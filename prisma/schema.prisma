@@ -1,0 +1,274 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model ShopifyStore {
+  id                     String        @id @default(cuid())
+  shop                   String        @unique
+  connectedAt            DateTime      @default(now())
+  lastSyncAt             DateTime?
+  currentBalance         Float?
+  currentBalanceCurrency String?
+  payouts                Payout[]
+  bankAccounts           BankAccount[]
+}
+
+model AppUser {
+  id        String   @id @default(cuid())
+  name      String
+  email     String   @unique
+  role      String
+  status    String   @default("ACTIVE")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model AppSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+model Payout {
+  id                     Int          @id
+  storeId                String
+  store                  ShopifyStore @relation(fields: [storeId], references: [id])
+  status                 String
+  date                   String
+  currency               String
+  amount                 Float
+  chargesFeeAmount       Float        @default(0)
+  chargesGrossAmount     Float        @default(0)
+  refundsFeeAmount       Float        @default(0)
+  refundsGrossAmount     Float        @default(0)
+  adjustmentsFeeAmount   Float        @default(0)
+  adjustmentsGrossAmount Float        @default(0)
+  bankAccountShopifyId   String?
+  fetchedAt              DateTime     @default(now())
+  transactions           PayoutTransaction[]
+}
+
+model BankAccount {
+  id            String       @id
+  storeId       String
+  store         ShopifyStore @relation(fields: [storeId], references: [id])
+  accountNumber String
+  bankName      String
+  country       String
+  currency      String
+  status        String
+  fetchedAt     DateTime     @default(now())
+}
+
+model PayoutTransaction {
+  id            Int      @id
+  payoutId      Int
+  payout        Payout   @relation(fields: [payoutId], references: [id])
+  type          String
+  currency      String
+  amount        Float
+  fee           Float
+  net           Float
+  sourceId      Int
+  sourceType    String
+  sourceOrderId Int?
+  processedAt   DateTime
+  fetchedAt     DateTime @default(now())
+}
+
+model Project {
+  id             String            @id @default(cuid())
+  name           String
+  startDate      DateTime
+  description    String?
+  createdAt      DateTime          @default(now())
+  assignments    StaffAssignment[]
+  metaAccounts   MetaAdAccount[]
+  otherBills      OtherBill[]
+  fulfillmentCosts FulfillmentCost[]
+}
+
+model MetaAdAccount {
+  id          String        @id @default(cuid())
+  accountId   String        @unique
+  accountName String?
+  accessToken String
+  currency    String?
+  projectId   String?
+  project     Project?      @relation(fields: [projectId], references: [id])
+  billings    MetaBilling[]
+  lastSyncAt  DateTime?
+  createdAt   DateTime      @default(now())
+}
+
+model MetaBilling {
+  id              String        @id
+  adAccountId     String
+  adAccount       MetaAdAccount @relation(fields: [adAccountId], references: [id])
+  amount          Float
+  currency        String
+  billingDate     String
+  status          String
+  chargeType      String?
+  productType     String?
+  paymentMethod   String?
+  paymentMethodLast4 String?
+  referenceNumber String?
+  receiptUrl      String?
+  createdAt       DateTime      @default(now())
+}
+
+model Staff {
+  id          String            @id @default(cuid())
+  name        String
+  role        String?
+  monthlyCost Float             @default(0)
+  note        String?
+  createdAt   DateTime          @default(now())
+  assignments StaffAssignment[]
+  otherBills   OtherBill[]
+  fulfillmentCosts FulfillmentCost[]
+}
+
+model StaffAssignment {
+  id        String    @id @default(cuid())
+  staffId   String
+  projectId String
+  staff     Staff     @relation(fields: [staffId], references: [id])
+  project   Project   @relation(fields: [projectId], references: [id])
+  startDate DateTime
+  endDate   DateTime?
+  createdAt DateTime  @default(now())
+
+  @@unique([staffId, projectId])
+}
+
+model ResourceProxy {
+  id           String        @id @default(cuid())
+  name         String
+  host         String?
+  port         String?
+  username     String?
+  password     String?
+  provider     String?
+  tags         String?
+  purchaseDate String?
+  expireDate   String?
+  status       String        @default("MAINTAIN")
+  note         String?
+  accounts     ToolAccount[]
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@index([status])
+  @@unique([host, port])
+}
+
+model ToolAccount {
+  id          String         @id @default(cuid())
+  email       String
+  accountCode String
+  accountType String
+  status      String         @default("ACTIVE")
+  proxyId     String?
+  proxy       ResourceProxy? @relation(fields: [proxyId], references: [id])
+  tags        String?
+  note        String?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@index([accountType])
+  @@index([status])
+  @@index([proxyId])
+}
+
+model OtherBill {
+  id                 String   @id @default(cuid())
+  vendorName         String
+  invoiceNumber      String?
+  billDate           String
+  dueDate            String?
+  serviceStartDate   String?
+  serviceEndDate     String?
+  category           String
+  expenseAccount     String
+  description        String?
+  currency           String   @default("USD")
+  subtotalAmount     Float
+  taxAmount          Float    @default(0)
+  totalAmount        Float
+  paymentStatus      String   @default("UNPAID")
+  paymentDate        String?
+  paymentMethod      String?
+  referenceNumber    String?
+  projectId          String?
+  project            Project? @relation(fields: [projectId], references: [id])
+  staffId            String?
+  staff              Staff?   @relation(fields: [staffId], references: [id])
+  allocationNote     String?
+  documentUrl        String?
+  documentName       String?
+  documentMimeType   String?
+  documentSize       Int?
+  accountingBasis    String   @default("ACCRUAL")
+  recognitionDate    String
+  notes              String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([billDate])
+  @@index([recognitionDate])
+  @@index([category])
+  @@index([paymentStatus])
+  @@index([projectId])
+  @@index([staffId])
+}
+
+model FulfillmentCost {
+  id                 String   @id @default(cuid())
+  providerName       String
+  invoiceNumber      String?
+  billDate           String
+  serviceStartDate   String?
+  serviceEndDate     String?
+  recognitionDate    String
+  costType           String
+  currency           String   @default("USD")
+  orderCount         Int      @default(0)
+  itemCount          Int      @default(0)
+  productCost        Float    @default(0)
+  pickPackCost       Float    @default(0)
+  shippingCost       Float    @default(0)
+  storageCost        Float    @default(0)
+  returnCost         Float    @default(0)
+  adjustmentAmount   Float    @default(0)
+  taxAmount          Float    @default(0)
+  totalAmount        Float
+  paymentStatus      String   @default("UNPAID")
+  paymentDate        String?
+  paymentMethod      String?
+  referenceNumber    String?
+  projectId          String?
+  project            Project? @relation(fields: [projectId], references: [id])
+  staffId            String?
+  staff              Staff?   @relation(fields: [staffId], references: [id])
+  documentUrl        String?
+  documentName       String?
+  documentMimeType   String?
+  documentSize       Int?
+  notes              String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([billDate])
+  @@index([recognitionDate])
+  @@index([costType])
+  @@index([paymentStatus])
+  @@index([projectId])
+  @@index([staffId])
+}
