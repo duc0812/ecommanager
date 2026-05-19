@@ -12,7 +12,10 @@ export function canAccess(role: UserRole, pathname: string) {
   if (role === 'ADMIN') return !pathname.startsWith('/setup')
   if (role === 'SELLER') return pathname === '/projects' || pathname.startsWith('/projects')
   if (role === 'SUPPORT') {
-    return pathname.startsWith('/finance/fulfillment') || pathname.startsWith('/finance/other-bills') || pathname.startsWith('/orders')
+    return pathname.startsWith('/fulfillment') ||
+      pathname.startsWith('/finance/fulfillment') ||
+      pathname.startsWith('/finance/other-bills') ||
+      pathname.startsWith('/orders')
   }
   return false
 }
