@@ -361,6 +361,9 @@ model Order {
   updatedAt            DateTime    @updatedAt
   lines                OrderLine[]
   shippingZone         String?
+  orderType            String      @default("UNKNOWN")   // "CUSTOM" | "NON_CUSTOM" | "UNKNOWN"
+  trelloCardId         String?
+  trelloCardUrl        String?
   @@index([placedAt])
   @@index([pipelineStatus])
   @@index([defaultSupplierId])
@@ -408,4 +411,14 @@ model SupplierZoneOverride {
   countryCodes String   // JSON array of ISO2 codes
   createdAt    DateTime @default(now())
   @@unique([supplierId, zoneCode])
+}
+
+model SkuDesign {
+  id           String   @id @default(cuid())
+  sku          String   @unique
+  designReady  Boolean  @default(false)
+  driveLink    String?
+  trelloCardId String?
+  updatedAt    DateTime @updatedAt
+  createdAt    DateTime @default(now())
 }
