@@ -13,6 +13,13 @@ export default function SetupPage() {
   const [apiSecret, setApiSecret] = useState('')
   const [showSecret, setShowSecret] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [trelloApiKey, setTrelloApiKey] = useState('')
+  const [trelloToken, setTrelloToken] = useState('')
+  const [trelloListId, setTrelloListId] = useState('')
+  const [trelloDoneListId, setTrelloDoneListId] = useState('')
+  const [trelloSyncFrom, setTrelloSyncFrom] = useState('LIT2341')
+  const [trelloSaving, setTrelloSaving] = useState(false)
+  const [trelloMsg, setTrelloMsg] = useState('')
 
   useEffect(() => {
     try {
@@ -25,6 +32,13 @@ export default function SetupPage() {
       }
     } catch {}
     fetch('/api/auth/status').then(r => r.json()).then(d => setStatus(d.shopify)).catch(() => setStatus({ connected: false }))
+    fetch('/api/trello/config').then(r => r.json()).then(d => {
+      if (d.apiKey) setTrelloApiKey(d.apiKey)
+      if (d.token) setTrelloToken(d.token)
+      if (d.listId) setTrelloListId(d.listId)
+      if (d.doneListId) setTrelloDoneListId(d.doneListId)
+      if (d.syncFromOrderName) setTrelloSyncFrom(d.syncFromOrderName)
+    }).catch(() => {})
   }, [])
 
   async function connect() {
@@ -50,6 +64,28 @@ export default function SetupPage() {
     localStorage.removeItem(LS_KEY)
     setStatus({ connected: false })
     setShop(''); setApiKey(''); setApiSecret('')
+  }
+
+  async function saveTrello() {
+    setTrelloSaving(true); setTrelloMsg('')
+    try {
+      await fetch('/api/trello/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          apiKey: trelloApiKey.trim(),
+          token: trelloToken.trim(),
+          listId: trelloListId.trim(),
+          doneListId: trelloDoneListId.trim(),
+          syncFromOrderName: trelloSyncFrom.trim(),
+        }),
+      })
+      setTrelloMsg('Đã lưu cấu hình Trello.')
+    } catch {
+      setTrelloMsg('Lỗi khi lưu.')
+    } finally {
+      setTrelloSaving(false)
+    }
   }
 
   const canConnect = shop.trim() && apiKey.trim() && apiSecret.trim()
@@ -228,6 +264,72 @@ export default function SetupPage() {
                 )}
               </div>
             </div>
+          </div>
+        </div>
+        {/* Trello Config */}
+        <div className="bg-surface-container-lowest rounded-xl border border-outline-variant/20 mb-lg">
+          <div className="flex items-center gap-sm px-lg py-md border-b border-outline-variant/20">
+            <span className="material-symbols-outlined text-on-surface-variant">view_kanban</span>
+            <h2 className="text-title-md">Trello Integration</h2>
+          </div>
+          <div className="p-lg grid grid-cols-1 md:grid-cols-2 gap-md">
+            <div>
+              <label className="text-label-sm block mb-xs">API Key</label>
+              <input
+                type="password"
+                value={trelloApiKey}
+                onChange={e => setTrelloApiKey(e.target.value)}
+                placeholder="Trello API Key"
+                className="w-full border rounded-lg px-md py-sm text-body-sm"
+              />
+            </div>
+            <div>
+              <label className="text-label-sm block mb-xs">Token</label>
+              <input
+                type="password"
+                value={trelloToken}
+                onChange={e => setTrelloToken(e.target.value)}
+                placeholder="Trello Token"
+                className="w-full border rounded-lg px-md py-sm text-body-sm"
+              />
+            </div>
+            <div>
+              <label className="text-label-sm block mb-xs">List ID (tạo card vào)</label>
+              <input
+                value={trelloListId}
+                onChange={e => setTrelloListId(e.target.value)}
+                placeholder="e.g. 64abc123def456"
+                className="w-full border rounded-lg px-md py-sm text-body-sm"
+              />
+            </div>
+            <div>
+              <label className="text-label-sm block mb-xs">Done List ID (cột DONE để sync)</label>
+              <input
+                value={trelloDoneListId}
+                onChange={e => setTrelloDoneListId(e.target.value)}
+                placeholder="e.g. 64abc789xyz012"
+                className="w-full border rounded-lg px-md py-sm text-body-sm"
+              />
+            </div>
+            <div>
+              <label className="text-label-sm block mb-xs">Sync từ order (không kèm #)</label>
+              <input
+                value={trelloSyncFrom}
+                onChange={e => setTrelloSyncFrom(e.target.value)}
+                placeholder="LIT2341"
+                className="w-full border rounded-lg px-md py-sm text-body-sm"
+              />
+            </div>
+          </div>
+          <div className="px-lg pb-lg flex items-center gap-sm">
+            <button
+              onClick={saveTrello}
+              disabled={trelloSaving}
+              className="bg-secondary text-on-secondary px-lg py-sm rounded-lg text-label-md disabled:opacity-50"
+            >
+              {trelloSaving ? 'Đang lưu…' : 'Lưu Trello Config'}
+            </button>
+            {trelloMsg && <span className="text-body-sm text-on-surface-variant">{trelloMsg}</span>}
           </div>
         </div>
       </main>
