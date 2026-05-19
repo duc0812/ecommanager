@@ -141,6 +141,14 @@ export type ProductUpsertInput = {
   productName?: string | null
   currency?: string
   requiresDesign?: boolean
+  baseSku?: string | null
+  productType?: string | null
+  printingMethod?: string | null
+  sizeLabel?: string | null
+  designTemplateUrl?: string | null
+  minProductionDays?: number | null
+  maxProductionDays?: number | null
+  shippingByRegion?: string | null
 }
 
 export async function upsertProductMapping(input: ProductUpsertInput) {
@@ -157,12 +165,28 @@ export async function upsertProductMapping(input: ProductUpsertInput) {
         productName: input.productName ?? null,
         currency: input.currency ?? 'USD',
         requiresDesign: input.requiresDesign ?? false,
+        baseSku: input.baseSku ?? null,
+        productType: input.productType ?? null,
+        printingMethod: input.printingMethod ?? null,
+        sizeLabel: input.sizeLabel ?? null,
+        designTemplateUrl: input.designTemplateUrl ?? null,
+        minProductionDays: input.minProductionDays ?? null,
+        maxProductionDays: input.maxProductionDays ?? null,
+        shippingByRegion: input.shippingByRegion ?? null,
       },
       update: {
         baseCost: input.baseCost,
         productName: input.productName ?? null,
         currency: input.currency ?? 'USD',
         requiresDesign: input.requiresDesign ?? false,
+        ...(input.baseSku !== undefined ? { baseSku: input.baseSku } : {}),
+        ...(input.productType !== undefined ? { productType: input.productType } : {}),
+        ...(input.printingMethod !== undefined ? { printingMethod: input.printingMethod } : {}),
+        ...(input.sizeLabel !== undefined ? { sizeLabel: input.sizeLabel } : {}),
+        ...(input.designTemplateUrl !== undefined ? { designTemplateUrl: input.designTemplateUrl } : {}),
+        ...(input.minProductionDays !== undefined ? { minProductionDays: input.minProductionDays } : {}),
+        ...(input.maxProductionDays !== undefined ? { maxProductionDays: input.maxProductionDays } : {}),
+        ...(input.shippingByRegion !== undefined ? { shippingByRegion: input.shippingByRegion } : {}),
       },
     })
     if (existing && existing.baseCost !== input.baseCost) {
@@ -187,7 +211,21 @@ export type BulkUpsertResult = {
 
 export async function bulkUpsertProducts(
   supplierId: string,
-  rows: Array<{ sku: string; baseCost: number; productName?: string | null; currency?: string; requiresDesign?: boolean }>,
+  rows: Array<{
+    sku: string
+    baseCost: number
+    productName?: string | null
+    currency?: string
+    requiresDesign?: boolean
+    baseSku?: string | null
+    productType?: string | null
+    printingMethod?: string | null
+    sizeLabel?: string | null
+    designTemplateUrl?: string | null
+    minProductionDays?: number | null
+    maxProductionDays?: number | null
+    shippingByRegion?: string | null
+  }>,
 ): Promise<BulkUpsertResult> {
   const result: BulkUpsertResult = { created: 0, updated: 0, errors: [] }
   for (let i = 0; i < rows.length; i++) {

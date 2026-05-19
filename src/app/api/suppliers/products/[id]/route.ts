@@ -6,8 +6,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   const body = await req.json()
   const existing = await prisma.supplierProduct.findUnique({ where: { id: params.id } })
   if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  if (body.baseCost == null && body.productName == null && body.requiresDesign == null) {
-    return NextResponse.json({ error: 'baseCost, productName, or requiresDesign required' }, { status: 400 })
+  if (Object.keys(body).length === 0) {
+    return NextResponse.json({ error: 'At least one field required' }, { status: 400 })
   }
   const updated = await upsertProductMapping({
     supplierId: existing.supplierId,
@@ -16,6 +16,14 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     productName: body.productName !== undefined ? body.productName : existing.productName,
     currency: body.currency ?? existing.currency,
     requiresDesign: body.requiresDesign !== undefined ? Boolean(body.requiresDesign) : existing.requiresDesign,
+    baseSku: body.baseSku !== undefined ? body.baseSku : existing.baseSku,
+    productType: body.productType !== undefined ? body.productType : existing.productType,
+    printingMethod: body.printingMethod !== undefined ? body.printingMethod : existing.printingMethod,
+    sizeLabel: body.sizeLabel !== undefined ? body.sizeLabel : existing.sizeLabel,
+    designTemplateUrl: body.designTemplateUrl !== undefined ? body.designTemplateUrl : existing.designTemplateUrl,
+    minProductionDays: body.minProductionDays !== undefined ? body.minProductionDays : existing.minProductionDays,
+    maxProductionDays: body.maxProductionDays !== undefined ? body.maxProductionDays : existing.maxProductionDays,
+    shippingByRegion: body.shippingByRegion !== undefined ? body.shippingByRegion : existing.shippingByRegion,
   })
   return NextResponse.json(updated)
 }
