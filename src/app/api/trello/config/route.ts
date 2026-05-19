@@ -4,6 +4,7 @@ import { prisma } from '@/lib/db'
 const TRELLO_KEYS = [
   'trello.apiKey',
   'trello.token',
+  'trello.boardId',
   'trello.listId',
   'trello.doneListId',
   'trello.syncFromOrderName',
@@ -18,7 +19,7 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   const body = await req.json()
   const updates: Array<{ key: string; value: string }> = []
-  for (const field of ['apiKey', 'token', 'listId', 'doneListId', 'syncFromOrderName']) {
+  for (const field of ['apiKey', 'token', 'boardId', 'listId', 'doneListId', 'syncFromOrderName']) {
     if (body[field] !== undefined) {
       updates.push({ key: `trello.${field}`, value: String(body[field]) })
     }

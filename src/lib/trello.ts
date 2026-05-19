@@ -1,6 +1,7 @@
 export type TrelloConfig = {
   apiKey: string
   token: string
+  boardId: string
   listId: string
   doneListId: string
   syncFromOrderName: string
@@ -65,15 +66,16 @@ export function shouldCreateCard(
 export async function getTrelloConfig(): Promise<TrelloConfig | null> {
   const { prisma } = await import('@/lib/db')
   const rows = await prisma.appSetting.findMany({
-    where: { key: { in: ['trello.apiKey', 'trello.token', 'trello.listId', 'trello.doneListId', 'trello.syncFromOrderName'] } },
+    where: { key: { in: ['trello.apiKey', 'trello.token', 'trello.boardId', 'trello.listId', 'trello.doneListId', 'trello.syncFromOrderName'] } },
   })
   const m = Object.fromEntries(rows.map(r => [r.key, r.value]))
-  if (!m['trello.apiKey'] || !m['trello.token'] || !m['trello.listId'] || !m['trello.doneListId']) return null
+  if (!m['trello.apiKey'] || !m['trello.token'] || !m['trello.boardId'] || !m['trello.listId'] || !m['trello.doneListId']) return null
   return {
     apiKey: m['trello.apiKey'],
     token: m['trello.token'],
+    boardId: m['trello.boardId'],
     listId: m['trello.listId'],
     doneListId: m['trello.doneListId'],
-    syncFromOrderName: m['trello.syncFromOrderName'] ?? 'LIT2341',
+    syncFromOrderName: m['trello.syncFromOrderName'] ?? '',
   }
 }

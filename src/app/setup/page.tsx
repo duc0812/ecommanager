@@ -15,9 +15,10 @@ export default function SetupPage() {
   const [loading, setLoading] = useState(false)
   const [trelloApiKey, setTrelloApiKey] = useState('')
   const [trelloToken, setTrelloToken] = useState('')
+  const [trelloBoardId, setTrelloBoardId] = useState('')
   const [trelloListId, setTrelloListId] = useState('')
   const [trelloDoneListId, setTrelloDoneListId] = useState('')
-  const [trelloSyncFrom, setTrelloSyncFrom] = useState('LIT2341')
+  const [trelloSyncFrom, setTrelloSyncFrom] = useState('')
   const [trelloSaving, setTrelloSaving] = useState(false)
   const [trelloMsg, setTrelloMsg] = useState('')
 
@@ -35,6 +36,7 @@ export default function SetupPage() {
     fetch('/api/trello/config').then(r => r.json()).then(d => {
       if (d.apiKey) setTrelloApiKey(d.apiKey)
       if (d.token) setTrelloToken(d.token)
+      if (d.boardId) setTrelloBoardId(d.boardId)
       if (d.listId) setTrelloListId(d.listId)
       if (d.doneListId) setTrelloDoneListId(d.doneListId)
       if (d.syncFromOrderName) setTrelloSyncFrom(d.syncFromOrderName)
@@ -75,6 +77,7 @@ export default function SetupPage() {
         body: JSON.stringify({
           apiKey: trelloApiKey.trim(),
           token: trelloToken.trim(),
+          boardId: trelloBoardId.trim(),
           listId: trelloListId.trim(),
           doneListId: trelloDoneListId.trim(),
           syncFromOrderName: trelloSyncFrom.trim(),
@@ -294,7 +297,16 @@ export default function SetupPage() {
               />
             </div>
             <div>
-              <label className="text-label-sm block mb-xs">List ID (tạo card vào)</label>
+              <label className="text-label-sm block mb-xs">Board ID</label>
+              <input
+                value={trelloBoardId}
+                onChange={e => setTrelloBoardId(e.target.value)}
+                placeholder="e.g. 64abc000board0"
+                className="w-full border rounded-lg px-md py-sm text-body-sm"
+              />
+            </div>
+            <div>
+              <label className="text-label-sm block mb-xs">List ID — DESIGN (tạo card vào)</label>
               <input
                 value={trelloListId}
                 onChange={e => setTrelloListId(e.target.value)}
@@ -303,7 +315,7 @@ export default function SetupPage() {
               />
             </div>
             <div>
-              <label className="text-label-sm block mb-xs">Done List ID (cột DONE để sync)</label>
+              <label className="text-label-sm block mb-xs">List ID — DONE (cột xác nhận hoàn thành)</label>
               <input
                 value={trelloDoneListId}
                 onChange={e => setTrelloDoneListId(e.target.value)}
