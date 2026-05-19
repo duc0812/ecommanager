@@ -5,6 +5,7 @@ import { computeOrderPL } from '@/lib/pl-calculator'
 import { buildSkuPriceMap } from '@/lib/repos/suppliers'
 import { upsertOrderWithLines } from '@/lib/repos/orders'
 import { autoDetectStatus, isValidPipelineStatus, type PipelineStatus } from '@/lib/pipeline-status'
+import { resolveZone, type SupplierZoneOverrides } from '@/lib/regions'
 
 export async function POST(req: NextRequest) {
   const shop = req.headers.get('x-shopify-shop-domain')
@@ -35,6 +36,16 @@ export async function POST(req: NextRequest) {
 
   const priceMap = await buildSkuPriceMap()
 
+  const allOverrides = await prisma.supplierZoneOverride.findMany()
+  const overridesBySupplier: Record<string, SupplierZoneOverrides> = {}
+  for (const o of allOverrides) {
+    if (!overridesBySupplier[o.supplierId]) overridesBySupplier[o.supplierId] = {}
+    try {
+      const codes = JSON.parse(o.countryCodes)
+      if (Array.isArray(codes)) overridesBySupplier[o.supplierId][o.zoneCode] = codes
+    } catch {}
+  }
+
   let cursor: string | null = null
   let totalSynced = 0
   let withUnmappedSku = 0
@@ -54,11 +65,21 @@ export async function POST(req: NextRequest) {
         .filter(t => t.kind !== 'REFUND' && t.status === 'SUCCESS')
         .reduce((sum, t) => sum + t.fees, 0)
       const grossExcludingMarketplaceTax = o.grossAmount - o.taxMarketplaceCollected
+
+      // Determine shipping zone via majority supplier overrides
+      let supplierIdForZone: string | undefined
+      for (const l of o.lines) {
+        if (l.sku && priceMap[l.sku]) { supplierIdForZone = priceMap[l.sku].supplierId; break }
+      }
+      const overrides = supplierIdForZone ? overridesBySupplier[supplierIdForZone] : undefined
+      const shippingZone = resolveZone(o.shippingCountry, overrides)
+
       const pl = computeOrderPL(
         {
           grossAmount: grossExcludingMarketplaceTax,
           totalFees,
           refundedAmount: o.refundedAmount,
+          shippingZone,
           lines: o.lines.map(l => ({ sku: l.sku, qty: l.quantity, unitPrice: l.unitPrice })),
         },
         priceMap,
@@ -104,6 +125,7 @@ export async function POST(req: NextRequest) {
         defaultSupplierId: pl.defaultSupplierId,
         placedAt: new Date(o.processedAt ?? o.createdAt),
         pipelineStatus: detected,
+        shippingZone,
         lines: o.lines.map((l, idx) => {
           const resolved = pl.perLineCost[idx]
           return {
@@ -115,6 +137,10 @@ export async function POST(req: NextRequest) {
             unitPrice: l.unitPrice,
             resolvedSupplierId: resolved.resolvedSupplierId,
             resolvedBaseCost: resolved.resolvedBaseCost,
+            // Snapshot the order-level shipping breakdown on each line for reporting flexibility
+            resolvedShipFirst: pl.resolvedShipFirst,
+            resolvedShipAdditional: pl.resolvedShipAdditional,
+            resolvedImportTax: pl.resolvedImportTaxPerUnit,
           }
         }),
       })

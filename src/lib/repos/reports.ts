@@ -19,8 +19,18 @@ export async function plSummary(filter: OrderFilter): Promise<PlSummary> {
     revenue += o.expectedPayout
     const totalQty = o.lines.reduce((s, l) => s + l.qty, 0)
     cogs += o.lines.reduce((s, l) => s + (l.resolvedBaseCost ?? 0) * l.qty, 0)
-    if (o.defaultSupplier) {
-      shipping += o.defaultSupplier.firstItemShipFee + o.defaultSupplier.additionalItemShipFee * Math.max(0, totalQty - 1)
+    // Use line-level snapshot if available (zone-aware), else fall back to supplier-level
+    const firstLine = o.lines[0]
+    const useSnapshot = firstLine?.resolvedShipFirst != null || firstLine?.resolvedShipAdditional != null
+    const shipFirst = useSnapshot
+      ? (firstLine.resolvedShipFirst ?? 0)
+      : (o.defaultSupplier?.firstItemShipFee ?? 0)
+    const shipAdditional = useSnapshot
+      ? (firstLine.resolvedShipAdditional ?? 0)
+      : (o.defaultSupplier?.additionalItemShipFee ?? 0)
+    const importTaxPerUnit = useSnapshot ? (firstLine.resolvedImportTax ?? 0) : 0
+    if (o.defaultSupplier || useSnapshot) {
+      shipping += shipFirst + shipAdditional * Math.max(0, totalQty - 1) + importTaxPerUnit * totalQty
     }
     if (o.lines.some(l => l.resolvedBaseCost == null)) unmappedCount++
   }
@@ -39,8 +49,18 @@ export async function ordersWithComputedPL(filter: OrderFilter): Promise<Enriche
   return orders.map(o => {
     const totalQty = o.lines.reduce((s, l) => s + l.qty, 0)
     const baseCost = o.lines.reduce((s, l) => s + (l.resolvedBaseCost ?? 0) * l.qty, 0)
-    const shipping = o.defaultSupplier
-      ? o.defaultSupplier.firstItemShipFee + o.defaultSupplier.additionalItemShipFee * Math.max(0, totalQty - 1)
+    // Use line-level snapshot if available (zone-aware), else fall back to supplier-level
+    const firstLine = o.lines[0]
+    const useSnapshot = firstLine?.resolvedShipFirst != null || firstLine?.resolvedShipAdditional != null
+    const shipFirst = useSnapshot
+      ? (firstLine.resolvedShipFirst ?? 0)
+      : (o.defaultSupplier?.firstItemShipFee ?? 0)
+    const shipAdditional = useSnapshot
+      ? (firstLine.resolvedShipAdditional ?? 0)
+      : (o.defaultSupplier?.additionalItemShipFee ?? 0)
+    const importTaxPerUnit = useSnapshot ? (firstLine.resolvedImportTax ?? 0) : 0
+    const shipping = (o.defaultSupplier || useSnapshot)
+      ? shipFirst + shipAdditional * Math.max(0, totalQty - 1) + importTaxPerUnit * totalQty
       : 0
     const profit = o.expectedPayout - baseCost - shipping
     const margin = o.expectedPayout === 0 ? 0 : (profit / o.expectedPayout) * 100
@@ -94,8 +114,18 @@ export async function combinedProjectPL(filter: {
     fulfillmentRevenue += o.expectedPayout
     const totalQty = o.lines.reduce((s, l) => s + l.qty, 0)
     fulfillmentCogs += o.lines.reduce((s, l) => s + (l.resolvedBaseCost ?? 0) * l.qty, 0)
-    if (o.defaultSupplier) {
-      fulfillmentCogs += o.defaultSupplier.firstItemShipFee + o.defaultSupplier.additionalItemShipFee * Math.max(0, totalQty - 1)
+    // Use line-level snapshot if available (zone-aware), else fall back to supplier-level
+    const firstLine = o.lines[0]
+    const useSnapshot = firstLine?.resolvedShipFirst != null || firstLine?.resolvedShipAdditional != null
+    const shipFirst = useSnapshot
+      ? (firstLine.resolvedShipFirst ?? 0)
+      : (o.defaultSupplier?.firstItemShipFee ?? 0)
+    const shipAdditional = useSnapshot
+      ? (firstLine.resolvedShipAdditional ?? 0)
+      : (o.defaultSupplier?.additionalItemShipFee ?? 0)
+    const importTaxPerUnit = useSnapshot ? (firstLine.resolvedImportTax ?? 0) : 0
+    if (o.defaultSupplier || useSnapshot) {
+      fulfillmentCogs += shipFirst + shipAdditional * Math.max(0, totalQty - 1) + importTaxPerUnit * totalQty
     }
   }
   const fulfillmentProfit = fulfillmentRevenue - fulfillmentCogs

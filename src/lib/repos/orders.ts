@@ -62,6 +62,7 @@ export type UpsertOrderInput = {
   defaultSupplierId: string | null
   placedAt: Date
   pipelineStatus?: PipelineStatus
+  shippingZone?: string | null
   lines: Array<{
     shopifyLineId: string
     sku: string | null
@@ -71,6 +72,9 @@ export type UpsertOrderInput = {
     unitPrice: number
     resolvedSupplierId: string | null
     resolvedBaseCost: number | null
+    resolvedShipFirst?: number | null
+    resolvedShipAdditional?: number | null
+    resolvedImportTax?: number | null
   }>
 }
 
@@ -99,6 +103,7 @@ export async function upsertOrderWithLines(input: UpsertOrderInput) {
         defaultSupplierId: input.defaultSupplierId,
         placedAt: input.placedAt,
         pipelineStatus: input.pipelineStatus ?? 'PENDING',
+        shippingZone: input.shippingZone ?? null,
       },
       update: {
         financialStatus: input.financialStatus,
@@ -109,6 +114,7 @@ export async function upsertOrderWithLines(input: UpsertOrderInput) {
         refundedAmount: input.refundedAmount,
         defaultSupplierId: input.defaultSupplierId,
         placedAt: input.placedAt,
+        shippingZone: input.shippingZone ?? null,
         ...(input.pipelineStatus !== undefined ? { pipelineStatus: input.pipelineStatus } : {}),
       },
     }),
@@ -124,6 +130,9 @@ export async function upsertOrderWithLines(input: UpsertOrderInput) {
         resolvedSupplierId: l.resolvedSupplierId,
         resolvedBaseCost: l.resolvedBaseCost,
         costSnapshotAt: l.resolvedSupplierId ? now : null,
+        resolvedShipFirst: l.resolvedShipFirst ?? null,
+        resolvedShipAdditional: l.resolvedShipAdditional ?? null,
+        resolvedImportTax: l.resolvedImportTax ?? null,
       })),
     }),
   ])

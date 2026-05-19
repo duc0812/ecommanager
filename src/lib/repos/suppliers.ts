@@ -1,6 +1,14 @@
 import { prisma } from '@/lib/db'
 import type { SupplierInput } from '@/lib/pl-calculator'
 
+function safeParseShipping(json: string): Record<string, { first: number; additional: number; importTax?: number }> | undefined {
+  try {
+    const parsed = JSON.parse(json)
+    if (typeof parsed === 'object' && parsed !== null) return parsed
+  } catch {}
+  return undefined
+}
+
 export async function listActiveSuppliers() {
   return prisma.supplier.findMany({ where: { isActive: true }, orderBy: { name: 'asc' } })
 }
@@ -31,6 +39,7 @@ export async function buildSkuPriceMap(): Promise<Record<string, SupplierInput>>
         firstItemShipFee: sup.firstItemShipFee,
         additionalItemShipFee: sup.additionalItemShipFee,
         requiresDesign: p.requiresDesign,
+        shippingByRegion: p.shippingByRegion ? safeParseShipping(p.shippingByRegion) : undefined,
       }
     }
   }
