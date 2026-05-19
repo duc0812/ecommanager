@@ -12,6 +12,8 @@ type OrderRow = {
   currency: string
   expectedPayout: number
   pipelineStatus: PipelineStatus
+  shippingZone: string | null
+  shippingCountry: string | null
   defaultSupplier: { id: string; name: string } | null
   lines: Array<{ id: string; sku: string | null; productTitle: string; qty: number }>
   computed: { baseCost: number; shipping: number; profit: number; margin: number; hasUnmappedSku: boolean }
@@ -338,6 +340,7 @@ export default function OrdersPage() {
                 <th className="px-md py-sm">Customer</th>
                 <th className="px-md py-sm">Date</th>
                 <th className="px-md py-sm">Supplier</th>
+                <th className="px-md py-sm">Zone</th>
                 <th className="px-md py-sm text-right">Payout</th>
                 <th className="px-md py-sm text-right">COGS</th>
                 <th className="px-md py-sm text-right">Profit</th>
@@ -371,6 +374,12 @@ export default function OrdersPage() {
                       <span className="text-error text-label-sm">unmapped</span>
                     )}
                   </td>
+                  <td className="px-md py-sm">
+                    <span className="font-mono text-label-sm">{o.shippingZone ?? '—'}</span>
+                    {o.shippingCountry && (
+                      <span className="text-label-sm text-on-surface-variant ml-xs">({o.shippingCountry})</span>
+                    )}
+                  </td>
                   <td className="px-md py-sm text-right">{fmt(o.expectedPayout, o.currency)}</td>
                   <td className="px-md py-sm text-right">
                     {fmt(o.computed.baseCost + o.computed.shipping, o.currency)}
@@ -398,7 +407,7 @@ export default function OrdersPage() {
               ))}
               {orders.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="px-md py-lg text-center text-on-surface-variant">
+                  <td colSpan={11} className="px-md py-lg text-center text-on-surface-variant">
                     No orders match filters.
                   </td>
                 </tr>
