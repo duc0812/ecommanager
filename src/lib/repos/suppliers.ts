@@ -131,6 +131,7 @@ export type ProductUpsertInput = {
   baseCost: number
   productName?: string | null
   currency?: string
+  requiresDesign?: boolean
 }
 
 export async function upsertProductMapping(input: ProductUpsertInput) {
@@ -146,11 +147,13 @@ export async function upsertProductMapping(input: ProductUpsertInput) {
         baseCost: input.baseCost,
         productName: input.productName ?? null,
         currency: input.currency ?? 'USD',
+        requiresDesign: input.requiresDesign ?? false,
       },
       update: {
         baseCost: input.baseCost,
         productName: input.productName ?? null,
         currency: input.currency ?? 'USD',
+        requiresDesign: input.requiresDesign ?? false,
       },
     })
     if (existing && existing.baseCost !== input.baseCost) {
@@ -175,7 +178,7 @@ export type BulkUpsertResult = {
 
 export async function bulkUpsertProducts(
   supplierId: string,
-  rows: Array<{ sku: string; baseCost: number; productName?: string | null; currency?: string }>,
+  rows: Array<{ sku: string; baseCost: number; productName?: string | null; currency?: string; requiresDesign?: boolean }>,
 ): Promise<BulkUpsertResult> {
   const result: BulkUpsertResult = { created: 0, updated: 0, errors: [] }
   for (let i = 0; i < rows.length; i++) {

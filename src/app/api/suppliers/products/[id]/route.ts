@@ -6,8 +6,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   const body = await req.json()
   const existing = await prisma.supplierProduct.findUnique({ where: { id: params.id } })
   if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  if (body.baseCost == null && body.productName == null) {
-    return NextResponse.json({ error: 'baseCost or productName required' }, { status: 400 })
+  if (body.baseCost == null && body.productName == null && body.requiresDesign == null) {
+    return NextResponse.json({ error: 'baseCost, productName, or requiresDesign required' }, { status: 400 })
   }
   const updated = await upsertProductMapping({
     supplierId: existing.supplierId,
@@ -15,6 +15,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     baseCost: body.baseCost != null ? Number(body.baseCost) : existing.baseCost,
     productName: body.productName !== undefined ? body.productName : existing.productName,
     currency: body.currency ?? existing.currency,
+    requiresDesign: body.requiresDesign !== undefined ? Boolean(body.requiresDesign) : existing.requiresDesign,
   })
   return NextResponse.json(updated)
 }
