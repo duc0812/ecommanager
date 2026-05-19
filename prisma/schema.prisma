@@ -374,6 +374,7 @@ model OrderLine {
   order                   Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
   shopifyLineId           String
   sku                     String?
+  resolvedSupplierSku     String?
   variantTitle            String?
   productTitle            String
   qty                     Int

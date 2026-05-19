@@ -66,6 +66,7 @@ export type UpsertOrderInput = {
   lines: Array<{
     shopifyLineId: string
     sku: string | null
+    resolvedSupplierSku?: string | null
     variantTitle: string | null
     productTitle: string
     qty: number
@@ -123,6 +124,7 @@ export async function upsertOrderWithLines(input: UpsertOrderInput) {
         orderId: input.id,
         shopifyLineId: l.shopifyLineId,
         sku: l.sku,
+        resolvedSupplierSku: l.resolvedSupplierSku ?? null,
         variantTitle: l.variantTitle,
         productTitle: l.productTitle,
         qty: l.qty,
