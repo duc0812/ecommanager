@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db'
 import type { SupplierInput } from '@/lib/pl-calculator'
+import type { SupplierProductCandidate } from '@/lib/auto-mapping'
 
 function safeParseShipping(json: string): Record<string, { first: number; additional: number; importTax?: number }> | undefined {
   try {
@@ -44,6 +45,34 @@ export async function buildSkuPriceMap(): Promise<Record<string, SupplierInput>>
     }
   }
   return map
+}
+
+export async function buildSupplierProductCandidates(): Promise<SupplierProductCandidate[]> {
+  const suppliers = await prisma.supplier.findMany({ where: { isActive: true } })
+  const products = await prisma.supplierProduct.findMany()
+  const byId = new Map(suppliers.map(s => [s.id, s]))
+  const candidates: SupplierProductCandidate[] = []
+  for (const p of products) {
+    const sup = byId.get(p.supplierId)
+    if (!sup) continue
+    candidates.push({
+      supplierId: sup.id,
+      supplierName: sup.name,
+      supplierCode: sup.code,
+      supplierPreferenceRank: sup.preferenceRank,
+      sku: p.sku,
+      baseCost: p.baseCost,
+      firstItemShipFee: sup.firstItemShipFee,
+      additionalItemShipFee: sup.additionalItemShipFee,
+      requiresDesign: p.requiresDesign,
+      shippingByRegion: p.shippingByRegion ? safeParseShipping(p.shippingByRegion) : undefined,
+      productName: p.productName,
+      productType: p.productType,
+      printingMethod: p.printingMethod,
+      sizeLabel: p.sizeLabel,
+    })
+  }
+  return candidates
 }
 
 export type CreateSupplierInput = {
@@ -209,23 +238,27 @@ export type BulkUpsertResult = {
   errors: Array<{ row: number; sku: string; error: string }>
 }
 
+export type ProductBulkRow = {
+  supplierName?: string | null
+  supplierCode?: string | null
+  sku: string
+  baseCost: number
+  productName?: string | null
+  currency?: string
+  requiresDesign?: boolean
+  baseSku?: string | null
+  productType?: string | null
+  printingMethod?: string | null
+  sizeLabel?: string | null
+  designTemplateUrl?: string | null
+  minProductionDays?: number | null
+  maxProductionDays?: number | null
+  shippingByRegion?: string | null
+}
+
 export async function bulkUpsertProducts(
   supplierId: string,
-  rows: Array<{
-    sku: string
-    baseCost: number
-    productName?: string | null
-    currency?: string
-    requiresDesign?: boolean
-    baseSku?: string | null
-    productType?: string | null
-    printingMethod?: string | null
-    sizeLabel?: string | null
-    designTemplateUrl?: string | null
-    minProductionDays?: number | null
-    maxProductionDays?: number | null
-    shippingByRegion?: string | null
-  }>,
+  rows: ProductBulkRow[],
 ): Promise<BulkUpsertResult> {
   const result: BulkUpsertResult = { created: 0, updated: 0, errors: [] }
   for (let i = 0; i < rows.length; i++) {
@@ -242,6 +275,41 @@ export async function bulkUpsertProducts(
       result.errors.push({ row: i, sku: r.sku, error: e.message })
     }
   }
+  return result
+}
+
+function normalizeLookup(v?: string | null) {
+  return (v ?? '').trim().toLowerCase()
+}
+
+export async function bulkUpsertProductsBySupplierName(rows: ProductBulkRow[]): Promise<BulkUpsertResult> {
+  const result: BulkUpsertResult = { created: 0, updated: 0, errors: [] }
+  const suppliers = await prisma.supplier.findMany()
+  const byName = new Map(suppliers.map(s => [normalizeLookup(s.name), s]))
+  const byCode = new Map(suppliers.map(s => [normalizeLookup(s.code), s]))
+
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i]
+    const lookup = normalizeLookup(r.supplierName) || normalizeLookup(r.supplierCode)
+    const supplier = byName.get(lookup) ?? byCode.get(lookup)
+    if (!supplier) {
+      result.errors.push({ row: i, sku: r.sku ?? '', error: 'supplierName does not match an existing supplier' })
+      continue
+    }
+    if (!r.sku) { result.errors.push({ row: i, sku: '', error: 'sku is required' }); continue }
+    if (!Number.isFinite(r.baseCost)) { result.errors.push({ row: i, sku: r.sku, error: 'baseCost must be a number' }); continue }
+    try {
+      const before = await prisma.supplierProduct.findUnique({
+        where: { supplierId_sku: { supplierId: supplier.id, sku: r.sku } },
+      })
+      const { supplierName, supplierCode, ...product } = r
+      await upsertProductMapping({ supplierId: supplier.id, ...product })
+      if (before) result.updated++; else result.created++
+    } catch (e: any) {
+      result.errors.push({ row: i, sku: r.sku, error: e.message })
+    }
+  }
+
   return result
 }
 

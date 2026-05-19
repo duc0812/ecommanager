@@ -2,16 +2,19 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { fetchOrdersPage } from '@/lib/shopify-orders'
 import { computeOrderPL } from '@/lib/pl-calculator'
-import { buildSkuPriceMap } from '@/lib/repos/suppliers'
+import { buildSkuPriceMap, buildSupplierProductCandidates } from '@/lib/repos/suppliers'
 import { upsertOrderWithLines } from '@/lib/repos/orders'
 import { autoDetectStatus, isValidPipelineStatus, type PipelineStatus } from '@/lib/pipeline-status'
 import { resolveZone, type SupplierZoneOverrides } from '@/lib/regions'
+import { getShopifyConnection } from '@/lib/token-store'
+import { resolveSupplierForOrderLine } from '@/lib/auto-mapping'
 
 export async function POST(req: NextRequest) {
-  const shop = req.headers.get('x-shopify-shop-domain')
-  const accessToken = req.headers.get('x-shopify-access-token')
+  const stored = await getShopifyConnection(req.headers.get('cookie') ?? undefined)
+  const shop = req.headers.get('x-shopify-shop-domain') || stored?.shop
+  const accessToken = req.headers.get('x-shopify-access-token') || stored?.token
   if (!shop || !accessToken) {
-    return NextResponse.json({ error: 'Missing shop domain or access token headers' }, { status: 400 })
+    return NextResponse.json({ error: 'Not connected to Shopify. Go to /setup and connect Shopify first.' }, { status: 401 })
   }
 
   const store = await prisma.shopifyStore.findUnique({
@@ -35,6 +38,7 @@ export async function POST(req: NextRequest) {
   const sinceIso = sinceDate.toISOString().split('T')[0]
 
   const priceMap = await buildSkuPriceMap()
+  const mappingCandidates = await buildSupplierProductCandidates()
 
   const allOverrides = await prisma.supplierZoneOverride.findMany()
   const overridesBySupplier: Record<string, SupplierZoneOverrides> = {}
@@ -65,11 +69,21 @@ export async function POST(req: NextRequest) {
         .filter(t => t.kind !== 'REFUND' && t.status === 'SUCCESS')
         .reduce((sum, t) => sum + t.fees, 0)
       const grossExcludingMarketplaceTax = o.grossAmount - o.taxMarketplaceCollected
+      const resolvedLines = o.lines.map(l => ({
+        line: l,
+        mapping: resolveSupplierForOrderLine({
+          sku: l.sku,
+          title: l.title,
+          variantTitle: l.variantTitle,
+          productTags: l.productTags,
+          productType: l.productType,
+        }, mappingCandidates),
+      }))
 
       // Determine shipping zone via majority supplier overrides
       let supplierIdForZone: string | undefined
-      for (const l of o.lines) {
-        if (l.sku && priceMap[l.sku]) { supplierIdForZone = priceMap[l.sku].supplierId; break }
+      for (const r of resolvedLines) {
+        if (r.mapping.supplier) { supplierIdForZone = r.mapping.supplier.supplierId; break }
       }
       const overrides = supplierIdForZone ? overridesBySupplier[supplierIdForZone] : undefined
       const shippingZone = resolveZone(o.shippingCountry, overrides)
@@ -80,7 +94,12 @@ export async function POST(req: NextRequest) {
           totalFees,
           refundedAmount: o.refundedAmount,
           shippingZone,
-          lines: o.lines.map(l => ({ sku: l.sku, qty: l.quantity, unitPrice: l.unitPrice })),
+          lines: resolvedLines.map(({ line, mapping }) => ({
+            sku: line.sku,
+            qty: line.quantity,
+            unitPrice: line.unitPrice,
+            resolvedSupplier: mapping.supplier,
+          })),
         },
         priceMap,
       )
@@ -94,9 +113,8 @@ export async function POST(req: NextRequest) {
 
       // Check if any line maps to a product requiring custom design
       const hasCustomDesignLine = o.lines.some(l => {
-        if (!l.sku) return false
-        const sup = priceMap[l.sku]
-        return !!sup?.requiresDesign
+        const resolved = resolvedLines.find(r => r.line.id === l.id)?.mapping.supplier
+        return !!resolved?.requiresDesign
       })
 
       const detected = autoDetectStatus({
@@ -131,6 +149,9 @@ export async function POST(req: NextRequest) {
           return {
             shopifyLineId: l.id,
             sku: l.sku,
+            resolvedSupplierSku: resolved.resolvedSupplierId
+              ? resolvedLines[idx]?.mapping.supplier?.sku ?? null
+              : null,
             variantTitle: l.variantTitle,
             productTitle: l.title,
             qty: l.quantity,
@@ -153,6 +174,17 @@ export async function POST(req: NextRequest) {
     where: { id: store.id },
     data: { lastSyncAt: new Date() },
   })
+
+  if (errors.length > 0 && totalSynced === 0) {
+    return NextResponse.json({
+      error: errors[0],
+      totalSynced,
+      withUnmappedSku,
+      errors,
+      projectId: store.projectId,
+      projectName: store.project.name,
+    }, { status: 502 })
+  }
 
   return NextResponse.json({
     totalSynced,

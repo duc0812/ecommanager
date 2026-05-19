@@ -2,6 +2,7 @@ export type OrderLineInput = {
   sku: string | null
   qty: number
   unitPrice: number
+  resolvedSupplier?: SupplierInput | null
 }
 
 export type ZoneShipping = {
@@ -57,7 +58,7 @@ export function computeOrderPL(
 
   for (const line of order.lines) {
     totalQty += line.qty
-    const sup = line.sku ? supplierMap[line.sku] : undefined
+    const sup = line.resolvedSupplier ?? (line.sku ? supplierMap[line.sku] : undefined)
     if (!sup) {
       hasUnmappedSku = true
       perLineCost.push({ sku: line.sku, resolvedSupplierId: null, resolvedBaseCost: null })

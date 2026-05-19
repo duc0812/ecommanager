@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import {
-  bulkUpsertProducts, countProducts, listProducts, upsertProductMapping,
+  bulkUpsertProducts, bulkUpsertProductsBySupplierName, countProducts, listProducts, upsertProductMapping,
 } from '@/lib/repos/suppliers'
 
 export async function GET(req: NextRequest) {
@@ -27,9 +27,11 @@ export async function POST(req: NextRequest) {
 
 export async function PUT(req: NextRequest) {
   const body = await req.json()
-  if (!body.supplierId || !Array.isArray(body.rows)) {
-    return NextResponse.json({ error: 'supplierId + rows array required' }, { status: 400 })
+  if (!Array.isArray(body.rows)) {
+    return NextResponse.json({ error: 'rows array required' }, { status: 400 })
   }
-  const result = await bulkUpsertProducts(body.supplierId, body.rows)
+  const result = body.supplierId
+    ? await bulkUpsertProducts(body.supplierId, body.rows)
+    : await bulkUpsertProductsBySupplierName(body.rows)
   return NextResponse.json(result)
 }
