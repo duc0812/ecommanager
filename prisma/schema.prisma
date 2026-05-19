@@ -296,21 +296,31 @@ model Supplier {
   templates             CsvTemplate[]
   orders                Order[]
   costHistory           SupplierCostHistory[]
+  zoneOverrides         SupplierZoneOverride[]
 }
 
 model SupplierProduct {
-  id             String   @id @default(cuid())
-  supplierId     String
-  supplier       Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
-  sku            String
-  productName    String?
-  baseCost       Float
-  currency       String   @default("USD")
-  requiresDesign Boolean  @default(false)
-  updatedAt      DateTime @updatedAt
-  createdAt      DateTime @default(now())
+  id                  String   @id @default(cuid())
+  supplierId          String
+  supplier            Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  sku                 String
+  productName         String?
+  baseCost            Float
+  currency            String   @default("USD")
+  requiresDesign      Boolean  @default(false)
+  updatedAt           DateTime @updatedAt
+  createdAt           DateTime @default(now())
+  baseSku             String?
+  productType         String?
+  printingMethod      String?
+  sizeLabel           String?
+  designTemplateUrl   String?
+  minProductionDays   Int?
+  maxProductionDays   Int?
+  shippingByRegion    String?
   @@unique([supplierId, sku])
   @@index([sku])
+  @@index([baseSku])
 }
 
 model SupplierCostHistory {
@@ -350,6 +360,7 @@ model Order {
   fetchedAt            DateTime    @default(now())
   updatedAt            DateTime    @updatedAt
   lines                OrderLine[]
+  shippingZone         String?
   @@index([placedAt])
   @@index([pipelineStatus])
   @@index([defaultSupplierId])
@@ -358,18 +369,21 @@ model Order {
 }
 
 model OrderLine {
-  id                 String    @id @default(cuid())
-  orderId            String
-  order              Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  shopifyLineId      String
-  sku                String?
-  variantTitle       String?
-  productTitle       String
-  qty                Int
-  unitPrice          Float
-  resolvedSupplierId String?
-  resolvedBaseCost   Float?
-  costSnapshotAt     DateTime?
+  id                      String    @id @default(cuid())
+  orderId                 String
+  order                   Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  shopifyLineId           String
+  sku                     String?
+  variantTitle            String?
+  productTitle            String
+  qty                     Int
+  unitPrice               Float
+  resolvedSupplierId      String?
+  resolvedBaseCost        Float?
+  costSnapshotAt          DateTime?
+  resolvedShipFirst       Float?
+  resolvedShipAdditional  Float?
+  resolvedImportTax       Float?
   @@index([sku])
 }
 
@@ -383,4 +397,14 @@ model CsvTemplate {
   isDefault  Boolean  @default(false)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+}
+
+model SupplierZoneOverride {
+  id           String   @id @default(cuid())
+  supplierId   String
+  supplier     Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  zoneCode     String
+  countryCodes String   // JSON array of ISO2 codes
+  createdAt    DateTime @default(now())
+  @@unique([supplierId, zoneCode])
 }
