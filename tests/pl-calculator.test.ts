@@ -103,4 +103,62 @@ describe('computeOrderPL', () => {
     expect(r.expectedPayout).toBeCloseTo(77, 2)
     expect(r.profit).toBeCloseTo(77 - 30 - 5, 2)
   })
+
+  it('uses zone-specific shipping when shippingByRegion is defined for order zone', () => {
+    const order: OrderInput = {
+      grossAmount: 100, totalFees: 0, refundedAmount: 0,
+      shippingZone: 'EU',
+      lines: [{ sku: 'X', qty: 2, unitPrice: 50 }],
+    }
+    const supplierMap: Record<string, SupplierInput> = {
+      X: {
+        supplierId: 's1', baseCost: 10,
+        firstItemShipFee: 5, additionalItemShipFee: 2,  // fallback (should be ignored)
+        shippingByRegion: { EU: { first: 4.1, additional: 4.1 } },
+      },
+    }
+    const r = computeOrderPL(order, supplierMap)
+    expect(r.totalShipping).toBeCloseTo(4.1 + 4.1, 2)  // first + 1 additional
+    expect(r.resolvedShipFirst).toBe(4.1)
+    expect(r.resolvedShipAdditional).toBe(4.1)
+    expect(r.totalImportTax).toBe(0)
+  })
+
+  it('applies importTax for US zone', () => {
+    const order: OrderInput = {
+      grossAmount: 100, totalFees: 0, refundedAmount: 0,
+      shippingZone: 'US',
+      lines: [{ sku: 'X', qty: 3, unitPrice: 30 }],
+    }
+    const supplierMap: Record<string, SupplierInput> = {
+      X: {
+        supplierId: 's1', baseCost: 10,
+        firstItemShipFee: 5, additionalItemShipFee: 2,
+        shippingByRegion: { US: { first: 0, additional: 0, importTax: 0.4 } },
+      },
+    }
+    const r = computeOrderPL(order, supplierMap)
+    expect(r.totalShipping).toBe(0)
+    expect(r.totalImportTax).toBeCloseTo(0.4 * 3, 2)
+    expect(r.resolvedImportTaxPerUnit).toBe(0.4)
+    expect(r.profit).toBeCloseTo(100 - 10 * 3 - 0 - 1.2, 2)
+  })
+
+  it('falls back to firstItemShipFee when no shippingByRegion match', () => {
+    const order: OrderInput = {
+      grossAmount: 100, totalFees: 0, refundedAmount: 0,
+      shippingZone: 'JP_CUSTOM',  // not in shippingByRegion
+      lines: [{ sku: 'X', qty: 1, unitPrice: 50 }],
+    }
+    const supplierMap: Record<string, SupplierInput> = {
+      X: {
+        supplierId: 's1', baseCost: 10,
+        firstItemShipFee: 9.99, additionalItemShipFee: 4.99,
+        shippingByRegion: { EU: { first: 4.1, additional: 4.1 } },
+      },
+    }
+    const r = computeOrderPL(order, supplierMap)
+    expect(r.totalShipping).toBe(9.99)
+    expect(r.resolvedShipFirst).toBe(9.99)
+  })
 })

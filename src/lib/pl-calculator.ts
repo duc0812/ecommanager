@@ -4,31 +4,43 @@ export type OrderLineInput = {
   unitPrice: number
 }
 
+export type ZoneShipping = {
+  first: number
+  additional: number
+  importTax?: number  // per-unit
+}
+
 export type OrderInput = {
   grossAmount: number
   totalFees: number
   refundedAmount: number
+  shippingZone?: string  // 'US' | 'EU' | 'GB' | 'CA' | 'ROW' | custom; if omitted → 'ROW'
   lines: OrderLineInput[]
 }
 
 export type SupplierInput = {
   supplierId: string
   baseCost: number
-  firstItemShipFee: number
-  additionalItemShipFee: number
-  requiresDesign?: boolean   // optional so existing code doesn't break
+  firstItemShipFee: number       // fallback default
+  additionalItemShipFee: number  // fallback default
+  shippingByRegion?: Record<string, ZoneShipping>  // optional zone-aware override
+  requiresDesign?: boolean
 }
 
 export type OrderPLResult = {
   expectedPayout: number
   totalBaseCost: number
   totalShipping: number
+  totalImportTax: number       // NEW
   profit: number
   marginPct: number
   defaultSupplierId: string | null
   hasUnmappedSku: boolean
   isMixedSupplier: boolean
   perLineCost: Array<{ sku: string | null; resolvedSupplierId: string | null; resolvedBaseCost: number | null }>
+  resolvedShipFirst: number     // NEW — for snapshot
+  resolvedShipAdditional: number // NEW — for snapshot
+  resolvedImportTaxPerUnit: number // NEW — for snapshot
 }
 
 export function computeOrderPL(
@@ -64,23 +76,37 @@ export function computeOrderPL(
     supplierIds.filter(id => supplierQty[id] === supplierQty[defaultSupplierIdRaw]).length > 1
 
   let totalShipping = 0
+  let totalImportTax = 0
+  let resolvedShipFirst = 0
+  let resolvedShipAdditional = 0
+  let resolvedImportTaxPerUnit = 0
   if (defaultSupplierIdRaw && !isMixedSupplier) {
     const sup = Object.values(supplierMap).find(s => s.supplierId === defaultSupplierIdRaw)!
-    totalShipping = sup.firstItemShipFee + sup.additionalItemShipFee * Math.max(0, totalQty - 1)
+    const zone = order.shippingZone ?? 'ROW'
+    const zoneRate = sup.shippingByRegion?.[zone]
+    resolvedShipFirst = zoneRate?.first ?? sup.firstItemShipFee
+    resolvedShipAdditional = zoneRate?.additional ?? sup.additionalItemShipFee
+    resolvedImportTaxPerUnit = zoneRate?.importTax ?? 0
+    totalShipping = resolvedShipFirst + resolvedShipAdditional * Math.max(0, totalQty - 1)
+    totalImportTax = resolvedImportTaxPerUnit * totalQty
   }
 
-  const profit = expectedPayout - totalBaseCost - totalShipping
+  const profit = expectedPayout - totalBaseCost - totalShipping - totalImportTax
   const marginPct = expectedPayout === 0 ? 0 : (profit / expectedPayout) * 100
 
   return {
     expectedPayout,
     totalBaseCost,
     totalShipping,
+    totalImportTax,
     profit,
     marginPct,
     defaultSupplierId: isMixedSupplier ? null : defaultSupplierIdRaw,
     hasUnmappedSku,
     isMixedSupplier,
     perLineCost,
+    resolvedShipFirst,
+    resolvedShipAdditional,
+    resolvedImportTaxPerUnit,
   }
 }
