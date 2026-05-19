@@ -9,6 +9,7 @@ export async function GET() {
         include: { staff: true },
         orderBy: { startDate: 'asc' },
       },
+      shopifyStore: { select: { shop: true } },
     },
   })
   return NextResponse.json(projects)
