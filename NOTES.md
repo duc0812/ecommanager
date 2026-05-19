@@ -10,11 +10,21 @@ Last updated: 2026-05-19
 
 **Spec location:** [docs/superpowers/specs/2026-05-19-fulfillment-pod-design.md](docs/superpowers/specs/2026-05-19-fulfillment-pod-design.md) (all 9 sections drafted)
 
-**Plan 1 location:** [docs/superpowers/plans/2026-05-19-fulfillment-pod-phase1-foundation-sync.md](docs/superpowers/plans/2026-05-19-fulfillment-pod-phase1-foundation-sync.md) — 15 tasks, TDD-driven, covers Phase 13.1+13.2 (foundation + sync). Ready to execute.
+**Plan 1 location:** [docs/superpowers/plans/2026-05-19-fulfillment-pod-phase1-foundation-sync.md](docs/superpowers/plans/2026-05-19-fulfillment-pod-phase1-foundation-sync.md) — 16 tasks (incl. Task 2.5 Repository layer), TDD-driven, multi-tenant aware. Covers Phase 13.1+13.2.
 
 **Plans 2 & 3:** Not yet written — will be created after Plan 1 is shipped.
 
-**Where we are:** Brainstorming complete, Plan 1 ready. Awaiting user choice on execution mode (subagent-driven vs inline).
+**Multi-tenancy architecture (decided 2026-05-19 round 2):**
+- 1 Shopify store = 1 Project (`ShopifyStore.projectId UNIQUE`)
+- Suppliers + SupplierProduct + CsvTemplate + Staff = SHARED (global, no projectId)
+- Order, OrderLine = project-scoped (`projectId` required)
+- Soft delete via `Project.archivedAt` (no hard delete)
+- Repository pattern: routes go through `src/lib/repos/<domain>.ts`, never `prisma` directly. Cross-domain JOIN only in `repos/reports.ts`.
+- Single SQLite DB (not multi-DB file) — chosen because cross-domain reports (P&L per project = orders + ad spend + staff cost) need JOIN.
+
+**Git:** Initialized 2026-05-19, baseline commit `b8ce2d9`.
+
+**Where we are:** Plan 1 ready with multi-tenancy. Awaiting confirmation to start dispatching subagents for Task 1.
 
 **To resume:**
 1. Read the spec file above + this NOTES file

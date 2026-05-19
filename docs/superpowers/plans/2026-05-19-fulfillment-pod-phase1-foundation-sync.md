@@ -5,6 +5,9 @@
 **Goal:** Ship the data layer + Shopify order sync for Phase 13 (Fulfillment & POD). End state: 6 new Prisma models migrated, 3 pure libraries unit-tested, sync route pulls real Shopify orders + transactions + fees, read API returns orders with computed P/L. No major UI yet — just a minimal `/orders` page to verify sync end-to-end.
 
 **Architecture:**
+- **Multi-tenant:** 1 Shopify store = 1 Project. `ShopifyStore.projectId` UNIQUE. `Order.projectId` required. Suppliers / SupplierProduct / CsvTemplate are SHARED (global, no `projectId`).
+- **Soft delete:** `Project.archivedAt DateTime?`. Queries default-filter `archivedAt IS NULL`.
+- **Repository pattern:** Routes never import `prisma` directly — must go through `src/lib/repos/<domain>.ts`. Cross-domain reports go through `src/lib/repos/reports.ts`. Prevents project-scope leaks and isolates DB access.
 - Pure functions for P/L math, CSV templating, timezone — fully unit-tested with Vitest.
 - GraphQL client for Shopify Admin API 2024-10 (cost-aware, paginated).
 - Snapshot-on-sync pattern: `OrderLine.resolvedBaseCost` is frozen at sync time so cost edits later don't rewrite history.
@@ -27,6 +30,10 @@
 | `src/lib/csv-template.ts` | Pure function: template + orders → CSV string |
 | `src/lib/timezone.ts` | VN ⇄ US time conversion + day-boundary helpers |
 | `src/lib/shopify-orders.ts` | GraphQL client (fetch orders w/ transactions, fees, refunds, paginated) |
+| `src/lib/repos/projects.ts` | Project queries (list active, getById, archive) |
+| `src/lib/repos/orders.ts` | Order CRUD + reads, ALWAYS scoped by `projectId` |
+| `src/lib/repos/suppliers.ts` | Supplier + SupplierProduct queries (global, no project scope) |
+| `src/lib/repos/reports.ts` | Cross-domain P/L aggregates (only file allowed to JOIN multi-module) |
 | `tests/pl-calculator.test.ts` | Unit tests |
 | `tests/csv-template.test.ts` | Unit tests |
 | `tests/timezone.test.ts` | Unit tests |
@@ -41,7 +48,7 @@
 ### Modified files
 | Path | Change |
 |---|---|
-| `prisma/schema.prisma` | Add 6 models + ShopifyStore.syncSinceDate field |
+| `prisma/schema.prisma` | Add 6 fulfillment models + ShopifyStore.{projectId, syncSinceDate} + Order.projectId + Project.archivedAt |
 | `src/lib/db.ts` | Bump SCHEMA_VERSION v8 → v9 |
 | `src/components/Sidebar.tsx` | Add Orders entry under Finance group |
 | `package.json` | Add vitest, @vitest/ui, vite-tsconfig-paths deps |
@@ -175,6 +182,8 @@ model SupplierCostHistory {
 model Order {
   id                   String      @id
   storeId              String
+  projectId            String
+  project              Project     @relation(fields: [projectId], references: [id])
   shopifyOrderNumber   String
   customerEmail        String?
   customerName         String?
@@ -199,6 +208,8 @@ model Order {
   @@index([placedAt])
   @@index([pipelineStatus])
   @@index([defaultSupplierId])
+  @@index([projectId])
+  @@index([projectId, placedAt])
 }
 
 model OrderLine {
@@ -230,12 +241,24 @@ model CsvTemplate {
 }
 ```
 
-- [ ] **Step 2: Add `syncSinceDate` field to ShopifyStore**
+- [ ] **Step 2: Update ShopifyStore and Project for multi-tenancy + syncSinceDate**
 
-In `prisma/schema.prisma`, find the `ShopifyStore` model and add this line before the closing `}`:
+In `prisma/schema.prisma`:
+
+(a) Add to `ShopifyStore` model (before closing `}`):
 ```prisma
   syncSinceDate          DateTime?
+  projectId              String?       @unique
+  project                Project?      @relation(fields: [projectId], references: [id])
 ```
+
+(b) Add to `Project` model (before closing `}`):
+```prisma
+  archivedAt   DateTime?
+  shopifyStore ShopifyStore?
+  orders       Order[]
+```
+(The `shopifyStore` back-relation and `orders` back-relation are needed for Prisma's relation system.)
 
 - [ ] **Step 3: Run migration**
 
@@ -272,7 +295,299 @@ Expected: 0 errors. If errors mention missing types from `@/generated/prisma/cli
 
 ```powershell
 git add prisma/schema.prisma prisma/migrations src/lib/db.ts
-git commit -m "feat(schema): add 6 fulfillment+supplier models and syncSinceDate field"
+git commit -m "feat(schema): add 6 fulfillment models, multi-tenant projectId on Order/Store, Project.archivedAt"
+```
+
+---
+
+## Task 2.5: Repository layer foundation
+
+**Files:**
+- Create: `src/lib/repos/projects.ts`
+- Create: `src/lib/repos/orders.ts`
+- Create: `src/lib/repos/suppliers.ts`
+- Create: `src/lib/repos/reports.ts`
+
+**Rationale:** Routes never import `prisma` directly; they call repos. Each repo encloses queries for one domain and enforces `projectId` scope. Reports repo is the only place allowed to JOIN multi-module data.
+
+- [ ] **Step 1: Create projects repo**
+
+Create `src/lib/repos/projects.ts`:
+```typescript
+import { prisma } from '@/lib/db'
+
+export type ProjectListOptions = { includeArchived?: boolean }
+
+export async function listProjects(opts: ProjectListOptions = {}) {
+  return prisma.project.findMany({
+    where: opts.includeArchived ? {} : { archivedAt: null },
+    orderBy: { createdAt: 'desc' },
+    include: { shopifyStore: { select: { shop: true } } },
+  })
+}
+
+export async function getProjectById(id: string, opts: ProjectListOptions = {}) {
+  return prisma.project.findFirst({
+    where: { id, ...(opts.includeArchived ? {} : { archivedAt: null }) },
+    include: { shopifyStore: true },
+  })
+}
+
+export async function archiveProject(id: string) {
+  return prisma.project.update({
+    where: { id },
+    data: { archivedAt: new Date() },
+  })
+}
+
+export async function unarchiveProject(id: string) {
+  return prisma.project.update({
+    where: { id },
+    data: { archivedAt: null },
+  })
+}
+
+export async function getProjectByStoreShop(shop: string) {
+  const store = await prisma.shopifyStore.findUnique({
+    where: { shop },
+    include: { project: true },
+  })
+  return store?.project ?? null
+}
+```
+
+- [ ] **Step 2: Create suppliers repo**
+
+Create `src/lib/repos/suppliers.ts`:
+```typescript
+import { prisma } from '@/lib/db'
+import type { SupplierInput } from '@/lib/pl-calculator'
+
+export async function listActiveSuppliers() {
+  return prisma.supplier.findMany({ where: { isActive: true }, orderBy: { name: 'asc' } })
+}
+
+export async function getSupplierById(id: string) {
+  return prisma.supplier.findUnique({ where: { id } })
+}
+
+/**
+ * Build global SKU → SupplierInput map for P/L calculation.
+ * If 2+ suppliers map same SKU, pick the one with highest preferenceRank.
+ * Shared across all projects (suppliers are global).
+ */
+export async function buildSkuPriceMap(): Promise<Record<string, SupplierInput>> {
+  const suppliers = await prisma.supplier.findMany({ where: { isActive: true } })
+  const products = await prisma.supplierProduct.findMany()
+  const byId = new Map(suppliers.map(s => [s.id, s]))
+  const map: Record<string, SupplierInput> = {}
+  for (const p of products) {
+    const sup = byId.get(p.supplierId)
+    if (!sup) continue
+    const existing = map[p.sku]
+    const existingRank = existing ? (byId.get(existing.supplierId)?.preferenceRank ?? 0) : -Infinity
+    if (!existing || sup.preferenceRank > existingRank) {
+      map[p.sku] = {
+        supplierId: sup.id,
+        baseCost: p.baseCost,
+        firstItemShipFee: sup.firstItemShipFee,
+        additionalItemShipFee: sup.additionalItemShipFee,
+      }
+    }
+  }
+  return map
+}
+```
+
+- [ ] **Step 3: Create orders repo**
+
+Create `src/lib/repos/orders.ts`:
+```typescript
+import { prisma } from '@/lib/db'
+
+export type OrderFilter = {
+  projectId?: string
+  dateFrom?: Date
+  dateTo?: Date
+  supplierId?: string
+  pipelineStatus?: string
+  limit?: number
+}
+
+function buildWhere(f: OrderFilter) {
+  const where: any = {}
+  if (f.projectId) where.projectId = f.projectId
+  if (f.supplierId) where.defaultSupplierId = f.supplierId
+  if (f.pipelineStatus) where.pipelineStatus = f.pipelineStatus
+  if (f.dateFrom || f.dateTo) {
+    where.placedAt = {}
+    if (f.dateFrom) where.placedAt.gte = f.dateFrom
+    if (f.dateTo) where.placedAt.lte = f.dateTo
+  }
+  return where
+}
+
+export async function listOrdersWithLines(filter: OrderFilter) {
+  return prisma.order.findMany({
+    where: buildWhere(filter),
+    orderBy: { placedAt: 'desc' },
+    take: filter.limit ?? 500,
+    include: {
+      lines: true,
+      defaultSupplier: { select: { id: true, name: true, code: true, firstItemShipFee: true, additionalItemShipFee: true } },
+    },
+  })
+}
+
+export type UpsertOrderInput = {
+  id: string
+  projectId: string
+  storeId: string
+  shopifyOrderNumber: string
+  customerEmail: string | null
+  customerName: string | null
+  shippingCountry: string | null
+  shippingState: string | null
+  financialStatus: string
+  fulfillmentStatus: string | null
+  currency: string
+  grossAmount: number
+  expectedPayout: number
+  totalFees: number
+  refundedAmount: number
+  defaultSupplierId: string | null
+  placedAt: Date
+  lines: Array<{
+    shopifyLineId: string
+    sku: string | null
+    variantTitle: string | null
+    productTitle: string
+    qty: number
+    unitPrice: number
+    resolvedSupplierId: string | null
+    resolvedBaseCost: number | null
+  }>
+}
+
+export async function upsertOrderWithLines(input: UpsertOrderInput) {
+  const now = new Date()
+  await prisma.$transaction([
+    prisma.orderLine.deleteMany({ where: { orderId: input.id } }),
+    prisma.order.upsert({
+      where: { id: input.id },
+      create: {
+        id: input.id,
+        projectId: input.projectId,
+        storeId: input.storeId,
+        shopifyOrderNumber: input.shopifyOrderNumber,
+        customerEmail: input.customerEmail,
+        customerName: input.customerName,
+        shippingCountry: input.shippingCountry,
+        shippingState: input.shippingState,
+        financialStatus: input.financialStatus,
+        fulfillmentStatus: input.fulfillmentStatus,
+        currency: input.currency,
+        grossAmount: input.grossAmount,
+        expectedPayout: input.expectedPayout,
+        totalFees: input.totalFees,
+        refundedAmount: input.refundedAmount,
+        defaultSupplierId: input.defaultSupplierId,
+        placedAt: input.placedAt,
+      },
+      update: {
+        financialStatus: input.financialStatus,
+        fulfillmentStatus: input.fulfillmentStatus,
+        grossAmount: input.grossAmount,
+        expectedPayout: input.expectedPayout,
+        totalFees: input.totalFees,
+        refundedAmount: input.refundedAmount,
+        defaultSupplierId: input.defaultSupplierId,
+        placedAt: input.placedAt,
+      },
+    }),
+    prisma.orderLine.createMany({
+      data: input.lines.map(l => ({
+        orderId: input.id,
+        shopifyLineId: l.shopifyLineId,
+        sku: l.sku,
+        variantTitle: l.variantTitle,
+        productTitle: l.productTitle,
+        qty: l.qty,
+        unitPrice: l.unitPrice,
+        resolvedSupplierId: l.resolvedSupplierId,
+        resolvedBaseCost: l.resolvedBaseCost,
+        costSnapshotAt: l.resolvedSupplierId ? now : null,
+      })),
+    }),
+  ])
+}
+```
+
+- [ ] **Step 4: Create reports repo (cross-domain aggregate)**
+
+Create `src/lib/repos/reports.ts`:
+```typescript
+import { listOrdersWithLines, type OrderFilter } from './orders'
+
+export type PlSummary = {
+  orderCount: number
+  revenue: number
+  cogs: number
+  shipping: number
+  profit: number
+  margin: number
+  avgProfit: number
+  unmappedCount: number
+}
+
+export async function plSummary(filter: OrderFilter): Promise<PlSummary> {
+  const orders = await listOrdersWithLines(filter)
+  let revenue = 0, cogs = 0, shipping = 0, unmappedCount = 0
+  for (const o of orders) {
+    revenue += o.expectedPayout
+    const totalQty = o.lines.reduce((s, l) => s + l.qty, 0)
+    cogs += o.lines.reduce((s, l) => s + (l.resolvedBaseCost ?? 0) * l.qty, 0)
+    if (o.defaultSupplier) {
+      shipping += o.defaultSupplier.firstItemShipFee + o.defaultSupplier.additionalItemShipFee * Math.max(0, totalQty - 1)
+    }
+    if (o.lines.some(l => l.resolvedBaseCost == null)) unmappedCount++
+  }
+  const profit = revenue - cogs - shipping
+  const margin = revenue === 0 ? 0 : (profit / revenue) * 100
+  const avgProfit = orders.length === 0 ? 0 : profit / orders.length
+  return { orderCount: orders.length, revenue, cogs, shipping, profit, margin, avgProfit, unmappedCount }
+}
+
+export type EnrichedOrder = Awaited<ReturnType<typeof listOrdersWithLines>>[number] & {
+  computed: { totalQty: number; baseCost: number; shipping: number; profit: number; margin: number; hasUnmappedSku: boolean }
+}
+
+export async function ordersWithComputedPL(filter: OrderFilter): Promise<EnrichedOrder[]> {
+  const orders = await listOrdersWithLines(filter)
+  return orders.map(o => {
+    const totalQty = o.lines.reduce((s, l) => s + l.qty, 0)
+    const baseCost = o.lines.reduce((s, l) => s + (l.resolvedBaseCost ?? 0) * l.qty, 0)
+    const shipping = o.defaultSupplier
+      ? o.defaultSupplier.firstItemShipFee + o.defaultSupplier.additionalItemShipFee * Math.max(0, totalQty - 1)
+      : 0
+    const profit = o.expectedPayout - baseCost - shipping
+    const margin = o.expectedPayout === 0 ? 0 : (profit / o.expectedPayout) * 100
+    const hasUnmappedSku = o.lines.some(l => l.resolvedBaseCost == null)
+    return { ...o, computed: { totalQty, baseCost, shipping, profit, margin, hasUnmappedSku } }
+  })
+}
+```
+
+- [ ] **Step 5: TypeScript compile**
+
+Run: `npx tsc --noEmit`
+Expected: 0 errors.
+
+- [ ] **Step 6: Commit**
+
+```powershell
+git add src/lib/repos
+git commit -m "feat(repos): repository layer for projects/orders/suppliers/reports with project-scope enforcement"
 ```
 
 ---
@@ -1026,14 +1341,16 @@ git commit -m "feat(shopify-orders): graphql client for orders + transactions + 
 **Files:**
 - Create: `src/app/api/shopify/orders/sync/route.ts`
 
-- [ ] **Step 1: Implement sync route**
+- [ ] **Step 1: Implement sync route using repos**
 
 Create `src/app/api/shopify/orders/sync/route.ts`:
 ```typescript
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { fetchOrdersPage } from '@/lib/shopify-orders'
-import { computeOrderPL, type SupplierInput } from '@/lib/pl-calculator'
+import { computeOrderPL } from '@/lib/pl-calculator'
+import { buildSkuPriceMap } from '@/lib/repos/suppliers'
+import { upsertOrderWithLines } from '@/lib/repos/orders'
 
 export async function POST(req: NextRequest) {
   const shop = req.headers.get('x-shopify-shop-domain')
@@ -1042,33 +1359,29 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Missing shop domain or access token headers' }, { status: 400 })
   }
 
-  const store = await prisma.shopifyStore.findUnique({ where: { shop } })
+  // Look up store + ensure linked to a project (multi-tenant requirement)
+  const store = await prisma.shopifyStore.findUnique({
+    where: { shop },
+    include: { project: true },
+  })
   if (!store) {
     return NextResponse.json({ error: 'Store not found in DB. Connect via /setup first.' }, { status: 404 })
+  }
+  if (!store.projectId || !store.project) {
+    return NextResponse.json({
+      error: 'Store not linked to a project. Go to /setup/projects and assign this store to a project.',
+    }, { status: 400 })
+  }
+  if (store.project.archivedAt) {
+    return NextResponse.json({ error: 'Project is archived; un-archive before syncing.' }, { status: 400 })
   }
 
   const sinceDate = store.syncSinceDate
     ?? new Date(Date.now() - 60 * 24 * 60 * 60 * 1000)
   const sinceIso = sinceDate.toISOString().split('T')[0]
 
-  // Build supplier price map (SKU → SupplierInput) keyed by sku;
-  // if multiple suppliers map same SKU we pick the one with highest preferenceRank.
-  const suppliers = await prisma.supplier.findMany({ where: { isActive: true } })
-  const productRows = await prisma.supplierProduct.findMany()
-  const priceMap: Record<string, SupplierInput> = {}
-  for (const sup of suppliers) {
-    for (const p of productRows.filter(r => r.supplierId === sup.id)) {
-      const existing = priceMap[p.sku]
-      if (!existing || (suppliers.find(s => s.id === existing.supplierId)?.preferenceRank ?? 0) < sup.preferenceRank) {
-        priceMap[p.sku] = {
-          supplierId: sup.id,
-          baseCost: p.baseCost,
-          firstItemShipFee: sup.firstItemShipFee,
-          additionalItemShipFee: sup.additionalItemShipFee,
-        }
-      }
-    }
-  }
+  // Suppliers are GLOBAL — single price map used across all projects
+  const priceMap = await buildSkuPriceMap()
 
   let cursor: string | null = null
   let totalSynced = 0
@@ -1100,57 +1413,38 @@ export async function POST(req: NextRequest) {
       )
       if (pl.hasUnmappedSku) withUnmappedSku++
 
-      await prisma.$transaction([
-        prisma.orderLine.deleteMany({ where: { orderId: o.id } }),
-        prisma.order.upsert({
-          where: { id: o.id },
-          create: {
-            id: o.id,
-            storeId: store.id,
-            shopifyOrderNumber: o.name,
-            customerEmail: o.customerEmail,
-            customerName: o.customerName,
-            shippingCountry: o.shippingCountry,
-            shippingState: o.shippingState,
-            financialStatus: o.financialStatus,
-            fulfillmentStatus: o.fulfillmentStatus,
-            currency: o.currency,
-            grossAmount: grossExcludingMarketplaceTax,
-            expectedPayout: pl.expectedPayout,
-            totalFees,
-            refundedAmount: o.refundedAmount,
-            defaultSupplierId: pl.defaultSupplierId,
-            placedAt: new Date(o.processedAt ?? o.createdAt),
-          },
-          update: {
-            financialStatus: o.financialStatus,
-            fulfillmentStatus: o.fulfillmentStatus,
-            grossAmount: grossExcludingMarketplaceTax,
-            expectedPayout: pl.expectedPayout,
-            totalFees,
-            refundedAmount: o.refundedAmount,
-            defaultSupplierId: pl.defaultSupplierId,
-            placedAt: new Date(o.processedAt ?? o.createdAt),
-          },
+      await upsertOrderWithLines({
+        id: o.id,
+        projectId: store.projectId,
+        storeId: store.id,
+        shopifyOrderNumber: o.name,
+        customerEmail: o.customerEmail,
+        customerName: o.customerName,
+        shippingCountry: o.shippingCountry,
+        shippingState: o.shippingState,
+        financialStatus: o.financialStatus,
+        fulfillmentStatus: o.fulfillmentStatus,
+        currency: o.currency,
+        grossAmount: grossExcludingMarketplaceTax,
+        expectedPayout: pl.expectedPayout,
+        totalFees,
+        refundedAmount: o.refundedAmount,
+        defaultSupplierId: pl.defaultSupplierId,
+        placedAt: new Date(o.processedAt ?? o.createdAt),
+        lines: o.lines.map((l, idx) => {
+          const resolved = pl.perLineCost[idx]
+          return {
+            shopifyLineId: l.id,
+            sku: l.sku,
+            variantTitle: l.variantTitle,
+            productTitle: l.title,
+            qty: l.quantity,
+            unitPrice: l.unitPrice,
+            resolvedSupplierId: resolved.resolvedSupplierId,
+            resolvedBaseCost: resolved.resolvedBaseCost,
+          }
         }),
-        prisma.orderLine.createMany({
-          data: o.lines.map((l, idx) => {
-            const resolved = pl.perLineCost[idx]
-            return {
-              orderId: o.id,
-              shopifyLineId: l.id,
-              sku: l.sku,
-              variantTitle: l.variantTitle,
-              productTitle: l.title,
-              qty: l.quantity,
-              unitPrice: l.unitPrice,
-              resolvedSupplierId: resolved.resolvedSupplierId,
-              resolvedBaseCost: resolved.resolvedBaseCost,
-              costSnapshotAt: resolved.resolvedSupplierId ? new Date() : null,
-            }
-          }),
-        }),
-      ])
+      })
       totalSynced++
     }
     cursor = page.hasNextPage ? page.endCursor : null
@@ -1161,7 +1455,13 @@ export async function POST(req: NextRequest) {
     data: { lastSyncAt: new Date() },
   })
 
-  return NextResponse.json({ totalSynced, withUnmappedSku, errors })
+  return NextResponse.json({
+    totalSynced,
+    withUnmappedSku,
+    errors,
+    projectId: store.projectId,
+    projectName: store.project.name,
+  })
 }
 ```
 
@@ -1195,10 +1495,16 @@ const SHOP = 'test-store.myshopify.com'
 const TOKEN = 'test_token'
 
 beforeAll(async () => {
+  // Multi-tenant setup: project must exist + linked to store
+  await prisma.project.upsert({
+    where: { id: 'proj_test' },
+    create: { id: 'proj_test', name: 'Test Project', startDate: new Date('2026-05-01') },
+    update: { archivedAt: null },
+  })
   await prisma.shopifyStore.upsert({
     where: { shop: SHOP },
-    create: { shop: SHOP, syncSinceDate: new Date('2026-05-01') },
-    update: { syncSinceDate: new Date('2026-05-01') },
+    create: { shop: SHOP, syncSinceDate: new Date('2026-05-01'), projectId: 'proj_test' },
+    update: { syncSinceDate: new Date('2026-05-01'), projectId: 'proj_test' },
   })
   await prisma.supplier.upsert({
     where: { code: 'test_sup' },
@@ -1284,12 +1590,14 @@ describe('POST /api/shopify/orders/sync', () => {
 
     expect(body.totalSynced).toBe(1)
     expect(body.withUnmappedSku).toBe(0)
+    expect(body.projectId).toBe('proj_test')
 
     const saved = await prisma.order.findUnique({
       where: { id: 'gid://shopify/Order/4090412213889' },
       include: { lines: true },
     })
     expect(saved).not.toBeNull()
+    expect(saved!.projectId).toBe('proj_test')
     expect(saved!.expectedPayout).toBeCloseTo(145.34, 2)
     expect(saved!.totalFees).toBeCloseTo(4.65, 2)
     expect(saved!.defaultSupplierId).toBe('sup_test')
@@ -1327,50 +1635,26 @@ git commit -m "test(sync): integration test for /api/shopify/orders/sync with mo
 Create `src/app/api/fulfillment/orders/route.ts`:
 ```typescript
 import { NextRequest, NextResponse } from 'next/server'
-import { prisma } from '@/lib/db'
+import { ordersWithComputedPL } from '@/lib/repos/reports'
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
-  const dateFrom = searchParams.get('dateFrom')    // ISO yyyy-mm-dd in UTC
+  const dateFrom = searchParams.get('dateFrom')
   const dateTo = searchParams.get('dateTo')
-  const supplierId = searchParams.get('supplierId')
-  const pipelineStatus = searchParams.get('pipelineStatus')
+  const supplierId = searchParams.get('supplierId') ?? undefined
+  const pipelineStatus = searchParams.get('pipelineStatus') ?? undefined
+  const projectId = searchParams.get('projectId') ?? undefined
 
-  const where: any = {}
-  if (dateFrom || dateTo) {
-    where.placedAt = {}
-    if (dateFrom) where.placedAt.gte = new Date(dateFrom + 'T00:00:00Z')
-    if (dateTo) where.placedAt.lte = new Date(dateTo + 'T23:59:59.999Z')
-  }
-  if (supplierId) where.defaultSupplierId = supplierId
-  if (pipelineStatus) where.pipelineStatus = pipelineStatus
-
-  const orders = await prisma.order.findMany({
-    where,
-    orderBy: { placedAt: 'desc' },
-    include: {
-      lines: true,
-      defaultSupplier: { select: { id: true, name: true, code: true, firstItemShipFee: true, additionalItemShipFee: true } },
-    },
-    take: 500,
+  const orders = await ordersWithComputedPL({
+    projectId,
+    supplierId,
+    pipelineStatus,
+    dateFrom: dateFrom ? new Date(dateFrom + 'T00:00:00Z') : undefined,
+    dateTo: dateTo ? new Date(dateTo + 'T23:59:59.999Z') : undefined,
+    limit: 500,
   })
 
-  const enriched = orders.map(o => {
-    const totalQty = o.lines.reduce((s, l) => s + l.qty, 0)
-    const baseCost = o.lines.reduce((s, l) => s + (l.resolvedBaseCost ?? 0) * l.qty, 0)
-    const shipping = o.defaultSupplier
-      ? o.defaultSupplier.firstItemShipFee + o.defaultSupplier.additionalItemShipFee * Math.max(0, totalQty - 1)
-      : 0
-    const profit = o.expectedPayout - baseCost - shipping
-    const margin = o.expectedPayout === 0 ? 0 : (profit / o.expectedPayout) * 100
-    const hasUnmappedSku = o.lines.some(l => l.resolvedBaseCost == null)
-    return {
-      ...o,
-      computed: { totalQty, baseCost, shipping, profit, margin, hasUnmappedSku },
-    }
-  })
-
-  return NextResponse.json({ orders: enriched, count: enriched.length })
+  return NextResponse.json({ orders, count: orders.length })
 }
 ```
 
@@ -1398,59 +1682,23 @@ git commit -m "feat(api): GET /api/fulfillment/orders with computed P/L per orde
 Create `src/app/api/fulfillment/pl-summary/route.ts`:
 ```typescript
 import { NextRequest, NextResponse } from 'next/server'
-import { prisma } from '@/lib/db'
+import { plSummary } from '@/lib/repos/reports'
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const dateFrom = searchParams.get('dateFrom')
   const dateTo = searchParams.get('dateTo')
-  const supplierId = searchParams.get('supplierId')
+  const supplierId = searchParams.get('supplierId') ?? undefined
+  const projectId = searchParams.get('projectId') ?? undefined
 
-  const where: any = {}
-  if (dateFrom || dateTo) {
-    where.placedAt = {}
-    if (dateFrom) where.placedAt.gte = new Date(dateFrom + 'T00:00:00Z')
-    if (dateTo) where.placedAt.lte = new Date(dateTo + 'T23:59:59.999Z')
-  }
-  if (supplierId) where.defaultSupplierId = supplierId
-
-  const orders = await prisma.order.findMany({
-    where,
-    include: {
-      lines: true,
-      defaultSupplier: { select: { firstItemShipFee: true, additionalItemShipFee: true } },
-    },
+  const summary = await plSummary({
+    projectId,
+    supplierId,
+    dateFrom: dateFrom ? new Date(dateFrom + 'T00:00:00Z') : undefined,
+    dateTo: dateTo ? new Date(dateTo + 'T23:59:59.999Z') : undefined,
   })
 
-  let revenue = 0
-  let cogs = 0
-  let shipping = 0
-  let unmappedCount = 0
-
-  for (const o of orders) {
-    revenue += o.expectedPayout
-    const totalQty = o.lines.reduce((s, l) => s + l.qty, 0)
-    cogs += o.lines.reduce((s, l) => s + (l.resolvedBaseCost ?? 0) * l.qty, 0)
-    if (o.defaultSupplier) {
-      shipping += o.defaultSupplier.firstItemShipFee + o.defaultSupplier.additionalItemShipFee * Math.max(0, totalQty - 1)
-    }
-    if (o.lines.some(l => l.resolvedBaseCost == null)) unmappedCount++
-  }
-
-  const profit = revenue - cogs - shipping
-  const margin = revenue === 0 ? 0 : (profit / revenue) * 100
-  const avgProfit = orders.length === 0 ? 0 : profit / orders.length
-
-  return NextResponse.json({
-    orderCount: orders.length,
-    revenue,
-    cogs,
-    shipping,
-    profit,
-    margin,
-    avgProfit,
-    unmappedCount,
-  })
+  return NextResponse.json(summary)
 }
 ```
 
@@ -1478,16 +1726,13 @@ git commit -m "feat(api): GET /api/fulfillment/pl-summary aggregate stats"
 Create `src/app/api/shopify/orders/route.ts`:
 ```typescript
 import { NextRequest, NextResponse } from 'next/server'
-import { prisma } from '@/lib/db'
+import { listOrdersWithLines } from '@/lib/repos/orders'
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const limit = Math.min(parseInt(searchParams.get('limit') ?? '100', 10), 500)
-  const orders = await prisma.order.findMany({
-    orderBy: { placedAt: 'desc' },
-    take: limit,
-    include: { lines: true },
-  })
+  const projectId = searchParams.get('projectId') ?? undefined
+  const orders = await listOrdersWithLines({ projectId, limit })
   return NextResponse.json({ orders, count: orders.length })
 }
 ```
@@ -1566,20 +1811,29 @@ type Summary = {
   profit: number; margin: number; avgProfit: number; unmappedCount: number
 }
 
+type ProjectItem = { id: string; name: string; shopifyStore: { shop: string } | null }
+
 export default function OrdersPage() {
+  const [projects, setProjects] = useState<ProjectItem[]>([])
+  const [projectId, setProjectId] = useState<string>('')   // '' = all projects
   const [orders, setOrders] = useState<OrderRow[]>([])
   const [summary, setSummary] = useState<Summary | null>(null)
   const [syncing, setSyncing] = useState(false)
   const [syncResult, setSyncResult] = useState<string>('')
 
+  useEffect(() => {
+    fetch('/api/projects').then(r => r.json()).then(data => setProjects(data.projects ?? data ?? []))
+  }, [])
+
   const load = useCallback(async () => {
+    const q = projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''
     const [oRes, sRes] = await Promise.all([
-      fetch('/api/fulfillment/orders').then(r => r.json()),
-      fetch('/api/fulfillment/pl-summary').then(r => r.json()),
+      fetch(`/api/fulfillment/orders${q}`).then(r => r.json()),
+      fetch(`/api/fulfillment/pl-summary${q}`).then(r => r.json()),
     ])
     setOrders(oRes.orders ?? [])
     setSummary(sRes)
-  }, [])
+  }, [projectId])
 
   useEffect(() => { load() }, [load])
 
@@ -1612,15 +1866,29 @@ export default function OrdersPage() {
     <div className="flex min-h-screen bg-surface">
       <Sidebar />
       <main className="ml-[280px] flex-1 p-xl">
-        <div className="flex items-center justify-between mb-lg">
+        <div className="flex items-center justify-between mb-lg gap-md">
           <h1 className="text-display-md">Orders & P/L</h1>
-          <button
-            onClick={sync}
-            disabled={syncing}
-            className="bg-secondary text-on-secondary px-lg py-sm rounded-lg text-label-md disabled:opacity-50"
-          >
-            {syncing ? 'Syncing…' : 'Sync Now'}
-          </button>
+          <div className="flex items-center gap-sm">
+            <select
+              value={projectId}
+              onChange={e => setProjectId(e.target.value)}
+              className="bg-surface-container-lowest border border-outline-variant rounded-lg px-md py-sm text-body-sm"
+            >
+              <option value="">All projects</option>
+              {projects.map(p => (
+                <option key={p.id} value={p.id}>
+                  {p.name}{p.shopifyStore ? ` · ${p.shopifyStore.shop}` : ''}
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={sync}
+              disabled={syncing}
+              className="bg-secondary text-on-secondary px-lg py-sm rounded-lg text-label-md disabled:opacity-50"
+            >
+              {syncing ? 'Syncing…' : 'Sync Now'}
+            </button>
+          </div>
         </div>
         {syncResult && <p className="mb-md text-body-sm text-on-surface-variant">{syncResult}</p>}
 

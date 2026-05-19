@@ -21,6 +21,29 @@ Thêm module **Fulfillment & POD Supplier Management** vào Ecom Manager để:
 
 ---
 
+## 1.5. Multi-Tenancy Architecture (added 2026-05-19 round 2)
+
+Hệ thống là **multi-store / multi-project POD**: mỗi Shopify store = 1 Project. Project là tenant root.
+
+**Phân loại tài nguyên:**
+
+| Layer | Resource | Note |
+|---|---|---|
+| 🌐 **Shared (global)** | Supplier, SupplierProduct, SupplierCostHistory, CsvTemplate, Staff, AppUser | 1 record dùng cho nhiều project. KHÔNG có `projectId`. |
+| 🔒 **Project-scoped (tenant)** | ShopifyStore (1-1), Order, OrderLine, MetaAdAccount, MetaBilling, Payout, PayoutTransaction, BankAccount | Mỗi record thuộc 1 project. Có `projectId` (trực tiếp hoặc qua FK). |
+| 🔗 **Junction** | StaffAssignment (Staff × Project M-N) | Đã tồn tại. Cho phép 1 nhân sự vận hành fulfillment nhiều project. |
+
+**Tenancy pattern:** **Single SQLite DB + `projectId` tag** trên tenant-scoped models. KHÔNG dùng multi-DB file (vì lose cross-project reports + supplier cần shared, chi tiết tradeoff trong commit history).
+
+**Soft delete:** Project có `archivedAt DateTime?`. Khi user "xóa" project → set `archivedAt = now()`. Mọi query default filter `archivedAt IS NULL`. Có view "Archive" để truy xuất data cũ. **Không bao giờ DELETE row thật** — đảm bảo audit + báo cáo lịch sử.
+
+**Repository pattern:** Code chia thành `src/lib/repos/<domain>.ts`, mỗi repo nhận `projectId` param (where applicable) và `includeArchived` flag. Route handler KHÔNG import `prisma` trực tiếp — phải đi qua repo. Điều này:
+- Bảo đảm mọi query có scope project đúng (không leak data project khác)
+- Tách rõ ranh giới module → dễ refactor sau (vd: move 1 domain sang DB riêng)
+- Cross-domain reports đi qua `repos/reports.ts` — chỉ ở đây mới được JOIN nhiều domain
+
+---
+
 ## 2. Quyết định đã chốt (từ brainstorming)
 
 | # | Hạng mục | Quyết định |
