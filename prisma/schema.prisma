@@ -299,15 +299,16 @@ model Supplier {
 }
 
 model SupplierProduct {
-  id          String   @id @default(cuid())
-  supplierId  String
-  supplier    Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
-  sku         String
-  productName String?
-  baseCost    Float
-  currency    String   @default("USD")
-  updatedAt   DateTime @updatedAt
-  createdAt   DateTime @default(now())
+  id             String   @id @default(cuid())
+  supplierId     String
+  supplier       Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  sku            String
+  productName    String?
+  baseCost       Float
+  currency       String   @default("USD")
+  requiresDesign Boolean  @default(false)
+  updatedAt      DateTime @updatedAt
+  createdAt      DateTime @default(now())
   @@unique([supplierId, sku])
   @@index([sku])
 }
