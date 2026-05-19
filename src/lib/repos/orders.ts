@@ -7,6 +7,7 @@ export type OrderFilter = {
   dateTo?: Date
   supplierId?: string
   pipelineStatus?: string
+  search?: string  // filter by orderNumber / customerName / customerEmail
   limit?: number
 }
 
@@ -19,6 +20,13 @@ function buildWhere(f: OrderFilter) {
     where.placedAt = {}
     if (f.dateFrom) where.placedAt.gte = f.dateFrom
     if (f.dateTo) where.placedAt.lte = f.dateTo
+  }
+  if (f.search) {
+    where.OR = [
+      { shopifyOrderNumber: { contains: f.search } },
+      { customerName: { contains: f.search } },
+      { customerEmail: { contains: f.search } },
+    ]
   }
   return where
 }
