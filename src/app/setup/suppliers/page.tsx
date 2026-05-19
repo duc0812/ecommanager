@@ -178,6 +178,7 @@ export default function SuppliersPage() {
                   <td className="px-md py-sm">{s.isActive ? 'active' : 'inactive'}</td>
                   <td className="px-md py-sm">
                     <div className="flex gap-xs">
+                      <a href={`/setup/suppliers/${s.id}/templates`} className="text-secondary text-label-sm">Templates</a>
                       <button onClick={() => startEdit(s)} className="text-secondary text-label-sm">Edit</button>
                       {s.isActive
                         ? <button onClick={() => deactivate(s.id)} className="text-error text-label-sm">Deactivate</button>
