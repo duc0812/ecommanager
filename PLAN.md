@@ -101,27 +101,30 @@ An internal e-commerce cashflow management tool for tracking Shopify payouts, Me
 
 ---
 
-### 🟡 Phase 13 — Fulfillment & Supplier POD (IN BRAINSTORMING)
-**Priority: High** — user-requested 2026-05-19
+### 🟢 Phase 13.1 + 13.2 — Fulfillment Foundation & Sync (DONE)
 **Spec:** [docs/superpowers/specs/2026-05-19-fulfillment-pod-design.md](docs/superpowers/specs/2026-05-19-fulfillment-pod-design.md)
-**Track chosen:** Hướng B (3-4 tuần) — multi-supplier, CSV template builder, pipeline Kanban, P/L realtime
+**Plan:** [docs/superpowers/plans/2026-05-19-fulfillment-pod-phase1-foundation-sync.md](docs/superpowers/plans/2026-05-19-fulfillment-pod-phase1-foundation-sync.md)
 
-**Status:** Section 1+2 (Architecture + Data Model) đã draft trong spec. Section 3-9 còn TODO. Chưa user-approve final → CHƯA code.
+Completed 2026-05-19 via subagent-driven development. 16 tasks, 13 tests passing.
 
-**Tóm tắt mục tiêu:**
-- Pull order-level từ Shopify Orders API (GraphQL, polling 15-30' + nút Sync Now)
-- 6 model mới: `Supplier`, `SupplierProduct`, `SupplierCostHistory`, `Order`, `OrderLine`, `CsvTemplate`
-- Per-order P/L = `Expected Payout (từ transaction.amount − fees) − Σ(SKU baseCost × qty) − supplier shipping (first+additional)`
-- CSV template builder per-supplier + export filter date range US-time
-- Pipeline status: Pending → Exported → Fulfilled → Shipped → Delivered
-- Tích hợp với Project module: P&L tổng = fulfillment profit − ad spend − staff cost
+**Shipped:**
+- 6 new Prisma models (Supplier, SupplierProduct, SupplierCostHistory, Order, OrderLine, CsvTemplate) + multi-tenant projectId
+- Repository layer (`src/lib/repos/`) with project-scope enforcement
+- Pure libraries: `pl-calculator`, `csv-template`, `timezone` (12 unit tests)
+- Shopify GraphQL orders sync (paginated, fees-aware, idempotent)
+- `/orders` dashboard with project selector + sync button + P/L table
 
-**Next steps (cho session sau):**
-1. Đọc spec đầy đủ ở link trên
-2. Confirm các open questions ở Section 8 của spec
-3. Draft tiếp Section 3-9, user approve từng section
-4. Finalize spec → invoke `superpowers:writing-plans` skill để tạo implementation plan
-5. Mới bắt đầu code (Prisma migrate → routes → UI)
+### 🔲 Phase 13.3 + 13.4 + 13.5 — Supplier Setup + CSV Export (TODO — Plan 2 not yet written)
+- `/setup/suppliers` CRUD UI
+- `/setup/products` SKU mapping table with CSV import
+- Printful / Printify connectors
+- CSV template builder UI
+- `/orders/export` page
+
+### 🔲 Phase 13.6 + 13.7 — Pipeline + Alerts + Project integration (TODO — Plan 3 not yet written)
+- Kanban pipeline view
+- Alert panel (unmapped SKU, mixed supplier, stale orders)
+- Combined P&L per project (Fulfillment + Meta + Staff)
 
 ---
 

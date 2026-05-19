@@ -24,7 +24,21 @@ Last updated: 2026-05-19
 
 **Git:** Initialized 2026-05-19, baseline commit `b8ce2d9`.
 
-**Where we are:** Plan 1 ready with multi-tenancy. Awaiting confirmation to start dispatching subagents for Task 1.
+**Where we are:** ✅ Plan 1 COMPLETE — Phase 13.1 + 13.2 (foundation + sync) shipped. 16 tasks done via subagent-driven development. 13 tests pass. Ready for manual smoke test + Plan 2 writing.
+
+**What works now:**
+- 6 new Prisma models + multi-tenant fields migrated
+- Repos layer in `src/lib/repos/` enforces project scope
+- Pure libs (`pl-calculator`, `csv-template`, `timezone`) fully unit-tested
+- Shopify GraphQL orders sync (paginated, fees-aware, idempotent, project-scoped)
+- 3 read APIs: `/api/shopify/orders`, `/api/fulfillment/orders`, `/api/fulfillment/pl-summary`
+- `/orders` dashboard with sync button + project selector + P/L table + alert
+
+**Manual smoke test pending:**
+- User to verify `/orders` renders in browser
+- User to test "Sync Now" against real Shopify store (after linking ShopifyStore.projectId to a project)
+
+**Next: Plan 2 — Supplier Setup UI + CSV Export (Phase 13.3 + 13.4 + 13.5)**
 
 **To resume:**
 1. Read the spec file above + this NOTES file
