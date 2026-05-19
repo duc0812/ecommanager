@@ -86,3 +86,114 @@ export async function updateSupplier(id: string, input: UpdateSupplierInput) {
 export async function deactivateSupplier(id: string) {
   return prisma.supplier.update({ where: { id }, data: { isActive: false } })
 }
+
+export type ProductFilter = {
+  supplierId?: string
+  search?: string
+  limit?: number
+  offset?: number
+}
+
+export async function listProducts(f: ProductFilter = {}) {
+  const where: any = {}
+  if (f.supplierId) where.supplierId = f.supplierId
+  if (f.search) {
+    where.OR = [
+      { sku: { contains: f.search } },
+      { productName: { contains: f.search } },
+    ]
+  }
+  return prisma.supplierProduct.findMany({
+    where,
+    orderBy: { updatedAt: 'desc' },
+    take: f.limit ?? 200,
+    skip: f.offset ?? 0,
+    include: { supplier: { select: { id: true, name: true, code: true, currency: true } } },
+  })
+}
+
+export async function countProducts(f: ProductFilter = {}) {
+  const where: any = {}
+  if (f.supplierId) where.supplierId = f.supplierId
+  if (f.search) {
+    where.OR = [
+      { sku: { contains: f.search } },
+      { productName: { contains: f.search } },
+    ]
+  }
+  return prisma.supplierProduct.count({ where })
+}
+
+export type ProductUpsertInput = {
+  supplierId: string
+  sku: string
+  baseCost: number
+  productName?: string | null
+  currency?: string
+}
+
+export async function upsertProductMapping(input: ProductUpsertInput) {
+  return prisma.$transaction(async (tx) => {
+    const existing = await tx.supplierProduct.findUnique({
+      where: { supplierId_sku: { supplierId: input.supplierId, sku: input.sku } },
+    })
+    const product = await tx.supplierProduct.upsert({
+      where: { supplierId_sku: { supplierId: input.supplierId, sku: input.sku } },
+      create: {
+        supplierId: input.supplierId,
+        sku: input.sku,
+        baseCost: input.baseCost,
+        productName: input.productName ?? null,
+        currency: input.currency ?? 'USD',
+      },
+      update: {
+        baseCost: input.baseCost,
+        productName: input.productName ?? null,
+        currency: input.currency ?? 'USD',
+      },
+    })
+    if (existing && existing.baseCost !== input.baseCost) {
+      await tx.supplierCostHistory.create({
+        data: {
+          supplierId: input.supplierId,
+          sku: input.sku,
+          oldCost: existing.baseCost,
+          newCost: input.baseCost,
+        },
+      })
+    }
+    return product
+  })
+}
+
+export type BulkUpsertResult = {
+  created: number
+  updated: number
+  errors: Array<{ row: number; sku: string; error: string }>
+}
+
+export async function bulkUpsertProducts(
+  supplierId: string,
+  rows: Array<{ sku: string; baseCost: number; productName?: string | null; currency?: string }>,
+): Promise<BulkUpsertResult> {
+  const result: BulkUpsertResult = { created: 0, updated: 0, errors: [] }
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i]
+    if (!r.sku) { result.errors.push({ row: i, sku: '', error: 'sku is required' }); continue }
+    if (!Number.isFinite(r.baseCost)) { result.errors.push({ row: i, sku: r.sku, error: 'baseCost must be a number' }); continue }
+    try {
+      const before = await prisma.supplierProduct.findUnique({
+        where: { supplierId_sku: { supplierId, sku: r.sku } },
+      })
+      await upsertProductMapping({ supplierId, ...r })
+      if (before) result.updated++; else result.created++
+    } catch (e: any) {
+      result.errors.push({ row: i, sku: r.sku, error: e.message })
+    }
+  }
+  return result
+}
+
+export async function deleteProductMapping(id: string) {
+  return prisma.supplierProduct.delete({ where: { id } })
+}
