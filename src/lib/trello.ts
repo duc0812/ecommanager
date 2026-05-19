@@ -24,10 +24,11 @@ export async function createTrelloCard(
   name: string,
   desc: string,
 ): Promise<TrelloCard> {
-  const res = await fetch(
-    `${BASE}/cards?${auth(cfg)}&idList=${cfg.listId}&name=${encodeURIComponent(name)}&desc=${encodeURIComponent(desc)}`,
-    { method: 'POST' },
-  )
+  const res = await fetch(`${BASE}/cards?${auth(cfg)}&idList=${cfg.listId}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, desc }),
+  })
   if (!res.ok) {
     const text = await res.text()
     throw new Error(`Trello createCard failed ${res.status}: ${text}`)

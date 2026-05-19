@@ -21,14 +21,11 @@ export async function POST() {
     const driveAttachment = card.attachments?.find(a => a.url.includes('drive.google.com'))
     if (!driveAttachment) continue
 
-    const skuDesign = await prisma.skuDesign.findFirst({ where: { trelloCardId: card.id } })
-    if (skuDesign && !skuDesign.designReady) {
-      await prisma.skuDesign.update({
-        where: { id: skuDesign.id },
-        data: { designReady: true, driveLink: driveAttachment.url },
-      })
-      updated++
-    }
+    const result = await prisma.skuDesign.updateMany({
+      where: { trelloCardId: card.id, designReady: false },
+      data: { designReady: true, driveLink: driveAttachment.url },
+    })
+    updated += result.count
   }
 
   return NextResponse.json({ updated, cardsChecked: cards.length })
