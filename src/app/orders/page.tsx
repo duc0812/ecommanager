@@ -17,6 +17,10 @@ type OrderRow = {
   defaultSupplier: { id: string; name: string } | null
   lines: Array<{ id: string; sku: string | null; productTitle: string; qty: number }>
   computed: { baseCost: number; shipping: number; profit: number; margin: number; hasUnmappedSku: boolean }
+  orderType: string           // "CUSTOM" | "NON_CUSTOM" | "UNKNOWN"
+  trelloCardId: string | null
+  trelloCardUrl: string | null
+  designReady: boolean
 }
 
 type Summary = {
@@ -48,6 +52,11 @@ export default function OrdersPage() {
   const [bulkStatus, setBulkStatus] = useState<PipelineStatus>('EXPORTED')
   const [syncing, setSyncing] = useState(false)
   const [syncResult, setSyncResult] = useState('')
+  const [syncingTrello, setSyncingTrello] = useState(false)
+  const [trelloResult, setTrelloResult] = useState('')
+  const [typeFilter, setTypeFilter] = useState<'ALL' | 'CUSTOM' | 'NON_CUSTOM'>('ALL')
+  const [designFilter, setDesignFilter] = useState<'ALL' | 'HAS' | 'MISSING'>('ALL')
+  const [trelloFilter, setTrelloFilter] = useState<'ALL' | 'CREATED' | 'NOT_CREATED'>('ALL')
 
   // Initial fetch of projects and suppliers
   useEffect(() => {
@@ -86,13 +95,30 @@ export default function OrdersPage() {
     ])
     let list: OrderRow[] = oRes.orders ?? []
     if (showUnmappedOnly) list = list.filter(o => o.computed.hasUnmappedSku)
+    if (typeFilter !== 'ALL') list = list.filter(o => o.orderType === typeFilter)
+    if (designFilter === 'HAS') list = list.filter(o => o.orderType === 'NON_CUSTOM' && o.designReady)
+    if (designFilter === 'MISSING') list = list.filter(o => o.orderType === 'NON_CUSTOM' && !o.designReady)
+    if (trelloFilter === 'CREATED') list = list.filter(o => o.trelloCardId != null)
+    if (trelloFilter === 'NOT_CREATED') list = list.filter(o => o.trelloCardId == null)
     setOrders(list)
     setSummary(sRes)
     setCounts(cRes)
     setSelected(new Set())
-  }, [queryString, projectId, showUnmappedOnly])
+  }, [queryString, projectId, showUnmappedOnly, typeFilter, designFilter, trelloFilter])
 
   useEffect(() => { load() }, [load])
+
+  const syncTrello = async () => {
+    setSyncingTrello(true); setTrelloResult('Đang sync Trello...')
+    try {
+      const res = await fetch('/api/trello/sync', { method: 'POST' })
+      const body = await res.json()
+      if (!res.ok) setTrelloResult(`Lỗi: ${body.error ?? res.statusText}`)
+      else setTrelloResult(`Đã cập nhật ${body.updated} design(s) từ ${body.cardsChecked} card DONE.`)
+      await load()
+    } catch (e: any) { setTrelloResult(`Lỗi: ${e.message}`) }
+    finally { setSyncingTrello(false) }
+  }
 
   const sync = async () => {
     setSyncing(true); setSyncResult('Syncing...')
@@ -167,6 +193,13 @@ export default function OrdersPage() {
               ))}
             </select>
             <button
+              onClick={syncTrello}
+              disabled={syncingTrello}
+              className="border border-outline-variant/40 px-lg py-sm rounded-lg text-label-md disabled:opacity-50"
+            >
+              {syncingTrello ? 'Syncing…' : 'Sync Trello'}
+            </button>
+            <button
               onClick={sync}
               disabled={syncing}
               className="bg-secondary text-on-secondary px-lg py-sm rounded-lg text-label-md disabled:opacity-50"
@@ -176,6 +209,7 @@ export default function OrdersPage() {
           </div>
         </div>
         {syncResult && <p className="mb-md text-body-sm text-on-surface-variant">{syncResult}</p>}
+        {trelloResult && <p className="mb-md text-body-sm text-on-surface-variant">{trelloResult}</p>}
 
         {/* Search + More filters */}
         <div className="bg-surface-container-lowest rounded-xl border border-outline-variant/20 mb-md">
@@ -234,6 +268,42 @@ export default function OrdersPage() {
                   />
                   Show unmapped SKU only
                 </label>
+              </div>
+              <div>
+                <label className="text-label-sm block mb-xs">Loại đơn</label>
+                <select
+                  value={typeFilter}
+                  onChange={e => setTypeFilter(e.target.value as any)}
+                  className="w-full border rounded-lg px-sm py-xs text-body-sm"
+                >
+                  <option value="ALL">Tất cả</option>
+                  <option value="CUSTOM">Custom</option>
+                  <option value="NON_CUSTOM">Non-Custom</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-label-sm block mb-xs">Design</label>
+                <select
+                  value={designFilter}
+                  onChange={e => setDesignFilter(e.target.value as any)}
+                  className="w-full border rounded-lg px-sm py-xs text-body-sm"
+                >
+                  <option value="ALL">Tất cả</option>
+                  <option value="HAS">Đã có</option>
+                  <option value="MISSING">Chưa có</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-label-sm block mb-xs">Trello</label>
+                <select
+                  value={trelloFilter}
+                  onChange={e => setTrelloFilter(e.target.value as any)}
+                  className="w-full border rounded-lg px-sm py-xs text-body-sm"
+                >
+                  <option value="ALL">Tất cả</option>
+                  <option value="CREATED">Đã tạo card</option>
+                  <option value="NOT_CREATED">Chưa tạo</option>
+                </select>
               </div>
             </div>
           )}
@@ -337,6 +407,9 @@ export default function OrdersPage() {
                   />
                 </th>
                 <th className="px-md py-sm">Order #</th>
+                <th className="px-md py-sm">Loại</th>
+                <th className="px-md py-sm">Design</th>
+                <th className="px-md py-sm">Trello</th>
                 <th className="px-md py-sm">Customer</th>
                 <th className="px-md py-sm">Date</th>
                 <th className="px-md py-sm">Supplier</th>
@@ -362,6 +435,40 @@ export default function OrdersPage() {
                     />
                   </td>
                   <td className="px-md py-sm font-mono">{o.shopifyOrderNumber}</td>
+                  <td className="px-md py-sm">
+                    {o.orderType === 'CUSTOM' && (
+                      <span className="bg-tertiary/15 text-tertiary text-label-sm px-xs py-[2px] rounded">Custom</span>
+                    )}
+                    {o.orderType === 'NON_CUSTOM' && (
+                      <span className="bg-surface-container text-on-surface-variant text-label-sm px-xs py-[2px] rounded">Non-Custom</span>
+                    )}
+                    {o.orderType === 'UNKNOWN' && (
+                      <span className="text-label-sm text-on-surface-variant">—</span>
+                    )}
+                  </td>
+                  <td className="px-md py-sm">
+                    {o.orderType === 'NON_CUSTOM' ? (
+                      o.designReady
+                        ? <span className="text-label-sm text-tertiary font-medium">Đã có</span>
+                        : <span className="text-label-sm text-on-surface-variant">—</span>
+                    ) : (
+                      <span className="text-label-sm text-on-surface-variant">—</span>
+                    )}
+                  </td>
+                  <td className="px-md py-sm">
+                    {o.trelloCardUrl ? (
+                      <a
+                        href={o.trelloCardUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-label-sm text-secondary underline"
+                      >
+                        Xem card
+                      </a>
+                    ) : (
+                      <span className="text-label-sm text-on-surface-variant">—</span>
+                    )}
+                  </td>
                   <td className="px-md py-sm">
                     <div>{o.customerName ?? '—'}</div>
                     {o.customerEmail && (
@@ -407,7 +514,7 @@ export default function OrdersPage() {
               ))}
               {orders.length === 0 && (
                 <tr>
-                  <td colSpan={11} className="px-md py-lg text-center text-on-surface-variant">
+                  <td colSpan={14} className="px-md py-lg text-center text-on-surface-variant">
                     No orders match filters.
                   </td>
                 </tr>
