@@ -114,12 +114,19 @@ Completed 2026-05-19 via subagent-driven development. 16 tasks, 13 tests passing
 - Shopify GraphQL orders sync (paginated, fees-aware, idempotent)
 - `/orders` dashboard with project selector + sync button + P/L table
 
-### 🔲 Phase 13.3 + 13.4 + 13.5 — Supplier Setup + CSV Export (TODO — Plan 2 not yet written)
-- `/setup/suppliers` CRUD UI
-- `/setup/products` SKU mapping table with CSV import
-- Printful / Printify connectors
-- CSV template builder UI
-- `/orders/export` page
+### 🟢 Phase 13.3 + 13.4 + 13.5 — Supplier Setup + CSV Export (DONE)
+**Plan:** [docs/superpowers/plans/2026-05-19-fulfillment-pod-phase2-supplier-csv-export.md](docs/superpowers/plans/2026-05-19-fulfillment-pod-phase2-supplier-csv-export.md)
+Completed 2026-05-19 via subagent-driven development.
+
+**Shipped:**
+- `/setup/suppliers` CRUD UI (active/inactive soft delete, ship fees, preference rank, API type Printful/Printify)
+- `/setup/products` SKU mapping table with bulk CSV import (header: `sku,baseCost,productName?`), inline cost edit, cost history side-effect
+- `/setup/suppliers/[id]/templates` CSV template builder (PER_LINE/PER_ORDER, column reorder ↑↓, literal: source, live preview)
+- `/orders/export` CSV Export Center (filter project/date/status, preview, download with markExported)
+- 6 new API routes: supplier CRUD, product mapping CRUD+bulk, template CRUD, export
+- `src/lib/csv-parser.ts` RFC-4180 parser + 5 unit tests
+
+**Deferred to later:** Printful API auto-sync, Printify API auto-sync (will add as connector plugins under `src/lib/suppliers/<type>.ts`).
 
 ### 🔲 Phase 13.6 + 13.7 — Pipeline + Alerts + Project integration (TODO — Plan 3 not yet written)
 - Kanban pipeline view

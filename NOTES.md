@@ -10,9 +10,11 @@ Last updated: 2026-05-19
 
 **Spec location:** [docs/superpowers/specs/2026-05-19-fulfillment-pod-design.md](docs/superpowers/specs/2026-05-19-fulfillment-pod-design.md) (all 9 sections drafted)
 
-**Plan 1 location:** [docs/superpowers/plans/2026-05-19-fulfillment-pod-phase1-foundation-sync.md](docs/superpowers/plans/2026-05-19-fulfillment-pod-phase1-foundation-sync.md) — 16 tasks (incl. Task 2.5 Repository layer), TDD-driven, multi-tenant aware. Covers Phase 13.1+13.2.
+**Plan 1 location:** [docs/superpowers/plans/2026-05-19-fulfillment-pod-phase1-foundation-sync.md](docs/superpowers/plans/2026-05-19-fulfillment-pod-phase1-foundation-sync.md) — DONE. Phase 13.1+13.2 shipped.
 
-**Plans 2 & 3:** Not yet written — will be created after Plan 1 is shipped.
+**Plan 2 location:** [docs/superpowers/plans/2026-05-19-fulfillment-pod-phase2-supplier-csv-export.md](docs/superpowers/plans/2026-05-19-fulfillment-pod-phase2-supplier-csv-export.md) — DONE. Phase 13.3+13.4+13.5 shipped (Supplier UI, Product mapping, CSV templates, Export).
+
+**Plan 3:** Not yet written — will cover Phase 13.6+13.7 (Pipeline Kanban + Alert panel + Project P&L integration).
 
 **Multi-tenancy architecture (decided 2026-05-19 round 2):**
 - 1 Shopify store = 1 Project (`ShopifyStore.projectId UNIQUE`)
@@ -24,21 +26,27 @@ Last updated: 2026-05-19
 
 **Git:** Initialized 2026-05-19, baseline commit `b8ce2d9`.
 
-**Where we are:** ✅ Plan 1 COMPLETE — Phase 13.1 + 13.2 (foundation + sync) shipped. 16 tasks done via subagent-driven development. 13 tests pass. Ready for manual smoke test + Plan 2 writing.
+**Where we are:** ✅ Plan 1 + Plan 2 COMPLETE — full per-order P/L workflow + CSV fulfillment shipped. 18 tests pass. Ready for end-to-end smoke test.
 
-**What works now:**
-- 6 new Prisma models + multi-tenant fields migrated
-- Repos layer in `src/lib/repos/` enforces project scope
-- Pure libs (`pl-calculator`, `csv-template`, `timezone`) fully unit-tested
-- Shopify GraphQL orders sync (paginated, fees-aware, idempotent, project-scoped)
-- 3 read APIs: `/api/shopify/orders`, `/api/fulfillment/orders`, `/api/fulfillment/pl-summary`
-- `/orders` dashboard with sync button + project selector + P/L table + alert
+**What works now (end-to-end):**
+- 6 fulfillment models migrated, multi-tenant (1 store = 1 project)
+- Repos layer enforces project scope
+- Pure libs unit-tested: `pl-calculator`, `csv-template`, `timezone`, `csv-parser`
+- Shopify GraphQL sync (paginated, fees-aware, idempotent, project-scoped)
+- `/orders` dashboard with sync button + project selector + P/L table
+- `/setup/suppliers` CRUD (with API type for Printful/Printify hooks ready)
+- `/setup/products` SKU mapping + CSV import + inline cost edit + cost history
+- `/setup/suppliers/[id]/templates` CSV template builder with live preview
+- `/orders/export` CSV export center: filter + preview + download (marks orders EXPORTED)
 
-**Manual smoke test pending:**
-- User to verify `/orders` renders in browser
-- User to test "Sync Now" against real Shopify store (after linking ShopifyStore.projectId to a project)
+**End-to-end smoke test guide:**
+1. Open `/setup/suppliers` → create "Printful" supplier (firstItemShipFee=4.99, additionalItemShipFee=2.99, currency=USD)
+2. Open `/setup/products` → add a few SKU mappings OR import CSV (format: `sku,baseCost,productName`)
+3. Open `/setup/suppliers` → click "Templates" → build template with columns (Order#, SKU, Qty, Recipient, Country)
+4. Open `/orders` → click "Sync Now" → verify orders appear with profit (mapped SKUs) or red alert (unmapped)
+5. Open `/orders/export` → pick supplier + template + date range → Preview → Download CSV → open in Excel
 
-**Next: Plan 2 — Supplier Setup UI + CSV Export (Phase 13.3 + 13.4 + 13.5)**
+**Next: Plan 3 — Pipeline Kanban + Alerts + Project integration (Phase 13.6 + 13.7)**
 
 **To resume:**
 1. Read the spec file above + this NOTES file

@@ -18,6 +18,7 @@ const nav: NavEntry[] = [
   { type: 'child', href: '/finance/meta', icon: 'campaign', label: 'Meta Billing' },
   { type: 'child', href: '/finance/fulfillment', icon: 'local_shipping', label: 'Fulfillment' },
   { type: 'child', href: '/orders', icon: 'receipt_long', label: 'Orders & P/L' },
+  { type: 'child', href: '/orders/export', icon: 'file_download', label: 'CSV Export' },
   { type: 'child', href: '/finance/other-bills', icon: 'receipt_long', label: 'Other Bills' },
   { type: 'divider' },
   { type: 'group', label: 'Tools' },
@@ -31,6 +32,8 @@ const nav: NavEntry[] = [
   { type: 'child', href: '/setup', icon: 'store', label: 'Store' },
   { type: 'child', href: '/setup/meta', icon: 'campaign', label: 'Meta' },
   { type: 'child', href: '/setup/projects', icon: 'folder', label: 'Projects' },
+  { type: 'child', href: '/setup/suppliers', icon: 'factory', label: 'Suppliers' },
+  { type: 'child', href: '/setup/products', icon: 'inventory_2', label: 'Products' },
   { type: 'child', href: '/setup/hr', icon: 'group', label: 'HR' },
   { type: 'child', href: '/setup/users', icon: 'admin_panel_settings', label: 'Users' },
 ]
