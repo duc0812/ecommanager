@@ -46,6 +46,14 @@ export type EnrichedOrder = Awaited<ReturnType<typeof listOrdersWithLines>>[numb
 
 export async function ordersWithComputedPL(filter: OrderFilter): Promise<EnrichedOrder[]> {
   const orders = await listOrdersWithLines(filter)
+
+  // Build SkuDesign lookup for Non-Custom design status
+  const allSkus = Array.from(new Set(orders.flatMap(o => o.lines.map(l => l.sku).filter(Boolean) as string[])))
+  const skuDesigns = allSkus.length > 0
+    ? await prisma.skuDesign.findMany({ where: { sku: { in: allSkus } } })
+    : []
+  const skuDesignMap = new Map(skuDesigns.map(s => [s.sku, s]))
+
   return orders.map(o => {
     const totalQty = o.lines.reduce((s, l) => s + l.qty, 0)
     const baseCost = o.lines.reduce((s, l) => s + (l.resolvedBaseCost ?? 0) * l.qty, 0)
@@ -65,7 +73,15 @@ export async function ordersWithComputedPL(filter: OrderFilter): Promise<Enriche
     const profit = o.expectedPayout - baseCost - shipping
     const margin = o.expectedPayout === 0 ? 0 : (profit / o.expectedPayout) * 100
     const hasUnmappedSku = o.lines.some(l => l.resolvedBaseCost == null)
-    return { ...o, computed: { totalQty, baseCost, shipping, profit, margin, hasUnmappedSku } }
+    const orderSkus = o.lines.map(l => l.sku).filter(Boolean) as string[]
+    const designReady = orderSkus.length > 0 && orderSkus.every(sku => skuDesignMap.get(sku)?.designReady === true)
+    const driveLink = orderSkus.length > 0 ? (skuDesignMap.get(orderSkus[0])?.driveLink ?? null) : null
+    return {
+      ...o,
+      computed: { totalQty, baseCost, shipping, profit, margin, hasUnmappedSku },
+      designReady,
+      driveLink,
+    }
   })
 }
 
