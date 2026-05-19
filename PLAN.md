@@ -128,6 +128,23 @@ Completed 2026-05-19 via subagent-driven development.
 
 **Deferred to later:** Printful API auto-sync, Printify API auto-sync (will add as connector plugins under `src/lib/suppliers/<type>.ts`).
 
+### 🟢 Phase 13.8 — Zone-Aware Shipping + Auto-Mapping + Crawler (DONE)
+**Plan:** [docs/superpowers/plans/2026-05-19-fulfillment-pod-phase4-zone-shipping-import.md](docs/superpowers/plans/2026-05-19-fulfillment-pod-phase4-zone-shipping-import.md)
+Completed 2026-05-19 (Plan 4 + codex additions).
+
+**Shipped:**
+- Schema v12: `SupplierProduct` adds 8 fields (`baseSku`, `productType`, `printingMethod`, `sizeLabel`, `designTemplateUrl`, `minProductionDays`, `maxProductionDays`, `shippingByRegion` JSON); `Order.shippingZone`; `OrderLine` adds `resolvedShipFirst/Additional/ImportTax/SupplierSku`; new `SupplierZoneOverride` model
+- `src/lib/regions.ts` — country→zone (US/EU/GB/CA/ROW) with per-supplier override (13 tests)
+- `computeOrderPL` zone-aware shipping + US import tax with snapshot fields (3 new tests)
+- `/setup/products` accepts full supplier sheet (20-col format from Printful-style spreadsheets) + variant modal with all fields organized by section
+- **Auto-mapping** (`src/lib/auto-mapping.ts`) — heuristic SKU matching using design 2D/3D detection + token matching, integrated into sync
+- **Product Crawler** (`/fulfillment/crawler`) — crawl public Shopify products to prep design SKUs
+- Unified `/fulfillment/*` route group (Dashboard, Crawler, Orders, Export, Suppliers, Products, Costs) — old paths kept as re-exports for back-compat
+- `xlsx` dep for spreadsheet import
+- 57 tests passing total
+
+---
+
 ### 🟢 Phase 13.6 + 13.7 — Pipeline Statuses + Project P&L Integration (DONE)
 **Plan:** [docs/superpowers/plans/2026-05-19-fulfillment-pod-phase3-pipeline-statuses-pl.md](docs/superpowers/plans/2026-05-19-fulfillment-pod-phase3-pipeline-statuses-pl.md)
 Completed 2026-05-19 via subagent-driven development.

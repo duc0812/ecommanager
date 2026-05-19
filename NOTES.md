@@ -14,7 +14,16 @@ Last updated: 2026-05-19
 
 **Plan 2 location:** [docs/superpowers/plans/2026-05-19-fulfillment-pod-phase2-supplier-csv-export.md](docs/superpowers/plans/2026-05-19-fulfillment-pod-phase2-supplier-csv-export.md) — DONE. Phase 13.3+13.4+13.5 shipped (Supplier UI, Product mapping, CSV templates, Export).
 
-**Plan 3:** Not yet written — will cover Phase 13.6+13.7 (Pipeline Kanban + Alert panel + Project P&L integration).
+**Plan 3 location:** [docs/superpowers/plans/2026-05-19-fulfillment-pod-phase3-pipeline-statuses-pl.md](docs/superpowers/plans/2026-05-19-fulfillment-pod-phase3-pipeline-statuses-pl.md) — DONE. Phase 13.6+13.7 shipped (11-state pipeline + auto-detect + Project P&L).
+
+**Plan 4 location:** [docs/superpowers/plans/2026-05-19-fulfillment-pod-phase4-zone-shipping-import.md](docs/superpowers/plans/2026-05-19-fulfillment-pod-phase4-zone-shipping-import.md) — DONE. Zone-aware shipping (US/EU/GB/CA/ROW) + real supplier sheet import + variant modal.
+
+**Plan 4+ (Codex-added on top of Plan 4):**
+- Auto-mapping lib (`src/lib/auto-mapping.ts`) — heuristic SKU matching (design 2D/3D detection, token matching), snapshots into `OrderLine.resolvedSupplierSku`
+- Product Crawler (`/fulfillment/crawler` UI + `/api/fulfillment/crawler` API) — crawl public Shopify products for design SKU prep
+- Unified `/fulfillment/*` route group (Dashboard, Crawler, Orders, Export, Suppliers, Products, Cost Register) — replaces scattered `/orders`, `/setup/suppliers` etc. with one Fulfillment section. Old paths kept as re-exports.
+- `xlsx` dependency added for spreadsheet import
+- Extra Shopify scope `read_customers` added
 
 **Multi-tenancy architecture (decided 2026-05-19 round 2):**
 - 1 Shopify store = 1 Project (`ShopifyStore.projectId UNIQUE`)
@@ -26,7 +35,7 @@ Last updated: 2026-05-19
 
 **Git:** Initialized 2026-05-19, baseline commit `b8ce2d9`.
 
-**Where we are:** ✅ Plan 1 + Plan 2 + Plan 3 COMPLETE — full Fulfillment & POD module shipped. 34 tests pass.
+**Where we are:** ✅ Plan 1 + 2 + 3 + 4 COMPLETE — full Fulfillment & POD module shipped with zone-aware shipping, auto-mapping heuristics, and product crawler. 57 tests pass.
 
 **What works now (full E2E):**
 - Multi-tenant Shopify order sync (1 store = 1 project) with paginated, fees-aware, idempotent GraphQL
