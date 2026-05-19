@@ -16,6 +16,9 @@ model ShopifyStore {
   currentBalanceCurrency String?
   payouts                Payout[]
   bankAccounts           BankAccount[]
+  syncSinceDate          DateTime?
+  projectId              String?       @unique
+  project                Project?      @relation(fields: [projectId], references: [id])
 }
 
 model AppUser {
@@ -91,6 +94,9 @@ model Project {
   metaAccounts   MetaAdAccount[]
   otherBills      OtherBill[]
   fulfillmentCosts FulfillmentCost[]
+  archivedAt   DateTime?
+  shopifyStore ShopifyStore?
+  orders       Order[]
 }
 
 model MetaAdAccount {
@@ -271,4 +277,109 @@ model FulfillmentCost {
   @@index([paymentStatus])
   @@index([projectId])
   @@index([staffId])
+}
+
+model Supplier {
+  id                    String                @id @default(cuid())
+  name                  String
+  code                  String                @unique
+  apiType               String?
+  apiKey                String?
+  firstItemShipFee      Float                 @default(0)
+  additionalItemShipFee Float                 @default(0)
+  currency              String                @default("USD")
+  preferenceRank        Int                   @default(0)
+  note                  String?
+  isActive              Boolean               @default(true)
+  createdAt             DateTime              @default(now())
+  products              SupplierProduct[]
+  templates             CsvTemplate[]
+  orders                Order[]
+  costHistory           SupplierCostHistory[]
+}
+
+model SupplierProduct {
+  id          String   @id @default(cuid())
+  supplierId  String
+  supplier    Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  sku         String
+  productName String?
+  baseCost    Float
+  currency    String   @default("USD")
+  updatedAt   DateTime @updatedAt
+  createdAt   DateTime @default(now())
+  @@unique([supplierId, sku])
+  @@index([sku])
+}
+
+model SupplierCostHistory {
+  id         String   @id @default(cuid())
+  supplierId String
+  supplier   Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  sku        String
+  oldCost    Float
+  newCost    Float
+  changedAt  DateTime @default(now())
+  @@index([supplierId, sku])
+}
+
+model Order {
+  id                   String      @id
+  storeId              String
+  projectId            String
+  project              Project     @relation(fields: [projectId], references: [id])
+  shopifyOrderNumber   String
+  customerEmail        String?
+  customerName         String?
+  shippingCountry      String?
+  shippingState        String?
+  financialStatus      String
+  fulfillmentStatus    String?
+  pipelineStatus       String      @default("PENDING")
+  currency             String
+  grossAmount          Float
+  expectedPayout       Float
+  totalFees            Float       @default(0)
+  refundedAmount       Float       @default(0)
+  defaultSupplierId    String?
+  defaultSupplier      Supplier?   @relation(fields: [defaultSupplierId], references: [id])
+  exportedAt           DateTime?
+  exportedToSupplierId String?
+  placedAt             DateTime
+  fetchedAt            DateTime    @default(now())
+  updatedAt            DateTime    @updatedAt
+  lines                OrderLine[]
+  @@index([placedAt])
+  @@index([pipelineStatus])
+  @@index([defaultSupplierId])
+  @@index([projectId])
+  @@index([projectId, placedAt])
+}
+
+model OrderLine {
+  id                 String    @id @default(cuid())
+  orderId            String
+  order              Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  shopifyLineId      String
+  sku                String?
+  variantTitle       String?
+  productTitle       String
+  qty                Int
+  unitPrice          Float
+  resolvedSupplierId String?
+  resolvedBaseCost   Float?
+  costSnapshotAt     DateTime?
+  @@index([sku])
+}
+
+model CsvTemplate {
+  id         String   @id @default(cuid())
+  supplierId String
+  supplier   Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  name       String
+  columns    String
+  rowMode    String   @default("PER_LINE")
+  isDefault  Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 }
