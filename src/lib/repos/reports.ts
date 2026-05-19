@@ -1,4 +1,5 @@
 import { listOrdersWithLines, type OrderFilter } from './orders'
+import { prisma } from '@/lib/db'
 
 export type PlSummary = {
   orderCount: number
@@ -46,4 +47,100 @@ export async function ordersWithComputedPL(filter: OrderFilter): Promise<Enriche
     const hasUnmappedSku = o.lines.some(l => l.resolvedBaseCost == null)
     return { ...o, computed: { totalQty, baseCost, shipping, profit, margin, hasUnmappedSku } }
   })
+}
+
+export type CombinedProjectPL = {
+  projectId: string
+  projectName: string
+  dateFrom: string | null
+  dateTo: string | null
+
+  fulfillmentRevenue: number   // Σ Order.expectedPayout for this project (excluding REFUNDED/CANCELLED)
+  fulfillmentCogs: number      // base cost + supplier shipping
+  fulfillmentProfit: number    // fulfillmentRevenue − fulfillmentCogs
+
+  metaAdSpend: number          // Σ MetaBilling.amount for project's MetaAdAccounts (SETTLED)
+
+  staffCost: number            // Σ Staff.monthlyCost × months active in date range
+
+  netProfit: number            // fulfillmentProfit − metaAdSpend − staffCost
+}
+
+export async function combinedProjectPL(filter: {
+  projectId: string
+  dateFrom?: Date
+  dateTo?: Date
+}): Promise<CombinedProjectPL> {
+  const project = await prisma.project.findUnique({
+    where: { id: filter.projectId },
+    include: {
+      metaAccounts: true,
+      assignments: { include: { staff: true } },
+    },
+  })
+  if (!project) throw new Error('Project not found')
+
+  // Fulfillment side — reuse listOrdersWithLines but exclude REFUNDED/CANCELLED orders by filtering after
+  const orders = await listOrdersWithLines({
+    projectId: filter.projectId,
+    dateFrom: filter.dateFrom,
+    dateTo: filter.dateTo,
+    limit: 10000,
+  })
+  let fulfillmentRevenue = 0
+  let fulfillmentCogs = 0
+  for (const o of orders) {
+    if (o.pipelineStatus === 'REFUNDED' || o.pipelineStatus === 'CANCELLED') continue
+    fulfillmentRevenue += o.expectedPayout
+    const totalQty = o.lines.reduce((s, l) => s + l.qty, 0)
+    fulfillmentCogs += o.lines.reduce((s, l) => s + (l.resolvedBaseCost ?? 0) * l.qty, 0)
+    if (o.defaultSupplier) {
+      fulfillmentCogs += o.defaultSupplier.firstItemShipFee + o.defaultSupplier.additionalItemShipFee * Math.max(0, totalQty - 1)
+    }
+  }
+  const fulfillmentProfit = fulfillmentRevenue - fulfillmentCogs
+
+  // Meta ad spend — filter MetaBilling by linked accounts + date range (SETTLED only)
+  const accountIds = project.metaAccounts.map(a => a.id)
+  let metaAdSpend = 0
+  if (accountIds.length > 0) {
+    const billingWhere: any = {
+      adAccountId: { in: accountIds },
+      status: 'SETTLED',
+    }
+    if (filter.dateFrom || filter.dateTo) {
+      const fromIso = filter.dateFrom ? filter.dateFrom.toISOString().split('T')[0] : '0000-01-01'
+      const toIso = filter.dateTo ? filter.dateTo.toISOString().split('T')[0] : '9999-12-31'
+      billingWhere.billingDate = { gte: fromIso, lte: toIso }
+    }
+    const billings = await prisma.metaBilling.findMany({ where: billingWhere })
+    metaAdSpend = billings.reduce((sum, b) => sum + b.amount, 0)
+  }
+
+  // Staff cost — for each assignment, compute active months in date range
+  const rangeStart = filter.dateFrom ?? project.startDate
+  const rangeEnd = filter.dateTo ?? new Date()
+  let staffCost = 0
+  for (const a of project.assignments) {
+    const aStart = a.startDate > rangeStart ? a.startDate : rangeStart
+    const aEnd = a.endDate && a.endDate < rangeEnd ? a.endDate : rangeEnd
+    if (aEnd <= aStart) continue
+    const months = (aEnd.getTime() - aStart.getTime()) / (1000 * 60 * 60 * 24 * 30.44)
+    staffCost += a.staff.monthlyCost * months
+  }
+
+  const netProfit = fulfillmentProfit - metaAdSpend - staffCost
+
+  return {
+    projectId: project.id,
+    projectName: project.name,
+    dateFrom: filter.dateFrom?.toISOString().split('T')[0] ?? null,
+    dateTo: filter.dateTo?.toISOString().split('T')[0] ?? null,
+    fulfillmentRevenue,
+    fulfillmentCogs,
+    fulfillmentProfit,
+    metaAdSpend,
+    staffCost,
+    netProfit,
+  }
 }

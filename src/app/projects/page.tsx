@@ -266,6 +266,17 @@ export default function ProjectDashboard() {
                   <MetaAccountSpend accounts={analytics.spendByAccount} />
                 </div>
 
+                {selectedProject && (
+                  <section>
+                    <div className="flex items-center gap-sm mb-lg">
+                      <span className="material-symbols-outlined text-secondary">calculate</span>
+                      <h3 className="text-headline-sm text-primary">P&amp;L (Fulfillment + Meta + Staff)</h3>
+                      <span className="text-label-sm text-on-surface-variant">fulfillment profit − meta ad spend − staff cost</span>
+                    </div>
+                    <ProjectPLCard projectId={selectedProject} />
+                  </section>
+                )}
+
                 {selectedStaff === 'all' && currentProject && currentProject.assignments.length > 0 && (
                   <ProjectStaff assignments={currentProject.assignments} onSelect={setSelectedStaff} />
                 )}
@@ -471,6 +482,36 @@ function ProjectStaff({ assignments, onSelect }: { assignments: Assignment[]; on
             <button onClick={() => onSelect(a.staffId)} className="text-secondary text-label-sm hover:underline">View staff period</button>
           </div>
         ))}
+      </div>
+    </div>
+  )
+}
+
+function ProjectPLCard({ projectId }: { projectId: string }) {
+  const [pl, setPl] = useState<any>(null)
+  useEffect(() => {
+    setPl(null)
+    fetch(`/api/projects/${projectId}/pl`).then(r => r.json()).then(setPl).catch(() => {})
+  }, [projectId])
+  if (!pl || pl.error) return null
+  const fmtMoney = (n: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n)
+  return (
+    <div className="grid grid-cols-2 md:grid-cols-4 gap-md">
+      <div className="bg-surface-container-lowest rounded-xl p-md shadow-card border border-outline-variant/20">
+        <p className="text-label-sm text-on-surface-variant">Fulfillment Profit</p>
+        <p className="text-stats-lg">{fmtMoney(pl.fulfillmentProfit)}</p>
+      </div>
+      <div className="bg-surface-container-lowest rounded-xl p-md shadow-card border border-outline-variant/20">
+        <p className="text-label-sm text-on-surface-variant">Meta Ad Spend</p>
+        <p className="text-stats-lg">{fmtMoney(pl.metaAdSpend)}</p>
+      </div>
+      <div className="bg-surface-container-lowest rounded-xl p-md shadow-card border border-outline-variant/20">
+        <p className="text-label-sm text-on-surface-variant">Staff Cost</p>
+        <p className="text-stats-lg">{fmtMoney(pl.staffCost)}</p>
+      </div>
+      <div className="bg-surface-container-lowest rounded-xl p-md shadow-card border border-outline-variant/20">
+        <p className="text-label-sm text-on-surface-variant">Net Profit</p>
+        <p className={`text-stats-lg ${pl.netProfit >= 0 ? 'text-on-tertiary-container' : 'text-error'}`}>{fmtMoney(pl.netProfit)}</p>
       </div>
     </div>
   )
