@@ -30,6 +30,7 @@ export async function buildSkuPriceMap(): Promise<Record<string, SupplierInput>>
         baseCost: p.baseCost,
         firstItemShipFee: sup.firstItemShipFee,
         additionalItemShipFee: sup.additionalItemShipFee,
+        requiresDesign: p.requiresDesign,
       }
     }
   }

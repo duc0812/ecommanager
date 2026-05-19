@@ -4,6 +4,7 @@ import { fetchOrdersPage } from '@/lib/shopify-orders'
 import { computeOrderPL } from '@/lib/pl-calculator'
 import { buildSkuPriceMap } from '@/lib/repos/suppliers'
 import { upsertOrderWithLines } from '@/lib/repos/orders'
+import { autoDetectStatus, isValidPipelineStatus, type PipelineStatus } from '@/lib/pipeline-status'
 
 export async function POST(req: NextRequest) {
   const shop = req.headers.get('x-shopify-shop-domain')
@@ -64,6 +65,26 @@ export async function POST(req: NextRequest) {
       )
       if (pl.hasUnmappedSku) withUnmappedSku++
 
+      // Read existing order to preserve manual status
+      const existing = await prisma.order.findUnique({ where: { id: o.id }, select: { pipelineStatus: true } })
+      const currentStatus = existing && isValidPipelineStatus(existing.pipelineStatus)
+        ? existing.pipelineStatus as PipelineStatus
+        : null
+
+      // Check if any line maps to a product requiring custom design
+      const hasCustomDesignLine = o.lines.some(l => {
+        if (!l.sku) return false
+        const sup = priceMap[l.sku]
+        return !!sup?.requiresDesign
+      })
+
+      const detected = autoDetectStatus({
+        financialStatus: o.financialStatus,
+        hasUnmappedSku: pl.hasUnmappedSku,
+        hasCustomDesignLine,
+        currentStatus,
+      })
+
       await upsertOrderWithLines({
         id: o.id,
         projectId: store.projectId,
@@ -82,6 +103,7 @@ export async function POST(req: NextRequest) {
         refundedAmount: o.refundedAmount,
         defaultSupplierId: pl.defaultSupplierId,
         placedAt: new Date(o.processedAt ?? o.createdAt),
+        pipelineStatus: detected,
         lines: o.lines.map((l, idx) => {
           const resolved = pl.perLineCost[idx]
           return {

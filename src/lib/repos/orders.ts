@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/db'
+import { PIPELINE_STATUSES, type PipelineStatus } from '@/lib/pipeline-status'
 
 export type OrderFilter = {
   projectId?: string
@@ -52,6 +53,7 @@ export type UpsertOrderInput = {
   refundedAmount: number
   defaultSupplierId: string | null
   placedAt: Date
+  pipelineStatus?: PipelineStatus
   lines: Array<{
     shopifyLineId: string
     sku: string | null
@@ -88,6 +90,7 @@ export async function upsertOrderWithLines(input: UpsertOrderInput) {
         refundedAmount: input.refundedAmount,
         defaultSupplierId: input.defaultSupplierId,
         placedAt: input.placedAt,
+        pipelineStatus: input.pipelineStatus ?? 'PENDING',
       },
       update: {
         financialStatus: input.financialStatus,
@@ -98,6 +101,7 @@ export async function upsertOrderWithLines(input: UpsertOrderInput) {
         refundedAmount: input.refundedAmount,
         defaultSupplierId: input.defaultSupplierId,
         placedAt: input.placedAt,
+        ...(input.pipelineStatus !== undefined ? { pipelineStatus: input.pipelineStatus } : {}),
       },
     }),
     prisma.orderLine.createMany({
@@ -115,4 +119,42 @@ export async function upsertOrderWithLines(input: UpsertOrderInput) {
       })),
     }),
   ])
+}
+
+export async function updateOrderStatus(orderId: string, status: PipelineStatus) {
+  return prisma.order.update({
+    where: { id: orderId },
+    data: {
+      pipelineStatus: status,
+      ...(status === 'EXPORTED' && { exportedAt: new Date() }),
+    },
+  })
+}
+
+export async function bulkUpdateOrderStatus(orderIds: string[], status: PipelineStatus) {
+  if (orderIds.length === 0) return { count: 0 }
+  return prisma.order.updateMany({
+    where: { id: { in: orderIds } },
+    data: {
+      pipelineStatus: status,
+      ...(status === 'EXPORTED' && { exportedAt: new Date() }),
+    },
+  })
+}
+
+export async function countByStatus(filter: { projectId?: string } = {}): Promise<Record<PipelineStatus, number>> {
+  const where: any = {}
+  if (filter.projectId) where.projectId = filter.projectId
+  const rows = await prisma.order.groupBy({
+    by: ['pipelineStatus'],
+    where,
+    _count: { _all: true },
+  })
+  const result = Object.fromEntries(PIPELINE_STATUSES.map(s => [s, 0])) as Record<PipelineStatus, number>
+  for (const r of rows) {
+    if (PIPELINE_STATUSES.includes(r.pipelineStatus as PipelineStatus)) {
+      result[r.pipelineStatus as PipelineStatus] = r._count._all
+    }
+  }
+  return result
 }

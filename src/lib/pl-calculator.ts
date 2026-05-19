@@ -16,6 +16,7 @@ export type SupplierInput = {
   baseCost: number
   firstItemShipFee: number
   additionalItemShipFee: number
+  requiresDesign?: boolean   // optional so existing code doesn't break
 }
 
 export type OrderPLResult = {
