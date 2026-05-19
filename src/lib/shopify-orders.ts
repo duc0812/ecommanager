@@ -22,6 +22,7 @@ export type ShopifyOrderLine = {
   unitPrice: number
   productTags: string[]
   productType: string | null
+  customAttributes: Array<{ key: string; value: string }>
 }
 
 export type ShopifyOrder = {
@@ -64,6 +65,7 @@ query SyncOrders($cursor: String, $query: String) {
         nodes {
           id sku title variantTitle quantity
           originalUnitPriceSet { shopMoney { amount } }
+          customAttributes { key value }
           product { tags productType }
         }
       }
@@ -149,6 +151,7 @@ export async function fetchOrdersPage(
         unitPrice: num(l.originalUnitPriceSet),
         productTags: l.product?.tags ?? [],
         productType: l.product?.productType ?? null,
+        customAttributes: l.customAttributes ?? [],
       })),
       transactions,
       refundedAmount,
