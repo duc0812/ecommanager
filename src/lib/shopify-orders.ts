@@ -20,6 +20,8 @@ export type ShopifyOrderLine = {
   variantTitle: string | null
   quantity: number
   unitPrice: number
+  productTags: string[]
+  productType: string | null
 }
 
 export type ShopifyOrder = {
@@ -56,13 +58,13 @@ query SyncOrders($cursor: String, $query: String) {
       currentSubtotalPriceSet { shopMoney { amount } }
       currentTotalTaxSet { shopMoney { amount } }
       currentShippingPriceSet { shopMoney { amount } }
-      customer { email displayName }
       shippingAddress { country countryCodeV2 province }
       taxLines { source priceSet { shopMoney { amount } } }
       lineItems(first: 50) {
         nodes {
           id sku title variantTitle quantity
           originalUnitPriceSet { shopMoney { amount } }
+          product { tags productType }
         }
       }
       transactions(first: 20) {
@@ -134,8 +136,8 @@ export async function fetchOrdersPage(
       shipping: num(n.currentShippingPriceSet),
       tax: num(n.currentTotalTaxSet),
       taxMarketplaceCollected,
-      customerEmail: n.customer?.email ?? null,
-      customerName: n.customer?.displayName ?? null,
+      customerEmail: null,
+      customerName: null,
       shippingCountry: n.shippingAddress?.countryCodeV2 ?? n.shippingAddress?.country ?? null,
       shippingState: n.shippingAddress?.province ?? null,
       lines: (n.lineItems?.nodes || []).map((l: any) => ({
@@ -145,6 +147,8 @@ export async function fetchOrdersPage(
         variantTitle: l.variantTitle,
         quantity: l.quantity,
         unitPrice: num(l.originalUnitPriceSet),
+        productTags: l.product?.tags ?? [],
+        productType: l.product?.productType ?? null,
       })),
       transactions,
       refundedAmount,
