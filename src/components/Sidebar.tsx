@@ -17,6 +17,7 @@ const nav: NavEntry[] = [
   { type: 'child', href: '/shopify', icon: 'payments', label: 'Shopify' },
   { type: 'child', href: '/finance/meta', icon: 'campaign', label: 'Meta Billing' },
   { type: 'child', href: '/finance/fulfillment', icon: 'local_shipping', label: 'Fulfillment' },
+  { type: 'child', href: '/orders', icon: 'receipt_long', label: 'Orders & P/L' },
   { type: 'child', href: '/finance/other-bills', icon: 'receipt_long', label: 'Other Bills' },
   { type: 'divider' },
   { type: 'group', label: 'Tools' },
