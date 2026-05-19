@@ -2,6 +2,18 @@ import { prisma } from '@/lib/db'
 
 export type TemplateColumn = { header: string; source: string }
 
+export const STANDARD_SUPPLIER_EXPORT_COLUMNS: TemplateColumn[] = [
+  { header: 'Order ID', source: 'order.shopifyOrderNumber' },
+  { header: 'Design SKU', source: 'line.designSku' },
+  { header: 'Supplier SKU', source: 'line.supplierSku' },
+  { header: 'Quantity', source: 'line.qty' },
+  { header: 'Product Title', source: 'line.productTitle' },
+  { header: 'Variant', source: 'line.variantTitle' },
+  { header: 'Recipient Name', source: 'order.customerName' },
+  { header: 'Country', source: 'order.shippingCountry' },
+  { header: 'State', source: 'order.shippingState' },
+]
+
 export type CreateTemplateInput = {
   supplierId: string
   name: string
@@ -14,6 +26,32 @@ export async function listTemplates(supplierId?: string) {
   return prisma.csvTemplate.findMany({
     where: supplierId ? { supplierId } : {},
     orderBy: [{ supplierId: 'asc' }, { createdAt: 'asc' }],
+    include: { supplier: { select: { id: true, name: true, code: true } } },
+  })
+}
+
+export async function ensureStandardSupplierTemplate(supplierId: string) {
+  const existingDefault = await prisma.csvTemplate.findFirst({
+    where: { supplierId, isDefault: true },
+    include: { supplier: { select: { id: true, name: true, code: true } } },
+  })
+  if (existingDefault) return existingDefault
+
+  const existingAny = await prisma.csvTemplate.findFirst({
+    where: { supplierId },
+    orderBy: { createdAt: 'asc' },
+    include: { supplier: { select: { id: true, name: true, code: true } } },
+  })
+  if (existingAny) return existingAny
+
+  return prisma.csvTemplate.create({
+    data: {
+      supplierId,
+      name: 'Standard Supplier Fulfillment Export',
+      rowMode: 'PER_LINE',
+      isDefault: true,
+      columns: JSON.stringify(STANDARD_SUPPLIER_EXPORT_COLUMNS),
+    },
     include: { supplier: { select: { id: true, name: true, code: true } } },
   })
 }

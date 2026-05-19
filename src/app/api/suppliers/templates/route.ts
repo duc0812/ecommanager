@@ -1,9 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createTemplate, listTemplates } from '@/lib/repos/templates'
+import { createTemplate, ensureStandardSupplierTemplate, listTemplates } from '@/lib/repos/templates'
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const supplierId = searchParams.get('supplierId') ?? undefined
+  const ensureDefault = searchParams.get('ensureDefault') === '1'
+  if (supplierId && ensureDefault) {
+    await ensureStandardSupplierTemplate(supplierId)
+  }
   const templates = await listTemplates(supplierId)
   return NextResponse.json({ templates })
 }

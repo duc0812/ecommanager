@@ -37,7 +37,7 @@ export default function ExportPage() {
   // Load templates when supplier changes
   useEffect(() => {
     if (!supplierId) { setTemplates([]); setTemplateId(''); return }
-    fetch(`/api/suppliers/templates?supplierId=${supplierId}`)
+    fetch(`/api/suppliers/templates?supplierId=${supplierId}&ensureDefault=1`)
       .then(r => r.json())
       .then(d => {
         setTemplates(d.templates ?? [])

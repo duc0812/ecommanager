@@ -15,6 +15,7 @@ export async function POST(req: NextRequest) {
 
   const orders = await listOrdersWithLines({
     projectId: body.projectId || undefined,
+    supplierId: tmpl.supplierId,
     pipelineStatus: body.pipelineStatus || undefined,
     dateFrom: body.dateFrom ? new Date(body.dateFrom + 'T00:00:00Z') : undefined,
     dateTo: body.dateTo ? new Date(body.dateTo + 'T23:59:59.999Z') : undefined,
@@ -30,6 +31,7 @@ export async function POST(req: NextRequest) {
     placedAt: o.placedAt,
     lines: o.lines.map(l => ({
       sku: l.sku,
+      supplierSku: l.resolvedSupplierSku,
       qty: l.qty,
       productTitle: l.productTitle,
       variantTitle: l.variantTitle,

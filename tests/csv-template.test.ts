@@ -9,8 +9,8 @@ const sampleOrder: OrderForCsv = {
   shippingState: 'CA',
   placedAt: new Date('2026-05-18T07:06:00Z'),
   lines: [
-    { sku: 'TSHIRT-RED-M', qty: 2, productTitle: 'Tee', variantTitle: 'Red / M' },
-    { sku: 'HOODIE-BLK-L', qty: 1, productTitle: 'Hoodie', variantTitle: 'Black / L' },
+    { sku: 'TSHIRT-RED-M', supplierSku: 'PHS2VN000000AA02', qty: 2, productTitle: 'Tee', variantTitle: 'Red / M' },
+    { sku: 'HOODIE-BLK-L', supplierSku: 'PHS2VN000000AA03', qty: 1, productTitle: 'Hoodie', variantTitle: 'Black / L' },
   ],
 }
 
@@ -50,6 +50,28 @@ describe('renderCsv', () => {
       columns: [{ header: 'Note', source: 'literal:Rush order' }],
     }
     expect(renderCsv(tmpl, [sampleOrder])).toBe('Note\nRush order')
+  })
+
+  it('can render supplier production SKU separately from Shopify SKU', () => {
+    const tmpl: CsvTemplate = {
+      rowMode: 'PER_LINE',
+      columns: [
+        { header: 'ShopifySKU', source: 'line.sku' },
+        { header: 'SupplierSKU', source: 'line.supplierSku' },
+      ],
+    }
+    expect(renderCsv(tmpl, [sampleOrder]).split('\n')[1]).toBe('TSHIRT-RED-M,PHS2VN000000AA02')
+  })
+
+  it('supports designSku as an explicit alias for the Shopify/internal SKU', () => {
+    const tmpl: CsvTemplate = {
+      rowMode: 'PER_LINE',
+      columns: [
+        { header: 'DesignSKU', source: 'line.designSku' },
+        { header: 'SupplierSKU', source: 'line.supplierSku' },
+      ],
+    }
+    expect(renderCsv(tmpl, [sampleOrder]).split('\n')[1]).toBe('TSHIRT-RED-M,PHS2VN000000AA02')
   })
 
   it('CSV-escapes fields containing commas or quotes', () => {

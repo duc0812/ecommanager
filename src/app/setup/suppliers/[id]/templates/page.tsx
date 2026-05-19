@@ -1,6 +1,6 @@
 'use client'
 import { useCallback, useEffect, useState } from 'react'
-import { useParams, useRouter } from 'next/navigation'
+import { useParams, usePathname, useRouter } from 'next/navigation'
 import Sidebar from '@/components/Sidebar'
 import { renderCsv, type CsvTemplate as RenderTemplate, type OrderForCsv } from '@/lib/csv-template'
 
@@ -20,7 +20,9 @@ const SOURCE_OPTIONS = [
   { value: 'order.shippingCountry', label: 'Order — Country' },
   { value: 'order.shippingState', label: 'Order — State' },
   { value: 'order.placedAt', label: 'Order — Placed At (ISO)' },
-  { value: 'line.sku', label: 'Line — SKU' },
+  { value: 'line.designSku', label: 'Line — Design SKU' },
+  { value: 'line.sku', label: 'Line — Shopify SKU' },
+  { value: 'line.supplierSku', label: 'Line — Supplier SKU' },
   { value: 'line.qty', label: 'Line — Quantity' },
   { value: 'line.productTitle', label: 'Line — Product Title' },
   { value: 'line.variantTitle', label: 'Line — Variant Title' },
@@ -39,6 +41,8 @@ const emptyEditor = {
 export default function TemplatesPage() {
   const params = useParams<{ id: string }>()
   const router = useRouter()
+  const pathname = usePathname()
+  const suppliersPath = pathname.startsWith('/fulfillment') ? '/fulfillment/suppliers' : '/setup/suppliers'
   const supplierId = params.id
 
   const [supplier, setSupplier] = useState<Supplier | null>(null)
@@ -71,6 +75,7 @@ export default function TemplatesPage() {
           placedAt: new Date(o.placedAt),
           lines: (o.lines ?? []).map((l: any) => ({
             sku: l.sku,
+            supplierSku: l.resolvedSupplierSku,
             qty: l.qty,
             productTitle: l.productTitle,
             variantTitle: l.variantTitle,
@@ -161,7 +166,7 @@ export default function TemplatesPage() {
     <div className="flex min-h-screen bg-surface">
       <Sidebar />
       <main className="ml-[280px] flex-1 p-xl">
-        <button onClick={() => router.push('/setup/suppliers')} className="text-secondary text-body-sm mb-md">
+        <button onClick={() => router.push(suppliersPath)} className="text-secondary text-body-sm mb-md">
           ← Back to suppliers
         </button>
         <h1 className="text-display-md mb-lg">CSV Templates — {supplier?.name ?? '...'}</h1>

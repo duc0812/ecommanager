@@ -93,16 +93,10 @@ export default function OrdersPage() {
   useEffect(() => { load() }, [load])
 
   const sync = async () => {
-    const creds = JSON.parse(localStorage.getItem('shopify_credentials_v1') ?? '{}')
-    if (!creds.shop || !creds.accessToken) { setSyncResult('Missing Shopify credentials.'); return }
     setSyncing(true); setSyncResult('Syncing...')
     try {
       const res = await fetch('/api/shopify/orders/sync', {
         method: 'POST',
-        headers: {
-          'x-shopify-shop-domain': creds.shop,
-          'x-shopify-access-token': creds.accessToken,
-        },
       })
       const body = await res.json()
       if (!res.ok) setSyncResult(`Error: ${body.error ?? res.statusText}`)

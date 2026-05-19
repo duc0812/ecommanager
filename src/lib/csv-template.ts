@@ -10,6 +10,7 @@ export type CsvTemplate = {
 
 export type OrderLineForCsv = {
   sku: string | null
+  supplierSku: string | null
   qty: number
   productTitle: string
   variantTitle: string | null
@@ -27,6 +28,7 @@ export type OrderForCsv = {
 
 function resolveSource(source: string, ctx: { order: OrderForCsv; line: OrderLineForCsv | null }): string {
   if (source.startsWith('literal:')) return source.slice('literal:'.length)
+  if (source === 'line.designSku' && ctx.line) return ctx.line.sku ?? ''
   const parts = source.split('.')
   const root = parts[0]
   if (root === 'order') {

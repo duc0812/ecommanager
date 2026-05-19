@@ -1,5 +1,7 @@
 'use client'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
+import * as XLSX from 'xlsx'
 import Sidebar from '@/components/Sidebar'
 import { parseCsv } from '@/lib/csv-parser'
 
@@ -12,24 +14,154 @@ type Product = {
   currency: string
   requiresDesign: boolean
   updatedAt: string
+  baseSku: string | null
+  productType: string | null
+  printingMethod: string | null
+  sizeLabel: string | null
+  designTemplateUrl: string | null
+  minProductionDays: number | null
+  maxProductionDays: number | null
+  shippingByRegion: string | null
   supplier: { id: string; name: string; code: string; currency: string }
 }
 
-export default function ProductsPage() {
+type ImportRow = {
+  supplierName?: string | null
+  sku: string
+  baseCost: number
+  productName?: string
+  requiresDesign?: boolean
+  baseSku?: string | null
+  productType?: string | null
+  printingMethod?: string | null
+  sizeLabel?: string | null
+  designTemplateUrl?: string | null
+  minProductionDays?: number | null
+  maxProductionDays?: number | null
+  shippingByRegion?: string | null
+}
+
+type ManualRow = {
+  supplierName: string
+  productType: string
+  baseSku: string
+  printingMethod: string
+  sizeLabel: string
+  sku: string
+  baseCost: string
+  usImportTax: string
+  usShipFirst: string
+  usShipAdditional: string
+  designTemplateUrl: string
+  minProductionDays: string
+  maxProductionDays: string
+}
+
+const emptyManualRow: ManualRow = {
+  supplierName: '',
+  productType: '',
+  baseSku: '',
+  printingMethod: '',
+  sizeLabel: '',
+  sku: '',
+  baseCost: '',
+  usImportTax: '',
+  usShipFirst: '',
+  usShipAdditional: '',
+  designTemplateUrl: '',
+  minProductionDays: '',
+  maxProductionDays: '',
+}
+
+function num(v: unknown): number {
+  if (!v) return 0
+  const n = parseFloat(v.toString().replace(/[$,\s]/g, ''))
+  return Number.isFinite(n) ? n : 0
+}
+
+function buildShippingByRegion(r: Record<string, unknown>): string | null {
+  const obj: Record<string, { first: number; additional: number; importTax?: number }> = {}
+  const usFirst = r['US shipping fee (1st item)']
+  const usAdditional = r['US additional shipping fee']
+  const usTax = r['US import Tax/item']
+  if (usFirst !== undefined || usAdditional !== undefined || usTax !== undefined) {
+    obj.US = { first: num(usFirst), additional: num(usAdditional) }
+    if (num(usTax) > 0) obj.US.importTax = num(usTax)
+  }
+  for (const zone of ['EU', 'GB', 'CA', 'ROW']) {
+    const f = r[`${zone} shipping fee (1st item)`]
+    const a = r[`${zone} additional shipping fee`]
+    if (f !== undefined || a !== undefined) {
+      obj[zone] = { first: num(f), additional: num(a) }
+    }
+  }
+  return Object.keys(obj).length > 0 ? JSON.stringify(obj) : null
+}
+
+function parseExcelRows(fileBuffer: ArrayBuffer): Record<string, string>[] {
+  const workbook = XLSX.read(fileBuffer, { type: 'array' })
+  const sheet = workbook.Sheets[workbook.SheetNames[0]]
+  const matrix = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: '' })
+  const headerIndex = matrix.findIndex(row => row.map(String).some(cell => cell.trim() === 'SKU variant'))
+  if (headerIndex < 0) return []
+  const headers = matrix[headerIndex].map(cell => String(cell).trim())
+  return matrix.slice(headerIndex + 1).map(row => {
+    const obj: Record<string, string> = {}
+    headers.forEach((header, index) => {
+      if (header) obj[header] = String(row[index] ?? '').trim()
+    })
+    return obj
+  })
+}
+
+function rowsToImportRows(rows: Record<string, unknown>[]): ImportRow[] {
+  return rows.map(r => {
+    const sku = String(r['SKU variant'] ?? r.sku ?? '').trim()
+    const baseCost = num(r['Base cost ($)'] ?? r['Tier 1 (0 - 999)'] ?? r.baseCost ?? r.basecost ?? '0')
+    const minProd = r['Min production time']
+    const maxProd = r['Max production time']
+    return {
+      supplierName: String(r['SUPPLIER NAME'] ?? r['Supplier Name'] ?? r.supplierName ?? r.supplier ?? '').trim() || null,
+      sku,
+      baseCost,
+      productName: String(r.productName ?? r['Product type'] ?? r['Product Title'] ?? '').trim() || undefined,
+      requiresDesign: ['1', 'true', 'TRUE', 'yes', 'YES'].includes(String(r.requiresDesign ?? r.requiresdesign ?? '').trim()),
+      baseSku: String(r['SKU product'] ?? '').trim() || null,
+      productType: String(r['Product type'] ?? r['Product Title'] ?? '').trim() || null,
+      printingMethod: String(r['Printing method'] ?? '').trim() || null,
+      sizeLabel: String(r['SIZES'] ?? '').trim() || null,
+      designTemplateUrl: String(r['Design Template'] ?? '').trim() || null,
+      minProductionDays: minProd ? parseInt(String(minProd), 10) : null,
+      maxProductionDays: maxProd ? parseInt(String(maxProd), 10) : null,
+      shippingByRegion: buildShippingByRegion(r),
+    }
+  }).filter(r => r.sku)
+}
+
+function ProductsPageContent() {
+  const searchParams = useSearchParams()
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
   const [supplierId, setSupplierId] = useState<string>('')
   const [search, setSearch] = useState('')
   const [products, setProducts] = useState<Product[]>([])
   const [total, setTotal] = useState(0)
   const [form, setForm] = useState({ sku: '', baseCost: '', productName: '' })
-  const [importPreview, setImportPreview] = useState<Array<{ sku: string; baseCost: number; productName?: string; requiresDesign?: boolean }> | null>(null)
+  const [manualRows, setManualRows] = useState<ManualRow[]>([{ ...emptyManualRow }])
+  const [importPreview, setImportPreview] = useState<ImportRow[] | null>(null)
   const [importResult, setImportResult] = useState<{ created: number; updated: number; errors: any[] } | null>(null)
   const [busy, setBusy] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editForm, setEditForm] = useState<any>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     fetch('/api/suppliers').then(r => r.json()).then(d => setSuppliers(d.suppliers ?? []))
   }, [])
+
+  useEffect(() => {
+    const fromQuery = searchParams.get('supplierId')
+    if (fromQuery) setSupplierId(fromQuery)
+  }, [searchParams])
 
   const load = useCallback(async () => {
     const q = new URLSearchParams()
@@ -61,14 +193,50 @@ export default function ProductsPage() {
     setBusy(false); await load()
   }
 
-  const editBaseCost = async (p: Product, newCost: number) => {
-    if (newCost === p.baseCost) return
-    await fetch(`/api/suppliers/products/${p.id}`, {
+  const openEdit = (p: Product) => {
+    let ship: any = {}
+    try { if (p.shippingByRegion) ship = JSON.parse(p.shippingByRegion) } catch {}
+    setEditingId(p.id)
+    setEditForm({
+      sku: p.sku,
+      baseCost: p.baseCost,
+      productName: p.productName ?? '',
+      currency: p.currency,
+      requiresDesign: p.requiresDesign,
+      baseSku: p.baseSku ?? '',
+      productType: p.productType ?? '',
+      printingMethod: p.printingMethod ?? '',
+      sizeLabel: p.sizeLabel ?? '',
+      designTemplateUrl: p.designTemplateUrl ?? '',
+      minProductionDays: p.minProductionDays ?? '',
+      maxProductionDays: p.maxProductionDays ?? '',
+      shipping: ship,
+    })
+  }
+
+  const saveEdit = async () => {
+    if (!editingId || !editForm) return
+    const shippingByRegion = Object.keys(editForm.shipping).length > 0 ? JSON.stringify(editForm.shipping) : null
+    const body = {
+      baseCost: Number(editForm.baseCost),
+      productName: editForm.productName || null,
+      currency: editForm.currency,
+      requiresDesign: editForm.requiresDesign,
+      baseSku: editForm.baseSku || null,
+      productType: editForm.productType || null,
+      printingMethod: editForm.printingMethod || null,
+      sizeLabel: editForm.sizeLabel || null,
+      designTemplateUrl: editForm.designTemplateUrl || null,
+      minProductionDays: editForm.minProductionDays === '' ? null : Number(editForm.minProductionDays),
+      maxProductionDays: editForm.maxProductionDays === '' ? null : Number(editForm.maxProductionDays),
+      shippingByRegion,
+    }
+    await fetch(`/api/suppliers/products/${editingId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ baseCost: newCost }),
+      body: JSON.stringify(body),
     })
-    await load()
+    setEditingId(null); setEditForm(null); await load()
   }
 
   const deleteOne = async (p: Product) => {
@@ -77,26 +245,60 @@ export default function ProductsPage() {
     await load()
   }
 
-  const onCsvPick = async (file: File) => {
-    if (!supplierId) { alert('Pick a supplier first (CSV import goes into the selected supplier)'); return }
-    const text = await file.text()
-    const rows = parseCsv(text)
-    const parsed = rows.map(r => ({
-      sku: (r.sku ?? '').trim(),
-      baseCost: parseFloat(r.baseCost ?? r.basecost ?? '0'),
-      productName: r.productName ?? r.name ?? undefined,
-      requiresDesign: ['1', 'true', 'TRUE', 'yes', 'YES'].includes((r.requiresDesign ?? r.requiresdesign ?? '').toString().trim()),
-    })).filter(r => r.sku)
+  const onFilePick = async (file: File) => {
+    const isExcel = /\.(xlsx|xls)$/i.test(file.name)
+    const rows = isExcel
+      ? parseExcelRows(await file.arrayBuffer())
+      : parseCsv(await file.text())
+    const parsed = rowsToImportRows(rows)
     setImportPreview(parsed); setImportResult(null)
   }
 
+  const updateManualRow = (index: number, patch: Partial<ManualRow>) => {
+    setManualRows(rows => rows.map((row, i) => i === index ? { ...row, ...patch } : row))
+  }
+
+  const addManualRow = () => {
+    const selectedSupplier = suppliers.find(s => s.id === supplierId)
+    setManualRows(rows => [...rows, { ...emptyManualRow, supplierName: selectedSupplier?.name ?? '' }])
+  }
+
+  const manualRowsToImport = (): ImportRow[] => {
+    const fallbackSupplier = suppliers.find(s => s.id === supplierId)?.name ?? ''
+    return manualRows.map(r => ({
+      supplierName: r.supplierName || fallbackSupplier || null,
+      sku: r.sku.trim(),
+      baseCost: num(r.baseCost),
+      productName: r.productType || undefined,
+      baseSku: r.baseSku || null,
+      productType: r.productType || null,
+      printingMethod: r.printingMethod || null,
+      sizeLabel: r.sizeLabel || null,
+      designTemplateUrl: r.designTemplateUrl || null,
+      minProductionDays: r.minProductionDays ? parseInt(r.minProductionDays, 10) : null,
+      maxProductionDays: r.maxProductionDays ? parseInt(r.maxProductionDays, 10) : null,
+      shippingByRegion: buildShippingByRegion({
+        'US import Tax/item': r.usImportTax,
+        'US shipping fee (1st item)': r.usShipFirst,
+        'US additional shipping fee': r.usShipAdditional,
+      }),
+    })).filter(r => r.sku)
+  }
+
+  const previewManualRows = () => {
+    const rows = manualRowsToImport()
+    if (rows.length === 0) { alert('Enter at least one row with SKU variant'); return }
+    setImportPreview(rows)
+    setImportResult(null)
+  }
+
   const commitImport = async () => {
-    if (!importPreview || !supplierId) return
+    if (!importPreview) return
     setBusy(true)
     const r = await fetch('/api/suppliers/products', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ supplierId, rows: importPreview }),
+      body: JSON.stringify({ supplierId: supplierId || undefined, rows: importPreview }),
     })
     const result = await r.json()
     setImportResult(result); setBusy(false); setImportPreview(null)
@@ -144,16 +346,16 @@ export default function ProductsPage() {
               </div>
             </div>
             <div>
-              <h2 className="text-headline-sm mb-md">Bulk import CSV</h2>
+              <h2 className="text-headline-sm mb-md">Import supplier SKU sheet</h2>
               <p className="text-body-sm text-on-surface-variant mb-sm">
-                Format: header row required. Columns: <code>sku</code>, <code>baseCost</code>, optional <code>productName</code>, <code>currency</code>, <code>requiresDesign</code> (1/0/true/false).
-                Import goes to the supplier selected above.
+                Accepts the supplier Excel sheet format with <code>SUPPLIER NAME</code>, <code>Product type</code>, <code>SKU product</code>, <code>SIZES</code>, <code>SKU variant</code>, base cost, shipping fees, design template, production time.
+                If a supplier is selected above, rows import into that supplier; otherwise each row uses its Supplier Name.
               </p>
               <input
                 ref={fileRef}
                 type="file"
-                accept=".csv,text/csv"
-                onChange={e => e.target.files?.[0] && onCsvPick(e.target.files[0])}
+                accept=".xlsx,.xls,.csv,text/csv"
+                onChange={e => e.target.files?.[0] && onFilePick(e.target.files[0])}
                 disabled={!supplierId}
                 className="text-body-sm"
               />
@@ -178,6 +380,51 @@ export default function ProductsPage() {
               )}
             </div>
           </div>
+
+          <div className="mt-lg border-t border-outline-variant/20 pt-lg">
+            <div className="flex items-center justify-between mb-md">
+              <h2 className="text-headline-sm">Manual sheet entry</h2>
+              <div className="flex gap-sm">
+                <button onClick={addManualRow} className="px-md py-xs rounded-lg border text-label-sm">Add row</button>
+                <button onClick={previewManualRows} className="bg-secondary text-on-secondary px-md py-xs rounded-lg text-label-sm">Preview manual rows</button>
+              </div>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="min-w-[1500px] w-full text-label-sm">
+                <thead className="bg-surface-container">
+                  <tr className="text-left">
+                    {['SUPPLIER NAME', 'Product type', 'SKU product', 'Printing method', 'SIZES', 'SKU variant', 'Base cost ($)', 'US import Tax/item', 'US shipping fee (1st item)', 'US additional shipping fee', 'Design Template', 'Min production time', 'Max production time', ''].map(h => (
+                      <th key={h} className="px-sm py-xs">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {manualRows.map((row, index) => (
+                    <tr key={index} className="border-t border-outline-variant/20">
+                      <td className="px-sm py-xs"><input className="w-40 border rounded px-xs py-[3px]" value={row.supplierName} onChange={e => updateManualRow(index, { supplierName: e.target.value })} placeholder={suppliers.find(s => s.id === supplierId)?.name ?? 'Supplier'} /></td>
+                      <td className="px-sm py-xs"><input className="w-40 border rounded px-xs py-[3px]" value={row.productType} onChange={e => updateManualRow(index, { productType: e.target.value })} /></td>
+                      <td className="px-sm py-xs"><input className="w-28 border rounded px-xs py-[3px] font-mono" value={row.baseSku} onChange={e => updateManualRow(index, { baseSku: e.target.value })} /></td>
+                      <td className="px-sm py-xs"><input className="w-36 border rounded px-xs py-[3px]" value={row.printingMethod} onChange={e => updateManualRow(index, { printingMethod: e.target.value })} /></td>
+                      <td className="px-sm py-xs"><input className="w-20 border rounded px-xs py-[3px]" value={row.sizeLabel} onChange={e => updateManualRow(index, { sizeLabel: e.target.value })} /></td>
+                      <td className="px-sm py-xs"><input className="w-40 border rounded px-xs py-[3px] font-mono" value={row.sku} onChange={e => updateManualRow(index, { sku: e.target.value })} /></td>
+                      <td className="px-sm py-xs"><input className="w-24 border rounded px-xs py-[3px]" type="number" step="0.01" value={row.baseCost} onChange={e => updateManualRow(index, { baseCost: e.target.value })} /></td>
+                      <td className="px-sm py-xs"><input className="w-24 border rounded px-xs py-[3px]" type="number" step="0.01" value={row.usImportTax} onChange={e => updateManualRow(index, { usImportTax: e.target.value })} /></td>
+                      <td className="px-sm py-xs"><input className="w-24 border rounded px-xs py-[3px]" type="number" step="0.01" value={row.usShipFirst} onChange={e => updateManualRow(index, { usShipFirst: e.target.value })} /></td>
+                      <td className="px-sm py-xs"><input className="w-24 border rounded px-xs py-[3px]" type="number" step="0.01" value={row.usShipAdditional} onChange={e => updateManualRow(index, { usShipAdditional: e.target.value })} /></td>
+                      <td className="px-sm py-xs"><input className="w-56 border rounded px-xs py-[3px]" value={row.designTemplateUrl} onChange={e => updateManualRow(index, { designTemplateUrl: e.target.value })} /></td>
+                      <td className="px-sm py-xs"><input className="w-20 border rounded px-xs py-[3px]" type="number" value={row.minProductionDays} onChange={e => updateManualRow(index, { minProductionDays: e.target.value })} /></td>
+                      <td className="px-sm py-xs"><input className="w-20 border rounded px-xs py-[3px]" type="number" value={row.maxProductionDays} onChange={e => updateManualRow(index, { maxProductionDays: e.target.value })} /></td>
+                      <td className="px-sm py-xs">
+                        {manualRows.length > 1 && (
+                          <button onClick={() => setManualRows(rows => rows.filter((_, i) => i !== index))} className="text-error">Remove</button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
 
         {/* Table */}
@@ -186,10 +433,11 @@ export default function ProductsPage() {
             <thead className="bg-surface-container">
               <tr className="text-left">
                 <th className="px-md py-sm">SKU</th>
-                <th className="px-md py-sm">Product</th>
+                <th className="px-md py-sm">Product / Type</th>
                 <th className="px-md py-sm">Supplier</th>
                 <th className="px-md py-sm text-right">Base cost</th>
-                <th className="px-md py-sm">Currency</th>
+                <th className="px-md py-sm">Size</th>
+                <th className="px-md py-sm">Shipping</th>
                 <th className="px-md py-sm">Custom?</th>
                 <th className="px-md py-sm">Updated</th>
                 <th className="px-md py-sm"></th>
@@ -197,20 +445,28 @@ export default function ProductsPage() {
             </thead>
             <tbody>
               {products.map(p => (
-                <tr key={p.id} className="border-t border-outline-variant/20">
-                  <td className="px-md py-sm font-mono">{p.sku}</td>
-                  <td className="px-md py-sm">{p.productName ?? '—'}</td>
-                  <td className="px-md py-sm">{p.supplier.name}</td>
-                  <td className="px-md py-sm text-right">
-                    <input
-                      type="number"
-                      step="0.01"
-                      defaultValue={p.baseCost.toFixed(2)}
-                      onBlur={e => editBaseCost(p, parseFloat(e.target.value))}
-                      className="w-24 text-right border rounded px-xs py-[2px]"
-                    />
+                <tr key={p.id} className="border-t border-outline-variant/20 hover:bg-surface-container/40">
+                  <td className="px-md py-sm font-mono text-xs">
+                    <div>{p.sku}</div>
+                    {p.baseSku && <div className="text-on-surface-variant">{p.baseSku}</div>}
                   </td>
-                  <td className="px-md py-sm">{p.currency}</td>
+                  <td className="px-md py-sm">
+                    <div>{p.productName ?? p.productType ?? '—'}</div>
+                    {p.printingMethod && <div className="text-xs text-on-surface-variant">{p.printingMethod}</div>}
+                  </td>
+                  <td className="px-md py-sm">{p.supplier.name}</td>
+                  <td className="px-md py-sm text-right cursor-pointer hover:underline" onClick={() => openEdit(p)}>
+                    {p.currency} {p.baseCost.toFixed(2)}
+                  </td>
+                  <td className="px-md py-sm text-xs">{p.sizeLabel ?? '—'}</td>
+                  <td className="px-md py-sm text-xs">
+                    {p.shippingByRegion ? (() => {
+                      try {
+                        const z = JSON.parse(p.shippingByRegion)
+                        return Object.keys(z).join(', ')
+                      } catch { return '—' }
+                    })() : '—'}
+                  </td>
                   <td className="px-md py-sm">
                     <input
                       type="checkbox"
@@ -227,16 +483,82 @@ export default function ProductsPage() {
                     />
                   </td>
                   <td className="px-md py-sm">{new Date(p.updatedAt).toLocaleDateString('en-CA')}</td>
-                  <td className="px-md py-sm">
-                    <button onClick={() => deleteOne(p)} className="text-error text-label-sm">Delete</button>
+                  <td className="px-md py-sm flex gap-sm">
+                    <button onClick={() => openEdit(p)} className="text-secondary text-label-sm hover:underline">Edit</button>
+                    <button onClick={() => deleteOne(p)} className="text-error text-label-sm hover:underline">Delete</button>
                   </td>
                 </tr>
               ))}
-              {products.length === 0 && <tr><td colSpan={8} className="px-md py-lg text-center text-on-surface-variant">No mappings. Add or import CSV.</td></tr>}
+              {products.length === 0 && <tr><td colSpan={9} className="px-md py-lg text-center text-on-surface-variant">No mappings. Add or import CSV.</td></tr>}
             </tbody>
           </table>
         </div>
+
+        {/* Edit modal */}
+        {editingId && editForm && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setEditingId(null)}>
+            <div onClick={e => e.stopPropagation()} className="bg-surface-container-lowest rounded-xl p-lg shadow-card border border-outline-variant/20 w-[800px] max-h-[90vh] overflow-y-auto">
+              <h2 className="text-headline-sm mb-md">Edit variant — {editForm.sku}</h2>
+
+              <h3 className="text-label-md mt-md mb-sm">Basics</h3>
+              <div className="grid grid-cols-2 gap-sm">
+                <div><label className="text-label-sm block mb-xs">Product type</label><input className="w-full border rounded-lg px-sm py-xs" value={editForm.productType} onChange={e => setEditForm({...editForm, productType: e.target.value})} /></div>
+                <div><label className="text-label-sm block mb-xs">Base SKU</label><input className="w-full border rounded-lg px-sm py-xs font-mono" value={editForm.baseSku} onChange={e => setEditForm({...editForm, baseSku: e.target.value})} /></div>
+                <div><label className="text-label-sm block mb-xs">Printing method</label><input className="w-full border rounded-lg px-sm py-xs" value={editForm.printingMethod} onChange={e => setEditForm({...editForm, printingMethod: e.target.value})} /></div>
+                <div><label className="text-label-sm block mb-xs">Size label</label><input className="w-full border rounded-lg px-sm py-xs" value={editForm.sizeLabel} onChange={e => setEditForm({...editForm, sizeLabel: e.target.value})} /></div>
+                <div><label className="text-label-sm block mb-xs">Product name</label><input className="w-full border rounded-lg px-sm py-xs" value={editForm.productName} onChange={e => setEditForm({...editForm, productName: e.target.value})} /></div>
+                <div><label className="text-label-sm block mb-xs">Base cost</label><input type="number" step="0.01" className="w-full border rounded-lg px-sm py-xs" value={editForm.baseCost} onChange={e => setEditForm({...editForm, baseCost: e.target.value})} /></div>
+                <div><label className="text-label-sm block mb-xs">Currency</label><input className="w-full border rounded-lg px-sm py-xs" value={editForm.currency} onChange={e => setEditForm({...editForm, currency: e.target.value})} /></div>
+                <div className="col-span-2"><label className="flex items-center gap-sm text-body-sm"><input type="checkbox" checked={editForm.requiresDesign} onChange={e => setEditForm({...editForm, requiresDesign: e.target.checked})} /> Requires design approval</label></div>
+              </div>
+
+              <h3 className="text-label-md mt-md mb-sm">Shipping by region</h3>
+              <p className="text-label-sm text-on-surface-variant mb-sm">Set per-zone first-item and additional-item shipping. Leave a zone empty to fall back to supplier default.</p>
+              {['US', 'EU', 'GB', 'CA', 'ROW'].map(zone => {
+                const z = editForm.shipping[zone] ?? {}
+                const setField = (key: 'first' | 'additional' | 'importTax', val: string) => {
+                  const next = { ...editForm.shipping }
+                  next[zone] = { ...next[zone], [key]: val === '' ? undefined : Number(val) }
+                  if (Object.values(next[zone]).every(v => v === undefined || v === 0)) {
+                    delete next[zone]
+                  }
+                  setEditForm({ ...editForm, shipping: next })
+                }
+                return (
+                  <div key={zone} className="grid grid-cols-4 gap-sm items-center mb-xs">
+                    <div className="font-mono text-label-md">{zone}</div>
+                    <div><label className="text-label-sm block">First item</label><input type="number" step="0.01" className="w-full border rounded-lg px-sm py-xs" value={z.first ?? ''} onChange={e => setField('first', e.target.value)} /></div>
+                    <div><label className="text-label-sm block">Additional</label><input type="number" step="0.01" className="w-full border rounded-lg px-sm py-xs" value={z.additional ?? ''} onChange={e => setField('additional', e.target.value)} /></div>
+                    {zone === 'US' && (
+                      <div><label className="text-label-sm block">Import tax/item</label><input type="number" step="0.01" className="w-full border rounded-lg px-sm py-xs" value={z.importTax ?? ''} onChange={e => setField('importTax', e.target.value)} /></div>
+                    )}
+                  </div>
+                )
+              })}
+
+              <h3 className="text-label-md mt-md mb-sm">Design + Production</h3>
+              <div className="grid grid-cols-2 gap-sm">
+                <div className="col-span-2"><label className="text-label-sm block mb-xs">Design template URL</label><input className="w-full border rounded-lg px-sm py-xs" value={editForm.designTemplateUrl} onChange={e => setEditForm({...editForm, designTemplateUrl: e.target.value})} placeholder="https://drive.google.com/..." /></div>
+                <div><label className="text-label-sm block mb-xs">Min production days</label><input type="number" className="w-full border rounded-lg px-sm py-xs" value={editForm.minProductionDays} onChange={e => setEditForm({...editForm, minProductionDays: e.target.value})} /></div>
+                <div><label className="text-label-sm block mb-xs">Max production days</label><input type="number" className="w-full border rounded-lg px-sm py-xs" value={editForm.maxProductionDays} onChange={e => setEditForm({...editForm, maxProductionDays: e.target.value})} /></div>
+              </div>
+
+              <div className="mt-lg flex gap-sm justify-end">
+                <button onClick={() => { setEditingId(null); setEditForm(null) }} className="px-lg py-sm rounded-lg text-label-md border">Cancel</button>
+                <button onClick={saveEdit} className="bg-secondary text-on-secondary px-lg py-sm rounded-lg text-label-md">Save</button>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
     </div>
+  )
+}
+
+export default function ProductsPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-surface" />}>
+      <ProductsPageContent />
+    </Suspense>
   )
 }
