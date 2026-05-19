@@ -128,10 +128,24 @@ Completed 2026-05-19 via subagent-driven development.
 
 **Deferred to later:** Printful API auto-sync, Printify API auto-sync (will add as connector plugins under `src/lib/suppliers/<type>.ts`).
 
-### 🔲 Phase 13.6 + 13.7 — Pipeline + Alerts + Project integration (TODO — Plan 3 not yet written)
-- Kanban pipeline view
-- Alert panel (unmapped SKU, mixed supplier, stale orders)
-- Combined P&L per project (Fulfillment + Meta + Staff)
+### 🟢 Phase 13.6 + 13.7 — Pipeline Statuses + Project P&L Integration (DONE)
+**Plan:** [docs/superpowers/plans/2026-05-19-fulfillment-pod-phase3-pipeline-statuses-pl.md](docs/superpowers/plans/2026-05-19-fulfillment-pod-phase3-pipeline-statuses-pl.md)
+Completed 2026-05-19 via subagent-driven development.
+
+**Shipped:**
+- 11-state pipeline taxonomy: PENDING_DESIGN, PENDING, EXPORTED, ON_HOLD, SUPPLIER_PROCESSING, IN_PRODUCTION, FULFILLED, DESIGN_REJECTED, ERROR, CANCELLED, REFUNDED
+- `autoDetectStatus()` lib with manual-status preservation (16 tests)
+- Sync route auto-derives status from Shopify financialStatus + SKU mapping + `requiresDesign` flag
+- `SupplierProduct.requiresDesign` flag (UI toggle + CSV import column)
+- Per-order status dropdown + bulk-status update API + counts endpoint
+- Rewrite `/orders` as tab-based list with search, More Filters, bulk action bar
+- Combined Project P&L: `/api/projects/[id]/pl` + ProjectPLCard component on `/projects`
+
+**Deferred to future plans (not in Plan 3):**
+- Printful / Printify API connectors (auto-sync cost + status)
+- Webhook-based sync (still polling + manual Sync Now)
+- Email digest reports
+- Bulk catalog import
 
 ---
 

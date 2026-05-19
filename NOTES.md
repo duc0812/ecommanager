@@ -26,34 +26,28 @@ Last updated: 2026-05-19
 
 **Git:** Initialized 2026-05-19, baseline commit `b8ce2d9`.
 
-**Where we are:** ✅ Plan 1 + Plan 2 COMPLETE — full per-order P/L workflow + CSV fulfillment shipped. 18 tests pass. Ready for end-to-end smoke test.
+**Where we are:** ✅ Plan 1 + Plan 2 + Plan 3 COMPLETE — full Fulfillment & POD module shipped. 34 tests pass.
 
-**What works now (end-to-end):**
-- 6 fulfillment models migrated, multi-tenant (1 store = 1 project)
-- Repos layer enforces project scope
-- Pure libs unit-tested: `pl-calculator`, `csv-template`, `timezone`, `csv-parser`
-- Shopify GraphQL sync (paginated, fees-aware, idempotent, project-scoped)
-- `/orders` dashboard with sync button + project selector + P/L table
-- `/setup/suppliers` CRUD (with API type for Printful/Printify hooks ready)
-- `/setup/products` SKU mapping + CSV import + inline cost edit + cost history
-- `/setup/suppliers/[id]/templates` CSV template builder with live preview
-- `/orders/export` CSV export center: filter + preview + download (marks orders EXPORTED)
+**What works now (full E2E):**
+- Multi-tenant Shopify order sync (1 store = 1 project) with paginated, fees-aware, idempotent GraphQL
+- 11-state pipeline taxonomy with auto-detect: REFUNDED/CANCELLED from Shopify, PENDING_DESIGN if unmapped SKU OR `requiresDesign` flag, else PENDING. Manual statuses preserved across re-sync.
+- Supplier CRUD + SKU mapping + cost history + custom-design flag (`requiresDesign`)
+- CSV template builder with live preview + Export Center (date range, supplier, template, preview, download, mark exported)
+- Tab-based `/orders` UI (Printful-style): All + 11 status tabs with counts, search, More Filters panel, status dropdown per row, bulk action bar
+- Combined Project P&L: Fulfillment Profit − Meta Ad Spend − Staff Cost = Net Profit per project, visible on `/projects`
 
-**End-to-end smoke test guide:**
-1. Open `/setup/suppliers` → create "Printful" supplier (firstItemShipFee=4.99, additionalItemShipFee=2.99, currency=USD)
-2. Open `/setup/products` → add a few SKU mappings OR import CSV (format: `sku,baseCost,productName`)
-3. Open `/setup/suppliers` → click "Templates" → build template with columns (Order#, SKU, Qty, Recipient, Country)
-4. Open `/orders` → click "Sync Now" → verify orders appear with profit (mapped SKUs) or red alert (unmapped)
-5. Open `/orders/export` → pick supplier + template + date range → Preview → Download CSV → open in Excel
+**Plans status:**
+- [Plan 1](docs/superpowers/plans/2026-05-19-fulfillment-pod-phase1-foundation-sync.md) — DONE
+- [Plan 2](docs/superpowers/plans/2026-05-19-fulfillment-pod-phase2-supplier-csv-export.md) — DONE
+- [Plan 3](docs/superpowers/plans/2026-05-19-fulfillment-pod-phase3-pipeline-statuses-pl.md) — DONE
 
-**Next: Plan 3 — Pipeline Kanban + Alerts + Project integration (Phase 13.6 + 13.7)**
-
-**To resume:**
-1. Read the spec file above + this NOTES file
-2. Last user message was: "Theo hướng B đi" then "bổ sung vào plan/claude/files dự án để codex hiểu được tiến trình"
-3. Next: ask user to review Section 2 (data model) of spec — confirm schema model + 5 open questions in Section 8
-4. After Section 2 approved, draft Section 3 (Order Sync logic — GraphQL queries, transaction-level fee extraction)
-5. DO NOT start coding yet — must finish all 9 sections + user-approve final spec before code
+**Deferred to future plans:**
+- Printful API auto-sync of cost + fulfillment status
+- Printify API auto-sync
+- Webhook-based realtime (currently polling + manual Sync Now)
+- Email digest / daily report
+- Pipeline Kanban view (chose tab-based list instead — simpler, scales better)
+- Bulk product mapping import from Printful catalog
 
 **Key decisions locked-in (full detail in spec Section 2):**
 - Polling Shopify Orders API (not webhook) + Sync Now button
