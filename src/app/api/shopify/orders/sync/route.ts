@@ -8,6 +8,8 @@ import { autoDetectStatus, isValidPipelineStatus, type PipelineStatus } from '@/
 import { resolveZone, type SupplierZoneOverrides } from '@/lib/regions'
 import { getShopifyConnection } from '@/lib/token-store'
 import { resolveSupplierForOrderLine } from '@/lib/auto-mapping'
+import { classifyOrderLines, buildTrelloCardContent } from '@/lib/order-classify'
+import { createTrelloCard, getTrelloConfig, shouldCreateCard } from '@/lib/trello'
 
 export async function POST(req: NextRequest) {
   const stored = await getShopifyConnection(req.headers.get('cookie') ?? undefined)
@@ -49,6 +51,8 @@ export async function POST(req: NextRequest) {
       if (Array.isArray(codes)) overridesBySupplier[o.supplierId][o.zoneCode] = codes
     } catch {}
   }
+
+  const trelloConfig = await getTrelloConfig()
 
   let cursor: string | null = null
   let totalSynced = 0
@@ -165,6 +169,81 @@ export async function POST(req: NextRequest) {
           }
         }),
       })
+
+      // Classify order type
+      const classifyLines = o.lines.map(l => ({
+        sku: l.sku,
+        productTitle: l.title,
+        customAttributes: l.customAttributes,
+        productTags: l.productTags,
+      }))
+      const orderType = classifyOrderLines(classifyLines)
+
+      // Update orderType in DB if not yet classified
+      const existingOrder = await prisma.order.findUnique({
+        where: { id: o.id },
+        select: { orderType: true, trelloCardId: true },
+      })
+      if (existingOrder && existingOrder.orderType === 'UNKNOWN') {
+        await prisma.order.update({ where: { id: o.id }, data: { orderType } })
+      }
+
+      // Create Trello card if needed
+      if (
+        trelloConfig &&
+        existingOrder?.trelloCardId == null &&
+        shouldCreateCard(o.name, trelloConfig.syncFromOrderName)
+      ) {
+        let needsCard = false
+
+        if (orderType === 'CUSTOM') {
+          needsCard = true
+        } else if (orderType === 'NON_CUSTOM') {
+          const skus = o.lines.map(l => l.sku).filter(Boolean) as string[]
+          if (skus.length > 0) {
+            const skuDesigns = await prisma.skuDesign.findMany({
+              where: { sku: { in: skus } },
+              select: { sku: true, designReady: true },
+            })
+            const readySkus = new Set(skuDesigns.filter(s => s.designReady).map(s => s.sku))
+            needsCard = skus.some(s => !readySkus.has(s))
+          }
+        }
+
+        if (needsCard) {
+          try {
+            const cardLines = o.lines.map(l => ({
+              sku: l.sku,
+              productTitle: l.title,
+              customAttributes: l.customAttributes,
+              productTags: l.productTags,
+              variantTitle: l.variantTitle,
+              qty: l.quantity,
+            }))
+            const { name: cardName, desc } = buildTrelloCardContent(o.name, cardLines, orderType)
+            const card = await createTrelloCard(trelloConfig, cardName, desc)
+            await prisma.order.update({
+              where: { id: o.id },
+              data: { trelloCardId: card.id, trelloCardUrl: card.url },
+            })
+
+            // For NON_CUSTOM: upsert SkuDesign records with trelloCardId
+            if (orderType === 'NON_CUSTOM') {
+              const skus = o.lines.map(l => l.sku).filter(Boolean) as string[]
+              for (const sku of skus) {
+                await prisma.skuDesign.upsert({
+                  where: { sku },
+                  create: { sku, trelloCardId: card.id },
+                  update: { trelloCardId: card.id },
+                })
+              }
+            }
+          } catch (e: any) {
+            errors.push(`Trello card creation failed for ${o.name}: ${e.message}`)
+          }
+        }
+      }
+
       totalSynced++
     }
     cursor = page.hasNextPage ? page.endCursor : null
