@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import crypto from 'crypto'
 import { saveOAuthState, getShopifyAppCredentials } from '@/lib/token-store'
 
-const SCOPES = 'read_analytics,read_orders,read_products,read_shopify_payments_payouts,read_shopify_payments_bank_accounts,read_shopify_payments_disputes,read_shopify_payments_accounts'
+const SCOPES = 'read_analytics,read_orders,read_customers,read_products,read_shopify_payments_payouts,read_shopify_payments_bank_accounts,read_shopify_payments_disputes,read_shopify_payments_accounts'
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)

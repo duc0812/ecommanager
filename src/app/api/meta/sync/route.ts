@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 
 const GRAPH_API_VERSION = process.env.META_GRAPH_API_VERSION ?? 'v19.0'
+const DEFAULT_BACKFILL_DAYS = 90
+const RESYNC_OVERLAP_DAYS = 7
+const ACTIVITY_LOOKBACK_DAYS = 7
+const ACTIVITY_LOOKAHEAD_DAYS = 7
 
 type MetaTransaction = {
   id: string
@@ -127,12 +131,20 @@ function addDays(date: Date, days: number) {
   return next
 }
 
+function daysAgo(days: number) {
+  return addDays(new Date(), -days)
+}
+
 function dateOnly(date: Date) {
   return date.toISOString().split('T')[0]
 }
 
 function parseDateOnly(value: string) {
   return new Date(`${value}T00:00:00.000Z`)
+}
+
+function isDateBetween(date: string, since: string, until: string) {
+  return date >= since && date <= until
 }
 
 function asText(value: any): string | null {
@@ -228,35 +240,60 @@ async function fetchAdAccountPaymentMethod(accountId: string, accessToken: strin
 
 async function fetchMetaBillingActivities(accountId: string, accessToken: string, since: string, until: string) {
   const paymentMethod = await fetchAdAccountPaymentMethod(accountId, accessToken)
-  const activities: any[] = []
+  const byId = new Map<string, MetaTransaction>()
   let cursor = parseDateOnly(since)
-  let finalDate = parseDateOnly(until)
+  const finalDate = parseDateOnly(until)
 
-  if (cursor >= finalDate) finalDate = addDays(cursor, 1)
+  if (cursor > finalDate) return []
 
-  while (cursor < finalDate) {
-    const chunkEnd = addDays(cursor, 1)
+  while (cursor <= finalDate) {
+    const targetDate = dateOnly(cursor)
+    const windowStart = dateOnly(addDays(cursor, -ACTIVITY_LOOKBACK_DAYS))
+    const windowEnd = dateOnly(addDays(cursor, ACTIVITY_LOOKAHEAD_DAYS))
     const url = graphUrl(`${accountId}/activities`, {
       fields: ['id', 'event_time', 'event_type', 'object_id', 'extra_data'].join(','),
-      since: dateOnly(cursor),
-      until: dateOnly(chunkEnd),
+      since: windowStart,
+      until: windowEnd,
       limit: '500',
       access_token: accessToken,
     })
-    activities.push(...await fetchPagedGraphData(url))
-    cursor = chunkEnd
+
+    const activities = await fetchPagedGraphData(url)
+    activities
+      .map(activity => normalizeActivity(accountId, activity, paymentMethod))
+      .filter((activity): activity is MetaTransaction => Boolean(activity))
+      .filter(activity => activity.billingDate === targetDate)
+      .forEach(activity => byId.set(activity.id, activity))
+
+    cursor = addDays(cursor, 1)
   }
 
-  const byId = new Map<string, MetaTransaction>()
-  activities
+  const fullRangeUrl = graphUrl(`${accountId}/activities`, {
+    fields: ['id', 'event_time', 'event_type', 'object_id', 'extra_data'].join(','),
+    since,
+    until: dateOnly(addDays(finalDate, 1)),
+    limit: '500',
+    access_token: accessToken,
+  })
+
+  const fullRangeActivities = await fetchPagedGraphData(fullRangeUrl)
+  fullRangeActivities
     .map(activity => normalizeActivity(accountId, activity, paymentMethod))
     .filter((activity): activity is MetaTransaction => Boolean(activity))
+    .filter(activity => isDateBetween(activity.billingDate, since, until))
     .forEach(activity => byId.set(activity.id, activity))
 
   return Array.from(byId.values())
 }
 
 async function fetchMetaTransactions(accountId: string, accessToken: string, since: string, until: string) {
+  try {
+    return await fetchMetaBillingActivities(accountId, accessToken, since, until)
+  } catch (activityErr: any) {
+    const activityMessage = String(activityErr?.message ?? '')
+    if (!activityMessage.includes('Meta API:')) throw activityErr
+  }
+
   const baseFields = [
     'id',
     'time',
@@ -307,11 +344,32 @@ async function fetchMetaTransactions(accountId: string, accessToken: string, sin
   return transactions.map(txn => normalizeTransaction(accountId, txn))
 }
 
+async function resolveSyncRange(accountDbId: string, requestedSince?: string | null, requestedUntil?: string | null) {
+  const until = requestedUntil ?? dateOnly(new Date())
+  if (requestedSince) return { since: requestedSince, until }
+
+  const latestBilling = await prisma.metaBilling.findFirst({
+    where: { adAccountId: accountDbId },
+    orderBy: { billingDate: 'desc' },
+    select: { billingDate: true },
+  })
+
+  if (latestBilling?.billingDate) {
+    return {
+      since: dateOnly(addDays(parseDateOnly(latestBilling.billingDate), -RESYNC_OVERLAP_DAYS)),
+      until,
+    }
+  }
+
+  return {
+    since: dateOnly(daysAgo(DEFAULT_BACKFILL_DAYS)),
+    until,
+  }
+}
+
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}))
   const { accountId } = body
-  const since = body.since ?? '2004-02-04'
-  const until = body.until ?? new Date().toISOString().split('T')[0]
 
   try {
     const where = accountId ? { id: accountId } : {}
@@ -322,9 +380,12 @@ export async function POST(req: NextRequest) {
     }
 
     let totalSynced = 0
+    const ranges: Record<string, { since: string; until: string; synced: number }> = {}
 
     for (const account of accounts) {
+      const { since, until } = await resolveSyncRange(account.id, body.since, body.until)
       const transactions = await fetchMetaTransactions(account.accountId, account.accessToken, since, until)
+      let accountSynced = 0
 
       for (const txn of transactions) {
         if (txn.legacyId && txn.legacyId !== txn.id) {
@@ -366,15 +427,17 @@ export async function POST(req: NextRequest) {
           },
         })
         totalSynced++
+        accountSynced++
       }
 
       await prisma.metaAdAccount.update({
         where: { id: account.id },
         data: { lastSyncAt: new Date() },
       })
+      ranges[account.id] = { since, until, synced: accountSynced }
     }
 
-    return NextResponse.json({ success: true, synced: totalSynced })
+    return NextResponse.json({ success: true, synced: totalSynced, ranges })
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 })
   }
