@@ -109,16 +109,19 @@ function EditModal({
   async function handleSave() {
     if (!name || !productType) return
     setSaving(true)
-    await onSave({
-      name, shopifyProductType: productType,
-      variantConditions: buildConditionsJson(),
-      supplierMappings: supplierMappings.filter(m => m.supplierProductId),
-      overrides: overrides.filter(o => o.supplierProductId && o.attrKey && o.attrVal).map(o => ({
-        supplierProductId: o.supplierProductId,
-        attributeCombo: JSON.stringify({ [o.attrKey]: o.attrVal }),
-      })),
-    })
-    setSaving(false)
+    try {
+      await onSave({
+        name, shopifyProductType: productType,
+        variantConditions: buildConditionsJson(),
+        supplierMappings: supplierMappings.filter(m => m.supplierProductId),
+        overrides: overrides.filter(o => o.supplierProductId && o.attrKey && o.attrVal).map(o => ({
+          supplierProductId: o.supplierProductId,
+          attributeCombo: JSON.stringify({ [o.attrKey]: o.attrVal }),
+        })),
+      })
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
@@ -255,11 +258,15 @@ export default function MappingPage() {
   useEffect(() => { loadData() }, [])
 
   async function handleSaveBase(data: any) {
+    let res: Response
     if (editBase === null) {
-      await fetch('/api/fulfillment/mapping/product-bases', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
+      res = await fetch('/api/fulfillment/mapping/product-bases', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
     } else if (editBase) {
-      await fetch(`/api/fulfillment/mapping/product-bases/${editBase.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
+      res = await fetch(`/api/fulfillment/mapping/product-bases/${editBase.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
+    } else {
+      return
     }
+    if (!res.ok) return
     setEditBase(undefined)
     loadData()
   }
@@ -289,6 +296,7 @@ export default function MappingPage() {
   }
 
   async function handleDeleteManual(id: string) {
+    if (!confirm('Xóa manual mapping này?')) return
     await fetch(`/api/fulfillment/mapping/manual/${id}`, { method: 'DELETE' })
     loadData()
   }
@@ -406,7 +414,7 @@ export default function MappingPage() {
                   {pendingLines.length === 0 && (
                     <div className="px-lg py-xl text-center text-on-surface/40 text-body-sm">Không có order nào đang bị blocked. ✅</div>
                   )}
-                  {pendingLines.map(line => (
+                  {pendingLines.filter(line => line.shopifyVariantId != null).map(line => (
                     <div key={line.id} className="grid grid-cols-[2.5fr_1.5fr_1fr_2fr_100px] gap-md px-lg py-md items-center border-t border-outline-variant/10">
                       <div>
                         <p className="text-label-md font-semibold text-on-surface">{line.productTitle}</p>
