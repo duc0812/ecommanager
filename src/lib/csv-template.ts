@@ -14,6 +14,13 @@ export type OrderLineForCsv = {
   qty: number
   productTitle: string
   variantTitle: string | null
+  unitPrice?: number | null
+  supplierProductType?: string | null
+  supplierProductName?: string | null
+  supplierVariant1Name?: string | null
+  supplierVariant1Value?: string | null
+  supplierVariant2Name?: string | null
+  supplierVariant2Value?: string | null
 }
 
 export type OrderForCsv = {
@@ -22,13 +29,30 @@ export type OrderForCsv = {
   customerEmail: string | null
   shippingCountry: string | null
   shippingState: string | null
+  shippingName?: string | null
+  shippingAddress1?: string | null
+  shippingAddress2?: string | null
+  shippingCity?: string | null
+  shippingZip?: string | null
+  shippingPhone?: string | null
+  financialStatus?: string | null
+  fulfillmentStatus?: string | null
+  designDriveLink?: string | null
+  trelloCardUrl?: string | null
   placedAt: Date
   lines: OrderLineForCsv[]
 }
 
 function resolveSource(source: string, ctx: { order: OrderForCsv; line: OrderLineForCsv | null }): string {
   if (source.startsWith('literal:')) return source.slice('literal:'.length)
+  if (source === 'order.placedDate') return ctx.order.placedAt.toISOString().slice(0, 10)
+  if (source === 'order.shippingAddressFull') {
+    return [ctx.order.shippingAddress1, ctx.order.shippingAddress2].filter(Boolean).join(', ')
+  }
   if (source === 'line.designSku' && ctx.line) return ctx.line.sku ?? ''
+  if (source === 'line.itemName' && ctx.line) {
+    return [ctx.line.productTitle, ctx.line.variantTitle].filter(Boolean).join(' - ')
+  }
   const parts = source.split('.')
   const root = parts[0]
   if (root === 'order') {

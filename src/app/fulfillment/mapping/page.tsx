@@ -1,11 +1,13 @@
 // src/app/fulfillment/mapping/page.tsx
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Sidebar from '@/components/Sidebar'
 
 // ── Types ────────────────────────────────────────────────────
 type SupplierProduct = {
-  id: string; sku: string; productName: string | null; variant1Value: string | null
+  id: string; sku: string; productName: string | null; productType: string | null
+  baseSku: string | null; variant1Name: string | null; variant1Value: string | null
+  variant2Name: string | null; variant2Value: string | null
   supplier: { id: string; name: string; code: string }
 }
 
@@ -69,6 +71,28 @@ function TagInput({ tags, onChange }: { tags: string[]; onChange: (t: string[]) 
   )
 }
 
+function supplierParentKey(p: SupplierProduct): string {
+  return [
+    p.supplier.id,
+    p.productName ?? '',
+    p.productType ?? '',
+    p.baseSku ?? '',
+  ].join('|')
+}
+
+function normalize(v: string | null | undefined): string {
+  return (v ?? '').toLowerCase().trim()
+}
+
+function productLabel(p: SupplierProduct): string {
+  return `${p.productName ?? p.productType ?? p.baseSku ?? p.sku} — ${p.supplier.name}${p.baseSku ? ` · ${p.baseSku}` : ''}`
+}
+
+function variantLabel(p: SupplierProduct): string {
+  const variants = [p.variant1Value, p.variant2Value].filter(Boolean).join(' / ')
+  return `${p.productName ?? p.productType ?? p.baseSku ?? p.sku} — ${p.supplier.name} · ${p.sku}${variants ? ` · ${variants}` : ''}`
+}
+
 // ── Edit Modal ───────────────────────────────────────────────
 function EditModal({
   base, supplierProducts, onSave, onClose,
@@ -98,6 +122,63 @@ function EditModal({
     }) ?? []
   )
   const [saving, setSaving] = useState(false)
+
+  const parentGroups = useMemo(() => {
+    const map = new Map<string, { key: string; label: string; products: SupplierProduct[]; representative: SupplierProduct }>()
+    for (const p of supplierProducts) {
+      const key = supplierParentKey(p)
+      const existing = map.get(key)
+      if (existing) {
+        existing.products.push(p)
+        if (p.sku < existing.representative.sku) existing.representative = p
+      } else {
+        map.set(key, { key, label: productLabel(p), products: [p], representative: p })
+      }
+    }
+    return Array.from(map.values()).sort((a, b) => a.label.localeCompare(b.label))
+  }, [supplierProducts])
+
+  const parentGroupByProductId = useMemo(() => {
+    const map = new Map<string, { key: string; label: string; products: SupplierProduct[]; representative: SupplierProduct }>()
+    for (const group of parentGroups) {
+      for (const p of group.products) map.set(p.id, group)
+    }
+    return map
+  }, [parentGroups])
+
+  const generatedVariantRows = useMemo(() => (
+    conditions.filter(c => c.anyOf.length > 1 || ['size', 'color'].includes(normalize(c.optionName))).flatMap(c => c.optionName
+      ? c.anyOf.map(value => ({ optionName: c.optionName, value }))
+      : [])
+  ), [conditions])
+
+  useEffect(() => {
+    const primaryGroup = supplierMappings[0]?.supplierProductId
+      ? parentGroupByProductId.get(supplierMappings[0].supplierProductId)
+      : null
+    if (!primaryGroup || generatedVariantRows.length === 0) return
+
+    setOverrides(prev => {
+      let changed = false
+      const next = [...prev]
+      for (const row of generatedVariantRows) {
+        const existing = next.find(o => normalize(o.attrKey) === normalize(row.optionName) && normalize(o.attrVal) === normalize(row.value))
+        if (existing) continue
+        const exact = primaryGroup.products.find(p =>
+          normalize(p.variant1Value) === normalize(row.value) ||
+          normalize(p.variant2Value) === normalize(row.value)
+        )
+        next.push({
+          attributeCombo: '',
+          attrKey: row.optionName,
+          attrVal: row.value,
+          supplierProductId: exact?.id ?? '',
+        })
+        changed = true
+      }
+      return changed ? next : prev
+    })
+  }, [generatedVariantRows, parentGroupByProductId, supplierMappings])
 
   function buildConditionsJson() {
     return JSON.stringify(conditions.filter(c => c.optionName && c.anyOf.length > 0).map(c => ({
@@ -172,14 +253,15 @@ function EditModal({
           {/* Supplier mappings */}
           <div>
             <p className="text-label-sm font-semibold text-on-surface/50 uppercase tracking-widest mb-xs">Suppliers theo Rank</p>
+            <p className="text-body-sm text-on-surface/40 mb-sm">Choose the supplier parent product. If you add conditions like Size S/M/L, variant mapping rows appear below.</p>
             <div className="flex flex-col gap-sm">
               {supplierMappings.map((m, i) => (
                 <div key={i} className="grid grid-cols-[40px_1fr_32px] gap-sm items-center">
                   <span className={`text-center rounded-lg py-[6px] text-label-sm font-bold ${i === 0 ? 'bg-secondary text-on-secondary' : 'bg-secondary/10 text-secondary'}`}>#{i + 1}</span>
                   <select className="border border-outline-variant/40 rounded-lg px-md py-sm text-body-sm bg-surface-container-lowest" value={m.supplierProductId} onChange={e => setSupplierMappings(prev => prev.map((r, j) => j === i ? { ...r, supplierProductId: e.target.value, preferenceRank: j + 1 } : r))}>
-                    <option value="">-- Chọn supplier product --</option>
-                    {supplierProducts.map(p => (
-                      <option key={p.id} value={p.id}>{p.productName ?? p.sku} — {p.supplier.name} · {p.sku}{p.variant1Value ? ` · ${p.variant1Value}` : ''}</option>
+                    <option value="">-- Choose supplier parent product --</option>
+                    {parentGroups.map(g => (
+                      <option key={g.key} value={g.representative.id}>{g.label}</option>
                     ))}
                   </select>
                   <button onClick={() => setSupplierMappings(prev => prev.filter((_, j) => j !== i).map((r, j) => ({ ...r, preferenceRank: j + 1 })))} className="text-error text-lg">✕</button>
@@ -189,30 +271,75 @@ function EditModal({
             </div>
           </div>
 
+          {generatedVariantRows.length > 0 && (
+            <div>
+              <p className="text-label-sm font-semibold text-on-surface/50 uppercase tracking-widest mb-xs">Variant Mapping</p>
+              <p className="text-body-sm text-on-surface/40 mb-sm">Map từng value của Shopify option sang variant cụ thể của supplier.</p>
+              <div className="flex flex-col gap-sm">
+                {generatedVariantRows.map((row) => {
+                  const existing = overrides.find(o => normalize(o.attrKey) === normalize(row.optionName) && normalize(o.attrVal) === normalize(row.value))
+                  const selectedParent = supplierMappings[0]?.supplierProductId
+                    ? parentGroupByProductId.get(supplierMappings[0].supplierProductId)
+                    : null
+                  const options = selectedParent?.products.length ? selectedParent.products : supplierProducts
+                  return (
+                    <div key={`${row.optionName}:${row.value}`} className="grid grid-cols-[160px_1fr] gap-md items-center rounded-lg border border-outline-variant/30 p-md">
+                      <div>
+                        <div className="text-label-sm text-on-surface/50">{row.optionName}</div>
+                        <div className="text-body-md font-semibold">{row.value}</div>
+                      </div>
+                      <select
+                        className="border border-outline-variant/40 rounded-lg px-md py-sm text-body-sm bg-surface-container-lowest"
+                        value={existing?.supplierProductId ?? ''}
+                        onChange={e => setOverrides(prev => {
+                          const found = prev.some(o => normalize(o.attrKey) === normalize(row.optionName) && normalize(o.attrVal) === normalize(row.value))
+                          if (found) {
+                            return prev.map(o => normalize(o.attrKey) === normalize(row.optionName) && normalize(o.attrVal) === normalize(row.value)
+                              ? { ...o, supplierProductId: e.target.value }
+                              : o)
+                          }
+                          return [...prev, { attributeCombo: '', attrKey: row.optionName, attrVal: row.value, supplierProductId: e.target.value }]
+                        })}
+                      >
+                        <option value="">-- Chọn supplier variant --</option>
+                        {options.map(p => (
+                          <option key={p.id} value={p.id}>{variantLabel(p)}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Special cases */}
           <div>
             <p className="text-label-sm font-semibold text-on-surface/50 uppercase tracking-widest mb-xs">Special Cases</p>
             <p className="text-body-sm text-on-surface/40 mb-sm">Ngoại lệ cho attribute combo cụ thể</p>
             <div className="flex flex-col gap-sm">
-              {overrides.map((o, i) => (
-                <div key={i} className="bg-[#fff8e1] border border-[#ffe082] rounded-lg p-md grid grid-cols-[1fr_1fr_32px] gap-md items-end">
+              {overrides.map((o, index) => ({ o, index })).filter(({ o }) => !generatedVariantRows.some(row =>
+                normalize(o.attrKey) === normalize(row.optionName) &&
+                normalize(o.attrVal) === normalize(row.value)
+              )).map(({ o, index }) => (
+                <div key={index} className="bg-[#fff8e1] border border-[#ffe082] rounded-lg p-md grid grid-cols-[1fr_1fr_32px] gap-md items-end">
                   <div>
                     <label className="text-label-sm text-on-surface/50 mb-xs block">Khi <span className="text-on-surface/30">(key = value)</span></label>
                     <div className="flex gap-sm">
-                      <input className="flex-1 border border-outline-variant/40 rounded-lg px-sm py-[6px] text-body-sm" value={o.attrKey} onChange={e => setOverrides(prev => prev.map((r, j) => j === i ? { ...r, attrKey: e.target.value } : r))} placeholder="Size" />
-                      <input className="flex-1 border border-outline-variant/40 rounded-lg px-sm py-[6px] text-body-sm" value={o.attrVal} onChange={e => setOverrides(prev => prev.map((r, j) => j === i ? { ...r, attrVal: e.target.value } : r))} placeholder="6XL" />
+                      <input className="flex-1 border border-outline-variant/40 rounded-lg px-sm py-[6px] text-body-sm" value={o.attrKey} onChange={e => setOverrides(prev => prev.map((r, j) => j === index ? { ...r, attrKey: e.target.value } : r))} placeholder="Size" />
+                      <input className="flex-1 border border-outline-variant/40 rounded-lg px-sm py-[6px] text-body-sm" value={o.attrVal} onChange={e => setOverrides(prev => prev.map((r, j) => j === index ? { ...r, attrVal: e.target.value } : r))} placeholder="6XL" />
                     </div>
                   </div>
                   <div>
                     <label className="text-label-sm text-on-surface/50 mb-xs block">Dùng supplier product</label>
-                    <select className="w-full border border-outline-variant/40 rounded-lg px-sm py-[6px] text-body-sm bg-white" value={o.supplierProductId} onChange={e => setOverrides(prev => prev.map((r, j) => j === i ? { ...r, supplierProductId: e.target.value } : r))}>
+                    <select className="w-full border border-outline-variant/40 rounded-lg px-sm py-[6px] text-body-sm bg-white" value={o.supplierProductId} onChange={e => setOverrides(prev => prev.map((r, j) => j === index ? { ...r, supplierProductId: e.target.value } : r))}>
                       <option value="">-- Chọn --</option>
                       {supplierProducts.map(p => (
                         <option key={p.id} value={p.id}>{p.productName ?? p.sku} — {p.supplier.name}</option>
                       ))}
                     </select>
                   </div>
-                  <button onClick={() => setOverrides(prev => prev.filter((_, j) => j !== i))} className="text-error text-lg mb-[2px]">✕</button>
+                  <button onClick={() => setOverrides(prev => prev.filter((_, j) => j !== index))} className="text-error text-lg mb-[2px]">✕</button>
                 </div>
               ))}
               <button onClick={() => setOverrides(prev => [...prev, { attributeCombo: '', supplierProductId: '', attrKey: '', attrVal: '' }])} className="text-secondary text-label-sm self-start hover:underline">+ Add special case</button>
@@ -489,3 +616,4 @@ export default function MappingPage() {
     </div>
   )
 }
+

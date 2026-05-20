@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Full Design Preview</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #0f172a; color: #e2e8f0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: 20px; }
+
+  h1 { font-size: 22px; font-weight: 700; color: #f1f5f9; margin-bottom: 4px; }
+  .subtitle { font-size: 13px; color: #64748b; margin-bottom: 20px; }
+  .section-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #475569; margin: 24px 0 12px; padding: 8px 12px; background: #1e293b; border-radius: 6px; border-left: 3px solid #6366f1; }
+
+  /* ---- OVERVIEW PAGE ---- */
+  .overview-demo { background: #1a2235; border-radius: 12px; padding: 20px; margin-bottom: 32px; border: 1px solid #2d3f5c; }
+  .page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; }
+  .page-title { font-size: 20px; font-weight: 700; color: #f1f5f9; }
+  .page-sub { font-size: 12px; color: #64748b; margin-top: 2px; }
+
+  /* Period tabs */
+  .period-tabs { display: flex; gap: 6px; margin-bottom: 16px; }
+  .tab { padding: 6px 16px; border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer; border: 1px solid transparent; }
+  .tab.active { background: #6366f1; color: white; }
+  .tab.inactive { background: #1e293b; color: #64748b; border-color: #334155; }
+
+  /* Hero card */
+  .hero-grid { display: grid; grid-template-columns: 1.2fr 1fr 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+  .hero-card { background: linear-gradient(135deg, #4f46e5, #7c3aed); border-radius: 10px; padding: 16px; }
+  .hero-card .label { font-size: 10px; color: #c7d2fe; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
+  .hero-card .value { font-size: 26px; font-weight: 800; color: white; }
+  .hero-card .badge { display: inline-flex; align-items: center; gap: 4px; background: rgba(255,255,255,0.15); border-radius: 20px; padding: 3px 8px; font-size: 10px; color: #a5f3fc; margin-top: 6px; }
+
+  .stat-card { background: #0f1a2e; border-radius: 10px; padding: 14px; border: 1px solid #1e3a5f; }
+  .stat-card .label { font-size: 10px; color: #475569; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; display: flex; align-items: center; gap: 4px; }
+  .stat-card .value { font-size: 20px; font-weight: 700; }
+  .stat-card .sub { font-size: 10px; color: #475569; margin-top: 4px; }
+  .positive { color: #22c55e; }
+  .negative { color: #ef4444; }
+  .neutral { color: #94a3b8; }
+  .blue { color: #60a5fa; }
+
+  /* Second row */
+  .metrics-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+  .metric-mini { background: #0f1a2e; border-radius: 8px; padding: 12px; border: 1px solid #1e3a5f; }
+  .metric-mini .label { font-size: 9px; color: #475569; text-transform: uppercase; margin-bottom: 4px; }
+  .metric-mini .value { font-size: 16px; font-weight: 700; color: #e2e8f0; }
+  .metric-mini .delta { font-size: 10px; margin-top: 3px; }
+
+  /* Chart area */
+  .chart-card { background: #0f1a2e; border-radius: 10px; padding: 16px; border: 1px solid #1e3a5f; margin-bottom: 12px; }
+  .chart-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+  .chart-title { font-size: 13px; font-weight: 600; color: #cbd5e1; }
+  .chart-toggle { display: flex; gap: 4px; }
+  .toggle-btn { padding: 4px 10px; border-radius: 6px; font-size: 10px; font-weight: 600; }
+  .toggle-btn.on { background: #6366f1; color: white; }
+  .toggle-btn.off { background: #1e293b; color: #64748b; }
+
+  /* ---- PROJECTS PAGE ---- */
+  .projects-demo { background: #1a2235; border-radius: 12px; padding: 20px; border: 1px solid #2d3f5c; }
+  .project-tabs { display: flex; gap: 6px; margin-bottom: 14px; }
+  .project-tab { padding: 6px 14px; border-radius: 8px; font-size: 12px; font-weight: 600; }
+  .project-tab.active { background: #6366f1; color: white; }
+  .project-tab.inactive { background: #1e293b; color: #64748b; }
+
+  .profit-section { background: #0f1a2e; border-radius: 10px; padding: 16px; border: 1px solid #1e3a5f; margin-bottom: 12px; }
+  .profit-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+  .profit-title { font-size: 13px; font-weight: 600; color: #cbd5e1; display: flex; align-items: center; gap: 6px; }
+  .profit-summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 14px; }
+  .ps-card { background: #1e293b; border-radius: 8px; padding: 10px; }
+  .ps-card .l { font-size: 9px; color: #475569; text-transform: uppercase; margin-bottom: 4px; }
+  .ps-card .v { font-size: 16px; font-weight: 700; }
+
+  .sync-section { background: #0f1a2e; border-radius: 10px; padding: 14px; border: 1px solid #1e3a5f; margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between; }
+  .sync-info { display: flex; align-items: center; gap: 10px; }
+  .sync-dot { width: 8px; height: 8px; background: #22c55e; border-radius: 50%; box-shadow: 0 0 6px #22c55e; }
+  .sync-text { font-size: 12px; color: #94a3b8; }
+  .sync-btn { background: #1e3a5f; color: #60a5fa; border: none; border-radius: 6px; padding: 6px 14px; font-size: 11px; font-weight: 600; cursor: pointer; }
+</style>
+</head>
+<body>
+
+<!-- ===== SECTION 1: OVERVIEW PAGE ===== -->
+<div class="section-label">📊 OVERVIEW PAGE — Redesigned</div>
+
+<div class="overview-demo">
+  <div class="page-header">
+    <div>
+      <div class="page-title">Tổng quan</div>
+      <div class="page-sub">Lợi nhuận & Hiệu quả kinh doanh · Cập nhật lúc 8:02 SA</div>
+    </div>
+    <div style="display:flex;gap:6px;align-items:center">
+      <div style="background:#1e293b;color:#64748b;border:1px solid #334155;padding:5px 10px;border-radius:6px;font-size:11px">↓ Xuất báo cáo</div>
+    </div>
+  </div>
+
+  <!-- Period tabs -->
+  <div class="period-tabs">
+    <div class="tab active">Hôm nay</div>
+    <div class="tab inactive">Tuần này</div>
+    <div class="tab inactive">Tháng này</div>
+    <div class="tab inactive">All time</div>
+  </div>
+
+  <!-- Row 1: Hero + 3 stats -->
+  <div class="hero-grid">
+    <div class="hero-card">
+      <div class="label">💰 LỢI NHUẬN RÒNG (HÔM NAY)</div>
+      <div class="value">$143.20</div>
+      <div class="badge">↑ +18.4% vs hôm qua</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">🛒 Đơn hàng</div>
+      <div class="value blue">7</div>
+      <div class="sub">AOV: $44.60/đơn</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">💵 Doanh thu</div>
+      <div class="value positive">$312.20</div>
+      <div class="sub" style="color:#22c55e">↑ 65% mục tiêu ngày</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">📣 Ad Spend</div>
+      <div class="value negative">$89.00</div>
+      <div class="sub" style="color:#f59e0b">ROAS 3.5x · Margin 45%</div>
+    </div>
+  </div>
+
+  <!-- Row 2: Secondary metrics -->
+  <div class="metrics-grid">
+    <div class="metric-mini">
+      <div class="label">Fulfillment Cost</div>
+      <div class="value" style="color:#f59e0b">$62.40</div>
+      <div class="delta" style="color:#475569">từ order lines</div>
+    </div>
+    <div class="metric-mini">
+      <div class="label">ROAS</div>
+      <div class="value" style="color:#a78bfa">3.5x</div>
+      <div class="delta positive">↑ vs target 3x</div>
+    </div>
+    <div class="metric-mini">
+      <div class="label">Avg Order Profit</div>
+      <div class="value" style="color:#22c55e">$20.45</div>
+      <div class="delta" style="color:#475569">per order</div>
+    </div>
+    <div class="metric-mini">
+      <div class="label">Unfulfilled</div>
+      <div class="value" style="color:#f59e0b">3</div>
+      <div class="delta" style="color:#475569">đơn chờ xử lý</div>
+    </div>
+  </div>
+
+  <!-- Chart: Revenue vs Costs -->
+  <div class="chart-card">
+    <div class="chart-header">
+      <div class="chart-title">Biểu đồ Revenue vs Ad Spend · Profit line</div>
+      <div class="chart-toggle">
+        <div class="toggle-btn off">Tuần</div>
+        <div class="toggle-btn on">Tháng</div>
+      </div>
+    </div>
+    <svg viewBox="0 0 560 130" style="width:100%">
+      <defs>
+        <linearGradient id="gp" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#22c55e" stop-opacity="0.2"/>
+          <stop offset="100%" stop-color="#22c55e" stop-opacity="0"/>
+        </linearGradient>
+      </defs>
+      <!-- grid -->
+      <line x1="0" y1="20" x2="560" y2="20" stroke="#1e3a5f" stroke-width="1"/>
+      <line x1="0" y1="50" x2="560" y2="50" stroke="#1e3a5f" stroke-width="1"/>
+      <line x1="0" y1="80" x2="560" y2="80" stroke="#1e3a5f" stroke-width="1"/>
+      <line x1="0" y1="110" x2="560" y2="110" stroke="#1e3a5f" stroke-width="1"/>
+      <!-- Revenue bars (blue, background) -->
+      <rect x="4" y="30" width="18" height="80" fill="#3b82f6" opacity="0.35" rx="3"/>
+      <rect x="32" y="25" width="18" height="85" fill="#3b82f6" opacity="0.35" rx="3"/>
+      <rect x="60" y="35" width="18" height="75" fill="#3b82f6" opacity="0.35" rx="3"/>
+      <rect x="88" y="20" width="18" height="90" fill="#3b82f6" opacity="0.35" rx="3"/>
+      <rect x="116" y="28" width="18" height="82" fill="#3b82f6" opacity="0.35" rx="3"/>
+      <rect x="144" y="15" width="18" height="95" fill="#3b82f6" opacity="0.35" rx="3"/>
+      <rect x="172" y="22" width="18" height="88" fill="#3b82f6" opacity="0.35" rx="3"/>
+      <rect x="200" y="18" width="18" height="92" fill="#3b82f6" opacity="0.35" rx="3"/>
+      <rect x="228" y="30" width="18" height="80" fill="#3b82f6" opacity="0.35" rx="3"/>
+      <rect x="256" y="12" width="18" height="98" fill="#3b82f6" opacity="0.35" rx="3"/>
+      <rect x="284" y="8" width="18" height="102" fill="#3b82f6" opacity="0.35" rx="3"/>
+      <rect x="312" y="20" width="18" height="90" fill="#3b82f6" opacity="0.35" rx="3"/>
+      <rect x="340" y="5" width="18" height="105" fill="#3b82f6" opacity="0.35" rx="3"/>
+      <rect x="368" y="14" width="18" height="96" fill="#3b82f6" opacity="0.35" rx="3"/>
+      <rect x="396" y="10" width="18" height="100" fill="#3b82f6" opacity="0.35" rx="3"/>
+      <rect x="424" y="3" width="18" height="107" fill="#3b82f6" opacity="0.35" rx="3"/>
+      <rect x="452" y="7" width="18" height="103" fill="#3b82f6" opacity="0.35" rx="3"/>
+      <rect x="480" y="16" width="18" height="94" fill="#3b82f6" opacity="0.35" rx="3"/>
+      <rect x="508" y="25" width="18" height="85" fill="#3b82f6" opacity="0.35" rx="3"/>
+      <rect x="536" y="2" width="18" height="108" fill="#3b82f6" opacity="0.35" rx="3"/>
+      <!-- Ad Spend bars (red overlay) -->
+      <rect x="4" y="75" width="18" height="35" fill="#ef4444" opacity="0.5" rx="3"/>
+      <rect x="32" y="72" width="18" height="38" fill="#ef4444" opacity="0.5" rx="3"/>
+      <rect x="60" y="78" width="18" height="32" fill="#ef4444" opacity="0.5" rx="3"/>
+      <rect x="88" y="68" width="18" height="42" fill="#ef4444" opacity="0.5" rx="3"/>
+      <rect x="116" y="73" width="18" height="37" fill="#ef4444" opacity="0.5" rx="3"/>
+      <rect x="144" y="65" width="18" height="45" fill="#ef4444" opacity="0.5" rx="3"/>
+      <rect x="172" y="70" width="18" height="40" fill="#ef4444" opacity="0.5" rx="3"/>
+      <rect x="200" y="67" width="18" height="43" fill="#ef4444" opacity="0.5" rx="3"/>
+      <rect x="228" y="74" width="18" height="36" fill="#ef4444" opacity="0.5" rx="3"/>
+      <rect x="256" y="62" width="18" height="48" fill="#ef4444" opacity="0.5" rx="3"/>
+      <rect x="284" y="58" width="18" height="52" fill="#ef4444" opacity="0.5" rx="3"/>
+      <rect x="312" y="66" width="18" height="44" fill="#ef4444" opacity="0.5" rx="3"/>
+      <rect x="340" y="55" width="18" height="55" fill="#ef4444" opacity="0.5" rx="3"/>
+      <rect x="368" y="62" width="18" height="48" fill="#ef4444" opacity="0.5" rx="3"/>
+      <rect x="396" y="59" width="18" height="51" fill="#ef4444" opacity="0.5" rx="3"/>
+      <rect x="424" y="52" width="18" height="58" fill="#ef4444" opacity="0.5" rx="3"/>
+      <rect x="452" y="56" width="18" height="54" fill="#ef4444" opacity="0.5" rx="3"/>
+      <rect x="480" y="63" width="18" height="47" fill="#ef4444" opacity="0.5" rx="3"/>
+      <rect x="508" y="70" width="18" height="40" fill="#ef4444" opacity="0.5" rx="3"/>
+      <rect x="536" y="48" width="18" height="62" fill="#ef4444" opacity="0.5" rx="3"/>
+      <!-- Profit line + area -->
+      <path d="M13,72 L41,68 L69,74 L97,62 L125,66 L153,56 L181,60 L209,55 L237,68 L265,48 L293,42 L321,52 L349,38 L377,45 L405,40 L433,32 L461,36 L489,44 L517,55 L545,35 L545,120 L13,120 Z" fill="url(#gp)"/>
+      <polyline points="13,72 41,68 69,74 97,62 125,66 153,56 181,60 209,55 237,68 265,48 293,42 321,52 349,38 377,45 405,40 433,32 461,36 489,44 517,55 545,35"
+        fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linejoin="round"/>
+      <!-- dots on profit line -->
+      <circle cx="433" cy="32" r="4" fill="#22c55e"/>
+      <circle cx="545" cy="35" r="4" fill="#22c55e" stroke="white" stroke-width="1.5"/>
+      <!-- legend -->
+      <rect x="4" y="117" width="10" height="6" fill="#3b82f6" opacity="0.5" rx="1"/>
+      <text x="17" y="122" fill="#475569" font-size="8">Revenue</text>
+      <rect x="70" y="117" width="10" height="6" fill="#ef4444" opacity="0.6" rx="1"/>
+      <text x="83" y="122" fill="#475569" font-size="8">Ad Spend</text>
+      <line x1="140" y1="120" x2="155" y2="120" stroke="#22c55e" stroke-width="2"/>
+      <text x="158" y="122" fill="#475569" font-size="8">Profit</text>
+    </svg>
+  </div>
+</div>
+
+<!-- ===== SECTION 2: PROJECTS PAGE - PROFIT CHART ===== -->
+<div class="section-label">📈 PROJECTS PAGE — Profit Chart Section (mới thêm vào)</div>
+
+<div class="projects-demo">
+  <div style="color:#f1f5f9;font-size:16px;font-weight:700;margin-bottom:12px">Project Management</div>
+
+  <div class="project-tabs">
+    <div class="project-tab active">Project Alpha</div>
+    <div class="project-tab inactive">Project Beta</div>
+  </div>
+
+  <!-- Profit chart section (NEW) -->
+  <div class="profit-section">
+    <div class="profit-header">
+      <div class="profit-title">
+        <span style="color:#22c55e">◆</span> Profit Chart
+        <span style="font-size:10px;color:#475569;font-weight:400">profit từng đơn hàng · tháng 5/2026</span>
+      </div>
+      <div style="display:flex;gap:6px">
+        <div class="toggle-btn off" style="background:#1e293b;color:#64748b;border-radius:6px;padding:4px 10px;font-size:10px;">Tuần</div>
+        <div class="toggle-btn on" style="background:#6366f1;color:white;border-radius:6px;padding:4px 10px;font-size:10px;">Tháng</div>
+        <div style="background:#1e293b;color:#64748b;border-radius:6px;padding:4px 10px;font-size:10px;border:1px solid #334155">Tùy chọn ▼</div>
+      </div>
+    </div>
+
+    <!-- Summary cards -->
+    <div class="profit-summary">
+      <div class="ps-card">
+        <div class="l">Total Profit</div>
+        <div class="v positive">$3,241</div>
+      </div>
+      <div class="ps-card">
+        <div class="l">Orders</div>
+        <div class="v blue">94</div>
+      </div>
+      <div class="ps-card">
+        <div class="l">Avg Margin</div>
+        <div class="v" style="color:#a78bfa">32.4%</div>
+      </div>
+      <div class="ps-card">
+        <div class="l">Avg Order Profit</div>
+        <div class="v" style="color:#f59e0b">$34.47</div>
+      </div>
+    </div>
+
+    <!-- Chart D: Profit line + Order count bars -->
+    <svg viewBox="0 0 560 140" style="width:100%">
+      <defs>
+        <linearGradient id="gprofit" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#22c55e" stop-opacity="0.25"/>
+          <stop offset="100%" stop-color="#22c55e" stop-opacity="0"/>
+        </linearGradient>
+      </defs>
+      <!-- grid -->
+      <line x1="0" y1="20" x2="560" y2="20" stroke="#1e3a5f" stroke-width="1"/>
+      <line x1="0" y1="55" x2="560" y2="55" stroke="#1e3a5f" stroke-width="1"/>
+      <line x1="0" y1="90" x2="560" y2="90" stroke="#1e3a5f" stroke-width="1"/>
+      <!-- Y axis labels -->
+      <text x="2" y="18" fill="#334155" font-size="8">$200</text>
+      <text x="2" y="53" fill="#334155" font-size="8">$100</text>
+      <!-- Order count bars (purple, background) -->
+      <rect x="8" y="75" width="16" height="25" fill="#6366f1" opacity="0.4" rx="2"/>
+      <rect x="35" y="68" width="16" height="32" fill="#6366f1" opacity="0.4" rx="2"/>
+      <rect x="62" y="72" width="16" height="28" fill="#6366f1" opacity="0.4" rx="2"/>
+      <rect x="89" y="60" width="16" height="40" fill="#6366f1" opacity="0.4" rx="2"/>
+      <rect x="116" y="65" width="16" height="35" fill="#6366f1" opacity="0.4" rx="2"/>
+      <rect x="143" y="50" width="16" height="50" fill="#6366f1" opacity="0.4" rx="2"/>
+      <rect x="170" y="55" width="16" height="45" fill="#6366f1" opacity="0.4" rx="2"/>
+      <rect x="197" y="45" width="16" height="55" fill="#6366f1" opacity="0.4" rx="2"/>
+      <rect x="224" y="58" width="16" height="42" fill="#6366f1" opacity="0.4" rx="2"/>
+      <rect x="251" y="38" width="16" height="62" fill="#6366f1" opacity="0.4" rx="2"/>
+      <rect x="278" y="32" width="16" height="68" fill="#6366f1" opacity="0.4" rx="2"/>
+      <rect x="305" y="42" width="16" height="58" fill="#6366f1" opacity="0.4" rx="2"/>
+      <rect x="332" y="25" width="16" height="75" fill="#6366f1" opacity="0.4" rx="2"/>
+      <rect x="359" y="35" width="16" height="65" fill="#6366f1" opacity="0.4" rx="2"/>
+      <rect x="386" y="28" width="16" height="72" fill="#6366f1" opacity="0.4" rx="2"/>
+      <rect x="413" y="18" width="16" height="82" fill="#6366f1" opacity="0.5" rx="2"/>
+      <rect x="440" y="22" width="16" height="78" fill="#6366f1" opacity="0.4" rx="2"/>
+      <rect x="467" y="30" width="16" height="70" fill="#6366f1" opacity="0.4" rx="2"/>
+      <rect x="494" y="40" width="16" height="60" fill="#6366f1" opacity="0.4" rx="2"/>
+      <rect x="521" y="12" width="16" height="88" fill="#6366f1" opacity="0.5" rx="2"/>
+      <!-- Profit line (green) -->
+      <path d="M16,82 L43,76 L70,79 L97,68 L124,72 L151,58 L178,62 L205,52 L232,66 L259,44 L286,38 L313,50 L340,32 L367,40 L394,35 L421,25 L448,29 L475,37 L502,48 L529,20 L529,130 L16,130 Z" fill="url(#gprofit)"/>
+      <polyline points="16,82 43,76 70,79 97,68 124,72 151,58 178,62 205,52 232,66 259,44 286,38 313,50 340,32 367,40 394,35 421,25 448,29 475,37 502,48 529,20"
+        fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linejoin="round"/>
+      <!-- Today marker -->
+      <circle cx="529" cy="20" r="5" fill="#22c55e" stroke="#0f1a2e" stroke-width="2"/>
+      <line x1="529" y1="20" x2="529" y2="130" stroke="#22c55e" stroke-width="1" stroke-dasharray="3,3"/>
+      <text x="522" y="135" fill="#22c55e" font-size="8">Hôm nay</text>
+      <!-- Date labels -->
+      <text x="8" y="130" fill="#334155" font-size="8">1/5</text>
+      <text x="116" y="130" fill="#334155" font-size="8">5/5</text>
+      <text x="224" y="130" fill="#334155" font-size="8">9/5</text>
+      <text x="332" y="130" fill="#334155" font-size="8">13/5</text>
+      <text x="440" y="130" fill="#334155" font-size="8">17/5</text>
+      <!-- Legend -->
+      <rect x="8" y="6" width="10" height="6" fill="#6366f1" opacity="0.5" rx="1"/>
+      <text x="21" y="11" fill="#475569" font-size="8">Orders/ngày</text>
+      <line x1="90" y1="9" x2="104" y2="9" stroke="#22c55e" stroke-width="2"/>
+      <text x="107" y="11" fill="#475569" font-size="8">Profit ($)</text>
+    </svg>
+  </div>
+
+  <!-- Auto-sync status bar -->
+  <div class="sync-section">
+    <div class="sync-info">
+      <div class="sync-dot"></div>
+      <div>
+        <div class="sync-text" style="color:#e2e8f0;font-size:12px;font-weight:600">Auto-sync đang hoạt động</div>
+        <div class="sync-text">Sync mỗi 1 tiếng · Lần cuối: 08:02 SA · Orders: 94 · Meta Insights: $89.00</div>
+      </div>
+    </div>
+    <div style="display:flex;gap:6px">
+      <div class="sync-btn">⟳ Sync ngay</div>
+      <div class="sync-btn" style="background:#0f1a2e;color:#475569">Cấu hình</div>
+    </div>
+  </div>
+</div>
+
+<div style="margin-top:24px;padding:16px;background:#1e293b;border-radius:8px;border-left:3px solid #f59e0b">
+  <div style="color:#f59e0b;font-size:11px;font-weight:700;margin-bottom:6px">⚠️ GHI CHÚ QUAN TRỌNG VỀ DATA</div>
+  <div style="color:#94a3b8;font-size:11px;line-height:1.6">
+    • <strong style="color:#e2e8f0">Profit per order</strong> = expectedPayout − Σ(resolvedBaseCost × qty) − shipping — chỉ chính xác với đơn đã được map supplier<br>
+    • <strong style="color:#e2e8f0">Ad Spend realtime</strong> = Meta Insights API (/{account_id}/insights) — cần thêm model DailyAdSpend mới vào DB<br>
+    • <strong style="color:#e2e8f0">Auto-sync</strong> = node-cron chạy trong Next.js process, không cần Task Scheduler bên ngoài<br>
+    • Đơn chưa map supplier sẽ hiện profit = N/A (không tính vào chart)
+  </div>
+</div>
+
+</body>
+</html>

@@ -44,9 +44,20 @@ export type ShopifyOrder = {
   customerName: string | null
   shippingCountry: string | null
   shippingState: string | null
+  shippingName: string | null
+  shippingAddress1: string | null
+  shippingAddress2: string | null
+  shippingCity: string | null
+  shippingZip: string | null
+  shippingPhone: string | null
   lines: ShopifyOrderLine[]
   transactions: ShopifyTransaction[]
   refundedAmount: number
+}
+
+export type ShopifyShopInfo = {
+  ianaTimezone: string | null
+  timezoneAbbreviation: string | null
 }
 
 const QUERY = `
@@ -61,7 +72,18 @@ query SyncOrders($cursor: String, $query: String) {
       currentSubtotalPriceSet { shopMoney { amount } }
       currentTotalTaxSet { shopMoney { amount } }
       currentShippingPriceSet { shopMoney { amount } }
-      shippingAddress { country countryCodeV2 province }
+      customer { email displayName }
+      shippingAddress {
+        name
+        address1
+        address2
+        city
+        zip
+        phone
+        country
+        countryCodeV2
+        province
+      }
       taxLines { source priceSet { shopMoney { amount } } }
       lineItems(first: 50) {
         nodes {
@@ -84,6 +106,14 @@ query SyncOrders($cursor: String, $query: String) {
         totalRefundedSet { shopMoney { amount } }
       }
     }
+  }
+}`
+
+const SHOP_QUERY = `
+query ShopInfo {
+  shop {
+    ianaTimezone
+    timezoneAbbreviation
   }
 }`
 
@@ -144,10 +174,16 @@ export async function fetchOrdersPage(
       shipping: num(n.currentShippingPriceSet),
       tax: num(n.currentTotalTaxSet),
       taxMarketplaceCollected,
-      customerEmail: null,
-      customerName: null,
+      customerEmail: n.customer?.email ?? null,
+      customerName: n.customer?.displayName ?? null,
       shippingCountry: n.shippingAddress?.countryCodeV2 ?? n.shippingAddress?.country ?? null,
       shippingState: n.shippingAddress?.province ?? null,
+      shippingName: n.shippingAddress?.name ?? null,
+      shippingAddress1: n.shippingAddress?.address1 ?? null,
+      shippingAddress2: n.shippingAddress?.address2 ?? null,
+      shippingCity: n.shippingAddress?.city ?? null,
+      shippingZip: n.shippingAddress?.zip ?? null,
+      shippingPhone: n.shippingAddress?.phone ?? null,
       lines: (n.lineItems?.nodes || []).map((l: any) => ({
         id: l.id,
         sku: l.sku || null,
@@ -171,5 +207,28 @@ export async function fetchOrdersPage(
     orders,
     hasNextPage: conn.pageInfo.hasNextPage,
     endCursor: conn.pageInfo.endCursor,
+  }
+}
+
+export async function fetchShopInfo(
+  shop: string,
+  accessToken: string,
+  apiVersion = '2024-10',
+): Promise<ShopifyShopInfo> {
+  const url = `https://${shop}/admin/api/${apiVersion}/graphql.json`
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Shopify-Access-Token': accessToken,
+    },
+    body: JSON.stringify({ query: SHOP_QUERY }),
+  })
+  if (!res.ok) throw new Error(`Shopify GraphQL ${res.status}: ${await res.text()}`)
+  const json = await res.json()
+  if (json.errors) throw new Error(`GraphQL errors: ${JSON.stringify(json.errors)}`)
+  return {
+    ianaTimezone: json.data?.shop?.ianaTimezone ?? null,
+    timezoneAbbreviation: json.data?.shop?.timezoneAbbreviation ?? null,
   }
 }

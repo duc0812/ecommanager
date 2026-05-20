@@ -1,0 +1,140 @@
+<h2>Edit Product Base — v2</h2>
+<p class="subtitle">Tag input cho values + Supplier Product rõ ràng</p>
+
+<div style="max-width:680px;margin:24px auto;border:1px solid #e0e0e0;border-radius:12px;overflow:hidden;background:#fff;box-shadow:0 4px 24px rgba(0,0,0,0.10)">
+
+  <!-- Modal header -->
+  <div style="padding:18px 24px;border-bottom:1px solid #e0e0e0;display:flex;justify-content:space-between;align-items:center;background:#091426">
+    <div style="font-size:16px;font-weight:700;color:#fff">Edit Product Base — Tshirt 3D</div>
+    <span style="color:#aaa;font-size:20px;cursor:pointer">✕</span>
+  </div>
+
+  <div style="padding:24px;display:flex;flex-direction:column;gap:20px">
+
+    <!-- Basic info -->
+    <div>
+      <div style="font-size:12px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Thông tin cơ bản</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div>
+          <div style="font-size:12px;color:#666;margin-bottom:4px">Tên Product Base</div>
+          <input style="width:100%;border:1px solid #ddd;border-radius:8px;padding:8px 12px;font-size:13px;box-sizing:border-box" value="Tshirt 3D" />
+        </div>
+        <div>
+          <div style="font-size:12px;color:#666;margin-bottom:4px">Shopify Product Type</div>
+          <input style="width:100%;border:1px solid #ddd;border-radius:8px;padding:8px 12px;font-size:13px;box-sizing:border-box" value="3D Clothing" />
+        </div>
+      </div>
+    </div>
+
+    <!-- Match conditions -->
+    <div>
+      <div style="font-size:12px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Match Conditions <span style="font-size:11px;font-weight:400;color:#888;text-transform:none">(AND logic)</span></div>
+      <div style="display:flex;flex-direction:column;gap:10px">
+
+        <!-- Condition row: Style -->
+        <div style="border:1px solid #ddd;border-radius:8px;padding:10px 12px;display:grid;grid-template-columns:120px 1fr 32px;gap:12px;align-items:center">
+          <div>
+            <div style="font-size:11px;color:#888;margin-bottom:3px">Option Name</div>
+            <input style="width:100%;border:1px solid #e0e0e0;border-radius:6px;padding:6px 8px;font-size:12px;box-sizing:border-box" value="Style" />
+          </div>
+          <div>
+            <div style="font-size:11px;color:#888;margin-bottom:3px">Values <span style="color:#aaa">(nhập rồi Enter)</span></div>
+            <div style="border:1px solid #e0e0e0;border-radius:6px;padding:5px 8px;display:flex;flex-wrap:wrap;gap:5px;align-items:center;min-height:34px;background:#fff">
+              <span style="background:#ede9ff;color:#4b41e1;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:600;display:flex;align-items:center;gap:4px">Tshirt <span style="opacity:.6;cursor:pointer">✕</span></span>
+              <input style="border:none;outline:none;font-size:12px;min-width:60px;flex:1" placeholder="Thêm value..." />
+            </div>
+          </div>
+          <span style="color:#e53935;cursor:pointer;text-align:center;font-size:16px;padding-top:16px">✕</span>
+        </div>
+
+        <!-- Condition row: Size -->
+        <div style="border:1px solid #ddd;border-radius:8px;padding:10px 12px;display:grid;grid-template-columns:120px 1fr 32px;gap:12px;align-items:center">
+          <div>
+            <div style="font-size:11px;color:#888;margin-bottom:3px">Option Name</div>
+            <input style="width:100%;border:1px solid #e0e0e0;border-radius:6px;padding:6px 8px;font-size:12px;box-sizing:border-box" value="Size" />
+          </div>
+          <div>
+            <div style="font-size:11px;color:#888;margin-bottom:3px">Values <span style="color:#aaa">(nhập rồi Enter)</span></div>
+            <div style="border:1px solid #4b41e1;border-radius:6px;padding:5px 8px;display:flex;flex-wrap:wrap;gap:5px;align-items:center;min-height:34px;background:#fff">
+              <span style="background:#ede9ff;color:#4b41e1;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:600;display:flex;align-items:center;gap:4px">S <span style="opacity:.6;cursor:pointer">✕</span></span>
+              <span style="background:#ede9ff;color:#4b41e1;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:600;display:flex;align-items:center;gap:4px">M <span style="opacity:.6;cursor:pointer">✕</span></span>
+              <span style="background:#ede9ff;color:#4b41e1;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:600;display:flex;align-items:center;gap:4px">L <span style="opacity:.6;cursor:pointer">✕</span></span>
+              <span style="background:#ede9ff;color:#4b41e1;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:600;display:flex;align-items:center;gap:4px">XL <span style="opacity:.6;cursor:pointer">✕</span></span>
+              <input style="border:none;outline:none;font-size:12px;min-width:40px;flex:1" placeholder="2XL..." />
+            </div>
+          </div>
+          <span style="color:#e53935;cursor:pointer;text-align:center;font-size:16px;padding-top:16px">✕</span>
+        </div>
+
+        <div style="color:#4b41e1;font-size:13px;cursor:pointer;padding:2px 0">+ Add condition</div>
+      </div>
+    </div>
+
+    <!-- Supplier mappings — shows Supplier Product name -->
+    <div>
+      <div style="font-size:12px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Suppliers theo Rank</div>
+      <div style="font-size:11px;color:#888;margin-bottom:8px">Chọn đúng sản phẩm của supplier để hệ thống biết map chính xác SKU nào</div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+
+        <div style="display:grid;grid-template-columns:40px 1fr 32px;gap:8px;align-items:center">
+          <span style="background:#4b41e1;color:white;border-radius:6px;padding:4px 0;font-size:12px;font-weight:700;text-align:center">#1</span>
+          <div style="border:1px solid #ddd;border-radius:8px;padding:8px 12px;display:flex;justify-content:space-between;align-items:center;background:#f9fffe;cursor:pointer">
+            <div>
+              <div style="font-size:13px;font-weight:700;color:#091426">Tshirt 3D Premium</div>
+              <div style="font-size:11px;color:#888;margin-top:1px">Supplier A · SKU: SUP-A-TS3D · Size: S,M,L,XL,2XL</div>
+            </div>
+            <span style="color:#4b41e1;font-size:12px">Đổi ▾</span>
+          </div>
+          <span style="color:#e53935;cursor:pointer;text-align:center;font-size:16px">✕</span>
+        </div>
+
+        <div style="display:grid;grid-template-columns:40px 1fr 32px;gap:8px;align-items:center">
+          <span style="background:#e3f2fd;color:#1565c0;border-radius:6px;padding:4px 0;font-size:12px;font-weight:700;text-align:center">#2</span>
+          <div style="border:1px solid #ddd;border-radius:8px;padding:8px 12px;display:flex;justify-content:space-between;align-items:center;cursor:pointer">
+            <div>
+              <div style="font-size:13px;font-weight:700;color:#091426">Classic Tshirt 3D</div>
+              <div style="font-size:11px;color:#888;margin-top:1px">Supplier B · SKU: SUP-B-CTS · Size: S,M,L,XL,2XL,3XL,4XL</div>
+            </div>
+            <span style="color:#4b41e1;font-size:12px">Đổi ▾</span>
+          </div>
+          <span style="color:#e53935;cursor:pointer;text-align:center;font-size:16px">✕</span>
+        </div>
+
+        <div style="color:#4b41e1;font-size:13px;cursor:pointer;padding:2px 0">+ Add supplier product</div>
+      </div>
+    </div>
+
+    <!-- Special Cases -->
+    <div>
+      <div style="font-size:12px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Special Cases</div>
+      <div style="font-size:11px;color:#888;margin-bottom:8px">Ngoại lệ cho attribute combo cụ thể — override supplier mặc định</div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <div style="background:#fff8e1;border:1px solid #ffe082;border-radius:8px;padding:10px 12px;display:grid;grid-template-columns:1fr 1fr 32px;gap:12px;align-items:start">
+          <div>
+            <div style="font-size:11px;color:#888;margin-bottom:5px">Khi attribute</div>
+            <div style="border:1px solid #e0e0e0;border-radius:6px;padding:5px 8px;display:flex;flex-wrap:wrap;gap:4px;background:#fff">
+              <span style="background:#fff3e0;color:#e65100;padding:2px 7px;border-radius:4px;font-size:11px;font-weight:600;display:flex;align-items:center;gap:3px">Size = 6XL <span style="opacity:.5;cursor:pointer">✕</span></span>
+              <input style="border:none;outline:none;font-size:11px;min-width:50px" placeholder="Add..." />
+            </div>
+          </div>
+          <div>
+            <div style="font-size:11px;color:#888;margin-bottom:5px">Dùng supplier product</div>
+            <div style="border:1px solid #ddd;border-radius:6px;padding:7px 10px;background:#fff">
+              <div style="font-size:12px;font-weight:700;color:#091426">Oversize Tshirt 3D</div>
+              <div style="font-size:11px;color:#888">Supplier B · SUP-B-OVR</div>
+            </div>
+          </div>
+          <span style="color:#e53935;cursor:pointer;text-align:center;font-size:16px;padding-top:18px">✕</span>
+        </div>
+        <div style="color:#4b41e1;font-size:13px;cursor:pointer;padding:2px 0">+ Add special case</div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Modal footer -->
+  <div style="padding:16px 24px;border-top:1px solid #e0e0e0;display:flex;justify-content:flex-end;gap:12px;background:#fafafa">
+    <button style="background:#fff;border:1px solid #ddd;color:#555;padding:8px 20px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">Cancel</button>
+    <button style="background:#4b41e1;color:white;border:none;padding:8px 20px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">Save Product Base</button>
+  </div>
+</div>

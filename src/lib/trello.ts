@@ -63,6 +63,23 @@ export function shouldCreateCard(
   return extractNum(orderName) >= extractNum(syncFromOrderName)
 }
 
+export async function addAttachmentToCard(
+  cfg: TrelloConfig,
+  cardId: string,
+  url: string,
+  name: string,
+): Promise<void> {
+  const res = await fetch(`${BASE}/cards/${cardId}/attachments?${auth(cfg)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url, name }),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`Trello addAttachment failed ${res.status}: ${text}`)
+  }
+}
+
 export async function getTrelloConfig(): Promise<TrelloConfig | null> {
   const { prisma } = await import('@/lib/db')
   const rows = await prisma.appSetting.findMany({

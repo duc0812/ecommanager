@@ -22,20 +22,59 @@ export async function POST(req: NextRequest) {
     limit: 5000,
   })
 
+  const supplierSkus = Array.from(new Set(
+    orders.flatMap(o => o.lines.map(l => l.resolvedSupplierSku).filter((sku): sku is string => Boolean(sku))),
+  ))
+  const supplierProducts = supplierSkus.length > 0
+    ? await prisma.supplierProduct.findMany({
+      where: { supplierId: tmpl.supplierId, sku: { in: supplierSkus } },
+      select: {
+        sku: true,
+        productType: true,
+        productName: true,
+        variant1Name: true,
+        variant1Value: true,
+        variant2Name: true,
+        variant2Value: true,
+      },
+    })
+    : []
+  const supplierProductBySku = new Map(supplierProducts.map(p => [p.sku, p]))
+
   const ordersForCsv: OrderForCsv[] = orders.map(o => ({
     shopifyOrderNumber: o.shopifyOrderNumber,
     customerName: o.customerName,
     customerEmail: o.customerEmail,
     shippingCountry: o.shippingCountry,
     shippingState: o.shippingState,
+    shippingName: o.shippingName,
+    shippingAddress1: o.shippingAddress1,
+    shippingAddress2: o.shippingAddress2,
+    shippingCity: o.shippingCity,
+    shippingZip: o.shippingZip,
+    shippingPhone: o.shippingPhone,
+    financialStatus: o.financialStatus,
+    fulfillmentStatus: o.fulfillmentStatus,
+    designDriveLink: o.designDriveLink,
+    trelloCardUrl: o.trelloCardUrl,
     placedAt: o.placedAt,
-    lines: o.lines.map(l => ({
-      sku: l.sku,
-      supplierSku: l.resolvedSupplierSku,
-      qty: l.qty,
-      productTitle: l.productTitle,
-      variantTitle: l.variantTitle,
-    })),
+    lines: o.lines.map(l => {
+      const supplierProduct = l.resolvedSupplierSku ? supplierProductBySku.get(l.resolvedSupplierSku) : null
+      return {
+        sku: l.sku,
+        supplierSku: l.resolvedSupplierSku,
+        qty: l.qty,
+        productTitle: l.productTitle,
+        variantTitle: l.variantTitle,
+        unitPrice: l.unitPrice,
+        supplierProductType: supplierProduct?.productType ?? null,
+        supplierProductName: supplierProduct?.productName ?? null,
+        supplierVariant1Name: supplierProduct?.variant1Name ?? null,
+        supplierVariant1Value: supplierProduct?.variant1Value ?? null,
+        supplierVariant2Name: supplierProduct?.variant2Name ?? null,
+        supplierVariant2Value: supplierProduct?.variant2Value ?? null,
+      }
+    }),
   }))
 
   const renderTmpl: RenderTemplate = {

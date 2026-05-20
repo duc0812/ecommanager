@@ -182,6 +182,7 @@ export type ProductUpsertInput = {
   minProductionDays?: number | null
   maxProductionDays?: number | null
   shippingByRegion?: string | null
+  textureOfMaterial?: string | null
 }
 
 export async function upsertProductMapping(input: ProductUpsertInput) {
@@ -208,6 +209,7 @@ export async function upsertProductMapping(input: ProductUpsertInput) {
         minProductionDays: input.minProductionDays ?? null,
         maxProductionDays: input.maxProductionDays ?? null,
         shippingByRegion: input.shippingByRegion ?? null,
+        textureOfMaterial: input.textureOfMaterial ?? null,
       },
       update: {
         baseCost: input.baseCost,
@@ -224,6 +226,7 @@ export async function upsertProductMapping(input: ProductUpsertInput) {
         ...(input.minProductionDays !== undefined ? { minProductionDays: input.minProductionDays } : {}),
         ...(input.maxProductionDays !== undefined ? { maxProductionDays: input.maxProductionDays } : {}),
         ...(input.shippingByRegion !== undefined ? { shippingByRegion: input.shippingByRegion } : {}),
+        ...(input.textureOfMaterial !== undefined ? { textureOfMaterial: input.textureOfMaterial } : {}),
       },
     })
     if (existing && existing.baseCost !== input.baseCost) {
@@ -247,8 +250,6 @@ export type BulkUpsertResult = {
 }
 
 export type ProductBulkRow = {
-  supplierName?: string | null
-  supplierCode?: string | null
   sku: string
   baseCost: number
   productName?: string | null
@@ -264,6 +265,7 @@ export type ProductBulkRow = {
   minProductionDays?: number | null
   maxProductionDays?: number | null
   shippingByRegion?: string | null
+  textureOfMaterial?: string | null
 }
 
 export async function bulkUpsertProducts(
@@ -285,41 +287,6 @@ export async function bulkUpsertProducts(
       result.errors.push({ row: i, sku: r.sku, error: e.message })
     }
   }
-  return result
-}
-
-function normalizeLookup(v?: string | null) {
-  return (v ?? '').trim().toLowerCase()
-}
-
-export async function bulkUpsertProductsBySupplierName(rows: ProductBulkRow[]): Promise<BulkUpsertResult> {
-  const result: BulkUpsertResult = { created: 0, updated: 0, errors: [] }
-  const suppliers = await prisma.supplier.findMany()
-  const byName = new Map(suppliers.map(s => [normalizeLookup(s.name), s]))
-  const byCode = new Map(suppliers.map(s => [normalizeLookup(s.code), s]))
-
-  for (let i = 0; i < rows.length; i++) {
-    const r = rows[i]
-    const lookup = normalizeLookup(r.supplierName) || normalizeLookup(r.supplierCode)
-    const supplier = byName.get(lookup) ?? byCode.get(lookup)
-    if (!supplier) {
-      result.errors.push({ row: i, sku: r.sku ?? '', error: 'supplierName does not match an existing supplier' })
-      continue
-    }
-    if (!r.sku) { result.errors.push({ row: i, sku: '', error: 'sku is required' }); continue }
-    if (!Number.isFinite(r.baseCost)) { result.errors.push({ row: i, sku: r.sku, error: 'baseCost must be a number' }); continue }
-    try {
-      const before = await prisma.supplierProduct.findUnique({
-        where: { supplierId_sku: { supplierId: supplier.id, sku: r.sku } },
-      })
-      const { supplierName, supplierCode, ...product } = r
-      await upsertProductMapping({ supplierId: supplier.id, ...product })
-      if (before) result.updated++; else result.created++
-    } catch (e: any) {
-      result.errors.push({ row: i, sku: r.sku, error: e.message })
-    }
-  }
-
   return result
 }
 

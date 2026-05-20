@@ -10,12 +10,37 @@ type OrderRow = {
   customerEmail: string | null
   placedAt: string
   currency: string
+  grossAmount: number
+  subtotalAmount: number
+  shippingAmount: number
+  taxAmount: number
   expectedPayout: number
+  financialStatus: string
+  fulfillmentStatus: string | null
+  shopTimezone: string | null
+  store: { id: string; shop: string; ianaTimezone: string | null } | null
   pipelineStatus: PipelineStatus
   shippingZone: string | null
   shippingCountry: string | null
+  shippingState: string | null
+  shippingName: string | null
+  shippingAddress1: string | null
+  shippingAddress2: string | null
+  shippingCity: string | null
+  shippingZip: string | null
+  shippingPhone: string | null
   defaultSupplier: { id: string; name: string } | null
-  lines: Array<{ id: string; sku: string | null; productTitle: string; qty: number }>
+  lines: Array<{
+    id: string
+    sku: string | null
+    productTitle: string
+    variantTitle: string | null
+    variantOptions: string | null
+    qty: number
+    unitPrice: number
+    resolvedSupplierSku: string | null
+    resolvedBaseCost: number | null
+  }>
   computed: { baseCost: number; shipping: number; profit: number; margin: number; hasUnmappedSku: boolean }
   orderType: string           // "CUSTOM" | "NON_CUSTOM" | "UNKNOWN"
   trelloCardId: string | null
@@ -57,6 +82,7 @@ export default function OrdersPage() {
   const [typeFilter, setTypeFilter] = useState<'ALL' | 'CUSTOM' | 'NON_CUSTOM'>('ALL')
   const [designFilter, setDesignFilter] = useState<'ALL' | 'HAS' | 'MISSING'>('ALL')
   const [trelloFilter, setTrelloFilter] = useState<'ALL' | 'CREATED' | 'NOT_CREATED'>('ALL')
+  const [selectedOrder, setSelectedOrder] = useState<OrderRow | null>(null)
 
   // Initial fetch of projects and suppliers
   useEffect(() => {
@@ -168,14 +194,68 @@ export default function OrdersPage() {
   }
 
   const fmt = (n: number, cur = 'USD') =>
-    new Intl.NumberFormat('en-US', { style: 'currency', currency: cur }).format(n)
+    new Intl.NumberFormat('en-US', { style: 'currency', currency: cur }).format(Number.isFinite(n) ? n : 0)
+
+  const formatShopifyDate = (iso: string, timeZone?: string | null) =>
+    new Intl.DateTimeFormat('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+      timeZone: timeZone || 'UTC',
+    }).format(new Date(iso))
+
+  const compactShopifyDate = (iso: string, timeZone?: string | null) => {
+    const dt = new Date(iso)
+    const zone = timeZone || 'UTC'
+    return {
+      date: new Intl.DateTimeFormat('en-US', {
+        month: 'short',
+        day: 'numeric',
+        timeZone: zone,
+      }).format(dt),
+      time: new Intl.DateTimeFormat('en-US', {
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+        timeZone: zone,
+      }).format(dt),
+    }
+  }
+
+  const titleCaseStatus = (status: string | null | undefined) =>
+    status ? status.toLowerCase().replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : 'Unfulfilled'
+
+  const statusTone = (status: string | null | undefined) => {
+    const s = status?.toUpperCase()
+    if (s === 'FULFILLED') return 'bg-tertiary/15 text-tertiary'
+    if (s === 'PARTIALLY_FULFILLED') return 'bg-secondary/10 text-secondary'
+    return 'bg-surface-container text-on-surface-variant'
+  }
+
+  const variantLabel = (line: OrderRow['lines'][number]) => {
+    if (line.variantTitle) return line.variantTitle
+    if (!line.variantOptions) return '—'
+    try {
+      const parsed = JSON.parse(line.variantOptions) as Record<string, string>
+      const entries = Object.entries(parsed)
+      return entries.length > 0 ? entries.map(([k, v]) => `${k}: ${v}`).join(', ') : '—'
+    } catch {
+      return line.variantOptions
+    }
+  }
+
+  const orderTimeZone = (order: OrderRow) =>
+    order.shopTimezone ?? order.store?.ianaTimezone ?? null
 
   const allCount = counts ? PIPELINE_STATUSES.reduce((s, k) => s + (counts[k] ?? 0), 0) : 0
 
   return (
     <div className="flex min-h-screen bg-surface">
       <Sidebar />
-      <main className="ml-[280px] flex-1 p-xl">
+      <main className="ml-[280px] w-[calc(100vw-280px)] min-w-0 overflow-x-hidden p-xl">
         {/* Header */}
         <div className="flex items-center justify-between mb-lg gap-md">
           <h1 className="text-display-md">All Orders</h1>
@@ -310,7 +390,7 @@ export default function OrdersPage() {
         </div>
 
         {/* Status tabs */}
-        <div className="flex items-center gap-md mb-md border-b border-outline-variant/20 overflow-x-auto">
+        <div className="flex flex-wrap items-center gap-x-md gap-y-xs mb-md border-b border-outline-variant/20">
           <button
             onClick={() => setActiveTab('ALL')}
             className={`px-sm py-sm text-label-md whitespace-nowrap ${
@@ -338,27 +418,6 @@ export default function OrdersPage() {
             )
           })}
         </div>
-
-        {/* Stats cards */}
-        {summary && (
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-md mb-lg">
-            {[
-              { label: 'Revenue', value: fmt(summary.revenue) },
-              { label: 'COGS', value: fmt(summary.cogs + summary.shipping) },
-              { label: 'Profit', value: fmt(summary.profit) },
-              { label: 'Margin', value: `${summary.margin.toFixed(1)}%` },
-              { label: 'Orders', value: String(summary.orderCount) },
-            ].map(s => (
-              <div
-                key={s.label}
-                className="bg-surface-container-lowest rounded-xl p-md shadow-card border border-outline-variant/20"
-              >
-                <p className="text-label-sm text-on-surface-variant">{s.label}</p>
-                <p className="text-stats-lg">{s.value}</p>
-              </div>
-            ))}
-          </div>
-        )}
 
         {summary && summary.unmappedCount > 0 && (
           <div className="bg-error/10 border border-error/30 rounded-lg p-md mb-md text-body-sm">
@@ -396,29 +455,29 @@ export default function OrdersPage() {
 
         {/* Orders table */}
         <div className="bg-surface-container-lowest rounded-xl border border-outline-variant/20 overflow-hidden">
-          <table className="w-full text-body-sm">
+          <table className="w-full table-fixed text-body-sm">
             <thead className="bg-surface-container">
               <tr className="text-left">
-                <th className="px-md py-sm">
+                <th className="w-9 px-sm py-sm">
                   <input
                     type="checkbox"
                     checked={selected.size === orders.length && orders.length > 0}
                     onChange={toggleAll}
                   />
                 </th>
-                <th className="px-md py-sm">Order #</th>
-                <th className="px-md py-sm">Loại</th>
-                <th className="px-md py-sm">Design</th>
-                <th className="px-md py-sm">Trello</th>
-                <th className="px-md py-sm">Customer</th>
-                <th className="px-md py-sm">Date</th>
-                <th className="px-md py-sm">Supplier</th>
-                <th className="px-md py-sm">Zone</th>
-                <th className="px-md py-sm text-right">Payout</th>
-                <th className="px-md py-sm text-right">COGS</th>
-                <th className="px-md py-sm text-right">Profit</th>
-                <th className="px-md py-sm text-right">Margin</th>
-                <th className="px-md py-sm">Status</th>
+                <th className="w-[8%] px-sm py-sm">Order #</th>
+                <th className="w-[7%] px-sm py-sm">Type</th>
+                <th className="w-[6%] px-sm py-sm">Design</th>
+                <th className="w-[7%] px-sm py-sm">Trello</th>
+                <th className="w-[8%] px-sm py-sm">Order status</th>
+                <th className="w-[9%] px-sm py-sm">Supplier</th>
+                <th className="w-[7%] px-sm py-sm">Zone</th>
+                <th className="w-[7%] px-sm py-sm text-right">Payout</th>
+                <th className="w-[7%] px-sm py-sm text-right">COGS</th>
+                <th className="w-[7%] px-sm py-sm text-right">Profit</th>
+                <th className="w-[6%] px-sm py-sm text-right">Margin</th>
+                <th className="w-[7%] px-sm py-sm">Date</th>
+                <th className="w-[11%] px-sm py-sm">Status</th>
               </tr>
             </thead>
             <tbody>
@@ -427,15 +486,23 @@ export default function OrdersPage() {
                   key={o.id}
                   className={`border-t border-outline-variant/20 ${o.computed.hasUnmappedSku ? 'bg-error/5' : ''}`}
                 >
-                  <td className="px-md py-sm">
+                  <td className="px-sm py-sm">
                     <input
                       type="checkbox"
                       checked={selected.has(o.id)}
                       onChange={() => toggleSelect(o.id)}
                     />
                   </td>
-                  <td className="px-md py-sm font-mono">{o.shopifyOrderNumber}</td>
-                  <td className="px-md py-sm">
+                  <td className="px-sm py-sm truncate">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedOrder(o)}
+                      className="font-mono text-secondary underline underline-offset-2"
+                    >
+                      {o.shopifyOrderNumber}
+                    </button>
+                  </td>
+                  <td className="px-sm py-sm">
                     {o.orderType === 'CUSTOM' && (
                       <span className="bg-tertiary/15 text-tertiary text-label-sm px-xs py-[2px] rounded">Custom</span>
                     )}
@@ -443,19 +510,17 @@ export default function OrdersPage() {
                       <span className="bg-surface-container text-on-surface-variant text-label-sm px-xs py-[2px] rounded">Non-Custom</span>
                     )}
                     {o.orderType === 'UNKNOWN' && (
-                      <span className="text-label-sm text-on-surface-variant">—</span>
+                      <span className="text-label-sm text-on-surface-variant">-</span>
                     )}
                   </td>
-                  <td className="px-md py-sm">
-                    {o.orderType === 'NON_CUSTOM' ? (
-                      o.designReady
-                        ? <span className="text-label-sm text-tertiary font-medium">Đã có</span>
-                        : <span className="text-label-sm text-on-surface-variant">—</span>
+                  <td className="px-sm py-sm">
+                    {o.designReady ? (
+                      <span className="text-label-sm text-tertiary font-medium">Done</span>
                     ) : (
-                      <span className="text-label-sm text-on-surface-variant">—</span>
+                      <span className="text-label-sm text-on-surface-variant">-</span>
                     )}
                   </td>
-                  <td className="px-md py-sm">
+                  <td className="px-sm py-sm truncate">
                     {o.trelloCardUrl ? (
                       <a
                         href={o.trelloCardUrl}
@@ -469,41 +534,50 @@ export default function OrdersPage() {
                       <span className="text-label-sm text-on-surface-variant">—</span>
                     )}
                   </td>
-                  <td className="px-md py-sm">
-                    <div>{o.customerName ?? '—'}</div>
-                    {o.customerEmail && (
-                      <div className="text-label-sm text-on-surface-variant">{o.customerEmail}</div>
-                    )}
+                  <td className="px-sm py-sm">
+                    <span className={`rounded px-xs py-[2px] text-label-sm ${statusTone(o.fulfillmentStatus)}`}>
+                      {titleCaseStatus(o.fulfillmentStatus)}
+                    </span>
                   </td>
-                  <td className="px-md py-sm">{new Date(o.placedAt).toLocaleDateString('en-CA')}</td>
-                  <td className="px-md py-sm">
+                  <td className="px-sm py-sm truncate">
                     {o.defaultSupplier?.name ?? (
                       <span className="text-error text-label-sm">unmapped</span>
                     )}
                   </td>
-                  <td className="px-md py-sm">
+                  <td className="px-sm py-sm">
                     <span className="font-mono text-label-sm">{o.shippingZone ?? '—'}</span>
                     {o.shippingCountry && (
                       <span className="text-label-sm text-on-surface-variant ml-xs">({o.shippingCountry})</span>
                     )}
                   </td>
-                  <td className="px-md py-sm text-right">{fmt(o.expectedPayout, o.currency)}</td>
-                  <td className="px-md py-sm text-right">
+                  <td className="px-sm py-sm text-right">{fmt(o.expectedPayout, o.currency)}</td>
+                  <td className="px-sm py-sm text-right">
                     {fmt(o.computed.baseCost + o.computed.shipping, o.currency)}
                   </td>
                   <td
-                    className={`px-md py-sm text-right font-semibold ${
+                    className={`px-sm py-sm text-right font-semibold ${
                       o.computed.profit >= 0 ? 'text-on-tertiary-container' : 'text-error'
                     }`}
                   >
                     {fmt(o.computed.profit, o.currency)}
                   </td>
-                  <td className="px-md py-sm text-right">{o.computed.margin.toFixed(1)}%</td>
-                  <td className="px-md py-sm">
+                  <td className="px-sm py-sm text-right">{o.computed.margin.toFixed(1)}%</td>
+                  <td className="px-sm py-sm text-label-sm text-on-surface-variant">
+                    {(() => {
+                      const parts = compactShopifyDate(o.placedAt, orderTimeZone(o))
+                      return (
+                        <div className="leading-tight">
+                          <div>{parts.date}</div>
+                          <div>{parts.time}</div>
+                        </div>
+                      )
+                    })()}
+                  </td>
+                  <td className="px-sm py-sm">
                     <select
                       value={o.pipelineStatus}
                       onChange={e => changeOneStatus(o.id, e.target.value as PipelineStatus)}
-                      className={`text-label-sm rounded px-xs py-[2px] ${STATUS_COLORS[o.pipelineStatus]}`}
+                      className={`w-full text-label-sm rounded px-xs py-[2px] ${STATUS_COLORS[o.pipelineStatus]}`}
                     >
                       {PIPELINE_STATUSES.map(s => (
                         <option key={s} value={s}>{STATUS_LABELS[s]}</option>
@@ -522,6 +596,110 @@ export default function OrdersPage() {
             </tbody>
           </table>
         </div>
+        {selectedOrder && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-lg">
+            <div className="max-h-[90vh] w-full max-w-5xl overflow-auto rounded-xl bg-surface-container-lowest shadow-xl">
+              <div className="sticky top-0 flex items-start justify-between gap-md border-b border-outline-variant/20 bg-surface-container-lowest p-lg">
+                <div>
+                  <h2 className="text-headline-sm font-semibold">{selectedOrder.shopifyOrderNumber}</h2>
+                  <div className="mt-xs flex flex-wrap items-center gap-xs text-body-sm text-on-surface-variant">
+                    <span>{formatShopifyDate(selectedOrder.placedAt, orderTimeZone(selectedOrder))}</span>
+                    <span className={`rounded px-xs py-[2px] text-label-sm ${statusTone(selectedOrder.fulfillmentStatus)}`}>
+                      {titleCaseStatus(selectedOrder.fulfillmentStatus)}
+                    </span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedOrder(null)}
+                  className="rounded-lg border border-outline-variant/40 px-md py-xs text-label-md"
+                >
+                  Close
+                </button>
+              </div>
+
+              <div className="grid gap-lg p-lg lg:grid-cols-[1fr_320px]">
+                <div>
+                  <h3 className="mb-sm text-label-md">Line items</h3>
+                  <div className="overflow-hidden rounded-lg border border-outline-variant/20">
+                    <table className="w-full text-body-sm">
+                      <thead className="bg-surface-container">
+                        <tr className="text-left">
+                          <th className="px-md py-sm">Product</th>
+                          <th className="px-md py-sm">SKU</th>
+                          <th className="px-md py-sm">Variant</th>
+                          <th className="px-md py-sm text-right">Qty</th>
+                          <th className="px-md py-sm text-right">Price</th>
+                          <th className="px-md py-sm text-right">Total</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedOrder.lines.map(line => (
+                          <tr key={line.id} className="border-t border-outline-variant/20">
+                            <td className="px-md py-sm">{line.productTitle}</td>
+                            <td className="px-md py-sm font-mono">{line.sku ?? '—'}</td>
+                            <td className="px-md py-sm">{variantLabel(line)}</td>
+                            <td className="px-md py-sm text-right">{line.qty}</td>
+                            <td className="px-md py-sm text-right">{fmt(line.unitPrice, selectedOrder.currency)}</td>
+                            <td className="px-md py-sm text-right">{fmt(line.unitPrice * line.qty, selectedOrder.currency)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div className="space-y-md">
+                  <section className="rounded-lg border border-outline-variant/20 p-md">
+                    <h3 className="mb-sm text-label-md">Customer</h3>
+                    <p className="text-body-sm">{selectedOrder.customerName ?? '—'}</p>
+                    <p className="text-body-sm text-on-surface-variant">{selectedOrder.customerEmail ?? '—'}</p>
+                    {selectedOrder.shippingPhone && (
+                      <p className="text-body-sm text-on-surface-variant">{selectedOrder.shippingPhone}</p>
+                    )}
+                    {(selectedOrder.shippingName || selectedOrder.shippingAddress1 || selectedOrder.shippingCity) && (
+                      <div className="mt-sm space-y-[2px] border-t border-outline-variant/20 pt-sm text-body-sm text-on-surface-variant">
+                        <p>{selectedOrder.shippingName ?? selectedOrder.customerName}</p>
+                        {selectedOrder.shippingAddress1 && <p>{selectedOrder.shippingAddress1}</p>}
+                        {selectedOrder.shippingAddress2 && <p>{selectedOrder.shippingAddress2}</p>}
+                        {(selectedOrder.shippingCity || selectedOrder.shippingState || selectedOrder.shippingZip) && (
+                          <p>
+                            {[selectedOrder.shippingCity, selectedOrder.shippingState, selectedOrder.shippingZip]
+                              .filter(Boolean)
+                              .join(', ')}
+                          </p>
+                        )}
+                        {selectedOrder.shippingCountry && <p>{selectedOrder.shippingCountry}</p>}
+                      </div>
+                    )}
+                  </section>
+
+                  <section className="rounded-lg border border-outline-variant/20 p-md">
+                    <h3 className="mb-sm text-label-md">Fulfillment</h3>
+                    <dl className="space-y-xs text-body-sm">
+                      <div className="flex justify-between gap-md">
+                        <dt className="text-on-surface-variant">Supplier</dt>
+                        <dd>{selectedOrder.defaultSupplier?.name ?? 'unmapped'}</dd>
+                      </div>
+                      <div className="flex justify-between gap-md">
+                        <dt className="text-on-surface-variant">Zone</dt>
+                        <dd>{selectedOrder.shippingZone ?? '—'} {selectedOrder.shippingCountry ? `(${selectedOrder.shippingCountry})` : ''}</dd>
+                      </div>
+                      <div className="flex justify-between gap-md">
+                        <dt className="text-on-surface-variant">Financial</dt>
+                        <dd>{selectedOrder.financialStatus}</dd>
+                      </div>
+                      <div className="flex justify-between gap-md">
+                        <dt className="text-on-surface-variant">Fulfillment</dt>
+                        <dd>{selectedOrder.fulfillmentStatus ?? '—'}</dd>
+                      </div>
+                    </dl>
+                  </section>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   )

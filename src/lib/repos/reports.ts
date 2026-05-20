@@ -74,8 +74,15 @@ export async function ordersWithComputedPL(filter: OrderFilter): Promise<Enriche
     const margin = o.expectedPayout === 0 ? 0 : (profit / o.expectedPayout) * 100
     const hasUnmappedSku = o.lines.some(l => l.resolvedBaseCost == null)
     const orderSkus = o.lines.map(l => l.sku).filter(Boolean) as string[]
-    const designReady = orderSkus.length > 0 && orderSkus.every(sku => skuDesignMap.get(sku)?.designReady === true)
-    const driveLink = orderSkus.length > 0 ? (skuDesignMap.get(orderSkus[0])?.driveLink ?? null) : null
+    const skuDesignReady = orderSkus.length > 0 && orderSkus.every(sku => skuDesignMap.get(sku)?.designReady === true)
+    const designReady = o.orderType === 'CUSTOM'
+      ? o.designReady
+      : o.designReady || skuDesignReady
+    const driveLink = o.designDriveLink ?? (
+      o.orderType === 'CUSTOM'
+        ? null
+        : orderSkus.length > 0 ? (skuDesignMap.get(orderSkus[0])?.driveLink ?? null) : null
+    )
     return {
       ...o,
       computed: { totalQty, baseCost, shipping, profit, margin, hasUnmappedSku },

@@ -1,0 +1,121 @@
+<h2>Option A — Single page, 2 tabs</h2>
+<p class="subtitle">Preview chi tiết layout trang Product Mapping</p>
+
+<div style="margin-top:24px;border:1px solid #e0e0e0;border-radius:12px;overflow:hidden;background:#fff;max-width:900px">
+
+  <!-- Page header -->
+  <div style="padding:20px 24px;border-bottom:1px solid #e0e0e0;display:flex;justify-content:space-between;align-items:center">
+    <div>
+      <div style="font-size:20px;font-weight:700;color:#091426">Product Mapping</div>
+      <div style="font-size:13px;color:#666;margin-top:2px">Cấu hình tự động khớp sản phẩm với supplier</div>
+    </div>
+    <button style="background:#4b41e1;color:white;border:none;padding:8px 18px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">+ New Product Base</button>
+  </div>
+
+  <!-- Tabs -->
+  <div style="display:flex;border-bottom:2px solid #e0e0e0;background:#fafafa">
+    <div style="padding:14px 24px;font-size:14px;font-weight:700;color:#4b41e1;border-bottom:2px solid #4b41e1;margin-bottom:-2px;cursor:pointer">
+      Auto Mapping
+    </div>
+    <div style="padding:14px 24px;font-size:14px;font-weight:600;color:#666;cursor:pointer;display:flex;align-items:center;gap:8px">
+      Manual Mapping
+      <span style="background:#e53935;color:white;border-radius:10px;padding:2px 8px;font-size:11px;font-weight:700">3</span>
+    </div>
+  </div>
+
+  <!-- Tab content: Auto Mapping -->
+  <div style="padding:20px 24px">
+
+    <!-- Search/filter bar -->
+    <div style="display:flex;gap:10px;margin-bottom:16px">
+      <input style="flex:1;border:1px solid #ddd;border-radius:8px;padding:8px 12px;font-size:13px;color:#333" placeholder="Tìm Product Base..." />
+      <select style="border:1px solid #ddd;border-radius:8px;padding:8px 12px;font-size:13px;color:#333;background:#fff">
+        <option>Tất cả loại</option>
+        <option>3D Clothing</option>
+        <option>2D Clothing</option>
+      </select>
+    </div>
+
+    <!-- Table -->
+    <div style="border:1px solid #e0e0e0;border-radius:10px;overflow:hidden">
+      <!-- Header -->
+      <div style="background:#f5f5f5;padding:10px 16px;font-size:12px;font-weight:700;color:#555;display:grid;grid-template-columns:2fr 2.5fr 2.5fr 1.5fr 80px;gap:8px">
+        <span>Product Base</span>
+        <span>Match Conditions</span>
+        <span>Suppliers (theo rank)</span>
+        <span>Overrides</span>
+        <span></span>
+      </div>
+
+      <!-- Row 1 -->
+      <div style="padding:12px 16px;border-top:1px solid #eee;display:grid;grid-template-columns:2fr 2.5fr 2.5fr 1.5fr 80px;gap:8px;align-items:center">
+        <div>
+          <div style="font-size:13px;font-weight:700;color:#091426">Tshirt 3D</div>
+          <div style="font-size:11px;color:#888;margin-top:2px">3D Clothing</div>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:4px">
+          <span style="background:#ede9ff;color:#4b41e1;padding:2px 8px;border-radius:4px;font-size:11px">Style = Tshirt</span>
+          <span style="background:#ede9ff;color:#4b41e1;padding:2px 8px;border-radius:4px;font-size:11px">Size = S,M,L,XL</span>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:4px">
+          <span style="background:#e8f5e9;color:#2e7d32;padding:3px 8px;border-radius:4px;font-size:11px;font-weight:600">#1 Supplier A</span>
+          <span style="background:#e3f2fd;color:#1565c0;padding:3px 8px;border-radius:4px;font-size:11px;font-weight:600">#2 Supplier B</span>
+        </div>
+        <div style="font-size:12px;color:#e65100">
+          <span style="background:#fff3e0;padding:2px 8px;border-radius:4px">1 override</span>
+        </div>
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+          <span style="color:#4b41e1;font-size:12px;cursor:pointer;font-weight:600">Edit</span>
+        </div>
+      </div>
+
+      <!-- Row 2 -->
+      <div style="padding:12px 16px;border-top:1px solid #eee;display:grid;grid-template-columns:2fr 2.5fr 2.5fr 1.5fr 80px;gap:8px;align-items:center;background:#fafafa">
+        <div>
+          <div style="font-size:13px;font-weight:700;color:#091426">Hoodie 2D</div>
+          <div style="font-size:11px;color:#888;margin-top:2px">2D Clothing</div>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:4px">
+          <span style="background:#ede9ff;color:#4b41e1;padding:2px 8px;border-radius:4px;font-size:11px">Style = Hoodie</span>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:4px">
+          <span style="background:#e8f5e9;color:#2e7d32;padding:3px 8px;border-radius:4px;font-size:11px;font-weight:600">#1 Supplier A</span>
+        </div>
+        <div style="font-size:12px;color:#aaa">—</div>
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+          <span style="color:#4b41e1;font-size:12px;cursor:pointer;font-weight:600">Edit</span>
+        </div>
+      </div>
+
+      <!-- Row 3 -->
+      <div style="padding:12px 16px;border-top:1px solid #eee;display:grid;grid-template-columns:2fr 2.5fr 2.5fr 1.5fr 80px;gap:8px;align-items:center">
+        <div>
+          <div style="font-size:13px;font-weight:700;color:#091426">Mug</div>
+          <div style="font-size:11px;color:#888;margin-top:2px">Drinkware</div>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:4px">
+          <span style="background:#ede9ff;color:#4b41e1;padding:2px 8px;border-radius:4px;font-size:11px">Type = Mug</span>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:4px">
+          <span style="background:#e8f5e9;color:#2e7d32;padding:3px 8px;border-radius:4px;font-size:11px;font-weight:600">#1 Supplier C</span>
+        </div>
+        <div style="font-size:12px;color:#aaa">—</div>
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+          <span style="color:#4b41e1;font-size:12px;cursor:pointer;font-weight:600">Edit</span>
+        </div>
+      </div>
+
+      <!-- Empty state hint -->
+      <div style="padding:12px 16px;border-top:1px solid #eee;text-align:center;color:#4b41e1;font-size:13px;cursor:pointer;background:#fafafa">
+        + Add Product Base
+      </div>
+    </div>
+
+    <!-- Legend -->
+    <div style="margin-top:16px;padding:12px 16px;background:#f0f4ff;border-radius:8px;font-size:12px;color:#555;display:flex;gap:24px">
+      <span>🔵 Auto mapping: ưu tiên theo rank supplier</span>
+      <span>🟠 Override: attribute combo cụ thể (priority 2)</span>
+      <span>🔴 Manual tab: variant ID cụ thể (priority 1 tuyệt đối)</span>
+    </div>
+  </div>
+</div>

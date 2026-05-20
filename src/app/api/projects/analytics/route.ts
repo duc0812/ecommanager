@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 
 type CostBuckets = {
-  fulfillment: number
   appBilling: number
   toolsBilling: number
 }
@@ -56,7 +55,6 @@ export async function GET(req: NextRequest) {
   const projectId = searchParams.get('projectId')
   const staffId = searchParams.get('staffId')
   const costs: CostBuckets = {
-    fulfillment: 0,
     appBilling: getNumberParam(searchParams, 'appBilling'),
     toolsBilling: getNumberParam(searchParams, 'toolsBilling'),
   }
@@ -97,7 +95,7 @@ export async function GET(req: NextRequest) {
   const periodIsValid = startDate <= endDate
 
   const paidMetaStatuses = ['PAID', 'SETTLED', 'COMPLETED']
-  const [payouts, metaAccounts, billings, fulfillmentCosts] = await Promise.all([
+  const [payouts, metaAccounts, billings] = await Promise.all([
     prisma.payout.findMany({
       where: {
         date: {
@@ -123,18 +121,6 @@ export async function GET(req: NextRequest) {
       },
       select: { amount: true, billingDate: true },
     }),
-    prisma.fulfillmentCost.findMany({
-      where: {
-        recognitionDate: {
-          gte: startStr,
-          lte: endStr,
-        },
-        paymentStatus: { not: 'VOID' },
-        projectId,
-        ...(staffId ? { staffId } : {}),
-      },
-      select: { totalAmount: true, recognitionDate: true },
-    }),
   ])
 
   const totalRevenue = payouts.reduce((sum, p) => sum + p.chargesGrossAmount, 0)
@@ -143,8 +129,7 @@ export async function GET(req: NextRequest) {
     return sum + p.chargesFeeAmount + p.refundsFeeAmount + p.adjustmentsFeeAmount
   }, 0)
   const totalMetaBilling = billings.reduce((sum, b) => sum + b.amount, 0)
-  const totalFulfillmentCost = fulfillmentCosts.reduce((sum, item) => sum + item.totalAmount, 0)
-  costs.fulfillment = totalFulfillmentCost
+  const totalFulfillmentCost = 0
   const billingDates = billings.map(b => b.billingDate).sort()
   const untilStr = endStr
   const spendByAccount = periodIsValid ? await Promise.all(metaAccounts.map(async account => {
@@ -199,10 +184,6 @@ export async function GET(req: NextRequest) {
       firstDate: billingDates[0] ?? null,
       lastDate: billingDates[billingDates.length - 1] ?? null,
       transactionCount: billings.length,
-    },
-    fulfillment: {
-      source: 'Finance fulfillment cost register',
-      transactionCount: fulfillmentCosts.length,
     },
     actualAdSpend: {
       source: 'Meta Insights spend',

@@ -1,0 +1,2 @@
+ALTER TABLE "Order" ADD COLUMN "designReady" BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE "Order" ADD COLUMN "designDriveLink" TEXT;

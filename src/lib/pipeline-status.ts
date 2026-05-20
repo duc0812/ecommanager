@@ -2,6 +2,7 @@ export const PIPELINE_STATUSES = [
   'PENDING_DESIGN',
   'PENDING_MAPPING',
   'PENDING',
+  'READY_TO_PRODUCTION',
   'EXPORTED',
   'ON_HOLD',
   'SUPPLIER_PROCESSING',
@@ -19,6 +20,7 @@ export const STATUS_LABELS: Record<PipelineStatus, string> = {
   PENDING_DESIGN: 'Pending Design',
   PENDING_MAPPING: 'Pending Mapping',
   PENDING: 'Pending',
+  READY_TO_PRODUCTION: 'Ready to Production',
   EXPORTED: 'Exported',
   ON_HOLD: 'On Hold',
   SUPPLIER_PROCESSING: 'Supplier Processing',
@@ -34,6 +36,7 @@ export const STATUS_COLORS: Record<PipelineStatus, string> = {
   PENDING_DESIGN: 'bg-amber-100 text-amber-900',
   PENDING_MAPPING: 'bg-rose-100 text-rose-900',
   PENDING: 'bg-blue-100 text-blue-900',
+  READY_TO_PRODUCTION: 'bg-emerald-100 text-emerald-900',
   EXPORTED: 'bg-indigo-100 text-indigo-900',
   ON_HOLD: 'bg-gray-200 text-gray-900',
   SUPPLIER_PROCESSING: 'bg-cyan-100 text-cyan-900',
@@ -45,7 +48,7 @@ export const STATUS_COLORS: Record<PipelineStatus, string> = {
   REFUNDED: 'bg-pink-100 text-pink-900',
 }
 
-const SYNC_RE_EVALUATED: PipelineStatus[] = ['PENDING_DESIGN', 'PENDING_MAPPING', 'PENDING']
+const SYNC_RE_EVALUATED: PipelineStatus[] = ['PENDING_DESIGN', 'PENDING_MAPPING', 'PENDING', 'READY_TO_PRODUCTION']
 
 export function isValidPipelineStatus(v: string): v is PipelineStatus {
   return (PIPELINE_STATUSES as readonly string[]).includes(v)
@@ -56,6 +59,7 @@ export type AutoDetectInput = {
   hasUnmappedSku: boolean
   hasPendingMapping: boolean
   hasCustomDesignLine: boolean
+  hasDesignReady: boolean
   currentStatus?: PipelineStatus | null
 }
 
@@ -66,9 +70,9 @@ export function autoDetectStatus(input: AutoDetectInput): PipelineStatus {
   if (fs === 'VOIDED' || fs === 'CANCELLED') return 'CANCELLED'
 
   const initial: PipelineStatus =
-    input.hasPendingMapping ? 'PENDING_MAPPING' :
-    input.hasUnmappedSku || input.hasCustomDesignLine ? 'PENDING_DESIGN' :
-    'PENDING'
+    input.hasPendingMapping || input.hasUnmappedSku ? 'PENDING_MAPPING' :
+    input.hasCustomDesignLine && !input.hasDesignReady ? 'PENDING_DESIGN' :
+    'READY_TO_PRODUCTION'
 
   if (!input.currentStatus) return initial
   if (SYNC_RE_EVALUATED.includes(input.currentStatus)) return initial

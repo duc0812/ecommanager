@@ -1,0 +1,243 @@
+<h2>Product Setup — Expandable Row</h2>
+<p class="subtitle">Click ▸ để mở rộng shipping + design + production days ngay tại chỗ</p>
+
+<div style="max-width:1000px;margin:24px auto">
+
+  <!-- Import bar -->
+  <div style="background:#f0f4ff;border:1px solid #c7d2fe;border-radius:10px;padding:12px 20px;margin-bottom:14px;display:flex;align-items:center;gap:20px;flex-wrap:wrap">
+    <div style="font-size:13px;font-weight:700;color:#3730a3;white-space:nowrap">📥 Import từ file</div>
+    <div style="font-size:12px;color:#555;flex:1;min-width:180px">Sheet cần có: Product type, SKU product, Variant 1, Variant 2, SKU variant, Base cost, shipping fee, production time</div>
+    <label style="background:#4b41e1;color:white;padding:7px 16px;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">Choose File</label>
+  </div>
+
+  <!-- Table -->
+  <div style="background:#fff;border:1px solid #e0e0e0;border-radius:10px;overflow:hidden">
+    <div style="padding:12px 20px;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center">
+      <div>
+        <div style="font-size:14px;font-weight:700;color:#091426">Product setup</div>
+        <div style="font-size:11px;color:#888;margin-top:2px">Mỗi dòng là một SKU variant — click ▸ để xem chi tiết</div>
+      </div>
+      <button style="background:#4b41e1;color:white;border:none;padding:7px 14px;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer">+ Add row</button>
+    </div>
+
+    <div style="overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse;font-size:12px">
+        <thead>
+          <tr style="background:#f5f5f5">
+            <th style="padding:9px 8px;width:28px;border-bottom:1px solid #e0e0e0"></th>
+            <th style="padding:9px 12px;color:#555;font-weight:700;text-align:left;border-bottom:1px solid #e0e0e0;white-space:nowrap">Product type</th>
+            <th style="padding:9px 12px;color:#555;font-weight:700;text-align:left;border-bottom:1px solid #e0e0e0;white-space:nowrap">SKU product</th>
+            <th style="padding:9px 8px;color:#7c3aed;font-weight:700;text-align:left;border-bottom:1px solid #e0e0e0;background:#fdf4ff">
+              <div style="font-size:11px">Variant 1</div>
+              <div style="display:flex;gap:3px;margin-top:2px">
+                <span style="background:#ede9ff;padding:1px 5px;border-radius:3px;font-size:10px">Name</span>
+                <span style="background:#ede9ff;padding:1px 5px;border-radius:3px;font-size:10px">Value</span>
+              </div>
+            </th>
+            <th style="padding:9px 8px;color:#7c3aed;font-weight:700;text-align:left;border-bottom:1px solid #e0e0e0;background:#fdf4ff">
+              <div style="font-size:11px">Variant 2 <span style="font-size:9px;color:#aaa;font-weight:400">(opt)</span></div>
+              <div style="display:flex;gap:3px;margin-top:2px">
+                <span style="background:#ede9ff;padding:1px 5px;border-radius:3px;font-size:10px">Name</span>
+                <span style="background:#ede9ff;padding:1px 5px;border-radius:3px;font-size:10px">Value</span>
+              </div>
+            </th>
+            <th style="padding:9px 12px;color:#555;font-weight:700;text-align:left;border-bottom:1px solid #e0e0e0;white-space:nowrap">SKU variant</th>
+            <th style="padding:9px 12px;color:#555;font-weight:700;text-align:left;border-bottom:1px solid #e0e0e0;white-space:nowrap">Base cost</th>
+            <th style="padding:9px 10px;color:#555;font-weight:700;text-align:center;border-bottom:1px solid #e0e0e0">
+              <div>US Ship</div>
+              <div style="font-size:10px;font-weight:400;color:#aaa">1st / add.</div>
+            </th>
+            <th style="padding:9px 12px;border-bottom:1px solid #e0e0e0;width:40px"></th>
+          </tr>
+        </thead>
+        <tbody>
+
+          <!-- ── Row 1: Add new (collapsed input) ── -->
+          <tr style="background:#fafffe;border-top:1px solid #eef">
+            <td style="padding:7px 8px;text-align:center">
+              <span style="color:#4b41e1;font-size:16px;cursor:pointer;user-select:none">+</span>
+            </td>
+            <td style="padding:7px 8px"><input style="width:100%;border:1px solid #ddd;border-radius:5px;padding:5px 7px;font-size:12px;box-sizing:border-box" placeholder="3D Clothing" /></td>
+            <td style="padding:7px 8px"><input style="width:70px;border:1px solid #ddd;border-radius:5px;padding:5px 7px;font-size:12px" placeholder="TX" /></td>
+            <td style="padding:7px 8px;background:#fdf4ff">
+              <div style="display:flex;gap:3px">
+                <input style="width:58px;border:1px solid #ddd;border-radius:5px;padding:5px 6px;font-size:12px" placeholder="Size" />
+                <input style="width:46px;border:1px solid #ddd;border-radius:5px;padding:5px 6px;font-size:12px" placeholder="XL" />
+              </div>
+            </td>
+            <td style="padding:7px 8px;background:#fdf4ff">
+              <div style="display:flex;gap:3px">
+                <input style="width:58px;border:1px solid #ddd;border-radius:5px;padding:5px 6px;font-size:12px" placeholder="Color" />
+                <input style="width:46px;border:1px solid #ddd;border-radius:5px;padding:5px 6px;font-size:12px" placeholder="Black" />
+              </div>
+            </td>
+            <td style="padding:7px 8px"><input style="width:90px;border:1px solid #ddd;border-radius:5px;padding:5px 7px;font-size:12px" placeholder="TX-XL-BLK" /></td>
+            <td style="padding:7px 8px"><input style="width:65px;border:1px solid #ddd;border-radius:5px;padding:5px 7px;font-size:12px" placeholder="10.00" /></td>
+            <td style="padding:7px 8px">
+              <div style="display:flex;gap:3px;align-items:center">
+                <input style="width:40px;border:1px solid #ddd;border-radius:5px;padding:5px 5px;font-size:12px;text-align:center" placeholder="4.00" />
+                <span style="color:#aaa">/</span>
+                <input style="width:40px;border:1px solid #ddd;border-radius:5px;padding:5px 5px;font-size:12px;text-align:center" placeholder="1.50" />
+              </div>
+            </td>
+            <td style="padding:7px 8px;text-align:center">
+              <button style="background:#4b41e1;color:white;border:none;padding:5px 10px;border-radius:5px;font-size:11px;cursor:pointer">Save</button>
+            </td>
+          </tr>
+
+          <!-- ── Row 2: TX-S — COLLAPSED ── -->
+          <tr style="border-top:1px solid #f0f0f0" id="row-txs">
+            <td style="padding:9px 8px;text-align:center">
+              <span onclick="toggleExpand('txs')" style="color:#4b41e1;font-size:14px;cursor:pointer;user-select:none;display:inline-block;transition:transform .2s" id="chevron-txs">▸</span>
+            </td>
+            <td style="padding:9px 12px;color:#333">3D Clothing</td>
+            <td style="padding:9px 12px;font-family:monospace;color:#555">TX</td>
+            <td style="padding:9px 12px;background:#fdf4ff">
+              <div style="font-size:10px;color:#888">Size</div>
+              <div style="font-weight:600;color:#7c3aed">S</div>
+            </td>
+            <td style="padding:9px 12px;background:#fdf4ff;color:#ccc">—</td>
+            <td style="padding:9px 12px;font-family:monospace;color:#333">TX-S</td>
+            <td style="padding:9px 12px;color:#2e7d32;font-weight:600">$10.00</td>
+            <td style="padding:9px 12px;color:#555;text-align:center">$4.50 / $1.50</td>
+            <td style="padding:9px 8px;text-align:center">
+              <span onclick="deletRow('txs')" style="color:#e53935;font-size:14px;cursor:pointer">✕</span>
+            </td>
+          </tr>
+          <!-- Expanded detail row for TX-S -->
+          <tr id="expand-txs" style="display:none;background:#f8f4ff;border-bottom:2px solid #e9d8fd">
+            <td></td>
+            <td colspan="8" style="padding:14px 16px">
+              <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px">
+                <div>
+                  <div style="font-size:11px;color:#888;margin-bottom:4px;font-weight:600">Design Template URL</div>
+                  <input style="width:100%;border:1px solid #ddd;border-radius:6px;padding:6px 8px;font-size:12px;box-sizing:border-box" value="https://template.ai/tx" />
+                </div>
+                <div>
+                  <div style="font-size:11px;color:#888;margin-bottom:4px;font-weight:600">Production days (min–max)</div>
+                  <div style="display:flex;gap:6px;align-items:center">
+                    <input style="width:50px;border:1px solid #ddd;border-radius:6px;padding:6px 8px;font-size:12px" value="3" />
+                    <span style="color:#aaa">–</span>
+                    <input style="width:50px;border:1px solid #ddd;border-radius:6px;padding:6px 8px;font-size:12px" value="5" />
+                  </div>
+                </div>
+                <div>
+                  <div style="font-size:11px;color:#888;margin-bottom:4px;font-weight:600">EU Shipping (1st / add.)</div>
+                  <div style="display:flex;gap:4px;align-items:center">
+                    <input style="width:50px;border:1px solid #ddd;border-radius:6px;padding:6px 8px;font-size:12px" placeholder="6.00" />
+                    <span style="color:#aaa">/</span>
+                    <input style="width:50px;border:1px solid #ddd;border-radius:6px;padding:6px 8px;font-size:12px" placeholder="2.00" />
+                  </div>
+                </div>
+                <div>
+                  <div style="font-size:11px;color:#888;margin-bottom:4px;font-weight:600">Other regions</div>
+                  <div style="display:flex;gap:4px;align-items:center">
+                    <input style="width:50px;border:1px solid #ddd;border-radius:6px;padding:6px 8px;font-size:12px" placeholder="8.00" />
+                    <span style="color:#aaa">/</span>
+                    <input style="width:50px;border:1px solid #ddd;border-radius:6px;padding:6px 8px;font-size:12px" placeholder="3.00" />
+                  </div>
+                </div>
+              </div>
+              <div style="margin-top:12px;display:flex;justify-content:flex-end;gap:8px">
+                <button onclick="toggleExpand('txs')" style="background:#fff;border:1px solid #ddd;color:#555;padding:5px 14px;border-radius:6px;font-size:12px;cursor:pointer">Cancel</button>
+                <button style="background:#4b41e1;color:white;border:none;padding:5px 14px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">Save</button>
+              </div>
+            </td>
+          </tr>
+
+          <!-- ── Row 3: TX-XL — COLLAPSED ── -->
+          <tr style="background:#fafafa;border-top:1px solid #f0f0f0">
+            <td style="padding:9px 8px;text-align:center">
+              <span onclick="toggleExpand('txxl')" style="color:#4b41e1;font-size:14px;cursor:pointer;user-select:none" id="chevron-txxl">▸</span>
+            </td>
+            <td style="padding:9px 12px;color:#333">3D Clothing</td>
+            <td style="padding:9px 12px;font-family:monospace;color:#555">TX</td>
+            <td style="padding:9px 12px;background:#fdf4ff">
+              <div style="font-size:10px;color:#888">Size</div>
+              <div style="font-weight:600;color:#7c3aed">XL</div>
+            </td>
+            <td style="padding:9px 12px;background:#fdf4ff;color:#ccc">—</td>
+            <td style="padding:9px 12px;font-family:monospace;color:#333">TX-XL</td>
+            <td style="padding:9px 12px;color:#2e7d32;font-weight:600">$10.00</td>
+            <td style="padding:9px 12px;color:#555;text-align:center">$4.50 / $1.50</td>
+            <td style="padding:9px 8px;text-align:center">
+              <span style="color:#e53935;font-size:14px;cursor:pointer">✕</span>
+            </td>
+          </tr>
+          <tr id="expand-txxl" style="display:none;background:#f8f4ff;border-bottom:2px solid #e9d8fd">
+            <td></td>
+            <td colspan="8" style="padding:14px 16px">
+              <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px">
+                <div><div style="font-size:11px;color:#888;margin-bottom:4px;font-weight:600">Design Template URL</div><input style="width:100%;border:1px solid #ddd;border-radius:6px;padding:6px 8px;font-size:12px;box-sizing:border-box" /></div>
+                <div><div style="font-size:11px;color:#888;margin-bottom:4px;font-weight:600">Production days (min–max)</div><div style="display:flex;gap:6px;align-items:center"><input style="width:50px;border:1px solid #ddd;border-radius:6px;padding:6px 8px;font-size:12px" value="3" /><span style="color:#aaa">–</span><input style="width:50px;border:1px solid #ddd;border-radius:6px;padding:6px 8px;font-size:12px" value="5" /></div></div>
+                <div><div style="font-size:11px;color:#888;margin-bottom:4px;font-weight:600">EU Shipping</div><div style="display:flex;gap:4px"><input style="width:50px;border:1px solid #ddd;border-radius:6px;padding:6px 8px;font-size:12px" /><span style="color:#aaa">/</span><input style="width:50px;border:1px solid #ddd;border-radius:6px;padding:6px 8px;font-size:12px" /></div></div>
+                <div><div style="font-size:11px;color:#888;margin-bottom:4px;font-weight:600">Other regions</div><div style="display:flex;gap:4px"><input style="width:50px;border:1px solid #ddd;border-radius:6px;padding:6px 8px;font-size:12px" /><span style="color:#aaa">/</span><input style="width:50px;border:1px solid #ddd;border-radius:6px;padding:6px 8px;font-size:12px" /></div></div>
+              </div>
+              <div style="margin-top:12px;display:flex;justify-content:flex-end;gap:8px">
+                <button onclick="toggleExpand('txxl')" style="background:#fff;border:1px solid #ddd;color:#555;padding:5px 14px;border-radius:6px;font-size:12px;cursor:pointer">Cancel</button>
+                <button style="background:#4b41e1;color:white;border:none;padding:5px 14px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">Save</button>
+              </div>
+            </td>
+          </tr>
+
+          <!-- ── Row 4: Mug 10oz ── -->
+          <tr style="border-top:1px solid #f0f0f0">
+            <td style="padding:9px 8px;text-align:center">
+              <span onclick="toggleExpand('mg10')" style="color:#4b41e1;font-size:14px;cursor:pointer;user-select:none" id="chevron-mg10">▸</span>
+            </td>
+            <td style="padding:9px 12px;color:#333">Mug</td>
+            <td style="padding:9px 12px;font-family:monospace;color:#555">MG</td>
+            <td style="padding:9px 12px;background:#fdf4ff">
+              <div style="font-size:10px;color:#888">Capacity</div>
+              <div style="font-weight:600;color:#7c3aed">10oz</div>
+            </td>
+            <td style="padding:9px 12px;background:#fdf4ff">
+              <div style="font-size:10px;color:#888">Color</div>
+              <div style="font-weight:600;color:#7c3aed">White</div>
+            </td>
+            <td style="padding:9px 12px;font-family:monospace;color:#333">MG-10-WHT</td>
+            <td style="padding:9px 12px;color:#2e7d32;font-weight:600">$6.50</td>
+            <td style="padding:9px 12px;color:#555;text-align:center">$5.00 / $2.00</td>
+            <td style="padding:9px 8px;text-align:center">
+              <span style="color:#e53935;font-size:14px;cursor:pointer">✕</span>
+            </td>
+          </tr>
+          <tr id="expand-mg10" style="display:none;background:#f8f4ff;border-bottom:2px solid #e9d8fd">
+            <td></td>
+            <td colspan="8" style="padding:14px 16px">
+              <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px">
+                <div><div style="font-size:11px;color:#888;margin-bottom:4px;font-weight:600">Design Template URL</div><input style="width:100%;border:1px solid #ddd;border-radius:6px;padding:6px 8px;font-size:12px;box-sizing:border-box" placeholder="https://..." /></div>
+                <div><div style="font-size:11px;color:#888;margin-bottom:4px;font-weight:600">Production days (min–max)</div><div style="display:flex;gap:6px;align-items:center"><input style="width:50px;border:1px solid #ddd;border-radius:6px;padding:6px 8px;font-size:12px" placeholder="2" /><span style="color:#aaa">–</span><input style="width:50px;border:1px solid #ddd;border-radius:6px;padding:6px 8px;font-size:12px" placeholder="4" /></div></div>
+                <div><div style="font-size:11px;color:#888;margin-bottom:4px;font-weight:600">EU Shipping</div><div style="display:flex;gap:4px"><input style="width:50px;border:1px solid #ddd;border-radius:6px;padding:6px 8px;font-size:12px" /><span style="color:#aaa">/</span><input style="width:50px;border:1px solid #ddd;border-radius:6px;padding:6px 8px;font-size:12px" /></div></div>
+                <div><div style="font-size:11px;color:#888;margin-bottom:4px;font-weight:600">Other regions</div><div style="display:flex;gap:4px"><input style="width:50px;border:1px solid #ddd;border-radius:6px;padding:6px 8px;font-size:12px" /><span style="color:#aaa">/</span><input style="width:50px;border:1px solid #ddd;border-radius:6px;padding:6px 8px;font-size:12px" /></div></div>
+              </div>
+              <div style="margin-top:12px;display:flex;justify-content:flex-end;gap:8px">
+                <button onclick="toggleExpand('mg10')" style="background:#fff;border:1px solid #ddd;color:#555;padding:5px 14px;border-radius:6px;font-size:12px;cursor:pointer">Cancel</button>
+                <button style="background:#4b41e1;color:white;border:none;padding:5px 14px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">Save</button>
+              </div>
+            </td>
+          </tr>
+
+        </tbody>
+      </table>
+    </div>
+
+    <div style="padding:10px 20px;background:#f9f9f9;border-top:1px solid #eee;font-size:11px;color:#999;display:flex;gap:24px;flex-wrap:wrap">
+      <span>▸ Mở rộng để chỉnh Design URL · Production days · Shipping theo region</span>
+      <span>🟣 Variant tự đặt tên: Size, Color, Capacity, Oz, Style...</span>
+    </div>
+  </div>
+</div>
+
+<script>
+function toggleExpand(id) {
+  const row = document.getElementById('expand-' + id);
+  const chevron = document.getElementById('chevron-' + id);
+  if (!row) return;
+  const isOpen = row.style.display !== 'none';
+  row.style.display = isOpen ? 'none' : 'table-row';
+  chevron.style.transform = isOpen ? '' : 'rotate(90deg)';
+  chevron.style.display = 'inline-block';
+  chevron.style.transition = 'transform 0.2s';
+}
+</script>

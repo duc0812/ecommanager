@@ -1,5 +1,5 @@
 'use client'
-import { useCallback, useEffect, useState } from 'react'
+import { ChangeEvent, useCallback, useEffect, useMemo, useState } from 'react'
 import Sidebar from '@/components/Sidebar'
 
 type MetaAccount = {
@@ -39,6 +39,15 @@ type DBData = {
   avgSpend: number
   lastSyncAt: string | null
   empty?: boolean
+}
+
+type ImportResult = {
+  rows: number
+  imported: number
+  updated: number
+  skipped: number
+  errors: { row: number; error: string }[]
+  error?: string
 }
 
 function fmtUSD(n: number) {
@@ -81,6 +90,10 @@ export default function MetaBillingPage() {
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
   const [syncResult, setSyncResult] = useState<{ synced?: number; error?: string } | null>(null)
+  const [importAccountId, setImportAccountId] = useState('')
+  const [importing, setImporting] = useState(false)
+  const [importResult, setImportResult] = useState<ImportResult | null>(null)
+  const accounts = useMemo(() => data?.accounts ?? [], [data?.accounts])
 
   const load = useCallback(async (accountId?: string, month?: string) => {
     setLoading(true)
@@ -95,6 +108,11 @@ export default function MetaBillingPage() {
   }, [])
 
   useEffect(() => { load(selectedAccount, selectedMonth) }, [load, selectedAccount, selectedMonth])
+
+  useEffect(() => {
+    if (selectedAccount !== 'all') setImportAccountId(selectedAccount)
+    else if (!importAccountId && accounts.length > 0) setImportAccountId(accounts[0].id)
+  }, [accounts, importAccountId, selectedAccount])
 
   async function syncAll() {
     setSyncing(true)
@@ -114,7 +132,23 @@ export default function MetaBillingPage() {
     setSelectedMonth(val)
   }
 
-  const accounts = data?.accounts ?? []
+  async function importBillingFile(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file || !importAccountId) return
+
+    setImporting(true)
+    setImportResult(null)
+    const form = new FormData()
+    form.set('accountId', importAccountId)
+    form.set('file', file)
+
+    const res = await fetch('/api/meta/import', { method: 'POST', body: form })
+    const json = await res.json()
+    setImportResult(json)
+    if (!json.error) await load(selectedAccount, selectedMonth)
+    setImporting(false)
+  }
 
   return (
     <div className="flex min-h-screen bg-surface">
@@ -240,6 +274,49 @@ export default function MetaBillingPage() {
                 <p className="text-label-sm text-on-surface-variant mt-xs">failed payment attempts</p>
               </div>
             </div>
+
+            <section className="mb-xl rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-lg">
+              <div className="flex flex-wrap items-center gap-md">
+                <div>
+                  <h3 className="text-headline-sm text-primary">Import Meta Billing Export</h3>
+                  <p className="mt-xs text-body-sm text-on-surface-variant">
+                    Upload CSV/XLSX from Meta Billing UI. Paid rows are upserted by Transaction ID; duplicates are updated or skipped.
+                  </p>
+                </div>
+                <div className="ml-auto flex flex-wrap items-center gap-sm">
+                  <select
+                    value={importAccountId}
+                    onChange={e => setImportAccountId(e.target.value)}
+                    className="rounded-lg border border-outline-variant/30 bg-surface-container px-md py-sm text-body-sm outline-none"
+                  >
+                    {accounts.map(a => (
+                      <option key={a.id} value={a.id}>{a.accountName || a.accountId}</option>
+                    ))}
+                  </select>
+                  <label className={`inline-flex cursor-pointer items-center gap-sm rounded-lg bg-secondary px-lg py-sm text-label-md text-on-secondary shadow-sm hover:opacity-90 ${importing ? 'pointer-events-none opacity-60' : ''}`}>
+                    <span className={`material-symbols-outlined text-[18px] ${importing ? 'animate-spin' : ''}`}>{importing ? 'sync' : 'upload_file'}</span>
+                    {importing ? 'Importing...' : 'Upload CSV/XLSX'}
+                    <input type="file" accept=".csv,.xlsx,.xls,text/csv" onChange={importBillingFile} className="hidden" disabled={importing || !importAccountId} />
+                  </label>
+                </div>
+              </div>
+              {importResult && (
+                <div className={`mt-md rounded-lg px-md py-sm text-body-sm ${importResult.error ? 'bg-error-container/20 text-error' : 'bg-on-tertiary-container/10 text-on-tertiary-container'}`}>
+                  {importResult.error ? (
+                    <span>Error: {importResult.error}</span>
+                  ) : (
+                    <span>
+                      Rows {importResult.rows}. Imported {importResult.imported}, updated {importResult.updated}, skipped {importResult.skipped}, errors {importResult.errors?.length ?? 0}.
+                    </span>
+                  )}
+                  {!importResult.error && importResult.errors?.length > 0 && (
+                    <div className="mt-xs text-error">
+                      {importResult.errors.slice(0, 5).map(err => <div key={`${err.row}-${err.error}`}>Row {err.row}: {err.error}</div>)}
+                    </div>
+                  )}
+                </div>
+              )}
+            </section>
 
             <div className="bg-surface-container-lowest rounded-xl border border-outline-variant/20 overflow-hidden">
               <div className="flex items-center gap-sm px-lg py-md border-b border-outline-variant/20">

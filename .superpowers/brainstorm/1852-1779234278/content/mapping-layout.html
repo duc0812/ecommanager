@@ -1,0 +1,77 @@
+<h2>Section 2: UI Structure — Product Mapping Page</h2>
+<p class="subtitle">Chọn layout nào phù hợp hơn cho trang mapping</p>
+
+<div class="cards" style="margin-top:24px">
+
+  <!-- Option A -->
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:16px;background:#f8f9ff;border-radius:8px;font-family:monospace;font-size:13px">
+      <div style="display:flex;gap:8px;margin-bottom:12px">
+        <div style="padding:6px 16px;background:#4b41e1;color:white;border-radius:6px;font-size:12px;font-weight:600">Auto Mapping</div>
+        <div style="padding:6px 16px;background:#fff;border:1px solid #ddd;border-radius:6px;font-size:12px;color:#e53935;font-weight:600">Manual Mapping <span style="background:#e53935;color:white;border-radius:10px;padding:1px 6px;font-size:10px;margin-left:4px">3</span></div>
+      </div>
+      <div style="border:1px solid #e0e0e0;border-radius:8px;overflow:hidden">
+        <div style="background:#f5f5f5;padding:8px 12px;font-size:11px;font-weight:600;color:#555;display:flex;gap:8px">
+          <span style="flex:2">Product Base</span>
+          <span style="flex:2">Match Conditions</span>
+          <span style="flex:2">Suppliers (by rank)</span>
+          <span style="flex:1">Actions</span>
+        </div>
+        <div style="padding:10px 12px;border-top:1px solid #eee;display:flex;gap:8px;font-size:11px;align-items:center">
+          <span style="flex:2;font-weight:600">Tshirt 3D</span>
+          <span style="flex:2;color:#666">Style=Tshirt, Type=3D Clothing</span>
+          <span style="flex:2"><span style="background:#e8f5e9;color:#2e7d32;padding:2px 6px;border-radius:4px;font-size:10px">Sup A</span> <span style="background:#e3f2fd;color:#1565c0;padding:2px 6px;border-radius:4px;font-size:10px">Sup B</span></span>
+          <span style="flex:1;color:#4b41e1;font-size:11px">Edit</span>
+        </div>
+        <div style="padding:10px 12px;border-top:1px solid #eee;display:flex;gap:8px;font-size:11px;align-items:center;background:#fafafa">
+          <span style="flex:2;font-weight:600">Hoodie 2D</span>
+          <span style="flex:2;color:#666">Style=Hoodie, Type=2D Clothing</span>
+          <span style="flex:2"><span style="background:#e8f5e9;color:#2e7d32;padding:2px 6px;border-radius:4px;font-size:10px">Sup A</span></span>
+          <span style="flex:1;color:#4b41e1;font-size:11px">Edit</span>
+        </div>
+        <div style="padding:10px 12px;border-top:1px solid #eee;text-align:center;color:#4b41e1;font-size:11px;cursor:pointer">+ Add Product Base</div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>Option A — Single page, 2 tabs</h3>
+      <p>Auto Mapping tab quản lý tất cả ProductBase dạng flat list. Manual Mapping tab là queue riêng. Badge đỏ hiện số item pending.</p>
+    </div>
+  </div>
+
+  <!-- Option B -->
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:16px;background:#f8f9ff;border-radius:8px;font-size:13px">
+      <div style="display:flex;gap:0;margin-bottom:12px;border:1px solid #e0e0e0;border-radius:8px;overflow:hidden">
+        <div style="flex:1;padding:10px;background:#4b41e1;color:white;font-size:12px;font-weight:600;text-align:center">
+          Auto Mapping
+          <div style="font-size:10px;opacity:0.8;font-weight:400;margin-top:2px">ProductBase rules</div>
+        </div>
+        <div style="flex:1;padding:10px;background:#fff3e0;color:#e65100;font-size:12px;font-weight:600;text-align:center;border-left:1px solid #e0e0e0">
+          Manual Mapping
+          <div style="font-size:10px;font-weight:400;margin-top:2px">⚠ 3 unresolved</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:12px">
+        <div style="flex:1;border:1px solid #e0e0e0;border-radius:8px;padding:10px">
+          <div style="font-size:11px;font-weight:600;margin-bottom:8px;color:#333">Product Bases</div>
+          <div style="font-size:11px;padding:6px 8px;background:#ede9ff;border-radius:6px;margin-bottom:4px;font-weight:600;color:#4b41e1">▶ Tshirt 3D</div>
+          <div style="font-size:11px;padding:6px 8px;border-radius:6px;margin-bottom:4px;color:#555">Hoodie 2D</div>
+          <div style="font-size:11px;padding:6px 8px;border-radius:6px;color:#555">Mug</div>
+          <div style="font-size:11px;padding:6px 8px;color:#4b41e1;margin-top:4px">+ New</div>
+        </div>
+        <div style="flex:2;border:1px solid #e0e0e0;border-radius:8px;padding:10px">
+          <div style="font-size:11px;font-weight:600;margin-bottom:8px;color:#333">Tshirt 3D — Supplier Mappings</div>
+          <div style="font-size:10px;color:#666;margin-bottom:6px">Rank 1: Supplier A → all sizes S–XL</div>
+          <div style="font-size:10px;color:#666;margin-bottom:6px">Rank 2: Supplier B → fallback</div>
+          <div style="font-size:10px;color:#e53935;margin-bottom:6px">⚠ Override: Size 6XL → Manual</div>
+          <div style="font-size:10px;color:#4b41e1">+ Add supplier / override</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>Option B — Master/Detail layout</h3>
+      <p>Left panel: danh sách ProductBase. Right panel: chi tiết rule + overrides. Thấy được toàn bộ config của 1 ProductBase trong 1 màn hình.</p>
+    </div>
+  </div>
+
+</div>

@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import {
-  bulkUpsertProducts, bulkUpsertProductsBySupplierName, countProducts, listProducts, upsertProductMapping,
-} from '@/lib/repos/suppliers'
+import { bulkUpsertProducts, countProducts, listProducts } from '@/lib/repos/suppliers'
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
@@ -16,22 +14,11 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({ products, total })
 }
 
-export async function POST(req: NextRequest) {
-  const body = await req.json()
-  if (!body.supplierId || !body.sku || !Number.isFinite(body.baseCost)) {
-    return NextResponse.json({ error: 'supplierId, sku, baseCost required' }, { status: 400 })
-  }
-  const p = await upsertProductMapping(body)
-  return NextResponse.json(p, { status: 201 })
-}
-
 export async function PUT(req: NextRequest) {
   const body = await req.json()
-  if (!Array.isArray(body.rows)) {
-    return NextResponse.json({ error: 'rows array required' }, { status: 400 })
+  if (!body.supplierId || !Array.isArray(body.rows)) {
+    return NextResponse.json({ error: 'supplierId and rows array required' }, { status: 400 })
   }
-  const result = body.supplierId
-    ? await bulkUpsertProducts(body.supplierId, body.rows)
-    : await bulkUpsertProductsBySupplierName(body.rows)
+  const result = await bulkUpsertProducts(body.supplierId, body.rows)
   return NextResponse.json(result)
 }

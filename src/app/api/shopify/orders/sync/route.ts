@@ -1,17 +1,42 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
-import { fetchOrdersPage } from '@/lib/shopify-orders'
-import { computeOrderPL } from '@/lib/pl-calculator'
-import { buildSkuPriceMap, buildSupplierProductCandidates } from '@/lib/repos/suppliers'
+import { fetchOrdersPage, fetchShopInfo } from '@/lib/shopify-orders'
+import { computeOrderPL, type SupplierInput } from '@/lib/pl-calculator'
 import { upsertOrderWithLines } from '@/lib/repos/orders'
 import { autoDetectStatus, isValidPipelineStatus, type PipelineStatus } from '@/lib/pipeline-status'
 import { resolveZone, type SupplierZoneOverrides } from '@/lib/regions'
 import { getShopifyConnection } from '@/lib/token-store'
-import { resolveSupplierForOrderLine } from '@/lib/auto-mapping'
 import { resolveByProductBase } from '@/lib/product-mapping'
 import { loadProductBasesForResolver, loadVariantManualMappingsForResolver } from '@/lib/repos/mapping'
 import { classifyOrderLines, buildTrelloCardContent } from '@/lib/order-classify'
-import { createTrelloCard, getTrelloConfig, shouldCreateCard } from '@/lib/trello'
+import { createTrelloCard, addAttachmentToCard, getTrelloConfig, shouldCreateCard } from '@/lib/trello'
+
+type ResolvedSupplierProduct = SupplierInput & {
+  sku: string
+  requiresDesign: boolean
+}
+
+function safeParseShipping(json: string | null): SupplierInput['shippingByRegion'] {
+  if (!json) return undefined
+  try {
+    const parsed = JSON.parse(json)
+    if (typeof parsed === 'object' && parsed !== null) return parsed
+  } catch {}
+  return undefined
+}
+
+function supplierParentKey(product: { supplierId: string; productName: string | null; productType: string | null; baseSku: string | null }): string {
+  return [
+    product.supplierId,
+    product.productName ?? '',
+    product.productType ?? '',
+    product.baseSku ?? '',
+  ].join('|')
+}
+
+function normalize(v: string | null | undefined): string {
+  return (v ?? '').toLowerCase().trim()
+}
 
 export async function POST(req: NextRequest) {
   const stored = await getShopifyConnection(req.headers.get('cookie') ?? undefined)
@@ -40,11 +65,53 @@ export async function POST(req: NextRequest) {
   const sinceDate = store.syncSinceDate
     ?? new Date(Date.now() - 60 * 24 * 60 * 60 * 1000)
   const sinceIso = sinceDate.toISOString().split('T')[0]
+  const shopInfo = await fetchShopInfo(shop, accessToken).catch(() => ({
+    ianaTimezone: store.ianaTimezone ?? null,
+    timezoneAbbreviation: null,
+  }))
+  const shopTimezone = shopInfo.ianaTimezone ?? store.ianaTimezone ?? null
 
-  const priceMap = await buildSkuPriceMap()
-  const mappingCandidates = await buildSupplierProductCandidates()
   const productBases = await loadProductBasesForResolver()
   const manualMappings = await loadVariantManualMappingsForResolver()
+  const supplierProducts = await prisma.supplierProduct.findMany({
+    include: { supplier: true },
+  })
+  const supplierProductById = new Map<string, ResolvedSupplierProduct>(
+    supplierProducts.filter(p => p.supplier.isActive).map(p => [p.id, {
+      supplierId: p.supplierId,
+      sku: p.sku,
+      baseCost: p.baseCost,
+      firstItemShipFee: p.supplier.firstItemShipFee,
+      additionalItemShipFee: p.supplier.additionalItemShipFee,
+      requiresDesign: p.requiresDesign,
+      shippingByRegion: safeParseShipping(p.shippingByRegion),
+    }]),
+  )
+  const rawSupplierProductById = new Map(supplierProducts.map(p => [p.id, p]))
+  const supplierProductsByParent = new Map<string, typeof supplierProducts>()
+  for (const p of supplierProducts.filter(p => p.supplier.isActive)) {
+    const key = supplierParentKey(p)
+    const existing = supplierProductsByParent.get(key) ?? []
+    existing.push(p)
+    supplierProductsByParent.set(key, existing)
+  }
+
+  function resolveSupplierProductIdForLine(supplierProductId: string | null, selectedOptions: Record<string, string>) {
+    if (!supplierProductId) return null
+    const mapped = rawSupplierProductById.get(supplierProductId)
+    if (!mapped) return supplierProductId
+    const optionValues = Object.entries(selectedOptions)
+      .filter(([key]) => ['size'].includes(normalize(key)))
+      .map(([, value]) => normalize(value))
+      .filter(Boolean)
+    if (optionValues.length === 0) return supplierProductId
+    const siblings = supplierProductsByParent.get(supplierParentKey(mapped)) ?? []
+    const exact = siblings.find(p =>
+      optionValues.includes(normalize(p.variant1Value)) ||
+      optionValues.includes(normalize(p.variant2Value))
+    )
+    return exact?.id ?? supplierProductId
+  }
 
   const allOverrides = await prisma.supplierZoneOverride.findMany()
   const overridesBySupplier: Record<string, SupplierZoneOverrides> = {}
@@ -79,28 +146,28 @@ export async function POST(req: NextRequest) {
       const grossExcludingMarketplaceTax = o.grossAmount - o.taxMarketplaceCollected
       const resolvedLines = o.lines.map(l => ({
         line: l,
-        mapping: resolveSupplierForOrderLine({
-          sku: l.sku,
-          title: l.title,
-          variantTitle: l.variantTitle,
-          productTags: l.productTags,
-          productType: l.productType,
-        }, mappingCandidates),
-        pbResolve: resolveByProductBase(
-          l.variantId,
-          l.productType,
-          l.selectedOptions,
-          productBases,
-          manualMappings,
-        ),
+        pbResolve: (() => {
+          const result = resolveByProductBase(
+            l.variantId,
+            l.productType,
+            l.selectedOptions,
+            productBases,
+            manualMappings,
+          )
+          return {
+            ...result,
+            supplierProductId: resolveSupplierProductIdForLine(result.supplierProductId, l.selectedOptions),
+          }
+        })(),
       }))
 
       const hasPendingMapping = resolvedLines.some(r => r.pbResolve.resolvedVia === 'unresolved')
 
-      // Determine shipping zone via majority supplier overrides
+      // Determine shipping zone via Product Mapping result only.
       let supplierIdForZone: string | undefined
       for (const r of resolvedLines) {
-        if (r.mapping.supplier) { supplierIdForZone = r.mapping.supplier.supplierId; break }
+        const supplier = r.pbResolve.supplierProductId ? supplierProductById.get(r.pbResolve.supplierProductId) : null
+        if (supplier) { supplierIdForZone = supplier.supplierId; break }
       }
       const overrides = supplierIdForZone ? overridesBySupplier[supplierIdForZone] : undefined
       const shippingZone = resolveZone(o.shippingCountry, overrides)
@@ -111,26 +178,28 @@ export async function POST(req: NextRequest) {
           totalFees,
           refundedAmount: o.refundedAmount,
           shippingZone,
-          lines: resolvedLines.map(({ line, mapping }) => ({
+          lines: resolvedLines.map(({ line, pbResolve }) => ({
             sku: line.sku,
             qty: line.quantity,
             unitPrice: line.unitPrice,
-            resolvedSupplier: mapping.supplier,
+            resolvedSupplier: pbResolve.supplierProductId
+              ? supplierProductById.get(pbResolve.supplierProductId) ?? null
+              : null,
           })),
         },
-        priceMap,
+        {},
       )
       if (pl.hasUnmappedSku) withUnmappedSku++
 
       // Read existing order to preserve manual status
-      const existing = await prisma.order.findUnique({ where: { id: o.id }, select: { pipelineStatus: true } })
+      const existing = await prisma.order.findUnique({ where: { id: o.id }, select: { pipelineStatus: true, designReady: true } })
       const currentStatus = existing && isValidPipelineStatus(existing.pipelineStatus)
         ? existing.pipelineStatus as PipelineStatus
         : null
 
       // Check if any line maps to a product requiring custom design
-      const hasCustomDesignLine = o.lines.some(l => {
-        const resolved = resolvedLines.find(r => r.line.id === l.id)?.mapping.supplier
+      const hasCustomDesignLine = resolvedLines.some(r => {
+        const resolved = r.pbResolve.supplierProductId ? supplierProductById.get(r.pbResolve.supplierProductId) : null
         return !!resolved?.requiresDesign
       })
 
@@ -139,6 +208,7 @@ export async function POST(req: NextRequest) {
         hasUnmappedSku: pl.hasUnmappedSku,
         hasPendingMapping,
         hasCustomDesignLine,
+        hasDesignReady: existing?.designReady ?? false,
         currentStatus,
       })
 
@@ -155,22 +225,29 @@ export async function POST(req: NextRequest) {
         fulfillmentStatus: o.fulfillmentStatus,
         currency: o.currency,
         grossAmount: grossExcludingMarketplaceTax,
+        subtotalAmount: o.subtotal,
+        shippingAmount: o.shipping,
+        taxAmount: o.tax,
         expectedPayout: pl.expectedPayout,
         totalFees,
         refundedAmount: o.refundedAmount,
         defaultSupplierId: pl.defaultSupplierId,
-        placedAt: new Date(o.processedAt ?? o.createdAt),
+        placedAt: new Date(o.createdAt),
+        shopTimezone,
         pipelineStatus: detected,
         shippingZone,
+        shippingName: o.shippingName,
+        shippingAddress1: o.shippingAddress1,
+        shippingAddress2: o.shippingAddress2,
+        shippingCity: o.shippingCity,
+        shippingZip: o.shippingZip,
+        shippingPhone: o.shippingPhone,
         lines: o.lines.map((l, idx) => {
           const resolved = pl.perLineCost[idx]
           if (!resolved) throw new Error(`perLineCost[${idx}] missing for order ${o.id}`)
           return {
             shopifyLineId: l.id,
             sku: l.sku,
-            resolvedSupplierSku: resolved.resolvedSupplierId
-              ? resolvedLines[idx]?.mapping.supplier?.sku ?? null
-              : null,
             variantTitle: l.variantTitle,
             productTitle: l.title,
             qty: l.quantity,
@@ -183,6 +260,11 @@ export async function POST(req: NextRequest) {
             resolvedImportTax: pl.resolvedImportTaxPerUnit,
             shopifyVariantId: l.variantId,
             variantOptions: Object.keys(l.selectedOptions).length > 0 ? JSON.stringify(l.selectedOptions) : null,
+            resolvedSupplierSku: resolved.resolvedSupplierId
+              ? (resolvedLines[idx]?.pbResolve.supplierProductId
+                ? supplierProductById.get(resolvedLines[idx].pbResolve.supplierProductId!)?.sku ?? null
+                : null)
+              : null,
           }
         }),
       })
@@ -244,6 +326,17 @@ export async function POST(req: NextRequest) {
               data: { trelloCardId: card.id, trelloCardUrl: card.url },
             })
 
+            // Attach preview images for CUSTOM orders so designers see mockups directly on the card
+            if (orderType === 'CUSTOM') {
+              for (const l of cardLines) {
+                const preview = l.customAttributes.find(a => a.key === '_customall_preview')?.value
+                if (preview) {
+                  await addAttachmentToCard(trelloConfig, card.id, preview, `🖼 Preview – ${l.sku ?? 'N/A'}`)
+                    .catch(e => errors.push(`Trello attach preview failed for ${o.name}: ${e.message}`))
+                }
+              }
+            }
+
             // For NON_CUSTOM: upsert SkuDesign records with trelloCardId
             if (orderType === 'NON_CUSTOM') {
               const skus = o.lines.map(l => l.sku).filter(Boolean) as string[]
@@ -268,7 +361,10 @@ export async function POST(req: NextRequest) {
 
   await prisma.shopifyStore.update({
     where: { id: store.id },
-    data: { lastSyncAt: new Date() },
+    data: {
+      lastSyncAt: new Date(),
+      ...(shopTimezone ? { ianaTimezone: shopTimezone } : {}),
+    },
   })
 
   if (errors.length > 0 && totalSynced === 0) {

@@ -1,0 +1,152 @@
+<h2>Option A v2 — Updated Naming + Manual Mapping Tab</h2>
+<p class="subtitle">Xem cả 2 tabs — click tab để switch</p>
+
+<div style="margin-top:24px;border:1px solid #e0e0e0;border-radius:12px;overflow:hidden;background:#fff;max-width:960px">
+
+  <!-- Page header -->
+  <div style="padding:20px 24px;border-bottom:1px solid #e0e0e0;display:flex;justify-content:space-between;align-items:center">
+    <div>
+      <div style="font-size:20px;font-weight:700;color:#091426">Product Mapping</div>
+      <div style="font-size:13px;color:#666;margin-top:2px">Cấu hình tự động khớp sản phẩm với supplier</div>
+    </div>
+    <div id="header-btn-auto" style="background:#4b41e1;color:white;border:none;padding:8px 18px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">+ New Product Base</div>
+    <div id="header-btn-manual" style="display:none;background:#e53935;color:white;border:none;padding:8px 18px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">Resolve Selected</div>
+  </div>
+
+  <!-- Tabs -->
+  <div style="display:flex;border-bottom:2px solid #e0e0e0;background:#fafafa">
+    <div id="tab-auto" onclick="switchTab('auto')" style="padding:14px 24px;font-size:14px;font-weight:700;color:#4b41e1;border-bottom:2px solid #4b41e1;margin-bottom:-2px;cursor:pointer">
+      Auto Mapping
+    </div>
+    <div id="tab-manual" onclick="switchTab('manual')" style="padding:14px 24px;font-size:14px;font-weight:600;color:#666;cursor:pointer;display:flex;align-items:center;gap:8px">
+      Manual Mapping
+      <span style="background:#e53935;color:white;border-radius:10px;padding:2px 8px;font-size:11px;font-weight:700">3</span>
+    </div>
+  </div>
+
+  <!-- AUTO MAPPING TAB -->
+  <div id="content-auto" style="padding:20px 24px">
+    <div style="display:flex;gap:10px;margin-bottom:16px">
+      <input style="flex:1;border:1px solid #ddd;border-radius:8px;padding:8px 12px;font-size:13px;color:#333" placeholder="Tìm Product Base..." />
+      <select style="border:1px solid #ddd;border-radius:8px;padding:8px 12px;font-size:13px;color:#333;background:#fff">
+        <option>Tất cả loại</option><option>3D Clothing</option><option>2D Clothing</option>
+      </select>
+    </div>
+
+    <div style="border:1px solid #e0e0e0;border-radius:10px;overflow:hidden">
+      <div style="background:#f5f5f5;padding:10px 16px;font-size:12px;font-weight:700;color:#555;display:grid;grid-template-columns:2fr 2.5fr 2.5fr 1.2fr 80px;gap:8px">
+        <span>Product Base</span><span>Match Conditions</span><span>Suppliers (theo rank)</span><span>Special Cases</span><span></span>
+      </div>
+
+      <div style="padding:12px 16px;border-top:1px solid #eee;display:grid;grid-template-columns:2fr 2.5fr 2.5fr 1.2fr 80px;gap:8px;align-items:center">
+        <div><div style="font-size:13px;font-weight:700;color:#091426">Tshirt 3D</div><div style="font-size:11px;color:#888;margin-top:2px">3D Clothing</div></div>
+        <div style="display:flex;flex-wrap:wrap;gap:4px">
+          <span style="background:#ede9ff;color:#4b41e1;padding:2px 8px;border-radius:4px;font-size:11px">Style = Tshirt</span>
+          <span style="background:#ede9ff;color:#4b41e1;padding:2px 8px;border-radius:4px;font-size:11px">Size = S,M,L,XL</span>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:4px">
+          <span style="background:#e8f5e9;color:#2e7d32;padding:3px 8px;border-radius:4px;font-size:11px;font-weight:600">#1 Supplier A</span>
+          <span style="background:#e3f2fd;color:#1565c0;padding:3px 8px;border-radius:4px;font-size:11px;font-weight:600">#2 Supplier B</span>
+        </div>
+        <div><span style="background:#fff3e0;color:#e65100;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600">1 case</span></div>
+        <div style="text-align:right"><span style="color:#4b41e1;font-size:12px;cursor:pointer;font-weight:600">Edit</span></div>
+      </div>
+
+      <div style="padding:12px 16px;border-top:1px solid #eee;display:grid;grid-template-columns:2fr 2.5fr 2.5fr 1.2fr 80px;gap:8px;align-items:center;background:#fafafa">
+        <div><div style="font-size:13px;font-weight:700;color:#091426">Hoodie 2D</div><div style="font-size:11px;color:#888;margin-top:2px">2D Clothing</div></div>
+        <div style="display:flex;flex-wrap:wrap;gap:4px">
+          <span style="background:#ede9ff;color:#4b41e1;padding:2px 8px;border-radius:4px;font-size:11px">Style = Hoodie</span>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:4px">
+          <span style="background:#e8f5e9;color:#2e7d32;padding:3px 8px;border-radius:4px;font-size:11px;font-weight:600">#1 Supplier A</span>
+        </div>
+        <div style="font-size:12px;color:#aaa">—</div>
+        <div style="text-align:right"><span style="color:#4b41e1;font-size:12px;cursor:pointer;font-weight:600">Edit</span></div>
+      </div>
+
+      <div style="padding:12px 16px;border-top:1px solid #eee;text-align:center;color:#4b41e1;font-size:13px;cursor:pointer;background:#fafafa">+ Add Product Base</div>
+    </div>
+
+    <div style="margin-top:14px;padding:10px 16px;background:#f0f4ff;border-radius:8px;font-size:12px;color:#555;display:flex;gap:20px;flex-wrap:wrap">
+      <span>🔵 Conditions match → auto assign supplier theo rank</span>
+      <span>🟠 Special Cases = ngoại lệ attribute combo cụ thể</span>
+      <span>🔴 Manual Mapping tab = override tuyệt đối, priority 1</span>
+    </div>
+  </div>
+
+  <!-- MANUAL MAPPING TAB -->
+  <div id="content-manual" style="display:none;padding:20px 24px">
+
+    <!-- Info banner -->
+    <div style="background:#fff8e1;border:1px solid #ffe082;border-radius:8px;padding:10px 16px;margin-bottom:16px;font-size:12px;color:#7a5c00;display:flex;align-items:center;gap:8px">
+      <span style="font-size:16px">⚡</span>
+      <span>Mapping ở đây <strong>override tất cả Auto Mapping rules</strong> và được dùng làm priority 1 cho mọi order về sau có cùng product/variant.</span>
+    </div>
+
+    <!-- Sub-tabs: Pending / Saved -->
+    <div style="display:flex;gap:0;margin-bottom:16px;border:1px solid #e0e0e0;border-radius:8px;overflow:hidden;width:fit-content">
+      <div style="padding:8px 20px;background:#e53935;color:white;font-size:13px;font-weight:600;cursor:pointer">Pending <span style="background:rgba(255,255,255,0.3);padding:1px 6px;border-radius:8px;font-size:11px">3</span></div>
+      <div style="padding:8px 20px;background:#fff;color:#555;font-size:13px;font-weight:600;cursor:pointer;border-left:1px solid #e0e0e0">Saved Mappings <span style="background:#eee;color:#666;padding:1px 6px;border-radius:8px;font-size:11px">12</span></div>
+    </div>
+
+    <!-- Pending queue -->
+    <div style="border:1px solid #e0e0e0;border-radius:10px;overflow:hidden">
+      <div style="background:#f5f5f5;padding:10px 16px;font-size:12px;font-weight:700;color:#555;display:grid;grid-template-columns:2.5fr 1.5fr 1.5fr 2fr 100px;gap:8px">
+        <span>Product / Variant</span><span>Shopify SKU</span><span>Orders blocked</span><span>Assign Supplier SKU</span><span></span>
+      </div>
+
+      <div style="padding:12px 16px;border-top:1px solid #eee;display:grid;grid-template-columns:2.5fr 1.5fr 1.5fr 2fr 100px;gap:8px;align-items:center">
+        <div>
+          <div style="font-size:13px;font-weight:700;color:#091426">Tshirt Premium 3D</div>
+          <div style="font-size:11px;color:#888">Size: 6XL / Color: Black</div>
+        </div>
+        <span style="font-size:12px;font-family:monospace;color:#555">TS-6XL-BLK</span>
+        <span style="font-size:12px;color:#e53935;font-weight:600">2 orders</span>
+        <select style="border:1px solid #ddd;border-radius:6px;padding:6px 8px;font-size:12px;color:#333;background:#fff;width:100%">
+          <option>-- Chọn supplier SKU --</option>
+          <option>Supplier B — POD-TS-6XL</option>
+          <option>Supplier C — OVER-TS-6XL</option>
+        </select>
+        <button style="background:#4b41e1;color:white;border:none;padding:6px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">Save</button>
+      </div>
+
+      <div style="padding:12px 16px;border-top:1px solid #eee;display:grid;grid-template-columns:2.5fr 1.5fr 1.5fr 2fr 100px;gap:8px;align-items:center;background:#fafafa">
+        <div>
+          <div style="font-size:13px;font-weight:700;color:#091426">Vintage Hoodie</div>
+          <div style="font-size:11px;color:#888">Size: L / Color: Vintage Wash</div>
+        </div>
+        <span style="font-size:12px;font-family:monospace;color:#555">VHD-L-VW</span>
+        <span style="font-size:12px;color:#e53935;font-weight:600">1 order</span>
+        <select style="border:1px solid #ddd;border-radius:6px;padding:6px 8px;font-size:12px;color:#333;background:#fff;width:100%">
+          <option>-- Chọn supplier SKU --</option>
+          <option>Supplier A — HD-L-VW</option>
+        </select>
+        <button style="background:#4b41e1;color:white;border:none;padding:6px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">Save</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+function switchTab(tab) {
+  document.getElementById('content-auto').style.display = tab === 'auto' ? 'block' : 'none';
+  document.getElementById('content-manual').style.display = tab === 'manual' ? 'block' : 'none';
+  document.getElementById('header-btn-auto').style.display = tab === 'auto' ? 'block' : 'none';
+  document.getElementById('header-btn-manual').style.display = tab === 'manual' ? 'block' : 'none';
+
+  var autoTab = document.getElementById('tab-auto');
+  var manualTab = document.getElementById('tab-manual');
+  if (tab === 'auto') {
+    autoTab.style.color = '#4b41e1';
+    autoTab.style.borderBottom = '2px solid #4b41e1';
+    manualTab.style.color = '#666';
+    manualTab.style.borderBottom = 'none';
+  } else {
+    manualTab.style.color = '#e53935';
+    manualTab.style.borderBottom = '2px solid #e53935';
+    autoTab.style.color = '#666';
+    autoTab.style.borderBottom = 'none';
+  }
+}
+</script>

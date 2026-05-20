@@ -206,16 +206,46 @@ export async function saveManualMapping(input: SaveManualMappingInput) {
       },
     })
 
+    // Immediately apply the resolved supplier to all unresolved lines with this variant
+    const supplierProduct = await tx.supplierProduct.findUnique({
+      where: { id: input.supplierProductId },
+      select: { supplierId: true, sku: true, baseCost: true },
+    })
+    if (supplierProduct) {
+      await tx.orderLine.updateMany({
+        where: { shopifyVariantId: input.shopifyVariantId, resolvedSupplierId: null },
+        data: {
+          resolvedSupplierId: supplierProduct.supplierId,
+          resolvedSupplierSku: supplierProduct.sku,
+          resolvedBaseCost: supplierProduct.baseCost ?? null,
+        },
+      })
+    }
+
     const affectedLines = await tx.orderLine.findMany({
-      where: { shopifyVariantId: input.shopifyVariantId, resolvedSupplierId: null },
+      where: { shopifyVariantId: input.shopifyVariantId },
       select: { orderId: true },
     })
     const orderIds = Array.from(new Set(affectedLines.map(l => l.orderId)))
     if (orderIds.length > 0) {
-      await tx.order.updateMany({
-        where: { id: { in: orderIds }, pipelineStatus: 'PENDING_MAPPING' },
-        data: { pipelineStatus: 'PENDING' },
+      const orders = await tx.order.findMany({
+        where: { id: { in: orderIds }, pipelineStatus: { in: ['PENDING_MAPPING', 'PENDING_DESIGN', 'PENDING'] } },
+        select: {
+          id: true,
+          designReady: true,
+          lines: { select: { sku: true, resolvedSupplierId: true, shopifyVariantId: true } },
+        },
       })
+      for (const order of orders) {
+        const skuLines = order.lines.filter(l => l.sku)
+        const willBeMapped = skuLines.length > 0 && skuLines.every(l => l.resolvedSupplierId)
+        await tx.order.update({
+          where: { id: order.id },
+          data: {
+            pipelineStatus: willBeMapped && order.designReady ? 'READY_TO_PRODUCTION' : 'PENDING',
+          },
+        })
+      }
     }
 
     return mapping

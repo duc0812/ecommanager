@@ -1,0 +1,167 @@
+<h2>Profit Chart — Bạn muốn hiển thị dữ liệu nào trên biểu đồ?</h2>
+<p class="subtitle">Chọn kiểu chart phù hợp nhất với nhu cầu theo dõi profit realtime</p>
+
+<div class="cards" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:24px">
+
+  <!-- Option A -->
+  <div class="card" data-choice="a" onclick="toggleSelect(this)" style="cursor:pointer">
+    <div class="card-image" style="padding:16px;background:#0f172a;border-radius:8px 8px 0 0">
+      <div style="font-size:11px;color:#94a3b8;margin-bottom:8px">PROFIT THEO NGÀY — Tháng 5/2026</div>
+      <svg viewBox="0 0 320 120" style="width:100%">
+        <!-- grid lines -->
+        <line x1="0" y1="30" x2="320" y2="30" stroke="#1e293b" stroke-width="1"/>
+        <line x1="0" y1="60" x2="320" y2="60" stroke="#1e293b" stroke-width="1"/>
+        <line x1="0" y1="90" x2="320" y2="90" stroke="#1e293b" stroke-width="1"/>
+        <!-- profit line (green) -->
+        <polyline points="0,90 16,75 32,80 48,60 64,65 80,50 96,55 112,40 128,45 144,35 160,30 176,25 192,35 208,20 224,28 240,15 256,22 272,18 288,25 304,12 320,10"
+          fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linejoin="round"/>
+        <!-- area fill -->
+        <path d="M0,90 L16,75 L32,80 L48,60 L64,65 L80,50 L96,55 L112,40 L128,45 L144,35 L160,30 L176,25 L192,35 L208,20 L224,28 L240,15 L256,22 L272,18 L288,25 L304,12 L320,10 L320,120 L0,120 Z"
+          fill="#22c55e" fill-opacity="0.1"/>
+        <!-- labels -->
+        <text x="4" y="115" fill="#475569" font-size="9">1</text>
+        <text x="80" y="115" fill="#475569" font-size="9">6</text>
+        <text x="160" y="115" fill="#475569" font-size="9">11</text>
+        <text x="240" y="115" fill="#475569" font-size="9">16</text>
+        <text x="310" y="115" fill="#475569" font-size="9">20</text>
+        <text x="2" y="28" fill="#94a3b8" font-size="8">$400</text>
+        <text x="2" y="88" fill="#94a3b8" font-size="8">$100</text>
+      </svg>
+      <div style="display:flex;gap:16px;margin-top:8px">
+        <div style="text-align:center">
+          <div style="color:#94a3b8;font-size:10px">TOTAL PROFIT</div>
+          <div style="color:#22c55e;font-size:18px;font-weight:700">$3,241</div>
+        </div>
+        <div style="text-align:center">
+          <div style="color:#94a3b8;font-size:10px">ORDERS</div>
+          <div style="color:#e2e8f0;font-size:18px;font-weight:700">94</div>
+        </div>
+        <div style="text-align:center">
+          <div style="color:#94a3b8;font-size:10px">AVG MARGIN</div>
+          <div style="color:#e2e8f0;font-size:18px;font-weight:700">32%</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A — Profit only</h3>
+      <p>Chỉ 1 đường profit thuần. Đơn giản, dễ đọc. Giống chart Shopify.</p>
+    </div>
+  </div>
+
+  <!-- Option B -->
+  <div class="card" data-choice="b" onclick="toggleSelect(this)" style="cursor:pointer">
+    <div class="card-image" style="padding:16px;background:#0f172a;border-radius:8px 8px 0 0">
+      <div style="font-size:11px;color:#94a3b8;margin-bottom:8px">REVENUE vs AD SPEND vs PROFIT</div>
+      <svg viewBox="0 0 320 120" style="width:100%">
+        <line x1="0" y1="30" x2="320" y2="30" stroke="#1e293b" stroke-width="1"/>
+        <line x1="0" y1="60" x2="320" y2="60" stroke="#1e293b" stroke-width="1"/>
+        <line x1="0" y1="90" x2="320" y2="90" stroke="#1e293b" stroke-width="1"/>
+        <!-- revenue line (blue) -->
+        <polyline points="0,70 16,55 32,60 48,40 64,45 80,30 96,35 112,20 128,25 144,15 160,12 176,10 192,18 208,8 224,14 240,6 256,10 272,8 288,12 304,5 320,4"
+          fill="none" stroke="#3b82f6" stroke-width="2" stroke-linejoin="round" stroke-dasharray="0"/>
+        <!-- ad spend line (red) -->
+        <polyline points="0,95 16,92 32,90 48,88 64,85 80,87 96,84 112,82 128,85 144,83 160,80 176,82 192,79 208,81 224,78 240,80 256,77 272,79 288,76 304,78 320,75"
+          fill="none" stroke="#ef4444" stroke-width="2" stroke-linejoin="round"/>
+        <!-- profit line (green) -->
+        <polyline points="0,90 16,75 32,80 48,60 64,65 80,50 96,55 112,40 128,45 144,35 160,30 176,25 192,35 208,20 224,28 240,15 256,22 272,18 288,25 304,12 320,10"
+          fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linejoin="round"/>
+      </svg>
+      <div style="display:flex;gap:12px;margin-top:8px;flex-wrap:wrap">
+        <div style="display:flex;align-items:center;gap:4px"><div style="width:12px;height:3px;background:#3b82f6"></div><span style="color:#94a3b8;font-size:10px">Revenue $4,317</span></div>
+        <div style="display:flex;align-items:center;gap:4px"><div style="width:12px;height:3px;background:#ef4444"></div><span style="color:#94a3b8;font-size:10px">Ad Spend $892</span></div>
+        <div style="display:flex;align-items:center;gap:4px"><div style="width:12px;height:3px;background:#22c55e"></div><span style="color:#94a3b8;font-size:10px">Profit $3,241</span></div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B — Revenue + Ad Spend + Profit (3 lines)</h3>
+      <p>Thấy rõ mối quan hệ revenue → ad spend → profit. Phân tích marketing tốt hơn.</p>
+    </div>
+  </div>
+
+  <!-- Option C -->
+  <div class="card" data-choice="c" onclick="toggleSelect(this)" style="cursor:pointer">
+    <div class="card-image" style="padding:16px;background:#0f172a;border-radius:8px 8px 0 0">
+      <div style="font-size:11px;color:#94a3b8;margin-bottom:8px">STACKED BARS — Revenue / Cost / Profit</div>
+      <svg viewBox="0 0 320 120" style="width:100%">
+        <line x1="0" y1="30" x2="320" y2="30" stroke="#1e293b" stroke-width="1"/>
+        <line x1="0" y1="60" x2="320" y2="60" stroke="#1e293b" stroke-width="1"/>
+        <line x1="0" y1="90" x2="320" y2="90" stroke="#1e293b" stroke-width="1"/>
+        <!-- bar group: revenue(blue) + cost(red) stacked, profit dot line -->
+        <rect x="4" y="50" width="10" height="60" fill="#3b82f6" opacity="0.7" rx="2"/>
+        <rect x="4" y="75" width="10" height="35" fill="#ef4444" opacity="0.7" rx="2"/>
+        <rect x="20" y="40" width="10" height="70" fill="#3b82f6" opacity="0.7" rx="2"/>
+        <rect x="20" y="68" width="10" height="42" fill="#ef4444" opacity="0.7" rx="2"/>
+        <rect x="36" y="45" width="10" height="65" fill="#3b82f6" opacity="0.7" rx="2"/>
+        <rect x="36" y="72" width="10" height="38" fill="#ef4444" opacity="0.7" rx="2"/>
+        <rect x="52" y="30" width="10" height="80" fill="#3b82f6" opacity="0.7" rx="2"/>
+        <rect x="52" y="62" width="10" height="48" fill="#ef4444" opacity="0.7" rx="2"/>
+        <rect x="68" y="35" width="10" height="75" fill="#3b82f6" opacity="0.7" rx="2"/>
+        <rect x="68" y="65" width="10" height="45" fill="#ef4444" opacity="0.7" rx="2"/>
+        <rect x="84" y="22" width="10" height="88" fill="#3b82f6" opacity="0.7" rx="2"/>
+        <rect x="84" y="58" width="10" height="52" fill="#ef4444" opacity="0.7" rx="2"/>
+        <rect x="100" y="18" width="10" height="92" fill="#3b82f6" opacity="0.7" rx="2"/>
+        <rect x="100" y="55" width="10" height="55" fill="#ef4444" opacity="0.7" rx="2"/>
+        <!-- profit line on top -->
+        <polyline points="9,72 25,62 41,68 57,52 73,58 89,48 105,44"
+          fill="none" stroke="#22c55e" stroke-width="2" stroke-linejoin="round" stroke-dasharray="4,2"/>
+      </svg>
+      <div style="display:flex;gap:12px;margin-top:8px">
+        <div style="display:flex;align-items:center;gap:4px"><div style="width:12px;height:10px;background:#3b82f6;opacity:0.7;border-radius:2px"></div><span style="color:#94a3b8;font-size:10px">Revenue</span></div>
+        <div style="display:flex;align-items:center;gap:4px"><div style="width:12px;height:10px;background:#ef4444;opacity:0.7;border-radius:2px"></div><span style="color:#94a3b8;font-size:10px">Costs (fulfillment+ads)</span></div>
+        <div style="display:flex;align-items:center;gap:4px"><div style="width:12px;height:3px;background:#22c55e;border-top:2px dashed #22c55e"></div><span style="color:#94a3b8;font-size:10px">Profit line</span></div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C — Stacked bars + profit line</h3>
+      <p>Thấy được cost structure mỗi ngày. Chi tiết nhưng phức tạp hơn.</p>
+    </div>
+  </div>
+
+  <!-- Option D -->
+  <div class="card" data-choice="d" onclick="toggleSelect(this)" style="cursor:pointer">
+    <div class="card-image" style="padding:16px;background:#0f172a;border-radius:8px 8px 0 0">
+      <div style="font-size:11px;color:#94a3b8;margin-bottom:8px">PROFIT + ORDER COUNT (dual axis)</div>
+      <svg viewBox="0 0 320 120" style="width:100%">
+        <line x1="0" y1="30" x2="320" y2="30" stroke="#1e293b" stroke-width="1"/>
+        <line x1="0" y1="60" x2="320" y2="60" stroke="#1e293b" stroke-width="1"/>
+        <line x1="0" y1="90" x2="320" y2="90" stroke="#1e293b" stroke-width="1"/>
+        <!-- profit area -->
+        <path d="M0,90 L16,75 L32,80 L48,60 L64,65 L80,50 L96,55 L112,40 L128,45 L144,35 L160,30 L176,25 L192,35 L208,20 L224,28 L240,15 L256,22 L272,18 L288,25 L304,12 L320,10 L320,120 L0,120 Z"
+          fill="#22c55e" fill-opacity="0.15"/>
+        <polyline points="0,90 16,75 32,80 48,60 64,65 80,50 96,55 112,40 128,45 144,35 160,30 176,25 192,35 208,20 224,28 240,15 256,22 272,18 288,25 304,12 320,10"
+          fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linejoin="round"/>
+        <!-- order count bars (light, background) -->
+        <rect x="2" y="85" width="6" height="15" fill="#6366f1" opacity="0.5" rx="1"/>
+        <rect x="18" y="78" width="6" height="22" fill="#6366f1" opacity="0.5" rx="1"/>
+        <rect x="34" y="82" width="6" height="18" fill="#6366f1" opacity="0.5" rx="1"/>
+        <rect x="50" y="72" width="6" height="28" fill="#6366f1" opacity="0.5" rx="1"/>
+        <rect x="66" y="75" width="6" height="25" fill="#6366f1" opacity="0.5" rx="1"/>
+        <rect x="82" y="65" width="6" height="35" fill="#6366f1" opacity="0.5" rx="1"/>
+        <rect x="98" y="68" width="6" height="32" fill="#6366f1" opacity="0.5" rx="1"/>
+        <rect x="114" y="55" width="6" height="45" fill="#6366f1" opacity="0.5" rx="1"/>
+        <rect x="130" y="60" width="6" height="40" fill="#6366f1" opacity="0.5" rx="1"/>
+        <rect x="146" y="50" width="6" height="50" fill="#6366f1" opacity="0.5" rx="1"/>
+        <rect x="162" y="45" width="6" height="55" fill="#6366f1" opacity="0.5" rx="1"/>
+        <rect x="178" y="42" width="6" height="58" fill="#6366f1" opacity="0.5" rx="1"/>
+        <rect x="194" y="52" width="6" height="48" fill="#6366f1" opacity="0.5" rx="1"/>
+        <rect x="210" y="38" width="6" height="62" fill="#6366f1" opacity="0.5" rx="1"/>
+        <rect x="226" y="46" width="6" height="54" fill="#6366f1" opacity="0.5" rx="1"/>
+        <rect x="242" y="35" width="6" height="65" fill="#6366f1" opacity="0.5" rx="1"/>
+        <rect x="258" y="40" width="6" height="60" fill="#6366f1" opacity="0.5" rx="1"/>
+        <rect x="274" y="36" width="6" height="64" fill="#6366f1" opacity="0.5" rx="1"/>
+        <rect x="290" y="42" width="6" height="58" fill="#6366f1" opacity="0.5" rx="1"/>
+        <rect x="306" y="30" width="6" height="70" fill="#6366f1" opacity="0.5" rx="1"/>
+      </svg>
+      <div style="display:flex;gap:12px;margin-top:8px">
+        <div style="display:flex;align-items:center;gap:4px"><div style="width:12px;height:3px;background:#22c55e"></div><span style="color:#94a3b8;font-size:10px">Profit ($)</span></div>
+        <div style="display:flex;align-items:center;gap:4px"><div style="width:12px;height:10px;background:#6366f1;opacity:0.5;border-radius:1px"></div><span style="color:#94a3b8;font-size:10px">Orders (count)</span></div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>D — Profit line + Order bars</h3>
+      <p>Thấy profit và volume đơn hàng cùng lúc. Dễ phát hiện ngày nhiều đơn nhưng profit thấp.</p>
+    </div>
+  </div>
+
+</div>
+<p class="subtitle" style="margin-top:16px;text-align:center">Click để chọn — hoặc trả lời trong terminal</p>

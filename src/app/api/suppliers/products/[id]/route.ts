@@ -26,6 +26,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     minProductionDays: body.minProductionDays !== undefined ? body.minProductionDays : existing.minProductionDays,
     maxProductionDays: body.maxProductionDays !== undefined ? body.maxProductionDays : existing.maxProductionDays,
     shippingByRegion: body.shippingByRegion !== undefined ? body.shippingByRegion : existing.shippingByRegion,
+    textureOfMaterial: body.textureOfMaterial !== undefined ? body.textureOfMaterial : existing.textureOfMaterial,
   })
   return NextResponse.json(updated)
 }

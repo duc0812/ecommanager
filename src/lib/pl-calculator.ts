@@ -53,6 +53,7 @@ export function computeOrderPL(
   let totalBaseCost = 0
   let totalQty = 0
   const supplierQty: Record<string, number> = {}
+  const suppliersById: Record<string, SupplierInput> = {}
   let hasUnmappedSku = false
   const perLineCost: OrderPLResult['perLineCost'] = []
 
@@ -66,6 +67,7 @@ export function computeOrderPL(
     }
     totalBaseCost += sup.baseCost * line.qty
     supplierQty[sup.supplierId] = (supplierQty[sup.supplierId] || 0) + line.qty
+    suppliersById[sup.supplierId] = sup
     perLineCost.push({ sku: line.sku, resolvedSupplierId: sup.supplierId, resolvedBaseCost: sup.baseCost })
   }
 
@@ -82,7 +84,7 @@ export function computeOrderPL(
   let resolvedShipAdditional = 0
   let resolvedImportTaxPerUnit = 0
   if (defaultSupplierIdRaw && !isMixedSupplier) {
-    const sup = Object.values(supplierMap).find(s => s.supplierId === defaultSupplierIdRaw)!
+    const sup = suppliersById[defaultSupplierIdRaw] ?? Object.values(supplierMap).find(s => s.supplierId === defaultSupplierIdRaw)!
     const zone = order.shippingZone ?? 'ROW'
     const zoneRate = sup.shippingByRegion?.[zone]
     resolvedShipFirst = zoneRate?.first ?? sup.firstItemShipFee

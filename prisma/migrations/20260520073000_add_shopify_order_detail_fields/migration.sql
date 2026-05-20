@@ -1,0 +1,9 @@
+ALTER TABLE "Order" ADD COLUMN "subtotalAmount" REAL NOT NULL DEFAULT 0;
+ALTER TABLE "Order" ADD COLUMN "shippingAmount" REAL NOT NULL DEFAULT 0;
+ALTER TABLE "Order" ADD COLUMN "taxAmount" REAL NOT NULL DEFAULT 0;
+ALTER TABLE "Order" ADD COLUMN "shippingName" TEXT;
+ALTER TABLE "Order" ADD COLUMN "shippingAddress1" TEXT;
+ALTER TABLE "Order" ADD COLUMN "shippingAddress2" TEXT;
+ALTER TABLE "Order" ADD COLUMN "shippingCity" TEXT;
+ALTER TABLE "Order" ADD COLUMN "shippingZip" TEXT;
+ALTER TABLE "Order" ADD COLUMN "shippingPhone" TEXT;

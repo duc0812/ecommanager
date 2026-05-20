@@ -38,6 +38,7 @@ export async function listOrdersWithLines(filter: OrderFilter) {
     take: filter.limit ?? 500,
     include: {
       lines: true,
+      store: { select: { id: true, shop: true, ianaTimezone: true } },
       defaultSupplier: { select: { id: true, name: true, code: true, firstItemShipFee: true, additionalItemShipFee: true } },
     },
   })
@@ -56,13 +57,23 @@ export type UpsertOrderInput = {
   fulfillmentStatus: string | null
   currency: string
   grossAmount: number
+  subtotalAmount?: number
+  shippingAmount?: number
+  taxAmount?: number
   expectedPayout: number
   totalFees: number
   refundedAmount: number
   defaultSupplierId: string | null
   placedAt: Date
+  shopTimezone?: string | null
   pipelineStatus?: PipelineStatus
   shippingZone?: string | null
+  shippingName?: string | null
+  shippingAddress1?: string | null
+  shippingAddress2?: string | null
+  shippingCity?: string | null
+  shippingZip?: string | null
+  shippingPhone?: string | null
   orderType?: string
   trelloCardId?: string | null
   trelloCardUrl?: string | null
@@ -86,6 +97,15 @@ export type UpsertOrderInput = {
 
 export async function upsertOrderWithLines(input: UpsertOrderInput) {
   const now = new Date()
+
+  // Preserve cost snapshots for lines that were already priced — re-sync must not overwrite
+  // old costs when supplier prices change (only new orders get fresh prices)
+  const existingLines = await prisma.orderLine.findMany({
+    where: { orderId: input.id, costSnapshotAt: { not: null } },
+    select: { shopifyLineId: true, resolvedBaseCost: true, costSnapshotAt: true, resolvedShipFirst: true, resolvedShipAdditional: true, resolvedImportTax: true },
+  })
+  const snapshots = new Map(existingLines.map(l => [l.shopifyLineId, l]))
+
   await prisma.$transaction([
     prisma.orderLine.deleteMany({ where: { orderId: input.id } }),
     prisma.order.upsert({
@@ -103,13 +123,23 @@ export async function upsertOrderWithLines(input: UpsertOrderInput) {
         fulfillmentStatus: input.fulfillmentStatus,
         currency: input.currency,
         grossAmount: input.grossAmount,
+        subtotalAmount: input.subtotalAmount ?? 0,
+        shippingAmount: input.shippingAmount ?? 0,
+        taxAmount: input.taxAmount ?? 0,
         expectedPayout: input.expectedPayout,
         totalFees: input.totalFees,
         refundedAmount: input.refundedAmount,
         defaultSupplierId: input.defaultSupplierId,
         placedAt: input.placedAt,
+        shopTimezone: input.shopTimezone ?? null,
         pipelineStatus: input.pipelineStatus ?? 'PENDING',
         shippingZone: input.shippingZone ?? null,
+        shippingName: input.shippingName ?? null,
+        shippingAddress1: input.shippingAddress1 ?? null,
+        shippingAddress2: input.shippingAddress2 ?? null,
+        shippingCity: input.shippingCity ?? null,
+        shippingZip: input.shippingZip ?? null,
+        shippingPhone: input.shippingPhone ?? null,
         orderType: input.orderType ?? 'UNKNOWN',
         trelloCardId: input.trelloCardId ?? null,
         trelloCardUrl: input.trelloCardUrl ?? null,
@@ -118,12 +148,22 @@ export async function upsertOrderWithLines(input: UpsertOrderInput) {
         financialStatus: input.financialStatus,
         fulfillmentStatus: input.fulfillmentStatus,
         grossAmount: input.grossAmount,
+        subtotalAmount: input.subtotalAmount ?? 0,
+        shippingAmount: input.shippingAmount ?? 0,
+        taxAmount: input.taxAmount ?? 0,
         expectedPayout: input.expectedPayout,
         totalFees: input.totalFees,
         refundedAmount: input.refundedAmount,
         defaultSupplierId: input.defaultSupplierId,
         placedAt: input.placedAt,
+        shopTimezone: input.shopTimezone ?? null,
         shippingZone: input.shippingZone ?? null,
+        shippingName: input.shippingName ?? null,
+        shippingAddress1: input.shippingAddress1 ?? null,
+        shippingAddress2: input.shippingAddress2 ?? null,
+        shippingCity: input.shippingCity ?? null,
+        shippingZip: input.shippingZip ?? null,
+        shippingPhone: input.shippingPhone ?? null,
         ...(input.pipelineStatus !== undefined ? { pipelineStatus: input.pipelineStatus } : {}),
         ...(input.orderType !== undefined ? { orderType: input.orderType } : {}),
         ...(input.trelloCardId !== undefined ? { trelloCardId: input.trelloCardId } : {}),
@@ -131,24 +171,27 @@ export async function upsertOrderWithLines(input: UpsertOrderInput) {
       },
     }),
     prisma.orderLine.createMany({
-      data: input.lines.map(l => ({
-        orderId: input.id,
-        shopifyLineId: l.shopifyLineId,
-        sku: l.sku,
-        resolvedSupplierSku: l.resolvedSupplierSku ?? null,
-        variantTitle: l.variantTitle,
-        productTitle: l.productTitle,
-        qty: l.qty,
-        unitPrice: l.unitPrice,
-        resolvedSupplierId: l.resolvedSupplierId,
-        resolvedBaseCost: l.resolvedBaseCost,
-        costSnapshotAt: l.resolvedSupplierId ? now : null,
-        resolvedShipFirst: l.resolvedShipFirst ?? null,
-        resolvedShipAdditional: l.resolvedShipAdditional ?? null,
-        resolvedImportTax: l.resolvedImportTax ?? null,
-        shopifyVariantId: l.shopifyVariantId ?? null,
-        variantOptions: l.variantOptions ?? null,
-      })),
+      data: input.lines.map(l => {
+        const snap = snapshots.get(l.shopifyLineId)
+        return {
+          orderId: input.id,
+          shopifyLineId: l.shopifyLineId,
+          sku: l.sku,
+          resolvedSupplierSku: l.resolvedSupplierSku ?? null,
+          variantTitle: l.variantTitle,
+          productTitle: l.productTitle,
+          qty: l.qty,
+          unitPrice: l.unitPrice,
+          resolvedSupplierId: l.resolvedSupplierId,
+          resolvedBaseCost: snap ? snap.resolvedBaseCost : l.resolvedBaseCost,
+          costSnapshotAt: snap ? snap.costSnapshotAt : (l.resolvedSupplierId ? now : null),
+          resolvedShipFirst: snap ? snap.resolvedShipFirst : (l.resolvedShipFirst ?? null),
+          resolvedShipAdditional: snap ? snap.resolvedShipAdditional : (l.resolvedShipAdditional ?? null),
+          resolvedImportTax: snap ? snap.resolvedImportTax : (l.resolvedImportTax ?? null),
+          shopifyVariantId: l.shopifyVariantId ?? null,
+          variantOptions: l.variantOptions ?? null,
+        }
+      }),
     }),
   ])
 }
