@@ -164,6 +164,7 @@ export async function POST(req: NextRequest) {
         shippingZone,
         lines: o.lines.map((l, idx) => {
           const resolved = pl.perLineCost[idx]
+          if (!resolved) throw new Error(`perLineCost[${idx}] missing for order ${o.id}`)
           return {
             shopifyLineId: l.id,
             sku: l.sku,
@@ -181,7 +182,7 @@ export async function POST(req: NextRequest) {
             resolvedShipAdditional: pl.resolvedShipAdditional,
             resolvedImportTax: pl.resolvedImportTaxPerUnit,
             shopifyVariantId: l.variantId,
-            variantOptions: JSON.stringify(l.selectedOptions),
+            variantOptions: Object.keys(l.selectedOptions).length > 0 ? JSON.stringify(l.selectedOptions) : null,
           }
         }),
       })
