@@ -318,6 +318,9 @@ model SupplierProduct {
   minProductionDays   Int?
   maxProductionDays   Int?
   shippingByRegion    String?
+  baseSupplierMappings  ProductBaseSupplierMapping[]
+  baseOverrides         ProductBaseOverride[]
+  variantManualMappings VariantManualMapping[]
   @@unique([supplierId, sku])
   @@index([sku])
   @@index([baseSku])
@@ -376,6 +379,8 @@ model OrderLine {
   orderId                 String
   order                   Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
   shopifyLineId           String
+  shopifyVariantId        String?
+  variantOptions          String?
   sku                     String?
   resolvedSupplierSku     String?
   variantTitle            String?
@@ -389,6 +394,7 @@ model OrderLine {
   resolvedShipAdditional  Float?
   resolvedImportTax       Float?
   @@index([sku])
+  @@index([shopifyVariantId])
 }
 
 model CsvTemplate {
@@ -421,4 +427,63 @@ model SkuDesign {
   trelloCardId String?
   updatedAt    DateTime @updatedAt
   createdAt    DateTime @default(now())
+}
+
+model ProductBase {
+  id                 String   @id @default(cuid())
+  name               String
+  shopifyProductType String
+  variantConditions  String
+  notes              String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  supplierMappings ProductBaseSupplierMapping[]
+  overrides        ProductBaseOverride[]
+  variantMappings  VariantManualMapping[]
+
+  @@index([shopifyProductType])
+}
+
+model ProductBaseSupplierMapping {
+  id                String          @id @default(cuid())
+  productBaseId     String
+  supplierProductId String
+  preferenceRank    Int
+
+  productBase     ProductBase     @relation(fields: [productBaseId], references: [id], onDelete: Cascade)
+  supplierProduct SupplierProduct @relation(fields: [supplierProductId], references: [id], onDelete: Cascade)
+
+  @@unique([productBaseId, preferenceRank])
+  @@index([productBaseId])
+}
+
+model ProductBaseOverride {
+  id                String          @id @default(cuid())
+  productBaseId     String
+  supplierProductId String
+  attributeCombo    String
+  notes             String?
+
+  productBase     ProductBase     @relation(fields: [productBaseId], references: [id], onDelete: Cascade)
+  supplierProduct SupplierProduct @relation(fields: [supplierProductId], references: [id], onDelete: Cascade)
+
+  @@index([productBaseId])
+}
+
+model VariantManualMapping {
+  id                  String   @id @default(cuid())
+  shopifyVariantId    String   @unique
+  shopifyProductTitle String
+  variantTitle        String?
+  supplierProductId   String
+  productBaseId       String?
+  notes               String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  supplierProduct SupplierProduct @relation(fields: [supplierProductId], references: [id], onDelete: Cascade)
+  productBase     ProductBase?    @relation(fields: [productBaseId], references: [id], onDelete: SetNull)
+
+  @@index([shopifyVariantId])
 }
