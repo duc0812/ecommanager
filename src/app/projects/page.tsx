@@ -27,6 +27,39 @@ type SpendAccount = {
   error?: string
 }
 
+type DailyProfitPoint = {
+  date: string
+  orders: number
+  ordersUnmapped: number
+  revenue: number
+  profit: number
+  adSpend: number
+}
+
+type ProfitChartData = {
+  dailyData: DailyProfitPoint[]
+  summary: {
+    totalOrders: number
+    totalOrdersUnmapped: number
+    totalRevenue: number
+    totalProfit: number
+    totalAdSpend: number
+    netProfit: number
+    avgMargin: number
+    avgOrderProfit: number
+  }
+}
+
+type AutoSyncStatus = {
+  status: string
+  lastResult: {
+    startedAt: string
+    finishedAt?: string
+    orders?: { synced?: number; skipped?: number; error?: string }
+    insights?: { synced?: number; accounts?: number; error?: string }
+  } | null
+}
+
 type Analytics = {
   project: Project
   labelAudit: {
@@ -89,6 +122,21 @@ export default function ProjectDashboard() {
   const [loading, setLoading] = useState(true)
   const [analyticsLoading, setAnalyticsLoading] = useState(false)
   const [costs, setCosts] = useState({ appBilling: '0', toolsBilling: '0' })
+  const [chartPeriod, setChartPeriod] = useState<string>('this-month')
+  const [syncStatus, setSyncStatus] = useState<AutoSyncStatus | null>(null)
+  const [syncing, setSyncing] = useState(false)
+
+  useEffect(() => {
+    fetch('/api/auto-sync').then(r => r.json()).then(setSyncStatus).catch(() => {})
+  }, [])
+
+  function handleManualSync() {
+    setSyncing(true)
+    fetch('/api/auto-sync', { method: 'POST' })
+      .then(r => r.json())
+      .then(() => fetch('/api/auto-sync').then(r => r.json()).then(setSyncStatus))
+      .finally(() => setSyncing(false))
+  }
 
   useEffect(() => {
     fetch('/api/projects')
@@ -208,6 +256,14 @@ export default function ProjectDashboard() {
               </div>
             ) : analytics ? (
               <div className="space-y-xl">
+                {selectedProject && (
+                  <ProfitChart
+                    projectId={selectedProject}
+                    period={chartPeriod}
+                    onPeriodChange={setChartPeriod}
+                  />
+                )}
+
                 <section>
                   <div className="flex items-center gap-sm mb-lg">
                     <span className="material-symbols-outlined text-secondary">account_balance_wallet</span>
@@ -280,6 +336,8 @@ export default function ProjectDashboard() {
                 {selectedStaff === 'all' && currentProject && currentProject.assignments.length > 0 && (
                   <ProjectStaff assignments={currentProject.assignments} onSelect={setSelectedStaff} />
                 )}
+
+                <AutoSyncStatusBar status={syncStatus} syncing={syncing} onSync={handleManualSync} />
               </div>
             ) : null}
           </>
@@ -513,6 +571,239 @@ function ProjectPLCard({ projectId }: { projectId: string }) {
         <p className="text-label-sm text-on-surface-variant">Net Profit</p>
         <p className={`text-stats-lg ${pl.netProfit >= 0 ? 'text-on-tertiary-container' : 'text-error'}`}>{fmtMoney(pl.netProfit)}</p>
       </div>
+    </div>
+  )
+}
+
+function ProfitChart({ projectId, period, onPeriodChange }: { projectId: string; period: string; onPeriodChange: (p: string) => void }) {
+  const [data, setData] = useState<ProfitChartData | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    setLoading(true)
+    fetch(`/api/projects/profit-chart?projectId=${projectId}&period=${period}`)
+      .then(r => r.json())
+      .then(setData)
+      .finally(() => setLoading(false))
+  }, [projectId, period])
+
+  const periods = [
+    { key: 'today', label: 'Hôm nay' },
+    { key: 'this-week', label: 'Tuần này' },
+    { key: 'this-month', label: 'Tháng này' },
+  ]
+
+  return (
+    <div className="bg-surface-container-lowest rounded-xl border border-outline-variant/20 overflow-hidden">
+      <div className="flex items-center justify-between px-lg py-md border-b border-outline-variant/20 flex-wrap gap-sm">
+        <div className="flex items-center gap-sm">
+          <span className="material-symbols-outlined text-secondary">show_chart</span>
+          <h3 className="text-headline-sm text-primary">Profit Chart</h3>
+          <span className="text-label-sm text-on-surface-variant">profit từng đơn hàng</span>
+        </div>
+        <div className="flex gap-xs">
+          {periods.map(p => (
+            <button
+              key={p.key}
+              onClick={() => onPeriodChange(p.key)}
+              className={`px-md py-xs rounded-lg text-label-sm font-semibold transition-all ${
+                period === p.key
+                  ? 'bg-secondary text-on-secondary'
+                  : 'bg-surface-container text-on-surface-variant hover:bg-surface-container-high'
+              }`}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {loading && (
+        <div className="flex items-center justify-center py-xl">
+          <span className="material-symbols-outlined animate-spin text-secondary">sync</span>
+        </div>
+      )}
+
+      {data && !loading && (
+        <>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-md p-lg border-b border-outline-variant/10">
+            <div className="bg-surface-container rounded-xl p-md">
+              <p className="text-label-sm text-on-surface-variant uppercase tracking-wider mb-xs">Net Profit</p>
+              <p className={`text-stats-lg font-bold ${data.summary.netProfit >= 0 ? 'text-on-tertiary-container' : 'text-error'}`}>
+                {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(data.summary.netProfit)}
+              </p>
+            </div>
+            <div className="bg-surface-container rounded-xl p-md">
+              <p className="text-label-sm text-on-surface-variant uppercase tracking-wider mb-xs">Orders</p>
+              <p className="text-stats-lg font-bold text-primary">{data.summary.totalOrders}</p>
+              {data.summary.totalOrdersUnmapped > 0 && (
+                <p className="text-label-sm text-amber-500">{data.summary.totalOrdersUnmapped} chưa map</p>
+              )}
+            </div>
+            <div className="bg-surface-container rounded-xl p-md">
+              <p className="text-label-sm text-on-surface-variant uppercase tracking-wider mb-xs">Avg Margin</p>
+              <p className="text-stats-lg font-bold text-secondary">{data.summary.avgMargin.toFixed(1)}%</p>
+            </div>
+            <div className="bg-surface-container rounded-xl p-md">
+              <p className="text-label-sm text-on-surface-variant uppercase tracking-wider mb-xs">Ad Spend</p>
+              <p className="text-stats-lg font-bold text-error">
+                {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(data.summary.totalAdSpend)}
+              </p>
+            </div>
+          </div>
+
+          <ProfitChartSVG data={data.dailyData} />
+        </>
+      )}
+
+      {data && data.dailyData.length === 0 && !loading && (
+        <div className="px-lg py-xl text-center text-on-surface-variant text-body-sm">
+          Không có dữ liệu cho khoảng thời gian này.
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ProfitChartSVG({ data }: { data: DailyProfitPoint[] }) {
+  if (data.length === 0) return null
+
+  const W = 600
+  const H = 150
+  const PAD = { top: 12, right: 12, bottom: 28, left: 8 }
+  const chartW = W - PAD.left - PAD.right
+  const chartH = H - PAD.top - PAD.bottom
+
+  const maxOrders = Math.max(...data.map(d => d.orders), 1)
+  const maxProfit = Math.max(...data.map(d => d.profit), 1)
+  const minProfit = Math.min(...data.map(d => d.profit), 0)
+  const profitRange = maxProfit - minProfit || 1
+
+  const barW = Math.max(2, (chartW / data.length) * 0.6)
+  const step = chartW / Math.max(data.length - 1, 1)
+
+  const toX = (i: number) => PAD.left + i * step
+  const toYProfit = (v: number) => PAD.top + chartH - ((v - minProfit) / profitRange) * chartH
+
+  const profitPoints = data.map((d, i) => `${toX(i)},${toYProfit(d.profit)}`).join(' ')
+
+  const fmtDate = (s: string) => {
+    const d = new Date(s + 'T00:00:00Z')
+    return `${d.getUTCDate()}/${d.getUTCMonth() + 1}`
+  }
+
+  const labelEvery = Math.ceil(data.length / 6)
+
+  return (
+    <div className="px-lg pb-lg">
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ overflow: 'visible' }}>
+        <defs>
+          <linearGradient id="profitGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#22c55e" stopOpacity="0.25" />
+            <stop offset="100%" stopColor="#22c55e" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+
+        {[0.25, 0.5, 0.75, 1].map(f => (
+          <line key={f}
+            x1={PAD.left} y1={PAD.top + chartH * (1 - f)}
+            x2={PAD.left + chartW} y2={PAD.top + chartH * (1 - f)}
+            stroke="currentColor" strokeOpacity="0.06" strokeWidth="1"
+            className="text-on-surface-variant"
+          />
+        ))}
+
+        {data.map((d, i) => {
+          const x = toX(i)
+          const barH = (d.orders / maxOrders) * chartH
+          return (
+            <rect key={d.date}
+              x={x - barW / 2}
+              y={PAD.top + chartH - barH}
+              width={barW}
+              height={barH}
+              fill="#6366f1"
+              fillOpacity="0.35"
+              rx="1"
+            />
+          )
+        })}
+
+        <path
+          d={`M${data.map((d, i) => `${toX(i)},${toYProfit(d.profit)}`).join(' L')} L${toX(data.length - 1)},${PAD.top + chartH} L${toX(0)},${PAD.top + chartH} Z`}
+          fill="url(#profitGrad)"
+        />
+        <polyline
+          points={profitPoints}
+          fill="none"
+          stroke="#22c55e"
+          strokeWidth="2"
+          strokeLinejoin="round"
+        />
+
+        {data.map((d, i) => {
+          if (i !== data.length - 1 && i % labelEvery !== 0) return null
+          return (
+            <text key={d.date}
+              x={toX(i)}
+              y={H - 4}
+              textAnchor="middle"
+              fontSize="9"
+              fill="currentColor"
+              fillOpacity="0.4"
+              className="text-on-surface-variant"
+            >
+              {fmtDate(d.date)}
+            </text>
+          )
+        })}
+
+        <circle cx={toX(data.length - 1)} cy={toYProfit(data[data.length - 1].profit)} r="4"
+          fill="#22c55e" stroke="currentColor" strokeWidth="2" className="text-surface-container-lowest" />
+      </svg>
+
+      <div className="flex gap-lg mt-xs">
+        <div className="flex items-center gap-xs">
+          <div className="w-3 h-2 rounded-sm" style={{ background: '#6366f1', opacity: 0.5 }} />
+          <span className="text-label-sm text-on-surface-variant">Orders/ngày</span>
+        </div>
+        <div className="flex items-center gap-xs">
+          <div className="w-4 h-0.5 bg-green-500" />
+          <span className="text-label-sm text-on-surface-variant">Profit ($)</span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function AutoSyncStatusBar({ status, syncing, onSync }: { status: AutoSyncStatus | null; syncing: boolean; onSync: () => void }) {
+  const lastOrders = status?.lastResult?.orders
+  const lastInsights = status?.lastResult?.insights
+  const lastTime = status?.lastResult?.finishedAt
+    ? new Date(status.lastResult.finishedAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
+    : null
+
+  return (
+    <div className="bg-surface-container-lowest rounded-xl border border-outline-variant/20 p-md flex items-center justify-between gap-md flex-wrap">
+      <div className="flex items-center gap-sm">
+        <div className="w-2 h-2 rounded-full bg-on-tertiary-container" style={{ boxShadow: '0 0 6px #4ade80' }} />
+        <div>
+          <p className="text-label-md text-primary">Auto-sync</p>
+          <p className="text-label-sm text-on-surface-variant">
+            {lastTime ? `Lần cuối: ${lastTime}` : 'Chưa sync'}
+            {lastOrders && !lastOrders.error ? ` · Orders: ${lastOrders.synced ?? 0}` : ''}
+            {lastInsights && !lastInsights.error ? ` · Insights: ${lastInsights.synced ?? 0} ngày` : ''}
+          </p>
+        </div>
+      </div>
+      <button
+        onClick={onSync}
+        disabled={syncing}
+        className="bg-surface-container text-secondary hover:bg-surface-container-high rounded-lg px-md py-xs text-label-sm font-semibold flex items-center gap-xs disabled:opacity-50"
+      >
+        <span className={`material-symbols-outlined text-[14px] ${syncing ? 'animate-spin' : ''}`}>sync</span>
+        {syncing ? 'Đang sync...' : 'Sync ngay'}
+      </button>
     </div>
   )
 }
