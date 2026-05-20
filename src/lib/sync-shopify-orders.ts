@@ -92,6 +92,21 @@ export async function syncShopifyOrders(): Promise<{ synced: number; skipped: nu
             totalFees,
             refundedAmount: order.refundedAmount,
             updatedAt: new Date(),
+            lines: {
+              deleteMany: {},
+              create: order.lines.map(l => ({
+                shopifyLineId: l.id,
+                shopifyVariantId: l.variantId,
+                variantOptions: l.selectedOptions && Object.keys(l.selectedOptions).length > 0
+                  ? JSON.stringify(l.selectedOptions)
+                  : null,
+                sku: l.sku,
+                variantTitle: l.variantTitle,
+                productTitle: l.title,
+                qty: l.quantity,
+                unitPrice: l.unitPrice,
+              })),
+            },
           },
         })
         synced++

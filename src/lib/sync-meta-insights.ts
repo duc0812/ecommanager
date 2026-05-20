@@ -36,9 +36,9 @@ export async function syncMetaInsights(
     url.searchParams.set('time_increment', '1')
     url.searchParams.set('time_range', JSON.stringify({ since, until }))
     url.searchParams.set('level', 'account')
-    url.searchParams.set('access_token', account.accessToken)
-
-    const res = await fetch(url.toString())
+    const res = await fetch(url.toString(), {
+      headers: { Authorization: `Bearer ${account.accessToken}` },
+    })
     if (!res.ok) {
       console.error(`[sync-meta-insights] HTTP ${res.status} for account ${account.accountId}`)
       continue
