@@ -1,5 +1,6 @@
 export const PIPELINE_STATUSES = [
   'PENDING_DESIGN',
+  'PENDING_MAPPING',
   'PENDING',
   'EXPORTED',
   'ON_HOLD',
@@ -16,6 +17,7 @@ export type PipelineStatus = typeof PIPELINE_STATUSES[number]
 
 export const STATUS_LABELS: Record<PipelineStatus, string> = {
   PENDING_DESIGN: 'Pending Design',
+  PENDING_MAPPING: 'Pending Mapping',
   PENDING: 'Pending',
   EXPORTED: 'Exported',
   ON_HOLD: 'On Hold',
@@ -30,6 +32,7 @@ export const STATUS_LABELS: Record<PipelineStatus, string> = {
 
 export const STATUS_COLORS: Record<PipelineStatus, string> = {
   PENDING_DESIGN: 'bg-amber-100 text-amber-900',
+  PENDING_MAPPING: 'bg-rose-100 text-rose-900',
   PENDING: 'bg-blue-100 text-blue-900',
   EXPORTED: 'bg-indigo-100 text-indigo-900',
   ON_HOLD: 'bg-gray-200 text-gray-900',
@@ -42,8 +45,7 @@ export const STATUS_COLORS: Record<PipelineStatus, string> = {
   REFUNDED: 'bg-pink-100 text-pink-900',
 }
 
-/** Re-evaluated by sync — these initial statuses are overridden if conditions change */
-const SYNC_RE_EVALUATED: PipelineStatus[] = ['PENDING_DESIGN', 'PENDING']
+const SYNC_RE_EVALUATED: PipelineStatus[] = ['PENDING_DESIGN', 'PENDING_MAPPING', 'PENDING']
 
 export function isValidPipelineStatus(v: string): v is PipelineStatus {
   return (PIPELINE_STATUSES as readonly string[]).includes(v)
@@ -52,6 +54,7 @@ export function isValidPipelineStatus(v: string): v is PipelineStatus {
 export type AutoDetectInput = {
   financialStatus: string
   hasUnmappedSku: boolean
+  hasPendingMapping: boolean
   hasCustomDesignLine: boolean
   currentStatus?: PipelineStatus | null
 }
@@ -59,20 +62,15 @@ export type AutoDetectInput = {
 export function autoDetectStatus(input: AutoDetectInput): PipelineStatus {
   const fs = (input.financialStatus || '').toUpperCase()
 
-  // Highest priority: financial state from Shopify always wins for terminal-financial states
   if (fs.includes('REFUND')) return 'REFUNDED'
   if (fs === 'VOIDED' || fs === 'CANCELLED') return 'CANCELLED'
 
-  // Compute what auto rules would say (initial state)
   const initial: PipelineStatus =
-    input.hasUnmappedSku || input.hasCustomDesignLine ? 'PENDING_DESIGN' : 'PENDING'
+    input.hasPendingMapping ? 'PENDING_MAPPING' :
+    input.hasUnmappedSku || input.hasCustomDesignLine ? 'PENDING_DESIGN' :
+    'PENDING'
 
-  // If no existing status, return initial
   if (!input.currentStatus) return initial
-
-  // If existing status is one of the auto-re-evaluated initial states → re-evaluate
   if (SYNC_RE_EVALUATED.includes(input.currentStatus)) return initial
-
-  // Otherwise preserve manual status (user has moved past initial)
   return input.currentStatus
 }
