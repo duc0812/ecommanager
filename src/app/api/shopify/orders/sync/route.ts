@@ -8,6 +8,8 @@ import { autoDetectStatus, isValidPipelineStatus, type PipelineStatus } from '@/
 import { resolveZone, type SupplierZoneOverrides } from '@/lib/regions'
 import { getShopifyConnection } from '@/lib/token-store'
 import { resolveSupplierForOrderLine } from '@/lib/auto-mapping'
+import { resolveByProductBase } from '@/lib/product-mapping'
+import { loadProductBasesForResolver, loadVariantManualMappingsForResolver } from '@/lib/repos/mapping'
 import { classifyOrderLines, buildTrelloCardContent } from '@/lib/order-classify'
 import { createTrelloCard, getTrelloConfig, shouldCreateCard } from '@/lib/trello'
 
@@ -41,6 +43,8 @@ export async function POST(req: NextRequest) {
 
   const priceMap = await buildSkuPriceMap()
   const mappingCandidates = await buildSupplierProductCandidates()
+  const productBases = await loadProductBasesForResolver()
+  const manualMappings = await loadVariantManualMappingsForResolver()
 
   const allOverrides = await prisma.supplierZoneOverride.findMany()
   const overridesBySupplier: Record<string, SupplierZoneOverrides> = {}
@@ -82,7 +86,16 @@ export async function POST(req: NextRequest) {
           productTags: l.productTags,
           productType: l.productType,
         }, mappingCandidates),
+        pbResolve: resolveByProductBase(
+          l.variantId,
+          l.productType,
+          l.selectedOptions,
+          productBases,
+          manualMappings,
+        ),
       }))
+
+      const hasPendingMapping = resolvedLines.some(r => r.pbResolve.resolvedVia === 'unresolved')
 
       // Determine shipping zone via majority supplier overrides
       let supplierIdForZone: string | undefined
@@ -124,6 +137,7 @@ export async function POST(req: NextRequest) {
       const detected = autoDetectStatus({
         financialStatus: o.financialStatus,
         hasUnmappedSku: pl.hasUnmappedSku,
+        hasPendingMapping,
         hasCustomDesignLine,
         currentStatus,
       })
@@ -166,6 +180,8 @@ export async function POST(req: NextRequest) {
             resolvedShipFirst: pl.resolvedShipFirst,
             resolvedShipAdditional: pl.resolvedShipAdditional,
             resolvedImportTax: pl.resolvedImportTaxPerUnit,
+            shopifyVariantId: l.variantId,
+            variantOptions: JSON.stringify(l.selectedOptions),
           }
         }),
       })

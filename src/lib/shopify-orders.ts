@@ -23,6 +23,8 @@ export type ShopifyOrderLine = {
   productTags: string[]
   productType: string | null
   customAttributes: Array<{ key: string; value: string }>
+  variantId: string | null          // NEW
+  selectedOptions: Record<string, string>  // NEW: {"Style":"Tshirt","Size":"S"}
 }
 
 export type ShopifyOrder = {
@@ -67,6 +69,10 @@ query SyncOrders($cursor: String, $query: String) {
           originalUnitPriceSet { shopMoney { amount } }
           customAttributes { key value }
           product { tags productType }
+          variant {
+            id
+            selectedOptions { name value }
+          }
         }
       }
       transactions(first: 20) {
@@ -152,6 +158,10 @@ export async function fetchOrdersPage(
         productTags: l.product?.tags ?? [],
         productType: l.product?.productType ?? null,
         customAttributes: l.customAttributes ?? [],
+        variantId: l.variant?.id ?? null,
+        selectedOptions: Object.fromEntries(
+          (l.variant?.selectedOptions ?? []).map((o: { name: string; value: string }) => [o.name, o.value])
+        ),
       })),
       transactions,
       refundedAmount,

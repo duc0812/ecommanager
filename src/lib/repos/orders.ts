@@ -79,6 +79,8 @@ export type UpsertOrderInput = {
     resolvedShipFirst?: number | null
     resolvedShipAdditional?: number | null
     resolvedImportTax?: number | null
+    shopifyVariantId?: string | null
+    variantOptions?: string | null
   }>
 }
 
@@ -144,6 +146,8 @@ export async function upsertOrderWithLines(input: UpsertOrderInput) {
         resolvedShipFirst: l.resolvedShipFirst ?? null,
         resolvedShipAdditional: l.resolvedShipAdditional ?? null,
         resolvedImportTax: l.resolvedImportTax ?? null,
+        shopifyVariantId: l.shopifyVariantId ?? null,
+        variantOptions: l.variantOptions ?? null,
       })),
     }),
   ])
