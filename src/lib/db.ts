@@ -3,7 +3,7 @@ import { PrismaClient } from '@/generated/prisma/client'
 import path from 'path'
 
 const globalForPrisma = globalThis as unknown as { prisma: PrismaClient; prismaVersion?: string }
-const SCHEMA_VERSION = 'v13' // bump this to force singleton reset after schema changes
+const SCHEMA_VERSION = 'v14' // bump this to force singleton reset after schema changes
 
 function createPrisma() {
   const dbPath = path.resolve(process.cwd(), 'dev.db')

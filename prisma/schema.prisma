@@ -312,8 +312,10 @@ model SupplierProduct {
   createdAt           DateTime @default(now())
   baseSku             String?
   productType         String?
-  printingMethod      String?
-  sizeLabel           String?
+  variant1Name        String?
+  variant1Value       String?
+  variant2Name        String?
+  variant2Value       String?
   designTemplateUrl   String?
   minProductionDays   Int?
   maxProductionDays   Int?
