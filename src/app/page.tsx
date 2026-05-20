@@ -54,6 +54,8 @@ export default function OverviewPage() {
   const [period, setPeriod] = useState<string>('today')
   const [data, setData] = useState<OverviewData | null>(null)
   const [loading, setLoading] = useState(true)
+  const [syncing, setSyncing] = useState(false)
+  const [lastSyncTime, setLastSyncTime] = useState<string | null>(null)
 
   useEffect(() => {
     setLoading(true)
@@ -62,6 +64,26 @@ export default function OverviewPage() {
       .then((d: OverviewData) => { setData(d); setLoading(false) })
       .catch(() => setLoading(false))
   }, [period])
+
+  function refreshData() {
+    setLoading(true)
+    fetch(`/api/overview?period=${period}`)
+      .then(r => r.json())
+      .then((d: OverviewData) => { setData(d); setLoading(false) })
+      .catch(() => setLoading(false))
+  }
+
+  function handleSync() {
+    setSyncing(true)
+    fetch('/api/auto-sync', { method: 'POST' })
+      .then(r => r.json())
+      .then(() => {
+        setLastSyncTime(new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }))
+        refreshData()
+      })
+      .catch(() => setSyncing(false))
+      .finally(() => setSyncing(false))
+  }
 
   const pm = data?.periodMetrics
   const isAllTime = period === 'all'
@@ -75,6 +97,17 @@ export default function OverviewPage() {
             <h2 className="text-display-md font-bold text-primary">Tổng quan</h2>
             <p className="text-on-surface-variant text-body-md mt-xs">Lợi nhuận & Hiệu quả kinh doanh</p>
           </div>
+          <button
+            onClick={handleSync}
+            disabled={syncing}
+            className="flex items-center gap-sm px-lg py-sm rounded-xl bg-secondary text-on-secondary text-label-md font-semibold shadow-sm hover:opacity-90 disabled:opacity-50 transition-all"
+          >
+            <span className={`material-symbols-outlined text-[18px] ${syncing ? 'animate-spin' : ''}`}>sync</span>
+            {syncing ? 'Đang sync...' : 'Sync ngay'}
+            {lastSyncTime && !syncing && (
+              <span className="text-on-secondary/60 text-label-sm font-normal">{lastSyncTime}</span>
+            )}
+          </button>
         </div>
 
         {/* Period tabs */}
