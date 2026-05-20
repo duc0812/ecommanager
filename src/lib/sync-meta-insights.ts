@@ -10,6 +10,16 @@ function daysAgo(n: number) {
   return dateOnly(new Date(Date.now() - n * 24 * 60 * 60 * 1000))
 }
 
+function safeFloat(s: string | null | undefined): number {
+  const n = parseFloat(s ?? '0')
+  return isNaN(n) ? 0 : n
+}
+
+function safeInt(s: string | null | undefined): number {
+  const n = parseInt(s ?? '0', 10)
+  return isNaN(n) ? 0 : n
+}
+
 export async function syncMetaInsights(
   days = 30
 ): Promise<{ synced: number; accounts: number; error?: string }> {
@@ -29,10 +39,15 @@ export async function syncMetaInsights(
     url.searchParams.set('access_token', account.accessToken)
 
     const res = await fetch(url.toString())
+    if (!res.ok) {
+      console.error(`[sync-meta-insights] HTTP ${res.status} for account ${account.accountId}`)
+      continue
+    }
     const json = await res.json()
 
     if (json.error) {
-      console.error(`[sync-meta-insights] Account ${account.accountId}: ${json.error.message}`)
+      const errMsg = typeof json.error === 'string' ? json.error : (json.error?.message ?? 'Unknown API error')
+      console.error(`[sync-meta-insights] Account ${account.accountId}: ${errMsg}`)
       continue
     }
 
@@ -45,15 +60,15 @@ export async function syncMetaInsights(
         create: {
           adAccountId: account.id,
           date: row.date_start,
-          spend: parseFloat(row.spend ?? '0'),
-          impressions: parseInt(row.impressions ?? '0', 10),
-          clicks: parseInt(row.clicks ?? '0', 10),
+          spend: safeFloat(row.spend),
+          impressions: safeInt(row.impressions),
+          clicks: safeInt(row.clicks),
           currency: account.currency ?? 'USD',
         },
         update: {
-          spend: parseFloat(row.spend ?? '0'),
-          impressions: parseInt(row.impressions ?? '0', 10),
-          clicks: parseInt(row.clicks ?? '0', 10),
+          spend: safeFloat(row.spend),
+          impressions: safeInt(row.impressions),
+          clicks: safeInt(row.clicks),
           fetchedAt: new Date(),
         },
       })
