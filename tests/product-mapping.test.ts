@@ -43,6 +43,18 @@ describe('matchesProductBase', () => {
   it('is case-insensitive for productType and values', () => {
     expect(matchesProductBase('3d clothing', { style: 'tshirt', size: 'M' }, tshirt3d)).toBe(true)
   })
+
+  it('matches when condition uses value (exact match)', () => {
+    const base: ProductBaseData = {
+      id: 'pb_val',
+      shopifyProductType: 'Exact Type',
+      variantConditions: JSON.stringify([{ optionName: 'Style', value: 'Hoodie' }]),
+      supplierMappings: [],
+      overrides: [],
+    }
+    expect(matchesProductBase('Exact Type', { Style: 'Hoodie' }, base)).toBe(true)
+    expect(matchesProductBase('Exact Type', { Style: 'Tshirt' }, base)).toBe(false)
+  })
 })
 
 describe('matchesAttributeCombo', () => {

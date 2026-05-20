@@ -89,12 +89,10 @@ export function resolveByProductBase(
 
   if (!shopifyProductType) return { supplierProductId: null, resolvedVia: 'unresolved' }
 
-  // First, find a ProductBase that matches the productType (regardless of variant conditions)
-  const baseByType = productBases.find(b => normalize(shopifyProductType) === normalize(b.shopifyProductType))
-
-  // Check overrides against the matched base
-  if (baseByType) {
-    for (const override of baseByType.overrides) {
+  // Check overrides across ALL bases with this productType
+  for (const base of productBases) {
+    if (normalize(base.shopifyProductType) !== normalize(shopifyProductType)) continue
+    for (const override of base.overrides) {
       let combo: Record<string, string>
       try {
         combo = JSON.parse(override.attributeCombo)
