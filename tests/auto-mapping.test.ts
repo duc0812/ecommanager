@@ -21,6 +21,10 @@ describe('resolveSupplierForOrderLine', () => {
         baseCost: 8,
         productName: 'POMo Gift Shirt 2D DTG',
         productType: 'Tshirt',
+        variant1Name: 'Size',
+        variant1Value: null,
+        variant2Name: null,
+        variant2Value: null,
       },
       {
         ...base,
@@ -31,6 +35,10 @@ describe('resolveSupplierForOrderLine', () => {
         baseCost: 14,
         productName: 'POMo Gift Shirt 3D AOP',
         productType: 'Tshirt',
+        variant1Name: 'Size',
+        variant1Value: null,
+        variant2Name: null,
+        variant2Value: null,
       },
     ]
 
@@ -49,8 +57,32 @@ describe('resolveSupplierForOrderLine', () => {
 
   it('falls back to preference rank when metadata cannot separate candidates', () => {
     const candidates: SupplierProductCandidate[] = [
-      { ...base, sku: 'SUP-A', supplierId: 'low', baseCost: 10, supplierPreferenceRank: 1 },
-      { ...base, sku: 'SUP-B', supplierId: 'high', baseCost: 12, supplierPreferenceRank: 5 },
+      {
+        ...base,
+        sku: 'SUP-A',
+        supplierId: 'low',
+        baseCost: 10,
+        supplierPreferenceRank: 1,
+        productName: 'Plain Shirt',
+        productType: 'Shirt',
+        variant1Name: null,
+        variant1Value: null,
+        variant2Name: null,
+        variant2Value: null,
+      },
+      {
+        ...base,
+        sku: 'SUP-B',
+        supplierId: 'high',
+        baseCost: 12,
+        supplierPreferenceRank: 5,
+        productName: 'Plain Shirt',
+        productType: 'Shirt',
+        variant1Name: null,
+        variant1Value: null,
+        variant2Name: null,
+        variant2Value: null,
+      },
     ]
 
     const result = resolveSupplierForOrderLine({
@@ -61,5 +93,50 @@ describe('resolveSupplierForOrderLine', () => {
     }, candidates)
 
     expect(result.supplier?.supplierId).toBe('high')
+  })
+
+  it('matches candidate by variant value when order line title contains the variant', () => {
+    const candidates: SupplierProductCandidate[] = [
+      {
+        ...base,
+        sku: 'MUG-10OZ',
+        supplierId: 'sup_10oz',
+        supplierName: 'Mug Supplier',
+        supplierCode: 'mug',
+        baseCost: 6,
+        supplierPreferenceRank: 1,
+        productName: 'Ceramic Mug',
+        productType: 'Mug',
+        variant1Name: 'Size',
+        variant1Value: '10oz',
+        variant2Name: null,
+        variant2Value: null,
+      },
+      {
+        ...base,
+        sku: 'MUG-15OZ',
+        supplierId: 'sup_15oz',
+        supplierName: 'Mug Supplier',
+        supplierCode: 'mug',
+        baseCost: 7,
+        supplierPreferenceRank: 1,
+        productName: 'Ceramic Mug',
+        productType: 'Mug',
+        variant1Name: 'Size',
+        variant1Value: '15oz',
+        variant2Name: null,
+        variant2Value: null,
+      },
+    ]
+
+    const result = resolveSupplierForOrderLine({
+      sku: 'DESIGN-MUG-001',
+      title: 'Custom Mug 10oz',
+      variantTitle: '10oz',
+      productTags: [],
+    }, candidates)
+
+    expect(result.supplier?.supplierId).toBe('sup_10oz')
+    expect(result.reasons).toContain('variant')
   })
 })
