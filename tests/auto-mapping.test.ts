@@ -19,9 +19,8 @@ describe('resolveSupplierForOrderLine', () => {
         supplierName: '2D Supplier',
         supplierCode: '2d',
         baseCost: 8,
-        productName: 'POMo Gift Shirt',
+        productName: 'POMo Gift Shirt 2D DTG',
         productType: 'Tshirt',
-        printingMethod: '2D DTG',
       },
       {
         ...base,
@@ -30,9 +29,8 @@ describe('resolveSupplierForOrderLine', () => {
         supplierName: '3D Supplier',
         supplierCode: '3d',
         baseCost: 14,
-        productName: 'POMo Gift Shirt',
+        productName: 'POMo Gift Shirt 3D AOP',
         productType: 'Tshirt',
-        printingMethod: '3D AOP',
       },
     ]
 

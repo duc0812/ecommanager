@@ -7,8 +7,10 @@ export type SupplierProductCandidate = SupplierInput & {
   supplierPreferenceRank: number
   productName?: string | null
   productType?: string | null
-  printingMethod?: string | null
-  sizeLabel?: string | null
+  variant1Name?: string | null
+  variant1Value?: string | null
+  variant2Name?: string | null
+  variant2Value?: string | null
 }
 
 export type OrderLineForMapping = {
@@ -76,7 +78,7 @@ export function resolveSupplierForOrderLine(
     let score = 0
     const reasons: string[] = []
 
-    const candidateDesignKind = detectDesignKind([c.printingMethod, c.productType, c.productName])
+    const candidateDesignKind = detectDesignKind([c.productType, c.productName])
     if (lineDesignKind && candidateDesignKind) {
       if (lineDesignKind === candidateDesignKind) {
         score += 45
@@ -87,17 +89,13 @@ export function resolveSupplierForOrderLine(
       }
     }
 
-    if (includesToken(lineText, c.printingMethod)) {
-      score += 30
-      reasons.push('printingMethod')
-    }
     if (includesToken(lineText, c.productType)) {
       score += 25
       reasons.push('productType')
     }
-    if (includesToken(lineText, c.sizeLabel)) {
+    if (includesToken(lineText, c.variant1Value) || includesToken(lineText, c.variant2Value)) {
       score += 10
-      reasons.push('size')
+      reasons.push('variant')
     }
 
     const nameOverlap = overlapScore(line.title, c.productName)

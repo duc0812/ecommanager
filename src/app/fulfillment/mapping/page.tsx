@@ -5,7 +5,7 @@ import Sidebar from '@/components/Sidebar'
 
 // ── Types ────────────────────────────────────────────────────
 type SupplierProduct = {
-  id: string; sku: string; productName: string | null; sizeLabel: string | null
+  id: string; sku: string; productName: string | null; variant1Value: string | null
   supplier: { id: string; name: string; code: string }
 }
 
@@ -179,7 +179,7 @@ function EditModal({
                   <select className="border border-outline-variant/40 rounded-lg px-md py-sm text-body-sm bg-surface-container-lowest" value={m.supplierProductId} onChange={e => setSupplierMappings(prev => prev.map((r, j) => j === i ? { ...r, supplierProductId: e.target.value, preferenceRank: j + 1 } : r))}>
                     <option value="">-- Chọn supplier product --</option>
                     {supplierProducts.map(p => (
-                      <option key={p.id} value={p.id}>{p.productName ?? p.sku} — {p.supplier.name} · {p.sku}{p.sizeLabel ? ` · ${p.sizeLabel}` : ''}</option>
+                      <option key={p.id} value={p.id}>{p.productName ?? p.sku} — {p.supplier.name} · {p.sku}{p.variant1Value ? ` · ${p.variant1Value}` : ''}</option>
                     ))}
                   </select>
                   <button onClick={() => setSupplierMappings(prev => prev.filter((_, j) => j !== i).map((r, j) => ({ ...r, preferenceRank: j + 1 })))} className="text-error text-lg">✕</button>
@@ -340,7 +340,7 @@ export default function MappingPage() {
                   <span>Product Base</span><span>Match Conditions</span><span>Suppliers</span><span>Special Cases</span><span></span>
                 </div>
                 {bases.length === 0 && (
-                  <div className="px-lg py-xl text-center text-on-surface/40 text-body-sm">Chưa có Product Base nào. Nhấn "+ New" để tạo.</div>
+                  <div className="px-lg py-xl text-center text-on-surface/40 text-body-sm">Chưa có Product Base nào. Nhấn New để tạo.</div>
                 )}
                 {bases.map((b, i) => {
                   let conditions: ConditionRow[] = []

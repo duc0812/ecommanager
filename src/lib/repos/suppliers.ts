@@ -68,8 +68,10 @@ export async function buildSupplierProductCandidates(): Promise<SupplierProductC
       shippingByRegion: p.shippingByRegion ? safeParseShipping(p.shippingByRegion) : undefined,
       productName: p.productName,
       productType: p.productType,
-      printingMethod: p.printingMethod,
-      sizeLabel: p.sizeLabel,
+      variant1Name: p.variant1Name,
+      variant1Value: p.variant1Value,
+      variant2Name: p.variant2Name,
+      variant2Value: p.variant2Value,
     })
   }
   return candidates
@@ -172,8 +174,10 @@ export type ProductUpsertInput = {
   requiresDesign?: boolean
   baseSku?: string | null
   productType?: string | null
-  printingMethod?: string | null
-  sizeLabel?: string | null
+  variant1Name?: string | null
+  variant1Value?: string | null
+  variant2Name?: string | null
+  variant2Value?: string | null
   designTemplateUrl?: string | null
   minProductionDays?: number | null
   maxProductionDays?: number | null
@@ -196,8 +200,10 @@ export async function upsertProductMapping(input: ProductUpsertInput) {
         requiresDesign: input.requiresDesign ?? false,
         baseSku: input.baseSku ?? null,
         productType: input.productType ?? null,
-        printingMethod: input.printingMethod ?? null,
-        sizeLabel: input.sizeLabel ?? null,
+        variant1Name: input.variant1Name ?? null,
+        variant1Value: input.variant1Value ?? null,
+        variant2Name: input.variant2Name ?? null,
+        variant2Value: input.variant2Value ?? null,
         designTemplateUrl: input.designTemplateUrl ?? null,
         minProductionDays: input.minProductionDays ?? null,
         maxProductionDays: input.maxProductionDays ?? null,
@@ -210,8 +216,10 @@ export async function upsertProductMapping(input: ProductUpsertInput) {
         requiresDesign: input.requiresDesign ?? false,
         ...(input.baseSku !== undefined ? { baseSku: input.baseSku } : {}),
         ...(input.productType !== undefined ? { productType: input.productType } : {}),
-        ...(input.printingMethod !== undefined ? { printingMethod: input.printingMethod } : {}),
-        ...(input.sizeLabel !== undefined ? { sizeLabel: input.sizeLabel } : {}),
+        ...(input.variant1Name !== undefined ? { variant1Name: input.variant1Name } : {}),
+        ...(input.variant1Value !== undefined ? { variant1Value: input.variant1Value } : {}),
+        ...(input.variant2Name !== undefined ? { variant2Name: input.variant2Name } : {}),
+        ...(input.variant2Value !== undefined ? { variant2Value: input.variant2Value } : {}),
         ...(input.designTemplateUrl !== undefined ? { designTemplateUrl: input.designTemplateUrl } : {}),
         ...(input.minProductionDays !== undefined ? { minProductionDays: input.minProductionDays } : {}),
         ...(input.maxProductionDays !== undefined ? { maxProductionDays: input.maxProductionDays } : {}),
@@ -248,8 +256,10 @@ export type ProductBulkRow = {
   requiresDesign?: boolean
   baseSku?: string | null
   productType?: string | null
-  printingMethod?: string | null
-  sizeLabel?: string | null
+  variant1Name?: string | null
+  variant1Value?: string | null
+  variant2Name?: string | null
+  variant2Value?: string | null
   designTemplateUrl?: string | null
   minProductionDays?: number | null
   maxProductionDays?: number | null

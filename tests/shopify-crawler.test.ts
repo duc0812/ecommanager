@@ -28,8 +28,8 @@ const candidates: SupplierProductCandidate[] = [
     firstItemShipFee: 0,
     additionalItemShipFee: 0,
     productType: 'Fit Hawaii Shirt',
-    printingMethod: '3D AOP',
-    sizeLabel: 'S',
+    variant1Name: 'Size',
+    variant1Value: 'S',
   },
   {
     sku: 'PHS2VN000000AA04',
@@ -41,8 +41,8 @@ const candidates: SupplierProductCandidate[] = [
     firstItemShipFee: 0,
     additionalItemShipFee: 0,
     productType: 'Fit Hawaii Shirt',
-    printingMethod: '3D AOP',
-    sizeLabel: 'XL',
+    variant1Name: 'Size',
+    variant1Value: 'XL',
   },
 ]
 
