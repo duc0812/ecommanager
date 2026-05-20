@@ -16,8 +16,10 @@ type Product = {
   updatedAt: string
   baseSku: string | null
   productType: string | null
-  printingMethod: string | null
-  sizeLabel: string | null
+  variant1Name: string | null
+  variant1Value: string | null
+  variant2Name: string | null
+  variant2Value: string | null
   designTemplateUrl: string | null
   minProductionDays: number | null
   maxProductionDays: number | null
@@ -33,8 +35,10 @@ type ImportRow = {
   requiresDesign?: boolean
   baseSku?: string | null
   productType?: string | null
-  printingMethod?: string | null
-  sizeLabel?: string | null
+  variant1Name?: string | null
+  variant1Value?: string | null
+  variant2Name?: string | null
+  variant2Value?: string | null
   designTemplateUrl?: string | null
   minProductionDays?: number | null
   maxProductionDays?: number | null
@@ -45,8 +49,10 @@ type ManualRow = {
   supplierName: string
   productType: string
   baseSku: string
-  printingMethod: string
-  sizeLabel: string
+  variant1Name: string
+  variant1Value: string
+  variant2Name: string
+  variant2Value: string
   sku: string
   baseCost: string
   usImportTax: string
@@ -61,8 +67,10 @@ const emptyManualRow: ManualRow = {
   supplierName: '',
   productType: '',
   baseSku: '',
-  printingMethod: '',
-  sizeLabel: '',
+  variant1Name: '',
+  variant1Value: '',
+  variant2Name: '',
+  variant2Value: '',
   sku: '',
   baseCost: '',
   usImportTax: '',
@@ -128,8 +136,10 @@ function rowsToImportRows(rows: Record<string, unknown>[]): ImportRow[] {
       requiresDesign: ['1', 'true', 'TRUE', 'yes', 'YES'].includes(String(r.requiresDesign ?? r.requiresdesign ?? '').trim()),
       baseSku: String(r['SKU product'] ?? '').trim() || null,
       productType: String(r['Product type'] ?? r['Product Title'] ?? '').trim() || null,
-      printingMethod: String(r['Printing method'] ?? '').trim() || null,
-      sizeLabel: String(r['SIZES'] ?? '').trim() || null,
+      variant1Name: String(r['Variant 1 Name'] ?? '').trim() || (String(r['SIZES'] ?? '').trim() ? 'Size' : null),
+      variant1Value: String(r['Variant 1 Value'] ?? r['SIZES'] ?? '').trim() || null,
+      variant2Name: String(r['Variant 2 Name'] ?? '').trim() || null,
+      variant2Value: String(r['Variant 2 Value'] ?? '').trim() || null,
       designTemplateUrl: String(r['Design Template'] ?? '').trim() || null,
       minProductionDays: minProd ? parseInt(String(minProd), 10) : null,
       maxProductionDays: maxProd ? parseInt(String(maxProd), 10) : null,
@@ -205,8 +215,10 @@ function ProductsPageContent() {
       requiresDesign: p.requiresDesign,
       baseSku: p.baseSku ?? '',
       productType: p.productType ?? '',
-      printingMethod: p.printingMethod ?? '',
-      sizeLabel: p.sizeLabel ?? '',
+      variant1Name: p.variant1Name ?? '',
+      variant1Value: p.variant1Value ?? '',
+      variant2Name: p.variant2Name ?? '',
+      variant2Value: p.variant2Value ?? '',
       designTemplateUrl: p.designTemplateUrl ?? '',
       minProductionDays: p.minProductionDays ?? '',
       maxProductionDays: p.maxProductionDays ?? '',
@@ -224,8 +236,10 @@ function ProductsPageContent() {
       requiresDesign: editForm.requiresDesign,
       baseSku: editForm.baseSku || null,
       productType: editForm.productType || null,
-      printingMethod: editForm.printingMethod || null,
-      sizeLabel: editForm.sizeLabel || null,
+      variant1Name: editForm.variant1Name || null,
+      variant1Value: editForm.variant1Value || null,
+      variant2Name: editForm.variant2Name || null,
+      variant2Value: editForm.variant2Value || null,
       designTemplateUrl: editForm.designTemplateUrl || null,
       minProductionDays: editForm.minProductionDays === '' ? null : Number(editForm.minProductionDays),
       maxProductionDays: editForm.maxProductionDays === '' ? null : Number(editForm.maxProductionDays),
@@ -272,8 +286,10 @@ function ProductsPageContent() {
       productName: r.productType || undefined,
       baseSku: r.baseSku || null,
       productType: r.productType || null,
-      printingMethod: r.printingMethod || null,
-      sizeLabel: r.sizeLabel || null,
+      variant1Name: r.variant1Name || null,
+      variant1Value: r.variant1Value || null,
+      variant2Name: r.variant2Name || null,
+      variant2Value: r.variant2Value || null,
       designTemplateUrl: r.designTemplateUrl || null,
       minProductionDays: r.minProductionDays ? parseInt(r.minProductionDays, 10) : null,
       maxProductionDays: r.maxProductionDays ? parseInt(r.maxProductionDays, 10) : null,
@@ -393,7 +409,7 @@ function ProductsPageContent() {
               <table className="min-w-[1500px] w-full text-label-sm">
                 <thead className="bg-surface-container">
                   <tr className="text-left">
-                    {['SUPPLIER NAME', 'Product type', 'SKU product', 'Printing method', 'SIZES', 'SKU variant', 'Base cost ($)', 'US import Tax/item', 'US shipping fee (1st item)', 'US additional shipping fee', 'Design Template', 'Min production time', 'Max production time', ''].map(h => (
+                    {['SUPPLIER NAME', 'Product type', 'SKU product', 'Variant 1 Name', 'Variant 1 Value', 'Variant 2 Name', 'Variant 2 Value', 'SKU variant', 'Base cost ($)', 'US import Tax/item', 'US shipping fee (1st item)', 'US additional shipping fee', 'Design Template', 'Min production time', 'Max production time', ''].map(h => (
                       <th key={h} className="px-sm py-xs">{h}</th>
                     ))}
                   </tr>
@@ -404,8 +420,10 @@ function ProductsPageContent() {
                       <td className="px-sm py-xs"><input className="w-40 border rounded px-xs py-[3px]" value={row.supplierName} onChange={e => updateManualRow(index, { supplierName: e.target.value })} placeholder={suppliers.find(s => s.id === supplierId)?.name ?? 'Supplier'} /></td>
                       <td className="px-sm py-xs"><input className="w-40 border rounded px-xs py-[3px]" value={row.productType} onChange={e => updateManualRow(index, { productType: e.target.value })} /></td>
                       <td className="px-sm py-xs"><input className="w-28 border rounded px-xs py-[3px] font-mono" value={row.baseSku} onChange={e => updateManualRow(index, { baseSku: e.target.value })} /></td>
-                      <td className="px-sm py-xs"><input className="w-36 border rounded px-xs py-[3px]" value={row.printingMethod} onChange={e => updateManualRow(index, { printingMethod: e.target.value })} /></td>
-                      <td className="px-sm py-xs"><input className="w-20 border rounded px-xs py-[3px]" value={row.sizeLabel} onChange={e => updateManualRow(index, { sizeLabel: e.target.value })} /></td>
+                      <td className="px-sm py-xs"><input className="w-24 border rounded px-xs py-[3px]" placeholder="Size" value={row.variant1Name} onChange={e => updateManualRow(index, { variant1Name: e.target.value })} /></td>
+                      <td className="px-sm py-xs"><input className="w-20 border rounded px-xs py-[3px]" placeholder="XL" value={row.variant1Value} onChange={e => updateManualRow(index, { variant1Value: e.target.value })} /></td>
+                      <td className="px-sm py-xs"><input className="w-24 border rounded px-xs py-[3px]" placeholder="Color" value={row.variant2Name} onChange={e => updateManualRow(index, { variant2Name: e.target.value })} /></td>
+                      <td className="px-sm py-xs"><input className="w-20 border rounded px-xs py-[3px]" placeholder="Black" value={row.variant2Value} onChange={e => updateManualRow(index, { variant2Value: e.target.value })} /></td>
                       <td className="px-sm py-xs"><input className="w-40 border rounded px-xs py-[3px] font-mono" value={row.sku} onChange={e => updateManualRow(index, { sku: e.target.value })} /></td>
                       <td className="px-sm py-xs"><input className="w-24 border rounded px-xs py-[3px]" type="number" step="0.01" value={row.baseCost} onChange={e => updateManualRow(index, { baseCost: e.target.value })} /></td>
                       <td className="px-sm py-xs"><input className="w-24 border rounded px-xs py-[3px]" type="number" step="0.01" value={row.usImportTax} onChange={e => updateManualRow(index, { usImportTax: e.target.value })} /></td>
@@ -436,7 +454,8 @@ function ProductsPageContent() {
                 <th className="px-md py-sm">Product / Type</th>
                 <th className="px-md py-sm">Supplier</th>
                 <th className="px-md py-sm text-right">Base cost</th>
-                <th className="px-md py-sm">Size</th>
+                <th className="px-md py-sm">Variant 1</th>
+                <th className="px-md py-sm">Variant 2</th>
                 <th className="px-md py-sm">Shipping</th>
                 <th className="px-md py-sm">Custom?</th>
                 <th className="px-md py-sm">Updated</th>
@@ -452,13 +471,17 @@ function ProductsPageContent() {
                   </td>
                   <td className="px-md py-sm">
                     <div>{p.productName ?? p.productType ?? '—'}</div>
-                    {p.printingMethod && <div className="text-xs text-on-surface-variant">{p.printingMethod}</div>}
                   </td>
                   <td className="px-md py-sm">{p.supplier.name}</td>
                   <td className="px-md py-sm text-right cursor-pointer hover:underline" onClick={() => openEdit(p)}>
                     {p.currency} {p.baseCost.toFixed(2)}
                   </td>
-                  <td className="px-md py-sm text-xs">{p.sizeLabel ?? '—'}</td>
+                  <td className="px-md py-sm text-xs">
+                    {p.variant1Value ? <span><span className="text-on-surface-variant">{p.variant1Name}: </span>{p.variant1Value}</span> : '—'}
+                  </td>
+                  <td className="px-md py-sm text-xs">
+                    {p.variant2Value ? <span><span className="text-on-surface-variant">{p.variant2Name}: </span>{p.variant2Value}</span> : '—'}
+                  </td>
                   <td className="px-md py-sm text-xs">
                     {p.shippingByRegion ? (() => {
                       try {
@@ -489,7 +512,7 @@ function ProductsPageContent() {
                   </td>
                 </tr>
               ))}
-              {products.length === 0 && <tr><td colSpan={9} className="px-md py-lg text-center text-on-surface-variant">No mappings. Add or import CSV.</td></tr>}
+              {products.length === 0 && <tr><td colSpan={10} className="px-md py-lg text-center text-on-surface-variant">No mappings. Add or import CSV.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -504,8 +527,10 @@ function ProductsPageContent() {
               <div className="grid grid-cols-2 gap-sm">
                 <div><label className="text-label-sm block mb-xs">Product type</label><input className="w-full border rounded-lg px-sm py-xs" value={editForm.productType} onChange={e => setEditForm({...editForm, productType: e.target.value})} /></div>
                 <div><label className="text-label-sm block mb-xs">Base SKU</label><input className="w-full border rounded-lg px-sm py-xs font-mono" value={editForm.baseSku} onChange={e => setEditForm({...editForm, baseSku: e.target.value})} /></div>
-                <div><label className="text-label-sm block mb-xs">Printing method</label><input className="w-full border rounded-lg px-sm py-xs" value={editForm.printingMethod} onChange={e => setEditForm({...editForm, printingMethod: e.target.value})} /></div>
-                <div><label className="text-label-sm block mb-xs">Size label</label><input className="w-full border rounded-lg px-sm py-xs" value={editForm.sizeLabel} onChange={e => setEditForm({...editForm, sizeLabel: e.target.value})} /></div>
+                <div><label className="text-label-sm block mb-xs">Variant 1 Name</label><input className="w-full border rounded-lg px-sm py-xs" placeholder="Size, Color, Capacity…" value={editForm.variant1Name} onChange={e => setEditForm({...editForm, variant1Name: e.target.value})} /></div>
+                <div><label className="text-label-sm block mb-xs">Variant 1 Value</label><input className="w-full border rounded-lg px-sm py-xs" placeholder="XL, Black, 10oz…" value={editForm.variant1Value} onChange={e => setEditForm({...editForm, variant1Value: e.target.value})} /></div>
+                <div><label className="text-label-sm block mb-xs">Variant 2 Name</label><input className="w-full border rounded-lg px-sm py-xs" placeholder="Color, Style…" value={editForm.variant2Name} onChange={e => setEditForm({...editForm, variant2Name: e.target.value})} /></div>
+                <div><label className="text-label-sm block mb-xs">Variant 2 Value</label><input className="w-full border rounded-lg px-sm py-xs" placeholder="White, Matte…" value={editForm.variant2Value} onChange={e => setEditForm({...editForm, variant2Value: e.target.value})} /></div>
                 <div><label className="text-label-sm block mb-xs">Product name</label><input className="w-full border rounded-lg px-sm py-xs" value={editForm.productName} onChange={e => setEditForm({...editForm, productName: e.target.value})} /></div>
                 <div><label className="text-label-sm block mb-xs">Base cost</label><input type="number" step="0.01" className="w-full border rounded-lg px-sm py-xs" value={editForm.baseCost} onChange={e => setEditForm({...editForm, baseCost: e.target.value})} /></div>
                 <div><label className="text-label-sm block mb-xs">Currency</label><input className="w-full border rounded-lg px-sm py-xs" value={editForm.currency} onChange={e => setEditForm({...editForm, currency: e.target.value})} /></div>
