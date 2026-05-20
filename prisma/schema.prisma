@@ -16,7 +16,9 @@ model ShopifyStore {
   currentBalanceCurrency String?
   payouts                Payout[]
   bankAccounts           BankAccount[]
+  orders                 Order[]
   syncSinceDate          DateTime?
+  ianaTimezone           String?
   projectId              String?       @unique
   project                Project?      @relation(fields: [projectId], references: [id])
 }
@@ -110,6 +112,7 @@ model MetaAdAccount {
   billings    MetaBilling[]
   lastSyncAt  DateTime?
   createdAt   DateTime      @default(now())
+  dailySpends DailyAdSpend[]
 }
 
 model MetaBilling {
@@ -320,6 +323,7 @@ model SupplierProduct {
   minProductionDays   Int?
   maxProductionDays   Int?
   shippingByRegion    String?
+  textureOfMaterial   String?
   baseSupplierMappings  ProductBaseSupplierMapping[]
   baseOverrides         ProductBaseOverride[]
   variantManualMappings VariantManualMapping[]
@@ -342,6 +346,7 @@ model SupplierCostHistory {
 model Order {
   id                   String      @id
   storeId              String
+  store                ShopifyStore @relation(fields: [storeId], references: [id])
   projectId            String
   project              Project     @relation(fields: [projectId], references: [id])
   shopifyOrderNumber   String
@@ -354,6 +359,9 @@ model Order {
   pipelineStatus       String      @default("PENDING")
   currency             String
   grossAmount          Float
+  subtotalAmount       Float       @default(0)
+  shippingAmount       Float       @default(0)
+  taxAmount            Float       @default(0)
   expectedPayout       Float
   totalFees            Float       @default(0)
   refundedAmount       Float       @default(0)
@@ -362,13 +370,22 @@ model Order {
   exportedAt           DateTime?
   exportedToSupplierId String?
   placedAt             DateTime
+  shopTimezone          String?
   fetchedAt            DateTime    @default(now())
   updatedAt            DateTime    @updatedAt
   lines                OrderLine[]
   shippingZone         String?
+  shippingName         String?
+  shippingAddress1     String?
+  shippingAddress2     String?
+  shippingCity         String?
+  shippingZip          String?
+  shippingPhone        String?
   orderType            String      @default("UNKNOWN")   // "CUSTOM" | "NON_CUSTOM" | "UNKNOWN"
   trelloCardId         String?
   trelloCardUrl        String?
+  designReady          Boolean     @default(false)
+  designDriveLink      String?
   @@index([placedAt])
   @@index([pipelineStatus])
   @@index([defaultSupplierId])
@@ -488,4 +505,20 @@ model VariantManualMapping {
   productBase     ProductBase?    @relation(fields: [productBaseId], references: [id], onDelete: SetNull)
 
   @@index([shopifyVariantId])
+}
+
+model DailyAdSpend {
+  id          String        @id @default(cuid())
+  adAccountId String
+  adAccount   MetaAdAccount @relation(fields: [adAccountId], references: [id])
+  date        String        // "YYYY-MM-DD"
+  spend       Float         @default(0)
+  impressions Int           @default(0)
+  clicks      Int           @default(0)
+  currency    String        @default("USD")
+  fetchedAt   DateTime      @default(now())
+
+  @@unique([adAccountId, date])
+  @@index([date])
+  @@index([adAccountId])
 }

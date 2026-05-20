@@ -17,6 +17,7 @@
     "@prisma/client": "^7.8.0",
     "axios": "^1.16.0",
     "next": "14.2.35",
+    "node-cron": "^4.2.1",
     "prisma": "^7.8.0",
     "react": "^18",
     "react-dom": "^18",
@@ -24,6 +25,7 @@
   },
   "devDependencies": {
     "@types/node": "^20.19.41",
+    "@types/node-cron": "^3.0.11",
     "@types/react": "^18",
     "@types/react-dom": "^18",
     "@vitest/ui": "^4.1.6",
