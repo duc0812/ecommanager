@@ -300,11 +300,23 @@ export default function SupplierSetupPage() {
     const es = expandForms[p.id]
     if (!es) return
     setSavingIds(prev => new Set(prev).add(p.id))
-    const shippingByRegion = buildShipping({
+    // Start from existing shipping data to preserve GB/CA and any other imported regions
+    let existingShipping: Record<string, { first: number; additional: number; importTax?: number }> = {}
+    try { if (p.shippingByRegion) existingShipping = JSON.parse(p.shippingByRegion) } catch {}
+    const formZones: Record<string, { first: string; additional: string }> = {
       US: { first: es.usShipFirst, additional: es.usShipAdditional },
       EU: { first: es.euShipFirst, additional: es.euShipAdditional },
       ROW: { first: es.rowShipFirst, additional: es.rowShipAdditional },
-    })
+    }
+    const merged = { ...existingShipping }
+    for (const [zone, { first, additional }] of Object.entries(formZones)) {
+      if (first || additional) {
+        merged[zone] = { first: num(first), additional: num(additional) }
+      } else {
+        delete merged[zone]
+      }
+    }
+    const shippingByRegion = Object.keys(merged).length > 0 ? JSON.stringify(merged) : null
     const body = {
       designTemplateUrl: es.designTemplateUrl || null,
       minProductionDays: es.minProductionDays ? parseInt(es.minProductionDays, 10) : null,
