@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react'
 import Sidebar from '@/components/Sidebar'
 import { RoleGate } from '@/components/RoleGate'
+import { calcGoalMetrics } from '@/lib/goal-tracker'
 
 type Assignment = {
   id: string
@@ -347,7 +348,11 @@ export default function ProjectDashboard() {
                   <MetaAccountSpend accounts={analytics.spendByAccount} />
                 </div>
 
-                {/* Revenue Goal Tracker — added in Task 3 */}
+                {selectedProject && (
+                  <section>
+                    <RevenueGoalTracker projectId={selectedProject} />
+                  </section>
+                )}
 
                 {selectedStaff === 'all' && currentProject && currentProject.assignments.length > 0 && (
                   <ProjectStaff assignments={currentProject.assignments} onSelect={setSelectedStaff} />
@@ -747,6 +752,141 @@ function ProfitChartSVG({ data }: { data: DailyProfitPoint[] }) {
           <span className="text-label-sm text-on-surface-variant">Profit ($)</span>
         </div>
       </div>
+    </div>
+  )
+}
+
+function RevenueGoalTracker({ projectId }: { projectId: string }) {
+  const [monthlyTarget, setMonthlyTarget] = useState<number>(() => {
+    if (typeof window === 'undefined') return 30000
+    return Number(localStorage.getItem('goal_monthly') || '30000')
+  })
+  const [dailyTarget, setDailyTarget] = useState<number>(() => {
+    if (typeof window === 'undefined') return 1000
+    return Number(localStorage.getItem('goal_daily') || '1000')
+  })
+  const [data, setData] = useState<ProfitChartData | null>(null)
+
+  useEffect(() => {
+    fetch(`/api/projects/profit-chart?projectId=${projectId}&period=this-month`)
+      .then(r => r.json())
+      .then(setData)
+      .catch(() => {})
+  }, [projectId])
+
+  function handleMonthlyTarget(val: string) {
+    const n = Number(val)
+    if (!Number.isFinite(n) || n <= 0) return
+    setMonthlyTarget(n)
+    localStorage.setItem('goal_monthly', String(n))
+  }
+
+  function handleDailyTarget(val: string) {
+    const n = Number(val)
+    if (!Number.isFinite(n) || n <= 0) return
+    setDailyTarget(n)
+    localStorage.setItem('goal_daily', String(n))
+  }
+
+  const now = new Date()
+  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate()
+  const totalRevenue = data?.summary.totalRevenue ?? 0
+  const daysElapsed = data?.dailyData.length ?? 0
+
+  const metrics = calcGoalMetrics({ totalRevenue, daysElapsed, daysInMonth, monthlyTarget, dailyTarget })
+  const { avgDaily, daysRemaining, projected, shortfall, neededPerDay, paceOk, monthPct } = metrics
+
+  return (
+    <div className="space-y-lg">
+      <div className="flex items-center gap-sm mb-lg flex-wrap">
+        <span className="material-symbols-outlined text-secondary">track_changes</span>
+        <h3 className="text-headline-sm text-primary">Revenue Goals</h3>
+        <div className="flex items-center gap-md ml-auto flex-wrap">
+          <label className="flex items-center gap-xs text-label-sm text-on-surface-variant">
+            Tháng $
+            <input
+              type="number"
+              defaultValue={monthlyTarget}
+              onBlur={e => handleMonthlyTarget(e.target.value)}
+              className="w-24 bg-surface-container border border-outline-variant/30 rounded-lg px-sm py-xs text-body-sm focus:ring-2 focus:ring-secondary outline-none"
+            />
+          </label>
+          <label className="flex items-center gap-xs text-label-sm text-on-surface-variant">
+            Ngày $
+            <input
+              type="number"
+              defaultValue={dailyTarget}
+              onBlur={e => handleDailyTarget(e.target.value)}
+              className="w-20 bg-surface-container border border-outline-variant/30 rounded-lg px-sm py-xs text-body-sm focus:ring-2 focus:ring-secondary outline-none"
+            />
+          </label>
+        </div>
+      </div>
+
+      {!data ? (
+        <div className="flex items-center justify-center py-xl">
+          <span className="material-symbols-outlined animate-spin text-secondary text-[24px]">sync</span>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-lg">
+          <div className="bg-surface-container-lowest rounded-xl border border-outline-variant/20 p-lg">
+            <div className="flex items-center gap-sm mb-sm">
+              <span className="material-symbols-outlined text-[18px] text-secondary">calendar_month</span>
+              <span className="text-label-sm uppercase tracking-wider text-on-surface-variant">Tháng này</span>
+            </div>
+            <p className="text-stats-lg text-primary">{fmtUSD(totalRevenue)}</p>
+            <p className="text-label-sm text-on-surface-variant mt-xs">{monthPct.toFixed(1)}% · {daysElapsed} ngày đã qua</p>
+            <div className="mt-md h-1 rounded-full bg-secondary/20">
+              <div className="h-1 rounded-full bg-secondary transition-all duration-500" style={{ width: `${monthPct}%` }} />
+            </div>
+            <p className="text-label-sm text-on-surface-variant mt-xs">mục tiêu {fmtUSD(monthlyTarget)}</p>
+          </div>
+
+          <div className="bg-surface-container-lowest rounded-xl border border-outline-variant/20 p-lg">
+            <div className="flex items-center gap-sm mb-sm">
+              <span className="material-symbols-outlined text-[18px] text-secondary">speed</span>
+              <span className="text-label-sm uppercase tracking-wider text-on-surface-variant">Pace hiện tại</span>
+            </div>
+            <p className={`text-stats-lg ${paceOk ? 'text-on-tertiary-container' : 'text-error'}`}>
+              {fmtUSD(avgDaily)}<span className="text-body-md font-normal">/ngày</span>
+            </p>
+            <p className={`text-label-sm mt-xs ${paceOk ? 'text-on-tertiary-container' : 'text-error'}`}>
+              {paceOk ? '▲ Đang vượt target' : '▼ Dưới target'} {fmtUSD(dailyTarget)}/ngày
+            </p>
+          </div>
+
+          <div className="bg-surface-container-lowest rounded-xl border border-outline-variant/20 p-lg">
+            <div className="flex items-center gap-sm mb-sm">
+              <span className="material-symbols-outlined text-[18px] text-secondary">trending_up</span>
+              <span className="text-label-sm uppercase tracking-wider text-on-surface-variant">Dự báo cuối tháng</span>
+            </div>
+            <p className={`text-stats-lg ${projected >= monthlyTarget ? 'text-on-tertiary-container' : 'text-primary'}`}>
+              {fmtUSD(projected)}
+            </p>
+            <p className="text-label-sm text-on-surface-variant mt-xs">Dựa trên pace hiện tại</p>
+          </div>
+
+          <div className="bg-surface-container-lowest rounded-xl border border-outline-variant/20 p-lg">
+            <div className="flex items-center gap-sm mb-sm">
+              <span className="material-symbols-outlined text-[18px] text-secondary">flag</span>
+              <span className="text-label-sm uppercase tracking-wider text-on-surface-variant">Còn thiếu</span>
+            </div>
+            {shortfall <= 0 ? (
+              <p className="text-stats-lg text-on-tertiary-container">Đạt target!</p>
+            ) : (
+              <>
+                <p className="text-stats-lg text-primary">{fmtUSD(shortfall)}</p>
+                <p className="text-label-sm text-on-surface-variant mt-xs">
+                  Cần {fmtUSD(neededPerDay)}/ngày · {daysRemaining} ngày còn lại
+                </p>
+                <div className="mt-md h-1 rounded-full bg-secondary/20">
+                  <div className="h-1 rounded-full bg-secondary transition-all duration-500" style={{ width: `${monthPct}%` }} />
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
