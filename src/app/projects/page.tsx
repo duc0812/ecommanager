@@ -766,12 +766,17 @@ function RevenueGoalTracker({ projectId }: { projectId: string }) {
     return Number(localStorage.getItem('goal_daily') || '1000')
   })
   const [data, setData] = useState<ProfitChartData | null>(null)
+  const [monthlyDraft, setMonthlyDraft] = useState(String(monthlyTarget))
+  const [dailyDraft, setDailyDraft] = useState(String(dailyTarget))
+  const [fetchError, setFetchError] = useState(false)
 
   useEffect(() => {
+    setData(null)
+    setFetchError(false)
     fetch(`/api/projects/profit-chart?projectId=${projectId}&period=this-month`)
       .then(r => r.json())
       .then(setData)
-      .catch(() => {})
+      .catch(() => setFetchError(true))
   }, [projectId])
 
   function handleMonthlyTarget(val: string) {
@@ -806,7 +811,8 @@ function RevenueGoalTracker({ projectId }: { projectId: string }) {
             Tháng $
             <input
               type="number"
-              defaultValue={monthlyTarget}
+              value={monthlyDraft}
+              onChange={e => setMonthlyDraft(e.target.value)}
               onBlur={e => handleMonthlyTarget(e.target.value)}
               className="w-24 bg-surface-container border border-outline-variant/30 rounded-lg px-sm py-xs text-body-sm focus:ring-2 focus:ring-secondary outline-none"
             />
@@ -815,7 +821,8 @@ function RevenueGoalTracker({ projectId }: { projectId: string }) {
             Ngày $
             <input
               type="number"
-              defaultValue={dailyTarget}
+              value={dailyDraft}
+              onChange={e => setDailyDraft(e.target.value)}
               onBlur={e => handleDailyTarget(e.target.value)}
               className="w-20 bg-surface-container border border-outline-variant/30 rounded-lg px-sm py-xs text-body-sm focus:ring-2 focus:ring-secondary outline-none"
             />
@@ -823,7 +830,9 @@ function RevenueGoalTracker({ projectId }: { projectId: string }) {
         </div>
       </div>
 
-      {!data ? (
+      {fetchError ? (
+        <p className="text-label-sm text-error py-md">Không tải được dữ liệu doanh thu.</p>
+      ) : !data ? (
         <div className="flex items-center justify-center py-xl">
           <span className="material-symbols-outlined animate-spin text-secondary text-[24px]">sync</span>
         </div>
