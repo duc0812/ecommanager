@@ -1,4 +1,4 @@
-'use client'
+﻿'use client'
 import { useEffect, useState } from 'react'
 import Sidebar from '@/components/Sidebar'
 import { RoleGate } from '@/components/RoleGate'
@@ -72,6 +72,7 @@ type Analytics = {
     period: { start: string; end: string }
     metaBilling: { source: string; firstDate: string | null; lastDate: string | null; transactionCount: number }
     actualAdSpend: { source: string; note: string }
+    orderProfit?: { source: string; mappedOrderCount: number; unmappedOrderCount: number; estimateRule?: string }
   }
   totalPayout: number
   totalRevenue: number
@@ -79,9 +80,17 @@ type Analytics = {
   totalAdSpend: number
   totalMetaBilling: number
   totalFulfillmentCost: number
+  totalOrderProfit: number
+  totalOrderCogs: number
+  cashflowCosts: number
+  mappedOrderCount: number
+  unmappedOrderCount: number
   costs: { fulfillment: number; appBilling: number; toolsBilling: number }
   totalOtherCosts: number
   actualCashflow: number
+  shopifyBalance: number
+  shopifyBalanceCurrency: string | null
+  projectedCashflow: number
   grossProfit: number
   grossMargin: number
   adSpendRatio: number
@@ -121,7 +130,6 @@ export default function ProjectDashboard() {
   const [analytics, setAnalytics] = useState<Analytics | null>(null)
   const [loading, setLoading] = useState(true)
   const [analyticsLoading, setAnalyticsLoading] = useState(false)
-  const [costs, setCosts] = useState({ appBilling: '0', toolsBilling: '0' })
   const [chartPeriod, setChartPeriod] = useState<string>('this-month')
   const [syncStatus, setSyncStatus] = useState<AutoSyncStatus | null>(null)
   const [syncing, setSyncing] = useState(false)
@@ -155,15 +163,13 @@ export default function ProjectDashboard() {
     const params = new URLSearchParams({ projectId: selectedProject })
     if (selectedStaff !== 'all') params.set('staffId', selectedStaff)
     if (selectedMonth) params.set('month', selectedMonth)
-    params.set('appBilling', costs.appBilling || '0')
-    params.set('toolsBilling', costs.toolsBilling || '0')
     fetch(`/api/projects/analytics?${params}`)
       .then(r => r.json())
       .then((data: Analytics) => {
         setAnalytics(data)
         setAnalyticsLoading(false)
       })
-  }, [selectedProject, selectedStaff, selectedMonth, costs])
+  }, [selectedProject, selectedStaff, selectedMonth])
 
   const currentProject = projects.find(p => p.id === selectedProject)
 
@@ -248,8 +254,6 @@ export default function ProjectDashboard() {
               </div>
             )}
 
-            <CostInputs costs={costs} setCosts={setCosts} />
-
             {analyticsLoading ? (
               <div className="flex items-center justify-center py-[80px]">
                 <span className="material-symbols-outlined animate-spin text-[28px] text-secondary">sync</span>
@@ -269,19 +273,28 @@ export default function ProjectDashboard() {
                     <span className="material-symbols-outlined text-secondary">account_balance_wallet</span>
                     <h3 className="text-headline-sm text-primary">Actual Cashflow</h3>
                     <span className="text-label-sm text-on-surface-variant">
-                      {selectedStaff === 'all' ? 'project payout - paid billing - costs' : 'seller-period payout - paid billing - costs'}
+                      {selectedStaff === 'all' ? 'payout - paid billing - COGS - costs' : 'seller-period payout - paid billing - COGS - costs'}
                     </span>
                   </div>
-                  <div className="grid grid-cols-1 md:grid-cols-4 gap-lg">
+                  <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-6 gap-lg">
                     <StatCard label="Shopify Payout" icon="payments" value={fmtUSD(analytics.totalPayout)} hint={`${analytics.payoutCount} paid payouts`} />
                     <StatCard label="Meta Billing" icon="receipt_long" value={fmtUSD(analytics.totalMetaBilling)} hint="paid billing transactions" />
-                    <StatCard label="Other Costs" icon="receipt_long" value={fmtUSD(analytics.totalOtherCosts)} hint="fulfillment + app + tools" />
+                    <StatCard label="COGS" icon="inventory_2" value={fmtUSD(analytics.totalOrderCogs)} hint={analytics.unmappedOrderCount > 0 ? `${analytics.unmappedOrderCount} order(s) tạm tính` : 'mapped order costs'} />
+                    <StatCard label="Other Costs" icon="receipt_long" value={fmtUSD(analytics.totalOtherCosts)} hint="manual app + tools" />
                     <StatCard
                       label={selectedStaff === 'all' ? 'Net Cashflow' : 'Seller Profit'}
                       icon="trending_up"
                       value={fmtUSD(analytics.actualCashflow)}
-                      hint={selectedStaff === 'all' ? 'cash in hand' : 'seller active period'}
+                      hint={selectedStaff === 'all' ? 'cash after billing and costs' : 'seller active period'}
                       negative={analytics.actualCashflow < 0}
+                      strong
+                    />
+                    <StatCard
+                      label="Projected Cashflow"
+                      icon="account_balance"
+                      value={fmtUSD(analytics.projectedCashflow)}
+                      hint={`includes ${fmtUSD(analytics.shopifyBalance)} Shopify balance`}
+                      negative={analytics.projectedCashflow < 0}
                       strong
                     />
                   </div>
@@ -293,12 +306,24 @@ export default function ProjectDashboard() {
                     <h3 className="text-headline-sm text-primary">Gross Profit</h3>
                     <span className="text-label-sm text-on-surface-variant">revenue - payment fees - variable costs - actual ad spend</span>
                   </div>
-                  <div className="grid grid-cols-1 md:grid-cols-4 gap-lg">
+                  <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-6 gap-lg">
                     <StatCard label="Revenue" icon="storefront" value={fmtUSD(analytics.totalRevenue)} hint="Shopify gross revenue" />
                     <StatCard label="Payment Fees" icon="credit_card" value={fmtUSD(analytics.totalPaymentFees)} hint="Shopify payment fees" />
-                    <StatCard label="Variable Costs" icon="receipt_long" value={fmtUSD(analytics.totalOtherCosts)} hint="fulfillment + app + tools" />
+                    <StatCard
+                      label="COGS"
+                      icon="inventory_2"
+                      value={fmtUSD(analytics.totalOrderCogs)}
+                      hint={analytics.unmappedOrderCount > 0 ? `${analytics.unmappedOrderCount} order(s) tạm tính` : 'base cost + shipping'}
+                    />
+                    <StatCard label="Ad Spend" icon="campaign" value={fmtUSD(analytics.totalAdSpend)} hint="Meta Insights spend" negative={analytics.totalAdSpend > 0} />
+                    <StatCard label="Other Costs" icon="receipt_long" value={fmtUSD(analytics.totalOtherCosts)} hint="manual app + tools" />
                     <StatCard label="Gross Profit" icon="savings" value={fmtUSD(analytics.grossProfit)} hint={`${fmtPercent(analytics.grossMargin)} gross margin`} negative={analytics.grossProfit < 0} strong />
                   </div>
+                  {analytics.unmappedOrderCount > 0 && (
+                    <p className="mt-sm text-label-sm text-amber-600">
+                      {analytics.unmappedOrderCount} order(s) chưa map đủ đang dùng COGS tạm tính: 50% payout còn thiếu sau phần COGS đã biết.
+                    </p>
+                  )}
                 </section>
 
                 <section>
@@ -322,16 +347,7 @@ export default function ProjectDashboard() {
                   <MetaAccountSpend accounts={analytics.spendByAccount} />
                 </div>
 
-                {selectedProject && (
-                  <section>
-                    <div className="flex items-center gap-sm mb-lg">
-                      <span className="material-symbols-outlined text-secondary">calculate</span>
-                      <h3 className="text-headline-sm text-primary">P&amp;L (Fulfillment + Meta + Staff)</h3>
-                      <span className="text-label-sm text-on-surface-variant">fulfillment profit − meta ad spend − staff cost</span>
-                    </div>
-                    <ProjectPLCard projectId={selectedProject} />
-                  </section>
-                )}
+                {/* Revenue Goal Tracker — added in Task 3 */}
 
                 {selectedStaff === 'all' && currentProject && currentProject.assignments.length > 0 && (
                   <ProjectStaff assignments={currentProject.assignments} onSelect={setSelectedStaff} />
@@ -345,29 +361,6 @@ export default function ProjectDashboard() {
       </main>
     </div>
     </RoleGate>
-  )
-}
-
-function CostInputs({ costs, setCosts }: { costs: { appBilling: string; toolsBilling: string }; setCosts: (costs: { appBilling: string; toolsBilling: string }) => void }) {
-  const inputCls = 'bg-surface-container border border-outline-variant/30 rounded-lg px-md py-xs text-body-sm focus:ring-2 focus:ring-secondary outline-none w-32'
-  return (
-    <div className="bg-surface-container-lowest rounded-xl border border-outline-variant/20 p-lg mb-xl">
-      <div className="flex items-center gap-sm mb-md">
-        <span className="material-symbols-outlined text-secondary">tune</span>
-        <h3 className="text-headline-sm text-primary">Cost Buckets</h3>
-        <span className="text-label-sm text-on-surface-variant">fulfillment comes from Finance - Fulfillment; these remain manual until integrations are added</span>
-      </div>
-      <div className="flex flex-wrap gap-md">
-        <label className="flex items-center gap-sm text-label-sm text-on-surface-variant">
-          App billing
-          <input className={inputCls} type="number" min="0" value={costs.appBilling} onChange={e => setCosts({ ...costs, appBilling: e.target.value })} />
-        </label>
-        <label className="flex items-center gap-sm text-label-sm text-on-surface-variant">
-          Tools billing
-          <input className={inputCls} type="number" min="0" value={costs.toolsBilling} onChange={e => setCosts({ ...costs, toolsBilling: e.target.value })} />
-        </label>
-      </div>
-    </div>
   )
 }
 
@@ -489,6 +482,11 @@ function DataDiagnostics({ analytics }: { analytics: Analytics }) {
           </span>
         </div>
         <p className="text-label-sm text-on-surface-variant">{analytics.dataDiagnostics.actualAdSpend.note}</p>
+        {analytics.dataDiagnostics.orderProfit && (
+          <p className="text-label-sm text-on-surface-variant">
+            Gross Profit uses {analytics.dataDiagnostics.orderProfit.mappedOrderCount} mapped order(s); {analytics.dataDiagnostics.orderProfit.unmappedOrderCount} estimated.
+          </p>
+        )}
       </div>
     </div>
   )
@@ -545,35 +543,6 @@ function ProjectStaff({ assignments, onSelect }: { assignments: Assignment[]; on
   )
 }
 
-function ProjectPLCard({ projectId }: { projectId: string }) {
-  const [pl, setPl] = useState<any>(null)
-  useEffect(() => {
-    setPl(null)
-    fetch(`/api/projects/${projectId}/pl`).then(r => r.json()).then(setPl).catch(() => {})
-  }, [projectId])
-  if (!pl || pl.error) return null
-  const fmtMoney = (n: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n)
-  return (
-    <div className="grid grid-cols-2 md:grid-cols-4 gap-md">
-      <div className="bg-surface-container-lowest rounded-xl p-md shadow-card border border-outline-variant/20">
-        <p className="text-label-sm text-on-surface-variant">Fulfillment Profit</p>
-        <p className="text-stats-lg">{fmtMoney(pl.fulfillmentProfit)}</p>
-      </div>
-      <div className="bg-surface-container-lowest rounded-xl p-md shadow-card border border-outline-variant/20">
-        <p className="text-label-sm text-on-surface-variant">Meta Ad Spend</p>
-        <p className="text-stats-lg">{fmtMoney(pl.metaAdSpend)}</p>
-      </div>
-      <div className="bg-surface-container-lowest rounded-xl p-md shadow-card border border-outline-variant/20">
-        <p className="text-label-sm text-on-surface-variant">Staff Cost</p>
-        <p className="text-stats-lg">{fmtMoney(pl.staffCost)}</p>
-      </div>
-      <div className="bg-surface-container-lowest rounded-xl p-md shadow-card border border-outline-variant/20">
-        <p className="text-label-sm text-on-surface-variant">Net Profit</p>
-        <p className={`text-stats-lg ${pl.netProfit >= 0 ? 'text-on-tertiary-container' : 'text-error'}`}>{fmtMoney(pl.netProfit)}</p>
-      </div>
-    </div>
-  )
-}
 
 function ProfitChart({ projectId, period, onPeriodChange }: { projectId: string; period: string; onPeriodChange: (p: string) => void }) {
   const [data, setData] = useState<ProfitChartData | null>(null)
@@ -626,18 +595,18 @@ function ProfitChart({ projectId, period, onPeriodChange }: { projectId: string;
 
       {data && !loading && (
         <>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-md p-lg border-b border-outline-variant/10">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-md p-lg border-b border-outline-variant/10">
             <div className="bg-surface-container rounded-xl p-md">
-              <p className="text-label-sm text-on-surface-variant uppercase tracking-wider mb-xs">Net Profit</p>
-              <p className={`text-stats-lg font-bold ${data.summary.netProfit >= 0 ? 'text-on-tertiary-container' : 'text-error'}`}>
-                {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(data.summary.netProfit)}
+              <p className="text-label-sm text-on-surface-variant uppercase tracking-wider mb-xs">Revenue</p>
+              <p className="text-stats-lg font-bold text-primary">
+                {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(data.summary.totalRevenue)}
               </p>
             </div>
             <div className="bg-surface-container rounded-xl p-md">
               <p className="text-label-sm text-on-surface-variant uppercase tracking-wider mb-xs">Orders</p>
               <p className="text-stats-lg font-bold text-primary">{data.summary.totalOrders}</p>
               {data.summary.totalOrdersUnmapped > 0 && (
-                <p className="text-label-sm text-amber-500">{data.summary.totalOrdersUnmapped} chưa map</p>
+                <p className="text-label-sm text-amber-500">{data.summary.totalOrdersUnmapped} tạm tính</p>
               )}
             </div>
             <div className="bg-surface-container rounded-xl p-md">
@@ -648,6 +617,12 @@ function ProfitChart({ projectId, period, onPeriodChange }: { projectId: string;
               <p className="text-label-sm text-on-surface-variant uppercase tracking-wider mb-xs">Ad Spend</p>
               <p className="text-stats-lg font-bold text-error">
                 {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(data.summary.totalAdSpend)}
+              </p>
+            </div>
+            <div className="bg-surface-container rounded-xl p-md">
+              <p className="text-label-sm text-on-surface-variant uppercase tracking-wider mb-xs">Net Profit</p>
+              <p className={`text-stats-lg font-bold ${data.summary.netProfit >= 0 ? 'text-on-tertiary-container' : 'text-error'}`}>
+                {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(data.summary.netProfit)}
               </p>
             </div>
           </div>
@@ -807,3 +782,5 @@ function AutoSyncStatusBar({ status, syncing, onSync }: { status: AutoSyncStatus
     </div>
   )
 }
+
+
