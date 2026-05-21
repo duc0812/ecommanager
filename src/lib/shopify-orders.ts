@@ -62,7 +62,7 @@ export type ShopifyShopInfo = {
 
 const QUERY = `
 query SyncOrders($cursor: String, $query: String) {
-  orders(first: 50, after: $cursor, query: $query, sortKey: PROCESSED_AT) {
+  orders(first: 50, after: $cursor, query: $query, sortKey: CREATED_AT) {
     pageInfo { hasNextPage endCursor }
     nodes {
       id name createdAt processedAt
@@ -138,7 +138,7 @@ export async function fetchOrdersPage(
     },
     body: JSON.stringify({
       query: QUERY,
-      variables: { cursor, query: `processed_at:>=${sinceIso}` },
+      variables: { cursor, query: `created_at:>=${sinceIso}` },
     }),
   })
   if (!res.ok) throw new Error(`Shopify GraphQL ${res.status}: ${await res.text()}`)

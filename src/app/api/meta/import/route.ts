@@ -143,10 +143,12 @@ export async function POST(req: NextRequest) {
       skipped++
       continue
     }
-    if (!/paid/i.test(status)) {
+    const normalizedStatus = status.toLowerCase().trim()
+    if (['failed', 'declined', 'rejected', 'cancelled', 'refunded'].includes(normalizedStatus)) {
       skipped++
       continue
     }
+    const dbStatus = /paid|settled|completed/i.test(status) ? 'PAID' : 'PENDING'
     if (!transactionId) {
       errors.push({ row: rowNumber, error: 'Missing Transaction ID' })
       continue
@@ -171,7 +173,7 @@ export async function POST(req: NextRequest) {
           amount,
           currency,
           billingDate: date,
-          status: 'PAID',
+          status: dbStatus,
           paymentMethod: paymentMethod ?? existing.paymentMethod,
           paymentMethodLast4: payment.last4 ?? existing.paymentMethodLast4,
           referenceNumber: referenceNumber || existing.referenceNumber,
@@ -187,7 +189,7 @@ export async function POST(req: NextRequest) {
           amount,
           currency,
           billingDate: date,
-          status: 'PAID',
+          status: dbStatus,
           chargeType: 'manual_import',
           productType: 'meta_billing_export',
           paymentMethod,

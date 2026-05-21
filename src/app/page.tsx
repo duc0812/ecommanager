@@ -50,39 +50,58 @@ function fmtNum(n: number) {
   return new Intl.NumberFormat('en-US').format(n || 0)
 }
 
+function todayInputValue() {
+  const now = new Date()
+  const year = now.getFullYear()
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  const day = String(now.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 export default function OverviewPage() {
   const [period, setPeriod] = useState<string>('today')
+  const [selectedDate, setSelectedDate] = useState<string>(() => todayInputValue())
   const [data, setData] = useState<OverviewData | null>(null)
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
   const [lastSyncTime, setLastSyncTime] = useState<string | null>(null)
 
+  const overviewUrl = `/api/overview?period=${period}${period === 'custom' ? `&date=${selectedDate}` : ''}`
+
   useEffect(() => {
     setLoading(true)
-    fetch(`/api/overview?period=${period}`)
+    fetch(overviewUrl)
       .then(r => r.json())
       .then((d: OverviewData) => { setData(d); setLoading(false) })
       .catch(() => setLoading(false))
-  }, [period])
+  }, [overviewUrl])
 
   function refreshData() {
     setLoading(true)
-    fetch(`/api/overview?period=${period}`)
+    fetch(overviewUrl)
       .then(r => r.json())
       .then((d: OverviewData) => { setData(d); setLoading(false) })
       .catch(() => setLoading(false))
   }
 
-  function handleSync() {
+  async function handleSync() {
     setSyncing(true)
-    fetch('/api/auto-sync', { method: 'POST' })
-      .then(r => r.json())
-      .then(() => {
-        setLastSyncTime(new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }))
-        refreshData()
-      })
-      .catch(() => setSyncing(false))
-      .finally(() => setSyncing(false))
+    try {
+      await fetch('/api/shopify/orders/sync', { method: 'POST' })
+      await Promise.all([
+        fetch('/api/fulfillment/orders/recalculate-costs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        }),
+        fetch('/api/meta/sync-insights', { method: 'POST' }),
+        fetch('/api/trello/sync', { method: 'POST' }),
+      ])
+      setLastSyncTime(new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }))
+      refreshData()
+    } finally {
+      setSyncing(false)
+    }
   }
 
   const pm = data?.periodMetrics
@@ -125,6 +144,24 @@ export default function OverviewPage() {
               {p.label}
             </button>
           ))}
+          <label className={`flex items-center gap-xs px-md py-sm rounded-lg border transition-all ${
+            period === 'custom'
+              ? 'bg-secondary text-on-secondary border-secondary shadow-sm'
+              : 'bg-surface-container text-on-surface-variant hover:bg-surface-container-high border-outline-variant/20'
+          }`}>
+            <span className="material-symbols-outlined text-[18px]">calendar_month</span>
+            <input
+              type="date"
+              value={selectedDate}
+              max={todayInputValue()}
+              onChange={(e) => {
+                setSelectedDate(e.target.value)
+                setPeriod('custom')
+              }}
+              onFocus={() => setPeriod('custom')}
+              className="bg-transparent text-label-md font-semibold outline-none [color-scheme:light]"
+            />
+          </label>
         </div>
 
         {loading && (

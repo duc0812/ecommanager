@@ -9,8 +9,10 @@ export type CsvTemplate = {
 }
 
 export type OrderLineForCsv = {
+  lineKey?: string | null
   sku: string | null
   supplierSku: string | null
+  supplierBaseSku?: string | null
   qty: number
   productTitle: string
   variantTitle: string | null
@@ -21,6 +23,10 @@ export type OrderLineForCsv = {
   supplierVariant1Value?: string | null
   supplierVariant2Name?: string | null
   supplierVariant2Value?: string | null
+  previewCdnUrl?: string | null
+  designDriveLink?: string | null
+  crogsPrice?: number | null
+  crogsTotal?: number | null
 }
 
 export type OrderForCsv = {

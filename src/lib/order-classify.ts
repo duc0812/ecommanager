@@ -20,16 +20,18 @@ export function buildTrelloCardContent(
   lines: Array<ClassifyLine & { variantTitle: string | null; qty: number }>,
   orderType: OrderType,
 ): { name: string; desc: string } {
-  const skuParts = lines
-    .filter(l => l.sku)
+  const productLines = lines.filter(l => l.sku)
+  const orderToken = orderName.replace(/^#/, '')
+  const skuParts = productLines
     .map(l => `${l.sku}${l.variantTitle ? ` [${l.variantTitle}]` : ''}`)
     .join(' / ')
   const name = `${orderName} - ${skuParts || 'N/A'}`
 
   if (orderType === 'CUSTOM') {
     const sections: string[] = []
-    for (const line of lines) {
-      if (!line.sku) continue
+    for (let idx = 0; idx < productLines.length; idx += 1) {
+      const line = productLines[idx]
+      const lineNumber = idx + 1
       const preview = line.customAttributes.find(a => a.key === '_customall_preview')?.value ?? ''
       const printFile = line.customAttributes.find(a => a.key === '_customall_print_file')?.value ?? ''
       const customUrl = line.customAttributes.find(a => a.key === '_customized_url')?.value ?? ''
@@ -42,20 +44,22 @@ export function buildTrelloCardContent(
         }
       } catch {}
       sections.push(
-        `**${line.productTitle}** (${line.sku}${line.variantTitle ? ` / ${line.variantTitle}` : ''}, qty: ${line.qty})` +
-        (preview ? `\n🖼 Preview: ${preview}` : '') +
-        (printFile ? `\n🖨 Print file: ${printFile}` : '') +
-        (printAreas ? `\n🎨 Print areas:\n${printAreas}` : '') +
-        (customUrl ? `\n🔗 Customized URL: ${customUrl}` : ''),
+        `**${lineNumber}. ${line.productTitle}** (${line.sku}${line.variantTitle ? ` / ${line.variantTitle}` : ''}, qty: ${line.qty})` +
+        `\nDrive attachment name: ${orderToken}_${lineNumber}` +
+        (preview ? `\nPreview: ${preview}` : '') +
+        (printFile ? `\nPrint file: ${printFile}` : '') +
+        (printAreas ? `\nPrint areas:\n${printAreas}` : '') +
+        (customUrl ? `\nCustomized URL: ${customUrl}` : ''),
       )
     }
     return { name, desc: sections.join('\n\n---\n\n') }
   }
 
-  // NON_CUSTOM
-  const skuList = lines.filter(l => l.sku).map(l => l.sku).join(', ')
+  const skuList = productLines
+    .map((l, idx) => `${idx + 1}. ${l.sku} (${orderToken}_${idx + 1})`)
+    .join(', ')
   return {
     name,
-    desc: `⚠️ Design chưa có — cần tạo design cho SKU: ${skuList}\n\nSản phẩm: ${lines.map(l => l.productTitle).join(', ')}`,
+    desc: `Design missing - create design for SKU: ${skuList}\n\nProducts: ${lines.map(l => l.productTitle).join(', ')}`,
   }
 }

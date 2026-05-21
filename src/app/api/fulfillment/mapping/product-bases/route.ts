@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { listProductBases, createProductBase } from '@/lib/repos/mapping'
+import { recalculateMissingOrderLineCosts } from '@/lib/repos/order-costs'
 
 export async function GET() {
   const bases = await listProductBases()
@@ -19,5 +20,6 @@ export async function POST(req: NextRequest) {
     supplierMappings: body.supplierMappings ?? [],
     overrides: body.overrides ?? [],
   })
-  return NextResponse.json({ base }, { status: 201 })
+  const refresh = await recalculateMissingOrderLineCosts()
+  return NextResponse.json({ base, refresh }, { status: 201 })
 }

@@ -26,10 +26,10 @@ describe('autoDetectStatus', () => {
     })).toBe('CANCELLED')
   })
 
-  it('PAID + unmapped SKU → PENDING_DESIGN', () => {
+  it('PAID + unmapped SKU → PENDING_MAPPING', () => {
     expect(autoDetectStatus({
       financialStatus: 'PAID', hasUnmappedSku: true, hasPendingMapping: false, hasCustomDesignLine: false,
-    })).toBe('PENDING_DESIGN')
+    })).toBe('PENDING_MAPPING')
   })
 
   it('PAID + custom design line → PENDING_DESIGN', () => {
@@ -38,10 +38,10 @@ describe('autoDetectStatus', () => {
     })).toBe('PENDING_DESIGN')
   })
 
-  it('PAID + all mapped + no custom → PENDING', () => {
+  it('PAID + all mapped + no custom → READY_TO_PRODUCTION', () => {
     expect(autoDetectStatus({
       financialStatus: 'PAID', hasUnmappedSku: false, hasPendingMapping: false, hasCustomDesignLine: false,
-    })).toBe('PENDING')
+    })).toBe('READY_TO_PRODUCTION')
   })
 
   it('preserves manual status (EXPORTED) when paid + mapped', () => {
@@ -51,13 +51,6 @@ describe('autoDetectStatus', () => {
     })).toBe('EXPORTED')
   })
 
-  it('preserves manual SUPPLIER_PROCESSING when paid + mapped', () => {
-    expect(autoDetectStatus({
-      financialStatus: 'PAID', hasUnmappedSku: false, hasPendingMapping: false, hasCustomDesignLine: false,
-      currentStatus: 'SUPPLIER_PROCESSING',
-    })).toBe('SUPPLIER_PROCESSING')
-  })
-
   it('overrides manual EXPORTED with REFUNDED when refunded in Shopify', () => {
     expect(autoDetectStatus({
       financialStatus: 'REFUNDED', hasUnmappedSku: false, hasPendingMapping: false, hasCustomDesignLine: false,
@@ -65,10 +58,10 @@ describe('autoDetectStatus', () => {
     })).toBe('REFUNDED')
   })
 
-  it('overrides manual IN_PRODUCTION with CANCELLED when voided', () => {
+  it('overrides manual WARNING with CANCELLED when voided', () => {
     expect(autoDetectStatus({
       financialStatus: 'VOIDED', hasUnmappedSku: false, hasPendingMapping: false, hasCustomDesignLine: false,
-      currentStatus: 'IN_PRODUCTION',
+      currentStatus: 'WARNING',
     })).toBe('CANCELLED')
   })
 
@@ -80,24 +73,24 @@ describe('autoDetectStatus', () => {
   })
 
   it('re-evaluates from PENDING_DESIGN when SKU later gets mapped', () => {
-    // User had PENDING_DESIGN; later they added the SKU mapping. Re-sync should move it to PENDING.
+    // User had PENDING_DESIGN; later they added the SKU mapping. Re-sync should move it to ready.
     expect(autoDetectStatus({
       financialStatus: 'PAID', hasUnmappedSku: false, hasPendingMapping: false, hasCustomDesignLine: false,
       currentStatus: 'PENDING_DESIGN',
-    })).toBe('PENDING')
+    })).toBe('READY_TO_PRODUCTION')
   })
 
-  it('re-evaluates from PENDING to PENDING_DESIGN if user later flags requiresDesign on a SKU', () => {
+  it('re-evaluates from WARNING to PENDING_DESIGN if user later flags requiresDesign on a SKU', () => {
     expect(autoDetectStatus({
       financialStatus: 'PAID', hasUnmappedSku: false, hasPendingMapping: false, hasCustomDesignLine: true,
-      currentStatus: 'PENDING',
+      currentStatus: 'WARNING',
     })).toBe('PENDING_DESIGN')
   })
 })
 
 describe('PIPELINE_STATUSES', () => {
-  it('has 12 statuses', () => {
-    expect(PIPELINE_STATUSES).toHaveLength(12)
+  it('has 11 statuses', () => {
+    expect(PIPELINE_STATUSES).toHaveLength(11)
   })
 
   it('STATUS_LABELS covers all statuses', () => {

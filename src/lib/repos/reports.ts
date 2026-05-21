@@ -12,6 +12,16 @@ export type PlSummary = {
   unmappedCount: number
 }
 
+function isNonProductLine(line: { sku: string | null; productTitle: string }) {
+  if (line.sku) return false
+  const title = line.productTitle.toLowerCase().trim()
+  return title === 'tip' || title === 'shipping protection'
+}
+
+function hasMissingProductCost(lines: Array<{ sku: string | null; productTitle: string; resolvedBaseCost: number | null }>) {
+  return lines.some(l => !isNonProductLine(l) && l.resolvedBaseCost == null)
+}
+
 export async function plSummary(filter: OrderFilter): Promise<PlSummary> {
   const orders = await listOrdersWithLines(filter)
   let revenue = 0, cogs = 0, shipping = 0, unmappedCount = 0
@@ -32,7 +42,7 @@ export async function plSummary(filter: OrderFilter): Promise<PlSummary> {
     if (o.defaultSupplier || useSnapshot) {
       shipping += shipFirst + shipAdditional * Math.max(0, totalQty - 1) + importTaxPerUnit * totalQty
     }
-    if (o.lines.some(l => l.resolvedBaseCost == null)) unmappedCount++
+    if (hasMissingProductCost(o.lines)) unmappedCount++
   }
   const profit = revenue - cogs - shipping
   const margin = revenue === 0 ? 0 : (profit / revenue) * 100
@@ -42,6 +52,7 @@ export async function plSummary(filter: OrderFilter): Promise<PlSummary> {
 
 export type EnrichedOrder = Awaited<ReturnType<typeof listOrdersWithLines>>[number] & {
   computed: { totalQty: number; baseCost: number; shipping: number; profit: number; margin: number; hasUnmappedSku: boolean }
+  mappingSummary: { mapped: number; total: number; complete: boolean }
 }
 
 export async function ordersWithComputedPL(filter: OrderFilter): Promise<EnrichedOrder[]> {
@@ -72,7 +83,10 @@ export async function ordersWithComputedPL(filter: OrderFilter): Promise<Enriche
       : 0
     const profit = o.expectedPayout - baseCost - shipping
     const margin = o.expectedPayout === 0 ? 0 : (profit / o.expectedPayout) * 100
-    const hasUnmappedSku = o.lines.some(l => l.resolvedBaseCost == null)
+    const hasUnmappedSku = hasMissingProductCost(o.lines)
+    const mappableLines = o.lines.filter(l => !isNonProductLine(l))
+    const productLineNumberById = new Map(mappableLines.map((line, idx) => [line.id, idx + 1]))
+    const mappedLineCount = mappableLines.filter(l => l.resolvedSupplierId && l.resolvedBaseCost != null).length
     const orderSkus = o.lines.map(l => l.sku).filter(Boolean) as string[]
     const skuDesignReady = orderSkus.length > 0 && orderSkus.every(sku => skuDesignMap.get(sku)?.designReady === true)
     const designReady = o.orderType === 'CUSTOM'
@@ -85,7 +99,18 @@ export async function ordersWithComputedPL(filter: OrderFilter): Promise<Enriche
     )
     return {
       ...o,
+      lines: o.lines.map(l => ({
+        ...l,
+        lineKey: productLineNumberById.has(l.id)
+          ? `${o.shopifyOrderNumber.replace(/^#/, '')}_${productLineNumberById.get(l.id)}`
+          : '',
+      })),
       computed: { totalQty, baseCost, shipping, profit, margin, hasUnmappedSku },
+      mappingSummary: {
+        mapped: mappedLineCount,
+        total: mappableLines.length,
+        complete: mappableLines.length > 0 && mappedLineCount === mappableLines.length,
+      },
       designReady,
       driveLink,
     }

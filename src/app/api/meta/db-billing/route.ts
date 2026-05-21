@@ -29,8 +29,9 @@ export async function GET(req: NextRequest) {
   }
 
   const paidStatuses = ['PAID', 'SETTLED', 'COMPLETED']
+  const visibleStatuses = [...paidStatuses, 'PENDING']
   const billingWhere = {
-    status: { in: paidStatuses },
+    status: { in: visibleStatuses },
     ...(accountId ? { adAccountId: accountId } : {}),
     ...(monthRange ? { billingDate: { gte: monthRange.start, lte: monthRange.end } } : {}),
   }
@@ -70,7 +71,9 @@ export async function GET(req: NextRequest) {
 
   const paidBillings = billings.filter(b => paidStatuses.includes(b.status))
   const failedBillings = billings.filter(b => b.status === 'FAILED')
+  const pendingBillings = billings.filter(b => b.status === 'PENDING')
   const totalSpent = paidBillings.reduce((s, b) => s + b.amount, 0)
+  const totalPending = pendingBillings.reduce((s, b) => s + b.amount, 0)
   const lastSyncAt = accounts.reduce((latest, a) => {
     if (!a.lastSyncAt) return latest
     if (!latest) return a.lastSyncAt
@@ -81,9 +84,11 @@ export async function GET(req: NextRequest) {
     accounts,
     billings,
     totalSpent,
+    totalPending,
     count: billings.length,
     paidCount: paidBillings.length,
     failedCount: failedBillings.length,
+    pendingCount: pendingBillings.length,
     avgSpend: paidBillings.length > 0 ? totalSpent / paidBillings.length : 0,
     lastSyncAt,
   })

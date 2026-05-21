@@ -10,6 +10,7 @@ import { resolveByProductBase } from '@/lib/product-mapping'
 import { loadProductBasesForResolver, loadVariantManualMappingsForResolver } from '@/lib/repos/mapping'
 import { classifyOrderLines, buildTrelloCardContent } from '@/lib/order-classify'
 import { createTrelloCard, addAttachmentToCard, getTrelloConfig, shouldCreateCard } from '@/lib/trello'
+import { extractPreviewCdnUrl } from '@/lib/order-line-assets'
 
 type ResolvedSupplierProduct = SupplierInput & {
   sku: string
@@ -38,6 +39,11 @@ function normalize(v: string | null | undefined): string {
   return (v ?? '').toLowerCase().trim()
 }
 
+function isNonProductLine(title: string) {
+  const normalized = normalize(title)
+  return normalized === 'tip' || normalized === 'shipping protection'
+}
+
 export async function POST(req: NextRequest) {
   const stored = await getShopifyConnection(req.headers.get('cookie') ?? undefined)
   const shop = req.headers.get('x-shopify-shop-domain') || stored?.shop
@@ -62,8 +68,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Project is archived; un-archive before syncing.' }, { status: 400 })
   }
 
+  // Always re-scan a short rolling window. Shopify order updates can arrive
+  // after the first import, and using only the last sync timestamp can miss
+  // newly created orders around timezone/payment-status boundaries.
+  const rollingLookbackDate = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000)
   const sinceDate = store.syncSinceDate
-    ?? new Date(Date.now() - 60 * 24 * 60 * 60 * 1000)
+    ? new Date(Math.min(store.syncSinceDate.getTime(), rollingLookbackDate.getTime()))
+    : new Date(Date.now() - 60 * 24 * 60 * 60 * 1000)
   const sinceIso = sinceDate.toISOString().split('T')[0]
   const shopInfo = await fetchShopInfo(shop, accessToken).catch(() => ({
     ianaTimezone: store.ianaTimezone ?? null,
@@ -96,8 +107,15 @@ export async function POST(req: NextRequest) {
     supplierProductsByParent.set(key, existing)
   }
 
-  function resolveSupplierProductIdForLine(supplierProductId: string | null, selectedOptions: Record<string, string>) {
+  function resolveSupplierProductIdForLine(
+    supplierProductId: string | null,
+    selectedOptions: Record<string, string>,
+    resolvedVia: ReturnType<typeof resolveByProductBase>['resolvedVia'],
+  ) {
     if (!supplierProductId) return null
+    if (resolvedVia === 'variant_manual' || resolvedVia === 'product_base_override') {
+      return supplierProductId
+    }
     const mapped = rawSupplierProductById.get(supplierProductId)
     if (!mapped) return supplierProductId
     const optionValues = Object.entries(selectedOptions)
@@ -110,7 +128,7 @@ export async function POST(req: NextRequest) {
       optionValues.includes(normalize(p.variant1Value)) ||
       optionValues.includes(normalize(p.variant2Value))
     )
-    return exact?.id ?? supplierProductId
+    return exact?.id ?? null
   }
 
   const allOverrides = await prisma.supplierZoneOverride.findMany()
@@ -156,12 +174,21 @@ export async function POST(req: NextRequest) {
           )
           return {
             ...result,
-            supplierProductId: resolveSupplierProductIdForLine(result.supplierProductId, l.selectedOptions),
+            supplierProductId: resolveSupplierProductIdForLine(
+              result.supplierProductId,
+              l.selectedOptions,
+              result.resolvedVia,
+            ),
           }
         })(),
       }))
 
-      const hasPendingMapping = resolvedLines.some(r => r.pbResolve.resolvedVia === 'unresolved')
+      const hasPendingMapping = resolvedLines.some(r =>
+        !isNonProductLine(r.line.title) && r.pbResolve.resolvedVia === 'unresolved'
+      )
+      const allSkuProductLinesMapped = resolvedLines
+        .filter(r => r.line.sku && !isNonProductLine(r.line.title))
+        .every(r => !!r.pbResolve.supplierProductId)
 
       // Determine shipping zone via Product Mapping result only.
       let supplierIdForZone: string | undefined
@@ -182,6 +209,7 @@ export async function POST(req: NextRequest) {
             sku: line.sku,
             qty: line.quantity,
             unitPrice: line.unitPrice,
+            isNonProductLine: isNonProductLine(line.title),
             resolvedSupplier: pbResolve.supplierProductId
               ? supplierProductById.get(pbResolve.supplierProductId) ?? null
               : null,
@@ -251,6 +279,7 @@ export async function POST(req: NextRequest) {
             variantTitle: l.variantTitle,
             productTitle: l.title,
             qty: l.quantity,
+            linePosition: idx + 1,
             unitPrice: l.unitPrice,
             resolvedSupplierId: resolved.resolvedSupplierId,
             resolvedBaseCost: resolved.resolvedBaseCost,
@@ -258,6 +287,7 @@ export async function POST(req: NextRequest) {
             resolvedShipFirst: pl.resolvedShipFirst,
             resolvedShipAdditional: pl.resolvedShipAdditional,
             resolvedImportTax: pl.resolvedImportTaxPerUnit,
+            previewCdnUrl: extractPreviewCdnUrl(l.customAttributes),
             shopifyVariantId: l.variantId,
             variantOptions: Object.keys(l.selectedOptions).length > 0 ? JSON.stringify(l.selectedOptions) : null,
             resolvedSupplierSku: resolved.resolvedSupplierId
@@ -286,10 +316,22 @@ export async function POST(req: NextRequest) {
       if (existingOrder && existingOrder.orderType === 'UNKNOWN') {
         await prisma.order.update({ where: { id: o.id }, data: { orderType } })
       }
+      if (!allSkuProductLinesMapped && existingOrder?.trelloCardId) {
+        await prisma.order.update({
+          where: { id: o.id },
+          data: {
+            trelloCardId: null,
+            trelloCardUrl: null,
+            designReady: false,
+            designDriveLink: null,
+          },
+        })
+      }
 
       // Create Trello card if needed
       if (
         trelloConfig &&
+        allSkuProductLinesMapped &&
         existingOrder?.trelloCardId == null &&
         shouldCreateCard(o.name, trelloConfig.syncFromOrderName)
       ) {
@@ -328,7 +370,10 @@ export async function POST(req: NextRequest) {
 
             // Attach preview images for CUSTOM orders so designers see mockups directly on the card
             if (orderType === 'CUSTOM') {
-              for (const l of cardLines) {
+              const orderToken = o.name.replace(/^#/, '')
+              const productCardLines = cardLines.filter(l => l.sku)
+              for (let idx = 0; idx < productCardLines.length; idx += 1) {
+                const l = productCardLines[idx]
                 const preview = l.customAttributes.find(a => a.key === '_customall_preview')?.value
                 if (preview) {
                   await addAttachmentToCard(trelloConfig, card.id, preview, `🖼 Preview – ${l.sku ?? 'N/A'}`)
@@ -363,6 +408,7 @@ export async function POST(req: NextRequest) {
     where: { id: store.id },
     data: {
       lastSyncAt: new Date(),
+      syncSinceDate: new Date(),
       ...(shopTimezone ? { ianaTimezone: shopTimezone } : {}),
     },
   })

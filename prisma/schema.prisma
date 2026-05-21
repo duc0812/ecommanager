@@ -356,7 +356,7 @@ model Order {
   shippingState        String?
   financialStatus      String
   fulfillmentStatus    String?
-  pipelineStatus       String      @default("PENDING")
+  pipelineStatus       String      @default("READY_TO_PRODUCTION")
   currency             String
   grossAmount          Float
   subtotalAmount       Float       @default(0)
@@ -405,6 +405,7 @@ model OrderLine {
   variantTitle            String?
   productTitle            String
   qty                     Int
+  linePosition            Int       @default(0)
   unitPrice               Float
   resolvedSupplierId      String?
   resolvedBaseCost        Float?
@@ -412,6 +413,9 @@ model OrderLine {
   resolvedShipFirst       Float?
   resolvedShipAdditional  Float?
   resolvedImportTax       Float?
+  shopifyProductType      String?
+  previewCdnUrl           String?
+  designDriveLink         String?
   @@index([sku])
   @@index([shopifyVariantId])
 }

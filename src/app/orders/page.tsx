@@ -32,6 +32,7 @@ type OrderRow = {
   defaultSupplier: { id: string; name: string } | null
   lines: Array<{
     id: string
+    lineKey: string
     sku: string | null
     productTitle: string
     variantTitle: string | null
@@ -40,8 +41,11 @@ type OrderRow = {
     unitPrice: number
     resolvedSupplierSku: string | null
     resolvedBaseCost: number | null
+    designDriveLink: string | null
+    previewCdnUrl: string | null
   }>
   computed: { baseCost: number; shipping: number; profit: number; margin: number; hasUnmappedSku: boolean }
+  mappingSummary: { mapped: number; total: number; complete: boolean }
   orderType: string           // "CUSTOM" | "NON_CUSTOM" | "UNKNOWN"
   trelloCardId: string | null
   trelloCardUrl: string | null
@@ -56,6 +60,16 @@ type Summary = {
 type Project = { id: string; name: string; shopifyStore: { shop: string } | null }
 type Supplier = { id: string; name: string }
 type StatusCounts = Record<PipelineStatus, number>
+
+async function fetchJson<T>(url: string): Promise<T> {
+  const res = await fetch(url)
+  const text = await res.text()
+  if (!res.ok) {
+    throw new Error(text || `${url} failed with ${res.status}`)
+  }
+  if (!text) throw new Error(`${url} returned an empty response`)
+  return JSON.parse(text) as T
+}
 
 export default function OrdersPage() {
   const [projects, setProjects] = useState<Project[]>([])
@@ -114,22 +128,27 @@ export default function OrdersPage() {
     const qs = queryString ? '?' + queryString : ''
     // status-counts responds only to projectId — intentional (tab counts show all statuses for the project)
     const countsQs = projectId ? '?projectId=' + projectId : ''
-    const [oRes, sRes, cRes] = await Promise.all([
-      fetch(`/api/fulfillment/orders${qs}`).then(r => r.json()),
-      fetch(`/api/fulfillment/pl-summary${qs}`).then(r => r.json()),
-      fetch(`/api/fulfillment/status-counts${countsQs}`).then(r => r.json()),
-    ])
-    let list: OrderRow[] = oRes.orders ?? []
-    if (showUnmappedOnly) list = list.filter(o => o.computed.hasUnmappedSku)
-    if (typeFilter !== 'ALL') list = list.filter(o => o.orderType === typeFilter)
-    if (designFilter === 'HAS') list = list.filter(o => o.orderType === 'NON_CUSTOM' && o.designReady)
-    if (designFilter === 'MISSING') list = list.filter(o => o.orderType === 'NON_CUSTOM' && !o.designReady)
-    if (trelloFilter === 'CREATED') list = list.filter(o => o.trelloCardId != null)
-    if (trelloFilter === 'NOT_CREATED') list = list.filter(o => o.trelloCardId == null)
-    setOrders(list)
-    setSummary(sRes)
-    setCounts(cRes)
-    setSelected(new Set())
+    try {
+      const [oRes, sRes, cRes] = await Promise.all([
+        fetchJson<{ orders?: OrderRow[] }>(`/api/fulfillment/orders${qs}`),
+        fetchJson<Summary>(`/api/fulfillment/pl-summary${qs}`),
+        fetchJson<StatusCounts>(`/api/fulfillment/status-counts${countsQs}`),
+      ])
+      let list: OrderRow[] = oRes.orders ?? []
+      if (showUnmappedOnly) list = list.filter(o => o.computed.hasUnmappedSku)
+      if (typeFilter !== 'ALL') list = list.filter(o => o.orderType === typeFilter)
+      if (designFilter === 'HAS') list = list.filter(o => o.orderType === 'NON_CUSTOM' && o.designReady)
+      if (designFilter === 'MISSING') list = list.filter(o => o.orderType === 'NON_CUSTOM' && !o.designReady)
+      if (trelloFilter === 'CREATED') list = list.filter(o => o.trelloCardId != null)
+      if (trelloFilter === 'NOT_CREATED') list = list.filter(o => o.trelloCardId == null)
+      setOrders(list)
+      setSummary(sRes)
+      setCounts(cRes)
+      setSelected(new Set())
+      setSyncResult('')
+    } catch (e: any) {
+      setSyncResult(`Load orders failed: ${e.message}`)
+    }
   }, [queryString, projectId, showUnmappedOnly, typeFilter, designFilter, trelloFilter])
 
   useEffect(() => { load() }, [load])
@@ -466,6 +485,7 @@ export default function OrdersPage() {
                   />
                 </th>
                 <th className="w-[8%] px-sm py-sm">Order #</th>
+                <th className="w-[7%] px-sm py-sm">Mapping</th>
                 <th className="w-[7%] px-sm py-sm">Type</th>
                 <th className="w-[6%] px-sm py-sm">Design</th>
                 <th className="w-[7%] px-sm py-sm">Trello</th>
@@ -501,6 +521,11 @@ export default function OrdersPage() {
                     >
                       {o.shopifyOrderNumber}
                     </button>
+                  </td>
+                  <td className="px-sm py-sm">
+                    <span className={`text-label-sm ${o.mappingSummary.complete ? 'text-tertiary' : 'text-error'}`}>
+                      {o.mappingSummary.mapped}/{o.mappingSummary.total}
+                    </span>
                   </td>
                   <td className="px-sm py-sm">
                     {o.orderType === 'CUSTOM' && (
@@ -588,7 +613,7 @@ export default function OrdersPage() {
               ))}
               {orders.length === 0 && (
                 <tr>
-                  <td colSpan={14} className="px-md py-lg text-center text-on-surface-variant">
+                  <td colSpan={15} className="px-md py-lg text-center text-on-surface-variant">
                     No orders match filters.
                   </td>
                 </tr>
@@ -626,6 +651,7 @@ export default function OrdersPage() {
                       <thead className="bg-surface-container">
                         <tr className="text-left">
                           <th className="px-md py-sm">Product</th>
+                          <th className="px-md py-sm">Line key</th>
                           <th className="px-md py-sm">SKU</th>
                           <th className="px-md py-sm">Variant</th>
                           <th className="px-md py-sm text-right">Qty</th>
@@ -637,6 +663,7 @@ export default function OrdersPage() {
                         {selectedOrder.lines.map(line => (
                           <tr key={line.id} className="border-t border-outline-variant/20">
                             <td className="px-md py-sm">{line.productTitle}</td>
+                            <td className="px-md py-sm font-mono">{line.lineKey}</td>
                             <td className="px-md py-sm font-mono">{line.sku ?? '—'}</td>
                             <td className="px-md py-sm">{variantLabel(line)}</td>
                             <td className="px-md py-sm text-right">{line.qty}</td>

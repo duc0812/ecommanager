@@ -1,0 +1,3 @@
+ALTER TABLE "OrderLine" ADD COLUMN "previewCdnUrl" TEXT;
+ALTER TABLE "OrderLine" ADD COLUMN "designDriveLink" TEXT;
+ALTER TABLE "OrderLine" ADD COLUMN "linePosition" INTEGER NOT NULL DEFAULT 0;

@@ -1,6 +1,13 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { getTrelloConfig, getCardsByList } from '@/lib/trello'
+import { findDriveAttachmentForLine } from '@/lib/order-line-assets'
+
+function isNonProductLine(line: { sku: string | null; productTitle: string }) {
+  if (line.sku) return false
+  const title = line.productTitle.toLowerCase().trim()
+  return title === 'tip' || title === 'shipping protection'
+}
 
 function cardMatchesOrder(cardName: string, orderNumber: string, skus: string[]): boolean {
   const normalizedCardName = cardName.toLowerCase()
@@ -25,7 +32,8 @@ export async function POST() {
   let updated = 0
 
   for (const card of cards) {
-    const driveAttachment = card.attachments?.find(a => a.url.includes('drive.google.com'))
+    const driveAttachments = card.attachments?.filter(a => a.url.includes('drive.google.com')) ?? []
+    const driveAttachment = driveAttachments[0]
     if (!driveAttachment) continue
 
     const linkedResult = await prisma.skuDesign.updateMany({
@@ -38,8 +46,9 @@ export async function POST() {
       where: { trelloCardId: card.id },
       select: {
         id: true,
+        shopifyOrderNumber: true,
         orderType: true,
-        lines: { select: { sku: true } },
+        lines: { orderBy: { linePosition: 'asc' }, select: { sku: true, productTitle: true, linePosition: true } },
       },
     })
 
@@ -52,11 +61,16 @@ export async function POST() {
       select: {
         id: true,
         shopifyOrderNumber: true,
-        lines: { select: { sku: true } },
+        lines: { orderBy: { linePosition: 'asc' }, select: { sku: true, productTitle: true, resolvedSupplierId: true } },
       },
     })
     const matchedCustomOrderIds = customOrdersMatchedByName
-      .filter(o => cardMatchesOrder(card.name, o.shopifyOrderNumber, o.lines.map(l => l.sku).filter(Boolean) as string[]))
+      .filter(o => {
+        const skuLines = o.lines.filter(l => l.sku)
+        return skuLines.length > 0 &&
+          skuLines.every(l => l.resolvedSupplierId) &&
+          cardMatchesOrder(card.name, o.shopifyOrderNumber, skuLines.map(l => l.sku).filter(Boolean) as string[])
+      })
       .map(o => o.id)
 
     const orderResult = await prisma.order.updateMany({
@@ -69,8 +83,6 @@ export async function POST() {
       data: {
         trelloCardId: card.id,
         trelloCardUrl: card.url,
-        designReady: true,
-        designDriveLink: driveAttachment.url,
       },
     })
     updated += orderResult.count
@@ -83,13 +95,59 @@ export async function POST() {
       const order = await prisma.order.findUnique({
         where: { id: orderId },
         select: {
+          id: true,
+          shopifyOrderNumber: true,
           pipelineStatus: true,
-          lines: { select: { sku: true, resolvedSupplierId: true } },
+          lines: {
+            orderBy: { linePosition: 'asc' },
+            select: {
+              id: true,
+              sku: true,
+              productTitle: true,
+              resolvedSupplierId: true,
+              linePosition: true,
+              designDriveLink: true,
+            },
+          },
         },
       })
-      const skuLines = order?.lines.filter(l => l.sku) ?? []
-      const hasSupplier = skuLines.length > 0 && skuLines.every(l => l.resolvedSupplierId)
-      if (order && hasSupplier && ['PENDING_DESIGN', 'PENDING', 'PENDING_MAPPING'].includes(order.pipelineStatus)) {
+      if (!order) continue
+
+      const productLines = order.lines.filter(l => !isNonProductLine(l))
+      const nextDriveLinks = new Map<string, string>()
+      for (let idx = 0; idx < productLines.length; idx += 1) {
+        const line = productLines[idx]
+        const attachment = findDriveAttachmentForLine(
+          order.shopifyOrderNumber,
+          idx + 1,
+          line.sku,
+          driveAttachments,
+          productLines.length,
+        )
+        if (!attachment) continue
+        nextDriveLinks.set(line.id, attachment.url)
+        if (line.designDriveLink !== attachment.url) {
+          await prisma.orderLine.update({
+            where: { id: line.id },
+            data: { designDriveLink: attachment.url },
+          })
+          updated++
+        }
+      }
+
+      const hasSupplier = productLines.length > 0 && productLines.every(l => l.resolvedSupplierId)
+      const allLinesHaveDrive = productLines.length > 0 &&
+        productLines.every(l => nextDriveLinks.has(l.id) || !!l.designDriveLink)
+      if (allLinesHaveDrive) {
+        await prisma.order.update({
+          where: { id: orderId },
+          data: {
+            designReady: true,
+            designDriveLink: nextDriveLinks.values().next().value ?? productLines.find(l => l.designDriveLink)?.designDriveLink ?? null,
+          },
+        })
+      }
+      if (hasSupplier && allLinesHaveDrive && ['PENDING_DESIGN', 'PENDING', 'WARNING', 'PENDING_MAPPING'].includes(order.pipelineStatus)) {
         await prisma.order.update({
           where: { id: orderId },
           data: { pipelineStatus: 'READY_TO_PRODUCTION' },

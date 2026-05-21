@@ -33,9 +33,11 @@ type DBData = {
   accounts: MetaAccount[]
   billings: MetaBilling[]
   totalSpent: number
+  totalPending: number
   count: number
   paidCount: number
   failedCount: number
+  pendingCount: number
   avgSpend: number
   lastSyncAt: string | null
   empty?: boolean
@@ -63,12 +65,14 @@ function statusClass(status: string) {
     return 'bg-on-tertiary-container/15 text-on-tertiary-container'
   }
   if (status === 'FAILED') return 'bg-error/15 text-error'
+  if (status === 'PENDING') return 'bg-amber-100 text-amber-900'
   return 'bg-surface-container text-on-surface-variant'
 }
 
 function statusLabel(status: string) {
   if (status === 'PAID' || status === 'SETTLED' || status === 'COMPLETED') return 'Paid'
   if (status === 'FAILED') return 'Failed'
+  if (status === 'PENDING') return 'Pending'
   return status
 }
 
@@ -89,7 +93,7 @@ export default function MetaBillingPage() {
   const [selectedMonth, setSelectedMonth] = useState<string>('')
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
-  const [syncResult, setSyncResult] = useState<{ synced?: number; error?: string } | null>(null)
+  const [syncResult, setSyncResult] = useState<{ synced?: number; insightsDays?: number; error?: string } | null>(null)
   const [importAccountId, setImportAccountId] = useState('')
   const [importing, setImporting] = useState(false)
   const [importResult, setImportResult] = useState<ImportResult | null>(null)
@@ -117,10 +121,15 @@ export default function MetaBillingPage() {
   async function syncAll() {
     setSyncing(true)
     setSyncResult(null)
-    const res = await fetch('/api/meta/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
-    const json = await res.json()
-    setSyncResult(json.error ? { error: json.error } : { synced: json.synced })
-    if (!json.error) await load(selectedAccount, selectedMonth)
+    const [billingRes, insightsRes] = await Promise.all([
+      fetch('/api/meta/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }),
+      fetch('/api/meta/sync-insights', { method: 'POST' }),
+    ])
+    const billing = await billingRes.json()
+    const insights = await insightsRes.json().catch(() => ({}))
+    const error = billing.error ?? insights.error
+    setSyncResult(error ? { error } : { synced: billing.synced, insightsDays: insights.synced })
+    if (!error) await load(selectedAccount, selectedMonth)
     setSyncing(false)
   }
 
@@ -248,7 +257,7 @@ export default function MetaBillingPage() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-lg mb-xl">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-lg mb-xl">
               <div className="bg-primary rounded-xl p-lg border border-outline-variant/20">
                 <div className="flex items-center gap-sm mb-sm">
                   <span className="material-symbols-outlined text-[18px] text-on-primary/50">payments</span>
@@ -257,6 +266,16 @@ export default function MetaBillingPage() {
                 <p className="text-stats-lg font-bold text-on-primary">{fmtUSD(data.totalSpent)}</p>
                 <p className="text-label-sm text-on-primary/50 mt-xs">{data.paidCount ?? 0} paid transactions</p>
               </div>
+              {(data.pendingCount ?? 0) > 0 && (
+                <div className="bg-amber-50 rounded-xl p-lg border border-amber-200">
+                  <div className="flex items-center gap-sm mb-sm">
+                    <span className="material-symbols-outlined text-[18px] text-amber-600">pending</span>
+                    <span className="text-label-sm text-amber-700 uppercase tracking-wider">Pending</span>
+                  </div>
+                  <p className="text-stats-lg font-bold text-amber-900">{fmtUSD(data.totalPending ?? 0)}</p>
+                  <p className="text-label-sm text-amber-700 mt-xs">{data.pendingCount} pending transactions</p>
+                </div>
+              )}
               <div className="bg-surface-container-lowest rounded-xl p-lg border border-outline-variant/20">
                 <div className="flex items-center gap-sm mb-sm">
                   <span className="material-symbols-outlined text-[18px] text-secondary">receipt_long</span>
@@ -280,7 +299,7 @@ export default function MetaBillingPage() {
                 <div>
                   <h3 className="text-headline-sm text-primary">Import Meta Billing Export</h3>
                   <p className="mt-xs text-body-sm text-on-surface-variant">
-                    Upload CSV/XLSX from Meta Billing UI. Paid rows are upserted by Transaction ID; duplicates are updated or skipped.
+                    Upload CSV/XLSX from Meta Billing UI. Paid and pending rows are upserted by Transaction ID; failed/declined rows are skipped.
                   </p>
                 </div>
                 <div className="ml-auto flex flex-wrap items-center gap-sm">
@@ -306,7 +325,7 @@ export default function MetaBillingPage() {
                     <span>Error: {importResult.error}</span>
                   ) : (
                     <span>
-                      Rows {importResult.rows}. Imported {importResult.imported}, updated {importResult.updated}, skipped {importResult.skipped}, errors {importResult.errors?.length ?? 0}.
+                      {importResult.rows} rows processed — {importResult.imported} imported, {importResult.updated} updated, {importResult.skipped} skipped (failed/empty), {importResult.errors?.length ?? 0} errors.
                     </span>
                   )}
                   {!importResult.error && importResult.errors?.length > 0 && (
@@ -324,7 +343,7 @@ export default function MetaBillingPage() {
                 <h3 className="text-headline-sm text-primary">Billing Transactions</h3>
                 <span className="bg-surface-container text-on-surface-variant px-sm py-xs rounded-full text-label-sm flex items-center gap-xs ml-2">
                   <span className="w-1.5 h-1.5 rounded-full bg-on-tertiary-container inline-block"></span>
-                  Paid only
+                  Paid + Pending
                 </span>
                 <span className="ml-auto bg-surface-container-high px-sm py-xs rounded text-label-sm text-on-surface-variant">{data.count}</span>
               </div>

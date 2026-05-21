@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { updateProductBase, deleteProductBase } from '@/lib/repos/mapping'
+import { recalculateMissingOrderLineCosts } from '@/lib/repos/order-costs'
 
 export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
   const body = await req.json()
@@ -14,7 +15,8 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
     supplierMappings: body.supplierMappings ?? [],
     overrides: body.overrides ?? [],
   })
-  return NextResponse.json({ base })
+  const refresh = await recalculateMissingOrderLineCosts()
+  return NextResponse.json({ base, refresh })
 }
 
 export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {

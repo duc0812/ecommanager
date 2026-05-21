@@ -229,7 +229,7 @@ export async function saveManualMapping(input: SaveManualMappingInput) {
     const orderIds = Array.from(new Set(affectedLines.map(l => l.orderId)))
     if (orderIds.length > 0) {
       const orders = await tx.order.findMany({
-        where: { id: { in: orderIds }, pipelineStatus: { in: ['PENDING_MAPPING', 'PENDING_DESIGN', 'PENDING'] } },
+        where: { id: { in: orderIds }, pipelineStatus: { in: ['PENDING_MAPPING', 'PENDING_DESIGN', 'PENDING', 'WARNING'] } },
         select: {
           id: true,
           designReady: true,
@@ -242,7 +242,7 @@ export async function saveManualMapping(input: SaveManualMappingInput) {
         await tx.order.update({
           where: { id: order.id },
           data: {
-            pipelineStatus: willBeMapped && order.designReady ? 'READY_TO_PRODUCTION' : 'PENDING',
+            pipelineStatus: willBeMapped && order.designReady ? 'READY_TO_PRODUCTION' : 'PENDING_DESIGN',
           },
         })
       }

@@ -1,33 +1,89 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
-import { computeOrderProfitFromDb } from '@/lib/order-profit'
+import { ordersWithComputedPL } from '@/lib/repos/reports'
 
-function getPeriodRange(period: string) {
+function dateKeyInZone(date: Date, timeZone: string) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date).map(p => [p.type, p.value]))
+  return `${parts.year}-${parts.month}-${parts.day}`
+}
+
+function zonedDayStartUtc(dateKey: string, timeZone: string) {
+  const [year, month, day] = dateKey.split('-').map(Number)
+  const naiveUtc = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0))
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).formatToParts(naiveUtc).map(p => [p.type, p.value]))
+  const zoneAsUtc = Date.UTC(
+    Number(parts.year),
+    Number(parts.month) - 1,
+    Number(parts.day),
+    Number(parts.hour === '24' ? '00' : parts.hour),
+    Number(parts.minute),
+    Number(parts.second),
+  )
+  return new Date(naiveUtc.getTime() - (zoneAsUtc - naiveUtc.getTime()))
+}
+
+function addDays(dateKey: string, days: number) {
+  const [year, month, day] = dateKey.split('-').map(Number)
+  return new Date(Date.UTC(year, month - 1, day + days, 0, 0, 0, 0)).toISOString().split('T')[0]
+}
+
+function getPeriodRange(period: string, timeZone: string, date?: string | null) {
   const now = new Date()
-  const todayStr = now.toISOString().split('T')[0]
+  const todayStr = dateKeyInZone(now, timeZone)
 
+  const buildRange = (fromKey: string, toKey: string, label: string) => ({
+    from: zonedDayStartUtc(fromKey, timeZone),
+    to: new Date(zonedDayStartUtc(addDays(toKey, 1), timeZone).getTime() - 1),
+    fromKey,
+    toKey,
+    label,
+  })
+
+  if (period === 'custom' && date && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return buildRange(date, date, `Ngày ${date}`)
+  }
   if (period === 'today') {
-    return { from: new Date(`${todayStr}T00:00:00.000Z`), to: new Date(`${todayStr}T23:59:59.999Z`), label: 'Hôm nay' }
+    return buildRange(todayStr, todayStr, 'Hôm nay')
   }
   if (period === 'this-week') {
-    const dow = now.getUTCDay()
-    const monday = new Date(now)
-    monday.setUTCDate(now.getUTCDate() - ((dow + 6) % 7))
-    const mondayStr = monday.toISOString().split('T')[0]
-    return { from: new Date(`${mondayStr}T00:00:00.000Z`), to: new Date(`${todayStr}T23:59:59.999Z`), label: 'Tuần này' }
+    const dow = new Date(`${todayStr}T12:00:00.000Z`).getUTCDay()
+    const mondayStr = addDays(todayStr, -((dow + 6) % 7))
+    return buildRange(mondayStr, todayStr, 'Tuần này')
   }
   if (period === 'this-month') {
-    const monthStr = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`
-    return { from: new Date(`${monthStr}-01T00:00:00.000Z`), to: new Date(`${todayStr}T23:59:59.999Z`), label: 'Tháng này' }
+    return buildRange(`${todayStr.slice(0, 7)}-01`, todayStr, 'Tháng này')
   }
   return null // all-time
+}
+
+function tipAmount(order: Awaited<ReturnType<typeof ordersWithComputedPL>>[number]) {
+  return order.lines.reduce((sum, line) => {
+    if (line.productTitle.toLowerCase().trim() !== 'tip') return sum
+    return sum + line.unitPrice * line.qty
+  }, 0)
 }
 
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url)
     const period = searchParams.get('period') ?? 'all'
-    const periodRange = getPeriodRange(period)
+    const store = await prisma.shopifyStore.findFirst({ select: { ianaTimezone: true } })
+    const storeTimeZone = store?.ianaTimezone ?? 'UTC'
+    const periodRange = getPeriodRange(period, storeTimeZone, searchParams.get('date'))
 
     const paidMetaStatuses = ['PAID', 'SETTLED', 'COMPLETED']
 
@@ -65,41 +121,23 @@ export async function GET(req: NextRequest) {
     let periodMetrics = null
     if (periodRange) {
       const [periodOrders, periodAdSpends] = await Promise.all([
-        prisma.order.findMany({
-          where: { placedAt: { gte: periodRange.from, lte: periodRange.to } },
-          include: {
-            lines: {
-              select: { qty: true, resolvedBaseCost: true, resolvedShipFirst: true, resolvedShipAdditional: true, resolvedImportTax: true },
-            },
-          },
-        }),
+        ordersWithComputedPL({ dateFrom: periodRange.from, dateTo: periodRange.to, limit: 10000 }),
         prisma.dailyAdSpend.findMany({
           where: {
             date: {
-              gte: periodRange.from.toISOString().split('T')[0],
-              lte: periodRange.to.toISOString().split('T')[0],
+              gte: periodRange.fromKey,
+              lte: periodRange.toKey,
             },
           },
         }),
       ])
 
-      let totalOrderProfit = 0
-      let mappedOrders = 0
-      let totalOrderRevenue = 0
-
-      for (const order of periodOrders) {
-        const profit = computeOrderProfitFromDb(order.expectedPayout, order.lines)
-        if (profit !== null) {
-          totalOrderProfit += profit
-          mappedOrders++
-          totalOrderRevenue += order.grossAmount
-        }
-      }
-
+      const totalOrderRevenue = periodOrders.reduce((s, order) => s + order.grossAmount - tipAmount(order), 0)
+      const totalOrderProfit = periodOrders.reduce((s, order) => s + order.computed.profit, 0)
       const adSpend = periodAdSpends.reduce((s, d) => s + d.spend, 0)
       const roas = adSpend > 0 ? totalOrderRevenue / adSpend : 0
       const avgMargin = totalOrderRevenue > 0 ? (totalOrderProfit / totalOrderRevenue) * 100 : 0
-      const aov = mappedOrders > 0 ? totalOrderRevenue / mappedOrders : 0
+      const aov = periodOrders.length > 0 ? totalOrderRevenue / periodOrders.length : 0
 
       const unfulfilledOrders = await prisma.order.count({
         where: {
@@ -114,8 +152,8 @@ export async function GET(req: NextRequest) {
       periodMetrics = {
         period,
         label: periodRange.label,
-        from: periodRange.from.toISOString().split('T')[0],
-        to: periodRange.to.toISOString().split('T')[0],
+        from: periodRange.fromKey,
+        to: periodRange.toKey,
         orders: periodOrders.length,
         revenue: Math.round(totalOrderRevenue * 100) / 100,
         adSpend: Math.round(adSpend * 100) / 100,

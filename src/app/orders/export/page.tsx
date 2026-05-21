@@ -35,6 +35,7 @@ const SOURCE_OPTIONS: SourceOption[] = [
   { value: 'order.designDriveLink', label: 'Design link' },
   { value: 'order.trelloCardUrl', label: 'Trello card link' },
   { value: 'line.supplierSku', label: 'Supplier SKU', needsLine: true },
+  { value: 'line.lineKey', label: 'Line key', needsLine: true },
   { value: 'line.sku', label: 'Shopify SKU', needsLine: true },
   { value: 'line.designSku', label: 'Design SKU', needsLine: true },
   { value: 'line.itemName', label: 'Item name', needsLine: true },
@@ -42,6 +43,10 @@ const SOURCE_OPTIONS: SourceOption[] = [
   { value: 'line.variantTitle', label: 'Variant title', needsLine: true },
   { value: 'line.qty', label: 'Quantity', needsLine: true },
   { value: 'line.unitPrice', label: 'Unit price', needsLine: true },
+  { value: 'line.previewCdnUrl', label: 'Mockup preview CDN', needsLine: true },
+  { value: 'line.designDriveLink', label: 'Line design link', needsLine: true },
+  { value: 'line.crogsPrice', label: 'CROGS price', needsLine: true },
+  { value: 'line.crogsTotal', label: 'CROGS total', needsLine: true },
   { value: 'line.supplierProductType', label: 'Supplier product type', needsLine: true },
   { value: 'line.supplierProductName', label: 'Supplier product name', needsLine: true },
   { value: 'line.supplierVariant1Value', label: 'Supplier variant 1 value', needsLine: true },
@@ -116,9 +121,10 @@ function guessSource(header: string): string {
   if (key === 'size') return 'line.supplierVariant1Value'
   if (key === 'color') return 'line.supplierVariant2Value'
   if (key.includes('quantity')) return 'line.qty'
-  if (key.includes('design link')) return 'order.designDriveLink'
-  if (key.includes('mockup')) return 'order.trelloCardUrl'
-  if (key === 'price' || key.includes('total')) return 'line.unitPrice'
+  if (key.includes('design link')) return 'line.designDriveLink'
+  if (key.includes('mockup')) return 'line.previewCdnUrl'
+  if (key === 'price') return 'line.crogsPrice'
+  if (key.includes('total')) return 'line.crogsTotal'
   return 'literal:'
 }
 
@@ -396,11 +402,9 @@ export default function ExportPage() {
                 <option value="">All</option>
                 <option value="PENDING_DESIGN">Pending Design</option>
                 <option value="PENDING_MAPPING">Pending Mapping</option>
+                <option value="WARNING">Warning</option>
                 <option value="READY_TO_PRODUCTION">Ready to Production</option>
-                <option value="PENDING">Pending</option>
                 <option value="EXPORTED">Exported</option>
-                <option value="SUPPLIER_PROCESSING">Supplier Processing</option>
-                <option value="IN_PRODUCTION">In Production</option>
                 <option value="FULFILLED">Fulfilled</option>
                 <option value="CANCELLED">Cancelled</option>
               </select>

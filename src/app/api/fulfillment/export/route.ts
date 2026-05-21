@@ -4,6 +4,12 @@ import { getTemplateById, parseTemplateColumns } from '@/lib/repos/templates'
 import { listOrdersWithLines } from '@/lib/repos/orders'
 import { renderCsv, type CsvTemplate as RenderTemplate, type OrderForCsv } from '@/lib/csv-template'
 
+function isNonProductLine(line: { sku: string | null; productTitle: string }) {
+  if (line.sku) return false
+  const title = line.productTitle.toLowerCase().trim()
+  return title === 'tip' || title === 'shipping protection'
+}
+
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => null)
   if (!body || !body.templateId) {
@@ -30,6 +36,7 @@ export async function POST(req: NextRequest) {
       where: { supplierId: tmpl.supplierId, sku: { in: supplierSkus } },
       select: {
         sku: true,
+        baseSku: true,
         productType: true,
         productName: true,
         variant1Name: true,
@@ -40,42 +47,74 @@ export async function POST(req: NextRequest) {
     })
     : []
   const supplierProductBySku = new Map(supplierProducts.map(p => [p.sku, p]))
+  const shopifySkus = Array.from(new Set(
+    orders.flatMap(o => o.lines.map(l => l.sku).filter((sku): sku is string => Boolean(sku))),
+  ))
+  const skuDesigns = shopifySkus.length > 0
+    ? await prisma.skuDesign.findMany({
+      where: { sku: { in: shopifySkus } },
+      select: { sku: true, driveLink: true },
+    })
+    : []
+  const skuDesignBySku = new Map(skuDesigns.map(s => [s.sku, s]))
 
-  const ordersForCsv: OrderForCsv[] = orders.map(o => ({
-    shopifyOrderNumber: o.shopifyOrderNumber,
-    customerName: o.customerName,
-    customerEmail: o.customerEmail,
-    shippingCountry: o.shippingCountry,
-    shippingState: o.shippingState,
-    shippingName: o.shippingName,
-    shippingAddress1: o.shippingAddress1,
-    shippingAddress2: o.shippingAddress2,
-    shippingCity: o.shippingCity,
-    shippingZip: o.shippingZip,
-    shippingPhone: o.shippingPhone,
-    financialStatus: o.financialStatus,
-    fulfillmentStatus: o.fulfillmentStatus,
-    designDriveLink: o.designDriveLink,
-    trelloCardUrl: o.trelloCardUrl,
-    placedAt: o.placedAt,
-    lines: o.lines.map(l => {
-      const supplierProduct = l.resolvedSupplierSku ? supplierProductBySku.get(l.resolvedSupplierSku) : null
+  const ordersForCsv: OrderForCsv[] = orders
+    .map(o => {
+      const productLines = o.lines.filter(l => !isNonProductLine(l))
+      const productLineNumberById = new Map(productLines.map((line, idx) => [line.id, idx + 1]))
+      const exportableLines = o.lines.filter(l =>
+        !isNonProductLine(l) &&
+        l.resolvedSupplierId === tmpl.supplierId &&
+        Boolean(l.resolvedSupplierSku)
+      )
       return {
-        sku: l.sku,
-        supplierSku: l.resolvedSupplierSku,
-        qty: l.qty,
-        productTitle: l.productTitle,
-        variantTitle: l.variantTitle,
-        unitPrice: l.unitPrice,
-        supplierProductType: supplierProduct?.productType ?? null,
-        supplierProductName: supplierProduct?.productName ?? null,
-        supplierVariant1Name: supplierProduct?.variant1Name ?? null,
-        supplierVariant1Value: supplierProduct?.variant1Value ?? null,
-        supplierVariant2Name: supplierProduct?.variant2Name ?? null,
-        supplierVariant2Value: supplierProduct?.variant2Value ?? null,
+        shopifyOrderNumber: o.shopifyOrderNumber,
+        customerName: o.customerName,
+        customerEmail: o.customerEmail,
+        shippingCountry: o.shippingCountry,
+        shippingState: o.shippingState,
+        shippingName: o.shippingName,
+        shippingAddress1: o.shippingAddress1,
+        shippingAddress2: o.shippingAddress2,
+        shippingCity: o.shippingCity,
+        shippingZip: o.shippingZip,
+        shippingPhone: o.shippingPhone,
+        financialStatus: o.financialStatus,
+        fulfillmentStatus: o.fulfillmentStatus,
+        designDriveLink: o.designDriveLink,
+        trelloCardUrl: o.trelloCardUrl,
+        placedAt: o.placedAt,
+        lines: exportableLines.map(l => {
+          const supplierProduct = l.resolvedSupplierSku ? supplierProductBySku.get(l.resolvedSupplierSku) : null
+          const designDriveLink =
+            l.designDriveLink ??
+            (productLines.length === 1 ? o.designDriveLink : null) ??
+            (o.orderType !== 'CUSTOM' && l.sku ? skuDesignBySku.get(l.sku)?.driveLink ?? null : null)
+          const lineNumber = productLineNumberById.get(l.id) ?? 1
+          return {
+            lineKey: `${o.shopifyOrderNumber.replace(/^#/, '')}_${lineNumber}`,
+            sku: l.sku,
+            supplierSku: l.resolvedSupplierSku,
+            supplierBaseSku: supplierProduct?.baseSku ?? null,
+            qty: l.qty,
+            productTitle: l.productTitle,
+            variantTitle: l.variantTitle,
+            unitPrice: l.unitPrice,
+            supplierProductType: supplierProduct?.productType ?? null,
+            supplierProductName: supplierProduct?.productName ?? null,
+            supplierVariant1Name: supplierProduct?.variant1Name ?? null,
+            supplierVariant1Value: supplierProduct?.variant1Value ?? null,
+            supplierVariant2Name: supplierProduct?.variant2Name ?? null,
+            supplierVariant2Value: supplierProduct?.variant2Value ?? null,
+            previewCdnUrl: l.previewCdnUrl,
+            designDriveLink,
+            crogsPrice: l.resolvedBaseCost,
+            crogsTotal: l.resolvedBaseCost == null ? null : l.resolvedBaseCost * l.qty,
+          }
+        }),
       }
-    }),
-  }))
+    })
+    .filter(o => o.lines.length > 0)
 
   const renderTmpl: RenderTemplate = {
     rowMode: tmpl.rowMode === 'PER_ORDER' ? 'PER_ORDER' : 'PER_LINE',
@@ -84,22 +123,25 @@ export async function POST(req: NextRequest) {
   const csv = renderCsv(renderTmpl, ordersForCsv)
 
   // Mark exported if requested
-  if (body.markExported && orders.length > 0) {
-    const orderIds = orders.map(o => o.id)
-    await prisma.order.updateMany({
-      where: { id: { in: orderIds } },
-      data: {
-        exportedAt: new Date(),
-        exportedToSupplierId: tmpl.supplierId,
-        pipelineStatus: 'EXPORTED',
-      },
-    })
+  if (body.markExported && ordersForCsv.length > 0) {
+    const exportedOrderNumbers = new Set(ordersForCsv.map(o => o.shopifyOrderNumber))
+    const orderIds = orders.filter(o => exportedOrderNumbers.has(o.shopifyOrderNumber)).map(o => o.id)
+    if (orderIds.length > 0) {
+      await prisma.order.updateMany({
+        where: { id: { in: orderIds } },
+        data: {
+          exportedAt: new Date(),
+          exportedToSupplierId: tmpl.supplierId,
+          pipelineStatus: 'EXPORTED',
+        },
+      })
+    }
   }
 
   // If preview mode, return JSON; otherwise CSV with attachment header
   if (body.preview) {
     return NextResponse.json({
-      orderCount: orders.length,
+      orderCount: ordersForCsv.length,
       csv,
       supplierCode: tmpl.supplier.code,
       supplierName: tmpl.supplier.name,

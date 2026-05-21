@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/db'
-import { PIPELINE_STATUSES, type PipelineStatus } from '@/lib/pipeline-status'
+import { PIPELINE_STATUSES, TERMINAL_PIPELINE_STATUSES, warningCutoffDate, type PipelineStatus } from '@/lib/pipeline-status'
 
 export type OrderFilter = {
   projectId?: string
@@ -13,22 +13,54 @@ export type OrderFilter = {
 
 function buildWhere(f: OrderFilter) {
   const where: any = {}
+  const and: any[] = []
   if (f.projectId) where.projectId = f.projectId
   if (f.supplierId) where.defaultSupplierId = f.supplierId
-  if (f.pipelineStatus) where.pipelineStatus = f.pipelineStatus
+  if (f.pipelineStatus === 'WARNING') {
+    and.push(warningWhere())
+    and.push(unfulfilledWhere())
+  } else if (f.pipelineStatus) {
+    where.pipelineStatus = f.pipelineStatus
+    if (!TERMINAL_PIPELINE_STATUSES.includes(f.pipelineStatus as PipelineStatus)) {
+      and.push({ NOT: warningWhere(false) })
+    }
+    if (f.pipelineStatus !== 'FULFILLED') {
+      and.push(unfulfilledWhere())
+    }
+  }
   if (f.dateFrom || f.dateTo) {
-    where.placedAt = {}
-    if (f.dateFrom) where.placedAt.gte = f.dateFrom
-    if (f.dateTo) where.placedAt.lte = f.dateTo
+    const placedAt: any = {}
+    if (f.dateFrom) placedAt.gte = f.dateFrom
+    if (f.dateTo) placedAt.lte = f.dateTo
+    and.push({ placedAt })
   }
   if (f.search) {
-    where.OR = [
+    and.push({ OR: [
       { shopifyOrderNumber: { contains: f.search } },
       { customerName: { contains: f.search } },
       { customerEmail: { contains: f.search } },
-    ]
+    ] })
   }
+  if (and.length > 0) where.AND = and
   return where
+}
+
+function unfulfilledWhere() {
+  return { OR: [{ fulfillmentStatus: null }, { fulfillmentStatus: { notIn: ['fulfilled', 'FULFILLED'] } }] }
+}
+
+function warningWhere(includeManual = true) {
+  const dynamic = {
+    placedAt: { lte: warningCutoffDate() },
+    pipelineStatus: { notIn: TERMINAL_PIPELINE_STATUSES },
+    OR: [
+      { fulfillmentStatus: null },
+      { fulfillmentStatus: { notIn: ['FULFILLED', 'fulfilled'] } },
+    ],
+  }
+  return includeManual
+    ? { OR: [{ pipelineStatus: 'WARNING' }, dynamic] }
+    : dynamic
 }
 
 export async function listOrdersWithLines(filter: OrderFilter) {
@@ -37,7 +69,7 @@ export async function listOrdersWithLines(filter: OrderFilter) {
     orderBy: { placedAt: 'desc' },
     take: filter.limit ?? 500,
     include: {
-      lines: true,
+      lines: { orderBy: { linePosition: 'asc' } },
       store: { select: { id: true, shop: true, ianaTimezone: true } },
       defaultSupplier: { select: { id: true, name: true, code: true, firstItemShipFee: true, additionalItemShipFee: true } },
     },
@@ -84,12 +116,15 @@ export type UpsertOrderInput = {
     variantTitle: string | null
     productTitle: string
     qty: number
+    linePosition?: number | null
     unitPrice: number
     resolvedSupplierId: string | null
     resolvedBaseCost: number | null
     resolvedShipFirst?: number | null
     resolvedShipAdditional?: number | null
     resolvedImportTax?: number | null
+    previewCdnUrl?: string | null
+    designDriveLink?: string | null
     shopifyVariantId?: string | null
     variantOptions?: string | null
   }>
@@ -101,8 +136,19 @@ export async function upsertOrderWithLines(input: UpsertOrderInput) {
   // Preserve cost snapshots for lines that were already priced — re-sync must not overwrite
   // old costs when supplier prices change (only new orders get fresh prices)
   const existingLines = await prisma.orderLine.findMany({
-    where: { orderId: input.id, costSnapshotAt: { not: null } },
-    select: { shopifyLineId: true, resolvedBaseCost: true, costSnapshotAt: true, resolvedShipFirst: true, resolvedShipAdditional: true, resolvedImportTax: true },
+    where: { orderId: input.id },
+    select: {
+      shopifyLineId: true,
+      resolvedSupplierId: true,
+      resolvedSupplierSku: true,
+      resolvedBaseCost: true,
+      costSnapshotAt: true,
+      resolvedShipFirst: true,
+      resolvedShipAdditional: true,
+      resolvedImportTax: true,
+      previewCdnUrl: true,
+      designDriveLink: true,
+    },
   })
   const snapshots = new Map(existingLines.map(l => [l.shopifyLineId, l]))
 
@@ -132,7 +178,7 @@ export async function upsertOrderWithLines(input: UpsertOrderInput) {
         defaultSupplierId: input.defaultSupplierId,
         placedAt: input.placedAt,
         shopTimezone: input.shopTimezone ?? null,
-        pipelineStatus: input.pipelineStatus ?? 'PENDING',
+        pipelineStatus: input.pipelineStatus ?? 'READY_TO_PRODUCTION',
         shippingZone: input.shippingZone ?? null,
         shippingName: input.shippingName ?? null,
         shippingAddress1: input.shippingAddress1 ?? null,
@@ -173,6 +219,9 @@ export async function upsertOrderWithLines(input: UpsertOrderInput) {
     prisma.orderLine.createMany({
       data: input.lines.map(l => {
         const snap = snapshots.get(l.shopifyLineId)
+        const preserveSnapshot = !!snap &&
+          snap.resolvedSupplierId === l.resolvedSupplierId &&
+          snap.resolvedSupplierSku === (l.resolvedSupplierSku ?? null)
         return {
           orderId: input.id,
           shopifyLineId: l.shopifyLineId,
@@ -181,13 +230,16 @@ export async function upsertOrderWithLines(input: UpsertOrderInput) {
           variantTitle: l.variantTitle,
           productTitle: l.productTitle,
           qty: l.qty,
+          linePosition: l.linePosition ?? 0,
           unitPrice: l.unitPrice,
           resolvedSupplierId: l.resolvedSupplierId,
-          resolvedBaseCost: snap ? snap.resolvedBaseCost : l.resolvedBaseCost,
-          costSnapshotAt: snap ? snap.costSnapshotAt : (l.resolvedSupplierId ? now : null),
-          resolvedShipFirst: snap ? snap.resolvedShipFirst : (l.resolvedShipFirst ?? null),
-          resolvedShipAdditional: snap ? snap.resolvedShipAdditional : (l.resolvedShipAdditional ?? null),
-          resolvedImportTax: snap ? snap.resolvedImportTax : (l.resolvedImportTax ?? null),
+          resolvedBaseCost: preserveSnapshot ? snap.resolvedBaseCost : l.resolvedBaseCost,
+          costSnapshotAt: preserveSnapshot ? snap.costSnapshotAt : (l.resolvedSupplierId ? now : null),
+          resolvedShipFirst: preserveSnapshot ? snap.resolvedShipFirst : (l.resolvedShipFirst ?? null),
+          resolvedShipAdditional: preserveSnapshot ? snap.resolvedShipAdditional : (l.resolvedShipAdditional ?? null),
+          resolvedImportTax: preserveSnapshot ? snap.resolvedImportTax : (l.resolvedImportTax ?? null),
+          previewCdnUrl: l.previewCdnUrl ?? snap?.previewCdnUrl ?? null,
+          designDriveLink: l.designDriveLink ?? snap?.designDriveLink ?? null,
           shopifyVariantId: l.shopifyVariantId ?? null,
           variantOptions: l.variantOptions ?? null,
         }
@@ -218,18 +270,23 @@ export async function bulkUpdateOrderStatus(orderIds: string[], status: Pipeline
 }
 
 export async function countByStatus(filter: { projectId?: string } = {}): Promise<Record<PipelineStatus, number>> {
-  const where: any = {}
-  if (filter.projectId) where.projectId = filter.projectId
-  const rows = await prisma.order.groupBy({
-    by: ['pipelineStatus'],
-    where,
-    _count: { _all: true },
-  })
+  const baseWhere: any = filter.projectId ? { projectId: filter.projectId } : {}
   const result = Object.fromEntries(PIPELINE_STATUSES.map(s => [s, 0])) as Record<PipelineStatus, number>
-  for (const r of rows) {
-    if (PIPELINE_STATUSES.includes(r.pipelineStatus as PipelineStatus)) {
-      result[r.pipelineStatus as PipelineStatus] = r._count._all
+  for (const status of PIPELINE_STATUSES) {
+    if (status === 'WARNING') {
+      result[status] = await prisma.order.count({ where: { AND: [baseWhere, warningWhere(), unfulfilledWhere()] } })
+      continue
     }
+    result[status] = await prisma.order.count({
+      where: {
+        AND: [
+          baseWhere,
+          { pipelineStatus: status },
+          ...(TERMINAL_PIPELINE_STATUSES.includes(status) ? [] : [{ NOT: warningWhere(false) }]),
+          ...(status !== 'FULFILLED' ? [unfulfilledWhere()] : []),
+        ],
+      },
+    })
   }
   return result
 }

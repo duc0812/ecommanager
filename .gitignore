@@ -56,3 +56,6 @@ dev-server.log
 # editor
 .vscode/
 .idea/
+
+# superpowers
+.superpowers/

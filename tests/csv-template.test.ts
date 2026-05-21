@@ -74,6 +74,34 @@ describe('renderCsv', () => {
     expect(renderCsv(tmpl, [sampleOrder]).split('\n')[1]).toBe('TSHIRT-RED-M,PHS2VN000000AA02')
   })
 
+  it('renders line-level fulfillment assets and CROGS totals', () => {
+    const order: OrderForCsv = {
+      ...sampleOrder,
+      lines: [
+        {
+          ...sampleOrder.lines[0],
+          lineKey: 'LIT2352_1',
+          previewCdnUrl: 'https://cdn.example/preview-1.png',
+          designDriveLink: 'https://drive.google.com/line-1',
+          crogsPrice: 35.95,
+          crogsTotal: 71.9,
+        },
+      ],
+    }
+    const tmpl: CsvTemplate = {
+      rowMode: 'PER_LINE',
+      columns: [
+        { header: 'Key', source: 'line.lineKey' },
+        { header: 'Mockup', source: 'line.previewCdnUrl' },
+        { header: 'Design', source: 'line.designDriveLink' },
+        { header: 'Price', source: 'line.crogsPrice' },
+        { header: 'Total', source: 'line.crogsTotal' },
+      ],
+    }
+    expect(renderCsv(tmpl, [order]).split('\n')[1])
+      .toBe('LIT2352_1,https://cdn.example/preview-1.png,https://drive.google.com/line-1,35.95,71.9')
+  })
+
   it('CSV-escapes fields containing commas or quotes', () => {
     const order: OrderForCsv = { ...sampleOrder, customerName: 'Doe, John "Big"' }
     const tmpl: CsvTemplate = {

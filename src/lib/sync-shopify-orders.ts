@@ -59,6 +59,7 @@ export async function syncShopifyOrders(): Promise<{ synced: number; skipped: nu
             shippingPhone: order.shippingPhone,
             financialStatus: order.financialStatus.toLowerCase(),
             fulfillmentStatus: order.fulfillmentStatus?.toLowerCase() ?? null,
+            ...(order.fulfillmentStatus?.toLowerCase() === 'fulfilled' ? { pipelineStatus: 'FULFILLED' } : {}),
             currency: order.currency,
             grossAmount: order.grossAmount,
             subtotalAmount: order.subtotal,
@@ -77,6 +78,7 @@ export async function syncShopifyOrders(): Promise<{ synced: number; skipped: nu
                   ? JSON.stringify(l.selectedOptions)
                   : null,
                 sku: l.sku,
+                shopifyProductType: l.productType ?? null,
                 variantTitle: l.variantTitle,
                 productTitle: l.title,
                 qty: l.quantity,
@@ -87,6 +89,7 @@ export async function syncShopifyOrders(): Promise<{ synced: number; skipped: nu
           update: {
             financialStatus: order.financialStatus.toLowerCase(),
             fulfillmentStatus: order.fulfillmentStatus?.toLowerCase() ?? null,
+            ...(order.fulfillmentStatus?.toLowerCase() === 'fulfilled' ? { pipelineStatus: 'FULFILLED' } : {}),
             grossAmount: order.grossAmount,
             expectedPayout,
             totalFees,
@@ -101,6 +104,7 @@ export async function syncShopifyOrders(): Promise<{ synced: number; skipped: nu
                   ? JSON.stringify(l.selectedOptions)
                   : null,
                 sku: l.sku,
+                shopifyProductType: l.productType ?? null,
                 variantTitle: l.variantTitle,
                 productTitle: l.title,
                 qty: l.quantity,

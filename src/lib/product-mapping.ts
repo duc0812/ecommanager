@@ -36,6 +36,15 @@ function normalize(v: string): string {
   return v.toLowerCase().trim()
 }
 
+function normalizeComparableValue(v: string): string {
+  const normalized = normalize(v)
+  return normalized.endsWith('s') ? normalized.slice(0, -1) : normalized
+}
+
+function valueMatches(actual: string, expected: string): boolean {
+  return normalizeComparableValue(actual) === normalizeComparableValue(expected)
+}
+
 export function matchesProductBase(
   shopifyProductType: string,
   variantOptions: Record<string, string>,
@@ -55,8 +64,8 @@ export function matchesProductBase(
   return conditions.every(cond => {
     const optVal = normalizedOptions[normalize(cond.optionName)]
     if (optVal === undefined) return false
-    if (cond.value !== undefined) return optVal === normalize(cond.value)
-    if (cond.anyOf !== undefined) return cond.anyOf.map(normalize).includes(optVal)
+    if (cond.value !== undefined) return valueMatches(optVal, cond.value)
+    if (cond.anyOf !== undefined) return cond.anyOf.some(value => valueMatches(optVal, value))
     return false
   })
 }
@@ -87,7 +96,27 @@ export function resolveByProductBase(
     if (manual) return { supplierProductId: manual.supplierProductId, resolvedVia: 'variant_manual' }
   }
 
-  if (!shopifyProductType) return { supplierProductId: null, resolvedVia: 'unresolved' }
+  if (!shopifyProductType) {
+    // Fallback: match by variantConditions only — only for bases that have at least 1 condition
+    const fallbackBase = productBases.find(b => {
+      let conditions: VariantCondition[]
+      try { conditions = JSON.parse(b.variantConditions) } catch { return false }
+      if (conditions.length === 0) return false
+      const normalizedOptions: Record<string, string> = {}
+      for (const [k, v] of Object.entries(variantOptions)) normalizedOptions[normalize(k)] = normalize(v)
+      return conditions.every(cond => {
+        const optVal = normalizedOptions[normalize(cond.optionName)]
+        if (optVal === undefined) return false
+        if (cond.value !== undefined) return valueMatches(optVal, cond.value)
+        if (cond.anyOf !== undefined) return cond.anyOf.some(v => valueMatches(optVal, v))
+        return false
+      })
+    })
+    if (!fallbackBase) return { supplierProductId: null, resolvedVia: 'unresolved' }
+    const sorted = [...fallbackBase.supplierMappings].sort((a, b) => a.preferenceRank - b.preferenceRank)
+    if (sorted.length > 0) return { supplierProductId: sorted[0].supplierProductId, resolvedVia: 'product_base_rank' }
+    return { supplierProductId: null, resolvedVia: 'unresolved' }
+  }
 
   // Check overrides across ALL bases with this productType
   for (const base of productBases) {
