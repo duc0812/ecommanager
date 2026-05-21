@@ -4,6 +4,7 @@ import { calcAmountUsd } from '@/lib/currency'
 
 const CATEGORIES = ['APP_TOOL', 'SUBSCRIPTION', 'OFFICE', 'OTHER'] as const
 const PAYMENT_METHODS = ['CK', 'PINGPONG', 'PO', 'OTHER'] as const
+const CURRENCIES = ['USD', 'VND'] as const
 
 function monthRange(month: string | null) {
   if (!month || !/^\d{4}-\d{2}$/.test(month)) return null
@@ -59,11 +60,21 @@ export async function POST(req: NextRequest) {
   if (!vendor?.trim()) errors.push('vendor required')
   if (!CATEGORIES.includes(category)) errors.push('invalid category')
   if (!amount || Number(amount) <= 0) errors.push('amount must be > 0')
-  if (!paidAt?.trim()) errors.push('paidAt required')
+  if (!paidAt?.trim() || !/^\d{4}-\d{2}-\d{2}$/.test(paidAt)) errors.push('paidAt must be YYYY-MM-DD')
   if (!PAYMENT_METHODS.includes(paymentMethod)) errors.push('invalid paymentMethod')
+  if (!CURRENCIES.includes(currency)) errors.push('invalid currency')
   if (currency === 'VND' && (!exchangeRate || Number(exchangeRate) <= 0)) errors.push('exchangeRate required for VND')
 
   if (errors.length > 0) return NextResponse.json({ error: errors.join(', ') }, { status: 400 })
+
+  const tagsStr = (() => {
+    if (!tags) return '[]'
+    if (Array.isArray(tags)) return JSON.stringify(tags.map(String))
+    if (typeof tags === 'string') {
+      try { const parsed = JSON.parse(tags); return Array.isArray(parsed) ? tags : '[]' } catch { return '[]' }
+    }
+    return '[]'
+  })()
 
   const amountUsd = calcAmountUsd({ amount: Number(amount), currency, exchangeRate: exchangeRate ? Number(exchangeRate) : undefined })
 
@@ -79,7 +90,7 @@ export async function POST(req: NextRequest) {
       paymentMethod,
       transactionId: transactionId?.trim() || null,
       note: note?.trim() || null,
-      tags: tags || '[]',
+      tags: tagsStr,
       projectId: projectId || null,
     },
   })
