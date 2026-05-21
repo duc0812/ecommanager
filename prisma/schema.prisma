@@ -28,6 +28,7 @@ model AppUser {
   name      String
   email     String   @unique
   role      String
+  permissions String @default("[]")
   status    String   @default("ACTIVE")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -140,7 +141,6 @@ model Staff {
   note        String?
   createdAt   DateTime          @default(now())
   assignments StaffAssignment[]
-  otherBills   OtherBill[]
   fulfillmentCosts FulfillmentCost[]
 }
 
@@ -197,45 +197,25 @@ model ToolAccount {
 }
 
 model OtherBill {
-  id                 String   @id @default(cuid())
-  vendorName         String
-  invoiceNumber      String?
-  billDate           String
-  dueDate            String?
-  serviceStartDate   String?
-  serviceEndDate     String?
-  category           String
-  expenseAccount     String
-  description        String?
-  currency           String   @default("USD")
-  subtotalAmount     Float
-  taxAmount          Float    @default(0)
-  totalAmount        Float
-  paymentStatus      String   @default("UNPAID")
-  paymentDate        String?
-  paymentMethod      String?
-  referenceNumber    String?
-  projectId          String?
-  project            Project? @relation(fields: [projectId], references: [id])
-  staffId            String?
-  staff              Staff?   @relation(fields: [staffId], references: [id])
-  allocationNote     String?
-  documentUrl        String?
-  documentName       String?
-  documentMimeType   String?
-  documentSize       Int?
-  accountingBasis    String   @default("ACCRUAL")
-  recognitionDate    String
-  notes              String?
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  id            String   @id @default(cuid())
+  vendor        String
+  category      String
+  amount        Float
+  currency      String   @default("USD")
+  amountUsd     Float
+  exchangeRate  Float?
+  paidAt        String
+  paymentMethod String
+  transactionId String?
+  note          String?
+  tags          String   @default("[]")
+  projectId     String?
+  project       Project? @relation(fields: [projectId], references: [id])
+  createdAt     DateTime @default(now())
 
-  @@index([billDate])
-  @@index([recognitionDate])
+  @@index([paidAt])
   @@index([category])
-  @@index([paymentStatus])
   @@index([projectId])
-  @@index([staffId])
 }
 
 model FulfillmentCost {
