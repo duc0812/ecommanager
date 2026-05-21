@@ -96,6 +96,7 @@ export default function OtherBillsPage() {
   const [amount, setAmount] = useState('')
   const [tagInput, setTagInput] = useState('')
   const [tags, setTags] = useState<string[]>([])
+  const [paidAt, setPaidAt] = useState(today())
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -157,6 +158,7 @@ export default function OtherBillsPage() {
     setCurrency('USD')
     setExchangeRate('')
     setAmount('')
+    setPaidAt(today())
     setTags([])
     setTagInput('')
     setMessage('Đã lưu thành công.')
@@ -172,7 +174,9 @@ export default function OtherBillsPage() {
 
   const projects = data?.projects ?? []
   const stats = data?.stats
-  const topCat = stats?.byCategory.sort((a, b) => b.totalUsd - a.totalUsd)[0]
+  const topCat = stats
+    ? [...stats.byCategory].sort((a, b) => b.totalUsd - a.totalUsd)[0]
+    : undefined
 
   return (
     <RoleGate>
@@ -213,7 +217,7 @@ export default function OtherBillsPage() {
 
               <div className="grid grid-cols-2 gap-md">
                 <Field label="Ngày thanh toán *">
-                  <input name="paidAt" type="date" required defaultValue={today()} className={inputCls} />
+                  <input name="paidAt" type="date" required value={paidAt} onChange={e => setPaidAt(e.target.value)} className={inputCls} />
                 </Field>
                 <Field label="Tiền tệ *">
                   <select value={currency} onChange={e => { setCurrency(e.target.value); setExchangeRate('') }} className={inputCls}>
@@ -249,6 +253,7 @@ export default function OtherBillsPage() {
                     type="number"
                     step="1"
                     min="1"
+                    required
                     value={exchangeRate}
                     onChange={e => setExchangeRate(e.target.value)}
                     placeholder="vd: 25400"
