@@ -209,12 +209,10 @@ export async function POST(req: NextRequest) {
         })(),
       }))
 
-      const hasPendingMapping = resolvedLines.some(r =>
-        !isNonProductLine(r.line.title) && r.pbResolve.resolvedVia === 'unresolved'
-      )
-      const allSkuProductLinesMapped = resolvedLines
-        .filter(r => r.line.sku && !isNonProductLine(r.line.title))
-        .every(r => !!r.pbResolve.supplierProductId)
+      const productLines = resolvedLines.filter(r => !isNonProductLine(r.line.title))
+      const hasPendingMapping = productLines.some(r => r.pbResolve.resolvedVia === 'unresolved')
+      const allProductLinesMapped = productLines.length > 0 &&
+        productLines.every(r => !!r.pbResolve.supplierProductId)
 
       // Determine shipping zone via Product Mapping result only.
       let supplierIdForZone: string | undefined
@@ -342,7 +340,7 @@ export async function POST(req: NextRequest) {
       if (existingOrder && existingOrder.orderType === 'UNKNOWN') {
         await prisma.order.update({ where: { id: o.id }, data: { orderType } })
       }
-      if (!allSkuProductLinesMapped && existingOrder?.trelloCardId) {
+      if (!allProductLinesMapped && existingOrder?.trelloCardId) {
         await prisma.order.update({
           where: { id: o.id },
           data: {
@@ -357,7 +355,7 @@ export async function POST(req: NextRequest) {
       // Create Trello card if needed
       if (
         trelloConfig &&
-        allSkuProductLinesMapped &&
+        allProductLinesMapped &&
         existingOrder?.trelloCardId == null &&
         shouldCreateCard(o.name, trelloConfig.syncFromOrderName)
       ) {

@@ -2,7 +2,7 @@
 import { ReactNode, useEffect, useState } from 'react'
 import { usePathname } from 'next/navigation'
 import { canAccess, FeaturePermission, ROLE_LABELS, UserRole } from '@/lib/roles'
-import { AuthPayload } from '@/lib/auth'
+import type { AuthPayload } from '@/lib/auth'
 
 type CurrentAccess = {
   role: UserRole
