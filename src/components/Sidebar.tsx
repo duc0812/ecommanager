@@ -1,8 +1,7 @@
 'use client'
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
-import { useEffect, useState } from 'react'
-import { RoleSwitcher, getCurrentAccess } from '@/components/RoleGate'
+import { usePathname, useRouter } from 'next/navigation'
+import { useCurrentUser } from '@/components/RoleGate'
 import { FeaturePermission, UserRole, visibleFor } from '@/lib/roles'
 
 type NavItem = { type: 'item' | 'child'; href: string; icon: string; label: string }
@@ -43,19 +42,16 @@ const nav: NavEntry[] = [
 
 export default function Sidebar() {
   const pathname = usePathname()
-  const [role, setRole] = useState<UserRole>('SUPERADMIN')
-  const [permissions, setPermissions] = useState<FeaturePermission[]>([])
+  const router = useRouter()
+  const { user } = useCurrentUser()
+  const role: UserRole = user?.role ?? 'SUPERADMIN'
+  const permissions: FeaturePermission[] = user?.permissions ?? []
 
-  useEffect(() => {
-    const update = () => {
-      const access = getCurrentAccess()
-      setRole(access.role)
-      setPermissions(access.permissions)
-    }
-    update()
-    window.addEventListener('role-change', update)
-    return () => window.removeEventListener('role-change', update)
-  }, [])
+  async function logout() {
+    await fetch('/api/auth/logout', { method: 'POST' })
+    router.push('/login')
+    router.refresh()
+  }
 
   return (
     <aside className="fixed left-0 top-0 h-full w-[280px] bg-primary flex flex-col py-lg z-50 border-r border-white/5">
@@ -100,8 +96,15 @@ export default function Sidebar() {
 
       <div className="px-md mt-auto">
         <div className="px-md py-sm rounded-lg bg-white/5">
-          <p className="mb-xs text-on-primary/40 text-label-sm">Current user</p>
-          <RoleSwitcher />
+          <p className="text-on-primary/40 text-label-sm truncate">{user?.name ?? '...'}</p>
+          <p className="text-on-primary/25 text-label-sm truncate mb-xs">{user?.email ?? ''}</p>
+          <button
+            onClick={logout}
+            className="flex items-center gap-xs text-on-primary/60 hover:text-error text-label-sm transition-colors"
+          >
+            <span className="material-symbols-outlined text-[16px]">logout</span>
+            Đăng xuất
+          </button>
         </div>
       </div>
     </aside>
