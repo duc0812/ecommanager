@@ -44,7 +44,18 @@ function isNonProductLine(title: string) {
   return normalized === 'tip' || normalized === 'shipping protection'
 }
 
+function orderNumberValue(orderName: string | null | undefined) {
+  const raw = orderName?.match(/\d+/)?.[0]
+  return raw ? Number(raw) : null
+}
+
 export async function POST(req: NextRequest) {
+  const body = await req.json().catch(() => ({}))
+  const fromOrderName = typeof body.fromOrderName === 'string' && body.fromOrderName.trim()
+    ? body.fromOrderName.trim()
+    : null
+  const fromOrderNumber = orderNumberValue(fromOrderName)
+
   const stored = await getShopifyConnection(req.headers.get('cookie') ?? undefined)
   const shop = req.headers.get('x-shopify-shop-domain') || stored?.shop
   const accessToken = req.headers.get('x-shopify-access-token') || stored?.token
@@ -72,9 +83,17 @@ export async function POST(req: NextRequest) {
   // after the first import, and using only the last sync timestamp can miss
   // newly created orders around timezone/payment-status boundaries.
   const rollingLookbackDate = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000)
-  const sinceDate = store.syncSinceDate
-    ? new Date(Math.min(store.syncSinceDate.getTime(), rollingLookbackDate.getTime()))
-    : new Date(Date.now() - 60 * 24 * 60 * 60 * 1000)
+  const fromOrder = fromOrderName
+    ? await prisma.order.findFirst({
+        where: { shopifyOrderNumber: fromOrderName },
+        select: { placedAt: true },
+      })
+    : null
+  const sinceDate = fromOrderName
+    ? (fromOrder?.placedAt ?? new Date(Date.now() - 120 * 24 * 60 * 60 * 1000))
+    : store.syncSinceDate
+      ? new Date(Math.min(store.syncSinceDate.getTime(), rollingLookbackDate.getTime()))
+      : new Date(Date.now() - 60 * 24 * 60 * 60 * 1000)
   const sinceIso = sinceDate.toISOString().split('T')[0]
   const shopInfo = await fetchShopInfo(shop, accessToken).catch(() => ({
     ianaTimezone: store.ianaTimezone ?? null,
@@ -146,6 +165,7 @@ export async function POST(req: NextRequest) {
   let cursor: string | null = null
   let totalSynced = 0
   let withUnmappedSku = 0
+  let skippedBeforeFromOrder = 0
   const errors: string[] = []
 
   do {
@@ -158,6 +178,12 @@ export async function POST(req: NextRequest) {
     }
 
     for (const o of page.orders) {
+      const currentOrderNumber = orderNumberValue(o.name)
+      if (fromOrderNumber != null && (currentOrderNumber == null || currentOrderNumber < fromOrderNumber)) {
+        skippedBeforeFromOrder++
+        continue
+      }
+
       const totalFees = o.transactions
         .filter(t => t.kind !== 'REFUND' && t.status === 'SUCCESS')
         .reduce((sum, t) => sum + t.fees, 0)
@@ -259,7 +285,7 @@ export async function POST(req: NextRequest) {
         expectedPayout: pl.expectedPayout,
         totalFees,
         refundedAmount: o.refundedAmount,
-        defaultSupplierId: pl.defaultSupplierId,
+        defaultSupplierId: pl.hasUnmappedSku ? null : pl.defaultSupplierId,
         placedAt: new Date(o.createdAt),
         shopTimezone,
         pipelineStatus: detected,
@@ -421,6 +447,8 @@ export async function POST(req: NextRequest) {
       errors,
       projectId: store.projectId,
       projectName: store.project.name,
+      fromOrderName,
+      skippedBeforeFromOrder,
     }, { status: 502 })
   }
 
@@ -430,5 +458,7 @@ export async function POST(req: NextRequest) {
     errors,
     projectId: store.projectId,
     projectName: store.project.name,
+    fromOrderName,
+    skippedBeforeFromOrder,
   })
 }

@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react'
 import Sidebar from '@/components/Sidebar'
 import type { ShopifyPayout, ShopifyBankAccount } from '@/lib/shopify'
+import { SHOPIFY_PAYOUT_START_DATE } from '@/lib/shopify-payout-policy'
 
 type Stats = {
   total_payouts: number
@@ -66,7 +67,7 @@ export default function FinancePage() {
   const [creds, setCreds] = useState<Creds>({ shop: '', token: '', version: '2024-04' })
   const [credsSaved, setCredsSaved] = useState(false)
   const [showToken, setShowToken] = useState(false)
-  const [dateMin, setDateMin] = useState('')
+  const [dateMin, setDateMin] = useState(SHOPIFY_PAYOUT_START_DATE)
   const [dateMax, setDateMax] = useState('')
   const [data, setData] = useState<ApiResponse | null>(null)
   const [txnData, setTxnData] = useState<TxnResponse | null>(null)
@@ -336,10 +337,10 @@ export default function FinancePage() {
               />
             </div>
             <button
-              onClick={() => { setDateMin(''); setDateMax('') }}
+              onClick={() => { setDateMin(SHOPIFY_PAYOUT_START_DATE); setDateMax('') }}
               className="border border-outline-variant text-on-surface-variant px-lg py-sm rounded-lg text-label-md hover:bg-surface-container transition-colors"
             >
-              Clear filter
+              Reset filter
             </button>
             {!canFetch() && (
               <span className="text-label-sm text-amber-600 self-center flex items-center gap-xs">

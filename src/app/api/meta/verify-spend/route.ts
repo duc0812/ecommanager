@@ -71,7 +71,7 @@ export async function GET(req: NextRequest) {
 
     const apiByDate = new Map(apiRows.map(r => [r.date, r]))
 
-    const allDates = new Set([...apiByDate.keys(), ...dbByDate.keys()])
+    const allDates = new Set([...Array.from(apiByDate.keys()), ...Array.from(dbByDate.keys())])
     const comparison = Array.from(allDates).sort().map(date => {
       const api = apiByDate.get(date)
       const db = dbByDate.get(date)

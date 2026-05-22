@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { fetchAllPayouts, fetchBalance, fetchBankAccounts, getCredentialsFromRequest } from '@/lib/shopify'
 import { getShopifyConnection } from '@/lib/token-store'
 import { prisma } from '@/lib/db'
+import { SHOPIFY_PAYOUT_START_DATE } from '@/lib/shopify-payout-policy'
 
 export async function POST(req: NextRequest) {
   try {
@@ -23,7 +24,7 @@ export async function POST(req: NextRequest) {
 
     // Fetch all payouts + balance + bank accounts in parallel
     const [payouts, balance, bankAccounts] = await Promise.all([
-      fetchAllPayouts(creds),
+      fetchAllPayouts(creds, { date_min: SHOPIFY_PAYOUT_START_DATE }),
       fetchBalance(creds).catch(() => null),
       fetchBankAccounts(creds).catch(() => []),
     ])
@@ -53,6 +54,7 @@ export async function POST(req: NextRequest) {
     // Upsert payouts
     let synced = 0
     for (const p of payouts) {
+      if (p.date < SHOPIFY_PAYOUT_START_DATE) continue
       await prisma.payout.upsert({
         where: { id: p.id },
         create: {
@@ -95,6 +97,7 @@ export async function POST(req: NextRequest) {
       success: true,
       synced_payouts: synced,
       synced_bank_accounts: bankAccounts.length,
+      payout_start_date: SHOPIFY_PAYOUT_START_DATE,
       store: { id: store.id, shop: store.shop },
     })
   } catch (err: any) {

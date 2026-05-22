@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { ordersWithComputedPL } from '@/lib/repos/reports'
+import { SHOPIFY_PAYOUT_DATE_WHERE } from '@/lib/shopify-payout-policy'
 
 function dateKeyInZone(date: Date, timeZone: string) {
   const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
@@ -88,7 +89,7 @@ export async function GET(req: NextRequest) {
     const paidMetaStatuses = ['PAID', 'SETTLED', 'COMPLETED']
 
     const [payouts, metaBillings, projects, staff] = await Promise.all([
-      prisma.payout.findMany({ where: { status: 'paid' } }),
+      prisma.payout.findMany({ where: { status: 'paid', date: SHOPIFY_PAYOUT_DATE_WHERE } }),
       prisma.metaBilling.findMany({ where: { status: { in: paidMetaStatuses } } }),
       prisma.project.findMany({
         include: { assignments: { include: { staff: true } } },
@@ -100,7 +101,7 @@ export async function GET(req: NextRequest) {
     const totalRevenue = payouts.reduce((s, p) => s + p.amount, 0)
     const payoutCount = payouts.length
     const recentPayouts = await prisma.payout.findMany({
-      where: { status: 'paid' }, orderBy: { date: 'desc' }, take: 5,
+      where: { status: 'paid', date: SHOPIFY_PAYOUT_DATE_WHERE }, orderBy: { date: 'desc' }, take: 5,
     })
 
     const totalSpend = metaBillings.reduce((s, b) => s + b.amount, 0)
@@ -132,6 +133,8 @@ export async function GET(req: NextRequest) {
         }),
       ])
 
+      const mappedPeriodOrders = periodOrders.filter(order => !order.computed.hasUnmappedSku)
+      const unmappedOrders = periodOrders.length - mappedPeriodOrders.length
       const totalOrderRevenue = periodOrders.reduce((s, order) => s + order.grossAmount - tipAmount(order), 0)
       const totalOrderProfit = periodOrders.reduce((s, order) => s + order.computed.profit, 0)
       const adSpend = periodAdSpends.reduce((s, d) => s + d.spend, 0)
@@ -155,6 +158,8 @@ export async function GET(req: NextRequest) {
         from: periodRange.fromKey,
         to: periodRange.toKey,
         orders: periodOrders.length,
+        mappedOrders: mappedPeriodOrders.length,
+        unmappedOrders,
         revenue: Math.round(totalOrderRevenue * 100) / 100,
         adSpend: Math.round(adSpend * 100) / 100,
         orderProfit: Math.round(totalOrderProfit * 100) / 100,

@@ -44,7 +44,16 @@ type OrderRow = {
     designDriveLink: string | null
     previewCdnUrl: string | null
   }>
-  computed: { baseCost: number; shipping: number; profit: number; margin: number; hasUnmappedSku: boolean }
+  computed: {
+    baseCost: number
+    knownCogs: number
+    estimatedCogs: number
+    shipping: number
+    profit: number
+    margin: number
+    hasUnmappedSku: boolean
+    isEstimated: boolean
+  }
   mappingSummary: { mapped: number; total: number; complete: boolean }
   orderType: string           // "CUSTOM" | "NON_CUSTOM" | "UNKNOWN"
   trelloCardId: string | null
@@ -440,7 +449,7 @@ export default function OrdersPage() {
 
         {summary && summary.unmappedCount > 0 && (
           <div className="bg-error/10 border border-error/30 rounded-lg p-md mb-md text-body-sm">
-            {'⚠'} {summary.unmappedCount} order(s) có SKU thiếu mapping — Profit có thể không chính xác.
+            {'⚠'} {summary.unmappedCount} order(s) có SKU thiếu mapping — COGS/Profit đang dùng tạm tính 50% phần payout chưa map.
           </div>
         )}
 
@@ -577,7 +586,12 @@ export default function OrdersPage() {
                   </td>
                   <td className="px-sm py-sm text-right">{fmt(o.expectedPayout, o.currency)}</td>
                   <td className="px-sm py-sm text-right">
-                    {fmt(o.computed.baseCost + o.computed.shipping, o.currency)}
+                    <div className="flex flex-col items-end leading-tight">
+                      <span>{fmt(o.computed.baseCost + o.computed.shipping, o.currency)}</span>
+                      {o.computed.isEstimated && (
+                        <span className="text-[10px] uppercase tracking-wide text-amber-600">tạm tính</span>
+                      )}
+                    </div>
                   </td>
                   <td
                     className={`px-sm py-sm text-right font-semibold ${

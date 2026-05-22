@@ -219,7 +219,8 @@ export async function upsertOrderWithLines(input: UpsertOrderInput) {
     prisma.orderLine.createMany({
       data: input.lines.map(l => {
         const snap = snapshots.get(l.shopifyLineId)
-        const preserveSnapshot = !!snap &&
+        const preserveSnapshot = !!l.resolvedSupplierId &&
+          !!snap &&
           snap.resolvedSupplierId === l.resolvedSupplierId &&
           snap.resolvedSupplierSku === (l.resolvedSupplierSku ?? null)
         return {

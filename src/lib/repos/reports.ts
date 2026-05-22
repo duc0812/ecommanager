@@ -1,5 +1,6 @@
 import { listOrdersWithLines, type OrderFilter } from './orders'
 import { prisma } from '@/lib/db'
+import { estimateOrderCostAndProfit } from '@/lib/order-profit'
 
 export type PlSummary = {
   orderCount: number
@@ -18,31 +19,19 @@ function isNonProductLine(line: { sku: string | null; productTitle: string }) {
   return title === 'tip' || title === 'shipping protection'
 }
 
-function hasMissingProductCost(lines: Array<{ sku: string | null; productTitle: string; resolvedBaseCost: number | null }>) {
-  return lines.some(l => !isNonProductLine(l) && l.resolvedBaseCost == null)
+function productLines<T extends { sku: string | null; productTitle: string }>(lines: T[]) {
+  return lines.filter(l => !isNonProductLine(l))
 }
 
 export async function plSummary(filter: OrderFilter): Promise<PlSummary> {
   const orders = await listOrdersWithLines(filter)
-  let revenue = 0, cogs = 0, shipping = 0, unmappedCount = 0
+  let revenue = 0, cogs = 0, unmappedCount = 0
+  const shipping = 0
   for (const o of orders) {
     revenue += o.expectedPayout
-    const totalQty = o.lines.reduce((s, l) => s + l.qty, 0)
-    cogs += o.lines.reduce((s, l) => s + (l.resolvedBaseCost ?? 0) * l.qty, 0)
-    // Use line-level snapshot if available (zone-aware), else fall back to supplier-level
-    const firstLine = o.lines[0]
-    const useSnapshot = firstLine?.resolvedShipFirst != null || firstLine?.resolvedShipAdditional != null
-    const shipFirst = useSnapshot
-      ? (firstLine.resolvedShipFirst ?? 0)
-      : (o.defaultSupplier?.firstItemShipFee ?? 0)
-    const shipAdditional = useSnapshot
-      ? (firstLine.resolvedShipAdditional ?? 0)
-      : (o.defaultSupplier?.additionalItemShipFee ?? 0)
-    const importTaxPerUnit = useSnapshot ? (firstLine.resolvedImportTax ?? 0) : 0
-    if (o.defaultSupplier || useSnapshot) {
-      shipping += shipFirst + shipAdditional * Math.max(0, totalQty - 1) + importTaxPerUnit * totalQty
-    }
-    if (hasMissingProductCost(o.lines)) unmappedCount++
+    const estimate = estimateOrderCostAndProfit(o.expectedPayout, productLines(o.lines))
+    cogs += estimate?.estimatedCogs ?? 0
+    if (estimate?.hasUnmapped) unmappedCount++
   }
   const profit = revenue - cogs - shipping
   const margin = revenue === 0 ? 0 : (profit / revenue) * 100
@@ -51,7 +40,17 @@ export async function plSummary(filter: OrderFilter): Promise<PlSummary> {
 }
 
 export type EnrichedOrder = Awaited<ReturnType<typeof listOrdersWithLines>>[number] & {
-  computed: { totalQty: number; baseCost: number; shipping: number; profit: number; margin: number; hasUnmappedSku: boolean }
+  computed: {
+    totalQty: number
+    baseCost: number
+    knownCogs: number
+    estimatedCogs: number
+    shipping: number
+    profit: number
+    margin: number
+    hasUnmappedSku: boolean
+    isEstimated: boolean
+  }
   mappingSummary: { mapped: number; total: number; complete: boolean }
 }
 
@@ -66,25 +65,15 @@ export async function ordersWithComputedPL(filter: OrderFilter): Promise<Enriche
   const skuDesignMap = new Map(skuDesigns.map(s => [s.sku, s]))
 
   return orders.map(o => {
-    const totalQty = o.lines.reduce((s, l) => s + l.qty, 0)
-    const baseCost = o.lines.reduce((s, l) => s + (l.resolvedBaseCost ?? 0) * l.qty, 0)
-    // Use line-level snapshot if available (zone-aware), else fall back to supplier-level
-    const firstLine = o.lines[0]
-    const useSnapshot = firstLine?.resolvedShipFirst != null || firstLine?.resolvedShipAdditional != null
-    const shipFirst = useSnapshot
-      ? (firstLine.resolvedShipFirst ?? 0)
-      : (o.defaultSupplier?.firstItemShipFee ?? 0)
-    const shipAdditional = useSnapshot
-      ? (firstLine.resolvedShipAdditional ?? 0)
-      : (o.defaultSupplier?.additionalItemShipFee ?? 0)
-    const importTaxPerUnit = useSnapshot ? (firstLine.resolvedImportTax ?? 0) : 0
-    const shipping = (o.defaultSupplier || useSnapshot)
-      ? shipFirst + shipAdditional * Math.max(0, totalQty - 1) + importTaxPerUnit * totalQty
-      : 0
-    const profit = o.expectedPayout - baseCost - shipping
+    const mappableLines = productLines(o.lines)
+    const totalQty = mappableLines.reduce((s, l) => s + l.qty, 0)
+    const estimate = estimateOrderCostAndProfit(o.expectedPayout, mappableLines)
+    const baseCost = estimate?.estimatedCogs ?? 0
+    const knownCogs = estimate?.knownCogs ?? 0
+    const shipping = 0
+    const profit = estimate?.profit ?? 0
     const margin = o.expectedPayout === 0 ? 0 : (profit / o.expectedPayout) * 100
-    const hasUnmappedSku = hasMissingProductCost(o.lines)
-    const mappableLines = o.lines.filter(l => !isNonProductLine(l))
+    const hasUnmappedSku = estimate?.hasUnmapped ?? false
     const productLineNumberById = new Map(mappableLines.map((line, idx) => [line.id, idx + 1]))
     const mappedLineCount = mappableLines.filter(l => l.resolvedSupplierId && l.resolvedBaseCost != null).length
     const orderSkus = o.lines.map(l => l.sku).filter(Boolean) as string[]
@@ -105,7 +94,17 @@ export async function ordersWithComputedPL(filter: OrderFilter): Promise<Enriche
           ? `${o.shopifyOrderNumber.replace(/^#/, '')}_${productLineNumberById.get(l.id)}`
           : '',
       })),
-      computed: { totalQty, baseCost, shipping, profit, margin, hasUnmappedSku },
+      computed: {
+        totalQty,
+        baseCost,
+        knownCogs,
+        estimatedCogs: baseCost,
+        shipping,
+        profit,
+        margin,
+        hasUnmappedSku,
+        isEstimated: hasUnmappedSku,
+      },
       mappingSummary: {
         mapped: mappedLineCount,
         total: mappableLines.length,
@@ -160,21 +159,7 @@ export async function combinedProjectPL(filter: {
   for (const o of orders) {
     if (o.pipelineStatus === 'REFUNDED' || o.pipelineStatus === 'CANCELLED') continue
     fulfillmentRevenue += o.expectedPayout
-    const totalQty = o.lines.reduce((s, l) => s + l.qty, 0)
-    fulfillmentCogs += o.lines.reduce((s, l) => s + (l.resolvedBaseCost ?? 0) * l.qty, 0)
-    // Use line-level snapshot if available (zone-aware), else fall back to supplier-level
-    const firstLine = o.lines[0]
-    const useSnapshot = firstLine?.resolvedShipFirst != null || firstLine?.resolvedShipAdditional != null
-    const shipFirst = useSnapshot
-      ? (firstLine.resolvedShipFirst ?? 0)
-      : (o.defaultSupplier?.firstItemShipFee ?? 0)
-    const shipAdditional = useSnapshot
-      ? (firstLine.resolvedShipAdditional ?? 0)
-      : (o.defaultSupplier?.additionalItemShipFee ?? 0)
-    const importTaxPerUnit = useSnapshot ? (firstLine.resolvedImportTax ?? 0) : 0
-    if (o.defaultSupplier || useSnapshot) {
-      fulfillmentCogs += shipFirst + shipAdditional * Math.max(0, totalQty - 1) + importTaxPerUnit * totalQty
-    }
+    fulfillmentCogs += estimateOrderCostAndProfit(o.expectedPayout, productLines(o.lines))?.estimatedCogs ?? 0
   }
   const fulfillmentProfit = fulfillmentRevenue - fulfillmentCogs
 

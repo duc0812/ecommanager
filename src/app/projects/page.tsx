@@ -262,6 +262,12 @@ export default function ProjectDashboard() {
             ) : analytics ? (
               <div className="space-y-xl">
                 {selectedProject && (
+                  <section>
+                    <RevenueGoalTracker projectId={selectedProject} />
+                  </section>
+                )}
+
+                {selectedProject && (
                   <ProfitChart
                     projectId={selectedProject}
                     period={chartPeriod}
@@ -347,12 +353,6 @@ export default function ProjectDashboard() {
                   <CostBreakdown analytics={analytics} />
                   <MetaAccountSpend accounts={analytics.spendByAccount} />
                 </div>
-
-                {selectedProject && (
-                  <section>
-                    <RevenueGoalTracker projectId={selectedProject} />
-                  </section>
-                )}
 
                 {selectedStaff === 'all' && currentProject && currentProject.assignments.length > 0 && (
                   <ProjectStaff assignments={currentProject.assignments} onSelect={setSelectedStaff} />

@@ -8,6 +8,8 @@ type PeriodMetrics = {
   from: string
   to: string
   orders: number
+  mappedOrders: number
+  unmappedOrders: number
   revenue: number
   adSpend: number
   orderProfit: number
@@ -89,11 +91,6 @@ export default function OverviewPage() {
     try {
       await fetch('/api/shopify/orders/sync', { method: 'POST' })
       await Promise.all([
-        fetch('/api/fulfillment/orders/recalculate-costs', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({}),
-        }),
         fetch('/api/meta/sync-insights', { method: 'POST' }),
         fetch('/api/trello/sync', { method: 'POST' }),
       ])
@@ -181,7 +178,12 @@ export default function OverviewPage() {
                   value={fmtUSD(pm.netProfit)}
                   negative={pm.netProfit < 0}
                 />
-                <StatCard label="Đơn hàng" value={fmtNum(pm.orders)} sub={`AOV: ${fmtUSD(pm.avgOrderValue)}`} icon="shopping_bag" />
+                <StatCard
+                  label="Đơn hàng"
+                  value={fmtNum(pm.orders)}
+                  sub={pm.unmappedOrders > 0 ? `${pm.unmappedOrders} chưa map · AOV: ${fmtUSD(pm.avgOrderValue)}` : `AOV: ${fmtUSD(pm.avgOrderValue)}`}
+                  icon="shopping_bag"
+                />
                 <StatCard label="Doanh thu" value={fmtUSD(pm.revenue)} sub={`Margin ${pm.avgMargin.toFixed(1)}%`} icon="storefront" positive />
                 <StatCard label="Ad Spend" value={fmtUSD(pm.adSpend)} sub={`ROAS ${pm.roas.toFixed(2)}x`} icon="campaign" negative />
               </div>
@@ -199,8 +201,8 @@ export default function OverviewPage() {
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-lg mb-xl">
                 <MiniCard label="Order Profit" value={fmtUSD(pm.orderProfit)} color="positive" />
                 <MiniCard label="ROAS" value={`${pm.roas.toFixed(2)}x`} color={pm.roas >= 3 ? 'positive' : 'warn'} />
-                <MiniCard label="Avg Margin" value={`${pm.avgMargin.toFixed(1)}%`} color={pm.avgMargin >= 25 ? 'positive' : 'warn'} />
-                <MiniCard label="Unfulfilled" value={fmtNum(pm.unfulfilledOrders)} color={pm.unfulfilledOrders > 0 ? 'warn' : 'neutral'} />
+                <MiniCard label="Ad ROI" value={pm.adSpend > 0 ? `${((pm.netProfit / pm.adSpend) * 100).toFixed(1)}%` : '—'} color={pm.netProfit / pm.adSpend >= 1 ? 'positive' : pm.netProfit >= 0 ? 'warn' : 'neutral'} />
+                <MiniCard label="Net Margin" value={pm.revenue > 0 ? `${((pm.netProfit / pm.revenue) * 100).toFixed(1)}%` : '—'} color={pm.netProfit / pm.revenue >= 0.1 ? 'positive' : pm.netProfit >= 0 ? 'warn' : 'neutral'} />
               </div>
             ) : (
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-lg mb-xl">

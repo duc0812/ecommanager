@@ -1,30 +1,62 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
-import { computeOrderProfitFromDb } from '@/lib/order-profit'
+import { estimateOrderCostAndProfit } from '@/lib/order-profit'
 
-function getPeriodRange(period: string, from?: string | null, to?: string | null) {
-  const now = new Date()
-  const todayStr = now.toISOString().split('T')[0]
+function dateKeyInZone(date: Date, timeZone: string) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date).map(p => [p.type, p.value]))
+  return `${parts.year}-${parts.month}-${parts.day}`
+}
 
-  if (period === 'custom' && from && to) {
-    return { from: new Date(`${from}T00:00:00.000Z`), to: new Date(`${to}T23:59:59.999Z`) }
-  }
-  if (period === 'today') {
-    return { from: new Date(`${todayStr}T00:00:00.000Z`), to: new Date(`${todayStr}T23:59:59.999Z`) }
-  }
+function zonedDayStartUtc(dateKey: string, timeZone: string) {
+  const [year, month, day] = dateKey.split('-').map(Number)
+  const naiveUtc = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0))
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).formatToParts(naiveUtc).map(p => [p.type, p.value]))
+  const zoneAsUtc = Date.UTC(
+    Number(parts.year),
+    Number(parts.month) - 1,
+    Number(parts.day),
+    Number(parts.hour === '24' ? '00' : parts.hour),
+    Number(parts.minute),
+    Number(parts.second),
+  )
+  return new Date(naiveUtc.getTime() - (zoneAsUtc - naiveUtc.getTime()))
+}
+
+function addDays(dateKey: string, days: number) {
+  const [year, month, day] = dateKey.split('-').map(Number)
+  return new Date(Date.UTC(year, month - 1, day + days, 0, 0, 0, 0)).toISOString().split('T')[0]
+}
+
+function getPeriodRange(period: string, timeZone: string, from?: string | null, to?: string | null) {
+  const todayStr = dateKeyInZone(new Date(), timeZone)
+  const buildRange = (fromKey: string, toKey: string) => ({
+    from: zonedDayStartUtc(fromKey, timeZone),
+    to: new Date(zonedDayStartUtc(addDays(toKey, 1), timeZone).getTime() - 1),
+    fromKey,
+    toKey,
+  })
+
+  if (period === 'custom' && from && to) return buildRange(from, to)
+  if (period === 'today') return buildRange(todayStr, todayStr)
   if (period === 'this-week') {
-    const dow = now.getUTCDay()
-    const monday = new Date(now)
-    monday.setUTCDate(now.getUTCDate() - ((dow + 6) % 7))
-    const mondayStr = monday.toISOString().split('T')[0]
-    return { from: new Date(`${mondayStr}T00:00:00.000Z`), to: new Date(`${todayStr}T23:59:59.999Z`) }
+    const dow = new Date(`${todayStr}T12:00:00.000Z`).getUTCDay()
+    return buildRange(addDays(todayStr, -((dow + 6) % 7)), todayStr)
   }
-  // default: this-month
-  const monthStr = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`
-  return {
-    from: new Date(`${monthStr}-01T00:00:00.000Z`),
-    to: new Date(`${todayStr}T23:59:59.999Z`),
-  }
+  return buildRange(`${todayStr.slice(0, 7)}-01`, todayStr)
 }
 
 export async function GET(req: NextRequest) {
@@ -33,16 +65,24 @@ export async function GET(req: NextRequest) {
   if (!projectId) return NextResponse.json({ error: 'projectId required' }, { status: 400 })
 
   const period = searchParams.get('period') ?? 'this-month'
-  const { from, to } = getPeriodRange(period, searchParams.get('from'), searchParams.get('to'))
 
   try {
-    // Lấy orders của project trong khoảng thời gian
+    const project = await prisma.project.findUnique({
+      where: { id: projectId },
+      select: { shopifyStore: { select: { ianaTimezone: true } } },
+    })
+    const timeZone = project?.shopifyStore?.ianaTimezone ?? 'UTC'
+    const { from, to, fromKey, toKey } = getPeriodRange(period, timeZone, searchParams.get('from'), searchParams.get('to'))
+
     const orders = await prisma.order.findMany({
       where: { projectId, placedAt: { gte: from, lte: to } },
       include: {
         lines: {
           select: {
             qty: true,
+            sku: true,
+            productTitle: true,
+            resolvedSupplierId: true,
             resolvedBaseCost: true,
             resolvedShipFirst: true,
             resolvedShipAdditional: true,
@@ -53,61 +93,54 @@ export async function GET(req: NextRequest) {
       orderBy: { placedAt: 'asc' },
     })
 
-    // Lấy MetaAdAccount của project để query DailyAdSpend
     const metaAccounts = await prisma.metaAdAccount.findMany({
       where: { projectId },
       select: { id: true },
     })
     const accountIds = metaAccounts.map(a => a.id)
-
-    const fromDate = from.toISOString().split('T')[0]
-    const toDate = to.toISOString().split('T')[0]
-
     const dailySpends = accountIds.length > 0
       ? await prisma.dailyAdSpend.findMany({
-          where: { adAccountId: { in: accountIds }, date: { gte: fromDate, lte: toDate } },
+          where: { adAccountId: { in: accountIds }, date: { gte: fromKey, lte: toKey } },
         })
       : []
 
-    // Tổng spend theo ngày
     const spendByDate: Record<string, number> = {}
     for (const ds of dailySpends) {
       spendByDate[ds.date] = (spendByDate[ds.date] ?? 0) + ds.spend
     }
 
-    // Group orders theo ngày
     const dayMap: Record<string, { orders: number; ordersUnmapped: number; revenue: number; profit: number }> = {}
-
     for (const order of orders) {
-      const dateKey = order.placedAt.toISOString().split('T')[0]
+      const dateKey = dateKeyInZone(order.placedAt, timeZone)
       if (!dayMap[dateKey]) dayMap[dateKey] = { orders: 0, ordersUnmapped: 0, revenue: 0, profit: 0 }
 
-      const profit = computeOrderProfitFromDb(order.expectedPayout, order.lines)
-
-      if (profit === null) {
+      const productLines = order.lines.filter(line => {
+        if (line.sku) return true
+        const title = line.productTitle.toLowerCase().trim()
+        return title !== 'tip' && title !== 'shipping protection'
+      })
+      const estimate = estimateOrderCostAndProfit(order.expectedPayout, productLines)
+      dayMap[dateKey].orders++
+      dayMap[dateKey].revenue += order.grossAmount
+      if (estimate?.hasUnmapped) {
         dayMap[dateKey].ordersUnmapped++
-      } else {
-        dayMap[dateKey].orders++
-        dayMap[dateKey].revenue += order.grossAmount
-        dayMap[dateKey].profit += profit
       }
+      dayMap[dateKey].profit += estimate?.profit ?? 0
     }
 
-    // Build daily series — fill in missing days with zeros
     const dailyData = []
-    const cursor = new Date(from)
-    while (cursor <= to) {
-      const dateStr = cursor.toISOString().split('T')[0]
-      const day = dayMap[dateStr] ?? { orders: 0, ordersUnmapped: 0, revenue: 0, profit: 0 }
+    let cursor = fromKey
+    while (cursor <= toKey) {
+      const day = dayMap[cursor] ?? { orders: 0, ordersUnmapped: 0, revenue: 0, profit: 0 }
       dailyData.push({
-        date: dateStr,
+        date: cursor,
         orders: day.orders,
         ordersUnmapped: day.ordersUnmapped,
         revenue: Math.round(day.revenue * 100) / 100,
         profit: Math.round(day.profit * 100) / 100,
-        adSpend: Math.round((spendByDate[dateStr] ?? 0) * 100) / 100,
+        adSpend: Math.round((spendByDate[cursor] ?? 0) * 100) / 100,
       })
-      cursor.setUTCDate(cursor.getUTCDate() + 1)
+      cursor = addDays(cursor, 1)
     }
 
     const totalOrders = dailyData.reduce((s, d) => s + d.orders, 0)
@@ -130,6 +163,7 @@ export async function GET(req: NextRequest) {
         avgMargin,
         avgOrderProfit,
       },
+      period: { from: fromKey, to: toKey, timeZone },
     })
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Unknown error'

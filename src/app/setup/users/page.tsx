@@ -2,15 +2,33 @@
 import { useEffect, useState } from 'react'
 import Sidebar from '@/components/Sidebar'
 import { RoleGate } from '@/components/RoleGate'
-import { ROLE_LABELS, UserRole } from '@/lib/roles'
+import {
+  accessSummary,
+  DEFAULT_ROLE_PERMISSIONS,
+  FeaturePermission,
+  FEATURE_GROUPS,
+  FEATURE_LABELS,
+  ROLE_LABELS,
+  UserRole,
+} from '@/lib/roles'
 
-type AppUser = { id: string; name: string; email: string; role: UserRole; status: string; createdAt: string }
+type AppUser = {
+  id: string
+  name: string
+  email: string
+  role: UserRole
+  permissions: FeaturePermission[]
+  status: string
+  createdAt: string
+}
 
 export default function UsersPage() {
   const [users, setUsers] = useState<AppUser[]>([])
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [role, setRole] = useState<UserRole>('SELLER')
+  const [permissions, setPermissions] = useState<FeaturePermission[]>(DEFAULT_ROLE_PERMISSIONS.SELLER)
+  const [editingId, setEditingId] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
 
   async function load() {
@@ -19,17 +37,43 @@ export default function UsersPage() {
 
   useEffect(() => { load() }, [])
 
-  async function createUser() {
+  function changeRole(next: UserRole) {
+    setRole(next)
+    setPermissions(DEFAULT_ROLE_PERMISSIONS[next])
+  }
+
+  function togglePermission(permission: FeaturePermission) {
+    setPermissions(current => {
+      if (current.includes(permission)) return current.filter(item => item !== permission)
+      return [...current, permission]
+    })
+  }
+
+  function editUser(user: AppUser) {
+    setEditingId(user.id)
+    setName(user.name)
+    setEmail(user.email)
+    setRole(user.role)
+    setPermissions(user.permissions)
+  }
+
+  function resetForm() {
+    setEditingId(null)
+    setName('')
+    setEmail('')
+    setRole('SELLER')
+    setPermissions(DEFAULT_ROLE_PERMISSIONS.SELLER)
+  }
+
+  async function saveUser() {
     if (!name || !email) return
     setSaving(true)
     await fetch('/api/users', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, email, role }),
+      body: JSON.stringify({ name, email, role, permissions }),
     })
-    setName('')
-    setEmail('')
-    setRole('SELLER')
+    resetForm()
     await load()
     setSaving(false)
   }
@@ -47,23 +91,60 @@ export default function UsersPage() {
         <header className="mb-xl">
           <p className="text-label-sm uppercase tracking-wider text-on-surface-variant">Setup</p>
           <h2 className="text-display-md font-bold text-primary">Users & Roles</h2>
-          <p className="mt-xs text-body-md text-on-surface-variant">Super Admin manages users. Admin can view all data but cannot access setup.</p>
+          <p className="mt-xs text-body-md text-on-surface-variant">Super Admin grants feature access for each user.</p>
         </header>
 
         <div className="grid grid-cols-1 lg:grid-cols-[380px_1fr] gap-xl">
           <section className="rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-lg">
-            <h3 className="text-headline-sm text-primary mb-md">Add User</h3>
+            <h3 className="text-headline-sm text-primary mb-md">{editingId ? 'Edit User Access' : 'Add User'}</h3>
             <div className="space-y-md">
               <input value={name} onChange={e => setName(e.target.value)} placeholder="Name" className="w-full rounded-lg border border-outline-variant/30 bg-surface-container px-md py-sm outline-none" />
-              <input value={email} onChange={e => setEmail(e.target.value)} placeholder="Email" className="w-full rounded-lg border border-outline-variant/30 bg-surface-container px-md py-sm outline-none" />
-              <select value={role} onChange={e => setRole(e.target.value as UserRole)} className="w-full rounded-lg border border-outline-variant/30 bg-surface-container px-md py-sm outline-none">
+              <input value={email} onChange={e => setEmail(e.target.value)} placeholder="Email" disabled={!!editingId} className="w-full rounded-lg border border-outline-variant/30 bg-surface-container px-md py-sm outline-none disabled:opacity-60" />
+              <select value={role} onChange={e => changeRole(e.target.value as UserRole)} className="w-full rounded-lg border border-outline-variant/30 bg-surface-container px-md py-sm outline-none">
                 <option value="ADMIN">Admin</option>
                 <option value="SELLER">Seller</option>
                 <option value="SUPPORT">Support</option>
               </select>
-              <button onClick={createUser} disabled={saving || !name || !email} className="w-full rounded-lg bg-secondary py-md text-label-md font-semibold text-on-secondary disabled:opacity-50">
-                {saving ? 'Saving...' : 'Save User'}
-              </button>
+              <div className="space-y-md rounded-lg border border-outline-variant/20 bg-surface-container-low p-md">
+                <div className="flex items-center justify-between gap-md">
+                  <p className="text-label-md font-semibold text-primary">Feature Access</p>
+                  <button
+                    onClick={() => setPermissions(DEFAULT_ROLE_PERMISSIONS[role])}
+                    className="text-label-sm text-secondary hover:underline"
+                    type="button"
+                  >
+                    Role default
+                  </button>
+                </div>
+                {FEATURE_GROUPS.map(group => (
+                  <div key={group.label}>
+                    <p className="mb-xs text-label-sm uppercase tracking-wider text-on-surface-variant">{group.label}</p>
+                    <div className="space-y-xs">
+                      {group.permissions.map(permission => (
+                        <label key={permission} className="flex cursor-pointer items-center gap-sm text-body-sm">
+                          <input
+                            type="checkbox"
+                            checked={permissions.includes(permission)}
+                            onChange={() => togglePermission(permission)}
+                            className="h-4 w-4 accent-secondary"
+                          />
+                          <span>{FEATURE_LABELS[permission]}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="flex gap-sm">
+                <button onClick={saveUser} disabled={saving || !name || !email} className="flex-1 rounded-lg bg-secondary py-md text-label-md font-semibold text-on-secondary disabled:opacity-50">
+                  {saving ? 'Saving...' : editingId ? 'Update Access' : 'Save User'}
+                </button>
+                {editingId && (
+                  <button onClick={resetForm} className="rounded-lg border border-outline-variant/30 px-md py-md text-label-md text-on-surface-variant">
+                    Cancel
+                  </button>
+                )}
+              </div>
             </div>
           </section>
 
@@ -85,15 +166,17 @@ export default function UsersPage() {
                       <p className="text-label-sm text-on-surface-variant">{user.email}</p>
                     </td>
                     <td className="px-lg py-md text-body-sm">{ROLE_LABELS[user.role]}</td>
-                    <td className="px-lg py-md text-body-sm text-on-surface-variant">
-                      {user.role === 'SUPERADMIN' && 'All data + setup'}
-                      {user.role === 'ADMIN' && 'All data, no setup'}
-                      {user.role === 'SELLER' && 'Project Management only'}
-                      {user.role === 'SUPPORT' && 'Fulfillment + Other Bills'}
+                    <td className="max-w-[420px] px-lg py-md text-body-sm text-on-surface-variant">
+                      {accessSummary(user.role, user.permissions)}
                     </td>
                     <td className="px-lg py-md"><span className="rounded-full bg-on-tertiary-container/15 px-sm py-xs text-label-sm text-on-tertiary-container">{user.status}</span></td>
-                    <td className="px-lg py-md">
-                      {user.role !== 'SUPERADMIN' && <button onClick={() => deleteUser(user.id)} className="text-error text-label-sm hover:underline">Delete</button>}
+                    <td className="px-lg py-md text-right">
+                      {user.role !== 'SUPERADMIN' && (
+                        <div className="flex justify-end gap-sm">
+                          <button onClick={() => editUser(user)} className="text-secondary text-label-sm hover:underline">Edit</button>
+                          <button onClick={() => deleteUser(user.id)} className="text-error text-label-sm hover:underline">Delete</button>
+                        </div>
+                      )}
                     </td>
                   </tr>
                 ))}

@@ -1,10 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { fetchAllPayouts, fetchBalance, fetchBankAccounts, getCredentialsFromRequest } from '@/lib/shopify'
 import { getShopifyConnection } from '@/lib/token-store'
+import { SHOPIFY_PAYOUT_START_DATE } from '@/lib/shopify-payout-policy'
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
-  const date_min = searchParams.get('date_min') ?? undefined
+  const requestedDateMin = searchParams.get('date_min') ?? undefined
+  const date_min = requestedDateMin && requestedDateMin > SHOPIFY_PAYOUT_START_DATE
+    ? requestedDateMin
+    : SHOPIFY_PAYOUT_START_DATE
   const date_max = searchParams.get('date_max') ?? undefined
 
   try {
@@ -73,6 +77,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       stats,
+      payout_start_date: SHOPIFY_PAYOUT_START_DATE,
       balance: balanceResult,
       bankAccounts,
       bankAccountsError,

@@ -2,8 +2,8 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useState } from 'react'
-import { RoleSwitcher, getCurrentRole } from '@/components/RoleGate'
-import { UserRole, visibleFor } from '@/lib/roles'
+import { RoleSwitcher, getCurrentAccess } from '@/components/RoleGate'
+import { FeaturePermission, UserRole, visibleFor } from '@/lib/roles'
 
 type NavItem = { type: 'item' | 'child'; href: string; icon: string; label: string }
 type NavGroup = { type: 'group'; label: string }
@@ -12,6 +12,9 @@ type NavEntry = NavItem | NavGroup | NavDivider
 
 const nav: NavEntry[] = [
   { type: 'item', href: '/', icon: 'dashboard', label: 'Overview' },
+  { type: 'divider' },
+  { type: 'group', label: 'Project Management' },
+  { type: 'child', href: '/projects', icon: 'analytics', label: 'Dashboard' },
   { type: 'divider' },
   { type: 'group', label: 'Finance' },
   { type: 'child', href: '/shopify', icon: 'payments', label: 'Shopify' },
@@ -30,9 +33,6 @@ const nav: NavEntry[] = [
   { type: 'child', href: '/tools/spy-idea', icon: 'travel_explore', label: 'Spy Idea' },
   { type: 'child', href: '/tools/resources', icon: 'dns', label: 'Resources' },
   { type: 'divider' },
-  { type: 'group', label: 'Project Management' },
-  { type: 'child', href: '/projects', icon: 'analytics', label: 'Dashboard' },
-  { type: 'divider' },
   { type: 'group', label: 'Setup' },
   { type: 'child', href: '/setup', icon: 'store', label: 'Store' },
   { type: 'child', href: '/setup/meta', icon: 'campaign', label: 'Meta' },
@@ -44,9 +44,14 @@ const nav: NavEntry[] = [
 export default function Sidebar() {
   const pathname = usePathname()
   const [role, setRole] = useState<UserRole>('SUPERADMIN')
+  const [permissions, setPermissions] = useState<FeaturePermission[]>([])
 
   useEffect(() => {
-    const update = () => setRole(getCurrentRole())
+    const update = () => {
+      const access = getCurrentAccess()
+      setRole(access.role)
+      setPermissions(access.permissions)
+    }
     update()
     window.addEventListener('role-change', update)
     return () => window.removeEventListener('role-change', update)
@@ -71,7 +76,7 @@ export default function Sidebar() {
               </p>
             )
           }
-          if (!visibleFor(role, entry.href)) return null
+          if (!visibleFor(role, entry.href, permissions)) return null
           const isChild = entry.type === 'child'
           const active = pathname === entry.href || (entry.href !== '/' && pathname.startsWith(entry.href))
           return (
@@ -95,7 +100,7 @@ export default function Sidebar() {
 
       <div className="px-md mt-auto">
         <div className="px-md py-sm rounded-lg bg-white/5">
-          <p className="mb-xs text-on-primary/40 text-label-sm">Current role</p>
+          <p className="mb-xs text-on-primary/40 text-label-sm">Current user</p>
           <RoleSwitcher />
         </div>
       </div>

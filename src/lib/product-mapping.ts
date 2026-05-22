@@ -97,24 +97,7 @@ export function resolveByProductBase(
   }
 
   if (!shopifyProductType) {
-    // Fallback: match by variantConditions only — only for bases that have at least 1 condition
-    const fallbackBase = productBases.find(b => {
-      let conditions: VariantCondition[]
-      try { conditions = JSON.parse(b.variantConditions) } catch { return false }
-      if (conditions.length === 0) return false
-      const normalizedOptions: Record<string, string> = {}
-      for (const [k, v] of Object.entries(variantOptions)) normalizedOptions[normalize(k)] = normalize(v)
-      return conditions.every(cond => {
-        const optVal = normalizedOptions[normalize(cond.optionName)]
-        if (optVal === undefined) return false
-        if (cond.value !== undefined) return valueMatches(optVal, cond.value)
-        if (cond.anyOf !== undefined) return cond.anyOf.some(v => valueMatches(optVal, v))
-        return false
-      })
-    })
-    if (!fallbackBase) return { supplierProductId: null, resolvedVia: 'unresolved' }
-    const sorted = [...fallbackBase.supplierMappings].sort((a, b) => a.preferenceRank - b.preferenceRank)
-    if (sorted.length > 0) return { supplierProductId: sorted[0].supplierProductId, resolvedVia: 'product_base_rank' }
+    // Require productType unless a manual variant mapping exists.
     return { supplierProductId: null, resolvedVia: 'unresolved' }
   }
 

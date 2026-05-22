@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { SHOPIFY_PAYOUT_DATE_WHERE, SHOPIFY_PAYOUT_START_DATE } from '@/lib/shopify-payout-policy'
 
 export async function GET() {
   const store = await prisma.shopifyStore.findFirst({
@@ -8,11 +9,12 @@ export async function GET() {
   })
 
   const payouts = await prisma.payout.findMany({
+    where: { date: SHOPIFY_PAYOUT_DATE_WHERE },
     orderBy: { date: 'desc' },
   })
 
   if (payouts.length === 0) {
-    return NextResponse.json({ empty: true, lastSyncAt: store?.lastSyncAt ?? null })
+    return NextResponse.json({ empty: true, payout_start_date: SHOPIFY_PAYOUT_START_DATE, lastSyncAt: store?.lastSyncAt ?? null })
   }
 
   const paidPayouts = payouts.filter(p => p.status === 'paid')
@@ -64,6 +66,7 @@ export async function GET() {
 
   return NextResponse.json({
     fromDB: true,
+    payout_start_date: SHOPIFY_PAYOUT_START_DATE,
     lastSyncAt: store?.lastSyncAt ?? null,
     stats: {
       total_payouts: payouts.length,
