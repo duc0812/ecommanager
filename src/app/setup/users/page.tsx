@@ -30,6 +30,32 @@ export default function UsersPage() {
   const [permissions, setPermissions] = useState<FeaturePermission[]>(DEFAULT_ROLE_PERMISSIONS.SELLER)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [passwordUserId, setPasswordUserId] = useState<string | null>(null)
+  const [newPassword, setNewPassword] = useState('')
+  const [passwordSaving, setPasswordSaving] = useState(false)
+  const [passwordError, setPasswordError] = useState('')
+
+  async function savePassword() {
+    if (!passwordUserId || newPassword.length < 6) {
+      setPasswordError('Password phải có ít nhất 6 ký tự')
+      return
+    }
+    setPasswordSaving(true)
+    setPasswordError('')
+    const res = await fetch(`/api/users/${passwordUserId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: newPassword }),
+    })
+    if (res.ok) {
+      setPasswordUserId(null)
+      setNewPassword('')
+    } else {
+      const data = await res.json()
+      setPasswordError(data.error || 'Lỗi khi lưu password')
+    }
+    setPasswordSaving(false)
+  }
 
   async function load() {
     setUsers(await fetch('/api/users').then(r => r.json()))
@@ -171,12 +197,15 @@ export default function UsersPage() {
                     </td>
                     <td className="px-lg py-md"><span className="rounded-full bg-on-tertiary-container/15 px-sm py-xs text-label-sm text-on-tertiary-container">{user.status}</span></td>
                     <td className="px-lg py-md text-right">
-                      {user.role !== 'SUPERADMIN' && (
-                        <div className="flex justify-end gap-sm">
-                          <button onClick={() => editUser(user)} className="text-secondary text-label-sm hover:underline">Edit</button>
-                          <button onClick={() => deleteUser(user.id)} className="text-error text-label-sm hover:underline">Delete</button>
-                        </div>
-                      )}
+                      <div className="flex justify-end gap-sm">
+                        <button onClick={() => { setPasswordUserId(user.id); setNewPassword(''); setPasswordError('') }} className="text-on-surface-variant text-label-sm hover:underline">Set Password</button>
+                        {user.role !== 'SUPERADMIN' && (
+                          <>
+                            <button onClick={() => editUser(user)} className="text-secondary text-label-sm hover:underline">Edit</button>
+                            <button onClick={() => deleteUser(user.id)} className="text-error text-label-sm hover:underline">Delete</button>
+                          </>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -186,6 +215,31 @@ export default function UsersPage() {
         </div>
       </main>
     </div>
+    {passwordUserId && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+        <div className="w-full max-w-sm rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-xl shadow-card">
+          <h3 className="text-headline-sm text-primary mb-md">Set Password</h3>
+          <div className="space-y-md">
+            <input
+              type="password"
+              placeholder="Password mới (tối thiểu 6 ký tự)"
+              value={newPassword}
+              onChange={e => setNewPassword(e.target.value)}
+              className="w-full rounded-lg border border-outline-variant/30 bg-surface-container px-md py-sm outline-none"
+            />
+            {passwordError && <p className="text-label-sm text-error">{passwordError}</p>}
+            <div className="flex gap-sm">
+              <button onClick={savePassword} disabled={passwordSaving} className="flex-1 rounded-lg bg-secondary py-md text-label-md font-semibold text-on-secondary disabled:opacity-50">
+                {passwordSaving ? 'Đang lưu...' : 'Lưu'}
+              </button>
+              <button onClick={() => setPasswordUserId(null)} className="rounded-lg border border-outline-variant/30 px-md py-md text-label-md text-on-surface-variant">
+                Hủy
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    )}
     </RoleGate>
   )
 }
