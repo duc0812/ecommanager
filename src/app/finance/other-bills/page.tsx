@@ -34,6 +34,7 @@ type Data = {
 const CATEGORIES: [string, string][] = [
   ['APP_TOOL', 'App & Tool'],
   ['SUBSCRIPTION', 'Subscription'],
+  ['SUPPLIER', 'Supplier'],
   ['OFFICE', 'Văn phòng'],
   ['OTHER', 'Khác'],
 ]
@@ -67,6 +68,17 @@ function today() {
   return new Date().toISOString().split('T')[0]
 }
 
+function currentYM() {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+}
+
+function prevYM() {
+  const d = new Date()
+  d.setMonth(d.getMonth() - 1)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+}
+
 function fmtUSD(n: number) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2 }).format(n || 0)
 }
@@ -91,12 +103,30 @@ export default function OtherBillsPage() {
   const [filters, setFilters] = useState({ month: '', projectId: 'all', category: 'all', paymentMethod: 'all' })
 
   // form state
+  const [vendor, setVendor] = useState('')
+  const [category, setCategory] = useState('')
+  const [paymentMethod, setPaymentMethod] = useState('')
   const [currency, setCurrency] = useState('USD')
   const [exchangeRate, setExchangeRate] = useState('')
   const [amount, setAmount] = useState('')
   const [tagInput, setTagInput] = useState('')
   const [tags, setTags] = useState<string[]>([])
   const [paidAt, setPaidAt] = useState(today())
+
+  // pending renewals
+  const [pendingRenewals, setPendingRenewals] = useState<OtherBill[]>([])
+
+  const loadRenewals = useCallback(async () => {
+    const [resLast, resCurr] = await Promise.all([
+      fetch(`/api/finance/other-bills?month=${prevYM()}&category=SUBSCRIPTION`),
+      fetch(`/api/finance/other-bills?month=${currentYM()}&category=SUBSCRIPTION`),
+    ])
+    const [lastData, currData] = await Promise.all([resLast.json(), resCurr.json()])
+    const currVendors = new Set((currData.bills as OtherBill[]).map((b: OtherBill) => b.vendor.toLowerCase()))
+    setPendingRenewals((lastData.bills as OtherBill[]).filter((b: OtherBill) => !currVendors.has(b.vendor.toLowerCase())))
+  }, [])
+
+  useEffect(() => { loadRenewals() }, [loadRenewals])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -124,18 +154,32 @@ export default function OtherBillsPage() {
     setTags(tags.filter(x => x !== t))
   }
 
+  function fillFromBill(bill: OtherBill) {
+    setVendor(bill.vendor)
+    setCategory(bill.category)
+    setAmount(String(bill.amount))
+    setCurrency(bill.currency)
+    setExchangeRate(bill.exchangeRate ? String(bill.exchangeRate) : '')
+    setPaymentMethod(bill.paymentMethod)
+    setPaidAt(today())
+    setTags(parseTags(bill.tags))
+    setTagInput('')
+    setMessage(null)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
     setSaving(true)
     setMessage(null)
     const form = new FormData(e.currentTarget)
     const body: Record<string, unknown> = {
-      vendor: form.get('vendor'),
-      category: form.get('category'),
+      vendor,
+      category,
       amount: Number(amount),
       currency,
-      paidAt: form.get('paidAt'),
-      paymentMethod: form.get('paymentMethod'),
+      paidAt,
+      paymentMethod,
       transactionId: form.get('transactionId') || null,
       note: form.get('note') || null,
       tags: JSON.stringify(tags),
@@ -155,6 +199,9 @@ export default function OtherBillsPage() {
       return
     }
     e.currentTarget.reset()
+    setVendor('')
+    setCategory('')
+    setPaymentMethod('')
     setCurrency('USD')
     setExchangeRate('')
     setAmount('')
@@ -162,7 +209,7 @@ export default function OtherBillsPage() {
     setTags([])
     setTagInput('')
     setMessage('Đã lưu thành công.')
-    await load()
+    await Promise.all([load(), loadRenewals()])
     setSaving(false)
   }
 
@@ -197,18 +244,18 @@ export default function OtherBillsPage() {
             </div>
             <div className="p-lg space-y-md">
               <Field label="Nhà cung cấp *">
-                <input name="vendor" required className={inputCls} />
+                <input required value={vendor} onChange={e => setVendor(e.target.value)} className={inputCls} />
               </Field>
 
               <div className="grid grid-cols-2 gap-md">
                 <Field label="Danh mục *">
-                  <select name="category" required className={inputCls}>
+                  <select required value={category} onChange={e => setCategory(e.target.value)} className={inputCls}>
                     <option value="">-- Chọn --</option>
                     {CATEGORIES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                   </select>
                 </Field>
                 <Field label="Phương thức *">
-                  <select name="paymentMethod" required className={inputCls}>
+                  <select required value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)} className={inputCls}>
                     <option value="">-- Chọn --</option>
                     {PAYMENT_METHODS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                   </select>
@@ -314,6 +361,33 @@ export default function OtherBillsPage() {
               <StatCard icon="category" label="Danh mục nhiều nhất" value={topCat ? catLabel(topCat.category) : '-'} hint={topCat ? fmtUSD(topCat.totalUsd) : '-'} />
               <StatCard icon="folder" label="Dự án" value={String(stats?.distinctProjects ?? 0)} hint="có chi phí" />
             </div>
+
+            {/* Pending Renewals */}
+            {pendingRenewals.length > 0 && (
+              <div className="bg-surface-container-lowest rounded-xl border border-error/30 overflow-hidden">
+                <div className="px-lg py-md border-b border-outline-variant/20 flex items-center gap-sm">
+                  <span className="material-symbols-outlined text-error text-[18px]">autorenew</span>
+                  <h3 className="text-headline-sm text-primary">Cần gia hạn tháng này</h3>
+                  <span className="ml-auto text-label-sm text-on-surface-variant">{pendingRenewals.length} subscription chưa tạo</span>
+                </div>
+                <div className="divide-y divide-outline-variant/10">
+                  {pendingRenewals.map(bill => (
+                    <div key={bill.id} className="px-lg py-md flex items-center gap-md">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-label-md text-primary font-semibold truncate">{bill.vendor}</p>
+                        <p className="text-label-sm text-on-surface-variant">{fmtUSD(bill.amountUsd)}{bill.currency === 'VND' ? ` · ${bill.amount.toLocaleString('vi-VN')} VND` : ''} · {methodLabel(bill.paymentMethod)}</p>
+                      </div>
+                      <button
+                        onClick={() => fillFromBill(bill)}
+                        className="shrink-0 bg-secondary text-on-secondary rounded-lg px-md py-xs text-label-sm font-semibold"
+                      >
+                        Clone
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Filters */}
             <div className="bg-surface-container-lowest rounded-xl border border-outline-variant/20 p-lg">

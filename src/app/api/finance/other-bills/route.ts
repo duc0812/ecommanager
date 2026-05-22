@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { calcAmountUsd } from '@/lib/currency'
 
-const CATEGORIES = ['APP_TOOL', 'SUBSCRIPTION', 'OFFICE', 'OTHER'] as const
+const CATEGORIES = ['APP_TOOL', 'SUBSCRIPTION', 'SUPPLIER', 'OFFICE', 'OTHER'] as const
 const PAYMENT_METHODS = ['CK', 'PINGPONG', 'PO', 'OTHER'] as const
 const CURRENCIES = ['USD', 'VND'] as const
 
