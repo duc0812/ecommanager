@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getPendingMappingQueue, listVariantManualMappings, saveManualMapping } from '@/lib/repos/mapping'
+import { recalculateMissingOrderLineCosts } from '@/lib/repos/order-costs'
 
 export async function GET() {
   const [pending, saved] = await Promise.all([
@@ -22,5 +23,6 @@ export async function POST(req: NextRequest) {
     productBaseId: body.productBaseId ?? null,
     notes: body.notes ?? null,
   })
-  return NextResponse.json({ mapping }, { status: 201 })
+  const refresh = await recalculateMissingOrderLineCosts({ refreshExisting: true })
+  return NextResponse.json({ mapping, refresh }, { status: 201 })
 }

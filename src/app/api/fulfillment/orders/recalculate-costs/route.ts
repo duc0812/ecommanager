@@ -10,6 +10,6 @@ export async function POST(req: NextRequest) {
     ? new Date(`${body.dateTo}T23:59:59.999Z`)
     : undefined
 
-  const result = await recalculateMissingOrderLineCosts({ dateFrom, dateTo })
+  const result = await recalculateMissingOrderLineCosts({ dateFrom, dateTo, refreshExisting: true })
   return NextResponse.json(result)
 }

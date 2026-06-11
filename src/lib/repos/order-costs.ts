@@ -65,14 +65,18 @@ function resolveSupplierProductIdForLine(
   return exact?.id ?? null
 }
 
-export async function recalculateMissingOrderLineCosts(filter: { dateFrom?: Date; dateTo?: Date } = {}) {
+export async function recalculateMissingOrderLineCosts(filter: {
+  dateFrom?: Date
+  dateTo?: Date
+  refreshExisting?: boolean
+} = {}) {
   const [productBases, manualMappings, supplierProducts, lines] = await Promise.all([
     loadProductBasesForResolver(),
     loadVariantManualMappingsForResolver(),
     prisma.supplierProduct.findMany({ include: { supplier: true } }),
     prisma.orderLine.findMany({
       where: {
-        resolvedBaseCost: null,
+        ...(!filter.refreshExisting ? { resolvedBaseCost: null } : {}),
         order: filter.dateFrom || filter.dateTo
           ? {
               placedAt: {
@@ -120,6 +124,21 @@ export async function recalculateMissingOrderLineCosts(filter: { dateFrom?: Date
     )
     const supplierProduct = supplierProductId ? rawSupplierProductById.get(supplierProductId) : null
     if (!supplierProduct) {
+      if (filter.refreshExisting) {
+        await prisma.orderLine.update({
+          where: { id: line.id },
+          data: {
+            resolvedSupplierId: null,
+            resolvedSupplierSku: null,
+            resolvedBaseCost: null,
+            resolvedShipFirst: null,
+            resolvedShipAdditional: null,
+            resolvedImportTax: null,
+            costSnapshotAt: null,
+          },
+        })
+        touchedOrderIds.add(line.orderId)
+      }
       unresolvedLines++
       continue
     }
@@ -224,12 +243,10 @@ export async function recalculateMissingOrderLineCosts(filter: { dateFrom?: Date
       currentStatus,
     })
 
-    if (defaultSupplierId) {
-      await prisma.order.update({
-        where: { id: orderId },
-        data: { defaultSupplierId, pipelineStatus },
-      })
-    }
+    await prisma.order.update({
+      where: { id: orderId },
+      data: { defaultSupplierId, pipelineStatus },
+    })
   }
 
   return {

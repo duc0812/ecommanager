@@ -15,11 +15,12 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
     supplierMappings: body.supplierMappings ?? [],
     overrides: body.overrides ?? [],
   })
-  const refresh = await recalculateMissingOrderLineCosts()
+  const refresh = await recalculateMissingOrderLineCosts({ refreshExisting: true })
   return NextResponse.json({ base, refresh })
 }
 
 export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
   await deleteProductBase(params.id)
-  return NextResponse.json({ ok: true })
+  const refresh = await recalculateMissingOrderLineCosts({ refreshExisting: true })
+  return NextResponse.json({ ok: true, refresh })
 }
