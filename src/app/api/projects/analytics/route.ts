@@ -145,12 +145,6 @@ export async function GET(req: NextRequest) {
   const orderRangeEnd = new Date(zonedDayStartUtc(addDays(endStr, 1), timeZone).getTime() - 1)
   const periodIsValid = startDate <= endDate
 
-  // Without a month/staff filter the Meta columns show the accounts' full history,
-  // matching the Finance page — ad accounts often spend before the project start date.
-  // 2024-01-01 stays inside Meta's 37-month insights lookback limit.
-  const metaAllTime = !staffId && !monthRange
-  const metaSinceStr = metaAllTime ? '2024-01-01' : startStr
-
   const paidMetaStatuses = ['PAID', 'SETTLED', 'COMPLETED']
   const [payouts, metaAccounts, billings, orders] = await Promise.all([
     prisma.payout.findMany({
@@ -170,7 +164,7 @@ export async function GET(req: NextRequest) {
     prisma.metaBilling.findMany({
       where: {
         billingDate: {
-          gte: metaSinceStr,
+          gte: startStr,
           lte: endStr,
         },
         status: { in: paidMetaStatuses },
@@ -229,7 +223,7 @@ export async function GET(req: NextRequest) {
   const untilStr = endStr
   const spendByAccount = periodIsValid ? await Promise.all(metaAccounts.map(async account => {
     try {
-      const spend = await fetchMetaInsightsSpend(account.accountId, account.accessToken, metaSinceStr, untilStr)
+      const spend = await fetchMetaInsightsSpend(account.accountId, account.accessToken, startStr, untilStr)
       return { accountId: account.accountId, accountName: account.accountName, spend, source: 'facebook_insights' }
     } catch (err: any) {
       return { accountId: account.accountId, accountName: account.accountName, spend: 0, source: 'facebook_insights_error', error: err.message }
