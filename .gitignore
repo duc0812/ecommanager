@@ -59,3 +59,7 @@ dev-server.log
 
 # superpowers
 .superpowers/
+
+# one-off scripts with credentials
+set-password.mjs
+seed-*.mjs

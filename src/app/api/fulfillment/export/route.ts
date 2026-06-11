@@ -3,12 +3,7 @@ import { prisma } from '@/lib/db'
 import { getTemplateById, parseTemplateColumns } from '@/lib/repos/templates'
 import { listOrdersWithLines } from '@/lib/repos/orders'
 import { renderCsv, type CsvTemplate as RenderTemplate, type OrderForCsv } from '@/lib/csv-template'
-
-function isNonProductLine(line: { sku: string | null; productTitle: string }) {
-  if (line.sku) return false
-  const title = line.productTitle.toLowerCase().trim()
-  return title === 'tip' || title === 'shipping protection'
-}
+import { isNonProductLine } from '@/lib/order-lines'
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => null)

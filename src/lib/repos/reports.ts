@@ -1,6 +1,7 @@
 import { listOrdersWithLines, type OrderFilter } from './orders'
 import { prisma } from '@/lib/db'
 import { estimateOrderCostAndProfit } from '@/lib/order-profit'
+import { productLinesOnly } from '@/lib/order-lines'
 
 export type PlSummary = {
   orderCount: number
@@ -13,15 +14,7 @@ export type PlSummary = {
   unmappedCount: number
 }
 
-function isNonProductLine(line: { sku: string | null; productTitle: string }) {
-  if (line.sku) return false
-  const title = line.productTitle.toLowerCase().trim()
-  return title === 'tip' || title === 'shipping protection'
-}
-
-function productLines<T extends { sku: string | null; productTitle: string }>(lines: T[]) {
-  return lines.filter(l => !isNonProductLine(l))
-}
+const productLines = productLinesOnly
 
 export async function plSummary(filter: OrderFilter): Promise<PlSummary> {
   const orders = await listOrdersWithLines(filter)
@@ -76,7 +69,7 @@ export async function ordersWithComputedPL(filter: OrderFilter): Promise<Enriche
     const hasUnmappedSku = estimate?.hasUnmapped ?? false
     const productLineNumberById = new Map(mappableLines.map((line, idx) => [line.id, idx + 1]))
     const mappedLineCount = mappableLines.filter(l => l.resolvedSupplierId && l.resolvedBaseCost != null).length
-    const orderSkus = o.lines.map(l => l.sku).filter(Boolean) as string[]
+    const orderSkus = mappableLines.map(l => l.sku).filter(Boolean) as string[]
     const skuDesignReady = orderSkus.length > 0 && orderSkus.every(sku => skuDesignMap.get(sku)?.designReady === true)
     const designReady = o.orderType === 'CUSTOM'
       ? o.designReady

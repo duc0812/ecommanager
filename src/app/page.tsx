@@ -67,6 +67,7 @@ export default function OverviewPage() {
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
   const [lastSyncTime, setLastSyncTime] = useState<string | null>(null)
+  const [syncError, setSyncError] = useState<string | null>(null)
 
   const overviewUrl = `/api/overview?period=${period}${period === 'custom' ? `&date=${selectedDate}` : ''}`
 
@@ -88,14 +89,20 @@ export default function OverviewPage() {
 
   async function handleSync() {
     setSyncing(true)
+    setSyncError(null)
     try {
       await fetch('/api/shopify/orders/sync', { method: 'POST' })
-      await Promise.all([
+      const [metaRes] = await Promise.all([
         fetch('/api/meta/sync-insights', { method: 'POST' }),
         fetch('/api/trello/sync', { method: 'POST' }),
       ])
+      const metaJson = await metaRes.json().catch(() => ({}))
+      const metaErr = metaJson.error ?? (metaJson.errors?.length ? metaJson.errors.join('; ') : null)
+      if (metaErr) setSyncError(`Meta: ${metaErr}`)
       setLastSyncTime(new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }))
       refreshData()
+    } catch (e: any) {
+      setSyncError(e?.message ?? 'Sync thất bại — kiểm tra server có đang chạy không')
     } finally {
       setSyncing(false)
     }
@@ -125,6 +132,13 @@ export default function OverviewPage() {
             )}
           </button>
         </div>
+
+        {syncError && (
+          <div className="mb-lg rounded-xl px-lg py-md flex items-center gap-md bg-error-container/20 border border-error/20">
+            <span className="material-symbols-outlined text-error">error</span>
+            <p className="text-body-sm text-error">{syncError}</p>
+          </div>
+        )}
 
         {/* Period tabs */}
         <div className="flex gap-xs mb-xl flex-wrap">

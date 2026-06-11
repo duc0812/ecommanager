@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { estimateOrderCostAndProfit } from '@/lib/order-profit'
+import { productLinesOnly } from '@/lib/order-lines'
 
 function dateKeyInZone(date: Date, timeZone: string) {
   const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
@@ -114,11 +115,7 @@ export async function GET(req: NextRequest) {
       const dateKey = dateKeyInZone(order.placedAt, timeZone)
       if (!dayMap[dateKey]) dayMap[dateKey] = { orders: 0, ordersUnmapped: 0, revenue: 0, profit: 0 }
 
-      const productLines = order.lines.filter(line => {
-        if (line.sku) return true
-        const title = line.productTitle.toLowerCase().trim()
-        return title !== 'tip' && title !== 'shipping protection'
-      })
+      const productLines = productLinesOnly(order.lines)
       const estimate = estimateOrderCostAndProfit(order.expectedPayout, productLines)
       dayMap[dateKey].orders++
       dayMap[dateKey].revenue += order.grossAmount

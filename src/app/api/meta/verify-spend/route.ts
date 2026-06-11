@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 
-const GRAPH_API_VERSION = process.env.META_GRAPH_API_VERSION ?? 'v19.0'
+const GRAPH_API_VERSION = process.env.META_GRAPH_API_VERSION ?? 'v22.0'
 
 function dateOnly(d: Date) {
   return d.toISOString().split('T')[0]

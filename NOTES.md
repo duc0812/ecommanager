@@ -136,6 +136,18 @@ Last updated: 2026-05-19
 - Enables simple string comparison for filtering: `date >= '2024-01-01'`
 - Analytics API uses this for assignment-based filtering
 
+### Non-product / Digital Order Lines
+- Canonical classifier: `isNonProductLine()` / `productLinesOnly()` in `src/lib/order-lines.ts` — dùng helper này, KHÔNG copy logic inline
+- Sku-less lines "Tip" / "Shipping protection" = non-product (như cũ)
+- **"Custom Text"** (digital add-on, có SKU dạng `LIT2570_1`, variant "Add Text") = digital, KHÔNG cần supplier mapping, KHÔNG cần design file riêng, KHÔNG chặn Trello card / READY_TO_PRODUCTION
+- Trello card vẫn hiển thị Custom Text trong mục "Add-ons (digital)" để designer thấy; "Drive attachment name: {order}_{n}" chỉ đánh số trên line vật lý
+- Thêm sản phẩm digital mới → thêm title vào `DIGITAL_PRODUCT_TITLES` trong `order-lines.ts`
+
+### Meta Insights Sync (DailyAdSpend)
+- `src/lib/sync-meta-insights.ts` — PHẢI follow `paging.next` (Insights API mặc định trả 25 dòng/trang; sync 30 ngày sẽ mất các ngày gần nhất nếu không paginate)
+- Graph API version: `v22.0` (v19.0 đã hết hạn ~02/2026 — gọi sẽ fail)
+- Nightly cron 1:00am America/Denver chạy `syncMetaInsights(2)` để chốt số ngày hôm trước
+
 ### Meta Billing Filter
 - Only `status = 'SETTLED'` records are returned by `db-billing` API
 - All statuses are stored in DB; filtering happens at query time

@@ -2,12 +2,7 @@ import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { getTrelloConfig, getCardsByList } from '@/lib/trello'
 import { findDriveAttachmentForLine } from '@/lib/order-line-assets'
-
-function isNonProductLine(line: { sku: string | null; productTitle: string }) {
-  if (line.sku) return false
-  const title = line.productTitle.toLowerCase().trim()
-  return title === 'tip' || title === 'shipping protection'
-}
+import { isNonProductLine } from '@/lib/order-lines'
 
 function cardMatchesOrder(cardName: string, orderNumber: string, skus: string[]): boolean {
   const normalizedCardName = cardName.toLowerCase()
@@ -66,7 +61,7 @@ export async function POST() {
     })
     const matchedCustomOrderIds = customOrdersMatchedByName
       .filter(o => {
-        const skuLines = o.lines.filter(l => l.sku)
+        const skuLines = o.lines.filter(l => l.sku && !isNonProductLine(l))
         return skuLines.length > 0 &&
           skuLines.every(l => l.resolvedSupplierId) &&
           cardMatchesOrder(card.name, o.shopifyOrderNumber, skuLines.map(l => l.sku).filter(Boolean) as string[])

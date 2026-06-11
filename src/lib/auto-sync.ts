@@ -46,11 +46,28 @@ export async function runAutoSync(): Promise<Record<string, any>> {
   return result
 }
 
+async function runNightlyMetaSync(): Promise<void> {
+  console.log('[nightly-meta-sync] Starting previous-day finalization...')
+  try {
+    const result = await syncMetaInsights(2)
+    await prisma.appSetting.upsert({
+      where: { key: 'last_nightly_meta_sync' },
+      create: { key: 'last_nightly_meta_sync', value: JSON.stringify({ ...result, ranAt: new Date().toISOString() }) },
+      update: { value: JSON.stringify({ ...result, ranAt: new Date().toISOString() }) },
+    })
+    console.log(`[nightly-meta-sync] Done — synced ${result.synced} rows across ${result.accounts} accounts`)
+    if (result.errors.length) console.error('[nightly-meta-sync] Errors:', result.errors)
+  } catch (e: unknown) {
+    console.error('[nightly-meta-sync] Fatal error:', e instanceof Error ? e.message : e)
+  }
+}
+
 export function initAutoSync() {
   if (initialized) return
   initialized = true
-  cron.schedule('* * * * *', () => {
-    runAutoSync().catch(err => console.error('[auto-sync] Error:', err))
-  })
-  console.log('[auto-sync] Initialized — runs every minute')
+  // 1am America/Denver (MDT = UTC-6 in summer, MST = UTC-7 in winter)
+  cron.schedule('0 1 * * *', () => {
+    runNightlyMetaSync().catch(err => console.error('[nightly-meta-sync] Unhandled error:', err))
+  }, { timezone: 'America/Denver' })
+  console.log('[auto-sync] Initialized — nightly Meta sync at 1:00am America/Denver')
 }

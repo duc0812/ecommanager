@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 
-const GRAPH_API_VERSION = process.env.META_GRAPH_API_VERSION ?? 'v19.0'
+const GRAPH_API_VERSION = process.env.META_GRAPH_API_VERSION ?? 'v22.0'
 const DEFAULT_BACKFILL_DAYS = 90
 const RESYNC_OVERLAP_DAYS = 7
 const ACTIVITY_LOOKBACK_DAYS = 7

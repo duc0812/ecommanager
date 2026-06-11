@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { SHOPIFY_PAYOUT_START_DATE } from '@/lib/shopify-payout-policy'
 import { estimateOrderCostAndProfit } from '@/lib/order-profit'
+import { productLinesOnly } from '@/lib/order-lines'
 
 type CostBuckets = {
   fulfillment: number
@@ -71,7 +72,7 @@ function getMonthRange(month: string | null, timeZone: string) {
 }
 
 function graphUrl(path: string, params: Record<string, string>) {
-  const url = new URL(`https://graph.facebook.com/${process.env.META_GRAPH_API_VERSION ?? 'v19.0'}/${path}`)
+  const url = new URL(`https://graph.facebook.com/${process.env.META_GRAPH_API_VERSION ?? 'v22.0'}/${path}`)
   Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, value))
   return url.toString()
 }
@@ -203,11 +204,7 @@ export async function GET(req: NextRequest) {
   let mappedOrderCount = 0
   let unmappedOrderCount = 0
   for (const order of orders) {
-    const productLines = order.lines.filter(line => {
-      if (line.sku) return true
-      const title = line.productTitle.toLowerCase().trim()
-      return title !== 'tip' && title !== 'shipping protection'
-    })
+    const productLines = productLinesOnly(order.lines)
     const estimate = estimateOrderCostAndProfit(order.expectedPayout, productLines)
     if (!estimate) continue
     if (estimate.hasUnmapped) {

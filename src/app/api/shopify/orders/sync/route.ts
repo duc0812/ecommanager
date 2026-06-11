@@ -9,6 +9,7 @@ import { getShopifyConnection } from '@/lib/token-store'
 import { resolveByProductBase } from '@/lib/product-mapping'
 import { loadProductBasesForResolver, loadVariantManualMappingsForResolver } from '@/lib/repos/mapping'
 import { classifyOrderLines, buildTrelloCardContent } from '@/lib/order-classify'
+import { isNonProductLine } from '@/lib/order-lines'
 import { createTrelloCard, addAttachmentToCard, getTrelloConfig, shouldCreateCard } from '@/lib/trello'
 import { extractPreviewCdnUrl } from '@/lib/order-line-assets'
 
@@ -39,10 +40,6 @@ function normalize(v: string | null | undefined): string {
   return (v ?? '').toLowerCase().trim()
 }
 
-function isNonProductLine(title: string) {
-  const normalized = normalize(title)
-  return normalized === 'tip' || normalized === 'shipping protection'
-}
 
 function orderNumberValue(orderName: string | null | undefined) {
   const raw = orderName?.match(/\d+/)?.[0]
@@ -209,7 +206,7 @@ export async function POST(req: NextRequest) {
         })(),
       }))
 
-      const productLines = resolvedLines.filter(r => !isNonProductLine(r.line.title))
+      const productLines = resolvedLines.filter(r => !isNonProductLine({ sku: r.line.sku, productTitle: r.line.title }))
       const hasPendingMapping = productLines.some(r => r.pbResolve.resolvedVia === 'unresolved')
       const allProductLinesMapped = productLines.length > 0 &&
         productLines.every(r => !!r.pbResolve.supplierProductId)
@@ -233,7 +230,7 @@ export async function POST(req: NextRequest) {
             sku: line.sku,
             qty: line.quantity,
             unitPrice: line.unitPrice,
-            isNonProductLine: isNonProductLine(line.title),
+            isNonProductLine: isNonProductLine({ sku: line.sku, productTitle: line.title }),
             resolvedSupplier: pbResolve.supplierProductId
               ? supplierProductById.get(pbResolve.supplierProductId) ?? null
               : null,
@@ -364,7 +361,9 @@ export async function POST(req: NextRequest) {
         if (orderType === 'CUSTOM') {
           needsCard = true
         } else if (orderType === 'NON_CUSTOM') {
-          const skus = o.lines.map(l => l.sku).filter(Boolean) as string[]
+          const skus = o.lines
+            .filter(l => !isNonProductLine({ sku: l.sku, productTitle: l.title }))
+            .map(l => l.sku).filter(Boolean) as string[]
           if (skus.length > 0) {
             const skuDesigns = await prisma.skuDesign.findMany({
               where: { sku: { in: skus } },
@@ -408,7 +407,9 @@ export async function POST(req: NextRequest) {
 
             // For NON_CUSTOM: upsert SkuDesign records with trelloCardId
             if (orderType === 'NON_CUSTOM') {
-              const skus = o.lines.map(l => l.sku).filter(Boolean) as string[]
+              const skus = o.lines
+                .filter(l => !isNonProductLine({ sku: l.sku, productTitle: l.title }))
+                .map(l => l.sku).filter(Boolean) as string[]
               for (const sku of skus) {
                 await prisma.skuDesign.upsert({
                   where: { sku },

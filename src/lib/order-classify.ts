@@ -1,3 +1,5 @@
+import { isNonProductLine } from '@/lib/order-lines'
+
 export type ClassifyLine = {
   sku: string | null
   productTitle: string
@@ -20,7 +22,17 @@ export function buildTrelloCardContent(
   lines: Array<ClassifyLine & { variantTitle: string | null; qty: number }>,
   orderType: OrderType,
 ): { name: string; desc: string } {
-  const productLines = lines.filter(l => l.sku)
+  const skuLines = lines.filter(l => l.sku)
+  const productLines = skuLines.filter(l => !isNonProductLine({ sku: l.sku, productTitle: l.productTitle }))
+  const digitalLines = skuLines.filter(l => isNonProductLine({ sku: l.sku, productTitle: l.productTitle }))
+  const digitalNote = digitalLines.length === 0 ? '' : '\n\n---\n\n**Add-ons (digital):**\n' +
+    digitalLines.map(l => {
+      const attrs = l.customAttributes
+        .filter(a => !a.key.startsWith('_'))
+        .map(a => `${a.key}: ${a.value}`)
+        .join(', ')
+      return `- ${l.productTitle}${l.variantTitle ? ` [${l.variantTitle}]` : ''} x${l.qty}${attrs ? ` — ${attrs}` : ''}`
+    }).join('\n')
   const orderToken = orderName.replace(/^#/, '')
   const skuParts = productLines
     .map(l => `${l.sku}${l.variantTitle ? ` [${l.variantTitle}]` : ''}`)
@@ -52,7 +64,7 @@ export function buildTrelloCardContent(
         (customUrl ? `\nCustomized URL: ${customUrl}` : ''),
       )
     }
-    return { name, desc: sections.join('\n\n---\n\n') }
+    return { name, desc: sections.join('\n\n---\n\n') + digitalNote }
   }
 
   const skuList = productLines
@@ -60,6 +72,6 @@ export function buildTrelloCardContent(
     .join(', ')
   return {
     name,
-    desc: `Design missing - create design for SKU: ${skuList}\n\nProducts: ${lines.map(l => l.productTitle).join(', ')}`,
+    desc: `Design missing - create design for SKU: ${skuList}\n\nProducts: ${lines.map(l => l.productTitle).join(', ')}${digitalNote}`,
   }
 }
