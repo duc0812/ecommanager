@@ -1,6 +1,6 @@
 import { listOrdersWithLines, type OrderFilter } from './orders'
 import { prisma } from '@/lib/db'
-import { estimateOrderCostAndProfit } from '@/lib/order-profit'
+import { estimateOrderCostAndProfit, effectiveBaseCost } from '@/lib/order-profit'
 import { productLinesOnly } from '@/lib/order-lines'
 
 export type PlSummary = {
@@ -68,7 +68,7 @@ export async function ordersWithComputedPL(filter: OrderFilter): Promise<Enriche
     const margin = o.expectedPayout === 0 ? 0 : (profit / o.expectedPayout) * 100
     const hasUnmappedSku = estimate?.hasUnmapped ?? false
     const productLineNumberById = new Map(mappableLines.map((line, idx) => [line.id, idx + 1]))
-    const mappedLineCount = mappableLines.filter(l => l.resolvedSupplierId && l.resolvedBaseCost != null).length
+    const mappedLineCount = mappableLines.filter(l => l.resolvedSupplierId && effectiveBaseCost(l) != null).length
     const orderSkus = mappableLines.map(l => l.sku).filter(Boolean) as string[]
     const skuDesignReady = orderSkus.length > 0 && orderSkus.every(sku => skuDesignMap.get(sku)?.designReady === true)
     const designReady = o.orderType === 'CUSTOM'

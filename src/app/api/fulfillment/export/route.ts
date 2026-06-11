@@ -4,6 +4,7 @@ import { getTemplateById, parseTemplateColumns } from '@/lib/repos/templates'
 import { listOrdersWithLines } from '@/lib/repos/orders'
 import { renderCsv, type CsvTemplate as RenderTemplate, type OrderForCsv } from '@/lib/csv-template'
 import { isNonProductLine } from '@/lib/order-lines'
+import { effectiveBaseCost } from '@/lib/order-profit'
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => null)
@@ -103,8 +104,8 @@ export async function POST(req: NextRequest) {
             supplierVariant2Value: supplierProduct?.variant2Value ?? null,
             previewCdnUrl: l.previewCdnUrl,
             designDriveLink,
-            crogsPrice: l.resolvedBaseCost,
-            crogsTotal: l.resolvedBaseCost == null ? null : l.resolvedBaseCost * l.qty,
+            crogsPrice: effectiveBaseCost(l),
+            crogsTotal: effectiveBaseCost(l) == null ? null : effectiveBaseCost(l)! * l.qty,
           }
         }),
       }
