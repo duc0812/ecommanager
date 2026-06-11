@@ -41,6 +41,8 @@ type OrderRow = {
     unitPrice: number
     resolvedSupplierSku: string | null
     resolvedBaseCost: number | null
+    manualBaseCost: number | null
+    resolvedSupplierId: string | null
     designDriveLink: string | null
     previewCdnUrl: string | null
   }>
@@ -106,6 +108,9 @@ export default function OrdersPage() {
   const [designFilter, setDesignFilter] = useState<'ALL' | 'HAS' | 'MISSING'>('ALL')
   const [trelloFilter, setTrelloFilter] = useState<'ALL' | 'CREATED' | 'NOT_CREATED'>('ALL')
   const [selectedOrder, setSelectedOrder] = useState<OrderRow | null>(null)
+  const [editingLineId, setEditingLineId] = useState<string | null>(null)
+  const [editCost, setEditCost] = useState('')
+  const [savingLineCost, setSavingLineCost] = useState(false)
 
   // Initial fetch of projects and suppliers
   useEffect(() => {
@@ -161,6 +166,32 @@ export default function OrdersPage() {
   }, [queryString, projectId, showUnmappedOnly, typeFilter, designFilter, trelloFilter])
 
   useEffect(() => { load() }, [load])
+
+  async function saveLineCost(lineId: string, value: number | null) {
+    if (savingLineCost) return
+    setSavingLineCost(true)
+    try {
+      const res = await fetch('/api/fulfillment/orders/line-cost', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lineId, manualBaseCost: value }),
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        throw new Error(body.error ?? 'Lưu base cost thất bại')
+      }
+      setEditingLineId(null)
+      setSelectedOrder(prev => prev ? {
+        ...prev,
+        lines: prev.lines.map(l => l.id === lineId ? { ...l, manualBaseCost: value } : l),
+      } : prev)
+      await load()
+    } catch (e: any) {
+      alert(e.message)
+    } finally {
+      setSavingLineCost(false)
+    }
+  }
 
   const syncTrello = async () => {
     setSyncingTrello(true); setTrelloResult('Đang sync Trello...')
@@ -671,6 +702,7 @@ export default function OrdersPage() {
                           <th className="px-md py-sm text-right">Qty</th>
                           <th className="px-md py-sm text-right">Price</th>
                           <th className="px-md py-sm text-right">Total</th>
+                          <th className="px-md py-sm text-right">Base cost</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -683,6 +715,61 @@ export default function OrdersPage() {
                             <td className="px-md py-sm text-right">{line.qty}</td>
                             <td className="px-md py-sm text-right">{fmt(line.unitPrice, selectedOrder.currency)}</td>
                             <td className="px-md py-sm text-right">{fmt(line.unitPrice * line.qty, selectedOrder.currency)}</td>
+                            <td className="px-md py-sm text-right">
+                              {editingLineId === line.id ? (
+                                <input
+                                  autoFocus
+                                  type="number"
+                                  min="0"
+                                  step="0.01"
+                                  value={editCost}
+                                  disabled={savingLineCost}
+                                  onChange={e => setEditCost(e.target.value)}
+                                  onKeyDown={e => {
+                                    if (e.key === 'Enter') {
+                                      const v = parseFloat(editCost)
+                                      if (!isNaN(v) && v >= 0) saveLineCost(line.id, v)
+                                    }
+                                    if (e.key === 'Escape') setEditingLineId(null)
+                                  }}
+                                  onBlur={() => {
+                                    const v = parseFloat(editCost)
+                                    if (!isNaN(v) && v >= 0) saveLineCost(line.id, v)
+                                    else setEditingLineId(null)
+                                  }}
+                                  className="w-[90px] rounded border border-outline-variant/40 px-xs py-[2px] text-right text-body-sm"
+                                />
+                              ) : line.resolvedSupplierId ? (
+                                <span className="inline-flex items-center justify-end gap-xs">
+                                  <button
+                                    onClick={() => {
+                                      setEditingLineId(line.id)
+                                      setEditCost(String(line.manualBaseCost ?? line.resolvedBaseCost ?? ''))
+                                    }}
+                                    title="Click để sửa base cost"
+                                    className="underline decoration-dotted underline-offset-2"
+                                  >
+                                    {(line.manualBaseCost ?? line.resolvedBaseCost) != null
+                                      ? fmt(line.manualBaseCost ?? line.resolvedBaseCost ?? 0, selectedOrder.currency)
+                                      : '—'}
+                                  </button>
+                                  {line.manualBaseCost != null && (
+                                    <>
+                                      <span className="rounded bg-secondary-container px-xs text-label-sm">manual</span>
+                                      <button
+                                        onClick={() => saveLineCost(line.id, null)}
+                                        title="Xóa manual, quay về giá auto"
+                                        className="text-error"
+                                      >
+                                        ✕
+                                      </button>
+                                    </>
+                                  )}
+                                </span>
+                              ) : (
+                                <span>—</span>
+                              )}
+                            </td>
                           </tr>
                         ))}
                       </tbody>
