@@ -9,6 +9,8 @@ export default defineConfig({
     environment: 'node',
     include: ['tests/**/*.test.ts', 'src/**/*.test.ts'],
     testTimeout: 10_000,
+    // Integration suites share the same SQLite dev.db — parallel files cause write contention
+    fileParallelism: false,
   },
   resolve: {
     alias: {

@@ -31,7 +31,7 @@ Migration `add_manual_base_cost`, then `npx prisma generate`, bump `SCHEMA_VERSI
 
 ## API
 
-`PATCH /api/orders/line-cost` — body `{ lineId: string, manualBaseCost: number | null }`
+`PATCH /api/fulfillment/orders/line-cost` — body `{ lineId: string, manualBaseCost: number | null }`
 
 - `manualBaseCost: null` → clear override (revert to auto). Always allowed.
 - `manualBaseCost: number` → must be finite and `>= 0`, and the line must have `resolvedSupplierId` set; otherwise `400`.
