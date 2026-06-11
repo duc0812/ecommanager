@@ -2,9 +2,14 @@ export type OrderLineForProfit = {
   qty: number
   resolvedSupplierId?: string | null
   resolvedBaseCost: number | null
+  manualBaseCost?: number | null
   resolvedShipFirst: number | null
   resolvedShipAdditional: number | null
   resolvedImportTax: number | null
+}
+
+export function effectiveBaseCost(line: Pick<OrderLineForProfit, 'manualBaseCost' | 'resolvedBaseCost'>): number | null {
+  return line.manualBaseCost ?? line.resolvedBaseCost
 }
 
 export type OrderCostEstimate = {
@@ -16,7 +21,7 @@ export type OrderCostEstimate = {
 
 export function computeKnownOrderCogs(lines: OrderLineForProfit[]): number {
   const totalQty = lines.reduce((s, l) => s + l.qty, 0)
-  const baseCost = lines.reduce((s, l) => s + (l.resolvedBaseCost ?? 0) * l.qty, 0)
+  const baseCost = lines.reduce((s, l) => s + (effectiveBaseCost(l) ?? 0) * l.qty, 0)
 
   const dominantLine = lines.find(l => l.resolvedShipFirst !== null) ?? null
   const shipFirst = dominantLine?.resolvedShipFirst ?? 0
@@ -28,7 +33,7 @@ export function computeKnownOrderCogs(lines: OrderLineForProfit[]): number {
 }
 
 export function hasUnmappedProductCost(lines: OrderLineForProfit[]): boolean {
-  return lines.some(l => !l.resolvedSupplierId || l.resolvedBaseCost === null)
+  return lines.some(l => !l.resolvedSupplierId || effectiveBaseCost(l) === null)
 }
 
 export function estimateOrderCostAndProfit(

@@ -64,3 +64,27 @@ describe('estimateOrderCostAndProfit', () => {
     expect(result).toEqual({ knownCogs: 25, estimatedCogs: 62.5, profit: 37.5, hasUnmapped: true })
   })
 })
+
+describe('manualBaseCost override', () => {
+  it('uses manualBaseCost over resolvedBaseCost in cogs', () => {
+    const result = computeOrderProfitFromDb(100, [
+      { qty: 1, resolvedSupplierId: 'sup1', resolvedBaseCost: 40, manualBaseCost: 25, resolvedShipFirst: 5, resolvedShipAdditional: 2, resolvedImportTax: 0 },
+    ])
+    expect(result).toBeCloseTo(100 - 25 - 5, 2)
+  })
+
+  it('line with supplier and only a manual cost is not unmapped', () => {
+    const result = estimateOrderCostAndProfit(100, [
+      { qty: 1, resolvedSupplierId: 'sup1', resolvedBaseCost: null, manualBaseCost: 30, resolvedShipFirst: null, resolvedShipAdditional: null, resolvedImportTax: null },
+    ])
+    expect(result?.hasUnmapped).toBe(false)
+    expect(result?.estimatedCogs).toBeCloseTo(30, 2)
+  })
+
+  it('manual cost without supplier mapping still counts as unmapped', () => {
+    const result = estimateOrderCostAndProfit(100, [
+      { qty: 1, resolvedSupplierId: null, resolvedBaseCost: null, manualBaseCost: 30, resolvedShipFirst: null, resolvedShipAdditional: null, resolvedImportTax: null },
+    ])
+    expect(result?.hasUnmapped).toBe(true)
+  })
+})
