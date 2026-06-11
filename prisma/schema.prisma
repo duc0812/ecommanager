@@ -390,6 +390,7 @@ model OrderLine {
   unitPrice               Float
   resolvedSupplierId      String?
   resolvedBaseCost        Float?
+  manualBaseCost          Float?
   costSnapshotAt          DateTime?
   resolvedShipFirst       Float?
   resolvedShipAdditional  Float?
