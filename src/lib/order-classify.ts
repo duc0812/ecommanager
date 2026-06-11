@@ -3,6 +3,7 @@ import { isNonProductLine } from '@/lib/order-lines'
 export type ClassifyLine = {
   sku: string | null
   productTitle: string
+  shopifyProductType?: string | null
   customAttributes: Array<{ key: string; value: string }>
   productTags: string[]
 }
@@ -23,8 +24,8 @@ export function buildTrelloCardContent(
   orderType: OrderType,
 ): { name: string; desc: string } {
   const skuLines = lines.filter(l => l.sku)
-  const productLines = skuLines.filter(l => !isNonProductLine({ sku: l.sku, productTitle: l.productTitle }))
-  const digitalLines = skuLines.filter(l => isNonProductLine({ sku: l.sku, productTitle: l.productTitle }))
+  const productLines = skuLines.filter(l => !isNonProductLine(l))
+  const digitalLines = skuLines.filter(l => isNonProductLine(l))
   const digitalNote = digitalLines.length === 0 ? '' : '\n\n---\n\n**Add-ons (digital):**\n' +
     digitalLines.map(l => {
       const attrs = l.customAttributes

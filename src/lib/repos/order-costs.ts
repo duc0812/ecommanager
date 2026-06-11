@@ -2,6 +2,7 @@ import { prisma } from '@/lib/db'
 import { autoDetectStatus, isValidPipelineStatus, type PipelineStatus } from '@/lib/pipeline-status'
 import { resolveByProductBase } from '@/lib/product-mapping'
 import { loadProductBasesForResolver, loadVariantManualMappingsForResolver } from '@/lib/repos/mapping'
+import { isNonProductLine } from '@/lib/order-lines'
 
 function normalize(v: string | null | undefined): string {
   return (v ?? '').toLowerCase().trim()
@@ -101,6 +102,7 @@ export async function recalculateMissingOrderLineCosts(filter: { dateFrom?: Date
   const touchedOrderIds = new Set<string>()
 
   for (const line of lines) {
+    if (isNonProductLine(line)) continue
     const selectedOptions = parseVariantOptions(line.variantOptions)
     const result = resolveByProductBase(
       line.shopifyVariantId,
@@ -158,11 +160,19 @@ export async function recalculateMissingOrderLineCosts(filter: { dateFrom?: Date
     },
     select: {
       id: true,
-      lines: { select: { sku: true, resolvedSupplierId: true, resolvedBaseCost: true } },
+      lines: {
+        select: {
+          sku: true,
+          productTitle: true,
+          shopifyProductType: true,
+          resolvedSupplierId: true,
+          resolvedBaseCost: true,
+        },
+      },
     },
   })
   for (const order of mappedPendingOrders) {
-    const skuLines = order.lines.filter(l => l.sku)
+    const skuLines = order.lines.filter(l => l.sku && !isNonProductLine(l))
     if (skuLines.length > 0 && skuLines.every(l => l.resolvedSupplierId && l.resolvedBaseCost != null)) {
       touchedOrderIds.add(order.id)
     }
@@ -181,6 +191,8 @@ export async function recalculateMissingOrderLineCosts(filter: { dateFrom?: Date
         lines: {
           select: {
             sku: true,
+            productTitle: true,
+            shopifyProductType: true,
             resolvedSupplierId: true,
             resolvedBaseCost: true,
             qty: true,
@@ -197,7 +209,7 @@ export async function recalculateMissingOrderLineCosts(filter: { dateFrom?: Date
       qtyBySupplier.set(line.resolvedSupplierId, (qtyBySupplier.get(line.resolvedSupplierId) ?? 0) + line.qty)
     }
     const defaultSupplierId = Array.from(qtyBySupplier.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null
-    const skuLines = order.lines.filter(l => l.sku)
+    const skuLines = order.lines.filter(l => l.sku && !isNonProductLine(l))
     const hasPendingMapping = skuLines.some(l => !l.resolvedSupplierId || l.resolvedBaseCost == null)
     const currentStatus = isValidPipelineStatus(order.pipelineStatus)
       ? order.pipelineStatus as PipelineStatus

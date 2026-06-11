@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db'
 import type { ProductBaseData, VariantManualMappingData } from '@/lib/product-mapping'
+import { isNonProductLine } from '@/lib/order-lines'
 
 // ── ProductBase ───────────────────────────────────────────
 
@@ -156,6 +157,7 @@ export async function getPendingMappingQueue() {
   })
   const seen = new Set<string>()
   return lines.filter(l => {
+    if (isNonProductLine(l)) return false
     if (!l.shopifyVariantId || seen.has(l.shopifyVariantId)) return false
     seen.add(l.shopifyVariantId)
     return true
@@ -233,11 +235,19 @@ export async function saveManualMapping(input: SaveManualMappingInput) {
         select: {
           id: true,
           designReady: true,
-          lines: { select: { sku: true, resolvedSupplierId: true, shopifyVariantId: true } },
+          lines: {
+            select: {
+              sku: true,
+              productTitle: true,
+              shopifyProductType: true,
+              resolvedSupplierId: true,
+              shopifyVariantId: true,
+            },
+          },
         },
       })
       for (const order of orders) {
-        const skuLines = order.lines.filter(l => l.sku)
+        const skuLines = order.lines.filter(l => l.sku && !isNonProductLine(l))
         const willBeMapped = skuLines.length > 0 && skuLines.every(l => l.resolvedSupplierId)
         await tx.order.update({
           where: { id: order.id },

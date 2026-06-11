@@ -126,6 +126,7 @@ export type UpsertOrderInput = {
     previewCdnUrl?: string | null
     designDriveLink?: string | null
     shopifyVariantId?: string | null
+    shopifyProductType?: string | null
     variantOptions?: string | null
   }>
 }
@@ -242,6 +243,7 @@ export async function upsertOrderWithLines(input: UpsertOrderInput) {
           previewCdnUrl: l.previewCdnUrl ?? snap?.previewCdnUrl ?? null,
           designDriveLink: l.designDriveLink ?? snap?.designDriveLink ?? null,
           shopifyVariantId: l.shopifyVariantId ?? null,
+          shopifyProductType: l.shopifyProductType ?? null,
           variantOptions: l.variantOptions ?? null,
         }
       }),

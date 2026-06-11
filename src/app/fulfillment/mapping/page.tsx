@@ -11,6 +11,8 @@ type SupplierProduct = {
   supplier: { id: string; name: string; code: string }
 }
 
+type Supplier = SupplierProduct['supplier']
+
 type SupplierMapping = {
   preferenceRank: number; supplierProductId: string
   supplierProduct: SupplierProduct
@@ -95,9 +97,10 @@ function variantLabel(p: SupplierProduct): string {
 
 // ── Edit Modal ───────────────────────────────────────────────
 function EditModal({
-  base, supplierProducts, onSave, onClose,
+  base, suppliers, supplierProducts, onSave, onClose,
 }: {
   base: ProductBase | null
+  suppliers: Supplier[]
   supplierProducts: SupplierProduct[]
   onSave: (data: any) => Promise<void>
   onClose: () => void
@@ -145,6 +148,11 @@ function EditModal({
     }
     return map
   }, [parentGroups])
+
+  const suppliersWithoutProducts = useMemo(() => {
+    const supplierIds = new Set(supplierProducts.map(p => p.supplier.id))
+    return suppliers.filter(s => !supplierIds.has(s.id))
+  }, [supplierProducts, suppliers])
 
   const generatedVariantRows = useMemo(() => (
     conditions.filter(c => c.anyOf.length > 1 || ['size', 'color'].includes(normalize(c.optionName))).flatMap(c => c.optionName
@@ -263,6 +271,9 @@ function EditModal({
                     {parentGroups.map(g => (
                       <option key={g.key} value={g.representative.id}>{g.label}</option>
                     ))}
+                    {suppliersWithoutProducts.map(s => (
+                      <option key={s.id} disabled>-- {s.name}: setup product/SKU trước --</option>
+                    ))}
                   </select>
                   <button onClick={() => setSupplierMappings(prev => prev.filter((_, j) => j !== i).map((r, j) => ({ ...r, preferenceRank: j + 1 })))} className="text-error text-lg">✕</button>
                 </div>
@@ -337,6 +348,9 @@ function EditModal({
                       {supplierProducts.map(p => (
                         <option key={p.id} value={p.id}>{p.productName ?? p.sku} — {p.supplier.name}</option>
                       ))}
+                      {suppliersWithoutProducts.map(s => (
+                        <option key={s.id} disabled>-- {s.name}: setup product/SKU trước --</option>
+                      ))}
                     </select>
                   </div>
                   <button onClick={() => setOverrides(prev => prev.filter((_, j) => j !== index))} className="text-error text-lg mb-[2px]">✕</button>
@@ -362,6 +376,7 @@ function EditModal({
 export default function MappingPage() {
   const [tab, setTab] = useState<'auto' | 'manual'>('auto')
   const [bases, setBases] = useState<ProductBase[]>([])
+  const [suppliers, setSuppliers] = useState<Supplier[]>([])
   const [supplierProducts, setSupplierProducts] = useState<SupplierProduct[]>([])
   const [pendingLines, setPendingLines] = useState<PendingLine[]>([])
   const [savedMappings, setSavedMappings] = useState<SavedMapping[]>([])
@@ -377,6 +392,7 @@ export default function MappingPage() {
       fetch('/api/fulfillment/mapping/manual').then(r => r.json()),
     ])
     setBases(basesRes.bases ?? [])
+    setSuppliers(spRes.suppliers ?? [])
     setSupplierProducts(spRes.products ?? [])
     setPendingLines(manualRes.pending ?? [])
     setSavedMappings(manualRes.saved ?? [])
@@ -429,6 +445,10 @@ export default function MappingPage() {
   }
 
   const pendingCount = pendingLines.length
+  const suppliersWithoutProducts = useMemo(() => {
+    const supplierIds = new Set(supplierProducts.map(p => p.supplier.id))
+    return suppliers.filter(s => !supplierIds.has(s.id))
+  }, [supplierProducts, suppliers])
 
   return (
     <div className="flex min-h-screen bg-surface">
@@ -559,6 +579,9 @@ export default function MappingPage() {
                         {supplierProducts.map(p => (
                           <option key={p.id} value={p.id}>{p.productName ?? p.sku} — {p.supplier.name} · {p.sku}</option>
                         ))}
+                        {suppliersWithoutProducts.map(s => (
+                          <option key={s.id} disabled>-- {s.name}: setup product/SKU trước --</option>
+                        ))}
                       </select>
                       <button
                         onClick={() => handleSaveManual(line)}
@@ -608,6 +631,7 @@ export default function MappingPage() {
       {editBase !== undefined && (
         <EditModal
           base={editBase}
+          suppliers={suppliers}
           supplierProducts={supplierProducts}
           onSave={handleSaveBase}
           onClose={() => setEditBase(undefined)}
@@ -616,4 +640,3 @@ export default function MappingPage() {
     </div>
   )
 }
-

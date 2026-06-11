@@ -188,6 +188,9 @@ export async function POST(req: NextRequest) {
       const resolvedLines = o.lines.map(l => ({
         line: l,
         pbResolve: (() => {
+          if (isNonProductLine({ sku: l.sku, productTitle: l.title, shopifyProductType: l.productType })) {
+            return { supplierProductId: null, resolvedVia: 'unresolved' as const }
+          }
           const result = resolveByProductBase(
             l.variantId,
             l.productType,
@@ -206,7 +209,11 @@ export async function POST(req: NextRequest) {
         })(),
       }))
 
-      const productLines = resolvedLines.filter(r => !isNonProductLine({ sku: r.line.sku, productTitle: r.line.title }))
+      const productLines = resolvedLines.filter(r => !isNonProductLine({
+        sku: r.line.sku,
+        productTitle: r.line.title,
+        shopifyProductType: r.line.productType,
+      }))
       const hasPendingMapping = productLines.some(r => r.pbResolve.resolvedVia === 'unresolved')
       const allProductLinesMapped = productLines.length > 0 &&
         productLines.every(r => !!r.pbResolve.supplierProductId)
@@ -230,7 +237,11 @@ export async function POST(req: NextRequest) {
             sku: line.sku,
             qty: line.quantity,
             unitPrice: line.unitPrice,
-            isNonProductLine: isNonProductLine({ sku: line.sku, productTitle: line.title }),
+            isNonProductLine: isNonProductLine({
+              sku: line.sku,
+              productTitle: line.title,
+              shopifyProductType: line.productType,
+            }),
             resolvedSupplier: pbResolve.supplierProductId
               ? supplierProductById.get(pbResolve.supplierProductId) ?? null
               : null,
@@ -310,6 +321,7 @@ export async function POST(req: NextRequest) {
             resolvedImportTax: pl.resolvedImportTaxPerUnit,
             previewCdnUrl: extractPreviewCdnUrl(l.customAttributes),
             shopifyVariantId: l.variantId,
+            shopifyProductType: l.productType,
             variantOptions: Object.keys(l.selectedOptions).length > 0 ? JSON.stringify(l.selectedOptions) : null,
             resolvedSupplierSku: resolved.resolvedSupplierId
               ? (resolvedLines[idx]?.pbResolve.supplierProductId
@@ -362,7 +374,7 @@ export async function POST(req: NextRequest) {
           needsCard = true
         } else if (orderType === 'NON_CUSTOM') {
           const skus = o.lines
-            .filter(l => !isNonProductLine({ sku: l.sku, productTitle: l.title }))
+            .filter(l => !isNonProductLine({ sku: l.sku, productTitle: l.title, shopifyProductType: l.productType }))
             .map(l => l.sku).filter(Boolean) as string[]
           if (skus.length > 0) {
             const skuDesigns = await prisma.skuDesign.findMany({
@@ -379,6 +391,7 @@ export async function POST(req: NextRequest) {
             const cardLines = o.lines.map(l => ({
               sku: l.sku,
               productTitle: l.title,
+              shopifyProductType: l.productType,
               customAttributes: l.customAttributes,
               productTags: l.productTags,
               variantTitle: l.variantTitle,
@@ -408,7 +421,7 @@ export async function POST(req: NextRequest) {
             // For NON_CUSTOM: upsert SkuDesign records with trelloCardId
             if (orderType === 'NON_CUSTOM') {
               const skus = o.lines
-                .filter(l => !isNonProductLine({ sku: l.sku, productTitle: l.title }))
+                .filter(l => !isNonProductLine({ sku: l.sku, productTitle: l.title, shopifyProductType: l.productType }))
                 .map(l => l.sku).filter(Boolean) as string[]
               for (const sku of skus) {
                 await prisma.skuDesign.upsert({

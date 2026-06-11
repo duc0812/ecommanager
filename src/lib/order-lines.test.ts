@@ -19,6 +19,18 @@ describe('isNonProductLine', () => {
     expect(isNonProductLine({ sku: 'ABC123_1', productTitle: '  custom text  ' })).toBe(true)
   })
 
+  it('treats Custom Text Shopify product type as digital regardless of title', () => {
+    expect(isNonProductLine({ sku: 'ABC1', productTitle: 'Personalized message', shopifyProductType: ' Custom Text ' })).toBe(true)
+  })
+
+  it('falls back to title when Shopify product type is missing', () => {
+    expect(isNonProductLine({ productTitle: ' Custom Text ', shopifyProductType: null })).toBe(true)
+  })
+
+  it('keeps physical products with a real product type mappable', () => {
+    expect(isNonProductLine({ sku: 'TEE1', productTitle: 'Premium Tee', shopifyProductType: 'Apparel' })).toBe(false)
+  })
+
   it('keeps physical product lines with SKU as product lines', () => {
     expect(isNonProductLine({ sku: 'LIT2570', productTitle: 'Custom Name Necklace' })).toBe(false)
   })

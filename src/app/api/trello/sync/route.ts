@@ -43,7 +43,7 @@ export async function POST() {
         id: true,
         shopifyOrderNumber: true,
         orderType: true,
-        lines: { orderBy: { linePosition: 'asc' }, select: { sku: true, productTitle: true, linePosition: true } },
+        lines: { orderBy: { linePosition: 'asc' }, select: { sku: true, productTitle: true, shopifyProductType: true, linePosition: true } },
       },
     })
 
@@ -56,7 +56,7 @@ export async function POST() {
       select: {
         id: true,
         shopifyOrderNumber: true,
-        lines: { orderBy: { linePosition: 'asc' }, select: { sku: true, productTitle: true, resolvedSupplierId: true } },
+        lines: { orderBy: { linePosition: 'asc' }, select: { sku: true, productTitle: true, shopifyProductType: true, resolvedSupplierId: true } },
       },
     })
     const matchedCustomOrderIds = customOrdersMatchedByName
@@ -99,6 +99,7 @@ export async function POST() {
               id: true,
               sku: true,
               productTitle: true,
+              shopifyProductType: true,
               resolvedSupplierId: true,
               linePosition: true,
               designDriveLink: true,
