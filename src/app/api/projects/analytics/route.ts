@@ -186,6 +186,7 @@ export async function GET(req: NextRequest) {
             productTitle: true,
             resolvedSupplierId: true,
             resolvedBaseCost: true,
+            manualBaseCost: true,
             resolvedShipFirst: true,
             resolvedShipAdditional: true,
             resolvedImportTax: true,

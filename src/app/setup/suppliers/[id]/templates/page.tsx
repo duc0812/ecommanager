@@ -87,8 +87,8 @@ export default function TemplatesPage() {
             variantTitle: l.variantTitle,
             previewCdnUrl: l.previewCdnUrl ?? null,
             designDriveLink: l.designDriveLink ?? null,
-            crogsPrice: l.resolvedBaseCost ?? null,
-            crogsTotal: l.resolvedBaseCost == null ? null : l.resolvedBaseCost * l.qty,
+            crogsPrice: (l.manualBaseCost ?? l.resolvedBaseCost) ?? null,
+            crogsTotal: (l.manualBaseCost ?? l.resolvedBaseCost) == null ? null : (l.manualBaseCost ?? l.resolvedBaseCost) * l.qty,
           })),
         })) as OrderForCsv[]
         setPreviewOrders(orders)

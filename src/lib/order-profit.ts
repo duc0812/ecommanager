@@ -2,7 +2,7 @@ export type OrderLineForProfit = {
   qty: number
   resolvedSupplierId?: string | null
   resolvedBaseCost: number | null
-  manualBaseCost?: number | null
+  manualBaseCost: number | null
   resolvedShipFirst: number | null
   resolvedShipAdditional: number | null
   resolvedImportTax: number | null
