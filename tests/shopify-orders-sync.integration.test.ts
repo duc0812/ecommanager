@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db'
 
 const SHOP = 'test-store.myshopify.com'
 const TOKEN = 'test_token'
+const VARIANT_ID = 'gid://shopify/ProductVariant/test-1'
 
 beforeAll(async () => {
   // Multi-tenant setup: project must exist + linked to store
@@ -25,12 +26,26 @@ beforeAll(async () => {
       firstItemShipFee: 4.99,
       additionalItemShipFee: 2.99,
     },
-    update: {},
+    update: {
+      isActive: true,
+      firstItemShipFee: 4.99,
+      additionalItemShipFee: 2.99,
+    },
   })
-  await prisma.supplierProduct.upsert({
+  const supplierProduct = await prisma.supplierProduct.upsert({
     where: { supplierId_sku: { supplierId: 'sup_test', sku: 'TSHIRT-RED-M' } },
     create: { supplierId: 'sup_test', sku: 'TSHIRT-RED-M', baseCost: 48.20 },
     update: { baseCost: 48.20 },
+  })
+  await prisma.variantManualMapping.upsert({
+    where: { shopifyVariantId: VARIANT_ID },
+    create: {
+      shopifyVariantId: VARIANT_ID,
+      shopifyProductTitle: 'Premium Tee',
+      variantTitle: 'Red / M',
+      supplierProductId: supplierProduct.id,
+    },
+    update: { supplierProductId: supplierProduct.id },
   })
 })
 
@@ -41,6 +56,7 @@ afterAll(async () => {
   const orderIds = orders.map(o => o.id)
   await prisma.orderLine.deleteMany({ where: { orderId: { in: orderIds } } })
   await prisma.order.deleteMany({ where: { storeId: { in: storeIds } } })
+  await prisma.variantManualMapping.deleteMany({ where: { shopifyVariantId: VARIANT_ID } })
 })
 
 describe('POST /api/shopify/orders/sync', () => {
@@ -71,6 +87,8 @@ describe('POST /api/shopify/orders/sync', () => {
               variantTitle: 'Red / M',
               quantity: 1,
               originalUnitPriceSet: { shopMoney: { amount: '149.99' } },
+              product: { tags: [], productType: 'T-Shirt' },
+              variant: { id: VARIANT_ID, selectedOptions: [{ name: 'Size', value: 'M' }] },
             }] },
             transactions: [{
               id: 'gid://shopify/OrderTransaction/1',

@@ -127,7 +127,7 @@ Last updated: 2026-05-19
 
 ### DB Path
 - Database is at `{project-root}/dev.db`
-- In code: `path.resolve(process.cwd(), 'dev.db')`
+- In code: `DATABASE_URL` is resolved to an absolute URL; fallback is `path.resolve(process.cwd(), 'dev.db')`
 - In `.env`: `DATABASE_URL="file:./dev.db"`
 - **Never use** `prisma/dev.db` — that path is wrong
 

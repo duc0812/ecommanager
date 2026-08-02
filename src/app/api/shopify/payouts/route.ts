@@ -17,13 +17,11 @@ export async function GET(req: NextRequest) {
       ? { shop: stored.shop, token: stored.token }
       : getCredentialsFromRequest(req)
 
-    // Fetch payouts first to get bank_account_ids for fallback lookup
     const payouts = await fetchAllPayouts(creds, { date_min, date_max })
-    const bankAccountIds = Array.from(new Set(payouts.map(p => p.bank_account_id).filter(Boolean))) as number[]
 
     const [balanceResult, bankAccountsResult] = await Promise.all([
       fetchBalance(creds).catch((e) => { console.error('[balance]', e.message); return { error: e.message, currency: null, amount: null } }),
-      fetchBankAccounts(creds, bankAccountIds).catch((e) => { console.error('[bankAccounts]', e.message); return { error: e.message, accounts: [] as any[] } }),
+      fetchBankAccounts(creds).catch((e) => { console.error('[bankAccounts]', e.message); return { error: e.message, accounts: [] as any[] } }),
     ])
     console.log('[bankAccountsResult]', JSON.stringify(bankAccountsResult).slice(0, 500))
 

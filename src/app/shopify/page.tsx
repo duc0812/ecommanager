@@ -74,13 +74,16 @@ export default function FinancePage() {
   const [selectedPayout, setSelectedPayout] = useState<number | null>(null)
   const [loading, setLoading] = useState(false)
   const [txnLoading, setTxnLoading] = useState(false)
-  const [syncing, setSyncing] = useState(false)
   const [syncResult, setSyncResult] = useState<{ synced_payouts?: number; synced_bank_accounts?: number; error?: string } | null>(null)
   const [lastSyncAt, setLastSyncAt] = useState<string | null>(null)
   const [fromDB, setFromDB] = useState(false)
 
-  async function loadFromDB() {
-    const res = await fetch('/api/shopify/db-payouts')
+  async function loadFromDB(filters?: { dateMin?: string; dateMax?: string }) {
+    const params = new URLSearchParams()
+    if (filters?.dateMin) params.set('date_min', filters.dateMin)
+    if (filters?.dateMax) params.set('date_max', filters.dateMax)
+    const query = params.size > 0 ? `?${params}` : ''
+    const res = await fetch(`/api/shopify/db-payouts${query}`, { cache: 'no-store' })
     const json = await res.json()
     if (!json.empty) {
       setData(json)
@@ -129,26 +132,22 @@ export default function FinancePage() {
     if (dateMin) params.set('date_min', dateMin)
     if (dateMax) params.set('date_max', dateMax)
     try {
-      const res = await fetch(`/api/shopify/payouts?${params}`, { headers: usingOAuth ? {} : manualHeaders() })
-      setData(await res.json())
-    } catch (e: any) {
-      setData({ error: e?.message || 'Network error' } as any)
-    }
-    setLoading(false)
-  }
-
-  async function syncToDB() {
-    setSyncing(true)
-    setSyncResult(null)
-    try {
-      const res = await fetch('/api/shopify/sync', { method: 'POST', headers: usingOAuth ? {} : manualHeaders() })
+      const res = await fetch(`/api/shopify/sync?${params}`, {
+        method: 'POST',
+        headers: usingOAuth ? {} : manualHeaders(),
+      })
       const result = await res.json()
       setSyncResult(result)
-      if (!result.error) await loadFromDB()
+      if (!res.ok || result.error) {
+        setData({ error: result.error ?? `Sync failed with ${res.status}` } as any)
+      } else {
+        await loadFromDB({ dateMin, dateMax })
+      }
     } catch (e: any) {
-      setSyncResult({ error: e?.message })
+      setData({ error: e?.message || 'Network error' } as any)
+      setSyncResult({ error: e?.message || 'Network error' })
     }
-    setSyncing(false)
+    setLoading(false)
   }
 
   async function fetchTransactions(payoutId: number) {
@@ -192,27 +191,15 @@ export default function FinancePage() {
             </p>
           </div>
           <div className="flex gap-sm items-center">
-            {data && !data.error && (
-              <button
-                onClick={syncToDB}
-                disabled={syncing}
-                className="flex items-center gap-sm border border-secondary text-secondary px-lg py-sm rounded-lg text-label-md hover:bg-secondary/5 transition-colors disabled:opacity-50"
-              >
-                <span className={`material-symbols-outlined text-[18px] ${syncing ? 'animate-spin' : ''}`}>
-                  {syncing ? 'sync' : 'save'}
-                </span>
-                {syncing ? 'Saving...' : 'Save to DB'}
-              </button>
-            )}
             <button
               onClick={fetchPayouts}
               disabled={loading || !canFetch()}
               className="flex items-center gap-sm bg-secondary text-on-secondary px-lg py-sm rounded-lg text-label-md shadow-sm hover:opacity-90 transition-opacity disabled:opacity-50"
             >
               <span className={`material-symbols-outlined text-[18px] ${loading ? 'animate-spin' : ''}`}>
-                {loading ? 'sync' : 'download'}
+                {loading ? 'sync' : 'sync'}
               </span>
-              {loading ? 'Fetching...' : 'Fetch Payouts'}
+              {loading ? 'Fetching & Saving...' : 'Fetch & Save Payouts'}
             </button>
           </div>
         </header>
@@ -468,7 +455,7 @@ export default function FinancePage() {
                         <td className="px-lg py-sm text-label-md text-on-tertiary-container font-bold">{p.amount} {p.currency}</td>
                         <td className="px-lg py-sm text-body-sm text-on-surface-variant">
                           {(() => {
-                            const ba = data.bankAccounts?.find(b => b.id === p.bank_account_id)
+                            const ba = data.bankAccounts?.find(b => String(b.id) === String(p.bank_account_id))
                             return ba ? `${ba.bank_name} ${ba.account_number}` : (p.bank_account_id ? `#${p.bank_account_id}` : '—')
                           })()}
                         </td>

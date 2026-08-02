@@ -1,20 +1,34 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
-import { SHOPIFY_PAYOUT_DATE_WHERE, SHOPIFY_PAYOUT_START_DATE } from '@/lib/shopify-payout-policy'
+import { SHOPIFY_PAYOUT_START_DATE } from '@/lib/shopify-payout-policy'
 
-export async function GET() {
+export const dynamic = 'force-dynamic'
+
+export async function GET(req: NextRequest) {
+  const requestedDateMin = req.nextUrl.searchParams.get('date_min') ?? undefined
+  const dateMin = requestedDateMin && requestedDateMin > SHOPIFY_PAYOUT_START_DATE
+    ? requestedDateMin
+    : SHOPIFY_PAYOUT_START_DATE
+  const dateMax = req.nextUrl.searchParams.get('date_max') ?? undefined
+  if (dateMax && dateMax < dateMin) {
+    return NextResponse.json({ error: 'date_max must be on or after date_min' }, { status: 400 })
+  }
+
   const store = await prisma.shopifyStore.findFirst({
     orderBy: { lastSyncAt: 'desc' },
     include: { bankAccounts: true },
   })
 
   const payouts = await prisma.payout.findMany({
-    where: { date: SHOPIFY_PAYOUT_DATE_WHERE },
+    where: { date: { gte: dateMin, ...(dateMax ? { lte: dateMax } : {}) } },
     orderBy: { date: 'desc' },
   })
 
   if (payouts.length === 0) {
-    return NextResponse.json({ empty: true, payout_start_date: SHOPIFY_PAYOUT_START_DATE, lastSyncAt: store?.lastSyncAt ?? null })
+    return NextResponse.json(
+      { empty: true, payout_start_date: SHOPIFY_PAYOUT_START_DATE, lastSyncAt: store?.lastSyncAt ?? null },
+      { headers: { 'Cache-Control': 'no-store' } },
+    )
   }
 
   const paidPayouts = payouts.filter(p => p.status === 'paid')
@@ -28,7 +42,7 @@ export async function GET() {
     date: p.date,
     currency: p.currency,
     amount: p.amount.toFixed(2),
-    bank_account_id: p.bankAccountShopifyId ? Number(p.bankAccountShopifyId) : null,
+    bank_account_id: p.bankAccountShopifyId,
     summary: {
       charges_gross_amount: p.chargesGrossAmount.toFixed(2),
       charges_fee_amount: p.chargesFeeAmount.toFixed(2),
@@ -40,7 +54,7 @@ export async function GET() {
   }))
 
   const bankAccounts = (store?.bankAccounts ?? []).map(b => ({
-    id: Number(b.id),
+    id: b.id,
     bank_name: b.bankName,
     account_number: b.accountNumber,
     country: b.country,
@@ -82,5 +96,5 @@ export async function GET() {
     bankAccounts,
     bankSummary: Object.values(bankMap),
     payouts: mappedPayouts,
-  })
+  }, { headers: { 'Cache-Control': 'no-store' } })
 }

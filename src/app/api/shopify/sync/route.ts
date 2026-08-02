@@ -6,6 +6,15 @@ import { SHOPIFY_PAYOUT_START_DATE } from '@/lib/shopify-payout-policy'
 
 export async function POST(req: NextRequest) {
   try {
+    const requestedDateMin = req.nextUrl.searchParams.get('date_min') ?? undefined
+    const dateMin = requestedDateMin && requestedDateMin > SHOPIFY_PAYOUT_START_DATE
+      ? requestedDateMin
+      : SHOPIFY_PAYOUT_START_DATE
+    const dateMax = req.nextUrl.searchParams.get('date_max') ?? undefined
+    if (dateMax && dateMax < dateMin) {
+      return NextResponse.json({ error: 'date_max must be on or after date_min' }, { status: 400 })
+    }
+
     const stored = await getShopifyConnection(req.headers.get('cookie') ?? undefined)
     const creds = stored
       ? { shop: stored.shop, token: stored.token }
@@ -24,7 +33,7 @@ export async function POST(req: NextRequest) {
 
     // Fetch all payouts + balance + bank accounts in parallel
     const [payouts, balance, bankAccounts] = await Promise.all([
-      fetchAllPayouts(creds, { date_min: SHOPIFY_PAYOUT_START_DATE }),
+      fetchAllPayouts(creds, { date_min: dateMin, date_max: dateMax }),
       fetchBalance(creds).catch(() => null),
       fetchBankAccounts(creds).catch(() => []),
     ])
@@ -43,8 +52,11 @@ export async function POST(req: NextRequest) {
           status: (ba as any).status ?? (ba.verified ? 'VALIDATED' : 'PENDING'),
         },
         update: {
+          storeId: store.id,
           accountNumber: ba.account_number,
           bankName: ba.bank_name,
+          country: ba.country,
+          currency: ba.currency,
           status: (ba as any).status ?? (ba.verified ? 'VALIDATED' : 'PENDING'),
           fetchedAt: new Date(),
         },
@@ -54,7 +66,10 @@ export async function POST(req: NextRequest) {
     // Upsert payouts
     let synced = 0
     for (const p of payouts) {
-      if (p.date < SHOPIFY_PAYOUT_START_DATE) continue
+      if (p.date < dateMin || (dateMax && p.date > dateMax)) continue
+      const bankAccountShopifyId = p.bank_account_id
+        ? String(p.bank_account_id)
+        : (bankAccounts[0] ? String(bankAccounts[0].id) : null)
       await prisma.payout.upsert({
         where: { id: p.id },
         create: {
@@ -70,11 +85,21 @@ export async function POST(req: NextRequest) {
           refundsGrossAmount: parseFloat(p.summary.refunds_gross_amount || '0'),
           adjustmentsFeeAmount: parseFloat(p.summary.adjustments_fee_amount || '0'),
           adjustmentsGrossAmount: parseFloat(p.summary.adjustments_gross_amount || '0'),
-          bankAccountShopifyId: p.bank_account_id ? String(p.bank_account_id) : (bankAccounts[0] ? String(bankAccounts[0].id) : null),
+          bankAccountShopifyId,
         },
         update: {
+          storeId: store.id,
           status: p.status,
+          date: p.date,
+          currency: p.currency,
           amount: parseFloat(p.amount),
+          chargesFeeAmount: parseFloat(p.summary.charges_fee_amount || '0'),
+          chargesGrossAmount: parseFloat(p.summary.charges_gross_amount || '0'),
+          refundsFeeAmount: parseFloat(p.summary.refunds_fee_amount || '0'),
+          refundsGrossAmount: parseFloat(p.summary.refunds_gross_amount || '0'),
+          adjustmentsFeeAmount: parseFloat(p.summary.adjustments_fee_amount || '0'),
+          adjustmentsGrossAmount: parseFloat(p.summary.adjustments_gross_amount || '0'),
+          bankAccountShopifyId,
           fetchedAt: new Date(),
         },
       })
@@ -98,6 +123,7 @@ export async function POST(req: NextRequest) {
       synced_payouts: synced,
       synced_bank_accounts: bankAccounts.length,
       payout_start_date: SHOPIFY_PAYOUT_START_DATE,
+      date_range: { from: dateMin, to: dateMax ?? null },
       store: { id: store.id, shop: store.shop },
     })
   } catch (err: any) {

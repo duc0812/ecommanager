@@ -169,9 +169,9 @@ export async function fetchBalance(creds: ShopifyCredentials): Promise<ShopifyBa
 }
 
 // Fetch bank accounts via GraphQL Admin API (REST endpoint deprecated for some stores)
-export async function fetchBankAccounts(creds: ShopifyCredentials, _bankAccountIds?: number[]): Promise<ShopifyBankAccount[]> {
+export async function fetchBankAccounts(creds: ShopifyCredentials): Promise<ShopifyBankAccount[]> {
   assertCreds(creds)
-  const { base, headers } = buildBase(creds)
+  const { headers } = buildBase(creds)
 
   const query = `{
     shopifyPaymentsAccount {

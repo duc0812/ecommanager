@@ -406,7 +406,6 @@ export async function POST(req: NextRequest) {
 
             // Attach preview images for CUSTOM orders so designers see mockups directly on the card
             if (orderType === 'CUSTOM') {
-              const orderToken = o.name.replace(/^#/, '')
               const productCardLines = cardLines.filter(l => l.sku)
               for (let idx = 0; idx < productCardLines.length; idx += 1) {
                 const l = productCardLines[idx]
