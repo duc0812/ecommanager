@@ -9,12 +9,15 @@ type MetaAccount = {
   projectId: string | null
   project: { name: string } | null
   lastSyncAt: string | null
+  currency: string | null
+  exchangeRate: number | null
 }
 
 type MetaBilling = {
   id: string
   adAccountId: string
   amount: number
+  amountUsd: number | null
   currency: string
   billingDate: string
   status: string
@@ -40,6 +43,7 @@ type DBData = {
   pendingCount: number
   avgSpend: number
   lastSyncAt: string | null
+  missingExchangeRateAccounts: { id: string; accountId: string; accountName: string | null; currency: string | null }[]
   empty?: boolean
 }
 
@@ -54,6 +58,18 @@ type ImportResult = {
 
 function fmtUSD(n: number) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2 }).format(n)
+}
+
+function fmtOriginalAmount(amount: number, currency: string) {
+  try {
+    return new Intl.NumberFormat(currency === 'VND' ? 'vi-VN' : 'en-US', {
+      style: 'currency',
+      currency,
+      maximumFractionDigits: currency === 'VND' ? 0 : 2,
+    }).format(amount)
+  } catch {
+    return `${amount.toLocaleString()} ${currency}`
+  }
 }
 
 function fmt(dateStr: string) {
@@ -196,6 +212,21 @@ export default function MetaBillingPage() {
             <p className="text-body-sm">
               {syncResult.error ? `Error: ${syncResult.error}` : `Synced ${syncResult.synced} transactions.`}
             </p>
+          </div>
+        )}
+
+        {(data?.missingExchangeRateAccounts?.length ?? 0) > 0 && (
+          <div className="mb-lg rounded-xl border border-amber-300 bg-amber-50 px-lg py-md text-amber-900">
+            <div className="flex items-start gap-sm">
+              <span className="material-symbols-outlined text-[20px]">currency_exchange</span>
+              <div>
+                <p className="text-label-md font-semibold">Chưa thể quy đổi đầy đủ sang USD</p>
+                <p className="mt-xs text-body-sm">
+                  Hãy nhập tỷ giá cho {data?.missingExchangeRateAccounts.map(account => account.accountName || account.accountId).join(', ')} tại phần Setup Meta. Các giao dịch này chưa được cộng vào tổng USD.
+                </p>
+                <a href="/setup/meta" className="mt-sm inline-flex text-label-sm font-semibold underline">Mở Setup Meta</a>
+              </div>
+            </div>
           </div>
         )}
 
@@ -366,7 +397,21 @@ export default function MetaBillingPage() {
                         <tr key={b.id} className="hover:bg-surface-container-low/40 transition-colors">
                           <td className="px-lg py-md text-body-sm text-secondary max-w-[220px] break-all">{b.id}</td>
                           <td className="px-lg py-md text-body-sm text-on-surface">{fmt(b.billingDate)}</td>
-                          <td className="px-lg py-md text-label-md font-bold text-primary">{fmtUSD(b.amount)}</td>
+                          <td className="px-lg py-md">
+                            {b.amountUsd === null ? (
+                              <div>
+                                <p className="text-label-md font-bold text-amber-700">{fmtOriginalAmount(b.amount, b.currency)}</p>
+                                <p className="text-label-sm text-amber-600">Chưa có tỷ giá</p>
+                              </div>
+                            ) : (
+                              <div>
+                                <p className="text-label-md font-bold text-primary">{fmtUSD(b.amountUsd)}</p>
+                                {b.currency !== 'USD' && (
+                                  <p className="text-label-sm text-on-surface-variant">Gốc: {fmtOriginalAmount(b.amount, b.currency)}</p>
+                                )}
+                              </div>
+                            )}
+                          </td>
                           <td className="px-lg py-md">
                             <div className="flex flex-wrap gap-xs max-w-[260px]">
                               {b.projectLabel && (

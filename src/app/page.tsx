@@ -23,12 +23,17 @@ type PeriodMetrics = {
 type ChartPoint = { date: string; revenue: number; adSpend: number }
 
 type RecentPayout = { id: number; date: string; amount: number; currency: string; status: string }
-type RecentBilling = { id: string; billingDate: string; amount: number; currency: string; chargeType: string | null }
+type RecentBilling = { id: string; billingDate: string; amount: number; amountUsd: number | null; currency: string; chargeType: string | null }
 type ProjectSummary = { id: string; name: string; startDate: string; staffCount: number; monthlyCost: number }
 
 type OverviewData = {
   shopify: { totalRevenue: number; payoutCount: number; recentPayouts: RecentPayout[] }
-  meta: { totalSpend: number; billingCount: number; recentBillings: RecentBilling[] }
+  meta: {
+    totalSpend: number
+    billingCount: number
+    recentBillings: RecentBilling[]
+    missingExchangeRateAccounts: { id: string; accountId: string; accountName: string | null; currency: string | null }[]
+  }
   projects: { count: number; list: ProjectSummary[] }
   staff: { count: number; totalMonthlyCost: number }
   netCashflow: number
@@ -137,6 +142,16 @@ export default function OverviewPage() {
           <div className="mb-lg rounded-xl px-lg py-md flex items-center gap-md bg-error-container/20 border border-error/20">
             <span className="material-symbols-outlined text-error">error</span>
             <p className="text-body-sm text-error">{syncError}</p>
+          </div>
+        )}
+
+        {(data?.meta.missingExchangeRateAccounts?.length ?? 0) > 0 && (
+          <div className="mb-lg rounded-xl border border-amber-300 bg-amber-50 px-lg py-md flex items-center gap-md text-amber-900">
+            <span className="material-symbols-outlined">currency_exchange</span>
+            <p className="text-body-sm flex-1">
+              Tổng USD chưa bao gồm {data?.meta.missingExchangeRateAccounts.map(account => account.accountName || account.accountId).join(', ')} vì chưa có tỷ giá.
+            </p>
+            <a href="/setup/meta" className="text-label-sm font-semibold underline">Nhập tỷ giá</a>
           </div>
         )}
 
@@ -301,7 +316,9 @@ export default function OverviewPage() {
                       {data.meta.recentBillings.map(b => (
                         <tr key={b.id} className="border-b border-outline-variant/10 hover:bg-surface-container-low/50">
                           <td className="px-lg py-sm text-body-sm text-on-surface-variant">{b.billingDate}</td>
-                          <td className="px-lg py-sm text-label-md font-bold text-error">-{fmtUSD(b.amount)}</td>
+                          <td className="px-lg py-sm text-label-md font-bold text-error">
+                            {b.amountUsd === null ? `${b.amount.toLocaleString()} ${b.currency}` : `-${fmtUSD(b.amountUsd)}`}
+                          </td>
                           <td className="px-lg py-sm text-body-sm text-on-surface-variant">{b.chargeType ?? '—'}</td>
                         </tr>
                       ))}

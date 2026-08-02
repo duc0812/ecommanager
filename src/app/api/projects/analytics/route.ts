@@ -3,6 +3,8 @@ import { prisma } from '@/lib/db'
 import { SHOPIFY_PAYOUT_START_DATE } from '@/lib/shopify-payout-policy'
 import { estimateOrderCostAndProfit } from '@/lib/order-profit'
 import { productLinesOnly } from '@/lib/order-lines'
+import { convertMetaAmountToUsd, normalizeMetaCurrency, sumMetaAmountsUsd } from '@/lib/meta-currency'
+import { getMetaExchangeRates } from '@/lib/meta-exchange-rates'
 
 type CostBuckets = {
   fulfillment: number
@@ -159,7 +161,7 @@ export async function GET(req: NextRequest) {
     }),
     prisma.metaAdAccount.findMany({
       where: { projectId },
-      select: { id: true, accountId: true, accountName: true, accessToken: true },
+      select: { id: true, accountId: true, accountName: true, accessToken: true, currency: true },
     }),
     prisma.metaBilling.findMany({
       where: {
@@ -170,7 +172,7 @@ export async function GET(req: NextRequest) {
         status: { in: paidMetaStatuses },
         adAccount: { projectId },
       },
-      select: { amount: true, billingDate: true },
+      select: { adAccountId: true, amount: true, currency: true, billingDate: true },
     }),
     prisma.order.findMany({
       where: {
@@ -195,9 +197,11 @@ export async function GET(req: NextRequest) {
       },
     }),
   ])
+  const exchangeRates = await getMetaExchangeRates(metaAccounts.map(account => account.id))
 
   const totalPayout = payouts.reduce((sum, p) => sum + p.amount, 0)
-  const totalMetaBilling = billings.reduce((sum, b) => sum + b.amount, 0)
+  const metaBillingSummary = sumMetaAmountsUsd(billings, exchangeRates)
+  const totalMetaBilling = metaBillingSummary.totalUsd
   let totalRevenue = 0
   let totalPaymentFees = 0
   let totalOrderProfit = 0
@@ -223,8 +227,21 @@ export async function GET(req: NextRequest) {
   const untilStr = endStr
   const spendByAccount = periodIsValid ? await Promise.all(metaAccounts.map(async account => {
     try {
-      const spend = await fetchMetaInsightsSpend(account.accountId, account.accessToken, startStr, untilStr)
-      return { accountId: account.accountId, accountName: account.accountName, spend, source: 'facebook_insights' }
+      const originalSpend = await fetchMetaInsightsSpend(account.accountId, account.accessToken, startStr, untilStr)
+      const currency = normalizeMetaCurrency(account.currency)
+      const spend = convertMetaAmountToUsd(originalSpend, currency, exchangeRates.get(account.id))
+      if (spend === null) {
+        return {
+          accountId: account.accountId,
+          accountName: account.accountName,
+          spend: 0,
+          originalSpend,
+          currency,
+          source: 'missing_exchange_rate',
+          error: `Chưa có tỷ giá ${currency} / USD`,
+        }
+      }
+      return { accountId: account.accountId, accountName: account.accountName, spend, originalSpend, currency, source: 'facebook_insights' }
     } catch (err: any) {
       return { accountId: account.accountId, accountName: account.accountName, spend: 0, source: 'facebook_insights_error', error: err.message }
     }
@@ -232,6 +249,8 @@ export async function GET(req: NextRequest) {
     accountId: account.accountId,
     accountName: account.accountName,
     spend: 0,
+    originalSpend: 0,
+    currency: normalizeMetaCurrency(account.currency),
     source: 'outside_selected_period',
   }))
   const totalAdSpend = spendByAccount.reduce((sum, item) => sum + item.spend, 0)
@@ -267,6 +286,8 @@ export async function GET(req: NextRequest) {
       id: account.id,
       accountId: account.accountId,
       accountName: account.accountName,
+      currency: normalizeMetaCurrency(account.currency),
+      exchangeRate: exchangeRates.get(account.id) ?? null,
     })),
   }
   const dataDiagnostics = {
@@ -276,6 +297,10 @@ export async function GET(req: NextRequest) {
       firstDate: billingDates[0] ?? null,
       lastDate: billingDates[billingDates.length - 1] ?? null,
       transactionCount: billings.length,
+      missingExchangeRateAccounts: metaAccounts
+        .filter(account => metaBillingSummary.missingAccountIds.includes(account.id)
+          || (normalizeMetaCurrency(account.currency) !== 'USD' && !exchangeRates.has(account.id)))
+        .map(account => account.accountName || account.accountId),
     },
     actualAdSpend: {
       source: 'Meta Insights spend',
