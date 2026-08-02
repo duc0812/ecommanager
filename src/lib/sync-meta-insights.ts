@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/db'
+import { isMetaBillingSyncWorkerActive } from '@/lib/meta-billing-sync'
 
 const GRAPH_API_VERSION = process.env.META_GRAPH_API_VERSION ?? 'v22.0'
 
@@ -23,6 +24,15 @@ function safeInt(s: string | null | undefined): number {
 export async function syncMetaInsights(
   days = 30
 ): Promise<{ synced: number; accounts: number; errors: string[]; perAccount: Array<{ name: string; rows: number }> }> {
+  if (isMetaBillingSyncWorkerActive()) {
+    return {
+      synced: 0,
+      accounts: 0,
+      errors: ['Meta billing đang chạy nền; Insights được bỏ qua để tránh gọi API đồng thời.'],
+      perAccount: [],
+    }
+  }
+
   const accounts = await prisma.metaAdAccount.findMany()
   if (accounts.length === 0) return { synced: 0, accounts: 0, errors: ['No Meta accounts configured'], perAccount: [] }
 

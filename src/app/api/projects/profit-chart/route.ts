@@ -4,6 +4,7 @@ import { estimateOrderCostAndProfit } from '@/lib/order-profit'
 import { productLinesOnly } from '@/lib/order-lines'
 import { convertMetaAmountToUsd, normalizeMetaCurrency } from '@/lib/meta-currency'
 import { getMetaExchangeRates } from '@/lib/meta-exchange-rates'
+import { PROJECT_REVENUE_EXCLUDED_STATUSES } from '@/lib/project-metrics'
 
 function dateKeyInZone(date: Date, timeZone: string) {
   const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
@@ -44,6 +45,10 @@ function addDays(dateKey: string, days: number) {
   return new Date(Date.UTC(year, month - 1, day + days, 0, 0, 0, 0)).toISOString().split('T')[0]
 }
 
+function roundMetric(value: number) {
+  return Math.round((value + 1e-9) * 100) / 100
+}
+
 function getPeriodRange(period: string, timeZone: string, from?: string | null, to?: string | null) {
   const todayStr = dateKeyInZone(new Date(), timeZone)
   const buildRange = (fromKey: string, toKey: string) => ({
@@ -78,7 +83,11 @@ export async function GET(req: NextRequest) {
     const { from, to, fromKey, toKey } = getPeriodRange(period, timeZone, searchParams.get('from'), searchParams.get('to'))
 
     const orders = await prisma.order.findMany({
-      where: { projectId, placedAt: { gte: from, lte: to } },
+      where: {
+        projectId,
+        placedAt: { gte: from, lte: to },
+        pipelineStatus: { notIn: [...PROJECT_REVENUE_EXCLUDED_STATUSES] },
+      },
       include: {
         lines: {
           select: {
@@ -145,20 +154,22 @@ export async function GET(req: NextRequest) {
         date: cursor,
         orders: day.orders,
         ordersUnmapped: day.ordersUnmapped,
-        revenue: Math.round(day.revenue * 100) / 100,
-        profit: Math.round(day.profit * 100) / 100,
-        adSpend: Math.round((spendByDate[cursor] ?? 0) * 100) / 100,
+        revenue: roundMetric(day.revenue),
+        profit: roundMetric(day.profit),
+        adSpend: roundMetric(spendByDate[cursor] ?? 0),
       })
       cursor = addDays(cursor, 1)
     }
 
-    const totalOrders = dailyData.reduce((s, d) => s + d.orders, 0)
-    const totalOrdersUnmapped = dailyData.reduce((s, d) => s + d.ordersUnmapped, 0)
-    const totalRevenue = Math.round(dailyData.reduce((s, d) => s + d.revenue, 0) * 100) / 100
-    const totalProfit = Math.round(dailyData.reduce((s, d) => s + d.profit, 0) * 100) / 100
-    const totalAdSpend = Math.round(dailyData.reduce((s, d) => s + d.adSpend, 0) * 100) / 100
-    const avgMargin = totalRevenue > 0 ? Math.round((totalProfit / totalRevenue) * 10000) / 100 : 0
-    const avgOrderProfit = totalOrders > 0 ? Math.round((totalProfit / totalOrders) * 100) / 100 : 0
+    // Build summary from raw values. Summing already-rounded daily points can drift
+    // by a few cents from the Project Analytics cards for the same period.
+    const totalOrders = orders.length
+    const totalOrdersUnmapped = Object.values(dayMap).reduce((sum, day) => sum + day.ordersUnmapped, 0)
+    const totalRevenue = roundMetric(orders.reduce((sum, order) => sum + order.grossAmount, 0))
+    const totalProfit = roundMetric(Object.values(dayMap).reduce((sum, day) => sum + day.profit, 0))
+    const totalAdSpend = roundMetric(Object.values(spendByDate).reduce((sum, spend) => sum + spend, 0))
+    const avgMargin = totalRevenue > 0 ? roundMetric((totalProfit / totalRevenue) * 100) : 0
+    const avgOrderProfit = totalOrders > 0 ? roundMetric(totalProfit / totalOrders) : 0
 
     return NextResponse.json({
       dailyData,
@@ -168,7 +179,7 @@ export async function GET(req: NextRequest) {
         totalRevenue,
         totalProfit,
         totalAdSpend,
-        netProfit: Math.round((totalProfit - totalAdSpend) * 100) / 100,
+        netProfit: roundMetric(totalProfit - totalAdSpend),
         avgMargin,
         avgOrderProfit,
       },

@@ -1,6 +1,9 @@
 'use client'
-import { ChangeEvent, useCallback, useEffect, useMemo, useState } from 'react'
+import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Sidebar from '@/components/Sidebar'
+import MetaBillingSyncStatus from '@/components/MetaBillingSyncStatus'
+import type { MetaBillingSyncJob } from '@/lib/meta-billing-sync-types'
+import { isMetaBillingSyncActive } from '@/lib/meta-billing-sync-types'
 
 type MetaAccount = {
   id: string
@@ -108,8 +111,10 @@ export default function MetaBillingPage() {
   const [selectedAccount, setSelectedAccount] = useState<string>('all')
   const [selectedMonth, setSelectedMonth] = useState<string>('')
   const [loading, setLoading] = useState(true)
-  const [syncing, setSyncing] = useState(false)
-  const [syncResult, setSyncResult] = useState<{ synced?: number; insightsDays?: number; error?: string } | null>(null)
+  const [startingSync, setStartingSync] = useState(false)
+  const [syncJob, setSyncJob] = useState<MetaBillingSyncJob | null>(null)
+  const [syncStartError, setSyncStartError] = useState<string | null>(null)
+  const wasSyncActive = useRef(false)
   const [importAccountId, setImportAccountId] = useState('')
   const [importing, setImporting] = useState(false)
   const [importResult, setImportResult] = useState<ImportResult | null>(null)
@@ -130,23 +135,56 @@ export default function MetaBillingPage() {
   useEffect(() => { load(selectedAccount, selectedMonth) }, [load, selectedAccount, selectedMonth])
 
   useEffect(() => {
+    let cancelled = false
+
+    async function pollSyncJob() {
+      try {
+        const res = await fetch('/api/meta/sync', { cache: 'no-store' })
+        const result = await res.json()
+        if (!res.ok || cancelled) return
+        const nextJob = (result.job ?? null) as MetaBillingSyncJob | null
+        const nextActive = isMetaBillingSyncActive(nextJob)
+        const shouldReload = wasSyncActive.current && !nextActive
+        wasSyncActive.current = nextActive
+        setSyncJob(nextJob)
+        if (shouldReload) await load(selectedAccount, selectedMonth)
+      } catch {
+        // A later poll will recover transient network errors without interrupting the job.
+      }
+    }
+
+    void pollSyncJob()
+    const timer = window.setInterval(pollSyncJob, 2_000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [load, selectedAccount, selectedMonth])
+
+  useEffect(() => {
     if (selectedAccount !== 'all') setImportAccountId(selectedAccount)
     else if (!importAccountId && accounts.length > 0) setImportAccountId(accounts[0].id)
   }, [accounts, importAccountId, selectedAccount])
 
   async function syncAll() {
-    setSyncing(true)
-    setSyncResult(null)
-    const [billingRes, insightsRes] = await Promise.all([
-      fetch('/api/meta/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }),
-      fetch('/api/meta/sync-insights', { method: 'POST' }),
-    ])
-    const billing = await billingRes.json()
-    const insights = await insightsRes.json().catch(() => ({}))
-    const error = billing.error ?? insights.error
-    setSyncResult(error ? { error } : { synced: billing.synced, insightsDays: insights.synced })
-    if (!error) await load(selectedAccount, selectedMonth)
-    setSyncing(false)
+    setStartingSync(true)
+    setSyncStartError(null)
+    try {
+      const res = await fetch('/api/meta/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      })
+      const result = await res.json()
+      if (!res.ok) throw new Error(result.error || 'Không thể bắt đầu Meta billing sync.')
+      const nextJob = result.job as MetaBillingSyncJob
+      wasSyncActive.current = isMetaBillingSyncActive(nextJob)
+      setSyncJob(nextJob)
+    } catch (error) {
+      setSyncStartError(error instanceof Error ? error.message : 'Không thể bắt đầu Meta billing sync.')
+    } finally {
+      setStartingSync(false)
+    }
   }
 
   function handleAccountFilter(val: string) {
@@ -194,26 +232,24 @@ export default function MetaBillingPage() {
           </div>
           <button
             onClick={syncAll}
-            disabled={syncing || accounts.length === 0}
+            disabled={startingSync || isMetaBillingSyncActive(syncJob) || accounts.length === 0}
             className="flex items-center gap-sm bg-secondary text-on-secondary px-lg py-sm rounded-lg text-label-md shadow-sm hover:opacity-90 transition-opacity disabled:opacity-50"
           >
-            <span className={`material-symbols-outlined text-[18px] ${syncing ? 'animate-spin' : ''}`}>
-              {syncing ? 'sync' : 'download'}
+            <span className={`material-symbols-outlined text-[18px] ${startingSync || isMetaBillingSyncActive(syncJob) ? 'animate-spin' : ''}`}>
+              {startingSync || isMetaBillingSyncActive(syncJob) ? 'sync' : 'download'}
             </span>
-            {syncing ? 'Syncing...' : 'Sync Now'}
+            {startingSync ? 'Đang khởi tạo...' : isMetaBillingSyncActive(syncJob) ? 'Đang sync billing...' : 'Sync Billing'}
           </button>
         </header>
 
-        {syncResult && (
-          <div className={`mb-lg rounded-xl px-lg py-md flex items-center gap-md ${syncResult.error ? 'bg-error-container/20 border border-error/20' : 'bg-on-tertiary-container/10 border border-on-tertiary-container/20'}`}>
-            <span className={`material-symbols-outlined ${syncResult.error ? 'text-error' : 'text-on-tertiary-container'}`}>
-              {syncResult.error ? 'error' : 'check_circle'}
-            </span>
-            <p className="text-body-sm">
-              {syncResult.error ? `Error: ${syncResult.error}` : `Synced ${syncResult.synced} transactions.`}
-            </p>
+        {syncStartError && (
+          <div className="mb-lg flex items-center gap-md rounded-xl border border-error/20 bg-error-container/20 px-lg py-md text-error">
+            <span className="material-symbols-outlined">error</span>
+            <p className="text-body-sm">Lỗi sync: {syncStartError}</p>
           </div>
         )}
+
+        <MetaBillingSyncStatus job={syncJob} />
 
         {(data?.missingExchangeRateAccounts?.length ?? 0) > 0 && (
           <div className="mb-lg rounded-xl border border-amber-300 bg-amber-50 px-lg py-md text-amber-900">
@@ -380,7 +416,7 @@ export default function MetaBillingPage() {
               </div>
               {data.billings.length === 0 ? (
                 <div className="px-lg py-xl text-center text-on-surface-variant text-body-sm">
-                  No transactions yet. Click <strong>Sync Now</strong> to fetch from Meta.
+                  No transactions yet. Click <strong>Sync Billing</strong> to fetch from Meta.
                 </div>
               ) : (
                 <div className="overflow-x-auto">

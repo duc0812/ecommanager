@@ -58,7 +58,7 @@ type AutoSyncStatus = {
   lastResult: {
     startedAt: string
     finishedAt?: string
-    orders?: { synced?: number; skipped?: number; error?: string }
+    orders?: { totalSynced?: number; withUnmappedSku?: number; errors?: string[]; error?: string }
     insights?: { synced?: number; accounts?: number; error?: string }
   } | null
 }
@@ -76,6 +76,14 @@ type Analytics = {
     metaBilling: { source: string; firstDate: string | null; lastDate: string | null; transactionCount: number; missingExchangeRateAccounts?: string[] }
     actualAdSpend: { source: string; note: string }
     orderProfit?: { source: string; mappedOrderCount: number; unmappedOrderCount: number; estimateRule?: string }
+    orderRevenue?: {
+      source: string
+      orderCount: number
+      firstDate: string | null
+      lastDate: string | null
+      latestPayoutDate: string | null
+      mayBeStale: boolean
+    }
   }
   totalPayout: number
   totalRevenue: number
@@ -136,17 +144,36 @@ export default function ProjectDashboard() {
   const [chartPeriod, setChartPeriod] = useState<string>('this-month')
   const [syncStatus, setSyncStatus] = useState<AutoSyncStatus | null>(null)
   const [syncing, setSyncing] = useState(false)
+  const [syncError, setSyncError] = useState<string | null>(null)
+  const [refreshVersion, setRefreshVersion] = useState(0)
 
   useEffect(() => {
     fetch('/api/auto-sync').then(r => r.json()).then(setSyncStatus).catch(() => {})
   }, [])
 
-  function handleManualSync() {
+  async function handleManualSync() {
     setSyncing(true)
-    fetch('/api/auto-sync', { method: 'POST' })
-      .then(r => r.json())
-      .then(() => fetch('/api/auto-sync').then(r => r.json()).then(setSyncStatus))
-      .finally(() => setSyncing(false))
+    setSyncError(null)
+    try {
+      const response = await fetch('/api/auto-sync', { method: 'POST' })
+      const body = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(body.error ?? `Sync failed (${response.status})`)
+
+      const result = body.result as AutoSyncStatus['lastResult']
+      setSyncStatus({ status: 'idle', lastResult: result })
+      setRefreshVersion(version => version + 1)
+
+      const errors = [
+        result?.orders?.error,
+        ...(result?.orders?.errors ?? []),
+        result?.insights?.error,
+      ].filter(Boolean)
+      if (errors.length > 0) setSyncError(errors.join(' · '))
+    } catch (error) {
+      setSyncError(error instanceof Error ? error.message : 'Không thể đồng bộ dữ liệu')
+    } finally {
+      setSyncing(false)
+    }
   }
 
   useEffect(() => {
@@ -172,7 +199,7 @@ export default function ProjectDashboard() {
         setAnalytics(data)
         setAnalyticsLoading(false)
       })
-  }, [selectedProject, selectedStaff, selectedMonth])
+  }, [selectedProject, selectedStaff, selectedMonth, refreshVersion])
 
   const currentProject = projects.find(p => p.id === selectedProject)
 
@@ -265,7 +292,7 @@ export default function ProjectDashboard() {
               <div className="space-y-xl">
                 {selectedProject && (
                   <section>
-                    <RevenueGoalTracker projectId={selectedProject} />
+                    <RevenueGoalTracker projectId={selectedProject} refreshVersion={refreshVersion} />
                   </section>
                 )}
 
@@ -274,6 +301,7 @@ export default function ProjectDashboard() {
                     projectId={selectedProject}
                     period={chartPeriod}
                     onPeriodChange={setChartPeriod}
+                    refreshVersion={refreshVersion}
                   />
                 )}
 
@@ -316,7 +344,14 @@ export default function ProjectDashboard() {
                     <span className="text-label-sm text-on-surface-variant">revenue - payment fees - variable costs - actual ad spend</span>
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-6 gap-lg">
-                    <StatCard label="Revenue" icon="storefront" value={fmtUSD(analytics.totalRevenue)} hint="Shopify gross revenue" />
+                    <StatCard
+                      label="Revenue"
+                      icon="storefront"
+                      value={fmtUSD(analytics.totalRevenue)}
+                      hint={analytics.dataDiagnostics.orderRevenue?.lastDate
+                        ? `${analytics.dataDiagnostics.orderRevenue.orderCount} orders · through ${fmt(analytics.dataDiagnostics.orderRevenue.lastDate)}`
+                        : 'No Shopify orders in this period'}
+                    />
                     <StatCard label="Payment Fees" icon="credit_card" value={fmtUSD(analytics.totalPaymentFees)} hint="Shopify payment fees" />
                     <StatCard
                       label="COGS"
@@ -360,7 +395,23 @@ export default function ProjectDashboard() {
                   <ProjectStaff assignments={currentProject.assignments} onSelect={setSelectedStaff} />
                 )}
 
-                <AutoSyncStatusBar status={syncStatus} syncing={syncing} onSync={handleManualSync} />
+                {analytics.dataDiagnostics.orderRevenue?.mayBeStale && (
+                  <div className="bg-amber-50 border border-amber-300 text-amber-900 rounded-xl p-md flex items-start gap-sm">
+                    <span className="material-symbols-outlined text-[20px]">warning</span>
+                    <div>
+                      <p className="text-label-md font-semibold">Revenue có thể đang thiếu Order</p>
+                      <p className="text-label-sm mt-xs">
+                        Order mới nhất: {analytics.dataDiagnostics.orderRevenue.lastDate
+                          ? fmt(analytics.dataDiagnostics.orderRevenue.lastDate)
+                          : 'chưa có'}; payout mới nhất: {analytics.dataDiagnostics.orderRevenue.latestPayoutDate
+                          ? fmt(analytics.dataDiagnostics.orderRevenue.latestPayoutDate)
+                          : 'chưa có'}. Hãy chạy Sync ngay và kiểm tra lỗi bên dưới.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                <AutoSyncStatusBar status={syncStatus} syncing={syncing} error={syncError} onSync={handleManualSync} />
               </div>
             ) : null}
           </>
@@ -559,7 +610,17 @@ function ProjectStaff({ assignments, onSelect }: { assignments: Assignment[]; on
 }
 
 
-function ProfitChart({ projectId, period, onPeriodChange }: { projectId: string; period: string; onPeriodChange: (p: string) => void }) {
+function ProfitChart({
+  projectId,
+  period,
+  onPeriodChange,
+  refreshVersion,
+}: {
+  projectId: string
+  period: string
+  onPeriodChange: (p: string) => void
+  refreshVersion: number
+}) {
   const [data, setData] = useState<ProfitChartData | null>(null)
   const [loading, setLoading] = useState(false)
 
@@ -569,7 +630,7 @@ function ProfitChart({ projectId, period, onPeriodChange }: { projectId: string;
       .then(r => r.json())
       .then(setData)
       .finally(() => setLoading(false))
-  }, [projectId, period])
+  }, [projectId, period, refreshVersion])
 
   const periods = [
     { key: 'today', label: 'Hôm nay' },
@@ -766,7 +827,7 @@ function ProfitChartSVG({ data }: { data: DailyProfitPoint[] }) {
   )
 }
 
-function RevenueGoalTracker({ projectId }: { projectId: string }) {
+function RevenueGoalTracker({ projectId, refreshVersion }: { projectId: string; refreshVersion: number }) {
   const [monthlyTarget, setMonthlyTarget] = useState<number>(() => {
     if (typeof window === 'undefined') return 30000
     return Number(localStorage.getItem('goal_monthly') || '30000')
@@ -787,7 +848,7 @@ function RevenueGoalTracker({ projectId }: { projectId: string }) {
       .then(r => r.json())
       .then(setData)
       .catch(() => setFetchError(true))
-  }, [projectId])
+  }, [projectId, refreshVersion])
 
   function handleMonthlyTarget(val: string) {
     const n = Number(val)
@@ -910,7 +971,17 @@ function RevenueGoalTracker({ projectId }: { projectId: string }) {
   )
 }
 
-function AutoSyncStatusBar({ status, syncing, onSync }: { status: AutoSyncStatus | null; syncing: boolean; onSync: () => void }) {
+function AutoSyncStatusBar({
+  status,
+  syncing,
+  error,
+  onSync,
+}: {
+  status: AutoSyncStatus | null
+  syncing: boolean
+  error: string | null
+  onSync: () => void
+}) {
   const lastOrders = status?.lastResult?.orders
   const lastInsights = status?.lastResult?.insights
   const lastTime = status?.lastResult?.finishedAt
@@ -918,16 +989,20 @@ function AutoSyncStatusBar({ status, syncing, onSync }: { status: AutoSyncStatus
     : null
 
   return (
-    <div className="bg-surface-container-lowest rounded-xl border border-outline-variant/20 p-md flex items-center justify-between gap-md flex-wrap">
-      <div className="flex items-center gap-sm">
-        <div className="w-2 h-2 rounded-full bg-on-tertiary-container" style={{ boxShadow: '0 0 6px #4ade80' }} />
-        <div>
+    <div className={`bg-surface-container-lowest rounded-xl border p-md flex items-center justify-between gap-md flex-wrap ${error ? 'border-error/40' : 'border-outline-variant/20'}`}>
+      <div className="flex items-start gap-sm min-w-0">
+        <div
+          className={`w-2 h-2 rounded-full mt-[7px] flex-shrink-0 ${error ? 'bg-error' : 'bg-on-tertiary-container'}`}
+          style={error ? undefined : { boxShadow: '0 0 6px #4ade80' }}
+        />
+        <div className="min-w-0">
           <p className="text-label-md text-primary">Auto-sync</p>
           <p className="text-label-sm text-on-surface-variant">
             {lastTime ? `Lần cuối: ${lastTime}` : 'Chưa sync'}
-            {lastOrders && !lastOrders.error ? ` · Orders: ${lastOrders.synced ?? 0}` : ''}
+            {lastOrders && !lastOrders.error ? ` · Orders: ${lastOrders.totalSynced ?? 0}` : ''}
             {lastInsights && !lastInsights.error ? ` · Insights: ${lastInsights.synced ?? 0} ngày` : ''}
           </p>
+          {error && <p className="text-label-sm text-error mt-xs break-words">Lỗi sync: {error}</p>}
         </div>
       </div>
       <button

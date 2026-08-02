@@ -5,6 +5,7 @@ import { estimateOrderCostAndProfit } from '@/lib/order-profit'
 import { productLinesOnly } from '@/lib/order-lines'
 import { convertMetaAmountToUsd, normalizeMetaCurrency, sumMetaAmountsUsd } from '@/lib/meta-currency'
 import { getMetaExchangeRates } from '@/lib/meta-exchange-rates'
+import { PROJECT_REVENUE_EXCLUDED_STATUSES, summarizeProjectOrderFinancials } from '@/lib/project-metrics'
 
 type CostBuckets = {
   fulfillment: number
@@ -73,27 +74,6 @@ function getMonthRange(month: string | null, timeZone: string) {
   }
 }
 
-function graphUrl(path: string, params: Record<string, string>) {
-  const url = new URL(`https://graph.facebook.com/${process.env.META_GRAPH_API_VERSION ?? 'v22.0'}/${path}`)
-  Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, value))
-  return url.toString()
-}
-
-async function fetchMetaInsightsSpend(accountId: string, accessToken: string, since: string, until: string) {
-  const timeRange = JSON.stringify({ since, until })
-  const url = graphUrl(`${accountId}/insights`, {
-    fields: 'spend',
-    level: 'account',
-    time_range: timeRange,
-    access_token: accessToken,
-  })
-
-  const res = await fetch(url)
-  const json = await res.json()
-  if (json.error) throw new Error(json.error.message)
-  return (json.data ?? []).reduce((sum: number, row: any) => sum + Number(row.spend ?? 0), 0)
-}
-
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const projectId = searchParams.get('projectId')
@@ -110,7 +90,7 @@ export async function GET(req: NextRequest) {
     where: { id: projectId },
     include: {
       assignments: { include: { staff: true } },
-      shopifyStore: { select: { ianaTimezone: true, currentBalance: true, currentBalanceCurrency: true } },
+      shopifyStore: { select: { id: true, ianaTimezone: true, currentBalance: true, currentBalanceCurrency: true } },
     },
   })
 
@@ -148,9 +128,15 @@ export async function GET(req: NextRequest) {
   const periodIsValid = startDate <= endDate
 
   const paidMetaStatuses = ['PAID', 'SETTLED', 'COMPLETED']
-  const [payouts, metaAccounts, billings, orders] = await Promise.all([
-    prisma.payout.findMany({
+  const metaAccounts = await prisma.metaAdAccount.findMany({
+    where: { projectId },
+    select: { id: true, accountId: true, accountName: true, currency: true },
+  })
+  const metaAccountIds = metaAccounts.map(account => account.id)
+  const [payouts, billings, orders, dailyAdSpends] = await Promise.all([
+    project.shopifyStore ? prisma.payout.findMany({
       where: {
+        storeId: project.shopifyStore.id,
         date: {
           gte: payoutStartStr,
           lte: endStr,
@@ -158,11 +144,7 @@ export async function GET(req: NextRequest) {
         status: 'paid',
       },
       orderBy: { date: 'desc' },
-    }),
-    prisma.metaAdAccount.findMany({
-      where: { projectId },
-      select: { id: true, accountId: true, accountName: true, accessToken: true, currency: true },
-    }),
+    }) : Promise.resolve([]),
     prisma.metaBilling.findMany({
       where: {
         billingDate: {
@@ -178,7 +160,7 @@ export async function GET(req: NextRequest) {
       where: {
         projectId,
         placedAt: { gte: orderRangeStart, lte: orderRangeEnd },
-        pipelineStatus: { notIn: ['REFUNDED', 'CANCELLED'] },
+        pipelineStatus: { notIn: [...PROJECT_REVENUE_EXCLUDED_STATUSES] },
       },
       include: {
         lines: {
@@ -196,14 +178,22 @@ export async function GET(req: NextRequest) {
         },
       },
     }),
+    periodIsValid && metaAccountIds.length > 0
+      ? prisma.dailyAdSpend.findMany({
+          where: {
+            adAccountId: { in: metaAccountIds },
+            date: { gte: startStr, lte: endStr },
+          },
+          select: { adAccountId: true, spend: true, currency: true },
+        })
+      : Promise.resolve([]),
   ])
   const exchangeRates = await getMetaExchangeRates(metaAccounts.map(account => account.id))
 
   const totalPayout = payouts.reduce((sum, p) => sum + p.amount, 0)
   const metaBillingSummary = sumMetaAmountsUsd(billings, exchangeRates)
   const totalMetaBilling = metaBillingSummary.totalUsd
-  let totalRevenue = 0
-  let totalPaymentFees = 0
+  const { totalRevenue, totalPaymentFees } = summarizeProjectOrderFinancials(orders)
   let totalOrderProfit = 0
   let totalOrderCogs = 0
   let mappedOrderCount = 0
@@ -217,42 +207,48 @@ export async function GET(req: NextRequest) {
     } else {
       mappedOrderCount++
     }
-    totalRevenue += order.grossAmount
-    totalPaymentFees += order.totalFees
     totalOrderProfit += estimate.profit
     totalOrderCogs += estimate.estimatedCogs
   }
   const totalFulfillmentCost = totalOrderCogs
   const billingDates = billings.map(b => b.billingDate).sort()
+  const orderDates = orders.map(order => dateKeyInZone(order.placedAt, timeZone)).sort()
+  const payoutDates = payouts.map(payout => payout.date).sort()
+  const latestOrderDate = orderDates[orderDates.length - 1] ?? null
+  const latestPayoutDate = payoutDates[payoutDates.length - 1] ?? null
+  const orderDataMayBeStale = Boolean(
+    latestOrderDate
+    && latestPayoutDate
+    && latestPayoutDate > addDays(latestOrderDate, 7),
+  )
   const untilStr = endStr
-  const spendByAccount = periodIsValid ? await Promise.all(metaAccounts.map(async account => {
-    try {
-      const originalSpend = await fetchMetaInsightsSpend(account.accountId, account.accessToken, startStr, untilStr)
-      const currency = normalizeMetaCurrency(account.currency)
-      const spend = convertMetaAmountToUsd(originalSpend, currency, exchangeRates.get(account.id))
-      if (spend === null) {
-        return {
-          accountId: account.accountId,
-          accountName: account.accountName,
-          spend: 0,
-          originalSpend,
-          currency,
-          source: 'missing_exchange_rate',
-          error: `Chưa có tỷ giá ${currency} / USD`,
-        }
-      }
-      return { accountId: account.accountId, accountName: account.accountName, spend, originalSpend, currency, source: 'facebook_insights' }
-    } catch (err: any) {
-      return { accountId: account.accountId, accountName: account.accountName, spend: 0, source: 'facebook_insights_error', error: err.message }
+  const spendRowsByAccount = new Map<string, typeof dailyAdSpends>()
+  for (const row of dailyAdSpends) {
+    const rows = spendRowsByAccount.get(row.adAccountId) ?? []
+    rows.push(row)
+    spendRowsByAccount.set(row.adAccountId, rows)
+  }
+  const spendByAccount = metaAccounts.map(account => {
+    const rows = spendRowsByAccount.get(account.id) ?? []
+    const currency = normalizeMetaCurrency(account.currency)
+    const originalSpend = rows.reduce((sum, row) => sum + row.spend, 0)
+    let missingExchangeRate = false
+    const spend = rows.reduce((sum, row) => {
+      const amountUsd = convertMetaAmountToUsd(row.spend, row.currency || currency, exchangeRates.get(account.id))
+      if (amountUsd === null) missingExchangeRate = true
+      return sum + (amountUsd ?? 0)
+    }, 0)
+
+    return {
+      accountId: account.accountId,
+      accountName: account.accountName,
+      spend,
+      originalSpend,
+      currency,
+      source: missingExchangeRate ? 'missing_exchange_rate' : 'synced_daily_ad_spend',
+      ...(missingExchangeRate ? { error: `Chưa có tỷ giá ${currency} / USD` } : {}),
     }
-  })) : metaAccounts.map(account => ({
-    accountId: account.accountId,
-    accountName: account.accountName,
-    spend: 0,
-    originalSpend: 0,
-    currency: normalizeMetaCurrency(account.currency),
-    source: 'outside_selected_period',
-  }))
+  })
   const totalAdSpend = spendByAccount.reduce((sum, item) => sum + item.spend, 0)
   const totalOtherCosts = costs.fulfillment + costs.appBilling + costs.toolsBilling
   const cashflowCosts = totalOrderCogs + totalOtherCosts
@@ -303,14 +299,22 @@ export async function GET(req: NextRequest) {
         .map(account => account.accountName || account.accountId),
     },
     actualAdSpend: {
-      source: 'Meta Insights spend',
-      note: 'Spend is accrued ad delivery cost. Billing is cash/card charge timing, so values can differ in the same date range.',
+      source: 'Synced Meta daily ad spend',
+      note: 'Dashboard reads the synced DailyAdSpend table. Billing is cash/card charge timing, so values can differ in the same date range.',
     },
     orderProfit: {
       source: 'Order profit with estimated COGS for unmapped lines',
       mappedOrderCount,
       unmappedOrderCount,
       estimateRule: 'Unmapped COGS = known COGS + 50% of payout remaining after known COGS',
+    },
+    orderRevenue: {
+      source: 'Shopify orders excluding refunded and cancelled orders',
+      orderCount: orders.length,
+      firstDate: orderDates[0] ?? null,
+      lastDate: latestOrderDate,
+      latestPayoutDate,
+      mayBeStale: orderDataMayBeStale,
     },
   }
 

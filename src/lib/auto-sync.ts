@@ -5,26 +5,34 @@ import { recalculateMissingOrderLineCosts } from '@/lib/repos/order-costs'
 
 let initialized = false
 
-function appBaseUrl() {
+function appBaseUrl(requestOrigin?: string) {
+  if (requestOrigin) return requestOrigin.replace(/\/$/, '')
   if (process.env.NEXT_PUBLIC_APP_URL) return process.env.NEXT_PUBLIC_APP_URL
   if (process.env.APP_URL) return process.env.APP_URL
   if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`
   return 'http://localhost:3000'
 }
 
-async function syncOrdersViaOrderPlFlow() {
-  const res = await fetch(`${appBaseUrl()}/api/shopify/orders/sync`, { method: 'POST' })
+async function syncOrdersViaOrderPlFlow(requestOrigin?: string, cookieHeader?: string | null) {
+  const res = await fetch(`${appBaseUrl(requestOrigin)}/api/shopify/orders/sync`, {
+    method: 'POST',
+    headers: cookieHeader ? { cookie: cookieHeader } : undefined,
+    redirect: 'manual',
+  })
   const body = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(body.error ?? `Order sync failed with ${res.status}`)
+  if (typeof body.totalSynced !== 'number') {
+    throw new Error('Order sync returned an invalid response. Check app URL and authentication.')
+  }
   const refresh = await recalculateMissingOrderLineCosts()
   return { ...body, refresh }
 }
 
-export async function runAutoSync(): Promise<Record<string, any>> {
+export async function runAutoSync(requestOrigin?: string, cookieHeader?: string | null): Promise<Record<string, any>> {
   const result: Record<string, any> = { startedAt: new Date().toISOString() }
 
   try {
-    result.orders = await syncOrdersViaOrderPlFlow()
+    result.orders = await syncOrdersViaOrderPlFlow(requestOrigin, cookieHeader)
   } catch (e: unknown) {
     result.orders = { error: e instanceof Error ? e.message : 'Unknown error' }
   }

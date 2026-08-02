@@ -1,6 +1,9 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import Sidebar from '@/components/Sidebar'
+import MetaBillingSyncStatus from '@/components/MetaBillingSyncStatus'
+import type { MetaBillingSyncJob } from '@/lib/meta-billing-sync-types'
+import { isMetaBillingSyncActive } from '@/lib/meta-billing-sync-types'
 
 type Project = { id: string; name: string }
 type MetaAccount = {
@@ -38,10 +41,12 @@ export default function SetupMetaPage() {
   const [assigning, setAssigning] = useState(false)
 
   const [showToken, setShowToken] = useState<Record<string, boolean>>({})
-  const [syncing, setSyncing] = useState<string | null>(null)
-  const [syncResult, setSyncResult] = useState<{ ok?: boolean; count?: number; error?: string } | null>(null)
+  const [startingSync, setStartingSync] = useState<string | null>(null)
+  const [syncJob, setSyncJob] = useState<MetaBillingSyncJob | null>(null)
+  const [syncStartError, setSyncStartError] = useState<string | null>(null)
+  const wasSyncActive = useRef(false)
 
-  async function load() {
+  const load = useCallback(async () => {
     setLoading(true)
     const [a, p] = await Promise.all([
       fetch('/api/meta/accounts').then(r => r.json()),
@@ -53,9 +58,36 @@ export default function SetupMetaPage() {
     setRateDrafts(Object.fromEntries(accountList.map(account => [account.id, account.exchangeRate ? String(account.exchangeRate) : ''])))
     setProjects(Array.isArray(p) ? p : [])
     setLoading(false)
-  }
+  }, [])
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { void load() }, [load])
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function pollSyncJob() {
+      try {
+        const res = await fetch('/api/meta/sync', { cache: 'no-store' })
+        const result = await res.json()
+        if (!res.ok || cancelled) return
+        const nextJob = (result.job ?? null) as MetaBillingSyncJob | null
+        const nextActive = isMetaBillingSyncActive(nextJob)
+        const shouldReload = wasSyncActive.current && !nextActive
+        wasSyncActive.current = nextActive
+        setSyncJob(nextJob)
+        if (shouldReload) await load()
+      } catch {
+        // Keep the current progress visible; the next poll can recover.
+      }
+    }
+
+    void pollSyncJob()
+    const timer = window.setInterval(pollSyncJob, 2_000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [load])
 
   async function addAccount() {
     if (!accountId || !accessToken) return
@@ -153,17 +185,24 @@ export default function SetupMetaPage() {
   }
 
   async function syncAccount(id: string) {
-    setSyncing(id)
-    setSyncResult(null)
-    const res = await fetch('/api/meta/sync', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ accountId: id }),
-    })
-    const data = await res.json()
-    setSyncResult(data.error ? { error: data.error } : { ok: true, count: data.synced })
-    setSyncing(null)
-    await load()
+    setStartingSync(id)
+    setSyncStartError(null)
+    try {
+      const res = await fetch('/api/meta/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accountId: id }),
+      })
+      const result = await res.json()
+      if (!res.ok) throw new Error(result.error || 'Không thể bắt đầu Meta billing sync.')
+      const nextJob = result.job as MetaBillingSyncJob
+      wasSyncActive.current = isMetaBillingSyncActive(nextJob)
+      setSyncJob(nextJob)
+    } catch (error) {
+      setSyncStartError(error instanceof Error ? error.message : 'Không thể bắt đầu Meta billing sync.')
+    } finally {
+      setStartingSync(null)
+    }
   }
 
   const inputCls = 'bg-surface-container border border-outline-variant/30 rounded-lg px-md py-sm text-body-md focus:ring-2 focus:ring-secondary focus:border-secondary outline-none transition-all w-full'
@@ -178,16 +217,14 @@ export default function SetupMetaPage() {
           <p className="text-on-surface-variant text-body-md mt-xs">Kết nối tài khoản quảng cáo Meta và gắn với dự án</p>
         </header>
 
-        {syncResult && (
-          <div className={`mb-lg rounded-xl px-lg py-md flex items-center gap-md ${syncResult.error ? 'bg-error-container/20 border border-error/20' : 'bg-on-tertiary-container/10 border border-on-tertiary-container/20'}`}>
-            <span className={`material-symbols-outlined ${syncResult.error ? 'text-error' : 'text-on-tertiary-container'}`}>
-              {syncResult.error ? 'error' : 'check_circle'}
-            </span>
-            <p className="text-body-sm">
-              {syncResult.error ? `Lỗi sync: ${syncResult.error}` : `Đã sync ${syncResult.count} billing records.`}
-            </p>
+        {syncStartError && (
+          <div className="mb-lg flex items-center gap-md rounded-xl border border-error/20 bg-error-container/20 px-lg py-md text-error">
+            <span className="material-symbols-outlined">error</span>
+            <p className="text-body-sm">Lỗi sync: {syncStartError}</p>
           </div>
         )}
+
+        <MetaBillingSyncStatus job={syncJob} />
 
         {currencyError && (
           <div className="mb-lg rounded-xl bg-error-container/20 border border-error/20 px-lg py-md flex items-center gap-md text-error">
@@ -353,13 +390,18 @@ export default function SetupMetaPage() {
                         <div className="flex items-center gap-sm flex-shrink-0">
                           <button
                             onClick={() => syncAccount(a.id)}
-                            disabled={syncing === a.id}
+                            disabled={startingSync !== null || isMetaBillingSyncActive(syncJob)}
                             className="flex items-center gap-xs border border-secondary text-secondary px-md py-xs rounded-lg text-label-sm hover:bg-secondary/5 disabled:opacity-50 transition-colors"
                           >
-                            <span className={`material-symbols-outlined text-[14px] ${syncing === a.id ? 'animate-spin' : ''}`}>sync</span>
-                            {syncing === a.id ? 'Syncing...' : 'Sync'}
+                            <span className={`material-symbols-outlined text-[14px] ${startingSync === a.id || isMetaBillingSyncActive(syncJob) ? 'animate-spin' : ''}`}>sync</span>
+                            {startingSync === a.id ? 'Đang khởi tạo...' : isMetaBillingSyncActive(syncJob) ? 'Đang sync...' : 'Sync billing'}
                           </button>
-                          <button onClick={() => deleteAccount(a.id)} className="text-error/60 hover:text-error transition-colors">
+                          <button
+                            onClick={() => deleteAccount(a.id)}
+                            disabled={isMetaBillingSyncActive(syncJob)}
+                            title={isMetaBillingSyncActive(syncJob) ? 'Chờ billing sync hoàn tất trước khi xóa tài khoản' : 'Xóa tài khoản'}
+                            className="text-error/60 hover:text-error disabled:cursor-not-allowed disabled:opacity-30 transition-colors"
+                          >
                             <span className="material-symbols-outlined text-[18px]">delete</span>
                           </button>
                         </div>
