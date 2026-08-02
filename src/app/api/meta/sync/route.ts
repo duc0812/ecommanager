@@ -432,7 +432,12 @@ export async function POST(req: NextRequest) {
 
       await prisma.metaAdAccount.update({
         where: { id: account.id },
-        data: { lastSyncAt: new Date() },
+        data: {
+          lastSyncAt: new Date(),
+          ...(!account.currency && transactions[0]?.currency
+            ? { currency: transactions[0].currency.trim().toUpperCase() }
+            : {}),
+        },
       })
       ranges[account.id] = { since, until, synced: accountSynced }
     }

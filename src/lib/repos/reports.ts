@@ -2,6 +2,8 @@ import { listOrdersWithLines, type OrderFilter } from './orders'
 import { prisma } from '@/lib/db'
 import { estimateOrderCostAndProfit, effectiveBaseCost } from '@/lib/order-profit'
 import { productLinesOnly } from '@/lib/order-lines'
+import { sumMetaAmountsUsd } from '@/lib/meta-currency'
+import { getMetaExchangeRates } from '@/lib/meta-exchange-rates'
 
 export type PlSummary = {
   orderCount: number
@@ -170,7 +172,8 @@ export async function combinedProjectPL(filter: {
       billingWhere.billingDate = { gte: fromIso, lte: toIso }
     }
     const billings = await prisma.metaBilling.findMany({ where: billingWhere })
-    metaAdSpend = billings.reduce((sum, b) => sum + b.amount, 0)
+    const exchangeRates = await getMetaExchangeRates(accountIds)
+    metaAdSpend = sumMetaAmountsUsd(billings, exchangeRates).totalUsd
   }
 
   // Staff cost — for each assignment, compute active months in date range

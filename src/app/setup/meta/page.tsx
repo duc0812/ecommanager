@@ -7,8 +7,8 @@ type MetaAccount = {
   id: string
   accountId: string
   accountName: string | null
-  accessToken: string
   currency: string | null
+  exchangeRate: number | null
   projectId: string | null
   project: { id: string; name: string } | null
   lastSyncAt: string | null
@@ -22,7 +22,16 @@ export default function SetupMetaPage() {
   const [accountId, setAccountId] = useState('')
   const [accountName, setAccountName] = useState('')
   const [accessToken, setAccessToken] = useState('')
+  const [currency, setCurrency] = useState('USD')
+  const [exchangeRate, setExchangeRate] = useState('')
   const [saving, setSaving] = useState(false)
+  const [currencyDrafts, setCurrencyDrafts] = useState<Record<string, string>>({})
+  const [rateDrafts, setRateDrafts] = useState<Record<string, string>>({})
+  const [savingCurrency, setSavingCurrency] = useState<string | null>(null)
+  const [currencyError, setCurrencyError] = useState<string | null>(null)
+  const [tokenDrafts, setTokenDrafts] = useState<Record<string, string>>({})
+  const [updatingToken, setUpdatingToken] = useState<string | null>(null)
+  const [accountNotice, setAccountNotice] = useState<string | null>(null)
 
   const [assignId, setAssignId] = useState('')
   const [assignProject, setAssignProject] = useState('')
@@ -38,7 +47,10 @@ export default function SetupMetaPage() {
       fetch('/api/meta/accounts').then(r => r.json()),
       fetch('/api/projects').then(r => r.json()),
     ])
-    setAccounts(Array.isArray(a) ? a : [])
+    const accountList: MetaAccount[] = Array.isArray(a) ? a : []
+    setAccounts(accountList)
+    setCurrencyDrafts(Object.fromEntries(accountList.map(account => [account.id, account.currency || 'USD'])))
+    setRateDrafts(Object.fromEntries(accountList.map(account => [account.id, account.exchangeRate ? String(account.exchangeRate) : ''])))
     setProjects(Array.isArray(p) ? p : [])
     setLoading(false)
   }
@@ -47,15 +59,74 @@ export default function SetupMetaPage() {
 
   async function addAccount() {
     if (!accountId || !accessToken) return
+    if (currency === 'VND' && (!Number(exchangeRate) || Number(exchangeRate) <= 0)) {
+      setCurrencyError('Vui lòng nhập tỷ giá VND cho 1 USD.')
+      return
+    }
     setSaving(true)
-    await fetch('/api/meta/accounts', {
+    setCurrencyError(null)
+    const res = await fetch('/api/meta/accounts', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ accountId, accountName, accessToken }),
+      body: JSON.stringify({ accountId, accountName, accessToken, currency, exchangeRate }),
     })
-    setAccountId(''); setAccountName(''); setAccessToken('')
+    const result = await res.json()
+    if (!res.ok) {
+      setCurrencyError(result.error || 'Không thể lưu tài khoản Meta.')
+      setSaving(false)
+      return
+    }
+    setAccountId(''); setAccountName(''); setAccessToken(''); setCurrency('USD'); setExchangeRate('')
     await load()
     setSaving(false)
+  }
+
+  async function saveCurrency(account: MetaAccount) {
+    const nextCurrency = currencyDrafts[account.id] || 'USD'
+    const nextRate = Number(rateDrafts[account.id])
+    if (nextCurrency === 'VND' && (!Number.isFinite(nextRate) || nextRate <= 0)) {
+      setCurrencyError(`Vui lòng nhập tỷ giá cho ${account.accountName || account.accountId}.`)
+      return
+    }
+    setSavingCurrency(account.id)
+    setCurrencyError(null)
+    const res = await fetch('/api/meta/accounts', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: account.id,
+        currency: nextCurrency,
+        exchangeRate: nextCurrency === 'VND' ? nextRate : null,
+      }),
+    })
+    const result = await res.json()
+    if (!res.ok) setCurrencyError(result.error || 'Không thể lưu tỷ giá.')
+    else await load()
+    setSavingCurrency(null)
+  }
+
+  async function updateAccessToken(account: MetaAccount) {
+    const nextToken = tokenDrafts[account.id]?.trim()
+    if (!nextToken) {
+      setCurrencyError(`Vui lòng dán token mới cho ${account.accountName || account.accountId}.`)
+      return
+    }
+    setUpdatingToken(account.id)
+    setCurrencyError(null)
+    setAccountNotice(null)
+    const res = await fetch('/api/meta/accounts', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: account.id, accessToken: nextToken }),
+    })
+    const result = await res.json()
+    if (!res.ok) {
+      setCurrencyError(result.error || 'Không thể cập nhật Access Token.')
+    } else {
+      setTokenDrafts(current => ({ ...current, [account.id]: '' }))
+      setAccountNotice(`Đã cập nhật token cho ${account.accountName || account.accountId}. Bạn có thể bấm Sync để kiểm tra.`)
+    }
+    setUpdatingToken(null)
   }
 
   async function deleteAccount(id: string) {
@@ -118,6 +189,20 @@ export default function SetupMetaPage() {
           </div>
         )}
 
+        {currencyError && (
+          <div className="mb-lg rounded-xl bg-error-container/20 border border-error/20 px-lg py-md flex items-center gap-md text-error">
+            <span className="material-symbols-outlined">error</span>
+            <p className="text-body-sm">{currencyError}</p>
+          </div>
+        )}
+
+        {accountNotice && (
+          <div className="mb-lg rounded-xl bg-on-tertiary-container/10 border border-on-tertiary-container/20 px-lg py-md flex items-center gap-md text-on-tertiary-container">
+            <span className="material-symbols-outlined">check_circle</span>
+            <p className="text-body-sm">{accountNotice}</p>
+          </div>
+        )}
+
         <div className="grid grid-cols-12 gap-lg">
 
           {/* Left: Add account + Assign */}
@@ -136,6 +221,28 @@ export default function SetupMetaPage() {
                 <div className="space-y-xs">
                   <label className="block text-label-sm text-on-surface-variant uppercase tracking-wider">Tên tài khoản</label>
                   <input type="text" value={accountName} onChange={e => setAccountName(e.target.value)} placeholder="VD: POD Ads Account" className={inputCls} />
+                </div>
+                <div className="grid grid-cols-2 gap-md">
+                  <div className="space-y-xs">
+                    <label className="block text-label-sm text-on-surface-variant uppercase tracking-wider">Tiền tệ</label>
+                    <select value={currency} onChange={e => setCurrency(e.target.value)} className={inputCls}>
+                      <option value="USD">USD</option>
+                      <option value="VND">VND</option>
+                    </select>
+                  </div>
+                  <div className="space-y-xs">
+                    <label className="block text-label-sm text-on-surface-variant uppercase tracking-wider">Tỷ giá VND / 1 USD</label>
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={exchangeRate}
+                      onChange={e => setExchangeRate(e.target.value)}
+                      placeholder="VD: 25500"
+                      disabled={currency !== 'VND'}
+                      className={`${inputCls} disabled:opacity-40`}
+                    />
+                  </div>
                 </div>
                 <div className="space-y-xs">
                   <label className="block text-label-sm text-on-surface-variant uppercase tracking-wider">Access Token *</label>
@@ -157,7 +264,7 @@ export default function SetupMetaPage() {
                 </div>
                 <button
                   onClick={addAccount}
-                  disabled={saving || !accountId || !accessToken}
+                  disabled={saving || !accountId || !accessToken || (currency === 'VND' && !exchangeRate)}
                   className="flex items-center gap-sm bg-secondary text-on-secondary px-lg py-sm rounded-lg text-label-md hover:opacity-90 disabled:opacity-40 transition-opacity"
                 >
                   <span className={`material-symbols-outlined text-[18px] ${saving ? 'animate-spin' : ''}`}>{saving ? 'sync' : 'add_circle'}</span>
@@ -256,6 +363,74 @@ export default function SetupMetaPage() {
                             <span className="material-symbols-outlined text-[18px]">delete</span>
                           </button>
                         </div>
+                      </div>
+                      <div className="mt-md grid grid-cols-1 sm:grid-cols-[120px_1fr_auto] gap-sm items-end rounded-lg bg-surface-container-low p-md">
+                        <div className="space-y-xs">
+                          <label className="block text-label-sm text-on-surface-variant">Tiền tệ</label>
+                          <select
+                            value={currencyDrafts[a.id] || 'USD'}
+                            onChange={e => setCurrencyDrafts(current => ({ ...current, [a.id]: e.target.value }))}
+                            className={inputCls}
+                          >
+                            <option value="USD">USD</option>
+                            <option value="VND">VND</option>
+                          </select>
+                        </div>
+                        <div className="space-y-xs">
+                          <label className="block text-label-sm text-on-surface-variant">Tỷ giá VND / 1 USD</label>
+                          <input
+                            type="number"
+                            min="1"
+                            step="1"
+                            value={rateDrafts[a.id] || ''}
+                            onChange={e => setRateDrafts(current => ({ ...current, [a.id]: e.target.value }))}
+                            placeholder="VD: 25500"
+                            disabled={(currencyDrafts[a.id] || 'USD') !== 'VND'}
+                            className={`${inputCls} disabled:opacity-40`}
+                          />
+                        </div>
+                        <button
+                          onClick={() => saveCurrency(a)}
+                          disabled={savingCurrency === a.id}
+                          className="h-[42px] flex items-center justify-center gap-xs bg-secondary text-on-secondary px-md rounded-lg text-label-sm hover:opacity-90 disabled:opacity-50"
+                        >
+                          <span className={`material-symbols-outlined text-[16px] ${savingCurrency === a.id ? 'animate-spin' : ''}`}>
+                            {savingCurrency === a.id ? 'sync' : 'currency_exchange'}
+                          </span>
+                          Lưu tỷ giá
+                        </button>
+                      </div>
+                      <div className="mt-sm grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-sm items-end rounded-lg border border-outline-variant/20 p-md">
+                        <div className="space-y-xs">
+                          <label className="block text-label-sm text-on-surface-variant">Access Token mới</label>
+                          <div className="relative">
+                            <input
+                              type={showToken[a.id] ? 'text' : 'password'}
+                              value={tokenDrafts[a.id] || ''}
+                              onChange={e => setTokenDrafts(current => ({ ...current, [a.id]: e.target.value }))}
+                              placeholder="Dán token mới vào đây..."
+                              autoComplete="off"
+                              className={`${inputCls} pr-10`}
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setShowToken(current => ({ ...current, [a.id]: !current[a.id] }))}
+                              className="absolute right-md top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-primary"
+                            >
+                              <span className="material-symbols-outlined text-[20px]">{showToken[a.id] ? 'visibility_off' : 'visibility'}</span>
+                            </button>
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => updateAccessToken(a)}
+                          disabled={updatingToken === a.id || !tokenDrafts[a.id]?.trim()}
+                          className="h-[42px] flex items-center justify-center gap-xs bg-primary text-on-primary px-md rounded-lg text-label-sm hover:opacity-90 disabled:opacity-40"
+                        >
+                          <span className={`material-symbols-outlined text-[16px] ${updatingToken === a.id ? 'animate-spin' : ''}`}>
+                            {updatingToken === a.id ? 'sync' : 'key'}
+                          </span>
+                          Cập nhật token
+                        </button>
                       </div>
                     </div>
                   ))}

@@ -125,6 +125,7 @@ export async function POST(req: NextRequest) {
   let imported = 0
   let updated = 0
   let skipped = 0
+  let detectedCurrency: string | null = null
   const errors: Array<{ row: number; error: string }> = []
 
   for (let index = 0; index < rows.length; index++) {
@@ -134,7 +135,7 @@ export async function POST(req: NextRequest) {
     const status = pick(row, ['Payment status', 'Status'])
     const date = parseDate(pick(row, ['Date', 'Transaction Date', 'Billing Date']))
     const amount = parseAmount(pick(row, ['Amount', 'Total', 'Paid Amount']))
-    const currency = pick(row, ['Currency']) || account.currency || 'USD'
+    const currency = (pick(row, ['Currency']) || account.currency || 'USD').trim().toUpperCase()
     const paymentRaw = pick(row, ['Payment method', 'Payment Method'])
     const referenceNumber = pick(row, ['Reference number', 'Reference Number']) || transactionId
     const receiptUrl = pick(row, ['Receipt URL', 'Receipt Url', 'Download URL', 'Download Url'])
@@ -161,6 +162,7 @@ export async function POST(req: NextRequest) {
       errors.push({ row: rowNumber, error: 'Invalid Amount' })
       continue
     }
+    detectedCurrency ??= currency
 
     const payment = parsePaymentMethod(paymentRaw)
     const paymentMethod = payment.code && payment.label ? `${payment.label} ${payment.code}` : payment.label
@@ -202,7 +204,13 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  await prisma.metaAdAccount.update({ where: { id: account.id }, data: { lastSyncAt: new Date() } })
+  await prisma.metaAdAccount.update({
+    where: { id: account.id },
+    data: {
+      lastSyncAt: new Date(),
+      ...(!account.currency && detectedCurrency ? { currency: detectedCurrency } : {}),
+    },
+  })
 
   return NextResponse.json({
     success: true,

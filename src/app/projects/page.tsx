@@ -24,6 +24,8 @@ type SpendAccount = {
   accountId: string
   accountName: string | null
   spend: number
+  originalSpend?: number
+  currency?: string
   source: string
   error?: string
 }
@@ -67,11 +69,11 @@ type Analytics = {
     project: { id: string; name: string; startDate: string }
     staff: { id: string; staffId: string; staffName: string; role: string | null; startDate: string; endDate: string | null; monthlyCost: number }[]
     period: { start: string; end: string | null }
-    metaAccounts: { id: string; accountId: string; accountName: string | null }[]
+    metaAccounts: { id: string; accountId: string; accountName: string | null; currency?: string; exchangeRate?: number | null }[]
   }
   dataDiagnostics: {
     period: { start: string; end: string }
-    metaBilling: { source: string; firstDate: string | null; lastDate: string | null; transactionCount: number }
+    metaBilling: { source: string; firstDate: string | null; lastDate: string | null; transactionCount: number; missingExchangeRateAccounts?: string[] }
     actualAdSpend: { source: string; note: string }
     orderProfit?: { source: string; mappedOrderCount: number; unmappedOrderCount: number; estimateRule?: string }
   }
@@ -487,6 +489,11 @@ function DataDiagnostics({ analytics }: { analytics: Analytics }) {
           </span>
         </div>
         <p className="text-label-sm text-on-surface-variant">{analytics.dataDiagnostics.actualAdSpend.note}</p>
+        {(analytics.dataDiagnostics.metaBilling.missingExchangeRateAccounts?.length ?? 0) > 0 && (
+          <p className="rounded-lg bg-amber-50 px-md py-sm text-label-sm text-amber-800">
+            Chưa có tỷ giá cho {analytics.dataDiagnostics.metaBilling.missingExchangeRateAccounts?.join(', ')}. Chi phí Meta của các tài khoản này chưa được cộng vào tổng USD.
+          </p>
+        )}
         {analytics.dataDiagnostics.orderProfit && (
           <p className="text-label-sm text-on-surface-variant">
             Gross Profit uses {analytics.dataDiagnostics.orderProfit.mappedOrderCount} mapped order(s); {analytics.dataDiagnostics.orderProfit.unmappedOrderCount} estimated.
@@ -513,6 +520,9 @@ function MetaAccountSpend({ accounts }: { accounts: SpendAccount[] }) {
               <div>
                 <p className="text-label-md text-primary">{account.accountName || account.accountId}</p>
                 <p className="text-label-sm text-on-surface-variant">{account.error ? account.error : account.source}</p>
+                {account.currency && account.currency !== 'USD' && account.originalSpend !== undefined && (
+                  <p className="text-label-sm text-on-surface-variant">Gốc: {account.originalSpend.toLocaleString('vi-VN')} {account.currency}</p>
+                )}
               </div>
               <span className="text-label-md text-primary">{fmtUSD(account.spend)}</span>
             </div>
@@ -931,5 +941,4 @@ function AutoSyncStatusBar({ status, syncing, onSync }: { status: AutoSyncStatus
     </div>
   )
 }
-
 

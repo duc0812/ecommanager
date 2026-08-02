@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { convertMetaAmountToUsd } from '@/lib/meta-currency'
+import { getMetaExchangeRates } from '@/lib/meta-exchange-rates'
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
@@ -14,7 +16,16 @@ export async function GET(req: NextRequest) {
 
   const [accounts, projects] = await Promise.all([
     prisma.metaAdAccount.findMany({
-      include: { project: true },
+      select: {
+        id: true,
+        accountId: true,
+        accountName: true,
+        currency: true,
+        projectId: true,
+        project: true,
+        lastSyncAt: true,
+        createdAt: true,
+      },
       orderBy: { createdAt: 'asc' },
     }),
     prisma.project.findMany({
@@ -27,6 +38,11 @@ export async function GET(req: NextRequest) {
   if (accounts.length === 0) {
     return NextResponse.json({ empty: true, accounts: [] })
   }
+  const exchangeRates = await getMetaExchangeRates(accounts.map(account => account.id))
+  const accountsWithRates = accounts.map(account => ({
+    ...account,
+    exchangeRate: exchangeRates.get(account.id) ?? null,
+  }))
 
   const paidStatuses = ['PAID', 'SETTLED', 'COMPLETED']
   const visibleStatuses = [...paidStatuses, 'PENDING']
@@ -64,6 +80,11 @@ export async function GET(req: NextRequest) {
 
     return {
       ...billing,
+      amountUsd: convertMetaAmountToUsd(
+        billing.amount,
+        billing.currency,
+        exchangeRates.get(billing.adAccountId),
+      ),
       projectLabel: projectActive && project ? { id: project.id, name: project.name } : null,
       staffLabels,
     }
@@ -72,8 +93,12 @@ export async function GET(req: NextRequest) {
   const paidBillings = billings.filter(b => paidStatuses.includes(b.status))
   const failedBillings = billings.filter(b => b.status === 'FAILED')
   const pendingBillings = billings.filter(b => b.status === 'PENDING')
-  const totalSpent = paidBillings.reduce((s, b) => s + b.amount, 0)
-  const totalPending = pendingBillings.reduce((s, b) => s + b.amount, 0)
+  const totalSpent = paidBillings.reduce((s, b) => s + (b.amountUsd ?? 0), 0)
+  const totalPending = pendingBillings.reduce((s, b) => s + (b.amountUsd ?? 0), 0)
+  const missingRateIds = new Set(billings.filter(b => b.amountUsd === null).map(b => b.adAccountId))
+  const missingExchangeRateAccounts = accountsWithRates
+    .filter(account => missingRateIds.has(account.id))
+    .map(account => ({ id: account.id, accountId: account.accountId, accountName: account.accountName, currency: account.currency }))
   const lastSyncAt = accounts.reduce((latest, a) => {
     if (!a.lastSyncAt) return latest
     if (!latest) return a.lastSyncAt
@@ -81,7 +106,7 @@ export async function GET(req: NextRequest) {
   }, null as Date | null)
 
   return NextResponse.json({
-    accounts,
+    accounts: accountsWithRates,
     billings,
     totalSpent,
     totalPending,
@@ -89,7 +114,10 @@ export async function GET(req: NextRequest) {
     paidCount: paidBillings.length,
     failedCount: failedBillings.length,
     pendingCount: pendingBillings.length,
-    avgSpend: paidBillings.length > 0 ? totalSpent / paidBillings.length : 0,
+    avgSpend: paidBillings.some(b => b.amountUsd !== null)
+      ? totalSpent / paidBillings.filter(b => b.amountUsd !== null).length
+      : 0,
+    missingExchangeRateAccounts,
     lastSyncAt,
   })
 }
