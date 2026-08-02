@@ -2,12 +2,17 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getPendingMappingQueue, listVariantManualMappings, saveManualMapping } from '@/lib/repos/mapping'
 import { recalculateMissingOrderLineCosts } from '@/lib/repos/order-costs'
 
+export const dynamic = 'force-dynamic'
+
 export async function GET() {
   const [pending, saved] = await Promise.all([
     getPendingMappingQueue(),
     listVariantManualMappings(),
   ])
-  return NextResponse.json({ pending, saved })
+  return NextResponse.json(
+    { pending, saved },
+    { headers: { 'Cache-Control': 'no-store' } },
+  )
 }
 
 export async function POST(req: NextRequest) {

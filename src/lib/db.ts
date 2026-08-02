@@ -1,13 +1,12 @@
 import { PrismaLibSql } from '@prisma/adapter-libsql'
 import { PrismaClient } from '@/generated/prisma/client'
-import path from 'path'
+import { resolveDatabaseUrl } from '@/lib/database-url'
 
 const globalForPrisma = globalThis as unknown as { prisma: PrismaClient; prismaVersion?: string }
 const SCHEMA_VERSION = 'v23' // bump this to force singleton reset after schema changes
 
 function createPrisma() {
-  const dbPath = path.resolve(process.cwd(), 'dev.db')
-  const adapter = new PrismaLibSql({ url: `file:${dbPath}` })
+  const adapter = new PrismaLibSql({ url: resolveDatabaseUrl() })
   return new PrismaClient({ adapter })
 }
 

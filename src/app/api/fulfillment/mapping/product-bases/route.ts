@@ -2,9 +2,14 @@ import { NextRequest, NextResponse } from 'next/server'
 import { listProductBases, createProductBase } from '@/lib/repos/mapping'
 import { recalculateMissingOrderLineCosts } from '@/lib/repos/order-costs'
 
+export const dynamic = 'force-dynamic'
+
 export async function GET() {
   const bases = await listProductBases()
-  return NextResponse.json({ bases })
+  return NextResponse.json(
+    { bases },
+    { headers: { 'Cache-Control': 'no-store' } },
+  )
 }
 
 export async function POST(req: NextRequest) {

@@ -194,7 +194,7 @@ model MetaBilling {
 - **Always use `@prisma/adapter-libsql`** — Prisma v7 requires a driver adapter for SQLite
 - **After any schema change**: run `npx prisma migrate dev --name <desc>` then `npx prisma generate` then **restart the dev server**
 - **Bump `SCHEMA_VERSION`** in `src/lib/db.ts` after every schema change to force singleton reset
-- **DB path**: `path.resolve(process.cwd(), 'dev.db')` — always absolute, always at project root
+- **DB URL**: runtime reads `DATABASE_URL`; relative `file:` paths are resolved from `process.cwd()`, with `dev.db` at the project root as fallback
 - **`prisma generate` cwd**: must be run from project root (`cd` to project dir first)
 
 ---

@@ -1,6 +1,6 @@
 // src/app/fulfillment/mapping/page.tsx
 'use client'
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import Sidebar from '@/components/Sidebar'
 
 // ── Types ────────────────────────────────────────────────────
@@ -385,20 +385,29 @@ export default function MappingPage() {
   const [pendingAssign, setPendingAssign] = useState<Record<string, string>>({}) // variantId → supplierProductId
   const [saving, setSaving] = useState<string | null>(null)
 
-  async function loadData() {
+  const loadData = useCallback(async () => {
     const [basesRes, spRes, manualRes] = await Promise.all([
-      fetch('/api/fulfillment/mapping/product-bases').then(r => r.json()),
-      fetch('/api/fulfillment/mapping/supplier-products').then(r => r.json()),
-      fetch('/api/fulfillment/mapping/manual').then(r => r.json()),
+      fetch('/api/fulfillment/mapping/product-bases', { cache: 'no-store' }).then(r => r.json()),
+      fetch('/api/fulfillment/mapping/supplier-products', { cache: 'no-store' }).then(r => r.json()),
+      fetch('/api/fulfillment/mapping/manual', { cache: 'no-store' }).then(r => r.json()),
     ])
     setBases(basesRes.bases ?? [])
     setSuppliers(spRes.suppliers ?? [])
     setSupplierProducts(spRes.products ?? [])
     setPendingLines(manualRes.pending ?? [])
     setSavedMappings(manualRes.saved ?? [])
-  }
+  }, [])
 
-  useEffect(() => { loadData() }, [])
+  useEffect(() => {
+    void loadData()
+    const refresh = () => { void loadData() }
+    const interval = window.setInterval(refresh, 30_000)
+    window.addEventListener('focus', refresh)
+    return () => {
+      window.clearInterval(interval)
+      window.removeEventListener('focus', refresh)
+    }
+  }, [loadData])
 
   async function handleSaveBase(data: any) {
     let res: Response
@@ -461,11 +470,17 @@ export default function MappingPage() {
               <h1 className="text-headline-sm font-bold text-on-surface">Product Mapping</h1>
               <p className="text-body-sm text-on-surface/50 mt-xs">Cấu hình tự động khớp sản phẩm với supplier</p>
             </div>
-            {tab === 'auto' && (
-              <button onClick={() => setEditBase(null)} className="bg-secondary text-on-secondary px-lg py-sm rounded-lg text-label-md">
-                + New Product Base
+            <div className="flex items-center gap-sm">
+              <button onClick={() => void loadData()} className="border border-outline-variant/40 text-on-surface/60 px-md py-sm rounded-lg text-label-md flex items-center gap-xs">
+                <span className="material-symbols-outlined text-[16px]">refresh</span>
+                Refresh
               </button>
-            )}
+              {tab === 'auto' && (
+                <button onClick={() => setEditBase(null)} className="bg-secondary text-on-secondary px-lg py-sm rounded-lg text-label-md">
+                  + New Product Base
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Tabs */}
