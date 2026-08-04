@@ -184,7 +184,7 @@ export default function FinancePage() {
                 {lastSyncAt && (
                   <span className="inline-flex items-center gap-xs text-label-sm text-on-surface-variant">
                     <span className="material-symbols-outlined text-[14px]">schedule</span>
-                    Last synced: {new Date(lastSyncAt).toLocaleString('vi-VN')}
+                    Last synced: {new Date(lastSyncAt).toLocaleString('en-US')}
                   </span>
                 )}
               </span>
@@ -549,7 +549,7 @@ export default function FinancePage() {
                         {t.net}
                       </td>
                       <td className="px-lg py-sm text-body-sm text-on-surface-variant">
-                        {new Date(t.processed_at).toLocaleDateString('vi-VN')}
+                        {new Date(t.processed_at).toLocaleDateString('en-US')}
                       </td>
                       <td className="px-lg py-sm text-body-sm text-on-surface-variant font-mono">{t.source_order_id ?? '—'}</td>
                     </tr>

@@ -47,7 +47,16 @@ type DBData = {
   avgSpend: number
   lastSyncAt: string | null
   missingExchangeRateAccounts: { id: string; accountId: string; accountName: string | null; currency: string | null }[]
+  period?: { start: string; end: string } | null
+  periodLabel?: { mode: 'project' | 'staff'; projectId: string; projectName: string; staffId?: string; staffName?: string } | null
   empty?: boolean
+}
+
+type ProjectOption = {
+  id: string
+  name: string
+  startDate: string
+  assignments: { id: string; staffId: string; startDate: string; endDate: string | null; staff: { id: string; name: string; role: string | null } }[]
 }
 
 type ImportResult = {
@@ -110,6 +119,9 @@ export default function MetaBillingPage() {
   const [data, setData] = useState<DBData | null>(null)
   const [selectedAccount, setSelectedAccount] = useState<string>('all')
   const [selectedMonth, setSelectedMonth] = useState<string>('')
+  const [selectedProjectTime, setSelectedProjectTime] = useState<string>('')  // projectId
+  const [selectedStaffTime, setSelectedStaffTime] = useState<string>('')      // "projectId|staffId"
+  const [projectOptions, setProjectOptions] = useState<ProjectOption[]>([])
   const [loading, setLoading] = useState(true)
   const [startingSync, setStartingSync] = useState(false)
   const [syncJob, setSyncJob] = useState<MetaBillingSyncJob | null>(null)
@@ -120,11 +132,19 @@ export default function MetaBillingPage() {
   const [importResult, setImportResult] = useState<ImportResult | null>(null)
   const accounts = useMemo(() => data?.accounts ?? [], [data?.accounts])
 
-  const load = useCallback(async (accountId?: string, month?: string) => {
+  const load = useCallback(async (accountId?: string, month?: string, projectTime?: string, staffTime?: string) => {
     setLoading(true)
     const params = new URLSearchParams()
     if (accountId && accountId !== 'all') params.set('accountId', accountId)
-    if (month) params.set('month', month)
+    if (staffTime) {
+      const [projectId, staffId] = staffTime.split('|')
+      if (projectId) params.set('projectId', projectId)
+      if (staffId) params.set('staffId', staffId)
+    } else if (projectTime) {
+      params.set('projectId', projectTime)
+    } else if (month) {
+      params.set('month', month)
+    }
     const query = params.toString()
     const res = await fetch(`/api/meta/db-billing${query ? `?${query}` : ''}`)
     const json = await res.json()
@@ -132,7 +152,11 @@ export default function MetaBillingPage() {
     setLoading(false)
   }, [])
 
-  useEffect(() => { load(selectedAccount, selectedMonth) }, [load, selectedAccount, selectedMonth])
+  useEffect(() => {
+    fetch('/api/projects').then(r => r.json()).then(d => setProjectOptions(Array.isArray(d) ? d : [])).catch(() => {})
+  }, [])
+
+  useEffect(() => { load(selectedAccount, selectedMonth, selectedProjectTime, selectedStaffTime) }, [load, selectedAccount, selectedMonth, selectedProjectTime, selectedStaffTime])
 
   useEffect(() => {
     let cancelled = false
@@ -147,7 +171,7 @@ export default function MetaBillingPage() {
         const shouldReload = wasSyncActive.current && !nextActive
         wasSyncActive.current = nextActive
         setSyncJob(nextJob)
-        if (shouldReload) await load(selectedAccount, selectedMonth)
+        if (shouldReload) await load(selectedAccount, selectedMonth, selectedProjectTime, selectedStaffTime)
       } catch {
         // A later poll will recover transient network errors without interrupting the job.
       }
@@ -159,7 +183,7 @@ export default function MetaBillingPage() {
       cancelled = true
       window.clearInterval(timer)
     }
-  }, [load, selectedAccount, selectedMonth])
+  }, [load, selectedAccount, selectedMonth, selectedProjectTime, selectedStaffTime])
 
   useEffect(() => {
     if (selectedAccount !== 'all') setImportAccountId(selectedAccount)
@@ -193,6 +217,26 @@ export default function MetaBillingPage() {
 
   function handleMonthFilter(val: string) {
     setSelectedMonth(val)
+    setSelectedProjectTime('')
+    setSelectedStaffTime('')
+  }
+
+  function handleProjectTime(val: string) {
+    setSelectedProjectTime(val)
+    setSelectedMonth('')
+    setSelectedStaffTime('')
+  }
+
+  function handleStaffTime(val: string) {
+    setSelectedStaffTime(val)
+    setSelectedMonth('')
+    setSelectedProjectTime('')
+  }
+
+  function clearTimeFilters() {
+    setSelectedMonth('')
+    setSelectedProjectTime('')
+    setSelectedStaffTime('')
   }
 
   async function importBillingFile(e: ChangeEvent<HTMLInputElement>) {
@@ -225,7 +269,7 @@ export default function MetaBillingPage() {
               {data?.lastSyncAt && (
                 <span className="inline-flex items-center gap-xs text-label-sm">
                   <span className="material-symbols-outlined text-[14px]">schedule</span>
-                  Last synced: {new Date(data.lastSyncAt).toLocaleString('vi-VN')}
+                  Last synced: {new Date(data.lastSyncAt).toLocaleString('en-US')}
                 </span>
               )}
             </p>
@@ -304,7 +348,7 @@ export default function MetaBillingPage() {
                   </button>
                 ))}
               </div>
-              <div className="flex items-center gap-sm ml-auto">
+              <div className="flex items-center gap-sm ml-auto flex-wrap">
                 <span className="text-label-sm text-on-surface-variant">Month:</span>
                 <input
                   type="month"
@@ -312,15 +356,43 @@ export default function MetaBillingPage() {
                   onChange={e => handleMonthFilter(e.target.value)}
                   className="bg-surface-container border border-outline-variant/30 rounded-lg px-md py-xs text-body-sm focus:ring-2 focus:ring-secondary outline-none"
                 />
-                {selectedMonth && (
+                <span className="text-label-sm text-on-surface-variant">Project Time:</span>
+                <select
+                  value={selectedProjectTime}
+                  onChange={e => handleProjectTime(e.target.value)}
+                  className="bg-surface-container border border-outline-variant/30 rounded-lg px-md py-xs text-body-sm focus:ring-2 focus:ring-secondary outline-none"
+                >
+                  <option value="">--</option>
+                  {projectOptions.map(p => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+                <span className="text-label-sm text-on-surface-variant">Staff Time:</span>
+                <select
+                  value={selectedStaffTime}
+                  onChange={e => handleStaffTime(e.target.value)}
+                  className="bg-surface-container border border-outline-variant/30 rounded-lg px-md py-xs text-body-sm focus:ring-2 focus:ring-secondary outline-none"
+                >
+                  <option value="">--</option>
+                  {projectOptions.flatMap(p => p.assignments.map(a => (
+                    <option key={`${p.id}|${a.staffId}`} value={`${p.id}|${a.staffId}`}>
+                      {a.staff.name} — {p.name}
+                    </option>
+                  )))}
+                </select>
+                {(selectedMonth || selectedProjectTime || selectedStaffTime) && (
                   <button
-                    onClick={() => handleMonthFilter('')}
+                    onClick={clearTimeFilters}
                     className="bg-surface-container text-on-surface-variant hover:bg-surface-container-high rounded-lg px-md py-xs text-label-sm"
                   >
                     All time
                   </button>
                 )}
-                <span className="text-label-sm text-on-surface-variant">{monthLabel(selectedMonth)}</span>
+                <span className="text-label-sm text-on-surface-variant">
+                  {(selectedStaffTime || selectedProjectTime) && data?.periodLabel
+                    ? `${data.periodLabel.mode === 'staff' && data.periodLabel.staffName ? `${data.periodLabel.staffName} · ` : ''}${data.periodLabel.projectName}${data.period ? ` (${fmt(data.period.start)} → ${fmt(data.period.end)})` : ''}`
+                    : monthLabel(selectedMonth)}
+                </span>
               </div>
             </div>
 

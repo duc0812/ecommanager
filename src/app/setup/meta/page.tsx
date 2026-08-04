@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Sidebar from '@/components/Sidebar'
 import MetaBillingSyncStatus from '@/components/MetaBillingSyncStatus'
+import { useCurrentUser } from '@/components/RoleGate'
 import type { MetaBillingSyncJob } from '@/lib/meta-billing-sync-types'
 import { isMetaBillingSyncActive } from '@/lib/meta-billing-sync-types'
 
@@ -45,6 +46,12 @@ export default function SetupMetaPage() {
   const [syncJob, setSyncJob] = useState<MetaBillingSyncJob | null>(null)
   const [syncStartError, setSyncStartError] = useState<string | null>(null)
   const wasSyncActive = useRef(false)
+
+  const { user } = useCurrentUser()
+  const isAdmin = user?.role === 'ADMIN' || user?.role === 'SUPERADMIN'
+  const todayKey = new Date().toISOString().split('T')[0]
+  const [backfilling, setBackfilling] = useState<string | null>(null)
+  const [backfillNotice, setBackfillNotice] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -205,6 +212,29 @@ export default function SetupMetaPage() {
     }
   }
 
+  async function backfillInsights(account: MetaAccount) {
+    if (!isAdmin) return
+    setBackfilling(account.id)
+    setBackfillNotice(null)
+    try {
+      const params = new URLSearchParams({ accountId: account.id, fromProjectStart: '1' })
+      const res = await fetch(`/api/meta/sync-insights?${params.toString()}`, { method: 'POST' })
+      const result = await res.json()
+      if (!res.ok) throw new Error(result.error || 'Backfill thất bại.')
+      const errs: string[] = Array.isArray(result.errors) ? result.errors : []
+      const label = account.accountName || account.accountId
+      setBackfillNotice(
+        `Backfill ${label}: ${result.synced ?? 0} ngày (${result.range?.since ?? '?'} → ${result.range?.until ?? todayKey})`
+        + (errs.length ? ` · Lỗi: ${errs.join('; ')}` : ''),
+      )
+      await load()
+    } catch (error) {
+      setBackfillNotice(error instanceof Error ? error.message : 'Backfill thất bại.')
+    } finally {
+      setBackfilling(null)
+    }
+  }
+
   const inputCls = 'bg-surface-container border border-outline-variant/30 rounded-lg px-md py-sm text-body-md focus:ring-2 focus:ring-secondary focus:border-secondary outline-none transition-all w-full'
 
   return (
@@ -237,6 +267,13 @@ export default function SetupMetaPage() {
           <div className="mb-lg rounded-xl bg-on-tertiary-container/10 border border-on-tertiary-container/20 px-lg py-md flex items-center gap-md text-on-tertiary-container">
             <span className="material-symbols-outlined">check_circle</span>
             <p className="text-body-sm">{accountNotice}</p>
+          </div>
+        )}
+
+        {backfillNotice && (
+          <div className="mb-lg rounded-xl bg-amber-50 border border-amber-300 px-lg py-md flex items-start gap-md text-amber-900">
+            <span className="material-symbols-outlined">history</span>
+            <p className="text-body-sm">{backfillNotice}</p>
           </div>
         )}
 
@@ -382,7 +419,7 @@ export default function SetupMetaPage() {
                             {a.lastSyncAt && (
                               <span className="text-label-sm text-on-surface-variant flex items-center gap-xs">
                                 <span className="material-symbols-outlined text-[12px]">schedule</span>
-                                {new Date(a.lastSyncAt).toLocaleString('vi-VN')}
+                                {new Date(a.lastSyncAt).toLocaleString('en-US')}
                               </span>
                             )}
                           </div>
@@ -474,6 +511,29 @@ export default function SetupMetaPage() {
                           Cập nhật token
                         </button>
                       </div>
+                      {isAdmin && (
+                        <div className="mt-sm flex flex-wrap items-center gap-sm rounded-lg border border-amber-300/50 bg-amber-50/50 p-md">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-label-sm font-medium text-amber-900">Backfill lịch sử Ad Spend</p>
+                            <p className="text-label-sm text-on-surface-variant">
+                              {a.project
+                                ? `Kéo toàn bộ insights từ ngày bắt đầu project "${a.project.name}" đến hôm nay. Chỉ Admin.`
+                                : 'Account chưa gán project — sẽ kéo lịch sử mặc định (tối đa ~2 năm gần nhất). Chỉ Admin.'}
+                            </p>
+                          </div>
+                          <button
+                            onClick={() => backfillInsights(a)}
+                            disabled={backfilling !== null || isMetaBillingSyncActive(syncJob)}
+                            title={isMetaBillingSyncActive(syncJob) ? 'Chờ Meta billing sync hoàn tất' : 'Kéo lại toàn bộ lịch sử insights từ ngày bắt đầu project'}
+                            className="h-[42px] flex items-center justify-center gap-xs bg-amber-600 text-white px-lg rounded-lg text-label-sm hover:opacity-90 disabled:opacity-50"
+                          >
+                            <span className={`material-symbols-outlined text-[16px] ${backfilling === a.id ? 'animate-spin' : ''}`}>
+                              {backfilling === a.id ? 'sync' : 'history'}
+                            </span>
+                            {backfilling === a.id ? 'Đang backfill...' : 'Backfill lịch sử'}
+                          </button>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>

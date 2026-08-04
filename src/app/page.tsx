@@ -104,7 +104,7 @@ export default function OverviewPage() {
       const metaJson = await metaRes.json().catch(() => ({}))
       const metaErr = metaJson.error ?? (metaJson.errors?.length ? metaJson.errors.join('; ') : null)
       if (metaErr) setSyncError(`Meta: ${metaErr}`)
-      setLastSyncTime(new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }))
+      setLastSyncTime(new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }))
       refreshData()
     } catch (e: any) {
       setSyncError(e?.message ?? 'Sync thất bại — kiểm tra server có đang chạy không')
@@ -351,7 +351,7 @@ export default function OverviewPage() {
                         <span className="material-symbols-outlined text-[18px] text-secondary">analytics</span>
                       </div>
                       <p className="text-label-sm text-on-surface-variant mb-md">
-                        Start: {new Date(p.startDate).toLocaleDateString('vi-VN')}
+                        Start: {new Date(p.startDate).toLocaleDateString('en-US')}
                       </p>
                       <div className="flex items-center justify-between">
                         <span className="flex items-center gap-xs text-body-sm text-on-surface-variant">
@@ -442,7 +442,7 @@ function OverviewChart({ data }: { data: ChartPoint[] }) {
   const labelEvery = Math.ceil(data.length / 6)
   const fmtDate = (s: string) => {
     const d = new Date(s + 'T00:00:00Z')
-    return `${d.getUTCDate()}/${d.getUTCMonth() + 1}`
+    return `${d.getUTCMonth() + 1}/${d.getUTCDate()}`
   }
 
   return (

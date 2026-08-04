@@ -84,7 +84,7 @@ function fmtUSD(n: number) {
 }
 
 function fmtDate(s: string) {
-  return new Date(`${s}T00:00:00`).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' })
+  return new Date(`${s}T00:00:00`).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' })
 }
 
 function catLabel(c: string) {

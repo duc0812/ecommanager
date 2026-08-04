@@ -96,7 +96,11 @@ type Analytics = {
   cashflowCosts: number
   mappedOrderCount: number
   unmappedOrderCount: number
-  costs: { fulfillment: number; appBilling: number; toolsBilling: number }
+  otherBillsTotal: number
+  otherBillsByCategory: { category: string; total: number; count: number }[]
+  otherBillsCount: number
+  fulfillmentBillsTotal: number
+  fulfillmentBillsCount: number
   totalOtherCosts: number
   actualCashflow: number
   shopifyBalance: number
@@ -113,7 +117,7 @@ type Analytics = {
 }
 
 function fmt(dateStr: string) {
-  return new Date(dateStr).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' })
+  return new Date(dateStr).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' })
 }
 
 function fmtUSD(n: number) {
@@ -138,6 +142,8 @@ export default function ProjectDashboard() {
   const [selectedProject, setSelectedProject] = useState<string | null>(null)
   const [selectedStaff, setSelectedStaff] = useState<string>('all')
   const [selectedMonth, setSelectedMonth] = useState<string>('')
+  const [dateFrom, setDateFrom] = useState<string>('')
+  const [dateTo, setDateTo] = useState<string>('')
   const [analytics, setAnalytics] = useState<Analytics | null>(null)
   const [loading, setLoading] = useState(true)
   const [analyticsLoading, setAnalyticsLoading] = useState(false)
@@ -193,13 +199,15 @@ export default function ProjectDashboard() {
     const params = new URLSearchParams({ projectId: selectedProject })
     if (selectedStaff !== 'all') params.set('staffId', selectedStaff)
     if (selectedMonth) params.set('month', selectedMonth)
+    if (dateFrom) params.set('dateFrom', dateFrom)
+    if (dateTo) params.set('dateTo', dateTo)
     fetch(`/api/projects/analytics?${params}`)
       .then(r => r.json())
       .then((data: Analytics) => {
         setAnalytics(data)
         setAnalyticsLoading(false)
       })
-  }, [selectedProject, selectedStaff, selectedMonth, refreshVersion])
+  }, [selectedProject, selectedStaff, selectedMonth, dateFrom, dateTo, refreshVersion])
 
   const currentProject = projects.find(p => p.id === selectedProject)
 
@@ -263,18 +271,36 @@ export default function ProjectDashboard() {
                   <input
                     type="month"
                     value={selectedMonth}
-                    onChange={e => setSelectedMonth(e.target.value)}
+                    onChange={e => { setSelectedMonth(e.target.value); setDateFrom(''); setDateTo('') }}
                     className="bg-surface-container border border-outline-variant/30 rounded-lg px-md py-xs text-body-sm focus:ring-2 focus:ring-secondary outline-none"
                   />
-                  {selectedMonth && (
-                    <button
-                      onClick={() => setSelectedMonth('')}
-                      className="bg-surface-container text-on-surface-variant hover:bg-surface-container-high rounded-lg px-md py-xs text-label-sm"
-                    >
-                      All time
-                    </button>
-                  )}
                 </div>
+                <div className="flex items-center gap-sm">
+                  <span className="text-label-sm text-on-surface-variant">From:</span>
+                  <input
+                    type="date"
+                    value={dateFrom}
+                    max={dateTo || undefined}
+                    onChange={e => { setDateFrom(e.target.value); setSelectedMonth('') }}
+                    className="bg-surface-container border border-outline-variant/30 rounded-lg px-md py-xs text-body-sm focus:ring-2 focus:ring-secondary outline-none"
+                  />
+                  <span className="text-label-sm text-on-surface-variant">To:</span>
+                  <input
+                    type="date"
+                    value={dateTo}
+                    min={dateFrom || undefined}
+                    onChange={e => { setDateTo(e.target.value); setSelectedMonth('') }}
+                    className="bg-surface-container border border-outline-variant/30 rounded-lg px-md py-xs text-body-sm focus:ring-2 focus:ring-secondary outline-none"
+                  />
+                </div>
+                {(selectedMonth || dateFrom || dateTo) && (
+                  <button
+                    onClick={() => { setSelectedMonth(''); setDateFrom(''); setDateTo('') }}
+                    className="bg-surface-container text-on-surface-variant hover:bg-surface-container-high rounded-lg px-md py-xs text-label-sm"
+                  >
+                    All time
+                  </button>
+                )}
                 {analytics && (
                   <span className="text-label-sm text-on-surface-variant ml-auto">
                     {selectedMonth ? `${monthLabel(selectedMonth)}: ` : ''}
@@ -317,7 +343,7 @@ export default function ProjectDashboard() {
                     <StatCard label="Shopify Payout" icon="payments" value={fmtUSD(analytics.totalPayout)} hint={`${analytics.payoutCount} paid payouts`} />
                     <StatCard label="Meta Billing" icon="receipt_long" value={fmtUSD(analytics.totalMetaBilling)} hint="paid billing transactions" />
                     <StatCard label="COGS" icon="inventory_2" value={fmtUSD(analytics.totalOrderCogs)} hint={analytics.unmappedOrderCount > 0 ? `${analytics.unmappedOrderCount} order(s) tạm tính` : 'mapped order costs'} />
-                    <StatCard label="Other Costs" icon="receipt_long" value={fmtUSD(analytics.totalOtherCosts)} hint="manual app + tools" />
+                    <StatCard label="Other Costs" icon="receipt_long" value={fmtUSD(analytics.totalOtherCosts)} hint={`${analytics.otherBillsCount} Other Bill(s)${analytics.fulfillmentBillsCount > 0 ? ` + ${analytics.fulfillmentBillsCount} fulfillment` : ''}`} />
                     <StatCard
                       label={selectedStaff === 'all' ? 'Net Cashflow' : 'Seller Profit'}
                       icon="trending_up"
@@ -360,7 +386,7 @@ export default function ProjectDashboard() {
                       hint={analytics.unmappedOrderCount > 0 ? `${analytics.unmappedOrderCount} order(s) tạm tính` : 'base cost + shipping'}
                     />
                     <StatCard label="Ad Spend" icon="campaign" value={fmtUSD(analytics.totalAdSpend)} hint="Meta Insights spend" negative={analytics.totalAdSpend > 0} />
-                    <StatCard label="Other Costs" icon="receipt_long" value={fmtUSD(analytics.totalOtherCosts)} hint="manual app + tools" />
+                    <StatCard label="Other Costs" icon="receipt_long" value={fmtUSD(analytics.totalOtherCosts)} hint={`${analytics.otherBillsCount} Other Bill(s)${analytics.fulfillmentBillsCount > 0 ? ` + ${analytics.fulfillmentBillsCount} fulfillment` : ''}`} />
                     <StatCard label="Gross Profit" icon="savings" value={fmtUSD(analytics.grossProfit)} hint={`${fmtPercent(analytics.grossMargin)} gross margin`} negative={analytics.grossProfit < 0} strong />
                   </div>
                   {analytics.unmappedOrderCount > 0 && (
@@ -435,13 +461,28 @@ function StatCard({ label, icon, value, hint, negative = false, strong = false }
   )
 }
 
+const OTHER_BILL_CATEGORY_LABELS: Record<string, string> = {
+  APP_TOOL: 'App & tools',
+  SUBSCRIPTION: 'Subscriptions',
+  SUPPLIER: 'Supplier bills',
+  OFFICE: 'Office',
+  OTHER: 'Other',
+}
+
 function CostBreakdown({ analytics }: { analytics: Analytics }) {
-  const rows = [
-    ['Meta billing paid', analytics.totalMetaBilling],
-    ['Fulfillment cost', analytics.costs.fulfillment],
-    ['App billing', analytics.costs.appBilling],
-    ['Tools billing', analytics.costs.toolsBilling],
-  ] as const
+  const rows: { label: string; value: number; muted?: boolean }[] = [
+    { label: 'Meta billing paid', value: analytics.totalMetaBilling },
+    { label: 'Order COGS', value: analytics.totalOrderCogs },
+    ...analytics.otherBillsByCategory.map(row => ({
+      label: `Other bill · ${OTHER_BILL_CATEGORY_LABELS[row.category] ?? row.category}`,
+      value: row.total,
+      muted: true,
+    })),
+    { label: `Other Bills total (${analytics.otherBillsCount})`, value: analytics.otherBillsTotal },
+    ...(analytics.fulfillmentBillsCount > 0
+      ? [{ label: `Fulfillment bills (${analytics.fulfillmentBillsCount})`, value: analytics.fulfillmentBillsTotal }]
+      : []),
+  ]
 
   return (
     <div className="bg-surface-container-lowest rounded-xl border border-outline-variant/20 overflow-hidden">
@@ -450,12 +491,16 @@ function CostBreakdown({ analytics }: { analytics: Analytics }) {
         <h3 className="text-headline-sm text-primary">Cashflow Cost Stack</h3>
       </div>
       <div className="divide-y divide-outline-variant/10">
-        {rows.map(([label, value]) => (
-          <div key={label} className="flex items-center justify-between px-lg py-md">
-            <span className="text-body-sm text-on-surface-variant">{label}</span>
-            <span className="text-label-md text-primary">{fmtUSD(value)}</span>
+        {rows.map(row => (
+          <div key={row.label} className="flex items-center justify-between px-lg py-md">
+            <span className={`text-body-sm ${row.muted ? 'text-on-surface-variant/70 pl-md' : 'text-on-surface-variant'}`}>{row.label}</span>
+            <span className={`text-label-md ${row.muted ? 'text-on-surface-variant' : 'text-primary'}`}>{fmtUSD(row.value)}</span>
           </div>
         ))}
+        <div className="flex items-center justify-between px-lg py-md bg-surface-container/40">
+          <span className="text-body-sm font-semibold text-primary">Total cashflow costs</span>
+          <span className="text-label-md font-semibold text-primary">{fmtUSD(analytics.cashflowCosts)}</span>
+        </div>
       </div>
     </div>
   )
@@ -740,7 +785,7 @@ function ProfitChartSVG({ data }: { data: DailyProfitPoint[] }) {
 
   const fmtDate = (s: string) => {
     const d = new Date(s + 'T00:00:00Z')
-    return `${d.getUTCDate()}/${d.getUTCMonth() + 1}`
+    return `${d.getUTCMonth() + 1}/${d.getUTCDate()}`
   }
 
   const labelEvery = Math.ceil(data.length / 6)
@@ -985,7 +1030,7 @@ function AutoSyncStatusBar({
   const lastOrders = status?.lastResult?.orders
   const lastInsights = status?.lastResult?.insights
   const lastTime = status?.lastResult?.finishedAt
-    ? new Date(status.lastResult.finishedAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
+    ? new Date(status.lastResult.finishedAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
     : null
 
   return (

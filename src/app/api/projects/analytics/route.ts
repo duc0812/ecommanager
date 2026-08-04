@@ -7,18 +7,7 @@ import { convertMetaAmountToUsd, normalizeMetaCurrency, sumMetaAmountsUsd } from
 import { getMetaExchangeRates } from '@/lib/meta-exchange-rates'
 import { PROJECT_REVENUE_EXCLUDED_STATUSES, summarizeProjectOrderFinancials } from '@/lib/project-metrics'
 
-type CostBuckets = {
-  fulfillment: number
-  appBilling: number
-  toolsBilling: number
-}
-
-function getNumberParam(searchParams: URLSearchParams, key: string) {
-  const value = searchParams.get(key)
-  if (!value) return 0
-  const parsed = Number(value)
-  return Number.isFinite(parsed) ? parsed : 0
-}
+const OTHER_BILL_CATEGORIES = ['APP_TOOL', 'SUBSCRIPTION', 'SUPPLIER', 'OFFICE', 'OTHER'] as const
 
 function dateOnly(date: Date) {
   return date.toISOString().split('T')[0]
@@ -63,6 +52,10 @@ function addDays(dateKey: string, days: number) {
   return new Date(Date.UTC(year, month - 1, day + days, 0, 0, 0, 0)).toISOString().split('T')[0]
 }
 
+function validDateKey(value: string | null) {
+  return value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : null
+}
+
 function getMonthRange(month: string | null, timeZone: string) {
   if (!month || !/^\d{4}-\d{2}$/.test(month)) return null
   const [year, monthIndex] = month.split('-').map(Number)
@@ -78,11 +71,6 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const projectId = searchParams.get('projectId')
   const staffId = searchParams.get('staffId')
-  const costs: CostBuckets = {
-    fulfillment: getNumberParam(searchParams, 'fulfillment'),
-    appBilling: getNumberParam(searchParams, 'appBilling'),
-    toolsBilling: getNumberParam(searchParams, 'toolsBilling'),
-  }
 
   if (!projectId) return NextResponse.json({ error: 'projectId required' }, { status: 400 })
 
@@ -97,9 +85,13 @@ export async function GET(req: NextRequest) {
   if (!project) return NextResponse.json({ error: 'Project not found' }, { status: 404 })
 
   const timeZone = project.shopifyStore?.ianaTimezone ?? 'UTC'
+  const dateFromKey = validDateKey(searchParams.get('dateFrom'))
+  const dateToKey = validDateKey(searchParams.get('dateTo'))
+  const hasExplicitRange = Boolean(dateFromKey || dateToKey)
   let startDate = project.startDate
   let endDate: Date | null = null
-  const monthRange = getMonthRange(searchParams.get('month'), timeZone)
+  // An explicit from/to range takes precedence over the month picker.
+  const monthRange = hasExplicitRange ? null : getMonthRange(searchParams.get('month'), timeZone)
 
   if (staffId) {
     const assignment = project.assignments.find(a => a.staffId === staffId)
@@ -116,11 +108,16 @@ export async function GET(req: NextRequest) {
     endDate = endDate && endDate < monthRange.end ? endDate : monthRange.end
   }
 
+  if (dateFromKey) startDate = zonedDayStartUtc(dateFromKey, timeZone)
+  if (dateToKey) endDate = new Date(zonedDayStartUtc(addDays(dateToKey, 1), timeZone).getTime() - 1)
+
   const todayKey = dateKeyInZone(new Date(), timeZone)
   const today = new Date(zonedDayStartUtc(addDays(todayKey, 1), timeZone).getTime() - 1)
   if (!endDate || endDate > today) endDate = today
 
-  const startStr = dateOnly(startDate)
+  // For an explicit range, use the picked day key directly so the string-based
+  // queries (ad spend / billing / payout) match the selected boundary exactly.
+  const startStr = dateFromKey ?? dateOnly(startDate)
   const payoutStartStr = startStr > SHOPIFY_PAYOUT_START_DATE ? startStr : SHOPIFY_PAYOUT_START_DATE
   const endStr = dateKeyInZone(endDate, timeZone)
   const orderRangeStart = zonedDayStartUtc(startStr, timeZone)
@@ -133,7 +130,7 @@ export async function GET(req: NextRequest) {
     select: { id: true, accountId: true, accountName: true, currency: true },
   })
   const metaAccountIds = metaAccounts.map(account => account.id)
-  const [payouts, billings, orders, dailyAdSpends] = await Promise.all([
+  const [payouts, billings, orders, dailyAdSpends, otherBills, fulfillmentBills] = await Promise.all([
     project.shopifyStore ? prisma.payout.findMany({
       where: {
         storeId: project.shopifyStore.id,
@@ -187,6 +184,20 @@ export async function GET(req: NextRequest) {
           select: { adAccountId: true, spend: true, currency: true },
         })
       : Promise.resolve([]),
+    prisma.otherBill.findMany({
+      where: {
+        projectId,
+        paidAt: { gte: startStr, lte: endStr },
+      },
+      select: { amountUsd: true, category: true },
+    }),
+    prisma.fulfillmentCost.findMany({
+      where: {
+        projectId,
+        recognitionDate: { gte: startStr, lte: endStr },
+      },
+      select: { totalAmount: true },
+    }),
   ])
   const exchangeRates = await getMetaExchangeRates(metaAccounts.map(account => account.id))
 
@@ -250,12 +261,21 @@ export async function GET(req: NextRequest) {
     }
   })
   const totalAdSpend = spendByAccount.reduce((sum, item) => sum + item.spend, 0)
-  const totalOtherCosts = costs.fulfillment + costs.appBilling + costs.toolsBilling
+  const otherBillsTotal = otherBills.reduce((sum, bill) => sum + bill.amountUsd, 0)
+  const otherBillsByCategory = OTHER_BILL_CATEGORIES
+    .map(category => ({
+      category,
+      total: otherBills.filter(bill => bill.category === category).reduce((sum, bill) => sum + bill.amountUsd, 0),
+      count: otherBills.filter(bill => bill.category === category).length,
+    }))
+    .filter(row => row.count > 0)
+  const fulfillmentBillsTotal = fulfillmentBills.reduce((sum, cost) => sum + cost.totalAmount, 0)
+  const totalOtherCosts = otherBillsTotal + fulfillmentBillsTotal
   const cashflowCosts = totalOrderCogs + totalOtherCosts
   const actualCashflow = totalPayout - totalMetaBilling - cashflowCosts
   const shopifyBalance = project.shopifyStore?.currentBalance ?? 0
   const projectedCashflow = actualCashflow + shopifyBalance
-  const grossProfit = totalOrderProfit - costs.fulfillment - costs.appBilling - costs.toolsBilling - totalAdSpend
+  const grossProfit = totalOrderProfit - totalOtherCosts - totalAdSpend
   const grossMargin = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0
   const adSpendRatio = totalRevenue > 0 ? (totalAdSpend / totalRevenue) * 100 : 0
   const roas = totalAdSpend > 0 ? totalRevenue / totalAdSpend : 0
@@ -335,7 +355,11 @@ export async function GET(req: NextRequest) {
     cashflowCosts,
     mappedOrderCount,
     unmappedOrderCount,
-    costs,
+    otherBillsTotal,
+    otherBillsByCategory,
+    otherBillsCount: otherBills.length,
+    fulfillmentBillsTotal,
+    fulfillmentBillsCount: fulfillmentBills.length,
     totalOtherCosts,
     actualCashflow,
     shopifyBalance,
