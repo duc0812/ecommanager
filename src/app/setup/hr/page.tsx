@@ -14,7 +14,7 @@ type Staff = {
 }
 
 function fmt(dateStr: string) {
-  return new Date(dateStr).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' })
+  return new Date(dateStr).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' })
 }
 
 export default function SetupHRPage() {

@@ -19,7 +19,7 @@ type Project = {
 }
 
 function fmt(dateStr: string) {
-  return new Date(dateStr).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' })
+  return new Date(dateStr).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' })
 }
 
 export default function SetupProjectsPage() {
@@ -29,6 +29,9 @@ export default function SetupProjectsPage() {
   const [pStart, setPStart] = useState('')
   const [pDesc, setPDesc] = useState('')
   const [saving, setSaving] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editStart, setEditStart] = useState('')
+  const [savingEdit, setSavingEdit] = useState(false)
 
   async function load() {
     setLoading(true)
@@ -56,6 +59,24 @@ export default function SetupProjectsPage() {
     if (!confirm('Xóa project này?')) return
     await fetch('/api/projects', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) })
     await load()
+  }
+
+  function beginEditStart(p: Project) {
+    setEditingId(p.id)
+    setEditStart(new Date(p.startDate).toISOString().slice(0, 10))
+  }
+
+  async function saveStart(id: string) {
+    if (!editStart) return
+    setSavingEdit(true)
+    await fetch('/api/projects', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, startDate: editStart }),
+    })
+    setEditingId(null)
+    await load()
+    setSavingEdit(false)
   }
 
   const inputCls = 'bg-surface-container border border-outline-variant/30 rounded-lg px-md py-sm text-body-md focus:ring-2 focus:ring-secondary focus:border-secondary outline-none transition-all w-full'
@@ -122,7 +143,25 @@ export default function SetupProjectsPage() {
                   <div className="flex-1">
                     <div className="flex items-center gap-sm mb-xs flex-wrap">
                       <h4 className="text-label-md text-primary">{p.name}</h4>
-                      <span className="bg-secondary/10 text-secondary px-sm py-xs rounded-full text-label-sm">Từ {fmt(p.startDate)}</span>
+                      {editingId === p.id ? (
+                        <span className="inline-flex items-center gap-xs">
+                          <input
+                            type="date"
+                            value={editStart}
+                            onChange={e => setEditStart(e.target.value)}
+                            className="bg-surface-container border border-outline-variant/30 rounded-lg px-sm py-xs text-body-sm"
+                          />
+                          <button onClick={() => saveStart(p.id)} disabled={savingEdit} className="text-secondary text-label-sm font-semibold hover:underline disabled:opacity-50">Lưu</button>
+                          <button onClick={() => setEditingId(null)} className="text-on-surface-variant text-label-sm hover:underline">Hủy</button>
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-xs">
+                          <span className="bg-secondary/10 text-secondary px-sm py-xs rounded-full text-label-sm">Từ {fmt(p.startDate)}</span>
+                          <button onClick={() => beginEditStart(p)} title="Sửa ngày bắt đầu" className="text-on-surface-variant hover:text-secondary">
+                            <span className="material-symbols-outlined text-[16px]">edit</span>
+                          </button>
+                        </span>
+                      )}
                     </div>
                     {p.description && <p className="text-body-sm text-on-surface-variant mb-xs">{p.description}</p>}
                     {p.assignments.length > 0 && (

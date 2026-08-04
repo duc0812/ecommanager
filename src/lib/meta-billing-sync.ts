@@ -414,16 +414,43 @@ async function saveBillingCoverage(accountDbId: string, range: { since: string; 
   })
 }
 
+function validDateKey(value: string | null | undefined) {
+  return value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : null
+}
+
+// The first sync should capture full history. Anchor it to the account's linked
+// project start (or an explicit env date). Unlinked accounts keep the conservative
+// 90-day first-sync window since we have no reliable "beginning" for them.
+async function resolveFirstSyncSince(accountDbId: string): Promise<{ since: string; anchored: boolean }> {
+  const envSince = validDateKey(process.env.META_BILLING_FIRST_SYNC_SINCE)
+  if (envSince) return { since: envSince, anchored: true }
+
+  const account = await prisma.metaAdAccount.findUnique({
+    where: { id: accountDbId },
+    select: { project: { select: { startDate: true } } },
+  })
+  if (account?.project?.startDate) return { since: dateOnly(account.project.startDate), anchored: true }
+
+  return { since: dateOnly(addDays(new Date(), -DEFAULT_BACKFILL_DAYS)), anchored: false }
+}
+
 async function resolveSyncRange(accountDbId: string) {
   const until = dateOnly(new Date())
+  const { since: desiredStart, anchored } = await resolveFirstSyncSince(accountDbId)
   const coverage = await readBillingCoverage(accountDbId)
 
-  return {
-    since: coverage?.until
-      ? dateOnly(addDays(parseDateOnly(coverage.until), -RESYNC_OVERLAP_DAYS))
-      : dateOnly(addDays(new Date(), -DEFAULT_BACKFILL_DAYS)),
-    until,
+  // First sync ever → full history from the anchor.
+  if (!coverage?.until) {
+    return { since: desiredStart > until ? until : desiredStart, until }
   }
+
+  // Subsequent syncs → incremental from the last covered day (minus overlap to re-finalize).
+  const incrementalSince = dateOnly(addDays(parseDateOnly(coverage.until), -RESYNC_OVERLAP_DAYS))
+  // If an earlier gap is still missing (only when anchored to a real project/env start),
+  // extend back once to fill it; coverage.since then advances so later syncs stay incremental.
+  const hasFrontGap = anchored && (!coverage.since || coverage.since > desiredStart)
+  const since = hasFrontGap ? desiredStart : incrementalSince
+  return { since: since > until ? until : since, until }
 }
 
 async function upsertTransaction(account: MetaAccount, transaction: MetaTransaction) {

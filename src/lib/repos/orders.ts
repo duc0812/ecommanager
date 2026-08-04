@@ -9,6 +9,8 @@ export type OrderFilter = {
   pipelineStatus?: string
   search?: string  // filter by orderNumber / customerName / customerEmail
   limit?: number
+  page?: number      // 1-based page number for pagination
+  pageSize?: number  // rows per page; when set, overrides `limit`
 }
 
 function buildWhere(f: OrderFilter) {
@@ -64,16 +66,25 @@ function warningWhere(includeManual = true) {
 }
 
 export async function listOrdersWithLines(filter: OrderFilter) {
+  const usePaging = filter.pageSize != null && filter.pageSize > 0
+  const take = usePaging ? filter.pageSize : (filter.limit ?? 500)
+  const skip = usePaging ? Math.max(0, (Math.max(1, filter.page ?? 1) - 1) * (filter.pageSize as number)) : 0
+
   return prisma.order.findMany({
     where: buildWhere(filter),
     orderBy: { placedAt: 'desc' },
-    take: filter.limit ?? 500,
+    take,
+    skip,
     include: {
       lines: { orderBy: { linePosition: 'asc' } },
       store: { select: { id: true, shop: true, ianaTimezone: true } },
       defaultSupplier: { select: { id: true, name: true, code: true, firstItemShipFee: true, additionalItemShipFee: true } },
     },
   })
+}
+
+export async function countOrders(filter: OrderFilter) {
+  return prisma.order.count({ where: buildWhere(filter) })
 }
 
 export type UpsertOrderInput = {

@@ -111,6 +111,9 @@ export default function OrdersPage() {
   const [editingLineId, setEditingLineId] = useState<string | null>(null)
   const [editCost, setEditCost] = useState('')
   const [savingLineCost, setSavingLineCost] = useState(false)
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(50)
+  const [pageMeta, setPageMeta] = useState<{ total: number; totalPages: number }>({ total: 0, totalPages: 1 })
 
   // Initial fetch of projects and suppliers
   useEffect(() => {
@@ -138,13 +141,19 @@ export default function OrdersPage() {
     return q.toString()
   }, [projectId, activeTab, searchDebounced, supplierId, dateFrom, dateTo])
 
+  // Reset to first page whenever the server-side filters change
+  useEffect(() => { setPage(1) }, [queryString, pageSize])
+
   const load = useCallback(async () => {
     const qs = queryString ? '?' + queryString : ''
+    const ordersParams = new URLSearchParams(queryString)
+    ordersParams.set('page', String(page))
+    ordersParams.set('pageSize', String(pageSize))
     // status-counts responds only to projectId — intentional (tab counts show all statuses for the project)
     const countsQs = projectId ? '?projectId=' + projectId : ''
     try {
       const [oRes, sRes, cRes] = await Promise.all([
-        fetchJson<{ orders?: OrderRow[] }>(`/api/fulfillment/orders${qs}`),
+        fetchJson<{ orders?: OrderRow[]; total?: number; totalPages?: number }>(`/api/fulfillment/orders?${ordersParams.toString()}`),
         fetchJson<Summary>(`/api/fulfillment/pl-summary${qs}`),
         fetchJson<StatusCounts>(`/api/fulfillment/status-counts${countsQs}`),
       ])
@@ -156,6 +165,7 @@ export default function OrdersPage() {
       if (trelloFilter === 'CREATED') list = list.filter(o => o.trelloCardId != null)
       if (trelloFilter === 'NOT_CREATED') list = list.filter(o => o.trelloCardId == null)
       setOrders(list)
+      setPageMeta({ total: oRes.total ?? list.length, totalPages: Math.max(1, oRes.totalPages ?? 1) })
       setSummary(sRes)
       setCounts(cRes)
       setSelected(new Set())
@@ -163,7 +173,7 @@ export default function OrdersPage() {
     } catch (e: any) {
       setSyncResult(`Load orders failed: ${e.message}`)
     }
-  }, [queryString, projectId, showUnmappedOnly, typeFilter, designFilter, trelloFilter])
+  }, [queryString, page, pageSize, projectId, showUnmappedOnly, typeFilter, designFilter, trelloFilter])
 
   useEffect(() => { load() }, [load])
 
@@ -666,6 +676,59 @@ export default function OrdersPage() {
             </tbody>
           </table>
         </div>
+
+        {/* Pagination */}
+        <div className="flex flex-wrap items-center justify-between gap-md mt-md">
+          <div className="flex items-center gap-sm text-body-sm text-on-surface-variant">
+            <span>
+              {pageMeta.total === 0
+                ? 'No orders'
+                : `Showing ${(page - 1) * pageSize + 1}–${Math.min(page * pageSize, pageMeta.total)} of ${pageMeta.total} orders`}
+            </span>
+            <select
+              value={pageSize}
+              onChange={e => setPageSize(Number(e.target.value))}
+              className="border rounded-lg px-sm py-xs text-body-sm"
+              title="Orders per page"
+            >
+              {[25, 50, 100, 200].map(n => (
+                <option key={n} value={n}>{n}/page</option>
+              ))}
+            </select>
+          </div>
+          <div className="flex items-center gap-xs">
+            <button
+              onClick={() => setPage(1)}
+              disabled={page <= 1}
+              className="border border-outline-variant/40 rounded-lg px-md py-xs text-label-md disabled:opacity-40"
+            >
+              First
+            </button>
+            <button
+              onClick={() => setPage(p => Math.max(1, p - 1))}
+              disabled={page <= 1}
+              className="border border-outline-variant/40 rounded-lg px-md py-xs text-label-md disabled:opacity-40"
+            >
+              Prev
+            </button>
+            <span className="px-sm text-body-sm">Page {page} / {pageMeta.totalPages}</span>
+            <button
+              onClick={() => setPage(p => Math.min(pageMeta.totalPages, p + 1))}
+              disabled={page >= pageMeta.totalPages}
+              className="border border-outline-variant/40 rounded-lg px-md py-xs text-label-md disabled:opacity-40"
+            >
+              Next
+            </button>
+            <button
+              onClick={() => setPage(pageMeta.totalPages)}
+              disabled={page >= pageMeta.totalPages}
+              className="border border-outline-variant/40 rounded-lg px-md py-xs text-label-md disabled:opacity-40"
+            >
+              Last
+            </button>
+          </div>
+        </div>
+
         {selectedOrder && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-lg">
             <div className="max-h-[90vh] w-full max-w-5xl overflow-auto rounded-xl bg-surface-container-lowest shadow-xl">

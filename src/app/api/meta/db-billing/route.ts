@@ -3,9 +3,15 @@ import { prisma } from '@/lib/db'
 import { convertMetaAmountToUsd } from '@/lib/meta-currency'
 import { getMetaExchangeRates } from '@/lib/meta-exchange-rates'
 
+function dateKey(date: Date) {
+  return date.toISOString().split('T')[0]
+}
+
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const accountId = searchParams.get('accountId')
+  const projectIdParam = searchParams.get('projectId')
+  const staffIdParam = searchParams.get('staffId')
   const month = searchParams.get('month')
   const monthRange = month && /^\d{4}-\d{2}$/.test(month)
     ? {
@@ -44,12 +50,60 @@ export async function GET(req: NextRequest) {
     exchangeRate: exchangeRates.get(account.id) ?? null,
   }))
 
+  // Resolve a Project Time / Staff Time window (overrides the month filter when set).
+  // Staff Time = a staff assignment's active period; Project Time = the project's
+  // effective start (min of project start and its assignments) → today.
+  const todayStr = dateKey(new Date())
+  let periodRange: { start: string; end: string } | null = null
+  let restrictProjectId: string | null = null
+  let periodLabel: { mode: 'project' | 'staff'; projectId: string; projectName: string; staffId?: string; staffName?: string } | null = null
+
+  if (staffIdParam) {
+    let match: { project: (typeof projects)[number]; assignment: (typeof projects)[number]['assignments'][number] } | null = null
+    for (const project of projects) {
+      for (const assignment of project.assignments) {
+        if (assignment.staffId === staffIdParam && (!projectIdParam || project.id === projectIdParam)) {
+          match = { project, assignment }
+          break
+        }
+      }
+      if (match) break
+    }
+    if (match) {
+      restrictProjectId = match.project.id
+      periodRange = {
+        start: dateKey(match.assignment.startDate),
+        end: match.assignment.endDate ? dateKey(match.assignment.endDate) : todayStr,
+      }
+      periodLabel = {
+        mode: 'staff',
+        projectId: match.project.id,
+        projectName: match.project.name,
+        staffId: match.assignment.staff.id,
+        staffName: match.assignment.staff.name,
+      }
+    }
+  } else if (projectIdParam) {
+    const project = projects.find(p => p.id === projectIdParam)
+    if (project) {
+      restrictProjectId = project.id
+      const startMs = Math.min(project.startDate.getTime(), ...project.assignments.map(a => a.startDate.getTime()))
+      periodRange = { start: dateKey(new Date(startMs)), end: todayStr }
+      periodLabel = { mode: 'project', projectId: project.id, projectName: project.name }
+    }
+  }
+
   const paidStatuses = ['PAID', 'SETTLED', 'COMPLETED']
   const visibleStatuses = [...paidStatuses, 'PENDING']
   const billingWhere = {
     status: { in: visibleStatuses },
     ...(accountId ? { adAccountId: accountId } : {}),
-    ...(monthRange ? { billingDate: { gte: monthRange.start, lte: monthRange.end } } : {}),
+    ...(restrictProjectId ? { adAccount: { projectId: restrictProjectId } } : {}),
+    ...(periodRange
+      ? { billingDate: { gte: periodRange.start, lte: periodRange.end } }
+      : monthRange
+        ? { billingDate: { gte: monthRange.start, lte: monthRange.end } }
+        : {}),
   }
 
   const billingsRaw = await prisma.metaBilling.findMany({
@@ -119,5 +173,7 @@ export async function GET(req: NextRequest) {
       : 0,
     missingExchangeRateAccounts,
     lastSyncAt,
+    period: periodRange,
+    periodLabel,
   })
 }
