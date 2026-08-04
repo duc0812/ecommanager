@@ -275,7 +275,19 @@ export async function GET(req: NextRequest) {
   const cashflowCosts = totalOrderCogs + totalOtherCosts
   const actualCashflow = totalPayout - totalMetaBilling - cashflowCosts
   const shopifyBalance = project.shopifyStore?.currentBalance ?? 0
-  const projectedCashflow = actualCashflow + shopifyBalance
+  // Payouts Shopify is transferring but has not deposited yet (forward-looking, not date-filtered).
+  const inTransitPayoutRows = project.shopifyStore
+    ? await prisma.payout.findMany({
+        where: { storeId: project.shopifyStore.id, status: { in: ['in_transit', 'scheduled', 'pending'] } },
+        select: { amount: true },
+      })
+    : []
+  const inTransitPayout = inTransitPayoutRows.reduce((sum, row) => sum + row.amount, 0)
+  const projectedCashflow = actualCashflow + shopifyBalance + inTransitPayout
+  // "Tiền treo": order net revenue not yet received as a paid payout, in-transit payout, or available balance.
+  const totalOrderNetRevenue = orders.reduce((sum, order) => sum + order.expectedPayout, 0)
+  const pendingPayout = Math.max(0, totalOrderNetRevenue - totalPayout - inTransitPayout - shopifyBalance)
+  const expectedCashflow = projectedCashflow + pendingPayout
   const grossProfit = totalOrderProfit - totalOtherCosts - totalAdSpend
   const grossMargin = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0
   const adSpendRatio = totalRevenue > 0 ? (totalAdSpend / totalRevenue) * 100 : 0
@@ -365,7 +377,11 @@ export async function GET(req: NextRequest) {
     actualCashflow,
     shopifyBalance,
     shopifyBalanceCurrency: project.shopifyStore?.currentBalanceCurrency ?? null,
+    inTransitPayout,
     projectedCashflow,
+    pendingPayout,
+    totalOrderNetRevenue,
+    expectedCashflow,
     grossProfit,
     grossMargin,
     adSpendRatio,
