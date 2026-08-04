@@ -165,6 +165,7 @@ export async function GET(req: NextRequest) {
             qty: true,
             sku: true,
             productTitle: true,
+            shopifyProductType: true,
             resolvedSupplierId: true,
             resolvedBaseCost: true,
             manualBaseCost: true,
