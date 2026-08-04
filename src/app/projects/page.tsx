@@ -391,7 +391,7 @@ export default function ProjectDashboard() {
                   </div>
                   {analytics.unmappedOrderCount > 0 && (
                     <p className="mt-sm text-label-sm text-amber-600">
-                      {analytics.unmappedOrderCount} order(s) chưa map đủ đang dùng COGS tạm tính: 50% payout còn thiếu sau phần COGS đã biết.
+                      {analytics.unmappedOrderCount} order(s) chưa có base cost đang dùng COGS tạm tính: 50% payout còn thiếu sau phần COGS đã biết.
                     </p>
                   )}
                 </section>

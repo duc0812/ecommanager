@@ -32,8 +32,11 @@ export function computeKnownOrderCogs(lines: OrderLineForProfit[]): number {
   return baseCost + shipping + importTax
 }
 
+// A line's cost is "unmapped" for COGS/profit purposes only when its base cost is
+// unknown. A manually-entered base cost is authoritative, so a missing supplier does
+// NOT trigger the estimate — supplier mapping is a separate status (see mappingSummary).
 export function hasUnmappedProductCost(lines: OrderLineForProfit[]): boolean {
-  return lines.some(l => !l.resolvedSupplierId || effectiveBaseCost(l) === null)
+  return lines.some(l => effectiveBaseCost(l) === null)
 }
 
 export function estimateOrderCostAndProfit(
