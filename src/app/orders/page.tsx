@@ -490,7 +490,7 @@ export default function OrdersPage() {
 
         {summary && summary.unmappedCount > 0 && (
           <div className="bg-error/10 border border-error/30 rounded-lg p-md mb-md text-body-sm">
-            {'⚠'} {summary.unmappedCount} order(s) có SKU thiếu mapping — COGS/Profit đang dùng tạm tính 50% phần payout chưa map.
+            {'⚠'} {summary.unmappedCount} order(s) chưa có base cost — COGS/Profit đang tạm tính 50% payout còn lại. (Đơn thiếu supplier nhưng đã có base cost xem cột Mapping.)
           </div>
         )}
 
