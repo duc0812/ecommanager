@@ -564,13 +564,23 @@ export default function OrdersPage() {
                     />
                   </td>
                   <td className="px-sm py-sm truncate">
-                    <button
-                      type="button"
-                      onClick={() => setSelectedOrder(o)}
-                      className="font-mono text-secondary underline underline-offset-2"
-                    >
-                      {o.shopifyOrderNumber}
-                    </button>
+                    <span className="inline-flex items-center gap-xs">
+                      {!o.computed.isEstimated && !o.mappingSummary.complete && (
+                        <span
+                          className="material-symbols-outlined text-[16px] text-amber-500"
+                          title="Đã nhập base cost bằng tay nhưng chưa map supplier"
+                        >
+                          gpp_maybe
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setSelectedOrder(o)}
+                        className="font-mono text-secondary underline underline-offset-2"
+                      >
+                        {o.shopifyOrderNumber}
+                      </button>
+                    </span>
                   </td>
                   <td className="px-sm py-sm">
                     <span className={`text-label-sm ${o.mappingSummary.complete ? 'text-tertiary' : 'text-error'}`}>

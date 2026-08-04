@@ -105,7 +105,11 @@ type Analytics = {
   actualCashflow: number
   shopifyBalance: number
   shopifyBalanceCurrency: string | null
+  inTransitPayout: number
   projectedCashflow: number
+  pendingPayout: number
+  totalOrderNetRevenue: number
+  expectedCashflow: number
   grossProfit: number
   grossMargin: number
   adSpendRatio: number
@@ -339,7 +343,7 @@ export default function ProjectDashboard() {
                       {selectedStaff === 'all' ? 'payout - paid billing - COGS - costs' : 'seller-period payout - paid billing - COGS - costs'}
                     </span>
                   </div>
-                  <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-6 gap-lg">
+                  <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-7 gap-lg">
                     <StatCard label="Shopify Payout" icon="payments" value={fmtUSD(analytics.totalPayout)} hint={`${analytics.payoutCount} paid payouts`} />
                     <StatCard label="Meta Billing" icon="receipt_long" value={fmtUSD(analytics.totalMetaBilling)} hint="paid billing transactions" />
                     <StatCard label="COGS" icon="inventory_2" value={fmtUSD(analytics.totalOrderCogs)} hint={analytics.unmappedOrderCount > 0 ? `${analytics.unmappedOrderCount} order(s) tạm tính` : 'mapped order costs'} />
@@ -356,8 +360,16 @@ export default function ProjectDashboard() {
                       label="Projected Cashflow"
                       icon="account_balance"
                       value={fmtUSD(analytics.projectedCashflow)}
-                      hint={`includes ${fmtUSD(analytics.shopifyBalance)} Shopify balance`}
+                      hint={`+ ${fmtUSD(analytics.shopifyBalance)} balance + ${fmtUSD(analytics.inTransitPayout)} in-transit`}
                       negative={analytics.projectedCashflow < 0}
+                      strong
+                    />
+                    <StatCard
+                      label="Cashflow Dự kiến"
+                      icon="hourglass_top"
+                      value={fmtUSD(analytics.expectedCashflow)}
+                      hint={`+ ${fmtUSD(analytics.pendingPayout)} tiền treo chưa payout`}
+                      negative={analytics.expectedCashflow < 0}
                       strong
                     />
                   </div>
