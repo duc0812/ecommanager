@@ -503,7 +503,12 @@ export default function MetaBillingPage() {
                     <tbody className="divide-y divide-outline-variant/10">
                       {data.billings.map(b => (
                         <tr key={b.id} className="hover:bg-surface-container-low/40 transition-colors">
-                          <td className="px-lg py-md text-body-sm text-secondary max-w-[220px] break-all">{b.id}</td>
+                          <td className="px-lg py-md text-body-sm text-secondary max-w-[220px] break-all">
+                            <div className="break-all">{b.id}</div>
+                            <span className={`mt-xs inline-block px-xs py-[1px] rounded text-label-sm ${b.productType === 'meta_billing_export' ? 'bg-secondary/10 text-secondary' : 'bg-amber-100 text-amber-800'}`}>
+                              {b.productType === 'meta_billing_export' ? 'Import (CSV)' : 'Auto (tool quét)'}
+                            </span>
+                          </td>
                           <td className="px-lg py-md text-body-sm text-on-surface">{fmt(b.billingDate)}</td>
                           <td className="px-lg py-md">
                             {b.amountUsd === null ? (
