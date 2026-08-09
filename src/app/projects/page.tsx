@@ -368,7 +368,7 @@ export default function ProjectDashboard() {
                       label="Cashflow Dự kiến"
                       icon="hourglass_top"
                       value={fmtUSD(analytics.expectedCashflow)}
-                      hint={`+ ${fmtUSD(analytics.pendingPayout)} tiền treo chưa payout`}
+                      hint={`nếu toàn bộ order payout về · + ${fmtUSD(analytics.pendingPayout)} order chưa vào balance/in-transit`}
                       negative={analytics.expectedCashflow < 0}
                       strong
                     />
