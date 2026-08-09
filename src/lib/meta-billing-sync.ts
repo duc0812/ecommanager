@@ -7,7 +7,7 @@ import { isMetaRateLimitError, metaPageDelayMs, parseMetaUsagePercent } from '@/
 
 const GRAPH_API_VERSION = process.env.META_GRAPH_API_VERSION ?? 'v22.0'
 const DEFAULT_BACKFILL_DAYS = 90
-const RESYNC_OVERLAP_DAYS = 7
+const RESYNC_OVERLAP_DAYS = 3
 const ACTIVITY_RANGE_DAYS = 1
 const MIN_ACTIVITY_RANGE_MS = 1_000
 const JOB_SETTING_KEY = 'meta.billingSyncJob'
