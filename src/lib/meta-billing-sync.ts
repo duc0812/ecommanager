@@ -532,6 +532,21 @@ async function syncAccount(job: MetaBillingSyncJob, account: MetaAccount, progre
   job.currentAccountId = account.id
   job.currentAccountName = progress.accountName
 
+  // If this account is maintained via the official CSV import, skip the activity
+  // scrape entirely — the export is authoritative and the scrape dates charges in
+  // UTC (which can differ from the export by a day), creating hard-to-dedupe copies.
+  const importedCount = await prisma.metaBilling.count({
+    where: { adAccountId: account.id, productType: 'meta_billing_export' },
+  })
+  if (importedCount > 0) {
+    progress.status = 'COMPLETED'
+    progress.progressPercent = 100
+    progress.coverageVerified = true
+    progress.message = `Dùng import CSV chính thức (${importedCount} giao dịch) — bỏ qua auto-scrape để tránh trùng.`
+    await saveJob(job)
+    return
+  }
+
   const range = progress.since && progress.until
     ? { since: progress.since, until: progress.until }
     : await resolveSyncRange(account.id)
