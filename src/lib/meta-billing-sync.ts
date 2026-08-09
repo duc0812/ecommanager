@@ -454,6 +454,20 @@ async function resolveSyncRange(accountDbId: string) {
 }
 
 async function upsertTransaction(account: MetaAccount, transaction: MetaTransaction) {
+  // The manually imported official export is authoritative. If it already covers
+  // this charge (same account + date + amount), don't add a scraped duplicate.
+  const importedDuplicate = await prisma.metaBilling.findFirst({
+    where: {
+      adAccountId: account.id,
+      billingDate: transaction.billingDate,
+      amount: transaction.amount,
+      currency: transaction.currency,
+      productType: 'meta_billing_export',
+    },
+    select: { id: true },
+  })
+  if (importedDuplicate) return
+
   if (transaction.legacyId && transaction.legacyId !== transaction.id) {
     await prisma.metaBilling.deleteMany({
       where: { id: transaction.legacyId, adAccountId: account.id },

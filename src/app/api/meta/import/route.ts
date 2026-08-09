@@ -125,6 +125,7 @@ export async function POST(req: NextRequest) {
   let imported = 0
   let updated = 0
   let skipped = 0
+  let removedDuplicates = 0
   let detectedCurrency: string | null = null
   const errors: Array<{ row: number; error: string }> = []
 
@@ -202,6 +203,19 @@ export async function POST(req: NextRequest) {
       })
       imported++
     }
+
+    // The official export is authoritative for this charge — drop any scraped
+    // billing_activity row that duplicates it (same account + date + amount).
+    const removed = await prisma.metaBilling.deleteMany({
+      where: {
+        adAccountId: account.id,
+        billingDate: date,
+        amount,
+        currency,
+        productType: 'billing_activity',
+      },
+    })
+    removedDuplicates += removed.count
   }
 
   await prisma.metaAdAccount.update({
@@ -218,6 +232,7 @@ export async function POST(req: NextRequest) {
     imported,
     updated,
     skipped,
+    removedDuplicates,
     errors,
   })
 }
