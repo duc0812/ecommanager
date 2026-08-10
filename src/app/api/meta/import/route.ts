@@ -21,6 +21,12 @@ function parseAmount(value: string) {
   return Number.isFinite(amount) ? amount : 0
 }
 
+function shiftDate(dateKey: string, days: number) {
+  const dt = new Date(`${dateKey}T00:00:00Z`)
+  dt.setUTCDate(dt.getUTCDate() + days)
+  return dt.toISOString().split('T')[0]
+}
+
 function parseDate(value: string) {
   const raw = value.trim()
   if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw
@@ -122,10 +128,9 @@ export async function POST(req: NextRequest) {
   if (!account) return NextResponse.json({ error: 'Ad account not found' }, { status: 404 })
 
   const rows = parseRows(file, await file.arrayBuffer())
-  let imported = 0
-  let updated = 0
+  let added = 0
+  let alreadyInTool = 0
   let skipped = 0
-  let removedDuplicates = 0
   let detectedCurrency: string | null = null
   const errors: Array<{ row: number; error: string }> = []
 
@@ -167,55 +172,43 @@ export async function POST(req: NextRequest) {
 
     const payment = parsePaymentMethod(paymentRaw)
     const paymentMethod = payment.code && payment.label ? `${payment.label} ${payment.code}` : payment.label
-    const existing = await prisma.metaBilling.findUnique({ where: { id: transactionId } })
 
-    if (existing) {
-      await prisma.metaBilling.update({
-        where: { id: transactionId },
-        data: {
-          amount,
-          currency,
-          billingDate: date,
-          status: dbStatus,
-          paymentMethod: paymentMethod ?? existing.paymentMethod,
-          paymentMethodLast4: payment.last4 ?? existing.paymentMethodLast4,
-          referenceNumber: referenceNumber || existing.referenceNumber,
-          receiptUrl: receiptUrl || existing.receiptUrl,
-        },
-      })
-      updated++
-    } else {
-      await prisma.metaBilling.create({
-        data: {
-          id: transactionId,
-          adAccountId: account.id,
-          amount,
-          currency,
-          billingDate: date,
-          status: dbStatus,
-          chargeType: 'manual_import',
-          productType: 'meta_billing_export',
-          paymentMethod,
-          paymentMethodLast4: payment.last4,
-          referenceNumber,
-          receiptUrl: receiptUrl || null,
-        },
-      })
-      imported++
-    }
-
-    // The official export is authoritative for this charge — drop any scraped
-    // billing_activity row that duplicates it (same account + date + amount).
-    const removed = await prisma.metaBilling.deleteMany({
+    // The tool scrape is the primary source. On import we only ADD charges the tool
+    // is missing, and mark them for the user to review. Match by transaction id OR by
+    // amount + date (±1 day): the scrape (Meta /activities) uses different ids and UTC
+    // dates than the official invoice export, so the same charge won't share an id.
+    const present = await prisma.metaBilling.findFirst({
       where: {
         adAccountId: account.id,
-        billingDate: date,
+        OR: [
+          { id: transactionId },
+          { amount, currency, billingDate: { gte: shiftDate(date, -1), lte: shiftDate(date, 1) } },
+        ],
+      },
+      select: { id: true },
+    })
+    if (present) {
+      alreadyInTool++
+      continue
+    }
+
+    await prisma.metaBilling.create({
+      data: {
+        id: transactionId,
+        adAccountId: account.id,
         amount,
         currency,
-        productType: 'billing_activity',
+        billingDate: date,
+        status: dbStatus,
+        chargeType: 'csv_gap_fill',
+        productType: 'meta_billing_export',
+        paymentMethod,
+        paymentMethodLast4: payment.last4,
+        referenceNumber,
+        receiptUrl: receiptUrl || null,
       },
     })
-    removedDuplicates += removed.count
+    added++
   }
 
   await prisma.metaAdAccount.update({
@@ -229,10 +222,9 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({
     success: true,
     rows: rows.length,
-    imported,
-    updated,
+    added,
+    alreadyInTool,
     skipped,
-    removedDuplicates,
     errors,
   })
 }

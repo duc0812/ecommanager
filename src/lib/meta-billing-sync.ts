@@ -455,14 +455,17 @@ async function resolveSyncRange(accountDbId: string) {
 
 async function upsertTransaction(account: MetaAccount, transaction: MetaTransaction) {
   // The manually imported official export is authoritative. If it already covers
-  // this charge (same account + date + amount), don't add a scraped duplicate.
+  // this charge, don't add a scraped duplicate. Match on amount within ±1 day
+  // because the scrape dates charges in UTC while the export uses the account tz.
+  const dupMin = dateOnly(addDays(parseDateOnly(transaction.billingDate), -1))
+  const dupMax = dateOnly(addDays(parseDateOnly(transaction.billingDate), 1))
   const importedDuplicate = await prisma.metaBilling.findFirst({
     where: {
       adAccountId: account.id,
-      billingDate: transaction.billingDate,
       amount: transaction.amount,
       currency: transaction.currency,
       productType: 'meta_billing_export',
+      billingDate: { gte: dupMin, lte: dupMax },
     },
     select: { id: true },
   })
@@ -531,21 +534,6 @@ async function syncAccount(job: MetaBillingSyncJob, account: MetaAccount, progre
   job.status = 'RUNNING'
   job.currentAccountId = account.id
   job.currentAccountName = progress.accountName
-
-  // If this account is maintained via the official CSV import, skip the activity
-  // scrape entirely — the export is authoritative and the scrape dates charges in
-  // UTC (which can differ from the export by a day), creating hard-to-dedupe copies.
-  const importedCount = await prisma.metaBilling.count({
-    where: { adAccountId: account.id, productType: 'meta_billing_export' },
-  })
-  if (importedCount > 0) {
-    progress.status = 'COMPLETED'
-    progress.progressPercent = 100
-    progress.coverageVerified = true
-    progress.message = `Dùng import CSV chính thức (${importedCount} giao dịch) — bỏ qua auto-scrape để tránh trùng.`
-    await saveJob(job)
-    return
-  }
 
   const range = progress.since && progress.until
     ? { since: progress.since, until: progress.until }
