@@ -61,8 +61,8 @@ type ProjectOption = {
 
 type ImportResult = {
   rows: number
-  imported: number
-  updated: number
+  added: number
+  alreadyInTool: number
   skipped: number
   errors: { row: number; error: string }[]
   error?: string
@@ -464,7 +464,7 @@ export default function MetaBillingPage() {
                     <span>Error: {importResult.error}</span>
                   ) : (
                     <span>
-                      {importResult.rows} rows processed — {importResult.imported} imported, {importResult.updated} updated, {importResult.skipped} skipped (failed/empty), {importResult.errors?.length ?? 0} errors.
+                      {importResult.rows} dòng CSV — <strong>{importResult.added} bổ sung (tool còn thiếu, đã đánh dấu cần check)</strong>, {importResult.alreadyInTool} đã có trong tool, {importResult.skipped} bỏ qua, {importResult.errors?.length ?? 0} lỗi.
                     </span>
                   )}
                   {!importResult.error && importResult.errors?.length > 0 && (
@@ -505,9 +505,16 @@ export default function MetaBillingPage() {
                         <tr key={b.id} className="hover:bg-surface-container-low/40 transition-colors">
                           <td className="px-lg py-md text-body-sm text-secondary max-w-[220px] break-all">
                             <div className="break-all">{b.id}</div>
-                            <span className={`mt-xs inline-block px-xs py-[1px] rounded text-label-sm ${b.productType === 'meta_billing_export' ? 'bg-secondary/10 text-secondary' : 'bg-amber-100 text-amber-800'}`}>
-                              {b.productType === 'meta_billing_export' ? 'Import (CSV)' : 'Auto (tool quét)'}
-                            </span>
+                            {b.chargeType === 'csv_gap_fill' ? (
+                              <span className="mt-xs inline-flex items-center gap-xs rounded bg-amber-100 px-xs py-[1px] text-label-sm text-amber-800">
+                                <span className="material-symbols-outlined text-[13px]">flag</span>
+                                Bổ sung từ CSV · cần check
+                              </span>
+                            ) : b.productType === 'meta_billing_export' ? (
+                              <span className="mt-xs inline-block rounded bg-secondary/10 px-xs py-[1px] text-label-sm text-secondary">Import (CSV)</span>
+                            ) : (
+                              <span className="mt-xs inline-block rounded bg-surface-container px-xs py-[1px] text-label-sm text-on-surface-variant">Auto (tool quét)</span>
+                            )}
                           </td>
                           <td className="px-lg py-md text-body-sm text-on-surface">{fmt(b.billingDate)}</td>
                           <td className="px-lg py-md">
