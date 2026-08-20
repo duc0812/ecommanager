@@ -1,0 +1,104 @@
+export type ShopifyVariant = { id?: number; price?: string; available?: boolean }
+export type ShopifyImage = { src?: string }
+export type ShopifyRawProduct = {
+  id?: number; title?: string; handle?: string; body_html?: string
+  vendor?: string; product_type?: string; tags?: string | string[]
+  created_at?: string; published_at?: string | null; updated_at?: string
+  variants?: ShopifyVariant[]; images?: ShopifyImage[]
+}
+
+export function normalizeStoreUrl(value: string): string {
+  const trimmed = value.trim()
+  if (!trimmed) throw new Error('Domain is required')
+  const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`
+  const parsed = new URL(withProtocol)
+  if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('Only http and https domains are supported')
+  const rawHostname = parsed.hostname.toLowerCase()
+  const hostname = rawHostname.replace(/^\[|\]$/g, '')
+  if (
+    hostname === 'localhost' || hostname.endsWith('.local') || hostname === '0.0.0.0' ||
+    hostname.startsWith('127.') || hostname.startsWith('10.') || hostname.startsWith('192.168.') ||
+    /^172\.(1[6-9]|2\d|3[0-1])\./.test(hostname) ||
+    hostname.startsWith('169.254.') ||
+    hostname === '::1' ||
+    /^::ffff:(127\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[0-1])\.)/.test(hostname) ||
+    /^::ffff:7f[0-9a-f]{2}:/.test(hostname) ||
+    /^::ffff:0?a[0-9a-f]{2}:/.test(hostname) ||
+    /^::ffff:c0a8:/.test(hostname) ||
+    /^::ffff:a9fe:/.test(hostname) ||
+    /^::ffff:ac1[0-9a-f]:/.test(hostname)
+  ) throw new Error('Local or private network domains are not allowed')
+  return `${parsed.protocol}//${parsed.host}`
+}
+
+export function normalizeDomain(value: string): string {
+  return new URL(normalizeStoreUrl(value)).host.toLowerCase()
+}
+
+export function parseDate(value?: string | null): Date | null {
+  if (!value) return null
+  const d = new Date(value)
+  return Number.isNaN(d.getTime()) ? null : d
+}
+
+export function stripHtml(value?: string): string {
+  return String(value ?? '')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+}
+
+export function tagsToArray(value?: string | string[]): string[] {
+  if (Array.isArray(value)) return value.map(t => String(t).trim()).filter(Boolean)
+  return String(value ?? '').split(',').map(t => t.trim()).filter(Boolean)
+}
+
+export function priceSummary(variants: ShopifyVariant[] = []): { min: number; max: number } | null {
+  const prices = variants.map(v => Number(v.price)).filter(p => Number.isFinite(p))
+  if (prices.length === 0) return null
+  return { min: Math.min(...prices), max: Math.max(...prices) }
+}
+
+export function productUrl(origin: string, handle?: string): string {
+  return handle ? `${origin}/products/${handle}` : origin
+}
+
+export function externalProductId(raw: ShopifyRawProduct): string {
+  if (raw.id != null) return String(raw.id)
+  if (raw.handle) return `handle:${raw.handle}`
+  throw new Error('Product has neither id nor handle')
+}
+
+export type ParsedSpyProduct = {
+  externalProductId: string; handle: string | null; title: string | null
+  productType: string | null; vendor: string | null; tags: string[]
+  imageUrl: string | null; priceMin: number | null; priceMax: number | null
+  variantCount: number; availableVariantCount: number
+  publishedAt: Date | null; dateSource: 'published_at' | 'created_at' | null; url: string
+}
+
+export function mapShopifyProduct(raw: ShopifyRawProduct, origin: string): ParsedSpyProduct {
+  const published = parseDate(raw.published_at)
+  const created = parseDate(raw.created_at)
+  const publishedAt = published ?? created
+  const dateSource = published ? 'published_at' : created ? 'created_at' : null
+  const variants = raw.variants ?? []
+  const ps = priceSummary(variants)
+  const handle = raw.handle || null
+  return {
+    externalProductId: externalProductId(raw),
+    handle,
+    title: raw.title || null,
+    productType: raw.product_type || null,
+    vendor: raw.vendor || null,
+    tags: tagsToArray(raw.tags),
+    imageUrl: raw.images?.[0]?.src || null,
+    priceMin: ps?.min ?? null,
+    priceMax: ps?.max ?? null,
+    variantCount: variants.length,
+    availableVariantCount: variants.filter(v => v.available !== false).length,
+    publishedAt,
+    dateSource,
+    url: productUrl(origin, handle ?? undefined),
+  }
+}
