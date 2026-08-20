@@ -59,3 +59,37 @@ export function externalProductId(raw: ShopifyRawProduct): string {
   if (raw.handle) return `handle:${raw.handle}`
   throw new Error('Product has neither id nor handle')
 }
+
+export type ParsedSpyProduct = {
+  externalProductId: string; handle: string | null; title: string | null
+  productType: string | null; vendor: string | null; tags: string[]
+  imageUrl: string | null; priceMin: number | null; priceMax: number | null
+  variantCount: number; availableVariantCount: number
+  publishedAt: Date | null; dateSource: 'published_at' | 'created_at' | null; url: string
+}
+
+export function mapShopifyProduct(raw: ShopifyRawProduct, origin: string): ParsedSpyProduct {
+  const published = parseDate(raw.published_at)
+  const created = parseDate(raw.created_at)
+  const publishedAt = published ?? created
+  const dateSource = published ? 'published_at' : created ? 'created_at' : null
+  const variants = raw.variants ?? []
+  const ps = priceSummary(variants)
+  const handle = raw.handle || null
+  return {
+    externalProductId: externalProductId(raw),
+    handle,
+    title: raw.title || null,
+    productType: raw.product_type || null,
+    vendor: raw.vendor || null,
+    tags: tagsToArray(raw.tags),
+    imageUrl: raw.images?.[0]?.src || null,
+    priceMin: ps?.min ?? null,
+    priceMax: ps?.max ?? null,
+    variantCount: variants.length,
+    availableVariantCount: variants.filter(v => v.available !== false).length,
+    publishedAt,
+    dateSource,
+    url: productUrl(origin, handle ?? undefined),
+  }
+}

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { normalizeStoreUrl, normalizeDomain, tagsToArray, priceSummary, externalProductId } from './shopify'
+import { normalizeStoreUrl, normalizeDomain, tagsToArray, priceSummary, externalProductId, mapShopifyProduct } from './shopify'
 
 describe('spy shopify helpers', () => {
   it('normalizeStoreUrl adds protocol and strips path', () => {
@@ -24,5 +24,29 @@ describe('spy shopify helpers', () => {
   it('externalProductId prefers numeric id, falls back to handle', () => {
     expect(externalProductId({ id: 123, handle: 'h' } as any)).toBe('123')
     expect(externalProductId({ handle: 'h' } as any)).toBe('handle:h')
+  })
+})
+
+describe('mapShopifyProduct', () => {
+  it('maps fields and derives publishedAt/dateSource', () => {
+    const raw = {
+      id: 42, title: 'Tee', handle: 'tee', vendor: 'V', product_type: 'Shirt',
+      tags: 'a,b', created_at: '2026-08-01T00:00:00Z', published_at: '2026-08-10T00:00:00Z',
+      variants: [{ price: '19.99', available: true }, { price: '24.99', available: false }],
+      images: [{ src: 'http://img/1.jpg' }],
+    }
+    const p = mapShopifyProduct(raw as any, 'https://foo.com')
+    expect(p.externalProductId).toBe('42')
+    expect(p.url).toBe('https://foo.com/products/tee')
+    expect(p.priceMin).toBe(19.99)
+    expect(p.priceMax).toBe(24.99)
+    expect(p.variantCount).toBe(2)
+    expect(p.availableVariantCount).toBe(1)
+    expect(p.dateSource).toBe('published_at')
+    expect(p.publishedAt?.toISOString()).toBe('2026-08-10T00:00:00.000Z')
+  })
+  it('falls back to created_at when published_at missing', () => {
+    const p = mapShopifyProduct({ id: 1, created_at: '2026-08-01T00:00:00Z' } as any, 'https://foo.com')
+    expect(p.dateSource).toBe('created_at')
   })
 })
