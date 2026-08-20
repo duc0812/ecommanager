@@ -508,3 +508,205 @@ model DailyAdSpend {
   @@index([date])
   @@index([adAccountId])
 }
+
+model SpyStore {
+  id        String   @id @default(cuid())
+  domain    String   @unique
+  name      String?
+  platform  String   @default("shopify")
+  status    String   @default("active")
+  tags      String   @default("[]")
+  notes     String?
+  addedAt   DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  products    SpyProduct[]
+  advertisers SpyAdvertiser[]
+
+  @@index([status])
+}
+
+model SpyProduct {
+  id                    String    @id @default(cuid())
+  storeId               String
+  store                 SpyStore  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  externalProductId     String
+  handle                String?
+  title                 String?
+  productType           String?
+  vendor                String?
+  tags                  String    @default("[]")
+  imageUrl              String?
+  priceMin              Float?
+  priceMax              Float?
+  variantCount          Int       @default(0)
+  availableVariantCount Int       @default(0)
+  niche                 String?
+  publishedAt           DateTime?
+  dateSource            String?
+  status                String    @default("active")
+  firstSeenAt           DateTime  @default(now())
+  lastSeenAt            DateTime  @default(now())
+  snapshots             SpyProductSnapshot[]
+
+  @@unique([storeId, externalProductId])
+  @@index([firstSeenAt])
+  @@index([productType])
+  @@index([storeId])
+}
+
+model SpyProductSnapshot {
+  id         String     @id @default(cuid())
+  productId  String
+  product    SpyProduct @relation(fields: [productId], references: [id], onDelete: Cascade)
+  scanId     String
+  scan       SpyScan    @relation(fields: [scanId], references: [id])
+  title      String?
+  priceMin   Float?
+  priceMax   Float?
+  available  Boolean?
+  capturedAt DateTime   @default(now())
+
+  @@index([productId])
+  @@index([scanId])
+}
+
+model SpyAdvertiser {
+  id             String    @id @default(cuid())
+  fbPageId       String    @unique
+  pageName       String?
+  pageCategory   String?
+  pageProfileUri String?
+  likes          Int?
+  igUsername     String?
+  igFollowers    Int?
+  entityType     String?
+  storeId        String?
+  store          SpyStore? @relation(fields: [storeId], references: [id], onDelete: SetNull)
+  firstSeenAt    DateTime  @default(now())
+  lastSeenAt     DateTime  @default(now())
+
+  ads SpyAd[]
+
+  @@index([storeId])
+}
+
+model SpyAd {
+  id                 String        @id @default(cuid())
+  adArchiveId        String        @unique
+  advertiserId       String
+  advertiser         SpyAdvertiser @relation(fields: [advertiserId], references: [id], onDelete: Cascade)
+  pageId             String
+  startDate          DateTime?
+  endDate            DateTime?
+  isActive           Boolean       @default(true)
+  collationCount     Int?
+  collationId        String?
+  mediaType          String?
+  displayFormat      String?
+  ctaType            String?
+  ctaText            String?
+  linkUrl            String?
+  title              String?
+  body               String?
+  caption            String?
+  publisherPlatforms String        @default("[]")
+  currency           String?
+  adLibraryUrl       String?
+  rawPayload         String?
+  firstSeenAt        DateTime      @default(now())
+  lastSeenAt         DateTime      @default(now())
+
+  observations SpyAdObservation[]
+  keywordHits  SpyKeywordHit[]
+
+  @@index([advertiserId])
+  @@index([startDate])
+  @@index([isActive])
+}
+
+model SpyAdObservation {
+  id               String   @id @default(cuid())
+  adId             String
+  ad               SpyAd    @relation(fields: [adId], references: [id], onDelete: Cascade)
+  scanId           String
+  scan             SpyScan  @relation(fields: [scanId], references: [id])
+  isActive         Boolean
+  collationCount   Int?
+  impressionsIndex Int?
+  observedAt       DateTime @default(now())
+
+  @@unique([adId, scanId])
+  @@index([adId])
+  @@index([scanId])
+}
+
+model SpyKeyword {
+  id        String   @id @default(cuid())
+  term      String
+  country   String   @default("ALL")
+  note      String?
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  hits SpyKeywordHit[]
+
+  @@unique([term, country])
+}
+
+model SpyKeywordHit {
+  id         String     @id @default(cuid())
+  keywordId  String
+  keyword    SpyKeyword @relation(fields: [keywordId], references: [id], onDelete: Cascade)
+  adId       String
+  ad         SpyAd      @relation(fields: [adId], references: [id], onDelete: Cascade)
+  scanId     String
+  scan       SpyScan    @relation(fields: [scanId], references: [id])
+  rank       Int?
+  observedAt DateTime   @default(now())
+
+  @@unique([keywordId, adId, scanId])
+  @@index([keywordId])
+  @@index([adId])
+}
+
+model SpyScan {
+  id             String    @id @default(cuid())
+  type           String
+  targetType     String
+  targetId       String
+  status         String    @default("running")
+  apifyRunId     String?
+  apifyDatasetId String?
+  stats          String?
+  error          String?
+  startedAt      DateTime  @default(now())
+  finishedAt     DateTime?
+
+  adObservations   SpyAdObservation[]
+  productSnapshots SpyProductSnapshot[]
+  keywordHits      SpyKeywordHit[]
+
+  @@index([type])
+  @@index([status])
+  @@index([startedAt])
+}
+
+model SpyIdea {
+  id            String   @id @default(cuid())
+  title         String
+  note          String?
+  status        String   @default("NEW")
+  tags          String   @default("[]")
+  refType       String   @default("NONE")
+  refAdId       String?
+  refProductId  String?
+  refStoreId    String?
+  refKeywordId  String?
+  snapshotJson  String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([status])
+  @@index([refType])
+}
