@@ -13,11 +13,20 @@ export function normalizeStoreUrl(value: string): string {
   const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`
   const parsed = new URL(withProtocol)
   if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('Only http and https domains are supported')
-  const hostname = parsed.hostname.toLowerCase()
+  const rawHostname = parsed.hostname.toLowerCase()
+  const hostname = rawHostname.replace(/^\[|\]$/g, '')
   if (
     hostname === 'localhost' || hostname.endsWith('.local') || hostname === '0.0.0.0' ||
     hostname.startsWith('127.') || hostname.startsWith('10.') || hostname.startsWith('192.168.') ||
-    /^172\.(1[6-9]|2\d|3[0-1])\./.test(hostname)
+    /^172\.(1[6-9]|2\d|3[0-1])\./.test(hostname) ||
+    hostname.startsWith('169.254.') ||
+    hostname === '::1' ||
+    /^::ffff:(127\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[0-1])\.)/.test(hostname) ||
+    /^::ffff:7f[0-9a-f]{2}:/.test(hostname) ||
+    /^::ffff:0?a[0-9a-f]{2}:/.test(hostname) ||
+    /^::ffff:c0a8:/.test(hostname) ||
+    /^::ffff:a9fe:/.test(hostname) ||
+    /^::ffff:ac1[0-9a-f]:/.test(hostname)
   ) throw new Error('Local or private network domains are not allowed')
   return `${parsed.protocol}//${parsed.host}`
 }

@@ -9,6 +9,15 @@ describe('spy shopify helpers', () => {
     expect(() => normalizeStoreUrl('192.168.0.1')).toThrow()
     expect(() => normalizeStoreUrl('localhost')).toThrow()
   })
+  it('normalizeStoreUrl rejects cloud metadata endpoint (169.254.x)', () => {
+    expect(() => normalizeStoreUrl('169.254.169.254')).toThrow()
+  })
+  it('normalizeStoreUrl rejects IPv6 loopback ::1', () => {
+    expect(() => normalizeStoreUrl('http://[::1]/')).toThrow()
+  })
+  it('normalizeStoreUrl rejects IPv6-mapped IPv4 loopback ::ffff:127.0.0.1', () => {
+    expect(() => normalizeStoreUrl('http://[::ffff:127.0.0.1]/')).toThrow()
+  })
   it('normalizeDomain returns bare lowercased host', () => {
     expect(normalizeDomain('https://Foo.com/')).toBe('foo.com')
     expect(normalizeDomain('foo.com')).toBe('foo.com')
