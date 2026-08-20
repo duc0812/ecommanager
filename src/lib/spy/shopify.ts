@@ -55,7 +55,7 @@ export function productUrl(origin: string, handle?: string): string {
 }
 
 export function externalProductId(raw: ShopifyRawProduct): string {
-  if (raw.id) return String(raw.id)
+  if (raw.id != null) return String(raw.id)
   if (raw.handle) return `handle:${raw.handle}`
   throw new Error('Product has neither id nor handle')
 }

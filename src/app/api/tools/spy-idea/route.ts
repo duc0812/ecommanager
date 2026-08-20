@@ -1,16 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { normalizeStoreUrl, parseDate, stripHtml, tagsToArray, productUrl, priceSummary } from '@/lib/spy/shopify'
-
-type ShopifyVariant = {
-  id?: number
-  price?: string
-  compare_at_price?: string | null
-  available?: boolean
-}
-
-type ShopifyImage = {
-  src?: string
-}
+import { ShopifyVariant, ShopifyImage, normalizeStoreUrl, parseDate, stripHtml, tagsToArray, productUrl, priceSummary } from '@/lib/spy/shopify'
 
 type ShopifyProduct = {
   id?: number
