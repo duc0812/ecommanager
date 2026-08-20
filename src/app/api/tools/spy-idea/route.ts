@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { normalizeStoreUrl, parseDate, stripHtml, tagsToArray, productUrl, priceSummary } from '@/lib/spy/shopify'
 
 type ShopifyVariant = {
   id?: number
@@ -66,70 +67,6 @@ const spyCache: SpyCacheStore = (globalThis as typeof globalThis & { __spyIdeaCa
 }
 
 ;(globalThis as typeof globalThis & { __spyIdeaCache?: SpyCacheStore }).__spyIdeaCache = spyCache
-
-function normalizeStoreUrl(value: string) {
-  const trimmed = value.trim()
-  if (!trimmed) throw new Error('Domain is required')
-  const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`
-  const parsed = new URL(withProtocol)
-
-  if (!['http:', 'https:'].includes(parsed.protocol)) {
-    throw new Error('Only http and https domains are supported')
-  }
-
-  const hostname = parsed.hostname.toLowerCase()
-  if (
-    hostname === 'localhost' ||
-    hostname.endsWith('.local') ||
-    hostname === '0.0.0.0' ||
-    hostname.startsWith('127.') ||
-    hostname.startsWith('10.') ||
-    hostname.startsWith('192.168.') ||
-    /^172\.(1[6-9]|2\d|3[0-1])\./.test(hostname)
-  ) {
-    throw new Error('Local or private network domains are not allowed')
-  }
-
-  return `${parsed.protocol}//${parsed.host}`
-}
-
-function parseDate(value?: string | null) {
-  if (!value) return null
-  const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? null : date
-}
-
-function stripHtml(value?: string) {
-  return String(value ?? '')
-    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
-
-function tagsToArray(value?: string | string[]) {
-  if (Array.isArray(value)) return value.map(tag => String(tag).trim()).filter(Boolean)
-  return String(value ?? '')
-    .split(',')
-    .map(tag => tag.trim())
-    .filter(Boolean)
-}
-
-function priceSummary(variants: ShopifyVariant[] = []) {
-  const prices = variants
-    .map(variant => Number(variant.price))
-    .filter(price => Number.isFinite(price))
-
-  if (prices.length === 0) return null
-  const min = Math.min(...prices)
-  const max = Math.max(...prices)
-  return min === max ? min.toFixed(2) : `${min.toFixed(2)} - ${max.toFixed(2)}`
-}
-
-function productUrl(origin: string, handle?: string) {
-  return handle ? `${origin}/products/${handle}` : origin
-}
 
 function productCacheKey(product: ShopifyProduct, origin: string) {
   if (product.id) return `id:${product.id}`
@@ -227,7 +164,7 @@ async function scanDomain(rawDomain: string) {
           tagsPreview: tags.slice(0, 8),
           variantCount: variants.length,
           availableVariantCount: variants.filter(variant => variant.available !== false).length,
-          price: priceSummary(variants),
+          price: (() => { const ps = priceSummary(variants); return ps ? (ps.min === ps.max ? ps.min.toFixed(2) : `${ps.min.toFixed(2)} - ${ps.max.toFixed(2)}`) : null })(),
           description: stripHtml(product.body_html).slice(0, 220),
           cacheKey: productCacheKey(product, origin),
         }
