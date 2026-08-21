@@ -25,16 +25,19 @@ export async function GET(req: NextRequest) {
   })
   const now = new Date()
   const winningAds = ads
-    .map(a => ({
-      ...a,
-      signals: {
-        isNew: isNewAd(a.startDate, now),
-        activeDays: activeDays(a.startDate, a.endDate, now),
-        isLongRunning: isLongRunning(a, now),
-        isScaling: isScaling(a.observations),
-        isStopped: isStopped(a.observations),
-      },
-    }))
+    .map(a => {
+      const { rawPayload: _rawPayload, ...rest } = a // eslint-disable-line @typescript-eslint/no-unused-vars
+      return {
+        ...rest,
+        signals: {
+          isNew: isNewAd(a.startDate, now),
+          activeDays: activeDays(a.startDate, a.endDate, now),
+          isLongRunning: isLongRunning(a, now),
+          isScaling: isScaling(a.observations),
+          isStopped: isStopped(a.observations),
+        },
+      }
+    })
     .filter(a => a.signals.isLongRunning || a.signals.isScaling)
     .sort((x, y) => y.signals.activeDays - x.signals.activeDays)
     .slice(0, 100)
