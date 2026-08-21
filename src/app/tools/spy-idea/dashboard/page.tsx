@@ -53,22 +53,26 @@ function AdCard({ a, onSave }: { a: Ad; onSave: (a: Ad) => void }) {
 
 export default function SpyDashboardPage() {
   const [summary, setSummary] = useState<Summary | null>(null)
-  const [ads, setAds] = useState<Ad[]>([])
+  const [allAds, setAllAds] = useState<Ad[]>([])
   const [adFilter, setAdFilter] = useState('active')
-
-  async function loadAds() {
-    const d = await fetch(`/api/spy/ads?filter=${adFilter}&limit=500`).then(r => r.json())
-    setAds(d.ads ?? [])
-  }
 
   useEffect(() => {
     fetch('/api/spy/dashboard/summary').then(r => r.json()).then(setSummary).catch(() => {})
+    fetch('/api/spy/ads?limit=500').then(r => r.json()).then(d => setAllAds(d.ads ?? [])).catch(() => {})
   }, [])
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { loadAds() }, [adFilter])
 
-  // Winning = long-running or scaling, from the same enriched set.
-  const winning = [...ads].filter(a => a.signals.isLongRunning || a.signals.isScaling).sort((x, y) => y.signals.activeDays - x.signals.activeDays).slice(0, 20)
+  // Winning = long-running or scaling, always from the full unfiltered set.
+  const winning = [...allAds].filter(a => a.signals.isLongRunning || a.signals.isScaling).sort((x, y) => y.signals.activeDays - x.signals.activeDays).slice(0, 20)
+
+  // Feed = full set filtered client-side by chip.
+  const feed = allAds.filter(a => {
+    if (adFilter === 'active') return a.isActive
+    if (adFilter === 'new') return a.signals.isNew
+    if (adFilter === 'long-running') return a.signals.isLongRunning
+    if (adFilter === 'scaling') return a.signals.isScaling
+    if (adFilter === 'stopped') return a.signals.isStopped
+    return true
+  })
 
   async function saveIdea(a: Ad) {
     await fetch('/api/spy/ideas', { method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -112,8 +116,8 @@ export default function SpyDashboardPage() {
               </div>
             </div>
             <div className="grid grid-cols-1 gap-md sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              {ads.map(a => <AdCard key={a.id} a={a} onSave={saveIdea} />)}
-              {ads.length === 0 && <p className="text-body-md text-on-surface-variant">No ads for this filter.</p>}
+              {feed.map(a => <AdCard key={a.id} a={a} onSave={saveIdea} />)}
+              {feed.length === 0 && <p className="text-body-md text-on-surface-variant">No ads for this filter.</p>}
             </div>
           </section>
         </main>
