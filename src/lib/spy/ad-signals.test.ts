@@ -22,6 +22,9 @@ describe('ad signals', () => {
     expect(isScaling([{ collationCount: 2, observedAt: new Date('2026-08-01') }, { collationCount: 6, observedAt: new Date('2026-08-10') }])).toBe(true)
     expect(isScaling([{ collationCount: 5, observedAt: new Date('2026-08-01') }])).toBe(false)
   })
+  it('isScaling returns false when earliest collationCount is null', () => {
+    expect(isScaling([{ collationCount: null, observedAt: new Date('2026-08-01') }, { collationCount: 5, observedAt: new Date('2026-08-10') }])).toBe(false)
+  })
   it('isStopped when was active then inactive', () => {
     expect(isStopped([{ isActive: true, observedAt: new Date('2026-08-01') }, { isActive: false, observedAt: new Date('2026-08-10') }])).toBe(true)
     expect(isStopped([{ isActive: true, observedAt: new Date('2026-08-10') }])).toBe(false)

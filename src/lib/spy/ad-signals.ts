@@ -21,8 +21,9 @@ export function isLongRunning(
 export function isScaling(obs: { collationCount: number | null; observedAt: Date }[]): boolean {
   if (obs.length < 2) return false
   const sorted = [...obs].sort((x, y) => x.observedAt.getTime() - y.observedAt.getTime())
-  const first = sorted[0].collationCount ?? 0
-  const last = sorted[sorted.length - 1].collationCount ?? 0
+  const first = sorted[0].collationCount
+  const last = sorted[sorted.length - 1].collationCount
+  if (first === null || last === null) return false
   return last > first
 }
 

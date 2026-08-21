@@ -5,6 +5,14 @@ import { runPageAdScan } from './scan-ads'
 
 let initialized = false
 
+async function sweepStaleScans() {
+  const result = await prisma.spyScan.updateMany({
+    where: { status: 'running' },
+    data: { status: 'failed', error: 'Interrupted by process restart', finishedAt: new Date() },
+  })
+  if (result.count > 0) console.log(`[spy-scheduler] swept ${result.count} stale running scan(s) to failed`)
+}
+
 async function scanAllStores() {
   const stores = await prisma.spyStore.findMany({ where: { status: 'active' } })
   for (const s of stores) {
@@ -26,6 +34,7 @@ async function scanAllPageTargets() {
 export function initSpyScheduler() {
   if (initialized) return
   initialized = true
+  sweepStaleScans().catch(e => console.error('[spy-scheduler]', e))
   cron.schedule('0 8,20 * * *', () => { scanAllStores().catch(e => console.error('[spy-scheduler]', e)) }, { timezone: 'Asia/Ho_Chi_Minh' })
   cron.schedule('0 9 * * *', () => { scanAllPageTargets().catch(e => console.error('[spy-scheduler]', e)) }, { timezone: 'Asia/Ho_Chi_Minh' })
   console.log('[spy-scheduler] Initialized — product scan at 08:00 & 20:00, ad scan at 09:00 Asia/Ho_Chi_Minh')
