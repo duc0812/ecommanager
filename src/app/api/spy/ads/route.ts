@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { isNewAd, activeDays, isLongRunning, isScaling, isStopped } from '@/lib/spy/ad-signals'
+import { parseAdLink } from '@/lib/spy/ad-link'
+import { recentLaunchSet } from '@/lib/spy/ad-product-match'
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
@@ -12,22 +14,33 @@ export async function GET(req: NextRequest) {
     where: storeId ? { advertiser: { storeId } } : undefined,
     orderBy: { lastSeenAt: 'desc' },
     take: limit,
-    include: { advertiser: { select: { pageName: true, storeId: true } }, observations: { select: { isActive: true, collationCount: true, observedAt: true } } },
+    include: {
+      advertiser: { select: { pageName: true, storeId: true } },
+      observations: { select: { isActive: true, collationCount: true, observedAt: true } },
+    },
   })
 
+  const launch = await recentLaunchSet(ads.map(a => a.linkUrl))
   const now = new Date()
-  const enriched = ads.map(a => ({
-    ...a,
-    signals: {
-      isNew: isNewAd(a.startDate, now),
-      activeDays: activeDays(a.startDate, a.endDate, now),
-      isLongRunning: isLongRunning(a, now),
-      isScaling: isScaling(a.observations),
-      isStopped: isStopped(a.observations),
-    },
-  }))
+  const enriched = ads.map(a => {
+    const p = parseAdLink(a.linkUrl)
+    const newProductLaunching = p.kind === 'product' && !!p.host && !!p.handle && launch.has(`${p.host}|${p.handle}`)
+    return {
+      ...a,
+      signals: {
+        isNew: isNewAd(a.startDate, now),
+        activeDays: activeDays(a.startDate, a.endDate, now),
+        isLongRunning: isLongRunning(a, now),
+        isScaling: isScaling(a.observations),
+        isStopped: isStopped(a.observations),
+        adStyle: p.kind,
+        newProductLaunching,
+      },
+    }
+  })
 
   const flags: Record<string, (x: typeof enriched[number]) => boolean> = {
+    active: x => x.isActive,
     new: x => x.signals.isNew,
     'long-running': x => x.signals.isLongRunning,
     scaling: x => x.signals.isScaling,

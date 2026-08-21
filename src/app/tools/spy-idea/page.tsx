@@ -30,6 +30,7 @@ export default function SpyIdeaPage() {
   const [adFilter, setAdFilter] = useState('')
   const [scanning, setScanning] = useState(false)
   const [scanningAds, setScanningAds] = useState(false)
+  const [scanMsg, setScanMsg] = useState('')
 
   async function loadStores() { setStores(await fetch('/api/spy/stores').then(r => r.json())) }
   async function loadProducts() { const d = await fetch('/api/spy/products?days=30').then(r => r.json()); setProducts(d.products ?? []) }
@@ -68,8 +69,18 @@ export default function SpyIdeaPage() {
   }
   async function scanAds() {
     setScanningAds(true)
-    try { await fetch('/api/spy/scan-ads', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) }) }
-    finally { setScanningAds(false) }
+    setScanMsg('Đang quét… ads sẽ xuất hiện sau ~30s.')
+    try {
+      await fetch('/api/spy/scan-ads', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) })
+      setTimeout(() => { loadAds() }, 15000)
+      setTimeout(() => { loadAds(); loadPages(); setScanMsg('') }, 30000)
+    } finally {
+      setScanningAds(false)
+    }
+  }
+  async function removePage(id: string) {
+    await fetch('/api/spy/pages', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) })
+    loadPages()
   }
   async function saveAdIdea(a: Ad) {
     await fetch('/api/spy/ideas', { method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -162,11 +173,15 @@ export default function SpyIdeaPage() {
                     {scanningAds ? 'Starting…' : 'Scan ads now'}
                   </button>
                 </div>
+                {scanMsg && <p className="text-body-sm text-on-surface-variant">{scanMsg}</p>}
                 <ul className="divide-y divide-outline-variant/20">
                   {pages.map(p => (
                     <li key={p.id} className="flex items-center justify-between py-sm">
-                      <div><p className="text-label-md text-primary">{p.label ?? p.pageUrl}</p>
-                        <p className="text-body-sm text-on-surface-variant">{p.store?.domain ?? 'unlinked'} · last {formatDate(p.lastScanAt)}</p></div>
+                      <div>
+                        <p className="text-label-md text-primary">{p.label ?? p.pageUrl}</p>
+                        <p className="text-body-sm text-on-surface-variant">{p.store?.domain ?? 'unlinked'} · last {formatDate(p.lastScanAt)}</p>
+                      </div>
+                      <button onClick={() => removePage(p.id)} className="text-error text-label-sm hover:underline">Xoá</button>
                     </li>
                   ))}
                 </ul>
