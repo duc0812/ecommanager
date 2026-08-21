@@ -21,6 +21,10 @@ export default function SetupPage() {
   const [trelloSyncFrom, setTrelloSyncFrom] = useState('')
   const [trelloSaving, setTrelloSaving] = useState(false)
   const [trelloMsg, setTrelloMsg] = useState('')
+  const [apifyToken, setApifyToken] = useState('')
+  const [apifyHasToken, setApifyHasToken] = useState(false)
+  const [apifySaving, setApifySaving] = useState(false)
+  const [apifyMsg, setApifyMsg] = useState('')
 
   useEffect(() => {
     try {
@@ -41,6 +45,7 @@ export default function SetupPage() {
       if (d.doneListId) setTrelloDoneListId(d.doneListId)
       if (d.syncFromOrderName) setTrelloSyncFrom(d.syncFromOrderName)
     }).catch(() => {})
+    fetch('/api/spy/config').then(r => r.json()).then(d => setApifyHasToken(Boolean(d.hasToken))).catch(() => {})
   }, [])
 
   async function connect() {
@@ -88,6 +93,25 @@ export default function SetupPage() {
       setTrelloMsg('Lỗi khi lưu.')
     } finally {
       setTrelloSaving(false)
+    }
+  }
+
+  async function saveApify() {
+    setApifySaving(true); setApifyMsg('')
+    try {
+      const res = await fetch('/api/spy/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ apifyToken: apifyToken.trim() }),
+      })
+      const d = await res.json()
+      setApifyHasToken(Boolean(d.hasToken))
+      setApifyToken('')
+      setApifyMsg(d.hasToken ? 'Đã lưu Apify token.' : 'Đã xoá Apify token.')
+    } catch {
+      setApifyMsg('Lỗi khi lưu.')
+    } finally {
+      setApifySaving(false)
     }
   }
 
@@ -342,6 +366,44 @@ export default function SetupPage() {
               {trelloSaving ? 'Đang lưu…' : 'Lưu Trello Config'}
             </button>
             {trelloMsg && <span className="text-body-sm text-on-surface-variant">{trelloMsg}</span>}
+          </div>
+        </div>
+        {/* Spy Tool — Apify */}
+        <div className="bg-surface-container-lowest rounded-xl border border-outline-variant/20 mb-lg">
+          <div className="flex items-center gap-sm px-lg py-md border-b border-outline-variant/20">
+            <span className="material-symbols-outlined text-on-surface-variant">travel_explore</span>
+            <h2 className="text-title-md">Spy Tool — Apify</h2>
+            {apifyHasToken && (
+              <span className="ml-auto bg-on-tertiary-container/15 text-on-tertiary-container px-sm py-xs rounded-full text-label-sm">
+                ✓ Token đã lưu
+              </span>
+            )}
+          </div>
+          <div className="p-lg space-y-md">
+            <div>
+              <label className="text-label-sm block mb-xs">Apify Token</label>
+              <input
+                type="password"
+                value={apifyToken}
+                onChange={e => setApifyToken(e.target.value)}
+                placeholder={apifyHasToken ? '•••••••• (đã lưu — nhập để thay, để trống + Lưu để xoá)' : 'apify_api_...'}
+                autoComplete="off"
+                className="w-full border rounded-lg px-md py-sm text-body-sm"
+              />
+              <p className="mt-xs text-body-sm text-on-surface-variant">
+                Dùng để quét Facebook Ad Library. Lấy tại apify.com → Settings → Integrations.
+              </p>
+            </div>
+            <div className="flex items-center gap-sm">
+              <button
+                onClick={saveApify}
+                disabled={apifySaving}
+                className="bg-secondary text-on-secondary px-lg py-sm rounded-lg text-label-md disabled:opacity-50"
+              >
+                {apifySaving ? 'Đang lưu…' : 'Lưu Apify Token'}
+              </button>
+              {apifyMsg && <span className="text-body-sm text-on-surface-variant">{apifyMsg}</span>}
+            </div>
           </div>
         </div>
       </main>

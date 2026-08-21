@@ -522,6 +522,7 @@ model SpyStore {
 
   products    SpyProduct[]
   advertisers SpyAdvertiser[]
+  pageTargets SpyPageTarget[]
 
   @@index([status])
 }
@@ -709,4 +710,19 @@ model SpyIdea {
 
   @@index([status])
   @@index([refType])
+}
+
+model SpyPageTarget {
+  id         String    @id @default(cuid())
+  storeId    String?
+  store      SpyStore? @relation(fields: [storeId], references: [id], onDelete: SetNull)
+  pageUrl    String    @unique
+  fbPageId   String?
+  label      String?
+  active     Boolean   @default(true)
+  lastScanAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([storeId])
+  @@index([active])
 }
