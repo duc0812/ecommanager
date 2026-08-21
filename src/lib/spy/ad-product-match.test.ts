@@ -18,11 +18,16 @@ describe('recentLaunchSet', () => {
     expect(set.has('mystore.com|hat')).toBe(true)
     const arg = findMany.mock.calls[0][0]
     expect(arg.where.handle.in).toEqual(['hat'])
-    expect(arg.where.store.domain.in).toEqual(['mystore.com'])
+    expect(arg.where.store.domain.in).toEqual(['mystore.com', 'www.mystore.com'])
   })
   it('skips the query and returns empty when no product links', async () => {
     const set = await recentLaunchSet(['https://mystore.com/', null])
     expect(set.size).toBe(0)
     expect(findMany).not.toHaveBeenCalled()
+  })
+  it('www-stored domain produces bare-host key', async () => {
+    findMany.mockResolvedValueOnce([{ handle: 'hat', store: { domain: 'www.mystore.com' } }])
+    const set = await recentLaunchSet(['https://www.mystore.com/products/hat'])
+    expect(set.has('mystore.com|hat')).toBe(true)
   })
 })
