@@ -1,23 +1,28 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
-import { computeTrendingNiches } from '@/lib/spy/trending'
-import { isScaling } from '@/lib/spy/ad-signals'
-
-const DAY = 24 * 60 * 60 * 1000
+import { isScaling, isLongRunning } from '@/lib/spy/ad-signals'
+import { parseAdLink } from '@/lib/spy/ad-link'
+import { recentLaunchSet } from '@/lib/spy/ad-product-match'
 
 export async function GET() {
-  const since7 = new Date(Date.now() - 7 * DAY)
-  const since14 = new Date(Date.now() - 14 * DAY)
+  const activeAds = await prisma.spyAd.count({ where: { isActive: true } })
+  const ads = await prisma.spyAd.findMany({
+    take: 500,
+    orderBy: { lastSeenAt: 'desc' },
+    select: {
+      isActive: true, startDate: true, endDate: true, linkUrl: true,
+      observations: { select: { isActive: true, collationCount: true, observedAt: true } },
+    },
+  })
+  const now = new Date()
+  const scalingAds = ads.filter(a => isScaling(a.observations)).length
+  const longRunningAds = ads.filter(a => isLongRunning(a, now)).length
 
-  const [newProducts7d, activeAds, products, adsForScaling] = await Promise.all([
-    prisma.spyProduct.count({ where: { firstSeenAt: { gte: since7 } } }),
-    prisma.spyAd.count({ where: { isActive: true } }),
-    prisma.spyProduct.findMany({ where: { firstSeenAt: { gte: since14 } }, select: { productType: true, firstSeenAt: true } }),
-    prisma.spyAd.findMany({ take: 500, orderBy: { lastSeenAt: 'desc' }, select: { observations: { select: { isActive: true, collationCount: true, observedAt: true } } } }),
-  ])
+  const launch = await recentLaunchSet(ads.map(a => a.linkUrl))
+  const newLaunchingAds = ads.filter(a => {
+    const p = parseAdLink(a.linkUrl)
+    return p.kind === 'product' && !!p.host && !!p.handle && launch.has(`${p.host}|${p.handle}`)
+  }).length
 
-  const scalingAds = adsForScaling.filter(a => isScaling(a.observations)).length
-  const trendingNiches = computeTrendingNiches(products, { windowDays: 7 }).length
-
-  return NextResponse.json({ newProducts7d, activeAds, scalingAds, trendingNiches })
+  return NextResponse.json({ activeAds, newLaunchingAds, scalingAds, longRunningAds })
 }
