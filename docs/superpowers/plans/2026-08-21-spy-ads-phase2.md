@@ -928,8 +928,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { isNewAd, activeDays, isLongRunning, isScaling, isStopped } from '@/lib/spy/ad-signals'
 
-export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params
+export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
+  const { id } = params
   const ad = await prisma.spyAd.findUnique({
     where: { id },
     include: { advertiser: true, observations: { orderBy: { observedAt: 'asc' } } },
@@ -949,7 +949,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 }
 ```
 
-Note: this repo is on Next.js 15+ where dynamic route `params` is a Promise — confirm by checking an existing dynamic route (e.g. `src/app/**/[id]/route.ts`) and match its `params` signature; if the repo uses the non-Promise form `{ params }: { params: { id: string } }`, use that instead.
+Note: this repo uses the **non-Promise** dynamic-route signature `{ params }: { params: { id: string } }` and accesses `params.id` directly (confirmed in `src/app/api/suppliers/[id]/route.ts`). Use exactly that form as shown above.
 
 - [ ] **Step 3: Verify**
 
