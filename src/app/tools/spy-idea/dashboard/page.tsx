@@ -5,7 +5,7 @@ import { RoleGate } from '@/components/RoleGate'
 
 type Summary = { activeAds: number; newLaunchingAds: number; scalingAds: number; longRunningAds: number }
 type Signals = { isNew: boolean; activeDays: number; isLongRunning: boolean; isScaling: boolean; isStopped: boolean; adStyle: 'product'|'collection'|'homepage'|'other'|null; newProductLaunching: boolean }
-type Ad = { id: string; title: string | null; body: string | null; adArchiveId: string; adLibraryUrl: string | null; linkUrl: string | null; isActive: boolean; startDate: string | null; advertiser: { pageName: string | null }; signals: Signals }
+type Ad = { id: string; title: string | null; body: string | null; adArchiveId: string; adLibraryUrl: string | null; linkUrl: string | null; isActive: boolean; startDate: string | null; mediaUrl: string | null; advertiser: { pageName: string | null }; signals: Signals }
 
 function formatDate(v: string | null) {
   if (!v) return '-'
@@ -27,6 +27,14 @@ function AdCard({ a, onSave }: { a: Ad; onSave: (a: Ad) => void }) {
   const s = a.signals
   return (
     <article className="rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-md">
+      {a.mediaUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={a.mediaUrl} alt={a.title ?? ''} className="mb-sm aspect-video w-full rounded-lg object-cover" />
+      ) : (
+        <div className="mb-sm flex aspect-video w-full items-center justify-center rounded-lg bg-surface-container-low text-on-surface-variant">
+          <span className="material-symbols-outlined text-[36px]">image_not_supported</span>
+        </div>
+      )}
       <div className="mb-xs flex flex-wrap gap-xs">
         {s.newProductLaunching && <span className="rounded-full bg-secondary/15 px-sm py-xs text-label-sm text-secondary">🚀 New Product Launching</span>}
         {s.adStyle && <span className="rounded-full bg-surface-container px-sm py-xs text-label-sm text-on-surface-variant">{STYLE_LABEL[s.adStyle]}</span>}
