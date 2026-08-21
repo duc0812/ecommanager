@@ -1,13 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
-
-function validFbUrl(raw: string): string | null {
-  try {
-    const u = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`)
-    if (!/(^|\.)facebook\.com$/i.test(u.hostname)) return null
-    return `${u.protocol}//${u.host}${u.pathname}`.replace(/\/$/, '')
-  } catch { return null }
-}
+import { normalizeFbPageUrl } from '@/lib/spy/fb-url'
 
 export async function GET() {
   const pages = await prisma.spyPageTarget.findMany({
@@ -19,7 +12,7 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   const b = await req.json().catch(() => ({}))
-  const pageUrl = validFbUrl(String(b.pageUrl ?? ''))
+  const pageUrl = normalizeFbPageUrl(String(b.pageUrl ?? ''))
   if (!pageUrl) return NextResponse.json({ error: 'A facebook.com page URL is required' }, { status: 400 })
   const page = await prisma.spyPageTarget.upsert({
     where: { pageUrl },
