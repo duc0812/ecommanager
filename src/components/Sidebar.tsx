@@ -30,6 +30,7 @@ const nav: NavEntry[] = [
   { type: 'divider' },
   { type: 'group', label: 'Tools' },
   { type: 'child', href: '/tools/spy-idea', icon: 'travel_explore', label: 'Spy Idea' },
+  { type: 'child', href: '/tools/spy-idea/dashboard', icon: 'space_dashboard', label: 'Spy Dashboard' },
   { type: 'child', href: '/tools/resources', icon: 'dns', label: 'Resources' },
   { type: 'divider' },
   { type: 'group', label: 'Setup' },
