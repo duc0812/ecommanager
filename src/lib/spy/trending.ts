@@ -30,15 +30,15 @@ export function computeTrendingNiches(
   }
 
   const rows: TrendingNiche[] = []
-  for (const [niche, a] of map) {
-    if (a.newCount <= 0) continue
+  map.forEach((a, niche) => {
+    if (a.newCount <= 0) return
     const deltaPct = a.prevCount === 0
       ? (a.newCount > 0 ? 100 : 0)
       : Math.round(((a.newCount - a.prevCount) / a.prevCount) * 100)
-    const topStores = Array.from(a.stores.entries())
-      .sort((x, y) => y[1] - x[1]).slice(0, 3).map(e => e[0])
+    const topStores = Array.from(a.stores, ([dom, n]) => ({ dom, n }))
+      .sort((x, y) => y.n - x.n).slice(0, 3).map(e => e.dom)
     rows.push({ niche, newCount: a.newCount, prevCount: a.prevCount, deltaPct, topStores })
-  }
+  })
   rows.sort((x, y) => y.deltaPct - x.deltaPct || y.newCount - x.newCount)
   return rows.slice(0, limit)
 }
