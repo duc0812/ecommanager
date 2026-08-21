@@ -1,9 +1,11 @@
+import { extractAdMediaUrl } from './ad-media'
+
 export type ParsedSpyAd = {
   adArchiveId: string; pageId: string; pageName: string | null; pageCategory: string | null
   pageLikes: number | null; igUsername: string | null; igFollowers: number | null
   isActive: boolean; startDate: Date | null; endDate: Date | null
   collationCount: number | null; collationId: string | null
-  mediaType: 'video' | 'image' | 'carousel' | 'dco' | null; displayFormat: string | null
+  mediaType: 'video' | 'image' | 'carousel' | 'dco' | null; mediaUrl: string | null; displayFormat: string | null
   ctaType: string | null; ctaText: string | null; linkUrl: string | null
   title: string | null; body: string | null; caption: string | null
   publisherPlatforms: string[]; currency: string | null; adLibraryUrl: string | null; rawPayload: any
@@ -49,6 +51,7 @@ export function mapApifyAd(raw: any): ParsedSpyAd {
     collationCount: num(raw?.collation_count),
     collationId: raw?.collation_id ?? null,
     mediaType: detectMediaType(snapshot),
+    mediaUrl: extractAdMediaUrl(snapshot),
     displayFormat: snapshot.display_format ?? null,
     ctaType: snapshot.cta_type ?? null,
     ctaText: snapshot.cta_text ?? null,
