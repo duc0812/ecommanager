@@ -1,14 +1,18 @@
+import { prisma } from '@/lib/db'
+
 export const ACTOR_ID = 'curious_coder~facebook-ads-library-scraper'
+export const APIFY_TOKEN_SETTING_KEY = 'spy.apify_token'
 const BASE = 'https://api.apify.com/v2'
 
-function token(): string {
-  const t = process.env.APIFY_TOKEN
+export async function getApifyToken(): Promise<string> {
+  const row = await prisma.appSetting.findUnique({ where: { key: APIFY_TOKEN_SETTING_KEY } })
+  const t = row?.value?.trim() || process.env.APIFY_TOKEN
   if (!t) throw new Error('APIFY_TOKEN not set')
   return t
 }
 
 export async function startActorRun(input: object): Promise<{ runId: string; datasetId: string }> {
-  const res = await fetch(`${BASE}/acts/${ACTOR_ID}/runs?token=${token()}`, {
+  const res = await fetch(`${BASE}/acts/${ACTOR_ID}/runs?token=${await getApifyToken()}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(input),
@@ -19,14 +23,14 @@ export async function startActorRun(input: object): Promise<{ runId: string; dat
 }
 
 export async function getRunStatus(runId: string): Promise<string> {
-  const res = await fetch(`${BASE}/actor-runs/${runId}?token=${token()}`)
+  const res = await fetch(`${BASE}/actor-runs/${runId}?token=${await getApifyToken()}`)
   if (!res.ok) throw new Error(`Apify run status failed: ${res.status}`)
   const json = await res.json()
   return json.data.status
 }
 
 export async function getDatasetItems(datasetId: string): Promise<any[]> {
-  const res = await fetch(`${BASE}/datasets/${datasetId}/items?clean=true&token=${token()}`)
+  const res = await fetch(`${BASE}/datasets/${datasetId}/items?clean=true&token=${await getApifyToken()}`)
   if (!res.ok) throw new Error(`Apify dataset fetch failed: ${res.status}`)
   return res.json()
 }
