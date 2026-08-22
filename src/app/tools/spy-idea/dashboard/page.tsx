@@ -29,9 +29,9 @@ function AdCard({ a, onSave }: { a: Ad; onSave: (a: Ad) => void }) {
     <article className="rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-md">
       {a.mediaUrl ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={a.mediaUrl} alt={a.title ?? ''} className="mb-sm aspect-video w-full rounded-lg object-cover" />
+        <img src={a.mediaUrl} alt={a.title ?? ''} className="mb-sm aspect-square w-full rounded-lg bg-surface-container-low object-contain" />
       ) : (
-        <div className="mb-sm flex aspect-video w-full items-center justify-center rounded-lg bg-surface-container-low text-on-surface-variant">
+        <div className="mb-sm flex aspect-square w-full items-center justify-center rounded-lg bg-surface-container-low text-on-surface-variant">
           <span className="material-symbols-outlined text-[36px]">image_not_supported</span>
         </div>
       )}
