@@ -11,6 +11,7 @@ type BestSellerItem = Product & { rank: number; prevRank: number | null; delta: 
 type BestSellerGroup = { store: { domain: string }; items: BestSellerItem[] }
 
 const AD_VIEWS = [
+  { key: 'all', label: 'All Ads' },
   { key: 'new', label: 'New Ads' },
   { key: 'launching', label: 'New Launching Ads' },
   { key: 'winning', label: 'Winning Ads (Long Ads)' },
@@ -30,7 +31,7 @@ export default function SpyIdeaPage() {
 
   const rawArea = params.get('area')
   const area: Area = (['ads', 'products', 'ideas'].includes(rawArea || '') ? rawArea : 'ads') as Area
-  const view = params.get('view') || (area === 'products' ? 'new-add' : 'new')
+  const view = params.get('view') || (area === 'products' ? 'new-add' : area === 'ads' ? 'all' : 'ideas')
   const domain = params.get('domain')
   const niche = params.get('niche')
   const type = params.get('type')
@@ -54,7 +55,7 @@ export default function SpyIdeaPage() {
   }
 
   function go(nextArea: Area, nextView?: string) {
-    const v = nextView ?? (nextArea === 'products' ? 'new-add' : nextArea === 'ads' ? 'new' : 'ideas')
+    const v = nextView ?? (nextArea === 'products' ? 'new-add' : nextArea === 'ads' ? 'all' : 'ideas')
     router.replace(buildUrl(nextArea, v))
   }
   function pickView(v: string) { router.replace(buildUrl(area, v)) }
