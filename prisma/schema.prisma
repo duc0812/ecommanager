@@ -523,6 +523,7 @@ model SpyStore {
   products    SpyProduct[]
   advertisers SpyAdvertiser[]
   pageTargets SpyPageTarget[]
+  bestSellers SpyBestSeller[]
 
   @@index([status])
 }
@@ -549,6 +550,7 @@ model SpyProduct {
   firstSeenAt           DateTime  @default(now())
   lastSeenAt            DateTime  @default(now())
   snapshots             SpyProductSnapshot[]
+  bestSellers           SpyBestSeller[]
 
   @@unique([storeId, externalProductId])
   @@index([firstSeenAt])
@@ -691,6 +693,7 @@ model SpyScan {
   adObservations   SpyAdObservation[]
   productSnapshots SpyProductSnapshot[]
   keywordHits      SpyKeywordHit[]
+  bestSellers      SpyBestSeller[]
 
   @@index([type])
   @@index([status])
@@ -764,4 +767,21 @@ model SpyProductType {
   keywords  String   @default("[]")
   active    Boolean  @default(true)
   createdAt DateTime @default(now())
+}
+
+model SpyBestSeller {
+  id         String     @id @default(cuid())
+  storeId    String
+  store      SpyStore   @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  productId  String
+  product    SpyProduct @relation(fields: [productId], references: [id], onDelete: Cascade)
+  scanId     String
+  scan       SpyScan    @relation(fields: [scanId], references: [id])
+  rank       Int
+  prevRank   Int?
+  capturedAt DateTime   @default(now())
+
+  @@index([storeId, capturedAt])
+  @@index([productId])
+  @@index([scanId])
 }

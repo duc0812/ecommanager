@@ -3,7 +3,7 @@ import { PrismaClient } from '@/generated/prisma/client'
 import { resolveDatabaseUrl } from '@/lib/database-url'
 
 const globalForPrisma = globalThis as unknown as { prisma: PrismaClient; prismaVersion?: string }
-const SCHEMA_VERSION = 'v29' // bump this to force singleton reset after schema changes
+const SCHEMA_VERSION = 'v30' // bump this to force singleton reset after schema changes
 
 function createPrisma() {
   const adapter = new PrismaLibSql({ url: resolveDatabaseUrl() })
