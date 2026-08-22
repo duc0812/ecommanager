@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
-import { convertMetaAmountToUsd } from '@/lib/meta-currency'
-import { getMetaExchangeRates } from '@/lib/meta-exchange-rates'
+import { convertMetaAmountToUsdDated } from '@/lib/meta-currency'
+import { getMetaRateSchedule } from '@/lib/meta-exchange-rates'
 
 function dateKey(date: Date) {
   return date.toISOString().split('T')[0]
@@ -44,11 +44,8 @@ export async function GET(req: NextRequest) {
   if (accounts.length === 0) {
     return NextResponse.json({ empty: true, accounts: [] })
   }
-  const exchangeRates = await getMetaExchangeRates(accounts.map(account => account.id))
-  const accountsWithRates = accounts.map(account => ({
-    ...account,
-    exchangeRate: exchangeRates.get(account.id) ?? null,
-  }))
+  const schedule = await getMetaRateSchedule()
+  const accountsWithRates = accounts
 
   // Resolve a Project Time / Staff Time window (overrides the month filter when set).
   // Staff Time = a staff assignment's active period; Project Time = the project's
@@ -134,10 +131,11 @@ export async function GET(req: NextRequest) {
 
     return {
       ...billing,
-      amountUsd: convertMetaAmountToUsd(
+      amountUsd: convertMetaAmountToUsdDated(
         billing.amount,
         billing.currency,
-        exchangeRates.get(billing.adAccountId),
+        billing.billingDate,
+        schedule,
       ),
       projectLabel: projectActive && project ? { id: project.id, name: project.name } : null,
       staffLabels,

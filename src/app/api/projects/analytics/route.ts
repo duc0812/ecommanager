@@ -3,8 +3,8 @@ import { prisma } from '@/lib/db'
 import { SHOPIFY_PAYOUT_START_DATE } from '@/lib/shopify-payout-policy'
 import { estimateOrderCostAndProfit } from '@/lib/order-profit'
 import { productLinesOnly } from '@/lib/order-lines'
-import { convertMetaAmountToUsd, normalizeMetaCurrency, sumMetaAmountsUsd } from '@/lib/meta-currency'
-import { getMetaExchangeRates } from '@/lib/meta-exchange-rates'
+import { convertMetaAmountToUsdDated, normalizeMetaCurrency, sumMetaAmountsUsdDated } from '@/lib/meta-currency'
+import { getMetaRateSchedule } from '@/lib/meta-exchange-rates'
 import { PROJECT_REVENUE_EXCLUDED_STATUSES, summarizeProjectOrderFinancials } from '@/lib/project-metrics'
 
 const OTHER_BILL_CATEGORIES = ['APP_TOOL', 'SUBSCRIPTION', 'SUPPLIER', 'OFFICE', 'OTHER'] as const
@@ -182,7 +182,7 @@ export async function GET(req: NextRequest) {
             adAccountId: { in: metaAccountIds },
             date: { gte: startStr, lte: endStr },
           },
-          select: { adAccountId: true, spend: true, currency: true },
+          select: { adAccountId: true, spend: true, currency: true, date: true },
         })
       : Promise.resolve([]),
     prisma.otherBill.findMany({
@@ -200,10 +200,10 @@ export async function GET(req: NextRequest) {
       select: { totalAmount: true },
     }),
   ])
-  const exchangeRates = await getMetaExchangeRates(metaAccounts.map(account => account.id))
+  const schedule = await getMetaRateSchedule()
 
   const totalPayout = payouts.reduce((sum, p) => sum + p.amount, 0)
-  const metaBillingSummary = sumMetaAmountsUsd(billings, exchangeRates)
+  const metaBillingSummary = sumMetaAmountsUsdDated(billings, schedule)
   const totalMetaBilling = metaBillingSummary.totalUsd
   const { totalRevenue, totalPaymentFees } = summarizeProjectOrderFinancials(orders)
   let totalOrderProfit = 0
@@ -246,7 +246,7 @@ export async function GET(req: NextRequest) {
     const originalSpend = rows.reduce((sum, row) => sum + row.spend, 0)
     let missingExchangeRate = false
     const spend = rows.reduce((sum, row) => {
-      const amountUsd = convertMetaAmountToUsd(row.spend, row.currency || currency, exchangeRates.get(account.id))
+      const amountUsd = convertMetaAmountToUsdDated(row.spend, row.currency || currency, row.date, schedule)
       if (amountUsd === null) missingExchangeRate = true
       return sum + (amountUsd ?? 0)
     }, 0)
@@ -316,7 +316,6 @@ export async function GET(req: NextRequest) {
       accountId: account.accountId,
       accountName: account.accountName,
       currency: normalizeMetaCurrency(account.currency),
-      exchangeRate: exchangeRates.get(account.id) ?? null,
     })),
   }
   const dataDiagnostics = {
@@ -326,10 +325,7 @@ export async function GET(req: NextRequest) {
       firstDate: billingDates[0] ?? null,
       lastDate: billingDates[billingDates.length - 1] ?? null,
       transactionCount: billings.length,
-      missingExchangeRateAccounts: metaAccounts
-        .filter(account => metaBillingSummary.missingAccountIds.includes(account.id)
-          || (normalizeMetaCurrency(account.currency) !== 'USD' && !exchangeRates.has(account.id)))
-        .map(account => account.accountName || account.accountId),
+      missingRateCount: metaBillingSummary.missingCount,
     },
     actualAdSpend: {
       source: 'Synced Meta daily ad spend',

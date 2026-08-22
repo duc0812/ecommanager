@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { estimateOrderCostAndProfit } from '@/lib/order-profit'
 import { productLinesOnly } from '@/lib/order-lines'
-import { convertMetaAmountToUsd, normalizeMetaCurrency } from '@/lib/meta-currency'
-import { getMetaExchangeRates } from '@/lib/meta-exchange-rates'
+import { convertMetaAmountToUsdDated } from '@/lib/meta-currency'
+import { getMetaRateSchedule } from '@/lib/meta-exchange-rates'
 import { PROJECT_REVENUE_EXCLUDED_STATUSES } from '@/lib/project-metrics'
 
 function dateKeyInZone(date: Date, timeZone: string) {
@@ -113,7 +113,7 @@ export async function GET(req: NextRequest) {
     })
     const accountIds = metaAccounts.map(a => a.id)
     const accountCurrencies = new Map(metaAccounts.map(account => [account.id, account.currency]))
-    const exchangeRates = await getMetaExchangeRates(accountIds)
+    const schedule = await getMetaRateSchedule()
     const dailySpends = accountIds.length > 0
       ? await prisma.dailyAdSpend.findMany({
           where: { adAccountId: { in: accountIds }, date: { gte: fromKey, lte: toKey } },
@@ -123,10 +123,11 @@ export async function GET(req: NextRequest) {
     const spendByDate: Record<string, number> = {}
     const missingRateIds = new Set<string>()
     for (const ds of dailySpends) {
-      const spendUsd = convertMetaAmountToUsd(
+      const spendUsd = convertMetaAmountToUsdDated(
         ds.spend,
         accountCurrencies.get(ds.adAccountId) || ds.currency,
-        exchangeRates.get(ds.adAccountId),
+        ds.date,
+        schedule,
       )
       if (spendUsd === null) missingRateIds.add(ds.adAccountId)
       spendByDate[ds.date] = (spendByDate[ds.date] ?? 0) + (spendUsd ?? 0)
@@ -185,10 +186,7 @@ export async function GET(req: NextRequest) {
         avgOrderProfit,
       },
       period: { from: fromKey, to: toKey, timeZone },
-      missingExchangeRateAccounts: metaAccounts.filter(account => (
-        missingRateIds.has(account.id)
-          || (normalizeMetaCurrency(account.currency) !== 'USD' && !exchangeRates.has(account.id))
-      )),
+      missingExchangeRateAccounts: metaAccounts.filter(account => missingRateIds.has(account.id)),
     })
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Unknown error'

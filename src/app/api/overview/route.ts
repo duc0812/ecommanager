@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { ordersWithComputedPL } from '@/lib/repos/reports'
 import { SHOPIFY_PAYOUT_DATE_WHERE } from '@/lib/shopify-payout-policy'
-import { convertMetaAmountToUsd, normalizeMetaCurrency, sumMetaAmountsUsd } from '@/lib/meta-currency'
-import { getMetaExchangeRates } from '@/lib/meta-exchange-rates'
+import { convertMetaAmountToUsdDated, sumMetaAmountsUsdDated } from '@/lib/meta-currency'
+import { getMetaRateSchedule } from '@/lib/meta-exchange-rates'
 
 function dateKeyInZone(date: Date, timeZone: string) {
   const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
@@ -100,7 +100,7 @@ export async function GET(req: NextRequest) {
       }),
       prisma.staff.findMany(),
     ])
-    const exchangeRates = await getMetaExchangeRates(metaAccounts.map(account => account.id))
+    const schedule = await getMetaRateSchedule()
 
     const totalRevenue = payouts.reduce((s, p) => s + p.amount, 0)
     const payoutCount = payouts.length
@@ -108,7 +108,7 @@ export async function GET(req: NextRequest) {
       where: { status: 'paid', date: SHOPIFY_PAYOUT_DATE_WHERE }, orderBy: { date: 'desc' }, take: 5,
     })
 
-    const metaBillingSummary = sumMetaAmountsUsd(metaBillings, exchangeRates)
+    const metaBillingSummary = sumMetaAmountsUsdDated(metaBillings, schedule)
     const totalSpend = metaBillingSummary.totalUsd
     const billingCount = metaBillings.length
     const recentBillingsRaw = await prisma.metaBilling.findMany({
@@ -116,19 +116,14 @@ export async function GET(req: NextRequest) {
     })
     const recentBillings = recentBillingsRaw.map(billing => ({
       ...billing,
-      amountUsd: convertMetaAmountToUsd(
+      amountUsd: convertMetaAmountToUsdDated(
         billing.amount,
         billing.currency,
-        exchangeRates.get(billing.adAccountId),
+        billing.billingDate,
+        schedule,
       ),
     }))
-    const missingRateIds = new Set(metaBillingSummary.missingAccountIds)
-    metaAccounts.forEach(account => {
-      if (normalizeMetaCurrency(account.currency) !== 'USD' && !exchangeRates.has(account.id)) {
-        missingRateIds.add(account.id)
-      }
-    })
-    const missingExchangeRateAccounts = metaAccounts.filter(account => missingRateIds.has(account.id))
+    const missingRateCount = metaBillingSummary.missingCount
 
     const projectList = projects.map(p => ({
       id: p.id,
@@ -157,11 +152,11 @@ export async function GET(req: NextRequest) {
       const unmappedOrders = periodOrders.length - mappedPeriodOrders.length
       const totalOrderRevenue = periodOrders.reduce((s, order) => s + order.grossAmount - tipAmount(order), 0)
       const totalOrderProfit = periodOrders.reduce((s, order) => s + order.computed.profit, 0)
-      const adSpend = sumMetaAmountsUsd(periodAdSpends.map(spend => ({
-        adAccountId: spend.adAccountId,
+      const adSpend = sumMetaAmountsUsdDated(periodAdSpends.map(spend => ({
         amount: spend.spend,
         currency: spend.currency,
-      })), exchangeRates).totalUsd
+        billingDate: spend.date,
+      })), schedule).totalUsd
       const roas = adSpend > 0 ? totalOrderRevenue / adSpend : 0
       const avgMargin = totalOrderRevenue > 0 ? (totalOrderProfit / totalOrderRevenue) * 100 : 0
       const aov = periodOrders.length > 0 ? totalOrderRevenue / periodOrders.length : 0
@@ -214,7 +209,7 @@ export async function GET(req: NextRequest) {
     }
     const spendByDate: Record<string, number> = {}
     for (const s of chartSpends) {
-      const spendUsd = convertMetaAmountToUsd(s.spend, s.currency, exchangeRates.get(s.adAccountId))
+      const spendUsd = convertMetaAmountToUsdDated(s.spend, s.currency, s.date, schedule)
       spendByDate[s.date] = (spendByDate[s.date] ?? 0) + (spendUsd ?? 0)
     }
 
@@ -233,7 +228,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       shopify: { totalRevenue, payoutCount, recentPayouts },
-      meta: { totalSpend, billingCount, recentBillings, missingExchangeRateAccounts },
+      meta: { totalSpend, billingCount, recentBillings, missingRateCount },
       projects: { count: projects.length, list: projectList },
       staff: { count: staff.length, totalMonthlyCost: staff.reduce((s, st) => s + st.monthlyCost, 0) },
       netCashflow: totalRevenue - totalSpend,
