@@ -3,11 +3,6 @@
 export type AdSignals = { isNew: boolean; activeDays: number; isLongRunning: boolean; isScaling: boolean; isStopped: boolean; adStyle: 'product'|'collection'|'homepage'|'other'|null; newProductLaunching: boolean }
 export type Ad = { id: string; title: string | null; body: string | null; adArchiveId: string; adLibraryUrl: string | null; linkUrl?: string | null; isActive?: boolean; mediaUrl: string | null; mediaType: 'video'|'image'|'carousel'|'dco'|null; startDate: string | null; productPublishedAt?: string | null; advertiser: { pageName: string | null }; signals: AdSignals }
 
-function linkHost(url: string | null): string {
-  if (!url) return 'CTA'
-  try { return new URL(url).hostname.replace(/^www\./, '') } catch { return 'CTA' }
-}
-
 const MEDIA_LABEL: Record<string, string> = { video: '🎬 Video', image: '🖼 Image', carousel: '🎠 Carousel', dco: 'DCO' }
 const STYLE_LABEL: Record<string, string> = { product: 'Product', collection: 'Collection', homepage: 'Homepage', other: 'Other' }
 
@@ -42,7 +37,7 @@ export default function AdCard({ a, onSave }: { a: Ad; onSave: (a: Ad) => void }
       <p className="mt-xs text-body-sm text-on-surface-variant">{a.advertiser.pageName} · {s.activeDays}d · {formatDate(a.startDate)}</p>
       {a.adLibraryUrl && <a href={a.adLibraryUrl} target="_blank" rel="noreferrer" className="mt-xs block truncate text-label-sm text-secondary hover:underline" title={a.adArchiveId}>#{a.adArchiveId}</a>}
       {a.linkUrl && (
-        <a href={a.linkUrl} target="_blank" rel="noreferrer" title={a.linkUrl} className="mt-xs block truncate text-label-sm text-secondary hover:underline">🔗 {linkHost(a.linkUrl)} CTA</a>
+        <a href={a.linkUrl} target="_blank" rel="noreferrer" title={a.linkUrl} className="mt-xs block truncate text-label-sm text-secondary hover:underline">🔗 {a.linkUrl}</a>
       )}
       {a.signals.adStyle === 'product' && a.productPublishedAt && (
         <p className="mt-xs text-body-sm text-on-surface-variant">Product uploaded: {formatDate(a.productPublishedAt)}</p>

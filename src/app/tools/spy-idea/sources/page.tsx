@@ -4,7 +4,7 @@ import type { SpyCronConfig } from '@/lib/spy/cron-config'
 
 type Store = { id: string; domain: string; name: string | null; status: string; _count?: { products: number } }
 type AdDomain = { id: string; domain: string; searchTerm: string; country: string; lastScanAt: string | null; pageCount: number; adCount: number; newAdCount: number }
-type PageTarget = { id: string; pageUrl: string; label: string | null; lastScanAt: string | null }
+type PageTarget = { id: string; pageUrl: string; label: string | null; lastScanAt: string | null; excluded?: boolean }
 type Quota = { isAdmin: boolean; used: number; limit: number; remaining: number | null }
 
 function DomainBlock({ domain, onScan, onRemove, onChanged }: { domain: AdDomain; onScan: () => void; onRemove: () => void; onChanged: () => void }) {
@@ -34,6 +34,10 @@ function DomainBlock({ domain, onScan, onRemove, onChanged }: { domain: AdDomain
     await fetch('/api/spy/pages', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) })
     load()
   }
+  async function toggleExclude(id: string, excluded: boolean) {
+    await fetch('/api/spy/pages', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, excluded }) })
+    load()
+  }
 
   return (
     <section className="rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-lg">
@@ -55,10 +59,13 @@ function DomainBlock({ domain, onScan, onRemove, onChanged }: { domain: AdDomain
         <ul className="divide-y divide-outline-variant/20">
           {pages.map(p => (
             <li key={p.id} className="flex items-center justify-between py-xs">
-              <span className="text-body-sm text-primary">{p.label ?? p.pageUrl}</span>
+              <span className={`text-body-sm text-primary ${p.excluded ? 'opacity-50' : ''}`}>{p.label ?? p.pageUrl}</span>
               <span className="flex items-center gap-md">
                 <button onClick={() => scanPage(p.id)} className="text-secondary text-label-sm hover:underline">Scan page</button>
-                <button onClick={() => removePage(p.id)} className="text-error text-label-sm hover:underline">Xoá</button>
+                <label className="flex items-center gap-xs text-label-sm text-on-surface-variant">
+                  <input type="checkbox" checked={!!p.excluded} onChange={e => toggleExclude(p.id, e.target.checked)} />
+                  Exclude
+                </label>
               </span>
             </li>
           ))}
