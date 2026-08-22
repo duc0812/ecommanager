@@ -36,4 +36,10 @@ describe('ingestAds', () => {
     expect(calls.adUpsert[0].create.rawPayload).toBe('{"x":1}')
     expect(calls.obs[0].where).toEqual({ adId_scanId: { adId: 'ad1', scanId: 'scan1' } })
   })
+
+  it('tags advertiser with adDomainId when provided', async () => {
+    await ingestAds('scan1', null, [ad('A1')], { adDomainId: 'dom1' })
+    expect(calls.advUpsert[0].create.adDomainId).toBe('dom1')
+    expect(calls.advUpsert[0].update.adDomainId).toBe('dom1')
+  })
 })
