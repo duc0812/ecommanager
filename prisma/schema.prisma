@@ -757,3 +757,11 @@ model SpyNiche {
   active    Boolean  @default(true)
   createdAt DateTime @default(now())
 }
+
+model SpyProductType {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  keywords  String   @default("[]")
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+}
