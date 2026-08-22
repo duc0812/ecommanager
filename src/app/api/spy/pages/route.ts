@@ -2,8 +2,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { normalizeFbPageUrl } from '@/lib/spy/fb-url'
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const adDomainId = new URL(req.url).searchParams.get('adDomainId') || undefined
   const pages = await prisma.spyPageTarget.findMany({
+    where: adDomainId ? { adDomainId } : undefined,
     orderBy: { createdAt: 'desc' },
     include: { store: { select: { domain: true } } },
   })
@@ -16,8 +18,8 @@ export async function POST(req: NextRequest) {
   if (!pageUrl) return NextResponse.json({ error: 'A facebook.com page URL is required' }, { status: 400 })
   const page = await prisma.spyPageTarget.upsert({
     where: { pageUrl },
-    create: { pageUrl, storeId: b.storeId || null, label: b.label || null },
-    update: { storeId: b.storeId ?? undefined, label: b.label ?? undefined },
+    create: { pageUrl, storeId: b.storeId || null, label: b.label || null, adDomainId: b.adDomainId || null },
+    update: { storeId: b.storeId ?? undefined, label: b.label ?? undefined, adDomainId: b.adDomainId || null },
   })
   return NextResponse.json(page)
 }
