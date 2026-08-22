@@ -14,3 +14,18 @@ export async function recentLaunchSet(linkUrls: Array<string | null>, windowDays
   })
   return new Set(products.map(p => `${(p.store?.domain ?? '').replace(/^www\./, '')}|${p.handle}`))
 }
+
+export async function productDateMap(linkUrls: Array<string | null>): Promise<Map<string, Date | null>> {
+  const parsed = linkUrls.map(parseAdLink).filter(p => p.kind === 'product' && p.host && p.handle)
+  const hosts = Array.from(new Set(parsed.map(p => p.host as string)))
+  const handles = Array.from(new Set(parsed.map(p => p.handle as string)))
+  if (hosts.length === 0 || handles.length === 0) return new Map()
+  const domainCandidates = Array.from(new Set(hosts.flatMap(h => [h, `www.${h}`])))
+  const products = await prisma.spyProduct.findMany({
+    where: { handle: { in: handles }, store: { domain: { in: domainCandidates } } },
+    select: { handle: true, publishedAt: true, store: { select: { domain: true } } },
+  })
+  const map = new Map<string, Date | null>()
+  for (const p of products) map.set(`${(p.store?.domain ?? '').replace(/^www\./, '')}|${p.handle}`, p.publishedAt ?? null)
+  return map
+}

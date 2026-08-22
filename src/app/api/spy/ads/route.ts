@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { isNewAd, activeDays, isLongRunning, isScaling, isStopped } from '@/lib/spy/ad-signals'
 import { parseAdLink } from '@/lib/spy/ad-link'
-import { recentLaunchSet } from '@/lib/spy/ad-product-match'
+import { recentLaunchSet, productDateMap } from '@/lib/spy/ad-product-match'
 import { parseKeywords, nicheOrWhere } from '@/lib/spy/niche'
 import { domainVariants } from '@/lib/spy/domain-filter'
 
@@ -46,13 +46,16 @@ export async function GET(req: NextRequest) {
   })
 
   const launch = await recentLaunchSet(ads.map(a => a.linkUrl))
+  const dates = await productDateMap(ads.map(a => a.linkUrl))
   const now = new Date()
   const enriched = ads.map(a => {
     const p = parseAdLink(a.linkUrl)
     const newProductLaunching = p.kind === 'product' && !!p.host && !!p.handle && launch.has(`${p.host}|${p.handle}`)
+    const key = p.kind === 'product' && p.host && p.handle ? `${p.host}|${p.handle}` : null
     const { rawPayload: _rawPayload, ...rest } = a // eslint-disable-line @typescript-eslint/no-unused-vars
     return {
       ...rest,
+      productPublishedAt: key && dates.has(key) ? dates.get(key) : null,
       signals: {
         isNew: isNewAd(a.startDate, now),
         activeDays: activeDays(a.startDate, a.endDate, now),
