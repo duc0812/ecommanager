@@ -1,152 +1,94 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import Sidebar from '@/components/Sidebar'
 import { RoleGate } from '@/components/RoleGate'
 import SpySectionNav from '@/components/SpySectionNav'
-import AdCard, { type Ad } from '@/components/spy/AdCard'
-import ProductCard, { type Product } from '@/components/spy/ProductCard'
+import SpyFilterSidebar, { FiltersData, Selected } from '@/components/spy/SpyFilterSidebar'
+import AdCard, { Ad } from '@/components/spy/AdCard'
+import ProductCard, { Product } from '@/components/spy/ProductCard'
 
-type Store = { id: string; domain: string; name: string | null; status: string; _count?: { products: number } }
 type Idea = { id: string; title: string; note: string | null; status: string; createdAt: string }
-type AdDomain = { id: string; domain: string; searchTerm: string; country: string; lastScanAt: string | null; pageCount: number; adCount: number; newAdCount: number }
-type PageTarget = { id: string; pageUrl: string; label: string | null; lastScanAt: string | null }
+type Area = 'ads' | 'products' | 'ideas'
 
-function DomainBlock({ domain, onScan, onRemove, onSaveIdea, onChanged }: { domain: AdDomain; onScan: () => void; onRemove: () => void; onSaveIdea: (a: Ad) => void; onChanged: () => void }) {
-  const [pages, setPages] = useState<PageTarget[]>([])
-  const [ads, setAds] = useState<Ad[]>([])
-  const [pageUrl, setPageUrl] = useState('')
-  const [term, setTerm] = useState(domain.searchTerm)
+const AD_VIEWS = [
+  { key: 'new', label: 'New Ads' },
+  { key: 'launching', label: 'New Launching Ads' },
+  { key: 'winning', label: 'Winning Ads (Long Ads)' },
+]
+const PRODUCT_VIEWS = [
+  { key: 'new-add', label: 'New Product Add' },
+  { key: 'best-seller', label: 'Best Seller' },
+]
 
-  async function load() {
-    setPages(await fetch(`/api/spy/pages?adDomainId=${domain.id}`).then(r => r.json()))
-    const d = await fetch(`/api/spy/ads?domainId=${domain.id}`).then(r => r.json()); setAds(d.ads ?? [])
-  }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { load() }, [domain.id])
-
-  async function saveTerm() {
-    await fetch('/api/spy/ad-domains', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: domain.id, searchTerm: term }) })
-    onChanged()
-  }
-  async function addPage() {
-    if (!pageUrl.trim()) return
-    await fetch('/api/spy/pages', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pageUrl, adDomainId: domain.id }) })
-    setPageUrl(''); load()
-  }
-  async function scanPage(id: string) {
-    await fetch('/api/spy/scan-ads', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pageId: id }) })
-    setTimeout(load, 30000)
-  }
-  async function removePage(id: string) {
-    await fetch('/api/spy/pages', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) })
-    load()
-  }
-
-  return (
-    <section className="rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-lg">
-      <div className="mb-md flex flex-wrap items-center gap-sm">
-        <h3 className="text-headline-sm text-primary">{domain.domain}</h3>
-        <span className="text-body-sm text-on-surface-variant">{domain.pageCount} pages · {domain.adCount} ads · {domain.newAdCount} new</span>
-        <input value={term} onChange={e => setTerm(e.target.value)} className="ml-auto w-48 rounded-lg border border-outline-variant/30 bg-surface-container px-md py-xs text-body-sm" />
-        <button onClick={saveTerm} className="rounded-lg bg-surface-container px-md py-xs text-label-sm">Save term</button>
-        <button onClick={onScan} className="rounded-lg bg-primary px-md py-xs text-label-sm text-on-primary">Scan domain</button>
-        <button onClick={onRemove} className="text-error text-label-sm hover:underline">Xoá</button>
-      </div>
-
-      <div className="mb-md">
-        <p className="mb-xs text-label-sm uppercase tracking-wider text-on-surface-variant">Fanpages</p>
-        <div className="mb-sm flex gap-sm">
-          <input value={pageUrl} onChange={e => setPageUrl(e.target.value)} placeholder="https://www.facebook.com/BrandPage"
-            className="flex-1 rounded-lg border border-outline-variant/30 bg-surface-container px-md py-sm text-body-sm outline-none focus:border-secondary" />
-          <button onClick={addPage} className="rounded-lg bg-secondary px-lg py-sm text-label-sm text-on-secondary">Add fanpage</button>
-        </div>
-        <ul className="divide-y divide-outline-variant/20">
-          {pages.map(p => (
-            <li key={p.id} className="flex items-center justify-between py-xs">
-              <span className="text-body-sm text-primary">{p.label ?? p.pageUrl}</span>
-              <span className="flex items-center gap-md">
-                <button onClick={() => scanPage(p.id)} className="text-secondary text-label-sm hover:underline">Scan page</button>
-                <button onClick={() => removePage(p.id)} className="text-error text-label-sm hover:underline">Xoá</button>
-              </span>
-            </li>
-          ))}
-        </ul>
-      </div>
-
-      <div className="grid grid-cols-1 gap-md sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-        {ads.map(a => <AdCard key={a.id} a={a} onSave={onSaveIdea} />)}
-        {ads.length === 0 && <p className="text-body-md text-on-surface-variant">No ads yet — scan the domain or a fanpage.</p>}
-      </div>
-    </section>
-  )
-}
-
-function formatDate(v: string | null) {
-  if (!v) return '-'
+function formatDate(v: string) {
   return new Intl.DateTimeFormat('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }).format(new Date(v))
 }
 
+function readParams(): { area: Area; view: string; sel: Selected } {
+  const p = new URLSearchParams(typeof window === 'undefined' ? '' : window.location.search)
+  const area = (['ads', 'products', 'ideas'].includes(p.get('area') || '') ? p.get('area') : 'ads') as Area
+  const view = p.get('view') || (area === 'products' ? 'new-add' : 'new')
+  return { area, view, sel: { domain: p.get('domain'), niche: p.get('niche'), type: p.get('type') } }
+}
+
+function writeParams(area: Area, view: string, sel: Selected) {
+  const p = new URLSearchParams()
+  p.set('area', area); p.set('view', view)
+  if (sel.domain) p.set('domain', sel.domain)
+  if (sel.niche) p.set('niche', sel.niche)
+  if (sel.type) p.set('type', sel.type)
+  window.history.replaceState(null, '', `?${p.toString()}`)
+}
+
 export default function SpyIdeaPage() {
-  const [tab, setTab] = useState<'stores' | 'products' | 'ideas' | 'ads'>('stores')
-  const [stores, setStores] = useState<Store[]>([])
+  const [filters, setFilters] = useState<FiltersData>({ domains: [], niches: [], productTypes: [] })
+  const [area, setArea] = useState<Area>('ads')
+  const [view, setView] = useState('new')
+  const [sel, setSel] = useState<Selected>({ domain: null, niche: null, type: null })
+  const [ads, setAds] = useState<Ad[]>([])
   const [products, setProducts] = useState<Product[]>([])
   const [ideas, setIdeas] = useState<Idea[]>([])
-  const [adDomains, setAdDomains] = useState<AdDomain[]>([])
-  const [newAds, setNewAds] = useState<Ad[]>([])
-  const [domain, setDomain] = useState('')
-  const [domainInput, setDomainInput] = useState('')
-  const [scanning, setScanning] = useState(false)
-
-  async function loadStores() { setStores(await fetch('/api/spy/stores').then(r => r.json())) }
-  async function loadProducts() { const d = await fetch('/api/spy/products?days=30').then(r => r.json()); setProducts(d.products ?? []) }
-  async function loadIdeas() { setIdeas(await fetch('/api/spy/ideas').then(r => r.json())) }
-  async function loadAdDomains() { setAdDomains(await fetch('/api/spy/ad-domains').then(r => r.json())) }
-  async function loadNewAds() { const d = await fetch('/api/spy/ads?filter=new').then(r => r.json()); setNewAds(d.ads ?? []) }
-
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { loadStores(); loadProducts(); loadIdeas(); loadAdDomains(); loadNewAds() }, [])
-
-  async function addStore() {
-    if (!domain.trim()) return
-    await fetch('/api/spy/stores', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ domain }) })
-    setDomain(''); loadStores()
-  }
-  async function removeStore(id: string) {
-    await fetch('/api/spy/stores', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) })
-    loadStores()
-  }
-  async function scanAll() {
-    setScanning(true)
-    try { await fetch('/api/spy/scan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) }); await loadProducts(); await loadStores() }
-    finally { setScanning(false) }
-  }
-  async function saveIdea(p: Product) {
-    await fetch('/api/spy/ideas', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: p.title ?? 'Untitled', refType: 'PRODUCT', refProductId: p.id, snapshotJson: p }) })
-    loadIdeas()
-  }
-  async function addAdDomain() {
-    if (!domainInput.trim()) return
-    await fetch('/api/spy/ad-domains', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ domain: domainInput }) })
-    setDomainInput(''); loadAdDomains()
-  }
-  async function scanDomain(id: string) {
-    await fetch('/api/spy/scan-ads', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ domainId: id }) })
-    setTimeout(() => { loadAdDomains(); loadNewAds() }, 30000)
-  }
-  async function removeAdDomain(id: string) {
-    await fetch('/api/spy/ad-domains', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) })
-    loadAdDomains()
-  }
-  async function saveAdIdea(a: Ad) {
-    await fetch('/api/spy/ideas', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: a.title ?? a.advertiser.pageName ?? 'Ad', refType: 'AD', refAdId: a.id, snapshotJson: a }) })
-    loadIdeas()
-  }
 
   useEffect(() => {
-    const t = new URLSearchParams(window.location.search).get('tab')
-    if (t === 'ads' || t === 'products' || t === 'stores' || t === 'ideas') setTab(t)
+    const init = readParams(); setArea(init.area); setView(init.view); setSel(init.sel)
+    fetch('/api/spy/filters').then(r => r.json()).then(setFilters).catch(() => {})
   }, [])
+
+  const filterQuery = useCallback(() => {
+    const q = new URLSearchParams()
+    if (sel.domain) q.set('domain', sel.domain)
+    if (sel.niche) q.set('nicheId', sel.niche)
+    if (sel.type) q.set('productTypeId', sel.type)
+    return q.toString()
+  }, [sel])
+
+  useEffect(() => {
+    if (area === 'ads') {
+      fetch(`/api/spy/ads?filter=${view}&limit=200&${filterQuery()}`).then(r => r.json()).then(d => setAds(d.ads ?? [])).catch(() => {})
+    } else if (area === 'products' && view === 'new-add') {
+      fetch(`/api/spy/products?days=30&limit=200&${filterQuery()}`).then(r => r.json()).then(d => setProducts(d.products ?? [])).catch(() => {})
+    } else if (area === 'ideas') {
+      fetch('/api/spy/ideas').then(r => r.json()).then(setIdeas).catch(() => {})
+    }
+  }, [area, view, filterQuery])
+
+  function go(nextArea: Area, nextView?: string) {
+    const v = nextView ?? (nextArea === 'products' ? 'new-add' : nextArea === 'ads' ? 'new' : 'ideas')
+    setArea(nextArea); setView(v); writeParams(nextArea, v, sel)
+  }
+  function pickView(v: string) { setView(v); writeParams(area, v, sel) }
+  function onSelect(dim: 'domain'|'niche'|'type', value: string | null) {
+    const next = { ...sel, [dim]: value }; setSel(next); writeParams(area, view, next)
+  }
+
+  async function saveAdIdea(a: Ad) {
+    await fetch('/api/spy/ideas', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: a.title ?? a.advertiser.pageName ?? 'Ad', refType: 'AD', refAdId: a.id, snapshotJson: a }) })
+  }
+  async function saveProductIdea(p: Product) {
+    await fetch('/api/spy/ideas', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: p.title ?? 'Untitled', refType: 'PRODUCT', refProductId: p.id, snapshotJson: p }) })
+  }
+
+  const subViews = area === 'ads' ? AD_VIEWS : area === 'products' ? PRODUCT_VIEWS : []
 
   return (
     <RoleGate>
@@ -155,80 +97,63 @@ export default function SpyIdeaPage() {
         <main className="ml-[280px] flex-1 p-xl">
           <header className="mb-lg">
             <p className="text-label-sm uppercase tracking-wider text-on-surface-variant">Tools</p>
-            <h2 className="text-display-md font-bold text-primary">Spy Idea</h2>
+            <h2 className="text-display-md font-bold text-primary">Spy</h2>
           </header>
 
-          <SpySectionNav
-            active={tab}
-            items={[
-              { key: 'dashboard', label: 'Dashboard', icon: 'space_dashboard', href: '/tools/spy-idea/dashboard' },
-              { key: 'ads', label: 'Ad Library', icon: 'library_books', onClick: () => setTab('ads') },
-              { key: 'products', label: 'Products', icon: 'inventory_2', onClick: () => setTab('products') },
-              { key: 'stores', label: 'Stores', icon: 'storefront', onClick: () => setTab('stores') },
-              { key: 'ideas', label: 'Ideas', icon: 'lightbulb', onClick: () => setTab('ideas') },
-              { key: 'niches', label: 'Niches', icon: 'sell', href: '/tools/spy-idea/niches' },
-            ]}
-          />
+          <SpySectionNav active={area} items={[
+            { key: 'ads', label: 'Ad Library', icon: 'library_books', onClick: () => go('ads') },
+            { key: 'products', label: 'Product Spy', icon: 'inventory_2', onClick: () => go('products') },
+            { key: 'ideas', label: 'Ideas', icon: 'lightbulb', onClick: () => go('ideas') },
+          ]} />
 
-          {tab === 'stores' && (
-            <section className="rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-lg">
-              <div className="mb-md flex gap-sm">
-                <input value={domain} onChange={e => setDomain(e.target.value)} placeholder="store.myshopify.com"
-                  className="flex-1 rounded-lg border border-outline-variant/30 bg-surface-container px-md py-sm text-body-md outline-none focus:border-secondary" />
-                <button onClick={addStore} className="rounded-lg bg-secondary px-lg py-sm text-label-md text-on-secondary">Add store</button>
-                <button onClick={scanAll} disabled={scanning} className="rounded-lg bg-primary px-lg py-sm text-label-md text-on-primary disabled:opacity-50">
-                  {scanning ? 'Scanning…' : 'Scan now'}
-                </button>
-              </div>
-              <ul className="divide-y divide-outline-variant/20">
-                {stores.map(s => (
-                  <li key={s.id} className="flex items-center justify-between py-sm">
-                    <div><p className="text-label-md text-primary">{s.domain}</p><p className="text-body-sm text-on-surface-variant">{s._count?.products ?? 0} products · {s.status}</p></div>
-                    <button onClick={() => removeStore(s.id)} className="text-error text-label-sm hover:underline">Remove</button>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          )}
+          <div className="flex gap-lg">
+            <SpyFilterSidebar filters={filters} selected={sel} onSelect={onSelect} />
 
-          {tab === 'products' && (
-            <div className="grid grid-cols-1 gap-md sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              {products.map(p => <ProductCard key={p.id} p={p} onSave={saveIdea} />)}
-            </div>
-          )}
+            <div className="min-w-0 flex-1">
+              {subViews.length > 0 && (
+                <nav className="mb-md flex flex-wrap gap-sm">
+                  {subViews.map(v => (
+                    <button key={v.key} onClick={() => pickView(v.key)}
+                      className={`rounded-md px-md py-xs text-label-sm ${view === v.key ? 'bg-secondary text-on-secondary' : 'bg-surface-container text-on-surface-variant'}`}>{v.label}</button>
+                  ))}
+                </nav>
+              )}
 
-          {tab === 'ideas' && (
-            <ul className="space-y-sm">
-              {ideas.map(i => (
-                <li key={i.id} className="rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-md">
-                  <p className="text-label-md text-primary">{i.title}</p>
-                  <p className="text-body-sm text-on-surface-variant">{i.status} · {formatDate(i.createdAt)}</p>
-                </li>
-              ))}
-            </ul>
-          )}
-
-          {tab === 'ads' && (
-            <div className="space-y-lg">
-              <section>
-                <h3 className="mb-md text-headline-sm text-primary">🆕 New Ads (just launched)</h3>
+              {area === 'ads' && (
                 <div className="grid grid-cols-1 gap-md sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                  {newAds.map(a => <AdCard key={a.id} a={a} onSave={saveAdIdea} />)}
-                  {newAds.length === 0 && <p className="text-body-md text-on-surface-variant">No newly launched ads.</p>}
+                  {ads.map(a => <AdCard key={a.id} a={a} onSave={saveAdIdea} />)}
+                  {ads.length === 0 && <p className="text-body-md text-on-surface-variant">No ads for this filter.</p>}
                 </div>
-              </section>
+              )}
 
-              <section className="rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-lg">
-                <div className="flex gap-sm">
-                  <input value={domainInput} onChange={e => setDomainInput(e.target.value)} placeholder="familystore.com"
-                    className="flex-1 rounded-lg border border-outline-variant/30 bg-surface-container px-md py-sm text-body-md outline-none focus:border-secondary" />
-                  <button onClick={addAdDomain} className="rounded-lg bg-secondary px-lg py-sm text-label-md text-on-secondary">Add domain</button>
+              {area === 'products' && view === 'new-add' && (
+                <div className="grid grid-cols-1 gap-md sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                  {products.map(p => <ProductCard key={p.id} p={p} onSave={saveProductIdea} />)}
+                  {products.length === 0 && <p className="text-body-md text-on-surface-variant">No products for this filter.</p>}
                 </div>
-              </section>
+              )}
 
-              {adDomains.map(d => <DomainBlock key={d.id} domain={d} onScan={() => scanDomain(d.id)} onRemove={() => removeAdDomain(d.id)} onSaveIdea={saveAdIdea} onChanged={loadAdDomains} />)}
+              {area === 'products' && view === 'best-seller' && (
+                <div className="rounded-xl border border-dashed border-outline-variant bg-surface-container-lowest p-2xl text-center text-on-surface-variant">
+                  <span className="material-symbols-outlined text-[44px] text-outline-variant">trending_up</span>
+                  <h3 className="mt-sm text-headline-sm text-primary">Best Seller</h3>
+                  <p className="mt-xs text-body-md">Coming in Phase C — scrape the store&apos;s best-selling collection.</p>
+                </div>
+              )}
+
+              {area === 'ideas' && (
+                <ul className="space-y-sm">
+                  {ideas.map(i => (
+                    <li key={i.id} className="rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-md">
+                      <p className="text-label-md text-primary">{i.title}</p>
+                      <p className="text-body-sm text-on-surface-variant">{i.status} · {formatDate(i.createdAt)}</p>
+                    </li>
+                  ))}
+                  {ideas.length === 0 && <p className="text-body-md text-on-surface-variant">No ideas saved yet.</p>}
+                </ul>
+              )}
             </div>
-          )}
+          </div>
         </main>
       </div>
     </RoleGate>
