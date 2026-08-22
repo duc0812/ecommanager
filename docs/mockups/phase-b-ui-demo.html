@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Spy Phase B — UI Demo (mockup)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet" />
+<style>
+  :root{
+    --surface:#f7f9fb; --lowest:#ffffff; --low:#f2f4f6; --container:#eceef0; --high:#e6e8ea;
+    --on-surface:#191c1e; --on-variant:#45474c; --outline-variant:#c5c6cd;
+    --primary:#091426; --on-primary:#fff; --primary-container:#1e293b; --on-primary-container:#8590a6;
+    --secondary:#4b41e1; --on-secondary:#fff; --secondary-fixed:#e2dfff;
+    --green:#00a472; --error:#ba1a1a;
+    --xs:4px; --sm:8px; --md:16px; --lg:24px; --xl:32px;
+    --shadow:0 4px 6px -1px rgba(0,0,0,.08),0 2px 4px -1px rgba(0,0,0,.04);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--surface);color:var(--on-surface);font-family:Inter,system-ui,sans-serif;font-size:16px}
+  .material-symbols-outlined{font-family:'Material Symbols Outlined';font-weight:normal;font-style:normal;line-height:1;vertical-align:middle}
+  .app{display:flex;min-height:100vh}
+
+  /* ===== App sidebar (280px) ===== */
+  .app-sidebar{width:280px;flex:0 0 280px;background:var(--primary);color:var(--on-primary);padding:var(--lg) var(--md);position:sticky;top:0;height:100vh}
+  .brand{display:flex;align-items:center;gap:var(--sm);font-weight:700;font-size:20px;margin-bottom:var(--xl)}
+  .brand .logo{width:32px;height:32px;border-radius:8px;background:var(--secondary);display:flex;align-items:center;justify-content:center}
+  .nav-group{color:var(--on-primary-container);font-size:12px;letter-spacing:.08em;text-transform:uppercase;margin:var(--lg) var(--sm) var(--sm)}
+  .nav-item{display:flex;align-items:center;gap:var(--md);padding:10px var(--md);border-radius:10px;color:#c9cfda;font-size:14px;cursor:pointer;margin-bottom:2px}
+  .nav-item .material-symbols-outlined{font-size:20px}
+  .nav-item:hover{background:rgba(255,255,255,.06)}
+  .nav-item.active{background:var(--secondary);color:#fff;font-weight:600}
+
+  /* ===== Spy main ===== */
+  .spy{flex:1;padding:var(--xl);min-width:0}
+  .page-head .kicker{font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--on-variant)}
+  .page-head h1{font-size:30px;font-weight:700;color:var(--primary);margin:2px 0 var(--lg)}
+
+  /* Tier 1 */
+  .tier1{display:flex;gap:var(--lg);border-bottom:1px solid rgba(197,198,205,.4);margin-bottom:var(--md)}
+  .tier1 button{background:none;border:none;border-bottom:2px solid transparent;padding:0 0 var(--sm);display:flex;align-items:center;gap:6px;font-size:14px;font-weight:600;letter-spacing:.03em;color:var(--on-variant);cursor:pointer}
+  .tier1 button .material-symbols-outlined{font-size:18px}
+  .tier1 button.active{color:var(--secondary);border-bottom-color:var(--secondary)}
+  .tier1 .spacer{flex:1}
+
+  /* Body: facets + content */
+  .body{display:flex;gap:var(--lg);align-items:flex-start}
+  .facets{width:220px;flex:0 0 220px;background:var(--lowest);border:1px solid rgba(197,198,205,.35);border-radius:16px;box-shadow:var(--shadow);padding:var(--md);position:sticky;top:var(--md)}
+  .facet-group{margin-bottom:var(--md)}
+  .facet-title{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--on-variant);font-weight:600;margin:0 0 6px 4px}
+  .facet-opt{display:flex;align-items:center;justify-content:space-between;padding:7px 10px;border-radius:8px;font-size:14px;color:var(--on-surface);cursor:pointer}
+  .facet-opt:hover{background:var(--low)}
+  .facet-opt.active{background:var(--secondary-fixed);color:#241a9e;font-weight:600}
+  .facet-opt .count{font-size:12px;color:var(--on-variant)}
+  .facet-opt.active .count{color:#4b41e1}
+  .facet-sep{height:1px;background:rgba(197,198,205,.5);margin:var(--md) 4px}
+  .facet-setup .facet-opt{color:var(--secondary)}
+  .facet-setup .facet-opt .material-symbols-outlined{font-size:18px;margin-right:8px}
+
+  .content{flex:1;min-width:0}
+  /* Tier 2 */
+  .tier2{display:flex;gap:var(--sm);margin-bottom:var(--md);flex-wrap:wrap}
+  .tier2 button{border:none;background:var(--container);color:var(--on-variant);padding:7px 14px;border-radius:8px;font-size:13px;font-weight:600;letter-spacing:.02em;cursor:pointer}
+  .tier2 button.active{background:var(--secondary);color:#fff}
+
+  .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:var(--md)}
+  @media(max-width:1400px){.grid{grid-template-columns:repeat(3,1fr)}}
+  @media(max-width:1100px){.grid{grid-template-columns:repeat(2,1fr)}}
+
+  /* Ad card */
+  .card{background:var(--lowest);border:1px solid rgba(197,198,205,.35);border-radius:16px;padding:var(--md)}
+  .media{position:relative;aspect-ratio:1/1;border-radius:12px;overflow:hidden;background:var(--low);display:flex;align-items:center;justify-content:center;margin-bottom:var(--sm)}
+  .media .ph{width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:34px}
+  .media-badge{position:absolute;right:8px;top:8px;background:rgba(9,20,38,.82);color:#fff;font-size:11px;font-weight:500;padding:3px 8px;border-radius:999px}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px}
+  .chip{font-size:11px;font-weight:600;padding:3px 8px;border-radius:999px}
+  .chip.launch{background:rgba(75,65,225,.15);color:#3b33b8}
+  .chip.style{background:var(--container);color:var(--on-variant)}
+  .chip.new{background:rgba(75,65,225,.10);color:#4b41e1}
+  .chip.long{background:rgba(0,164,114,.15);color:#00714f}
+  .chip.scaling{background:rgba(9,20,38,.08);color:#091426}
+  .card h3{font-size:14px;font-weight:700;color:var(--primary);margin:2px 0;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .card .body{font-size:13px;color:var(--on-variant);margin:2px 0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .card .meta{font-size:13px;color:var(--on-variant);margin-top:4px}
+  .card .adid{display:block;font-size:12px;color:var(--secondary);margin-top:4px;text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .card .row{display:flex;justify-content:space-between;margin-top:var(--sm)}
+  .card .row a,.card .row button{font-size:12px;color:var(--secondary);background:none;border:none;cursor:pointer;text-decoration:none}
+  .price{font-size:14px;font-weight:700;color:var(--primary);margin-top:2px}
+
+  .stub{background:var(--lowest);border:1px dashed var(--outline-variant);border-radius:16px;padding:48px var(--lg);text-align:center;color:var(--on-variant)}
+  .stub .material-symbols-outlined{font-size:44px;color:var(--outline-variant)}
+  .stub h3{color:var(--primary);margin:var(--sm) 0 4px;font-size:20px}
+
+  .idea{background:var(--lowest);border:1px solid rgba(197,198,205,.35);border-radius:12px;padding:var(--md);margin-bottom:var(--sm)}
+  .idea .t{font-size:14px;font-weight:600;color:var(--primary)}
+  .idea .s{font-size:13px;color:var(--on-variant)}
+
+  .demo-banner{background:#fffbe6;border:1px solid #ffe08a;color:#7a5c00;font-size:13px;padding:8px 14px;border-radius:10px;margin-bottom:var(--md)}
+  .hidden{display:none}
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- App sidebar -->
+  <aside class="app-sidebar">
+    <div class="brand"><span class="logo"><span class="material-symbols-outlined">bolt</span></span> Ecom Manager</div>
+    <div class="nav-group">Tổng quan</div>
+    <div class="nav-item"><span class="material-symbols-outlined">dashboard</span> Overview</div>
+    <div class="nav-item"><span class="material-symbols-outlined">payments</span> Finance</div>
+    <div class="nav-group">Tools</div>
+    <div class="nav-item active"><span class="material-symbols-outlined">travel_explore</span> Spy Idea</div>
+    <div class="nav-item"><span class="material-symbols-outlined">inventory</span> Resources</div>
+    <div class="nav-group">Cấu hình</div>
+    <div class="nav-item"><span class="material-symbols-outlined">settings</span> Setup</div>
+  </aside>
+
+  <!-- Spy area -->
+  <main class="spy">
+    <div class="page-head">
+      <div class="kicker">Tools</div>
+      <h1>Spy</h1>
+    </div>
+    <div class="demo-banner">⚠️ Đây là <b>mockup tĩnh</b> để duyệt UI Phase B — chưa phải code thật. Bấm thử các tab & facet bên trái.</div>
+
+    <!-- Tier 1 -->
+    <nav class="tier1">
+      <button data-area="ads" class="active" onclick="setArea('ads')"><span class="material-symbols-outlined">library_books</span> Ad Library</button>
+      <button data-area="products" onclick="setArea('products')"><span class="material-symbols-outlined">inventory_2</span> Product Spy</button>
+      <button data-area="ideas" onclick="setArea('ideas')"><span class="material-symbols-outlined">lightbulb</span> Ideas</button>
+    </nav>
+
+    <div class="body">
+      <!-- Facet sidebar -->
+      <aside class="facets">
+        <div class="facet-group">
+          <p class="facet-title">Domain</p>
+          <div class="facet-opt active" onclick="pick(this)">All <span class="count">142</span></div>
+          <div class="facet-opt" onclick="pick(this)">homesizy.com <span class="count">86</span></div>
+          <div class="facet-opt" onclick="pick(this)">familystore.com <span class="count">56</span></div>
+        </div>
+        <div class="facet-group">
+          <p class="facet-title">Niche</p>
+          <div class="facet-opt active" onclick="pick(this)">All</div>
+          <div class="facet-opt" onclick="pick(this)">Disney <span class="count">31</span></div>
+          <div class="facet-opt" onclick="pick(this)">Jeep <span class="count">18</span></div>
+          <div class="facet-opt" onclick="pick(this)">Pokemon <span class="count">12</span></div>
+        </div>
+        <div class="facet-group">
+          <p class="facet-title">Product type</p>
+          <div class="facet-opt active" onclick="pick(this)">All</div>
+          <div class="facet-opt" onclick="pick(this)">Tumbler <span class="count">40</span></div>
+          <div class="facet-opt" onclick="pick(this)">Hoodie <span class="count">27</span></div>
+          <div class="facet-opt" onclick="pick(this)">Mug <span class="count">15</span></div>
+        </div>
+        <div class="facet-sep"></div>
+        <div class="facet-group facet-setup">
+          <p class="facet-title">Setup</p>
+          <div class="facet-opt"><span><span class="material-symbols-outlined">storefront</span>Sources</span><span class="material-symbols-outlined">chevron_right</span></div>
+          <div class="facet-opt"><span><span class="material-symbols-outlined">sell</span>Niche</span><span class="material-symbols-outlined">chevron_right</span></div>
+          <div class="facet-opt"><span><span class="material-symbols-outlined">category</span>Product type</span><span class="material-symbols-outlined">chevron_right</span></div>
+        </div>
+      </aside>
+
+      <!-- Content -->
+      <div class="content">
+        <!-- AD LIBRARY -->
+        <section id="area-ads">
+          <nav class="tier2">
+            <button class="active">New Ads</button>
+            <button>New Launching Ads</button>
+            <button>Winning Ads (Long Ads)</button>
+          </nav>
+          <div class="grid" id="ads-grid"></div>
+        </section>
+
+        <!-- PRODUCT SPY -->
+        <section id="area-products" class="hidden">
+          <nav class="tier2">
+            <button class="active" onclick="setPview('new',this)">New Product Add</button>
+            <button onclick="setPview('best',this)">Best Seller</button>
+          </nav>
+          <div class="grid" id="prod-grid"></div>
+          <div id="prod-best" class="stub hidden">
+            <span class="material-symbols-outlined">trending_up</span>
+            <h3>Best Seller</h3>
+            <p>Coming in Phase C — scrape best-selling collection của website.</p>
+          </div>
+        </section>
+
+        <!-- IDEAS -->
+        <section id="area-ideas" class="hidden">
+          <div id="ideas-list"></div>
+        </section>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+  const ads = [
+    {t:'Disney Stitch 40oz Tumbler — Limited', b:'Keep your drinks cold 24h. Grab yours before it sells out 🔵', media:'video', page:'Homesizy', days:3, id:'6981233440112', chips:['launch','style-Product','new'], g:'#4b41e1,#645efb'},
+    {t:'Jeep Life Off-Road Hoodie', b:'For those who live the Jeep life. Premium heavyweight cotton.', media:'image', page:'FamilyStore', days:5, id:'7712099831245', chips:['style-Collection','new'], g:'#00a472,#00301e'},
+    {t:'Pokemon Pikachu 20oz Mug', b:'Catch your morning coffee ⚡ Gotta sip em all!', media:'video', page:'Homesizy', days:2, id:'6620117789004', chips:['launch','style-Product','new'], g:'#f2b705,#e07a00'},
+    {t:'Nurse Life Skinny Tumbler', b:'Because caffeine + compassion = nurse. Personalized name.', media:'image', page:'FamilyStore', days:1, id:'7781200456781', chips:['style-Product','new'], g:'#4b41e1,#241a9e'},
+    {t:'Disney Villains Zip Hoodie', b:'Embrace your dark side 🖤 Soft fleece inside.', media:'image', page:'Homesizy', days:6, id:'6420987655120', chips:['style-Homepage','new'], g:'#6d28d9,#3b0764'},
+    {t:'Jeep Grill Sunset Blanket', b:'Wrap up in adventure. Ultra-soft sherpa.', media:'video', page:'FamilyStore', days:4, id:'7799003211456', chips:['launch','style-Product','new'], g:'#0ea5e9,#075985'},
+    {t:'Pokemon Eevee Evolutions Tee', b:'All 8 evolutions, one tee. Fan favorite.', media:'image', page:'Homesizy', days:2, id:'6512300987744', chips:['style-Collection','new'], g:'#ef4444,#7f1d1d'},
+    {t:'Cat Mom Tumbler 30oz', b:'For the crazy cat lady who has it all 🐈', media:'image', page:'FamilyStore', days:1, id:'7810022334567', chips:['style-Product','new'], g:'#f472b6,#9d174d'},
+  ];
+  const products = [
+    {t:'Disney Stitch 40oz Tumbler', dom:'homesizy.com', date:'08/20/2026', price:'$34.99', g:'#4b41e1,#645efb'},
+    {t:'Jeep Life Off-Road Hoodie', dom:'familystore.com', date:'08/20/2026', price:'$44.99', g:'#00a472,#00301e'},
+    {t:'Pokemon Pikachu 20oz Mug', dom:'homesizy.com', date:'08/19/2026', price:'$19.99', g:'#f2b705,#e07a00'},
+    {t:'Nurse Life Skinny Tumbler', dom:'familystore.com', date:'08/19/2026', price:'$29.99', g:'#4b41e1,#241a9e'},
+    {t:'Disney Villains Zip Hoodie', dom:'homesizy.com', date:'08/18/2026', price:'$49.99', g:'#6d28d9,#3b0764'},
+    {t:'Jeep Grill Sherpa Blanket', dom:'familystore.com', date:'08/18/2026', price:'$39.99', g:'#0ea5e9,#075985'},
+    {t:'Pokemon Eevee Evolutions Tee', dom:'homesizy.com', date:'08/17/2026', price:'$24.99', g:'#ef4444,#7f1d1d'},
+    {t:'Cat Mom 30oz Tumbler', dom:'familystore.com', date:'08/17/2026', price:'$32.99', g:'#f472b6,#9d174d'},
+  ];
+  const ideas = [
+    {t:'Disney Stitch 40oz Tumbler — Limited', s:'AD · SAVED · 08/20/2026'},
+    {t:'Jeep Life Off-Road Hoodie', s:'PRODUCT · SAVED · 08/20/2026'},
+    {t:'Pokemon Pikachu 20oz Mug', s:'AD · REVIEWING · 08/19/2026'},
+  ];
+  const MEDIA = {video:'🎬 Video', image:'🖼 Image'};
+  function chip(c){
+    if(c==='launch') return '<span class="chip launch">🚀 New Product Launching</span>';
+    if(c==='new') return '<span class="chip new">New</span>';
+    if(c==='long') return '<span class="chip long">Long-running</span>';
+    if(c==='scaling') return '<span class="chip scaling">Scaling</span>';
+    if(c.startsWith('style-')) return '<span class="chip style">'+c.slice(6)+'</span>';
+    return '';
+  }
+  function adCard(a){
+    return `<article class="card">
+      <div class="media"><div class="ph" style="background:linear-gradient(135deg,${a.g})"><span class="material-symbols-outlined">${a.media==='video'?'play_circle':'image'}</span></div>
+        <span class="media-badge">${MEDIA[a.media]}</span></div>
+      <div class="chips">${a.chips.map(chip).join('')}</div>
+      <h3>${a.t}</h3>
+      <p class="body">${a.b}</p>
+      <p class="meta">${a.page} · ${a.days}d</p>
+      <a class="adid" href="#">#${a.id}</a>
+      <div class="row"><a href="#">Detail</a><button>＋ Save IDEA</button></div>
+    </article>`;
+  }
+  function prodCard(p){
+    return `<article class="card">
+      <div class="media"><div class="ph" style="background:linear-gradient(135deg,${p.g})"><span class="material-symbols-outlined">checkroom</span></div></div>
+      <h3>${p.t}</h3>
+      <p class="meta">${p.dom} · ${p.date}</p>
+      <p class="price">${p.price}</p>
+      <div class="row"><span></span><button>＋ Save IDEA</button></div>
+    </article>`;
+  }
+  document.getElementById('ads-grid').innerHTML = ads.map(adCard).join('');
+  document.getElementById('prod-grid').innerHTML = products.map(prodCard).join('');
+  document.getElementById('ideas-list').innerHTML = ideas.map(i=>`<div class="idea"><div class="t">${i.t}</div><div class="s">${i.s}</div></div>`).join('');
+
+  function setArea(area){
+    document.querySelectorAll('.tier1 button').forEach(b=>b.classList.toggle('active', b.dataset.area===area));
+    document.getElementById('area-ads').classList.toggle('hidden', area!=='ads');
+    document.getElementById('area-products').classList.toggle('hidden', area!=='products');
+    document.getElementById('area-ideas').classList.toggle('hidden', area!=='ideas');
+  }
+  function setPview(v,btn){
+    document.querySelectorAll('#area-products .tier2 button').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('prod-grid').classList.toggle('hidden', v!=='new');
+    document.getElementById('prod-best').classList.toggle('hidden', v!=='best');
+  }
+  // tier2 for ads = simple active toggle
+  document.querySelectorAll('#area-ads .tier2 button').forEach(btn=>btn.addEventListener('click',()=>{
+    document.querySelectorAll('#area-ads .tier2 button').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+  }));
+  function pick(el){
+    el.parentElement.querySelectorAll('.facet-opt').forEach(o=>o.classList.remove('active'));
+    el.classList.add('active');
+  }
+</script>
+</body>
+</html>
