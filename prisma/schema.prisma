@@ -785,3 +785,12 @@ model SpyBestSeller {
   @@index([productId])
   @@index([scanId])
 }
+
+model SpyScanQuota {
+  id     String @id @default(cuid())
+  userId String
+  day    String
+  count  Int    @default(0)
+
+  @@unique([userId, day])
+}
