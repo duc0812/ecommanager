@@ -8,3 +8,7 @@ export function normalizeFbPageUrl(raw: string): string | null {
     return null
   }
 }
+
+export function fanpageUrlFromId(id: string): string {
+  return `https://www.facebook.com/${id}`
+}

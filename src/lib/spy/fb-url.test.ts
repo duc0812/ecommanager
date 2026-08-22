@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { normalizeFbPageUrl } from './fb-url'
+import { normalizeFbPageUrl, fanpageUrlFromId } from './fb-url'
 
 describe('normalizeFbPageUrl', () => {
   it('preserves the query string for profile.php?id= pages', () => {
@@ -14,5 +14,11 @@ describe('normalizeFbPageUrl', () => {
     expect(normalizeFbPageUrl('https://evil.com/x')).toBeNull()
     expect(normalizeFbPageUrl('notfacebook.com')).toBeNull()
     expect(normalizeFbPageUrl('')).toBeNull()
+  })
+})
+
+describe('fanpageUrlFromId', () => {
+  it('builds a facebook page URL from an id', () => {
+    expect(fanpageUrlFromId('12345')).toBe('https://www.facebook.com/12345')
   })
 })

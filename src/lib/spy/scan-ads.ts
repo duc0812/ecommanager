@@ -4,6 +4,7 @@ import { mapApifyAd } from './ad-mapping'
 import { ingestAds } from './ingest-ads'
 import { AD_SCAN_CAP } from './ad-signals'
 import { buildAdLibrarySearchUrl } from './ad-search-url'
+import { fanpageUrlFromId } from './fb-url'
 
 export async function runPageAdScan(pageTarget: { id: string; storeId: string | null; pageUrl: string; adDomainId?: string | null }) {
   const scan = await prisma.spyScan.create({
@@ -51,6 +52,15 @@ export async function runDomainAdScan(domain: { id: string; searchTerm: string; 
     const stats = { totalScanned: items.length, ...ingest }
     await prisma.spyScan.update({ where: { id: scan.id }, data: { status: 'success', stats: JSON.stringify(stats), finishedAt: new Date() } })
     await prisma.spyAdDomain.update({ where: { id: domain.id }, data: { lastScanAt: new Date() } })
+    const advertisers = await prisma.spyAdvertiser.findMany({ where: { adDomainId: domain.id }, select: { fbPageId: true, pageName: true } })
+    for (const adv of advertisers) {
+      const pageUrl = fanpageUrlFromId(adv.fbPageId)
+      await prisma.spyPageTarget.upsert({
+        where: { pageUrl },
+        create: { pageUrl, fbPageId: adv.fbPageId, label: adv.pageName ?? undefined, adDomainId: domain.id },
+        update: { adDomainId: domain.id, ...(adv.pageName ? { label: adv.pageName } : {}) },
+      })
+    }
     return { scanId: scan.id, status: 'success' as const, stats }
   } catch (e: unknown) {
     const error = e instanceof Error ? e.message : 'Unknown error'
