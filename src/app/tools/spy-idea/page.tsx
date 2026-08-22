@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react'
 import Sidebar from '@/components/Sidebar'
 import { RoleGate } from '@/components/RoleGate'
+import SpySectionNav from '@/components/SpySectionNav'
 
 type Store = { id: string; domain: string; name: string | null; status: string; _count?: { products: number } }
 type Product = { id: string; title: string | null; handle: string | null; imageUrl: string | null; priceMin: number | null; priceMax: number | null; firstSeenAt: string; productType: string | null; store: { domain: string } }
@@ -183,24 +184,31 @@ export default function SpyIdeaPage() {
     loadIdeas()
   }
 
+  useEffect(() => {
+    const t = new URLSearchParams(window.location.search).get('tab')
+    if (t === 'ads' || t === 'products' || t === 'stores' || t === 'ideas') setTab(t)
+  }, [])
+
   return (
     <RoleGate>
       <div className="flex min-h-screen bg-surface">
         <Sidebar />
         <main className="ml-[280px] flex-1 p-xl">
-          <header className="mb-xl">
+          <header className="mb-lg">
             <p className="text-label-sm uppercase tracking-wider text-on-surface-variant">Tools</p>
             <h2 className="text-display-md font-bold text-primary">Spy Idea</h2>
           </header>
 
-          <div className="mb-lg inline-flex rounded-lg bg-surface-container p-xs">
-            {(['stores','products','ideas','ads'] as const).map(t => (
-              <button key={t} onClick={() => setTab(t)}
-                className={`rounded-md px-md py-xs text-label-sm capitalize ${tab === t ? 'bg-secondary text-on-secondary' : 'text-on-surface-variant'}`}>
-                {t}
-              </button>
-            ))}
-          </div>
+          <SpySectionNav
+            active={tab}
+            items={[
+              { key: 'dashboard', label: 'Dashboard', icon: 'space_dashboard', href: '/tools/spy-idea/dashboard' },
+              { key: 'ads', label: 'Ad Library', icon: 'library_books', onClick: () => setTab('ads') },
+              { key: 'products', label: 'Products', icon: 'inventory_2', onClick: () => setTab('products') },
+              { key: 'stores', label: 'Stores', icon: 'storefront', onClick: () => setTab('stores') },
+              { key: 'ideas', label: 'Ideas', icon: 'lightbulb', onClick: () => setTab('ideas') },
+            ]}
+          />
 
           {tab === 'stores' && (
             <section className="rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-lg">
