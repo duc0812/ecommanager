@@ -9,6 +9,8 @@ import ProductCard, { Product } from '@/components/spy/ProductCard'
 
 type Idea = { id: string; title: string; note: string | null; status: string; createdAt: string }
 type Area = 'ads' | 'products' | 'ideas'
+type BestSellerItem = Product & { rank: number; prevRank: number | null; delta: number | null }
+type BestSellerGroup = { store: { domain: string }; items: BestSellerItem[] }
 
 const AD_VIEWS = [
   { key: 'new', label: 'New Ads' },
@@ -48,6 +50,7 @@ export default function SpyIdeaPage() {
   const [ads, setAds] = useState<Ad[]>([])
   const [products, setProducts] = useState<Product[]>([])
   const [ideas, setIdeas] = useState<Idea[]>([])
+  const [bestSellers, setBestSellers] = useState<BestSellerGroup[]>([])
 
   useEffect(() => {
     const init = readParams(); setArea(init.area); setView(init.view); setSel(init.sel)
@@ -67,6 +70,9 @@ export default function SpyIdeaPage() {
       fetch(`/api/spy/ads?filter=${view}&limit=200&${filterQuery()}`).then(r => r.json()).then(d => setAds(d.ads ?? [])).catch(() => {})
     } else if (area === 'products' && view === 'new-add') {
       fetch(`/api/spy/products?days=30&limit=200&${filterQuery()}`).then(r => r.json()).then(d => setProducts(d.products ?? [])).catch(() => {})
+    } else if (area === 'products' && view === 'best-seller') {
+      const lim = sel.domain ? 50 : 12
+      fetch(`/api/spy/best-sellers?limit=${lim}&${filterQuery()}`).then(r => r.json()).then(d => setBestSellers(d.groups ?? [])).catch(() => {})
     } else if (area === 'ideas') {
       fetch('/api/spy/ideas').then(r => r.json()).then(setIdeas).catch(() => {})
     }
@@ -134,10 +140,16 @@ export default function SpyIdeaPage() {
               )}
 
               {area === 'products' && view === 'best-seller' && (
-                <div className="rounded-xl border border-dashed border-outline-variant bg-surface-container-lowest p-2xl text-center text-on-surface-variant">
-                  <span className="material-symbols-outlined text-[44px] text-outline-variant">trending_up</span>
-                  <h3 className="mt-sm text-headline-sm text-primary">Best Seller</h3>
-                  <p className="mt-xs text-body-md">Coming in Phase C — scrape the store&apos;s best-selling collection.</p>
+                <div className="space-y-xl">
+                  {bestSellers.map(g => (
+                    <section key={g.store.domain}>
+                      <h3 className="mb-md text-headline-sm text-primary">{g.store.domain}</h3>
+                      <div className="grid grid-cols-1 gap-md sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                        {g.items.map(it => <ProductCard key={it.id} p={it} onSave={saveProductIdea} rank={it.rank} rankDelta={it.delta} />)}
+                      </div>
+                    </section>
+                  ))}
+                  {bestSellers.length === 0 && <p className="text-body-md text-on-surface-variant">No best sellers yet — scan a store first (Setup → Sources).</p>}
                 </div>
               )}
 

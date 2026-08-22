@@ -10,10 +10,22 @@ function priceText(min: number | null, max: number | null) {
   if (min == null || max == null) return '-'
   return min === max ? `$${min.toFixed(2)}` : `$${min.toFixed(2)} - $${max.toFixed(2)}`
 }
+function TrendBadge({ delta }: { delta?: number | null }) {
+  if (delta === null || delta === undefined) return <span className="rounded-full bg-secondary/15 px-sm py-xs text-label-sm text-secondary">NEW</span>
+  if (delta > 0) return <span className="rounded-full bg-on-tertiary-container/15 px-sm py-xs text-label-sm text-on-tertiary-container">▲{delta}</span>
+  if (delta < 0) return <span className="rounded-full bg-error/10 px-sm py-xs text-label-sm text-error">▼{Math.abs(delta)}</span>
+  return <span className="rounded-full bg-surface-container px-sm py-xs text-label-sm text-on-surface-variant">—</span>
+}
 
-export default function ProductCard({ p, onSave }: { p: Product; onSave: (p: Product) => void }) {
+export default function ProductCard({ p, onSave, rank, rankDelta }: { p: Product; onSave: (p: Product) => void; rank?: number; rankDelta?: number | null }) {
   return (
-    <article className="overflow-hidden rounded-xl border border-outline-variant/20 bg-surface-container-lowest">
+    <article className="relative overflow-hidden rounded-xl border border-outline-variant/20 bg-surface-container-lowest">
+      {rank !== undefined && (
+        <div className="absolute left-xs top-xs z-10 flex items-center gap-xs">
+          <span className="rounded-full bg-primary/85 px-sm py-xs text-label-sm text-on-primary">#{rank}</span>
+          <TrendBadge delta={rankDelta} />
+        </div>
+      )}
       <div className="aspect-square bg-surface-container-low">
         {p.imageUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
