@@ -26,7 +26,7 @@ export async function ingestAds(
     const data = {
       advertiserId: advertiser.id, pageId: a.pageId, startDate: a.startDate, endDate: a.endDate,
       isActive: a.isActive, collationCount: a.collationCount, collationId: a.collationId,
-      mediaType: a.mediaType, displayFormat: a.displayFormat, ctaType: a.ctaType, ctaText: a.ctaText,
+      mediaType: a.mediaType, mediaUrl: a.mediaUrl, displayFormat: a.displayFormat, ctaType: a.ctaType, ctaText: a.ctaText,
       linkUrl: a.linkUrl, title: a.title, body: a.body, caption: a.caption,
       publisherPlatforms: JSON.stringify(a.publisherPlatforms), currency: a.currency,
       adLibraryUrl: a.adLibraryUrl, rawPayload: JSON.stringify(a.rawPayload),

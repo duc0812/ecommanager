@@ -25,8 +25,9 @@ export async function GET(req: NextRequest) {
   const enriched = ads.map(a => {
     const p = parseAdLink(a.linkUrl)
     const newProductLaunching = p.kind === 'product' && !!p.host && !!p.handle && launch.has(`${p.host}|${p.handle}`)
+    const { rawPayload: _rawPayload, ...rest } = a // eslint-disable-line @typescript-eslint/no-unused-vars
     return {
-      ...a,
+      ...rest,
       signals: {
         isNew: isNewAd(a.startDate, now),
         activeDays: activeDays(a.startDate, a.endDate, now),

@@ -11,7 +11,7 @@ function formatDate(v: string | null) {
 
 type Obs = { id: string; isActive: boolean; collationCount: number | null; observedAt: string }
 type AdDetail = {
-  ad: { id: string; title: string | null; body: string | null; caption: string | null; ctaText: string | null; linkUrl: string | null; adLibraryUrl: string | null; mediaType: string | null; startDate: string | null; endDate: string | null; advertiser: { pageName: string | null; pageCategory: string | null; likes: number | null }; observations: Obs[] }
+  ad: { id: string; title: string | null; body: string | null; caption: string | null; ctaText: string | null; linkUrl: string | null; adLibraryUrl: string | null; mediaType: string | null; mediaUrl: string | null; startDate: string | null; endDate: string | null; advertiser: { pageName: string | null; pageCategory: string | null; likes: number | null }; observations: Obs[] }
   signals: { isNew: boolean; activeDays: number; isLongRunning: boolean; isScaling: boolean; isStopped: boolean }
 }
 
@@ -46,6 +46,10 @@ export default function AdDetailPage() {
                 {data.signals.isStopped && <span className="rounded-full bg-error/10 px-sm py-xs text-label-sm text-error">Stopped</span>}
               </div>
               <div className="rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-lg">
+                {data.ad.mediaUrl && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={data.ad.mediaUrl} alt={data.ad.title ?? ''} className="mb-md max-h-96 w-full rounded-lg object-contain" />
+                )}
                 <p className="whitespace-pre-wrap text-body-md text-primary">{data.ad.body}</p>
                 {data.ad.caption && <p className="mt-sm text-body-sm text-on-surface-variant">{data.ad.caption}</p>}
                 <div className="mt-md flex gap-md text-label-sm">

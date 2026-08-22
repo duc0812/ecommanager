@@ -19,6 +19,7 @@ const ad = (id: string): ParsedSpyAd => ({
   adArchiveId: id, pageId: '123', pageName: 'Brand', pageCategory: 'Retail', pageLikes: 10,
   igUsername: null, igFollowers: null, isActive: true, startDate: new Date('2026-08-01'),
   endDate: null, collationCount: 3, collationId: 'c', mediaType: 'video', displayFormat: 'video',
+  mediaUrl: 'https://thumb.jpg',
   ctaType: 'SHOP_NOW', ctaText: 'Shop', linkUrl: 'https://x', title: 'T', body: 'B', caption: null,
   publisherPlatforms: ['facebook'], currency: 'USD', adLibraryUrl: 'https://l', rawPayload: { x: 1 },
 })

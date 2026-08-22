@@ -9,7 +9,7 @@ describe('mapApifyAd', () => {
       currency: 'USD', ad_library_url: 'https://facebook.com/ads/library/?id=A1',
       publisher_platform: ['facebook', 'instagram'],
       advertiser: { ad_library_page_info: { page_info: { likes: 1000, page_category: 'Retail', ig_username: 'brand', ig_followers: 50 } } },
-      snapshot: { display_format: 'video', videos: [{ video_hd_url: 'v' }], body: { text: 'Buy now' }, caption: 'cap', cta_type: 'SHOP_NOW', cta_text: 'Shop Now', link_url: 'https://shop', title: 'T' },
+      snapshot: { display_format: 'video', videos: [{ video_hd_url: 'v', video_preview_image_url: 'v' }], body: { text: 'Buy now' }, caption: 'cap', cta_type: 'SHOP_NOW', cta_text: 'Shop Now', link_url: 'https://shop', title: 'T' },
     }
     const a = mapApifyAd(raw)
     expect(a.adArchiveId).toBe('A1')
@@ -19,6 +19,7 @@ describe('mapApifyAd', () => {
     expect(a.isActive).toBe(true)
     expect(a.startDate?.toISOString()).toBe('2025-01-01T00:00:00.000Z')
     expect(a.mediaType).toBe('video')
+    expect(a.mediaUrl).toBe('v')
     expect(a.body).toBe('Buy now')
     expect(a.ctaType).toBe('SHOP_NOW')
     expect(a.publisherPlatforms).toEqual(['facebook', 'instagram'])
