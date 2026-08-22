@@ -5,12 +5,11 @@ import SpySectionNav from '@/components/SpySectionNav'
 import TaxonomyEditor from '@/components/spy/TaxonomyEditor'
 
 const NAV_ITEMS = [
-  { key: 'dashboard', label: 'Dashboard', icon: 'space_dashboard', href: '/tools/spy-idea/dashboard' },
-  { key: 'ads', label: 'Ad Library', icon: 'library_books', href: '/tools/spy-idea?tab=ads' },
-  { key: 'products', label: 'Products', icon: 'inventory_2', href: '/tools/spy-idea?tab=products' },
-  { key: 'stores', label: 'Stores', icon: 'storefront', href: '/tools/spy-idea?tab=stores' },
-  { key: 'ideas', label: 'Ideas', icon: 'lightbulb', href: '/tools/spy-idea?tab=ideas' },
+  { key: 'ads', label: 'Ad Library', icon: 'library_books', href: '/tools/spy-idea?area=ads&view=new' },
+  { key: 'products', label: 'Product Spy', icon: 'inventory_2', href: '/tools/spy-idea?area=products&view=new-add' },
+  { key: 'sources', label: 'Sources', icon: 'storefront', href: '/tools/spy-idea/sources' },
   { key: 'niches', label: 'Niches', icon: 'sell', href: '/tools/spy-idea/niches' },
+  { key: 'types', label: 'Product types', icon: 'category', href: '/tools/spy-idea/product-types' },
 ]
 
 export default function NichesPage() {
