@@ -2,12 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { normalizeDomain } from '@/lib/spy/shopify'
 import { isNewAd } from '@/lib/spy/ad-signals'
+import { defaultSearchTerm } from '@/lib/spy/ad-search-url'
 
 export const dynamic = 'force-dynamic'
-
-function defaultSearchTerm(domain: string): string {
-  return domain.replace(/^www\./, '').split('.')[0]
-}
 
 export async function GET() {
   const domains = await prisma.spyAdDomain.findMany({ orderBy: { createdAt: 'desc' } })
