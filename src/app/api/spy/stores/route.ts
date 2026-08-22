@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { normalizeDomain } from '@/lib/spy/shopify'
 
+export const dynamic = 'force-dynamic'
+
 export async function GET() {
   const stores = await prisma.spyStore.findMany({
     orderBy: { addedAt: 'desc' },

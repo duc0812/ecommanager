@@ -3,6 +3,8 @@ import { prisma } from '@/lib/db'
 import { normalizeDomain } from '@/lib/spy/shopify'
 import { isNewAd } from '@/lib/spy/ad-signals'
 
+export const dynamic = 'force-dynamic'
+
 function defaultSearchTerm(domain: string): string {
   return domain.replace(/^www\./, '').split('.')[0]
 }

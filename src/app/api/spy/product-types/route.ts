@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 
+export const dynamic = 'force-dynamic'
+
 function normKeywords(v: unknown): string[] {
   if (Array.isArray(v)) return v.map(k => String(k).trim()).filter(Boolean)
   return String(v ?? '').split(/[\n,]/).map(k => k.trim()).filter(Boolean)

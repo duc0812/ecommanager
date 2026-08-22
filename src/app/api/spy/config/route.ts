@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { APIFY_TOKEN_SETTING_KEY } from '@/lib/spy/apify'
 
+export const dynamic = 'force-dynamic'
+
 export async function GET() {
   const row = await prisma.appSetting.findUnique({ where: { key: APIFY_TOKEN_SETTING_KEY } })
   return NextResponse.json({ hasToken: Boolean(row?.value?.trim()) })

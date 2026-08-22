@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { bareDomain } from '@/lib/spy/domain-filter'
 
+export const dynamic = 'force-dynamic'
+
 export async function GET() {
   const [stores, adDomains, niches, productTypes] = await Promise.all([
     prisma.spyStore.findMany({ select: { domain: true } }),
