@@ -7,8 +7,9 @@ vi.mock('@/lib/db', () => ({
       create: vi.fn(async ({ data }: any) => { const s = { id: 'scan1', ...data }; db.scans.push(s); return s }),
       update: vi.fn(async ({ data }: any) => { Object.assign(db.scans[0], data); return db.scans[0] }),
     },
-    spyPageTarget: { update: vi.fn(async () => ({})) },
+    spyPageTarget: { update: vi.fn(async () => ({})), upsert: vi.fn(async () => ({})) },
     spyAdDomain: { update: vi.fn(async () => ({})) },
+    spyAdvertiser: { findMany: vi.fn(async () => []) },
   },
 }))
 vi.mock('./apify', () => ({
@@ -21,6 +22,7 @@ vi.mock('./ingest-ads', () => ({ ingestAds: vi.fn(async () => ({ found: 1, newAd
 import { runPageAdScan, runDomainAdScan } from './scan-ads'
 import { startActorRun, pollRunUntilDone, getDatasetItems } from './apify'
 import { ingestAds } from './ingest-ads'
+import { prisma } from '@/lib/db'
 
 beforeEach(() => { db.scans.length = 0; vi.clearAllMocks() })
 
@@ -48,10 +50,12 @@ describe('runDomainAdScan', () => {
     ;(pollRunUntilDone as any).mockResolvedValue('SUCCEEDED')
     ;(getDatasetItems as any).mockResolvedValue([{ ad_archive_id: 'A1', page_id: '9', is_active: true }])
     ;(ingestAds as any).mockResolvedValue({ found: 1, newAds: 1, updated: 0 })
+    ;(prisma.spyAdvertiser.findMany as any).mockResolvedValue([{ fbPageId: '9', pageName: 'Brand' }])
     const r = await runDomainAdScan({ id: 'dom1', searchTerm: 'familystore', country: 'ALL' })
     expect(r.status).toBe('success')
     expect(db.scans[0].type).toBe('DOMAIN_ADS')
     expect((ingestAds as any).mock.calls[0][3]).toEqual({ adDomainId: 'dom1' })
     expect(String((startActorRun as any).mock.calls[0][0].urls[0].url)).toContain('q=familystore')
+    expect((prisma.spyPageTarget.upsert as any).mock.calls[0][0].create.pageUrl).toBe('https://www.facebook.com/9')
   })
 })
