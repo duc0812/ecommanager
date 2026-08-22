@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react'
 import Sidebar from '@/components/Sidebar'
 import { RoleGate } from '@/components/RoleGate'
+import SpySectionNav from '@/components/SpySectionNav'
 
 type Summary = { activeAds: number; newLaunchingAds: number; scalingAds: number; longRunningAds: number }
 type Signals = { isNew: boolean; activeDays: number; isLongRunning: boolean; isScaling: boolean; isStopped: boolean; adStyle: 'product'|'collection'|'homepage'|'other'|null; newProductLaunching: boolean }
@@ -109,6 +110,17 @@ export default function SpyDashboardPage() {
             <p className="text-label-sm uppercase tracking-wider text-on-surface-variant">Tools</p>
             <h2 className="text-display-md font-bold text-primary">Spy Dashboard</h2>
           </header>
+
+          <SpySectionNav
+            active="dashboard"
+            items={[
+              { key: 'dashboard', label: 'Dashboard', icon: 'space_dashboard', href: '/tools/spy-idea/dashboard' },
+              { key: 'ads', label: 'Ad Library', icon: 'library_books', href: '/tools/spy-idea?tab=ads' },
+              { key: 'products', label: 'Products', icon: 'inventory_2', href: '/tools/spy-idea?tab=products' },
+              { key: 'stores', label: 'Stores', icon: 'storefront', href: '/tools/spy-idea?tab=stores' },
+              { key: 'ideas', label: 'Ideas', icon: 'lightbulb', href: '/tools/spy-idea?tab=ideas' },
+            ]}
+          />
 
           {summary && (
             <div className="mb-xl grid grid-cols-2 gap-lg md:grid-cols-4">
