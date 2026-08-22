@@ -13,7 +13,6 @@ type MetaAccount = {
   project: { name: string } | null
   lastSyncAt: string | null
   currency: string | null
-  exchangeRate: number | null
 }
 
 type MetaBilling = {

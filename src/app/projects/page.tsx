@@ -73,7 +73,7 @@ type Analytics = {
   }
   dataDiagnostics: {
     period: { start: string; end: string }
-    metaBilling: { source: string; firstDate: string | null; lastDate: string | null; transactionCount: number; missingExchangeRateAccounts?: string[] }
+    metaBilling: { source: string; firstDate: string | null; lastDate: string | null; transactionCount: number; missingRateCount?: number }
     actualAdSpend: { source: string; note: string }
     orderProfit?: { source: string; mappedOrderCount: number; unmappedOrderCount: number; estimateRule?: string }
     orderRevenue?: {
@@ -597,9 +597,9 @@ function DataDiagnostics({ analytics }: { analytics: Analytics }) {
           </span>
         </div>
         <p className="text-label-sm text-on-surface-variant">{analytics.dataDiagnostics.actualAdSpend.note}</p>
-        {(analytics.dataDiagnostics.metaBilling.missingExchangeRateAccounts?.length ?? 0) > 0 && (
+        {(analytics.dataDiagnostics.metaBilling.missingRateCount ?? 0) > 0 && (
           <p className="rounded-lg bg-amber-50 px-md py-sm text-label-sm text-amber-800">
-            Chưa có tỷ giá cho {analytics.dataDiagnostics.metaBilling.missingExchangeRateAccounts?.join(', ')}. Chi phí Meta của các tài khoản này chưa được cộng vào tổng USD.
+            {analytics.dataDiagnostics.metaBilling.missingRateCount} Meta billing(s) missing an exchange rate — set rates in Setup → Meta Exchange Rate
           </p>
         )}
         {analytics.dataDiagnostics.orderProfit && (

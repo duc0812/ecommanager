@@ -32,7 +32,7 @@ type OverviewData = {
     totalSpend: number
     billingCount: number
     recentBillings: RecentBilling[]
-    missingExchangeRateAccounts: { id: string; accountId: string; accountName: string | null; currency: string | null }[]
+    missingRateCount: number
   }
   projects: { count: number; list: ProjectSummary[] }
   staff: { count: number; totalMonthlyCost: number }
@@ -145,11 +145,11 @@ export default function OverviewPage() {
           </div>
         )}
 
-        {(data?.meta.missingExchangeRateAccounts?.length ?? 0) > 0 && (
+        {(data?.meta.missingRateCount ?? 0) > 0 && (
           <div className="mb-lg rounded-xl border border-amber-300 bg-amber-50 px-lg py-md flex items-center gap-md text-amber-900">
             <span className="material-symbols-outlined">currency_exchange</span>
             <p className="text-body-sm flex-1">
-              Tổng USD chưa bao gồm {data?.meta.missingExchangeRateAccounts.map(account => account.accountName || account.accountId).join(', ')} vì chưa có tỷ giá.
+              {data?.meta.missingRateCount} Meta billing(s) missing an exchange rate — set rates in Setup → Meta Exchange Rate
             </p>
             <a href="/setup/meta" className="text-label-sm font-semibold underline">Nhập tỷ giá</a>
           </div>
