@@ -5,36 +5,48 @@ import { RoleGate } from '@/components/RoleGate'
 
 type Summary = { activeAds: number; newLaunchingAds: number; scalingAds: number; longRunningAds: number }
 type Signals = { isNew: boolean; activeDays: number; isLongRunning: boolean; isScaling: boolean; isStopped: boolean; adStyle: 'product'|'collection'|'homepage'|'other'|null; newProductLaunching: boolean }
-type Ad = { id: string; title: string | null; body: string | null; adArchiveId: string; adLibraryUrl: string | null; linkUrl: string | null; isActive: boolean; startDate: string | null; mediaUrl: string | null; advertiser: { pageName: string | null }; signals: Signals }
+type Ad = { id: string; title: string | null; body: string | null; adArchiveId: string; adLibraryUrl: string | null; linkUrl: string | null; isActive: boolean; startDate: string | null; mediaUrl: string | null; mediaType: 'video'|'image'|'carousel'|'dco'|null; advertiser: { pageName: string | null }; signals: Signals }
 
 function formatDate(v: string | null) {
   if (!v) return '-'
   return new Intl.DateTimeFormat('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }).format(new Date(v))
 }
 
-function Stat({ label, value }: { label: string; value: number }) {
+function Stat({ label, value, onClick, active }: { label: string; value: number; onClick?: () => void; active?: boolean }) {
   return (
-    <div className="rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-lg">
+    <button
+      type="button"
+      onClick={onClick}
+      className={`w-full rounded-xl border bg-surface-container-lowest p-lg text-left transition-colors ${active ? 'border-secondary' : 'border-outline-variant/20'} ${onClick ? 'cursor-pointer hover:border-secondary/60' : 'cursor-default'}`}
+    >
       <p className="text-label-sm uppercase tracking-wider text-on-surface-variant">{label}</p>
       <p className="mt-xs text-stats-lg text-primary">{value}</p>
-    </div>
+    </button>
   )
 }
 
 const STYLE_LABEL: Record<string, string> = { product: 'Product', collection: 'Collection', homepage: 'Homepage', other: 'Other' }
+const MEDIA_LABEL: Record<string, string> = { video: '🎬 Video', image: '🖼 Image', carousel: '🎠 Carousel', dco: 'DCO' }
+const FILTER_LABEL: Record<string, string> = { active: 'Active', new: 'New', launching: '🚀 New Product Launching', 'long-running': 'Long-running', scaling: 'Scaling', stopped: 'Stopped', all: 'All' }
+const FILTERS = ['active', 'new', 'launching', 'long-running', 'scaling', 'stopped', 'all']
 
 function AdCard({ a, onSave }: { a: Ad; onSave: (a: Ad) => void }) {
   const s = a.signals
   return (
     <article className="rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-md">
-      {a.mediaUrl ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={a.mediaUrl} alt={a.title ?? ''} className="mb-sm aspect-square w-full rounded-lg bg-surface-container-low object-contain" />
-      ) : (
-        <div className="mb-sm flex aspect-square w-full items-center justify-center rounded-lg bg-surface-container-low text-on-surface-variant">
-          <span className="material-symbols-outlined text-[36px]">image_not_supported</span>
-        </div>
-      )}
+      <div className="relative mb-sm">
+        {a.mediaUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={a.mediaUrl} alt={a.title ?? ''} className="aspect-square w-full rounded-lg bg-surface-container-low object-contain" />
+        ) : (
+          <div className="flex aspect-square w-full items-center justify-center rounded-lg bg-surface-container-low text-on-surface-variant">
+            <span className="material-symbols-outlined text-[36px]">image_not_supported</span>
+          </div>
+        )}
+        {a.mediaType && (
+          <span className="absolute right-xs top-xs rounded-full bg-primary/80 px-sm py-xs text-label-sm text-on-primary">{MEDIA_LABEL[a.mediaType]}</span>
+        )}
+      </div>
       <div className="mb-xs flex flex-wrap gap-xs">
         {s.newProductLaunching && <span className="rounded-full bg-secondary/15 px-sm py-xs text-label-sm text-secondary">🚀 New Product Launching</span>}
         {s.adStyle && <span className="rounded-full bg-surface-container px-sm py-xs text-label-sm text-on-surface-variant">{STYLE_LABEL[s.adStyle]}</span>}
@@ -76,6 +88,7 @@ export default function SpyDashboardPage() {
   const feed = allAds.filter(a => {
     if (adFilter === 'active') return a.isActive
     if (adFilter === 'new') return a.signals.isNew
+    if (adFilter === 'launching') return a.signals.newProductLaunching
     if (adFilter === 'long-running') return a.signals.isLongRunning
     if (adFilter === 'scaling') return a.signals.isScaling
     if (adFilter === 'stopped') return a.signals.isStopped
@@ -99,10 +112,10 @@ export default function SpyDashboardPage() {
 
           {summary && (
             <div className="mb-xl grid grid-cols-2 gap-lg md:grid-cols-4">
-              <Stat label="Active ads" value={summary.activeAds} />
-              <Stat label="New Product Launching" value={summary.newLaunchingAds} />
-              <Stat label="Scaling ads" value={summary.scalingAds} />
-              <Stat label="Long-running ads" value={summary.longRunningAds} />
+              <Stat label="Active ads" value={summary.activeAds} onClick={() => setAdFilter('active')} active={adFilter === 'active'} />
+              <Stat label="New Product Launching" value={summary.newLaunchingAds} onClick={() => setAdFilter('launching')} active={adFilter === 'launching'} />
+              <Stat label="Scaling ads" value={summary.scalingAds} onClick={() => setAdFilter('scaling')} active={adFilter === 'scaling'} />
+              <Stat label="Long-running ads" value={summary.longRunningAds} onClick={() => setAdFilter('long-running')} active={adFilter === 'long-running'} />
             </div>
           )}
 
@@ -118,8 +131,8 @@ export default function SpyDashboardPage() {
             <div className="mb-md flex items-center gap-md">
               <h3 className="text-headline-sm text-primary">Ads</h3>
               <div className="flex flex-wrap gap-xs">
-                {['active', 'new', 'long-running', 'scaling', 'stopped', 'all'].map(f => (
-                  <button key={f} onClick={() => setAdFilter(f)} className={`rounded-md px-md py-xs text-label-sm capitalize ${adFilter === f ? 'bg-secondary text-on-secondary' : 'bg-surface-container text-on-surface-variant'}`}>{f}</button>
+                {FILTERS.map(f => (
+                  <button key={f} onClick={() => setAdFilter(f)} className={`rounded-md px-md py-xs text-label-sm ${adFilter === f ? 'bg-secondary text-on-secondary' : 'bg-surface-container text-on-surface-variant'}`}>{FILTER_LABEL[f]}</button>
                 ))}
               </div>
             </div>
