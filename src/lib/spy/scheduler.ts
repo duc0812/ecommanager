@@ -1,6 +1,6 @@
 import cron from 'node-cron'
 import { prisma } from '@/lib/db'
-import { runStoreProductScan } from './scan-runner'
+import { runStoreProductScan, runStoreBestSellerScan } from './scan-runner'
 import { runPageAdScan } from './scan-ads'
 
 let initialized = false
@@ -18,8 +18,10 @@ async function scanAllStores() {
   for (const s of stores) {
     try { await runStoreProductScan(s) }
     catch (e) { console.error('[spy-scheduler] scan failed for', s.domain, e) }
+    try { await runStoreBestSellerScan(s) }
+    catch (e) { console.error('[spy-scheduler] best-seller scan failed for', s.domain, e) }
   }
-  console.log(`[spy-scheduler] product scan done for ${stores.length} store(s)`)
+  console.log(`[spy-scheduler] product + best-seller scan done for ${stores.length} store(s)`)
 }
 
 async function scanAllPageTargets() {
