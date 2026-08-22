@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/db'
+import type { DatedRate } from '@/lib/meta-currency'
 
 const META_EXCHANGE_RATE_PREFIX = 'meta.exchangeRate.'
 
@@ -37,4 +38,17 @@ export async function saveMetaExchangeRate(adAccountId: string, exchangeRate: nu
     create: { key, value: String(exchangeRate) },
     update: { value: String(exchangeRate) },
   })
+}
+
+export async function getMetaRateSchedule(): Promise<DatedRate[]> {
+  const rows = await prisma.metaExchangeRate.findMany({ orderBy: { effectiveDate: 'asc' }, select: { effectiveDate: true, rate: true } })
+  return rows
+}
+
+export async function addMetaRate(effectiveDate: string, rate: number): Promise<void> {
+  await prisma.metaExchangeRate.upsert({ where: { effectiveDate }, create: { effectiveDate, rate }, update: { rate } })
+}
+
+export async function deleteMetaRate(id: string): Promise<void> {
+  await prisma.metaExchangeRate.delete({ where: { id } })
 }

@@ -795,3 +795,11 @@ model SpyScanQuota {
 
   @@unique([userId, day])
 }
+
+model MetaExchangeRate {
+  id            String   @id @default(cuid())
+  effectiveDate String   @unique
+  rate          Float
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
