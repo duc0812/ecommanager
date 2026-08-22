@@ -2,13 +2,14 @@ import { describe, it, expect } from 'vitest'
 import { buildAdLibrarySearchUrl, defaultSearchTerm } from './ad-search-url'
 
 describe('buildAdLibrarySearchUrl', () => {
-  it('builds an Ad Library keyword-search URL with encoded term and country', () => {
+  it('builds an exact-phrase Ad Library URL with a quoted, encoded term and country', () => {
     const url = buildAdLibrarySearchUrl('family store', 'US')
-    expect(url).toBe('https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=US&q=family%20store&search_type=keyword_unordered&media_type=all')
+    expect(url).toBe('https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=US&q=%22family%20store%22&search_type=keyword_exact_phrase&media_type=all')
   })
-  it('defaults country to ALL', () => {
-    expect(buildAdLibrarySearchUrl('familystore')).toContain('country=ALL')
-    expect(buildAdLibrarySearchUrl('familystore')).toContain('q=familystore')
+  it('defaults country to ALL and wraps the term in quotes', () => {
+    expect(buildAdLibrarySearchUrl('familystore.com')).toContain('country=ALL')
+    expect(buildAdLibrarySearchUrl('familystore.com')).toContain('q=%22familystore.com%22')
+    expect(buildAdLibrarySearchUrl('familystore.com')).toContain('search_type=keyword_exact_phrase')
   })
 })
 
