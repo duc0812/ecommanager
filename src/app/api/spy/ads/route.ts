@@ -3,19 +3,29 @@ import { prisma } from '@/lib/db'
 import { isNewAd, activeDays, isLongRunning, isScaling, isStopped } from '@/lib/spy/ad-signals'
 import { parseAdLink } from '@/lib/spy/ad-link'
 import { recentLaunchSet } from '@/lib/spy/ad-product-match'
+import { parseKeywords, nicheOrWhere } from '@/lib/spy/niche'
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const filter = searchParams.get('filter') || undefined
   const storeId = searchParams.get('storeId') || undefined
   const domainId = searchParams.get('domainId') || undefined
+  const nicheId = searchParams.get('nicheId') || undefined
   const limit = Math.min(parseInt(searchParams.get('limit') ?? '200', 10) || 200, 500)
 
+  const base: any = {
+    ...(storeId ? { advertiser: { storeId } } : {}),
+    ...(domainId ? { advertiser: { adDomainId: domainId } } : {}),
+  }
+  let where: any = base
+  if (nicheId) {
+    const niche = await prisma.spyNiche.findUnique({ where: { id: nicheId }, select: { keywords: true } })
+    const nw = nicheOrWhere(parseKeywords(niche?.keywords), ['title', 'body'])
+    if (nw) where = { AND: [base, nw] }
+  }
+
   const ads = await prisma.spyAd.findMany({
-    where: {
-      ...(storeId ? { advertiser: { storeId } } : {}),
-      ...(domainId ? { advertiser: { adDomainId: domainId } } : {}),
-    },
+    where,
     orderBy: { lastSeenAt: 'desc' },
     take: limit,
     include: {
