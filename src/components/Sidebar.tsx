@@ -35,6 +35,7 @@ const nav: NavEntry[] = [
   { type: 'group', label: 'Setup' },
   { type: 'child', href: '/setup', icon: 'store', label: 'Store' },
   { type: 'child', href: '/setup/meta', icon: 'campaign', label: 'Meta' },
+  { type: 'child', href: '/setup/meta-rates', icon: 'currency_exchange', label: 'Meta Exchange Rate' },
   { type: 'child', href: '/setup/projects', icon: 'folder', label: 'Projects' },
   { type: 'child', href: '/setup/hr', icon: 'group', label: 'HR' },
   { type: 'child', href: '/setup/users', icon: 'admin_panel_settings', label: 'Users' },

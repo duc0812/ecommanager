@@ -12,7 +12,6 @@ type MetaAccount = {
   accountId: string
   accountName: string | null
   currency: string | null
-  exchangeRate: number | null
   projectId: string | null
   project: { id: string; name: string } | null
   lastSyncAt: string | null
@@ -27,10 +26,8 @@ export default function SetupMetaPage() {
   const [accountName, setAccountName] = useState('')
   const [accessToken, setAccessToken] = useState('')
   const [currency, setCurrency] = useState('USD')
-  const [exchangeRate, setExchangeRate] = useState('')
   const [saving, setSaving] = useState(false)
   const [currencyDrafts, setCurrencyDrafts] = useState<Record<string, string>>({})
-  const [rateDrafts, setRateDrafts] = useState<Record<string, string>>({})
   const [savingCurrency, setSavingCurrency] = useState<string | null>(null)
   const [currencyError, setCurrencyError] = useState<string | null>(null)
   const [tokenDrafts, setTokenDrafts] = useState<Record<string, string>>({})
@@ -62,7 +59,6 @@ export default function SetupMetaPage() {
     const accountList: MetaAccount[] = Array.isArray(a) ? a : []
     setAccounts(accountList)
     setCurrencyDrafts(Object.fromEntries(accountList.map(account => [account.id, account.currency || 'USD'])))
-    setRateDrafts(Object.fromEntries(accountList.map(account => [account.id, account.exchangeRate ? String(account.exchangeRate) : ''])))
     setProjects(Array.isArray(p) ? p : [])
     setLoading(false)
   }, [])
@@ -98,16 +94,12 @@ export default function SetupMetaPage() {
 
   async function addAccount() {
     if (!accountId || !accessToken) return
-    if (currency === 'VND' && (!Number(exchangeRate) || Number(exchangeRate) <= 0)) {
-      setCurrencyError('Vui lòng nhập tỷ giá VND cho 1 USD.')
-      return
-    }
     setSaving(true)
     setCurrencyError(null)
     const res = await fetch('/api/meta/accounts', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ accountId, accountName, accessToken, currency, exchangeRate }),
+      body: JSON.stringify({ accountId, accountName, accessToken, currency }),
     })
     const result = await res.json()
     if (!res.ok) {
@@ -115,31 +107,22 @@ export default function SetupMetaPage() {
       setSaving(false)
       return
     }
-    setAccountId(''); setAccountName(''); setAccessToken(''); setCurrency('USD'); setExchangeRate('')
+    setAccountId(''); setAccountName(''); setAccessToken(''); setCurrency('USD')
     await load()
     setSaving(false)
   }
 
   async function saveCurrency(account: MetaAccount) {
     const nextCurrency = currencyDrafts[account.id] || 'USD'
-    const nextRate = Number(rateDrafts[account.id])
-    if (nextCurrency === 'VND' && (!Number.isFinite(nextRate) || nextRate <= 0)) {
-      setCurrencyError(`Vui lòng nhập tỷ giá cho ${account.accountName || account.accountId}.`)
-      return
-    }
     setSavingCurrency(account.id)
     setCurrencyError(null)
     const res = await fetch('/api/meta/accounts', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        id: account.id,
-        currency: nextCurrency,
-        exchangeRate: nextCurrency === 'VND' ? nextRate : null,
-      }),
+      body: JSON.stringify({ id: account.id, currency: nextCurrency }),
     })
     const result = await res.json()
-    if (!res.ok) setCurrencyError(result.error || 'Không thể lưu tỷ giá.')
+    if (!res.ok) setCurrencyError(result.error || 'Không thể lưu tiền tệ.')
     else await load()
     setSavingCurrency(null)
   }
@@ -245,6 +228,11 @@ export default function SetupMetaPage() {
           <p className="text-label-sm text-on-surface-variant uppercase tracking-wider mb-xs">Setup</p>
           <h2 className="text-display-md font-bold text-primary">Meta Ads</h2>
           <p className="text-on-surface-variant text-body-md mt-xs">Kết nối tài khoản quảng cáo Meta và gắn với dự án</p>
+          <p className="text-body-sm text-on-surface-variant mt-sm">
+            <span className="material-symbols-outlined text-[14px] align-middle mr-xs">info</span>
+            VND exchange rates are managed in{' '}
+            <a href="/setup/meta-rates" className="text-secondary underline hover:opacity-80">Setup → Meta Exchange Rate</a>.
+          </p>
         </header>
 
         {syncStartError && (
@@ -296,27 +284,12 @@ export default function SetupMetaPage() {
                   <label className="block text-label-sm text-on-surface-variant uppercase tracking-wider">Tên tài khoản</label>
                   <input type="text" value={accountName} onChange={e => setAccountName(e.target.value)} placeholder="VD: POD Ads Account" className={inputCls} />
                 </div>
-                <div className="grid grid-cols-2 gap-md">
-                  <div className="space-y-xs">
-                    <label className="block text-label-sm text-on-surface-variant uppercase tracking-wider">Tiền tệ</label>
-                    <select value={currency} onChange={e => setCurrency(e.target.value)} className={inputCls}>
-                      <option value="USD">USD</option>
-                      <option value="VND">VND</option>
-                    </select>
-                  </div>
-                  <div className="space-y-xs">
-                    <label className="block text-label-sm text-on-surface-variant uppercase tracking-wider">Tỷ giá VND / 1 USD</label>
-                    <input
-                      type="number"
-                      min="1"
-                      step="1"
-                      value={exchangeRate}
-                      onChange={e => setExchangeRate(e.target.value)}
-                      placeholder="VD: 25500"
-                      disabled={currency !== 'VND'}
-                      className={`${inputCls} disabled:opacity-40`}
-                    />
-                  </div>
+                <div className="space-y-xs">
+                  <label className="block text-label-sm text-on-surface-variant uppercase tracking-wider">Tiền tệ</label>
+                  <select value={currency} onChange={e => setCurrency(e.target.value)} className={inputCls}>
+                    <option value="USD">USD</option>
+                    <option value="VND">VND</option>
+                  </select>
                 </div>
                 <div className="space-y-xs">
                   <label className="block text-label-sm text-on-surface-variant uppercase tracking-wider">Access Token *</label>
@@ -338,7 +311,7 @@ export default function SetupMetaPage() {
                 </div>
                 <button
                   onClick={addAccount}
-                  disabled={saving || !accountId || !accessToken || (currency === 'VND' && !exchangeRate)}
+                  disabled={saving || !accountId || !accessToken}
                   className="flex items-center gap-sm bg-secondary text-on-secondary px-lg py-sm rounded-lg text-label-md hover:opacity-90 disabled:opacity-40 transition-opacity"
                 >
                   <span className={`material-symbols-outlined text-[18px] ${saving ? 'animate-spin' : ''}`}>{saving ? 'sync' : 'add_circle'}</span>
@@ -443,7 +416,7 @@ export default function SetupMetaPage() {
                           </button>
                         </div>
                       </div>
-                      <div className="mt-md grid grid-cols-1 sm:grid-cols-[120px_1fr_auto] gap-sm items-end rounded-lg bg-surface-container-low p-md">
+                      <div className="mt-md grid grid-cols-1 sm:grid-cols-[120px_auto] gap-sm items-end rounded-lg bg-surface-container-low p-md">
                         <div className="space-y-xs">
                           <label className="block text-label-sm text-on-surface-variant">Tiền tệ</label>
                           <select
@@ -455,19 +428,6 @@ export default function SetupMetaPage() {
                             <option value="VND">VND</option>
                           </select>
                         </div>
-                        <div className="space-y-xs">
-                          <label className="block text-label-sm text-on-surface-variant">Tỷ giá VND / 1 USD</label>
-                          <input
-                            type="number"
-                            min="1"
-                            step="1"
-                            value={rateDrafts[a.id] || ''}
-                            onChange={e => setRateDrafts(current => ({ ...current, [a.id]: e.target.value }))}
-                            placeholder="VD: 25500"
-                            disabled={(currencyDrafts[a.id] || 'USD') !== 'VND'}
-                            className={`${inputCls} disabled:opacity-40`}
-                          />
-                        </div>
                         <button
                           onClick={() => saveCurrency(a)}
                           disabled={savingCurrency === a.id}
@@ -476,7 +436,7 @@ export default function SetupMetaPage() {
                           <span className={`material-symbols-outlined text-[16px] ${savingCurrency === a.id ? 'animate-spin' : ''}`}>
                             {savingCurrency === a.id ? 'sync' : 'currency_exchange'}
                           </span>
-                          Lưu tỷ giá
+                          Lưu tiền tệ
                         </button>
                       </div>
                       <div className="mt-sm grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-sm items-end rounded-lg border border-outline-variant/20 p-md">
