@@ -119,6 +119,7 @@ export default function SpyDashboardPage() {
               { key: 'products', label: 'Products', icon: 'inventory_2', href: '/tools/spy-idea?tab=products' },
               { key: 'stores', label: 'Stores', icon: 'storefront', href: '/tools/spy-idea?tab=stores' },
               { key: 'ideas', label: 'Ideas', icon: 'lightbulb', href: '/tools/spy-idea?tab=ideas' },
+              { key: 'niches', label: 'Niches', icon: 'sell', href: '/tools/spy-idea/niches' },
             ]}
           />
 

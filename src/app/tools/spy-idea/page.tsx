@@ -207,6 +207,7 @@ export default function SpyIdeaPage() {
               { key: 'products', label: 'Products', icon: 'inventory_2', onClick: () => setTab('products') },
               { key: 'stores', label: 'Stores', icon: 'storefront', onClick: () => setTab('stores') },
               { key: 'ideas', label: 'Ideas', icon: 'lightbulb', onClick: () => setTab('ideas') },
+              { key: 'niches', label: 'Niches', icon: 'sell', href: '/tools/spy-idea/niches' },
             ]}
           />
 
