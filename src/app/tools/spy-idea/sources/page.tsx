@@ -1,6 +1,5 @@
 'use client'
 import { useEffect, useState, useCallback } from 'react'
-import AdCard, { Ad } from '@/components/spy/AdCard'
 import type { SpyCronConfig } from '@/lib/spy/cron-config'
 
 type Store = { id: string; domain: string; name: string | null; status: string; _count?: { products: number } }
@@ -10,13 +9,11 @@ type Quota = { isAdmin: boolean; used: number; limit: number; remaining: number 
 
 function DomainBlock({ domain, onScan, onRemove, onChanged }: { domain: AdDomain; onScan: () => void; onRemove: () => void; onChanged: () => void }) {
   const [pages, setPages] = useState<PageTarget[]>([])
-  const [ads, setAds] = useState<Ad[]>([])
   const [pageUrl, setPageUrl] = useState('')
   const [term, setTerm] = useState(domain.searchTerm)
 
   async function load() {
     setPages(await fetch(`/api/spy/pages?adDomainId=${domain.id}`).then(r => r.json()))
-    const d = await fetch(`/api/spy/ads?domainId=${domain.id}`).then(r => r.json()); setAds(d.ads ?? [])
   }
   useEffect(() => { load() }, [domain.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -66,10 +63,6 @@ function DomainBlock({ domain, onScan, onRemove, onChanged }: { domain: AdDomain
             </li>
           ))}
         </ul>
-      </div>
-      <div className="grid grid-cols-1 gap-md sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-        {ads.map(a => <AdCard key={a.id} a={a} onSave={() => {}} />)}
-        {ads.length === 0 && <p className="text-body-md text-on-surface-variant">No ads yet — scan the domain or a fanpage.</p>}
       </div>
     </section>
   )

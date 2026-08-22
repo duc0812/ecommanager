@@ -25,7 +25,6 @@ export default function SpyFilterSidebar() {
   const router = useRouter()
   const params = useSearchParams()
   const [filters, setFilters] = useState<FiltersData>({ domains: [], niches: [], productTypes: [] })
-  const showFacets = pathname === '/tools/spy-idea'
 
   useEffect(() => { fetch('/api/spy/filters', { cache: 'no-store' }).then(r => r.json()).then(setFilters).catch(() => {}) }, [])
 
@@ -37,14 +36,10 @@ export default function SpyFilterSidebar() {
 
   return (
     <aside className="sticky top-md w-[220px] flex-none self-start rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-md shadow-card">
-      {showFacets && (
-        <>
-          <Facet title="Domain" value={params.get('domain')} onPick={v => setParam('domain', v)} options={[{ key: null, label: 'All' }, ...filters.domains.map(d => ({ key: d, label: d }))]} />
-          <Facet title="Niche" value={params.get('niche')} onPick={v => setParam('niche', v)} options={[{ key: null, label: 'All' }, ...filters.niches.map(n => ({ key: n.id, label: n.name }))]} />
-          <Facet title="Product type" value={params.get('type')} onPick={v => setParam('type', v)} options={[{ key: null, label: 'All' }, ...filters.productTypes.map(t => ({ key: t.id, label: t.name }))]} />
-          <div className="my-md h-px bg-outline-variant/40" />
-        </>
-      )}
+      <Facet title="Domain" value={params.get('domain')} onPick={v => setParam('domain', v)} options={[{ key: null, label: 'All' }, ...filters.domains.map(d => ({ key: d, label: d }))]} />
+      <Facet title="Niche" value={params.get('niche')} onPick={v => setParam('niche', v)} options={[{ key: null, label: 'All' }, ...filters.niches.map(n => ({ key: n.id, label: n.name }))]} />
+      <Facet title="Product type" value={params.get('type')} onPick={v => setParam('type', v)} options={[{ key: null, label: 'All' }, ...filters.productTypes.map(t => ({ key: t.id, label: t.name }))]} />
+      <div className="my-md h-px bg-outline-variant/40" />
       <div>
         <p className="mb-xs px-xs text-label-sm uppercase tracking-wider text-on-surface-variant">Setup</p>
         {[
