@@ -729,6 +729,7 @@ model SpyPageTarget {
   fbPageId   String?
   label      String?
   active     Boolean      @default(true)
+  excluded   Boolean      @default(false)
   lastScanAt DateTime?
   createdAt  DateTime     @default(now())
 

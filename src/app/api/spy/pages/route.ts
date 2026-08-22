@@ -29,6 +29,7 @@ export async function PATCH(req: NextRequest) {
   if (!b.id) return NextResponse.json({ error: 'id required' }, { status: 400 })
   const data: Record<string, unknown> = {}
   if ('active' in b) data.active = Boolean(b.active)
+  if ('excluded' in b) data.excluded = Boolean(b.excluded)
   if ('label' in b) data.label = b.label || null
   if ('storeId' in b) data.storeId = b.storeId || null
   const page = await prisma.spyPageTarget.update({ where: { id: b.id }, data })

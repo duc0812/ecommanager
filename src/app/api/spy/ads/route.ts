@@ -33,6 +33,9 @@ export async function GET(req: NextRequest) {
     const pw = nicheOrWhere(parseKeywords(pt?.keywords), ['title', 'body'])
     if (pw) and.push(pw)
   }
+  const excludedRows = await prisma.spyPageTarget.findMany({ where: { excluded: true, fbPageId: { not: null } }, select: { fbPageId: true } })
+  const excludedIds = excludedRows.map(r => r.fbPageId).filter((x): x is string => !!x)
+  if (excludedIds.length) and.push({ advertiser: { fbPageId: { notIn: excludedIds } } })
   const where: any = and.length ? { AND: and } : {}
 
   const ads = await prisma.spyAd.findMany({
