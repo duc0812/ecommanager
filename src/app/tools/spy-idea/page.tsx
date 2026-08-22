@@ -82,7 +82,7 @@ function DomainBlock({ domain, onScan, onRemove, onSaveIdea, onChanged }: { doma
     <section className="rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-lg">
       <div className="mb-md flex flex-wrap items-center gap-sm">
         <h3 className="text-headline-sm text-primary">{domain.domain}</h3>
-        <span className="text-body-sm text-on-surface-variant">{domain.adCount} ads · {domain.newAdCount} new</span>
+        <span className="text-body-sm text-on-surface-variant">{domain.pageCount} pages · {domain.adCount} ads · {domain.newAdCount} new</span>
         <input value={term} onChange={e => setTerm(e.target.value)} className="ml-auto w-48 rounded-lg border border-outline-variant/30 bg-surface-container px-md py-xs text-body-sm" />
         <button onClick={saveTerm} className="rounded-lg bg-surface-container px-md py-xs text-label-sm">Save term</button>
         <button onClick={onScan} className="rounded-lg bg-primary px-md py-xs text-label-sm text-on-primary">Scan domain</button>
@@ -180,6 +180,7 @@ export default function SpyIdeaPage() {
   }
   async function saveAdIdea(a: Ad) {
     await fetch('/api/spy/ideas', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: a.title ?? a.advertiser.pageName ?? 'Ad', refType: 'AD', refAdId: a.id, snapshotJson: a }) })
+    loadIdeas()
   }
 
   return (
