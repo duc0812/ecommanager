@@ -8,6 +8,7 @@ vi.mock('@/lib/db', () => ({
       update: vi.fn(async ({ data }: any) => { Object.assign(db.scans[0], data); return db.scans[0] }),
     },
     spyPageTarget: { update: vi.fn(async () => ({})) },
+    spyAdDomain: { update: vi.fn(async () => ({})) },
   },
 }))
 vi.mock('./apify', () => ({
@@ -17,8 +18,9 @@ vi.mock('./apify', () => ({
 }))
 vi.mock('./ingest-ads', () => ({ ingestAds: vi.fn(async () => ({ found: 1, newAds: 1, updated: 0 })) }))
 
-import { runPageAdScan } from './scan-ads'
-import { startActorRun, pollRunUntilDone } from './apify'
+import { runPageAdScan, runDomainAdScan } from './scan-ads'
+import { startActorRun, pollRunUntilDone, getDatasetItems } from './apify'
+import { ingestAds } from './ingest-ads'
 
 beforeEach(() => { db.scans.length = 0; vi.clearAllMocks() })
 
@@ -36,5 +38,20 @@ describe('runPageAdScan', () => {
     expect(r.status).toBe('failed')
     expect(db.scans[0].status).toBe('failed')
     expect(db.scans[0].error).toContain('FAILED')
+  })
+})
+
+describe('runDomainAdScan', () => {
+  beforeEach(() => { db.scans.length = 0; vi.clearAllMocks() })
+  it('runs a keyword search and tags ads with the domain', async () => {
+    ;(startActorRun as any).mockResolvedValue({ runId: 'r1', datasetId: 'd1' })
+    ;(pollRunUntilDone as any).mockResolvedValue('SUCCEEDED')
+    ;(getDatasetItems as any).mockResolvedValue([{ ad_archive_id: 'A1', page_id: '9', is_active: true }])
+    ;(ingestAds as any).mockResolvedValue({ found: 1, newAds: 1, updated: 0 })
+    const r = await runDomainAdScan({ id: 'dom1', searchTerm: 'familystore', country: 'ALL' })
+    expect(r.status).toBe('success')
+    expect(db.scans[0].type).toBe('DOMAIN_ADS')
+    expect((ingestAds as any).mock.calls[0][3]).toEqual({ adDomainId: 'dom1' })
+    expect(String((startActorRun as any).mock.calls[0][0].urls[0].url)).toContain('q=familystore')
   })
 })

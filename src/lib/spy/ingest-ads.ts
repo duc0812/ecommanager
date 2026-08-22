@@ -3,22 +3,25 @@ import type { ParsedSpyAd } from '@/lib/spy/ad-mapping'
 
 export async function ingestAds(
   scanId: string, storeId: string | null, ads: ParsedSpyAd[],
+  opts: { adDomainId?: string | null } = {},
 ): Promise<{ found: number; newAds: number; updated: number }> {
   let newAds = 0, updated = 0
   const now = new Date()
   for (const a of ads) {
     if (!a.adArchiveId || !a.pageId) continue
+    const adDomainId = opts.adDomainId ?? undefined
     const advertiser = await prisma.spyAdvertiser.upsert({
       where: { fbPageId: a.pageId },
       create: {
         fbPageId: a.pageId, pageName: a.pageName, pageCategory: a.pageCategory,
         likes: a.pageLikes, igUsername: a.igUsername, igFollowers: a.igFollowers,
-        storeId: storeId ?? undefined, firstSeenAt: now, lastSeenAt: now,
+        storeId: storeId ?? undefined, adDomainId, firstSeenAt: now, lastSeenAt: now,
       },
       update: {
         pageName: a.pageName, pageCategory: a.pageCategory, likes: a.pageLikes,
         igUsername: a.igUsername, igFollowers: a.igFollowers, lastSeenAt: now,
         ...(storeId ? { storeId } : {}),
+        ...(adDomainId ? { adDomainId } : {}),
       },
     })
 

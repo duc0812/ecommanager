@@ -573,8 +573,8 @@ model SpyProductSnapshot {
 }
 
 model SpyAdvertiser {
-  id             String    @id @default(cuid())
-  fbPageId       String    @unique
+  id             String       @id @default(cuid())
+  fbPageId       String       @unique
   pageName       String?
   pageCategory   String?
   pageProfileUri String?
@@ -583,13 +583,16 @@ model SpyAdvertiser {
   igFollowers    Int?
   entityType     String?
   storeId        String?
-  store          SpyStore? @relation(fields: [storeId], references: [id], onDelete: SetNull)
-  firstSeenAt    DateTime  @default(now())
-  lastSeenAt     DateTime  @default(now())
+  store          SpyStore?    @relation(fields: [storeId], references: [id], onDelete: SetNull)
+  adDomainId     String?
+  adDomain       SpyAdDomain? @relation(fields: [adDomainId], references: [id], onDelete: SetNull)
+  firstSeenAt    DateTime     @default(now())
+  lastSeenAt     DateTime     @default(now())
 
   ads SpyAd[]
 
   @@index([storeId])
+  @@index([adDomainId])
 }
 
 model SpyAd {
@@ -714,16 +717,35 @@ model SpyIdea {
 }
 
 model SpyPageTarget {
-  id         String    @id @default(cuid())
+  id         String       @id @default(cuid())
   storeId    String?
-  store      SpyStore? @relation(fields: [storeId], references: [id], onDelete: SetNull)
-  pageUrl    String    @unique
+  store      SpyStore?    @relation(fields: [storeId], references: [id], onDelete: SetNull)
+  adDomainId String?
+  adDomain   SpyAdDomain? @relation(fields: [adDomainId], references: [id], onDelete: SetNull)
+  pageUrl    String       @unique
   fbPageId   String?
   label      String?
+  active     Boolean      @default(true)
+  lastScanAt DateTime?
+  createdAt  DateTime     @default(now())
+
+  @@index([storeId])
+  @@index([active])
+  @@index([adDomainId])
+}
+
+model SpyAdDomain {
+  id         String    @id @default(cuid())
+  domain     String    @unique
+  searchTerm String
+  label      String?
+  country    String    @default("ALL")
   active     Boolean   @default(true)
   lastScanAt DateTime?
   createdAt  DateTime  @default(now())
 
-  @@index([storeId])
+  pages       SpyPageTarget[]
+  advertisers SpyAdvertiser[]
+
   @@index([active])
 }

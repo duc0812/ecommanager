@@ -8,10 +8,14 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const filter = searchParams.get('filter') || undefined
   const storeId = searchParams.get('storeId') || undefined
+  const domainId = searchParams.get('domainId') || undefined
   const limit = Math.min(parseInt(searchParams.get('limit') ?? '200', 10) || 200, 500)
 
   const ads = await prisma.spyAd.findMany({
-    where: storeId ? { advertiser: { storeId } } : undefined,
+    where: {
+      ...(storeId ? { advertiser: { storeId } } : {}),
+      ...(domainId ? { advertiser: { adDomainId: domainId } } : {}),
+    },
     orderBy: { lastSeenAt: 'desc' },
     take: limit,
     include: {
