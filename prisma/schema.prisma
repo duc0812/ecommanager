@@ -749,3 +749,11 @@ model SpyAdDomain {
 
   @@index([active])
 }
+
+model SpyNiche {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  keywords  String   @default("[]")
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+}
