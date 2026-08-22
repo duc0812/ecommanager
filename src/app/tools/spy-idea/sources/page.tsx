@@ -1,7 +1,5 @@
 'use client'
 import { useEffect, useState } from 'react'
-import Sidebar from '@/components/Sidebar'
-import { RoleGate } from '@/components/RoleGate'
 import AdCard, { Ad } from '@/components/spy/AdCard'
 
 type Store = { id: string; domain: string; name: string | null; status: string; _count?: { products: number } }
@@ -115,47 +113,42 @@ export default function SourcesPage() {
   }
 
   return (
-    <RoleGate>
-      <div className="flex min-h-screen bg-surface">
-        <Sidebar />
-        <main className="ml-[280px] flex-1 p-xl">
-          <header className="mb-lg">
-            <p className="text-label-sm uppercase tracking-wider text-on-surface-variant">Tools · Spy · Setup</p>
-            <h2 className="text-display-md font-bold text-primary">Sources</h2>
-          </header>
+    <>
+      <header className="mb-lg">
+        <p className="text-label-sm uppercase tracking-wider text-on-surface-variant">Tools · Spy · Setup</p>
+        <h2 className="text-display-md font-bold text-primary">Sources</h2>
+      </header>
 
-          <section className="mb-xl rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-lg">
-            <h3 className="mb-md text-headline-sm text-primary">Shopify stores</h3>
-            <div className="mb-md flex gap-sm">
-              <input value={domain} onChange={e => setDomain(e.target.value)} placeholder="store.myshopify.com"
-                className="flex-1 rounded-lg border border-outline-variant/30 bg-surface-container px-md py-sm text-body-md outline-none focus:border-secondary" />
-              <button onClick={addStore} className="rounded-lg bg-secondary px-lg py-sm text-label-md text-on-secondary">Add store</button>
-              <button onClick={scanAll} disabled={scanning} className="rounded-lg bg-primary px-lg py-sm text-label-md text-on-primary disabled:opacity-50">{scanning ? 'Scanning…' : 'Scan now'}</button>
-            </div>
-            <ul className="divide-y divide-outline-variant/20">
-              {stores.map(s => (
-                <li key={s.id} className="flex items-center justify-between py-sm">
-                  <div><p className="text-label-md text-primary">{s.domain}</p><p className="text-body-sm text-on-surface-variant">{s._count?.products ?? 0} products · {s.status}</p></div>
-                  <button onClick={() => removeStore(s.id)} className="text-error text-label-sm hover:underline">Remove</button>
-                </li>
-              ))}
-            </ul>
-          </section>
+      <section className="mb-xl rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-lg">
+        <h3 className="mb-md text-headline-sm text-primary">Shopify stores</h3>
+        <div className="mb-md flex gap-sm">
+          <input value={domain} onChange={e => setDomain(e.target.value)} placeholder="store.myshopify.com"
+            className="flex-1 rounded-lg border border-outline-variant/30 bg-surface-container px-md py-sm text-body-md outline-none focus:border-secondary" />
+          <button onClick={addStore} className="rounded-lg bg-secondary px-lg py-sm text-label-md text-on-secondary">Add store</button>
+          <button onClick={scanAll} disabled={scanning} className="rounded-lg bg-primary px-lg py-sm text-label-md text-on-primary disabled:opacity-50">{scanning ? 'Scanning…' : 'Scan now'}</button>
+        </div>
+        <ul className="divide-y divide-outline-variant/20">
+          {stores.map(s => (
+            <li key={s.id} className="flex items-center justify-between py-sm">
+              <div><p className="text-label-md text-primary">{s.domain}</p><p className="text-body-sm text-on-surface-variant">{s._count?.products ?? 0} products · {s.status}</p></div>
+              <button onClick={() => removeStore(s.id)} className="text-error text-label-sm hover:underline">Remove</button>
+            </li>
+          ))}
+        </ul>
+      </section>
 
-          <section className="mb-md rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-lg">
-            <h3 className="mb-md text-headline-sm text-primary">Ad domains</h3>
-            <div className="flex gap-sm">
-              <input value={domainInput} onChange={e => setDomainInput(e.target.value)} placeholder="familystore.com"
-                className="flex-1 rounded-lg border border-outline-variant/30 bg-surface-container px-md py-sm text-body-md outline-none focus:border-secondary" />
-              <button onClick={addAdDomain} className="rounded-lg bg-secondary px-lg py-sm text-label-md text-on-secondary">Add domain</button>
-            </div>
-          </section>
+      <section className="mb-md rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-lg">
+        <h3 className="mb-md text-headline-sm text-primary">Ad domains</h3>
+        <div className="flex gap-sm">
+          <input value={domainInput} onChange={e => setDomainInput(e.target.value)} placeholder="familystore.com"
+            className="flex-1 rounded-lg border border-outline-variant/30 bg-surface-container px-md py-sm text-body-md outline-none focus:border-secondary" />
+          <button onClick={addAdDomain} className="rounded-lg bg-secondary px-lg py-sm text-label-md text-on-secondary">Add domain</button>
+        </div>
+      </section>
 
-          <div className="space-y-lg">
-            {adDomains.map(d => <DomainBlock key={d.id} domain={d} onScan={() => scanDomain(d.id)} onRemove={() => removeAdDomain(d.id)} onChanged={loadAdDomains} />)}
-          </div>
-        </main>
+      <div className="space-y-lg">
+        {adDomains.map(d => <DomainBlock key={d.id} domain={d} onScan={() => scanDomain(d.id)} onRemove={() => removeAdDomain(d.id)} onChanged={loadAdDomains} />)}
       </div>
-    </RoleGate>
+    </>
   )
 }
