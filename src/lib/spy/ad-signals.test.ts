@@ -4,8 +4,9 @@ import { AD_SCAN_CAP, isNewAd, activeDays, isLongRunning, isScaling, isStopped }
 const now = new Date('2026-08-21T00:00:00Z')
 describe('ad signals', () => {
   it('AD_SCAN_CAP is 200', () => { expect(AD_SCAN_CAP).toBe(200) })
-  it('isNewAd within 7 days', () => {
+  it('isNewAd within 15 days', () => {
     expect(isNewAd(new Date('2026-08-18T00:00:00Z'), now)).toBe(true)
+    expect(isNewAd(new Date('2026-08-08T00:00:00Z'), now)).toBe(true)
     expect(isNewAd(new Date('2026-08-01T00:00:00Z'), now)).toBe(false)
     expect(isNewAd(null, now)).toBe(false)
   })

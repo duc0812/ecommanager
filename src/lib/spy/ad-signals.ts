@@ -1,7 +1,7 @@
 export const AD_SCAN_CAP = 200
 const DAY = 24 * 60 * 60 * 1000
 
-export function isNewAd(startDate: Date | null, now: Date = new Date(), windowDays = 7): boolean {
+export function isNewAd(startDate: Date | null, now: Date = new Date(), windowDays = 15): boolean {
   if (!startDate) return false
   return startDate.getTime() >= now.getTime() - windowDays * DAY
 }
