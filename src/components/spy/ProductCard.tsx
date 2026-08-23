@@ -32,14 +32,14 @@ export default function ProductCard({ p, onSave, rank, rankDelta }: { p: Product
           // eslint-disable-next-line @next/next/no-img-element
           <img src={p.imageUrl} alt={p.title ?? ''} className="h-full w-full object-cover" />
         ) : (
-          <div className="flex h-full w-full items-center justify-center text-[#B8B2A9]"><span className="material-symbols-outlined text-[42px]">image_not_supported</span></div>
+          <div className="flex h-full w-full items-center justify-center text-[#57534E]"><span className="material-symbols-outlined text-[42px]">image_not_supported</span></div>
         )}
       </div>
       <div className="flex flex-1 flex-col gap-[8px] p-[16px]">
         <h3 className="line-clamp-2 text-[14.5px] font-semibold leading-[1.3] tracking-[-0.012em] text-[#1B1A17]">{p.title}</h3>
-        <div className="flex items-center gap-[6px] text-[11.5px] text-[#78716C]">
-          <span className="truncate">{p.store.domain}</span>
-          <span className="ml-auto font-[family-name:var(--font-plex-mono)] text-[10.5px] text-[#B8B2A9]">{formatDate(p.firstSeenAt)}</span>
+        <div className="flex items-center gap-[6px] text-[11.5px] text-[#57534E]">
+          <span className="truncate font-medium">{p.store.domain}</span>
+          <span className="ml-auto font-[family-name:var(--font-plex-mono)] text-[10.5px] text-[#57534E]">{formatDate(p.firstSeenAt)}</span>
         </div>
         <p className="text-[13px] font-semibold text-[#1B1A17]">{priceText(p.priceMin, p.priceMax)}</p>
         <div className="mt-auto flex items-center border-t border-[#EFEDE9] pt-[12px]">

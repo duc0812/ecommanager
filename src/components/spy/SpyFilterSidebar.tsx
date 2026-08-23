@@ -8,7 +8,7 @@ type FiltersData = { domains: string[]; niches: { id: string; name: string }[]; 
 function Facet({ title, options, value, onPick }: { title: string; options: { key: string | null; label: string }[]; value: string | null; onPick: (v: string | null) => void }) {
   return (
     <div className="flex flex-col gap-2">
-      <div className="px-[10px] font-[family-name:var(--font-plex-mono)] text-[10px] uppercase tracking-[0.12em] text-[#A8A29B]">{title}</div>
+      <div className="px-[10px] font-[family-name:var(--font-plex-mono)] text-[10px] uppercase tracking-[0.12em] text-[#78716C]">{title}</div>
       <div className="flex flex-col gap-[1px]">
         {options.map(o => {
           const active = (o.key ?? null) === value
@@ -50,7 +50,7 @@ export default function SpyFilterSidebar() {
       <Facet title="Niche" value={params.get('niche')} onPick={v => setParam('niche', v)} options={[{ key: null, label: 'All' }, ...filters.niches.map(n => ({ key: n.id, label: n.name }))]} />
       <Facet title="Product type" value={params.get('type')} onPick={v => setParam('type', v)} options={[{ key: null, label: 'All' }, ...filters.productTypes.map(t => ({ key: t.id, label: t.name }))]} />
       <div className="mt-auto flex flex-col gap-2 border-t border-[#EDEBE7] pt-[24px]">
-        <div className="px-[10px] font-[family-name:var(--font-plex-mono)] text-[10px] uppercase tracking-[0.12em] text-[#A8A29B]">Setup</div>
+        <div className="px-[10px] font-[family-name:var(--font-plex-mono)] text-[10px] uppercase tracking-[0.12em] text-[#78716C]">Setup</div>
         <div className="flex flex-col gap-[1px]">
           {setupLinks.map(s => {
             const active = pathname === s.href

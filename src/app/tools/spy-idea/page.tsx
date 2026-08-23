@@ -127,7 +127,7 @@ export default function SpyIdeaPage() {
             <button key={v.key} onClick={() => pickView(v.key)}
               className={`h-[32px] rounded-full px-[14px] text-[12.5px] transition-colors ${view === v.key ? 'border border-[#1B1A17] bg-[#1B1A17] font-medium text-white' : 'border border-[#E6E3DE] bg-white text-[#6B655D] hover:bg-[#F2F1EE]'}`}>{v.label}</button>
           ))}
-          {resultLabel && <div className="ml-auto font-[family-name:var(--font-plex-mono)] text-[11px] tracking-[0.04em] text-[#A8A29B]">{resultLabel}</div>}
+          {resultLabel && <div className="ml-auto font-[family-name:var(--font-plex-mono)] text-[11px] tracking-[0.04em] text-[#78716C]">{resultLabel}</div>}
         </div>
       )}
 
@@ -164,7 +164,7 @@ export default function SpyIdeaPage() {
           {ideas.map(i => (
             <li key={i.id} className="rounded-[12px] border border-[#E6E3DE] bg-white px-[16px] py-[14px]">
               <p className="text-[14px] font-semibold text-[#1B1A17]">{i.title}</p>
-              <p className="mt-1 font-[family-name:var(--font-plex-mono)] text-[11px] text-[#A8A29B]">{i.status} · {formatDate(i.createdAt)}</p>
+              <p className="mt-1 font-[family-name:var(--font-plex-mono)] text-[11px] text-[#78716C]">{i.status} · {formatDate(i.createdAt)}</p>
             </li>
           ))}
           {ideas.length === 0 && <p className="text-[13px] text-[#78716C]">No ideas saved yet.</p>}
