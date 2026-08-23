@@ -36,11 +36,14 @@ export async function GET(req: NextRequest) {
   const excludedRows = await prisma.spyPageTarget.findMany({ where: { excluded: true, fbPageId: { not: null } }, select: { fbPageId: true } })
   const excludedIds = excludedRows.map(r => r.fbPageId).filter((x): x is string => !!x)
   if (excludedIds.length) and.push({ advertiser: { fbPageId: { notIn: excludedIds } } })
+  if (filter === 'new') and.push({ startDate: { gte: new Date(Date.now() - 15 * 24 * 60 * 60 * 1000) } })
+  if (filter === 'winning' || filter === 'long-running') and.push({ startDate: { not: null } })
   const where: any = and.length ? { AND: and } : {}
+  const orderBy = filter === 'winning' || filter === 'long-running' ? { startDate: 'asc' as const } : { startDate: 'desc' as const }
 
   const ads = await prisma.spyAd.findMany({
     where,
-    orderBy: { lastSeenAt: 'desc' },
+    orderBy,
     take: limit,
     include: {
       advertiser: { select: { pageName: true, storeId: true } },
