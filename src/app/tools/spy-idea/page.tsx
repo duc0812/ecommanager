@@ -1,7 +1,6 @@
 'use client'
 import { useCallback, useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import SpySectionNav from '@/components/SpySectionNav'
 import AdCard, { Ad } from '@/components/spy/AdCard'
 import ProductCard, { Product } from '@/components/spy/ProductCard'
 
@@ -20,6 +19,17 @@ const PRODUCT_VIEWS = [
   { key: 'new-add', label: 'New Product Add' },
   { key: 'best-seller', label: 'Best Seller' },
 ]
+const AREA_TABS: { key: Area; label: string }[] = [
+  { key: 'ads', label: 'Ad Library' },
+  { key: 'products', label: 'Product Spy' },
+  { key: 'ideas', label: 'Ideas' },
+]
+const AREA_META: Record<Area, { title: string; subtitle: string }> = {
+  ads: { title: 'Ad Library', subtitle: 'Creatives from your tracked domains.' },
+  products: { title: 'Product Spy', subtitle: 'New products and best sellers across your stores.' },
+  ideas: { title: 'Ideas', subtitle: 'Ads and products you saved.' },
+}
+const GRID = 'grid grid-cols-[repeat(auto-fill,minmax(290px,1fr))] gap-5'
 
 function formatDate(v: string) {
   return new Intl.DateTimeFormat('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }).format(new Date(v))
@@ -89,68 +99,77 @@ export default function SpyIdeaPage() {
   }
 
   const subViews = area === 'ads' ? AD_VIEWS : area === 'products' ? PRODUCT_VIEWS : []
+  const meta = AREA_META[area]
+  const resultLabel = area === 'ads'
+    ? `${ads.length} creatives`
+    : area === 'products' && view === 'new-add'
+      ? `${products.length} products`
+      : area === 'products'
+        ? `${bestSellers.reduce((n, g) => n + g.items.length, 0)} products`
+        : ''
 
   return (
-    <>
-      <header className="mb-lg">
-        <p className="text-label-sm uppercase tracking-wider text-on-surface-variant">Tools</p>
-        <h2 className="text-display-md font-bold text-primary">Spy</h2>
-      </header>
-
-      <SpySectionNav active={area} items={[
-        { key: 'ads', label: 'Ad Library', icon: 'library_books', onClick: () => go('ads') },
-        { key: 'products', label: 'Product Spy', icon: 'inventory_2', onClick: () => go('products') },
-        { key: 'ideas', label: 'Ideas', icon: 'lightbulb', onClick: () => go('ideas') },
-      ]} />
-
-      {subViews.length > 0 && (
-        <nav className="mb-md flex flex-wrap gap-sm">
-          {subViews.map(v => (
-            <button key={v.key} onClick={() => pickView(v.key)}
-              className={`rounded-md px-md py-xs text-label-sm ${view === v.key ? 'bg-secondary text-on-secondary' : 'bg-surface-container text-on-surface-variant'}`}>{v.label}</button>
+    <div>
+      <header className="sticky top-0 z-10 -mx-[36px] -mt-[28px] border-b border-[#E6E3DE] bg-[#F7F6F4]/90 px-[36px] pt-[26px] backdrop-blur-md">
+        <h1 className="text-[30px] font-semibold leading-none tracking-[-0.03em] text-[#1B1A17]">{meta.title}</h1>
+        <p className="mt-2 text-[13px] text-[#78716C]">{meta.subtitle}</p>
+        <nav className="mt-[22px] flex gap-[28px]">
+          {AREA_TABS.map(t => (
+            <button key={t.key} onClick={() => go(t.key)}
+              className={`relative pb-[12px] text-[13.5px] transition-colors ${area === t.key ? 'font-semibold text-[#1B1A17] shadow-[inset_0_-2px_0_0_#3F3AC4]' : 'font-medium text-[#8A847C] hover:text-[#1B1A17]'}`}>{t.label}</button>
           ))}
         </nav>
+      </header>
+
+      {subViews.length > 0 && (
+        <div className="mt-[22px] flex flex-wrap items-center gap-2">
+          {subViews.map(v => (
+            <button key={v.key} onClick={() => pickView(v.key)}
+              className={`h-[32px] rounded-full px-[14px] text-[12.5px] transition-colors ${view === v.key ? 'border border-[#1B1A17] bg-[#1B1A17] font-medium text-white' : 'border border-[#E6E3DE] bg-white text-[#6B655D] hover:bg-[#F2F1EE]'}`}>{v.label}</button>
+          ))}
+          {resultLabel && <div className="ml-auto font-[family-name:var(--font-plex-mono)] text-[11px] tracking-[0.04em] text-[#A8A29B]">{resultLabel}</div>}
+        </div>
       )}
 
       {area === 'ads' && (
-        <div className="grid grid-cols-1 gap-md sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        <div className={`mt-[22px] ${GRID}`}>
           {ads.map(a => <AdCard key={a.id} a={a} onSave={saveAdIdea} />)}
-          {ads.length === 0 && <p className="text-body-md text-on-surface-variant">No ads for this filter.</p>}
+          {ads.length === 0 && <p className="text-[13px] text-[#78716C]">No ads for this filter.</p>}
         </div>
       )}
 
       {area === 'products' && view === 'new-add' && (
-        <div className="grid grid-cols-1 gap-md sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        <div className={`mt-[22px] ${GRID}`}>
           {products.map(p => <ProductCard key={p.id} p={p} onSave={saveProductIdea} />)}
-          {products.length === 0 && <p className="text-body-md text-on-surface-variant">No products for this filter.</p>}
+          {products.length === 0 && <p className="text-[13px] text-[#78716C]">No products for this filter.</p>}
         </div>
       )}
 
       {area === 'products' && view === 'best-seller' && (
-        <div className="space-y-xl">
+        <div className="mt-[22px] space-y-[36px]">
           {bestSellers.map(g => (
             <section key={g.store.domain}>
-              <h3 className="mb-md text-headline-sm text-primary">{g.store.domain}</h3>
-              <div className="grid grid-cols-1 gap-md sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              <h3 className="mb-[16px] text-[16px] font-semibold tracking-[-0.01em] text-[#1B1A17]">{g.store.domain}</h3>
+              <div className={GRID}>
                 {g.items.map(it => <ProductCard key={it.id} p={it} onSave={saveProductIdea} rank={it.rank} rankDelta={it.delta} />)}
               </div>
             </section>
           ))}
-          {bestSellers.length === 0 && <p className="text-body-md text-on-surface-variant">No best sellers yet — scan a store first (Setup → Sources).</p>}
+          {bestSellers.length === 0 && <p className="text-[13px] text-[#78716C]">No best sellers yet — scan a store first (Setup → Sources).</p>}
         </div>
       )}
 
       {area === 'ideas' && (
-        <ul className="space-y-sm">
+        <ul className="mt-[22px] space-y-2">
           {ideas.map(i => (
-            <li key={i.id} className="rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-md">
-              <p className="text-label-md text-primary">{i.title}</p>
-              <p className="text-body-sm text-on-surface-variant">{i.status} · {formatDate(i.createdAt)}</p>
+            <li key={i.id} className="rounded-[12px] border border-[#E6E3DE] bg-white px-[16px] py-[14px]">
+              <p className="text-[14px] font-semibold text-[#1B1A17]">{i.title}</p>
+              <p className="mt-1 font-[family-name:var(--font-plex-mono)] text-[11px] text-[#A8A29B]">{i.status} · {formatDate(i.createdAt)}</p>
             </li>
           ))}
-          {ideas.length === 0 && <p className="text-body-md text-on-surface-variant">No ideas saved yet.</p>}
+          {ideas.length === 0 && <p className="text-[13px] text-[#78716C]">No ideas saved yet.</p>}
         </ul>
       )}
-    </>
+    </div>
   )
 }
