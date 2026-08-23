@@ -37,7 +37,7 @@ export async function GET(req: NextRequest) {
   const excludedIds = excludedRows.map(r => r.fbPageId).filter((x): x is string => !!x)
   if (excludedIds.length) and.push({ advertiser: { fbPageId: { notIn: excludedIds } } })
   if (filter === 'new') and.push({ startDate: { gte: new Date(Date.now() - 15 * 24 * 60 * 60 * 1000) } })
-  if (filter === 'winning' || filter === 'long-running') and.push({ startDate: { not: null } })
+  if (filter === 'winning' || filter === 'long-running') and.push({ isActive: true, startDate: { not: null } })
   const where: any = and.length ? { AND: and } : {}
   const orderBy = filter === 'winning' || filter === 'long-running' ? { startDate: 'asc' as const } : { startDate: 'desc' as const }
 
