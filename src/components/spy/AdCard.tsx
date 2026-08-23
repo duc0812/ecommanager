@@ -22,7 +22,7 @@ export default function AdCard({ a, onSave }: { a: Ad; onSave: (a: Ad) => void }
       <div className="relative aspect-[4/5] overflow-hidden bg-[#F2F1EE]">
         {a.mediaUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={a.mediaUrl} alt={a.title ?? ''} className="h-full w-full object-cover" />
+          <img src={a.mediaUrl} alt={a.title ?? ''} loading="lazy" className="h-full w-full object-cover" />
         ) : (
           <div className="flex h-full w-full items-center justify-center text-[#57534E]"><span className="material-symbols-outlined text-[36px]">image_not_supported</span></div>
         )}
@@ -31,7 +31,7 @@ export default function AdCard({ a, onSave }: { a: Ad; onSave: (a: Ad) => void }
             <span className="h-[5px] w-[5px] rounded-full bg-[#8FD6A4]" />{MEDIA_LABEL[a.mediaType]}
           </div>
         )}
-        <div className="absolute right-[10px] top-[10px] rounded-[6px] bg-white/90 px-[8px] py-[4px] font-[family-name:var(--font-plex-mono)] text-[10px] text-[#57534E]">{s.activeDays}d</div>
+        <div className="absolute right-[10px] top-[10px] rounded-[6px] bg-white/90 px-[8px] py-[4px] font-[family-name:var(--font-plex-mono)] font-medium text-[10px] text-[#57534E]">{s.activeDays}d</div>
       </div>
 
       <div className="flex flex-1 flex-col gap-[10px] p-[16px]">
@@ -42,28 +42,28 @@ export default function AdCard({ a, onSave }: { a: Ad; onSave: (a: Ad) => void }
           {s.isLongRunning && <span className="inline-flex h-[20px] items-center rounded-[5px] bg-[#E7EDE9] px-[8px] text-[10.5px] font-medium text-[#3F7A57]">Long-running</span>}
           {s.isScaling && <span className="inline-flex h-[20px] items-center rounded-[5px] bg-[#EDEBFB] px-[8px] text-[10.5px] font-medium text-[#4B45C6]">Scaling</span>}
           {s.isStopped && <span className="inline-flex h-[20px] items-center rounded-[5px] bg-[#F6E7E7] px-[8px] text-[10.5px] font-medium text-[#B3524B]">Stopped</span>}
-          <span className="ml-auto font-[family-name:var(--font-plex-mono)] text-[10px] text-[#57534E]">{formatDate(a.startDate)}</span>
+          <span className="ml-auto font-[family-name:var(--font-plex-mono)] font-medium text-[10px] text-[#57534E]">{formatDate(a.startDate)}</span>
         </div>
 
         <h3 className="line-clamp-2 text-[14.5px] font-semibold leading-[1.3] tracking-[-0.012em] text-[#1B1A17]">{a.title ?? a.advertiser.pageName ?? 'Ad'}</h3>
-        {a.body && <p className="line-clamp-2 text-[12.5px] leading-[1.5] text-[#6B655D]">{a.body}</p>}
+        {a.body && <p className="line-clamp-2 text-[12.5px] font-medium leading-[1.5] text-[#57534E]">{a.body}</p>}
         {a.advertiser.pageName && <p className="text-[11.5px] font-medium text-[#57534E]">{a.advertiser.pageName}</p>}
 
         <div className="mt-auto flex flex-col gap-2 border-t border-[#EFEDE9] pt-[12px]">
           {a.linkUrl && (
             <a href={a.linkUrl} target="_blank" rel="noreferrer" title={a.linkUrl} className="flex items-center gap-[6px] text-[#57534E] transition-colors hover:text-[#3F3AC4]">
               <span className="material-symbols-outlined text-[14px] text-[#57534E]">link</span>
-              <span className="truncate font-[family-name:var(--font-plex-mono)] text-[11px]">{a.linkUrl}</span>
+              <span className="truncate font-[family-name:var(--font-plex-mono)] font-medium text-[11px]">{a.linkUrl}</span>
             </a>
           )}
           {s.adStyle === 'product' && a.productPublishedAt && (
-            <p className="font-[family-name:var(--font-plex-mono)] text-[10.5px] text-[#57534E]">Uploaded {formatDate(a.productPublishedAt)}</p>
+            <p className="font-[family-name:var(--font-plex-mono)] font-medium text-[10.5px] text-[#57534E]">Uploaded {formatDate(a.productPublishedAt)}</p>
           )}
           <div className="flex items-center gap-2">
             {a.adLibraryUrl ? (
-              <a href={a.adLibraryUrl} target="_blank" rel="noreferrer" title={a.adArchiveId} className="truncate font-[family-name:var(--font-plex-mono)] text-[10.5px] text-[#57534E] hover:text-[#57534E]">#{a.adArchiveId}</a>
+              <a href={a.adLibraryUrl} target="_blank" rel="noreferrer" title={a.adArchiveId} className="truncate font-[family-name:var(--font-plex-mono)] font-medium text-[10.5px] text-[#57534E] hover:text-[#57534E]">#{a.adArchiveId}</a>
             ) : (
-              <span className="truncate font-[family-name:var(--font-plex-mono)] text-[10.5px] text-[#57534E]">#{a.adArchiveId}</span>
+              <span className="truncate font-[family-name:var(--font-plex-mono)] font-medium text-[10.5px] text-[#57534E]">#{a.adArchiveId}</span>
             )}
             <div className="ml-auto flex gap-[6px]">
               <button onClick={() => setOpen(true)} className="flex h-[28px] items-center rounded-[7px] border border-[#E6E3DE] bg-white px-[10px] text-[11.5px] text-[#57534E] transition-colors hover:bg-[#F7F6F4] hover:text-[#1B1A17]">Detail</button>

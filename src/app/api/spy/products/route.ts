@@ -11,7 +11,7 @@ export async function GET(req: NextRequest) {
   const nicheId = searchParams.get('nicheId') || undefined
   const productTypeId = searchParams.get('productTypeId') || undefined
   const days = Math.min(parseInt(searchParams.get('days') ?? '7', 10), 90)
-  const limit = Math.min(parseInt(searchParams.get('limit') ?? '200', 10), 500)
+  const limit = Math.min(parseInt(searchParams.get('limit') ?? '200', 10), 2000)
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
 
   const and: any[] = [{ firstSeenAt: { gte: since } }]
@@ -35,5 +35,5 @@ export async function GET(req: NextRequest) {
     take: limit,
     include: { store: { select: { domain: true } } },
   })
-  return NextResponse.json({ products, niches: groupByNiche(products) })
+  return NextResponse.json({ products, niches: groupByNiche(products), fetched: products.length })
 }

@@ -68,26 +68,26 @@ export default function AdDetailModal({ ad, onClose, onSave }: { ad: Ad; onClose
               {s.isLongRunning && <span className={`${CHIP} bg-[#E7EDE9] text-[#3F7A57]`}>Long-running</span>}
               {s.isScaling && <span className={`${CHIP} bg-[#EDEBFB] text-[#4B45C6]`}>Scaling</span>}
               {s.isStopped && <span className={`${CHIP} bg-[#F6E7E7] text-[#B3524B]`}>Stopped</span>}
-              <span className="ml-auto font-[family-name:var(--font-plex-mono)] text-[10.5px] text-[#57534E]">{formatDate(ad.startDate)}</span>
+              <span className="ml-auto font-[family-name:var(--font-plex-mono)] font-medium text-[10.5px] text-[#57534E]">{formatDate(ad.startDate)}</span>
             </div>
 
-            {ad.body && <p className="whitespace-pre-wrap text-[13.5px] leading-[1.6] text-[#3F3A35]">{ad.body}</p>}
+            {ad.body && <p className="whitespace-pre-wrap text-[13.5px] font-medium leading-[1.6] text-[#3F3A35]">{ad.body}</p>}
             {detail?.ad.caption && <p className="text-[12.5px] text-[#57534E]">{detail.ad.caption}</p>}
 
             <div className="flex flex-col gap-[8px] rounded-[12px] border border-[#EFEDE9] bg-[#FAF9F7] p-[14px]">
               {ad.linkUrl && (
                 <a href={ad.linkUrl} target="_blank" rel="noreferrer" title={ad.linkUrl} className="flex items-center gap-[6px] text-[#57534E] transition-colors hover:text-[#3F3AC4]">
                   <span className="material-symbols-outlined text-[15px] text-[#57534E]">link</span>
-                  <span className="truncate font-[family-name:var(--font-plex-mono)] text-[11.5px]">{ad.linkUrl}</span>
+                  <span className="truncate font-[family-name:var(--font-plex-mono)] font-medium text-[11.5px]">{ad.linkUrl}</span>
                 </a>
               )}
               {s.adStyle === 'product' && ad.productPublishedAt && (
-                <p className="font-[family-name:var(--font-plex-mono)] text-[11px] text-[#57534E]">Product uploaded {formatDate(ad.productPublishedAt)}</p>
+                <p className="font-[family-name:var(--font-plex-mono)] font-medium text-[11px] text-[#57534E]">Product uploaded {formatDate(ad.productPublishedAt)}</p>
               )}
               {ad.adLibraryUrl && (
                 <a href={ad.adLibraryUrl} target="_blank" rel="noreferrer" className="flex items-center gap-[6px] text-[#57534E] transition-colors hover:text-[#3F3AC4]">
                   <span className="material-symbols-outlined text-[15px] text-[#57534E]">open_in_new</span>
-                  <span className="truncate font-[family-name:var(--font-plex-mono)] text-[11.5px]">Ad Library #{ad.adArchiveId}</span>
+                  <span className="truncate font-[family-name:var(--font-plex-mono)] font-medium text-[11.5px]">Ad Library #{ad.adArchiveId}</span>
                 </a>
               )}
             </div>
@@ -104,7 +104,7 @@ export default function AdDetailModal({ ad, onClose, onSave }: { ad: Ad; onClose
                     <li key={o.id} className="flex items-center gap-[12px] rounded-[8px] bg-[#F7F6F4] px-[12px] py-[8px] text-[12px]">
                       <span className={o.isActive ? 'text-[#3F7A57]' : 'text-[#B3524B]'}>{o.isActive ? 'Active' : 'Inactive'}</span>
                       <span className="text-[#78716C]">collation {o.collationCount ?? '-'}</span>
-                      <span className="ml-auto font-[family-name:var(--font-plex-mono)] text-[11px] text-[#57534E]">{formatDate(o.observedAt)}</span>
+                      <span className="ml-auto font-[family-name:var(--font-plex-mono)] font-medium text-[11px] text-[#57534E]">{formatDate(o.observedAt)}</span>
                     </li>
                   ))}
                 </ul>

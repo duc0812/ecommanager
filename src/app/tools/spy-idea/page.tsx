@@ -50,6 +50,9 @@ export default function SpyIdeaPage() {
   const [products, setProducts] = useState<Product[]>([])
   const [ideas, setIdeas] = useState<Idea[]>([])
   const [bestSellers, setBestSellers] = useState<BestSellerGroup[]>([])
+  const [limit, setLimit] = useState(200)
+  const [adsFetched, setAdsFetched] = useState(0)
+  const [productsFetched, setProductsFetched] = useState(0)
 
   function buildUrl(nextArea: Area, nextView: string, overrides?: { domain?: string | null; niche?: string | null; type?: string | null }) {
     const p = new URLSearchParams()
@@ -78,18 +81,20 @@ export default function SpyIdeaPage() {
     return q.toString()
   }, [domain, niche, type])
 
+  useEffect(() => { setLimit(200) }, [area, view, filterQuery])
+
   useEffect(() => {
     if (area === 'ads') {
-      fetch(`/api/spy/ads?filter=${view}&limit=200&${filterQuery()}`).then(r => r.json()).then(d => setAds(d.ads ?? [])).catch(() => {})
+      fetch(`/api/spy/ads?filter=${view}&limit=${limit}&${filterQuery()}`).then(r => r.json()).then(d => { setAds(d.ads ?? []); setAdsFetched(d.fetched ?? (d.ads?.length ?? 0)) }).catch(() => {})
     } else if (area === 'products' && view === 'new-add') {
-      fetch(`/api/spy/products?days=30&limit=200&${filterQuery()}`).then(r => r.json()).then(d => setProducts(d.products ?? [])).catch(() => {})
+      fetch(`/api/spy/products?days=30&limit=${limit}&${filterQuery()}`).then(r => r.json()).then(d => { setProducts(d.products ?? []); setProductsFetched(d.fetched ?? (d.products?.length ?? 0)) }).catch(() => {})
     } else if (area === 'products' && view === 'best-seller') {
       const lim = domain ? 50 : 12
       fetch(`/api/spy/best-sellers?limit=${lim}&${filterQuery()}`).then(r => r.json()).then(d => setBestSellers(d.groups ?? [])).catch(() => {})
     } else if (area === 'ideas') {
       fetch('/api/spy/ideas').then(r => r.json()).then(setIdeas).catch(() => {})
     }
-  }, [area, view, filterQuery])
+  }, [area, view, filterQuery, limit])
 
   async function saveAdIdea(a: Ad) {
     await fetch('/api/spy/ideas', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: a.title ?? a.advertiser.pageName ?? 'Ad', refType: 'AD', refAdId: a.id, snapshotJson: a }) })
@@ -101,9 +106,9 @@ export default function SpyIdeaPage() {
   const subViews = area === 'ads' ? AD_VIEWS : area === 'products' ? PRODUCT_VIEWS : []
   const meta = AREA_META[area]
   const resultLabel = area === 'ads'
-    ? `${ads.length} creatives`
+    ? `${ads.length}${adsFetched >= limit ? '+' : ''} creatives`
     : area === 'products' && view === 'new-add'
-      ? `${products.length} products`
+      ? `${products.length}${productsFetched >= limit ? '+' : ''} products`
       : area === 'products'
         ? `${bestSellers.reduce((n, g) => n + g.items.length, 0)} products`
         : ''
@@ -127,22 +132,36 @@ export default function SpyIdeaPage() {
             <button key={v.key} onClick={() => pickView(v.key)}
               className={`h-[32px] rounded-full px-[14px] text-[12.5px] transition-colors ${view === v.key ? 'border border-[#1B1A17] bg-[#1B1A17] font-medium text-white' : 'border border-[#E6E3DE] bg-white text-[#6B655D] hover:bg-[#F2F1EE]'}`}>{v.label}</button>
           ))}
-          {resultLabel && <div className="ml-auto font-[family-name:var(--font-plex-mono)] text-[11px] tracking-[0.04em] text-[#78716C]">{resultLabel}</div>}
+          {resultLabel && <div className="ml-auto font-[family-name:var(--font-plex-mono)] font-medium text-[11px] tracking-[0.04em] text-[#78716C]">{resultLabel}</div>}
         </div>
       )}
 
       {area === 'ads' && (
-        <div className={`mt-[22px] ${GRID}`}>
-          {ads.map(a => <AdCard key={a.id} a={a} onSave={saveAdIdea} />)}
-          {ads.length === 0 && <p className="text-[13px] text-[#78716C]">No ads for this filter.</p>}
-        </div>
+        <>
+          <div className={`mt-[22px] ${GRID}`}>
+            {ads.map(a => <AdCard key={a.id} a={a} onSave={saveAdIdea} />)}
+            {ads.length === 0 && <p className="text-[13px] text-[#78716C]">No ads for this filter.</p>}
+          </div>
+          {adsFetched >= limit && (
+            <div className="mt-[24px] flex justify-center">
+              <button onClick={() => setLimit(l => l + 200)} className="h-[38px] rounded-[10px] border border-[#E6E3DE] bg-white px-[20px] text-[13px] font-medium text-[#1B1A17] transition-colors hover:bg-[#F2F1EE]">Load more</button>
+            </div>
+          )}
+        </>
       )}
 
       {area === 'products' && view === 'new-add' && (
-        <div className={`mt-[22px] ${GRID}`}>
-          {products.map(p => <ProductCard key={p.id} p={p} onSave={saveProductIdea} />)}
-          {products.length === 0 && <p className="text-[13px] text-[#78716C]">No products for this filter.</p>}
-        </div>
+        <>
+          <div className={`mt-[22px] ${GRID}`}>
+            {products.map(p => <ProductCard key={p.id} p={p} onSave={saveProductIdea} />)}
+            {products.length === 0 && <p className="text-[13px] text-[#78716C]">No products for this filter.</p>}
+          </div>
+          {productsFetched >= limit && (
+            <div className="mt-[24px] flex justify-center">
+              <button onClick={() => setLimit(l => l + 200)} className="h-[38px] rounded-[10px] border border-[#E6E3DE] bg-white px-[20px] text-[13px] font-medium text-[#1B1A17] transition-colors hover:bg-[#F2F1EE]">Load more</button>
+            </div>
+          )}
+        </>
       )}
 
       {area === 'products' && view === 'best-seller' && (
@@ -164,7 +183,7 @@ export default function SpyIdeaPage() {
           {ideas.map(i => (
             <li key={i.id} className="rounded-[12px] border border-[#E6E3DE] bg-white px-[16px] py-[14px]">
               <p className="text-[14px] font-semibold text-[#1B1A17]">{i.title}</p>
-              <p className="mt-1 font-[family-name:var(--font-plex-mono)] text-[11px] text-[#78716C]">{i.status} · {formatDate(i.createdAt)}</p>
+              <p className="mt-1 font-[family-name:var(--font-plex-mono)] font-medium text-[11px] text-[#78716C]">{i.status} · {formatDate(i.createdAt)}</p>
             </li>
           ))}
           {ideas.length === 0 && <p className="text-[13px] text-[#78716C]">No ideas saved yet.</p>}

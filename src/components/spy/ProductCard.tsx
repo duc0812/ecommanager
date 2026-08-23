@@ -23,14 +23,14 @@ export default function ProductCard({ p, onSave, rank, rankDelta }: { p: Product
     <article className="group relative flex flex-col overflow-hidden rounded-[14px] border border-[#E6E3DE] bg-white transition-all duration-200 hover:-translate-y-0.5 hover:border-[#D6D2CB] hover:shadow-[0_12px_28px_-18px_rgba(27,26,23,0.35)]">
       {rank !== undefined && (
         <div className="absolute left-[10px] top-[10px] z-10 flex items-center gap-[5px]">
-          <span className="rounded-[6px] bg-[#1B1A17]/80 px-[8px] py-[4px] font-[family-name:var(--font-plex-mono)] text-[10px] font-medium text-white backdrop-blur-sm">#{rank}</span>
+          <span className="rounded-[6px] bg-[#1B1A17]/80 px-[8px] py-[4px] font-[family-name:var(--font-plex-mono)] font-medium text-[10px] font-medium text-white backdrop-blur-sm">#{rank}</span>
           <TrendBadge delta={rankDelta} />
         </div>
       )}
       <div className="aspect-[4/5] overflow-hidden bg-[#F2F1EE]">
         {p.imageUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={p.imageUrl} alt={p.title ?? ''} className="h-full w-full object-cover" />
+          <img src={p.imageUrl} alt={p.title ?? ''} loading="lazy" className="h-full w-full object-cover" />
         ) : (
           <div className="flex h-full w-full items-center justify-center text-[#57534E]"><span className="material-symbols-outlined text-[42px]">image_not_supported</span></div>
         )}
@@ -39,7 +39,7 @@ export default function ProductCard({ p, onSave, rank, rankDelta }: { p: Product
         <h3 className="line-clamp-2 text-[14.5px] font-semibold leading-[1.3] tracking-[-0.012em] text-[#1B1A17]">{p.title}</h3>
         <div className="flex items-center gap-[6px] text-[11.5px] text-[#57534E]">
           <span className="truncate font-medium">{p.store.domain}</span>
-          <span className="ml-auto font-[family-name:var(--font-plex-mono)] text-[10.5px] text-[#57534E]">{formatDate(p.firstSeenAt)}</span>
+          <span className="ml-auto font-[family-name:var(--font-plex-mono)] font-medium text-[10.5px] text-[#57534E]">{formatDate(p.firstSeenAt)}</span>
         </div>
         <p className="text-[13px] font-semibold text-[#1B1A17]">{priceText(p.priceMin, p.priceMax)}</p>
         <div className="mt-auto flex items-center border-t border-[#EFEDE9] pt-[12px]">

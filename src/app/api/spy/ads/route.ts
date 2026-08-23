@@ -14,7 +14,7 @@ export async function GET(req: NextRequest) {
   const domain = searchParams.get('domain') || undefined
   const nicheId = searchParams.get('nicheId') || undefined
   const productTypeId = searchParams.get('productTypeId') || undefined
-  const limit = Math.min(parseInt(searchParams.get('limit') ?? '200', 10) || 200, 500)
+  const limit = Math.min(parseInt(searchParams.get('limit') ?? '200', 10) || 200, 2000)
 
   const and: any[] = []
   if (storeId) and.push({ advertiser: { storeId } })
@@ -84,5 +84,5 @@ export async function GET(req: NextRequest) {
     winning: x => x.signals.isLongRunning || x.signals.isScaling,
   }
   const result = filter && flags[filter] ? enriched.filter(flags[filter]) : enriched
-  return NextResponse.json({ ads: result })
+  return NextResponse.json({ ads: result, fetched: ads.length })
 }
