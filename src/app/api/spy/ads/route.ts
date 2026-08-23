@@ -51,11 +51,11 @@ export async function GET(req: NextRequest) {
     },
   })
 
-  const launch = await recentLaunchSet(ads.map(a => a.linkUrl))
-  const dates = await productDateMap(ads.map(a => a.linkUrl))
+  const launch = await recentLaunchSet(ads.map(a => a.resolvedUrl ?? a.linkUrl))
+  const dates = await productDateMap(ads.map(a => a.resolvedUrl ?? a.linkUrl))
   const now = new Date()
   const enriched = ads.map(a => {
-    const p = parseAdLink(a.linkUrl)
+    const p = parseAdLink(a.resolvedUrl ?? a.linkUrl)
     const newProductLaunching = p.kind === 'product' && !!p.host && !!p.handle && launch.has(`${p.host}|${p.handle}`)
     const key = p.kind === 'product' && p.host && p.handle ? `${p.host}|${p.handle}` : null
     const { rawPayload: _rawPayload, ...rest } = a // eslint-disable-line @typescript-eslint/no-unused-vars

@@ -613,6 +613,8 @@ model SpyAd {
   ctaType            String?
   ctaText            String?
   linkUrl            String?
+  resolvedUrl        String?
+  linkResolvedAt     DateTime?
   mediaUrl           String?
   title              String?
   body               String?

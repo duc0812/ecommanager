@@ -2,6 +2,7 @@ import { prisma } from '@/lib/db'
 import { startActorRun, pollRunUntilDone, getDatasetItems } from './apify'
 import { mapApifyAd } from './ad-mapping'
 import { ingestAds } from './ingest-ads'
+import { resolvePendingAdLinks } from './resolve-link'
 import { AD_SCAN_CAP } from './ad-signals'
 import { buildAdLibrarySearchUrl } from './ad-search-url'
 import { fanpageUrlFromId } from './fb-url'
@@ -23,6 +24,7 @@ export async function runPageAdScan(pageTarget: { id: string; storeId: string | 
     const items = await getDatasetItems(datasetId)
     const ads = items.map(mapApifyAd)
     const ingest = await ingestAds(scan.id, pageTarget.storeId, ads, { adDomainId: pageTarget.adDomainId ?? undefined })
+    await resolvePendingAdLinks().catch(err => console.error('[spy] link resolve failed', err))
     const stats = { totalScanned: items.length, ...ingest }
     await prisma.spyScan.update({ where: { id: scan.id }, data: { status: 'success', stats: JSON.stringify(stats), finishedAt: new Date() } })
     const fbPageId = ads.find(a => a.pageId)?.pageId ?? null
@@ -49,6 +51,7 @@ export async function runDomainAdScan(domain: { id: string; searchTerm: string; 
     const items = await getDatasetItems(datasetId)
     const ads = items.map(mapApifyAd)
     const ingest = await ingestAds(scan.id, null, ads, { adDomainId: domain.id })
+    await resolvePendingAdLinks().catch(err => console.error('[spy] link resolve failed', err))
     const stats = { totalScanned: items.length, ...ingest }
     await prisma.spyScan.update({ where: { id: scan.id }, data: { status: 'success', stats: JSON.stringify(stats), finishedAt: new Date() } })
     await prisma.spyAdDomain.update({ where: { id: domain.id }, data: { lastScanAt: new Date() } })
