@@ -157,6 +157,22 @@ export async function GET(req: NextRequest) {
         currency: spend.currency,
         billingDate: spend.date,
       })), schedule).totalUsd
+
+      const spendByAccount = new Map<string, number>()
+      for (const s of periodAdSpends) {
+        const usd = convertMetaAmountToUsdDated(s.spend, s.currency, s.date, schedule) ?? 0
+        spendByAccount.set(s.adAccountId, (spendByAccount.get(s.adAccountId) ?? 0) + usd)
+      }
+      const accountById = new Map(metaAccounts.map(a => [a.id, a]))
+      const adSpendByAccount = Array.from(spendByAccount.entries())
+        .map(([id, usd]) => ({
+          accountId: id,
+          name: accountById.get(id)?.accountName || accountById.get(id)?.accountId || 'Account',
+          spendUsd: Math.round(usd * 100) / 100,
+        }))
+        .filter(a => a.spendUsd > 0)
+        .sort((a, b) => b.spendUsd - a.spendUsd)
+
       const roas = adSpend > 0 ? totalOrderRevenue / adSpend : 0
       const avgMargin = totalOrderRevenue > 0 ? (totalOrderProfit / totalOrderRevenue) * 100 : 0
       const aov = periodOrders.length > 0 ? totalOrderRevenue / periodOrders.length : 0
@@ -181,6 +197,7 @@ export async function GET(req: NextRequest) {
         unmappedOrders,
         revenue: Math.round(totalOrderRevenue * 100) / 100,
         adSpend: Math.round(adSpend * 100) / 100,
+        adSpendByAccount,
         orderProfit: Math.round(totalOrderProfit * 100) / 100,
         netProfit: Math.round((totalOrderProfit - adSpend) * 100) / 100,
         roas: Math.round(roas * 100) / 100,

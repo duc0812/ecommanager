@@ -12,6 +12,7 @@ type PeriodMetrics = {
   unmappedOrders: number
   revenue: number
   adSpend: number
+  adSpendByAccount: { accountId: string; name: string; spendUsd: number }[]
   orderProfit: number
   netProfit: number
   roas: number
@@ -214,7 +215,8 @@ export default function OverviewPage() {
                   icon="shopping_bag"
                 />
                 <StatCard label="Doanh thu" value={fmtUSD(pm.revenue)} sub={`Margin ${pm.avgMargin.toFixed(1)}%`} icon="storefront" positive />
-                <StatCard label="Ad Spend" value={fmtUSD(pm.adSpend)} sub={`ROAS ${pm.roas.toFixed(2)}x`} icon="campaign" negative />
+                <StatCard label="Ad Spend" value={fmtUSD(pm.adSpend)} sub={`ROAS ${pm.roas.toFixed(2)}x`} icon="campaign" negative
+                  rows={pm.adSpendByAccount.length > 1 ? pm.adSpendByAccount.map(a => ({ label: a.name, value: fmtUSD(a.spendUsd) })) : undefined} />
               </div>
             ) : (
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-lg mb-lg">
@@ -394,7 +396,7 @@ function HeroCard({ label, value, negative }: { label: string; value: string; ne
   )
 }
 
-function StatCard({ label, value, icon, positive, negative, sub }: { label: string; value: string; icon: string; positive?: boolean; negative?: boolean; sub?: string }) {
+function StatCard({ label, value, icon, positive, negative, sub, rows }: { label: string; value: string; icon: string; positive?: boolean; negative?: boolean; sub?: string; rows?: { label: string; value: string }[] }) {
   const valueColor = positive ? 'text-on-tertiary-container' : negative ? 'text-error' : 'text-primary'
   return (
     <div className="rounded-xl p-lg shadow-card border border-outline-variant/20 bg-surface-container-lowest">
@@ -404,6 +406,16 @@ function StatCard({ label, value, icon, positive, negative, sub }: { label: stri
       </div>
       <div className={`text-stats-lg font-bold ${valueColor}`}>{value}</div>
       {sub && <p className="text-label-sm text-on-surface-variant mt-xs">{sub}</p>}
+      {rows && rows.length > 0 && (
+        <div className="mt-sm border-t border-outline-variant/20 pt-sm space-y-xs">
+          {rows.map((r, i) => (
+            <div key={i} className="flex items-center justify-between gap-sm text-label-sm">
+              <span className="truncate text-on-surface-variant">{r.label}</span>
+              <span className="font-medium text-primary tabular-nums">{r.value}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
