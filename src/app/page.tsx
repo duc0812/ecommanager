@@ -203,9 +203,11 @@ export default function OverviewPage() {
             {/* Row 1: Hero + 3 stat cards */}
             {!isAllTime && pm ? (
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-lg mb-lg">
-                <HeroCard
-                  label={`Lợi nhuận ròng · ${pm.label}`}
+                <StatCard
+                  label="Lợi nhuận ròng"
                   value={fmtUSD(pm.netProfit)}
+                  icon="savings"
+                  positive={pm.netProfit >= 0}
                   negative={pm.netProfit < 0}
                 />
                 <StatCard
