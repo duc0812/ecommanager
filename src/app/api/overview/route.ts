@@ -80,6 +80,24 @@ function tipAmount(order: Awaited<ReturnType<typeof ordersWithComputedPL>>[numbe
   }, 0)
 }
 
+type BillingRow = { amount: number; currency: string; billingDate: string; paymentMethod: string | null; paymentMethodLast4: string | null }
+
+function cardSummary(bills: BillingRow[], schedule: Awaited<ReturnType<typeof getMetaRateSchedule>>) {
+  const map = new Map<string, { last4: string; method: string; usd: number }>()
+  for (const b of bills) {
+    const usd = convertMetaAmountToUsdDated(b.amount, b.currency, b.billingDate, schedule) ?? 0
+    const last4 = b.paymentMethodLast4 || '—'
+    const entry = map.get(last4) ?? { last4, method: b.paymentMethod || '', usd: 0 }
+    entry.usd += usd
+    if (!entry.method && b.paymentMethod) entry.method = b.paymentMethod
+    map.set(last4, entry)
+  }
+  return Array.from(map.values())
+    .map(c => ({ last4: c.last4, method: c.method, usd: Math.round(c.usd * 100) / 100 }))
+    .filter(c => c.usd > 0)
+    .sort((a, b) => b.usd - a.usd)
+}
+
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url)
@@ -198,6 +216,10 @@ export async function GET(req: NextRequest) {
         revenue: Math.round(totalOrderRevenue * 100) / 100,
         adSpend: Math.round(adSpend * 100) / 100,
         adSpendByAccount,
+        spendByCard: cardSummary(
+          metaBillings.filter(b => b.billingDate >= periodRange.fromKey && b.billingDate <= periodRange.toKey),
+          schedule,
+        ),
         orderProfit: Math.round(totalOrderProfit * 100) / 100,
         netProfit: Math.round((totalOrderProfit - adSpend) * 100) / 100,
         roas: Math.round(roas * 100) / 100,
@@ -245,7 +267,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       shopify: { totalRevenue, payoutCount, recentPayouts },
-      meta: { totalSpend, billingCount, recentBillings, missingRateCount },
+      meta: { totalSpend, billingCount, recentBillings, missingRateCount, spendByCard: cardSummary(metaBillings, schedule) },
       projects: { count: projects.length, list: projectList },
       staff: { count: staff.length, totalMonthlyCost: staff.reduce((s, st) => s + st.monthlyCost, 0) },
       netCashflow: totalRevenue - totalSpend,

@@ -494,7 +494,7 @@ export default function MetaBillingPage() {
                   <table className="w-full">
                     <thead>
                       <tr className="border-b border-outline-variant/20 bg-surface-container-low/40">
-                        {['Transaction ID', 'Date', 'Amount', 'Labels', 'Payment method', 'Reference number', 'Payment status', 'Action'].map(h => (
+                        {['Transaction ID', 'Account', 'Date', 'Amount', 'Labels', 'Payment method', 'Reference number', 'Payment status', 'Action'].map(h => (
                           <th key={h} className="text-left px-lg py-sm text-label-sm text-on-surface-variant uppercase tracking-wider">{h}</th>
                         ))}
                       </tr>
@@ -515,6 +515,7 @@ export default function MetaBillingPage() {
                               <span className="mt-xs inline-block rounded bg-surface-container px-xs py-[1px] text-label-sm text-on-surface-variant">Auto (tool quét)</span>
                             )}
                           </td>
+                          <td className="px-lg py-md text-body-sm text-on-surface">{b.adAccount.accountName || b.adAccount.accountId}</td>
                           <td className="px-lg py-md text-body-sm text-on-surface">{fmt(b.billingDate)}</td>
                           <td className="px-lg py-md">
                             {b.amountUsd === null ? (
@@ -567,7 +568,7 @@ export default function MetaBillingPage() {
                     </tbody>
                     <tfoot>
                       <tr className="border-t-2 border-outline-variant/30 bg-surface-container-low/20">
-                        <td colSpan={2} className="px-lg py-md text-label-md font-semibold text-primary">Paid total</td>
+                        <td colSpan={3} className="px-lg py-md text-label-md font-semibold text-primary">Paid total</td>
                         <td className="px-lg py-md text-label-md font-bold text-primary">{fmtUSD(data.totalSpent)}</td>
                         <td colSpan={5} />
                       </tr>

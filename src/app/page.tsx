@@ -2,6 +2,8 @@
 import { useEffect, useState } from 'react'
 import Sidebar from '@/components/Sidebar'
 
+type CardSpend = { last4: string; method: string; usd: number }
+
 type PeriodMetrics = {
   period: string
   label: string
@@ -13,6 +15,7 @@ type PeriodMetrics = {
   revenue: number
   adSpend: number
   adSpendByAccount: { accountId: string; name: string; spendUsd: number }[]
+  spendByCard: CardSpend[]
   orderProfit: number
   netProfit: number
   roas: number
@@ -34,6 +37,7 @@ type OverviewData = {
     billingCount: number
     recentBillings: RecentBilling[]
     missingRateCount: number
+    spendByCard: CardSpend[]
   }
   projects: { count: number; list: ProjectSummary[] }
   staff: { count: number; totalMonthlyCost: number }
@@ -243,6 +247,28 @@ export default function OverviewPage() {
                 <StatCard label="Meta Billings" value={fmtNum(data.meta.billingCount)} icon="receipt" />
                 <StatCard label="Staff Count" value={fmtNum(data.staff.count)} icon="group" />
                 <StatCard label="Monthly Staff Cost" value={fmtUSD(data.staff.totalMonthlyCost)} icon="payments" />
+              </div>
+            )}
+
+            {/* Spend by card */}
+            {(pm?.spendByCard ?? data.meta.spendByCard ?? []).length > 0 && (
+              <div className="bg-surface-container-lowest rounded-xl shadow-card border border-outline-variant/20 mb-xl p-lg">
+                <div className="flex items-center gap-sm mb-md">
+                  <span className="material-symbols-outlined text-[18px] text-secondary">credit_card</span>
+                  <h3 className="text-headline-sm text-primary">Chi tiêu theo thẻ</h3>
+                  <span className="text-label-sm text-on-surface-variant">· {pm ? pm.label : 'All time'}</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-md">
+                  {(pm?.spendByCard ?? data.meta.spendByCard ?? []).map(c => (
+                    <div key={c.last4} className="flex items-center justify-between rounded-lg border border-outline-variant/20 bg-surface-container-low/40 px-md py-sm">
+                      <span className="flex items-center gap-sm text-body-sm text-on-surface">
+                        <span className="material-symbols-outlined text-[18px] text-on-surface-variant">credit_card</span>
+                        {c.method || 'Card'} •••• {c.last4}
+                      </span>
+                      <span className="text-label-md font-bold text-primary tabular-nums">{fmtUSD(c.usd)}</span>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
 
