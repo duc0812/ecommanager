@@ -1,4 +1,6 @@
 'use client'
+import { useState } from 'react'
+import AdDetailModal from './AdDetailModal'
 
 export type AdSignals = { isNew: boolean; activeDays: number; isLongRunning: boolean; isScaling: boolean; isStopped: boolean; adStyle: 'product'|'collection'|'homepage'|'other'|null; newProductLaunching: boolean }
 export type Ad = { id: string; title: string | null; body: string | null; adArchiveId: string; adLibraryUrl: string | null; linkUrl?: string | null; isActive?: boolean; mediaUrl: string | null; mediaType: 'video'|'image'|'carousel'|'dco'|null; startDate: string | null; productPublishedAt?: string | null; advertiser: { pageName: string | null }; signals: AdSignals }
@@ -13,7 +15,9 @@ function formatDate(v: string | null) {
 
 export default function AdCard({ a, onSave }: { a: Ad; onSave: (a: Ad) => void }) {
   const s = a.signals
+  const [open, setOpen] = useState(false)
   return (
+    <>
     <article className="group flex flex-col overflow-hidden rounded-[14px] border border-[#E6E3DE] bg-white transition-all duration-200 hover:-translate-y-0.5 hover:border-[#D6D2CB] hover:shadow-[0_12px_28px_-18px_rgba(27,26,23,0.35)]">
       <div className="relative aspect-[4/5] overflow-hidden bg-[#F2F1EE]">
         {a.mediaUrl ? (
@@ -62,12 +66,14 @@ export default function AdCard({ a, onSave }: { a: Ad; onSave: (a: Ad) => void }
               <span className="truncate font-[family-name:var(--font-plex-mono)] text-[10.5px] text-[#B8B2A9]">#{a.adArchiveId}</span>
             )}
             <div className="ml-auto flex gap-[6px]">
-              <a href={`/tools/spy-idea/ads/${a.id}`} className="flex h-[28px] items-center rounded-[7px] border border-[#E6E3DE] bg-white px-[10px] text-[11.5px] text-[#57534E] transition-colors hover:bg-[#F7F6F4] hover:text-[#1B1A17]">Detail</a>
+              <button onClick={() => setOpen(true)} className="flex h-[28px] items-center rounded-[7px] border border-[#E6E3DE] bg-white px-[10px] text-[11.5px] text-[#57534E] transition-colors hover:bg-[#F7F6F4] hover:text-[#1B1A17]">Detail</button>
               <button onClick={() => onSave(a)} className="flex h-[28px] items-center rounded-[7px] bg-[#3F3AC4] px-[10px] text-[11.5px] font-medium text-white transition-colors hover:bg-[#201C8F]">+ Save idea</button>
             </div>
           </div>
         </div>
       </div>
     </article>
+    {open && <AdDetailModal ad={a} onClose={() => setOpen(false)} onSave={onSave} />}
+    </>
   )
 }
