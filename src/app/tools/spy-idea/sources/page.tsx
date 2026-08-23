@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useState, useCallback } from 'react'
 import type { SpyCronConfig } from '@/lib/spy/cron-config'
+import { notifyFiltersChanged } from '@/lib/spy/filter-events'
 
 type Store = { id: string; domain: string; name: string | null; status: string; _count?: { products: number } }
 type AdDomain = { id: string; domain: string; searchTerm: string; country: string; lastScanAt: string | null; pageCount: number; adCount: number; newAdCount: number }
@@ -184,11 +185,11 @@ export default function SourcesPage() {
   async function addStore() {
     if (!domain.trim()) return
     await fetch('/api/spy/stores', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ domain }) })
-    setDomain(''); loadStores()
+    setDomain(''); loadStores(); notifyFiltersChanged()
   }
   async function removeStore(id: string) {
     await fetch('/api/spy/stores', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) })
-    loadStores()
+    loadStores(); notifyFiltersChanged()
   }
   async function scanAll() {
     setScanning(true)
@@ -217,7 +218,7 @@ export default function SourcesPage() {
   async function addAdDomain() {
     if (!domainInput.trim()) return
     await fetch('/api/spy/ad-domains', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ domain: domainInput }) })
-    setDomainInput(''); loadAdDomains()
+    setDomainInput(''); loadAdDomains(); notifyFiltersChanged()
   }
   async function scanDomain(id: string) {
     await fetch('/api/spy/scan-ads', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ domainId: id }) })
@@ -225,11 +226,14 @@ export default function SourcesPage() {
   }
   async function removeAdDomain(id: string) {
     await fetch('/api/spy/ad-domains', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) })
-    loadAdDomains()
+    loadAdDomains(); notifyFiltersChanged()
   }
 
   return (
     <>
+      <a href="/tools/spy-idea" className="mb-md inline-flex items-center gap-1 text-secondary text-label-md hover:underline">
+        <span className="material-symbols-outlined text-[18px]">arrow_back</span>Back to Ad Library
+      </a>
       <header className="mb-lg">
         <p className="text-label-sm uppercase tracking-wider text-on-surface-variant">Tools · Spy · Setup</p>
         <h2 className="text-display-md font-bold text-primary">Sources</h2>

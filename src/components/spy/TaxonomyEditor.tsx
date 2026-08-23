@@ -1,5 +1,6 @@
 'use client'
 import { useEffect, useState } from 'react'
+import { notifyFiltersChanged } from '@/lib/spy/filter-events'
 
 type Row = { id: string; name: string; keywords: string; active: boolean }
 
@@ -18,7 +19,7 @@ export default function TaxonomyEditor({ title, endpoint, hint }: { title: strin
   async function add() {
     if (!name.trim()) return
     await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, keywords }) })
-    setName(''); setKeywords(''); load()
+    setName(''); setKeywords(''); load(); notifyFiltersChanged()
   }
   async function save(id: string, kw: string) {
     await fetch(endpoint, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, keywords: kw }) })
@@ -26,7 +27,7 @@ export default function TaxonomyEditor({ title, endpoint, hint }: { title: strin
   }
   async function remove(id: string) {
     await fetch(endpoint, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) })
-    load()
+    load(); notifyFiltersChanged()
   }
 
   return (

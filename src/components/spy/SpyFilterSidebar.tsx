@@ -2,6 +2,7 @@
 import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
+import { FILTERS_CHANGED } from '@/lib/spy/filter-events'
 
 type FiltersData = { domains: string[]; niches: { id: string; name: string }[]; productTypes: { id: string; name: string }[] }
 
@@ -30,7 +31,12 @@ export default function SpyFilterSidebar() {
   const params = useSearchParams()
   const [filters, setFilters] = useState<FiltersData>({ domains: [], niches: [], productTypes: [] })
 
-  useEffect(() => { fetch('/api/spy/filters', { cache: 'no-store' }).then(r => r.json()).then(setFilters).catch(() => {}) }, [])
+  useEffect(() => {
+    const load = () => fetch('/api/spy/filters', { cache: 'no-store' }).then(r => r.json()).then(setFilters).catch(() => {})
+    load()
+    window.addEventListener(FILTERS_CHANGED, load)
+    return () => window.removeEventListener(FILTERS_CHANGED, load)
+  }, [])
 
   function setParam(key: string, value: string | null) {
     const p = new URLSearchParams(Array.from(params.entries()))
