@@ -1,6 +1,11 @@
 import { prisma } from '@/lib/db'
 import { parseAdLink } from './ad-link'
 
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+const DEAD = new Set([400, 401, 403, 404, 405, 410, 451])
+
+export type ResolveResult = { status: 'ok'; url: string } | { status: 'dead' } | { status: 'retry' }
+
 export function needsResolution(linkUrl: string | null): boolean {
   if (!linkUrl) return false
   let u: URL
@@ -10,27 +15,29 @@ export function needsResolution(linkUrl: string | null): boolean {
   return parseAdLink(linkUrl).kind === 'other'
 }
 
-export async function resolveRedirect(linkUrl: string, timeoutMs = 8000): Promise<string | null> {
+export async function resolveRedirect(linkUrl: string, timeoutMs = 8000): Promise<ResolveResult> {
   try {
     const res = await fetch(linkUrl, {
       method: 'GET',
       redirect: 'follow',
       signal: AbortSignal.timeout(timeoutMs),
-      headers: { 'user-agent': 'Mozilla/5.0 (compatible; EcomManagerBot/1.0)' },
+      headers: { 'user-agent': UA },
     })
     try { await res.body?.cancel() } catch { /* ignore */ }
-    return res.url || null
+    if (res.ok) return { status: 'ok', url: res.url || linkUrl }
+    if (DEAD.has(res.status)) return { status: 'dead' }
+    return { status: 'retry' }
   } catch {
-    return null
+    return { status: 'retry' }
   }
 }
 
 export async function resolvePendingAdLinks(
   opts: { networkCap?: number; batch?: number; concurrency?: number } = {},
-): Promise<{ checked: number; resolved: number; network: number }> {
+): Promise<{ checked: number; resolved: number; network: number; retried: number }> {
   const networkCap = opts.networkCap ?? 50
   const batch = opts.batch ?? 300
-  const concurrency = opts.concurrency ?? 6
+  const concurrency = opts.concurrency ?? 4
 
   const candidates = await prisma.spyAd.findMany({
     where: { linkResolvedAt: null, linkUrl: { not: null } },
@@ -54,17 +61,20 @@ export async function resolvePendingAdLinks(
   }
 
   let resolved = 0
+  let retried = 0
   let idx = 0
   async function worker() {
     while (idx < toResolve.length) {
       const cur = toResolve[idx++]
-      const finalUrl = await resolveRedirect(cur.linkUrl)
-      const good = finalUrl && finalUrl !== cur.linkUrl ? finalUrl : null
+      const r = await resolveRedirect(cur.linkUrl)
+      if (r.status === 'retry') { retried++; continue }
+      if (r.status === 'dead') { await prisma.spyAd.update({ where: { id: cur.id }, data: { linkResolvedAt: new Date() } }); continue }
+      const good = r.url !== cur.linkUrl ? r.url : null
       await prisma.spyAd.update({ where: { id: cur.id }, data: { resolvedUrl: good, linkResolvedAt: new Date() } })
       if (good) resolved++
     }
   }
   await Promise.all(Array.from({ length: Math.min(concurrency, toResolve.length) }, () => worker()))
 
-  return { checked: candidates.length, resolved, network: toResolve.length }
+  return { checked: candidates.length, resolved, network: toResolve.length, retried }
 }

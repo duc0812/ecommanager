@@ -5,22 +5,29 @@ Ads whose linkUrl is a coded redirect (e.g. https://store.com/CT6082038) never p
 product, so they get no "uploaded" date. This follows the redirect once and stores the final
 /products/<handle> URL in resolvedUrl, which the ads API then uses for matching.
 
-Idempotent: only looks at rows where linkResolvedAt IS NULL, and stamps linkResolvedAt on
-every row it checks (resolved or not) so re-runs skip them. DateTime is written as ISO-8601
-text to match the Prisma/libsql storage format.
+Each attempt is classified: ok (stamp resolvedUrl + linkResolvedAt), dead (4xx -> stamp
+linkResolvedAt only, never retry), or retry (timeout / 429 / 5xx -> left untouched so a later
+run picks it up). This is why bursts that get throttled recover on a re-run.
 
-Run from the project root (where dev.db resolves): python3 scripts/backfill-ad-links.py
+Modes:
+  python3 scripts/backfill-ad-links.py            # process rows never attempted (linkResolvedAt IS NULL)
+  SPY_RETRY=1 python3 scripts/backfill-ad-links.py # re-open every unresolved row, then process
+
+DateTime is written as ISO-8601 text to match the Prisma/libsql storage format.
+Run from the project root (where dev.db resolves).
 """
 import sqlite3, os
 from urllib.parse import urlparse, parse_qs, unquote
 from urllib.request import Request, urlopen
+from urllib.error import HTTPError
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor
 
 DB = os.environ.get("SPY_DB", "dev.db")
-UA = "Mozilla/5.0 (compatible; EcomManagerBot/1.0)"
+UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 TIMEOUT = 8
-WORKERS = 8
+WORKERS = int(os.environ.get("SPY_WORKERS", "4"))
+DEAD = {400, 401, 403, 404, 405, 410, 451}
 
 
 def now_iso():
@@ -60,13 +67,19 @@ def resolve(url):
     try:
         req = Request(url, method="GET", headers={"User-Agent": UA})
         with urlopen(req, timeout=TIMEOUT) as resp:
-            return resp.geturl()
+            return ("ok", resp.geturl())
+    except HTTPError as e:
+        return ("dead", None) if e.code in DEAD else ("retry", None)
     except Exception:
-        return None
+        return ("retry", None)
 
 
 def main():
     conn = sqlite3.connect(DB)
+    if os.environ.get("SPY_RETRY") == "1":
+        conn.execute("UPDATE SpyAd SET linkResolvedAt=NULL WHERE resolvedUrl IS NULL")
+        conn.commit()
+
     rows = conn.execute(
         "SELECT id, linkUrl FROM SpyAd WHERE linkResolvedAt IS NULL AND linkUrl IS NOT NULL"
     ).fetchall()
@@ -78,20 +91,28 @@ def main():
         conn.executemany("UPDATE SpyAd SET linkResolvedAt=? WHERE id=?", [(ts, i) for i in to_mark])
         conn.commit()
 
-    resolved = 0
+    resolved = dead = retried = 0
 
     def work(item):
         _id, url = item
         return _id, url, resolve(url)
 
     with ThreadPoolExecutor(max_workers=WORKERS) as ex:
-        for _id, url, final in ex.map(work, to_resolve):
+        for _id, url, (status, final) in ex.map(work, to_resolve):
+            if status == "retry":
+                retried += 1
+                continue
+            if status == "dead":
+                conn.execute("UPDATE SpyAd SET linkResolvedAt=? WHERE id=?", (now_iso(), _id))
+                dead += 1
+                continue
             good = final if (final and final != url) else None
             conn.execute("UPDATE SpyAd SET resolvedUrl=?, linkResolvedAt=? WHERE id=?", (good, now_iso(), _id))
             if good:
                 resolved += 1
     conn.commit()
-    print(f"checked={len(rows)} needing={len(to_resolve)} marked={len(to_mark)} resolved={resolved}")
+    print(f"checked={len(rows)} needing={len(to_resolve)} marked={len(to_mark)} "
+          f"resolved={resolved} dead={dead} retry_left={retried}")
 
 
 if __name__ == "__main__":

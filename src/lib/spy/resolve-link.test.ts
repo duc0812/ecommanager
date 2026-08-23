@@ -34,27 +34,35 @@ describe('needsResolution', () => {
 })
 
 describe('resolveRedirect', () => {
-  it('returns the final url and drains the body', async () => {
+  it('ok: returns final url and drains the body', async () => {
     const cancel = vi.fn(async () => {})
-    vi.stubGlobal('fetch', vi.fn(async () => ({ url: 'https://familystore.com/products/xyz', body: { cancel } })))
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, url: 'https://familystore.com/products/xyz', body: { cancel } })))
     const out = await resolveRedirect('https://familystore.com/CT1')
-    expect(out).toBe('https://familystore.com/products/xyz')
+    expect(out).toEqual({ status: 'ok', url: 'https://familystore.com/products/xyz' })
     expect(cancel).toHaveBeenCalled()
   })
-  it('returns null when fetch throws', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('network') }))
-    expect(await resolveRedirect('https://x/y')).toBeNull()
+  it('dead: 404 is a definitive failure', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 404, url: 'https://x/y', body: null })))
+    expect(await resolveRedirect('https://x/y')).toEqual({ status: 'dead' })
+  })
+  it('retry: 503 throttle is transient', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 503, url: 'https://x/y', body: null })))
+    expect(await resolveRedirect('https://x/y')).toEqual({ status: 'retry' })
+  })
+  it('retry: a thrown error (timeout/network) is transient', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('timeout') }))
+    expect(await resolveRedirect('https://x/y')).toEqual({ status: 'retry' })
   })
 })
 
 describe('resolvePendingAdLinks', () => {
-  it('marks non-needing ads checked, resolves needing ads, counts results', async () => {
+  it('marks non-needing checked, resolves needing, counts results', async () => {
     store.findManyResult = [
       { id: 'a1', linkUrl: 'https://familystore.com/CT1' },
       { id: 'a2', linkUrl: 'https://familystore.com/products/p' },
       { id: 'a3', linkUrl: 'https://familystore.com/' },
     ]
-    vi.stubGlobal('fetch', vi.fn(async () => ({ url: 'https://familystore.com/products/resolved', body: null })))
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, url: 'https://familystore.com/products/resolved', body: null })))
     const res = await resolvePendingAdLinks({ concurrency: 2 })
     expect(res.checked).toBe(3)
     expect(res.network).toBe(1)
@@ -67,20 +75,40 @@ describe('resolvePendingAdLinks', () => {
 
   it('stores null resolvedUrl when the redirect lands on the same url', async () => {
     store.findManyResult = [{ id: 'b1', linkUrl: 'https://familystore.com/CT2' }]
-    vi.stubGlobal('fetch', vi.fn(async () => ({ url: 'https://familystore.com/CT2', body: null })))
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, url: 'https://familystore.com/CT2', body: null })))
     const res = await resolvePendingAdLinks()
     expect(res.resolved).toBe(0)
     expect(store.update[0].data.resolvedUrl).toBeNull()
     expect(store.update[0].data.linkResolvedAt).toBeInstanceOf(Date)
   })
 
+  it('does NOT mark transient failures — leaves them for a later run', async () => {
+    store.findManyResult = [{ id: 'c1', linkUrl: 'https://familystore.com/CT3' }]
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 503, url: 'https://familystore.com/CT3', body: null })))
+    const res = await resolvePendingAdLinks()
+    expect(res.retried).toBe(1)
+    expect(res.resolved).toBe(0)
+    expect(store.update).toHaveLength(0)
+    expect(store.updateMany).toHaveLength(0)
+  })
+
+  it('marks a dead link (404) so it is not retried, without a resolvedUrl', async () => {
+    store.findManyResult = [{ id: 'd1', linkUrl: 'https://familystore.com/CT4' }]
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 404, url: 'https://familystore.com/CT4', body: null })))
+    const res = await resolvePendingAdLinks()
+    expect(res.resolved).toBe(0)
+    expect(res.retried).toBe(0)
+    expect(store.update[0].where.id).toBe('d1')
+    expect(store.update[0].data).toEqual({ linkResolvedAt: expect.any(Date) })
+  })
+
   it('caps network resolutions and leaves the rest for a later run', async () => {
     store.findManyResult = [
-      { id: 'c1', linkUrl: 'https://familystore.com/CT1' },
-      { id: 'c2', linkUrl: 'https://familystore.com/CT2' },
-      { id: 'c3', linkUrl: 'https://familystore.com/CT3' },
+      { id: 'e1', linkUrl: 'https://familystore.com/CT1' },
+      { id: 'e2', linkUrl: 'https://familystore.com/CT2' },
+      { id: 'e3', linkUrl: 'https://familystore.com/CT3' },
     ]
-    vi.stubGlobal('fetch', vi.fn(async () => ({ url: 'https://familystore.com/products/x', body: null })))
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, url: 'https://familystore.com/products/x', body: null })))
     const res = await resolvePendingAdLinks({ networkCap: 2 })
     expect(res.network).toBe(2)
     expect(store.update).toHaveLength(2)
