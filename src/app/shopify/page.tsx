@@ -168,7 +168,7 @@ export default function FinancePage() {
     <div className="flex min-h-screen bg-surface">
       <Sidebar />
 
-      <main className="ml-[280px] flex-1 p-xl">
+      <main className="ml-0 lg:ml-[280px] mt-14 lg:mt-0 flex-1 p-xl">
         {/* Header */}
         <header className="flex items-start justify-between mb-xl">
           <div>

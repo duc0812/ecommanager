@@ -516,7 +516,7 @@ export default function MappingPage() {
   return (
     <div className="flex min-h-screen bg-surface">
       <Sidebar />
-      <main className="ml-[280px] flex-1 p-xl">
+      <main className="ml-0 lg:ml-[280px] mt-14 lg:mt-0 flex-1 p-xl">
         <div className="bg-surface-container-lowest rounded-xl shadow-card border border-outline-variant/20 overflow-hidden">
           {/* Header */}
           <div className="flex items-center justify-between px-xl py-md border-b border-outline-variant/20">

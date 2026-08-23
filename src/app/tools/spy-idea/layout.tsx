@@ -12,7 +12,7 @@ export default function SpyLayout({ children }: { children: React.ReactNode }) {
     <RoleGate>
       <div className={`${plexSans.className} ${plexMono.variable} flex min-h-screen bg-[#F7F6F4] text-[#1B1A17]`}>
         <Sidebar />
-        <div className="ml-[280px] flex min-w-0 flex-1">
+        <div className="ml-0 lg:ml-[280px] mt-14 lg:mt-0 flex min-w-0 flex-1">
           <SpyChrome>{children}</SpyChrome>
         </div>
       </div>

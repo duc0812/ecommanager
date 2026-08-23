@@ -120,7 +120,7 @@ export default function OverviewPage() {
   return (
     <div className="flex min-h-screen bg-surface">
       <Sidebar />
-      <main className="ml-[280px] flex-1 p-xl">
+      <main className="ml-0 lg:ml-[280px] mt-14 lg:mt-0 flex-1 p-xl">
         <div className="flex items-center justify-between mb-lg flex-wrap gap-sm">
           <div>
             <h2 className="text-display-md font-bold text-primary">Tổng quan</h2>

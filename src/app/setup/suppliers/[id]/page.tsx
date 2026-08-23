@@ -418,7 +418,7 @@ export default function SupplierSetupPage() {
   return (
     <div className="flex min-h-screen bg-surface">
       <Sidebar />
-      <main className="ml-[280px] flex-1 p-xl">
+      <main className="ml-0 lg:ml-[280px] mt-14 lg:mt-0 flex-1 p-xl">
         <div className="mb-lg">
           <a href={suppliersPath} className="text-secondary text-label-md">Back to fulfillments</a>
           <div className="flex items-start justify-between mt-sm gap-lg">

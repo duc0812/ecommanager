@@ -219,7 +219,7 @@ export default function ProjectDashboard() {
     <RoleGate>
     <div className="flex min-h-screen bg-surface">
       <Sidebar />
-      <main className="ml-[280px] flex-1 p-xl">
+      <main className="ml-0 lg:ml-[280px] mt-14 lg:mt-0 flex-1 p-xl">
         <header className="mb-xl">
           <h2 className="text-display-md font-bold text-primary">Project Management</h2>
           <p className="text-on-surface-variant text-body-md mt-xs">Actual cashflow, seller profit, and marketing efficiency by project period</p>

@@ -25,7 +25,7 @@ function Facet({ title, options, value, onPick }: { title: string; options: { ke
   )
 }
 
-export default function SpyFilterSidebar() {
+export default function SpyFilterSidebar({ open = false, onClose }: { open?: boolean; onClose?: () => void }) {
   const pathname = usePathname()
   const router = useRouter()
   const params = useSearchParams()
@@ -42,6 +42,7 @@ export default function SpyFilterSidebar() {
     const p = new URLSearchParams(Array.from(params.entries()))
     if (value) p.set(key, value); else p.delete(key)
     router.replace(`/tools/spy-idea?${p.toString()}`)
+    onClose?.()
   }
 
   const setupLinks = [
@@ -51,7 +52,9 @@ export default function SpyFilterSidebar() {
   ]
 
   return (
-    <aside className="sticky top-0 flex h-screen w-[268px] flex-none flex-col gap-[28px] overflow-y-auto border-r border-[#E6E3DE] bg-white px-[20px] py-[24px]">
+    <>
+      {open && <div onClick={onClose} className="fixed inset-0 z-40 bg-black/50 lg:hidden" />}
+      <aside className={`fixed left-0 top-0 z-50 flex h-screen w-[280px] flex-none flex-col gap-[28px] overflow-y-auto border-r border-[#E6E3DE] bg-white px-[20px] py-[24px] transition-transform duration-200 lg:sticky lg:z-auto lg:w-[268px] lg:translate-x-0 ${open ? 'translate-x-0' : '-translate-x-full'}`}>
       <Facet title="Domain" value={params.get('domain')} onPick={v => setParam('domain', v)} options={[{ key: null, label: 'All' }, ...filters.domains.map(d => ({ key: d, label: d }))]} />
       <Facet title="Niche" value={params.get('niche')} onPick={v => setParam('niche', v)} options={[{ key: null, label: 'All' }, ...filters.niches.map(n => ({ key: n.id, label: n.name }))]} />
       <Facet title="Product type" value={params.get('type')} onPick={v => setParam('type', v)} options={[{ key: null, label: 'All' }, ...filters.productTypes.map(t => ({ key: t.id, label: t.name }))]} />
@@ -61,7 +64,7 @@ export default function SpyFilterSidebar() {
           {setupLinks.map(s => {
             const active = pathname === s.href
             return (
-              <Link key={s.href} href={s.href} className={`flex items-center gap-[10px] rounded-[8px] px-[10px] py-[8px] text-[13px] transition-colors ${active ? 'bg-[#F0EFFB] font-semibold text-[#3F3AC4]' : 'text-[#57534E] hover:bg-[#F2F1EE]'}`}>
+              <Link key={s.href} href={s.href} onClick={() => onClose?.()} className={`flex items-center gap-[10px] rounded-[8px] px-[10px] py-[8px] text-[13px] transition-colors ${active ? 'bg-[#F0EFFB] font-semibold text-[#3F3AC4]' : 'text-[#57534E] hover:bg-[#F2F1EE]'}`}>
                 <span className="material-symbols-outlined text-[18px]">{s.icon}</span>{s.label}
               </Link>
             )
@@ -69,5 +72,6 @@ export default function SpyFilterSidebar() {
         </div>
       </div>
     </aside>
+    </>
   )
 }

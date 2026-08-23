@@ -1,5 +1,6 @@
 'use client'
 import Link from 'next/link'
+import { useEffect, useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import { useCurrentUser } from '@/components/RoleGate'
 import { FeaturePermission, UserRole, visibleFor } from '@/lib/roles'
@@ -47,6 +48,8 @@ export default function Sidebar() {
   const { user } = useCurrentUser()
   const role: UserRole = user?.role ?? 'SUPERADMIN'
   const permissions: FeaturePermission[] = user?.permissions ?? []
+  const [open, setOpen] = useState(false)
+  useEffect(() => { setOpen(false) }, [pathname])
 
   async function logout() {
     await fetch('/api/auth/logout', { method: 'POST' })
@@ -55,7 +58,15 @@ export default function Sidebar() {
   }
 
   return (
-    <aside className="fixed left-0 top-0 h-full w-[280px] bg-primary flex flex-col py-lg z-50 border-r border-white/5">
+    <>
+      <div className="fixed left-0 right-0 top-0 z-30 flex h-14 items-center gap-3 border-b border-white/5 bg-primary px-4 lg:hidden">
+        <button onClick={() => setOpen(true)} aria-label="Mở menu" className="flex h-9 w-9 items-center justify-center rounded-lg text-on-primary hover:bg-white/10">
+          <span className="material-symbols-outlined">menu</span>
+        </button>
+        <span className="text-label-md font-black text-on-primary">Ecom Manager</span>
+      </div>
+      {open && <div onClick={() => setOpen(false)} className="fixed inset-0 z-40 bg-black/50 lg:hidden" />}
+      <aside className={`fixed left-0 top-0 h-full w-[280px] bg-primary flex flex-col py-lg z-50 border-r border-white/5 transition-transform duration-200 lg:translate-x-0 ${open ? 'translate-x-0' : '-translate-x-full'}`}>
       <div className="px-lg mb-lg">
         <h1 className="text-headline-sm font-black text-on-primary">Ecom Manager</h1>
         <p className="text-on-primary/60 text-body-sm">Cashflow Suite</p>
@@ -80,6 +91,7 @@ export default function Sidebar() {
             <Link
               key={entry.href}
               href={entry.href}
+              onClick={() => setOpen(false)}
               className={`flex items-center gap-md rounded-lg transition-all duration-200 ${
                 isChild ? 'pl-[28px] pr-md py-[6px]' : 'px-md py-sm'
               } ${
@@ -109,5 +121,6 @@ export default function Sidebar() {
         </div>
       </div>
     </aside>
+    </>
   )
 }

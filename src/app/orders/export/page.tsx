@@ -352,7 +352,7 @@ export default function ExportPage() {
   return (
     <div className="flex min-h-screen bg-surface">
       <Sidebar />
-      <main className="ml-[280px] w-[calc(100vw-280px)] min-w-0 p-xl">
+      <main className="ml-0 lg:ml-[280px] mt-14 lg:mt-0 w-[calc(100vw-280px)] min-w-0 p-xl">
         <h1 className="text-display-md mb-lg">CSV Export</h1>
 
         <div className="bg-surface-container-lowest rounded-xl p-lg shadow-card border border-outline-variant/20 mb-lg">

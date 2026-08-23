@@ -140,7 +140,7 @@ export default function SuppliersPage() {
   return (
     <div className="flex min-h-screen bg-surface">
       <Sidebar />
-      <main className="ml-[280px] flex-1 p-xl">
+      <main className="ml-0 lg:ml-[280px] mt-14 lg:mt-0 flex-1 p-xl">
         <div className="flex items-center justify-between mb-lg">
           <div>
             <h1 className="text-display-md">All Fulfillments</h1>

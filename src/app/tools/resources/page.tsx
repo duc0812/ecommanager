@@ -156,7 +156,7 @@ export default function ResourcesPage() {
     <RoleGate>
     <div className="flex min-h-screen bg-surface">
       <Sidebar />
-      <main className="ml-[280px] flex-1 p-xl">
+      <main className="ml-0 lg:ml-[280px] mt-14 lg:mt-0 flex-1 p-xl">
         <header className="mb-xl">
           <p className="text-label-sm uppercase tracking-wider text-on-surface-variant">Tools</p>
           <h2 className="text-display-md font-bold text-primary">Resource Management</h2>

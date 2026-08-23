@@ -324,7 +324,7 @@ export default function OrdersPage() {
   return (
     <div className="flex min-h-screen bg-surface">
       <Sidebar />
-      <main className="ml-[280px] w-[calc(100vw-280px)] min-w-0 overflow-x-hidden p-xl">
+      <main className="ml-0 lg:ml-[280px] mt-14 lg:mt-0 w-[calc(100vw-280px)] min-w-0 overflow-x-hidden p-xl">
         {/* Header */}
         <div className="flex items-center justify-between mb-lg gap-md">
           <h1 className="text-display-md">All Orders</h1>

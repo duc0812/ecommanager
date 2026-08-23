@@ -93,7 +93,7 @@ export default function SetupHRPage() {
   return (
     <div className="flex min-h-screen bg-surface">
       <Sidebar />
-      <main className="ml-[280px] flex-1 p-xl">
+      <main className="ml-0 lg:ml-[280px] mt-14 lg:mt-0 flex-1 p-xl">
         <header className="mb-xl">
           <p className="text-label-sm text-on-surface-variant uppercase tracking-wider mb-xs">Setup</p>
           <h2 className="text-display-md font-bold text-primary">HR</h2>

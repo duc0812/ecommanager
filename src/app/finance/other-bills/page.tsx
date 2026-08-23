@@ -229,7 +229,7 @@ export default function OtherBillsPage() {
     <RoleGate>
     <div className="flex min-h-screen bg-surface">
       <Sidebar />
-      <main className="ml-[280px] flex-1 p-xl">
+      <main className="ml-0 lg:ml-[280px] mt-14 lg:mt-0 flex-1 p-xl">
         <header className="mb-xl">
           <h2 className="text-display-md font-bold text-primary">Other Bills</h2>
           <p className="text-on-surface-variant text-body-md mt-xs">Ghi nhận các chi phí đã thanh toán: app, subscription, văn phòng...</p>
