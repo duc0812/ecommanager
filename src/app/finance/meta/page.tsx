@@ -131,6 +131,41 @@ export default function MetaBillingPage() {
   const [importResult, setImportResult] = useState<ImportResult | null>(null)
   const accounts = useMemo(() => data?.accounts ?? [], [data?.accounts])
 
+  const cardSummary = useMemo(() => {
+    const paid = new Set(['PAID', 'SETTLED', 'COMPLETED'])
+    const map = new Map<string, { last4: string; method: string; baseUsd: number; usdPortion: number; hasVnd: boolean }>()
+    for (const b of data?.billings ?? []) {
+      if (!paid.has(b.status)) continue
+      const last4 = b.paymentMethodLast4 || '—'
+      const e = map.get(last4) ?? { last4, method: b.paymentMethod || '', baseUsd: 0, usdPortion: 0, hasVnd: false }
+      if (b.amountUsd != null) {
+        e.baseUsd += b.amountUsd
+        if (b.currency === 'USD') e.usdPortion += b.amountUsd
+      }
+      if (b.currency !== 'USD') e.hasVnd = true
+      if (!e.method && b.paymentMethod) e.method = b.paymentMethod
+      map.set(last4, e)
+    }
+    return Array.from(map.values())
+      .map(e => {
+        const feeUsd = e.hasVnd ? Math.round(e.usdPortion * 0.03 * 100) / 100 : 0
+        return {
+          last4: e.last4, method: e.method, hasVnd: e.hasVnd,
+          baseUsd: Math.round(e.baseUsd * 100) / 100,
+          usdPortion: Math.round(e.usdPortion * 100) / 100,
+          feeUsd,
+          totalUsd: Math.round((e.baseUsd + feeUsd) * 100) / 100,
+        }
+      })
+      .filter(e => e.totalUsd > 0)
+      .sort((a, b) => b.totalUsd - a.totalUsd)
+  }, [data?.billings])
+
+  const cardTotals = useMemo(
+    () => cardSummary.reduce((s, c) => ({ base: s.base + c.baseUsd, fee: s.fee + c.feeUsd, total: s.total + c.totalUsd }), { base: 0, fee: 0, total: 0 }),
+    [cardSummary],
+  )
+
   const load = useCallback(async (accountId?: string, month?: string, projectTime?: string, staffTime?: string) => {
     setLoading(true)
     const params = new URLSearchParams()
@@ -431,6 +466,53 @@ export default function MetaBillingPage() {
                 <p className="text-label-sm text-on-surface-variant mt-xs">failed payment attempts</p>
               </div>
             </div>
+
+            {cardSummary.length > 0 && (
+              <div className="mb-xl bg-surface-container-lowest rounded-xl border border-outline-variant/20 overflow-hidden">
+                <div className="flex flex-wrap items-center gap-sm px-lg py-md border-b border-outline-variant/20">
+                  <span className="material-symbols-outlined text-secondary">credit_card</span>
+                  <h3 className="text-headline-sm text-primary">Chi tiêu theo thẻ</h3>
+                  <span className="text-label-sm text-on-surface-variant">Phí 3% cho giao dịch USD của thẻ VND (thẻ có cả VND lẫn USD)</span>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b border-outline-variant/20 bg-surface-container-low/40">
+                        {['Thẻ', 'Chi tiêu (USD)', 'Trong đó GD USD', 'Phí 3%', 'Tổng gồm phí'].map(h => (
+                          <th key={h} className="text-left px-lg py-sm text-label-sm text-on-surface-variant uppercase tracking-wider">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-outline-variant/10">
+                      {cardSummary.map(c => (
+                        <tr key={c.last4} className="hover:bg-surface-container-low/40 transition-colors">
+                          <td className="px-lg py-md text-body-sm text-on-surface">
+                            <span className="inline-flex items-center gap-sm">
+                              <span className="material-symbols-outlined text-[18px] text-on-surface-variant">credit_card</span>
+                              {c.method || 'Card'} •••• {c.last4}
+                              {c.feeUsd > 0 && <span className="rounded bg-amber-100 px-xs py-[1px] text-label-sm text-amber-800">thẻ VND</span>}
+                            </span>
+                          </td>
+                          <td className="px-lg py-md text-label-md font-semibold text-primary tabular-nums">{fmtUSD(c.baseUsd)}</td>
+                          <td className="px-lg py-md text-body-sm text-on-surface-variant tabular-nums">{c.usdPortion > 0 ? fmtUSD(c.usdPortion) : '-'}</td>
+                          <td className="px-lg py-md text-body-sm tabular-nums">{c.feeUsd > 0 ? <span className="font-semibold text-amber-700">{fmtUSD(c.feeUsd)}</span> : <span className="text-on-surface-variant">-</span>}</td>
+                          <td className="px-lg py-md text-label-md font-bold text-primary tabular-nums">{fmtUSD(c.totalUsd)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t-2 border-outline-variant/30 bg-surface-container-low/20">
+                        <td className="px-lg py-md text-label-md font-semibold text-primary">Tổng</td>
+                        <td className="px-lg py-md text-label-md font-bold text-primary tabular-nums">{fmtUSD(cardTotals.base)}</td>
+                        <td />
+                        <td className="px-lg py-md text-label-md font-bold text-amber-700 tabular-nums">{fmtUSD(cardTotals.fee)}</td>
+                        <td className="px-lg py-md text-label-md font-bold text-primary tabular-nums">{fmtUSD(cardTotals.total)}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+            )}
 
             <section className="mb-xl rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-lg">
               <div className="flex flex-wrap items-center gap-md">
