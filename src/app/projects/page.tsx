@@ -465,13 +465,13 @@ export default function ProjectDashboard() {
 
 function StatCard({ label, icon, value, hint, negative = false, strong = false }: { label: string; icon: string; value: string; hint: string; negative?: boolean; strong?: boolean }) {
   return (
-    <div className={`${strong ? 'bg-primary text-on-primary' : 'bg-surface-container-lowest'} rounded-xl border border-outline-variant/20 p-lg`}>
+    <div className={`${strong ? `${negative ? 'bg-rose-600' : 'bg-emerald-600'} text-white` : 'bg-surface-container-lowest'} rounded-xl border border-outline-variant/20 p-md`}>
       <div className="flex items-center gap-sm mb-sm">
-        <span className={`material-symbols-outlined text-[18px] ${strong ? 'text-on-primary/60' : 'text-secondary'}`}>{icon}</span>
-        <span className={`text-label-sm uppercase tracking-wider ${strong ? 'text-on-primary/60' : 'text-on-surface-variant'}`}>{label}</span>
+        <span className={`material-symbols-outlined text-[18px] ${strong ? 'text-white/70' : 'text-secondary'}`}>{icon}</span>
+        <span className={`text-label-sm uppercase tracking-wider ${strong ? 'text-white/80' : 'text-on-surface-variant'}`}>{label}</span>
       </div>
-      <p className={`text-stats-lg ${strong ? 'text-on-primary' : negative ? 'text-error' : 'text-primary'}`}>{value}</p>
-      <p className={`text-label-sm mt-xs ${strong ? 'text-on-primary/50' : 'text-on-surface-variant'}`}>{hint}</p>
+      <p className={`text-[20px] font-bold leading-tight tabular-nums ${strong ? 'text-white' : negative ? 'text-error' : 'text-primary'}`}>{value}</p>
+      <p className={`text-label-sm mt-xs ${strong ? 'text-white/70' : 'text-on-surface-variant'}`}>{hint}</p>
     </div>
   )
 }
