@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { convertMetaAmountToUsdDated } from '@/lib/meta-currency'
 import { getMetaRateSchedule } from '@/lib/meta-exchange-rates'
+import { getVndCardLast4, sumBillingFxFeesUsd } from '@/lib/meta-fee'
 
 function dateKey(date: Date) {
   return date.toISOString().split('T')[0]
@@ -147,6 +148,9 @@ export async function GET(req: NextRequest) {
   const pendingBillings = billings.filter(b => b.status === 'PENDING')
   const totalSpent = paidBillings.reduce((s, b) => s + (b.amountUsd ?? 0), 0)
   const totalPending = pendingBillings.reduce((s, b) => s + (b.amountUsd ?? 0), 0)
+  const vndCards = await getVndCardLast4()
+  const fxFee = sumBillingFxFeesUsd(paidBillings, vndCards, schedule)
+  const paidReality = totalSpent + fxFee
   const missingRateIds = new Set(billings.filter(b => b.amountUsd === null).map(b => b.adAccountId))
   const missingExchangeRateAccounts = accountsWithRates
     .filter(account => missingRateIds.has(account.id))
@@ -162,6 +166,9 @@ export async function GET(req: NextRequest) {
     billings,
     totalSpent,
     totalPending,
+    fxFee,
+    paidReality,
+    vndCardLast4: Array.from(vndCards),
     count: billings.length,
     paidCount: paidBillings.length,
     failedCount: failedBillings.length,

@@ -39,6 +39,9 @@ type DBData = {
   billings: MetaBilling[]
   totalSpent: number
   totalPending: number
+  fxFee: number
+  paidReality: number
+  vndCardLast4: string[]
   count: number
   paidCount: number
   failedCount: number
@@ -133,24 +136,25 @@ export default function MetaBillingPage() {
 
   const cardSummary = useMemo(() => {
     const paid = new Set(['PAID', 'SETTLED', 'COMPLETED'])
-    const map = new Map<string, { last4: string; method: string; baseUsd: number; usdPortion: number; hasVnd: boolean }>()
+    const vnd = new Set(data?.vndCardLast4 ?? [])
+    const map = new Map<string, { last4: string; method: string; baseUsd: number; usdPortion: number }>()
     for (const b of data?.billings ?? []) {
       if (!paid.has(b.status)) continue
       const last4 = b.paymentMethodLast4 || '—'
-      const e = map.get(last4) ?? { last4, method: b.paymentMethod || '', baseUsd: 0, usdPortion: 0, hasVnd: false }
+      const e = map.get(last4) ?? { last4, method: b.paymentMethod || '', baseUsd: 0, usdPortion: 0 }
       if (b.amountUsd != null) {
         e.baseUsd += b.amountUsd
         if (b.currency === 'USD') e.usdPortion += b.amountUsd
       }
-      if (b.currency !== 'USD') e.hasVnd = true
       if (!e.method && b.paymentMethod) e.method = b.paymentMethod
       map.set(last4, e)
     }
     return Array.from(map.values())
       .map(e => {
-        const feeUsd = e.hasVnd ? Math.round(e.usdPortion * 0.03 * 100) / 100 : 0
+        const hasVnd = vnd.has(e.last4)
+        const feeUsd = hasVnd ? Math.round(e.usdPortion * 0.03 * 100) / 100 : 0
         return {
-          last4: e.last4, method: e.method, hasVnd: e.hasVnd,
+          last4: e.last4, method: e.method, hasVnd,
           baseUsd: Math.round(e.baseUsd * 100) / 100,
           usdPortion: Math.round(e.usdPortion * 100) / 100,
           feeUsd,
@@ -159,7 +163,7 @@ export default function MetaBillingPage() {
       })
       .filter(e => e.totalUsd > 0)
       .sort((a, b) => b.totalUsd - a.totalUsd)
-  }, [data?.billings])
+  }, [data?.billings, data?.vndCardLast4])
 
   const cardTotals = useMemo(
     () => cardSummary.reduce((s, c) => ({ base: s.base + c.baseUsd, fee: s.fee + c.feeUsd, total: s.total + c.totalUsd }), { base: 0, fee: 0, total: 0 }),
@@ -434,10 +438,18 @@ export default function MetaBillingPage() {
               <div className="bg-primary rounded-xl p-lg border border-outline-variant/20">
                 <div className="flex items-center gap-sm mb-sm">
                   <span className="material-symbols-outlined text-[18px] text-on-primary/50">payments</span>
-                  <span className="text-label-sm text-on-primary/60 uppercase tracking-wider">Paid Amount</span>
+                  <span className="text-label-sm text-on-primary/60 uppercase tracking-wider">Paid On Meta</span>
                 </div>
                 <p className="text-stats-lg font-bold text-on-primary">{fmtUSD(data.totalSpent)}</p>
-                <p className="text-label-sm text-on-primary/50 mt-xs">{data.paidCount ?? 0} paid transactions</p>
+                <p className="text-label-sm text-on-primary/50 mt-xs">Trả cho Facebook · {data.paidCount ?? 0} paid</p>
+              </div>
+              <div className="bg-surface-container-lowest rounded-xl p-lg border border-secondary/40">
+                <div className="flex items-center gap-sm mb-sm">
+                  <span className="material-symbols-outlined text-[18px] text-secondary">account_balance_wallet</span>
+                  <span className="text-label-sm text-on-surface-variant uppercase tracking-wider">Paid Amount Reality</span>
+                </div>
+                <p className="text-stats-lg font-bold text-primary">{fmtUSD(data.paidReality ?? data.totalSpent)}</p>
+                <p className="text-label-sm text-on-surface-variant mt-xs">Gồm phí đổi 3%: <span className="font-semibold text-amber-700">+{fmtUSD(data.fxFee ?? 0)}</span></p>
               </div>
               {(data.pendingCount ?? 0) > 0 && (
                 <div className="bg-amber-50 rounded-xl p-lg border border-amber-200">

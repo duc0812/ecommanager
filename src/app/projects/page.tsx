@@ -90,6 +90,8 @@ type Analytics = {
   totalPaymentFees: number
   totalAdSpend: number
   totalMetaBilling: number
+  metaFxFee: number
+  paidReality: number
   totalFulfillmentCost: number
   totalOrderProfit: number
   totalOrderCogs: number
@@ -343,9 +345,10 @@ export default function ProjectDashboard() {
                       {selectedStaff === 'all' ? 'payout - paid billing - COGS - costs' : 'seller-period payout - paid billing - COGS - costs'}
                     </span>
                   </div>
-                  <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-7 gap-lg">
+                  <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-8 gap-lg">
                     <StatCard label="Shopify Payout" icon="payments" value={fmtUSD(analytics.totalPayout)} hint={`${analytics.payoutCount} paid payouts`} />
-                    <StatCard label="Meta Billing" icon="receipt_long" value={fmtUSD(analytics.totalMetaBilling)} hint="paid billing transactions" />
+                    <StatCard label="Paid On Meta" icon="receipt_long" value={fmtUSD(analytics.totalMetaBilling)} hint="trả cho Facebook" />
+                    <StatCard label="Paid Amount Reality" icon="account_balance_wallet" value={fmtUSD(analytics.paidReality ?? analytics.totalMetaBilling)} hint={`gồm phí 3%: +${fmtUSD(analytics.metaFxFee ?? 0)}`} />
                     <StatCard label="COGS" icon="inventory_2" value={fmtUSD(analytics.totalOrderCogs)} hint={analytics.unmappedOrderCount > 0 ? `${analytics.unmappedOrderCount} order(s) tạm tính` : 'mapped order costs'} />
                     <StatCard label="Other Costs" icon="receipt_long" value={fmtUSD(analytics.totalOtherCosts)} hint={`${analytics.otherBillsCount} Other Bill(s)${analytics.fulfillmentBillsCount > 0 ? ` + ${analytics.fulfillmentBillsCount} fulfillment` : ''}`} />
                     <StatCard
@@ -483,7 +486,8 @@ const OTHER_BILL_CATEGORY_LABELS: Record<string, string> = {
 
 function CostBreakdown({ analytics }: { analytics: Analytics }) {
   const rows: { label: string; value: number; muted?: boolean }[] = [
-    { label: 'Meta billing paid', value: analytics.totalMetaBilling },
+    { label: 'Paid On Meta (trả FB)', value: analytics.totalMetaBilling },
+    ...(analytics.metaFxFee > 0 ? [{ label: 'Phí chuyển đổi 3% (USD)', value: analytics.metaFxFee }] : []),
     { label: 'Order COGS', value: analytics.totalOrderCogs },
     ...analytics.otherBillsByCategory.map(row => ({
       label: `Other bill · ${OTHER_BILL_CATEGORY_LABELS[row.category] ?? row.category}`,

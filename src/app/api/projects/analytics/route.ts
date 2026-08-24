@@ -5,6 +5,7 @@ import { estimateOrderCostAndProfit } from '@/lib/order-profit'
 import { productLinesOnly } from '@/lib/order-lines'
 import { convertMetaAmountToUsdDated, normalizeMetaCurrency, sumMetaAmountsUsdDated } from '@/lib/meta-currency'
 import { getMetaRateSchedule } from '@/lib/meta-exchange-rates'
+import { getVndCardLast4, sumBillingFxFeesUsd } from '@/lib/meta-fee'
 import { PROJECT_REVENUE_EXCLUDED_STATUSES, summarizeProjectOrderFinancials } from '@/lib/project-metrics'
 
 const OTHER_BILL_CATEGORIES = ['APP_TOOL', 'SUBSCRIPTION', 'SUPPLIER', 'OFFICE', 'OTHER'] as const
@@ -151,7 +152,7 @@ export async function GET(req: NextRequest) {
         status: { in: paidMetaStatuses },
         adAccount: { projectId },
       },
-      select: { adAccountId: true, amount: true, currency: true, billingDate: true },
+      select: { adAccountId: true, amount: true, currency: true, billingDate: true, paymentMethodLast4: true },
     }),
     prisma.order.findMany({
       where: {
@@ -205,6 +206,9 @@ export async function GET(req: NextRequest) {
   const totalPayout = payouts.reduce((sum, p) => sum + p.amount, 0)
   const metaBillingSummary = sumMetaAmountsUsdDated(billings, schedule)
   const totalMetaBilling = metaBillingSummary.totalUsd
+  const vndCards = await getVndCardLast4()
+  const metaFxFee = sumBillingFxFeesUsd(billings, vndCards, schedule)
+  const paidReality = totalMetaBilling + metaFxFee
   const { totalRevenue, totalPaymentFees } = summarizeProjectOrderFinancials(orders)
   let totalOrderProfit = 0
   let totalOrderCogs = 0
@@ -273,7 +277,7 @@ export async function GET(req: NextRequest) {
   const fulfillmentBillsTotal = fulfillmentBills.reduce((sum, cost) => sum + cost.totalAmount, 0)
   const totalOtherCosts = otherBillsTotal + fulfillmentBillsTotal
   const cashflowCosts = totalOrderCogs + totalOtherCosts
-  const actualCashflow = totalPayout - totalMetaBilling - cashflowCosts
+  const actualCashflow = totalPayout - totalMetaBilling - metaFxFee - cashflowCosts
   const shopifyBalance = project.shopifyStore?.currentBalance ?? 0
   // Payouts Shopify is transferring but has not deposited yet (forward-looking, not date-filtered).
   const inTransitPayoutRows = project.shopifyStore
@@ -288,10 +292,11 @@ export async function GET(req: NextRequest) {
   const totalOrderNetRevenue = orders.reduce((sum, order) => sum + order.expectedPayout, 0)
   const pendingPayout = Math.max(0, totalOrderNetRevenue - totalPayout - inTransitPayout - shopifyBalance)
   const expectedCashflow = projectedCashflow + pendingPayout
-  const grossProfit = totalOrderProfit - totalOtherCosts - totalAdSpend
+  const grossProfit = totalOrderProfit - totalOtherCosts - totalAdSpend - metaFxFee
   const grossMargin = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0
-  const adSpendRatio = totalRevenue > 0 ? (totalAdSpend / totalRevenue) * 100 : 0
-  const roas = totalAdSpend > 0 ? totalRevenue / totalAdSpend : 0
+  const effectiveAdCost = totalAdSpend + metaFxFee
+  const adSpendRatio = totalRevenue > 0 ? (effectiveAdCost / totalRevenue) * 100 : 0
+  const roas = effectiveAdCost > 0 ? totalRevenue / effectiveAdCost : 0
   const activeAssignments = project.assignments
     .filter(assignment => {
       const assignmentStart = assignment.startDate.toISOString().split('T')[0]
@@ -358,6 +363,8 @@ export async function GET(req: NextRequest) {
     totalPaymentFees,
     totalAdSpend,
     totalMetaBilling,
+    metaFxFee,
+    paidReality,
     totalFulfillmentCost,
     totalOrderProfit,
     totalOrderCogs,
