@@ -7,6 +7,7 @@ import { getMetaRateSchedule } from '@/lib/meta-exchange-rates'
 import { getVndCardLast4, billingFxFeeUsd } from '@/lib/meta-fee'
 import { PROJECT_REVENUE_EXCLUDED_STATUSES } from '@/lib/project-metrics'
 import { computeSellerCommission } from '@/lib/seller-commission'
+import { verifyToken } from '@/lib/auth'
 
 function monthOf(dateStr: string) {
   return dateStr.slice(0, 7)
@@ -30,6 +31,10 @@ function monthList(startMonth: string, endMonth: string) {
 }
 
 export async function GET(req: NextRequest) {
+  const token = req.cookies.get('auth_token')?.value
+  const auth = token ? await verifyToken(token) : null
+  if (!auth || auth.role !== 'SUPERADMIN') return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+
   const { searchParams } = new URL(req.url)
   const projectId = searchParams.get('projectId')
   const staffId = searchParams.get('staffId')

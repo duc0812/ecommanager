@@ -5,7 +5,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import { useCurrentUser } from '@/components/RoleGate'
 import { FeaturePermission, UserRole, visibleFor } from '@/lib/roles'
 
-type NavItem = { type: 'item' | 'child'; href: string; icon: string; label: string }
+type NavItem = { type: 'item' | 'child'; href: string; icon: string; label: string; superAdminOnly?: boolean }
 type NavGroup = { type: 'group'; label: string }
 type NavDivider = { type: 'divider' }
 type NavEntry = NavItem | NavGroup | NavDivider
@@ -15,6 +15,7 @@ const nav: NavEntry[] = [
   { type: 'divider' },
   { type: 'group', label: 'Project Management' },
   { type: 'child', href: '/projects', icon: 'analytics', label: 'Dashboard' },
+  { type: 'child', href: '/projects/seller-profit', icon: 'workspace_premium', label: 'Seller Profit', superAdminOnly: true },
   { type: 'divider' },
   { type: 'group', label: 'Finance' },
   { type: 'child', href: '/shopify', icon: 'payments', label: 'Shopify' },
@@ -84,6 +85,7 @@ export default function Sidebar() {
               </p>
             )
           }
+          if (entry.superAdminOnly && role !== 'SUPERADMIN') return null
           if (!visibleFor(role, entry.href, permissions)) return null
           const isChild = entry.type === 'child'
           const active = pathname === entry.href || (entry.href !== '/' && pathname.startsWith(entry.href))
