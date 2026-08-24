@@ -1,7 +1,7 @@
 ﻿'use client'
 import { useEffect, useState } from 'react'
 import Sidebar from '@/components/Sidebar'
-import { RoleGate } from '@/components/RoleGate'
+import { RoleGate, useCurrentUser } from '@/components/RoleGate'
 import { calcGoalMetrics } from '@/lib/goal-tracker'
 
 type Assignment = {
@@ -158,6 +158,8 @@ export default function ProjectDashboard() {
   const [syncing, setSyncing] = useState(false)
   const [syncError, setSyncError] = useState<string | null>(null)
   const [refreshVersion, setRefreshVersion] = useState(0)
+  const { user } = useCurrentUser()
+  const isSuperAdmin = user?.role === 'SUPERADMIN'
 
   useEffect(() => {
     fetch('/api/auto-sync').then(r => r.json()).then(setSyncStatus).catch(() => {})
@@ -378,6 +380,10 @@ export default function ProjectDashboard() {
                   </div>
                 </section>
 
+                {isSuperAdmin && selectedStaff !== 'all' && selectedProject && (
+                  <SellerCommission projectId={selectedProject} staffId={selectedStaff} />
+                )}
+
                 <section>
                   <div className="flex items-center gap-sm mb-lg">
                     <span className="material-symbols-outlined text-secondary">request_quote</span>
@@ -473,6 +479,79 @@ function StatCard({ label, icon, value, hint, negative = false, strong = false }
       <p className={`text-[20px] font-bold leading-tight tabular-nums ${strong ? 'text-white' : negative ? 'text-error' : 'text-primary'}`}>{value}</p>
       <p className={`text-label-sm mt-xs ${strong ? 'text-white/70' : 'text-on-surface-variant'}`}>{hint}</p>
     </div>
+  )
+}
+
+type SellerCommRow = { month: string; realized: number; cumulative: number; baseline: number; profit: number; met: boolean; rate: number; commission: number }
+type SellerCommData = { staff: { id: string; name: string; role: string | null }; period: { start: string; end: string }; months: SellerCommRow[]; totalCommission: number; error?: string }
+
+function fmtMonthLabel(m: string) {
+  const [y, mo] = m.split('-')
+  return `${mo}/${y}`
+}
+
+function SellerCommission({ projectId, staffId }: { projectId: string; staffId: string }) {
+  const [data, setData] = useState<SellerCommData | null>(null)
+  const [loading, setLoading] = useState(true)
+  useEffect(() => {
+    setLoading(true)
+    fetch(`/api/projects/seller-commission?projectId=${projectId}&staffId=${staffId}`)
+      .then(r => r.json())
+      .then((d: SellerCommData) => { setData(d); setLoading(false) })
+      .catch(() => setLoading(false))
+  }, [projectId, staffId])
+
+  return (
+    <section className="rounded-xl border border-outline-variant/20 bg-surface-container-lowest overflow-hidden">
+      <div className="flex flex-wrap items-center gap-sm px-lg py-md border-b border-outline-variant/20">
+        <span className="material-symbols-outlined text-secondary">workspace_premium</span>
+        <h3 className="text-headline-sm text-primary">Seller Profit</h3>
+        <span className="text-label-sm text-on-surface-variant">Hoa hồng theo cashflow thực · KPI $1,000 · chỉ super admin</span>
+        {data && !data.error && data.months?.length > 0 && (
+          <span className="ml-auto rounded-lg bg-emerald-600 text-white px-md py-xs text-label-md font-bold tabular-nums">Tổng hoa hồng: {fmtUSD(data.totalCommission)}</span>
+        )}
+      </div>
+      {loading ? (
+        <div className="px-lg py-xl text-center text-on-surface-variant text-body-sm">Đang tính…</div>
+      ) : !data || data.error || !data.months || data.months.length === 0 ? (
+        <div className="px-lg py-xl text-center text-on-surface-variant text-body-sm">{data?.error ? `Lỗi: ${data.error}` : 'Chưa có dữ liệu cho seller này.'}</div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-outline-variant/20 bg-surface-container-low/40">
+                {['Tháng', 'Cashflow thực', 'Lũy kế', 'Mốc phải vượt', 'Profit', 'Bậc', 'Hoa hồng'].map(h => (
+                  <th key={h} className="text-left px-lg py-sm text-label-sm text-on-surface-variant uppercase tracking-wider">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-outline-variant/10">
+              {data.months.map(r => (
+                <tr key={r.month} className={`hover:bg-surface-container-low/40 transition-colors ${r.met ? '' : 'opacity-70'}`}>
+                  <td className="px-lg py-md text-body-sm text-on-surface">{fmtMonthLabel(r.month)}</td>
+                  <td className={`px-lg py-md text-body-sm tabular-nums ${r.realized < 0 ? 'text-error' : 'text-on-surface'}`}>{fmtUSD(r.realized)}</td>
+                  <td className="px-lg py-md text-body-sm text-on-surface-variant tabular-nums">{fmtUSD(r.cumulative)}</td>
+                  <td className="px-lg py-md text-body-sm text-on-surface-variant tabular-nums">{fmtUSD(r.baseline)}</td>
+                  <td className={`px-lg py-md text-label-md font-semibold tabular-nums ${r.profit < 0 ? 'text-error' : 'text-primary'}`}>{fmtUSD(r.profit)}</td>
+                  <td className="px-lg py-md text-body-sm">
+                    {r.met
+                      ? <span className="rounded-full bg-emerald-100 text-emerald-800 px-sm py-xs text-label-sm font-semibold">{Math.round(r.rate * 100)}%</span>
+                      : <span className="rounded-full bg-surface-container text-on-surface-variant px-sm py-xs text-label-sm">Trượt KPI</span>}
+                  </td>
+                  <td className={`px-lg py-md text-label-md font-bold tabular-nums ${r.commission > 0 ? 'text-emerald-700' : 'text-on-surface-variant'}`}>{r.commission > 0 ? fmtUSD(r.commission) : '-'}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr className="border-t-2 border-outline-variant/30 bg-surface-container-low/20">
+                <td colSpan={6} className="px-lg py-md text-label-md font-semibold text-primary">Tổng hoa hồng seller</td>
+                <td className="px-lg py-md text-label-md font-bold text-emerald-700 tabular-nums">{fmtUSD(data.totalCommission)}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      )}
+    </section>
   )
 }
 
