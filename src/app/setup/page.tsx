@@ -13,6 +13,8 @@ export default function SetupPage() {
   const [apiSecret, setApiSecret] = useState('')
   const [showSecret, setShowSecret] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [reauthLoading, setReauthLoading] = useState(false)
+  const [origin, setOrigin] = useState('')
   const [trelloApiKey, setTrelloApiKey] = useState('')
   const [trelloToken, setTrelloToken] = useState('')
   const [trelloBoardId, setTrelloBoardId] = useState('')
@@ -27,6 +29,7 @@ export default function SetupPage() {
   const [apifyMsg, setApifyMsg] = useState('')
 
   useEffect(() => {
+    setOrigin(window.location.origin)
     try {
       const saved = localStorage.getItem(LS_KEY)
       if (saved) {
@@ -64,6 +67,14 @@ export default function SetupPage() {
       setLoading(false)
       alert('Lỗi kết nối server.')
     }
+  }
+
+  function reauthorize() {
+    const s = (status?.shop || shop).trim()
+    if (!s) { alert('Không tìm thấy shop domain để cấp quyền lại.'); return }
+    setReauthLoading(true)
+    // Re-run OAuth với scopes mới nhất — Shopify sẽ cấp token mới thay token cũ
+    window.location.href = `/api/auth/shopify?shop=${encodeURIComponent(s)}`
   }
 
   async function disconnect() {
@@ -155,6 +166,12 @@ export default function SetupPage() {
                   <div className="grid grid-cols-2 gap-xs pt-sm border-t border-secondary/20">
                     <a href="/shopify" className="text-secondary text-label-sm hover:underline py-xs">Xem Finance</a>
                     <button onClick={disconnect} className="text-error text-label-sm hover:underline py-xs text-right">Ngắt kết nối</button>
+                    <button onClick={reauthorize} disabled={reauthLoading} className="col-span-2 text-secondary text-label-sm hover:underline py-xs text-left flex items-center gap-xs disabled:opacity-40">
+                      <span className={`material-symbols-outlined text-[14px] ${reauthLoading ? 'animate-spin' : ''}`}>
+                        {reauthLoading ? 'sync' : 'shield_person'}
+                      </span>
+                      Cấp quyền lại (re-authorize)
+                    </button>
                   </div>
                 </div>
               ) : (
@@ -199,13 +216,30 @@ export default function SetupPage() {
                     <span className="material-symbols-outlined text-[64px] text-on-tertiary-container">check_circle</span>
                     <h3 className="text-headline-sm text-primary mt-md mb-sm">Đã kết nối thành công</h3>
                     <p className="text-body-md text-on-surface-variant mb-xl">{status.shop}</p>
-                    <div className="flex gap-sm justify-center">
+                    <div className="flex gap-sm justify-center flex-wrap">
                       <a href="/shopify" className="bg-secondary text-on-secondary px-xl py-md rounded-lg text-label-md hover:opacity-90 transition-opacity">
                         Xem Finance →
                       </a>
+                      <button
+                        onClick={reauthorize}
+                        disabled={reauthLoading}
+                        className="border border-secondary text-secondary px-xl py-md rounded-lg text-label-md font-semibold hover:bg-secondary/5 transition-colors disabled:opacity-40 flex items-center gap-xs"
+                      >
+                        <span className={`material-symbols-outlined text-[18px] ${reauthLoading ? 'animate-spin' : ''}`}>
+                          {reauthLoading ? 'sync' : 'shield_person'}
+                        </span>
+                        {reauthLoading ? 'Đang mở Shopify...' : 'Cấp quyền lại'}
+                      </button>
                       <button onClick={disconnect} className="border border-outline-variant text-on-surface-variant px-xl py-md rounded-lg text-label-md hover:bg-surface-container transition-colors">
                         Ngắt kết nối
                       </button>
+                    </div>
+                    <div className="mt-lg bg-amber-50 border border-amber-200 rounded-lg p-md text-left flex gap-sm">
+                      <span className="material-symbols-outlined text-[18px] text-amber-700 mt-[2px]">info</span>
+                      <p className="text-body-sm text-amber-800">
+                        Vừa cập nhật app với quyền mới, hoặc gặp lỗi 401/không lấy được dữ liệu?
+                        Bấm <strong>Cấp quyền lại</strong> để lấy access token mới kèm đầy đủ scopes.
+                      </p>
                     </div>
                   </div>
                 ) : (
@@ -268,9 +302,9 @@ export default function SetupPage() {
                       </p>
                       <ol className="text-body-sm text-amber-700 space-y-xs ml-md list-decimal">
                         <li>Vào <strong>partners.shopify.com</strong> → Apps → Create app</li>
-                        <li>Trong App setup, thêm Redirect URI:<br />
+                        <li>Trong App setup → <strong>Allowed redirection URL(s)</strong>, thêm:<br />
                           <code className="text-xs bg-amber-100 rounded px-xs py-xs inline-block mt-xs break-all">
-                            http://localhost:3000/api/auth/shopify/callback
+                            {(origin || 'http://localhost:3002')}/api/auth/shopify/callback
                           </code>
                         </li>
                         <li>Copy API Key và API Secret vào form trên.</li>
