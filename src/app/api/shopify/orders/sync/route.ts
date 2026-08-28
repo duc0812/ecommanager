@@ -12,6 +12,8 @@ import { classifyOrderLines, buildTrelloCardContent } from '@/lib/order-classify
 import { isNonProductLine } from '@/lib/order-lines'
 import { createTrelloCard, addAttachmentToCard, getTrelloConfig, shouldCreateCard } from '@/lib/trello'
 import { extractPreviewCdnUrl } from '@/lib/order-line-assets'
+import { resolveOrderDesign, designKey, type DesignLineInput } from '@/lib/design-library'
+import { loadReadyDesignLookup, loadMasterArtworkBySku } from '@/lib/repos/design-library'
 
 type ResolvedSupplierProduct = SupplierInput & {
   sku: string
@@ -115,6 +117,7 @@ export async function POST(req: NextRequest) {
     }]),
   )
   const rawSupplierProductById = new Map(supplierProducts.map(p => [p.id, p]))
+  const supplierNameById = new Map(supplierProducts.map(p => [p.supplierId, p.supplier.name]))
   const supplierProductsByParent = new Map<string, typeof supplierProducts>()
   for (const p of supplierProducts.filter(p => p.supplier.isActive)) {
     const key = supplierParentKey(p)
@@ -158,6 +161,8 @@ export async function POST(req: NextRequest) {
   }
 
   const trelloConfig = await getTrelloConfig()
+  const designLookup = await loadReadyDesignLookup()
+  const masterArtworkBySku = await loadMasterArtworkBySku()
 
   let cursor: string | null = null
   let totalSynced = 0
@@ -263,12 +268,30 @@ export async function POST(req: NextRequest) {
         return !!resolved?.requiresDesign
       })
 
+      const designInputs: DesignLineInput[] = resolvedLines.map((r, idx) => {
+        const sp = r.pbResolve.supplierProductId ? supplierProductById.get(r.pbResolve.supplierProductId) : null
+        return {
+          index: idx,
+          sku: r.line.sku,
+          isNonProduct: isNonProductLine({ sku: r.line.sku, productTitle: r.line.title, shopifyProductType: r.line.productType }),
+          requiresDesign: !!sp?.requiresDesign,
+          resolvedSupplierId: sp?.supplierId ?? null,
+          existingDesignLink: null,
+        }
+      })
+      const designResolution = resolveOrderDesign(designInputs, (sku, supId) => {
+        const key = designKey(sku, supId)
+        return designLookup.has(key) ? { ready: true, designLink: designLookup.get(key) ?? null } : null
+      })
+      const libraryDesignLinkByIndex = new Map(designResolution.lineLinks.map(l => [l.index, l.designLink]))
+      const effectiveDesignReady = designResolution.orderDesignReady || (existing?.designReady ?? false)
+
       const detected = autoDetectStatus({
         financialStatus: o.financialStatus,
         hasUnmappedSku: pl.hasUnmappedSku,
         hasPendingMapping,
         hasCustomDesignLine,
-        hasDesignReady: existing?.designReady ?? false,
+        hasDesignReady: effectiveDesignReady,
         currentStatus,
       })
 
@@ -295,6 +318,7 @@ export async function POST(req: NextRequest) {
         placedAt: new Date(o.createdAt),
         shopTimezone,
         pipelineStatus: detected,
+        designReady: effectiveDesignReady,
         shippingZone,
         shippingName: o.shippingName,
         shippingAddress1: o.shippingAddress1,
@@ -328,6 +352,7 @@ export async function POST(req: NextRequest) {
                 ? supplierProductById.get(resolvedLines[idx].pbResolve.supplierProductId!)?.sku ?? null
                 : null)
               : null,
+            designDriveLink: libraryDesignLinkByIndex.get(idx) ?? null,
           }
         }),
       })
@@ -373,31 +398,28 @@ export async function POST(req: NextRequest) {
         if (orderType === 'CUSTOM') {
           needsCard = true
         } else if (orderType === 'NON_CUSTOM') {
-          const skus = o.lines
-            .filter(l => !isNonProductLine({ sku: l.sku, productTitle: l.title, shopifyProductType: l.productType }))
-            .map(l => l.sku).filter(Boolean) as string[]
-          if (skus.length > 0) {
-            const skuDesigns = await prisma.skuDesign.findMany({
-              where: { sku: { in: skus } },
-              select: { sku: true, designReady: true },
-            })
-            const readySkus = new Set(skuDesigns.filter(s => s.designReady).map(s => s.sku))
-            needsCard = skus.some(s => !readySkus.has(s))
-          }
+          needsCard = designResolution.missing.length > 0
         }
 
         if (needsCard) {
           try {
-            const cardLines = o.lines.map(l => ({
-              sku: l.sku,
-              productTitle: l.title,
-              shopifyProductType: l.productType,
-              customAttributes: l.customAttributes,
-              productTags: l.productTags,
-              variantTitle: l.variantTitle,
-              qty: l.quantity,
-            }))
-            const { name: cardName, desc } = buildTrelloCardContent(o.name, cardLines, orderType)
+            const cardLines = o.lines.map((l, idx) => {
+              const spId = resolvedLines[idx]?.pbResolve.supplierProductId ?? null
+              const sp = spId ? supplierProductById.get(spId) : null
+              const raw = spId ? rawSupplierProductById.get(spId) : null
+              return {
+                sku: l.sku,
+                productTitle: l.title,
+                shopifyProductType: l.productType,
+                customAttributes: l.customAttributes,
+                productTags: l.productTags,
+                variantTitle: l.variantTitle,
+                qty: l.quantity,
+                supplierName: sp ? supplierNameById.get(sp.supplierId) ?? null : null,
+                designTemplateUrl: raw?.designTemplateUrl ?? null,
+              }
+            })
+            const { name: cardName, desc } = buildTrelloCardContent(o.name, cardLines, orderType, masterArtworkBySku)
             const card = await createTrelloCard(trelloConfig, cardName, desc)
             await prisma.order.update({
               where: { id: o.id },
@@ -417,16 +439,14 @@ export async function POST(req: NextRequest) {
               }
             }
 
-            // For NON_CUSTOM: upsert SkuDesign records with trelloCardId
+            // For NON_CUSTOM: link each missing (SKU × Supplier) to this card for reuse
             if (orderType === 'NON_CUSTOM') {
-              const skus = o.lines
-                .filter(l => !isNonProductLine({ sku: l.sku, productTitle: l.title, shopifyProductType: l.productType }))
-                .map(l => l.sku).filter(Boolean) as string[]
-              for (const sku of skus) {
-                await prisma.skuDesign.upsert({
-                  where: { sku },
-                  create: { sku, trelloCardId: card.id },
-                  update: { trelloCardId: card.id },
+              for (const m of designResolution.missing) {
+                if (!m.sku || !m.supplierId) continue
+                await prisma.skuSupplierDesign.upsert({
+                  where: { sku_supplierId: { sku: m.sku, supplierId: m.supplierId } },
+                  create: { sku: m.sku, supplierId: m.supplierId, trelloCardId: card.id, source: 'TRELLO', ready: false },
+                  update: { trelloCardId: card.id, source: 'TRELLO' },
                 })
               }
             }
