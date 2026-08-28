@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db'
 import { getTrelloConfig, getCardsByList } from '@/lib/trello'
 import { findDriveAttachmentForLine } from '@/lib/order-line-assets'
 import { isNonProductLine } from '@/lib/order-lines'
+import { markLibraryReadyByCard } from '@/lib/repos/design-library'
 
 function cardMatchesOrder(cardName: string, orderNumber: string, skus: string[]): boolean {
   const normalizedCardName = cardName.toLowerCase()
@@ -31,11 +32,7 @@ export async function POST() {
     const driveAttachment = driveAttachments[0]
     if (!driveAttachment) continue
 
-    const linkedResult = await prisma.skuDesign.updateMany({
-      where: { trelloCardId: card.id, designReady: false },
-      data: { designReady: true, driveLink: driveAttachment.url },
-    })
-    updated += linkedResult.count
+    updated += await markLibraryReadyByCard(card.id, driveAttachment.url)
 
     const linkedOrders = await prisma.order.findMany({
       where: { trelloCardId: card.id },
@@ -158,22 +155,11 @@ export async function POST() {
     ))
 
     for (const sku of skus) {
-      const before = await prisma.skuDesign.findUnique({ where: { sku }, select: { designReady: true } })
       await prisma.skuDesign.upsert({
         where: { sku },
-        create: {
-          sku,
-          trelloCardId: card.id,
-          designReady: true,
-          driveLink: driveAttachment.url,
-        },
-        update: {
-          trelloCardId: card.id,
-          designReady: true,
-          driveLink: driveAttachment.url,
-        },
+        create: { sku, driveLink: driveAttachment.url },
+        update: { driveLink: driveAttachment.url },
       })
-      if (!before?.designReady) updated++
     }
   }
 
