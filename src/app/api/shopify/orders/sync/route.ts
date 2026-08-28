@@ -257,7 +257,7 @@ export async function POST(req: NextRequest) {
       if (pl.hasUnmappedSku) withUnmappedSku++
 
       // Read existing order to preserve manual status
-      const existing = await prisma.order.findUnique({ where: { id: o.id }, select: { pipelineStatus: true, designReady: true } })
+      const existing = await prisma.order.findUnique({ where: { id: o.id }, select: { pipelineStatus: true, designReady: true, trelloCardId: true } })
       const currentStatus = existing && isValidPipelineStatus(existing.pipelineStatus)
         ? existing.pipelineStatus as PipelineStatus
         : null
@@ -284,7 +284,7 @@ export async function POST(req: NextRequest) {
         return designLookup.has(key) ? { ready: true, designLink: designLookup.get(key) ?? null } : null
       })
       const libraryDesignLinkByIndex = new Map(designResolution.lineLinks.map(l => [l.index, l.designLink]))
-      const effectiveDesignReady = designResolution.orderDesignReady || (existing?.designReady ?? false)
+      const effectiveDesignReady = designResolution.orderDesignReady || (existing?.designReady === true && existing?.trelloCardId != null)
 
       const detected = autoDetectStatus({
         financialStatus: o.financialStatus,

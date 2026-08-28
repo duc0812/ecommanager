@@ -72,10 +72,7 @@ export async function ordersWithComputedPL(filter: OrderFilter): Promise<Enriche
     const productLineNumberById = new Map(mappableLines.map((line, idx) => [line.id, idx + 1]))
     const mappedLineCount = mappableLines.filter(l => l.resolvedSupplierId && effectiveBaseCost(l) != null).length
     const orderSkus = mappableLines.map(l => l.sku).filter(Boolean) as string[]
-    const skuDesignReady = orderSkus.length > 0 && orderSkus.every(sku => skuDesignMap.get(sku)?.designReady === true)
-    const designReady = o.orderType === 'CUSTOM'
-      ? o.designReady
-      : o.designReady || skuDesignReady
+    const designReady = o.designReady
     const driveLink = o.designDriveLink ?? (
       o.orderType === 'CUSTOM'
         ? null
