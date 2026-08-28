@@ -67,6 +67,13 @@ export default function DesignLibraryPage() {
     setCsv(''); load()
   }
 
+  const groups = entries.reduce<{ sku: string; rows: Entry[] }[]>((acc, e) => {
+    const last = acc[acc.length - 1]
+    if (last && last.sku === e.sku) last.rows.push(e)
+    else acc.push({ sku: e.sku, rows: [e] })
+    return acc
+  }, [])
+
   return (
     <div className="flex min-h-screen bg-surface">
       <Sidebar />
@@ -127,9 +134,11 @@ export default function DesignLibraryPage() {
               </tr>
             </thead>
             <tbody>
-              {entries.map(e => (
-                <tr key={e.id} className="border-t border-outline-variant/20">
-                  <td className="px-md py-sm font-medium">{e.sku}</td>
+              {groups.map(group => group.rows.map((e, i) => (
+                <tr key={e.id} className={`border-t ${i === 0 ? 'border-outline-variant/40' : 'border-outline-variant/10'}`}>
+                  {i === 0 && (
+                    <td rowSpan={group.rows.length} className="px-md py-sm font-medium align-top border-r border-outline-variant/20">{group.sku}</td>
+                  )}
                   <td className="px-md py-sm">{e.supplier.name}</td>
                   <td className="px-md py-sm max-w-[320px] truncate">
                     {e.designLink ? <a className="text-primary underline" href={e.designLink} target="_blank" rel="noreferrer">{e.designLink}</a> : '—'}
@@ -145,7 +154,7 @@ export default function DesignLibraryPage() {
                     <button onClick={() => remove(e.id)} className="material-symbols-outlined text-error">delete</button>
                   </td>
                 </tr>
-              ))}
+              )))}
               {entries.length === 0 && <tr><td className="px-md py-lg text-on-surface-variant" colSpan={7}>Chưa có design nào.</td></tr>}
             </tbody>
           </table>
