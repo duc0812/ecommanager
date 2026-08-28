@@ -44,6 +44,16 @@ Last updated: 2026-05-19
 - CSV template builder with live preview + Export Center (date range, supplier, template, preview, download, mark exported)
 - Tab-based `/orders` UI (Printful-style): All + 11 status tabs with counts, search, More Filters panel, status dropdown per row, bulk action bar
 - Combined Project P&L: Fulfillment Profit − Meta Ad Spend − Staff Cost = Net Profit per project, visible on `/projects`
+- Design Library (`/fulfillment/design-library`): SKU × Supplier design tracking with per-supplier design requirement gate, Trello card fallback/populate, CSV import
+
+### Design Library (2026-08-28)
+- New Prisma model `SkuSupplierDesign` (per SKU × Supplier): `designLink`, `ready`, `source` (MANUAL|TRELLO), `trelloCardId`; unique constraint `(sku, supplierId)`
+- `SkuDesign` repurposed as master artwork per SKU
+- Order sync gate per supplier: line needs design only if resolved `SupplierProduct.requiresDesign=true`; order is design-ready ("đẩy thẳng") when all design-required lines have ready `SkuSupplierDesign` for their supplier
+- `OrderLine.designDriveLink` filled from library on sync
+- Fallback: missing (SKU×Supplier) still creates Trello card (describing supplier + template + master artwork); on Trello DONE + Drive link, `POST /api/trello/sync` sets library entry `ready=true` for reuse
+- New page `/fulfillment/design-library` with Sidebar nav "Design Library"
+- API: `GET/POST /api/fulfillment/design-library`, `DELETE /[id]`, `POST /import` (CSV `sku,supplierCode,designLink`)
 
 **Plans status:**
 - [Plan 1](docs/superpowers/plans/2026-05-19-fulfillment-pod-phase1-foundation-sync.md) — DONE

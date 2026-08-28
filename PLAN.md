@@ -166,6 +166,18 @@ Completed 2026-05-19 via subagent-driven development.
 
 ---
 
+### 🟢 Phase 13.9 — Design Library (DONE)
+**Completed 2026-08-28 via 8-task implementation.**
+
+**Shipped:**
+- Schema v13: `SkuSupplierDesign` model (per SKU × Supplier, unique constraint) with `designLink`, `ready`, `source` (MANUAL|TRELLO), `trelloCardId`; `SkuDesign` repurposed as master artwork per SKU
+- Order sync gate per supplier: `SupplierProduct.requiresDesign` flag; line needs design only if true; order design-ready when all design-required lines have ready `SkuSupplierDesign`
+- `OrderLine.designDriveLink` populated from library on sync
+- Trello card fallback: missing (SKU×Supplier) creates card; on Trello DONE + Drive link, `POST /api/trello/sync` populates library entry `ready=true` for reuse
+- `/fulfillment/design-library` page with Sidebar nav; API: `GET/POST /api/fulfillment/design-library`, `DELETE /[id]`, `POST /import` (CSV: `sku,supplierCode,designLink`)
+
+---
+
 ## Known Issues / Tech Debt
 
 | Issue | Priority | Notes |
