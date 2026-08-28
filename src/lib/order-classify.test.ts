@@ -1,6 +1,21 @@
 import { describe, it, expect } from 'vitest'
 import { buildTrelloCardContent } from '@/lib/order-classify'
 
+describe('buildTrelloCardContent NON_CUSTOM with supplier hints', () => {
+  it('lists supplier + template ref + master artwork per SKU', () => {
+    const lines = [{
+      sku: 'SKU1', productTitle: 'Tee', customAttributes: [], productTags: [],
+      variantTitle: 'M', qty: 1, supplierName: 'Printful', designTemplateUrl: 'http://tpl/pf',
+    }]
+    const master = new Map<string, string | null>([['SKU1', 'http://master/1']])
+    const { desc } = buildTrelloCardContent('#1023', lines, 'NON_CUSTOM', master)
+    expect(desc).toContain('SKU1')
+    expect(desc).toContain('Printful')
+    expect(desc).toContain('http://tpl/pf')
+    expect(desc).toContain('http://master/1')
+  })
+})
+
 const physicalLine = {
   sku: 'LIT2570',
   productTitle: 'Custom Name Necklace',
