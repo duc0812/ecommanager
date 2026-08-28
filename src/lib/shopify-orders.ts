@@ -210,6 +210,103 @@ export async function fetchOrdersPage(
   }
 }
 
+// ─── Fulfillment tracking (for Tracking Management) ─────────────────────────
+// Lightweight query kept separate from the heavy order sync so it does not bloat
+// every order-sync page. Only pulls what the tracking page needs.
+
+export type ShopifyFulfillment = {
+  id: string
+  displayStatus: string | null      // Shopify's own status (SUCCESS/IN_TRANSIT/DELIVERED/…)
+  deliveredAt: string | null
+  trackingNumber: string | null
+  carrier: string | null            // tracking company, e.g. "YunExpress"
+  trackingUrl: string | null
+  lineItemIds: string[]             // Shopify LineItem GIDs covered by this fulfillment (== OrderLine.shopifyLineId)
+}
+
+export type ShopifyOrderFulfillments = {
+  id: string       // order GID
+  name: string     // "#1023"
+  fulfillmentStatus: string | null   // order-level displayFulfillmentStatus (FULFILLED/UNFULFILLED/PARTIALLY_FULFILLED/…)
+  fulfillments: ShopifyFulfillment[]
+}
+
+export type ShopifyFulfillmentsPage = {
+  orders: ShopifyOrderFulfillments[]
+  hasNextPage: boolean
+  endCursor: string | null
+}
+
+const FULFILLMENTS_QUERY = `
+query SyncFulfillments($cursor: String, $query: String) {
+  orders(first: 50, after: $cursor, query: $query, sortKey: CREATED_AT) {
+    pageInfo { hasNextPage endCursor }
+    nodes {
+      id name
+      displayFulfillmentStatus
+      fulfillments(first: 20) {
+        id
+        displayStatus
+        deliveredAt
+        trackingInfo(first: 10) { number company url }
+        fulfillmentLineItems(first: 100) {
+          nodes { lineItem { id } }
+        }
+      }
+    }
+  }
+}`
+
+export async function fetchOrderFulfillmentsPage(
+  shop: string,
+  accessToken: string,
+  cursor: string | null,
+  sinceIso: string,
+  apiVersion = '2024-10',
+): Promise<ShopifyFulfillmentsPage> {
+  const url = `https://${shop}/admin/api/${apiVersion}/graphql.json`
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Shopify-Access-Token': accessToken,
+    },
+    body: JSON.stringify({
+      query: FULFILLMENTS_QUERY,
+      variables: { cursor, query: `created_at:>=${sinceIso}` },
+    }),
+  })
+  if (!res.ok) throw new Error(`Shopify GraphQL ${res.status}: ${await res.text()}`)
+  const json = await res.json()
+  if (json.errors) throw new Error(`GraphQL errors: ${JSON.stringify(json.errors)}`)
+
+  const conn = json.data.orders
+  const orders: ShopifyOrderFulfillments[] = conn.nodes.map((n: any) => ({
+    id: n.id,
+    name: n.name,
+    fulfillmentStatus: n.displayFulfillmentStatus ?? null,
+    fulfillments: (n.fulfillments || []).map((f: any) => {
+      const track = (f.trackingInfo || [])[0] ?? null
+      return {
+        id: f.id,
+        displayStatus: f.displayStatus ?? null,
+        deliveredAt: f.deliveredAt ?? null,
+        trackingNumber: track?.number ?? null,
+        carrier: track?.company ?? null,
+        trackingUrl: track?.url ?? null,
+        lineItemIds: (f.fulfillmentLineItems?.nodes || [])
+          .map((li: any) => li.lineItem?.id)
+          .filter(Boolean) as string[],
+      }
+    }),
+  }))
+  return {
+    orders,
+    hasNextPage: conn.pageInfo.hasNextPage,
+    endCursor: conn.pageInfo.endCursor,
+  }
+}
+
 export async function fetchShopInfo(
   shop: string,
   accessToken: string,

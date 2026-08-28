@@ -5,5 +5,7 @@ export async function register() {
     initAutoSync()
     const { initSpyScheduler } = await import('./lib/spy/scheduler')
     initSpyScheduler()
+    const { initTrackingScheduler } = await import('./lib/tracking/scheduler')
+    initTrackingScheduler()
   }
 }

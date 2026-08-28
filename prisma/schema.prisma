@@ -281,6 +281,7 @@ model Supplier {
   orders                Order[]
   costHistory           SupplierCostHistory[]
   zoneOverrides         SupplierZoneOverride[]
+  shipments             Shipment[]
 }
 
 model SupplierProduct {
@@ -355,6 +356,7 @@ model Order {
   fetchedAt            DateTime    @default(now())
   updatedAt            DateTime    @updatedAt
   lines                OrderLine[]
+  shipments            Shipment[]
   shippingZone         String?
   shippingName         String?
   shippingAddress1     String?
@@ -400,6 +402,41 @@ model OrderLine {
   designDriveLink         String?
   @@index([sku])
   @@index([shopifyVariantId])
+}
+
+model Shipment {
+  id                   String    @id @default(cuid())
+  orderId              String
+  order                Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  projectId            String
+  lineKey              String                              // "1023_1" — matches order management coding
+  shopifyLineId        String?                             // stable Shopify line item GID (OrderLine.id is not stable across syncs)
+  sku                  String?
+  productTitle         String?
+  shopifyFulfillmentId String?
+  trackingNumber       String?
+  carrier              String?                             // Shopify tracking company
+  trackingUrl          String?
+  supplierId           String?                             // resolved from product mapping
+  supplier             Supplier? @relation(fields: [supplierId], references: [id])
+  status               String    @default("PENDING")       // normalized: PENDING/INFO_RECEIVED/IN_TRANSIT/OUT_FOR_DELIVERY/DELIVERED/EXCEPTION/EXPIRED
+  detectedCarrier      String?                             // real carrier name resolved by crawl (e.g. "Yanwen Express"); may hold the full chain "Jomall → China Post → USPS"
+  detectedCarrierCode  String?                             // slug (e.g. "yanwen-express")
+  lastMileCarrier      String?                             // final-leg carrier, e.g. "USPS"
+  lastMileTrackingNumber String?                           // number the final leg is tracked under, e.g. "LZ439195516CN"
+  checkpointsJson      String?                             // JSON array of {time, desc, status}
+  lastCheckpointAt     DateTime?
+  crawlSource          String?                             // which adapter produced the data (e.g. "parcelwill")
+  crawlError           String?
+  crawledAt            DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  @@unique([orderId, lineKey])
+  @@index([projectId])
+  @@index([trackingNumber])
+  @@index([status])
+  @@index([supplierId])
 }
 
 model CsvTemplate {

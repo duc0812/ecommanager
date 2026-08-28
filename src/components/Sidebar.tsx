@@ -29,6 +29,7 @@ const nav: NavEntry[] = [
   { type: 'child', href: '/fulfillment/export', icon: 'file_download', label: 'CSV Export' },
   { type: 'child', href: '/fulfillment/suppliers', icon: 'factory', label: 'Suppliers' },
   { type: 'child', href: '/fulfillment/mapping', icon: 'account_tree', label: 'Product Mapping' },
+  { type: 'child', href: '/fulfillment/tracking', icon: 'pin_drop', label: 'Tracking' },
   { type: 'divider' },
   { type: 'group', label: 'Tools' },
   { type: 'child', href: '/tools/spy-idea', icon: 'travel_explore', label: 'Spy Idea' },
@@ -51,6 +52,12 @@ export default function Sidebar() {
   const permissions: FeaturePermission[] = user?.permissions ?? []
   const [open, setOpen] = useState(false)
   useEffect(() => { setOpen(false) }, [pathname])
+  const activeHref = nav.reduce<string | null>((best, entry) => {
+    if (entry.type !== 'item' && entry.type !== 'child') return best
+    const matches = pathname === entry.href || (entry.href !== '/' && pathname.startsWith(`${entry.href}/`))
+    if (!matches) return best
+    return !best || entry.href.length > best.length ? entry.href : best
+  }, null)
 
   async function logout() {
     await fetch('/api/auth/logout', { method: 'POST' })
@@ -88,7 +95,7 @@ export default function Sidebar() {
           if (entry.superAdminOnly && role !== 'SUPERADMIN') return null
           if (!visibleFor(role, entry.href, permissions)) return null
           const isChild = entry.type === 'child'
-          const active = pathname === entry.href || (entry.href !== '/' && pathname.startsWith(entry.href))
+          const active = activeHref === entry.href
           return (
             <Link
               key={entry.href}
