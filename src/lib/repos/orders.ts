@@ -120,6 +120,7 @@ export type UpsertOrderInput = {
   orderType?: string
   trelloCardId?: string | null
   trelloCardUrl?: string | null
+  designReady?: boolean
   lines: Array<{
     shopifyLineId: string
     sku: string | null
@@ -202,6 +203,7 @@ export async function upsertOrderWithLines(input: UpsertOrderInput) {
         orderType: input.orderType ?? 'UNKNOWN',
         trelloCardId: input.trelloCardId ?? null,
         trelloCardUrl: input.trelloCardUrl ?? null,
+        designReady: input.designReady ?? false,
       },
       update: {
         financialStatus: input.financialStatus,
@@ -227,6 +229,7 @@ export async function upsertOrderWithLines(input: UpsertOrderInput) {
         ...(input.orderType !== undefined ? { orderType: input.orderType } : {}),
         ...(input.trelloCardId !== undefined ? { trelloCardId: input.trelloCardId } : {}),
         ...(input.trelloCardUrl !== undefined ? { trelloCardUrl: input.trelloCardUrl } : {}),
+        ...(input.designReady !== undefined ? { designReady: input.designReady } : {}),
       },
     }),
     prisma.orderLine.createMany({
