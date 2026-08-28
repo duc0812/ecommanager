@@ -282,6 +282,7 @@ model Supplier {
   costHistory           SupplierCostHistory[]
   zoneOverrides         SupplierZoneOverride[]
   shipments             Shipment[]
+  skuDesigns            SkuSupplierDesign[]
 }
 
 model SupplierProduct {
@@ -469,6 +470,24 @@ model SkuDesign {
   trelloCardId String?
   updatedAt    DateTime @updatedAt
   createdAt    DateTime @default(now())
+}
+
+model SkuSupplierDesign {
+  id           String   @id @default(cuid())
+  sku          String
+  supplierId   String
+  supplier     Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  designLink   String?
+  ready        Boolean  @default(false)
+  source       String   @default("MANUAL")   // "MANUAL" | "TRELLO"
+  trelloCardId String?
+  note         String?
+  updatedAt    DateTime @updatedAt
+  createdAt    DateTime @default(now())
+  @@unique([sku, supplierId])
+  @@index([sku])
+  @@index([supplierId])
+  @@index([trelloCardId])
 }
 
 model ProductBase {
