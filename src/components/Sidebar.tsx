@@ -12,6 +12,7 @@ type NavEntry = NavItem | NavGroup | NavDivider
 
 const nav: NavEntry[] = [
   { type: 'item', href: '/', icon: 'dashboard', label: 'Overview' },
+  { type: 'item', href: '/task-fix', icon: 'rule', label: 'Need To Fix' },
   { type: 'divider' },
   { type: 'group', label: 'Project Management' },
   { type: 'child', href: '/projects', icon: 'analytics', label: 'Dashboard' },
@@ -31,7 +32,6 @@ const nav: NavEntry[] = [
   { type: 'child', href: '/fulfillment/mapping', icon: 'account_tree', label: 'Product Mapping' },
   { type: 'child', href: '/fulfillment/tracking', icon: 'pin_drop', label: 'Tracking' },
   { type: 'child', href: '/fulfillment/design-library', icon: 'palette', label: 'Design Library' },
-  { type: 'child', href: '/fulfillment/task-fix', icon: 'rule', label: 'Task Need Fix' },
   { type: 'divider' },
   { type: 'group', label: 'Tools' },
   { type: 'child', href: '/tools/spy-idea', icon: 'travel_explore', label: 'Spy Idea' },
