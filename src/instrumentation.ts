@@ -9,5 +9,7 @@ export async function register() {
     initTrackingScheduler()
     const { initOrderNormalizeScheduler } = await import('./lib/order-normalize-scheduler')
     initOrderNormalizeScheduler()
+    const { initParcelPanelScheduler } = await import('./lib/tracking/parcelpanel-scheduler')
+    initParcelPanelScheduler()
   }
 }
