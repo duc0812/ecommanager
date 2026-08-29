@@ -3,12 +3,14 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import Sidebar from '@/components/Sidebar'
 import { TASK_META, TASK_TYPES, type TaskType, type TaskDept } from '@/lib/order-tasks'
 
+type FixLine = { lineId: string; shopifyVariantId: string | null; productTitle: string; sku: string | null }
 type TaskRow = {
   orderId: string
   shopifyOrderNumber: string
   placedAt: string
   projectName: string | null
   task: { type: TaskType; dept: TaskDept; label: string; detail: string }
+  fixLines?: FixLine[]
 }
 type Project = { id: string; name: string }
 
@@ -31,6 +33,8 @@ export default function TaskFixPage() {
   const [loading, setLoading] = useState(false)
   const [rechecking, setRechecking] = useState<string>('')
   const [message, setMessage] = useState('')
+  const [fixValues, setFixValues] = useState<Record<string, string>>({})
+  const [savingFix, setSavingFix] = useState('')
 
   useEffect(() => {
     fetch('/api/projects').then(r => r.json()).then(d => setProjects(Array.isArray(d) ? d : (d.projects ?? []))).catch(() => {})
@@ -78,6 +82,36 @@ export default function TaskFixPage() {
       setMessage(`Lỗi: ${e.message}`)
     } finally {
       setRechecking('')
+    }
+  }
+
+  async function submitFix(row: TaskRow, line: FixLine) {
+    const raw = (fixValues[line.lineId] ?? '').trim()
+    if (!raw) { setMessage('Nhập giá trị trước khi lưu.'); return }
+    setSavingFix(line.lineId)
+    setMessage('')
+    try {
+      const fixes = row.task.type === 'MISSING_SKU'
+        ? [{ lineId: line.lineId, sku: raw }]
+        : [{ lineId: line.lineId, baseCost: Number(raw) }]
+      const res = await fetch('/api/fulfillment/task-fix/fix', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId: row.orderId, taskType: row.task.type, fixes }),
+      })
+      const body = await res.json()
+      if (!res.ok) { setMessage(`Lỗi: ${body.error ?? res.statusText}`); return }
+      setMessage(
+        body.errors?.length
+          ? `Một phần lỗi: ${body.errors.join('; ')}`
+          : `${row.shopifyOrderNumber}: đã fix "${line.productTitle}"${row.task.type === 'MISSING_SKU' ? ' (đã ghi SKU lên Shopify)' : ''}.`,
+      )
+      setFixValues(v => { const n = { ...v }; delete n[line.lineId]; return n })
+      await load()
+    } catch (e: any) {
+      setMessage(`Lỗi: ${e.message}`)
+    } finally {
+      setSavingFix('')
     }
   }
 
@@ -135,6 +169,7 @@ export default function TaskFixPage() {
                 <th className="px-md py-sm font-medium">Bộ phận</th>
                 <th className="px-md py-sm font-medium">Issue</th>
                 <th className="px-md py-sm font-medium">Chi tiết</th>
+                <th className="px-md py-sm font-medium">Suggest</th>
                 <th className="px-md py-sm font-medium">Project</th>
                 <th className="px-md py-sm font-medium">Ngày</th>
                 <th className="px-md py-sm font-medium text-right">Re-check</th>
@@ -148,7 +183,40 @@ export default function TaskFixPage() {
                   <td className="px-md py-sm">
                     <span className={`inline-block rounded-full px-sm py-[3px] text-label-sm ${TYPE_TONE[r.task.type]}`}>{r.task.label}</span>
                   </td>
-                  <td className="px-md py-sm max-w-[280px] truncate text-on-surface-variant" title={r.task.detail}>{r.task.detail}</td>
+                  <td className="px-md py-sm max-w-[240px] truncate text-on-surface-variant" title={r.task.detail}>{r.task.detail}</td>
+                  <td className="px-md py-sm">
+                    {(() => {
+                      const t = r.task.type
+                      if ((t === 'MISSING_SKU' || t === 'MISSING_BASE_COST') && r.fixLines?.length) {
+                        return (
+                          <div className="flex flex-col gap-xs min-w-[210px]">
+                            {r.fixLines.map(fl => (
+                              <div key={fl.lineId} className="flex items-center gap-xs">
+                                <input
+                                  value={fixValues[fl.lineId] ?? ''}
+                                  onChange={e => setFixValues(v => ({ ...v, [fl.lineId]: e.target.value }))}
+                                  onKeyDown={e => { if (e.key === 'Enter') submitFix(r, fl) }}
+                                  placeholder={t === 'MISSING_SKU' ? `SKU · ${fl.productTitle.slice(0, 16)}` : 'Base cost'}
+                                  type={t === 'MISSING_BASE_COST' ? 'number' : 'text'}
+                                  className="border border-outline-variant/40 rounded-lg px-sm py-xs text-body-sm w-[150px]"
+                                />
+                                <button
+                                  onClick={() => submitFix(r, fl)}
+                                  disabled={savingFix === fl.lineId}
+                                  className="bg-secondary text-on-secondary px-md py-xs rounded-lg text-label-sm disabled:opacity-50"
+                                >
+                                  {savingFix === fl.lineId ? '…' : 'Lưu'}
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )
+                      }
+                      if (t === 'UNMAPPED') return <a href="/fulfillment/mapping" className="text-secondary underline underline-offset-2 text-label-sm">Mở Product Mapping →</a>
+                      if (t === 'MISSING_DESIGN') return <a href="/fulfillment/design-library" className="text-secondary underline underline-offset-2 text-label-sm">Mở Design Library →</a>
+                      return <span className="text-on-surface-variant">—</span>
+                    })()}
+                  </td>
                   <td className="px-md py-sm text-on-surface-variant">{r.projectName ?? '—'}</td>
                   <td className="px-md py-sm text-label-sm text-on-surface-variant whitespace-nowrap">{fmtDate(r.placedAt)}</td>
                   <td className="px-md py-sm text-right">
@@ -165,7 +233,7 @@ export default function TaskFixPage() {
               ))}
               {visible.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="px-md py-lg text-center text-on-surface-variant">
+                  <td colSpan={8} className="px-md py-lg text-center text-on-surface-variant">
                     {loading ? 'Đang tải…' : '🎉 Không có task nào cần fix.'}
                   </td>
                 </tr>

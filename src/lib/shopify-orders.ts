@@ -257,6 +257,42 @@ query SyncFulfillments($cursor: String, $query: String) {
   }
 }`
 
+// Write a SKU onto a product variant (SKU lives on the variant's inventory item).
+// Requires the write_products scope. Returns void on success, throws on error.
+export async function updateVariantSku(
+  shop: string,
+  accessToken: string,
+  variantId: string,
+  sku: string,
+  apiVersion = '2024-10',
+): Promise<void> {
+  const url = `https://${shop}/admin/api/${apiVersion}/graphql.json`
+  const gql = async (query: string, variables: any) => {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': accessToken },
+      body: JSON.stringify({ query, variables }),
+    })
+    if (!res.ok) throw new Error(`Shopify ${res.status}: ${(await res.text()).slice(0, 200)}`)
+    const json = await res.json()
+    if (json.errors) throw new Error(json.errors.map((e: any) => e.message).join('; '))
+    return json.data
+  }
+  const pv = await gql(`query($id: ID!) { productVariant(id: $id) { product { id } } }`, { id: variantId })
+  const productId = pv?.productVariant?.product?.id
+  if (!productId) throw new Error('Không tìm thấy variant/product trên Shopify')
+  const data = await gql(
+    `mutation($pid: ID!, $vid: ID!, $sku: String!) {
+      productVariantsBulkUpdate(productId: $pid, variants: [{ id: $vid, inventoryItem: { sku: $sku } }]) {
+        userErrors { field message }
+      }
+    }`,
+    { pid: productId, vid: variantId, sku },
+  )
+  const errs = data?.productVariantsBulkUpdate?.userErrors ?? []
+  if (errs.length > 0) throw new Error(errs.map((e: any) => e.message).join('; '))
+}
+
 // Fetch the CURRENT sku of product variants (by GID). Order line items snapshot
 // the sku at order-creation time, so a sku added later only shows on the variant —
 // this reads it from the variant so a missing-sku order can be backfilled.

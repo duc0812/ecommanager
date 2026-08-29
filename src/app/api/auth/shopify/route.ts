@@ -8,7 +8,7 @@ const SCOPES = [
   'read_orders',
   'read_customers',
   'read_customer_payment_methods',
-  'read_products',
+  'read_products', 'write_products',
   'read_product_listings', 'write_product_listings',
   'read_product_feeds', 'write_product_feeds',
   'read_fulfillments', 'write_fulfillments',
