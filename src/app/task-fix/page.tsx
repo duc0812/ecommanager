@@ -64,7 +64,7 @@ export default function TaskFixPage() {
     setRechecking(`${row.orderId}:${row.task.type}`)
     setMessage('')
     try {
-      const res = await fetch(`/api/fulfillment/orders/${row.orderId}/recheck`, { method: 'POST' })
+      const res = await fetch(`/api/fulfillment/orders/${encodeURIComponent(row.orderId)}/recheck`, { method: 'POST' })
       const body = await res.json()
       if (!res.ok) { setMessage(`Lỗi: ${body.error ?? res.statusText}`); return }
       const stillOpen = (body.remaining ?? []).some((t: any) => t.type === row.task.type)

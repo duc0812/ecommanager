@@ -240,7 +240,7 @@ export default function OrdersPage() {
   }
 
   const changeOneStatus = async (id: string, status: PipelineStatus) => {
-    await fetch(`/api/fulfillment/orders/${id}/status`, {
+    await fetch(`/api/fulfillment/orders/${encodeURIComponent(id)}/status`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status }),
