@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
 
   const order = await prisma.order.findUnique({
     where: { id: orderId },
-    select: { orderType: true, designReady: true, lines: { select: LINE_SELECT } },
+    select: { orderType: true, designReady: true, placedAt: true, fulfillmentStatus: true, pipelineStatus: true, lines: { select: LINE_SELECT } },
   })
   if (!order) return NextResponse.json({ error: 'Order not found' }, { status: 404 })
 
@@ -61,8 +61,11 @@ export async function POST(req: NextRequest) {
 
   const fresh = await prisma.order.findUnique({
     where: { id: orderId },
-    select: { orderType: true, designReady: true, lines: { select: LINE_SELECT } },
+    select: { orderType: true, designReady: true, placedAt: true, fulfillmentStatus: true, pipelineStatus: true, lines: { select: LINE_SELECT } },
   })
-  const remaining = fresh ? detectOrderTasks({ orderType: fresh.orderType, designReady: fresh.designReady, lines: fresh.lines }) : []
+  const remaining = fresh ? detectOrderTasks({
+    orderType: fresh.orderType, designReady: fresh.designReady, lines: fresh.lines,
+    placedAt: fresh.placedAt, fulfillmentStatus: fresh.fulfillmentStatus, pipelineStatus: fresh.pipelineStatus,
+  }) : []
   return NextResponse.json({ applied, remaining, errors })
 }

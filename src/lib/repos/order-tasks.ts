@@ -35,6 +35,7 @@ export async function listOrderTasks(filter: { projectId?: string } = {}): Promi
     orderBy: { placedAt: 'desc' },
     select: {
       id: true, shopifyOrderNumber: true, placedAt: true, orderType: true, designReady: true,
+      fulfillmentStatus: true, pipelineStatus: true,
       projectId: true,
       project: { select: { name: true } },
       lines: {
@@ -50,7 +51,10 @@ export async function listOrderTasks(filter: { projectId?: string } = {}): Promi
   const counts = {} as Record<TaskType, number>
   for (const o of orders) {
     const productLines = o.lines.filter(l => !isNonProductLine(l))
-    const tasks = detectOrderTasks({ orderType: o.orderType, designReady: o.designReady, lines: o.lines })
+    const tasks = detectOrderTasks({
+      orderType: o.orderType, designReady: o.designReady, lines: o.lines,
+      placedAt: o.placedAt, fulfillmentStatus: o.fulfillmentStatus, pipelineStatus: o.pipelineStatus,
+    })
     for (const task of tasks) {
       let fixLines: FixLine[] | undefined
       if (task.type === 'MISSING_SKU') {
@@ -152,7 +156,7 @@ export async function recheckOrderTasks(
   const order = await prisma.order.findUnique({
     where: { id: orderId },
     select: {
-      orderType: true, designReady: true,
+      orderType: true, designReady: true, placedAt: true, fulfillmentStatus: true, pipelineStatus: true,
       lines: {
         select: {
           id: true, sku: true, shopifyVariantId: true, productTitle: true, shopifyProductType: true,
@@ -177,6 +181,9 @@ export async function recheckOrderTasks(
     }
   }
 
-  const remaining = detectOrderTasks({ orderType: order.orderType, designReady: order.designReady, lines: order.lines })
+  const remaining = detectOrderTasks({
+    orderType: order.orderType, designReady: order.designReady, lines: order.lines,
+    placedAt: order.placedAt, fulfillmentStatus: order.fulfillmentStatus, pipelineStatus: order.pipelineStatus,
+  })
   return { remaining, skuBackfilled }
 }

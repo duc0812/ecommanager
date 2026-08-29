@@ -22,12 +22,13 @@ type DoneRow = {
 }
 type Project = { id: string; name: string }
 
-const DEPT_LABEL: Record<TaskDept, string> = { MAPPING: 'Mapping', DESIGN: 'Design' }
+const DEPT_LABEL: Record<TaskDept, string> = { MAPPING: 'Mapping', DESIGN: 'Design', FULFILLMENT: 'Fulfillment' }
 const TYPE_TONE: Record<TaskType, string> = {
   MISSING_SKU: 'bg-rose-100 text-rose-900',
   UNMAPPED: 'bg-amber-100 text-amber-900',
   MISSING_BASE_COST: 'bg-orange-100 text-orange-900',
   MISSING_DESIGN: 'bg-indigo-100 text-indigo-900',
+  LATE_FULFILLMENT: 'bg-red-100 text-red-900',
 }
 
 export default function TaskFixPage() {
@@ -224,6 +225,7 @@ export default function TaskFixPage() {
             <option value="">Tất cả bộ phận</option>
             <option value="MAPPING">Mapping</option>
             <option value="DESIGN">Design</option>
+            <option value="FULFILLMENT">Fulfillment</option>
           </select>
           {(deptFilter || typeFilter) && (
             <button onClick={() => { setDeptFilter(''); setTypeFilter('') }} className="text-label-sm text-on-surface-variant underline underline-offset-2">Bỏ lọc</button>
