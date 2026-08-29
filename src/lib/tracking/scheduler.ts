@@ -2,7 +2,6 @@ import cron from 'node-cron'
 import { prisma } from '@/lib/db'
 import { getShopifyConnection } from '@/lib/token-store'
 import { syncStoreTracking } from './tracking-sync'
-import { crawlShipmentStatuses } from './crawl-shipments'
 
 const TZ = 'Asia/Ho_Chi_Minh'
 let initialized = false
@@ -33,17 +32,7 @@ export async function runDailyTrackingSync() {
   } catch (e: any) {
     console.error('[tracking-scheduler] failed:', e?.message ?? e)
   }
-  try {
-    const crawl = await crawlShipmentStatuses('undelivered')
-    await prisma.appSetting.upsert({
-      where: { key: 'last_tracking_crawl_result' },
-      create: { key: 'last_tracking_crawl_result', value: JSON.stringify({ ...crawl, ranAt: new Date().toISOString() }) },
-      update: { value: JSON.stringify({ ...crawl, ranAt: new Date().toISOString() }) },
-    })
-    console.log(`[tracking-scheduler] status 2 headless: ${crawl.numbersCrawled} numbers, ${crawl.withEvents} with events`)
-  } catch (e: any) {
-    console.error('[tracking-scheduler] crawl failed:', e?.message ?? e)
-  }
+  // Delivery-status crawling removed — ParcelPanel on the store handles customer-facing status.
 }
 
 export function initTrackingScheduler() {

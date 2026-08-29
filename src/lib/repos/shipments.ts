@@ -1,6 +1,5 @@
 import { prisma } from '@/lib/db'
 import type { BuiltShipment } from '@/lib/tracking/build-shipments'
-import { parseInternalTrackingSnapshot } from '@/lib/tracking/tracking-status'
 
 // Orders (with the line fields buildOrderShipments needs) for one store since a date.
 export async function loadOrdersForShipmentSync(storeId: string, since: Date) {
@@ -89,10 +88,5 @@ export async function listShipments(filter: ShipmentFilter) {
     },
   })
 
-  return shipments.map(shipment => ({
-    ...shipment,
-    internalStatus: shipment.crawlSource
-      ? parseInternalTrackingSnapshot(shipment.checkpointsJson)?.status ?? null
-      : null,
-  }))
+  return shipments
 }

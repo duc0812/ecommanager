@@ -13,15 +13,8 @@ export async function GET(req: NextRequest) {
 
   const total = shipments.length
   const withTracking = shipments.filter(s => s.trackingNumber).length
-  const internallyTracked = shipments.filter(s => s.internalStatus).length
   return NextResponse.json({
     shipments,
-    stats: {
-      total,
-      withTracking,
-      withoutTracking: total - withTracking,
-      internallyTracked,
-      internalDelivered: shipments.filter(s => s.internalStatus === 'DELIVERED').length,
-    },
+    stats: { total, withTracking, withoutTracking: total - withTracking },
   })
 }

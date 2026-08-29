@@ -1,24 +1,19 @@
 'use client'
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import Sidebar from '@/components/Sidebar'
-import { parseTrackingCheckpoints, type TrackingCheckpoint } from '@/lib/tracking/tracking-status'
+import { statusBucket, BUCKET_ORDER, BUCKET_LABELS, type StatusBucket } from '@/lib/tracking/status-bucket'
+import { detectLastMileCarrier } from '@/lib/tracking/lastmile-carrier'
 
 type ShipmentRow = {
   id: string
   lineKey: string
+  sku: string | null
+  productTitle: string | null
   trackingNumber: string | null
   carrier: string | null
   detectedCarrier: string | null
   trackingUrl: string | null
   status: string
-  internalStatus: string | null
-  lastMileCarrier: string | null
-  lastMileTrackingNumber: string | null
-  checkpointsJson: string | null
-  lastCheckpointAt: string | null
-  crawlSource: string | null
-  crawledAt: string | null
-  crawlError: string | null
   supplier: { id: string; name: string } | null
   order: {
     id: string
@@ -29,13 +24,7 @@ type ShipmentRow = {
   } | null
 }
 
-type Stats = {
-  total: number
-  withTracking: number
-  withoutTracking: number
-  internallyTracked: number
-  internalDelivered: number
-}
+type Stats = { total: number; withTracking: number; withoutTracking: number }
 type Project = { id: string; name: string }
 type Supplier = { id: string; name: string }
 
@@ -46,16 +35,29 @@ async function fetchJson<T>(url: string): Promise<T> {
   return JSON.parse(text) as T
 }
 
-function statusTone(status: string): string {
-  const s = status.toUpperCase()
-  if (s === 'DELIVERED') return 'bg-tertiary/15 text-tertiary'
-  if (s === 'IN_TRANSIT' || s === 'OUT_FOR_DELIVERY' || s === 'FULFILLED' || s === 'INFO_RECEIVED') return 'bg-secondary/10 text-secondary'
-  if (s === 'ATTEMPTED_DELIVERY' || s === 'FAILURE' || s === 'EXCEPTION' || s === 'FAILED_ATTEMPT' || s === 'EXPIRED') return 'bg-error/10 text-error'
-  return 'bg-surface-container text-on-surface-variant'
+const BUCKET_TONE: Record<StatusBucket, string> = {
+  PENDING: 'bg-surface-container text-on-surface-variant',
+  INFO_RECEIVED: 'bg-secondary/10 text-secondary',
+  IN_TRANSIT: 'bg-amber-100 text-amber-900',
+  OUT_FOR_DELIVERY: 'bg-indigo-100 text-indigo-900',
+  DELIVERED: 'bg-emerald-100 text-emerald-900',
+  EXCEPTION: 'bg-error/10 text-error',
 }
 
-function prettyStatus(status: string): string {
-  return status.toLowerCase().replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+const BUCKET_DOT: Record<StatusBucket, string> = {
+  PENDING: 'bg-on-surface-variant/50',
+  INFO_RECEIVED: 'bg-secondary',
+  IN_TRANSIT: 'bg-amber-500',
+  OUT_FOR_DELIVERY: 'bg-indigo-500',
+  DELIVERED: 'bg-emerald-500',
+  EXCEPTION: 'bg-error',
+}
+
+function carrierLabel(s: ShipmentRow): string {
+  if (s.detectedCarrier) return s.detectedCarrier
+  if (s.carrier) return s.carrier
+  if (s.trackingNumber) return detectLastMileCarrier(s.trackingNumber).company
+  return '—'
 }
 
 export default function TrackingPage() {
@@ -63,21 +65,19 @@ export default function TrackingPage() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
   const [projectId, setProjectId] = useState('')
   const [supplierId, setSupplierId] = useState('')
-  const [hasTracking, setHasTracking] = useState<'' | 'yes' | 'no'>('')
   const [search, setSearch] = useState('')
   const [searchDebounced, setSearchDebounced] = useState('')
+  const [activeBucket, setActiveBucket] = useState<StatusBucket | 'ALL'>('ALL')
 
   const [shipments, setShipments] = useState<ShipmentRow[]>([])
   const [stats, setStats] = useState<Stats | null>(null)
   const [loading, setLoading] = useState(false)
   const [syncing, setSyncing] = useState(false)
-  const [crawling, setCrawling] = useState(false)
   const [message, setMessage] = useState('')
-  const [expandedId, setExpandedId] = useState<string | null>(null)
 
   useEffect(() => {
-    fetch('/api/projects').then(r => r.json()).then(d => setProjects(Array.isArray(d) ? d : (d.projects ?? [])))
-    fetch('/api/suppliers').then(r => r.json()).then(d => setSuppliers(d.suppliers ?? []))
+    fetch('/api/projects').then(r => r.json()).then(d => setProjects(Array.isArray(d) ? d : (d.projects ?? []))).catch(() => {})
+    fetch('/api/suppliers').then(r => r.json()).then(d => setSuppliers(d.suppliers ?? [])).catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -89,10 +89,9 @@ export default function TrackingPage() {
     const q = new URLSearchParams()
     if (projectId) q.set('projectId', projectId)
     if (supplierId) q.set('supplierId', supplierId)
-    if (hasTracking) q.set('hasTracking', hasTracking)
     if (searchDebounced) q.set('search', searchDebounced)
     return q.toString()
-  }, [projectId, supplierId, hasTracking, searchDebounced])
+  }, [projectId, supplierId, searchDebounced])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -112,9 +111,9 @@ export default function TrackingPage() {
 
   const sync = async () => {
     setSyncing(true)
-    setMessage('Đang sync tracking 30 ngày gần nhất...')
+    setMessage('Đang sync tracking từ Shopify...')
     try {
-      const res = await fetch('/api/fulfillment/tracking/sync?days=30', { method: 'POST' })
+      const res = await fetch('/api/fulfillment/tracking/sync?days=60', { method: 'POST' })
       const body = await res.json()
       if (!res.ok) {
         setMessage(`Lỗi: ${body.error ?? res.statusText}`)
@@ -131,106 +130,110 @@ export default function TrackingPage() {
     }
   }
 
-  const crawl = async () => {
-    setCrawling(true)
-    setMessage('Đang crawl Status 2 bằng headless browser (có thể mất vài phút)...')
-    try {
-      const res = await fetch('/api/fulfillment/tracking/crawl?scope=undelivered', { method: 'POST' })
-      const body = await res.json()
-      if (!res.ok) {
-        setMessage(`Lỗi crawl: ${body.error ?? res.statusText}`)
-      } else {
-        const byStatus = Object.entries(body.byStatus ?? {}).map(([k, v]) => `${k}: ${v}`).join(', ')
-        setMessage(`Status 2: đã crawl ${body.numbersCrawled} tracking — ${body.withEvents} có hành trình. ${byStatus}${body.errors?.length ? ` (${body.errors.length} lỗi)` : ''}`)
-        await load()
-      }
-    } catch (e: any) {
-      setMessage(`Lỗi crawl: ${e.message}`)
-    } finally {
-      setCrawling(false)
+  // Bucket each shipment once; drive both the tab counts and the analytics cards.
+  const withBucket = useMemo(() => shipments.map(s => ({ s, bucket: statusBucket(s.status) })), [shipments])
+
+  const counts = useMemo(() => {
+    const c: Record<StatusBucket, number> = {
+      PENDING: 0, INFO_RECEIVED: 0, IN_TRANSIT: 0, OUT_FOR_DELIVERY: 0, DELIVERED: 0, EXCEPTION: 0,
     }
-  }
+    for (const { bucket } of withBucket) c[bucket]++
+    return c
+  }, [withBucket])
+
+  const analytics = useMemo(() => {
+    const total = shipments.length
+    const withTracking = stats?.withTracking ?? shipments.filter(s => s.trackingNumber).length
+    const inTransit = counts.IN_TRANSIT + counts.OUT_FOR_DELIVERY
+    const delivered = counts.DELIVERED
+    const exception = counts.EXCEPTION
+    const noTracking = stats?.withoutTracking ?? (total - withTracking)
+    const deliveryRate = withTracking > 0 ? Math.round((delivered / withTracking) * 100) : 0
+    return { total, inTransit, delivered, exception, noTracking, deliveryRate }
+  }, [shipments, stats, counts])
+
+  const visible = useMemo(
+    () => (activeBucket === 'ALL' ? withBucket : withBucket.filter(x => x.bucket === activeBucket)),
+    [withBucket, activeBucket],
+  )
 
   const fmtDate = (iso: string, tz?: string | null) =>
     new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: tz || 'UTC' }).format(new Date(iso))
 
+  const cards: { label: string; value: string | number; tone: string }[] = [
+    { label: 'Tổng shipment', value: analytics.total, tone: 'text-primary' },
+    { label: 'In Transit', value: analytics.inTransit, tone: 'text-amber-700' },
+    { label: 'Delivered', value: analytics.delivered, tone: 'text-emerald-700' },
+    { label: 'Delivery rate', value: `${analytics.deliveryRate}%`, tone: 'text-tertiary' },
+    { label: 'Exception', value: analytics.exception, tone: 'text-error' },
+    { label: 'Chưa có tracking', value: analytics.noTracking, tone: 'text-on-surface-variant' },
+  ]
+
   return (
     <div className="flex min-h-screen bg-surface">
       <Sidebar />
-      <main className="ml-0 lg:ml-[280px] mt-14 lg:mt-0 w-[calc(100vw-280px)] min-w-0 overflow-x-hidden p-xl">
+      <main className="ml-0 lg:ml-[280px] mt-14 lg:mt-0 w-full lg:w-[calc(100vw-280px)] min-w-0 overflow-x-hidden p-xl">
         {/* Header */}
         <div className="flex items-center justify-between mb-lg gap-md">
           <div>
             <p className="text-label-sm text-on-surface-variant uppercase tracking-wider mb-xs">Fulfillment</p>
-            <h1 className="text-display-md text-primary">Tracking Management</h1>
+            <h1 className="text-display-md text-primary">Tracking</h1>
           </div>
-          <div className="flex items-center gap-sm">
-            <button
-              onClick={crawl}
-              disabled={crawling || syncing}
-              className="border border-outline-variant/40 px-lg py-sm rounded-lg text-label-md disabled:opacity-50"
-            >
-              {crawling ? 'Crawling…' : 'Crawl Status 2'}
-            </button>
-            <button
-              onClick={sync}
-              disabled={syncing || crawling}
-              className="bg-secondary text-on-secondary px-lg py-sm rounded-lg text-label-md disabled:opacity-50"
-            >
-              {syncing ? 'Syncing…' : 'Sync 30 ngày'}
-            </button>
-          </div>
+          <button
+            onClick={sync}
+            disabled={syncing}
+            className="bg-secondary text-on-secondary px-lg py-sm rounded-lg text-label-md disabled:opacity-50 flex items-center gap-xs"
+          >
+            <span className={`material-symbols-outlined text-[18px] ${syncing ? 'animate-spin' : ''}`}>{syncing ? 'sync' : 'download'}</span>
+            {syncing ? 'Syncing…' : 'Sync từ Shopify'}
+          </button>
         </div>
         {message && <p className="mb-md text-body-sm text-on-surface-variant">{message}</p>}
 
-        {/* Stats */}
-        {stats && (
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-md mb-lg">
-            <div className="bg-surface-container-lowest rounded-xl shadow-card border border-outline-variant/20 p-lg">
-              <p className="text-label-sm text-on-surface-variant">Tổng shipment</p>
-              <p className="text-headline-md text-primary mt-xs">{stats.total}</p>
+        {/* Analytics cards */}
+        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-md mb-lg">
+          {cards.map(c => (
+            <div key={c.label} className="bg-surface-container-lowest rounded-xl shadow-card border border-outline-variant/20 p-lg">
+              <p className="text-label-sm text-on-surface-variant">{c.label}</p>
+              <p className={`text-headline-md mt-xs ${c.tone}`}>{c.value}</p>
             </div>
-            <div className="bg-surface-container-lowest rounded-xl shadow-card border border-outline-variant/20 p-lg">
-              <p className="text-label-sm text-on-surface-variant">Có tracking</p>
-              <p className="text-headline-md text-tertiary mt-xs">{stats.withTracking}</p>
-            </div>
-            <div className="bg-surface-container-lowest rounded-xl shadow-card border border-outline-variant/20 p-lg">
-              <p className="text-label-sm text-on-surface-variant">Chưa có tracking</p>
-              <p className="text-headline-md text-on-surface-variant mt-xs">{stats.withoutTracking}</p>
-            </div>
-            <div className="bg-surface-container-lowest rounded-xl shadow-card border border-outline-variant/20 p-lg">
-              <p className="text-label-sm text-on-surface-variant">Đã có Status 2</p>
-              <p className="text-headline-md text-secondary mt-xs">{stats.internallyTracked}</p>
-            </div>
-            <div className="bg-surface-container-lowest rounded-xl shadow-card border border-outline-variant/20 p-lg">
-              <p className="text-label-sm text-on-surface-variant">Status 2 Delivered</p>
-              <p className="text-headline-md text-tertiary mt-xs">{stats.internalDelivered}</p>
-            </div>
-          </div>
-        )}
+          ))}
+        </div>
 
-        {/* Filters */}
-        <div className="bg-surface-container-lowest rounded-xl border border-outline-variant/20 p-md mb-md grid grid-cols-1 md:grid-cols-4 gap-md">
+        {/* Status tabs */}
+        <div className="flex flex-wrap gap-xs mb-md">
+          <button
+            onClick={() => setActiveBucket('ALL')}
+            className={`px-md py-xs rounded-full text-label-sm border transition-colors ${activeBucket === 'ALL' ? 'bg-primary text-on-primary border-primary' : 'bg-surface-container-lowest text-on-surface-variant border-outline-variant/40 hover:bg-surface-container'}`}
+          >
+            Tất cả <span className="opacity-70">({withBucket.length})</span>
+          </button>
+          {BUCKET_ORDER.map(b => (
+            <button
+              key={b}
+              onClick={() => setActiveBucket(b)}
+              className={`px-md py-xs rounded-full text-label-sm border transition-colors flex items-center gap-xs ${activeBucket === b ? 'bg-primary text-on-primary border-primary' : 'bg-surface-container-lowest text-on-surface-variant border-outline-variant/40 hover:bg-surface-container'}`}
+            >
+              <span className={`w-[7px] h-[7px] rounded-full ${BUCKET_DOT[b]}`} />
+              {BUCKET_LABELS[b]} <span className="opacity-70">({counts[b]})</span>
+            </button>
+          ))}
+        </div>
+
+        {/* Filters toolbar */}
+        <div className="bg-surface-container-lowest rounded-xl border border-outline-variant/20 p-md mb-md grid grid-cols-1 md:grid-cols-3 gap-md">
           <div>
             <label className="text-label-sm block mb-xs">Project</label>
-            <select value={projectId} onChange={e => setProjectId(e.target.value)} className="w-full border rounded-lg px-sm py-xs text-body-sm">
+            <select value={projectId} onChange={e => setProjectId(e.target.value)} className="w-full border border-outline-variant/40 rounded-lg px-sm py-xs text-body-sm">
               <option value="">All projects</option>
               {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
           </div>
           <div>
             <label className="text-label-sm block mb-xs">Supplier</label>
-            <select value={supplierId} onChange={e => setSupplierId(e.target.value)} className="w-full border rounded-lg px-sm py-xs text-body-sm">
+            <select value={supplierId} onChange={e => setSupplierId(e.target.value)} className="w-full border border-outline-variant/40 rounded-lg px-sm py-xs text-body-sm">
               <option value="">All</option>
               {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="text-label-sm block mb-xs">Tracking</label>
-            <select value={hasTracking} onChange={e => setHasTracking(e.target.value as any)} className="w-full border rounded-lg px-sm py-xs text-body-sm">
-              <option value="">Tất cả</option>
-              <option value="yes">Đã có tracking</option>
-              <option value="no">Chưa có</option>
             </select>
           </div>
           <div>
@@ -239,128 +242,70 @@ export default function TrackingPage() {
               value={search}
               onChange={e => setSearch(e.target.value)}
               placeholder="Order ID hoặc tracking number"
-              className="w-full border rounded-lg px-sm py-xs text-body-sm"
+              className="w-full border border-outline-variant/40 rounded-lg px-sm py-xs text-body-sm"
             />
           </div>
         </div>
 
-        {/* Table */}
+        {/* Shipment list */}
         <div className="bg-surface-container-lowest rounded-xl border border-outline-variant/20 overflow-hidden">
           <table className="w-full text-body-sm">
             <thead className="bg-surface-container">
-              <tr className="text-left">
-                <th className="px-md py-sm">Order ID</th>
-                <th className="px-md py-sm">Tracking number</th>
-                <th className="px-md py-sm">Carrier</th>
-                <th className="px-md py-sm">Last-mile tracking</th>
-                <th className="px-md py-sm">Supplier</th>
-                <th className="px-md py-sm">Status nguồn ngoài</th>
-                <th className="px-md py-sm">Status 2 nội bộ</th>
-                <th className="px-md py-sm">Placed</th>
-                {!projectId && <th className="px-md py-sm">Project</th>}
+              <tr className="text-left text-on-surface-variant">
+                <th className="px-md py-sm font-medium">Order</th>
+                <th className="px-md py-sm font-medium">Product</th>
+                <th className="px-md py-sm font-medium">Tracking</th>
+                <th className="px-md py-sm font-medium">Carrier</th>
+                <th className="px-md py-sm font-medium">Status</th>
+                <th className="px-md py-sm font-medium">Supplier</th>
+                <th className="px-md py-sm font-medium">Ngày đặt</th>
               </tr>
             </thead>
             <tbody>
-              {shipments.map(s => {
-                const checkpoints: TrackingCheckpoint[] = s.crawlSource
-                  ? parseTrackingCheckpoints(s.checkpointsJson)
-                  : []
-                const expanded = expandedId === s.id
-                return (
-                  <Fragment key={s.id}>
-                    <tr
-                      className={`border-t border-outline-variant/20 ${checkpoints.length > 0 ? 'cursor-pointer hover:bg-surface-container/40' : ''}`}
-                      onClick={() => checkpoints.length > 0 && setExpandedId(expanded ? null : s.id)}
-                    >
-                      <td className="px-md py-sm font-mono text-secondary">
-                        <span className="inline-flex items-center gap-xs">
-                          {checkpoints.length > 0 && (
-                            <span className="material-symbols-outlined text-[16px] text-on-surface-variant">
-                              {expanded ? 'expand_more' : 'chevron_right'}
-                            </span>
-                          )}
-                          {s.lineKey}
-                        </span>
-                      </td>
-                      <td className="px-md py-sm font-mono">
-                        {s.trackingNumber
-                          ? (s.trackingUrl
-                              ? <a href={s.trackingUrl} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} className="text-secondary underline underline-offset-2">{s.trackingNumber}</a>
-                              : s.trackingNumber)
-                          : <span className="text-on-surface-variant">— chưa có</span>}
-                      </td>
-                      <td className="px-md py-sm">{s.detectedCarrier ?? s.carrier ?? '—'}</td>
-                      <td className="px-md py-sm">
-                        {s.lastMileTrackingNumber
-                          ? (
-                            <div className="flex flex-col leading-tight">
-                              <a
-                                href={`https://parcelsapp.com/en/tracking/${s.lastMileTrackingNumber}`}
-                                target="_blank" rel="noopener noreferrer"
-                                onClick={e => e.stopPropagation()}
-                                className="font-mono text-secondary underline underline-offset-2"
-                              >{s.lastMileTrackingNumber}</a>
-                              {s.lastMileCarrier && <span className="text-label-sm text-on-surface-variant">{s.lastMileCarrier}</span>}
-                            </div>
-                          )
-                          : <span className="text-on-surface-variant">—</span>}
-                      </td>
-                      <td className="px-md py-sm">
-                        {s.supplier?.name ?? <span className="text-error text-label-sm">unmapped</span>}
-                      </td>
-                      <td className="px-md py-sm">
-                        <div className="flex flex-col gap-[2px]">
-                          <span className={`rounded px-xs py-[2px] text-label-sm w-fit ${statusTone(s.status)}`}>{prettyStatus(s.status)}</span>
-                        </div>
-                      </td>
-                      <td className="px-md py-sm">
-                        <div className="flex flex-col gap-[2px]">
-                          {s.internalStatus
-                            ? <span className={`rounded px-xs py-[2px] text-label-sm w-fit ${statusTone(s.internalStatus)}`}>{prettyStatus(s.internalStatus)}</span>
-                            : <span className="text-on-surface-variant">— chưa crawl</span>}
-                          {checkpoints[0] && (
-                            <span className="text-label-sm text-on-surface-variant truncate max-w-[260px]" title={checkpoints[0].desc}>
-                              {checkpoints[0].desc}
-                            </span>
-                          )}
-                          {s.crawlError && (
-                            <span className="text-label-sm text-error" title={s.crawlError}>Lỗi crawl</span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-md py-sm text-label-sm text-on-surface-variant">
-                        {s.order ? fmtDate(s.order.placedAt, s.order.shopTimezone) : '—'}
-                      </td>
-                      {!projectId && <td className="px-md py-sm text-label-sm text-on-surface-variant">{s.order?.project?.name ?? '—'}</td>}
-                    </tr>
-                    {expanded && checkpoints.length > 0 && (
-                      <tr className="border-t border-outline-variant/10 bg-surface-container/30">
-                        <td colSpan={projectId ? 8 : 9} className="px-lg py-md">
-                          <ol className="space-y-xs">
-                            {checkpoints.map((cp, i) => (
-                              <li key={i} className="flex items-start gap-md text-body-sm">
-                                <span className={`mt-[6px] h-2 w-2 shrink-0 rounded-full ${i === 0 ? 'bg-secondary' : 'bg-outline-variant'}`} />
-                                <span className="w-[150px] shrink-0 font-mono text-label-sm text-on-surface-variant">{cp.time}</span>
-                                <span>{cp.desc}</span>
-                              </li>
-                            ))}
-                          </ol>
-                        </td>
-                      </tr>
-                    )}
-                  </Fragment>
-                )
-              })}
-              {shipments.length === 0 && !loading && (
+              {visible.map(({ s, bucket }) => (
+                <tr key={s.id} className="border-t border-outline-variant/20 hover:bg-surface-container/40">
+                  <td className="px-md py-sm">
+                    <div className="font-medium text-on-surface">{s.order?.shopifyOrderNumber ?? '—'}</div>
+                    <div className="font-mono text-label-sm text-on-surface-variant">{s.lineKey}</div>
+                  </td>
+                  <td className="px-md py-sm max-w-[240px]">
+                    <div className="truncate">{s.productTitle ?? '—'}</div>
+                    {s.sku && <div className="font-mono text-label-sm text-on-surface-variant truncate">{s.sku}</div>}
+                  </td>
+                  <td className="px-md py-sm font-mono">
+                    {s.trackingNumber
+                      ? (s.trackingUrl
+                          ? <a href={s.trackingUrl} target="_blank" rel="noopener noreferrer" className="text-secondary underline underline-offset-2">{s.trackingNumber}</a>
+                          : s.trackingNumber)
+                      : <span className="text-on-surface-variant">— chưa có</span>}
+                  </td>
+                  <td className="px-md py-sm">{carrierLabel(s)}</td>
+                  <td className="px-md py-sm">
+                    <span className={`inline-flex items-center gap-xs rounded-full px-sm py-[3px] text-label-sm w-fit ${BUCKET_TONE[bucket]}`}>
+                      <span className={`w-[6px] h-[6px] rounded-full ${BUCKET_DOT[bucket]}`} />
+                      {BUCKET_LABELS[bucket]}
+                    </span>
+                  </td>
+                  <td className="px-md py-sm">
+                    {s.supplier?.name ?? <span className="text-error text-label-sm">unmapped</span>}
+                  </td>
+                  <td className="px-md py-sm text-label-sm text-on-surface-variant whitespace-nowrap">
+                    {s.order ? fmtDate(s.order.placedAt, s.order.shopTimezone) : '—'}
+                  </td>
+                </tr>
+              ))}
+              {visible.length === 0 && !loading && (
                 <tr>
-                  <td colSpan={projectId ? 8 : 9} className="px-md py-lg text-center text-on-surface-variant">
-                    Chưa có shipment. Bấm Sync 30 ngày để kéo tracking từ Shopify về.
+                  <td colSpan={7} className="px-md py-lg text-center text-on-surface-variant">
+                    {shipments.length === 0
+                      ? 'Chưa có shipment. Bấm Sync từ Shopify để kéo tracking về.'
+                      : 'Không có shipment nào ở trạng thái này.'}
                   </td>
                 </tr>
               )}
               {loading && (
                 <tr>
-                  <td colSpan={projectId ? 8 : 9} className="px-md py-lg text-center text-on-surface-variant">Đang tải…</td>
+                  <td colSpan={7} className="px-md py-lg text-center text-on-surface-variant">Đang tải…</td>
                 </tr>
               )}
             </tbody>

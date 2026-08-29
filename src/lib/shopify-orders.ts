@@ -307,6 +307,85 @@ export async function fetchOrderFulfillmentsPage(
   }
 }
 
+// ─── Fulfillment tracking WRITE-back (push last-mile number to Shopify) ──────
+
+export type OrderFulfillmentRef = {
+  orderId: string
+  orderName: string
+  fulfillments: Array<{ id: string; status: string; trackingNumbers: string[] }>
+}
+
+export async function fetchOrderFulfillmentsByName(
+  shop: string,
+  accessToken: string,
+  orderName: string,     // e.g. "#LIT2929"
+  apiVersion = '2024-10',
+): Promise<OrderFulfillmentRef[]> {
+  const url = `https://${shop}/admin/api/${apiVersion}/graphql.json`
+  const query = `
+    query($q: String!) {
+      orders(first: 5, query: $q) {
+        nodes {
+          id name
+          fulfillments(first: 20) { id status trackingInfo { number } }
+        }
+      }
+    }`
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': accessToken },
+    body: JSON.stringify({ query, variables: { q: `name:${orderName}` } }),
+  })
+  if (!res.ok) throw new Error(`Shopify GraphQL ${res.status}: ${await res.text()}`)
+  const json = await res.json()
+  if (json.errors) throw new Error(`GraphQL errors: ${JSON.stringify(json.errors)}`)
+  return (json.data?.orders?.nodes ?? []).map((o: any) => ({
+    orderId: o.id,
+    orderName: o.name,
+    fulfillments: (o.fulfillments ?? []).map((f: any) => ({
+      id: f.id,
+      status: f.status,
+      trackingNumbers: (f.trackingInfo ?? []).map((t: any) => t.number).filter(Boolean),
+    })),
+  }))
+}
+
+export type TrackingUpdateResult = { ok: boolean; error?: string; trackingInfo?: Array<{ company: string | null; number: string | null; url: string | null }> }
+
+export async function updateFulfillmentTracking(
+  shop: string,
+  accessToken: string,
+  fulfillmentId: string,
+  input: { company?: string; number: string; url?: string },
+  notifyCustomer = false,
+  apiVersion = '2024-10',
+): Promise<TrackingUpdateResult> {
+  const url = `https://${shop}/admin/api/${apiVersion}/graphql.json`
+  const mutation = `
+    mutation($fulfillmentId: ID!, $trackingInfoInput: FulfillmentTrackingInput!, $notifyCustomer: Boolean) {
+      fulfillmentTrackingInfoUpdate(fulfillmentId: $fulfillmentId, trackingInfoInput: $trackingInfoInput, notifyCustomer: $notifyCustomer) {
+        fulfillment { id trackingInfo { company number url } }
+        userErrors { field message }
+      }
+    }`
+  const trackingInfoInput: Record<string, string> = { number: input.number }
+  if (input.company) trackingInfoInput.company = input.company
+  if (input.url) trackingInfoInput.url = input.url
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': accessToken },
+    body: JSON.stringify({ query: mutation, variables: { fulfillmentId, trackingInfoInput, notifyCustomer } }),
+  })
+  if (!res.ok) return { ok: false, error: `HTTP ${res.status}: ${(await res.text()).slice(0, 200)}` }
+  const json = await res.json()
+  if (json.errors) return { ok: false, error: `GraphQL: ${JSON.stringify(json.errors).slice(0, 300)}` }
+  const payload = json.data?.fulfillmentTrackingInfoUpdate
+  const userErrors = payload?.userErrors ?? []
+  if (userErrors.length > 0) return { ok: false, error: userErrors.map((e: any) => e.message).join('; ') }
+  return { ok: true, trackingInfo: payload?.fulfillment?.trackingInfo ?? [] }
+}
+
 export async function fetchShopInfo(
   shop: string,
   accessToken: string,
