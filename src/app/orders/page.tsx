@@ -3,6 +3,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import Sidebar from '@/components/Sidebar'
 import { PIPELINE_STATUSES, STATUS_LABELS, STATUS_COLORS, type PipelineStatus } from '@/lib/pipeline-status'
 import { computeWarnings, WARNING_TYPES, WARNING_META, type WarningType } from '@/lib/order-warnings'
+import { DESIGN_STATUS_META, type LineDesignStatus } from '@/lib/design-status'
+
+const DESIGN_STATUS_ORDER: LineDesignStatus[] = ['PENDING', 'LIBRARY', 'DONE']
 
 const TAB_STATUSES = PIPELINE_STATUSES.filter(s => s !== 'WARNING')
 
@@ -48,6 +51,7 @@ type OrderRow = {
     resolvedSupplierId: string | null
     designDriveLink: string | null
     previewCdnUrl: string | null
+    designStatus: LineDesignStatus
   }>
   computed: {
     baseCost: number
@@ -646,11 +650,19 @@ export default function OrdersPage() {
                     )}
                   </td>
                   <td className="px-sm py-sm">
-                    {o.designReady ? (
-                      <span className="text-label-sm text-tertiary font-medium">Done</span>
-                    ) : (
-                      <span className="text-label-sm text-on-surface-variant">-</span>
-                    )}
+                    {(() => {
+                      const statuses = DESIGN_STATUS_ORDER.filter(s => o.lines.some(l => l.designStatus === s))
+                      if (statuses.length === 0) return <span className="text-label-sm text-on-surface-variant">—</span>
+                      return (
+                        <div className="flex flex-wrap gap-[3px]">
+                          {statuses.map(s => (
+                            <span key={s} className={`text-label-sm px-xs py-[1px] rounded whitespace-nowrap ${DESIGN_STATUS_META[s].tone}`}>
+                              {DESIGN_STATUS_META[s].label}
+                            </span>
+                          ))}
+                        </div>
+                      )
+                    })()}
                   </td>
                   <td className="px-sm py-sm truncate">
                     {o.trelloCardUrl ? (
