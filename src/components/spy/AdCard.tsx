@@ -22,7 +22,7 @@ export default function AdCard({ a, onSave }: { a: Ad; onSave: (a: Ad) => void }
       <div className="relative aspect-[4/5] overflow-hidden bg-[#F2F1EE]">
         {a.mediaUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={a.mediaUrl} alt={a.title ?? ''} loading="lazy" className="h-full w-full object-cover" />
+          <img src={`/api/spy/media/${a.id}`} alt={a.title ?? ''} loading="lazy" className="h-full w-full object-cover" />
         ) : (
           <div className="flex h-full w-full items-center justify-center text-[#57534E]"><span className="material-symbols-outlined text-[36px]">image_not_supported</span></div>
         )}
