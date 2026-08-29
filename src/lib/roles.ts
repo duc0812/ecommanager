@@ -10,6 +10,9 @@ export type FeaturePermission =
   | 'fulfillment_export'
   | 'fulfillment_suppliers'
   | 'fulfillment_mapping'
+  | 'fulfillment_tracking'
+  | 'fulfillment_design_library'
+  | 'need_to_fix'
   | 'tools_spy_idea'
   | 'tools_resources'
   | 'projects'
@@ -37,6 +40,9 @@ export const FEATURE_LABELS: Record<FeaturePermission, string> = {
   fulfillment_export: 'CSV Export',
   fulfillment_suppliers: 'Suppliers',
   fulfillment_mapping: 'Product Mapping',
+  fulfillment_tracking: 'Tracking',
+  fulfillment_design_library: 'Design Library',
+  need_to_fix: 'Need To Fix',
   tools_spy_idea: 'Spy Idea',
   tools_resources: 'Resources',
   projects: 'Project Management',
@@ -59,6 +65,9 @@ export const FEATURE_GROUPS: { label: string; permissions: FeaturePermission[] }
       'fulfillment_export',
       'fulfillment_suppliers',
       'fulfillment_mapping',
+      'fulfillment_tracking',
+      'fulfillment_design_library',
+      'need_to_fix',
     ],
   },
   { label: 'Tools', permissions: ['tools_spy_idea', 'tools_resources'] },
@@ -79,6 +88,9 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, FeaturePermission[]> = {
     'fulfillment_export',
     'fulfillment_suppliers',
     'fulfillment_mapping',
+    'fulfillment_tracking',
+    'fulfillment_design_library',
+    'need_to_fix',
     'tools_spy_idea',
     'tools_resources',
     'projects',
@@ -92,6 +104,9 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, FeaturePermission[]> = {
     'fulfillment_export',
     'fulfillment_suppliers',
     'fulfillment_mapping',
+    'fulfillment_tracking',
+    'fulfillment_design_library',
+    'need_to_fix',
   ],
 }
 
@@ -106,6 +121,9 @@ const FEATURE_PATHS: Record<FeaturePermission, string[]> = {
   fulfillment_export: ['/fulfillment/export', '/orders/export'],
   fulfillment_suppliers: ['/fulfillment/suppliers', '/setup/suppliers'],
   fulfillment_mapping: ['/fulfillment/mapping'],
+  fulfillment_tracking: ['/fulfillment/tracking'],
+  fulfillment_design_library: ['/fulfillment/design-library'],
+  need_to_fix: ['/task-fix'],
   tools_spy_idea: ['/tools/spy-idea'],
   tools_resources: ['/tools/resources'],
   projects: ['/projects'],
