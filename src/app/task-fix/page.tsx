@@ -12,6 +12,14 @@ type TaskRow = {
   task: { type: TaskType; dept: TaskDept; label: string; detail: string }
   fixLines?: FixLine[]
 }
+type DoneRow = {
+  orderId: string
+  shopifyOrderNumber: string
+  taskType: TaskType
+  dept: TaskDept
+  resolvedAt: string
+  projectName: string | null
+}
 type Project = { id: string; name: string }
 
 const DEPT_LABEL: Record<TaskDept, string> = { MAPPING: 'Mapping', DESIGN: 'Design' }
@@ -28,7 +36,9 @@ export default function TaskFixPage() {
   const [deptFilter, setDeptFilter] = useState<'' | TaskDept>('')
   const [typeFilter, setTypeFilter] = useState<'' | TaskType>('')
 
+  const [view, setView] = useState<'open' | 'done'>('open')
   const [rows, setRows] = useState<TaskRow[]>([])
+  const [doneRows, setDoneRows] = useState<DoneRow[]>([])
   const [counts, setCounts] = useState<Record<string, number>>({})
   const [loading, setLoading] = useState(false)
   const [rechecking, setRechecking] = useState<string>('')
@@ -43,17 +53,24 @@ export default function TaskFixPage() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const qs = projectId ? `?projectId=${projectId}` : ''
+      const params = new URLSearchParams()
+      if (projectId) params.set('projectId', projectId)
+      if (view === 'done') params.set('done', '1')
+      const qs = params.toString() ? `?${params.toString()}` : ''
       const res = await fetch(`/api/fulfillment/task-fix${qs}`)
       const data = await res.json()
-      setRows(data.rows ?? [])
-      setCounts(data.counts ?? {})
+      if (view === 'done') {
+        setDoneRows(data.done ?? [])
+      } else {
+        setRows(data.rows ?? [])
+        setCounts(data.counts ?? {})
+      }
     } catch (e: any) {
       setMessage(`Load thất bại: ${e.message}`)
     } finally {
       setLoading(false)
     }
-  }, [projectId])
+  }, [projectId, view])
 
   useEffect(() => { load() }, [load])
 
@@ -133,6 +150,58 @@ export default function TaskFixPage() {
         </div>
         {message && <p className="mb-md text-body-sm text-on-surface-variant">{message}</p>}
 
+        {/* Open / Done toggle */}
+        <div className="inline-flex rounded-lg border border-outline-variant/40 overflow-hidden mb-md">
+          <button
+            onClick={() => setView('open')}
+            className={`px-lg py-sm text-label-sm ${view === 'open' ? 'bg-secondary text-on-secondary' : 'bg-surface-container-lowest text-on-surface-variant hover:bg-surface-container'}`}
+          >
+            Cần fix{view === 'open' ? ` (${rows.length})` : ''}
+          </button>
+          <button
+            onClick={() => setView('done')}
+            className={`px-lg py-sm text-label-sm ${view === 'done' ? 'bg-secondary text-on-secondary' : 'bg-surface-container-lowest text-on-surface-variant hover:bg-surface-container'}`}
+          >
+            Đã done{view === 'done' ? ` (${doneRows.length})` : ''}
+          </button>
+        </div>
+
+        {view === 'done' ? (
+          <div className="bg-surface-container-lowest rounded-xl border border-outline-variant/20 overflow-hidden">
+            <table className="w-full text-body-sm">
+              <thead className="bg-surface-container text-on-surface-variant">
+                <tr className="text-left">
+                  <th className="px-md py-sm font-medium">Order #</th>
+                  <th className="px-md py-sm font-medium">Bộ phận</th>
+                  <th className="px-md py-sm font-medium">Issue</th>
+                  <th className="px-md py-sm font-medium">Project</th>
+                  <th className="px-md py-sm font-medium text-right">Đã xong</th>
+                </tr>
+              </thead>
+              <tbody>
+                {doneRows.map(r => (
+                  <tr key={`${r.orderId}:${r.taskType}`} className="border-t border-outline-variant/20 hover:bg-surface-container/40">
+                    <td className="px-md py-sm font-medium">{r.shopifyOrderNumber}</td>
+                    <td className="px-md py-sm">{DEPT_LABEL[r.dept] ?? r.dept}</td>
+                    <td className="px-md py-sm">
+                      <span className={`inline-block rounded-full px-sm py-[3px] text-label-sm ${TYPE_TONE[r.taskType]}`}>{TASK_META[r.taskType]?.label ?? r.taskType}</span>
+                    </td>
+                    <td className="px-md py-sm text-on-surface-variant">{r.projectName ?? '—'}</td>
+                    <td className="px-md py-sm text-label-sm text-on-surface-variant whitespace-nowrap text-right">{fmtDate(r.resolvedAt)}</td>
+                  </tr>
+                ))}
+                {doneRows.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="px-md py-lg text-center text-on-surface-variant">
+                      {loading ? 'Đang tải…' : 'Chưa có task nào được đánh dấu done.'}
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+        <>
         {/* Count chips per task type */}
         <div className="flex flex-wrap gap-sm mb-md">
           {TASK_TYPES.map(t => (
@@ -241,6 +310,8 @@ export default function TaskFixPage() {
             </tbody>
           </table>
         </div>
+        </>
+        )}
       </main>
     </div>
   )

@@ -3,7 +3,7 @@ import { PrismaClient } from '@/generated/prisma/client'
 import { resolveDatabaseUrl } from '@/lib/database-url'
 
 const globalForPrisma = globalThis as unknown as { prisma: PrismaClient; prismaVersion?: string }
-const SCHEMA_VERSION = 'v38'
+const SCHEMA_VERSION = 'v39'
 
 function createPrisma() {
   const adapter = new PrismaLibSql({ url: resolveDatabaseUrl() })

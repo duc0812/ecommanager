@@ -10,9 +10,20 @@ export type TaskRow = {
   orderId: string
   shopifyOrderNumber: string
   placedAt: Date
+  projectId: string | null
   projectName: string | null
   task: OrderTask
   fixLines?: FixLine[]   // lines the "Suggest" column can fix inline (MISSING_SKU / MISSING_BASE_COST)
+}
+
+export type DoneTaskRow = {
+  orderId: string
+  shopifyOrderNumber: string
+  taskType: TaskType
+  dept: string
+  resolvedAt: Date
+  projectId: string | null
+  projectName: string | null
 }
 
 export async function listOrderTasks(filter: { projectId?: string } = {}): Promise<{
@@ -24,6 +35,7 @@ export async function listOrderTasks(filter: { projectId?: string } = {}): Promi
     orderBy: { placedAt: 'desc' },
     select: {
       id: true, shopifyOrderNumber: true, placedAt: true, orderType: true, designReady: true,
+      projectId: true,
       project: { select: { name: true } },
       lines: {
         select: {
@@ -52,6 +64,7 @@ export async function listOrderTasks(filter: { projectId?: string } = {}): Promi
         orderId: o.id,
         shopifyOrderNumber: o.shopifyOrderNumber,
         placedAt: o.placedAt,
+        projectId: o.projectId ?? null,
         projectName: o.project?.name ?? null,
         task,
         fixLines,
@@ -60,6 +73,73 @@ export async function listOrderTasks(filter: { projectId?: string } = {}): Promi
     }
   }
   return { rows, counts }
+}
+
+// Reconcile the persisted OrderTaskState against the current live open tasks
+// (computed across ALL projects — never a project-filtered subset, or tasks in
+// other projects would be wrongly marked resolved). Open tasks are upserted
+// with resolvedAt=null (re-opening any that had previously resolved); persisted
+// open states no longer present in the live set are stamped resolvedAt=now.
+export async function reconcileTaskStates(openRows: TaskRow[]): Promise<void> {
+  const now = new Date()
+  const openKeys = new Set(openRows.map(r => `${r.orderId}::${r.task.type}`))
+
+  for (const r of openRows) {
+    await prisma.orderTaskState.upsert({
+      where: { orderId_taskType: { orderId: r.orderId, taskType: r.task.type } },
+      create: {
+        orderId: r.orderId,
+        shopifyOrderNumber: r.shopifyOrderNumber,
+        taskType: r.task.type,
+        dept: r.task.dept,
+        resolvedAt: null,
+      },
+      update: {
+        shopifyOrderNumber: r.shopifyOrderNumber,
+        dept: r.task.dept,
+        resolvedAt: null,
+      },
+    })
+  }
+
+  const persistedOpen = await prisma.orderTaskState.findMany({ where: { resolvedAt: null } })
+  const toResolve = persistedOpen.filter(s => !openKeys.has(`${s.orderId}::${s.taskType}`))
+  if (toResolve.length > 0) {
+    await prisma.orderTaskState.updateMany({
+      where: { id: { in: toResolve.map(s => s.id) } },
+      data: { resolvedAt: now },
+    })
+  }
+}
+
+export async function listDoneTasks(filter: { projectId?: string } = {}): Promise<DoneTaskRow[]> {
+  const states = await prisma.orderTaskState.findMany({
+    where: { resolvedAt: { not: null } },
+    orderBy: { resolvedAt: 'desc' },
+    take: 500,
+  })
+  if (states.length === 0) return []
+
+  const orders = await prisma.order.findMany({
+    where: { id: { in: Array.from(new Set(states.map(s => s.orderId))) } },
+    select: { id: true, projectId: true, project: { select: { name: true } } },
+  })
+  const projById = new Map(orders.map(o => [o.id, { projectId: o.projectId ?? null, projectName: o.project?.name ?? null }]))
+
+  return states
+    .map(s => {
+      const p = projById.get(s.orderId)
+      return {
+        orderId: s.orderId,
+        shopifyOrderNumber: s.shopifyOrderNumber,
+        taskType: s.taskType as TaskType,
+        dept: s.dept,
+        resolvedAt: s.resolvedAt as Date,
+        projectId: p?.projectId ?? null,
+        projectName: p?.projectName ?? null,
+      }
+    })
+    .filter(r => !filter.projectId || r.projectId === filter.projectId)
 }
 
 // Backfill missing SKUs on one order from the current variant sku on Shopify,

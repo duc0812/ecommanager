@@ -861,3 +861,19 @@ model MetaExchangeRate {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 }
+
+// Tracks Task Need Fix issues so resolved ones can be listed in the "Done" log
+// (tasks are otherwise computed live and vanish when fixed). Reconciled on load.
+model OrderTaskState {
+  id                 String    @id @default(cuid())
+  orderId            String
+  shopifyOrderNumber String
+  taskType           String
+  dept               String
+  resolvedAt         DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@unique([orderId, taskType])
+  @@index([resolvedAt])
+}
