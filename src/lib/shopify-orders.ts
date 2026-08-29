@@ -257,6 +257,39 @@ query SyncFulfillments($cursor: String, $query: String) {
   }
 }`
 
+// Fetch the CURRENT sku of product variants (by GID). Order line items snapshot
+// the sku at order-creation time, so a sku added later only shows on the variant —
+// this reads it from the variant so a missing-sku order can be backfilled.
+export async function fetchVariantSkus(
+  shop: string,
+  accessToken: string,
+  variantIds: string[],
+  apiVersion = '2024-10',
+): Promise<Map<string, string | null>> {
+  const out = new Map<string, string | null>()
+  const ids = Array.from(new Set(variantIds.filter(Boolean)))
+  if (ids.length === 0) return out
+  const url = `https://${shop}/admin/api/${apiVersion}/graphql.json`
+  for (let i = 0; i < ids.length; i += 250) {
+    const batch = ids.slice(i, i + 250)
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': accessToken },
+      body: JSON.stringify({
+        query: `query VariantSkus($ids: [ID!]!) { nodes(ids: $ids) { ... on ProductVariant { id sku } } }`,
+        variables: { ids: batch },
+      }),
+    })
+    if (!res.ok) throw new Error(`Shopify GraphQL ${res.status}: ${await res.text()}`)
+    const json = await res.json()
+    if (json.errors) throw new Error(`GraphQL errors: ${JSON.stringify(json.errors)}`)
+    for (const n of json.data?.nodes || []) {
+      if (n && n.id) out.set(n.id, n.sku && n.sku.trim() ? n.sku.trim() : null)
+    }
+  }
+  return out
+}
+
 export async function fetchOrderFulfillmentsPage(
   shop: string,
   accessToken: string,
