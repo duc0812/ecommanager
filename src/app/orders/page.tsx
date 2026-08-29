@@ -2,6 +2,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Sidebar from '@/components/Sidebar'
 import { PIPELINE_STATUSES, STATUS_LABELS, STATUS_COLORS, type PipelineStatus } from '@/lib/pipeline-status'
+import { computeWarnings, WARNING_TYPES, WARNING_META, type WarningType } from '@/lib/order-warnings'
+
+const TAB_STATUSES = PIPELINE_STATUSES.filter(s => s !== 'WARNING')
 
 type OrderRow = {
   id: string
@@ -71,6 +74,7 @@ type Summary = {
 type Project = { id: string; name: string; shopifyStore: { shop: string } | null }
 type Supplier = { id: string; name: string }
 type StatusCounts = Record<PipelineStatus, number>
+type CountsResponse = StatusCounts & { warnings: Record<WarningType, number> }
 
 async function fetchJson<T>(url: string): Promise<T> {
   const res = await fetch(url)
@@ -87,6 +91,7 @@ export default function OrdersPage() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
   const [projectId, setProjectId] = useState<string>('')
   const [activeTab, setActiveTab] = useState<'ALL' | PipelineStatus>('ALL')
+  const [warningFilter, setWarningFilter] = useState<'' | WarningType>('')
   const [search, setSearch] = useState('')
   const [searchDebounced, setSearchDebounced] = useState('')
   const [showFilters, setShowFilters] = useState(false)
@@ -97,7 +102,7 @@ export default function OrdersPage() {
 
   const [orders, setOrders] = useState<OrderRow[]>([])
   const [summary, setSummary] = useState<Summary | null>(null)
-  const [counts, setCounts] = useState<StatusCounts | null>(null)
+  const [counts, setCounts] = useState<CountsResponse | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [bulkStatus, setBulkStatus] = useState<PipelineStatus>('EXPORTED')
   const [syncing, setSyncing] = useState(false)
@@ -133,13 +138,14 @@ export default function OrdersPage() {
   const queryString = useMemo(() => {
     const q = new URLSearchParams()
     if (projectId) q.set('projectId', projectId)
-    if (activeTab !== 'ALL') q.set('pipelineStatus', activeTab)
+    if (warningFilter) q.set('warningType', warningFilter)
+    else if (activeTab !== 'ALL') q.set('pipelineStatus', activeTab)
     if (searchDebounced) q.set('search', searchDebounced)
     if (supplierId) q.set('supplierId', supplierId)
     if (dateFrom) q.set('dateFrom', dateFrom)
     if (dateTo) q.set('dateTo', dateTo)
     return q.toString()
-  }, [projectId, activeTab, searchDebounced, supplierId, dateFrom, dateTo])
+  }, [projectId, activeTab, warningFilter, searchDebounced, supplierId, dateFrom, dateTo])
 
   // Reset to first page whenever the server-side filters change
   useEffect(() => { setPage(1) }, [queryString, pageSize])
@@ -155,7 +161,7 @@ export default function OrdersPage() {
       const [oRes, sRes, cRes] = await Promise.all([
         fetchJson<{ orders?: OrderRow[]; total?: number; totalPages?: number }>(`/api/fulfillment/orders?${ordersParams.toString()}`),
         fetchJson<Summary>(`/api/fulfillment/pl-summary${qs}`),
-        fetchJson<StatusCounts>(`/api/fulfillment/status-counts${countsQs}`),
+        fetchJson<CountsResponse>(`/api/fulfillment/status-counts${countsQs}`),
       ])
       let list: OrderRow[] = oRes.orders ?? []
       if (showUnmappedOnly) list = list.filter(o => o.computed.hasUnmappedSku)
@@ -461,23 +467,23 @@ export default function OrdersPage() {
         {/* Status tabs */}
         <div className="flex flex-wrap items-center gap-x-md gap-y-xs mb-md border-b border-outline-variant/20">
           <button
-            onClick={() => setActiveTab('ALL')}
+            onClick={() => { setActiveTab('ALL'); setWarningFilter('') }}
             className={`px-sm py-sm text-label-md whitespace-nowrap ${
-              activeTab === 'ALL'
+              activeTab === 'ALL' && !warningFilter
                 ? 'border-b-2 border-secondary text-secondary'
                 : 'text-on-surface-variant'
             }`}
           >
             All <span className="text-label-sm ml-xs">{allCount}</span>
           </button>
-          {PIPELINE_STATUSES.map(s => {
+          {TAB_STATUSES.map(s => {
             const c = counts?.[s] ?? 0
             return (
               <button
                 key={s}
-                onClick={() => setActiveTab(s)}
+                onClick={() => { setActiveTab(s); setWarningFilter('') }}
                 className={`px-sm py-sm text-label-md whitespace-nowrap ${
-                  activeTab === s
+                  activeTab === s && !warningFilter
                     ? 'border-b-2 border-secondary text-secondary'
                     : 'text-on-surface-variant'
                 }`}
@@ -486,6 +492,34 @@ export default function OrdersPage() {
               </button>
             )
           })}
+        </div>
+
+        {/* Warning chips (dimension separate from pipeline status) */}
+        <div className="flex flex-wrap items-center gap-sm mb-md">
+          <span className="material-symbols-outlined text-[18px] text-on-surface-variant">warning</span>
+          {WARNING_TYPES.map(w => {
+            const c = counts?.warnings?.[w] ?? 0
+            const active = warningFilter === w
+            return (
+              <button
+                key={w}
+                onClick={() => { setWarningFilter(active ? '' : w); if (!active) setActiveTab('ALL') }}
+                className={`inline-flex items-center gap-xs px-md py-xs rounded-full text-label-sm border transition-colors ${
+                  active
+                    ? `${WARNING_META[w].tone} border-transparent ring-1 ring-inset ring-current`
+                    : 'bg-surface-container-lowest text-on-surface-variant border-outline-variant/40 hover:bg-surface-container'
+                }`}
+              >
+                <span className={`w-[7px] h-[7px] rounded-full ${WARNING_META[w].dot}`} />
+                {WARNING_META[w].short} <span className="opacity-70">({c})</span>
+              </button>
+            )
+          })}
+          {warningFilter && (
+            <button onClick={() => setWarningFilter('')} className="text-label-sm text-on-surface-variant underline underline-offset-2">
+              Bỏ lọc
+            </button>
+          )}
         </div>
 
         {summary && summary.unmappedCount > 0 && (
@@ -563,7 +597,7 @@ export default function OrdersPage() {
                       onChange={() => toggleSelect(o.id)}
                     />
                   </td>
-                  <td className="px-sm py-sm truncate">
+                  <td className="px-sm py-sm align-top">
                     <span className="inline-flex items-center gap-xs">
                       {!o.computed.isEstimated && !o.mappingSummary.complete && (
                         <span
@@ -581,6 +615,19 @@ export default function OrdersPage() {
                         {o.shopifyOrderNumber}
                       </button>
                     </span>
+                    {(() => {
+                      const ws = computeWarnings({ placedAt: new Date(o.placedAt), fulfillmentStatus: o.fulfillmentStatus, pipelineStatus: o.pipelineStatus })
+                      return ws.length > 0 ? (
+                        <div className="mt-[3px] flex flex-wrap gap-[3px]">
+                          {ws.map(w => (
+                            <span key={w} title={WARNING_META[w].label} className={`inline-flex items-center gap-[3px] text-[10px] leading-none px-xs py-[2px] rounded ${WARNING_META[w].tone}`}>
+                              <span className={`w-[5px] h-[5px] rounded-full ${WARNING_META[w].dot}`} />
+                              {WARNING_META[w].short}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null
+                    })()}
                   </td>
                   <td className="px-sm py-sm">
                     <span className={`text-label-sm ${o.mappingSummary.complete ? 'text-tertiary' : 'text-error'}`}>

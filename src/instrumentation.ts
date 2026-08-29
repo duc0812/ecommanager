@@ -7,5 +7,7 @@ export async function register() {
     initSpyScheduler()
     const { initTrackingScheduler } = await import('./lib/tracking/scheduler')
     initTrackingScheduler()
+    const { initOrderNormalizeScheduler } = await import('./lib/order-normalize-scheduler')
+    initOrderNormalizeScheduler()
   }
 }

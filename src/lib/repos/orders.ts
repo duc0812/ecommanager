@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db'
-import { PIPELINE_STATUSES, TERMINAL_PIPELINE_STATUSES, warningCutoffDate, type PipelineStatus } from '@/lib/pipeline-status'
+import { PIPELINE_STATUSES, TERMINAL_PIPELINE_STATUSES, type PipelineStatus } from '@/lib/pipeline-status'
+import { WARNING_TYPES, type WarningType } from '@/lib/order-warnings'
 
 export type OrderFilter = {
   projectId?: string
@@ -7,6 +8,7 @@ export type OrderFilter = {
   dateTo?: Date
   supplierId?: string
   pipelineStatus?: string
+  warningType?: WarningType  // filter by a computed warning dimension (separate from pipelineStatus)
   search?: string  // filter by orderNumber / customerName / customerEmail
   limit?: number
   page?: number      // 1-based page number for pagination
@@ -18,15 +20,11 @@ function buildWhere(f: OrderFilter) {
   const and: any[] = []
   if (f.projectId) where.projectId = f.projectId
   if (f.supplierId) where.defaultSupplierId = f.supplierId
-  if (f.pipelineStatus === 'WARNING') {
-    and.push(warningWhere())
-    and.push(unfulfilledWhere())
+  if (f.warningType) {
+    and.push(warningTypeWhere(f.warningType))
   } else if (f.pipelineStatus) {
     where.pipelineStatus = f.pipelineStatus
-    if (!TERMINAL_PIPELINE_STATUSES.includes(f.pipelineStatus as PipelineStatus)) {
-      and.push({ NOT: warningWhere(false) })
-    }
-    if (f.pipelineStatus !== 'FULFILLED') {
+    if (f.pipelineStatus !== 'FULFILLED' && !TERMINAL_PIPELINE_STATUSES.includes(f.pipelineStatus as PipelineStatus)) {
       and.push(unfulfilledWhere())
     }
   }
@@ -51,18 +49,21 @@ function unfulfilledWhere() {
   return { OR: [{ fulfillmentStatus: null }, { fulfillmentStatus: { notIn: ['fulfilled', 'FULFILLED'] } }] }
 }
 
-function warningWhere(includeManual = true) {
-  const dynamic = {
-    placedAt: { lte: warningCutoffDate() },
-    pipelineStatus: { notIn: TERMINAL_PIPELINE_STATUSES },
-    OR: [
-      { fulfillmentStatus: null },
-      { fulfillmentStatus: { notIn: ['FULFILLED', 'fulfilled'] } },
-    ],
+const WARN_DAY_MS = 86400000
+// DB-side mirror of computeWarnings() in @/lib/order-warnings — keep the two in sync.
+function warningTypeWhere(type: WarningType): any {
+  const now = Date.now()
+  const cut7 = new Date(now - 7 * WARN_DAY_MS)
+  const cut1 = new Date(now - 1 * WARN_DAY_MS)
+  if (type === 'LATE_FULFILLMENT') {
+    return {
+      placedAt: { lte: cut7 },
+      pipelineStatus: { notIn: ['FULFILLED', 'CANCELLED', 'REFUNDED'] },
+      OR: [{ fulfillmentStatus: null }, { fulfillmentStatus: { notIn: ['FULFILLED', 'fulfilled'] } }],
+    }
   }
-  return includeManual
-    ? { OR: [{ pipelineStatus: 'WARNING' }, dynamic] }
-    : dynamic
+  if (type === 'STUCK_DESIGN') return { placedAt: { lte: cut1 }, pipelineStatus: 'PENDING_DESIGN' }
+  return { placedAt: { lte: cut1 }, pipelineStatus: 'READY_TO_PRODUCTION' } // NOT_EXPORTED
 }
 
 export async function listOrdersWithLines(filter: OrderFilter) {
@@ -292,20 +293,24 @@ export async function countByStatus(filter: { projectId?: string } = {}): Promis
   const baseWhere: any = filter.projectId ? { projectId: filter.projectId } : {}
   const result = Object.fromEntries(PIPELINE_STATUSES.map(s => [s, 0])) as Record<PipelineStatus, number>
   for (const status of PIPELINE_STATUSES) {
-    if (status === 'WARNING') {
-      result[status] = await prisma.order.count({ where: { AND: [baseWhere, warningWhere(), unfulfilledWhere()] } })
-      continue
-    }
     result[status] = await prisma.order.count({
       where: {
         AND: [
           baseWhere,
           { pipelineStatus: status },
-          ...(TERMINAL_PIPELINE_STATUSES.includes(status) ? [] : [{ NOT: warningWhere(false) }]),
-          ...(status !== 'FULFILLED' ? [unfulfilledWhere()] : []),
+          ...(status !== 'FULFILLED' && !TERMINAL_PIPELINE_STATUSES.includes(status) ? [unfulfilledWhere()] : []),
         ],
       },
     })
+  }
+  return result
+}
+
+export async function countWarnings(filter: { projectId?: string } = {}): Promise<Record<WarningType, number>> {
+  const baseWhere: any = filter.projectId ? { projectId: filter.projectId } : {}
+  const result = {} as Record<WarningType, number>
+  for (const type of WARNING_TYPES) {
+    result[type] = await prisma.order.count({ where: { AND: [baseWhere, warningTypeWhere(type)] } })
   }
   return result
 }
