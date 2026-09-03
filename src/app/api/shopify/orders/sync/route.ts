@@ -450,16 +450,18 @@ export async function POST(req: NextRequest) {
               }
             }
 
-            // For NON_CUSTOM: link each missing (SKU × Supplier) to this card for reuse
-            if (orderType === 'NON_CUSTOM') {
-              for (const m of designResolution.missing) {
-                if (!m.sku || !m.supplierId) continue
-                await prisma.skuSupplierDesign.upsert({
-                  where: { sku_supplierId: { sku: m.sku, supplierId: m.supplierId } },
-                  create: { sku: m.sku, supplierId: m.supplierId, trelloCardId: card.id, source: 'TRELLO', ready: false },
-                  update: { trelloCardId: card.id, source: 'TRELLO' },
-                })
-              }
+            // Link every missing, non-customized design line to this card (all order types).
+            for (const m of designResolution.missing) {
+              const li = designInputs[m.index]
+              if (!li || li.customized || !m.sku || !m.supplierId) continue
+              await prisma.skuSupplierDesign.upsert({
+                where: { sku_supplierId: { sku: m.sku, supplierId: m.supplierId } },
+                create: {
+                  sku: m.sku, supplierId: m.supplierId, parentCode: suggestParentCode(m.sku),
+                  trelloCardId: card.id, source: 'TRELLO', ready: false, designType: 'NON_CUSTOM',
+                },
+                update: { trelloCardId: card.id },
+              })
             }
           } catch (e: any) {
             errors.push(`Trello card creation failed for ${o.name}: ${e.message}`)
