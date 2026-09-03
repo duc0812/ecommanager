@@ -23,14 +23,15 @@ const broken = await db.execute({
   args: [],
 })
 
-const terminal = new Set(['FULFILLED', 'CANCELLED', 'REFUNDED', 'fulfilled'])
+// EXPORTED is skipped too: those orders may already be at the supplier — do not re-queue them for design.
+const skipStatuses = new Set(['FULFILLED', 'CANCELLED', 'REFUNDED', 'fulfilled', 'EXPORTED'])
 let resettable = 0
 const belowThresholdOrders = []
 console.log(`Found ${broken.rows.length} broken orders (designReady, no link).`)
 console.log(`trello.syncFromOrderName=${syncFrom || '(unset)'} → card-creation threshold=${threshold}`)
 for (const o of broken.rows) {
   const isFulfilled = (o.fulfillmentStatus ?? '').toLowerCase() === 'fulfilled'
-  const willReset = !terminal.has(o.pipelineStatus) && !isFulfilled
+  const willReset = !skipStatuses.has(o.pipelineStatus) && !isFulfilled
   if (willReset) resettable += 1
   const belowThreshold = numOf(o.shopifyOrderNumber) < threshold
   if (willReset && belowThreshold) belowThresholdOrders.push(o.shopifyOrderNumber)
