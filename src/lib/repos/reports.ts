@@ -1,9 +1,9 @@
 import { listOrdersWithLines, type OrderFilter } from './orders'
-import { loadReadyParentLookup } from './design-library'
+import { loadReadyDesignEntries } from './design-library'
 import { prisma } from '@/lib/db'
 import { estimateOrderCostAndProfit, effectiveBaseCost } from '@/lib/order-profit'
 import { productLinesOnly, isNonProductLine } from '@/lib/order-lines'
-import { matchParentEntry } from '@/lib/design-parent'
+import { matchDesignEntry } from '@/lib/design-parent'
 import { lineDesignStatus } from '@/lib/design-status'
 import { sumMetaAmountsUsdDated } from '@/lib/meta-currency'
 import { getMetaRateSchedule } from '@/lib/meta-exchange-rates'
@@ -62,7 +62,7 @@ export async function ordersWithComputedPL(filter: OrderFilter): Promise<Enriche
     : []
   const skuDesignMap = new Map(skuDesigns.map(s => [s.sku, s]))
   // Ready per-(parent × supplier) designs — powers the "Design Library" line status.
-  const parentEntries = await loadReadyParentLookup()
+  const designEntries = await loadReadyDesignEntries()
 
   return orders.map(o => {
     const mappableLines = productLines(o.lines)
@@ -94,7 +94,7 @@ export async function ordersWithComputedPL(filter: OrderFilter): Promise<Enriche
           isNonProduct: isNonProductLine(l),
           previewCdnUrl: l.previewCdnUrl,
           designDriveLink: l.designDriveLink,
-          hasLibraryDesign: !!matchParentEntry(l.sku, l.resolvedSupplierId, parentEntries),
+          hasLibraryDesign: !!matchDesignEntry(l.sku, l.resolvedSupplierId, designEntries),
         }),
       })),
       computed: {

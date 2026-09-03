@@ -5,10 +5,10 @@ import Sidebar from '@/components/Sidebar'
 type Entry = {
   id: string; sku: string; supplierId: string; designLink: string | null
   ready: boolean; source: string; note: string | null; updatedAt: string
-  parentCode: string | null; designType: string
+  matchMode: string; designType: string
   supplier: { id: string; name: string; code: string }
 }
-type RowEdit = { parentCode: string; designType: string }
+type RowEdit = { matchMode: string; designType: string }
 type Supplier = { id: string; name: string; code: string }
 
 export default function DesignLibraryPage() {
@@ -17,7 +17,7 @@ export default function DesignLibraryPage() {
   const [filterSupplier, setFilterSupplier] = useState('')
   const [filterSku, setFilterSku] = useState('')
   const [filterReady, setFilterReady] = useState('')
-  const [form, setForm] = useState({ sku: '', supplierId: '', designLink: '' })
+  const [form, setForm] = useState({ sku: '', supplierId: '', designLink: '', matchMode: 'VARIANT' })
   const [csv, setCsv] = useState('')
   const [msg, setMsg] = useState('')
   const [rowEdits, setRowEdits] = useState<Record<string, RowEdit>>({})
@@ -44,7 +44,7 @@ export default function DesignLibraryPage() {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...form, ready: true }),
     })
-    if (res.ok) { setForm({ sku: '', supplierId: '', designLink: '' }); setMsg('Đã lưu'); load() }
+    if (res.ok) { setForm({ sku: '', supplierId: '', designLink: '', matchMode: 'VARIANT' }); setMsg('Đã lưu'); load() }
     else setMsg((await res.json()).error ?? 'Lỗi')
   }
 
@@ -62,12 +62,12 @@ export default function DesignLibraryPage() {
   }
 
   function getRowEdit(e: Entry): RowEdit {
-    return rowEdits[e.id] ?? { parentCode: e.parentCode ?? '', designType: e.designType ?? 'NON_CUSTOM' }
+    return rowEdits[e.id] ?? { matchMode: e.matchMode ?? 'VARIANT', designType: e.designType ?? 'NON_CUSTOM' }
   }
 
   function setRowField(id: string, field: keyof RowEdit, value: string) {
     const entry = entries.find(e => e.id === id)
-    const fallback: RowEdit = { parentCode: entry?.parentCode ?? '', designType: entry?.designType ?? 'NON_CUSTOM' }
+    const fallback: RowEdit = { matchMode: entry?.matchMode ?? 'VARIANT', designType: entry?.designType ?? 'NON_CUSTOM' }
     setRowEdits(prev => ({ ...prev, [id]: { ...(prev[id] ?? fallback), [field]: value } }))
   }
 
@@ -76,7 +76,7 @@ export default function DesignLibraryPage() {
     setSavingRow(e.id)
     await fetch('/api/fulfillment/design-library', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sku: e.sku, supplierId: e.supplierId, designLink: e.designLink, ready: e.ready, parentCode: edit.parentCode || null, designType: edit.designType }),
+      body: JSON.stringify({ sku: e.sku, supplierId: e.supplierId, designLink: e.designLink, ready: e.ready, matchMode: edit.matchMode, designType: edit.designType }),
     })
     setSavingRow(null)
     setRowEdits(prev => { const n = { ...prev }; delete n[e.id]; return n })
@@ -112,8 +112,13 @@ export default function DesignLibraryPage() {
             <h2 className="text-title-md font-medium">Thêm design (xác nhận theo SKU)</h2>
           </div>
           <div className="flex flex-wrap gap-sm items-end">
-            <input className="border border-outline-variant/40 rounded-lg px-md py-sm" placeholder="SKU"
+            <input className="border border-outline-variant/40 rounded-lg px-md py-sm" placeholder="SKU / Parent code"
               value={form.sku} onChange={e => setForm({ ...form, sku: e.target.value })} />
+            <select className="border border-outline-variant/40 rounded-lg px-md py-sm" title="Match mode"
+              value={form.matchMode} onChange={e => setForm({ ...form, matchMode: e.target.value })}>
+              <option value="VARIANT">Variant (khớp chính xác)</option>
+              <option value="PARENT">Parent (mọi size/style)</option>
+            </select>
             <select className="border border-outline-variant/40 rounded-lg px-md py-sm"
               value={form.supplierId} onChange={e => setForm({ ...form, supplierId: e.target.value })}>
               <option value="">— Supplier —</option>
@@ -163,7 +168,7 @@ export default function DesignLibraryPage() {
               <tr className="text-left">
                 <th className="px-md py-sm">SKU</th><th className="px-md py-sm">Supplier</th>
                 <th className="px-md py-sm">Design Link</th>
-                <th className="px-md py-sm">Parent Code</th>
+                <th className="px-md py-sm">Match</th>
                 <th className="px-md py-sm">Design Type</th>
                 <th className="px-md py-sm">Status</th>
                 <th className="px-md py-sm">Source</th><th className="px-md py-sm">Updated</th><th className="px-md py-sm"></th>
@@ -181,13 +186,16 @@ export default function DesignLibraryPage() {
                   <td className="px-md py-sm max-w-[320px] truncate">
                     {e.designLink ? <a className="text-primary underline" href={e.designLink} target="_blank" rel="noreferrer">{e.designLink}</a> : '—'}
                   </td>
-                  <td className="px-md py-sm min-w-[140px]">
-                    <input
-                      className="border border-outline-variant/40 rounded-lg px-sm py-xs text-body-sm w-full"
-                      value={getRowEdit(e).parentCode}
-                      onChange={ev => setRowField(e.id, 'parentCode', ev.target.value)}
-                      placeholder="Parent code"
-                    />
+                  <td className="px-md py-sm">
+                    <select
+                      className="border border-outline-variant/40 rounded-lg px-sm py-xs text-body-sm"
+                      value={getRowEdit(e).matchMode}
+                      onChange={ev => setRowField(e.id, 'matchMode', ev.target.value)}
+                      title="Parent = mọi size/style dùng chung; Variant = khớp chính xác SKU"
+                    >
+                      <option value="VARIANT">Variant</option>
+                      <option value="PARENT">Parent</option>
+                    </select>
                   </td>
                   <td className="px-md py-sm">
                     <select

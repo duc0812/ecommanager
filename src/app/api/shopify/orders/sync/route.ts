@@ -13,8 +13,8 @@ import { isNonProductLine } from '@/lib/order-lines'
 import { createTrelloCard, addAttachmentToCard, getTrelloConfig, shouldCreateCard } from '@/lib/trello'
 import { extractPreviewCdnUrl } from '@/lib/order-line-assets'
 import { resolveOrderDesignByParent, type DesignLineInputV2 } from '@/lib/design-library'
-import { loadReadyParentLookup, upsertTaskEntry, loadMasterArtworkBySku } from '@/lib/repos/design-library'
-import { suggestParentCode, matchParentEntry, type ParentEntry } from '@/lib/design-parent'
+import { loadReadyDesignEntries, upsertTaskEntry, loadMasterArtworkBySku } from '@/lib/repos/design-library'
+import { matchDesignEntry, type DesignEntry } from '@/lib/design-parent'
 
 type ResolvedSupplierProduct = SupplierInput & {
   sku: string
@@ -49,8 +49,8 @@ function orderNumberValue(orderName: string | null | undefined) {
   return raw ? Number(raw) : null
 }
 
-function parentDesignType(d: { sku: string | null; resolvedSupplierId: string | null }, entries: ParentEntry[]): string {
-  const m = matchParentEntry(d.sku, d.resolvedSupplierId, entries)
+function lineDesignType(d: { sku: string | null; resolvedSupplierId: string | null }, entries: DesignEntry[]): string {
+  const m = matchDesignEntry(d.sku, d.resolvedSupplierId, entries)
   return m?.designType ?? 'NON_CUSTOM'
 }
 
@@ -167,7 +167,7 @@ export async function POST(req: NextRequest) {
   }
 
   const trelloConfig = await getTrelloConfig()
-  const parentEntries = await loadReadyParentLookup()
+  const designEntries = await loadReadyDesignEntries()
   const masterArtworkBySku = await loadMasterArtworkBySku()
 
   let cursor: string | null = null
@@ -287,14 +287,14 @@ export async function POST(req: NextRequest) {
         }
       })
       const hasDesignLine = designInputs.some(d => !d.isNonProduct && d.requiresDesign)
-      const designResolution = resolveOrderDesignByParent(designInputs, parentEntries)
+      const designResolution = resolveOrderDesignByParent(designInputs, designEntries)
       const libraryDesignLinkByIndex = new Map(designResolution.lineLinks.map(l => [l.index, l.designLink]))
 
       // Re-evaluate order type every sync from per-line families (not sticky)
       const orderType = reduceOrderType(
         designInputs
           .filter(d => !d.isNonProduct && d.requiresDesign)
-          .map(d => lineFamily({ customized: d.customized, designType: parentDesignType(d, parentEntries) })),
+          .map(d => lineFamily({ customized: d.customized, designType: lineDesignType(d, designEntries) })),
       )
       const effectiveDesignReady = designResolution.orderDesignReady || (existing?.designReady === true && existing?.trelloCardId != null)
 
@@ -383,7 +383,6 @@ export async function POST(req: NextRequest) {
         if (!li || li.customized || !m.sku || !m.supplierId) continue
         await upsertTaskEntry({
           sku: m.sku, supplierId: m.supplierId,
-          parentCode: suggestParentCode(m.sku),
           trelloCardId: existingOrder?.trelloCardId ?? null,
         })
       }
@@ -457,8 +456,9 @@ export async function POST(req: NextRequest) {
               await prisma.skuSupplierDesign.upsert({
                 where: { sku_supplierId: { sku: m.sku, supplierId: m.supplierId } },
                 create: {
-                  sku: m.sku, supplierId: m.supplierId, parentCode: suggestParentCode(m.sku),
-                  trelloCardId: card.id, source: 'TRELLO', ready: false, designType: 'NON_CUSTOM',
+                  sku: m.sku, supplierId: m.supplierId,
+                  trelloCardId: card.id, source: 'TRELLO', ready: false,
+                  matchMode: 'VARIANT', designType: 'NON_CUSTOM',
                 },
                 update: { trelloCardId: card.id },
               })

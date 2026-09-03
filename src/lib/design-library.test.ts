@@ -100,25 +100,34 @@ const pLine = (over: Partial<any> = {}) => ({
   index: 0, sku: 'DN15041511-TS', isNonProduct: false, requiresDesign: true,
   resolvedSupplierId: 'supA', existingDesignLink: null, customized: false, ...over,
 })
-const parents = [{ parentCode: 'DN15041511', supplierId: 'supA', designLink: 'L', designType: 'NON_CUSTOM' }]
+const parentEntry = [{ sku: 'DN15041511', supplierId: 'supA', matchMode: 'PARENT', designLink: 'L', designType: 'NON_CUSTOM' }]
+const variantEntry = [{ sku: 'DN15041511-TS', supplierId: 'supA', matchMode: 'VARIANT', designLink: 'V', designType: 'NON_CUSTOM' }]
 
 describe('resolveOrderDesignByParent', () => {
-  it('reuses by parent code for a non-customized line', () => {
-    const r = resolveOrderDesignByParent([pLine()], parents)
+  it('reuses by PARENT prefix for a non-customized line', () => {
+    const r = resolveOrderDesignByParent([pLine()], parentEntry)
     expect(r.orderDesignReady).toBe(true)
     expect(r.lineLinks).toEqual([{ index: 0, designLink: 'L' }])
   })
-  it('customized line is missing even if parent has a design', () => {
-    const r = resolveOrderDesignByParent([pLine({ customized: true })], parents)
+  it('reuses by exact VARIANT match', () => {
+    const r = resolveOrderDesignByParent([pLine({ sku: 'DN15041511-TS' })], variantEntry)
+    expect(r.lineLinks).toEqual([{ index: 0, designLink: 'V' }])
+  })
+  it('VARIANT entry does not match a different variant', () => {
+    const r = resolveOrderDesignByParent([pLine({ sku: 'DN15041511-TL' })], variantEntry)
+    expect(r.orderDesignReady).toBe(false)
+  })
+  it('customized line is missing even if a design matches', () => {
+    const r = resolveOrderDesignByParent([pLine({ customized: true })], parentEntry)
     expect(r.orderDesignReady).toBe(false)
     expect(r.missing).toEqual([{ index: 0, sku: 'DN15041511-TS', supplierId: 'supA' }])
   })
-  it('no parent match => missing', () => {
-    const r = resolveOrderDesignByParent([pLine({ sku: 'ZZZ-1' })], parents)
+  it('no match => missing', () => {
+    const r = resolveOrderDesignByParent([pLine({ sku: 'ZZZ-1' })], parentEntry)
     expect(r.orderDesignReady).toBe(false)
   })
   it('own existing link wins', () => {
-    const r = resolveOrderDesignByParent([pLine({ existingDesignLink: 'own', customized: true })], parents)
+    const r = resolveOrderDesignByParent([pLine({ existingDesignLink: 'own', customized: true })], parentEntry)
     expect(r.orderDesignReady).toBe(true)
   })
 })

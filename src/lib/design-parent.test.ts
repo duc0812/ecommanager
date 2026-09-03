@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest'
-import { suggestParentCode, matchParentEntry, type ParentEntry } from './design-parent'
+import { suggestParentCode, matchDesignEntry, type DesignEntry } from './design-parent'
 
-const e = (parentCode: string, over: Partial<ParentEntry> = {}): ParentEntry => ({
-  parentCode, supplierId: 'supA', designLink: 'L', designType: 'NON_CUSTOM', ...over,
+const e = (over: Partial<DesignEntry> = {}): DesignEntry => ({
+  sku: 'DN15041511', supplierId: 'supA', matchMode: 'PARENT', designLink: 'L', designType: 'NON_CUSTOM', ...over,
 })
 
 describe('suggestParentCode', () => {
@@ -19,21 +19,31 @@ describe('suggestParentCode', () => {
   })
 })
 
-describe('matchParentEntry', () => {
-  it('matches when parentCode is a prefix of the sku (case-insensitive), same supplier', () => {
-    const m = matchParentEntry('SW15051601-3XL', 'supA', [e('sw15051601')])
-    expect(m?.parentCode).toBe('sw15051601')
+describe('matchDesignEntry', () => {
+  it('PARENT matches by prefix (any size/style reuses)', () => {
+    expect(matchDesignEntry('DN15041511-TS', 'supA', [e({ matchMode: 'PARENT', sku: 'DN15041511' })])?.sku).toBe('DN15041511')
   })
-  it('does not match a different supplier', () => {
-    expect(matchParentEntry('SW15051601-3XL', 'supB', [e('SW15051601', { supplierId: 'supA' })])).toBeNull()
+  it('VARIANT matches only the exact sku', () => {
+    expect(matchDesignEntry('DN15041511-TS', 'supA', [e({ matchMode: 'VARIANT', sku: 'DN15041511-TS' })])?.sku).toBe('DN15041511-TS')
+    expect(matchDesignEntry('DN15041511-TL', 'supA', [e({ matchMode: 'VARIANT', sku: 'DN15041511-TS' })])).toBeNull()
   })
-  it('prefers the longest matching parentCode', () => {
-    const m = matchParentEntry('DN15041511-TS', 'supA', [e('DN15'), e('DN15041511')])
-    expect(m?.parentCode).toBe('DN15041511')
+  it('VARIANT does not prefix-match', () => {
+    expect(matchDesignEntry('DN15041511-TS', 'supA', [e({ matchMode: 'VARIANT', sku: 'DN15041511' })])).toBeNull()
   })
-  it('null when nothing matches or inputs empty', () => {
-    expect(matchParentEntry('ABC-1', 'supA', [e('ZZZ')])).toBeNull()
-    expect(matchParentEntry(null, 'supA', [e('ABC')])).toBeNull()
-    expect(matchParentEntry('ABC-1', null, [e('ABC')])).toBeNull()
+  it('is case-insensitive and supplier-scoped', () => {
+    expect(matchDesignEntry('dn15041511-ts', 'supA', [e({ matchMode: 'PARENT', sku: 'DN15041511' })])?.sku).toBe('DN15041511')
+    expect(matchDesignEntry('DN15041511-TS', 'supB', [e({ matchMode: 'PARENT', sku: 'DN15041511', supplierId: 'supA' })])).toBeNull()
+  })
+  it('exact VARIANT wins over a PARENT prefix', () => {
+    const entries = [e({ matchMode: 'PARENT', sku: 'DN15041511' }), e({ matchMode: 'VARIANT', sku: 'DN15041511-TS' })]
+    expect(matchDesignEntry('DN15041511-TS', 'supA', entries)?.matchMode).toBe('VARIANT')
+  })
+  it('longest PARENT prefix wins', () => {
+    const entries = [e({ matchMode: 'PARENT', sku: 'DN15' }), e({ matchMode: 'PARENT', sku: 'DN15041511' })]
+    expect(matchDesignEntry('DN15041511-TS', 'supA', entries)?.sku).toBe('DN15041511')
+  })
+  it('null on empty inputs', () => {
+    expect(matchDesignEntry(null, 'supA', [e()])).toBeNull()
+    expect(matchDesignEntry('DN15041511-TS', null, [e()])).toBeNull()
   })
 })

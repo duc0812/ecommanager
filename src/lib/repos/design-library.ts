@@ -1,7 +1,7 @@
 import { prisma } from '@/lib/db'
 import { designKey, type DesignImportRow } from '@/lib/design-library'
 import { findDriveAttachmentForSku, type DriveAttachment } from '@/lib/order-line-assets'
-import { suggestParentCode, type ParentEntry } from '@/lib/design-parent'
+import { type DesignEntry } from '@/lib/design-parent'
 
 export type DesignLibraryFilter = { supplierId?: string; sku?: string; ready?: boolean; source?: string }
 
@@ -18,39 +18,38 @@ export async function listDesignEntries(filter: DesignLibraryFilter) {
   })
 }
 
-export function pickParent(entry: { parentCode: string | null; sku: string }): string {
-  return (entry.parentCode && entry.parentCode.trim()) || suggestParentCode(entry.sku)
-}
-
-export async function loadReadyParentLookup(): Promise<ParentEntry[]> {
+export async function loadReadyDesignEntries(): Promise<DesignEntry[]> {
   const rows = await prisma.skuSupplierDesign.findMany({
     where: { ready: true },
-    select: { sku: true, parentCode: true, supplierId: true, designLink: true, designType: true },
+    select: { sku: true, supplierId: true, matchMode: true, designLink: true, designType: true },
   })
   return rows
     .filter(r => r.designLink)
     .map(r => ({
-      parentCode: pickParent({ parentCode: r.parentCode, sku: r.sku }),
+      sku: r.sku,
       supplierId: r.supplierId,
+      matchMode: r.matchMode,
       designLink: r.designLink,
       designType: r.designType,
     }))
-    .filter(r => r.parentCode)
 }
 
+// Auto-created task row for a missing design. Defaults to VARIANT (exact sku) — the safe
+// mode; the user promotes it to PARENT (and shortens the sku to the design code) on the
+// design-library page when the design should cover all size/style variants.
 export async function upsertTaskEntry(input: {
-  sku: string; supplierId: string; parentCode: string; trelloCardId?: string | null
+  sku: string; supplierId: string; trelloCardId?: string | null
 }): Promise<void> {
   const existing = await prisma.skuSupplierDesign.findUnique({
     where: { sku_supplierId: { sku: input.sku, supplierId: input.supplierId } },
-    select: { id: true, ready: true },
+    select: { id: true },
   })
   if (existing) return
   await prisma.skuSupplierDesign.create({
     data: {
-      sku: input.sku, supplierId: input.supplierId, parentCode: input.parentCode,
+      sku: input.sku, supplierId: input.supplierId,
       ready: false, source: 'TRELLO', trelloCardId: input.trelloCardId ?? null,
-      designType: 'NON_CUSTOM',
+      matchMode: 'VARIANT', designType: 'NON_CUSTOM',
     },
   })
 }
@@ -58,7 +57,7 @@ export async function upsertTaskEntry(input: {
 export async function upsertDesignEntry(input: {
   sku: string; supplierId: string; designLink?: string | null;
   ready?: boolean; note?: string | null; source?: string; trelloCardId?: string | null;
-  parentCode?: string | null; designType?: string
+  matchMode?: string; designType?: string
 }) {
   const ready = input.ready ?? (input.designLink ? true : false)
   return prisma.skuSupplierDesign.upsert({
@@ -68,7 +67,7 @@ export async function upsertDesignEntry(input: {
       designLink: input.designLink ?? null, ready,
       note: input.note ?? null, source: input.source ?? 'MANUAL',
       trelloCardId: input.trelloCardId ?? null,
-      parentCode: input.parentCode ?? null,
+      matchMode: input.matchMode ?? 'VARIANT',
       designType: input.designType ?? 'NON_CUSTOM',
     },
     update: {
@@ -77,7 +76,7 @@ export async function upsertDesignEntry(input: {
       ...(input.note !== undefined ? { note: input.note } : {}),
       ...(input.source !== undefined ? { source: input.source } : {}),
       ...(input.trelloCardId !== undefined ? { trelloCardId: input.trelloCardId } : {}),
-      ...(input.parentCode !== undefined ? { parentCode: input.parentCode } : {}),
+      ...(input.matchMode !== undefined ? { matchMode: input.matchMode } : {}),
       ...(input.designType !== undefined ? { designType: input.designType } : {}),
     },
   })

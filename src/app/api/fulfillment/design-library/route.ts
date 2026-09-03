@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
     ready: typeof body.ready === 'boolean' ? body.ready : undefined,
     note: body.note ?? null,
     source: 'MANUAL',
-    parentCode: body.parentCode !== undefined ? (body.parentCode ? String(body.parentCode).trim() : null) : undefined,
+    matchMode: body.matchMode !== undefined ? String(body.matchMode).toUpperCase() : undefined,
     designType: body.designType !== undefined ? String(body.designType) : undefined,
   })
   return NextResponse.json({ entry })

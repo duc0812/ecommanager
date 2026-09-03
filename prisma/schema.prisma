@@ -482,7 +482,8 @@ model SkuSupplierDesign {
   source       String   @default("MANUAL")   // "MANUAL" | "TRELLO"
   trelloCardId String?
   note         String?
-  parentCode   String?
+  parentCode   String?   // deprecated (v2) — superseded by matchMode; retained to avoid a data-loss migration
+  matchMode    String   @default("VARIANT")   // "VARIANT" (exact sku) | "PARENT" (sku is prefix)
   designType   String   @default("NON_CUSTOM")   // "NON_CUSTOM" | "CUSTOM" | "DUAL"
   updatedAt    DateTime @updatedAt
   createdAt    DateTime @default(now())
