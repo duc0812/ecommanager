@@ -407,13 +407,10 @@ export async function POST(req: NextRequest) {
         existingOrder?.trelloCardId == null &&
         shouldCreateCard(o.name, trelloConfig.syncFromOrderName)
       ) {
-        let needsCard = false
-
-        if (orderType === 'CUSTOM') {
-          needsCard = true
-        } else if (orderType === 'NON_CUSTOM') {
-          needsCard = designResolution.missing.length > 0
-        }
+        // A design card is needed whenever any design line is unresolved.
+        // (CUSTOM/customized lines always land in `missing`; NON_CUSTOM/DUAL/MIXED
+        // only when a parent design is missing.)
+        const needsCard = designResolution.missing.length > 0
 
         if (needsCard) {
           try {
