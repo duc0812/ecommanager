@@ -4,6 +4,7 @@ import type { MetaBillingSyncAccountProgress, MetaBillingSyncJob } from '@/lib/m
 import { isMetaBillingSyncActive } from '@/lib/meta-billing-sync-types'
 import { metaBillingDateInTimezone, normalizeMetaActivityAmount } from '@/lib/meta-billing-normalization'
 import { isMetaRateLimitError, metaPageDelayMs, parseMetaUsagePercent } from '@/lib/meta-rate-limit'
+import { buildAccountBalanceUpdate } from '@/lib/meta-balance'
 
 const GRAPH_API_VERSION = process.env.META_GRAPH_API_VERSION ?? 'v22.0'
 const DEFAULT_BACKFILL_DAYS = 90
@@ -28,6 +29,9 @@ type MetaPaymentMethod = {
   label: string | null
   last4: string | null
   timezoneName: string | null
+  balance: number | null
+  balanceCurrency: string | null
+  balanceSyncedAt: Date
 }
 
 type MetaTransaction = {
@@ -356,7 +360,7 @@ async function fetchPaymentMethod(
   progress: MetaBillingSyncAccountProgress,
 ): Promise<MetaPaymentMethod> {
   const url = graphUrl(account.accountId, {
-    fields: 'funding_source,funding_source_details,currency,timezone_name',
+    fields: 'funding_source,funding_source_details,currency,timezone_name,balance',
     access_token: account.accessToken,
   })
 
@@ -365,15 +369,17 @@ async function fetchPaymentMethod(
     const details = json.funding_source_details
     const object = details && typeof details === 'object' ? details as Record<string, unknown> : {}
     const label = cleanPaymentMethodLabel(asText(object.display_string ?? object.readable_card_type ?? object.card_type ?? object.type))
+    const balanceUpdate = buildAccountBalanceUpdate(json as Record<string, unknown>, account.currency ?? null, new Date())
     await sleep(metaPageDelayMs(usagePercent))
     return {
       label,
       last4: parseLast4(object),
       timezoneName: typeof json.timezone_name === 'string' ? json.timezone_name : null,
+      ...balanceUpdate,
     }
   } catch {
     // Payment method is optional. Billing activities can still be synchronized without it.
-    return { label: null, last4: null, timezoneName: null }
+    return { label: null, last4: null, timezoneName: null, balance: null, balanceCurrency: account.currency ?? null, balanceSyncedAt: new Date() }
   }
 }
 
@@ -657,6 +663,9 @@ async function syncAccount(job: MetaBillingSyncJob, account: MetaAccount, progre
     data: {
       lastSyncAt: new Date(),
       ...(!account.currency && detectedCurrency ? { currency: detectedCurrency } : {}),
+      balance: paymentMethod.balance,
+      balanceCurrency: paymentMethod.balanceCurrency,
+      balanceSyncedAt: paymentMethod.balanceSyncedAt,
     },
   })
   await saveBillingCoverage(account.id, range)
