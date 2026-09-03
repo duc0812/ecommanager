@@ -12,8 +12,8 @@ import { autoDetectStatus, isValidPipelineStatus, type PipelineStatus } from '@/
 // pipelineStatus. Supplier-scoped and mode-aware (VARIANT exact, PARENT prefix), so only
 // orders whose line resolves to the SAME supplier and matches the entry are touched.
 // `customized` is read from the persisted `OrderLine.customized` flag (set at Shopify sync
-// time from print-files / preview / 'Custom Name' tag / external custom fields), so re-eval
-// never regresses a customized order back to non-custom.
+// time from print-files / preview / external custom fields), so re-eval never regresses a
+// customized order back to non-custom.
 export async function reevaluateOrdersForDesignEntry(entry: {
   sku: string; supplierId: string; matchMode: string
 }): Promise<number> {

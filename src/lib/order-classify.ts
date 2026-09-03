@@ -27,14 +27,13 @@ const VARIANT_PROP_KEYS = new Set(['size', 'color', 'colour', 'style', 'variant'
 export function isLineCustomized(line: {
   customAttributes: Array<{ key: string; value: string }>
   previewCdnUrl?: string | null
-  productTags?: string[]
 }): boolean {
   if (line.previewCdnUrl && line.previewCdnUrl.trim()) return true
-  if ((line.productTags ?? []).includes('Custom Name')) return true
-  // A customer-entered custom field marks the line customized: the hidden `_print_files`
-  // (Customcy/Customily-style apps), or ANY visible line-item property with a non-empty value
-  // added by an external personalization app (e.g. "YOUR NAME": "Janice") — excluding
-  // variant-selector keys and blank values.
+  // Old logic (hidden `_print_files` from Customcy/Customily-style apps) PLUS the exception:
+  // ANY visible non-"_"-prefixed line-item property with a non-empty value added by an external
+  // personalization app (e.g. "YOUR NAME": "Janice"), excluding variant-selector keys.
+  // Product tags are intentionally NOT used — many non-custom products carry the 'Custom Name'
+  // tag, so it is an unreliable customization signal.
   return line.customAttributes.some(a => {
     if (a.key === '_print_files') return true
     if (a.key.startsWith('_')) return false

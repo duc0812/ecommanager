@@ -8,8 +8,8 @@ describe('isLineCustomized', () => {
   it('true when previewCdnUrl present', () => {
     expect(isLineCustomized({ customAttributes: [], previewCdnUrl: 'http://p' })).toBe(true)
   })
-  it('true when product tagged Custom Name', () => {
-    expect(isLineCustomized({ customAttributes: [], productTags: ['phone case', 'Custom Name'] })).toBe(true)
+  it('false when only the product carries a Custom Name tag (tags are not a signal)', () => {
+    expect(isLineCustomized({ customAttributes: [], previewCdnUrl: null })).toBe(false)
   })
   it('true when an external custom field is present (e.g. YOUR NAME)', () => {
     expect(isLineCustomized({ customAttributes: [{ key: 'YOUR NAME', value: 'Janice' }] })).toBe(true)
@@ -17,8 +17,8 @@ describe('isLineCustomized', () => {
   it('false for a variant-selector property (Size) with no other signal', () => {
     expect(isLineCustomized({ customAttributes: [{ key: 'Size', value: 'M' }], previewCdnUrl: null })).toBe(false)
   })
-  it('false when only hidden non-custom props and no tag/preview', () => {
-    expect(isLineCustomized({ customAttributes: [{ key: '_ll_id', value: 'x' }], previewCdnUrl: null, productTags: ['phone case'] })).toBe(false)
+  it('false when only hidden non-custom props and no preview', () => {
+    expect(isLineCustomized({ customAttributes: [{ key: '_ll_id', value: 'x' }], previewCdnUrl: null })).toBe(false)
   })
   it('false for a non-_ property with a blank value', () => {
     expect(isLineCustomized({ customAttributes: [{ key: 'Custom Note', value: '  ' }], previewCdnUrl: null })).toBe(false)

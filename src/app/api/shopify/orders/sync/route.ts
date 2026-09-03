@@ -283,7 +283,7 @@ export async function POST(req: NextRequest) {
           requiresDesign: !!sp?.supplierId,
           resolvedSupplierId: sp?.supplierId ?? null,
           existingDesignLink: existingLineLinks.get(r.line.id) ?? null,
-          customized: isLineCustomized({ customAttributes: r.line.customAttributes, previewCdnUrl: extractPreviewCdnUrl(r.line.customAttributes), productTags: r.line.productTags }),
+          customized: isLineCustomized({ customAttributes: r.line.customAttributes, previewCdnUrl: extractPreviewCdnUrl(r.line.customAttributes) }),
         }
       })
       const hasDesignLine = designInputs.some(d => !d.isNonProduct && d.requiresDesign)
