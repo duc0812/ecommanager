@@ -927,8 +927,8 @@ function RevenueGoalTracker({ projectId, refreshVersion }: { projectId: string; 
 
   const now = new Date()
   const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate()
-  const totalRevenue = data?.summary.totalRevenue ?? 0
-  const daysElapsed = data?.dailyData.length ?? 0
+  const totalRevenue = data?.summary?.totalRevenue ?? 0
+  const daysElapsed = data?.dailyData?.length ?? 0
 
   const metrics = calcGoalMetrics({ totalRevenue, daysElapsed, daysInMonth, monthlyTarget, dailyTarget })
   const { avgDaily, daysRemaining, projected, shortfall, neededPerDay, paceOk, monthPct } = metrics

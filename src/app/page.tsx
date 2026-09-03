@@ -150,11 +150,19 @@ export default function OverviewPage() {
           </div>
         )}
 
-        {(data?.meta.missingRateCount ?? 0) > 0 && (
+        {data?.error && !loading && (
+          <div className="mb-lg rounded-xl px-lg py-md flex items-center gap-md bg-error-container/20 border border-error/20">
+            <span className="material-symbols-outlined text-error">cloud_off</span>
+            <p className="text-body-sm text-error flex-1">Không tải được dữ liệu tổng quan: {data.error}</p>
+            <button onClick={refreshData} className="text-label-sm font-semibold underline text-error">Thử lại</button>
+          </div>
+        )}
+
+        {(data?.meta?.missingRateCount ?? 0) > 0 && (
           <div className="mb-lg rounded-xl border border-amber-300 bg-amber-50 px-lg py-md flex items-center gap-md text-amber-900">
             <span className="material-symbols-outlined">currency_exchange</span>
             <p className="text-body-sm flex-1">
-              {data?.meta.missingRateCount} Meta billing(s) missing an exchange rate — set rates in Setup → Meta Exchange Rate
+              {data?.meta?.missingRateCount} Meta billing(s) missing an exchange rate — set rates in Setup → Meta Exchange Rate
             </p>
             <a href="/setup/meta" className="text-label-sm font-semibold underline">Nhập tỷ giá</a>
           </div>
