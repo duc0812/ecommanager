@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { getTrelloConfig, getCardsByList } from '@/lib/trello'
-import { findDriveAttachmentForLine } from '@/lib/order-line-assets'
+import { findDriveAttachmentForLine, findDriveAttachmentForSku } from '@/lib/order-line-assets'
 import { isNonProductLine } from '@/lib/order-lines'
 import { markLibraryReadyByCard } from '@/lib/repos/design-library'
 
@@ -32,7 +32,7 @@ export async function POST() {
     const driveAttachment = driveAttachments[0]
     if (!driveAttachment) continue
 
-    updated += await markLibraryReadyByCard(card.id, driveAttachment.url)
+    updated += await markLibraryReadyByCard(card.id, driveAttachments)
 
     const linkedOrders = await prisma.order.findMany({
       where: { trelloCardId: card.id },
@@ -155,10 +155,12 @@ export async function POST() {
     ))
 
     for (const sku of skus) {
+      const file = findDriveAttachmentForSku(sku, driveAttachments)
+      if (!file) continue
       await prisma.skuDesign.upsert({
         where: { sku },
-        create: { sku, driveLink: driveAttachment.url },
-        update: { driveLink: driveAttachment.url },
+        create: { sku, driveLink: file.url },
+        update: { driveLink: file.url },
       })
     }
   }

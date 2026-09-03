@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db'
 import { designKey, type DesignImportRow } from '@/lib/design-library'
+import { findDriveAttachmentForSku, type DriveAttachment } from '@/lib/order-line-assets'
 
 export type DesignLibraryFilter = { supplierId?: string; sku?: string; ready?: boolean; source?: string }
 
@@ -70,10 +71,20 @@ export async function importDesignEntries(rows: DesignImportRow[]): Promise<{ up
   return { upserted, errors }
 }
 
-export async function markLibraryReadyByCard(cardId: string, designLink: string): Promise<number> {
-  const res = await prisma.skuSupplierDesign.updateMany({
+export async function markLibraryReadyByCard(cardId: string, attachments: DriveAttachment[]): Promise<number> {
+  const rows = await prisma.skuSupplierDesign.findMany({
     where: { trelloCardId: cardId, ready: false },
-    data: { ready: true, designLink },
+    select: { id: true, sku: true },
   })
-  return res.count
+  let updated = 0
+  for (const row of rows) {
+    const file = findDriveAttachmentForSku(row.sku, attachments)
+    if (!file) continue
+    await prisma.skuSupplierDesign.update({
+      where: { id: row.id },
+      data: { ready: true, designLink: file.url },
+    })
+    updated += 1
+  }
+  return updated
 }

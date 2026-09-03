@@ -43,3 +43,13 @@ export function findDriveAttachmentForLine(
   if (productLineCount === 1 && driveAttachments.length === 1) return driveAttachments[0]
   return null
 }
+
+export function findDriveAttachmentForSku(
+  sku: string | null | undefined,
+  attachments: DriveAttachment[],
+): DriveAttachment | null {
+  const normalized = (sku ?? '').toLowerCase().trim()
+  if (!normalized) return null
+  const driveAttachments = attachments.filter(a => a.url.includes('drive.google.com'))
+  return driveAttachments.find(a => `${a.name} ${a.url}`.toLowerCase().includes(normalized)) ?? null
+}
