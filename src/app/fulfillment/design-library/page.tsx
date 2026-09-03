@@ -47,7 +47,7 @@ export default function DesignLibraryPage() {
     if (res.ok) {
       const d = await res.json().catch(() => ({}))
       setForm({ sku: '', supplierId: '', designLink: '', matchMode: 'VARIANT', designType: 'NON_CUSTOM' })
-      setMsg(`Đã lưu${typeof d.resynced === 'number' ? ` — re-sync ${d.resynced} đơn` : ''}`)
+      setMsg(`Đã lưu${typeof d.resynced === 'number' ? ` — cập nhật lại ${d.resynced} đơn theo library` : ''}`)
       load()
     }
     else setMsg((await res.json()).error ?? 'Lỗi')
@@ -84,7 +84,7 @@ export default function DesignLibraryPage() {
       body: JSON.stringify({ sku: e.sku, supplierId: e.supplierId, designLink: e.designLink, ready: e.ready, matchMode: edit.matchMode, designType: edit.designType }),
     })
     const d = await res.json().catch(() => ({}))
-    if (typeof d.resynced === 'number') setMsg(`Đã lưu ${e.sku} — re-sync ${d.resynced} đơn`)
+    if (typeof d.resynced === 'number') setMsg(`Đã lưu ${e.sku} — cập nhật lại ${d.resynced} đơn theo library`)
     setSavingRow(null)
     setRowEdits(prev => { const n = { ...prev }; delete n[e.id]; return n })
     load()
