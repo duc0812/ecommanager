@@ -20,6 +20,9 @@ describe('isLineCustomized', () => {
   it('false when only hidden non-custom props and no tag/preview', () => {
     expect(isLineCustomized({ customAttributes: [{ key: '_ll_id', value: 'x' }], previewCdnUrl: null, productTags: ['phone case'] })).toBe(false)
   })
+  it('false for a non-_ property with a blank value', () => {
+    expect(isLineCustomized({ customAttributes: [{ key: 'Custom Note', value: '  ' }], previewCdnUrl: null })).toBe(false)
+  })
 })
 
 describe('lineFamily', () => {

@@ -10,6 +10,8 @@ export type ClassifyLine = {
 
 export type OrderType = 'CUSTOM' | 'NON_CUSTOM'
 
+// DEPRECATED: whole-order classifier, superseded by per-line isLineCustomized + reduceOrderType
+// in the sync route. Kept only for buildTrelloCardContent's OrderType arg / back-compat.
 export function classifyOrderLines(lines: ClassifyLine[]): OrderType {
   for (const line of lines) {
     if (line.customAttributes.some(a => a.key === '_print_files')) return 'CUSTOM'
@@ -30,12 +32,15 @@ export function isLineCustomized(line: {
   if (line.previewCdnUrl && line.previewCdnUrl.trim()) return true
   if ((line.productTags ?? []).includes('Custom Name')) return true
   // A customer-entered custom field marks the line customized: the hidden `_print_files`
-  // (Customcy/Customily-style apps), or ANY visible line-item property added by an external
-  // personalization app (e.g. "YOUR NAME": "Janice") — excluding variant-selector keys.
-  return line.customAttributes.some(a =>
-    a.key === '_print_files' ||
-    (!a.key.startsWith('_') && !VARIANT_PROP_KEYS.has(a.key.toLowerCase().trim())),
-  )
+  // (Customcy/Customily-style apps), or ANY visible line-item property with a non-empty value
+  // added by an external personalization app (e.g. "YOUR NAME": "Janice") — excluding
+  // variant-selector keys and blank values.
+  return line.customAttributes.some(a => {
+    if (a.key === '_print_files') return true
+    if (a.key.startsWith('_')) return false
+    if (VARIANT_PROP_KEYS.has(a.key.toLowerCase().trim())) return false
+    return !!(a.value && a.value.trim())
+  })
 }
 
 export type LineFamily = 'CUSTOM' | 'DUAL' | 'NON_CUSTOM'
