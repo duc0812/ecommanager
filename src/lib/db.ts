@@ -4,7 +4,7 @@ import { resolveDatabaseUrl } from '@/lib/database-url'
 import { retryOnBusy } from '@/lib/sqlite-busy'
 
 const globalForPrisma = globalThis as unknown as { prisma: PrismaClient; prismaVersion?: string }
-const SCHEMA_VERSION = 'v42'
+const SCHEMA_VERSION = 'v43'
 
 function createPrisma(): PrismaClient {
   const adapter = new PrismaLibSql({ url: resolveDatabaseUrl() })

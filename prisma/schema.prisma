@@ -101,6 +101,7 @@ model Project {
   archivedAt   DateTime?
   shopifyStore ShopifyStore?
   orders       Order[]
+  snapshots    CashflowSnapshot[]
 }
 
 model MetaAdAccount {
@@ -111,10 +112,13 @@ model MetaAdAccount {
   currency    String?
   projectId   String?
   project     Project?      @relation(fields: [projectId], references: [id])
-  billings    MetaBilling[]
-  lastSyncAt  DateTime?
-  createdAt   DateTime      @default(now())
-  dailySpends DailyAdSpend[]
+  billings        MetaBilling[]
+  lastSyncAt      DateTime?
+  balance         Float?
+  balanceCurrency String?
+  balanceSyncedAt DateTime?
+  createdAt       DateTime      @default(now())
+  dailySpends     DailyAdSpend[]
 }
 
 model MetaBilling {
@@ -881,4 +885,31 @@ model OrderTaskState {
 
   @@unique([orderId, taskType])
   @@index([resolvedAt])
+}
+
+model CashflowSnapshot {
+  id                   String   @id @default(cuid())
+  projectId            String
+  project              Project  @relation(fields: [projectId], references: [id])
+  periodMonth          String   // 'YYYY-MM'
+  asOfDate             String   // 'YYYY-MM-DD' cuối tháng theo tz store
+  takenAt              DateTime @default(now())
+
+  totalPayout          Float
+  totalMetaBilling     Float
+  metaFxFee            Float
+  totalOrderCogs       Float
+  totalOtherCosts      Float
+  actualCashflow       Float
+  shopifyBalance       Float
+  inTransitPayout      Float
+  pendingPayout        Float
+  pendingInvoiceCharge Float
+  projectedCashflow    Float
+
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@unique([projectId, periodMonth])
+  @@index([projectId])
 }
