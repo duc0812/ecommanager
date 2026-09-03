@@ -5,6 +5,7 @@ import { listOrdersWithLines } from '@/lib/repos/orders'
 import { renderCsv, type CsvTemplate as RenderTemplate, type OrderForCsv } from '@/lib/csv-template'
 import { isNonProductLine } from '@/lib/order-lines'
 import { effectiveBaseCost } from '@/lib/order-profit'
+import { pickExportDesignLink } from '@/lib/export-design'
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => null)
@@ -82,10 +83,14 @@ export async function POST(req: NextRequest) {
         placedAt: o.placedAt,
         lines: exportableLines.map(l => {
           const supplierProduct = l.resolvedSupplierSku ? supplierProductBySku.get(l.resolvedSupplierSku) : null
-          const designDriveLink =
-            l.designDriveLink ??
-            (productLines.length === 1 ? o.designDriveLink : null) ??
-            (o.orderType !== 'CUSTOM' && l.sku ? skuDesignBySku.get(l.sku)?.driveLink ?? null : null)
+          const designDriveLink = pickExportDesignLink({
+            lineDesignLink: l.designDriveLink,
+            orderDesignLink: o.designDriveLink,
+            productLineCount: productLines.length,
+            orderType: o.orderType,
+            sku: l.sku,
+            skuDesignLink: l.sku ? skuDesignBySku.get(l.sku)?.driveLink ?? null : null,
+          })
           const lineNumber = productLineNumberById.get(l.id) ?? 1
           return {
             lineKey: `${o.shopifyOrderNumber.replace(/^#/, '')}_${lineNumber}`,
