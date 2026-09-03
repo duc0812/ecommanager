@@ -3,6 +3,8 @@ import { prisma } from '@/lib/db'
 import { previousMonth, monthlyProfit } from '@/lib/cashflow-snapshot'
 
 export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
+  const project = await prisma.project.findUnique({ where: { id: params.id }, select: { id: true } })
+  if (!project) return NextResponse.json({ error: 'Project not found' }, { status: 404 })
   const snapshots = await prisma.cashflowSnapshot.findMany({
     where: { projectId: params.id },
     orderBy: { periodMonth: 'asc' },

@@ -214,7 +214,7 @@ export async function computeProjectCashflow(input: ProjectCashflowInput): Promi
       })
     : []
   const inTransitPayout = inTransitPayoutRows.reduce((sum: number, row: any) => sum + row.amount, 0)
-  const pendingInvoiceCharge = sumPendingInvoiceChargeUsd(metaAccounts, endStr, schedule)
+  const pendingInvoiceCharge = sumPendingInvoiceChargeUsd(metaAccounts, dateKeyInZone(new Date(), timeZone), schedule)
   const projectedCashflow = actualCashflow + shopifyBalance + inTransitPayout - pendingInvoiceCharge
   const totalOrderNetRevenue = orders.reduce((sum: number, order: any) => sum + order.expectedPayout, 0)
   const pendingPayout = Math.max(0, totalOrderNetRevenue - totalPayout - inTransitPayout - shopifyBalance)
