@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, Fragment } from 'react'
 import Sidebar from '@/components/Sidebar'
 
 type Entry = {
@@ -66,12 +66,9 @@ export default function DesignLibraryPage() {
   }
 
   function setRowField(id: string, field: keyof RowEdit, value: string) {
-    setRowEdits(prev => ({ ...prev, [id]: { ...getRowEditById(id), [field]: value } }))
-  }
-
-  function getRowEditById(id: string): RowEdit {
     const entry = entries.find(e => e.id === id)
-    return rowEdits[id] ?? { parentCode: entry?.parentCode ?? '', designType: entry?.designType ?? 'NON_CUSTOM' }
+    const fallback: RowEdit = { parentCode: entry?.parentCode ?? '', designType: entry?.designType ?? 'NON_CUSTOM' }
+    setRowEdits(prev => ({ ...prev, [id]: { ...(prev[id] ?? fallback), [field]: value } }))
   }
 
   async function saveRowEdit(e: Entry) {
@@ -173,7 +170,9 @@ export default function DesignLibraryPage() {
               </tr>
             </thead>
             <tbody>
-              {groups.map(group => group.rows.map((e, i) => (
+              {groups.map(group => (
+              <Fragment key={group.sku}>
+              {group.rows.map((e, i) => (
                 <tr key={e.id} className={`border-t ${i === 0 ? 'border-outline-variant/40' : 'border-outline-variant/10'}`}>
                   {i === 0 && (
                     <td rowSpan={group.rows.length} className="px-md py-sm font-medium align-top border-r border-outline-variant/20">{group.sku}</td>
@@ -224,7 +223,9 @@ export default function DesignLibraryPage() {
                     </div>
                   </td>
                 </tr>
-              )))}
+              ))}
+              </Fragment>
+              ))}
               {entries.length === 0 && <tr><td className="px-md py-lg text-on-surface-variant" colSpan={10}>Chưa có design nào.</td></tr>}
             </tbody>
           </table>
