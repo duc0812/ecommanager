@@ -5,8 +5,10 @@ import Sidebar from '@/components/Sidebar'
 type Entry = {
   id: string; sku: string; supplierId: string; designLink: string | null
   ready: boolean; source: string; note: string | null; updatedAt: string
+  parentCode: string | null; designType: string
   supplier: { id: string; name: string; code: string }
 }
+type RowEdit = { parentCode: string; designType: string }
 type Supplier = { id: string; name: string; code: string }
 
 export default function DesignLibraryPage() {
@@ -18,6 +20,8 @@ export default function DesignLibraryPage() {
   const [form, setForm] = useState({ sku: '', supplierId: '', designLink: '' })
   const [csv, setCsv] = useState('')
   const [msg, setMsg] = useState('')
+  const [rowEdits, setRowEdits] = useState<Record<string, RowEdit>>({})
+  const [savingRow, setSavingRow] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     const qs = new URLSearchParams()
@@ -54,6 +58,31 @@ export default function DesignLibraryPage() {
 
   async function remove(id: string) {
     await fetch(`/api/fulfillment/design-library/${id}`, { method: 'DELETE' })
+    load()
+  }
+
+  function getRowEdit(e: Entry): RowEdit {
+    return rowEdits[e.id] ?? { parentCode: e.parentCode ?? '', designType: e.designType ?? 'NON_CUSTOM' }
+  }
+
+  function setRowField(id: string, field: keyof RowEdit, value: string) {
+    setRowEdits(prev => ({ ...prev, [id]: { ...getRowEditById(id), [field]: value } }))
+  }
+
+  function getRowEditById(id: string): RowEdit {
+    const entry = entries.find(e => e.id === id)
+    return rowEdits[id] ?? { parentCode: entry?.parentCode ?? '', designType: entry?.designType ?? 'NON_CUSTOM' }
+  }
+
+  async function saveRowEdit(e: Entry) {
+    const edit = getRowEdit(e)
+    setSavingRow(e.id)
+    await fetch('/api/fulfillment/design-library', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sku: e.sku, supplierId: e.supplierId, designLink: e.designLink, ready: e.ready, parentCode: edit.parentCode || null, designType: edit.designType }),
+    })
+    setSavingRow(null)
+    setRowEdits(prev => { const n = { ...prev }; delete n[e.id]; return n })
     load()
   }
 
@@ -111,7 +140,7 @@ export default function DesignLibraryPage() {
           <button className="bg-secondary text-on-secondary px-lg py-sm rounded-lg text-label-md mt-sm" onClick={runImport}>Import</button>
         </div>
 
-        <div className="flex flex-wrap gap-sm mb-md">
+        <div className="flex flex-wrap gap-sm mb-md items-center">
           <select className="border border-outline-variant/40 rounded-lg px-md py-sm" value={filterSupplier} onChange={e => setFilterSupplier(e.target.value)}>
             <option value="">All suppliers</option>
             {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
@@ -122,6 +151,13 @@ export default function DesignLibraryPage() {
             <option value="true">Ready</option>
             <option value="false">Not ready</option>
           </select>
+          <button
+            className={`flex items-center gap-xs px-md py-sm rounded-lg text-label-sm border ${filterReady === 'false' ? 'bg-amber-100 text-amber-900 border-amber-300' : 'border-outline-variant/40 text-on-surface-variant'}`}
+            onClick={() => setFilterReady(filterReady === 'false' ? '' : 'false')}
+          >
+            <span className="material-symbols-outlined text-base">assignment</span>
+            Tasks only
+          </button>
         </div>
 
         <div className="bg-surface-container-lowest rounded-xl shadow-card border border-outline-variant/20 overflow-hidden">
@@ -129,7 +165,10 @@ export default function DesignLibraryPage() {
             <thead className="bg-surface-container-low">
               <tr className="text-left">
                 <th className="px-md py-sm">SKU</th><th className="px-md py-sm">Supplier</th>
-                <th className="px-md py-sm">Design Link</th><th className="px-md py-sm">Ready</th>
+                <th className="px-md py-sm">Design Link</th>
+                <th className="px-md py-sm">Parent Code</th>
+                <th className="px-md py-sm">Design Type</th>
+                <th className="px-md py-sm">Status</th>
                 <th className="px-md py-sm">Source</th><th className="px-md py-sm">Updated</th><th className="px-md py-sm"></th>
               </tr>
             </thead>
@@ -143,19 +182,50 @@ export default function DesignLibraryPage() {
                   <td className="px-md py-sm max-w-[320px] truncate">
                     {e.designLink ? <a className="text-primary underline" href={e.designLink} target="_blank" rel="noreferrer">{e.designLink}</a> : '—'}
                   </td>
+                  <td className="px-md py-sm min-w-[140px]">
+                    <input
+                      className="border border-outline-variant/40 rounded-lg px-sm py-xs text-body-sm w-full"
+                      value={getRowEdit(e).parentCode}
+                      onChange={ev => setRowField(e.id, 'parentCode', ev.target.value)}
+                      placeholder="Parent code"
+                    />
+                  </td>
                   <td className="px-md py-sm">
-                    <button onClick={() => toggleReady(e)} className={`px-sm py-xs rounded-lg text-label-sm ${e.ready ? 'bg-emerald-100 text-emerald-900' : 'bg-amber-100 text-amber-900'}`}>
-                      {e.ready ? 'Ready' : 'Not ready'}
-                    </button>
+                    <select
+                      className="border border-outline-variant/40 rounded-lg px-sm py-xs text-body-sm"
+                      value={getRowEdit(e).designType}
+                      onChange={ev => setRowField(e.id, 'designType', ev.target.value)}
+                    >
+                      <option value="NON_CUSTOM">NON_CUSTOM</option>
+                      <option value="CUSTOM">CUSTOM</option>
+                      <option value="DUAL">DUAL</option>
+                    </select>
+                  </td>
+                  <td className="px-md py-sm">
+                    <span className={`px-sm py-xs rounded-lg text-label-sm ${e.ready ? 'bg-emerald-100 text-emerald-900' : 'bg-amber-100 text-amber-900'}`}>
+                      {e.ready ? 'Ready' : 'Task'}
+                    </span>
                   </td>
                   <td className="px-md py-sm">{e.source}</td>
                   <td className="px-md py-sm">{new Date(e.updatedAt).toLocaleDateString('en-US')}</td>
                   <td className="px-md py-sm">
-                    <button onClick={() => remove(e.id)} className="material-symbols-outlined text-error">delete</button>
+                    <div className="flex items-center gap-xs">
+                      <button
+                        onClick={() => saveRowEdit(e)}
+                        disabled={savingRow === e.id}
+                        className="bg-secondary text-on-secondary px-sm py-xs rounded-lg text-label-sm disabled:opacity-50"
+                      >
+                        {savingRow === e.id ? '...' : 'Save'}
+                      </button>
+                      <button onClick={() => toggleReady(e)} className={`px-sm py-xs rounded-lg text-label-sm ${e.ready ? 'bg-emerald-100 text-emerald-900' : 'bg-amber-100 text-amber-900'}`}>
+                        {e.ready ? 'Ready' : 'Not ready'}
+                      </button>
+                      <button onClick={() => remove(e.id)} className="material-symbols-outlined text-error">delete</button>
+                    </div>
                   </td>
                 </tr>
               )))}
-              {entries.length === 0 && <tr><td className="px-md py-lg text-on-surface-variant" colSpan={7}>Chưa có design nào.</td></tr>}
+              {entries.length === 0 && <tr><td className="px-md py-lg text-on-surface-variant" colSpan={10}>Chưa có design nào.</td></tr>}
             </tbody>
           </table>
         </div>
