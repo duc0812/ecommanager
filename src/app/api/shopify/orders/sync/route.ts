@@ -8,12 +8,13 @@ import { resolveZone, type SupplierZoneOverrides } from '@/lib/regions'
 import { getShopifyConnection } from '@/lib/token-store'
 import { resolveByProductBase } from '@/lib/product-mapping'
 import { loadProductBasesForResolver, loadVariantManualMappingsForResolver } from '@/lib/repos/mapping'
-import { classifyOrderLines, buildTrelloCardContent } from '@/lib/order-classify'
+import { buildTrelloCardContent, isLineCustomized, lineFamily, reduceOrderType } from '@/lib/order-classify'
 import { isNonProductLine } from '@/lib/order-lines'
 import { createTrelloCard, addAttachmentToCard, getTrelloConfig, shouldCreateCard } from '@/lib/trello'
 import { extractPreviewCdnUrl } from '@/lib/order-line-assets'
-import { resolveOrderDesign, designKey, type DesignLineInput } from '@/lib/design-library'
-import { loadReadyDesignLookup, loadMasterArtworkBySku } from '@/lib/repos/design-library'
+import { resolveOrderDesignByParent, type DesignLineInputV2 } from '@/lib/design-library'
+import { loadReadyParentLookup, upsertTaskEntry, loadMasterArtworkBySku } from '@/lib/repos/design-library'
+import { suggestParentCode, matchParentEntry, type ParentEntry } from '@/lib/design-parent'
 
 type ResolvedSupplierProduct = SupplierInput & {
   sku: string
@@ -46,6 +47,11 @@ function normalize(v: string | null | undefined): string {
 function orderNumberValue(orderName: string | null | undefined) {
   const raw = orderName?.match(/\d+/)?.[0]
   return raw ? Number(raw) : null
+}
+
+function parentDesignType(d: { sku: string | null; resolvedSupplierId: string | null }, entries: ParentEntry[]): string {
+  const m = matchParentEntry(d.sku, d.resolvedSupplierId, entries)
+  return m?.designType ?? 'NON_CUSTOM'
 }
 
 export async function POST(req: NextRequest) {
@@ -161,7 +167,7 @@ export async function POST(req: NextRequest) {
   }
 
   const trelloConfig = await getTrelloConfig()
-  const designLookup = await loadReadyDesignLookup()
+  const parentEntries = await loadReadyParentLookup()
   const masterArtworkBySku = await loadMasterArtworkBySku()
 
   let cursor: string | null = null
@@ -268,16 +274,7 @@ export async function POST(req: NextRequest) {
         ? existing.pipelineStatus as PipelineStatus
         : null
 
-      // Classify order type (needed before design resolution to gate library reuse)
-      const classifyLines = o.lines.map(l => ({
-        sku: l.sku,
-        productTitle: l.title,
-        customAttributes: l.customAttributes,
-        productTags: l.productTags,
-      }))
-      const orderType = classifyOrderLines(classifyLines)
-
-      const designInputs: DesignLineInput[] = resolvedLines.map((r, idx) => {
+      const designInputs: DesignLineInputV2[] = resolvedLines.map((r, idx) => {
         const sp = r.pbResolve.supplierProductId ? supplierProductById.get(r.pbResolve.supplierProductId) : null
         return {
           index: idx,
@@ -286,14 +283,19 @@ export async function POST(req: NextRequest) {
           requiresDesign: !!sp?.supplierId,
           resolvedSupplierId: sp?.supplierId ?? null,
           existingDesignLink: existingLineLinks.get(r.line.id) ?? null,
+          customized: isLineCustomized({ customAttributes: r.line.customAttributes, previewCdnUrl: extractPreviewCdnUrl(r.line.customAttributes) }),
         }
       })
       const hasDesignLine = designInputs.some(d => !d.isNonProduct && d.requiresDesign)
-      const designResolution = resolveOrderDesign(designInputs, (sku, supId) => {
-        const key = designKey(sku, supId)
-        return designLookup.has(key) ? { ready: true, designLink: designLookup.get(key) ?? null } : null
-      }, { allowReuse: orderType !== 'CUSTOM' })
+      const designResolution = resolveOrderDesignByParent(designInputs, parentEntries)
       const libraryDesignLinkByIndex = new Map(designResolution.lineLinks.map(l => [l.index, l.designLink]))
+
+      // Re-evaluate order type every sync from per-line families (not sticky)
+      const orderType = reduceOrderType(
+        designInputs
+          .filter(d => !d.isNonProduct && d.requiresDesign)
+          .map(d => lineFamily({ customized: d.customized, designType: parentDesignType(d, parentEntries) })),
+      )
       const effectiveDesignReady = designResolution.orderDesignReady || (existing?.designReady === true && existing?.trelloCardId != null)
 
       const detected = autoDetectStatus({
@@ -368,14 +370,24 @@ export async function POST(req: NextRequest) {
         }),
       })
 
-      // Update orderType in DB if not yet classified
+      // Persist re-evaluated order type on every sync (non-sticky)
       const existingOrder = await prisma.order.findUnique({
         where: { id: o.id },
-        select: { orderType: true, trelloCardId: true },
+        select: { trelloCardId: true },
       })
-      if (existingOrder && existingOrder.orderType === 'UNKNOWN') {
-        await prisma.order.update({ where: { id: o.id }, data: { orderType } })
+      await prisma.order.update({ where: { id: o.id }, data: { orderType } })
+
+      // Auto-create task rows for missing non-custom designs
+      for (const m of designResolution.missing) {
+        const li = designInputs[m.index]
+        if (!li || li.customized || !m.sku || !m.supplierId) continue
+        await upsertTaskEntry({
+          sku: m.sku, supplierId: m.supplierId,
+          parentCode: suggestParentCode(m.sku),
+          trelloCardId: existingOrder?.trelloCardId ?? null,
+        })
       }
+
       if (!allProductLinesMapped && existingOrder?.trelloCardId) {
         await prisma.order.update({
           where: { id: o.id },
@@ -421,7 +433,7 @@ export async function POST(req: NextRequest) {
                 designTemplateUrl: raw?.designTemplateUrl ?? null,
               }
             })
-            const { name: cardName, desc } = buildTrelloCardContent(o.name, cardLines, orderType, masterArtworkBySku)
+            const { name: cardName, desc } = buildTrelloCardContent(o.name, cardLines, orderType === 'CUSTOM' ? 'CUSTOM' : 'NON_CUSTOM', masterArtworkBySku)
             const card = await createTrelloCard(trelloConfig, cardName, desc)
             await prisma.order.update({
               where: { id: o.id },
