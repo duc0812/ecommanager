@@ -70,6 +70,7 @@ export type AutoDetectInput = {
   hasUnmappedSku: boolean
   hasPendingMapping: boolean
   hasCustomDesignLine: boolean
+  hasDesignLine?: boolean
   hasDesignReady?: boolean
   currentStatus?: PipelineStatus | null
 }
@@ -83,9 +84,10 @@ export function autoDetectStatus(input: AutoDetectInput): PipelineStatus {
   const fulfillment = (input.fulfillmentStatus || '').toLowerCase()
   if (fulfillment === 'fulfilled') return 'FULFILLED'
 
+  const needsDesign = input.hasDesignLine ?? input.hasCustomDesignLine
   const initial: PipelineStatus =
     input.hasPendingMapping || input.hasUnmappedSku ? 'PENDING_MAPPING' :
-    input.hasCustomDesignLine && !input.hasDesignReady ? 'PENDING_DESIGN' :
+    needsDesign && !input.hasDesignReady ? 'PENDING_DESIGN' :
     'READY_TO_PRODUCTION'
 
   if (!input.currentStatus) return initial
