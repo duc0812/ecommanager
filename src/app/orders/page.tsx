@@ -113,7 +113,7 @@ export default function OrdersPage() {
   const [syncResult, setSyncResult] = useState('')
   const [syncingTrello, setSyncingTrello] = useState(false)
   const [trelloResult, setTrelloResult] = useState('')
-  const [typeFilter, setTypeFilter] = useState<'ALL' | 'CUSTOM' | 'NON_CUSTOM'>('ALL')
+  const [typeFilter, setTypeFilter] = useState<'ALL' | 'CUSTOM' | 'NON_CUSTOM' | 'DUAL' | 'MIXED'>('ALL')
   const [designFilter, setDesignFilter] = useState<'ALL' | 'HAS' | 'MISSING'>('ALL')
   const [trelloFilter, setTrelloFilter] = useState<'ALL' | 'CREATED' | 'NOT_CREATED'>('ALL')
   const [selectedOrder, setSelectedOrder] = useState<OrderRow | null>(null)
@@ -170,8 +170,8 @@ export default function OrdersPage() {
       let list: OrderRow[] = oRes.orders ?? []
       if (showUnmappedOnly) list = list.filter(o => o.computed.hasUnmappedSku)
       if (typeFilter !== 'ALL') list = list.filter(o => o.orderType === typeFilter)
-      if (designFilter === 'HAS') list = list.filter(o => o.orderType === 'NON_CUSTOM' && o.designReady)
-      if (designFilter === 'MISSING') list = list.filter(o => o.orderType === 'NON_CUSTOM' && !o.designReady)
+      if (designFilter === 'HAS') list = list.filter(o => o.orderType !== 'CUSTOM' && o.designReady)
+      if (designFilter === 'MISSING') list = list.filter(o => o.orderType !== 'CUSTOM' && !o.designReady)
       if (trelloFilter === 'CREATED') list = list.filter(o => o.trelloCardId != null)
       if (trelloFilter === 'NOT_CREATED') list = list.filter(o => o.trelloCardId == null)
       setOrders(list)
@@ -438,6 +438,8 @@ export default function OrdersPage() {
                   <option value="ALL">Tất cả</option>
                   <option value="CUSTOM">Custom</option>
                   <option value="NON_CUSTOM">Non-Custom</option>
+                  <option value="DUAL">Dual</option>
+                  <option value="MIXED">Mixed</option>
                 </select>
               </div>
               <div>
@@ -644,6 +646,12 @@ export default function OrdersPage() {
                     )}
                     {o.orderType === 'NON_CUSTOM' && (
                       <span className="bg-surface-container text-on-surface-variant text-label-sm px-xs py-[2px] rounded">Non-Custom</span>
+                    )}
+                    {o.orderType === 'DUAL' && (
+                      <span className="bg-amber-100 text-amber-900 text-label-sm px-xs py-[2px] rounded">Dual</span>
+                    )}
+                    {o.orderType === 'MIXED' && (
+                      <span className="bg-indigo-100 text-indigo-900 text-label-sm px-xs py-[2px] rounded">Mixed</span>
                     )}
                     {o.orderType === 'UNKNOWN' && (
                       <span className="text-label-sm text-on-surface-variant">-</span>

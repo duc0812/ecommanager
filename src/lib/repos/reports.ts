@@ -1,9 +1,9 @@
 import { listOrdersWithLines, type OrderFilter } from './orders'
-import { loadReadyDesignLookup } from './design-library'
+import { loadReadyParentLookup } from './design-library'
 import { prisma } from '@/lib/db'
 import { estimateOrderCostAndProfit, effectiveBaseCost } from '@/lib/order-profit'
 import { productLinesOnly, isNonProductLine } from '@/lib/order-lines'
-import { designKey } from '@/lib/design-library'
+import { matchParentEntry } from '@/lib/design-parent'
 import { lineDesignStatus } from '@/lib/design-status'
 import { sumMetaAmountsUsdDated } from '@/lib/meta-currency'
 import { getMetaRateSchedule } from '@/lib/meta-exchange-rates'
@@ -61,8 +61,8 @@ export async function ordersWithComputedPL(filter: OrderFilter): Promise<Enriche
     ? await prisma.skuDesign.findMany({ where: { sku: { in: allSkus } } })
     : []
   const skuDesignMap = new Map(skuDesigns.map(s => [s.sku, s]))
-  // Ready per-(SKU × supplier) designs — powers the "Design Library" line status.
-  const readyLib = await loadReadyDesignLookup()
+  // Ready per-(parent × supplier) designs — powers the "Design Library" line status.
+  const parentEntries = await loadReadyParentLookup()
 
   return orders.map(o => {
     const mappableLines = productLines(o.lines)
@@ -94,7 +94,7 @@ export async function ordersWithComputedPL(filter: OrderFilter): Promise<Enriche
           isNonProduct: isNonProductLine(l),
           previewCdnUrl: l.previewCdnUrl,
           designDriveLink: l.designDriveLink,
-          hasLibraryDesign: !!(l.sku && l.resolvedSupplierId && readyLib.has(designKey(l.sku, l.resolvedSupplierId))),
+          hasLibraryDesign: !!matchParentEntry(l.sku, l.resolvedSupplierId, parentEntries),
         }),
       })),
       computed: {
