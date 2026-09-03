@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/db'
 import { computeProjectCashflow } from '@/lib/repos/cashflow'
-import { monthEndBoundaryUtc } from '@/lib/cashflow-snapshot'
+import { monthEndBoundaryUtc, listPeriodMonths } from '@/lib/cashflow-snapshot'
 import { zonedDayStartUtc, dateOnly } from '@/lib/cashflow-dates'
 import { SHOPIFY_PAYOUT_START_DATE } from '@/lib/shopify-payout-policy'
 
@@ -50,6 +50,20 @@ export async function snapshotProjectMonth(projectId: string, periodMonth: strin
       takenAt: new Date(),
     },
   })
+}
+
+export async function backfillProjectSnapshots(projectId: string, now = new Date()) {
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
+    include: { shopifyStore: { select: { ianaTimezone: true } } },
+  })
+  if (!project) throw new Error(`Project ${projectId} not found`)
+  const timeZone = project.shopifyStore?.ianaTimezone ?? 'UTC'
+  const prev = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1))
+  const lastMonth = `${prev.getUTCFullYear()}-${String(prev.getUTCMonth() + 1).padStart(2, '0')}`
+  const months = listPeriodMonths(project.startDate, lastMonth, timeZone)
+  for (const m of months) await snapshotProjectMonth(projectId, m)
+  return { months }
 }
 
 export async function runMonthEndSnapshots(now = new Date()) {
