@@ -229,6 +229,7 @@ export async function recalculateMissingOrderLineCosts(filter: {
     }
     const defaultSupplierId = Array.from(qtyBySupplier.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null
     const skuLines = order.lines.filter(l => l.sku && !isNonProductLine(l))
+    const hasDesignLine = skuLines.some(l => l.resolvedSupplierId)
     const hasPendingMapping = skuLines.some(l => !l.resolvedSupplierId || l.resolvedBaseCost == null)
     const currentStatus = isValidPipelineStatus(order.pipelineStatus)
       ? order.pipelineStatus as PipelineStatus
@@ -239,6 +240,7 @@ export async function recalculateMissingOrderLineCosts(filter: {
       hasUnmappedSku: hasPendingMapping,
       hasPendingMapping,
       hasCustomDesignLine: order.orderType === 'CUSTOM',
+      hasDesignLine,
       hasDesignReady: order.designReady,
       currentStatus,
     })

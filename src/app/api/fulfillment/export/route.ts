@@ -86,7 +86,6 @@ export async function POST(req: NextRequest) {
           const designDriveLink = pickExportDesignLink({
             lineDesignLink: l.designDriveLink,
             orderDesignLink: o.designDriveLink,
-            productLineCount: productLines.length,
             orderType: o.orderType,
             sku: l.sku,
             skuDesignLink: l.sku ? skuDesignBySku.get(l.sku)?.driveLink ?? null : null,

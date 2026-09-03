@@ -148,6 +148,7 @@ export async function POST() {
       }
     }
 
+    // CUSTOM orders never reuse designs, so they don't populate the SkuDesign master-artwork library.
     const skus = Array.from(new Set(
       linkedOrders
         .filter(o => o.orderType !== 'CUSTOM')

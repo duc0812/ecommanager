@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { pickExportDesignLink } from './export-design'
 
 const inp = (o: Partial<Parameters<typeof pickExportDesignLink>[0]>) => ({
-  lineDesignLink: null, orderDesignLink: null, productLineCount: 1,
+  lineDesignLink: null, orderDesignLink: null,
   orderType: 'NON_CUSTOM', sku: 'S', skuDesignLink: null, ...o,
 })
 
@@ -11,7 +11,7 @@ describe('pickExportDesignLink', () => {
     expect(pickExportDesignLink(inp({ lineDesignLink: 'L', orderDesignLink: 'O' }))).toBe('L')
   })
   it('uses order link for multi-line when line lacks its own', () => {
-    expect(pickExportDesignLink(inp({ orderDesignLink: 'O', productLineCount: 3 }))).toBe('O')
+    expect(pickExportDesignLink(inp({ orderDesignLink: 'O' }))).toBe('O')
   })
   it('falls back to SkuDesign for NON_CUSTOM', () => {
     expect(pickExportDesignLink(inp({ skuDesignLink: 'M' }))).toBe('M')
