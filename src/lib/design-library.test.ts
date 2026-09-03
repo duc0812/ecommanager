@@ -65,6 +65,35 @@ describe('resolveOrderDesign', () => {
     expect(r.orderDesignReady).toBe(false)
     expect(r.missing[0].supplierId).toBeNull()
   })
+
+  it('ready-but-null-link entry is treated as missing', () => {
+    const r = resolveOrderDesign(
+      [baseLine({ sku: 'SKU1', resolvedSupplierId: 'supA' })],
+      lookupFrom({ [designKey('SKU1', 'supA')]: { ready: true, designLink: null } }),
+    )
+    expect(r.orderDesignReady).toBe(false)
+    expect(r.missing).toEqual([{ index: 0, sku: 'SKU1', supplierId: 'supA' }])
+  })
+
+  it('allowReuse:false ignores the library (always missing without own link)', () => {
+    const r = resolveOrderDesign(
+      [baseLine({ sku: 'SKU1', resolvedSupplierId: 'supA' })],
+      lookupFrom({ [designKey('SKU1', 'supA')]: { ready: true, designLink: 'http://d/1' } }),
+      { allowReuse: false },
+    )
+    expect(r.orderDesignReady).toBe(false)
+    expect(r.lineLinks).toEqual([])
+    expect(r.missing).toEqual([{ index: 0, sku: 'SKU1', supplierId: 'supA' }])
+  })
+
+  it('allowReuse:false still honors own existing design link', () => {
+    const r = resolveOrderDesign(
+      [baseLine({ existingDesignLink: 'http://trello/link' })],
+      lookupFrom({}),
+      { allowReuse: false },
+    )
+    expect(r.orderDesignReady).toBe(true)
+  })
 })
 
 describe('parseDesignLibraryCsv', () => {

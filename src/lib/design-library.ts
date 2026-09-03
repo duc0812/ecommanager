@@ -20,24 +20,29 @@ export type DesignResolution = {
   missing: Array<{ index: number; sku: string | null; supplierId: string | null }>
 }
 
-export function resolveOrderDesign(lines: DesignLineInput[], lookup: LibraryLookup): DesignResolution {
+export function resolveOrderDesign(
+  lines: DesignLineInput[],
+  lookup: LibraryLookup,
+  opts?: { allowReuse?: boolean },
+): DesignResolution {
+  const allowReuse = opts?.allowReuse !== false
   const designLines = lines.filter(l => !l.isNonProduct && l.requiresDesign)
   const lineLinks: DesignResolution['lineLinks'] = []
   const missing: DesignResolution['missing'] = []
-  let orderDesignReady = true
 
   for (const line of designLines) {
     if (line.existingDesignLink) continue
-    const entry = line.sku && line.resolvedSupplierId ? lookup(line.sku, line.resolvedSupplierId) : null
-    if (entry && entry.ready) {
-      if (entry.designLink) lineLinks.push({ index: line.index, designLink: entry.designLink })
+    const entry = allowReuse && line.sku && line.resolvedSupplierId
+      ? lookup(line.sku, line.resolvedSupplierId)
+      : null
+    if (entry && entry.ready && entry.designLink) {
+      lineLinks.push({ index: line.index, designLink: entry.designLink })
       continue
     }
-    orderDesignReady = false
     missing.push({ index: line.index, sku: line.sku, supplierId: line.resolvedSupplierId })
   }
 
-  return { orderDesignReady, lineLinks, missing }
+  return { orderDesignReady: missing.length === 0, lineLinks, missing }
 }
 
 export type DesignImportRow = { sku: string; supplierCode: string; designLink: string }
