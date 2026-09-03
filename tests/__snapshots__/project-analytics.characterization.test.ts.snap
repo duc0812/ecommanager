@@ -1254,6 +1254,7 @@ exports[`analytics route characterization > matches snapshot for LZ 2026-03-01..
       "storeId": "cmp27h9bf0008hkv9saniltuu",
     },
   ],
+  "pendingInvoiceCharge": 0,
   "pendingPayout": 828.779999999955,
   "project": {
     "archivedAt": null,

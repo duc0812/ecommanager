@@ -9,6 +9,21 @@ import { dateKeyInZone, addDays } from '@/lib/cashflow-dates'
 
 const OTHER_BILL_CATEGORIES = ['APP_TOOL', 'SUBSCRIPTION', 'SUPPLIER', 'OFFICE', 'OTHER'] as const
 
+export function sumPendingInvoiceChargeUsd(
+  accounts: { balance: number | null; balanceCurrency: string | null }[],
+  dateKey: string,
+  schedule: { effectiveDate: string; rate: number }[],
+): number {
+  let total = 0
+  for (const a of accounts) {
+    if (a.balance === null || a.balance === undefined) continue
+    const usd = convertMetaAmountToUsdDated(a.balance, a.balanceCurrency, dateKey, schedule)
+    if (usd === null) continue
+    total += usd
+  }
+  return Math.round(total * 100) / 100
+}
+
 export type ProjectCashflowInput = {
   project: any
   timeZone: string
@@ -41,7 +56,7 @@ export async function computeProjectCashflow(input: ProjectCashflowInput): Promi
   const paidMetaStatuses = ['PAID', 'SETTLED', 'COMPLETED']
   const metaAccounts = await prisma.metaAdAccount.findMany({
     where: { projectId: project.id },
-    select: { id: true, accountId: true, accountName: true, currency: true },
+    select: { id: true, accountId: true, accountName: true, currency: true, balance: true, balanceCurrency: true },
   })
   const metaAccountIds = metaAccounts.map((account: any) => account.id)
   const [payouts, billings, orders, dailyAdSpends, otherBills, fulfillmentBills] = await Promise.all([
@@ -199,7 +214,8 @@ export async function computeProjectCashflow(input: ProjectCashflowInput): Promi
       })
     : []
   const inTransitPayout = inTransitPayoutRows.reduce((sum: number, row: any) => sum + row.amount, 0)
-  const projectedCashflow = actualCashflow + shopifyBalance + inTransitPayout
+  const pendingInvoiceCharge = sumPendingInvoiceChargeUsd(metaAccounts, endStr, schedule)
+  const projectedCashflow = actualCashflow + shopifyBalance + inTransitPayout - pendingInvoiceCharge
   const totalOrderNetRevenue = orders.reduce((sum: number, order: any) => sum + order.expectedPayout, 0)
   const pendingPayout = Math.max(0, totalOrderNetRevenue - totalPayout - inTransitPayout - shopifyBalance)
   const expectedCashflow = projectedCashflow + pendingPayout
@@ -291,6 +307,7 @@ export async function computeProjectCashflow(input: ProjectCashflowInput): Promi
     shopifyBalance,
     shopifyBalanceCurrency: project.shopifyStore?.currentBalanceCurrency ?? null,
     inTransitPayout,
+    pendingInvoiceCharge,
     projectedCashflow,
     pendingPayout,
     totalOrderNetRevenue,

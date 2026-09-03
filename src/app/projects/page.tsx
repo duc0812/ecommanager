@@ -108,6 +108,7 @@ type Analytics = {
   shopifyBalance: number
   shopifyBalanceCurrency: string | null
   inTransitPayout: number
+  pendingInvoiceCharge: number
   projectedCashflow: number
   pendingPayout: number
   totalOrderNetRevenue: number
@@ -359,11 +360,12 @@ export default function ProjectDashboard() {
                       negative={analytics.actualCashflow < 0}
                       strong
                     />
+                    <StatCard label="Pending Meta" icon="pending_actions" value={fmtUSD(analytics.pendingInvoiceCharge)} hint="nợ ads chưa charge" />
                     <StatCard
                       label="Projected Cashflow"
                       icon="account_balance"
                       value={fmtUSD(analytics.projectedCashflow)}
-                      hint={`+ ${fmtUSD(analytics.shopifyBalance)} balance + ${fmtUSD(analytics.inTransitPayout)} in-transit`}
+                      hint={`+ ${fmtUSD(analytics.shopifyBalance)} balance + ${fmtUSD(analytics.inTransitPayout)} in-transit − ${fmtUSD(analytics.pendingInvoiceCharge)} pending Meta`}
                       negative={analytics.projectedCashflow < 0}
                       strong
                     />
