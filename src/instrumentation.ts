@@ -11,5 +11,7 @@ export async function register() {
     initOrderNormalizeScheduler()
     const { initParcelPanelScheduler } = await import('./lib/tracking/parcelpanel-scheduler')
     initParcelPanelScheduler()
+    const { initCashflowSnapshotScheduler } = await import('./lib/cashflow-snapshot-scheduler')
+    initCashflowSnapshotScheduler()
   }
 }

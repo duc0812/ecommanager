@@ -1,3 +1,4 @@
+import cron from 'node-cron'
 import { prisma } from '@/lib/db'
 import { computeProjectCashflow } from '@/lib/repos/cashflow'
 import { monthEndBoundaryUtc, listPeriodMonths } from '@/lib/cashflow-snapshot'
@@ -86,4 +87,15 @@ export async function runMonthEndSnapshots(now = new Date()) {
     update: { value: JSON.stringify({ periodMonth, created, errors, ranAt: new Date().toISOString() }) },
   })
   return { created, errors }
+}
+
+let initialized = false
+export function initCashflowSnapshotScheduler() {
+  if (initialized) return
+  initialized = true
+  // 00:00 ngày 1 mỗi tháng — chốt tháng vừa kết thúc
+  cron.schedule('0 0 1 * *', () => {
+    runMonthEndSnapshots().catch(err => console.error('[cashflow-snapshot] unhandled:', err))
+  }, { timezone: 'America/Denver' })
+  console.log('[cashflow-snapshot] Initialized — monthly snapshot at 00:00 (1st) America/Denver')
 }
