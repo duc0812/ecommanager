@@ -482,10 +482,13 @@ model SkuSupplierDesign {
   source       String   @default("MANUAL")   // "MANUAL" | "TRELLO"
   trelloCardId String?
   note         String?
+  parentCode   String?
+  designType   String   @default("NON_CUSTOM")   // "NON_CUSTOM" | "CUSTOM" | "DUAL"
   updatedAt    DateTime @updatedAt
   createdAt    DateTime @default(now())
   @@unique([sku, supplierId])
   @@index([sku])
+  @@index([parentCode, supplierId])
   @@index([supplierId])
   @@index([trelloCardId])
 }
