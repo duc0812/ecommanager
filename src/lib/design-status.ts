@@ -19,8 +19,9 @@ export function lineDesignStatus(input: {
   hasLibraryDesign: boolean
 }): LineDesignStatus {
   if (input.isNonProduct) return 'NONE'
+  if (input.designDriveLink) return 'DONE'
   const isCustomized = !!input.previewCdnUrl
-  if (isCustomized) return input.designDriveLink ? 'DONE' : 'PENDING'
+  if (isCustomized) return 'PENDING'
   if (input.hasLibraryDesign) return 'LIBRARY'
   return 'NONE'
 }

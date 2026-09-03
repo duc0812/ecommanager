@@ -28,3 +28,12 @@ describe('lineDesignStatus', () => {
     expect(lineDesignStatus({ ...base, isNonProduct: true, previewCdnUrl: 'http://p', hasLibraryDesign: true })).toBe('NONE')
   })
 })
+
+describe('lineDesignStatus link presence', () => {
+  it('DONE when the line has a designDriveLink even without preview', () => {
+    expect(lineDesignStatus({ isNonProduct: false, previewCdnUrl: null, designDriveLink: 'L', hasLibraryDesign: false })).toBe('DONE')
+  })
+  it('LIBRARY when non-customized and library has a ready design', () => {
+    expect(lineDesignStatus({ isNonProduct: false, previewCdnUrl: null, designDriveLink: null, hasLibraryDesign: true })).toBe('LIBRARY')
+  })
+})
