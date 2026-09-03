@@ -1,5 +1,42 @@
 import { describe, it, expect } from 'vitest'
-import { buildTrelloCardContent } from '@/lib/order-classify'
+import { buildTrelloCardContent, isLineCustomized, lineFamily, reduceOrderType } from '@/lib/order-classify'
+
+describe('isLineCustomized', () => {
+  it('true when _print_files present', () => {
+    expect(isLineCustomized({ customAttributes: [{ key: '_print_files', value: '[]' }] })).toBe(true)
+  })
+  it('true when previewCdnUrl present', () => {
+    expect(isLineCustomized({ customAttributes: [], previewCdnUrl: 'http://p' })).toBe(true)
+  })
+  it('false otherwise', () => {
+    expect(isLineCustomized({ customAttributes: [{ key: 'Size', value: 'M' }], previewCdnUrl: null })).toBe(false)
+  })
+})
+
+describe('lineFamily', () => {
+  it('customized => CUSTOM regardless of type', () => {
+    expect(lineFamily({ customized: true, designType: 'DUAL' })).toBe('CUSTOM')
+  })
+  it('DUAL type not customized => DUAL', () => {
+    expect(lineFamily({ customized: false, designType: 'DUAL' })).toBe('DUAL')
+  })
+  it('otherwise NON_CUSTOM', () => {
+    expect(lineFamily({ customized: false, designType: 'NON_CUSTOM' })).toBe('NON_CUSTOM')
+  })
+})
+
+describe('reduceOrderType', () => {
+  it('empty => UNKNOWN', () => { expect(reduceOrderType([])).toBe('UNKNOWN') })
+  it('all same => that family', () => {
+    expect(reduceOrderType(['NON_CUSTOM', 'NON_CUSTOM'])).toBe('NON_CUSTOM')
+    expect(reduceOrderType(['DUAL'])).toBe('DUAL')
+    expect(reduceOrderType(['CUSTOM', 'CUSTOM'])).toBe('CUSTOM')
+  })
+  it('mixed families => MIXED', () => {
+    expect(reduceOrderType(['CUSTOM', 'NON_CUSTOM'])).toBe('MIXED')
+    expect(reduceOrderType(['DUAL', 'NON_CUSTOM'])).toBe('MIXED')
+  })
+})
 
 describe('buildTrelloCardContent NON_CUSTOM with supplier hints', () => {
   it('lists supplier + template ref + master artwork per SKU', () => {

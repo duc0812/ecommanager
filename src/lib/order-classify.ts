@@ -18,6 +18,31 @@ export function classifyOrderLines(lines: ClassifyLine[]): OrderType {
   return 'NON_CUSTOM'
 }
 
+export function isLineCustomized(line: {
+  customAttributes: Array<{ key: string; value: string }>
+  previewCdnUrl?: string | null
+}): boolean {
+  if (line.customAttributes.some(a => a.key === '_print_files')) return true
+  return !!(line.previewCdnUrl && line.previewCdnUrl.trim())
+}
+
+export type LineFamily = 'CUSTOM' | 'DUAL' | 'NON_CUSTOM'
+
+export function lineFamily(input: { customized: boolean; designType: string }): LineFamily {
+  if (input.customized) return 'CUSTOM'
+  if (input.designType === 'DUAL') return 'DUAL'
+  return 'NON_CUSTOM'
+}
+
+export function reduceOrderType(
+  families: LineFamily[],
+): 'NON_CUSTOM' | 'CUSTOM' | 'DUAL' | 'MIXED' | 'UNKNOWN' {
+  if (families.length === 0) return 'UNKNOWN'
+  const distinct = Array.from(new Set(families))
+  if (distinct.length === 1) return distinct[0]
+  return 'MIXED'
+}
+
 export function buildTrelloCardContent(
   orderName: string,
   lines: Array<ClassifyLine & { variantTitle: string | null; qty: number; supplierName?: string | null; designTemplateUrl?: string | null }>,
