@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { resolveOrderDesign, parseDesignLibraryCsv, designKey, type DesignLineInput, type LibraryLookup } from './design-library'
+import { resolveOrderDesign, resolveOrderDesignByParent, parseDesignLibraryCsv, designKey, type DesignLineInput, type LibraryLookup } from './design-library'
 
 const lookupFrom = (map: Record<string, { ready: boolean; designLink: string | null }>): LibraryLookup =>
   (sku, sup) => map[designKey(sku, sup)] ?? null
@@ -92,6 +92,33 @@ describe('resolveOrderDesign', () => {
       lookupFrom({}),
       { allowReuse: false },
     )
+    expect(r.orderDesignReady).toBe(true)
+  })
+})
+
+const pLine = (over: Partial<any> = {}) => ({
+  index: 0, sku: 'DN15041511-TS', isNonProduct: false, requiresDesign: true,
+  resolvedSupplierId: 'supA', existingDesignLink: null, customized: false, ...over,
+})
+const parents = [{ parentCode: 'DN15041511', supplierId: 'supA', designLink: 'L', designType: 'NON_CUSTOM' }]
+
+describe('resolveOrderDesignByParent', () => {
+  it('reuses by parent code for a non-customized line', () => {
+    const r = resolveOrderDesignByParent([pLine()], parents)
+    expect(r.orderDesignReady).toBe(true)
+    expect(r.lineLinks).toEqual([{ index: 0, designLink: 'L' }])
+  })
+  it('customized line is missing even if parent has a design', () => {
+    const r = resolveOrderDesignByParent([pLine({ customized: true })], parents)
+    expect(r.orderDesignReady).toBe(false)
+    expect(r.missing).toEqual([{ index: 0, sku: 'DN15041511-TS', supplierId: 'supA' }])
+  })
+  it('no parent match => missing', () => {
+    const r = resolveOrderDesignByParent([pLine({ sku: 'ZZZ-1' })], parents)
+    expect(r.orderDesignReady).toBe(false)
+  })
+  it('own existing link wins', () => {
+    const r = resolveOrderDesignByParent([pLine({ existingDesignLink: 'own', customized: true })], parents)
     expect(r.orderDesignReady).toBe(true)
   })
 })

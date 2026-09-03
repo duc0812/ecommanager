@@ -1,3 +1,5 @@
+import { matchParentEntry, type ParentEntry } from '@/lib/design-parent'
+
 export function designKey(sku: string, supplierId: string): string {
   return `${sku}::${supplierId}`
 }
@@ -42,6 +44,31 @@ export function resolveOrderDesign(
     missing.push({ index: line.index, sku: line.sku, supplierId: line.resolvedSupplierId })
   }
 
+  return { orderDesignReady: missing.length === 0, lineLinks, missing }
+}
+
+export type DesignLineInputV2 = DesignLineInput & { customized: boolean }
+
+export function resolveOrderDesignByParent(
+  lines: DesignLineInputV2[],
+  parentEntries: ParentEntry[],
+): DesignResolution {
+  const designLines = lines.filter(l => !l.isNonProduct && l.requiresDesign)
+  const lineLinks: DesignResolution['lineLinks'] = []
+  const missing: DesignResolution['missing'] = []
+  for (const line of designLines) {
+    if (line.existingDesignLink) continue
+    if (line.customized) {
+      missing.push({ index: line.index, sku: line.sku, supplierId: line.resolvedSupplierId })
+      continue
+    }
+    const entry = matchParentEntry(line.sku, line.resolvedSupplierId, parentEntries)
+    if (entry && entry.designLink) {
+      lineLinks.push({ index: line.index, designLink: entry.designLink })
+      continue
+    }
+    missing.push({ index: line.index, sku: line.sku, supplierId: line.resolvedSupplierId })
+  }
   return { orderDesignReady: missing.length === 0, lineLinks, missing }
 }
 
