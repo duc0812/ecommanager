@@ -17,7 +17,7 @@ export default function DesignLibraryPage() {
   const [filterSupplier, setFilterSupplier] = useState('')
   const [filterSku, setFilterSku] = useState('')
   const [filterReady, setFilterReady] = useState('')
-  const [form, setForm] = useState({ sku: '', supplierId: '', designLink: '', matchMode: 'VARIANT' })
+  const [form, setForm] = useState({ sku: '', supplierId: '', designLink: '', matchMode: 'VARIANT', designType: 'NON_CUSTOM' })
   const [csv, setCsv] = useState('')
   const [msg, setMsg] = useState('')
   const [rowEdits, setRowEdits] = useState<Record<string, RowEdit>>({})
@@ -44,7 +44,12 @@ export default function DesignLibraryPage() {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...form, ready: true }),
     })
-    if (res.ok) { setForm({ sku: '', supplierId: '', designLink: '', matchMode: 'VARIANT' }); setMsg('Đã lưu'); load() }
+    if (res.ok) {
+      const d = await res.json().catch(() => ({}))
+      setForm({ sku: '', supplierId: '', designLink: '', matchMode: 'VARIANT', designType: 'NON_CUSTOM' })
+      setMsg(`Đã lưu${typeof d.resynced === 'number' ? ` — re-sync ${d.resynced} đơn` : ''}`)
+      load()
+    }
     else setMsg((await res.json()).error ?? 'Lỗi')
   }
 
@@ -74,10 +79,12 @@ export default function DesignLibraryPage() {
   async function saveRowEdit(e: Entry) {
     const edit = getRowEdit(e)
     setSavingRow(e.id)
-    await fetch('/api/fulfillment/design-library', {
+    const res = await fetch('/api/fulfillment/design-library', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sku: e.sku, supplierId: e.supplierId, designLink: e.designLink, ready: e.ready, matchMode: edit.matchMode, designType: edit.designType }),
     })
+    const d = await res.json().catch(() => ({}))
+    if (typeof d.resynced === 'number') setMsg(`Đã lưu ${e.sku} — re-sync ${d.resynced} đơn`)
     setSavingRow(null)
     setRowEdits(prev => { const n = { ...prev }; delete n[e.id]; return n })
     load()
@@ -123,6 +130,12 @@ export default function DesignLibraryPage() {
               value={form.supplierId} onChange={e => setForm({ ...form, supplierId: e.target.value })}>
               <option value="">— Supplier —</option>
               {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+            <select className="border border-outline-variant/40 rounded-lg px-md py-sm" title="Design type"
+              value={form.designType} onChange={e => setForm({ ...form, designType: e.target.value })}>
+              <option value="NON_CUSTOM">NON_CUSTOM</option>
+              <option value="CUSTOM">CUSTOM</option>
+              <option value="DUAL">DUAL</option>
             </select>
             <input className="border border-outline-variant/40 rounded-lg px-md py-sm flex-1 min-w-[280px]" placeholder="Design link (Drive/CDN)"
               value={form.designLink} onChange={e => setForm({ ...form, designLink: e.target.value })} />

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { listDesignEntries, upsertDesignEntry } from '@/lib/repos/design-library'
+import { reevaluateOrdersForDesignEntry } from '@/lib/repos/design-reeval'
 
 export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams
@@ -28,5 +29,9 @@ export async function POST(req: NextRequest) {
     matchMode: body.matchMode !== undefined ? String(body.matchMode).toUpperCase() : undefined,
     designType: body.designType !== undefined ? String(body.designType) : undefined,
   })
-  return NextResponse.json({ entry })
+  // Re-sync existing orders that use this design against the just-saved library entry.
+  const resynced = await reevaluateOrdersForDesignEntry({
+    sku: entry.sku, supplierId: entry.supplierId, matchMode: entry.matchMode,
+  })
+  return NextResponse.json({ entry, resynced })
 }
