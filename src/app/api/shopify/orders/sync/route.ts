@@ -258,15 +258,24 @@ export async function POST(req: NextRequest) {
 
       // Read existing order to preserve manual status
       const existing = await prisma.order.findUnique({ where: { id: o.id }, select: { pipelineStatus: true, designReady: true, trelloCardId: true } })
+      const existingLineLinks = new Map(
+        (await prisma.orderLine.findMany({
+          where: { orderId: o.id },
+          select: { shopifyLineId: true, designDriveLink: true },
+        })).map(l => [l.shopifyLineId, l.designDriveLink]),
+      )
       const currentStatus = existing && isValidPipelineStatus(existing.pipelineStatus)
         ? existing.pipelineStatus as PipelineStatus
         : null
 
-      // Check if any line maps to a product requiring custom design
-      const hasCustomDesignLine = resolvedLines.some(r => {
-        const resolved = r.pbResolve.supplierProductId ? supplierProductById.get(r.pbResolve.supplierProductId) : null
-        return !!resolved?.requiresDesign
-      })
+      // Classify order type (needed before design resolution to gate library reuse)
+      const classifyLines = o.lines.map(l => ({
+        sku: l.sku,
+        productTitle: l.title,
+        customAttributes: l.customAttributes,
+        productTags: l.productTags,
+      }))
+      const orderType = classifyOrderLines(classifyLines)
 
       const designInputs: DesignLineInput[] = resolvedLines.map((r, idx) => {
         const sp = r.pbResolve.supplierProductId ? supplierProductById.get(r.pbResolve.supplierProductId) : null
@@ -274,15 +283,16 @@ export async function POST(req: NextRequest) {
           index: idx,
           sku: r.line.sku,
           isNonProduct: isNonProductLine({ sku: r.line.sku, productTitle: r.line.title, shopifyProductType: r.line.productType }),
-          requiresDesign: !!sp?.requiresDesign,
+          requiresDesign: !!sp?.supplierId,
           resolvedSupplierId: sp?.supplierId ?? null,
-          existingDesignLink: null,
+          existingDesignLink: existingLineLinks.get(r.line.id) ?? null,
         }
       })
+      const hasDesignLine = designInputs.some(d => !d.isNonProduct && d.requiresDesign)
       const designResolution = resolveOrderDesign(designInputs, (sku, supId) => {
         const key = designKey(sku, supId)
         return designLookup.has(key) ? { ready: true, designLink: designLookup.get(key) ?? null } : null
-      })
+      }, { allowReuse: orderType !== 'CUSTOM' })
       const libraryDesignLinkByIndex = new Map(designResolution.lineLinks.map(l => [l.index, l.designLink]))
       const effectiveDesignReady = designResolution.orderDesignReady || (existing?.designReady === true && existing?.trelloCardId != null)
 
@@ -290,7 +300,8 @@ export async function POST(req: NextRequest) {
         financialStatus: o.financialStatus,
         hasUnmappedSku: pl.hasUnmappedSku,
         hasPendingMapping,
-        hasCustomDesignLine,
+        hasCustomDesignLine: hasDesignLine,
+        hasDesignLine,
         hasDesignReady: effectiveDesignReady,
         currentStatus,
       })
@@ -356,15 +367,6 @@ export async function POST(req: NextRequest) {
           }
         }),
       })
-
-      // Classify order type
-      const classifyLines = o.lines.map(l => ({
-        sku: l.sku,
-        productTitle: l.title,
-        customAttributes: l.customAttributes,
-        productTags: l.productTags,
-      }))
-      const orderType = classifyOrderLines(classifyLines)
 
       // Update orderType in DB if not yet classified
       const existingOrder = await prisma.order.findUnique({
