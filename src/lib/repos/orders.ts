@@ -141,6 +141,7 @@ export type UpsertOrderInput = {
     shopifyVariantId?: string | null
     shopifyProductType?: string | null
     variantOptions?: string | null
+    customized?: boolean
   }>
 }
 
@@ -262,6 +263,7 @@ export async function upsertOrderWithLines(input: UpsertOrderInput) {
           shopifyVariantId: l.shopifyVariantId ?? null,
           shopifyProductType: l.shopifyProductType ?? null,
           variantOptions: l.variantOptions ?? null,
+          customized: l.customized ?? false,
         }
       }),
     }),

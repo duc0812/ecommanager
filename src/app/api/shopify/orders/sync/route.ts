@@ -283,7 +283,7 @@ export async function POST(req: NextRequest) {
           requiresDesign: !!sp?.supplierId,
           resolvedSupplierId: sp?.supplierId ?? null,
           existingDesignLink: existingLineLinks.get(r.line.id) ?? null,
-          customized: isLineCustomized({ customAttributes: r.line.customAttributes, previewCdnUrl: extractPreviewCdnUrl(r.line.customAttributes) }),
+          customized: isLineCustomized({ customAttributes: r.line.customAttributes, previewCdnUrl: extractPreviewCdnUrl(r.line.customAttributes), productTags: r.line.productTags }),
         }
       })
       const hasDesignLine = designInputs.some(d => !d.isNonProduct && d.requiresDesign)
@@ -366,6 +366,7 @@ export async function POST(req: NextRequest) {
                 : null)
               : null,
             designDriveLink: libraryDesignLinkByIndex.get(idx) ?? null,
+            customized: designInputs[idx]?.customized ?? false,
           }
         }),
       })

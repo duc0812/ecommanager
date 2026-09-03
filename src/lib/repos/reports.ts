@@ -95,6 +95,7 @@ export async function ordersWithComputedPL(filter: OrderFilter): Promise<Enriche
           previewCdnUrl: l.previewCdnUrl,
           designDriveLink: l.designDriveLink,
           hasLibraryDesign: !!matchDesignEntry(l.sku, l.resolvedSupplierId, designEntries),
+          customized: l.customized,
         }),
       })),
       computed: {

@@ -18,12 +18,24 @@ export function classifyOrderLines(lines: ClassifyLine[]): OrderType {
   return 'NON_CUSTOM'
 }
 
+// Line-item property keys that are variant selectors, not customer customization — excluded
+// so a "Size"/"Color" property does not falsely mark a line as customized.
+const VARIANT_PROP_KEYS = new Set(['size', 'color', 'colour', 'style', 'variant', 'option', 'title', 'quantity'])
+
 export function isLineCustomized(line: {
   customAttributes: Array<{ key: string; value: string }>
   previewCdnUrl?: string | null
+  productTags?: string[]
 }): boolean {
-  if (line.customAttributes.some(a => a.key === '_print_files')) return true
-  return !!(line.previewCdnUrl && line.previewCdnUrl.trim())
+  if (line.previewCdnUrl && line.previewCdnUrl.trim()) return true
+  if ((line.productTags ?? []).includes('Custom Name')) return true
+  // A customer-entered custom field marks the line customized: the hidden `_print_files`
+  // (Customcy/Customily-style apps), or ANY visible line-item property added by an external
+  // personalization app (e.g. "YOUR NAME": "Janice") — excluding variant-selector keys.
+  return line.customAttributes.some(a =>
+    a.key === '_print_files' ||
+    (!a.key.startsWith('_') && !VARIANT_PROP_KEYS.has(a.key.toLowerCase().trim())),
+  )
 }
 
 export type LineFamily = 'CUSTOM' | 'DUAL' | 'NON_CUSTOM'

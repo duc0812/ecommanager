@@ -401,6 +401,7 @@ model OrderLine {
   shopifyProductType      String?
   previewCdnUrl           String?
   designDriveLink         String?
+  customized              Boolean   @default(false)
   @@index([sku])
   @@index([shopifyVariantId])
 }

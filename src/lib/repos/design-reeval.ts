@@ -11,8 +11,9 @@ import { autoDetectStatus, isValidPipelineStatus, type PipelineStatus } from '@/
 // immediately: fills newly-resolved line design links, re-derives orderType / designReady /
 // pipelineStatus. Supplier-scoped and mode-aware (VARIANT exact, PARENT prefix), so only
 // orders whose line resolves to the SAME supplier and matches the entry are touched.
-// `customized` is detected from `previewCdnUrl` only (the `_print_files` line property is not
-// persisted); the full Shopify sync remains the source of truth for that signal.
+// `customized` is read from the persisted `OrderLine.customized` flag (set at Shopify sync
+// time from print-files / preview / 'Custom Name' tag / external custom fields), so re-eval
+// never regresses a customized order back to non-custom.
 export async function reevaluateOrdersForDesignEntry(entry: {
   sku: string; supplierId: string; matchMode: string
 }): Promise<number> {
@@ -32,7 +33,7 @@ export async function reevaluateOrdersForDesignEntry(entry: {
         orderBy: { linePosition: 'asc' },
         select: {
           id: true, sku: true, resolvedSupplierId: true, productTitle: true,
-          shopifyProductType: true, previewCdnUrl: true, designDriveLink: true,
+          shopifyProductType: true, previewCdnUrl: true, designDriveLink: true, customized: true,
         },
       },
     },
@@ -50,7 +51,7 @@ export async function reevaluateOrdersForDesignEntry(entry: {
       requiresDesign: !!l.resolvedSupplierId,
       resolvedSupplierId: l.resolvedSupplierId,
       existingDesignLink: l.designDriveLink,
-      customized: !!(l.previewCdnUrl && l.previewCdnUrl.trim()),
+      customized: l.customized,
     }))
 
     const res = resolveOrderDesignByParent(designInputs, designEntries)

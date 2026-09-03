@@ -17,10 +17,11 @@ export function lineDesignStatus(input: {
   previewCdnUrl?: string | null
   designDriveLink?: string | null
   hasLibraryDesign: boolean
+  customized?: boolean
 }): LineDesignStatus {
   if (input.isNonProduct) return 'NONE'
   if (input.designDriveLink) return 'DONE'
-  const isCustomized = !!input.previewCdnUrl
+  const isCustomized = input.customized ?? !!input.previewCdnUrl
   if (isCustomized) return 'PENDING'
   if (input.hasLibraryDesign) return 'LIBRARY'
   return 'NONE'

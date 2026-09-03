@@ -8,8 +8,17 @@ describe('isLineCustomized', () => {
   it('true when previewCdnUrl present', () => {
     expect(isLineCustomized({ customAttributes: [], previewCdnUrl: 'http://p' })).toBe(true)
   })
-  it('false otherwise', () => {
+  it('true when product tagged Custom Name', () => {
+    expect(isLineCustomized({ customAttributes: [], productTags: ['phone case', 'Custom Name'] })).toBe(true)
+  })
+  it('true when an external custom field is present (e.g. YOUR NAME)', () => {
+    expect(isLineCustomized({ customAttributes: [{ key: 'YOUR NAME', value: 'Janice' }] })).toBe(true)
+  })
+  it('false for a variant-selector property (Size) with no other signal', () => {
     expect(isLineCustomized({ customAttributes: [{ key: 'Size', value: 'M' }], previewCdnUrl: null })).toBe(false)
+  })
+  it('false when only hidden non-custom props and no tag/preview', () => {
+    expect(isLineCustomized({ customAttributes: [{ key: '_ll_id', value: 'x' }], previewCdnUrl: null, productTags: ['phone case'] })).toBe(false)
   })
 })
 
