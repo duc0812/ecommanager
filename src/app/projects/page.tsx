@@ -159,6 +159,8 @@ export default function ProjectDashboard() {
   const [syncing, setSyncing] = useState(false)
   const [syncError, setSyncError] = useState<string | null>(null)
   const [refreshVersion, setRefreshVersion] = useState(0)
+  const [snapshotRows, setSnapshotRows] = useState<any[]>([])
+  const [basis, setBasis] = useState<'actual' | 'projected'>('actual')
 
   useEffect(() => {
     fetch('/api/auto-sync').then(r => r.json()).then(setSyncStatus).catch(() => {})
@@ -215,6 +217,11 @@ export default function ProjectDashboard() {
         setAnalyticsLoading(false)
       })
   }, [selectedProject, selectedStaff, selectedMonth, dateFrom, dateTo, refreshVersion])
+
+  useEffect(() => {
+    if (!selectedProject) return
+    fetch(`/api/projects/${selectedProject}/snapshots`).then(r => r.json()).then(d => setSnapshotRows(d.rows ?? [])).catch(() => setSnapshotRows([]))
+  }, [selectedProject, refreshVersion])
 
   const currentProject = projects.find(p => p.id === selectedProject)
 
@@ -377,6 +384,36 @@ export default function ProjectDashboard() {
                       negative={analytics.expectedCashflow < 0}
                       strong
                     />
+                  </div>
+                </section>
+
+                <section>
+                  <div className="flex items-center gap-sm mb-lg">
+                    <span className="material-symbols-outlined text-secondary">calendar_month</span>
+                    <h3 className="text-headline-sm text-primary">Profit theo tháng</h3>
+                    <div className="ml-auto flex gap-xs">
+                      <button onClick={() => setBasis('actual')} className={`px-md py-xs rounded-lg text-label-sm ${basis === 'actual' ? 'bg-secondary text-on-secondary' : 'bg-surface-container'}`}>Actual</button>
+                      <button onClick={() => setBasis('projected')} className={`px-md py-xs rounded-lg text-label-sm ${basis === 'projected' ? 'bg-secondary text-on-secondary' : 'bg-surface-container'}`}>Projected</button>
+                    </div>
+                  </div>
+                  <div className="bg-surface-container-lowest rounded-xl border border-outline-variant/20 overflow-hidden">
+                    <div className="divide-y divide-outline-variant/10">
+                      {snapshotRows.length === 0 && (
+                        <div className="px-lg py-md text-body-sm text-on-surface-variant">Chưa có snapshot. Bấm Backfill để tạo.</div>
+                      )}
+                      {snapshotRows.map((r: any) => (
+                        <div key={r.periodMonth} className="flex items-center justify-between px-lg py-md">
+                          <span className="text-body-sm text-on-surface-variant">{r.periodMonth}</span>
+                          <span className="text-label-md text-primary">{fmtUSD(basis === 'actual' ? r.actualCashflow : r.projectedCashflow)}</span>
+                          <span className={`text-label-md font-semibold ${(basis === 'actual' ? r.actualProfit : r.projectedProfit) < 0 ? 'text-error' : 'text-primary'}`}>
+                            {fmtUSD(basis === 'actual' ? r.actualProfit : r.projectedProfit)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="flex gap-sm mt-md">
+                    <button onClick={async () => { await fetch(`/api/projects/snapshot/backfill`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ projectId: selectedProject }) }); setRefreshVersion(v => v + 1) }} className="bg-secondary text-on-secondary px-lg py-sm rounded-lg text-label-md">Backfill</button>
                   </div>
                 </section>
 
