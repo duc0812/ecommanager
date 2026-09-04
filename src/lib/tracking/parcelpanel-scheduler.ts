@@ -2,15 +2,16 @@ import cron from 'node-cron'
 import { prisma } from '@/lib/db'
 import { getShopifyConnection } from '@/lib/token-store'
 import { syncParcelPanelTracking } from './parcelpanel-sync'
+import { getParcelPanelApiKey } from './parcelpanel-config'
 
 const TZ = 'Asia/Ho_Chi_Minh'
 let initialized = false
 
 // Daily: refresh real carrier status from ParcelPanel for undelivered shipments.
 export async function runDailyParcelPanelSync() {
-  const apiKey = process.env.PARCELPANEL_API_KEY
+  const apiKey = await getParcelPanelApiKey()
   if (!apiKey) {
-    console.log('[parcelpanel] PARCELPANEL_API_KEY not set; skipping')
+    console.log('[parcelpanel] API key not configured (DB or env); skipping')
     return
   }
   const conn = await getShopifyConnection()

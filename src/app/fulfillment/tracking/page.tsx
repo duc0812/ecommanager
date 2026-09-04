@@ -73,12 +73,29 @@ export default function TrackingPage() {
   const [stats, setStats] = useState<Stats | null>(null)
   const [loading, setLoading] = useState(false)
   const [syncing, setSyncing] = useState(false)
+  const [ppSyncing, setPpSyncing] = useState(false)
   const [message, setMessage] = useState('')
+
+  // ParcelPanel API key config (stored server-side; only a masked preview comes back)
+  const [showConfig, setShowConfig] = useState(false)
+  const [ppConfigured, setPpConfigured] = useState(false)
+  const [ppMasked, setPpMasked] = useState<string | null>(null)
+  const [ppKeyInput, setPpKeyInput] = useState('')
+  const [savingKey, setSavingKey] = useState(false)
+
+  const loadPpConfig = useCallback(async () => {
+    try {
+      const d = await fetchJson<{ configured: boolean; maskedKey: string | null }>('/api/fulfillment/tracking/parcelpanel-config')
+      setPpConfigured(d.configured)
+      setPpMasked(d.maskedKey)
+    } catch { /* ignore */ }
+  }, [])
 
   useEffect(() => {
     fetch('/api/projects').then(r => r.json()).then(d => setProjects(Array.isArray(d) ? d : (d.projects ?? []))).catch(() => {})
     fetch('/api/suppliers').then(r => r.json()).then(d => setSuppliers(d.suppliers ?? [])).catch(() => {})
-  }, [])
+    loadPpConfig()
+  }, [loadPpConfig])
 
   useEffect(() => {
     const t = setTimeout(() => setSearchDebounced(search.trim()), 300)
@@ -127,6 +144,45 @@ export default function TrackingPage() {
       setMessage(`Lỗi: ${e.message}`)
     } finally {
       setSyncing(false)
+    }
+  }
+
+  const saveKey = async () => {
+    setSavingKey(true)
+    try {
+      const res = await fetch('/api/fulfillment/tracking/parcelpanel-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ apiKey: ppKeyInput.trim() }),
+      })
+      const body = await res.json()
+      if (!res.ok) { setMessage(`Lỗi lưu key: ${body.error ?? res.statusText}`); return }
+      setPpConfigured(body.configured)
+      setPpMasked(body.maskedKey)
+      setPpKeyInput('')
+      setMessage(body.configured ? 'Đã lưu ParcelPanel API key.' : 'Đã xóa ParcelPanel API key.')
+    } catch (e: any) {
+      setMessage(`Lỗi lưu key: ${e.message}`)
+    } finally {
+      setSavingKey(false)
+    }
+  }
+
+  const resyncParcelPanel = async () => {
+    if (!ppConfigured) { setShowConfig(true); setMessage('Nhập ParcelPanel API key trước khi resync.'); return }
+    setPpSyncing(true)
+    setMessage('Đang resync trạng thái thật từ ParcelPanel…')
+    try {
+      const res = await fetch('/api/fulfillment/tracking/parcelpanel-sync', { method: 'POST' })
+      const body = await res.json()
+      if (!res.ok) { setMessage(`Lỗi ParcelPanel: ${body.error ?? res.statusText}`); return }
+      const errNote = body.errors?.length ? ` — ${body.errors.length} lỗi` : ''
+      setMessage(`ParcelPanel: cập nhật ${body.shipmentsUpdated} shipment (${body.delivered} delivered) / ${body.ordersChecked} đơn${errNote}.`)
+      await load()
+    } catch (e: any) {
+      setMessage(`Lỗi ParcelPanel: ${e.message}`)
+    } finally {
+      setPpSyncing(false)
     }
   }
 
@@ -179,15 +235,66 @@ export default function TrackingPage() {
             <p className="text-label-sm text-on-surface-variant uppercase tracking-wider mb-xs">Fulfillment</p>
             <h1 className="text-display-md text-primary">Tracking</h1>
           </div>
-          <button
-            onClick={sync}
-            disabled={syncing}
-            className="bg-secondary text-on-secondary px-lg py-sm rounded-lg text-label-md disabled:opacity-50 flex items-center gap-xs"
-          >
-            <span className={`material-symbols-outlined text-[18px] ${syncing ? 'animate-spin' : ''}`}>{syncing ? 'sync' : 'download'}</span>
-            {syncing ? 'Syncing…' : 'Sync từ Shopify'}
-          </button>
+          <div className="flex items-center gap-xs">
+            <button
+              onClick={sync}
+              disabled={syncing}
+              className="bg-surface-container-lowest text-on-surface border border-outline-variant/40 px-lg py-sm rounded-lg text-label-md disabled:opacity-50 flex items-center gap-xs hover:bg-surface-container"
+            >
+              <span className={`material-symbols-outlined text-[18px] ${syncing ? 'animate-spin' : ''}`}>{syncing ? 'sync' : 'download'}</span>
+              {syncing ? 'Syncing…' : 'Sync từ Shopify'}
+            </button>
+            <button
+              onClick={resyncParcelPanel}
+              disabled={ppSyncing}
+              title={ppConfigured ? `ParcelPanel: ${ppMasked}` : 'Chưa cấu hình ParcelPanel API key'}
+              className="bg-secondary text-on-secondary px-lg py-sm rounded-lg text-label-md disabled:opacity-50 flex items-center gap-xs"
+            >
+              <span className={`material-symbols-outlined text-[18px] ${ppSyncing ? 'animate-spin' : ''}`}>{ppSyncing ? 'sync' : 'local_shipping'}</span>
+              {ppSyncing ? 'Resyncing…' : 'Resync ParcelPanel'}
+            </button>
+            <button
+              onClick={() => setShowConfig(v => !v)}
+              title="Cấu hình ParcelPanel API key"
+              className="text-on-surface-variant border border-outline-variant/40 rounded-lg p-sm hover:bg-surface-container"
+            >
+              <span className="material-symbols-outlined text-[20px]">settings</span>
+            </button>
+          </div>
         </div>
+
+        {/* ParcelPanel API key config */}
+        {showConfig && (
+          <div className="bg-surface-container-lowest rounded-xl border border-outline-variant/20 p-md mb-md">
+            <div className="flex items-center gap-xs mb-xs">
+              <span className="material-symbols-outlined text-[18px] text-on-surface-variant">key</span>
+              <p className="text-label-md text-on-surface">ParcelPanel API key</p>
+              <span className={`ml-auto text-label-sm ${ppConfigured ? 'text-emerald-700' : 'text-on-surface-variant'}`}>
+                {ppConfigured ? `Đã lưu · ${ppMasked}` : 'Chưa cấu hình'}
+              </span>
+            </div>
+            <div className="flex flex-col sm:flex-row gap-xs">
+              <input
+                type="password"
+                value={ppKeyInput}
+                onChange={e => setPpKeyInput(e.target.value)}
+                placeholder={ppConfigured ? 'Nhập key mới để thay, hoặc để trống rồi Lưu để xóa' : 'Dán ParcelPanel API key…'}
+                className="flex-1 border border-outline-variant/40 rounded-lg px-sm py-xs text-body-sm font-mono"
+              />
+              <button
+                onClick={saveKey}
+                disabled={savingKey}
+                className="bg-secondary text-on-secondary px-lg py-xs rounded-lg text-label-md disabled:opacity-50"
+              >
+                {savingKey ? 'Đang lưu…' : 'Lưu'}
+              </button>
+            </div>
+            <p className="text-label-sm text-on-surface-variant mt-xs">
+              Key lưu trên server (DB), dùng cho nút Resync và cron 04:00 hằng ngày. Lấy key trong ParcelPanel → Settings → API.
+            </p>
+          </div>
+        )}
+
         {message && <p className="mb-md text-body-sm text-on-surface-variant">{message}</p>}
 
         {/* Analytics cards */}

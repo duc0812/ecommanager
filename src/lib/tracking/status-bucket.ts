@@ -35,6 +35,7 @@ const MAP: Record<string, StatusBucket> = {
   INFO_RECEIVED: 'INFO_RECEIVED',
   IN_TRANSIT: 'IN_TRANSIT',
   OUT_FOR_DELIVERY: 'OUT_FOR_DELIVERY',
+  READY_FOR_PICKUP: 'OUT_FOR_DELIVERY',   // ParcelPanel: arrived, awaiting customer pickup
   DELIVERED: 'DELIVERED',
   ATTEMPTED_DELIVERY: 'EXCEPTION',
   EXCEPTION: 'EXCEPTION',

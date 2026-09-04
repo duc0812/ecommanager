@@ -9,6 +9,7 @@ describe('statusBucket', () => {
     expect(statusBucket('INFO_RECEIVED')).toBe('INFO_RECEIVED')
     expect(statusBucket('IN_TRANSIT')).toBe('IN_TRANSIT')
     expect(statusBucket('OUT_FOR_DELIVERY')).toBe('OUT_FOR_DELIVERY')
+    expect(statusBucket('READY_FOR_PICKUP')).toBe('OUT_FOR_DELIVERY')
     expect(statusBucket('DELIVERED')).toBe('DELIVERED')
   })
 
