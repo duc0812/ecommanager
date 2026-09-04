@@ -4,6 +4,6 @@ import { recalculateMissingOrderLineCosts } from '@/lib/repos/order-costs'
 
 export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
   await deleteManualMapping(params.id)
-  const refresh = await recalculateMissingOrderLineCosts({ refreshExisting: true })
+  const refresh = await recalculateMissingOrderLineCosts()
   return NextResponse.json({ ok: true, refresh })
 }

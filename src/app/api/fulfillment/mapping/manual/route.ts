@@ -28,6 +28,6 @@ export async function POST(req: NextRequest) {
     productBaseId: body.productBaseId ?? null,
     notes: body.notes ?? null,
   })
-  const refresh = await recalculateMissingOrderLineCosts({ refreshExisting: true })
+  const refresh = await recalculateMissingOrderLineCosts()
   return NextResponse.json({ mapping, refresh }, { status: 201 })
 }
