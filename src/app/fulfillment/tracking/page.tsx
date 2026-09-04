@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import Sidebar from '@/components/Sidebar'
 import { statusBucket, BUCKET_ORDER, BUCKET_LABELS, type StatusBucket } from '@/lib/tracking/status-bucket'
 import { detectLastMileCarrier } from '@/lib/tracking/lastmile-carrier'
+import { splitNdjson } from '@/lib/tracking/ndjson-stream'
 
 type ShipmentRow = {
   id: string
@@ -74,6 +75,7 @@ export default function TrackingPage() {
   const [loading, setLoading] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [ppSyncing, setPpSyncing] = useState(false)
+  const [ppProgress, setPpProgress] = useState<{ done: number; total: number } | null>(null)
   const [message, setMessage] = useState('')
 
   // ParcelPanel API key config (stored server-side; only a masked preview comes back)
@@ -171,18 +173,45 @@ export default function TrackingPage() {
   const resyncParcelPanel = async () => {
     if (!ppConfigured) { setShowConfig(true); setMessage('Nhập ParcelPanel API key trước khi resync.'); return }
     setPpSyncing(true)
+    setPpProgress(null)
     setMessage('Đang resync trạng thái thật từ ParcelPanel…')
     try {
       const res = await fetch('/api/fulfillment/tracking/parcelpanel-sync', { method: 'POST' })
-      const body = await res.json()
-      if (!res.ok) { setMessage(`Lỗi ParcelPanel: ${body.error ?? res.statusText}`); return }
-      const errNote = body.errors?.length ? ` — ${body.errors.length} lỗi` : ''
-      setMessage(`ParcelPanel: cập nhật ${body.shipmentsUpdated} shipment (${body.delivered} delivered) / ${body.ordersChecked} đơn${errNote}.`)
-      await load()
+      if (!res.ok || !res.body) {
+        const body = await res.json().catch(() => ({}))
+        setMessage(`Lỗi ParcelPanel: ${body.error ?? res.statusText}`)
+        return
+      }
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      let doneMsg: any = null
+      let errored: string | null = null
+      for (;;) {
+        const { value, done: streamDone } = await reader.read()
+        if (streamDone) break
+        buffer += decoder.decode(value, { stream: true })
+        const split = splitNdjson(buffer)
+        buffer = split.rest
+        for (const line of split.lines) {
+          let msg: any
+          try { msg = JSON.parse(line) } catch { continue }
+          if (msg.type === 'progress') setPpProgress({ done: msg.done, total: msg.total })
+          else if (msg.type === 'done') doneMsg = msg
+          else if (msg.type === 'error') errored = msg.error
+        }
+      }
+      if (errored) { setMessage(`Lỗi ParcelPanel: ${errored}`); return }
+      if (doneMsg) {
+        const errNote = doneMsg.errors?.length ? ` — ${doneMsg.errors.length} lỗi` : ''
+        setMessage(`ParcelPanel: cập nhật ${doneMsg.shipmentsUpdated} shipment (${doneMsg.delivered} delivered) / ${doneMsg.ordersChecked} đơn${errNote}.`)
+        await load()
+      }
     } catch (e: any) {
       setMessage(`Lỗi ParcelPanel: ${e.message}`)
     } finally {
       setPpSyncing(false)
+      setPpProgress(null)
     }
   }
 
@@ -251,7 +280,7 @@ export default function TrackingPage() {
               className="bg-secondary text-on-secondary px-lg py-sm rounded-lg text-label-md disabled:opacity-50 flex items-center gap-xs"
             >
               <span className={`material-symbols-outlined text-[18px] ${ppSyncing ? 'animate-spin' : ''}`}>{ppSyncing ? 'sync' : 'local_shipping'}</span>
-              {ppSyncing ? 'Resyncing…' : 'Resync ParcelPanel'}
+              {ppSyncing ? (ppProgress ? `Resyncing ${ppProgress.done}/${ppProgress.total}…` : 'Resyncing…') : 'Resync ParcelPanel'}
             </button>
             <button
               onClick={() => setShowConfig(v => !v)}
@@ -296,6 +325,20 @@ export default function TrackingPage() {
         )}
 
         {message && <p className="mb-md text-body-sm text-on-surface-variant">{message}</p>}
+
+        {ppSyncing && ppProgress && ppProgress.total > 0 && (
+          <div className="mb-md">
+            <div className="h-[6px] w-full rounded-full bg-surface-container overflow-hidden">
+              <div
+                className="h-full bg-secondary transition-all duration-300"
+                style={{ width: `${Math.round((ppProgress.done / ppProgress.total) * 100)}%` }}
+              />
+            </div>
+            <p className="text-label-sm text-on-surface-variant mt-xs">
+              ParcelPanel: {ppProgress.done}/{ppProgress.total} đơn ({Math.round((ppProgress.done / ppProgress.total) * 100)}%)
+            </p>
+          </div>
+        )}
 
         {/* Analytics cards */}
         <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-md mb-lg">
