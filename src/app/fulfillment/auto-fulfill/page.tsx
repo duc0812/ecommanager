@@ -60,7 +60,7 @@ export default function AutoFulfillPage() {
       if (err) { setMessage(`Lỗi: ${err}`); return }
       if (doneMsg) {
         setRows(doneMsg.rows ?? [])
-        setMessage(`${apply ? 'Apply' : 'Preview'} xong: ${doneMsg.fulfilled} fulfill, ${doneMsg.tooRecent} chưa đủ tuổi, ${doneMsg.alreadyFulfilled} đã fulfill, ${doneMsg.needsManual} cần tay, ${doneMsg.errored} lỗi / ${doneMsg.ordersChecked} đơn.`)
+        setMessage(`${apply ? 'Apply' : 'Preview'} xong: ${doneMsg.fulfilled} fulfill, ${doneMsg.tooRecent} chưa đủ tuổi, ${doneMsg.alreadyFulfilled} đã fulfill, ${doneMsg.needsManual} cần tay, ${doneMsg.notFound} không thấy đơn, ${doneMsg.errored} lỗi / ${doneMsg.ordersChecked} đơn.`)
       }
     } catch (e: any) { setMessage(`Lỗi: ${e.message}`) }
     finally { setRunning(false); setProgress(null) }

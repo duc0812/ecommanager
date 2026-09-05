@@ -71,6 +71,10 @@ export async function runAutoFulfill(opts: {
     let fulfilledLines = 0
     let message = plan.message
 
+    if (!opts.apply && plan.status === 'will_fulfill') {
+      fulfilledLines = plan.fulfillments.reduce((sum, f) => sum + f.lineItems.length, 0)
+    }
+
     if (opts.apply && plan.status === 'will_fulfill') {
       try {
         for (const f of plan.fulfillments) {
@@ -84,7 +88,7 @@ export async function runAutoFulfill(opts: {
             if (f.shipmentIds.length > 0) {
               await prisma.shipment.updateMany({
                 where: { id: { in: f.shipmentIds } },
-                data: { trackingNumber: f.tracking, trackingUrl: url, shopifyFulfillmentId: r.fulfillmentId ?? undefined, status: 'FULFILLED' },
+                data: { trackingNumber: f.tracking, trackingUrl: url, carrier: 'Other', shopifyFulfillmentId: r.fulfillmentId ?? undefined, status: 'FULFILLED' },
               })
             }
           } else {
@@ -101,7 +105,7 @@ export async function runAutoFulfill(opts: {
 
     summary.rows.push({ baseOrder: base, status: plan.status, trackings, fulfilledLines, message })
     switch (plan.status) {
-      case 'will_fulfill': summary.fulfilled += opts.apply ? 1 : 0; break
+      case 'will_fulfill': summary.fulfilled++; break
       case 'too_recent': summary.tooRecent++; break
       case 'already_fulfilled': summary.alreadyFulfilled++; break
       case 'not_found': summary.notFound++; break

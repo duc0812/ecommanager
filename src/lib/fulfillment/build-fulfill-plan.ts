@@ -4,6 +4,9 @@ export function orderLineKey(token: string): string {
   return token.trim().replace(/^#/, '')
 }
 
+// Revision tokens like "R"/"R1" (e.g. "#LIT2362R1", "#LIT2736R") are DISTINCT Shopify
+// order names, not sub-order suffixes — do not fold them into the base order, or this
+// could end up fulfilling the wrong order.
 export function normalizeBaseOrder(token: string): string {
   // Strip leading #, then all trailing _<token> sub-order suffixes ("_2", "_2_1").
   return orderLineKey(token).replace(/(_[A-Za-z0-9]+)+$/, '')
@@ -49,13 +52,25 @@ export function buildFulfillmentPlan(input: {
   if ((input.displayFulfillmentStatus ?? '').toUpperCase() === 'FULFILLED') return done('already_fulfilled', undefined, ageDays)
 
   // Open fulfillment-order line items keyed by the underlying order line id.
+  // Only FOs that are actually open for fulfillment count — ON_HOLD/SCHEDULED/
+  // CANCELLED/INCOMPLETE/CLOSED FOs are not fulfillable right now.
+  const OPEN_FO_STATUSES = new Set(['OPEN', 'IN_PROGRESS'])
   const openByLineId = new Map<string, { foId: string; foLineItemId: string; quantity: number }>()
-  for (const fo of input.fulfillmentOrders) {
-    for (const li of fo.lineItems) {
+  input.fulfillmentOrders.forEach(fo => {
+    if (!OPEN_FO_STATUSES.has(fo.status)) return
+    fo.lineItems.forEach(li => {
       if (li.remainingQuantity > 0) openByLineId.set(li.shopifyLineId, { foId: fo.id, foLineItemId: li.id, quantity: li.remainingQuantity })
-    }
+    })
+  })
+  if (openByLineId.size === 0) {
+    if ((input.displayFulfillmentStatus ?? '').toUpperCase() === 'FULFILLED') return done('already_fulfilled', undefined, ageDays)
+    // FOs exist but none are OPEN/IN_PROGRESS (all on hold/scheduled/etc) → needs a human.
+    // If an OPEN/IN_PROGRESS FO exists but simply has no remaining quantity, that's just
+    // already fulfilled, not a manual case.
+    const hasOpenFO = input.fulfillmentOrders.some(fo => OPEN_FO_STATUSES.has(fo.status))
+    if (input.fulfillmentOrders.length > 0 && !hasOpenFO) return done('needs_manual', 'Fulfillment order chưa mở (on hold/scheduled)', ageDays)
+    return done('already_fulfilled', undefined, ageDays)
   }
-  if (openByLineId.size === 0) return done('already_fulfilled', undefined, ageDays)
 
   const shipmentByLineKey = new Map(input.shipments.filter(s => s.shopifyLineId).map(s => [s.lineKey, s]))
   const shipmentIdByLineId = new Map(input.shipments.filter(s => s.shopifyLineId).map(s => [s.shopifyLineId as string, s.id]))

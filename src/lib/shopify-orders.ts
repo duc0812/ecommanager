@@ -543,8 +543,6 @@ export async function fetchShopInfo(
   }
 }
 
-// ─── Fulfillment-order read + fulfillment create (for Auto Fulfilled) ───────
-
 export type ShopifyOrderFO = {
   orderId: string
   name: string
@@ -586,7 +584,7 @@ export async function fetchOrderFulfillmentOrdersByNames(
   const url = `https://${shop}/admin/api/${apiVersion}/graphql.json`
   const query = `
     query($q: String) {
-      orders(first: 25, query: $q) {
+      orders(first: 50, query: $q) {
         nodes {
           id name createdAt displayFulfillmentStatus
           fulfillmentOrders(first: 10) {

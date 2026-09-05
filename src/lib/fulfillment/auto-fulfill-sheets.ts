@@ -39,7 +39,13 @@ export async function getMinAgeDays(): Promise<number> {
   return Number.isFinite(n) && n >= 0 ? Math.floor(n) : DEFAULT_MIN_AGE_DAYS
 }
 
+export function coerceMinAgeDays(n: unknown): number {
+  const num = Number(n)
+  if (!Number.isFinite(num)) return DEFAULT_MIN_AGE_DAYS
+  return Math.max(0, Math.floor(num))
+}
+
 export async function setMinAgeDays(n: number): Promise<void> {
-  const value = String(Math.max(0, Math.floor(Number(n) || 0)))
+  const value = String(coerceMinAgeDays(n))
   await prisma.appSetting.upsert({ where: { key: MIN_AGE_KEY }, create: { key: MIN_AGE_KEY, value }, update: { value } })
 }
