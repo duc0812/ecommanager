@@ -91,6 +91,35 @@ export default function TrackingPage() {
   const [ppProgress, setPpProgress] = useState<{ done: number; total: number } | null>(null)
   const [message, setMessage] = useState('')
   const [perf, setPerf] = useState<SupplierPerfResult | null>(null)
+  const [backfilling, setBackfilling] = useState(false)
+
+  const loadPerf = useCallback(() => {
+    fetch('/api/fulfillment/supplier-performance?days=30')
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d && Array.isArray(d.suppliers) && d.overallCustomerReceipt) setPerf(d) })
+      .catch(() => {})
+  }, [])
+
+  const runBackfill = async () => {
+    setBackfilling(true); setPpProgress(null); setMessage('Đang backfill PP timing (60 ngày)…')
+    try {
+      const res = await fetch('/api/fulfillment/supplier-performance/backfill?days=60', { method: 'POST' })
+      if (!res.ok || !res.body) { const b = await res.json().catch(() => ({})); setMessage(`Lỗi backfill: ${b.error ?? res.statusText}`); return }
+      const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = ''; let doneMsg: any = null; let err: string | null = null
+      for (;;) {
+        const { value, done } = await reader.read(); if (done) break
+        buf += dec.decode(value, { stream: true }); const sp = splitNdjson(buf); buf = sp.rest
+        for (const line of sp.lines) { let m: any; try { m = JSON.parse(line) } catch { continue }
+          if (m.type === 'progress') setPpProgress({ done: m.done, total: m.total })
+          else if (m.type === 'done') doneMsg = m
+          else if (m.type === 'error') err = m.error
+        }
+      }
+      if (err) { setMessage(`Lỗi backfill: ${err}`); return }
+      if (doneMsg) { setMessage(`Backfill xong: cập nhật ${doneMsg.shipmentsUpdated}/${doneMsg.ordersChecked} đơn.`); loadPerf() }
+    } catch (e: any) { setMessage(`Lỗi backfill: ${e.message}`) }
+    finally { setBackfilling(false); setPpProgress(null) }
+  }
 
   // ParcelPanel API key config (stored server-side; only a masked preview comes back)
   const [showConfig, setShowConfig] = useState(false)
@@ -110,12 +139,9 @@ export default function TrackingPage() {
   useEffect(() => {
     fetch('/api/projects').then(r => r.json()).then(d => setProjects(Array.isArray(d) ? d : (d.projects ?? []))).catch(() => {})
     fetch('/api/suppliers').then(r => r.json()).then(d => setSuppliers(d.suppliers ?? [])).catch(() => {})
-    fetch('/api/fulfillment/supplier-performance?days=30')
-      .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d && Array.isArray(d.suppliers) && d.overallCustomerReceipt) setPerf(d) })
-      .catch(() => {})
+    loadPerf()
     loadPpConfig()
-  }, [loadPpConfig])
+  }, [loadPpConfig, loadPerf])
 
   useEffect(() => {
     const t = setTimeout(() => setSearchDebounced(search.trim()), 300)
@@ -375,6 +401,14 @@ export default function TrackingPage() {
               <div className="flex items-center gap-sm">
                 <span className="material-symbols-outlined text-secondary">local_shipping</span>
                 <h2 className="text-title-md text-on-surface">Supplier Performance · {perf.days} ngày</h2>
+                <button
+                  onClick={runBackfill}
+                  disabled={backfilling}
+                  title="Kéo dữ liệu timing từ ParcelPanel cho đơn đã giao 60 ngày qua"
+                  className="ml-sm text-label-sm text-secondary border border-outline-variant/40 rounded-lg px-sm py-[2px] disabled:opacity-50"
+                >
+                  {backfilling ? (ppProgress ? `Backfill ${ppProgress.done}/${ppProgress.total}…` : 'Backfilling…') : 'Backfill PP'}
+                </button>
               </div>
               <div className="text-right">
                 <p className="text-label-sm text-on-surface-variant">TB khách nhận hàng (mọi supplier)</p>
