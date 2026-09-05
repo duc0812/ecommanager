@@ -22,20 +22,31 @@ export async function runAutoFulfill(opts: {
 
   // 1) Read all enabled sheets, group rows by base order. First sheet wins on conflicts.
   const byOrder = new Map<string, { rows: Array<{ lineKey: string; tracking: string }>; storeBase: string }>()
+  const sheetErrorRows: OrderResultRow[] = []
   for (const sheet of opts.sheets.filter(s => s.enabled)) {
     const ref = parseSheetUrl(sheet.url)
     if (!ref) continue
     let text: string
-    try { text = await fetchSheetCsv(csvExportUrl(ref)) } catch { continue }
+    try {
+      text = await fetchSheetCsv(csvExportUrl(ref))
+    } catch (e: any) {
+      sheetErrorRows.push({
+        baseOrder: `(sheet: ${sheet.name || sheet.url})`, status: 'error', trackings: [], fulfilledLines: 0,
+        message: `Không tải được sheet: ${e?.message ?? 'lỗi'}`,
+      })
+      continue
+    }
     const grouped = groupByOrder(parseSheetCsv(text))
     Array.from(grouped).forEach(([base, rows]) => { if (!byOrder.has(base)) byOrder.set(base, { rows, storeBase: sheet.storeBase }) })
   }
 
   const names = Array.from(byOrder.keys())
-  const summary: AutoFulfillSummary = { ordersChecked: names.length, fulfilled: 0, tooRecent: 0, alreadyFulfilled: 0, notFound: 0, needsManual: 0, errored: 0, rows: [] }
+  const summary: AutoFulfillSummary = {
+    ordersChecked: names.length, fulfilled: 0, tooRecent: 0, alreadyFulfilled: 0, notFound: 0, needsManual: 0,
+    errored: sheetErrorRows.length, rows: [...sheetErrorRows],
+  }
   if (names.length === 0) return summary
 
-  // 2) Load Shopify fulfillment orders + DB shipments/placedAt.
   const foMap = await fetchOrderFulfillmentOrdersByNames(opts.shop, opts.accessToken, names)
   const orders = await prisma.order.findMany({
     where: { storeId: opts.storeId, shopifyOrderNumber: { in: [...names, ...names.map(n => `#${n}`)] } },
@@ -43,7 +54,6 @@ export async function runAutoFulfill(opts: {
   })
   const dbByName = new Map(orders.map(o => [o.shopifyOrderNumber.replace(/^#/, ''), o]))
 
-  // 3) Plan + (optionally) apply, per order.
   let done = 0
   for (const [base, { rows, storeBase }] of Array.from(byOrder)) {
     const db = dbByName.get(base)
@@ -62,25 +72,30 @@ export async function runAutoFulfill(opts: {
     let message = plan.message
 
     if (opts.apply && plan.status === 'will_fulfill') {
-      for (const f of plan.fulfillments) {
-        const url = `${storeBase.replace(/\/$/, '')}/apps/trackingorder?nums=${encodeURIComponent(f.tracking)}`
-        const r = await createFulfillment(opts.shop, opts.accessToken, {
-          fulfillmentOrderId: f.fulfillmentOrderId, lineItems: f.lineItems,
-          trackingInfo: { company: 'Other', number: f.tracking, url }, notifyCustomer: true,
-        })
-        if (r.ok) {
-          fulfilledLines += f.lineItems.length
-          if (f.shipmentIds.length > 0) {
-            await prisma.shipment.updateMany({
-              where: { id: { in: f.shipmentIds } },
-              data: { trackingNumber: f.tracking, trackingUrl: url, shopifyFulfillmentId: r.fulfillmentId ?? undefined, status: 'FULFILLED' },
-            })
+      try {
+        for (const f of plan.fulfillments) {
+          const url = `${storeBase.replace(/\/$/, '')}/apps/trackingorder?nums=${encodeURIComponent(f.tracking)}`
+          const r = await createFulfillment(opts.shop, opts.accessToken, {
+            fulfillmentOrderId: f.fulfillmentOrderId, lineItems: f.lineItems,
+            trackingInfo: { company: 'Other', number: f.tracking, url }, notifyCustomer: true,
+          })
+          if (r.ok) {
+            fulfilledLines += f.lineItems.length
+            if (f.shipmentIds.length > 0) {
+              await prisma.shipment.updateMany({
+                where: { id: { in: f.shipmentIds } },
+                data: { trackingNumber: f.tracking, trackingUrl: url, shopifyFulfillmentId: r.fulfillmentId ?? undefined, status: 'FULFILLED' },
+              })
+            }
+          } else {
+            plan.status = 'error'
+            message = r.error
           }
-        } else {
-          plan.status = 'error'
-          message = r.error
+          await sleep(300)
         }
-        await sleep(300)
+      } catch (e: any) {
+        plan.status = 'error'
+        message = e?.message ?? 'fulfill failed'
       }
     }
 
