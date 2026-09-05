@@ -55,7 +55,10 @@ export async function runAutoFulfill(opts: {
   })
   const dbByName = new Map(orders.map(o => [o.shopifyOrderNumber.replace(/^#/, ''), o]))
 
-  let done = 0
+  // 3) Evaluate every sheet order in-memory (the Shopify + DB fetches above already ran).
+  type Evaluated = { base: string; plan: ReturnType<typeof buildFulfillmentPlan>; storeBase: string; db: (typeof orders)[number] | undefined; fulfilledLines: number }
+  const evaluated: Evaluated[] = []
+  let checked = 0
   for (const [base, { rows, storeBase }] of Array.from(byOrder)) {
     const db = dbByName.get(base)
     const fo = foMap.get(base)
@@ -67,25 +70,27 @@ export async function runAutoFulfill(opts: {
       placedAt: db?.placedAt ?? (fo ? new Date(fo.createdAt) : null),
       now, minAgeDays: opts.minAgeDays,
     })
+    const plannedLines = plan.fulfillments.reduce((sum, f) => sum + f.lineItems.length, 0)
+    evaluated.push({ base, plan, storeBase, db, fulfilledLines: opts.apply ? 0 : plannedLines })
+    checked++
+    if (!opts.apply) opts.onProgress?.(checked, names.length) // Preview: progress over all orders checked
+  }
 
-    const trackings = Array.from(new Set(plan.fulfillments.map(f => f.tracking)))
-    let fulfilledLines = 0
-    let message = plan.message
-
-    if (!opts.apply && plan.status === 'will_fulfill') {
-      fulfilledLines = plan.fulfillments.reduce((sum, f) => sum + f.lineItems.length, 0)
-    }
-
-    if (opts.apply && plan.status === 'will_fulfill') {
+  // 4) Apply creates fulfillments ONLY for the will_fulfill orders; progress reflects
+  //    that subset (not every order checked). Per-order errors don't abort the batch.
+  if (opts.apply) {
+    const toFulfill = evaluated.filter(e => e.plan.status === 'will_fulfill')
+    let done = 0
+    for (const e of toFulfill) {
       try {
-        for (const f of plan.fulfillments) {
-          const url = `${storeBase.replace(/\/$/, '')}/apps/trackingorder?nums=${encodeURIComponent(f.tracking)}`
+        for (const f of e.plan.fulfillments) {
+          const url = `${e.storeBase.replace(/\/$/, '')}/apps/trackingorder?nums=${encodeURIComponent(f.tracking)}`
           const r = await createFulfillment(opts.shop, opts.accessToken, {
             fulfillmentOrderId: f.fulfillmentOrderId, lineItems: f.lineItems,
             trackingInfo: { company: 'Other', number: f.tracking, url }, notifyCustomer: true,
           })
           if (r.ok) {
-            fulfilledLines += f.lineItems.length
+            e.fulfilledLines += f.lineItems.length
             if (f.shipmentIds.length > 0) {
               await prisma.shipment.updateMany({
                 where: { id: { in: f.shipmentIds } },
@@ -93,28 +98,32 @@ export async function runAutoFulfill(opts: {
               })
             }
           } else {
-            plan.status = 'error'
-            message = r.error
+            e.plan.status = 'error'
+            e.plan.message = r.error
           }
           await sleep(300)
         }
-      } catch (e: any) {
-        plan.status = 'error'
-        message = e?.message ?? 'fulfill failed'
+      } catch (err: any) {
+        e.plan.status = 'error'
+        e.plan.message = err?.message ?? 'fulfill failed'
       }
+      done++
+      opts.onProgress?.(done, toFulfill.length)
     }
+  }
 
-    // Per-fulfillment breakdown so the UI can show each sub-order line ↔ its tracking
-    // (split orders create one fulfillment per distinct tracking). Recover the sheet
-    // lineKeys from the shipment ids each fulfillment covers.
+  // 5) Build result rows + counters from every evaluated order.
+  for (const e of evaluated) {
+    const { base, plan, db, fulfilledLines } = e
+    const trackings = Array.from(new Set(plan.fulfillments.map(f => f.tracking)))
+    // Per-fulfillment breakdown so the UI can show each sub-order line ↔ its tracking.
     const lineKeyByShipmentId = new Map((db?.shipments ?? []).map(s => [s.id, s.lineKey]))
     const fulfillments: FulfillmentDetail[] = plan.fulfillments.map(f => ({
       tracking: f.tracking,
       lineKeys: f.shipmentIds.map(id => lineKeyByShipmentId.get(id)).filter((k): k is string => !!k),
       lineCount: f.lineItems.length,
     }))
-
-    summary.rows.push({ baseOrder: base, status: plan.status, trackings, fulfilledLines, message, fulfillments })
+    summary.rows.push({ baseOrder: base, status: plan.status, trackings, fulfilledLines, message: plan.message, fulfillments })
     switch (plan.status) {
       case 'will_fulfill': summary.fulfilled++; break
       case 'too_recent': summary.tooRecent++; break
@@ -123,8 +132,6 @@ export async function runAutoFulfill(opts: {
       case 'needs_manual': summary.needsManual++; break
       case 'error': summary.errored++; break
     }
-    done++
-    opts.onProgress?.(done, names.length)
   }
   return summary
 }
