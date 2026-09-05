@@ -5,13 +5,17 @@ import { getShopifyConnection } from '@/lib/token-store'
 import { fetchOrderLinePropsByNames, type ShopifyOrderLineProps } from '@/lib/shopify-orders'
 import { buildPersonalizationSections, mergePersonalizationIntoDesc, PERSONALIZATION_MARKER } from '@/lib/order-classify'
 
-// Orders past the design stage keep whatever card they had — re-editing them would only
-// churn the board.
-const SKIP_STATUSES = ['EXPORTED', 'FULFILLED', 'CANCELLED', 'REFUNDED']
+// Scoped by a recent time window rather than by design state: orders sitting at
+// designReady = false are mostly a historical backlog going back months, and rewriting
+// those cards would flood the board's activity feed for nothing.
+const DEFAULT_SINCE_DAYS = 7
 
 export async function POST(req: Request) {
   const body = await req.json().catch(() => ({} as any))
   const dryRun = body?.dryRun === true
+  const sinceDays = Number.isFinite(body?.sinceDays)
+    ? Math.min(Math.max(Math.trunc(body.sinceDays), 1), 365)
+    : DEFAULT_SINCE_DAYS
 
   const cfg = await getTrelloConfig()
   if (!cfg) {
@@ -22,19 +26,19 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Chưa kết nối Shopify. Vào /setup để connect trước.' }, { status: 401 })
   }
 
+  const since = new Date(Date.now() - sinceDays * 24 * 60 * 60 * 1000)
   const orders = await prisma.order.findMany({
     where: {
       trelloCardId: { not: null },
-      designReady: false,
-      pipelineStatus: { notIn: SKIP_STATUSES },
+      placedAt: { gte: since },
     },
     select: { shopifyOrderNumber: true, trelloCardId: true },
     orderBy: { placedAt: 'desc' },
   })
   if (orders.length === 0) {
     return NextResponse.json({
-      dryRun, ordersChecked: 0, cardsChecked: 0, cardsUpdated: 0, cardsUnchanged: 0,
-      noPersonalization: 0, notFoundOnShopify: [], samples: [], errors: [],
+      dryRun, sinceDays, ordersChecked: 0, cardsChecked: 0, cardsUpdated: 0, cardsUnchanged: 0,
+      noPersonalization: 0, notFoundOnShopify: [], notFoundCount: 0, samples: [], errors: [],
     })
   }
 
@@ -103,6 +107,7 @@ export async function POST(req: Request) {
 
   return NextResponse.json({
     dryRun,
+    sinceDays,
     ordersChecked: orders.length,
     cardsChecked: ordersByCard.size,
     cardsUpdated,

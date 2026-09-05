@@ -229,11 +229,16 @@ export default function OrdersPage() {
   const backfillCustomInfo = async () => {
     setBackfillingCustom(true); setTrelloResult('Đang bổ sung thông tin custom lên Trello...')
     try {
-      const res = await fetch('/api/trello/backfill-custom-info', { method: 'POST' })
+      const res = await fetch('/api/trello/backfill-custom-info', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sinceDays: 7 }),
+      })
       const body = await res.json()
       if (!res.ok) setTrelloResult(`Lỗi: ${body.error ?? res.statusText}`)
       else setTrelloResult(
         `Đã bổ sung thông tin custom cho ${body.cardsUpdated}/${body.cardsChecked} card ` +
+        `trong ${body.sinceDays} ngày gần nhất ` +
         `(${body.cardsUnchanged} đã có sẵn, ${body.noPersonalization} đơn không có custom text)` +
         (body.errors?.length ? ` — ${body.errors.length} lỗi: ${body.errors.slice(0, 3).join('; ')}` : ''),
       )
@@ -377,7 +382,7 @@ export default function OrdersPage() {
             <button
               onClick={backfillCustomInfo}
               disabled={backfillingCustom}
-              title="Bổ sung nội dung custom (tên/text khách nhập) vào các card Trello đã tạo trước đó"
+              title="Bổ sung nội dung custom (tên/text khách nhập) vào các card Trello của đơn trong 7 ngày gần nhất"
               className="border border-outline-variant/40 px-lg py-sm rounded-lg text-label-md disabled:opacity-50"
             >
               {backfillingCustom ? 'Đang bổ sung…' : 'Bổ sung info custom'}
