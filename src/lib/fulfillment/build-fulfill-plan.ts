@@ -27,7 +27,7 @@ export type FOLineItem = { id: string; remainingQuantity: number; shopifyLineId:
 export type FulfillmentOrderRef = { id: string; status: string; lineItems: FOLineItem[] }
 export type PlannedFulfillment = { fulfillmentOrderId: string; lineItems: Array<{ id: string; quantity: number }>; tracking: string; shipmentIds: string[] }
 export type OrderPlanStatus = 'will_fulfill' | 'too_recent' | 'already_fulfilled' | 'not_found' | 'needs_manual' | 'error'
-export type OrderPlan = { baseOrder: string; status: OrderPlanStatus; fulfillments: PlannedFulfillment[]; message?: string; ageDays?: number }
+export type OrderPlan = { baseOrder: string; status: OrderPlanStatus; fulfillments: PlannedFulfillment[]; message?: string; ageDays?: number; openLineCount?: number; hasHeldLines?: boolean }
 
 export function buildFulfillmentPlan(input: {
   baseOrder: string
@@ -134,5 +134,10 @@ export function buildFulfillmentPlan(input: {
 
   const fulfillments = Array.from(groups.values()).filter(f => f.lineItems.length > 0)
   if (fulfillments.length === 0) return done('already_fulfilled', undefined, ageDays)
-  return { baseOrder, status: 'will_fulfill', fulfillments, ageDays }
+  // openLineCount lets the caller tell a FULL fulfillment (every open line covered) from a
+  // partial one, so it can mark the order FULFILLED only when nothing remains open.
+  // hasHeldLines: the order also has lines on non-open (on-hold/scheduled) FOs, so even
+  // fulfilling every OPEN line does not complete the order — the caller must not mark it
+  // fully FULFILLED in that case.
+  return { baseOrder, status: 'will_fulfill', fulfillments, ageDays, openLineCount: openByLineId.size, hasHeldLines: heldLineIds.size > 0 }
 }

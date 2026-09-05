@@ -51,7 +51,7 @@ export async function runAutoFulfill(opts: {
   const foMap = await fetchOrderFulfillmentOrdersByNames(opts.shop, opts.accessToken, names)
   const orders = await prisma.order.findMany({
     where: { storeId: opts.storeId, shopifyOrderNumber: { in: [...names, ...names.map(n => `#${n}`)] } },
-    select: { shopifyOrderNumber: true, placedAt: true, shipments: { select: { id: true, lineKey: true, shopifyLineId: true } } },
+    select: { id: true, shopifyOrderNumber: true, placedAt: true, pipelineStatus: true, shipments: { select: { id: true, lineKey: true, shopifyLineId: true } } },
   })
   const dbByName = new Map(orders.map(o => [o.shopifyOrderNumber.replace(/^#/, ''), o]))
 
@@ -106,6 +106,17 @@ export async function runAutoFulfill(opts: {
       } catch (err: any) {
         e.plan.status = 'error'
         e.plan.message = err?.message ?? 'fulfill failed'
+      }
+      // If EVERY open line of this order was fulfilled (a full, not partial, fulfillment)
+      // and nothing errored, sync the DB order so Order P/L + late-fulfillment views reflect
+      // FULFILLED right away instead of waiting for the next Shopify tracking sync.
+      if (e.plan.status === 'will_fulfill' && e.db && !e.plan.hasHeldLines && e.plan.openLineCount != null && e.fulfilledLines >= e.plan.openLineCount) {
+        const ps = (e.db.pipelineStatus ?? '').toUpperCase()
+        if (ps !== 'CANCELLED' && ps !== 'REFUNDED') {
+          try {
+            await prisma.order.update({ where: { id: e.db.id }, data: { fulfillmentStatus: 'FULFILLED', pipelineStatus: 'FULFILLED' } })
+          } catch { /* non-fatal: the daily tracking sync reconciles order status from Shopify */ }
+        }
       }
       done++
       opts.onProgress?.(done, toFulfill.length)
