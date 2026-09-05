@@ -11,6 +11,10 @@ const STATUS_LABEL: Record<string, string> = {
   not_found: 'Không thấy đơn', needs_manual: 'Cần xử tay', error: 'Lỗi',
 }
 
+// Results table shows only actionable rows; already-fulfilled and not-found are
+// noise (old orders) — their counts still appear in the summary line.
+const HIDDEN_STATUSES = new Set(['already_fulfilled', 'not_found'])
+
 export default function AutoFulfillPage() {
   const [sheets, setSheets] = useState<SheetConfig[]>([])
   const [minAgeDays, setMinAgeDays] = useState(5)
@@ -66,6 +70,9 @@ export default function AutoFulfillPage() {
     finally { setRunning(false); setProgress(null) }
   }
 
+  const visibleRows = rows.filter(r => !HIDDEN_STATUSES.has(r.status))
+  const hiddenCount = rows.length - visibleRows.length
+
   return (
     <div className="flex min-h-screen bg-surface">
       <Sidebar />
@@ -118,7 +125,7 @@ export default function AutoFulfillPage() {
               <th className="px-md py-sm font-medium">Lines</th><th className="px-md py-sm font-medium">Status</th><th className="px-md py-sm font-medium">Ghi chú</th>
             </tr></thead>
             <tbody>
-              {rows.map((r, i) => (
+              {visibleRows.map((r, i) => (
                 <tr key={`${r.baseOrder}-${i}`} className="border-t border-outline-variant/20">
                   <td className="px-md py-sm font-medium">{r.baseOrder.startsWith('(') ? r.baseOrder : `#${r.baseOrder}`}</td>
                   <td className="px-md py-sm font-mono text-label-sm">{r.trackings.join(', ') || '—'}</td>
@@ -127,7 +134,13 @@ export default function AutoFulfillPage() {
                   <td className="px-md py-sm text-label-sm text-on-surface-variant">{r.message ?? ''}</td>
                 </tr>
               ))}
-              {rows.length === 0 && <tr><td colSpan={5} className="px-md py-lg text-center text-on-surface-variant">Bấm Preview để xem kế hoạch fulfill.</td></tr>}
+              {visibleRows.length === 0 && (
+                <tr><td colSpan={5} className="px-md py-lg text-center text-on-surface-variant">
+                  {rows.length === 0
+                    ? 'Bấm Preview để xem kế hoạch fulfill.'
+                    : `Không có đơn nào cần fulfill (đã ẩn ${hiddenCount} đơn đã fulfill / không thấy).`}
+                </td></tr>
+              )}
             </tbody>
           </table>
         </div>
