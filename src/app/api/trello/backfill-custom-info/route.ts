@@ -3,7 +3,7 @@ import { prisma } from '@/lib/db'
 import { getTrelloConfig, getCardDesc, updateCardDesc } from '@/lib/trello'
 import { getShopifyConnection } from '@/lib/token-store'
 import { fetchOrderLinePropsByNames, type ShopifyOrderLineProps } from '@/lib/shopify-orders'
-import { buildPersonalizationSections, mergePersonalizationIntoDesc, PERSONALIZATION_MARKER } from '@/lib/order-classify'
+import { buildPersonalizationSections, cardHasInlinePersonalization, mergePersonalizationIntoDesc, PERSONALIZATION_MARKER } from '@/lib/order-classify'
 
 // Scoped by a recent time window rather than by design state: orders sitting at
 // designReady = false are mostly a historical backlog going back months, and rewriting
@@ -38,7 +38,8 @@ export async function POST(req: Request) {
   if (orders.length === 0) {
     return NextResponse.json({
       dryRun, sinceDays, ordersChecked: 0, cardsChecked: 0, cardsUpdated: 0, cardsUnchanged: 0,
-      noPersonalization: 0, notFoundOnShopify: [], notFoundCount: 0, samples: [], errors: [],
+      alreadyComplete: 0, noPersonalization: 0, notFoundOnShopify: [], notFoundCount: 0,
+      samples: [], errors: [],
     })
   }
 
@@ -66,6 +67,7 @@ export async function POST(req: Request) {
 
   let cardsUpdated = 0
   let cardsUnchanged = 0
+  let alreadyComplete = 0
   let noPersonalization = 0
   const notFoundOnShopify: string[] = []
   const samples: string[] = []
@@ -95,6 +97,8 @@ export async function POST(req: Request) {
     try {
       const desc = await getCardDesc(cfg, cardId)
       if (desc === null) { cardsUnchanged += 1; continue }
+      // Cards created after the fix already carry the input inline — appending would duplicate it.
+      if (cardHasInlinePersonalization(desc)) { alreadyComplete += 1; continue }
       const next = mergePersonalizationIntoDesc(desc, block)
       if (next === desc) { cardsUnchanged += 1; continue }
       if (!dryRun) await updateCardDesc(cfg, cardId, next)
@@ -112,6 +116,7 @@ export async function POST(req: Request) {
     cardsChecked: ordersByCard.size,
     cardsUpdated,
     cardsUnchanged,
+    alreadyComplete,
     noPersonalization,
     notFoundOnShopify: notFoundOnShopify.slice(0, 20),
     notFoundCount: notFoundOnShopify.length,

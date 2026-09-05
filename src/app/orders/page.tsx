@@ -239,7 +239,8 @@ export default function OrdersPage() {
       else setTrelloResult(
         `Đã bổ sung thông tin custom cho ${body.cardsUpdated}/${body.cardsChecked} card ` +
         `trong ${body.sinceDays} ngày gần nhất ` +
-        `(${body.cardsUnchanged} đã có sẵn, ${body.noPersonalization} đơn không có custom text)` +
+        `(${body.alreadyComplete + body.cardsUnchanged} card đã có sẵn thông tin, ` +
+        `${body.noPersonalization} đơn không có custom text)` +
         (body.errors?.length ? ` — ${body.errors.length} lỗi: ${body.errors.slice(0, 3).join('; ')}` : ''),
       )
     } catch (e: any) { setTrelloResult(`Lỗi: ${e.message}`) }

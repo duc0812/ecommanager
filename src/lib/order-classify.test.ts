@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   buildPersonalizationSections,
   buildTrelloCardContent,
+  cardHasInlinePersonalization,
   isLineCustomized,
   lineFamily,
   mergePersonalizationIntoDesc,
@@ -252,5 +253,41 @@ describe('mergePersonalizationIntoDesc', () => {
 
   it('handles an empty card body without a leading separator', () => {
     expect(mergePersonalizationIntoDesc('', block)).toBe(block)
+  })
+})
+
+describe('cardHasInlinePersonalization — the backfill must not double up on new cards', () => {
+  const line = {
+    sku: 'SKU1',
+    productTitle: 'Hoodie',
+    customAttributes: [{ key: 'Custom Name/Text', value: 'Krissi' }],
+    productTags: [],
+    variantTitle: '3XL',
+    qty: 1,
+  }
+
+  it('true for a card the current builder produced (info already there)', () => {
+    const { desc } = buildTrelloCardContent('#LIT3548', [line], 'CUSTOM')
+    expect(cardHasInlinePersonalization(desc)).toBe(true)
+  })
+
+  it('true for the NON_CUSTOM/MIXED branch too', () => {
+    const { desc } = buildTrelloCardContent('#LIT3548', [line], 'NON_CUSTOM')
+    expect(cardHasInlinePersonalization(desc)).toBe(true)
+  })
+
+  it('false for an old card created before the fix — that one still needs backfilling', () => {
+    const old = '**1. Hoodie** (SKU1 / 3XL, qty: 1)\nDrive attachment name: LIT3548_1'
+    expect(cardHasInlinePersonalization(old)).toBe(false)
+  })
+
+  it('false for a card only patched by the backfill, so its block can still be refreshed', () => {
+    const patched = mergePersonalizationIntoDesc('old body', `${PERSONALIZATION_MARKER}\n\n  - Name: Krissi`)
+    expect(cardHasInlinePersonalization(patched)).toBe(false)
+  })
+
+  it('false when the customer input was empty, so nothing was written', () => {
+    const { desc } = buildTrelloCardContent('#LIT3548', [{ ...line, customAttributes: [] }], 'CUSTOM')
+    expect(cardHasInlinePersonalization(desc)).toBe(false)
   })
 })
