@@ -1,14 +1,18 @@
-export type SheetRef = { spreadsheetId: string; gid: string }
+export type SheetRef = { spreadsheetId: string; gid: string | null }
 
 export function parseSheetUrl(url: string): SheetRef | null {
   const id = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/)?.[1]
   if (!id) return null
-  const gid = url.match(/[?#&]gid=([0-9]+)/)?.[1] ?? '0'
+  // A "/edit?usp=sharing" link carries no gid. Do NOT default to gid=0 — a sheet
+  // whose original first tab was deleted has no gid 0, and export?gid=0 then 400s.
+  // gid=null → omit it below so Google exports the first existing sheet.
+  const gid = url.match(/[?#&]gid=([0-9]+)/)?.[1] ?? null
   return { spreadsheetId: id, gid }
 }
 
 export function csvExportUrl(ref: SheetRef): string {
-  return `https://docs.google.com/spreadsheets/d/${ref.spreadsheetId}/export?format=csv&gid=${ref.gid}`
+  const base = `https://docs.google.com/spreadsheets/d/${ref.spreadsheetId}/export?format=csv`
+  return ref.gid ? `${base}&gid=${ref.gid}` : base
 }
 
 export type SheetRow = { orderToken: string; tracking: string }
@@ -48,7 +52,7 @@ export function parseSheetCsv(text: string): SheetRow[] {
 
 export async function fetchSheetCsv(url: string): Promise<string> {
   const res = await fetch(url, { redirect: 'follow' })
-  if (!res.ok) throw new Error(`Không tải được sheet (HTTP ${res.status}). Kiểm tra link và quyền chia sẻ.`)
+  if (!res.ok) throw new Error(`Không tải được sheet (HTTP ${res.status}). Kiểm tra: link đúng, sheet đã chia sẻ "Anyone with the link → Viewer", và đúng tab.`)
   const text = await res.text()
   if (/<html|<!doctype html/i.test(text.slice(0, 200))) {
     throw new Error('Sheet chưa bật "Anyone with the link → Viewer" (nhận về trang HTML thay vì CSV).')

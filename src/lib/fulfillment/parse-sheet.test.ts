@@ -6,9 +6,9 @@ describe('parseSheetUrl', () => {
     expect(parseSheetUrl('https://docs.google.com/spreadsheets/d/1abjXYZ/edit?gid=1162194966#gid=1162194966'))
       .toEqual({ spreadsheetId: '1abjXYZ', gid: '1162194966' })
   })
-  it('defaults gid to 0 when absent', () => {
-    expect(parseSheetUrl('https://docs.google.com/spreadsheets/d/1abjXYZ/edit'))
-      .toEqual({ spreadsheetId: '1abjXYZ', gid: '0' })
+  it('gid is null when absent (do NOT default to 0 — a deleted first tab has no gid 0)', () => {
+    expect(parseSheetUrl('https://docs.google.com/spreadsheets/d/1abjXYZ/edit?usp=sharing'))
+      .toEqual({ spreadsheetId: '1abjXYZ', gid: null })
   })
   it('returns null for a non-sheets URL', () => {
     expect(parseSheetUrl('https://example.com/foo')).toBeNull()
@@ -16,9 +16,13 @@ describe('parseSheetUrl', () => {
 })
 
 describe('csvExportUrl', () => {
-  it('builds the export URL', () => {
+  it('builds the export URL with a gid', () => {
     expect(csvExportUrl({ spreadsheetId: '1abjXYZ', gid: '5' }))
       .toBe('https://docs.google.com/spreadsheets/d/1abjXYZ/export?format=csv&gid=5')
+  })
+  it('omits gid when null (Google exports the first sheet)', () => {
+    expect(csvExportUrl({ spreadsheetId: '1abjXYZ', gid: null }))
+      .toBe('https://docs.google.com/spreadsheets/d/1abjXYZ/export?format=csv')
   })
 })
 
