@@ -29,6 +29,19 @@ type Stats = { total: number; withTracking: number; withoutTracking: number }
 type Project = { id: string; name: string }
 type Supplier = { id: string; name: string }
 
+type PerfMetric = { avgDays: number | null; n: number }
+type SupplierPerfRow = {
+  supplierId: string | null
+  supplierName: string
+  deliveredCount: number
+  placedToInTransit: PerfMetric
+  inTransitToDelivered: PerfMetric
+  shippingTime: PerfMetric
+  customerReceipt: PerfMetric
+}
+type SupplierPerfResult = { days: number; overallCustomerReceipt: PerfMetric; suppliers: SupplierPerfRow[] }
+const fmtDays = (m: PerfMetric) => m.avgDays == null ? '—' : `${m.avgDays}d (n=${m.n})`
+
 async function fetchJson<T>(url: string): Promise<T> {
   const res = await fetch(url)
   const text = await res.text()
@@ -77,6 +90,7 @@ export default function TrackingPage() {
   const [ppSyncing, setPpSyncing] = useState(false)
   const [ppProgress, setPpProgress] = useState<{ done: number; total: number } | null>(null)
   const [message, setMessage] = useState('')
+  const [perf, setPerf] = useState<SupplierPerfResult | null>(null)
 
   // ParcelPanel API key config (stored server-side; only a masked preview comes back)
   const [showConfig, setShowConfig] = useState(false)
@@ -96,6 +110,10 @@ export default function TrackingPage() {
   useEffect(() => {
     fetch('/api/projects').then(r => r.json()).then(d => setProjects(Array.isArray(d) ? d : (d.projects ?? []))).catch(() => {})
     fetch('/api/suppliers').then(r => r.json()).then(d => setSuppliers(d.suppliers ?? [])).catch(() => {})
+    fetch('/api/fulfillment/supplier-performance?days=30')
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d && Array.isArray(d.suppliers) && d.overallCustomerReceipt) setPerf(d) })
+      .catch(() => {})
     loadPpConfig()
   }, [loadPpConfig])
 
@@ -349,6 +367,55 @@ export default function TrackingPage() {
             </div>
           ))}
         </div>
+
+        {/* Supplier performance (30 ngày) */}
+        {perf && (
+          <div className="bg-surface-container-lowest rounded-xl shadow-card border border-outline-variant/20 mb-lg overflow-hidden">
+            <div className="flex items-center justify-between gap-md px-lg py-md border-b border-outline-variant/20">
+              <div className="flex items-center gap-sm">
+                <span className="material-symbols-outlined text-secondary">local_shipping</span>
+                <h2 className="text-title-md text-on-surface">Supplier Performance · {perf.days} ngày</h2>
+              </div>
+              <div className="text-right">
+                <p className="text-label-sm text-on-surface-variant">TB khách nhận hàng (mọi supplier)</p>
+                <p className="text-headline-sm text-primary">{fmtDays(perf.overallCustomerReceipt)}</p>
+              </div>
+            </div>
+            {perf.suppliers.length === 0 ? (
+              <p className="px-lg py-md text-body-sm text-on-surface-variant">Chưa có đơn nào delivered trong {perf.days} ngày qua (cần ParcelPanel đã sync trạng thái).</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-body-sm">
+                  <thead className="bg-surface-container">
+                    <tr className="text-left text-on-surface-variant">
+                      <th className="px-md py-sm font-medium">Supplier</th>
+                      <th className="px-md py-sm font-medium">Đã giao</th>
+                      <th className="px-md py-sm font-medium">Đặt → in-transit</th>
+                      <th className="px-md py-sm font-medium">In-transit → giao</th>
+                      <th className="px-md py-sm font-medium">Giao hàng (tracking → giao)</th>
+                      <th className="px-md py-sm font-medium">Khách nhận (đặt → giao)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {perf.suppliers.map(s => (
+                      <tr key={s.supplierId ?? 'none'} className="border-t border-outline-variant/20">
+                        <td className="px-md py-sm font-medium">{s.supplierName}</td>
+                        <td className="px-md py-sm">{s.deliveredCount}</td>
+                        <td className="px-md py-sm">{fmtDays(s.placedToInTransit)}</td>
+                        <td className="px-md py-sm">{fmtDays(s.inTransitToDelivered)}</td>
+                        <td className="px-md py-sm">{fmtDays(s.shippingTime)}</td>
+                        <td className="px-md py-sm">{fmtDays(s.customerReceipt)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <p className="px-lg py-sm text-label-sm text-on-surface-variant border-t border-outline-variant/20">
+              Trung bình theo ngày (n = số đơn có đủ mốc). "Giao hàng" = từ event tracking đầu tiên → delivered; "Khách nhận" = từ lúc đặt → delivered.
+            </p>
+          </div>
+        )}
 
         {/* Status tabs */}
         <div className="flex flex-wrap gap-xs mb-md">
