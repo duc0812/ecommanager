@@ -81,6 +81,27 @@ describe('buildFulfillmentPlan', () => {
     ])
   })
 
+  it('same tracking across sub-orders → one whole-order fulfillment (all open lines, no per-line mapping needed)', () => {
+    const fo = [{ id: 'fo1', status: 'OPEN', lineItems: [
+      { id: 'foli-A', remainingQuantity: 1, shopifyLineId: 'gid://li/A', sku: 'A' },
+      { id: 'foli-B', remainingQuantity: 1, shopifyLineId: 'gid://li/B', sku: 'B' },
+      { id: 'foli-C', remainingQuantity: 1, shopifyLineId: 'gid://li/C', sku: 'C' },
+    ] }]
+    // 3 sub-orders, all the SAME tracking, and NO shipment mapping — must still fulfill
+    // the whole order in one fulfillment (not needs_manual).
+    const p = buildFulfillmentPlan({ ...base, baseOrder: 'LIT1', rows: [
+      { lineKey: 'LIT1_1', tracking: 'AA' },
+      { lineKey: 'LIT1_2', tracking: 'AA' },
+      { lineKey: 'LIT1_3', tracking: 'AA' },
+    ], shipments: [], fulfillmentOrders: fo, placedAt: days(9) })
+    expect(p.status).toBe('will_fulfill')
+    expect(p.fulfillments).toEqual([
+      { fulfillmentOrderId: 'fo1', lineItems: [
+        { id: 'foli-A', quantity: 1 }, { id: 'foli-B', quantity: 1 }, { id: 'foli-C', quantity: 1 },
+      ], tracking: 'AA', shipmentIds: [] },
+    ])
+  })
+
   it('needs_manual when a sub-order line cannot be mapped', () => {
     const fo = [{ id: 'fo1', status: 'OPEN', lineItems: [
       { id: 'foli-A', remainingQuantity: 1, shopifyLineId: 'gid://li/A', sku: 'A' },

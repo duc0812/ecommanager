@@ -87,17 +87,26 @@ export function buildFulfillmentPlan(input: {
     groups.set(key, g)
   }
 
-  for (const row of input.rows) {
-    if (isWholeOrderRow(row.lineKey)) {
-      // Apply this tracking to every currently-open line.
-      openByLineId.forEach((open, lineId) => addLine(row.tracking, open.foId, open.foLineItemId, open.quantity, shipmentIdByLineId.get(lineId)))
-      continue
+  // Same tracking for every sub-order → fulfill the WHOLE order in one fulfillment
+  // (all currently-open lines), no per-line mapping needed. Different trackings across
+  // sub-orders → map each to its exact line (split shipment, per-line fulfillment).
+  const distinctTrackings = new Set(input.rows.map(r => r.tracking))
+  if (distinctTrackings.size <= 1) {
+    const tracking = input.rows[0]?.tracking ?? ''
+    openByLineId.forEach((open, lineId) => addLine(tracking, open.foId, open.foLineItemId, open.quantity, shipmentIdByLineId.get(lineId)))
+  } else {
+    for (const row of input.rows) {
+      if (isWholeOrderRow(row.lineKey)) {
+        // Apply this tracking to every currently-open line.
+        openByLineId.forEach((open, lineId) => addLine(row.tracking, open.foId, open.foLineItemId, open.quantity, shipmentIdByLineId.get(lineId)))
+        continue
+      }
+      const ship = shipmentByLineKey.get(row.lineKey)
+      if (!ship || !ship.shopifyLineId) return done('needs_manual', `Không map được ${row.lineKey} sang line Shopify`, ageDays)
+      const open = openByLineId.get(ship.shopifyLineId)
+      if (!open) continue // that line is already fulfilled — skip it, idempotent
+      addLine(row.tracking, open.foId, open.foLineItemId, open.quantity, ship.id)
     }
-    const ship = shipmentByLineKey.get(row.lineKey)
-    if (!ship || !ship.shopifyLineId) return done('needs_manual', `Không map được ${row.lineKey} sang line Shopify`, ageDays)
-    const open = openByLineId.get(ship.shopifyLineId)
-    if (!open) continue // that line is already fulfilled — skip it, idempotent
-    addLine(row.tracking, open.foId, open.foLineItemId, open.quantity, ship.id)
   }
 
   const fulfillments = Array.from(groups.values()).filter(f => f.lineItems.length > 0)
