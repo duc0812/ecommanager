@@ -113,6 +113,7 @@ export default function OrdersPage() {
   const [syncResult, setSyncResult] = useState('')
   const [syncingTrello, setSyncingTrello] = useState(false)
   const [trelloResult, setTrelloResult] = useState('')
+  const [backfillingCustom, setBackfillingCustom] = useState(false)
   const [typeFilter, setTypeFilter] = useState<'ALL' | 'CUSTOM' | 'NON_CUSTOM' | 'DUAL' | 'MIXED'>('ALL')
   const [designFilter, setDesignFilter] = useState<'ALL' | 'HAS' | 'MISSING'>('ALL')
   const [trelloFilter, setTrelloFilter] = useState<'ALL' | 'CREATED' | 'NOT_CREATED'>('ALL')
@@ -223,6 +224,21 @@ export default function OrdersPage() {
       await load()
     } catch (e: any) { setTrelloResult(`Lỗi: ${e.message}`) }
     finally { setSyncingTrello(false) }
+  }
+
+  const backfillCustomInfo = async () => {
+    setBackfillingCustom(true); setTrelloResult('Đang bổ sung thông tin custom lên Trello...')
+    try {
+      const res = await fetch('/api/trello/backfill-custom-info', { method: 'POST' })
+      const body = await res.json()
+      if (!res.ok) setTrelloResult(`Lỗi: ${body.error ?? res.statusText}`)
+      else setTrelloResult(
+        `Đã bổ sung thông tin custom cho ${body.cardsUpdated}/${body.cardsChecked} card ` +
+        `(${body.cardsUnchanged} đã có sẵn, ${body.noPersonalization} đơn không có custom text)` +
+        (body.errors?.length ? ` — ${body.errors.length} lỗi: ${body.errors.slice(0, 3).join('; ')}` : ''),
+      )
+    } catch (e: any) { setTrelloResult(`Lỗi: ${e.message}`) }
+    finally { setBackfillingCustom(false) }
   }
 
   const sync = async () => {
@@ -357,6 +373,14 @@ export default function OrdersPage() {
               className="border border-outline-variant/40 px-lg py-sm rounded-lg text-label-md disabled:opacity-50"
             >
               {syncingTrello ? 'Syncing…' : 'Sync Trello'}
+            </button>
+            <button
+              onClick={backfillCustomInfo}
+              disabled={backfillingCustom}
+              title="Bổ sung nội dung custom (tên/text khách nhập) vào các card Trello đã tạo trước đó"
+              className="border border-outline-variant/40 px-lg py-sm rounded-lg text-label-md disabled:opacity-50"
+            >
+              {backfillingCustom ? 'Đang bổ sung…' : 'Bổ sung info custom'}
             </button>
             <button
               onClick={sync}

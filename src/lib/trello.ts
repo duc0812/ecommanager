@@ -55,6 +55,42 @@ export async function getCardsByList(cfg: TrelloConfig, listId: string): Promise
   }))
 }
 
+// Bulk card edits run hundreds of calls in a row and Trello caps a token at 100 req/10s,
+// so back off and retry instead of failing the whole batch on a 429.
+async function fetchWithRateLimitRetry(url: string, init?: RequestInit, attempts = 3): Promise<Response> {
+  let res = await fetch(url, init)
+  for (let i = 1; i < attempts && res.status === 429; i += 1) {
+    const retryAfter = parseFloat(res.headers.get('retry-after') ?? '') || i
+    await new Promise(r => setTimeout(r, Math.min(retryAfter, 10) * 1000))
+    res = await fetch(url, init)
+  }
+  return res
+}
+
+export async function getCardDesc(cfg: TrelloConfig, cardId: string): Promise<string | null> {
+  const res = await fetchWithRateLimitRetry(`${BASE}/cards/${cardId}?${auth(cfg)}&fields=id,desc`)
+  // A card deleted on the board leaves a stale trelloCardId behind — treat it as "nothing to update".
+  if (res.status === 404) return null
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`Trello getCard failed ${res.status}: ${text}`)
+  }
+  const data = await res.json()
+  return data.desc ?? ''
+}
+
+export async function updateCardDesc(cfg: TrelloConfig, cardId: string, desc: string): Promise<void> {
+  const res = await fetchWithRateLimitRetry(`${BASE}/cards/${cardId}?${auth(cfg)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ desc }),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`Trello updateCard failed ${res.status}: ${text}`)
+  }
+}
+
 export function shouldCreateCard(
   orderName: string,
   syncFromOrderName: string,

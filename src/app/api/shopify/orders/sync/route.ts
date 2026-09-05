@@ -437,12 +437,12 @@ export async function POST(req: NextRequest) {
               data: { trelloCardId: card.id, trelloCardUrl: card.url },
             })
 
-            // Attach preview images for CUSTOM orders so designers see mockups directly on the card
-            if (orderType === 'CUSTOM') {
+            // Attach preview images for customized orders so designers see mockups directly on the card
+            if (orderType === 'CUSTOM' || orderType === 'MIXED') {
               const productCardLines = cardLines.filter(l => l.sku)
               for (let idx = 0; idx < productCardLines.length; idx += 1) {
                 const l = productCardLines[idx]
-                const preview = l.customAttributes.find(a => a.key === '_customall_preview')?.value
+                const preview = extractPreviewCdnUrl(l.customAttributes)
                 if (preview) {
                   await addAttachmentToCard(trelloConfig, card.id, preview, `🖼 Preview – ${l.sku ?? 'N/A'}`)
                     .catch(e => errors.push(`Trello attach preview failed for ${o.name}: ${e.message}`))

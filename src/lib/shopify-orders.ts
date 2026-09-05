@@ -455,6 +455,71 @@ export async function updateFulfillmentTracking(
   return { ok: true, trackingInfo: payload?.fulfillment?.trackingInfo ?? [] }
 }
 
+// Line-item properties are not persisted on OrderLine, so anything that needs the raw
+// customer input for orders already in the DB (e.g. backfilling Trello card descriptions)
+// has to read them back from Shopify. Keyed by order name ("#LIT3548").
+export type ShopifyOrderLineProps = {
+  sku: string | null
+  title: string
+  variantTitle: string | null
+  quantity: number
+  productType: string | null
+  customAttributes: Array<{ key: string; value: string }>
+}
+
+const LINE_PROPS_QUERY = `
+query OrderLineProps($query: String) {
+  orders(first: 50, query: $query) {
+    nodes {
+      name
+      lineItems(first: 50) {
+        nodes {
+          sku title variantTitle quantity
+          customAttributes { key value }
+          product { productType }
+        }
+      }
+    }
+  }
+}`
+
+export async function fetchOrderLinePropsByNames(
+  shop: string,
+  accessToken: string,
+  orderNames: string[],
+  apiVersion = '2024-10',
+): Promise<Map<string, ShopifyOrderLineProps[]>> {
+  const out = new Map<string, ShopifyOrderLineProps[]>()
+  const names = Array.from(new Set(orderNames.filter(Boolean)))
+  if (names.length === 0) return out
+  const url = `https://${shop}/admin/api/${apiVersion}/graphql.json`
+
+  // `orders(first: 50)` caps a page, so batch the name filter to stay under it.
+  for (let i = 0; i < names.length; i += 25) {
+    const batch = names.slice(i, i + 25)
+    const query = batch.map(n => `name:${n.replace(/^#/, '')}`).join(' OR ')
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': accessToken },
+      body: JSON.stringify({ query: LINE_PROPS_QUERY, variables: { query } }),
+    })
+    if (!res.ok) throw new Error(`Shopify GraphQL ${res.status}: ${(await res.text()).slice(0, 200)}`)
+    const json = await res.json()
+    if (json.errors) throw new Error(`GraphQL errors: ${JSON.stringify(json.errors).slice(0, 300)}`)
+    for (const n of json.data?.orders?.nodes ?? []) {
+      out.set(n.name, (n.lineItems?.nodes ?? []).map((l: any) => ({
+        sku: l.sku || null,
+        title: l.title,
+        variantTitle: l.variantTitle ?? null,
+        quantity: l.quantity,
+        productType: l.product?.productType ?? null,
+        customAttributes: l.customAttributes ?? [],
+      })))
+    }
+  }
+  return out
+}
+
 export async function fetchShopInfo(
   shop: string,
   accessToken: string,
