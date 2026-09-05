@@ -4,7 +4,8 @@ import { type SheetConfig } from './auto-fulfill-sheets'
 import { groupByOrder, buildFulfillmentPlan, type OrderPlanStatus } from './build-fulfill-plan'
 import { fetchOrderFulfillmentOrdersByNames, createFulfillment } from '@/lib/shopify-orders'
 
-export type OrderResultRow = { baseOrder: string; status: OrderPlanStatus; trackings: string[]; fulfilledLines: number; message?: string }
+export type FulfillmentDetail = { tracking: string; lineKeys: string[]; lineCount: number }
+export type OrderResultRow = { baseOrder: string; status: OrderPlanStatus; trackings: string[]; fulfilledLines: number; message?: string; fulfillments?: FulfillmentDetail[] }
 export type AutoFulfillSummary = {
   ordersChecked: number; fulfilled: number; tooRecent: number; alreadyFulfilled: number
   notFound: number; needsManual: number; errored: number; rows: OrderResultRow[]
@@ -103,7 +104,17 @@ export async function runAutoFulfill(opts: {
       }
     }
 
-    summary.rows.push({ baseOrder: base, status: plan.status, trackings, fulfilledLines, message })
+    // Per-fulfillment breakdown so the UI can show each sub-order line ↔ its tracking
+    // (split orders create one fulfillment per distinct tracking). Recover the sheet
+    // lineKeys from the shipment ids each fulfillment covers.
+    const lineKeyByShipmentId = new Map((db?.shipments ?? []).map(s => [s.id, s.lineKey]))
+    const fulfillments: FulfillmentDetail[] = plan.fulfillments.map(f => ({
+      tracking: f.tracking,
+      lineKeys: f.shipmentIds.map(id => lineKeyByShipmentId.get(id)).filter((k): k is string => !!k),
+      lineCount: f.lineItems.length,
+    }))
+
+    summary.rows.push({ baseOrder: base, status: plan.status, trackings, fulfilledLines, message, fulfillments })
     switch (plan.status) {
       case 'will_fulfill': summary.fulfilled++; break
       case 'too_recent': summary.tooRecent++; break

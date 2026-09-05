@@ -4,7 +4,8 @@ import Sidebar from '@/components/Sidebar'
 import { splitNdjson } from '@/lib/tracking/ndjson-stream'
 
 type SheetConfig = { id: string; name: string; url: string; enabled: boolean; storeBase: string }
-type ResultRow = { baseOrder: string; status: string; trackings: string[]; fulfilledLines: number; message?: string }
+type FulfillmentDetail = { tracking: string; lineKeys: string[]; lineCount: number }
+type ResultRow = { baseOrder: string; status: string; trackings: string[]; fulfilledLines: number; message?: string; fulfillments?: FulfillmentDetail[] }
 
 const STATUS_LABEL: Record<string, string> = {
   will_fulfill: 'Sẽ fulfill', too_recent: 'Chưa đủ tuổi', already_fulfilled: 'Đã fulfill',
@@ -125,15 +126,30 @@ export default function AutoFulfillPage() {
               <th className="px-md py-sm font-medium">Lines</th><th className="px-md py-sm font-medium">Status</th><th className="px-md py-sm font-medium">Ghi chú</th>
             </tr></thead>
             <tbody>
-              {visibleRows.map((r, i) => (
-                <tr key={`${r.baseOrder}-${i}`} className="border-t border-outline-variant/20">
-                  <td className="px-md py-sm font-medium">{r.baseOrder.startsWith('(') ? r.baseOrder : `#${r.baseOrder}`}</td>
-                  <td className="px-md py-sm font-mono text-label-sm">{r.trackings.join(', ') || '—'}</td>
-                  <td className="px-md py-sm">{r.fulfilledLines || '—'}</td>
-                  <td className="px-md py-sm">{STATUS_LABEL[r.status] ?? r.status}</td>
-                  <td className="px-md py-sm text-label-sm text-on-surface-variant">{r.message ?? ''}</td>
-                </tr>
-              ))}
+              {visibleRows.flatMap((r, i) => {
+                // Split orders create one fulfillment per distinct tracking — show each
+                // sub-order line on its own row so the line↔tracking pairing is visible.
+                if (r.fulfillments && r.fulfillments.length > 0) {
+                  return r.fulfillments.map((f, j) => (
+                    <tr key={`${r.baseOrder}-${i}-${j}`} className="border-t border-outline-variant/20">
+                      <td className="px-md py-sm font-medium">{f.lineKeys.length ? f.lineKeys.map(k => `#${k}`).join(', ') : `#${r.baseOrder}`}</td>
+                      <td className="px-md py-sm font-mono text-label-sm">{f.tracking}</td>
+                      <td className="px-md py-sm">{f.lineCount}</td>
+                      <td className="px-md py-sm">{STATUS_LABEL[r.status] ?? r.status}</td>
+                      <td className="px-md py-sm text-label-sm text-on-surface-variant">{r.message ?? ''}</td>
+                    </tr>
+                  ))
+                }
+                return [(
+                  <tr key={`${r.baseOrder}-${i}`} className="border-t border-outline-variant/20">
+                    <td className="px-md py-sm font-medium">{r.baseOrder.startsWith('(') ? r.baseOrder : `#${r.baseOrder}`}</td>
+                    <td className="px-md py-sm font-mono text-label-sm">{r.trackings.join(', ') || '—'}</td>
+                    <td className="px-md py-sm">{r.fulfilledLines || '—'}</td>
+                    <td className="px-md py-sm">{STATUS_LABEL[r.status] ?? r.status}</td>
+                    <td className="px-md py-sm text-label-sm text-on-surface-variant">{r.message ?? ''}</td>
+                  </tr>
+                )]
+              })}
               {visibleRows.length === 0 && (
                 <tr><td colSpan={5} className="px-md py-lg text-center text-on-surface-variant">
                   {rows.length === 0
