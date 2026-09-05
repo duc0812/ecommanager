@@ -75,10 +75,18 @@ export function buildFulfillmentPlan(input: {
   const shipmentByLineKey = new Map(input.shipments.filter(s => s.shopifyLineId).map(s => [s.lineKey, s]))
   const shipmentIdByLineId = new Map(input.shipments.filter(s => s.shopifyLineId).map(s => [s.shopifyLineId as string, s.id]))
 
+  // Lines that exist but sit on a non-open FO (on hold / scheduled) — so a listed line
+  // that maps here is NOT "already fulfilled"; it needs a human.
+  const heldLineIds = new Set<string>()
+  input.fulfillmentOrders.forEach(fo => {
+    if (!OPEN_FO_STATUSES.has(fo.status)) fo.lineItems.forEach(li => heldLineIds.add(li.shopifyLineId))
+  })
+
   const isWholeOrderRow = (lineKey: string) => lineKey === baseOrder
 
   // key: `${foId} ${tracking}` -> PlannedFulfillment
   const groups = new Map<string, PlannedFulfillment>()
+  const lineTracking = new Map<string, string>() // foLineItemId -> tracking, to catch conflicts
   const addLine = (tracking: string, foId: string, foLineItemId: string, quantity: number, shipmentId?: string) => {
     const key = `${foId} ${tracking}`
     const g = groups.get(key) ?? { fulfillmentOrderId: foId, lineItems: [], tracking, shipmentIds: [] }
@@ -87,24 +95,39 @@ export function buildFulfillmentPlan(input: {
     groups.set(key, g)
   }
 
-  // Same tracking for every sub-order → fulfill the WHOLE order in one fulfillment
-  // (all currently-open lines), no per-line mapping needed. Different trackings across
-  // sub-orders → map each to its exact line (split shipment, per-line fulfillment).
-  const distinctTrackings = new Set(input.rows.map(r => r.tracking))
-  if (distinctTrackings.size <= 1) {
-    const tracking = input.rows[0]?.tracking ?? ''
+  // Fulfill ONLY the sub-orders listed in the sheet, grouped by tracking:
+  //  - all listed sub-orders share one tracking → merge into ONE fulfillment (whole order);
+  //  - different trackings → one fulfillment per tracking (split shipment);
+  //  - only some items listed (the rest not shipped yet) → fulfill the listed lines and
+  //    leave the others untouched (partial). A line NOT listed is never fulfilled.
+  // Anything ambiguous → needs_manual (never guess — this feature emails customers).
+  const hasWhole = input.rows.some(r => isWholeOrderRow(r.lineKey))
+  const hasSuffixed = input.rows.some(r => !isWholeOrderRow(r.lineKey))
+
+  if (hasWhole && hasSuffixed) {
+    // A whole-order (unsuffixed) row mixed with per-line (suffixed) rows is contradictory.
+    return done('needs_manual', 'Sheet vừa có dòng cả đơn vừa có dòng lẻ cho cùng đơn', ageDays)
+  }
+
+  if (hasWhole) {
+    // Only unsuffixed row(s): whole order. They must agree on one tracking.
+    const wholeTrackings = new Set(input.rows.map(r => r.tracking))
+    if (wholeTrackings.size > 1) return done('needs_manual', 'Dòng cả đơn nhưng nhiều tracking khác nhau', ageDays)
+    const tracking = input.rows[0].tracking
     openByLineId.forEach((open, lineId) => addLine(tracking, open.foId, open.foLineItemId, open.quantity, shipmentIdByLineId.get(lineId)))
   } else {
     for (const row of input.rows) {
-      if (isWholeOrderRow(row.lineKey)) {
-        // Apply this tracking to every currently-open line.
-        openByLineId.forEach((open, lineId) => addLine(row.tracking, open.foId, open.foLineItemId, open.quantity, shipmentIdByLineId.get(lineId)))
-        continue
-      }
       const ship = shipmentByLineKey.get(row.lineKey)
       if (!ship || !ship.shopifyLineId) return done('needs_manual', `Không map được ${row.lineKey} sang line Shopify`, ageDays)
       const open = openByLineId.get(ship.shopifyLineId)
-      if (!open) continue // that line is already fulfilled — skip it, idempotent
+      if (!open) {
+        // Listed line isn't open: on hold → needs a human; otherwise already fulfilled → skip (idempotent).
+        if (heldLineIds.has(ship.shopifyLineId)) return done('needs_manual', `Line ${row.lineKey} đang on-hold/scheduled`, ageDays)
+        continue
+      }
+      const prev = lineTracking.get(open.foLineItemId)
+      if (prev && prev !== row.tracking) return done('needs_manual', `Line ${row.lineKey} có 2 tracking khác nhau`, ageDays)
+      lineTracking.set(open.foLineItemId, row.tracking)
       addLine(row.tracking, open.foId, open.foLineItemId, open.quantity, ship.id)
     }
   }
