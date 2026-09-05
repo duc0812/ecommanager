@@ -75,7 +75,7 @@ export function buildFulfillmentPlan(input: {
   for (const row of input.rows) {
     if (isWholeOrderRow(row.lineKey)) {
       // Apply this tracking to every currently-open line.
-      for (const [lineId, open] of openByLineId) addLine(row.tracking, open.foId, open.foLineItemId, open.quantity, shipmentIdByLineId.get(lineId))
+      openByLineId.forEach((open, lineId) => addLine(row.tracking, open.foId, open.foLineItemId, open.quantity, shipmentIdByLineId.get(lineId)))
       continue
     }
     const ship = shipmentByLineKey.get(row.lineKey)
