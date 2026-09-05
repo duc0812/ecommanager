@@ -16,6 +16,9 @@ const STATUS_LABEL: Record<string, string> = {
 // noise (old orders) — their counts still appear in the summary line.
 const HIDDEN_STATUSES = new Set(['already_fulfilled', 'not_found'])
 
+// Persist the last Preview/Apply result in the browser so it survives a refresh.
+const RESULT_STORAGE_KEY = 'auto-fulfill:last-result'
+
 export default function AutoFulfillPage() {
   const [sheets, setSheets] = useState<SheetConfig[]>([])
   const [minAgeDays, setMinAgeDays] = useState(5)
@@ -29,6 +32,20 @@ export default function AutoFulfillPage() {
     if (d) { setSheets(d.sheets ?? []); setMinAgeDays(d.minAgeDays ?? 5) }
   }, [])
   useEffect(() => { loadConfig() }, [loadConfig])
+
+  // Restore the last result on load so a refresh doesn't wipe the plan.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(RESULT_STORAGE_KEY)
+      if (!raw) return
+      const saved = JSON.parse(raw)
+      if (Array.isArray(saved?.rows) && saved.rows.length > 0) {
+        setRows(saved.rows)
+        const when = saved.at ? new Date(saved.at).toLocaleString('en-US') : ''
+        setMessage(`${saved.message ?? ''}${when ? ` · (kết quả lưu lúc ${when} — bấm Preview để chạy lại)` : ''}`)
+      }
+    } catch { /* ignore unavailable/blocked storage */ }
+  }, [])
 
   const saveConfig = async () => {
     setMessage('Đang lưu…')
@@ -64,8 +81,11 @@ export default function AutoFulfillPage() {
       }
       if (err) { setMessage(`Lỗi: ${err}`); return }
       if (doneMsg) {
-        setRows(doneMsg.rows ?? [])
-        setMessage(`${apply ? 'Apply' : 'Preview'} xong: ${doneMsg.fulfilled} fulfill, ${doneMsg.tooRecent} chưa đủ tuổi, ${doneMsg.alreadyFulfilled} đã fulfill, ${doneMsg.needsManual} cần tay, ${doneMsg.notFound} không thấy đơn, ${doneMsg.errored} lỗi / ${doneMsg.ordersChecked} đơn.`)
+        const resultRows = doneMsg.rows ?? []
+        const summary = `${apply ? 'Apply' : 'Preview'} xong: ${doneMsg.fulfilled} fulfill, ${doneMsg.tooRecent} chưa đủ tuổi, ${doneMsg.alreadyFulfilled} đã fulfill, ${doneMsg.needsManual} cần tay, ${doneMsg.notFound} không thấy đơn, ${doneMsg.errored} lỗi / ${doneMsg.ordersChecked} đơn.`
+        setRows(resultRows)
+        setMessage(summary)
+        try { localStorage.setItem(RESULT_STORAGE_KEY, JSON.stringify({ rows: resultRows, message: summary, at: Date.now() })) } catch { /* ignore */ }
       }
     } catch (e: any) { setMessage(`Lỗi: ${e.message}`) }
     finally { setRunning(false); setProgress(null) }
