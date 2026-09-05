@@ -14,6 +14,7 @@ export async function GET(req: NextRequest) {
       supplierId: true,
       supplier: { select: { name: true } },
       checkpointsJson: true,
+      ppTimingJson: true,
       lastCheckpointAt: true,
       order: { select: { placedAt: true } },
     },
@@ -25,6 +26,7 @@ export async function GET(req: NextRequest) {
     placedAt: s.order?.placedAt ?? null,
     deliveredAt: s.lastCheckpointAt ?? null,
     checkpointsJson: s.checkpointsJson,
+    ppTimingJson: s.ppTimingJson,
   }))
 
   return NextResponse.json(computeSupplierPerformance(shipments, days))

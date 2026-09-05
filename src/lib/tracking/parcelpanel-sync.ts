@@ -15,15 +15,19 @@ export type ParcelPanelSyncResult = {
 export async function syncParcelPanelTracking(params: {
   apiKey: string
   storeId?: string
+  includeDelivered?: boolean   // backfill: also re-fetch DELIVERED shipments (normally skipped)
+  sinceDays?: number           // backfill: limit to orders placed within N days
   onProgress?: (done: number, total: number) => void
 }): Promise<ParcelPanelSyncResult> {
   const errors: string[] = []
+  const orderWhere: any = {}
+  if (params.storeId) orderWhere.storeId = params.storeId
+  if (params.sinceDays) orderWhere.placedAt = { gte: new Date(Date.now() - params.sinceDays * 86_400_000) }
+  const where: any = { trackingNumber: { not: null } }
+  if (!params.includeDelivered) where.status = { not: 'DELIVERED' }
+  if (Object.keys(orderWhere).length > 0) where.order = orderWhere
   const shipments = await prisma.shipment.findMany({
-    where: {
-      trackingNumber: { not: null },
-      status: { not: 'DELIVERED' },
-      ...(params.storeId ? { order: { storeId: params.storeId } } : {}),
-    },
+    where,
     select: { id: true, trackingNumber: true, orderId: true, order: { select: { shopifyOrderNumber: true } } },
   })
 
@@ -61,6 +65,7 @@ export async function syncParcelPanelTracking(params: {
             lastMileCarrier: m.lastMileCarrier,
             lastMileTrackingNumber: m.lastMileTrackingNumber,
             checkpointsJson: m.checkpointsJson,
+            ppTimingJson: m.ppTimingJson,
             lastCheckpointAt: m.lastCheckpointAt,
             crawlSource: 'parcelpanel',
             crawlError: null,

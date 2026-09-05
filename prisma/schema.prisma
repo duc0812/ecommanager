@@ -431,6 +431,7 @@ model Shipment {
   lastMileCarrier      String?                             // final-leg carrier, e.g. "USPS"
   lastMileTrackingNumber String?                           // number the final leg is tracked under, e.g. "LZ439195516CN"
   checkpointsJson      String?                             // JSON array of {time, desc, status}
+  ppTimingJson         String?                             // ParcelPanel timing fields: {orderDate, fulfillmentDate, pickupDate, deliveryDate, transitTime}
   lastCheckpointAt     DateTime?
   crawlSource          String?                             // which adapter produced the data (e.g. "parcelwill")
   crawlError           String?

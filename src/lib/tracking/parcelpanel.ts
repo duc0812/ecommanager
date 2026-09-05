@@ -20,7 +20,22 @@ export type PPShipment = {
   last_mile?: { carrier_name?: string | null; carrier_code?: string | null; tracking_number?: string | null } | null
   checkpoints?: PPCheckpoint[] | null
   estimated_delivery_date?: string | null
+  order_date?: string | null
   fulfillment_date?: string | null
+  pickup_date?: string | null
+  delivery_date?: string | null
+  transit_time?: number | null
+}
+
+// ParcelPanel's own timing fields (its Analytics is built on these), persisted per
+// Shipment as ppTimingJson. Dates are raw PP strings (mixed TZ / TZ-less); transitTime
+// is PP's computed pickup→delivery days.
+export type PpTiming = {
+  orderDate: string | null
+  fulfillmentDate: string | null
+  pickupDate: string | null
+  deliveryDate: string | null
+  transitTime: number | null
 }
 
 export async function fetchParcelPanelOrderTracking(apiKey: string, orderNumber: string): Promise<PPShipment[]> {
@@ -39,7 +54,18 @@ export type MappedShipment = {
   lastMileCarrier: string | null
   lastMileTrackingNumber: string | null
   checkpointsJson: string | null
+  ppTimingJson: string | null
   lastCheckpointAt: Date | null
+}
+
+export function ppTimingOf(pp: PPShipment): PpTiming {
+  return {
+    orderDate: pp.order_date ?? null,
+    fulfillmentDate: pp.fulfillment_date ?? null,
+    pickupDate: pp.pickup_date ?? null,
+    deliveryDate: pp.delivery_date ?? null,
+    transitTime: typeof pp.transit_time === 'number' ? pp.transit_time : null,
+  }
 }
 
 export function mapParcelPanelShipment(pp: PPShipment): MappedShipment {
@@ -49,6 +75,8 @@ export function mapParcelPanelShipment(pp: PPShipment): MappedShipment {
     status: c.status ?? null,
   }))
   const latest = checkpoints.find(c => !!c.time)?.time ?? null
+  const timing = ppTimingOf(pp)
+  const hasTiming = Object.values(timing).some(v => v != null)
   return {
     status: (pp.status ?? 'PENDING').toUpperCase(),
     detectedCarrier: pp.carrier?.name ?? null,
@@ -56,6 +84,7 @@ export function mapParcelPanelShipment(pp: PPShipment): MappedShipment {
     lastMileCarrier: pp.last_mile?.carrier_name ?? null,
     lastMileTrackingNumber: pp.last_mile?.tracking_number ?? null,
     checkpointsJson: checkpoints.length > 0 ? JSON.stringify(checkpoints) : null,
+    ppTimingJson: hasTiming ? JSON.stringify(timing) : null,
     lastCheckpointAt: latest ? new Date(latest) : null,
   }
 }

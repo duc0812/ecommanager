@@ -1,24 +1,28 @@
 import { statusBucket } from '@/lib/tracking/status-bucket'
 
-// Supplier delivery-time analytics over recently-delivered shipments. Milestones come
-// from the ParcelPanel checkpoints stored on each Shipment:
-//   placedAt    — Order.placedAt
-//   firstScanAt — earliest checkpoint (Info Received / first tracking event)
-//   inTransitAt — earliest checkpoint that buckets to IN_TRANSIT (first real movement)
-//   deliveredAt — the delivery time (lastCheckpointAt when DELIVERED)
-// Times from ParcelPanel checkpoints may lack a timezone, so we report whole-ish days.
-
+// Supplier delivery-time analytics over recently-delivered shipments. Primary source is
+// ParcelPanel's own timing fields (ppTimingJson: orderDate/fulfillmentDate/pickupDate/
+// deliveryDate/transitTime) — the same fields its Analytics dashboard uses. Falls back to
+// parsing the stored checkpoints for shipments synced before those fields were captured.
 const DAY_MS = 86_400_000
 
-// ParcelPanel checkpoint times can be timezone-less ('2026-09-05T16:27:09'); JS would
-// parse those in server-local time, so day-level deltas would shift with the deployment
-// timezone. Force UTC when no offset is present so parsing is deployment-stable. (A fixed
-// sub-day bias vs the UTC Order.placedAt remains — acceptable at day granularity.)
+// Parse a timezone-less checkpoint time as UTC so day-level deltas don't shift with the
+// deployment timezone (checkpoints are compared only against each other).
 export function parseTs(s: string | null | undefined): Date | null {
   if (!s) return null
   const str = String(s).trim()
   const hasTz = /[zZ]$|[+-]\d\d:?\d\d$/.test(str)
   const d = new Date(hasTz ? str : `${str}Z`)
+  return isNaN(d.getTime()) ? null : d
+}
+
+// PP timing strings mix TZ-annotated ('...-06:00') and TZ-less ('...') values, all in the
+// store's timezone. Compare them as WALL-CLOCK (strip any offset, parse as UTC) so day
+// deltas between two PP timestamps are correct regardless of the actual offset.
+export function ppWallClock(s: string | null | undefined): Date | null {
+  if (!s) return null
+  const stripped = String(s).trim().replace(/([zZ]|[+-]\d\d:?\d\d)$/, '')
+  const d = new Date(`${stripped}Z`)
   return isNaN(d.getTime()) ? null : d
 }
 
@@ -30,10 +34,7 @@ export function checkpointMilestones(checkpointsJson: string | null | undefined)
   let arr: any
   try { arr = JSON.parse(checkpointsJson) } catch { return none }
   if (!Array.isArray(arr)) return none
-
-  let firstScanAt: Date | null = null
-  let inTransitAt: Date | null = null
-  let latestAt: Date | null = null
+  let firstScanAt: Date | null = null, inTransitAt: Date | null = null, latestAt: Date | null = null
   for (const c of arr) {
     const t = parseTs(c?.time)
     if (!t) continue
@@ -41,16 +42,33 @@ export function checkpointMilestones(checkpointsJson: string | null | undefined)
     if (!latestAt || t > latestAt) latestAt = t
     if (statusBucket(c?.status) === 'IN_TRANSIT' && (!inTransitAt || t < inTransitAt)) inTransitAt = t
   }
-  // Delivered = the last (newest) checkpoint on a delivered shipment.
   return { firstScanAt, inTransitAt, deliveredAt: latestAt }
+}
+
+type PpTimingParsed = { orderDate: Date | null; fulfillmentDate: Date | null; pickupDate: Date | null; deliveryDate: Date | null; transitTime: number | null }
+
+export function parsePpTiming(ppTimingJson: string | null | undefined): PpTimingParsed {
+  const none: PpTimingParsed = { orderDate: null, fulfillmentDate: null, pickupDate: null, deliveryDate: null, transitTime: null }
+  if (!ppTimingJson) return none
+  let o: any
+  try { o = JSON.parse(ppTimingJson) } catch { return none }
+  if (!o || typeof o !== 'object') return none
+  return {
+    orderDate: ppWallClock(o.orderDate),
+    fulfillmentDate: ppWallClock(o.fulfillmentDate),
+    pickupDate: ppWallClock(o.pickupDate),
+    deliveryDate: ppWallClock(o.deliveryDate),
+    transitTime: typeof o.transitTime === 'number' && o.transitTime >= 0 ? o.transitTime : null,
+  }
 }
 
 export type PerfShipment = {
   supplierId: string | null
   supplierName: string
-  placedAt: Date | null
-  deliveredAt: Date | null
-  checkpointsJson: string | null
+  placedAt: Date | null          // Order.placedAt (fallback when PP orderDate is absent)
+  deliveredAt: Date | null       // fallback delivered time (lastCheckpointAt)
+  checkpointsJson: string | null // fallback milestone source
+  ppTimingJson: string | null    // primary source (ParcelPanel timing fields)
 }
 
 export type PerfMetric = { avgDays: number | null; n: number }
@@ -58,16 +76,12 @@ export type SupplierPerfRow = {
   supplierId: string | null
   supplierName: string
   deliveredCount: number
-  placedToInTransit: PerfMetric   // #1 placed → in-transit
-  inTransitToDelivered: PerfMetric // #2 in-transit → delivered
-  shippingTime: PerfMetric         // #3 first tracking event → delivered (supplier shipping)
-  customerReceipt: PerfMetric      // #4 placed → delivered (production + shipping)
+  placedToInTransit: PerfMetric    // #1 placed → in-transit (pickup)
+  inTransitToDelivered: PerfMetric // #2 in-transit → delivered (PP transit_time)
+  shippingTime: PerfMetric         // #3 fulfillment/first-scan → delivered
+  customerReceipt: PerfMetric      // #4 placed → delivered
 }
-export type SupplierPerfResult = {
-  days: number
-  overallCustomerReceipt: PerfMetric // #4 across ALL suppliers
-  suppliers: SupplierPerfRow[]
-}
+export type SupplierPerfResult = { days: number; overallCustomerReceipt: PerfMetric; suppliers: SupplierPerfRow[] }
 
 const diffDays = (a: Date, b: Date): number => (b.getTime() - a.getTime()) / DAY_MS
 
@@ -78,30 +92,32 @@ function avgMetric(values: number[]): PerfMetric {
   return { avgDays: Math.round((sum / clean.length) * 10) / 10, n: clean.length }
 }
 
-// Aggregate per supplier. `shipments` should already be limited to the desired window
-// (delivered within `days`). Each metric averages only over shipments that have both of
-// its endpoints, so a missing in-transit checkpoint just lowers that metric's sample n.
 export function computeSupplierPerformance(shipments: PerfShipment[], days: number): SupplierPerfResult {
   type Acc = { name: string; delivered: number; d1: number[]; d2: number[]; d3: number[]; d4: number[] }
   const bySupplier = new Map<string, Acc>()
   const overallD4: number[] = []
 
   for (const s of shipments) {
-    const { firstScanAt, inTransitAt, deliveredAt: cpDelivered } = checkpointMilestones(s.checkpointsJson)
-    const deliveredAt = cpDelivered ?? s.deliveredAt
-    if (!deliveredAt || isNaN(deliveredAt.getTime())) continue
+    const t = parsePpTiming(s.ppTimingJson)
+    const cp = checkpointMilestones(s.checkpointsJson)
+    const placed = t.orderDate ?? s.placedAt
+    const delivered = t.deliveryDate ?? cp.deliveredAt ?? s.deliveredAt
+    if (!delivered || isNaN(delivered.getTime())) continue
+    const inTransit = t.pickupDate ?? cp.inTransitAt
+    const firstScan = t.fulfillmentDate ?? cp.firstScanAt
+
     const key = s.supplierId ?? '__none__'
     const acc = bySupplier.get(key) ?? { name: s.supplierName || 'Chưa gán supplier', delivered: 0, d1: [], d2: [], d3: [], d4: [] }
     acc.delivered++
 
-    const dt = deliveredAt.getTime()
-    if (inTransitAt && s.placedAt) acc.d1.push(diffDays(s.placedAt, inTransitAt))
-    // Skip transit deltas whose start == the delivery event (single/degenerate checkpoint):
-    // that's "shipping time unknown", not a genuine 0-day shipment.
-    if (inTransitAt && inTransitAt.getTime() !== dt) acc.d2.push(diffDays(inTransitAt, deliveredAt))
-    if (firstScanAt && firstScanAt.getTime() !== dt) acc.d3.push(diffDays(firstScanAt, deliveredAt))
-    if (s.placedAt) {
-      const d4 = diffDays(s.placedAt, deliveredAt)
+    const dt = delivered.getTime()
+    if (inTransit && placed) acc.d1.push(diffDays(placed, inTransit))
+    // #2: prefer PP's own transit_time; else derive, skipping the degenerate same-timestamp case.
+    if (t.transitTime != null) acc.d2.push(t.transitTime)
+    else if (inTransit && inTransit.getTime() !== dt) acc.d2.push(diffDays(inTransit, delivered))
+    if (firstScan && firstScan.getTime() !== dt) acc.d3.push(diffDays(firstScan, delivered))
+    if (placed) {
+      const d4 = diffDays(placed, delivered)
       acc.d4.push(d4)
       overallD4.push(d4)
     }
@@ -117,7 +133,6 @@ export function computeSupplierPerformance(shipments: PerfShipment[], days: numb
     shippingTime: avgMetric(a.d3),
     customerReceipt: avgMetric(a.d4),
   }))
-  // Slowest customer-receipt first so the worst suppliers surface at the top.
   suppliers.sort((x, y) => (y.customerReceipt.avgDays ?? -1) - (x.customerReceipt.avgDays ?? -1))
 
   return { days, overallCustomerReceipt: avgMetric(overallD4), suppliers }
