@@ -542,3 +542,111 @@ export async function fetchShopInfo(
     timezoneAbbreviation: json.data?.shop?.timezoneAbbreviation ?? null,
   }
 }
+
+// ─── Fulfillment-order read + fulfillment create (for Auto Fulfilled) ───────
+
+export type ShopifyOrderFO = {
+  orderId: string
+  name: string
+  createdAt: string
+  displayFulfillmentStatus: string | null
+  fulfillmentOrders: Array<{ id: string; status: string; lineItems: Array<{ id: string; remainingQuantity: number; shopifyLineId: string; sku: string | null }> }>
+}
+
+export function mapFulfillmentOrdersResponse(nodes: any[]): Map<string, ShopifyOrderFO> {
+  const out = new Map<string, ShopifyOrderFO>()
+  for (const o of nodes ?? []) {
+    const key = String(o.name ?? '').replace(/^#/, '')
+    out.set(key, {
+      orderId: o.id,
+      name: o.name,
+      createdAt: o.createdAt,
+      displayFulfillmentStatus: o.displayFulfillmentStatus ?? null,
+      fulfillmentOrders: (o.fulfillmentOrders?.nodes ?? []).map((fo: any) => ({
+        id: fo.id,
+        status: fo.status,
+        lineItems: (fo.lineItems?.nodes ?? []).map((li: any) => ({
+          id: li.id,
+          remainingQuantity: li.remainingQuantity ?? 0,
+          shopifyLineId: li.lineItem?.id ?? '',
+          sku: li.lineItem?.sku ?? null,
+        })),
+      })),
+    })
+  }
+  return out
+}
+
+export async function fetchOrderFulfillmentOrdersByNames(
+  shop: string, accessToken: string, names: string[], apiVersion = '2024-10',
+): Promise<Map<string, ShopifyOrderFO>> {
+  const out = new Map<string, ShopifyOrderFO>()
+  const uniq = Array.from(new Set(names.map(n => n.replace(/^#/, '')).filter(Boolean)))
+  if (uniq.length === 0) return out
+  const url = `https://${shop}/admin/api/${apiVersion}/graphql.json`
+  const query = `
+    query($q: String) {
+      orders(first: 25, query: $q) {
+        nodes {
+          id name createdAt displayFulfillmentStatus
+          fulfillmentOrders(first: 10) {
+            nodes {
+              id status
+              lineItems(first: 50) { nodes { id remainingQuantity lineItem { id sku } } }
+            }
+          }
+        }
+      }
+    }`
+  for (let i = 0; i < uniq.length; i += 25) {
+    const batch = uniq.slice(i, i + 25)
+    const q = batch.map(n => `name:${n}`).join(' OR ')
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': accessToken },
+      body: JSON.stringify({ query, variables: { q } }),
+    })
+    if (!res.ok) throw new Error(`Shopify GraphQL ${res.status}: ${(await res.text()).slice(0, 200)}`)
+    const json = await res.json()
+    if (json.errors) throw new Error(`GraphQL errors: ${JSON.stringify(json.errors).slice(0, 300)}`)
+    mapFulfillmentOrdersResponse(json.data?.orders?.nodes ?? []).forEach((v, k) => out.set(k, v))
+    await new Promise(r => setTimeout(r, 300))
+  }
+  return out
+}
+
+export async function createFulfillment(
+  shop: string,
+  accessToken: string,
+  input: { fulfillmentOrderId: string; lineItems: Array<{ id: string; quantity: number }>; trackingInfo: { company?: string; number: string; url?: string }; notifyCustomer: boolean },
+  apiVersion = '2024-10',
+): Promise<{ ok: boolean; fulfillmentId?: string; error?: string }> {
+  const url = `https://${shop}/admin/api/${apiVersion}/graphql.json`
+  const mutation = `
+    mutation($fulfillment: FulfillmentV2Input!) {
+      fulfillmentCreateV2(fulfillment: $fulfillment) {
+        fulfillment { id status }
+        userErrors { field message }
+      }
+    }`
+  const fulfillment = {
+    lineItemsByFulfillmentOrder: [{
+      fulfillmentOrderId: input.fulfillmentOrderId,
+      fulfillmentOrderLineItems: input.lineItems.map(li => ({ id: li.id, quantity: li.quantity })),
+    }],
+    trackingInfo: input.trackingInfo,
+    notifyCustomer: input.notifyCustomer,
+  }
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': accessToken },
+    body: JSON.stringify({ query: mutation, variables: { fulfillment } }),
+  })
+  if (!res.ok) return { ok: false, error: `HTTP ${res.status}: ${(await res.text()).slice(0, 200)}` }
+  const json = await res.json()
+  if (json.errors) return { ok: false, error: `GraphQL: ${JSON.stringify(json.errors).slice(0, 300)}` }
+  const payload = json.data?.fulfillmentCreateV2
+  const userErrors = payload?.userErrors ?? []
+  if (userErrors.length > 0) return { ok: false, error: userErrors.map((e: any) => e.message).join('; ') }
+  return { ok: true, fulfillmentId: payload?.fulfillment?.id }
+}
