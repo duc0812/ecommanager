@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const upserts: any[] = []
+const campaignUpserts: any[] = []
 
 vi.mock('@/lib/db', () => ({
   prisma: {
@@ -16,13 +17,23 @@ vi.mock('@/lib/db', () => ({
         return {}
       }),
     },
+    metaCampaignDailySpend: {
+      upsert: vi.fn(async (args: any) => {
+        campaignUpserts.push(args)
+        return {}
+      }),
+    },
   },
 }))
 
-import { syncMetaInsights } from '@/lib/sync-meta-insights'
+import { syncMetaInsights, syncMetaCampaignInsights } from '@/lib/sync-meta-insights'
 
 function insightsRow(date: string, spend: string) {
   return { date_start: date, date_stop: date, spend, impressions: '100', clicks: '10' }
+}
+
+function campaignRow(date: string, campaignId: string, campaignName: string, spend: string) {
+  return { date_start: date, date_stop: date, campaign_id: campaignId, campaign_name: campaignName, spend, impressions: '50', clicks: '5' }
 }
 
 describe('syncMetaInsights pagination', () => {
@@ -66,5 +77,56 @@ describe('syncMetaInsights pagination', () => {
     expect(result.synced).toBe(0)
     expect(result.errors).toHaveLength(1)
     expect(result.errors[0]).toContain('Invalid OAuth access token')
+  })
+})
+
+describe('syncMetaCampaignInsights', () => {
+  beforeEach(() => {
+    campaignUpserts.length = 0
+    vi.restoreAllMocks()
+  })
+
+  it('requests campaign level with campaign fields and upserts one row per campaign per day', async () => {
+    const page1 = {
+      data: [
+        campaignRow('2026-09-01', 'c1', 'Remi04 Pomo New Arrival', '10'),
+        campaignRow('2026-09-01', 'c2', 'JEEP mug collection', '4'),
+      ],
+      paging: { next: 'https://graph.facebook.com/page2' },
+    }
+    const page2 = { data: [campaignRow('2026-09-02', 'c1', 'Remi04 Pomo New Arrival', '12')], paging: {} }
+    const fetchSpy = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce({ ok: true, json: async () => page1 } as Response)
+      .mockResolvedValueOnce({ ok: true, json: async () => page2 } as Response)
+
+    const result = await syncMetaCampaignInsights(30)
+
+    const firstUrl = decodeURIComponent(String(fetchSpy.mock.calls[0][0]))
+    expect(firstUrl).toContain('level=campaign')
+    expect(firstUrl).toContain('fields=campaign_id,campaign_name,spend,impressions,clicks')
+    expect(firstUrl).toContain('time_increment=1')
+    expect(result.synced).toBe(3)
+    expect(result.errors).toEqual([])
+    expect(campaignUpserts).toHaveLength(3)
+    expect(campaignUpserts[0].where).toEqual({
+      adAccountId_campaignId_date: { adAccountId: 'acc1', campaignId: 'c1', date: '2026-09-01' },
+    })
+    expect(campaignUpserts[0].create).toMatchObject({
+      adAccountId: 'acc1', campaignId: 'c1', campaignName: 'Remi04 Pomo New Arrival',
+      date: '2026-09-01', spend: 10, impressions: 50, clicks: 5, currency: 'USD',
+    })
+    expect(campaignUpserts[0].update).toMatchObject({ campaignName: 'Remi04 Pomo New Arrival', spend: 10 })
+  })
+
+  it('skips rows without a campaign_id', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ data: [{ date_start: '2026-09-01', spend: '1', impressions: '1', clicks: '0' }], paging: {} }),
+    } as Response)
+
+    const result = await syncMetaCampaignInsights(30)
+
+    expect(result.synced).toBe(0)
+    expect(campaignUpserts).toHaveLength(0)
   })
 })
