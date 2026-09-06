@@ -173,4 +173,14 @@ describe('computeNichePerformance', () => {
     expect(r.unassigned.spend).toBeCloseTo(2)
     expect(r.unassigned.revenue).toBeCloseTo(9)
   })
+
+  it('reports a missing rate even when the spend row references an account not in accounts', () => {
+    const r = computeNichePerformance(base({
+      schedule: [],
+      accounts: [usdAccount],
+      campaignSpends: [spend({ adAccountId: 'acc-ghost', campaignId: 'c9', campaignName: 'jeep', spend: 500_000, currency: 'VND' })],
+    }))
+    expect(r.niches.find(n => n.nicheId === 'n-jeep')!.spend).toBe(0)
+    expect(r.missingExchangeRateAccounts).toEqual([{ accountId: 'acc-ghost', accountName: null, currency: 'VND' }])
+  })
 })
