@@ -176,6 +176,10 @@ Completed 2026-05-19 via subagent-driven development.
 - Trello card fallback: missing (SKU×Supplier) creates card; on Trello DONE + Drive link, `POST /api/trello/sync` populates library entry `ready=true` for reuse
 - `/fulfillment/design-library` page with Sidebar nav; API: `GET/POST /api/fulfillment/design-library`, `DELETE /[id]`, `POST /import` (CSV: `sku,supplierCode,designLink`)
 
+### 🟢 Phase 14 — Niche Performance Dashboard (DONE)
+- [x] Niche Performance dashboard (campaign-level Meta spend vs Shopify revenue per niche) — spec `docs/superpowers/specs/2026-09-06-niche-performance-design.md`
+- [ ] Niche Performance: product-type layer inside a niche, per-niche profit (COGS), daily trend chart
+
 ---
 
 ## Known Issues / Tech Debt

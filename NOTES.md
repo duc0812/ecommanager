@@ -196,6 +196,15 @@ Projects Summary:
 
 ---
 
+## Niche Performance (Marketing) — 2026-09-06
+- Page `/marketing/niche-performance`, permission `marketing_niche` (SUPERADMIN + ADMIN by default).
+- Campaign spend comes from `MetaCampaignDailySpend` (Meta insights `level=campaign`), synced by `syncMetaCampaignInsights()` right after the account-level sync in `runAutoSync` and the 01:00 America/Denver cron. Manual: `POST /api/meta/sync-campaign-insights?days=30`.
+- Niche = `Niche` table (name + JSON keywords). Campaign → niche by keyword on `campaignName` (override table `MetaCampaignNicheOverride` wins); order line → niche by keyword on `productTitle`, computed at query time (no column on OrderLine).
+- Spend converted to USD with the dated rate schedule; no 3% FX fee added. Revenue = line price × qty minus pro-rata order refund; excludes non-product lines and REFUNDED/CANCELLED pipeline statuses.
+- Aggregation logic is pure: `src/lib/marketing/niche-performance.ts` (tested).
+
+---
+
 ## Dev Server Info
 
 - **Port**: 3002

@@ -115,7 +115,7 @@ No Prisma imports. Input types mirror the selects above. Rules:
 
 **Campaign → niche.** For each distinct `campaignId`: if an override exists, use it; else the first active niche (by `sortOrder`) whose keywords match `campaignName` case-insensitively; else `unassigned`.
 
-**Spend.** Each daily row is converted with `convertMetaAmountToUsdDated(spend, currency ?? accountCurrency, date, schedule)`. A `null` result means a missing VND rate: the row contributes 0 and the account is added to `missingExchangeRateAccounts`. Per campaign the function also keeps `spendOriginal` (sum in the account currency) and `currency` for display.
+**Spend.** Each daily row is converted with `convertMetaAmountToUsdDated(spend, accountCurrency ?? rowCurrency, date, schedule)`. The account currency is authoritative because `MetaCampaignDailySpend.currency` defaults to USD even for VND accounts. A `null` result means a missing VND rate: the row contributes 0 and the account is added to `missingExchangeRateAccounts`. Per campaign the function also keeps `spendOriginal` (sum in the account currency) and `currency` for display.
 
 **Order line → niche.** Only `productLinesOnly(lines)` are considered. Line revenue = `unitPrice × qty`. Order refund is allocated pro-rata: `lineRefund = refundedAmount × lineRevenue / sum(lineRevenue of product lines)`; net line revenue = `lineRevenue − lineRefund`, floored at 0. Niche assignment uses the same first-match rule on `productTitle`. Unmatched lines go to `unassigned.revenue`.
 
