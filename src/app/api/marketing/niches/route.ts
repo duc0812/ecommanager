@@ -66,7 +66,10 @@ export async function PATCH(req: NextRequest) {
     const niche = await prisma.niche.update({ where: { id: String(b.id) }, data })
     return NextResponse.json(niche)
   } catch (e) {
-    if (isUniqueError(e)) return NextResponse.json({ error: `Niche "${data.name}" đã tồn tại.` }, { status: 409 })
+    if (isUniqueError(e)) {
+      const message = data.name === undefined ? 'Tên niche đã tồn tại.' : `Niche "${data.name}" đã tồn tại.`
+      return NextResponse.json({ error: message }, { status: 409 })
+    }
     if (isNotFoundError(e)) return NextResponse.json({ error: 'Niche not found' }, { status: 404 })
     throw e
   }

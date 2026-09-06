@@ -92,7 +92,7 @@ export function computeNichePerformance(input: NichePerformanceInput): NichePerf
     const account = accountMap.get(s.adAccountId)
     const currency = normalizeMetaCurrency(account?.currency || s.currency)
     const usd = convertMetaAmountToUsdDated(s.spend, currency, s.date, input.schedule)
-    if (usd === null) {
+    if (usd === null && s.spend > 0) {
       if (account) {
         missingRate.set(account.id, account)
       } else {

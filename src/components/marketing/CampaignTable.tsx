@@ -6,10 +6,11 @@ import { fmtUsd, fmtMoney, fmtPct, fmtInt, fmtDate } from './format'
 type Props = {
   campaigns: CampaignRow[]
   niches?: Array<{ id: string; name: string }>
-  onAssign?: (campaignId: string, nicheId: string) => Promise<void>
+  currentNicheId?: string
+  onAssign?: (campaignId: string, nicheId: string | null) => Promise<void>
 }
 
-export default function CampaignTable({ campaigns, niches, onAssign }: Props) {
+export default function CampaignTable({ campaigns, niches, currentNicheId, onAssign }: Props) {
   const [busy, setBusy] = useState<string | null>(null)
   const canAssign = Boolean(niches && onAssign)
 
@@ -55,20 +56,21 @@ export default function CampaignTable({ campaigns, niches, onAssign }: Props) {
               {canAssign && (
                 <td className="px-md py-sm">
                   <select
-                    value=""
+                    value={currentNicheId ?? ''}
                     disabled={busy === c.campaignId}
                     onChange={async e => {
-                      const nicheId = e.target.value
-                      if (!nicheId) return
+                      const v = e.target.value
+                      if (!v || v === currentNicheId) return
                       setBusy(c.campaignId)
-                      try { await onAssign!(c.campaignId, nicheId) }
+                      try { await onAssign!(c.campaignId, v === '__unassign' ? null : v) }
                       catch (e) { console.error('assign niche failed', e) }
                       finally { setBusy(null) }
                     }}
                     className="rounded-lg border border-outline-variant/30 bg-surface-container px-sm py-xs text-body-sm"
                   >
-                    <option value="">Gán niche…</option>
+                    {!currentNicheId && <option value="">Gán niche…</option>}
                     {niches!.map(n => <option key={n.id} value={n.id}>{n.name}</option>)}
+                    {currentNicheId && <option value="__unassign">Bỏ gán</option>}
                   </select>
                 </td>
               )}

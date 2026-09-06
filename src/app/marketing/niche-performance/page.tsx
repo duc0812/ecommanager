@@ -39,15 +39,15 @@ export default function NichePerformancePage() {
       const list: Project[] = (Array.isArray(d) ? d : (d.projects ?? [])).filter((p: Project) => !p.archivedAt)
       setProjects(list)
       if (list.length > 0 && !projectId) setProjectId(list[0].id)
-    }).catch(() => {})
+    }).catch(() => setMessage('Không tải được danh sách project; đang dùng project mặc định.'))
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const load = useCallback(async () => {
-    if (!projectId) return
     if (period === 'custom' && (!from || !to)) return
     const seq = ++requestSeq.current
     setLoading(true); setError('')
-    const params = new URLSearchParams({ projectId, period })
+    const params = new URLSearchParams({ period })
+    if (projectId) params.set('projectId', projectId)
     if (period === 'custom') { params.set('from', from); params.set('to', to) }
     try {
       const res = await fetch(`/api/marketing/niche-performance?${params}`)
@@ -79,10 +79,14 @@ export default function NichePerformancePage() {
     }
   }
 
-  const assign = async (campaignId: string, nicheId: string) => {
-    const res = await fetch('/api/marketing/campaign-overrides', {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ campaignId, nicheId }),
-    })
+  const assign = async (campaignId: string, nicheId: string | null) => {
+    const res = nicheId === null
+      ? await fetch('/api/marketing/campaign-overrides', {
+          method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ campaignId }),
+        })
+      : await fetch('/api/marketing/campaign-overrides', {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ campaignId, nicheId }),
+        })
     if (!res.ok) { const b = await res.json().catch(() => ({})); setMessage(`Lỗi gán niche: ${b.error ?? res.status}`); return }
     await load()
   }
@@ -203,7 +207,7 @@ export default function NichePerformancePage() {
                         <NicheRows key={n.nicheId} open={expanded.has(n.nicheId)} onToggle={() => toggle(n.nicheId)}
                           name={n.name} spend={n.spend} revenue={n.revenue} roas={n.roas} orders={n.orders} aov={n.aov}
                           campaignsLabel={`${n.activeCampaignCount}/${n.campaignCount}`}>
-                          <CampaignTable campaigns={n.campaigns} />
+                          <CampaignTable campaigns={n.campaigns} niches={nicheOptions} currentNicheId={n.nicheId} onAssign={assign} />
                         </NicheRows>
                       ))}
                       {showUnassigned && (

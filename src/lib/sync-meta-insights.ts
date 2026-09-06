@@ -59,6 +59,7 @@ type InsightsSyncConfig = {
   level: 'account' | 'campaign'
   fields: string
   skippedLabel: string
+  firstSyncSince: string
   lastStoredDate: (account: SyncAccount) => Promise<string | null>
   persistRow: (account: SyncAccount, row: InsightsRow) => Promise<boolean>
 }
@@ -101,8 +102,6 @@ async function runInsightsSync(
   const fromProjectStart = options.fromProjectStart === true
   const fixedDays = (typeof optionsOrDays === 'number' || options.days != null) ? (options.days ?? 30) : null
   const until = validDateKey(options.until) ?? dateOnly(new Date())
-  // Meta only returns days that had delivery, so a wide first-sync range is cheap.
-  const firstSyncSince = validDateKey(process.env.META_INSIGHTS_FIRST_SYNC_SINCE) ?? daysAgo(730)
 
   let totalSynced = 0
   const errors: string[] = []
@@ -117,11 +116,11 @@ async function runInsightsSync(
       // Anchor to the project's start date; if it is missing or misconfigured
       // (later than today), fall back to the wide default so the backfill still works.
       const projectStart = account.project?.startDate ? dateOnly(account.project.startDate) : null
-      since = projectStart && projectStart <= until ? projectStart : firstSyncSince
+      since = projectStart && projectStart <= until ? projectStart : config.firstSyncSince
     } else if (fixedDays != null) {
       since = daysAgo(fixedDays)
     } else {
-      since = (await config.lastStoredDate(account)) ?? firstSyncSince
+      since = (await config.lastStoredDate(account)) ?? config.firstSyncSince
     }
     if (since > until) since = until
     if (since < earliestSince) earliestSince = since
@@ -186,6 +185,7 @@ export async function syncMetaInsights(
     level: 'account',
     fields: 'spend,impressions,clicks',
     skippedLabel: 'Insights',
+    firstSyncSince: validDateKey(process.env.META_INSIGHTS_FIRST_SYNC_SINCE) ?? daysAgo(730),
     lastStoredDate: async account => {
       const lastStored = await prisma.dailyAdSpend.findFirst({
         where: { adAccountId: account.id },
@@ -216,6 +216,7 @@ export async function syncMetaCampaignInsights(
     level: 'campaign',
     fields: 'campaign_id,campaign_name,spend,impressions,clicks',
     skippedLabel: 'Campaign insights',
+    firstSyncSince: validDateKey(process.env.META_CAMPAIGN_INSIGHTS_FIRST_SYNC_SINCE) ?? daysAgo(180),
     lastStoredDate: async account => {
       const lastStored = await prisma.metaCampaignDailySpend.findFirst({
         where: { adAccountId: account.id },

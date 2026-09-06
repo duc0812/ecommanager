@@ -16,12 +16,14 @@ vi.mock('@/lib/db', () => ({
         upserts.push(args)
         return {}
       }),
+      findFirst: vi.fn(async () => null),
     },
     metaCampaignDailySpend: {
       upsert: vi.fn(async (args: any) => {
         campaignUpserts.push(args)
         return {}
       }),
+      findFirst: vi.fn(async () => null),
     },
   },
 }))
@@ -116,6 +118,20 @@ describe('syncMetaCampaignInsights', () => {
       date: '2026-09-01', spend: 10, impressions: 50, clicks: 5, currency: 'USD',
     })
     expect(campaignUpserts[0].update).toMatchObject({ campaignName: 'Remi04 Pomo New Arrival', spend: 10 })
+  })
+
+  it('with no stored campaign rows, first sync since defaults to 180 days back (not 730)', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ data: [], paging: {} }),
+    } as Response)
+
+    await syncMetaCampaignInsights()
+
+    const expectedSince = new Date(Date.now() - 180 * 864e5).toISOString().slice(0, 10)
+    const firstUrl = new URL(String(fetchSpy.mock.calls[0][0]))
+    const timeRange = JSON.parse(firstUrl.searchParams.get('time_range')!)
+    expect(timeRange.since).toBe(expectedSince)
   })
 
   it('skips rows without a campaign_id', async () => {

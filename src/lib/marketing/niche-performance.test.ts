@@ -174,6 +174,14 @@ describe('computeNichePerformance', () => {
     expect(r.unassigned.revenue).toBeCloseTo(9)
   })
 
+  it('zero-spend VND row does not flag a missing exchange rate', () => {
+    const r = computeNichePerformance(base({
+      schedule: [],
+      campaignSpends: [spend({ adAccountId: 'acc-vnd', campaignId: 'c9', campaignName: 'Honey Bear video', spend: 0, currency: 'VND' })],
+    }))
+    expect(r.missingExchangeRateAccounts).toEqual([])
+  })
+
   it('reports a missing rate even when the spend row references an account not in accounts', () => {
     const r = computeNichePerformance(base({
       schedule: [],

@@ -202,6 +202,7 @@ Projects Summary:
 - Niche = `Niche` table (name + JSON keywords). Campaign → niche by keyword on `campaignName` (override table `MetaCampaignNicheOverride` wins); order line → niche by keyword on `productTitle`, computed at query time (no column on OrderLine).
 - Spend converted to USD with the dated rate schedule; no 3% FX fee added. Revenue = line price × qty minus pro-rata order refund; excludes non-product lines and REFUNDED/CANCELLED pipeline statuses.
 - Aggregation logic is pure: `src/lib/marketing/niche-performance.ts` (tested).
+- Revenue basis differs from the Projects dashboard: niche revenue = line price × qty − pro-rata refund (product lines only), while Projects uses `order.grossAmount`, so the two pages will not tie exactly.
 
 ---
 
