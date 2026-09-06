@@ -23,6 +23,10 @@ function isUniqueError(e: unknown) {
   return typeof e === 'object' && e !== null && (e as any).code === 'P2002'
 }
 
+function isNotFoundError(e: unknown) {
+  return typeof e === 'object' && e !== null && (e as any).code === 'P2025'
+}
+
 export async function GET() {
   const niches = await prisma.niche.findMany({ orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }] })
   return NextResponse.json(niches)
@@ -63,6 +67,7 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json(niche)
   } catch (e) {
     if (isUniqueError(e)) return NextResponse.json({ error: `Niche "${data.name}" đã tồn tại.` }, { status: 409 })
+    if (isNotFoundError(e)) return NextResponse.json({ error: 'Niche not found' }, { status: 404 })
     throw e
   }
 }
@@ -72,6 +77,11 @@ export async function DELETE(req: NextRequest) {
   if (denied) return denied
   const b = await req.json().catch(() => ({}))
   if (!b.id) return NextResponse.json({ error: 'id required' }, { status: 400 })
-  await prisma.niche.delete({ where: { id: String(b.id) } })
-  return NextResponse.json({ ok: true })
+  try {
+    await prisma.niche.delete({ where: { id: String(b.id) } })
+    return NextResponse.json({ ok: true })
+  } catch (e) {
+    if (isNotFoundError(e)) return NextResponse.json({ error: 'Niche not found' }, { status: 404 })
+    throw e
+  }
 }
