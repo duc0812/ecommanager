@@ -119,6 +119,7 @@ model MetaAdAccount {
   balanceSyncedAt DateTime?
   createdAt       DateTime      @default(now())
   dailySpends     DailyAdSpend[]
+  campaignDailySpends MetaCampaignDailySpend[]
 }
 
 model MetaBilling {
@@ -573,6 +574,42 @@ model DailyAdSpend {
   @@unique([adAccountId, date])
   @@index([date])
   @@index([adAccountId])
+}
+
+model MetaCampaignDailySpend {
+  id           String        @id @default(cuid())
+  adAccountId  String
+  adAccount    MetaAdAccount @relation(fields: [adAccountId], references: [id], onDelete: Cascade)
+  campaignId   String
+  campaignName String
+  date         String        // "YYYY-MM-DD" in the Meta account timezone, same as DailyAdSpend
+  spend        Float         @default(0)
+  impressions  Int           @default(0)
+  clicks       Int           @default(0)
+  currency     String        @default("USD")
+  fetchedAt    DateTime      @default(now())
+
+  @@unique([adAccountId, campaignId, date])
+  @@index([date])
+  @@index([campaignId])
+}
+
+model Niche {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  keywords  String   @default("[]") // JSON string[]; matched case-insensitively on campaign names and product titles
+  active    Boolean  @default(true)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  overrides MetaCampaignNicheOverride[]
+}
+
+model MetaCampaignNicheOverride {
+  campaignId String   @id
+  nicheId    String
+  niche      Niche    @relation(fields: [nicheId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
 }
 
 model SpyStore {
