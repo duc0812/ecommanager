@@ -16,6 +16,7 @@ export type FeaturePermission =
   | 'tools_spy_idea'
   | 'tools_resources'
   | 'projects'
+  | 'marketing_niche'
   | 'setup_store'
   | 'setup_meta'
   | 'setup_projects'
@@ -46,6 +47,7 @@ export const FEATURE_LABELS: Record<FeaturePermission, string> = {
   tools_spy_idea: 'Spy Idea',
   tools_resources: 'Resources',
   projects: 'Project Management',
+  marketing_niche: 'Niche Performance',
   setup_store: 'Setup Store',
   setup_meta: 'Setup Meta',
   setup_projects: 'Setup Projects',
@@ -72,6 +74,7 @@ export const FEATURE_GROUPS: { label: string; permissions: FeaturePermission[] }
   },
   { label: 'Tools', permissions: ['tools_spy_idea', 'tools_resources'] },
   { label: 'Project Management', permissions: ['projects'] },
+  { label: 'Marketing', permissions: ['marketing_niche'] },
   { label: 'Setup', permissions: ['setup_store', 'setup_meta', 'setup_projects', 'setup_hr', 'setup_users'] },
 ]
 
@@ -94,6 +97,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, FeaturePermission[]> = {
     'tools_spy_idea',
     'tools_resources',
     'projects',
+    'marketing_niche',
   ],
   SELLER: ['projects'],
   SUPPORT: [
@@ -127,6 +131,7 @@ const FEATURE_PATHS: Record<FeaturePermission, string[]> = {
   tools_spy_idea: ['/tools/spy-idea'],
   tools_resources: ['/tools/resources'],
   projects: ['/projects'],
+  marketing_niche: ['/marketing/niche-performance'],
   setup_store: ['/setup'],
   setup_meta: ['/setup/meta'],
   setup_projects: ['/setup/projects'],
