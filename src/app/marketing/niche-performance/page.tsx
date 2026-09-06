@@ -1,10 +1,10 @@
 'use client'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import Sidebar from '@/components/Sidebar'
 import { RoleGate } from '@/components/RoleGate'
 import CampaignTable from '@/components/marketing/CampaignTable'
 import NicheManagerPanel from '@/components/marketing/NicheManagerPanel'
-import { fmtUsd, fmtRoas, fmtInt, roasTone } from '@/components/marketing/format'
+import { fmtUsd, fmtRoas, fmtInt, fmtDate, roasTone } from '@/components/marketing/format'
 import type { NichePerformanceResult } from '@/lib/marketing/niche-performance'
 
 type Data = NichePerformanceResult & { project: { id: string; name: string } }
@@ -32,6 +32,7 @@ export default function NichePerformancePage() {
   const [message, setMessage] = useState('')
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [showManager, setShowManager] = useState(false)
+  const requestSeq = useRef(0)
 
   useEffect(() => {
     fetch('/api/projects').then(r => r.json()).then(d => {
@@ -44,6 +45,7 @@ export default function NichePerformancePage() {
   const load = useCallback(async () => {
     if (!projectId) return
     if (period === 'custom' && (!from || !to)) return
+    const seq = ++requestSeq.current
     setLoading(true); setError('')
     const params = new URLSearchParams({ projectId, period })
     if (period === 'custom') { params.set('from', from); params.set('to', to) }
@@ -51,11 +53,11 @@ export default function NichePerformancePage() {
       const res = await fetch(`/api/marketing/niche-performance?${params}`)
       const body = await res.json()
       if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`)
-      setData(body)
+      if (seq === requestSeq.current) setData(body)
     } catch (e: any) {
-      setError(e.message)
+      if (seq === requestSeq.current) setError(e.message)
     } finally {
-      setLoading(false)
+      if (seq === requestSeq.current) setLoading(false)
     }
   }, [projectId, period, from, to])
 
@@ -145,7 +147,7 @@ export default function NichePerformancePage() {
             )}
             {data && (
               <span className="ml-auto text-label-sm text-on-surface-variant">
-                {data.period.from.replace(/(\d{4})-(\d{2})-(\d{2})/, '$2/$3/$1')} – {data.period.to.replace(/(\d{4})-(\d{2})-(\d{2})/, '$2/$3/$1')} · {data.period.timeZone}
+                {fmtDate(data.period.from)} – {fmtDate(data.period.to)} · {data.period.timeZone}
               </span>
             )}
           </div>
@@ -257,7 +259,9 @@ function NicheRows({ open, onToggle, name, muted, spend, revenue, roas, orders, 
 }) {
   return (
     <>
-      <tr onClick={onToggle} className={`cursor-pointer border-b border-outline-variant/10 hover:bg-surface-container-low ${muted ? 'text-on-surface-variant' : ''}`}>
+      <tr onClick={onToggle} role="button" tabIndex={0} aria-expanded={open}
+        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle() } }}
+        className={`cursor-pointer border-b border-outline-variant/10 hover:bg-surface-container-low focus:outline-none focus-visible:ring-2 focus-visible:ring-secondary ${muted ? 'text-on-surface-variant' : ''}`}>
         <td className="px-lg py-md">
           <div className="flex items-center gap-xs">
             <span className="material-symbols-outlined text-[18px] text-on-surface-variant">{open ? 'expand_more' : 'chevron_right'}</span>
