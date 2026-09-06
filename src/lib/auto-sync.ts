@@ -64,16 +64,28 @@ async function runNightlyMetaSync(): Promise<void> {
   console.log('[nightly-meta-sync] Starting previous-day finalization...')
   try {
     const result = await syncMetaInsights(2)
-    const campaigns = await syncMetaCampaignInsights(2)
+
+    let campaigns: Awaited<ReturnType<typeof syncMetaCampaignInsights>> | { error: string }
+    try {
+      campaigns = await syncMetaCampaignInsights(2)
+    } catch (e: unknown) {
+      campaigns = { error: e instanceof Error ? e.message : 'Unknown error' }
+    }
+
     const payload = { ...result, campaigns, ranAt: new Date().toISOString() }
     await prisma.appSetting.upsert({
       where: { key: 'last_nightly_meta_sync' },
       create: { key: 'last_nightly_meta_sync', value: JSON.stringify(payload) },
       update: { value: JSON.stringify(payload) },
     })
-    console.log(`[nightly-meta-sync] Done — synced ${result.synced} account rows, ${campaigns.synced} campaign rows across ${result.accounts} accounts`)
+    const campaignSynced = 'synced' in campaigns ? campaigns.synced : 0
+    console.log(`[nightly-meta-sync] Done — synced ${result.synced} account rows, ${campaignSynced} campaign rows across ${result.accounts} accounts`)
     if (result.errors.length) console.error('[nightly-meta-sync] Errors:', result.errors)
-    if (campaigns.errors.length) console.error('[nightly-meta-sync] Campaign errors:', campaigns.errors)
+    if ('error' in campaigns) {
+      console.error('[nightly-meta-sync] Campaign sync failed:', campaigns.error)
+    } else if (campaigns.errors.length) {
+      console.error('[nightly-meta-sync] Campaign errors:', campaigns.errors)
+    }
   } catch (e: unknown) {
     console.error('[nightly-meta-sync] Fatal error:', e instanceof Error ? e.message : e)
   }
