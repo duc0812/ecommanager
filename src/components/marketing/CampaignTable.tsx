@@ -55,13 +55,15 @@ export default function CampaignTable({ campaigns, niches, onAssign }: Props) {
               {canAssign && (
                 <td className="px-md py-sm">
                   <select
-                    defaultValue=""
+                    value=""
                     disabled={busy === c.campaignId}
                     onChange={async e => {
                       const nicheId = e.target.value
                       if (!nicheId) return
                       setBusy(c.campaignId)
-                      try { await onAssign!(c.campaignId, nicheId) } finally { setBusy(null) }
+                      try { await onAssign!(c.campaignId, nicheId) }
+                      catch (e) { console.error('assign niche failed', e) }
+                      finally { setBusy(null) }
                     }}
                     className="rounded-lg border border-outline-variant/30 bg-surface-container px-sm py-xs text-body-sm"
                   >
