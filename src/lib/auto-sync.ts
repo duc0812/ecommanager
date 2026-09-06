@@ -1,6 +1,6 @@
 import cron from 'node-cron'
 import { prisma } from '@/lib/db'
-import { syncMetaInsights } from '@/lib/sync-meta-insights'
+import { syncMetaInsights, syncMetaCampaignInsights } from '@/lib/sync-meta-insights'
 import { recalculateMissingOrderLineCosts } from '@/lib/repos/order-costs'
 
 let initialized = false
@@ -43,6 +43,12 @@ export async function runAutoSync(requestOrigin?: string, cookieHeader?: string 
     result.insights = { error: e instanceof Error ? e.message : 'Unknown error' }
   }
 
+  try {
+    result.campaignInsights = await syncMetaCampaignInsights()
+  } catch (e: unknown) {
+    result.campaignInsights = { error: e instanceof Error ? e.message : 'Unknown error' }
+  }
+
   result.finishedAt = new Date().toISOString()
 
   await prisma.appSetting.upsert({
@@ -58,13 +64,16 @@ async function runNightlyMetaSync(): Promise<void> {
   console.log('[nightly-meta-sync] Starting previous-day finalization...')
   try {
     const result = await syncMetaInsights(2)
+    const campaigns = await syncMetaCampaignInsights(2)
+    const payload = { ...result, campaigns, ranAt: new Date().toISOString() }
     await prisma.appSetting.upsert({
       where: { key: 'last_nightly_meta_sync' },
-      create: { key: 'last_nightly_meta_sync', value: JSON.stringify({ ...result, ranAt: new Date().toISOString() }) },
-      update: { value: JSON.stringify({ ...result, ranAt: new Date().toISOString() }) },
+      create: { key: 'last_nightly_meta_sync', value: JSON.stringify(payload) },
+      update: { value: JSON.stringify(payload) },
     })
-    console.log(`[nightly-meta-sync] Done — synced ${result.synced} rows across ${result.accounts} accounts`)
+    console.log(`[nightly-meta-sync] Done — synced ${result.synced} account rows, ${campaigns.synced} campaign rows across ${result.accounts} accounts`)
     if (result.errors.length) console.error('[nightly-meta-sync] Errors:', result.errors)
+    if (campaigns.errors.length) console.error('[nightly-meta-sync] Campaign errors:', campaigns.errors)
   } catch (e: unknown) {
     console.error('[nightly-meta-sync] Fatal error:', e instanceof Error ? e.message : e)
   }
