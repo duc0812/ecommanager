@@ -43,18 +43,18 @@ export default function NicheManagerPanel({ open, onClose, onChanged }: { open: 
   return (
     <div className="fixed inset-0 z-50 flex">
       <div className="flex-1 bg-primary/40" onClick={onClose} />
-      <aside className="w-full max-w-xl h-full overflow-y-auto bg-surface-container-lowest shadow-card border-l border-outline-variant/20 p-lg">
+      <aside className="w-full max-w-2xl h-full overflow-y-auto bg-surface-container-lowest shadow-card border-l border-outline-variant/20 p-lg">
         <div className="flex items-center justify-between mb-lg">
           <h2 className="text-headline-sm text-primary">Quản lý niche</h2>
           <button onClick={onClose} className="material-symbols-outlined text-on-surface-variant">close</button>
         </div>
 
         <section className="mb-lg rounded-xl border border-outline-variant/20 bg-surface-container-low p-md">
-          <div className="grid grid-cols-1 gap-sm md:grid-cols-[1fr_2fr_auto]">
+          <div className="grid grid-cols-1 gap-sm md:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto]">
             <input value={name} onChange={e => setName(e.target.value)} placeholder="Tên niche (Jeep, PoMo…)"
-              className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest px-md py-sm text-body-md outline-none focus:border-secondary" />
+              className="min-w-0 w-full rounded-lg border border-outline-variant/30 bg-surface-container-lowest px-md py-sm text-body-md outline-none focus:border-secondary" />
             <input value={keywords} onChange={e => setKeywords(e.target.value)} placeholder="keywords: jeep, jeep girl"
-              className="rounded-lg border border-outline-variant/30 bg-surface-container-lowest px-md py-sm text-body-md outline-none focus:border-secondary" />
+              className="min-w-0 w-full rounded-lg border border-outline-variant/30 bg-surface-container-lowest px-md py-sm text-body-md outline-none focus:border-secondary" />
             <button onClick={add} className="rounded-lg bg-secondary px-lg py-sm text-label-md text-on-secondary">Thêm</button>
           </div>
           <p className="mt-xs text-body-sm text-on-surface-variant">
@@ -96,9 +96,9 @@ function NicheRowEditor({ row, onSave, onRemove }: {
         <input value={sortOrder} onChange={e => setSortOrder(e.target.value)} title="Thứ tự ưu tiên"
           className="w-14 rounded-lg border border-outline-variant/30 bg-surface-container px-sm py-xs text-body-sm text-center" />
         <input value={name} onChange={e => setName(e.target.value)}
-          className="w-40 rounded-lg border border-outline-variant/30 bg-surface-container px-md py-xs text-label-md font-bold text-primary" />
+          className="w-36 rounded-lg border border-outline-variant/30 bg-surface-container px-md py-xs text-label-md font-bold text-primary" />
         <input value={kw} onChange={e => setKw(e.target.value)} placeholder="keywords"
-          className="min-w-[200px] flex-1 rounded-lg border border-outline-variant/30 bg-surface-container px-md py-xs text-body-sm" />
+          className="min-w-[160px] flex-1 rounded-lg border border-outline-variant/30 bg-surface-container px-md py-xs text-body-sm" />
         <button
           disabled={!dirty}
           onClick={() => onSave({ name, keywords: kw, sortOrder: Number(sortOrder) || 0 })}
