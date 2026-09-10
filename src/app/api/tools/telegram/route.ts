@@ -1,46 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getTelegramStatus, saveTelegramConfig, sendTelegramMessage } from '@/lib/telegram'
-import { buildProxyCheckMessage } from '@/lib/proxy-maintenance'
+import { requireSuperadmin } from '@/lib/api-auth'
 
-type TelegramUpdate = {
-  message?: {
-    chat?: { id?: string | number }
-    text?: string
-  }
-}
-
-function normalizeCommand(text: string) {
-  return text.trim().toLowerCase().replace(/\s+/g, ' ')
-}
-
-function isProxyCheckCommand(text: string) {
-  const command = normalizeCommand(text)
-  return command === 'check'
-    || command === '/check'
-    || command.startsWith('/check@')
-    || command === '@proxymaintainbot check'
-    || command.startsWith('@proxymaintainbot check ')
-}
-
-async function handleTelegramUpdate(update: TelegramUpdate) {
-  const chatId = update.message?.chat?.id
-  const text = update.message?.text || ''
-  if (!chatId || !isProxyCheckCommand(text)) {
-    return NextResponse.json({ ok: true, ignored: true })
-  }
-
-  const result = await sendTelegramMessage(await buildProxyCheckMessage(), chatId)
-  return NextResponse.json({ ok: true, result })
-}
+export const dynamic = 'force-dynamic'
 
 export async function GET() {
   return NextResponse.json(await getTelegramStatus())
 }
 
 export async function POST(req: NextRequest) {
-  const body = await req.json()
-  if (body.message) return handleTelegramUpdate(body)
-
+  const auth = await requireSuperadmin(req)
+  if ('error' in auth) return auth.error
+  const body = await req.json().catch(() => ({}))
   const botToken = String(body.botToken ?? '').trim()
   const chatId = String(body.chatId ?? '').trim()
   if (!botToken || !chatId) {
@@ -51,7 +22,10 @@ export async function POST(req: NextRequest) {
 }
 
 export async function PUT(req: NextRequest) {
+  const auth = await requireSuperadmin(req)
+  if ('error' in auth) return auth.error
   const body = await req.json().catch(() => ({}))
-  const result = await sendTelegramMessage(body.message || 'Ecom Manager Telegram test message.')
+  const message = String(body.message ?? '').trim().slice(0, 500) || 'Ecom Manager Telegram test message.'
+  const result = await sendTelegramMessage(message)
   return NextResponse.json(result)
 }

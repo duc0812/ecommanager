@@ -136,7 +136,7 @@ export default function AutoFulfillPage() {
             ))}
           </div>
           <button onClick={addSheet} className="mt-md text-secondary text-label-md">+ Thêm sheet</button>
-          <p className="text-label-sm text-on-surface-variant mt-sm">Mỗi sheet phải chia sẻ "Anyone with the link → Viewer". Cron chạy 03:30 hằng ngày (tự Apply).</p>
+          <p className="text-label-sm text-on-surface-variant mt-sm">Mỗi sheet phải chia sẻ &quot;Anyone with the link → Viewer&quot;. Cron chạy 03:30 hằng ngày (tự Apply).</p>
         </div>
 
         <div className="bg-surface-container-lowest rounded-xl border border-outline-variant/20 overflow-hidden">

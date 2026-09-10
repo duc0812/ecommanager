@@ -154,6 +154,7 @@ export default function ProjectDashboard() {
   const [analytics, setAnalytics] = useState<Analytics | null>(null)
   const [loading, setLoading] = useState(true)
   const [analyticsLoading, setAnalyticsLoading] = useState(false)
+  const [analyticsError, setAnalyticsError] = useState('')
   const [chartPeriod, setChartPeriod] = useState<string>('this-month')
   const [syncStatus, setSyncStatus] = useState<AutoSyncStatus | null>(null)
   const [syncing, setSyncing] = useState(false)
@@ -205,17 +206,26 @@ export default function ProjectDashboard() {
   useEffect(() => {
     if (!selectedProject) return
     setAnalyticsLoading(true)
+    setAnalyticsError('')
     const params = new URLSearchParams({ projectId: selectedProject })
     if (selectedStaff !== 'all') params.set('staffId', selectedStaff)
     if (selectedMonth) params.set('month', selectedMonth)
     if (dateFrom) params.set('dateFrom', dateFrom)
     if (dateTo) params.set('dateTo', dateTo)
-    fetch(`/api/projects/analytics?${params}`)
-      .then(r => r.json())
-      .then((data: Analytics) => {
-        setAnalytics(data)
-        setAnalyticsLoading(false)
+    const controller = new AbortController()
+    fetch(`/api/projects/analytics?${params}`, { signal: controller.signal })
+      .then(async r => {
+        const data = await r.json().catch(() => null)
+        if (!r.ok || !data || data.error) throw new Error(data?.error || `HTTP ${r.status}`)
+        setAnalytics(data as Analytics)
       })
+      .catch((err: any) => {
+        if (err?.name === 'AbortError') return
+        setAnalytics(null)
+        setAnalyticsError(err?.message || 'Không tải được analytics')
+      })
+      .finally(() => { if (!controller.signal.aborted) setAnalyticsLoading(false) })
+    return () => controller.abort()
   }, [selectedProject, selectedStaff, selectedMonth, dateFrom, dateTo, refreshVersion])
 
   useEffect(() => {
@@ -314,6 +324,9 @@ export default function ProjectDashboard() {
                   >
                     All time
                   </button>
+                )}
+                {analyticsError && (
+                  <span className="text-label-sm text-error ml-auto">{analyticsError}</span>
                 )}
                 {analytics && (
                   <span className="text-label-sm text-on-surface-variant ml-auto">

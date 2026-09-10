@@ -1,14 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { fetchPayoutTransactions, getCredentialsFromRequest } from '@/lib/shopify'
+import { fetchPayoutTransactions } from '@/lib/shopify'
 import { getShopifyConnection } from '@/lib/token-store'
 
 // Fetch raw balance transactions của 1 payout để xem chi tiết
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const stored = await getShopifyConnection(req.headers.get('cookie') ?? undefined)
-    const creds = stored
-      ? { shop: stored.shop, token: stored.token }
-      : getCredentialsFromRequest(req)
+    const stored = await getShopifyConnection()
+    if (!stored) return NextResponse.json({ error: 'Not connected to Shopify. Go to /setup and connect Shopify first.' }, { status: 401 })
+    const creds = { shop: stored.shop, token: stored.token }
     const transactions = await fetchPayoutTransactions(creds, Number(params.id))
 
     // Group theo type để dễ review

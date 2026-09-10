@@ -42,7 +42,7 @@ export default function AdDetailModal({ ad, onClose, onSave }: { ad: Ad; onClose
           <div className="relative bg-[#F2F1EE]">
             {ad.mediaUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={ad.mediaUrl} alt={ad.title ?? ''} className="max-h-[48vh] w-full object-contain" />
+              <img src={`/api/spy/media/${ad.id}`} alt={ad.title ?? ''} className="max-h-[48vh] w-full object-contain" />
             ) : (
               <div className="flex h-[220px] w-full items-center justify-center text-[#57534E]"><span className="material-symbols-outlined text-[42px]">image_not_supported</span></div>
             )}

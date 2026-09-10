@@ -170,6 +170,7 @@ export default function OtherBillsPage() {
 
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
+    const formEl = e.currentTarget
     setSaving(true)
     setMessage(null)
     const form = new FormData(e.currentTarget)
@@ -198,7 +199,7 @@ export default function OtherBillsPage() {
       setSaving(false)
       return
     }
-    e.currentTarget.reset()
+    formEl.reset()
     setVendor('')
     setCategory('')
     setPaymentMethod('')

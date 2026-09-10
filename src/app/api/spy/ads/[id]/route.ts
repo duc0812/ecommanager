@@ -6,13 +6,13 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
   const { id } = params
   const ad = await prisma.spyAd.findUnique({
     where: { id },
+    omit: { rawPayload: true },
     include: { advertiser: true, observations: { orderBy: { observedAt: 'asc' } } },
   })
   if (!ad) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  const { rawPayload: _rawPayload, ...adNoRaw } = ad // eslint-disable-line @typescript-eslint/no-unused-vars
   const now = new Date()
   return NextResponse.json({
-    ad: adNoRaw,
+    ad,
     signals: {
       isNew: isNewAd(ad.startDate, now),
       activeDays: activeDays(ad.startDate, ad.endDate, now),

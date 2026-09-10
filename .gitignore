@@ -49,6 +49,9 @@ dev-server.*log
 dev-server.err.log
 dev-server.log
 
+# cached spy ad media (downloaded at scan time)
+spy-media/
+
 # env
 .env
 .env.*
@@ -63,3 +66,11 @@ dev-server.log
 # one-off scripts with credentials
 set-password.mjs
 seed-*.mjs
+
+# isolated test database
+test.db
+test.db-*
+
+# python bytecode
+__pycache__/
+*.pyc

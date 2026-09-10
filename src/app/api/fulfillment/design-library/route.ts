@@ -22,10 +22,10 @@ export async function POST(req: NextRequest) {
   const entry = await upsertDesignEntry({
     sku: String(body.sku).trim(),
     supplierId: String(body.supplierId),
-    designLink: body.designLink ?? null,
+    designLink: body.designLink === undefined ? undefined : (String(body.designLink).trim() || null),
     ready: typeof body.ready === 'boolean' ? body.ready : undefined,
-    note: body.note ?? null,
-    source: 'MANUAL',
+    note: body.note === undefined ? undefined : (String(body.note).trim() || null),
+    source: body.designLink === undefined ? undefined : 'MANUAL',
     matchMode: body.matchMode !== undefined ? String(body.matchMode).toUpperCase() : undefined,
     designType: body.designType !== undefined ? String(body.designType) : undefined,
   })

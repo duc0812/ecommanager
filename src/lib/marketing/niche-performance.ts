@@ -165,7 +165,12 @@ export function computeNichePerformance(input: NichePerformanceInput): NichePerf
     })
   }
 
-  const toRow = ({ latestDate: _latest, nicheId: _niche, ...row }: CampaignAgg): CampaignRow => row
+  const toRow = (agg: CampaignAgg): CampaignRow => {
+    const { latestDate, nicheId, ...row } = agg
+    void latestDate
+    void nicheId
+    return row
+  }
   const bySpendDesc = (a: { spend: number }, b: { spend: number }) => b.spend - a.spend
 
   const campaignsList = Array.from(campaigns.values())

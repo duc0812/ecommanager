@@ -223,3 +223,29 @@ Projects Summary:
 | `prisma/migrations/` | Auto-managed by `prisma migrate dev` |
 | `dev.db` | Runtime database, not source code |
 | `.next/` | Build cache |
+
+
+## 2026-09-10 — Security hardening + data-correctness pass (full code review)
+
+**Security model (server-side now):**
+- `src/middleware.ts` verifies the JWT and enforces `API_ACCESS_RULES` (`src/lib/api-access.ts`) for every `/api/*` request and `canAccess` for pages (rewrite to `/no-access`). Unknown API paths are denied for non-SUPERADMIN.
+- `src/lib/api-auth.ts` → `getAuthUser` / `requireSuperadmin` re-read role/status/`tokenVersion` from `AppUser`; used by users, config/token routes, Meta accounts, Shopify connect/disconnect.
+- Sessions: 24h JWT with `tv` (tokenVersion) claim, refreshed on every `/api/auth/me`; password/role/status changes bump `tokenVersion` → old sessions die. Cookie `lax`, `secure` when `NEXT_PUBLIC_APP_URL` is https. Login rate limit 10 fails / 15 min per IP and per email. Min password 10.
+- Shopify credentials only from DB: cookie fallback and `x-shopify-*` header overrides removed; manual-token mode on `/shopify` removed; `/api/shopify/debug` and legacy `/api/shopify/sync-orders` deleted. OAuth validates `*.myshopify.com`, binds callback to the `state` (10-min TTL), constant-time HMAC, HTML-escaped pages.
+- Trello GET returns masked key/token. Crawler + Google Sheet fetches go through `assertSafeExternalUrl` (SSRF guard). Security headers in `next.config.mjs`.
+- Client: `UserProvider` (root layout) fetches `/api/auth/me` once; `RoleGate`/`Sidebar` fail closed; no secrets in `localStorage`.
+
+**Data fixes:**
+- Refund double-count: `grossAmount` = Shopify `currentTotalPriceSet` + refunds (pre-refund total); `expectedPayout = gross - fees - refunded`. `scripts/fix-refund-double-count.mjs --apply` repaired existing rows (run on prod too).
+- `PARTIALLY_REFUNDED` no longer terminal; `cancelledAt` → CANCELLED; unpaid (PENDING/AUTHORIZED/EXPIRED) → new `AWAITING_PAYMENT` status (re-evaluated on sync, excluded from revenue).
+- Order sync: rolling window uses `updated_at`; `syncSinceDate` only advances when Shopify fetch fully succeeded (502 otherwise); `fulfillmentStatus` passed to `autoDetectStatus`.
+- Meta billing dedup: count-parity per amount/±1-day window (threshold charges with equal amounts are distinct); PENDING import rows upgraded to PAID by the scrape. Paid statuses centralised in `PAID_META_STATUSES` (`meta-fee.ts`); `combinedProjectPL` no longer filters on the never-written `SETTLED`.
+- Tracking sync aborts on partial Shopify read (never resets tracking), skips orders missing from the response, and does not overwrite ParcelPanel shipment status.
+- Design-library POST leaves `designLink`/`note`/`source` untouched when absent (Ready toggle no longer wipes links). Export only moves READY_TO_PRODUCTION/EXPORTED to EXPORTED. Manual mapping leaves cost fields to `recalculateMissingOrderLineCosts` and re-derives status via `autoDetectStatus`. Last-mile push requires an exact order-name match.
+
+**Infra / OOM:**
+- `db.ts` pins one Prisma client on `globalThis` in every env and applies `PRAGMA journal_mode=WAL` + `busy_timeout=5000`.
+- `src/lib/job-lock.ts` (`initOnce`, `runExclusive`) — every scheduler is registered once per process and never overlaps itself; spy scheduler state lives on `globalThis` so `reloadSpyScheduler` really stops old tasks.
+- Spy: list endpoints `omit rawPayload` and use per-ad summary columns (`firstCollationCount`, `everActive`, `observationCount`, maintained by `ingestAds`; backfill via `scripts/backfill-spy-ad-summary.mjs`); observations older than 120 days pruned; `scan-ads` runs targets sequentially under a lock, quota = 1 per target; domain scans create page targets `active: false`; Apify calls have timeouts, dataset is paged, timed-out runs are aborted; media cache writes atomically, caps 8 MB, allow-lists fbcdn hosts, remembers failed URLs, caches only the ads a scan ingested.
+- Indexes added: Order(storeId,placedAt / shopifyOrderNumber / trelloCardId), OrderLine(orderId / orderId,shopifyLineId), Payout(storeId,status,date), MetaBilling(adAccountId,status,billingDate), PayoutTransaction(payoutId), StaffAssignment(projectId), SpyAd(lastSeenAt).
+- Tests run against `test.db` (recreated from migrations in `tests/global-setup.ts`); the characterization test is opt-in via `RUN_CHARACTERIZATION=1`. Leaked fixtures (`proj_test`, `proj_mbc`, test stores/supplier) were removed from dev.db.

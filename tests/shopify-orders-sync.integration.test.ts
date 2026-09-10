@@ -2,7 +2,10 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import { prisma } from '@/lib/db'
 
 const SHOP = 'test-store.myshopify.com'
-const TOKEN = 'test_token'
+
+vi.mock('@/lib/token-store', () => ({
+  getShopifyConnection: vi.fn(async () => ({ shop: 'test-store.myshopify.com', token: 'test_token', connectedAt: new Date() })),
+}))
 const VARIANT_ID = 'gid://shopify/ProductVariant/test-1'
 
 beforeAll(async () => {
@@ -110,13 +113,7 @@ describe('POST /api/shopify/orders/sync', () => {
     } as Response)
 
     const { POST } = await import('@/app/api/shopify/orders/sync/route')
-    const req = new Request('http://test/api/shopify/orders/sync', {
-      method: 'POST',
-      headers: {
-        'x-shopify-shop-domain': SHOP,
-        'x-shopify-access-token': TOKEN,
-      },
-    })
+    const req = new Request('http://test/api/shopify/orders/sync', { method: 'POST' })
     const res = await POST(req as any)
     const body = await res.json()
 

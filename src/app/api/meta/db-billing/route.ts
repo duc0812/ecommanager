@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { convertMetaAmountToUsdDated } from '@/lib/meta-currency'
 import { getMetaRateSchedule } from '@/lib/meta-exchange-rates'
-import { getVndCardLast4, sumBillingFxFeesUsd } from '@/lib/meta-fee'
+import { getVndCardLast4, sumBillingFxFeesUsd, PAID_META_STATUSES } from '@/lib/meta-fee'
 
 function dateKey(date: Date) {
   return date.toISOString().split('T')[0]
@@ -91,7 +91,7 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  const paidStatuses = ['PAID', 'SETTLED', 'COMPLETED']
+  const paidStatuses = PAID_META_STATUSES
   const visibleStatuses = [...paidStatuses, 'PENDING']
   const billingWhere = {
     status: { in: visibleStatuses },

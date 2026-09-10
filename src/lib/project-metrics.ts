@@ -1,4 +1,4 @@
-export const PROJECT_REVENUE_EXCLUDED_STATUSES = ['REFUNDED', 'CANCELLED'] as const
+export const PROJECT_REVENUE_EXCLUDED_STATUSES = ['REFUNDED', 'CANCELLED', 'AWAITING_PAYMENT'] as const
 
 export type ProjectOrderFinancials = {
   grossAmount: number

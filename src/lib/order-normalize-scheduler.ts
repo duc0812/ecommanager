@@ -1,10 +1,10 @@
 import cron from 'node-cron'
+import { initOnce, runExclusive } from '@/lib/job-lock'
 import { prisma } from '@/lib/db'
 import { getShopifyConnection } from '@/lib/token-store'
 import { normalizeOpenOrderStatuses } from './order-normalize'
 
 const TZ = 'Asia/Ho_Chi_Minh'
-let initialized = false
 
 // Daily: pull the real fulfillment status for every OPEN order from Shopify and
 // write back any changes, so old orders don't sit UNFULFILLED forever after
@@ -35,10 +35,11 @@ export async function runDailyOrderNormalize() {
 }
 
 export function initOrderNormalizeScheduler() {
-  if (initialized) return
-  initialized = true
+  if (!initOnce('order-normalize-scheduler')) return
   cron.schedule('0 2 * * *', () => {
-    runDailyOrderNormalize().catch(err => console.error('[order-normalize] unhandled:', err))
+    runExclusive('order-normalize', runDailyOrderNormalize)
+      .then(r => { if (r.skipped) console.warn('[order-normalize] previous run still active; skipped') })
+      .catch(err => console.error('[order-normalize] unhandled:', err))
   }, { timezone: TZ })
   console.log('[order-normalize] Initialized — daily status normalization at 02:00 Asia/Ho_Chi_Minh')
 }

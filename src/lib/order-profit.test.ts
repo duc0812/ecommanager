@@ -9,11 +9,11 @@ describe('computeOrderProfitFromDb', () => {
     expect(result).toBeNull()
   })
 
-  it('returns null if a line has base cost but no supplier', () => {
+  it('a known base cost without a supplier still yields a profit (supplier mapping is tracked separately)', () => {
     const result = computeOrderProfitFromDb(100, [
       { qty: 1, resolvedSupplierId: null, resolvedBaseCost: 14, manualBaseCost: null, resolvedShipFirst: 0, resolvedShipAdditional: 0, resolvedImportTax: 0 },
     ])
-    expect(result).toBeNull()
+    expect(result).toBe(86)
   })
 
   it('calculates profit for single-item order', () => {
@@ -81,10 +81,11 @@ describe('manualBaseCost override', () => {
     expect(result?.estimatedCogs).toBeCloseTo(30, 2)
   })
 
-  it('manual cost without supplier mapping still counts as unmapped', () => {
+  it('manual cost without supplier mapping is authoritative for COGS (not unmapped)', () => {
     const result = estimateOrderCostAndProfit(100, [
       { qty: 1, resolvedSupplierId: null, resolvedBaseCost: null, manualBaseCost: 30, resolvedShipFirst: null, resolvedShipAdditional: null, resolvedImportTax: null },
     ])
-    expect(result?.hasUnmapped).toBe(true)
+    expect(result?.hasUnmapped).toBe(false)
+    expect(result?.profit).toBe(70)
   })
 })

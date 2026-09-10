@@ -446,7 +446,7 @@ export default function TrackingPage() {
               </div>
             )}
             <p className="px-lg py-sm text-label-sm text-on-surface-variant border-t border-outline-variant/20">
-              Trung bình theo ngày (n = số đơn có đủ mốc). "Giao hàng" = từ event tracking đầu tiên → delivered; "Khách nhận" = từ lúc đặt → delivered.
+              Trung bình theo ngày (n = số đơn có đủ mốc). &quot;Giao hàng&quot; = từ event tracking đầu tiên → delivered; &quot;Khách nhận&quot; = từ lúc đặt → delivered.
             </p>
           </div>
         )}

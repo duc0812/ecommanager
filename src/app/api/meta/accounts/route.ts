@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { requireSuperadmin } from '@/lib/api-auth'
 
 const SUPPORTED_CURRENCIES = new Set(['USD', 'VND'])
 const SAFE_ACCOUNT_SELECT = {
@@ -27,6 +28,8 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  const auth = await requireSuperadmin(req)
+  if ('error' in auth) return auth.error
   const { accountId, accountName, accessToken, projectId, currency: rawCurrency } = await req.json()
   if (!accountId || !accessToken) {
     return NextResponse.json({ error: 'accountId and accessToken required' }, { status: 400 })
@@ -44,7 +47,10 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
-  const { id } = await req.json()
+  const auth = await requireSuperadmin(req)
+  if ('error' in auth) return auth.error
+  const { id } = await req.json().catch(() => ({}))
+  if (!id || typeof id !== 'string') return NextResponse.json({ error: 'id is required' }, { status: 400 })
   await prisma.metaBilling.deleteMany({ where: { adAccountId: id } })
   await prisma.dailyAdSpend.deleteMany({ where: { adAccountId: id } })
   await prisma.metaAdAccount.delete({ where: { id } })
@@ -52,7 +58,9 @@ export async function DELETE(req: NextRequest) {
 }
 
 export async function PATCH(req: NextRequest) {
-  const body = await req.json()
+  const auth = await requireSuperadmin(req)
+  if ('error' in auth) return auth.error
+  const body = await req.json().catch(() => ({}))
   const { id } = body
   if (!id) return NextResponse.json({ error: 'Account id is required' }, { status: 400 })
 

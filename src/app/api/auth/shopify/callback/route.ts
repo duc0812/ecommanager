@@ -1,34 +1,46 @@
 import { NextRequest, NextResponse } from 'next/server'
 import crypto from 'crypto'
 import { consumeOAuthState, setShopifyConnection, getShopifyAppCredentials } from '@/lib/token-store'
+import { escapeHtml, normalizeShopDomain } from '@/lib/shopify-shop'
+
+export const dynamic = 'force-dynamic'
+
+function html(body: string, status = 200) {
+  return new NextResponse(body, { status, headers: { 'Content-Type': 'text/html; charset=utf-8' } })
+}
+
+function safeEqualHex(a: string, b: string) {
+  if (!/^[0-9a-f]+$/i.test(a) || !/^[0-9a-f]+$/i.test(b) || a.length !== b.length) return false
+  return crypto.timingSafeEqual(Buffer.from(a, 'hex'), Buffer.from(b, 'hex'))
+}
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
-  const code  = searchParams.get('code') ?? ''
-  const shop  = searchParams.get('shop') ?? ''
+  const code = searchParams.get('code') ?? ''
+  const shop = normalizeShopDomain(searchParams.get('shop') ?? '')
   const state = searchParams.get('state') ?? ''
-  const hmac  = searchParams.get('hmac') ?? ''
+  const hmac = searchParams.get('hmac') ?? ''
+
+  if (!shop || !code) return html(errorPage('Thiếu tham số shop hoặc code.'), 400)
 
   const savedShop = consumeOAuthState(state)
-  if (!savedShop) {
-    return new NextResponse(errorPage('State không hợp lệ hoặc đã hết hạn.'), { headers: { 'Content-Type': 'text/html' } })
+  if (!savedShop || savedShop !== shop) {
+    return html(errorPage('State không hợp lệ hoặc đã hết hạn.'), 400)
   }
 
   const appCreds = await getShopifyAppCredentials()
   if (!appCreds) {
-    return new NextResponse(errorPage('Không tìm thấy API credentials. Vui lòng thử lại từ Setup.'), { headers: { 'Content-Type': 'text/html' } })
+    return html(errorPage('Không tìm thấy API credentials. Vui lòng thử lại từ Setup.'), 400)
   }
 
-  // Verify HMAC
   const params: Record<string, string> = {}
   searchParams.forEach((v, k) => { if (k !== 'hmac') params[k] = v })
   const message = Object.keys(params).sort().map(k => `${k}=${params[k]}`).join('&')
   const digest = crypto.createHmac('sha256', appCreds.apiSecret).update(message).digest('hex')
-  if (!crypto.timingSafeEqual(Buffer.from(digest), Buffer.from(hmac))) {
-    return new NextResponse(errorPage('HMAC không hợp lệ.'), { headers: { 'Content-Type': 'text/html' } })
+  if (!safeEqualHex(digest, hmac)) {
+    return html(errorPage('HMAC không hợp lệ.'), 400)
   }
 
-  // Exchange code for token
   const res = await fetch(`https://${shop}/admin/oauth/access_token`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -36,18 +48,17 @@ export async function GET(req: NextRequest) {
   })
 
   if (!res.ok) {
-    const text = await res.text()
-    return new NextResponse(errorPage(`Token exchange thất bại: ${text}`), { headers: { 'Content-Type': 'text/html' } })
+    console.error('[shopify oauth] token exchange failed', res.status, (await res.text()).slice(0, 300))
+    return html(errorPage(`Token exchange thất bại (HTTP ${res.status}). Kiểm tra API Key/Secret và thử lại.`), 502)
   }
 
   const { access_token } = await res.json()
+  if (typeof access_token !== 'string' || !access_token) {
+    return html(errorPage('Shopify không trả về access token.'), 502)
+  }
   await setShopifyConnection(shop, access_token)
 
-  const response = new NextResponse(successPage(shop), { headers: { 'Content-Type': 'text/html' } })
-  // Persist token in httpOnly cookie — survives server restarts without a DB
-  response.cookies.set('shopify_shop', shop, { httpOnly: true, path: '/', maxAge: 60 * 60 * 24 * 90 })
-  response.cookies.set('shopify_token', access_token, { httpOnly: true, path: '/', maxAge: 60 * 60 * 24 * 90 })
-  return response
+  return html(successPage(shop))
 }
 
 function successPage(shop: string) {
@@ -58,7 +69,7 @@ h2{color:#16a34a;margin-bottom:12px}.btn{display:inline-block;margin-top:20px;pa
 color:#fff;border-radius:8px;text-decoration:none;font-weight:600}</style></head>
 <body><div class="card"><div style="font-size:48px">✅</div>
 <h2>Kết nối thành công!</h2>
-<p>Store <b>${shop}</b> đã được kết nối.</p>
+<p>Store <b>${escapeHtml(shop)}</b> đã được kết nối.</p>
 <a class="btn" href="/shopify">Xem Payouts →</a></div></body></html>`
 }
 
@@ -69,6 +80,6 @@ function errorPage(msg: string) {
 h2{color:#dc2626;margin-bottom:12px}.btn{display:inline-block;margin-top:20px;padding:10px 24px;background:#1a73e8;
 color:#fff;border-radius:8px;text-decoration:none;font-weight:600}</style></head>
 <body><div class="card"><div style="font-size:48px">❌</div>
-<h2>Lỗi kết nối</h2><p>${msg}</p>
+<h2>Lỗi kết nối</h2><p>${escapeHtml(msg)}</p>
 <a class="btn" href="/setup">Quay lại Setup</a></div></body></html>`
 }

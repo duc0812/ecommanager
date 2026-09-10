@@ -13,6 +13,7 @@ This file tells AI coding agents (Claude Code, Codex, etc.) how to work on this 
 ## Absolute Rules
 
 ### Database / Prisma
+- **Tests never touch `dev.db`.** `vitest` sets `DATABASE_URL=file:./test.db` and `tests/global-setup.ts` recreates it from migrations on every run. Integration tests must create their own fixtures.
 - **NEVER add `url` to the `datasource db {}` block** in `prisma/schema.prisma` — this breaks Prisma v7. URL lives only in `prisma.config.ts`.
 - **After ANY schema change**, run ALL of these in order:
   ```bash
@@ -47,6 +48,9 @@ Every new page must:
 
 ### Adding New API Routes
 - Route file: `src/app/api/<feature>/<action>/route.ts`
+- **Every `/api/*` path is denied by default for non-SUPERADMIN users.** Add a rule to `API_ACCESS_RULES` in `src/lib/api-access.ts` (feature permission list, `'ANY'`, or `'SUPERADMIN'`); the middleware enforces it. Routes that change secrets/tokens or delete data must ALSO call `requireSuperadmin(req)` from `src/lib/api-auth.ts` (DB-backed check).
+- Never read Shopify/Meta/Trello/Apify tokens from cookies, headers or the request body — they live in the DB (`token-store.ts`, `AppSetting`) and GET routes return masked values only.
+- Any URL the server fetches on behalf of a user must go through `assertSafeExternalUrl` (`src/lib/safe-url.ts`).
 - Export named functions: `GET`, `POST`, `DELETE`, `PATCH`
 - Always return `NextResponse.json(data)` or `NextResponse.json({ error: string }, { status: number })`
 - Import prisma: `import { prisma } from '@/lib/db'`

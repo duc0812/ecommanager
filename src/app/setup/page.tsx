@@ -4,8 +4,6 @@ import Sidebar from '@/components/Sidebar'
 
 type Status = { connected: boolean; shop?: string; connectedAt?: string }
 
-const LS_KEY = 'shopify_app_creds_v1'
-
 export default function SetupPage() {
   const [status, setStatus] = useState<Status | null>(null)
   const [shop, setShop] = useState('')
@@ -17,6 +15,8 @@ export default function SetupPage() {
   const [origin, setOrigin] = useState('')
   const [trelloApiKey, setTrelloApiKey] = useState('')
   const [trelloToken, setTrelloToken] = useState('')
+  const [trelloApiKeyMasked, setTrelloApiKeyMasked] = useState('')
+  const [trelloTokenMasked, setTrelloTokenMasked] = useState('')
   const [trelloBoardId, setTrelloBoardId] = useState('')
   const [trelloListId, setTrelloListId] = useState('')
   const [trelloDoneListId, setTrelloDoneListId] = useState('')
@@ -30,19 +30,11 @@ export default function SetupPage() {
 
   useEffect(() => {
     setOrigin(window.location.origin)
-    try {
-      const saved = localStorage.getItem(LS_KEY)
-      if (saved) {
-        const p = JSON.parse(saved)
-        if (p.shop) setShop(p.shop)
-        if (p.apiKey) setApiKey(p.apiKey)
-        if (p.apiSecret) setApiSecret(p.apiSecret)
-      }
-    } catch {}
+    try { localStorage.removeItem('shopify_app_creds_v1') } catch {}
     fetch('/api/auth/status').then(r => r.json()).then(d => setStatus(d.shopify)).catch(() => setStatus({ connected: false }))
     fetch('/api/trello/config').then(r => r.json()).then(d => {
-      if (d.apiKey) setTrelloApiKey(d.apiKey)
-      if (d.token) setTrelloToken(d.token)
+      setTrelloApiKeyMasked(d.apiKeyMasked || '')
+      setTrelloTokenMasked(d.tokenMasked || '')
       if (d.boardId) setTrelloBoardId(d.boardId)
       if (d.listId) setTrelloListId(d.listId)
       if (d.doneListId) setTrelloDoneListId(d.doneListId)
@@ -55,13 +47,19 @@ export default function SetupPage() {
     const s = shop.trim(), k = apiKey.trim(), sec = apiSecret.trim()
     if (!s || !k || !sec) { alert('Vui lòng điền đầy đủ Shop Domain, API Key và API Secret.'); return }
     setLoading(true)
-    try { localStorage.setItem(LS_KEY, JSON.stringify({ shop: s, apiKey: k, apiSecret: sec })) } catch {}
     try {
-      await fetch('/api/auth/shopify-config', {
+      const res = await fetch('/api/auth/shopify-config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ apiKey: k, apiSecret: sec, shop: s }),
       })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        setLoading(false)
+        alert(d.error || 'Không lưu được cấu hình Shopify.')
+        return
+      }
+      setApiSecret('')
       window.location.href = `/api/auth/shopify?shop=${encodeURIComponent(s)}`
     } catch {
       setLoading(false)
@@ -79,7 +77,6 @@ export default function SetupPage() {
 
   async function disconnect() {
     await fetch('/api/auth/status', { method: 'DELETE' }).catch(() => {})
-    localStorage.removeItem(LS_KEY)
     setStatus({ connected: false })
     setShop(''); setApiKey(''); setApiSecret('')
   }
@@ -87,18 +84,22 @@ export default function SetupPage() {
   async function saveTrello() {
     setTrelloSaving(true); setTrelloMsg('')
     try {
-      await fetch('/api/trello/config', {
+      const res = await fetch('/api/trello/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          apiKey: trelloApiKey.trim(),
-          token: trelloToken.trim(),
+          ...(trelloApiKey.trim() ? { apiKey: trelloApiKey.trim() } : {}),
+          ...(trelloToken.trim() ? { token: trelloToken.trim() } : {}),
           boardId: trelloBoardId.trim(),
           listId: trelloListId.trim(),
           doneListId: trelloDoneListId.trim(),
           syncFromOrderName: trelloSyncFrom.trim(),
         }),
       })
+      if (!res.ok) throw new Error('save failed')
+      const cfg = await fetch('/api/trello/config').then(r => r.json()).catch(() => null)
+      if (cfg) { setTrelloApiKeyMasked(cfg.apiKeyMasked || ''); setTrelloTokenMasked(cfg.tokenMasked || '') }
+      setTrelloApiKey(''); setTrelloToken('')
       setTrelloMsg('Đã lưu cấu hình Trello.')
     } catch {
       setTrelloMsg('Lỗi khi lưu.')
@@ -340,7 +341,7 @@ export default function SetupPage() {
                 type="password"
                 value={trelloApiKey}
                 onChange={e => setTrelloApiKey(e.target.value)}
-                placeholder="Trello API Key"
+                placeholder={trelloApiKeyMasked ? `Đã lưu (${trelloApiKeyMasked}) — nhập để thay` : 'Trello API Key'}
                 className="w-full border rounded-lg px-md py-sm text-body-sm"
               />
             </div>
@@ -350,7 +351,7 @@ export default function SetupPage() {
                 type="password"
                 value={trelloToken}
                 onChange={e => setTrelloToken(e.target.value)}
-                placeholder="Trello Token"
+                placeholder={trelloTokenMasked ? `Đã lưu (${trelloTokenMasked}) — nhập để thay` : 'Trello Token'}
                 className="w-full border rounded-lg px-md py-sm text-body-sm"
               />
             </div>

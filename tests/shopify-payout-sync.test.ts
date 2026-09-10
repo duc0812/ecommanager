@@ -5,8 +5,7 @@ const mocks = vi.hoisted(() => ({
   fetchAllPayouts: vi.fn(),
   fetchBalance: vi.fn(),
   fetchBankAccounts: vi.fn(),
-  getCredentialsFromRequest: vi.fn(() => ({ shop: 'store.myshopify.com', token: 'token' })),
-  getShopifyConnection: vi.fn(async () => null),
+  getShopifyConnection: vi.fn(async () => ({ shop: 'store.myshopify.com', token: 'token', connectedAt: new Date() })),
   storeUpsert: vi.fn(async () => ({ id: 'store-1', shop: 'store.myshopify.com' })),
   storeUpdate: vi.fn(async () => ({})),
   bankUpsert: vi.fn(async () => ({})),
@@ -17,7 +16,6 @@ vi.mock('@/lib/shopify', () => ({
   fetchAllPayouts: mocks.fetchAllPayouts,
   fetchBalance: mocks.fetchBalance,
   fetchBankAccounts: mocks.fetchBankAccounts,
-  getCredentialsFromRequest: mocks.getCredentialsFromRequest,
 }))
 
 vi.mock('@/lib/token-store', () => ({

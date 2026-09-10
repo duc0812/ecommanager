@@ -6,9 +6,9 @@ import { syncStoreTracking, clampTrackingDays } from '@/lib/tracking/tracking-sy
 export async function POST(req: NextRequest) {
   const days = clampTrackingDays(req.nextUrl.searchParams.get('days'))
 
-  const stored = await getShopifyConnection(req.headers.get('cookie') ?? undefined)
-  const shop = req.headers.get('x-shopify-shop-domain') || stored?.shop
-  const accessToken = req.headers.get('x-shopify-access-token') || stored?.token
+  const stored = await getShopifyConnection()
+  const shop = stored?.shop
+  const accessToken = stored?.token
   if (!shop || !accessToken) {
     return NextResponse.json({ error: 'Not connected to Shopify. Go to /setup and connect Shopify first.' }, { status: 401 })
   }

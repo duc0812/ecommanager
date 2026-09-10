@@ -94,7 +94,7 @@ export async function pushLastMileToShopify(opts: {
     const number = numbers[0]
     try {
       const found = await fetchOrderFulfillmentsByName(opts.shop, opts.accessToken, orderName)
-      const order = found.find(o => o.orderName.replace(/^#/, '') === orderName.replace(/^#/, '')) ?? found[0]
+      const order = found.find(o => o.orderName.replace(/^#/, '') === orderName.replace(/^#/, ''))
       if (!order || order.fulfillments.length === 0) {
         rows.push({ orderName, number, status: 'not_found', message: 'Không thấy order/fulfillment trên Shopify' })
         done++; opts.onProgress?.(done, total); opts.onRow?.(rows[rows.length - 1], done, total); continue

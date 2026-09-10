@@ -31,10 +31,6 @@ function DomainBlock({ domain, onScan, onRemove, onChanged }: { domain: AdDomain
     await fetch('/api/spy/scan-ads', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pageId: id }) })
     setTimeout(load, 30000)
   }
-  async function removePage(id: string) {
-    await fetch('/api/spy/pages', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) })
-    load()
-  }
   async function toggleExclude(id: string, excluded: boolean) {
     await fetch('/api/spy/pages', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, excluded }) })
     load()

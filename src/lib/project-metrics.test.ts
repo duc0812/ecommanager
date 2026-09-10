@@ -6,7 +6,7 @@ import {
 
 describe('project metrics', () => {
   it('uses the same terminal statuses for every project revenue view', () => {
-    expect(PROJECT_REVENUE_EXCLUDED_STATUSES).toEqual(['REFUNDED', 'CANCELLED'])
+    expect(PROJECT_REVENUE_EXCLUDED_STATUSES).toEqual(['REFUNDED', 'CANCELLED', 'AWAITING_PAYMENT'])
   })
 
   it('sums revenue independently from supplier mapping and COGS availability', () => {

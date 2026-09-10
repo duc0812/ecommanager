@@ -1,6 +1,6 @@
 import { zonedDayStartUtc, addDays, dateKeyInZone } from '@/lib/cashflow-dates'
 
-export function monthEndDateKey(periodMonth: string, timeZone: string): string {
+export function monthEndDateKey(periodMonth: string, _timeZone: string): string {
   const [y, m] = periodMonth.split('-').map(Number)
   // ngày 0 của tháng kế = ngày cuối tháng này (theo lịch dương)
   const lastDayUtc = new Date(Date.UTC(y, m, 0))

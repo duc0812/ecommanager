@@ -4,6 +4,7 @@ import { ordersWithComputedPL } from '@/lib/repos/reports'
 import { SHOPIFY_PAYOUT_DATE_WHERE } from '@/lib/shopify-payout-policy'
 import { convertMetaAmountToUsdDated, sumMetaAmountsUsdDated } from '@/lib/meta-currency'
 import { getMetaRateSchedule } from '@/lib/meta-exchange-rates'
+import { PAID_META_STATUSES } from '@/lib/meta-fee'
 
 function dateKeyInZone(date: Date, timeZone: string) {
   const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
@@ -106,7 +107,7 @@ export async function GET(req: NextRequest) {
     const storeTimeZone = store?.ianaTimezone ?? 'UTC'
     const periodRange = getPeriodRange(period, storeTimeZone, searchParams.get('date'))
 
-    const paidMetaStatuses = ['PAID', 'SETTLED', 'COMPLETED']
+    const paidMetaStatuses = PAID_META_STATUSES
 
     const [payouts, metaBillings, metaAccounts, projects, staff] = await Promise.all([
       prisma.payout.findMany({ where: { status: 'paid', date: SHOPIFY_PAYOUT_DATE_WHERE } }),

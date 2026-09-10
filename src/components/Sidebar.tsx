@@ -54,8 +54,8 @@ export default function Sidebar() {
   const pathname = usePathname()
   const router = useRouter()
   const { user } = useCurrentUser()
-  const role: UserRole = user?.role ?? 'SUPERADMIN'
-  const permissions: FeaturePermission[] = user?.permissions ?? []
+  const role: UserRole = user?.role ?? 'SUPPORT'
+  const permissions: FeaturePermission[] = user ? user.permissions : []
   const [open, setOpen] = useState(false)
   useEffect(() => { setOpen(false) }, [pathname])
   const activeHref = nav.reduce<string | null>((best, entry) => {

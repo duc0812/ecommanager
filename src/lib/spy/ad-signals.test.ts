@@ -1,5 +1,18 @@
 import { describe, it, expect } from 'vitest'
-import { AD_SCAN_CAP, isNewAd, activeDays, isLongRunning, isScaling, isStopped } from './ad-signals'
+import { AD_SCAN_CAP, isNewAd, activeDays, isLongRunning, isScaling, isStopped, isScalingSummary, isStoppedSummary } from './ad-signals'
+
+describe('summary signals', () => {
+  it('isScalingSummary mirrors isScaling', () => {
+    expect(isScalingSummary({ isActive: true, collationCount: 6, firstCollationCount: 2, everActive: true, observationCount: 2 })).toBe(true)
+    expect(isScalingSummary({ isActive: true, collationCount: 6, firstCollationCount: 2, everActive: true, observationCount: 1 })).toBe(false)
+    expect(isScalingSummary({ isActive: true, collationCount: 6, firstCollationCount: null, everActive: true, observationCount: 3 })).toBe(false)
+  })
+  it('isStoppedSummary mirrors isStopped', () => {
+    expect(isStoppedSummary({ isActive: false, collationCount: null, firstCollationCount: null, everActive: true, observationCount: 2 })).toBe(true)
+    expect(isStoppedSummary({ isActive: false, collationCount: null, firstCollationCount: null, everActive: false, observationCount: 2 })).toBe(false)
+    expect(isStoppedSummary({ isActive: true, collationCount: null, firstCollationCount: null, everActive: true, observationCount: 1 })).toBe(false)
+  })
+})
 
 const now = new Date('2026-08-21T00:00:00Z')
 describe('ad signals', () => {

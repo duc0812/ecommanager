@@ -46,10 +46,6 @@ const STATUS_CHIP: Record<string, string> = {
   canceled: 'bg-surface-container text-on-surface-variant',
 }
 
-const LS_KEY = 'shopify_credentials_v1'
-
-type Creds = { shop: string; token: string; version: string }
-
 function StatCard({ label, value, icon, accent }: { label: string; value: string; icon: string; accent?: boolean }) {
   return (
     <div className={`rounded-xl p-lg shadow-card border border-outline-variant/20 ${accent ? 'bg-primary text-on-primary' : 'bg-surface-container-lowest'}`}>
@@ -64,9 +60,6 @@ function StatCard({ label, value, icon, accent }: { label: string; value: string
 
 export default function FinancePage() {
   const [oauthConnected, setOauthConnected] = useState<{ connected: boolean; shop?: string } | null>(null)
-  const [creds, setCreds] = useState<Creds>({ shop: '', token: '', version: '2024-04' })
-  const [credsSaved, setCredsSaved] = useState(false)
-  const [showToken, setShowToken] = useState(false)
   const [dateMin, setDateMin] = useState(SHOPIFY_PAYOUT_START_DATE)
   const [dateMax, setDateMax] = useState('')
   const [data, setData] = useState<ApiResponse | null>(null)
@@ -99,28 +92,11 @@ export default function FinancePage() {
     loadFromDB()
   }, [])
 
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem(LS_KEY)
-      if (saved) {
-        const parsed = JSON.parse(saved)
-        setCreds({ shop: parsed.shop || '', token: parsed.token || '', version: parsed.version || '2024-04' })
-        if (parsed.shop && parsed.token) setCredsSaved(true)
-      }
-    } catch {}
-  }, [])
+  useEffect(() => { try { localStorage.removeItem('shopify_credentials_v1') } catch {} }, [])
 
   const usingOAuth = !!oauthConnected?.connected
 
-  function manualHeaders(): HeadersInit {
-    return {
-      'x-shopify-shop-domain': creds.shop.trim(),
-      'x-shopify-access-token': creds.token.trim(),
-      'x-shopify-api-version': (creds.version || '2024-04').trim(),
-    }
-  }
-
-  function canFetch() { return usingOAuth || !!(creds.shop.trim() && creds.token.trim()) }
+  function canFetch() { return usingOAuth }
 
   async function fetchPayouts() {
     setLoading(true)
@@ -134,7 +110,6 @@ export default function FinancePage() {
     try {
       const res = await fetch(`/api/shopify/sync?${params}`, {
         method: 'POST',
-        headers: usingOAuth ? {} : manualHeaders(),
       })
       const result = await res.json()
       setSyncResult(result)
@@ -154,7 +129,7 @@ export default function FinancePage() {
     setTxnLoading(true)
     setSelectedPayout(payoutId)
     try {
-      const res = await fetch(`/api/shopify/payouts/${payoutId}`, { headers: usingOAuth ? {} : manualHeaders() })
+      const res = await fetch(`/api/shopify/payouts/${payoutId}`)
       setTxnData(await res.json())
     } catch (e: any) {
       setTxnData({ error: e?.message } as any)
@@ -162,7 +137,7 @@ export default function FinancePage() {
     setTxnLoading(false)
   }
 
-  const shopName = oauthConnected?.shop ?? creds.shop ?? 'Your Store'
+  const shopName = oauthConnected?.shop ?? 'Your Store'
 
   return (
     <div className="flex min-h-screen bg-surface">
@@ -205,12 +180,12 @@ export default function FinancePage() {
         </header>
 
         {/* Connection alert */}
-        {oauthConnected?.connected === false && !credsSaved && (
+        {oauthConnected?.connected === false && (
           <div className="mb-xl bg-amber-50 border border-amber-200 rounded-xl px-lg py-md flex items-center gap-md">
             <span className="material-symbols-outlined text-amber-600">warning</span>
             <div className="flex-1">
               <p className="text-label-md text-amber-800">Chưa kết nối Shopify</p>
-              <p className="text-body-sm text-amber-700">Kết nối OAuth hoặc nhập credentials thủ công bên dưới.</p>
+              <p className="text-body-sm text-amber-700">Kết nối Shopify qua OAuth tại trang Setup (chỉ Super Admin).</p>
             </div>
             <a href="/setup" className="bg-amber-600 text-white px-md py-sm rounded-lg text-label-md hover:bg-amber-700 transition-colors">
               Setup OAuth
@@ -229,76 +204,6 @@ export default function FinancePage() {
                 ? `Lỗi sync: ${syncResult.error}`
                 : `Đã lưu ${syncResult.synced_payouts} payouts và ${syncResult.synced_bank_accounts} bank accounts vào database.`}
             </p>
-          </div>
-        )}
-
-        {/* Manual credentials — hidden when OAuth connected */}
-        {!usingOAuth && (
-          <div className="mb-xl bg-surface-container-lowest rounded-xl shadow-card border border-outline-variant/20 overflow-hidden">
-            <div className="flex items-center gap-sm px-lg py-md border-b border-outline-variant/20">
-              <span className="material-symbols-outlined text-secondary">key</span>
-              <h3 className="text-headline-sm text-primary">Shopify Credentials</h3>
-              {credsSaved && <span className="ml-auto bg-on-tertiary-container/15 text-on-tertiary-container px-sm py-xs rounded-full text-label-sm">✓ Saved</span>}
-            </div>
-            <div className="p-lg">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-lg mb-lg">
-                <div className="space-y-xs">
-                  <label className="block text-label-sm text-on-surface-variant uppercase tracking-wider">Shop domain</label>
-                  <input
-                    type="text"
-                    value={creds.shop}
-                    onChange={e => setCreds({ ...creds, shop: e.target.value })}
-                    placeholder="your-store.myshopify.com"
-                    className="w-full bg-surface-container border border-outline-variant/30 rounded-lg px-md py-sm text-body-md focus:ring-2 focus:ring-secondary focus:border-secondary outline-none transition-all"
-                  />
-                </div>
-                <div className="space-y-xs">
-                  <label className="block text-label-sm text-on-surface-variant uppercase tracking-wider">Access token</label>
-                  <div className="relative">
-                    <input
-                      type={showToken ? 'text' : 'password'}
-                      value={creds.token}
-                      onChange={e => setCreds({ ...creds, token: e.target.value })}
-                      placeholder="shpat_xxxxxxxxxxxxxxxxxxxx"
-                      className="w-full bg-surface-container border border-outline-variant/30 rounded-lg px-md py-sm pr-10 text-body-md focus:ring-2 focus:ring-secondary focus:border-secondary outline-none transition-all"
-                      autoComplete="off"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowToken(s => !s)}
-                      className="absolute right-md top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-primary"
-                    >
-                      <span className="material-symbols-outlined text-[20px]">{showToken ? 'visibility_off' : 'visibility'}</span>
-                    </button>
-                  </div>
-                </div>
-                <div className="space-y-xs">
-                  <label className="block text-label-sm text-on-surface-variant uppercase tracking-wider">API version</label>
-                  <input
-                    type="text"
-                    value={creds.version}
-                    onChange={e => setCreds({ ...creds, version: e.target.value })}
-                    placeholder="2024-04"
-                    className="w-full bg-surface-container border border-outline-variant/30 rounded-lg px-md py-sm text-body-md focus:ring-2 focus:ring-secondary focus:border-secondary outline-none transition-all"
-                  />
-                </div>
-              </div>
-              <div className="flex gap-sm">
-                <button
-                  onClick={() => { try { localStorage.setItem(LS_KEY, JSON.stringify(creds)); setCredsSaved(true) } catch {} }}
-                  disabled={!(creds.shop.trim() && creds.token.trim())}
-                  className="bg-secondary text-on-secondary px-lg py-sm rounded-lg text-label-md hover:opacity-90 transition-opacity disabled:opacity-40"
-                >
-                  Save credentials
-                </button>
-                <button
-                  onClick={() => { localStorage.removeItem(LS_KEY); setCreds({ shop: '', token: '', version: '2024-04' }); setCredsSaved(false); setData(null) }}
-                  className="border border-outline-variant text-on-surface-variant px-lg py-sm rounded-lg text-label-md hover:bg-surface-container transition-colors"
-                >
-                  Clear
-                </button>
-              </div>
-            </div>
           </div>
         )}
 

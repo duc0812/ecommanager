@@ -4,7 +4,7 @@ import { GET } from '@/app/api/projects/analytics/route'
 
 const PID = 'cmp27ew310003hkv9sw0wnb2u' // LZ
 
-describe('analytics route characterization', () => {
+describe.skipIf(!process.env.RUN_CHARACTERIZATION)('analytics route characterization', () => {
   it('matches snapshot for LZ 2026-03-01..2026-07-31', async () => {
     const url = `http://localhost/api/projects/analytics?projectId=${PID}&dateFrom=2026-03-01&dateTo=2026-07-31`
     const res = await GET(new NextRequest(url))

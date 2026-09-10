@@ -16,6 +16,12 @@ describe('resolveDatabaseUrl', () => {
 
   it('falls back to dev.db when DATABASE_URL is absent', () => {
     const cwd = path.resolve('app-root')
-    expect(resolveDatabaseUrl(undefined, cwd)).toBe(`file:${path.resolve(cwd, 'dev.db')}`)
+    const saved = process.env.DATABASE_URL
+    delete process.env.DATABASE_URL
+    try {
+      expect(resolveDatabaseUrl(undefined, cwd)).toBe(`file:${path.resolve(cwd, 'dev.db')}`)
+    } finally {
+      if (saved !== undefined) process.env.DATABASE_URL = saved
+    }
   })
 })

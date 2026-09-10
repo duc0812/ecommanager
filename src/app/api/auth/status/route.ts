@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { clearShopifyConnection, getShopifyConnection } from '@/lib/token-store'
+import { requireSuperadmin } from '@/lib/api-auth'
 
-export async function GET(req: NextRequest) {
-  const conn = await getShopifyConnection(req.headers.get('cookie') ?? undefined)
+export const dynamic = 'force-dynamic'
+
+export async function GET() {
+  const conn = await getShopifyConnection()
   return NextResponse.json({
     shopify: conn
       ? { connected: true, shop: conn.shop, connectedAt: conn.connectedAt }
@@ -10,7 +13,9 @@ export async function GET(req: NextRequest) {
   })
 }
 
-export async function DELETE() {
+export async function DELETE(req: NextRequest) {
+  const auth = await requireSuperadmin(req)
+  if ('error' in auth) return auth.error
   await clearShopifyConnection()
   const response = NextResponse.json({ ok: true })
   response.cookies.set('shopify_shop', '', { httpOnly: true, path: '/', maxAge: 0 })

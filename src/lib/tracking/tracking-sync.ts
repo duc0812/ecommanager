@@ -49,6 +49,12 @@ export async function syncStoreTracking(params: {
     cursor = page.hasNextPage ? page.endCursor : null
   } while (cursor)
 
+  // A partial Shopify read must never be written back: orders missing from the
+  // response would be reset to "no fulfillments" and lose their tracking numbers.
+  if (errors.length > 0) {
+    return { days, since: sinceIso, ordersProcessed: 0, shipmentCount: 0, withTracking: 0, withoutTracking: 0, fulfillmentStatusUpdated: 0, errors }
+  }
+
   // 2) Join with DB orders and upsert shipments + refresh fulfillment status.
   const orders = await loadOrdersForShipmentSync(params.storeId, since)
   let ordersProcessed = 0
@@ -57,10 +63,11 @@ export async function syncStoreTracking(params: {
   let fulfillmentStatusUpdated = 0
   for (const o of orders) {
     const shopifyData = byOrderId.get(o.id)
+    if (!shopifyData) continue
     const rows = buildOrderShipments({
       shopifyOrderNumber: o.shopifyOrderNumber,
       lines: o.lines,
-      fulfillments: shopifyData?.fulfillments ?? [],
+      fulfillments: shopifyData.fulfillments,
     })
     if (rows.length > 0) {
       await upsertOrderShipments(o.id, o.projectId, rows)
@@ -69,7 +76,7 @@ export async function syncStoreTracking(params: {
       withTracking += rows.filter(r => r.trackingNumber).length
     }
     // Refresh the order's fulfillment status from Shopify's authoritative value.
-    const fresh = shopifyData?.fulfillmentStatus ?? null
+    const fresh = shopifyData.fulfillmentStatus ?? null
     if (fresh && fresh !== o.fulfillmentStatus) {
       await prisma.order.update({ where: { id: o.id }, data: { fulfillmentStatus: fresh } })
       fulfillmentStatusUpdated++

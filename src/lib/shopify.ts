@@ -223,13 +223,6 @@ export async function fetchBankAccounts(creds: ShopifyCredentials): Promise<Shop
 
 // ─── Helper: đọc credentials từ request headers ─────────────────────────────
 
-export function getCredentialsFromRequest(req: Request): ShopifyCredentials {
-  const shop = req.headers.get('x-shopify-shop-domain') || ''
-  const token = req.headers.get('x-shopify-access-token') || ''
-  const version = req.headers.get('x-shopify-api-version') || undefined
-  return { shop, token, version }
-}
-
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function buildUrl(base: string, params: Record<string, string>): string {

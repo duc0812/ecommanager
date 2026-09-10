@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { parseCronConfig, SPY_CRON_CONFIG_KEY } from '@/lib/spy/cron-config'
 import { reloadSpyScheduler } from '@/lib/spy/scheduler'
+import { requireSuperadmin } from '@/lib/api-auth'
 
 export const dynamic = 'force-dynamic'
 
@@ -11,6 +12,8 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  const auth = await requireSuperadmin(req)
+  if ('error' in auth) return auth.error
   const body = await req.json().catch(() => ({}))
   const cfg = parseCronConfig(JSON.stringify(body))
   await prisma.appSetting.upsert({

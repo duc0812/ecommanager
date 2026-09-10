@@ -1,6 +1,7 @@
 export const PIPELINE_STATUSES = [
   'PENDING_DESIGN',
   'PENDING_MAPPING',
+  'AWAITING_PAYMENT',
   'WARNING',
   'READY_TO_PRODUCTION',
   'EXPORTED',
@@ -17,6 +18,7 @@ export type PipelineStatus = typeof PIPELINE_STATUSES[number]
 export const STATUS_LABELS: Record<PipelineStatus, string> = {
   PENDING_DESIGN: 'Pending Design',
   PENDING_MAPPING: 'Pending Mapping',
+  AWAITING_PAYMENT: 'Awaiting Payment',
   WARNING: 'Warning',
   READY_TO_PRODUCTION: 'Ready to Production',
   EXPORTED: 'Exported',
@@ -31,6 +33,7 @@ export const STATUS_LABELS: Record<PipelineStatus, string> = {
 export const STATUS_COLORS: Record<PipelineStatus, string> = {
   PENDING_DESIGN: 'bg-amber-100 text-amber-900',
   PENDING_MAPPING: 'bg-rose-100 text-rose-900',
+  AWAITING_PAYMENT: 'bg-slate-200 text-slate-800',
   WARNING: 'bg-red-100 text-red-900',
   READY_TO_PRODUCTION: 'bg-emerald-100 text-emerald-900',
   EXPORTED: 'bg-indigo-100 text-indigo-900',
@@ -45,7 +48,8 @@ export const STATUS_COLORS: Record<PipelineStatus, string> = {
 export const WARNING_AFTER_DAYS = 8
 export const TERMINAL_PIPELINE_STATUSES: PipelineStatus[] = ['CANCELLED', 'REFUNDED']
 
-const SYNC_RE_EVALUATED: PipelineStatus[] = ['PENDING_DESIGN', 'PENDING_MAPPING', 'WARNING', 'READY_TO_PRODUCTION']
+const SYNC_RE_EVALUATED: PipelineStatus[] = ['PENDING_DESIGN', 'PENDING_MAPPING', 'AWAITING_PAYMENT', 'WARNING', 'READY_TO_PRODUCTION']
+const UNPAID_FINANCIAL_STATUSES = ['PENDING', 'AUTHORIZED', 'EXPIRED']
 
 export function isValidPipelineStatus(v: string): v is PipelineStatus {
   return (PIPELINE_STATUSES as readonly string[]).includes(v)
@@ -72,13 +76,15 @@ export type AutoDetectInput = {
   hasCustomDesignLine: boolean
   hasDesignLine?: boolean
   hasDesignReady?: boolean
+  cancelled?: boolean
   currentStatus?: PipelineStatus | null
 }
 
 export function autoDetectStatus(input: AutoDetectInput): PipelineStatus {
   const fs = (input.financialStatus || '').toUpperCase()
 
-  if (fs.includes('REFUND')) return 'REFUNDED'
+  if (input.cancelled) return 'CANCELLED'
+  if (fs === 'REFUNDED') return 'REFUNDED'
   if (fs === 'VOIDED' || fs === 'CANCELLED') return 'CANCELLED'
 
   const fulfillment = (input.fulfillmentStatus || '').toLowerCase()
@@ -86,6 +92,7 @@ export function autoDetectStatus(input: AutoDetectInput): PipelineStatus {
 
   const needsDesign = input.hasDesignLine ?? input.hasCustomDesignLine
   const initial: PipelineStatus =
+    UNPAID_FINANCIAL_STATUSES.includes(fs) ? 'AWAITING_PAYMENT' :
     input.hasPendingMapping || input.hasUnmappedSku ? 'PENDING_MAPPING' :
     needsDesign && !input.hasDesignReady ? 'PENDING_DESIGN' :
     'READY_TO_PRODUCTION'

@@ -17,7 +17,9 @@ vi.mock('./apify', () => ({
   pollRunUntilDone: vi.fn(async () => 'SUCCEEDED'),
   getDatasetItems: vi.fn(async () => [{ ad_archive_id: 'A1', page_id: '9', is_active: true }]),
 }))
-vi.mock('./ingest-ads', () => ({ ingestAds: vi.fn(async () => ({ found: 1, newAds: 1, updated: 0 })) }))
+vi.mock('./ingest-ads', () => ({ ingestAds: vi.fn(async () => ({ found: 1, newAds: 1, updated: 0, ids: ['ad1'] })) }))
+vi.mock('./resolve-link', () => ({ resolvePendingAdLinks: vi.fn(async () => ({ checked: 0, resolved: 0, network: 0, retried: 0 })) }))
+vi.mock('./media-cache', () => ({ cacheAdMediaForIds: vi.fn(async () => ({ checked: 0, cached: 0 })) }))
 
 import { runPageAdScan, runDomainAdScan } from './scan-ads'
 import { startActorRun, pollRunUntilDone, getDatasetItems } from './apify'

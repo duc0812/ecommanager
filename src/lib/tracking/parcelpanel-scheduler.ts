@@ -1,11 +1,11 @@
 import cron from 'node-cron'
+import { initOnce, runExclusive } from '@/lib/job-lock'
 import { prisma } from '@/lib/db'
 import { getShopifyConnection } from '@/lib/token-store'
 import { syncParcelPanelTracking } from './parcelpanel-sync'
 import { getParcelPanelApiKey } from './parcelpanel-config'
 
 const TZ = 'Asia/Ho_Chi_Minh'
-let initialized = false
 
 // Daily: refresh real carrier status from ParcelPanel for undelivered shipments.
 export async function runDailyParcelPanelSync() {
@@ -31,10 +31,11 @@ export async function runDailyParcelPanelSync() {
 }
 
 export function initParcelPanelScheduler() {
-  if (initialized) return
-  initialized = true
+  if (!initOnce('parcelpanel-scheduler')) return
   cron.schedule('0 4 * * *', () => {
-    runDailyParcelPanelSync().catch(err => console.error('[parcelpanel] unhandled:', err))
+    runExclusive('parcelpanel-sync', runDailyParcelPanelSync)
+      .then(r => { if (r.skipped) console.warn('[parcelpanel] previous run still active; skipped') })
+      .catch(err => console.error('[parcelpanel] unhandled:', err))
   }, { timezone: TZ })
   console.log('[parcelpanel] Initialized — daily ParcelPanel tracking sync at 04:00 Asia/Ho_Chi_Minh')
 }

@@ -5,7 +5,8 @@ import { getMetaRateSchedule } from '@/lib/meta-exchange-rates'
 // A Vietnamese bank card charged by Meta in USD incurs a ~3% FX conversion fee.
 export const FX_FEE_RATE = 0.03
 
-const PAID_STATUSES = ['PAID', 'SETTLED', 'COMPLETED']
+export const PAID_META_STATUSES = ['PAID', 'SETTLED', 'COMPLETED']
+const PAID_STATUSES = PAID_META_STATUSES
 
 type Schedule = Awaited<ReturnType<typeof getMetaRateSchedule>>
 type FeeBilling = { amount: number; currency: string; billingDate: string; paymentMethodLast4: string | null }

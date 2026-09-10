@@ -94,7 +94,7 @@ export default function SpyIdeaPage() {
     } else if (area === 'ideas') {
       fetch('/api/spy/ideas').then(r => r.json()).then(setIdeas).catch(() => {})
     }
-  }, [area, view, filterQuery, limit])
+  }, [area, view, filterQuery, limit, domain])
 
   async function saveAdIdea(a: Ad) {
     await fetch('/api/spy/ideas', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: a.title ?? a.advertiser.pageName ?? 'Ad', refType: 'AD', refAdId: a.id, snapshotJson: a }) })

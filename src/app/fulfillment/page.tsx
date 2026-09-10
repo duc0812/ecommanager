@@ -28,16 +28,10 @@ const modules = [
     desc: 'Manage supplier profiles, shipping defaults, and export templates.',
   },
   {
-    href: '/fulfillment/products',
+    href: '/fulfillment/mapping',
     icon: 'inventory_2',
     title: 'Product Mapping',
     desc: 'Import supplier SKU sheets and maintain base cost, size, product type, and shipping rules.',
-  },
-  {
-    href: '/fulfillment/costs',
-    icon: 'payments',
-    title: 'Cost Register',
-    desc: 'Record landed fulfillment costs, invoices, product cost, shipping, storage, and adjustments.',
   },
 ]
 

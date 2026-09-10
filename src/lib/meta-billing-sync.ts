@@ -463,19 +463,38 @@ async function upsertTransaction(account: MetaAccount, transaction: MetaTransact
   // The manually imported official export is authoritative. If it already covers
   // this charge, don't add a scraped duplicate. Match on amount within ±1 day
   // because the scrape dates charges in UTC while the export uses the account tz.
+  // Threshold billing charges the same amount on consecutive days, so a plain
+  // amount+window match would collapse distinct charges. Compare counts instead:
+  // only skip when the export already has MORE rows for this amount than the scrape.
   const dupMin = dateOnly(addDays(parseDateOnly(transaction.billingDate), -1))
   const dupMax = dateOnly(addDays(parseDateOnly(transaction.billingDate), 1))
-  const importedDuplicate = await prisma.metaBilling.findFirst({
-    where: {
-      adAccountId: account.id,
-      amount: transaction.amount,
-      currency: transaction.currency,
-      productType: 'meta_billing_export',
-      billingDate: { gte: dupMin, lte: dupMax },
-    },
-    select: { id: true },
-  })
-  if (importedDuplicate) return
+  const windowWhere = {
+    adAccountId: account.id,
+    amount: transaction.amount,
+    currency: transaction.currency,
+    billingDate: { gte: dupMin, lte: dupMax },
+  }
+  const [importedCount, scrapedCount] = await Promise.all([
+    prisma.metaBilling.count({ where: { ...windowWhere, productType: 'meta_billing_export' } }),
+    prisma.metaBilling.count({
+      where: {
+        ...windowWhere,
+        id: { not: transaction.id },
+        OR: [{ productType: null }, { productType: { not: 'meta_billing_export' } }],
+      },
+    }),
+  ])
+  if (importedCount > scrapedCount) {
+    if (transaction.status === 'PAID') {
+      const pendingImport = await prisma.metaBilling.findFirst({
+        where: { ...windowWhere, productType: 'meta_billing_export', status: 'PENDING' },
+        orderBy: { billingDate: 'asc' },
+        select: { id: true },
+      })
+      if (pendingImport) await prisma.metaBilling.update({ where: { id: pendingImport.id }, data: { status: 'PAID' } })
+    }
+    return
+  }
 
   if (transaction.legacyId && transaction.legacyId !== transaction.id) {
     await prisma.metaBilling.deleteMany({

@@ -50,6 +50,7 @@ type SpyCacheStore = {
 
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000
 const MAX_DOMAINS = 10
+const MAX_CACHED_DOMAINS = 50
 
 const spyCache: SpyCacheStore = (globalThis as typeof globalThis & { __spyIdeaCache?: SpyCacheStore }).__spyIdeaCache ?? {
   domains: new Map(),
@@ -63,7 +64,18 @@ function productCacheKey(product: ShopifyProduct, origin: string) {
   return `url:${productUrl(origin, product.handle)}`
 }
 
+function evictStaleDomains(now: Date) {
+  const nowMs = now.getTime()
+  spyCache.domains.forEach((entry, key) => { if (entry.expiresAt <= nowMs) spyCache.domains.delete(key) })
+  while (spyCache.domains.size > MAX_CACHED_DOMAINS) {
+    const oldest = spyCache.domains.keys().next().value
+    if (oldest === undefined) break
+    spyCache.domains.delete(oldest)
+  }
+}
+
 function getValidDomainCache(origin: string, now: Date) {
+  evictStaleDomains(now)
   const existing = spyCache.domains.get(origin)
   if (existing && existing.expiresAt > now.getTime()) {
     if (!existing.products) existing.products = new Map<string, SpyProduct>()

@@ -7,6 +7,7 @@ import { matchDesignEntry } from '@/lib/design-parent'
 import { lineDesignStatus } from '@/lib/design-status'
 import { sumMetaAmountsUsdDated } from '@/lib/meta-currency'
 import { getMetaRateSchedule } from '@/lib/meta-exchange-rates'
+import { PAID_META_STATUSES } from '@/lib/meta-fee'
 
 export type PlSummary = {
   orderCount: number
@@ -173,7 +174,7 @@ export async function combinedProjectPL(filter: {
   if (accountIds.length > 0) {
     const billingWhere: any = {
       adAccountId: { in: accountIds },
-      status: 'SETTLED',
+      status: { in: PAID_META_STATUSES },
     }
     if (filter.dateFrom || filter.dateTo) {
       const fromIso = filter.dateFrom ? filter.dateFrom.toISOString().split('T')[0] : '0000-01-01'

@@ -1,3 +1,4 @@
+import { assertSafeExternalUrl } from '@/lib/safe-url'
 import { resolveSupplierForOrderLine, type MappingResult, type SupplierProductCandidate } from '@/lib/auto-mapping'
 
 export const SHOPIFY_PRODUCT_CSV_COLUMNS = [
@@ -67,7 +68,7 @@ export type CrawledVariantMapping = {
 }
 
 export function productUrlToJsonEndpoint(url: string) {
-  const parsed = new URL(url.trim().split('?')[0])
+  const parsed = assertSafeExternalUrl(url.trim().split('?')[0], { allowHttp: false })
   const path = parsed.pathname.replace(/\/$/, '')
   parsed.pathname = path.endsWith('.json') ? path : `${path}.json`
   parsed.search = ''
@@ -82,7 +83,7 @@ export async function fetchPublicShopifyProduct(url: string): Promise<ShopifyCra
       'Accept': 'application/json',
     },
   })
-  if (!res.ok) throw new Error(`Shopify product fetch failed ${res.status}: ${await res.text()}`)
+  if (!res.ok) throw new Error(`Shopify product fetch failed (HTTP ${res.status}). Check that this is a public Shopify product URL.`)
   const payload = await res.json()
   if (!payload?.product) throw new Error('Response missing product key. Check that this is a public Shopify product URL.')
   return payload.product

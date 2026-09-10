@@ -3,7 +3,7 @@ import { estimateOrderCostAndProfit } from '@/lib/order-profit'
 import { productLinesOnly } from '@/lib/order-lines'
 import { convertMetaAmountToUsdDated, normalizeMetaCurrency, sumMetaAmountsUsdDated } from '@/lib/meta-currency'
 import { getMetaRateSchedule } from '@/lib/meta-exchange-rates'
-import { getVndCardLast4, sumBillingFxFeesUsd } from '@/lib/meta-fee'
+import { getVndCardLast4, sumBillingFxFeesUsd, PAID_META_STATUSES } from '@/lib/meta-fee'
 import { PROJECT_REVENUE_EXCLUDED_STATUSES, summarizeProjectOrderFinancials } from '@/lib/project-metrics'
 import { dateKeyInZone, addDays } from '@/lib/cashflow-dates'
 
@@ -46,14 +46,12 @@ export async function computeProjectCashflow(input: ProjectCashflowInput): Promi
     startStr,
     endStr,
     payoutStartStr,
-    startDate,
-    endDate,
     orderRangeStart,
     orderRangeEnd,
     periodIsValid,
   } = input
 
-  const paidMetaStatuses = ['PAID', 'SETTLED', 'COMPLETED']
+  const paidMetaStatuses = PAID_META_STATUSES
   const metaAccounts = await prisma.metaAdAccount.findMany({
     where: { projectId: project.id },
     select: { id: true, accountId: true, accountName: true, currency: true, balance: true, balanceCurrency: true },

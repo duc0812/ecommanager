@@ -1,9 +1,9 @@
 import cron from 'node-cron'
+import { initOnce, runExclusive } from '@/lib/job-lock'
 import { prisma } from '@/lib/db'
 import { syncMetaInsights, syncMetaCampaignInsights } from '@/lib/sync-meta-insights'
 import { recalculateMissingOrderLineCosts } from '@/lib/repos/order-costs'
 
-let initialized = false
 
 function appBaseUrl(requestOrigin?: string) {
   if (requestOrigin) return requestOrigin.replace(/\/$/, '')
@@ -29,6 +29,12 @@ async function syncOrdersViaOrderPlFlow(requestOrigin?: string, cookieHeader?: s
 }
 
 export async function runAutoSync(requestOrigin?: string, cookieHeader?: string | null): Promise<Record<string, any>> {
+  const outcome = await runExclusive('auto-sync', () => runAutoSyncInner(requestOrigin, cookieHeader))
+  if (outcome.skipped) return { skipped: true, error: 'Auto sync is already running' }
+  return outcome.result
+}
+
+async function runAutoSyncInner(requestOrigin?: string, cookieHeader?: string | null): Promise<Record<string, any>> {
   const result: Record<string, any> = { startedAt: new Date().toISOString() }
 
   try {
@@ -92,11 +98,12 @@ async function runNightlyMetaSync(): Promise<void> {
 }
 
 export function initAutoSync() {
-  if (initialized) return
-  initialized = true
+  if (!initOnce('auto-sync')) return
   // 1am America/Denver (MDT = UTC-6 in summer, MST = UTC-7 in winter)
   cron.schedule('0 1 * * *', () => {
-    runNightlyMetaSync().catch(err => console.error('[nightly-meta-sync] Unhandled error:', err))
+    runExclusive('nightly-meta-sync', runNightlyMetaSync)
+      .then(r => { if (r.skipped) console.warn('[nightly-meta-sync] previous run still active; skipped') })
+      .catch(err => console.error('[nightly-meta-sync] Unhandled error:', err))
   }, { timezone: 'America/Denver' })
   console.log('[auto-sync] Initialized — nightly Meta sync at 1:00am America/Denver')
 }

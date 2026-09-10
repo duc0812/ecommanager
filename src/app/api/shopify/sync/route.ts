@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { fetchAllPayouts, fetchBalance, fetchBankAccounts, getCredentialsFromRequest } from '@/lib/shopify'
+import { fetchAllPayouts, fetchBalance, fetchBankAccounts } from '@/lib/shopify'
 import { getShopifyConnection } from '@/lib/token-store'
 import { prisma } from '@/lib/db'
 import { SHOPIFY_PAYOUT_START_DATE } from '@/lib/shopify-payout-policy'
@@ -15,14 +15,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'date_max must be on or after date_min' }, { status: 400 })
     }
 
-    const stored = await getShopifyConnection(req.headers.get('cookie') ?? undefined)
-    const creds = stored
-      ? { shop: stored.shop, token: stored.token }
-      : getCredentialsFromRequest(req)
+    const stored = await getShopifyConnection()
+    if (!stored) return NextResponse.json({ error: 'Not connected to Shopify. Go to /setup and connect Shopify first.' }, { status: 401 })
+    const creds = { shop: stored.shop, token: stored.token }
 
-    if (!creds.shop || !creds.token) {
-      return NextResponse.json({ error: 'Not connected' }, { status: 401 })
-    }
 
     // Upsert the store record
     const store = await prisma.shopifyStore.upsert({

@@ -13,7 +13,7 @@ export async function POST(req: NextRequest) {
 
   const apiKey = await getParcelPanelApiKey()
   if (!apiKey) return NextResponse.json({ error: 'Chưa cấu hình ParcelPanel API key.' }, { status: 400 })
-  const conn = await getShopifyConnection(req.headers.get('cookie') ?? undefined)
+  const conn = await getShopifyConnection()
   const store = conn ? await prisma.shopifyStore.findUnique({ where: { shop: conn.shop } }) : null
 
   const encoder = new TextEncoder()

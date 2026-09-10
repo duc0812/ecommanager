@@ -21,7 +21,7 @@ export async function POST(req: Request) {
   if (!cfg) {
     return NextResponse.json({ error: 'Trello chưa được cấu hình. Vào Setup để nhập API key.' }, { status: 400 })
   }
-  const conn = await getShopifyConnection(req.headers.get('cookie') ?? undefined)
+  const conn = await getShopifyConnection()
   if (!conn) {
     return NextResponse.json({ error: 'Chưa kết nối Shopify. Vào /setup để connect trước.' }, { status: 401 })
   }

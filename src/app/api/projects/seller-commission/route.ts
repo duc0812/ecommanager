@@ -4,7 +4,7 @@ import { estimateOrderCostAndProfit } from '@/lib/order-profit'
 import { productLinesOnly } from '@/lib/order-lines'
 import { convertMetaAmountToUsdDated } from '@/lib/meta-currency'
 import { getMetaRateSchedule } from '@/lib/meta-exchange-rates'
-import { getVndCardLast4, billingFxFeeUsd } from '@/lib/meta-fee'
+import { getVndCardLast4, billingFxFeeUsd, PAID_META_STATUSES } from '@/lib/meta-fee'
 import { PROJECT_REVENUE_EXCLUDED_STATUSES } from '@/lib/project-metrics'
 import { computeSellerCommission } from '@/lib/seller-commission'
 import { verifyToken } from '@/lib/auth'
@@ -61,7 +61,7 @@ export async function GET(req: NextRequest) {
   const rangeStart = new Date(`${startStr}T00:00:00.000Z`)
   const rangeEnd = new Date(`${endStr}T23:59:59.999Z`)
 
-  const paidMetaStatuses = ['PAID', 'SETTLED', 'COMPLETED']
+  const paidMetaStatuses = PAID_META_STATUSES
   const [payouts, billings, orders, otherBills, fulfillmentBills, schedule, vndCards] = await Promise.all([
     project.shopifyStore
       ? prisma.payout.findMany({ where: { storeId: project.shopifyStore.id, status: 'paid', date: { gte: startStr, lte: endStr } }, select: { date: true, amount: true } })

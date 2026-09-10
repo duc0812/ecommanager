@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { computeTrendingNiches } from '@/lib/spy/trending'
-import { isNewAd, activeDays, isLongRunning, isScaling, isStopped } from '@/lib/spy/ad-signals'
+import { isNewAd, activeDays, isLongRunning, isScalingSummary, isStoppedSummary } from '@/lib/spy/ad-signals'
 
 const DAY = 24 * 60 * 60 * 1000
 
@@ -18,23 +18,22 @@ export async function GET(req: NextRequest) {
   const ads = await prisma.spyAd.findMany({
     orderBy: { lastSeenAt: 'desc' },
     take: 500,
+    omit: { rawPayload: true },
     include: {
       advertiser: { select: { pageName: true } },
-      observations: { select: { isActive: true, collationCount: true, observedAt: true } },
     },
   })
   const now = new Date()
   const winningAds = ads
     .map(a => {
-      const { rawPayload: _rawPayload, ...rest } = a // eslint-disable-line @typescript-eslint/no-unused-vars
       return {
-        ...rest,
+        ...a,
         signals: {
           isNew: isNewAd(a.startDate, now),
           activeDays: activeDays(a.startDate, a.endDate, now),
           isLongRunning: isLongRunning(a, now),
-          isScaling: isScaling(a.observations),
-          isStopped: isStopped(a.observations),
+          isScaling: isScalingSummary(a),
+          isStopped: isStoppedSummary(a),
         },
       }
     })

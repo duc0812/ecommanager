@@ -12,13 +12,17 @@ type ShopifyAppCredentials = {
   shop: string
 }
 
+type OAuthState = { shop: string; createdAt: number }
+
+const OAUTH_STATE_TTL_MS = 10 * 60 * 1000
+
 declare global {
   // eslint-disable-next-line no-var
   var __shopifyConnection: ShopifyConnection | null
   // eslint-disable-next-line no-var
   var __shopifyAppCreds: ShopifyAppCredentials | null
   // eslint-disable-next-line no-var
-  var __oauthStates: Map<string, string>
+  var __oauthStates: Map<string, OAuthState>
 }
 
 if (!global.__shopifyConnection) global.__shopifyConnection = null
@@ -54,7 +58,7 @@ async function deleteSettings(keys: string[]) {
   await prisma.appSetting.deleteMany({ where: { key: { in: keys } } })
 }
 
-export async function getShopifyConnection(cookieHeader?: string): Promise<ShopifyConnection | null> {
+export async function getShopifyConnection(): Promise<ShopifyConnection | null> {
   if (global.__shopifyConnection) return global.__shopifyConnection
 
   const fromDb = await settingsFor(CONNECTION_KEYS)
@@ -71,21 +75,7 @@ export async function getShopifyConnection(cookieHeader?: string): Promise<Shopi
     return global.__shopifyConnection
   }
 
-  if (cookieHeader) {
-    const shop = parseCookie(cookieHeader, 'shopify_shop')
-    const token = parseCookie(cookieHeader, 'shopify_token')
-    if (shop && token) {
-      await setShopifyConnection(shop, token)
-      return global.__shopifyConnection
-    }
-  }
-
   return null
-}
-
-function parseCookie(header: string, name: string): string | null {
-  const match = header.match(new RegExp(`(?:^|;\\s*)${name}=([^;]+)`))
-  return match ? decodeURIComponent(match[1]) : null
 }
 
 export async function setShopifyConnection(shop: string, token: string) {
@@ -125,12 +115,22 @@ export async function getShopifyAppCredentials(): Promise<ShopifyAppCredentials 
   return global.__shopifyAppCreds
 }
 
+function pruneOAuthStates(now: number) {
+  global.__oauthStates.forEach((value, key) => {
+    if (now - value.createdAt > OAUTH_STATE_TTL_MS) global.__oauthStates.delete(key)
+  })
+}
+
 export function saveOAuthState(state: string, shop: string) {
-  global.__oauthStates.set(state, shop)
+  const now = Date.now()
+  pruneOAuthStates(now)
+  global.__oauthStates.set(state, { shop, createdAt: now })
 }
 
 export function consumeOAuthState(state: string): string | null {
-  const shop = global.__oauthStates.get(state) ?? null
+  if (!state) return null
+  const entry = global.__oauthStates.get(state) ?? null
   global.__oauthStates.delete(state)
-  return shop
+  if (!entry || Date.now() - entry.createdAt > OAUTH_STATE_TTL_MS) return null
+  return entry.shop
 }

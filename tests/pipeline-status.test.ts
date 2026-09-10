@@ -8,10 +8,36 @@ describe('autoDetectStatus', () => {
     })).toBe('REFUNDED')
   })
 
-  it('PARTIALLY_REFUNDED → REFUNDED', () => {
+  it('PARTIALLY_REFUNDED stays in the pipeline (not terminal)', () => {
     expect(autoDetectStatus({
       financialStatus: 'PARTIALLY_REFUNDED', hasUnmappedSku: false, hasPendingMapping: false, hasCustomDesignLine: false,
-    })).toBe('REFUNDED')
+    })).toBe('READY_TO_PRODUCTION')
+  })
+
+  it('cancelledAt on a PAID order → CANCELLED', () => {
+    expect(autoDetectStatus({
+      financialStatus: 'PAID', cancelled: true, hasUnmappedSku: false, hasPendingMapping: false, hasCustomDesignLine: false,
+    })).toBe('CANCELLED')
+  })
+
+  it('unpaid orders wait for payment instead of entering production', () => {
+    for (const fs of ['PENDING', 'AUTHORIZED', 'EXPIRED']) {
+      expect(autoDetectStatus({
+        financialStatus: fs, hasUnmappedSku: false, hasPendingMapping: false, hasCustomDesignLine: false,
+      })).toBe('AWAITING_PAYMENT')
+    }
+  })
+
+  it('AWAITING_PAYMENT is re-evaluated once the order is paid', () => {
+    expect(autoDetectStatus({
+      financialStatus: 'PAID', hasUnmappedSku: false, hasPendingMapping: false, hasCustomDesignLine: false, currentStatus: 'AWAITING_PAYMENT',
+    })).toBe('READY_TO_PRODUCTION')
+  })
+
+  it('fulfillmentStatus FULFILLED wins over pending mapping', () => {
+    expect(autoDetectStatus({
+      financialStatus: 'PAID', fulfillmentStatus: 'FULFILLED', hasUnmappedSku: true, hasPendingMapping: true, hasCustomDesignLine: false, currentStatus: 'PENDING_MAPPING',
+    })).toBe('FULFILLED')
   })
 
   it('VOIDED → CANCELLED', () => {
@@ -89,8 +115,8 @@ describe('autoDetectStatus', () => {
 })
 
 describe('PIPELINE_STATUSES', () => {
-  it('has 11 statuses', () => {
-    expect(PIPELINE_STATUSES).toHaveLength(11)
+  it('has 12 statuses', () => {
+    expect(PIPELINE_STATUSES).toHaveLength(12)
   })
 
   it('STATUS_LABELS covers all statuses', () => {

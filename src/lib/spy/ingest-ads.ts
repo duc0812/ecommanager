@@ -4,8 +4,9 @@ import type { ParsedSpyAd } from '@/lib/spy/ad-mapping'
 export async function ingestAds(
   scanId: string, storeId: string | null, ads: ParsedSpyAd[],
   opts: { adDomainId?: string | null } = {},
-): Promise<{ found: number; newAds: number; updated: number }> {
+): Promise<{ found: number; newAds: number; updated: number; ids: string[] }> {
   let newAds = 0, updated = 0
+  const ids: string[] = []
   const now = new Date()
   for (const a of ads) {
     if (!a.adArchiveId || !a.pageId) continue
@@ -36,9 +37,17 @@ export async function ingestAds(
     }
     const row = await prisma.spyAd.upsert({
       where: { adArchiveId: a.adArchiveId },
-      create: { adArchiveId: a.adArchiveId, firstSeenAt: now, lastSeenAt: now, ...data },
-      update: { lastSeenAt: now, ...data },
+      create: {
+        adArchiveId: a.adArchiveId, firstSeenAt: now, lastSeenAt: now, ...data,
+        firstCollationCount: a.collationCount, everActive: a.isActive, observationCount: 1,
+      },
+      update: {
+        lastSeenAt: now, ...data,
+        observationCount: { increment: 1 },
+        ...(a.isActive ? { everActive: true } : {}),
+      },
     })
+    ids.push(row.id)
     if (existing) updated++; else newAds++
 
     await prisma.spyAdObservation.upsert({
@@ -47,5 +56,5 @@ export async function ingestAds(
       update: { isActive: a.isActive, collationCount: a.collationCount },
     })
   }
-  return { found: ads.length, newAds, updated }
+  return { found: ads.length, newAds, updated, ids }
 }

@@ -32,6 +32,7 @@ export type ShopifyOrder = {
   name: string
   createdAt: string
   processedAt: string | null
+  cancelledAt: string | null
   financialStatus: string
   fulfillmentStatus: string | null
   currency: string
@@ -65,7 +66,7 @@ query SyncOrders($cursor: String, $query: String) {
   orders(first: 50, after: $cursor, query: $query, sortKey: CREATED_AT) {
     pageInfo { hasNextPage endCursor }
     nodes {
-      id name createdAt processedAt
+      id name createdAt processedAt cancelledAt
       displayFinancialStatus displayFulfillmentStatus
       currencyCode
       currentTotalPriceSet { shopMoney { amount } }
@@ -128,6 +129,7 @@ export async function fetchOrdersPage(
   cursor: string | null,
   sinceIso: string,
   apiVersion = '2024-10',
+  sinceField: 'created_at' | 'updated_at' = 'created_at',
 ): Promise<ShopifyOrdersPage> {
   const url = `https://${shop}/admin/api/${apiVersion}/graphql.json`
   const res = await fetch(url, {
@@ -138,7 +140,7 @@ export async function fetchOrdersPage(
     },
     body: JSON.stringify({
       query: QUERY,
-      variables: { cursor, query: `created_at:>=${sinceIso}` },
+      variables: { cursor, query: `${sinceField}:>=${sinceIso}` },
     }),
   })
   if (!res.ok) throw new Error(`Shopify GraphQL ${res.status}: ${await res.text()}`)
@@ -166,10 +168,11 @@ export async function fetchOrdersPage(
       name: n.name,
       createdAt: n.createdAt,
       processedAt: n.processedAt,
+      cancelledAt: n.cancelledAt ?? null,
       financialStatus: n.displayFinancialStatus,
       fulfillmentStatus: n.displayFulfillmentStatus,
       currency: n.currencyCode,
-      grossAmount: num(n.currentTotalPriceSet),
+      grossAmount: num(n.currentTotalPriceSet) + refundedAmount,
       subtotal: num(n.currentSubtotalPriceSet),
       shipping: num(n.currentShippingPriceSet),
       tax: num(n.currentTotalTaxSet),

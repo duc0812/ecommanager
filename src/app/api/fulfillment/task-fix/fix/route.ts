@@ -33,7 +33,7 @@ export async function POST(req: NextRequest) {
   let applied = 0
 
   if (taskType === 'MISSING_SKU') {
-    const conn = await getShopifyConnection(req.headers.get('cookie') ?? undefined)
+    const conn = await getShopifyConnection()
     if (!conn) return NextResponse.json({ error: 'Chưa kết nối Shopify.' }, { status: 400 })
     for (const f of fixes) {
       const sku = (f.sku ?? '').trim()

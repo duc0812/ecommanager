@@ -36,8 +36,8 @@ export default function UsersPage() {
   const [passwordError, setPasswordError] = useState('')
 
   async function savePassword() {
-    if (!passwordUserId || newPassword.length < 6) {
-      setPasswordError('Password phải có ít nhất 6 ký tự')
+    if (!passwordUserId || newPassword.length < 10) {
+      setPasswordError('Password phải có ít nhất 10 ký tự')
       return
     }
     setPasswordSaving(true)

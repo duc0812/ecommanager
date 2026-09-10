@@ -43,7 +43,7 @@ export default function AdDetailPage() {
           <div className="rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-lg">
             {data.ad.mediaUrl && (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={data.ad.mediaUrl} alt={data.ad.title ?? ''} className="mb-md max-h-96 w-full rounded-lg object-contain" />
+              <img src={`/api/spy/media/${data.ad.id}`} alt={data.ad.title ?? ''} className="mb-md max-h-96 w-full rounded-lg object-contain" />
             )}
             <p className="whitespace-pre-wrap text-body-md text-primary">{data.ad.body}</p>
             {data.ad.caption && <p className="mt-sm text-body-sm text-on-surface-variant">{data.ad.caption}</p>}

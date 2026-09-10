@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseTs, ppWallClock, checkpointMilestones, parsePpTiming, computeSupplierPerformance, type PerfShipment } from './supplier-performance'
+import { parseTs, ppWallClock, checkpointMilestones, parsePpTiming, computeSupplierPerformance } from './supplier-performance'
 
 describe('parseTs', () => {
   it('parses timezone-less as UTC; keeps explicit offset/Z', () => {

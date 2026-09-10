@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
-import { isScaling, isLongRunning } from '@/lib/spy/ad-signals'
+import { isScalingSummary, isLongRunning } from '@/lib/spy/ad-signals'
 import { parseAdLink } from '@/lib/spy/ad-link'
 import { recentLaunchSet } from '@/lib/spy/ad-product-match'
 
@@ -11,11 +11,11 @@ export async function GET() {
     orderBy: { lastSeenAt: 'desc' },
     select: {
       isActive: true, startDate: true, endDate: true, linkUrl: true,
-      observations: { select: { isActive: true, collationCount: true, observedAt: true } },
+      collationCount: true, firstCollationCount: true, everActive: true, observationCount: true,
     },
   })
   const now = new Date()
-  const scalingAds = ads.filter(a => isScaling(a.observations)).length
+  const scalingAds = ads.filter(a => isScalingSummary(a)).length
   const longRunningAds = ads.filter(a => isLongRunning(a, now)).length
 
   const launch = await recentLaunchSet(ads.map(a => a.linkUrl))

@@ -1,10 +1,10 @@
 import cron from 'node-cron'
+import { initOnce, runExclusive } from '@/lib/job-lock'
 import { prisma } from '@/lib/db'
 import { getShopifyConnection } from '@/lib/token-store'
 import { syncStoreTracking } from './tracking-sync'
 
 const TZ = 'Asia/Ho_Chi_Minh'
-let initialized = false
 
 // Runs the tracking sync for the currently-connected Shopify store.
 // NOTE: the app stores a single Shopify connection token (token-store is
@@ -36,11 +36,12 @@ export async function runDailyTrackingSync() {
 }
 
 export function initTrackingScheduler() {
-  if (initialized) return
-  initialized = true
+  if (!initOnce('tracking-scheduler')) return
   // Once daily at 03:00 Asia/Ho_Chi_Minh
   cron.schedule('0 3 * * *', () => {
-    runDailyTrackingSync().catch(err => console.error('[tracking-scheduler] unhandled:', err))
+    runExclusive('tracking-sync', runDailyTrackingSync)
+      .then(r => { if (r.skipped) console.warn('[tracking-scheduler] previous run still active; skipped') })
+      .catch(err => console.error('[tracking-scheduler] unhandled:', err))
   }, { timezone: TZ })
   console.log('[tracking-scheduler] Initialized — daily tracking sync at 03:00 Asia/Ho_Chi_Minh')
 }

@@ -1,11 +1,11 @@
 import cron from 'node-cron'
+import { initOnce, runExclusive } from '@/lib/job-lock'
 import { prisma } from '@/lib/db'
 import { getShopifyConnection } from '@/lib/token-store'
 import { getSheets, getMinAgeDays } from './auto-fulfill-sheets'
 import { runAutoFulfill } from './auto-fulfill'
 
 const TZ = 'Asia/Ho_Chi_Minh'
-let initialized = false
 
 export async function runDailyAutoFulfill() {
   const sheets = (await getSheets()).filter(s => s.enabled)
@@ -29,8 +29,11 @@ export async function runDailyAutoFulfill() {
 }
 
 export function initAutoFulfillScheduler() {
-  if (initialized) return
-  initialized = true
-  cron.schedule('30 3 * * *', () => { runDailyAutoFulfill().catch(err => console.error('[auto-fulfill] unhandled:', err)) }, { timezone: TZ })
+  if (!initOnce('auto-fulfill-scheduler')) return
+  cron.schedule('30 3 * * *', () => {
+    runExclusive('auto-fulfill', runDailyAutoFulfill)
+      .then(r => { if (r.skipped) console.warn('[auto-fulfill] previous run still active; skipped') })
+      .catch(err => console.error('[auto-fulfill] unhandled:', err))
+  }, { timezone: TZ })
   console.log('[auto-fulfill] Initialized — daily auto-fulfill at 03:30 Asia/Ho_Chi_Minh')
 }

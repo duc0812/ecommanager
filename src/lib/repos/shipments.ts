@@ -37,12 +37,21 @@ export async function upsertOrderShipments(orderId: string, projectId: string, r
       carrier: r.carrier,
       trackingUrl: r.trackingUrl,
       supplierId: r.supplierId,
-      status: r.status,
     }
     await prisma.shipment.upsert({
       where: { orderId_lineKey: { orderId, lineKey: r.lineKey } },
-      create: { orderId, projectId, lineKey: r.lineKey, ...data },
+      create: { orderId, projectId, lineKey: r.lineKey, status: r.status, ...data },
       update: data,
+    })
+    // Shopify's coarse fulfillment status must not clobber the finer status a
+    // tracking crawl (ParcelPanel) already wrote for this shipment.
+    await prisma.shipment.updateMany({
+      where: {
+        orderId,
+        lineKey: r.lineKey,
+        OR: [{ crawlSource: null }, { crawlSource: { not: 'parcelpanel' } }],
+      },
+      data: { status: r.status },
     })
   }
 }

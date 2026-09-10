@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
-import { isNewAd, activeDays, isLongRunning, isScaling, isStopped } from '@/lib/spy/ad-signals'
+import { isNewAd, activeDays, isLongRunning, isScalingSummary, isStoppedSummary } from '@/lib/spy/ad-signals'
 import { parseAdLink } from '@/lib/spy/ad-link'
 import { recentLaunchSet, productDateMap } from '@/lib/spy/ad-product-match'
 import { parseKeywords, nicheOrWhere } from '@/lib/spy/niche'
@@ -45,9 +45,9 @@ export async function GET(req: NextRequest) {
     where,
     orderBy,
     take: limit,
+    omit: { rawPayload: true },
     include: {
       advertiser: { select: { pageName: true, storeId: true } },
-      observations: { select: { isActive: true, collationCount: true, observedAt: true } },
     },
   })
 
@@ -58,16 +58,15 @@ export async function GET(req: NextRequest) {
     const p = parseAdLink(a.resolvedUrl ?? a.linkUrl)
     const newProductLaunching = p.kind === 'product' && !!p.host && !!p.handle && launch.has(`${p.host}|${p.handle}`)
     const key = p.kind === 'product' && p.host && p.handle ? `${p.host}|${p.handle}` : null
-    const { rawPayload: _rawPayload, ...rest } = a // eslint-disable-line @typescript-eslint/no-unused-vars
     return {
-      ...rest,
+      ...a,
       productPublishedAt: key && dates.has(key) ? dates.get(key) : null,
       signals: {
         isNew: isNewAd(a.startDate, now),
         activeDays: activeDays(a.startDate, a.endDate, now),
         isLongRunning: isLongRunning(a, now),
-        isScaling: isScaling(a.observations),
-        isStopped: isStopped(a.observations),
+        isScaling: isScalingSummary(a),
+        isStopped: isStoppedSummary(a),
         adStyle: p.kind,
         newProductLaunching,
       },

@@ -127,8 +127,10 @@ export async function POST(req: NextRequest) {
     const exportedOrderNumbers = new Set(ordersForCsv.map(o => o.shopifyOrderNumber))
     const orderIds = orders.filter(o => exportedOrderNumbers.has(o.shopifyOrderNumber)).map(o => o.id)
     if (orderIds.length > 0) {
+      // Only production-ready orders move to EXPORTED; pending design/mapping,
+      // on-hold, fulfilled and terminal orders keep their state.
       await prisma.order.updateMany({
-        where: { id: { in: orderIds } },
+        where: { id: { in: orderIds }, pipelineStatus: { in: ['READY_TO_PRODUCTION', 'EXPORTED'] } },
         data: {
           exportedAt: new Date(),
           exportedToSupplierId: tmpl.supplierId,

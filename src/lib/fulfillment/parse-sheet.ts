@@ -1,3 +1,4 @@
+import { assertSafeExternalUrl } from '@/lib/safe-url'
 export type SheetRef = { spreadsheetId: string; gid: string | null }
 
 export function parseSheetUrl(url: string): SheetRef | null {
@@ -51,7 +52,8 @@ export function parseSheetCsv(text: string): SheetRow[] {
 }
 
 export async function fetchSheetCsv(url: string): Promise<string> {
-  const res = await fetch(url, { redirect: 'follow' })
+  const safe = assertSafeExternalUrl(url, { allowedHosts: ['docs.google.com', 'googleusercontent.com', 'drive.google.com'] })
+  const res = await fetch(safe.toString(), { redirect: 'follow', signal: AbortSignal.timeout(30_000) })
   if (!res.ok) throw new Error(`Không tải được sheet (HTTP ${res.status}). Kiểm tra: link đúng, sheet đã chia sẻ "Anyone with the link → Viewer", và đúng tab.`)
   const text = await res.text()
   if (/<html|<!doctype html/i.test(text.slice(0, 200))) {

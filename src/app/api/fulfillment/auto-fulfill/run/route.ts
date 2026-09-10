@@ -6,7 +6,7 @@ import { runAutoFulfill } from '@/lib/fulfillment/auto-fulfill'
 
 export async function POST(req: NextRequest) {
   const apply = req.nextUrl.searchParams.get('apply') === '1'
-  const conn = await getShopifyConnection(req.headers.get('cookie') ?? undefined)
+  const conn = await getShopifyConnection()
   if (!conn) return NextResponse.json({ error: 'Chưa kết nối Shopify. Vào /setup để kết nối.' }, { status: 401 })
   const store = await prisma.shopifyStore.findUnique({ where: { shop: conn.shop } })
   if (!store) return NextResponse.json({ error: 'Store chưa có trong DB.' }, { status: 404 })

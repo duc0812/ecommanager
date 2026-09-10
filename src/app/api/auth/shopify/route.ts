@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import crypto from 'crypto'
 import { saveOAuthState, getShopifyAppCredentials } from '@/lib/token-store'
 import { getShopifyRedirectUri } from '@/lib/public-url'
+import { requireSuperadmin } from '@/lib/api-auth'
+import { normalizeShopDomain } from '@/lib/shopify-shop'
+
+export const dynamic = 'force-dynamic'
 
 const SCOPES = [
   'read_analytics',
@@ -27,21 +31,25 @@ const SCOPES = [
 ].join(',')
 
 export async function GET(req: NextRequest) {
-  const { searchParams } = new URL(req.url)
-  const shop = searchParams.get('shop')?.trim()
+  const auth = await requireSuperadmin(req)
+  if ('error' in auth) return auth.error
 
+  const { searchParams } = new URL(req.url)
+  const shop = normalizeShopDomain(searchParams.get('shop') ?? '')
   if (!shop) {
-    return NextResponse.json({ error: 'Missing shop parameter' }, { status: 400 })
+    return NextResponse.json({ error: 'Shop domain phải có dạng ten-shop.myshopify.com' }, { status: 400 })
   }
 
   const appCreds = await getShopifyAppCredentials()
   if (!appCreds?.apiKey) {
     return NextResponse.json({ error: 'Chưa có API Key. Vui lòng điền trên trang Setup.' }, { status: 400 })
   }
+  if (appCreds.shop && appCreds.shop.toLowerCase() !== shop) {
+    return NextResponse.json({ error: `Shop ${shop} không khớp với shop đã cấu hình (${appCreds.shop}).` }, { status: 400 })
+  }
 
   const redirectUri = getShopifyRedirectUri(req)
   const state = crypto.randomBytes(16).toString('hex')
-
   saveOAuthState(state, shop)
 
   const params = new URLSearchParams({

@@ -61,9 +61,9 @@ export async function POST(req: NextRequest) {
     : null
   const fromOrderNumber = orderNumberValue(fromOrderName)
 
-  const stored = await getShopifyConnection(req.headers.get('cookie') ?? undefined)
-  const shop = req.headers.get('x-shopify-shop-domain') || stored?.shop
-  const accessToken = req.headers.get('x-shopify-access-token') || stored?.token
+  const stored = await getShopifyConnection()
+  const shop = stored?.shop
+  const accessToken = stored?.token
   if (!shop || !accessToken) {
     return NextResponse.json({ error: 'Not connected to Shopify. Go to /setup and connect Shopify first.' }, { status: 401 })
   }
@@ -100,6 +100,7 @@ export async function POST(req: NextRequest) {
       ? new Date(Math.min(store.syncSinceDate.getTime(), rollingLookbackDate.getTime()))
       : new Date(Date.now() - 60 * 24 * 60 * 60 * 1000)
   const sinceIso = sinceDate.toISOString().split('T')[0]
+  const sinceField: 'created_at' | 'updated_at' = fromOrderName || !store.syncSinceDate ? 'created_at' : 'updated_at'
   const shopInfo = await fetchShopInfo(shop, accessToken).catch(() => ({
     ianaTimezone: store.ianaTimezone ?? null,
     timezoneAbbreviation: null,
@@ -175,13 +176,15 @@ export async function POST(req: NextRequest) {
   let withUnmappedSku = 0
   let skippedBeforeFromOrder = 0
   const errors: string[] = []
+  let fetchFailed = false
 
   do {
     let page
     try {
-      page = await fetchOrdersPage(shop, accessToken, cursor, sinceIso)
+      page = await fetchOrdersPage(shop, accessToken, cursor, sinceIso, undefined, sinceField)
     } catch (e: any) {
-      errors.push(e.message)
+      errors.push(`Shopify fetch failed: ${e.message}`)
+      fetchFailed = true
       break
     }
 
@@ -300,6 +303,8 @@ export async function POST(req: NextRequest) {
 
       const detected = autoDetectStatus({
         financialStatus: o.financialStatus,
+        fulfillmentStatus: o.fulfillmentStatus,
+        cancelled: !!o.cancelledAt,
         hasUnmappedSku: pl.hasUnmappedSku,
         hasPendingMapping,
         hasCustomDesignLine: hasDesignLine,
@@ -479,12 +484,12 @@ export async function POST(req: NextRequest) {
     where: { id: store.id },
     data: {
       lastSyncAt: new Date(),
-      syncSinceDate: new Date(),
+      ...(fetchFailed ? {} : { syncSinceDate: new Date() }),
       ...(shopTimezone ? { ianaTimezone: shopTimezone } : {}),
     },
   })
 
-  if (errors.length > 0 && totalSynced === 0) {
+  if (fetchFailed || (errors.length > 0 && totalSynced === 0)) {
     return NextResponse.json({
       error: errors[0],
       totalSynced,

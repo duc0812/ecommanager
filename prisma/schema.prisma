@@ -31,6 +31,7 @@ model AppUser {
   permissions  String   @default("[]")
   status       String   @default("ACTIVE")
   passwordHash String?
+  tokenVersion Int      @default(0)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 }
@@ -58,6 +59,7 @@ model Payout {
   bankAccountShopifyId   String?
   fetchedAt              DateTime     @default(now())
   transactions           PayoutTransaction[]
+  @@index([storeId, status, date])
 }
 
 model BankAccount {
@@ -86,6 +88,7 @@ model PayoutTransaction {
   sourceOrderId Int?
   processedAt   DateTime
   fetchedAt     DateTime @default(now())
+  @@index([payoutId])
 }
 
 model Project {
@@ -137,6 +140,7 @@ model MetaBilling {
   referenceNumber String?
   receiptUrl      String?
   createdAt       DateTime      @default(now())
+  @@index([adAccountId, status, billingDate])
 }
 
 model Staff {
@@ -161,6 +165,7 @@ model StaffAssignment {
   createdAt DateTime  @default(now())
 
   @@unique([staffId, projectId])
+  @@index([projectId])
 }
 
 model ResourceProxy {
@@ -380,6 +385,9 @@ model Order {
   @@index([defaultSupplierId])
   @@index([projectId])
   @@index([projectId, placedAt])
+  @@index([storeId, placedAt])
+  @@index([shopifyOrderNumber])
+  @@index([trelloCardId])
 }
 
 model OrderLine {
@@ -409,6 +417,8 @@ model OrderLine {
   customized              Boolean   @default(false)
   @@index([sku])
   @@index([shopifyVariantId])
+  @@index([orderId])
+  @@index([orderId, shopifyLineId])
 }
 
 model Shipment {
@@ -728,6 +738,9 @@ model SpyAd {
   rawPayload         String?
   firstSeenAt        DateTime      @default(now())
   lastSeenAt         DateTime      @default(now())
+  firstCollationCount Int?
+  everActive         Boolean       @default(false)
+  observationCount   Int           @default(0)
 
   observations SpyAdObservation[]
   keywordHits  SpyKeywordHit[]
@@ -735,6 +748,7 @@ model SpyAd {
   @@index([advertiserId])
   @@index([startDate])
   @@index([isActive])
+  @@index([lastSeenAt])
 }
 
 model SpyAdObservation {

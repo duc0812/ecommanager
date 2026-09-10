@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/db'
 import type { ProductBaseData, VariantManualMappingData } from '@/lib/product-mapping'
 import { isNonProductLine } from '@/lib/order-lines'
+import { autoDetectStatus, isValidPipelineStatus, type PipelineStatus } from '@/lib/pipeline-status'
 
 // ── ProductBase ───────────────────────────────────────────
 
@@ -211,15 +212,16 @@ export async function saveManualMapping(input: SaveManualMappingInput) {
     // Immediately apply the resolved supplier to all unresolved lines with this variant
     const supplierProduct = await tx.supplierProduct.findUnique({
       where: { id: input.supplierProductId },
-      select: { supplierId: true, sku: true, baseCost: true },
+      select: { supplierId: true, sku: true },
     })
     if (supplierProduct) {
+      // Base cost and shipping snapshot are filled by recalculateMissingOrderLineCosts
+      // (it only visits lines with resolvedBaseCost = null), so leave cost fields untouched here.
       await tx.orderLine.updateMany({
         where: { shopifyVariantId: input.shopifyVariantId, resolvedSupplierId: null },
         data: {
           resolvedSupplierId: supplierProduct.supplierId,
           resolvedSupplierSku: supplierProduct.sku,
-          resolvedBaseCost: supplierProduct.baseCost ?? null,
         },
       })
     }
@@ -231,10 +233,14 @@ export async function saveManualMapping(input: SaveManualMappingInput) {
     const orderIds = Array.from(new Set(affectedLines.map(l => l.orderId)))
     if (orderIds.length > 0) {
       const orders = await tx.order.findMany({
-        where: { id: { in: orderIds }, pipelineStatus: { in: ['PENDING_MAPPING', 'PENDING_DESIGN', 'PENDING', 'WARNING'] } },
+        where: { id: { in: orderIds }, pipelineStatus: { in: ['PENDING_MAPPING', 'PENDING_DESIGN', 'AWAITING_PAYMENT', 'WARNING'] } },
         select: {
           id: true,
           designReady: true,
+          financialStatus: true,
+          fulfillmentStatus: true,
+          pipelineStatus: true,
+          orderType: true,
           lines: {
             select: {
               sku: true,
@@ -249,12 +255,18 @@ export async function saveManualMapping(input: SaveManualMappingInput) {
       for (const order of orders) {
         const skuLines = order.lines.filter(l => l.sku && !isNonProductLine(l))
         const willBeMapped = skuLines.length > 0 && skuLines.every(l => l.resolvedSupplierId)
-        await tx.order.update({
-          where: { id: order.id },
-          data: {
-            pipelineStatus: willBeMapped && order.designReady ? 'READY_TO_PRODUCTION' : 'PENDING_DESIGN',
-          },
+        const currentStatus = isValidPipelineStatus(order.pipelineStatus) ? order.pipelineStatus as PipelineStatus : null
+        const pipelineStatus = autoDetectStatus({
+          financialStatus: order.financialStatus,
+          fulfillmentStatus: order.fulfillmentStatus,
+          hasUnmappedSku: !willBeMapped,
+          hasPendingMapping: !willBeMapped,
+          hasCustomDesignLine: order.orderType === 'CUSTOM',
+          hasDesignLine: skuLines.some(l => l.resolvedSupplierId),
+          hasDesignReady: order.designReady,
+          currentStatus,
         })
+        await tx.order.update({ where: { id: order.id }, data: { pipelineStatus } })
       }
     }
 

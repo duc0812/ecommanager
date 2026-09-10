@@ -526,7 +526,7 @@ export default function ExportPage() {
                         const isFixed = base === 'literal:'
                         return (
                           <tr
-                            key={`${column.header}-${index}`}
+                            key={index}
                             onDragOver={e => e.preventDefault()}
                             onDrop={e => {
                               e.preventDefault()

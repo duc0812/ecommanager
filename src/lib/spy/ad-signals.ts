@@ -27,6 +27,21 @@ export function isScaling(obs: { collationCount: number | null; observedAt: Date
   return last > first
 }
 
+// Summary-column variants: the same signals computed from per-ad counters that
+// ingestAds maintains, so list endpoints do not need to load observation rows.
+export type AdSummary = { isActive: boolean; collationCount: number | null; firstCollationCount: number | null; everActive: boolean; observationCount: number }
+
+export function isScalingSummary(a: AdSummary): boolean {
+  if (a.observationCount < 2) return false
+  if (a.firstCollationCount === null || a.collationCount === null) return false
+  return a.collationCount > a.firstCollationCount
+}
+
+export function isStoppedSummary(a: AdSummary): boolean {
+  if (a.observationCount < 2) return false
+  return a.everActive && a.isActive === false
+}
+
 export function isStopped(obs: { isActive: boolean; observedAt: Date }[]): boolean {
   if (obs.length < 2) return false
   const sorted = [...obs].sort((x, y) => x.observedAt.getTime() - y.observedAt.getTime())

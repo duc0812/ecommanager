@@ -177,17 +177,19 @@ export async function POST(req: NextRequest) {
     // is missing, and mark them for the user to review. Match by transaction id OR by
     // amount + date (±1 day): the scrape (Meta /activities) uses different ids and UTC
     // dates than the official invoice export, so the same charge won't share an id.
-    const present = await prisma.metaBilling.findFirst({
-      where: {
-        adAccountId: account.id,
-        OR: [
-          { id: transactionId },
-          { amount, currency, billingDate: { gte: shiftDate(date, -1), lte: shiftDate(date, 1) } },
-        ],
-      },
-      select: { id: true },
-    })
-    if (present) {
+    const byId = await prisma.metaBilling.findFirst({ where: { id: transactionId }, select: { id: true } })
+    if (byId) {
+      alreadyInTool++
+      continue
+    }
+    // Same-amount charges on consecutive days are distinct (threshold billing), so
+    // compare row counts in the window rather than matching a single row.
+    const windowWhere = { adAccountId: account.id, amount, currency, billingDate: { gte: shiftDate(date, -1), lte: shiftDate(date, 1) } }
+    const [scrapedCount, importedCount] = await Promise.all([
+      prisma.metaBilling.count({ where: { ...windowWhere, OR: [{ productType: null }, { productType: { not: 'meta_billing_export' } }] } }),
+      prisma.metaBilling.count({ where: { ...windowWhere, productType: 'meta_billing_export' } }),
+    ])
+    if (scrapedCount > importedCount) {
       alreadyInTool++
       continue
     }
