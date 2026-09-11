@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { AUTH_COOKIE, verifyToken } from '@/lib/auth'
 import { canCallApi } from '@/lib/api-access'
-import { canAccess } from '@/lib/roles'
+import { canAccess, homePathFor } from '@/lib/roles'
 
 const PUBLIC_PATHS = ['/login', '/api/auth/login', '/api/auth/shopify/callback']
 
@@ -34,12 +34,19 @@ export async function middleware(req: NextRequest) {
   }
 
   if (!canAccess(payload.role, pathname, payload.permissions)) {
-    return NextResponse.rewrite(new URL('/no-access', req.url), { status: 403 })
+    const home = homePathFor(payload.role, payload.permissions)
+    if (home && home !== pathname && (pathname === '/' || pathname === '/no-access')) {
+      return NextResponse.redirect(new URL(home, req.url))
+    }
+    if (pathname === '/no-access') return NextResponse.next()
+    const denied = new URL('/no-access', req.url)
+    denied.searchParams.set('from', pathname)
+    return NextResponse.redirect(denied)
   }
 
   return NextResponse.next()
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|no-access).*)'],
+  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
 }

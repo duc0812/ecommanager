@@ -59,3 +59,15 @@ describe('canCallApi', () => {
     expect(canCallApi('ADMIN', [], '/api/overview', 'GET')).toBe('forbidden')
   })
 })
+
+import { homePathFor } from './roles'
+
+describe('homePathFor', () => {
+  it('sends each role to the first page it can open', () => {
+    expect(homePathFor('SUPERADMIN')).toBe('/')
+    expect(homePathFor('ADMIN', DEFAULT_ROLE_PERMISSIONS.ADMIN)).toBe('/')
+    expect(homePathFor('SUPPORT', DEFAULT_ROLE_PERMISSIONS.SUPPORT)).toBe('/fulfillment')
+    expect(homePathFor('SELLER', DEFAULT_ROLE_PERMISSIONS.SELLER)).toBe('/projects')
+    expect(homePathFor('SELLER', [])).toBeNull()
+  })
+})

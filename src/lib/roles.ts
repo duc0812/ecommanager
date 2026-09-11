@@ -178,3 +178,35 @@ export function accessSummary(role: UserRole, permissions: FeaturePermission[]) 
   if (permissions.length === 0) return 'No features'
   return permissions.map(permission => FEATURE_LABELS[permission]).join(', ')
 }
+
+const HOME_PRIORITY: FeaturePermission[] = [
+  'overview',
+  'projects',
+  'fulfillment_dashboard',
+  'fulfillment_orders',
+  'need_to_fix',
+  'shopify',
+  'meta_billing',
+  'other_bills',
+  'marketing_niche',
+  'tools_spy_idea',
+  'tools_resources',
+  'fulfillment_tracking',
+  'fulfillment_export',
+  'fulfillment_mapping',
+  'fulfillment_suppliers',
+  'fulfillment_design_library',
+  'fulfillment_crawler',
+  'setup_store',
+  'setup_meta',
+  'setup_projects',
+  'setup_hr',
+  'setup_users',
+]
+
+export function homePathFor(role: UserRole, permissions?: FeaturePermission[]): string | null {
+  if (role === 'SUPERADMIN') return '/'
+  const granted = permissions ?? DEFAULT_ROLE_PERMISSIONS[role] ?? []
+  const feature = HOME_PRIORITY.find(f => granted.includes(f)) ?? granted[0]
+  return feature ? FEATURE_PATHS[feature][0] : null
+}

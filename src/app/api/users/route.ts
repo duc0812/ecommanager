@@ -50,7 +50,8 @@ export async function POST(req: NextRequest) {
   }
 
   const permissions = JSON.stringify(permissionsFor(role, body.permissions) satisfies FeaturePermission[])
-  const accessChanged = !!existing && (existing.role !== role || (status !== undefined && existing.status !== status) || existing.permissions !== permissions)
+  const samePermissions = !!existing && JSON.stringify([...parsePermissions(existing.permissions)].sort()) === JSON.stringify([...parsePermissions(permissions)].sort())
+  const accessChanged = !!existing && (existing.role !== role || (status !== undefined && existing.status !== status) || !samePermissions)
   const user = existing
     ? await prisma.appUser.update({
         where: { id: existing.id },

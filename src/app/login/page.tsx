@@ -27,7 +27,9 @@ function LoginForm() {
         body: JSON.stringify({ email, password }),
       })
       if (res.ok) {
-        router.push(safeNext(params.get('next')))
+        const data = await res.json().catch(() => ({}))
+        const next = params.get('next')
+        router.push(next ? safeNext(next) : (typeof data.home === 'string' ? data.home : '/'))
         router.refresh()
         return
       }

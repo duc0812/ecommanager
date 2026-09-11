@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import bcrypt from 'bcryptjs'
 import { prisma } from '@/lib/db'
 import { AUTH_COOKIE, sessionCookieOptions, signToken } from '@/lib/auth'
-import { parsePermissions, UserRole } from '@/lib/roles'
+import { homePathFor, parsePermissions, UserRole } from '@/lib/roles'
 import { clearLoginFailures, clientIp, loginBlocked, recordLoginFailure } from '@/lib/login-rate-limit'
 
 export const dynamic = 'force-dynamic'
@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
     tv: user.tokenVersion,
   })
 
-  const res = NextResponse.json({ ok: true })
+  const res = NextResponse.json({ ok: true, home: homePathFor(user.role as UserRole, parsePermissions(user.permissions)) ?? '/no-access' })
   res.cookies.set(AUTH_COOKIE, token, sessionCookieOptions())
   return res
 }
