@@ -29,6 +29,7 @@ const TYPE_TONE: Record<TaskType, string> = {
   MISSING_BASE_COST: 'bg-orange-100 text-orange-900',
   MISSING_DESIGN: 'bg-indigo-100 text-indigo-900',
   LATE_FULFILLMENT: 'bg-red-100 text-red-900',
+  TRACKING_STUCK: 'bg-sky-100 text-sky-900',
 }
 
 export default function TaskFixPage() {
@@ -285,6 +286,7 @@ export default function TaskFixPage() {
                       }
                       if (t === 'UNMAPPED') return <a href="/fulfillment/mapping" className="text-secondary underline underline-offset-2 text-label-sm">Mở Product Mapping →</a>
                       if (t === 'MISSING_DESIGN') return <a href="/fulfillment/design-library" className="text-secondary underline underline-offset-2 text-label-sm">Mở Design Library →</a>
+                      if (t === 'TRACKING_STUCK') return <a href={`/fulfillment/tracking?search=${encodeURIComponent(r.shopifyOrderNumber.replace(/^#/, ''))}`} className="text-secondary underline underline-offset-2 text-label-sm">Mở Tracking →</a>
                       return <span className="text-on-surface-variant">—</span>
                     })()}
                   </td>

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { detectOrderTasks, TASK_META, type TaskLine } from './order-tasks'
+import { detectOrderTasks, detectStuckTrackingTask, TASK_META, type TaskLine, type TaskShipment } from './order-tasks'
 
 const line = (o: Partial<TaskLine>): TaskLine => ({
   sku: 'SKU1', productTitle: 'Tee', shopifyProductType: 'Shirt',
@@ -57,5 +57,48 @@ describe('detectOrderTasks', () => {
   it('exposes task metadata', () => {
     expect(TASK_META.MISSING_DESIGN.dept).toBe('DESIGN')
     expect(TASK_META.MISSING_SKU.label).toBeTruthy()
+  })
+})
+
+describe('detectStuckTrackingTask', () => {
+  const NOW = new Date('2026-09-18T00:00:00Z')
+  const placed = (n: number) => new Date(NOW.getTime() - n * 86_400_000)
+  const ship = (o: Partial<TaskShipment>): TaskShipment => ({ lineKey: 'LIT1_1', trackingNumber: 'JM123456789', status: 'PENDING', ...o })
+
+  it('flags a JM tracking that never got a checkpoint', () => {
+    const t = detectStuckTrackingTask({ placedAt: placed(30), pipelineStatus: 'FULFILLED', shipments: [ship({})], now: NOW })
+    expect(t?.type).toBe('TRACKING_STUCK')
+    expect(t?.dept).toBe('FULFILLMENT')
+    expect(t?.detail).toContain('JM123456789')
+    expect(t?.detail).toContain('LIT1_1')
+  })
+
+  it('ignores a JM tracking that is moving or delivered', () => {
+    expect(detectStuckTrackingTask({ placedAt: placed(30), shipments: [ship({ status: 'IN_TRANSIT' })], now: NOW })).toBeNull()
+    expect(detectStuckTrackingTask({ placedAt: placed(30), shipments: [ship({ status: 'DELIVERED' })], now: NOW })).toBeNull()
+  })
+
+  it('ignores other carriers still pending', () => {
+    expect(detectStuckTrackingTask({ placedAt: placed(30), shipments: [ship({ trackingNumber: 'LZ439195516CN' })], now: NOW })).toBeNull()
+    expect(detectStuckTrackingTask({ placedAt: placed(30), shipments: [ship({ trackingNumber: null })], now: NOW })).toBeNull()
+  })
+
+  it('waits out the grace period — a fresh tracking is not a task yet', () => {
+    expect(detectStuckTrackingTask({ placedAt: placed(3), shipments: [ship({})], now: NOW })).toBeNull()
+  })
+
+  it('never nags on cancelled/refunded orders', () => {
+    expect(detectStuckTrackingTask({ placedAt: placed(30), pipelineStatus: 'CANCELLED', shipments: [ship({})], now: NOW })).toBeNull()
+    expect(detectStuckTrackingTask({ placedAt: placed(30), pipelineStatus: 'REFUNDED', shipments: [ship({})], now: NOW })).toBeNull()
+  })
+
+  it('lists every stuck line of the order in one task', () => {
+    const t = detectStuckTrackingTask({
+      placedAt: placed(30), pipelineStatus: 'FULFILLED', now: NOW,
+      shipments: [ship({ lineKey: 'LIT1_1' }), ship({ lineKey: 'LIT1_2', trackingNumber: 'JM987' }), ship({ lineKey: 'LIT1_3', trackingNumber: 'UL1', status: 'PENDING' })],
+    })
+    expect(t?.detail).toContain('LIT1_1')
+    expect(t?.detail).toContain('JM987')
+    expect(t?.detail).not.toContain('UL1')
   })
 })

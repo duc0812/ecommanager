@@ -79,8 +79,11 @@ export default function TrackingPage() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
   const [projectId, setProjectId] = useState('')
   const [supplierId, setSupplierId] = useState('')
-  const [search, setSearch] = useState('')
-  const [searchDebounced, setSearchDebounced] = useState('')
+  // ?search=<order/tracking> prefills the box so other pages (Task Need Fix) can deep-link
+  // straight to one order's shipments.
+  const initialSearch = typeof window === 'undefined' ? '' : (new URLSearchParams(window.location.search).get('search') ?? '')
+  const [search, setSearch] = useState(initialSearch)
+  const [searchDebounced, setSearchDebounced] = useState(initialSearch)
   const [activeBucket, setActiveBucket] = useState<StatusBucket | 'ALL'>('ALL')
 
   const [shipments, setShipments] = useState<ShipmentRow[]>([])

@@ -1,8 +1,17 @@
 import { prisma } from '@/lib/db'
-import { detectOrderTasks, type OrderTask, type TaskType } from '@/lib/order-tasks'
+import { detectOrderTasks, detectStuckTrackingTask, STUCK_TRACKING_PREFIXES, type OrderTask, type TaskType } from '@/lib/order-tasks'
 import { isNonProductLine } from '@/lib/order-lines'
 
-const ACTIVE_WHERE = { pipelineStatus: { notIn: ['FULFILLED', 'CANCELLED', 'REFUNDED'] } }
+const DONE_PIPELINE = ['FULFILLED', 'CANCELLED', 'REFUNDED']
+const ACTIVE_WHERE = { pipelineStatus: { notIn: DONE_PIPELINE } }
+
+// Every other task type only ever applies to an active order. TRACKING_STUCK is the
+// exception: a tracking number can only go dark AFTER the order was fulfilled, so those
+// orders are pulled in as well (cancelled/refunded ones are still left alone).
+const STUCK_TRACKING_WHERE = {
+  pipelineStatus: { notIn: ['CANCELLED', 'REFUNDED'] },
+  shipments: { some: { status: 'PENDING', OR: STUCK_TRACKING_PREFIXES.map(p => ({ trackingNumber: { startsWith: p } })) } },
+}
 
 export type FixLine = { lineId: string; shopifyVariantId: string | null; productTitle: string; sku: string | null }
 
@@ -31,13 +40,14 @@ export async function listOrderTasks(filter: { projectId?: string } = {}): Promi
   counts: Record<TaskType, number>
 }> {
   const orders = await prisma.order.findMany({
-    where: { ...ACTIVE_WHERE, ...(filter.projectId ? { projectId: filter.projectId } : {}) },
+    where: { OR: [ACTIVE_WHERE, STUCK_TRACKING_WHERE], ...(filter.projectId ? { projectId: filter.projectId } : {}) },
     orderBy: { placedAt: 'desc' },
     select: {
       id: true, shopifyOrderNumber: true, placedAt: true, orderType: true, designReady: true,
       fulfillmentStatus: true, pipelineStatus: true,
       projectId: true,
       project: { select: { name: true } },
+      shipments: { select: { lineKey: true, trackingNumber: true, status: true } },
       lines: {
         select: {
           id: true, sku: true, productTitle: true, shopifyProductType: true, shopifyVariantId: true,
@@ -51,10 +61,16 @@ export async function listOrderTasks(filter: { projectId?: string } = {}): Promi
   const counts = {} as Record<TaskType, number>
   for (const o of orders) {
     const productLines = o.lines.filter(l => !isNonProductLine(l))
-    const tasks = detectOrderTasks({
+    // Data/design/SLA checks stay scoped to active orders — a fulfilled order pulled in
+    // only for its dead tracking must not suddenly raise mapping or design tasks.
+    const tasks = DONE_PIPELINE.includes(o.pipelineStatus) ? [] : detectOrderTasks({
       orderType: o.orderType, designReady: o.designReady, lines: o.lines,
       placedAt: o.placedAt, fulfillmentStatus: o.fulfillmentStatus, pipelineStatus: o.pipelineStatus,
     })
+    const stuckTracking = detectStuckTrackingTask({
+      placedAt: o.placedAt, pipelineStatus: o.pipelineStatus, shipments: o.shipments,
+    })
+    if (stuckTracking) tasks.push(stuckTracking)
     for (const task of tasks) {
       let fixLines: FixLine[] | undefined
       if (task.type === 'MISSING_SKU') {
