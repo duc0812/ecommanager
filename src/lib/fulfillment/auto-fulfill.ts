@@ -1,7 +1,7 @@
 import { prisma } from '@/lib/db'
 import { fetchSheetCsv, parseSheetCsv, csvExportUrl, parseSheetUrl } from './parse-sheet'
 import { type SheetConfig } from './auto-fulfill-sheets'
-import { groupByOrder, buildFulfillmentPlan, type OrderPlanStatus } from './build-fulfill-plan'
+import { groupByOrder, mergeSheetGroups, buildFulfillmentPlan, type OrderPlanStatus } from './build-fulfill-plan'
 import { fetchOrderFulfillmentOrdersByNames, createFulfillment } from '@/lib/shopify-orders'
 
 export type FulfillmentDetail = { tracking: string; lineKeys: string[]; lineCount: number }
@@ -21,7 +21,9 @@ export async function runAutoFulfill(opts: {
 }): Promise<AutoFulfillSummary> {
   const now = opts.now ?? new Date()
 
-  // 1) Read all enabled sheets, group rows by base order. First sheet wins on conflicts.
+  // 1) Read all enabled sheets and group rows by base order. Rows for the same order are
+  //    MERGED across sheets — a multi-supplier order lists its sub-orders in each supplier's
+  //    own sheet, so keeping only the first sheet's rows would silently skip the others.
   const byOrder = new Map<string, { rows: Array<{ lineKey: string; tracking: string }>; storeBase: string }>()
   const sheetErrorRows: OrderResultRow[] = []
   for (const sheet of opts.sheets.filter(s => s.enabled)) {
@@ -38,7 +40,7 @@ export async function runAutoFulfill(opts: {
       continue
     }
     const grouped = groupByOrder(parseSheetCsv(text))
-    Array.from(grouped).forEach(([base, rows]) => { if (!byOrder.has(base)) byOrder.set(base, { rows, storeBase: sheet.storeBase }) })
+    mergeSheetGroups(byOrder, grouped, sheet.storeBase)
   }
 
   const names = Array.from(byOrder.keys())

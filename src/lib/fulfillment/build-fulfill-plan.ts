@@ -23,6 +23,30 @@ export function groupByOrder(rows: SheetRow[]): Map<string, Array<{ lineKey: str
   return g
 }
 
+export type OrderRow = { lineKey: string; tracking: string }
+
+// Merge one sheet's grouped rows into the accumulator. A multi-supplier order lists its
+// sub-orders across DIFFERENT supplier sheets, so rows must be MERGED — dropping an order
+// already seen in an earlier sheet silently loses the other supplier's lines (they then
+// never get fulfilled). Identical (lineKey, tracking) pairs dedupe; a real conflict (same
+// line, two trackings) is kept so buildFulfillmentPlan can flag it as needs_manual.
+export function mergeSheetGroups(
+  target: Map<string, { rows: OrderRow[]; storeBase: string }>,
+  grouped: Map<string, OrderRow[]>,
+  storeBase: string,
+): void {
+  for (const [base, rows] of Array.from(grouped)) {
+    const existing = target.get(base)
+    if (!existing) {
+      target.set(base, { rows: [...rows], storeBase })
+      continue
+    }
+    for (const r of rows) {
+      if (!existing.rows.some(x => x.lineKey === r.lineKey && x.tracking === r.tracking)) existing.rows.push(r)
+    }
+  }
+}
+
 export type FOLineItem = { id: string; remainingQuantity: number; shopifyLineId: string; sku: string | null }
 export type FulfillmentOrderRef = { id: string; status: string; lineItems: FOLineItem[] }
 export type PlannedFulfillment = { fulfillmentOrderId: string; lineItems: Array<{ id: string; quantity: number }>; tracking: string; shipmentIds: string[] }

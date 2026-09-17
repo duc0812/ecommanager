@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { normalizeBaseOrder, orderLineKey, groupByOrder, buildFulfillmentPlan } from './build-fulfill-plan'
+import { normalizeBaseOrder, orderLineKey, groupByOrder, mergeSheetGroups, buildFulfillmentPlan } from './build-fulfill-plan'
 
 const NOW = new Date('2026-09-05T00:00:00Z')
 const days = (n: number) => new Date(NOW.getTime() - n * 86_400_000)
@@ -29,6 +29,39 @@ describe('groupByOrder', () => {
     ])
     expect(g.get('LIT1')).toEqual([{ lineKey: 'LIT1_1', tracking: 'AA' }, { lineKey: 'LIT1_2', tracking: 'AA' }])
     expect(g.get('LIT2')).toEqual([{ lineKey: 'LIT2', tracking: 'BB' }])
+  })
+})
+
+describe('mergeSheetGroups', () => {
+  it('merges the same order across supplier sheets (multi-supplier order must not lose lines)', () => {
+    // Real case #LIT3498: _1 lives in the Mangoshao sheet, _2/_3 in the Jomall sheet.
+    const target = new Map<string, { rows: Array<{ lineKey: string; tracking: string }>; storeBase: string }>()
+    mergeSheetGroups(target, groupByOrder([{ orderToken: '#LIT3498_1', tracking: 'UL481452389YP' }]), 'https://a.com')
+    mergeSheetGroups(target, groupByOrder([
+      { orderToken: '#LIT3498_2', tracking: 'SWX859060000168964562' },
+      { orderToken: '#LIT3498_3', tracking: 'SWX859060000168964562' },
+    ]), 'https://b.com')
+
+    const entry = target.get('LIT3498')!
+    expect(entry.rows).toEqual([
+      { lineKey: 'LIT3498_1', tracking: 'UL481452389YP' },
+      { lineKey: 'LIT3498_2', tracking: 'SWX859060000168964562' },
+      { lineKey: 'LIT3498_3', tracking: 'SWX859060000168964562' },
+    ])
+    expect(entry.storeBase).toBe('https://a.com') // first sheet's storeBase is kept
+  })
+
+  it('dedupes identical rows but keeps a conflicting tracking for the same line', () => {
+    const target = new Map<string, { rows: Array<{ lineKey: string; tracking: string }>; storeBase: string }>()
+    mergeSheetGroups(target, groupByOrder([{ orderToken: '#LIT1_1', tracking: 'AA' }]), 'https://a.com')
+    mergeSheetGroups(target, groupByOrder([
+      { orderToken: '#LIT1_1', tracking: 'AA' },  // exact duplicate → dropped
+      { orderToken: '#LIT1_1', tracking: 'BB' },  // conflict → kept so the plan flags needs_manual
+    ]), 'https://b.com')
+    expect(target.get('LIT1')!.rows).toEqual([
+      { lineKey: 'LIT1_1', tracking: 'AA' },
+      { lineKey: 'LIT1_1', tracking: 'BB' },
+    ])
   })
 })
 
