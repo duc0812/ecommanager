@@ -4,7 +4,7 @@ import Sidebar from '@/components/Sidebar'
 import { splitNdjson } from '@/lib/tracking/ndjson-stream'
 
 type SheetConfig = { id: string; name: string; url: string; enabled: boolean; storeBase: string }
-type FulfillmentDetail = { tracking: string; lineKeys: string[]; lineCount: number }
+type FulfillmentDetail = { tracking: string; lineKeys: string[]; lineCount: number; addOn?: boolean }
 type ResultRow = { baseOrder: string; status: string; trackings: string[]; fulfilledLines: number; message?: string; fulfillments?: FulfillmentDetail[] }
 
 const STATUS_LABEL: Record<string, string> = {
@@ -152,8 +152,13 @@ export default function AutoFulfillPage() {
                 if (r.fulfillments && r.fulfillments.length > 0) {
                   return r.fulfillments.map((f, j) => (
                     <tr key={`${r.baseOrder}-${i}-${j}`} className="border-t border-outline-variant/20">
-                      <td className="px-md py-sm font-medium">{f.lineKeys.length ? f.lineKeys.map(k => `#${k}`).join(', ') : `#${r.baseOrder}`}</td>
-                      <td className="px-md py-sm font-mono text-label-sm">{f.tracking}</td>
+                      <td className="px-md py-sm font-medium">
+                        {f.lineKeys.length ? f.lineKeys.map(k => `#${k}`).join(', ') : `#${r.baseOrder}`}
+                        {f.addOn && <span className="ml-xs text-label-sm text-on-surface-variant">· phụ phí</span>}
+                      </td>
+                      <td className="px-md py-sm font-mono text-label-sm">
+                        {f.addOn ? <span className="font-sans text-on-surface-variant">— không tracking</span> : f.tracking}
+                      </td>
                       <td className="px-md py-sm">{f.lineCount}</td>
                       <td className="px-md py-sm">{STATUS_LABEL[r.status] ?? r.status}</td>
                       <td className="px-md py-sm text-label-sm text-on-surface-variant">{r.message ?? ''}</td>

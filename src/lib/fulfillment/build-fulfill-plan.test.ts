@@ -300,3 +300,91 @@ describe('buildFulfillmentPlan', () => {
     expect(p.fulfillments).toEqual([{ fulfillmentOrderId: 'fo1', lineItems: [{ id: 'foli-A', quantity: 1 }], tracking: 'AA', shipmentIds: [] }])
   })
 })
+
+describe('buildFulfillmentPlan — add-on lines (Shipping protection / Tip / Custom Text)', () => {
+  const base = { displayFulfillmentStatus: 'UNFULFILLED', now: NOW, minAgeDays: 5 }
+  // Real shape from Shopify: a non-shippable add-on gets its OWN open fulfillment order.
+  const productFo = { id: 'fo1', status: 'OPEN', lineItems: [{ id: 'foli-A', remainingQuantity: 1, shopifyLineId: 'gid://li/A', sku: 'A' }] }
+  const protectionFo = { id: 'fo2', status: 'OPEN', lineItems: [{ id: 'foli-P', remainingQuantity: 1, shopifyLineId: 'gid://li/P', sku: null }] }
+  const ship1 = { id: 's1', lineKey: 'LIT1_1', shopifyLineId: 'gid://li/A' }
+
+  it('closes the protection line (own FO, no tracking) once every product line is covered', () => {
+    const p = buildFulfillmentPlan({
+      ...base, baseOrder: 'LIT1', rows: [{ lineKey: 'LIT1_1', tracking: 'AA' }],
+      shipments: [ship1], fulfillmentOrders: [productFo, protectionFo],
+      addOnLineIds: ['gid://li/P'], placedAt: days(9),
+    })
+    expect(p.status).toBe('will_fulfill')
+    expect(p.fulfillments).toEqual([
+      { fulfillmentOrderId: 'fo1', lineItems: [{ id: 'foli-A', quantity: 1 }], tracking: 'AA', shipmentIds: ['s1'] },
+      { fulfillmentOrderId: 'fo2', lineItems: [{ id: 'foli-P', quantity: 1 }], tracking: '', shipmentIds: [], addOn: true },
+    ])
+    expect(p.openLineCount).toBe(2) // both covered → caller marks the order FULFILLED
+  })
+
+  it('repairs an order already shipped short: products fulfilled, only the protection FO left open', () => {
+    // #LIT3498 / #LIT3534 on prod: product FO CLOSED, protection FO still OPEN → PARTIALLY_FULFILLED.
+    const closedProductFo = { id: 'fo1', status: 'CLOSED', lineItems: [{ id: 'foli-A', remainingQuantity: 0, shopifyLineId: 'gid://li/A', sku: 'A' }] }
+    const p = buildFulfillmentPlan({
+      ...base, displayFulfillmentStatus: 'PARTIALLY_FULFILLED', baseOrder: 'LIT1',
+      rows: [{ lineKey: 'LIT1_1', tracking: 'AA' }], shipments: [ship1],
+      fulfillmentOrders: [closedProductFo, protectionFo], addOnLineIds: ['gid://li/P'], placedAt: days(15),
+    })
+    expect(p.status).toBe('will_fulfill')
+    expect(p.fulfillments).toEqual([
+      { fulfillmentOrderId: 'fo2', lineItems: [{ id: 'foli-P', quantity: 1 }], tracking: '', shipmentIds: [], addOn: true },
+    ])
+  })
+
+  it('leaves the add-on alone while a product line is still unshipped (partial fulfillment)', () => {
+    const twoProductFo = { id: 'fo1', status: 'OPEN', lineItems: [
+      { id: 'foli-A', remainingQuantity: 1, shopifyLineId: 'gid://li/A', sku: 'A' },
+      { id: 'foli-B', remainingQuantity: 1, shopifyLineId: 'gid://li/B', sku: 'B' },
+    ] }
+    const p = buildFulfillmentPlan({
+      ...base, baseOrder: 'LIT1', rows: [{ lineKey: 'LIT1_1', tracking: 'AA' }],
+      shipments: [ship1, { id: 's2', lineKey: 'LIT1_2', shopifyLineId: 'gid://li/B' }],
+      fulfillmentOrders: [twoProductFo, protectionFo], addOnLineIds: ['gid://li/P'], placedAt: days(9),
+    })
+    expect(p.status).toBe('will_fulfill')
+    expect(p.fulfillments).toEqual([
+      { fulfillmentOrderId: 'fo1', lineItems: [{ id: 'foli-A', quantity: 1 }], tracking: 'AA', shipmentIds: ['s1'] },
+    ])
+  })
+
+  it('an add-on sharing the product FO rides along on that fulfillment (one email, same tracking)', () => {
+    // "Custom Text ... - Add Text" sits in the SAME fulfillment order as the goods.
+    const fo = { id: 'fo1', status: 'OPEN', lineItems: [
+      { id: 'foli-A', remainingQuantity: 1, shopifyLineId: 'gid://li/A', sku: 'A' },
+      { id: 'foli-T', remainingQuantity: 1, shopifyLineId: 'gid://li/T', sku: 'TXT' },
+    ] }
+    const p = buildFulfillmentPlan({
+      ...base, baseOrder: 'LIT1', rows: [{ lineKey: 'LIT1_1', tracking: 'AA' }],
+      shipments: [ship1], fulfillmentOrders: [fo], addOnLineIds: ['gid://li/T'], placedAt: days(9),
+    })
+    expect(p.fulfillments).toEqual([
+      { fulfillmentOrderId: 'fo1', lineItems: [{ id: 'foli-A', quantity: 1 }, { id: 'foli-T', quantity: 1 }], tracking: 'AA', shipmentIds: ['s1'] },
+    ])
+  })
+
+  it('whole-order row: the add-on is closed without tracking, not merged into the shipment', () => {
+    const p = buildFulfillmentPlan({
+      ...base, baseOrder: 'LIT1', rows: [{ lineKey: 'LIT1', tracking: 'AA' }],
+      shipments: [], fulfillmentOrders: [productFo, protectionFo], addOnLineIds: ['gid://li/P'], placedAt: days(9),
+    })
+    expect(p.fulfillments).toEqual([
+      { fulfillmentOrderId: 'fo1', lineItems: [{ id: 'foli-A', quantity: 1 }], tracking: 'AA', shipmentIds: [] },
+      { fulfillmentOrderId: 'fo2', lineItems: [{ id: 'foli-P', quantity: 1 }], tracking: '', shipmentIds: [], addOn: true },
+    ])
+  })
+
+  it('without addOnLineIds (order not in the DB) nothing extra is fulfilled', () => {
+    const p = buildFulfillmentPlan({
+      ...base, baseOrder: 'LIT1', rows: [{ lineKey: 'LIT1_1', tracking: 'AA' }],
+      shipments: [ship1], fulfillmentOrders: [productFo, protectionFo], placedAt: days(9),
+    })
+    expect(p.fulfillments).toEqual([
+      { fulfillmentOrderId: 'fo1', lineItems: [{ id: 'foli-A', quantity: 1 }], tracking: 'AA', shipmentIds: ['s1'] },
+    ])
+  })
+})

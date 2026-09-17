@@ -49,7 +49,8 @@ export function mergeSheetGroups(
 
 export type FOLineItem = { id: string; remainingQuantity: number; shopifyLineId: string; sku: string | null }
 export type FulfillmentOrderRef = { id: string; status: string; lineItems: FOLineItem[] }
-export type PlannedFulfillment = { fulfillmentOrderId: string; lineItems: Array<{ id: string; quantity: number }>; tracking: string; shipmentIds: string[] }
+// addOn: non-product lines (Shipping protection / Tip / Custom Text) closed with no tracking.
+export type PlannedFulfillment = { fulfillmentOrderId: string; lineItems: Array<{ id: string; quantity: number }>; tracking: string; shipmentIds: string[]; addOn?: boolean }
 export type OrderPlanStatus = 'will_fulfill' | 'too_recent' | 'already_fulfilled' | 'not_found' | 'needs_manual' | 'error'
 export type OrderPlan = { baseOrder: string; status: OrderPlanStatus; fulfillments: PlannedFulfillment[]; message?: string; ageDays?: number; openLineCount?: number; hasHeldLines?: boolean }
 
@@ -59,6 +60,10 @@ export function buildFulfillmentPlan(input: {
   shipments: Array<{ id: string; lineKey: string; shopifyLineId: string | null }>
   fulfillmentOrders: FulfillmentOrderRef[] | null
   displayFulfillmentStatus: string | null
+  // Shopify line ids of the order's non-product lines (isNonProductLine), which no supplier
+  // ships and no sheet ever lists. Omitted when the order isn't in the DB → nothing extra
+  // is ever fulfilled, so a missing/stale mapping can never over-fulfill.
+  addOnLineIds?: string[]
   placedAt: Date | null
   now: Date
   minAgeDays: number
@@ -96,14 +101,19 @@ export function buildFulfillmentPlan(input: {
     return done('already_fulfilled', undefined, ageDays)
   }
 
+  const addOnLineIds = new Set(input.addOnLineIds ?? [])
   const shipmentByLineKey = new Map(input.shipments.filter(s => s.shopifyLineId).map(s => [s.lineKey, s]))
   const shipmentIdByLineId = new Map(input.shipments.filter(s => s.shopifyLineId).map(s => [s.shopifyLineId as string, s.id]))
 
-  // Lines that exist but sit on a non-open FO (on hold / scheduled) — so a listed line
-  // that maps here is NOT "already fulfilled"; it needs a human.
+  // Lines that exist but sit on a FO a human must release (on hold / scheduled / incomplete)
+  // — a listed line that maps here is NOT "already fulfilled"; it needs a human.
+  // CLOSED/CANCELLED are terminal (shipped, or moved/cancelled): a listed line there is just
+  // done, so it is skipped — counting those as "held" would both flag shipped orders as
+  // needs_manual and stop the caller from ever marking a split order FULFILLED.
+  const HELD_FO_STATUSES = new Set(['ON_HOLD', 'SCHEDULED', 'INCOMPLETE'])
   const heldLineIds = new Set<string>()
   input.fulfillmentOrders.forEach(fo => {
-    if (!OPEN_FO_STATUSES.has(fo.status)) fo.lineItems.forEach(li => heldLineIds.add(li.shopifyLineId))
+    if (HELD_FO_STATUSES.has(fo.status)) fo.lineItems.forEach(li => heldLineIds.add(li.shopifyLineId))
   })
 
   const isWholeOrderRow = (lineKey: string) => lineKey === baseOrder
@@ -111,9 +121,9 @@ export function buildFulfillmentPlan(input: {
   // key: `${foId} ${tracking}` -> PlannedFulfillment
   const groups = new Map<string, PlannedFulfillment>()
   const lineTracking = new Map<string, string>() // foLineItemId -> tracking, to catch conflicts
-  const addLine = (tracking: string, foId: string, foLineItemId: string, quantity: number, shipmentId?: string) => {
+  const addLine = (tracking: string, foId: string, foLineItemId: string, quantity: number, shipmentId?: string, addOn?: boolean) => {
     const key = `${foId} ${tracking}`
-    const g = groups.get(key) ?? { fulfillmentOrderId: foId, lineItems: [], tracking, shipmentIds: [] }
+    const g = groups.get(key) ?? { fulfillmentOrderId: foId, lineItems: [], tracking, shipmentIds: [], ...(addOn ? { addOn: true } : {}) }
     if (!g.lineItems.some(li => li.id === foLineItemId)) g.lineItems.push({ id: foLineItemId, quantity })
     if (shipmentId && !g.shipmentIds.includes(shipmentId)) g.shipmentIds.push(shipmentId)
     groups.set(key, g)
@@ -138,7 +148,10 @@ export function buildFulfillmentPlan(input: {
     const wholeTrackings = new Set(input.rows.map(r => r.tracking))
     if (wholeTrackings.size > 1) return done('needs_manual', 'Dòng cả đơn nhưng nhiều tracking khác nhau', ageDays)
     const tracking = input.rows[0].tracking
-    openByLineId.forEach((open, lineId) => addLine(tracking, open.foId, open.foLineItemId, open.quantity, shipmentIdByLineId.get(lineId)))
+    openByLineId.forEach((open, lineId) => {
+      if (addOnLineIds.has(lineId)) return // add-ons are closed below, without tracking
+      addLine(tracking, open.foId, open.foLineItemId, open.quantity, shipmentIdByLineId.get(lineId))
+    })
   } else {
     for (const row of input.rows) {
       const ship = shipmentByLineKey.get(row.lineKey)
@@ -153,6 +166,34 @@ export function buildFulfillmentPlan(input: {
       if (prev && prev !== row.tracking) return done('needs_manual', `Line ${row.lineKey} có 2 tracking khác nhau`, ageDays)
       lineTracking.set(open.foLineItemId, row.tracking)
       addLine(row.tracking, open.foId, open.foLineItemId, open.quantity, ship.id)
+    }
+  }
+
+  // Non-product add-on lines (Shipping protection, Tip, Custom Text) are never listed in a
+  // supplier sheet — nobody ships them — yet Shopify keeps them as OPEN fulfillment-order
+  // lines, usually on a fulfillment order of their own. Left behind they hold the order at
+  // PARTIALLY_FULFILLED forever. So once every real product line of the order is accounted
+  // for (shipped now, or shipped earlier), close the add-on lines as well.
+  const plannedFoLineIds = new Set<string>()
+  groups.forEach(g => g.lineItems.forEach(li => plannedFoLineIds.add(li.id)))
+  const openAddOns: Array<{ foId: string; foLineItemId: string; quantity: number }> = []
+  let uncoveredProductLines = 0
+  openByLineId.forEach((open, lineId) => {
+    if (plannedFoLineIds.has(open.foLineItemId)) return
+    if (addOnLineIds.has(lineId)) openAddOns.push(open)
+    else uncoveredProductLines++
+  })
+  // A product line parked on a non-open FO (on hold/scheduled) also means the order is not
+  // done shipping, so the add-ons keep waiting too.
+  const hasHeldProductLine = Array.from(heldLineIds).some(id => !addOnLineIds.has(id))
+  if (openAddOns.length > 0 && uncoveredProductLines === 0 && !hasHeldProductLine) {
+    for (const a of openAddOns) {
+      // Same fulfillment order as goods going out now → ride along on that fulfillment (one
+      // shipping email, one tracking). Its own fulfillment order → close it with NO tracking
+      // and no customer email: nothing physical ships, and repeating the tracking number
+      // would create a duplicate shipment in ParcelPanel.
+      const sameFo = Array.from(groups.values()).find(g => g.fulfillmentOrderId === a.foId)
+      addLine(sameFo ? sameFo.tracking : '', a.foId, a.foLineItemId, a.quantity, undefined, !sameFo)
     }
   }
 

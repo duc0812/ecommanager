@@ -3,8 +3,9 @@ import { fetchSheetCsv, parseSheetCsv, csvExportUrl, parseSheetUrl } from './par
 import { type SheetConfig } from './auto-fulfill-sheets'
 import { groupByOrder, mergeSheetGroups, buildFulfillmentPlan, type OrderPlanStatus } from './build-fulfill-plan'
 import { fetchOrderFulfillmentOrdersByNames, createFulfillment } from '@/lib/shopify-orders'
+import { isNonProductLine } from '@/lib/order-lines'
 
-export type FulfillmentDetail = { tracking: string; lineKeys: string[]; lineCount: number }
+export type FulfillmentDetail = { tracking: string; lineKeys: string[]; lineCount: number; addOn?: boolean }
 export type OrderResultRow = { baseOrder: string; status: OrderPlanStatus; trackings: string[]; fulfilledLines: number; message?: string; fulfillments?: FulfillmentDetail[] }
 export type AutoFulfillSummary = {
   ordersChecked: number; fulfilled: number; tooRecent: number; alreadyFulfilled: number
@@ -53,7 +54,13 @@ export async function runAutoFulfill(opts: {
   const foMap = await fetchOrderFulfillmentOrdersByNames(opts.shop, opts.accessToken, names)
   const orders = await prisma.order.findMany({
     where: { storeId: opts.storeId, shopifyOrderNumber: { in: [...names, ...names.map(n => `#${n}`)] } },
-    select: { id: true, shopifyOrderNumber: true, placedAt: true, pipelineStatus: true, shipments: { select: { id: true, lineKey: true, shopifyLineId: true } } },
+    select: {
+      id: true, shopifyOrderNumber: true, placedAt: true, pipelineStatus: true,
+      shipments: { select: { id: true, lineKey: true, shopifyLineId: true } },
+      // Non-product lines (Shipping protection / Tip / Custom Text) have no Shipment row and
+      // never appear in a supplier sheet, but Shopify still waits for them to be fulfilled.
+      lines: { select: { shopifyLineId: true, sku: true, productTitle: true, shopifyProductType: true } },
+    },
   })
   const dbByName = new Map(orders.map(o => [o.shopifyOrderNumber.replace(/^#/, ''), o]))
 
@@ -69,6 +76,7 @@ export async function runAutoFulfill(opts: {
       shipments: db?.shipments ?? [],
       fulfillmentOrders: fo ? fo.fulfillmentOrders : null,
       displayFulfillmentStatus: fo?.displayFulfillmentStatus ?? null,
+      addOnLineIds: (db?.lines ?? []).filter(l => isNonProductLine(l)).map(l => l.shopifyLineId),
       placedAt: db?.placedAt ?? (fo ? new Date(fo.createdAt) : null),
       now, minAgeDays: opts.minAgeDays,
     })
@@ -86,10 +94,14 @@ export async function runAutoFulfill(opts: {
     for (const e of toFulfill) {
       try {
         for (const f of e.plan.fulfillments) {
+          // Add-on fulfillment (Shipping protection & co on their own fulfillment order):
+          // no tracking and no email — nothing ships, and the customer already got the
+          // shipping notice for the real parcel.
           const url = `${e.storeBase.replace(/\/$/, '')}/apps/trackingorder?nums=${encodeURIComponent(f.tracking)}`
           const r = await createFulfillment(opts.shop, opts.accessToken, {
             fulfillmentOrderId: f.fulfillmentOrderId, lineItems: f.lineItems,
-            trackingInfo: { company: 'Other', number: f.tracking, url }, notifyCustomer: true,
+            trackingInfo: f.addOn ? undefined : { company: 'Other', number: f.tracking, url },
+            notifyCustomer: !f.addOn,
           })
           if (r.ok) {
             e.fulfilledLines += f.lineItems.length
@@ -135,6 +147,7 @@ export async function runAutoFulfill(opts: {
       tracking: f.tracking,
       lineKeys: f.shipmentIds.map(id => lineKeyByShipmentId.get(id)).filter((k): k is string => !!k),
       lineCount: f.lineItems.length,
+      ...(f.addOn ? { addOn: true } : {}),
     }))
     summary.rows.push({ baseOrder: base, status: plan.status, trackings, fulfilledLines, message: plan.message, fulfillments })
     switch (plan.status) {

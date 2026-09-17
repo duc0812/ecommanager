@@ -619,7 +619,9 @@ export async function fetchOrderFulfillmentOrdersByNames(
 export async function createFulfillment(
   shop: string,
   accessToken: string,
-  input: { fulfillmentOrderId: string; lineItems: Array<{ id: string; quantity: number }>; trackingInfo: { company?: string; number: string; url?: string }; notifyCustomer: boolean },
+  // trackingInfo is omitted for non-product add-on lines (Shipping protection / Tip /
+  // Custom Text): nothing physical ships, so they get no tracking number.
+  input: { fulfillmentOrderId: string; lineItems: Array<{ id: string; quantity: number }>; trackingInfo?: { company?: string; number: string; url?: string }; notifyCustomer: boolean },
   apiVersion = '2024-10',
 ): Promise<{ ok: boolean; fulfillmentId?: string; error?: string }> {
   const url = `https://${shop}/admin/api/${apiVersion}/graphql.json`
@@ -635,7 +637,7 @@ export async function createFulfillment(
       fulfillmentOrderId: input.fulfillmentOrderId,
       fulfillmentOrderLineItems: input.lineItems.map(li => ({ id: li.id, quantity: li.quantity })),
     }],
-    trackingInfo: input.trackingInfo,
+    ...(input.trackingInfo ? { trackingInfo: input.trackingInfo } : {}),
     notifyCustomer: input.notifyCustomer,
   }
   const res = await fetch(url, {
