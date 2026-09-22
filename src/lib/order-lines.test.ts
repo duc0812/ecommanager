@@ -10,6 +10,14 @@ describe('isNonProductLine', () => {
     expect(isNonProductLine({ sku: null, productTitle: 'Shipping protection' })).toBe(true)
   })
 
+  it('treats Package Protection insurance line as non-product even when it has a SKU and a physical product type', () => {
+    expect(isNonProductLine({
+      sku: 'SO-7980934',
+      productTitle: 'Package Protection',
+      shopifyProductType: 'Jewelry',
+    })).toBe(true)
+  })
+
   it('treats Custom Text digital line as non-product even when it has a SKU', () => {
     expect(isNonProductLine({ sku: 'LIT2570_1', productTitle: 'Custom Text' })).toBe(true)
   })
@@ -25,6 +33,11 @@ describe('isNonProductLine', () => {
 
   it('falls back to title when Shopify product type is missing', () => {
     expect(isNonProductLine({ productTitle: ' Custom Text ', shopifyProductType: null })).toBe(true)
+  })
+
+  it('treats Tip and Shipping protection as non-product even if the store gives them a SKU', () => {
+    expect(isNonProductLine({ sku: 'TIP-1', productTitle: 'Tip' })).toBe(true)
+    expect(isNonProductLine({ sku: 'SP-1', productTitle: 'Shipping protection', shopifyProductType: 'Kaching Cart Upsell Toggle' })).toBe(true)
   })
 
   it('keeps physical products with a real product type mappable', () => {

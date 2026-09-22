@@ -135,4 +135,84 @@ describe('POST /api/shopify/orders/sync', () => {
 
     fetchSpy.mockRestore()
   })
+
+  it('does not hold an order in PENDING_MAPPING for a Package Protection add-on line', async () => {
+    const mockResponse = {
+      data: {
+        orders: {
+          pageInfo: { hasNextPage: false, endCursor: null },
+          nodes: [{
+            id: 'gid://shopify/Order/4090412213890',
+            name: '#1024',
+            createdAt: '2026-05-19T07:06:00Z',
+            processedAt: '2026-05-19T07:06:00Z',
+            displayFinancialStatus: 'PAID',
+            displayFulfillmentStatus: 'UNFULFILLED',
+            currencyCode: 'USD',
+            currentTotalPriceSet: { shopMoney: { amount: '153.01' } },
+            currentSubtotalPriceSet: { shopMoney: { amount: '153.01' } },
+            currentTotalTaxSet: { shopMoney: { amount: '0' } },
+            currentShippingPriceSet: { shopMoney: { amount: '0' } },
+            customer: { email: 'smoothflight@yahoo.com', displayName: 'David Olsen' },
+            shippingAddress: { country: 'United States', countryCodeV2: 'US', province: 'CA' },
+            taxLines: [],
+            lineItems: { nodes: [
+              {
+                id: 'gid://shopify/LineItem/1',
+                sku: 'TSHIRT-RED-M',
+                title: 'Premium Tee',
+                variantTitle: 'Red / M',
+                quantity: 1,
+                originalUnitPriceSet: { shopMoney: { amount: '149.99' } },
+                product: { tags: [], productType: 'T-Shirt' },
+                variant: { id: VARIANT_ID, selectedOptions: [{ name: 'Size', value: 'M' }] },
+              },
+              {
+                // Sold as a real Shopify product: it carries a SKU and an unrelated product type.
+                id: 'gid://shopify/LineItem/2',
+                sku: 'SO-7980934',
+                title: 'Package Protection',
+                variantTitle: 'Insurance for total less $100',
+                quantity: 1,
+                originalUnitPriceSet: { shopMoney: { amount: '3.02' } },
+                product: { tags: [], productType: 'Jewelry' },
+                variant: { id: 'gid://shopify/ProductVariant/43172296163485', selectedOptions: [] },
+              },
+            ] },
+            transactions: [{
+              id: 'gid://shopify/OrderTransaction/2',
+              kind: 'SALE',
+              status: 'SUCCESS',
+              processedAt: '2026-05-19T07:06:00Z',
+              amountSet: { shopMoney: { amount: '153.01' } },
+              fees: [{ amount: { amount: '4.65' } }],
+            }],
+            refunds: [],
+          }],
+        },
+      },
+    }
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => mockResponse,
+      text: async () => '',
+    } as Response)
+
+    const { POST } = await import('@/app/api/shopify/orders/sync/route')
+    const req = new Request('http://test/api/shopify/orders/sync', { method: 'POST' })
+    const res = await POST(req as any)
+    const body = await res.json()
+
+    expect(body.withUnmappedSku).toBe(0)
+
+    const saved = await prisma.order.findUnique({
+      where: { id: 'gid://shopify/Order/4090412213890' },
+      include: { lines: true },
+    })
+    expect(saved!.pipelineStatus).not.toBe('PENDING_MAPPING')
+    const protection = saved!.lines.find(l => l.sku === 'SO-7980934')
+    expect(protection!.resolvedSupplierId).toBeNull()
+
+    fetchSpy.mockRestore()
+  })
 })
