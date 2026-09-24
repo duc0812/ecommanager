@@ -427,6 +427,54 @@ function EditModal({
 }
 
 // ── Main Page ─────────────────────────────────────────────────
+type Overlap = {
+  shopifyProductType: string
+  baseNames: [string, string]
+  reason: 'no_conditions' | 'different_options' | 'overlapping_values'
+  sharedValues?: string[]
+}
+
+const OVERLAP_REASON: Record<Overlap['reason'], string> = {
+  no_conditions: 'một base không có điều kiện nào nên khớp mọi đơn',
+  different_options: 'hai base lọc trên hai option khác nhau nên đơn nào có cả hai đều khớp cả hai',
+  overlapping_values: 'cùng option nhưng trùng giá trị',
+}
+
+function OverlapWarning({ overlaps }: { overlaps: Overlap[] }) {
+  if (overlaps.length === 0) return null
+  const byType = new Map<string, Overlap[]>()
+  for (const o of overlaps) byType.set(o.shopifyProductType, [...(byType.get(o.shopifyProductType) ?? []), o])
+  return (
+    <div className="mx-xl mt-lg rounded-lg border border-error/30 bg-error/5 px-lg py-md">
+      <div className="flex items-center gap-sm">
+        <span className="material-symbols-outlined text-[18px] text-error">warning</span>
+        <p className="text-label-md font-semibold text-error">
+          {overlaps.length} cặp Product Base có thể cùng khớp một đơn ({byType.size} product type)
+        </p>
+      </div>
+      <p className="text-body-sm text-on-surface/60 mt-xs">
+        Khi hai base cùng khớp, hệ thống lấy base tạo trước. Hãy sửa điều kiện để chúng loại trừ nhau.
+      </p>
+      <div className="mt-sm flex flex-col gap-xs">
+        {Array.from(byType.entries()).map(([type, list]) => (
+          <div key={type} className="text-body-sm">
+            <span className="font-semibold text-on-surface">{type}</span>
+            <ul className="mt-[2px] ml-md list-disc text-on-surface/60">
+              {list.map((o, i) => (
+                <li key={i}>
+                  <span className="font-medium">{o.baseNames[0]}</span> ↔ <span className="font-medium">{o.baseNames[1]}</span>
+                  {' — '}{OVERLAP_REASON[o.reason]}
+                  {o.sharedValues?.length ? ` (${o.sharedValues.slice(0, 6).join(', ')})` : ''}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export default function MappingPage() {
   const [tab, setTab] = useState<'auto' | 'manual'>('auto')
   const [bases, setBases] = useState<ProductBase[]>([])
@@ -438,18 +486,21 @@ export default function MappingPage() {
   const [editBase, setEditBase] = useState<ProductBase | null | undefined>(undefined) // undefined = closed, null = new
   const [pendingAssign, setPendingAssign] = useState<Record<string, string>>({}) // variantId → supplierProductId
   const [saving, setSaving] = useState<string | null>(null)
+  const [overlaps, setOverlaps] = useState<Overlap[]>([])
 
   const loadData = useCallback(async () => {
-    const [basesRes, spRes, manualRes] = await Promise.all([
+    const [basesRes, spRes, manualRes, conflictRes] = await Promise.all([
       fetch('/api/fulfillment/mapping/product-bases', { cache: 'no-store' }).then(r => r.json()),
       fetch('/api/fulfillment/mapping/supplier-products', { cache: 'no-store' }).then(r => r.json()),
       fetch('/api/fulfillment/mapping/manual', { cache: 'no-store' }).then(r => r.json()),
+      fetch('/api/fulfillment/mapping/conflicts', { cache: 'no-store' }).then(r => r.json()).catch(() => ({ overlaps: [] })),
     ])
     setBases(basesRes.bases ?? [])
     setSuppliers(spRes.suppliers ?? [])
     setSupplierProducts(spRes.products ?? [])
     setPendingLines(manualRes.pending ?? [])
     setSavedMappings(manualRes.saved ?? [])
+    setOverlaps(conflictRes.overlaps ?? [])
   }, [])
 
   useEffect(() => {
@@ -536,6 +587,8 @@ export default function MappingPage() {
               )}
             </div>
           </div>
+
+          {tab === 'auto' && <OverlapWarning overlaps={overlaps} />}
 
           {/* Tabs */}
           <div className="flex border-b-2 border-outline-variant/20 bg-surface-container-low">

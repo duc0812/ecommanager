@@ -106,9 +106,13 @@ export async function deleteProductBase(id: string) {
 
 export async function loadProductBasesForResolver(): Promise<ProductBaseData[]> {
   const bases = await prisma.productBase.findMany({
+    // Unordered, two bases matching the same line resolved to whichever the database happened
+    // to return first — so saving any base could silently re-map a different product. Oldest
+    // first keeps the original, deliberate base ahead of a later catch-all.
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     include: {
       supplierMappings: { orderBy: { preferenceRank: 'asc' } },
-      overrides: true,
+      overrides: { orderBy: { id: 'asc' } },
     },
   })
   return bases.map(b => ({
