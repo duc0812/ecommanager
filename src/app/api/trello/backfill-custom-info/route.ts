@@ -16,6 +16,15 @@ export async function POST(req: Request) {
   const sinceDays = Number.isFinite(body?.sinceDays)
     ? Math.min(Math.max(Math.trunc(body.sinceDays), 1), 365)
     : DEFAULT_SINCE_DAYS
+  // Naming the orders outright repairs just those cards and ignores the time window, for
+  // when a fix should reach a couple of known-bad cards without touching the rest of the board.
+  const orderNames = Array.from(new Set(
+    (Array.isArray(body?.orderNames) ? body.orderNames : [])
+      .map((n: any) => String(n).trim().toUpperCase())
+      .filter(Boolean)
+      .map((n: string) => (n.startsWith('#') ? n : `#${n}`)),
+  )) as string[]
+  const targeted = orderNames.length > 0
 
   const cfg = await getTrelloConfig()
   if (!cfg) {
@@ -30,14 +39,21 @@ export async function POST(req: Request) {
   const orders = await prisma.order.findMany({
     where: {
       trelloCardId: { not: null },
-      placedAt: { gte: since },
+      ...(targeted
+        ? { shopifyOrderNumber: { in: orderNames } }
+        : { placedAt: { gte: since } }),
     },
     select: { shopifyOrderNumber: true, trelloCardId: true },
     orderBy: { placedAt: 'desc' },
   })
+  // A named order with no card yet (or no row at all) is a silent no-op otherwise.
+  const notInDb = targeted
+    ? orderNames.filter(n => !orders.some(o => o.shopifyOrderNumber === n))
+    : []
   if (orders.length === 0) {
     return NextResponse.json({
-      dryRun, sinceDays, ordersChecked: 0, cardsChecked: 0, cardsUpdated: 0, cardsUnchanged: 0,
+      dryRun, sinceDays: targeted ? null : sinceDays, orderNames, notInDb,
+      ordersChecked: 0, cardsChecked: 0, cardsUpdated: 0, cardsUnchanged: 0,
       alreadyComplete: 0, noPersonalization: 0, notFoundOnShopify: [], notFoundCount: 0,
       samples: [], errors: [],
     })
@@ -111,7 +127,9 @@ export async function POST(req: Request) {
 
   return NextResponse.json({
     dryRun,
-    sinceDays,
+    sinceDays: targeted ? null : sinceDays,
+    orderNames,
+    notInDb,
     ordersChecked: orders.length,
     cardsChecked: ordersByCard.size,
     cardsUpdated,

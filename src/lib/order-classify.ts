@@ -25,16 +25,37 @@ export function classifyOrderLines(lines: ClassifyLine[]): OrderType {
 // so a "Size"/"Color" property does not falsely mark a line as customized.
 const VARIANT_PROP_KEYS = new Set(['size', 'color', 'colour', 'style', 'variant', 'option', 'title', 'quantity'])
 
+// Shopify hides any line-item property whose key starts with "_" from the cart and the
+// order pages. Apps use that for their own plumbing (_customall_preview, _kaching_cart),
+// but this store's personalization app hides the customer's OWN field on some products
+// (_Custom Name/Text on #LIT4024) — dropping every "_" key lost the text to print.
+// Plumbing keys are machine identifiers; a customer field is a written label, so the
+// shape of the name separates them.
+function isMachineKey(key: string): boolean {
+  return !/\s/.test(key) && key === key.toLowerCase()
+}
+
 // The customer-entered properties a designer has to read off the card. Same filter the
 // customization check uses, so anything that marks a line CUSTOM is also printable on Trello.
+// Keys are returned without the hiding "_" so both spellings of one field read alike.
 export function visibleCustomAttributes(
   attrs: Array<{ key: string; value: string }>,
 ): Array<{ key: string; value: string }> {
-  return attrs.filter(a => {
-    if (a.key.startsWith('_')) return false
-    if (VARIANT_PROP_KEYS.has(a.key.toLowerCase().trim())) return false
-    return !!(a.value && a.value.trim())
-  })
+  const out: Array<{ key: string; value: string }> = []
+  const seen = new Set<string>()
+  for (const a of attrs) {
+    const hidden = a.key.startsWith('_')
+    const label = hidden ? a.key.slice(1) : a.key
+    if (hidden && (!label || isMachineKey(label))) continue
+    const normalized = label.toLowerCase().trim()
+    if (VARIANT_PROP_KEYS.has(normalized)) continue
+    if (!a.value || !a.value.trim()) continue
+    // A product carrying both spellings of one field would otherwise print it twice.
+    if (seen.has(normalized)) continue
+    seen.add(normalized)
+    out.push(hidden ? { key: label, value: a.value } : a)
+  }
+  return out
 }
 
 export function isLineCustomized(line: {

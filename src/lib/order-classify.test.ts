@@ -7,6 +7,7 @@ import {
   lineFamily,
   mergePersonalizationIntoDesc,
   reduceOrderType,
+  visibleCustomAttributes,
   PERSONALIZATION_MARKER,
 } from '@/lib/order-classify'
 
@@ -289,5 +290,70 @@ describe('cardHasInlinePersonalization — the backfill must not double up on ne
   it('false when the customer input was empty, so nothing was written', () => {
     const { desc } = buildTrelloCardContent('#LIT3548', [{ ...line, customAttributes: [] }], 'CUSTOM')
     expect(cardHasInlinePersonalization(desc)).toBe(false)
+  })
+})
+
+// Real shape of #LIT4024: the same personalization app that normally writes
+// "Custom Name/Text" wrote it as "_Custom Name/Text" on this product, so Shopify hid it
+// from the cart — and the card builder dropped the customer's name with it.
+const hiddenPropsLine = {
+  sku: 'DN2007261441-HOODIE, BLACK-PINK, L',
+  productTitle: "Jeep Hair Don't Care Est 1941 Fleece Zip Hoodie-DN2007261441",
+  customAttributes: [
+    { key: '_Custom Name: Yes Or No?', value: 'Yes' },
+    { key: '_Custom Name/Text', value: 'Lisa' },
+  ],
+  productTags: ['Custom Name'],
+  variantTitle: 'Hoodie / Pink / L',
+  qty: 1,
+}
+
+describe('"_"-hidden personalization is still customer input (#LIT4024)', () => {
+  it('marks the line customized', () => {
+    expect(isLineCustomized(hiddenPropsLine)).toBe(true)
+  })
+
+  it('CUSTOM: prints the name, without the leading "_" in the label', () => {
+    const { desc } = buildTrelloCardContent('#LIT4024', [hiddenPropsLine], 'CUSTOM')
+    expect(desc).toContain('Custom Name/Text: Lisa')
+    expect(desc).not.toContain('_Custom Name/Text')
+  })
+
+  it('NON_CUSTOM/MIXED branch shows it too', () => {
+    const { desc } = buildTrelloCardContent('#LIT4024', [hiddenPropsLine], 'NON_CUSTOM')
+    expect(desc).toContain('Custom Name/Text: Lisa')
+  })
+
+  it('the backfill block picks it up', () => {
+    const block = buildPersonalizationSections('#LIT4024', [{ ...hiddenPropsLine, shopifyProductType: '2D Cothing' }])
+    expect(block).toContain('Custom Name/Text: Lisa')
+  })
+
+  it('keeps hiding machine-named app internals seen on this store', () => {
+    const internals = [
+      '_customall_preview', '_print_files', '_customall_print_file', '_customized_url',
+      '_customallcustomid', '_ctm_add_on_variant', '_add_on_customallcustomid',
+      '_kaching_cart', '_ll_id',
+    ]
+    for (const key of internals) {
+      expect(visibleCustomAttributes([{ key, value: 'x' }])).toEqual([])
+      // _print_files is exempt: it is app-internal, but its presence is itself a
+      // customization signal the classifier deliberately keys off.
+      if (key === '_print_files') continue
+      expect(isLineCustomized({ customAttributes: [{ key, value: 'x' }], previewCdnUrl: null })).toBe(false)
+    }
+  })
+
+  it('an uploaded-photo field hidden under "_" reaches the designer', () => {
+    const line = {
+      ...hiddenPropsLine,
+      customAttributes: [{ key: '_Upload Your Jeep Photo (Leave blank if you don\'t want to personalize)', value: 'https://image.ymqapp.com/x.jpg' }],
+    }
+    const { desc } = buildTrelloCardContent('#LIT4024', [line], 'CUSTOM')
+    expect(desc).toContain('https://image.ymqapp.com/x.jpg')
+  })
+
+  it('a "_"-hidden variant selector is still not personalization', () => {
+    expect(visibleCustomAttributes([{ key: '_Size', value: 'L' }])).toEqual([])
   })
 })
