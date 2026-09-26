@@ -7,6 +7,8 @@ export type ClassifyLine = {
   shopifyProductType?: string | null
   customAttributes: Array<{ key: string; value: string }>
   productTags: string[]
+  productUrl?: string | null
+  variantId?: string | null
 }
 
 export type OrderType = 'CUSTOM' | 'NON_CUSTOM'
@@ -82,10 +84,30 @@ function formatPersonalizationItems(attrs: Array<{ key: string; value: string }>
     .join('\n')
 }
 
+// Our own personaliser (cm-builder, the Customall clone) saves no preview image: the order
+// line carries the choices plus `_design`, which the product page redraws when opened with
+// ?variant=<id>#cm-design=<base64url JSON>. That link is the designer's view of the order.
+export function customerDesignLink(line: Pick<ClassifyLine, 'customAttributes' | 'productUrl' | 'variantId'>): string | null {
+  const raw = line.customAttributes.find(a => a.key === '_design')?.value
+  if (!raw || !line.productUrl) return null
+  let design: any
+  try { design = JSON.parse(raw) } catch { return null }
+  if (!design || design.v !== 'cm1') return null
+  const variant = line.variantId?.split('/').pop()
+  const url = new URL(line.productUrl)
+  if (variant) url.searchParams.set('variant', variant)
+  url.hash = `cm-design=${Buffer.from(JSON.stringify(design), 'utf8').toString('base64url')}`
+  return url.toString()
+}
+
+export const CUSTOMER_DESIGN_LABEL = 'Customer design (open to see it):'
+
 // Everything the customer supplied for one line, in the order a designer needs it:
 // the text to print first, then the artwork references.
 function customerInputLines(line: ClassifyLine): string[] {
   const out: string[] = []
+  const designLink = customerDesignLink(line)
+  if (designLink) out.push(`${CUSTOMER_DESIGN_LABEL} ${designLink}`)
   const preview = extractPreviewCdnUrl(line.customAttributes)
   const personalization = visibleCustomAttributes(line.customAttributes)
     .filter(a => a.value !== preview)

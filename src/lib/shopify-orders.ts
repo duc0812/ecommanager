@@ -25,6 +25,7 @@ export type ShopifyOrderLine = {
   customAttributes: Array<{ key: string; value: string }>
   variantId: string | null          // NEW
   selectedOptions: Record<string, string>  // NEW: {"Style":"Tshirt","Size":"S"}
+  productUrl?: string | null        // storefront page; null when the product is not published
 }
 
 export type ShopifyOrder = {
@@ -91,7 +92,7 @@ query SyncOrders($cursor: String, $query: String) {
           id sku title variantTitle quantity
           originalUnitPriceSet { shopMoney { amount } }
           customAttributes { key value }
-          product { tags productType }
+          product { tags productType onlineStoreUrl }
           variant {
             id
             selectedOptions { name value }
@@ -198,6 +199,7 @@ export async function fetchOrdersPage(
         productType: l.product?.productType ?? null,
         customAttributes: l.customAttributes ?? [],
         variantId: l.variant?.id ?? null,
+        productUrl: l.product?.onlineStoreUrl ?? null,
         selectedOptions: Object.fromEntries(
           (l.variant?.selectedOptions ?? []).map((o: { name: string; value: string }) => [o.name, o.value])
         ),
@@ -468,6 +470,8 @@ export type ShopifyOrderLineProps = {
   quantity: number
   productType: string | null
   customAttributes: Array<{ key: string; value: string }>
+  productUrl: string | null
+  variantId: string | null
 }
 
 const LINE_PROPS_QUERY = `
@@ -479,7 +483,8 @@ query OrderLineProps($query: String) {
         nodes {
           sku title variantTitle quantity
           customAttributes { key value }
-          product { productType }
+          product { productType onlineStoreUrl }
+          variant { id }
         }
       }
     }
@@ -517,6 +522,8 @@ export async function fetchOrderLinePropsByNames(
         quantity: l.quantity,
         productType: l.product?.productType ?? null,
         customAttributes: l.customAttributes ?? [],
+        productUrl: l.product?.onlineStoreUrl ?? null,
+        variantId: l.variant?.id ?? null,
       })))
     }
   }

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   buildPersonalizationSections,
   buildTrelloCardContent,
+  customerDesignLink,
   cardHasInlinePersonalization,
   isLineCustomized,
   lineFamily,
@@ -355,5 +356,57 @@ describe('"_"-hidden personalization is still customer input (#LIT4024)', () => 
 
   it('a "_"-hidden variant selector is still not personalization', () => {
     expect(visibleCustomAttributes([{ key: '_Size', value: 'L' }])).toEqual([])
+  })
+})
+
+// #LIT4084: a product personalised by our own cm-builder (Customall clone) carries no preview
+// image, only the choices and a `_design` record the product page can redraw.
+describe('customer design link for our own personaliser (#LIT4084)', () => {
+  const design = {
+    v: 'cm1', artwork: 'KDBPvl3ex', template: 1,
+    data: { _bo0cd: { categoryID: 'pPyd8hJQC', id: 'oPFvPa8Mf', key: '2025-09/LOv1ZPbVsa__8.png' }, _txehn: { text: 'Betty Kaye ' } },
+  }
+  const line = {
+    sku: 'D43-00-001-US',
+    productTitle: 'Custom Sister Christmas Ornament',
+    customAttributes: [
+      { key: 'Choose Butterfly #1', value: '8' },
+      { key: 'Type Name #2', value: 'Betty Kaye ' },
+      { key: '_design', value: JSON.stringify(design) },
+    ],
+    productTags: [],
+    variantTitle: '3.07 IN',
+    qty: 1,
+    productUrl: 'https://litzzy.com/products/festive-sister',
+    variantId: 'gid://shopify/ProductVariant/48943892758685',
+  }
+
+  it('links the product page with the variant and the design in the hash', () => {
+    const link = customerDesignLink(line)!
+    expect(link.startsWith('https://litzzy.com/products/festive-sister?variant=48943892758685#cm-design=')).toBe(true)
+    const b64 = link.split('#cm-design=')[1]
+    expect(b64).toMatch(/^[A-Za-z0-9_-]+$/)
+    expect(JSON.parse(Buffer.from(b64, 'base64url').toString('utf8'))).toEqual(design)
+  })
+
+  it('keeps non-ASCII text intact through the link', () => {
+    const d = { ...design, data: { _t: { text: 'Chloé ♥' } } }
+    const link = customerDesignLink({ ...line, customAttributes: [{ key: '_design', value: JSON.stringify(d) }] })!
+    expect(JSON.parse(Buffer.from(link.split('#cm-design=')[1], 'base64url').toString('utf8'))).toEqual(d)
+  })
+
+  it('no link without a product url, a cm1 design, or with an unreadable one', () => {
+    expect(customerDesignLink({ ...line, productUrl: null })).toBeNull()
+    expect(customerDesignLink({ ...line, customAttributes: [{ key: '_design', value: '{"cat":"x","layers":[]}' }] })).toBeNull()
+    expect(customerDesignLink({ ...line, customAttributes: [{ key: '_design', value: 'not json' }] })).toBeNull()
+    expect(customerDesignLink({ ...line, customAttributes: [] })).toBeNull()
+  })
+
+  it('the card shows the link first, then the choices, and hides the raw _design', () => {
+    const { desc } = buildTrelloCardContent('#LIT4084', [line], 'CUSTOM')
+    expect(desc).toContain('Customer design (open to see it):')
+    expect(desc).toContain('#cm-design=')
+    expect(desc.indexOf('Customer design')).toBeLessThan(desc.indexOf('Choose Butterfly #1: 8'))
+    expect(desc).not.toContain('"artwork"')
   })
 })

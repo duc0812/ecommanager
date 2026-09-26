@@ -8,7 +8,7 @@ import { resolveZone, type SupplierZoneOverrides } from '@/lib/regions'
 import { getShopifyConnection } from '@/lib/token-store'
 import { resolveByProductBase } from '@/lib/product-mapping'
 import { loadProductBasesForResolver, loadVariantManualMappingsForResolver } from '@/lib/repos/mapping'
-import { buildTrelloCardContent, isLineCustomized, lineFamily, reduceOrderType } from '@/lib/order-classify'
+import { buildTrelloCardContent, customerDesignLink, isLineCustomized, lineFamily, reduceOrderType } from '@/lib/order-classify'
 import { isNonProductLine } from '@/lib/order-lines'
 import { createTrelloCard, addAttachmentToCard, getTrelloConfig, shouldCreateCard } from '@/lib/trello'
 import { extractPreviewCdnUrl } from '@/lib/order-line-assets'
@@ -429,6 +429,8 @@ export async function POST(req: NextRequest) {
                 shopifyProductType: l.productType,
                 customAttributes: l.customAttributes,
                 productTags: l.productTags,
+                productUrl: l.productUrl ?? null,
+                variantId: l.variantId,
                 variantTitle: l.variantTitle,
                 qty: l.quantity,
                 supplierName: sp ? supplierNameById.get(sp.supplierId) ?? null : null,
@@ -451,6 +453,11 @@ export async function POST(req: NextRequest) {
                 if (preview) {
                   await addAttachmentToCard(trelloConfig, card.id, preview, `🖼 Preview – ${l.sku ?? 'N/A'}`)
                     .catch(e => errors.push(`Trello attach preview failed for ${o.name}: ${e.message}`))
+                }
+                const designLink = customerDesignLink(l)
+                if (designLink) {
+                  await addAttachmentToCard(trelloConfig, card.id, designLink, `🎨 Customer design – ${l.sku ?? 'N/A'}`)
+                    .catch(e => errors.push(`Trello attach design link failed for ${o.name}: ${e.message}`))
                 }
               }
             }
