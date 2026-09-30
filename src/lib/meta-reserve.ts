@@ -4,11 +4,13 @@ import { normalizeMetaCurrency } from '@/lib/meta-currency'
 
 // Meta charges the card when the unbilled balance reaches the account's billing threshold.
 // Graph API v22.0 exposes neither the threshold nor the next bill date (the `adspaymentcycles`
-// edge and every `*threshold*` field return 400), so the threshold is inferred from the
-// repeated charge amounts in billing history, or entered by hand.
+// edge and every `*threshold*` field return 400), so it is entered by hand or read off
+// billing history: the BIGGEST recent charge. A threshold charge cannot exceed the threshold,
+// while leftovers and retries come in smaller (Remi03 2026-09-29: 29.32/19.55/11.17 after a
+// 94.45 threshold charge) and Meta raises the threshold as an account matures (Remi10:
+// 224 -> 402 -> 656 -> 901 within a week), so the most-repeated amount lags or picks noise.
 const CLUSTER_TOLERANCE = 0.01
-const DEFAULT_WINDOW_DAYS = 60
-const MIN_OCCURRENCES = 2
+const DEFAULT_WINDOW_DAYS = 21
 const UNSETTLED_ACCOUNT_STATUSES = new Set([2, 3, 9])
 
 export const WATCH_DAYS = 3
@@ -30,36 +32,21 @@ export function inferThreshold(
 ): InferredThreshold | null {
   const code = normalizeMetaCurrency(currency)
   const since = addDays(today, -windowDays)
-  const rows = billings
+  const amounts = billings
     .filter(row =>
       normalizeMetaCurrency(row.currency) === code
       && row.billingDate >= since
       && row.billingDate <= today
       && Number.isFinite(row.amount)
       && row.amount > 0)
-    .sort((a, b) => b.amount - a.amount)
+  if (amounts.length === 0) return null
 
-  const clusters: { amount: number; occurrences: number; lastSeen: string }[] = []
-  for (const row of rows) {
-    const current = clusters[clusters.length - 1]
-    if (current && (current.amount - row.amount) / current.amount <= CLUSTER_TOLERANCE) {
-      current.occurrences += 1
-      if (row.billingDate > current.lastSeen) current.lastSeen = row.billingDate
-      continue
-    }
-    clusters.push({ amount: row.amount, occurrences: 1, lastSeen: row.billingDate })
-  }
+  const amount = amounts.reduce((max, row) => Math.max(max, row.amount), 0)
+  // Charges within a hair of the top one are the same threshold being hit again: confidence.
+  const atThatLevel = amounts.filter(row => (amount - row.amount) / amount <= CLUSTER_TOLERANCE)
+  const lastSeen = atThatLevel.reduce((latest, row) => (row.billingDate > latest ? row.billingDate : latest), '')
 
-  const candidates = clusters.filter(cluster => cluster.occurrences >= MIN_OCCURRENCES)
-  if (candidates.length === 0) return null
-  // Meta raises the threshold as an account matures, so the newest cluster is the live one.
-  candidates.sort((a, b) =>
-    b.lastSeen.localeCompare(a.lastSeen)
-    || b.occurrences - a.occurrences
-    || b.amount - a.amount)
-
-  const best = candidates[0]
-  return { amount: best.amount, currency: code, occurrences: best.occurrences, lastSeen: best.lastSeen }
+  return { amount, currency: code, occurrences: atThatLevel.length, lastSeen }
 }
 
 export type BudgetEntity = {

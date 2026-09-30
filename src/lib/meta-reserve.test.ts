@@ -8,7 +8,40 @@ function bill(billingDate: string, amount: number, currency = 'USD') {
 }
 
 describe('inferThreshold', () => {
-  it('picks the repeated charge amount, clustering cents apart', () => {
+  it('takes the biggest recent charge, not the most repeated one (Meta raises the threshold)', () => {
+    // Real Remi10 history: the charge Meta takes climbs 224 -> 402 -> 656 -> 901.
+    const rows = [
+      bill('2026-09-27', 901.72),
+      bill('2026-09-26', 655.25),
+      bill('2026-09-24', 656.41),
+      bill('2026-09-23', 402.38),
+      bill('2026-09-22', 223.23),
+      bill('2026-09-21', 224.92),
+      bill('2026-09-20', 224.32),
+      bill('2026-09-19', 548.04),
+    ]
+    const result = inferThreshold(rows, { today: TODAY, currency: 'USD' })
+    expect(result?.amount).toBe(901.72)
+    expect(result?.occurrences).toBe(1)
+    expect(result?.lastSeen).toBe('2026-09-27')
+  })
+
+  it('ignores the partial charges Meta takes after a threshold charge', () => {
+    // Real Remi03 history: 93-94 is the threshold; 29.32/19.55/11.17 are leftovers.
+    const rows = [
+      bill('2026-09-29', 29.32),
+      bill('2026-09-29', 29.32),
+      bill('2026-09-29', 19.55),
+      bill('2026-09-29', 11.17),
+      bill('2026-09-28', 94.45),
+      bill('2026-09-25', 93.23),
+      bill('2026-09-24', 93.19),
+    ]
+    const result = inferThreshold(rows, { today: TODAY, currency: 'USD' })
+    expect(result?.amount).toBe(94.45)
+  })
+
+  it('counts how many charges sit at that level, as confidence', () => {
     const rows = [
       bill('2026-09-15', 279.39),
       bill('2026-09-13', 279.48),
@@ -16,7 +49,6 @@ describe('inferThreshold', () => {
       bill('2026-09-10', 279.32),
       bill('2026-09-09', 279.56),
       bill('2026-09-14', 34.95),
-      bill('2026-09-13', 1.17),
     ]
     expect(inferThreshold(rows, { today: TODAY, currency: 'USD' })).toEqual({
       amount: 279.56,
@@ -26,52 +58,33 @@ describe('inferThreshold', () => {
     })
   })
 
-  it('prefers the most recent cluster when Meta raises the threshold', () => {
-    const rows = [
-      bill('2026-09-21', 224.92),
-      bill('2026-09-20', 224.32),
-      bill('2026-09-20', 223.40),
-      bill('2026-09-15', 279.39),
-      bill('2026-09-13', 279.48),
-      bill('2026-09-12', 279.41),
-      bill('2026-09-10', 279.32),
-      bill('2026-09-09', 279.56),
-    ]
-    const result = inferThreshold(rows, { today: TODAY, currency: 'USD' })
-    expect(result?.amount).toBe(224.92)
-    expect(result?.occurrences).toBe(3)
-    expect(result?.lastSeen).toBe('2026-09-21')
-  })
-
-  it('clusters zero-decimal currency amounts', () => {
+  it('works on zero-decimal currencies', () => {
     const rows = [
       bill('2026-09-11', 14784598, 'VND'),
       bill('2026-09-10', 14805879, 'VND'),
       bill('2026-09-09', 14795656, 'VND'),
-      bill('2026-09-07', 14787286, 'VND'),
     ]
     const result = inferThreshold(rows, { today: TODAY, currency: 'VND' })
     expect(result?.amount).toBe(14805879)
-    expect(result?.occurrences).toBe(4)
+    expect(result?.occurrences).toBe(3)
   })
 
-  it('returns null when no charge amount repeats', () => {
-    const rows = [bill('2026-09-20', 548.04), bill('2026-09-17', 31.84), bill('2026-09-17', 450.69)]
-    expect(inferThreshold(rows, { today: TODAY, currency: 'USD' })).toBeNull()
+  it('uses a single charge when that is the only history', () => {
+    expect(inferThreshold([bill('2026-09-20', 548.04)], { today: TODAY, currency: 'USD' })?.amount).toBe(548.04)
   })
 
-  it('ignores charges older than the window', () => {
-    const rows = [bill('2026-06-01', 279.39), bill('2026-06-02', 279.48), bill('2026-09-20', 100)]
-    expect(inferThreshold(rows, { today: TODAY, currency: 'USD', windowDays: 60 })).toBeNull()
+  it('ignores charges older than the window, however big', () => {
+    const rows = [bill('2026-08-20', 5000), bill('2026-09-20', 100)]
+    expect(inferThreshold(rows, { today: TODAY, currency: 'USD' })?.amount).toBe(100)
+  })
+
+  it('returns null when the window holds no charge at all', () => {
+    expect(inferThreshold([bill('2026-06-01', 279.39)], { today: TODAY, currency: 'USD' })).toBeNull()
   })
 
   it('ignores charges in another currency', () => {
-    const rows = [
-      bill('2026-09-20', 279.39, 'VND'),
-      bill('2026-09-19', 279.48, 'VND'),
-      bill('2026-09-18', 100, 'USD'),
-    ]
-    expect(inferThreshold(rows, { today: TODAY, currency: 'USD' })).toBeNull()
+    const rows = [bill('2026-09-20', 500, 'VND'), bill('2026-09-18', 100, 'USD')]
+    expect(inferThreshold(rows, { today: TODAY, currency: 'USD' })?.amount).toBe(100)
   })
 })
 

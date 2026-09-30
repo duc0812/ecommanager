@@ -210,7 +210,9 @@ Projects Summary:
 
 Panel "Dự phòng thanh toán Meta" trên `/finance/meta` trả lời: **cần có bao nhiêu tiền trên thẻ trong N ngày tới**.
 
-**Graph API v22.0 KHÔNG trả ngưỡng billing.** Edge `adspaymentcycles` và mọi field `billing_threshold` / `threshold_amount` / `next_bill_date` đều lỗi 400 (đã probe trên act_31911697621754869). Vì vậy ngưỡng được **suy ra từ lịch sử billing**: cụm số tiền charge lặp lại (tolerance 1%, tối thiểu 2 lần, cửa sổ 60 ngày), ưu tiên cụm mới nhất vì Meta nâng ngưỡng theo thời gian. Ghi đè tay được (`thresholdSource = MANUAL`).
+**Graph API v22.0 KHÔNG trả ngưỡng billing.** Edge `adspaymentcycles` và mọi field `billing_threshold` / `threshold_amount` / `next_bill_date` đều lỗi 400 (đã probe trên act_31911697621754869). Ưu tiên: **nhập tay (`thresholdSource = MANUAL`) trước, suy đoán sau**.
+
+Suy đoán = **charge lớn nhất trong 21 ngày**, KHÔNG phải cụm lặp nhiều nhất. Lý do đo được trên prod 2026-09-30: (1) sau một charge ngưỡng, Meta thu tiếp các charge lẻ nhỏ hơn — Remi03 ngày 29/09 có 29.32 / 29.32 / 19.55 / 11.17 sau charge ngưỡng 94.45 ngày 28/09, nên "cụm lặp mới nhất" chọn 29.32 (sai); (2) ngưỡng leo thang nhanh — Remi10 đi 224 → 402.38 → 656.41 → 901.72 trong một tuần, charge mới nhất thường chỉ xuất hiện 1 lần nên quy tắc "tối thiểu 2 lần" bỏ qua nó. Một charge không thể lớn hơn ngưỡng, nên max là ước lượng lệch về phía an toàn (thiếu tiền thẻ = tắt ads). `occurrences` giờ chỉ là mức tin cậy: bao nhiêu charge nằm trong 1% của max.
 
 Field lấy được từ API: `balance`, `account_status`, `funding_source_details`, và `campaigns/adsets` với `budget_remaining,daily_budget,lifetime_budget,stop_time`.
 

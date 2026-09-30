@@ -13,8 +13,6 @@ import {
   type ThresholdSource,
 } from '@/lib/meta-reserve'
 
-const THRESHOLD_WINDOW_DAYS = 60
-
 export type ReserveAccountRow = ReserveAssessment & {
   projectId: string | null
   balanceCurrency: string | null
@@ -92,11 +90,7 @@ export async function buildReserveOverview(
     const manual = account.thresholdSource === 'MANUAL' && account.billingThreshold !== null
     const inferred = manual
       ? null
-      : inferThreshold(billingsByAccount.get(account.id) ?? [], {
-        today,
-        currency,
-        windowDays: THRESHOLD_WINDOW_DAYS,
-      })
+      : inferThreshold(billingsByAccount.get(account.id) ?? [], { today, currency })
     const threshold = manual ? account.billingThreshold : inferred?.amount ?? null
     const thresholdSource: ThresholdSource | null = manual ? 'MANUAL' : inferred ? 'INFERRED' : null
 

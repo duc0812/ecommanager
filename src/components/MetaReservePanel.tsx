@@ -401,7 +401,7 @@ export default function MetaReservePanel() {
                               {row.thresholdSource === 'MANUAL'
                                 ? 'nhập tay'
                                 : row.thresholdSource === 'INFERRED'
-                                  ? `đoán · ${row.thresholdOccurrences} lần · ${fmtDate(row.thresholdLastSeen)}`
+                                  ? `đoán · charge lớn nhất 21 ngày · x${row.thresholdOccurrences} · ${fmtDate(row.thresholdLastSeen)}`
                                   : 'bấm để nhập'}
                             </span>
                           </button>
