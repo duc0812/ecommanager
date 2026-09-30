@@ -230,6 +230,23 @@ Files: `src/lib/meta-reserve.ts` (pure + test), `meta-reserve-service.ts` (DB), 
 
 Chưa làm: cron/alert Telegram, cộng phí FX 3% vào số cần nạp, lưu lịch sử ngưỡng.
 
+## Daily sync 15:00 giờ VN — 2026-09-30
+
+`src/lib/daily-sync.ts` + `daily-sync-scheduler.ts`: cron `0 15 * * *` timezone `Asia/Ho_Chi_Minh`, đăng ký trong `instrumentation.ts`, chạy **tuần tự** trong `runExclusive('daily-sync')`:
+
+1. `syncShopifyPayouts()` — payouts + balance + bank accounts
+2. Meta billing — `startMetaBillingSync(null)` rồi **chờ** job xong (poll 5s, tối đa 15 phút)
+3. `refreshReserveData()` — balance/budget/card cho panel dự phòng
+
+Thứ tự bắt buộc: dự phòng đọc ngưỡng từ lịch sử billing, và cả hai đều gọi Meta API (rate limit) nên không được chạy song song. Một bước lỗi **không** chặn bước sau; kết quả ghi vào `AppSetting.last_daily_sync_result`, xem/chạy tay qua `GET|POST /api/sync/daily` và khối "Sync tự động" trên `/finance/meta`.
+
+**Trước đó không có cron nào cho Meta billing lẫn Shopify** (kiểm 2026-09-30: `git log -S "0 12 * * *"` trống, VPS không có crontab/systemd timer). Cron `0 1 * * *` America/Denver chỉ chạy Meta **insights** (DailyAdSpend), không phải billing.
+
+`syncShopifyPayouts` được tách khỏi `/api/shopify/sync` ra `src/lib/shopify-payouts-sync.ts` (route thành wrapper mỏng; `tests/shopify-payout-sync.test.ts` vẫn import `POST` nên nó là lưới an toàn của lần tách này).
+
+### Nợ kỹ thuật đã biết: `runAutoSync` sync order bằng HTTP self-call
+`src/lib/auto-sync.ts` gọi `fetch(APP_URL + '/api/shopify/orders/sync')` kèm cookie của request → từ cron không có cookie thì middleware trả 401, và `last_auto_sync_result` ngày 2026-09-30 ghi `orders: { error: "fetch failed" }`. **Shopify orders hiện chỉ sync khi bấm tay.** Sửa đúng = tách 521 dòng POST của `src/app/api/shopify/orders/sync/route.ts` ra lib rồi cho scheduler gọi in-process như mọi scheduler khác (chủ động chưa làm 2026-09-30, ngoài phạm vi yêu cầu).
+
 ## Dev Server Info
 
 - **Port**: 3002

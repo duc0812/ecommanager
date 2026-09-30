@@ -60,6 +60,8 @@ export const API_ACCESS_RULES: ApiRule[] = [
   { prefix: '/api/projects/', access: ['projects'] },
   { prefix: '/api/shopify/orders/sync', access: ['shopify', 'fulfillment_orders', 'overview'] },
   { prefix: '/api/shopify', access: ['shopify'] },
+  { prefix: '/api/sync/daily', methods: READ, access: ['meta_billing', 'shopify', 'overview'] },
+  { prefix: '/api/sync/daily', methods: WRITE, access: ['meta_billing', 'shopify'] },
   { prefix: '/api/spy/config', methods: READ, access: ['setup_store', 'tools_spy_idea'] },
   { prefix: '/api/spy/config', methods: WRITE, access: 'SUPERADMIN' },
   { prefix: '/api/spy/cron', methods: WRITE, access: 'SUPERADMIN' },

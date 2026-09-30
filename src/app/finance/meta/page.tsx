@@ -3,6 +3,7 @@ import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from '
 import Sidebar from '@/components/Sidebar'
 import MetaBillingSyncStatus from '@/components/MetaBillingSyncStatus'
 import MetaReservePanel from '@/components/MetaReservePanel'
+import DailySyncStatus from '@/components/DailySyncStatus'
 import type { MetaBillingSyncJob } from '@/lib/meta-billing-sync-types'
 import { isMetaBillingSyncActive } from '@/lib/meta-billing-sync-types'
 
@@ -333,6 +334,8 @@ export default function MetaBillingPage() {
         )}
 
         <MetaBillingSyncStatus job={syncJob} />
+
+        <DailySyncStatus />
 
         <MetaReservePanel />
 

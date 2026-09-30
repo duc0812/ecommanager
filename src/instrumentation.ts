@@ -15,5 +15,7 @@ export async function register() {
     initAutoFulfillScheduler()
     const { initCashflowSnapshotScheduler } = await import('./lib/cashflow-snapshot-scheduler')
     initCashflowSnapshotScheduler()
+    const { initDailySyncScheduler } = await import('./lib/daily-sync-scheduler')
+    initDailySyncScheduler()
   }
 }
