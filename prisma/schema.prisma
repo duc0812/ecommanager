@@ -120,6 +120,18 @@ model MetaAdAccount {
   balance         Float?
   balanceCurrency String?
   balanceSyncedAt DateTime?
+  accountStatus       Int?
+  fundingCardLast4    String?
+  fundingCardLabel    String?
+  billingThreshold    Float?
+  thresholdCurrency   String?
+  thresholdSource     String?
+  budgetRemaining     Float?
+  plannedDailySpend   Float?
+  spendToday          Float?
+  activeCampaignCount Int?
+  excludedFromCashflow Boolean @default(false)
+  budgetSyncedAt      DateTime?
   createdAt       DateTime      @default(now())
   dailySpends     DailyAdSpend[]
   campaignDailySpends MetaCampaignDailySpend[]

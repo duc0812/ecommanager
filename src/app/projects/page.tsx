@@ -380,7 +380,7 @@ export default function ProjectDashboard() {
                       negative={analytics.actualCashflow < 0}
                       strong
                     />
-                    <StatCard label="Pending Meta" icon="pending_actions" value={fmtUSD(analytics.pendingInvoiceCharge)} hint="nợ ads chưa charge" />
+                    <StatCard label="Pending Meta" icon="pending_actions" value={fmtUSD(analytics.pendingInvoiceCharge)} hint="nợ ads chưa charge (trừ account đã bỏ qua)" />
                     <StatCard
                       label="Projected Cashflow"
                       icon="account_balance"

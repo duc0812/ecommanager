@@ -74,3 +74,14 @@ test.db-*
 # python bytecode
 __pycache__/
 *.pyc
+
+# competitor monitor (Python) — scraped raw data + rebuildable state
+research/raw/
+monitor/data/
+monitor/logs/
+monitor/db/
+.pytest_cache/
+
+# prod DB snapshots (chứa access token, ~40MB)
+db-backups/
+*.db.bak*

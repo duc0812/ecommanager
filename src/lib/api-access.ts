@@ -44,6 +44,8 @@ export const API_ACCESS_RULES: ApiRule[] = [
   { prefix: '/api/meta/import', access: ['meta_billing'] },
   { prefix: '/api/meta/exchange-rates', methods: READ, access: ['meta_billing', 'setup_meta', 'projects'] },
   { prefix: '/api/meta/exchange-rates', methods: WRITE, access: ['setup_meta'] },
+  { prefix: '/api/meta/reserve', methods: READ, access: ['meta_billing', 'overview'] },
+  { prefix: '/api/meta/reserve', methods: WRITE, access: ['meta_billing'] },
   { prefix: '/api/meta/sync-campaign-insights', access: ['marketing_niche', 'setup_meta'] },
   { prefix: '/api/meta/sync', access: ['meta_billing', 'setup_meta', 'overview'] },
   { prefix: '/api/meta/verify-spend', access: ['setup_meta', 'meta_billing'] },

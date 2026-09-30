@@ -206,6 +206,28 @@ Projects Summary:
 
 ---
 
+## Meta Billing Reserve (dự phòng nạp thẻ) — 2026-09-30
+
+Panel "Dự phòng thanh toán Meta" trên `/finance/meta` trả lời: **cần có bao nhiêu tiền trên thẻ trong N ngày tới**.
+
+**Graph API v22.0 KHÔNG trả ngưỡng billing.** Edge `adspaymentcycles` và mọi field `billing_threshold` / `threshold_amount` / `next_bill_date` đều lỗi 400 (đã probe trên act_31911697621754869). Vì vậy ngưỡng được **suy ra từ lịch sử billing**: cụm số tiền charge lặp lại (tolerance 1%, tối thiểu 2 lần, cửa sổ 60 ngày), ưu tiên cụm mới nhất vì Meta nâng ngưỡng theo thời gian. Ghi đè tay được (`thresholdSource = MANUAL`).
+
+Field lấy được từ API: `balance`, `account_status`, `funding_source_details`, và `campaigns/adsets` với `budget_remaining,daily_budget,lifetime_budget,stop_time`.
+
+**`budget_remaining` CÓ trừ số đã chi trong ngày** (đã kiểm chứng 2026-09-30: campaign daily=1500 remaining=1373 khi insights `date_preset=today` báo spend=1.27 → 1500−127=1373, khớp trên cả 28 campaign của Remi10+Remi08). Vì vậy `đã chi hôm nay = daily_budget − budget_remaining`, không cần gọi insights. Một account đang UNSETTLED thì không chi gì nên `remaining == daily` — đừng kết luận từ account đó rằng field không giảm.
+
+Công thức panel: `dự kiến cuối ngày = balance + (ngân sách − đã chi hôm nay)`; vượt `ngưỡng` → Meta charge, thẻ phải có sẵn số tiền bằng ngưỡng.
+
+**Số tiền cần trên thẻ** = ngưỡng, NHƯNG = toàn bộ balance khi account đã vượt ngưỡng hoặc `account_status ∈ {2,3,9}` (UNSETTLED / DISABLED / GRACE) — Meta sẽ thu cả cục nợ, không phải một ngưỡng. Gom theo **thẻ** (`fundingCardLast4`) vì 1 thẻ chạy nhiều account (7619 = Remi04 + Remi05 + Remi08) và một thẻ có thể bị charge cả USD lẫn VND.
+
+Files: `src/lib/meta-reserve.ts` (pure + test), `meta-reserve-service.ts` (DB), `meta-reserve-sync.ts` (Meta API), `src/app/api/meta/reserve/route.ts` (GET/POST refresh/PATCH ngưỡng, `requireSuperadmin` cho PATCH), `src/components/MetaReservePanel.tsx`. Card parser dùng chung tách ra `src/lib/meta-card.ts`.
+
+**Ngưỡng chỉ đúng khi billing history đã sync.** Verify bằng snapshot prod, không bằng `dev.db` (dev.db thường cũ hàng tuần → suy ra ngưỡng sai: Remi10 ra $224.92 thay vì $656.41, Remi03 ra $7.82 thay vì $93.23). Kéo snapshot: SSH `root@178.105.170.0` → `python3 -c` với `sqlite3` stdlib chạy `VACUUM INTO '/tmp/prod-snap.db'` (VPS **không** có sqlite3 CLI, node v20 nên **không** có `node:sqlite`; python3 3.14 có sẵn) → `scp` về `db-backups/` (đã gitignore, file chứa access token) → `DATABASE_URL="file:./db-backups/<snap>.db" npx prisma migrate deploy` rồi chạy verify script.
+
+**`MetaAdAccount.excludedFromCashflow`** (2026-09-30): account Meta không thu được tiền nữa (Remi04, Remi05 — `account_status = 3`) bị loại khỏi **cả** tổng dự phòng **và** `pendingInvoiceCharge` ("Pending Meta" trên `/projects`, `sumPendingInvoiceChargeUsd` ở `repos/cashflow.ts`). Vẫn hiện trong bảng với badge "Bỏ qua" (mờ) và bật/tắt bằng icon 👁 trên hàng. Chi phí quảng cáo **đã chi** của chúng vẫn tính vào P&L như cũ — chỉ phần nợ chưa charge bị loại. Remi02 chưa được thêm vào tool.
+
+Chưa làm: cron/alert Telegram, cộng phí FX 3% vào số cần nạp, lưu lịch sử ngưỡng.
+
 ## Dev Server Info
 
 - **Port**: 3002

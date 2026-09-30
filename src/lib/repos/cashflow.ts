@@ -10,12 +10,13 @@ import { dateKeyInZone, addDays } from '@/lib/cashflow-dates'
 const OTHER_BILL_CATEGORIES = ['APP_TOOL', 'SUBSCRIPTION', 'SUPPLIER', 'OFFICE', 'OTHER'] as const
 
 export function sumPendingInvoiceChargeUsd(
-  accounts: { balance: number | null; balanceCurrency: string | null }[],
+  accounts: { balance: number | null; balanceCurrency: string | null; excludedFromCashflow: boolean }[],
   dateKey: string,
   schedule: { effectiveDate: string; rate: number }[],
 ): number {
   let total = 0
   for (const a of accounts) {
+    if (a.excludedFromCashflow) continue
     if (a.balance === null || a.balance === undefined) continue
     const usd = convertMetaAmountToUsdDated(a.balance, a.balanceCurrency, dateKey, schedule)
     if (usd === null) continue
@@ -54,7 +55,7 @@ export async function computeProjectCashflow(input: ProjectCashflowInput): Promi
   const paidMetaStatuses = PAID_META_STATUSES
   const metaAccounts = await prisma.metaAdAccount.findMany({
     where: { projectId: project.id },
-    select: { id: true, accountId: true, accountName: true, currency: true, balance: true, balanceCurrency: true },
+    select: { id: true, accountId: true, accountName: true, currency: true, balance: true, balanceCurrency: true, excludedFromCashflow: true },
   })
   const metaAccountIds = metaAccounts.map((account: any) => account.id)
   const [payouts, billings, orders, dailyAdSpends, otherBills, fulfillmentBills] = await Promise.all([

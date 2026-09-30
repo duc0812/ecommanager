@@ -2,6 +2,7 @@
 import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Sidebar from '@/components/Sidebar'
 import MetaBillingSyncStatus from '@/components/MetaBillingSyncStatus'
+import MetaReservePanel from '@/components/MetaReservePanel'
 import type { MetaBillingSyncJob } from '@/lib/meta-billing-sync-types'
 import { isMetaBillingSyncActive } from '@/lib/meta-billing-sync-types'
 
@@ -332,6 +333,8 @@ export default function MetaBillingPage() {
         )}
 
         <MetaBillingSyncStatus job={syncJob} />
+
+        <MetaReservePanel />
 
         {(data?.missingExchangeRateAccounts?.length ?? 0) > 0 && (
           <div className="mb-lg rounded-xl border border-amber-300 bg-amber-50 px-lg py-md text-amber-900">

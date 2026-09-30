@@ -5,6 +5,7 @@ import { isMetaBillingSyncActive } from '@/lib/meta-billing-sync-types'
 import { metaBillingDateInTimezone, normalizeMetaActivityAmount } from '@/lib/meta-billing-normalization'
 import { isMetaRateLimitError, metaPageDelayMs, parseMetaUsagePercent } from '@/lib/meta-rate-limit'
 import { buildAccountBalanceUpdate } from '@/lib/meta-balance'
+import { cleanPaymentMethodLabel, parseLast4 } from '@/lib/meta-card'
 
 const GRAPH_API_VERSION = process.env.META_GRAPH_API_VERSION ?? 'v22.0'
 const DEFAULT_BACKFILL_DAYS = 90
@@ -90,24 +91,6 @@ function graphUrl(path: string, params: Record<string, string>) {
   const url = new URL(`https://graph.facebook.com/${GRAPH_API_VERSION}/${path}`)
   Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, value))
   return url.toString()
-}
-
-function parseLast4(value: unknown): string | null {
-  if (value == null) return null
-  if (typeof value === 'object') {
-    const details = value as Record<string, unknown>
-    const direct = details.last4 ?? details.last_4 ?? details.card_last_four_digits
-    if (direct) return String(direct).slice(-4)
-  }
-
-  const text = typeof value === 'string' ? value : JSON.stringify(value)
-  const match = text.match(/(?:\*+|x+|\.{2,}|[-\s])(\d{4})(?!\d)/i)
-  return match?.[1] ?? null
-}
-
-function cleanPaymentMethodLabel(value: string | null) {
-  if (!value) return null
-  return value.replace(/\s*(?:\*+|x+|\.{2,}|[-\s])\d{4}\s*$/i, '').trim() || value
 }
 
 function parseJsonMaybe(value: unknown) {
