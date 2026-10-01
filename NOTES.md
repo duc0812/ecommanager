@@ -230,6 +230,16 @@ Files: `src/lib/meta-reserve.ts` (pure + test), `meta-reserve-service.ts` (DB), 
 
 Chưa làm: cron/alert Telegram, cộng phí FX 3% vào số cần nạp, lưu lịch sử ngưỡng.
 
+## Tách "dòng tiền của kỳ" khỏi "vị thế tiền hiện tại" — 2026-10-01
+
+`shopifyBalance`, `inTransitPayout`, `pendingInvoiceCharge` chỉ miêu tả **lúc này** — Shopify và Meta đều không có API lịch sử cho chúng. Trước đây cả ba bị cộng thẳng vào dòng tiền của kỳ đang xem, nên xem tháng 10 (0 order, 0 payout) vẫn ra "Projected Cashflow 5,575.69", và xem tháng 9 thì hai thẻ `Projected Cashflow` / `Cashflow Dự kiến` **trùng số** vì `pendingPayout` luôn bị kẹp về 0 (doanh thu order ≈ payout nhận trong tháng, trừ thêm ~6.5k ảnh chụp là âm).
+
+`src/lib/cashflow-stock.ts` quyết định nguồn số: kỳ chạy tới hôm nay → `LIVE`; kỳ đã đóng → `CashflowSnapshot` có `asOfDate === endStr` → `SNAPSHOT`; không có → `NONE` (UI hiện "—", không hiện số bừa). `Vị thế tiền = balance + in-transit − nợ Meta`, **không** cộng `actualCashflow` nữa.
+
+**Đã bỏ hẳn** `expectedCashflow` + `pendingPayout` (thẻ "Cashflow Dự kiến"): balance + in-transit đã là toàn bộ tiền Shopify đang giữ. Đo bằng API 2026-10-01: `balance.json` = 1,386.53 **khớp tuyệt đối** tổng balance transaction có `payout_status=pending`, còn tx của payout in_transit mang `payout_status=in_transit` → **balance KHÔNG bao gồm in-transit**, tiền rời balance ngay khi Shopify tạo payout. Nên `balance + in-transit` không double count.
+
+Cột snapshot `shopifyBalance` / `inTransitPayout` / `pendingInvoiceCharge` / `projectedCashflow` giờ **nullable**; `pendingPayout` bị drop. `snapshotProjectMonth` chỉ ghi stock khi `asOfDate` cách hôm nay ≤ `SNAPSHOT_STOCK_GRACE_DAYS` (2) — cron chốt tháng chạy 00:00 ngày 1 nên vẫn ghi được, còn backfill tháng cũ thì ghi null. Migration `20261001020000` null hoá các dòng ghi muộn hơn 2 ngày: trên prod đúng 7 dòng (02→08/2026) đều mang balance 4,606.28 của ngày 13/09.
+
 ## Daily sync 15:00 giờ VN — 2026-09-30
 
 `src/lib/daily-sync.ts` + `daily-sync-scheduler.ts`: cron `0 15 * * *` timezone `Asia/Ho_Chi_Minh`, đăng ký trong `instrumentation.ts`, chạy **tuần tự** trong `runExclusive('daily-sync')`:

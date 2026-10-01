@@ -6,6 +6,7 @@ import { getMetaRateSchedule } from '@/lib/meta-exchange-rates'
 import { getVndCardLast4, sumBillingFxFeesUsd, PAID_META_STATUSES } from '@/lib/meta-fee'
 import { PROJECT_REVENUE_EXCLUDED_STATUSES, summarizeProjectOrderFinancials } from '@/lib/project-metrics'
 import { dateKeyInZone, addDays } from '@/lib/cashflow-dates'
+import { buildLiveStock, emptyStock, liveStockAppliesTo, stockFromSnapshot, type CashflowStock } from '@/lib/cashflow-stock'
 
 const OTHER_BILL_CATEGORIES = ['APP_TOOL', 'SUBSCRIPTION', 'SUPPLIER', 'OFFICE', 'OTHER'] as const
 
@@ -36,6 +37,9 @@ export type ProjectCashflowInput = {
   orderRangeStart: Date
   orderRangeEnd: Date
   periodIsValid: boolean
+  // How far past the period end the live balance may still be taken to describe it. The
+  // month-end snapshot passes a couple of days; a dashboard read passes none.
+  stockGraceDays?: number
 }
 
 export type ProjectCashflowResult = Record<string, any>
@@ -50,6 +54,7 @@ export async function computeProjectCashflow(input: ProjectCashflowInput): Promi
     orderRangeStart,
     orderRangeEnd,
     periodIsValid,
+    stockGraceDays = 0,
   } = input
 
   const paidMetaStatuses = PAID_META_STATUSES
@@ -205,19 +210,29 @@ export async function computeProjectCashflow(input: ProjectCashflowInput): Promi
   const totalOtherCosts = otherBillsTotal + fulfillmentBillsTotal
   const cashflowCosts = totalOrderCogs + totalOtherCosts
   const actualCashflow = totalPayout - totalMetaBilling - metaFxFee - cashflowCosts
-  const shopifyBalance = project.shopifyStore?.currentBalance ?? 0
-  const inTransitPayoutRows = project.shopifyStore
-    ? await prisma.payout.findMany({
-        where: { storeId: project.shopifyStore.id, status: { in: ['in_transit', 'scheduled', 'pending'] } },
-        select: { amount: true },
-      })
-    : []
-  const inTransitPayout = inTransitPayoutRows.reduce((sum: number, row: any) => sum + row.amount, 0)
-  const pendingInvoiceCharge = sumPendingInvoiceChargeUsd(metaAccounts, dateKeyInZone(new Date(), timeZone), schedule)
-  const projectedCashflow = actualCashflow + shopifyBalance + inTransitPayout - pendingInvoiceCharge
+  const todayKey = dateKeyInZone(new Date(), timeZone)
+  let stock: CashflowStock
+  if (liveStockAppliesTo(endStr, todayKey, stockGraceDays)) {
+    const inTransitPayoutRows = project.shopifyStore
+      ? await prisma.payout.findMany({
+          where: { storeId: project.shopifyStore.id, status: { in: ['in_transit', 'scheduled', 'pending'] } },
+          select: { amount: true },
+        })
+      : []
+    stock = buildLiveStock({
+      shopifyBalance: project.shopifyStore?.currentBalance ?? 0,
+      inTransitPayout: inTransitPayoutRows.reduce((sum: number, row: any) => sum + row.amount, 0),
+      pendingInvoiceCharge: sumPendingInvoiceChargeUsd(metaAccounts, todayKey, schedule),
+    }, todayKey)
+  } else {
+    // A closed period gets the balance its own month-end snapshot recorded, or nothing.
+    const snapshot = await prisma.cashflowSnapshot.findFirst({
+      where: { projectId: project.id, asOfDate: endStr },
+      select: { asOfDate: true, shopifyBalance: true, inTransitPayout: true, pendingInvoiceCharge: true },
+    })
+    stock = snapshot ? stockFromSnapshot(snapshot) : emptyStock()
+  }
   const totalOrderNetRevenue = orders.reduce((sum: number, order: any) => sum + order.expectedPayout, 0)
-  const pendingPayout = Math.max(0, totalOrderNetRevenue - totalPayout - inTransitPayout - shopifyBalance)
-  const expectedCashflow = projectedCashflow + pendingPayout
   const grossProfit = totalOrderProfit - totalOtherCosts - totalAdSpend - metaFxFee
   const grossMargin = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0
   const effectiveAdCost = totalAdSpend + metaFxFee
@@ -303,14 +318,13 @@ export async function computeProjectCashflow(input: ProjectCashflowInput): Promi
     fulfillmentBillsCount: fulfillmentBills.length,
     totalOtherCosts,
     actualCashflow,
-    shopifyBalance,
+    stock,
+    shopifyBalance: stock.shopifyBalance,
     shopifyBalanceCurrency: project.shopifyStore?.currentBalanceCurrency ?? null,
-    inTransitPayout,
-    pendingInvoiceCharge,
-    projectedCashflow,
-    pendingPayout,
+    inTransitPayout: stock.inTransitPayout,
+    pendingInvoiceCharge: stock.pendingInvoiceCharge,
+    projectedCashflow: stock.projectedCashflow,
     totalOrderNetRevenue,
-    expectedCashflow,
     grossProfit,
     grossMargin,
     adSpendRatio,

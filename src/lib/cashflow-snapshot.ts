@@ -33,6 +33,7 @@ export function listPeriodMonths(startDate: Date, upToMonth: string, timeZone: s
   return out
 }
 
-export function monthlyProfit(current: number, prev: number | null): number {
+export function monthlyProfit(current: number | null, prev: number | null): number | null {
+  if (current === null) return null
   return prev === null ? current : Math.round((current - prev) * 100) / 100
 }

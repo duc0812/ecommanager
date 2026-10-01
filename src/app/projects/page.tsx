@@ -105,14 +105,16 @@ type Analytics = {
   fulfillmentBillsCount: number
   totalOtherCosts: number
   actualCashflow: number
-  shopifyBalance: number
+  stock: {
+    source: 'LIVE' | 'SNAPSHOT' | 'NONE'
+    asOf: string | null
+    shopifyBalance: number | null
+    inTransitPayout: number | null
+    pendingInvoiceCharge: number | null
+    projectedCashflow: number | null
+  }
   shopifyBalanceCurrency: string | null
-  inTransitPayout: number
-  pendingInvoiceCharge: number
-  projectedCashflow: number
-  pendingPayout: number
   totalOrderNetRevenue: number
-  expectedCashflow: number
   grossProfit: number
   grossMargin: number
   adSpendRatio: number
@@ -380,21 +382,21 @@ export default function ProjectDashboard() {
                       negative={analytics.actualCashflow < 0}
                       strong
                     />
-                    <StatCard label="Pending Meta" icon="pending_actions" value={fmtUSD(analytics.pendingInvoiceCharge)} hint="nợ ads chưa charge (trừ account đã bỏ qua)" />
                     <StatCard
-                      label="Projected Cashflow"
-                      icon="account_balance"
-                      value={fmtUSD(analytics.projectedCashflow)}
-                      hint={`+ ${fmtUSD(analytics.shopifyBalance)} balance + ${fmtUSD(analytics.inTransitPayout)} in-transit − ${fmtUSD(analytics.pendingInvoiceCharge)} pending Meta`}
-                      negative={analytics.projectedCashflow < 0}
-                      strong
+                      label="Pending Meta"
+                      icon="pending_actions"
+                      value={fmtStock(analytics.stock.pendingInvoiceCharge)}
+                      hint={stockHint(analytics.stock, 'nợ ads chưa charge (trừ account đã bỏ qua)')}
                     />
                     <StatCard
-                      label="Cashflow Dự kiến"
-                      icon="hourglass_top"
-                      value={fmtUSD(analytics.expectedCashflow)}
-                      hint={`nếu toàn bộ order payout về · + ${fmtUSD(analytics.pendingPayout)} order chưa vào balance/in-transit`}
-                      negative={analytics.expectedCashflow < 0}
+                      label="Vị thế tiền"
+                      icon="account_balance"
+                      value={fmtStock(analytics.stock.projectedCashflow)}
+                      hint={stockHint(
+                        analytics.stock,
+                        `${fmtUSD(analytics.stock.shopifyBalance ?? 0)} balance + ${fmtUSD(analytics.stock.inTransitPayout ?? 0)} in-transit − ${fmtUSD(analytics.stock.pendingInvoiceCharge ?? 0)} nợ Meta`,
+                      )}
+                      negative={(analytics.stock.projectedCashflow ?? 0) < 0}
                       strong
                     />
                   </div>
@@ -417,9 +419,9 @@ export default function ProjectDashboard() {
                       {snapshotRows.map((r: any) => (
                         <div key={r.periodMonth} className="flex items-center justify-between px-lg py-md">
                           <span className="text-body-sm text-on-surface-variant">{r.periodMonth}</span>
-                          <span className="text-label-md text-primary">{fmtUSD(basis === 'actual' ? r.actualCashflow : r.projectedCashflow)}</span>
+                          <span className="text-label-md text-primary">{fmtStock(basis === 'actual' ? r.actualCashflow : r.projectedCashflow)}</span>
                           <span className={`text-label-md font-semibold ${(basis === 'actual' ? r.actualProfit : r.projectedProfit) < 0 ? 'text-error' : 'text-primary'}`}>
-                            {fmtUSD(basis === 'actual' ? r.actualProfit : r.projectedProfit)}
+                            {fmtStock(basis === 'actual' ? r.actualProfit : r.projectedProfit)}
                           </span>
                         </div>
                       ))}
@@ -513,6 +515,19 @@ export default function ProjectDashboard() {
     </div>
     </RoleGate>
   )
+}
+
+function fmtStock(value: number | null) {
+  return value === null ? '—' : fmtUSD(value)
+}
+
+// A stock figure is only ever true for one instant, so it has to say which instant that is.
+function stockHint(stock: Analytics['stock'], composition: string) {
+  if (stock.source === 'NONE') return 'kỳ đã đóng, không có snapshot số dư'
+  const when = stock.source === 'LIVE'
+    ? 'hiện tại'
+    : `chốt ${new Date(`${stock.asOf}T00:00:00`).toLocaleDateString('en-US')}`
+  return `${when} · ${composition}`
 }
 
 function StatCard({ label, icon, value, hint, negative = false, strong = false }: { label: string; icon: string; value: string; hint: string; negative?: boolean; strong?: boolean }) {

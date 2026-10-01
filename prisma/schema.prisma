@@ -965,11 +965,12 @@ model CashflowSnapshot {
   totalOrderCogs       Float
   totalOtherCosts      Float
   actualCashflow       Float
-  shopifyBalance       Float
-  inTransitPayout      Float
-  pendingPayout        Float
-  pendingInvoiceCharge Float
-  projectedCashflow    Float
+  // Nullable on purpose: these three only describe "now" (no API history), so a snapshot taken
+  // outside its own period must record "unknown" instead of today's numbers.
+  shopifyBalance       Float?
+  inTransitPayout      Float?
+  pendingInvoiceCharge Float?
+  projectedCashflow    Float?
 
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt

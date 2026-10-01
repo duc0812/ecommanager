@@ -5,6 +5,7 @@ import { computeProjectCashflow } from '@/lib/repos/cashflow'
 import { monthEndBoundaryUtc, listPeriodMonths } from '@/lib/cashflow-snapshot'
 import { zonedDayStartUtc, dateOnly } from '@/lib/cashflow-dates'
 import { SHOPIFY_PAYOUT_START_DATE } from '@/lib/shopify-payout-policy'
+import { SNAPSHOT_STOCK_GRACE_DAYS } from '@/lib/cashflow-stock'
 
 export async function snapshotProjectMonth(projectId: string, periodMonth: string) {
   const project = await prisma.project.findUnique({
@@ -29,6 +30,7 @@ export async function snapshotProjectMonth(projectId: string, periodMonth: strin
     project, timeZone, startStr, endStr, payoutStartStr,
     startDate, endDate, orderRangeStart, orderRangeEnd,
     periodIsValid: startDate <= endDate,
+    stockGraceDays: SNAPSHOT_STOCK_GRACE_DAYS,
   })
 
   return prisma.cashflowSnapshot.upsert({
@@ -38,7 +40,7 @@ export async function snapshotProjectMonth(projectId: string, periodMonth: strin
       totalPayout: c.totalPayout, totalMetaBilling: c.totalMetaBilling, metaFxFee: c.metaFxFee,
       totalOrderCogs: c.totalOrderCogs, totalOtherCosts: c.totalOtherCosts,
       actualCashflow: c.actualCashflow, shopifyBalance: c.shopifyBalance,
-      inTransitPayout: c.inTransitPayout, pendingPayout: c.pendingPayout,
+      inTransitPayout: c.inTransitPayout,
       pendingInvoiceCharge: c.pendingInvoiceCharge, projectedCashflow: c.projectedCashflow,
       takenAt: new Date(),
     },
@@ -47,7 +49,7 @@ export async function snapshotProjectMonth(projectId: string, periodMonth: strin
       totalPayout: c.totalPayout, totalMetaBilling: c.totalMetaBilling, metaFxFee: c.metaFxFee,
       totalOrderCogs: c.totalOrderCogs, totalOtherCosts: c.totalOtherCosts,
       actualCashflow: c.actualCashflow, shopifyBalance: c.shopifyBalance,
-      inTransitPayout: c.inTransitPayout, pendingPayout: c.pendingPayout,
+      inTransitPayout: c.inTransitPayout,
       pendingInvoiceCharge: c.pendingInvoiceCharge, projectedCashflow: c.projectedCashflow,
       takenAt: new Date(),
     },
