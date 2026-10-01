@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
-import { previousMonth, monthlyProfit, effectiveExpectedCashflow, snapshotCloseDateKey } from '@/lib/cashflow-snapshot'
+import { previousMonth, monthlyProfit, effectiveExpectedCashflow } from '@/lib/cashflow-snapshot'
 import { requireSuperadmin } from '@/lib/api-auth'
 
 export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
@@ -16,7 +16,7 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
     const expected = effectiveExpectedCashflow(s)
     return {
       ...s,
-      closeDate: snapshotCloseDateKey(s.periodMonth),
+      closeDate: s.asOfDate,
       expectedCashflowEffective: expected,
       actualProfit: monthlyProfit(s.actualCashflow, prev ? prev.actualCashflow : null),
       expectedProfit: monthlyProfit(expected, prev ? effectiveExpectedCashflow(prev) : null),

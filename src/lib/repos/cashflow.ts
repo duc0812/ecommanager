@@ -6,6 +6,7 @@ import { getMetaRateSchedule } from '@/lib/meta-exchange-rates'
 import { getVndCardLast4, sumBillingFxFeesUsd, PAID_META_STATUSES } from '@/lib/meta-fee'
 import { PROJECT_REVENUE_EXCLUDED_STATUSES, summarizeProjectOrderFinancials } from '@/lib/project-metrics'
 import { dateKeyInZone, addDays } from '@/lib/cashflow-dates'
+import { monthEndDateKey } from '@/lib/cashflow-snapshot'
 import { buildLiveStock, emptyStock, liveStockAppliesTo, stockFromSnapshot, type CashflowStock } from '@/lib/cashflow-stock'
 import { expectedPeriodCashflow } from '@/lib/cashflow-expected'
 
@@ -38,9 +39,6 @@ export type ProjectCashflowInput = {
   orderRangeStart: Date
   orderRangeEnd: Date
   periodIsValid: boolean
-  // How far past the period end the live balance may still be taken to describe it. The
-  // month-end snapshot passes a couple of days; a dashboard read passes none.
-  stockGraceDays?: number
 }
 
 export type ProjectCashflowResult = Record<string, any>
@@ -55,7 +53,6 @@ export async function computeProjectCashflow(input: ProjectCashflowInput): Promi
     orderRangeStart,
     orderRangeEnd,
     periodIsValid,
-    stockGraceDays = 0,
   } = input
 
   const paidMetaStatuses = PAID_META_STATUSES
@@ -213,7 +210,7 @@ export async function computeProjectCashflow(input: ProjectCashflowInput): Promi
   const actualCashflow = totalPayout - totalMetaBilling - metaFxFee - cashflowCosts
   const todayKey = dateKeyInZone(new Date(), timeZone)
   let stock: CashflowStock
-  if (liveStockAppliesTo(endStr, todayKey, stockGraceDays)) {
+  if (liveStockAppliesTo(endStr, todayKey)) {
     const inTransitPayoutRows = project.shopifyStore
       ? await prisma.payout.findMany({
           where: { storeId: project.shopifyStore.id, status: { in: ['in_transit', 'scheduled', 'pending'] } },
@@ -227,8 +224,16 @@ export async function computeProjectCashflow(input: ProjectCashflowInput): Promi
     }, todayKey)
   } else {
     // A closed period gets the balance its own month-end snapshot recorded, or nothing.
+    const monthOfEnd = endStr.slice(0, 7)
     const snapshot = await prisma.cashflowSnapshot.findFirst({
-      where: { projectId: project.id, asOfDate: endStr },
+      where: {
+        projectId: project.id,
+        OR: [
+          { asOfDate: endStr },
+          // A month view ends on the last day; its meter was read the morning after.
+          ...(endStr === monthEndDateKey(monthOfEnd, timeZone) ? [{ periodMonth: monthOfEnd }] : []),
+        ],
+      },
       select: { asOfDate: true, shopifyBalance: true, inTransitPayout: true, pendingInvoiceCharge: true },
     })
     stock = snapshot ? stockFromSnapshot(snapshot) : emptyStock()

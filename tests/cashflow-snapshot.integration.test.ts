@@ -20,7 +20,8 @@ describe('snapshotProjectMonth', () => {
   it('creates a snapshot row with breakdown, idempotent on re-run', async () => {
     const first = await snapshotProjectMonth(PID, '2026-06')
     expect(first.periodMonth).toBe('2026-06')
-    expect(first.asOfDate).toBe('2026-06-30')
+    // The meter is read on the 1st of the next month, so that is the instant it describes.
+    expect(first.asOfDate).toBe('2026-07-01')
     expect(typeof first.actualCashflow).toBe('number')
     const second = await snapshotProjectMonth(PID, '2026-06')
     expect(second.id).toBe(first.id)

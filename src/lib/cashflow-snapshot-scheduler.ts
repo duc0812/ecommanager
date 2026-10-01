@@ -1,10 +1,9 @@
 import { initOnce } from '@/lib/job-lock'
 import { prisma } from '@/lib/db'
 import { computeProjectCashflow } from '@/lib/repos/cashflow'
-import { monthEndBoundaryUtc, listPeriodMonths } from '@/lib/cashflow-snapshot'
-import { zonedDayStartUtc, dateOnly } from '@/lib/cashflow-dates'
+import { listPeriodMonths, snapshotCloseDateKey } from '@/lib/cashflow-snapshot'
+import { zonedDayStartUtc, dateOnly, addDays } from '@/lib/cashflow-dates'
 import { SHOPIFY_PAYOUT_START_DATE } from '@/lib/shopify-payout-policy'
-import { SNAPSHOT_STOCK_GRACE_DAYS } from '@/lib/cashflow-stock'
 
 export async function snapshotProjectMonth(projectId: string, periodMonth: string) {
   const project = await prisma.project.findUnique({
@@ -17,19 +16,21 @@ export async function snapshotProjectMonth(projectId: string, periodMonth: strin
   if (!project) throw new Error(`Project ${projectId} not found`)
 
   const timeZone = project.shopifyStore?.ianaTimezone ?? 'UTC'
-  const { asOfDate, endDate } = monthEndBoundaryUtc(periodMonth, timeZone)
+  // A snapshot is a meter reading taken on the 1st of the following month, so that date is
+  // both what it is dated and how far it accumulates. Read on the day itself it carries a
+  // live balance; recomputed later it carries none, because that instant has passed.
+  const asOfDate = snapshotCloseDateKey(periodMonth)
+  const endDate = new Date(zonedDayStartUtc(addDays(asOfDate, 1), timeZone).getTime() - 1)
   const startDate = project.startDate
   const startStr = dateOnly(startDate)
-  const endStr = asOfDate
   const payoutStartStr = startStr > SHOPIFY_PAYOUT_START_DATE ? startStr : SHOPIFY_PAYOUT_START_DATE
-  const orderRangeStart = zonedDayStartUtc(startStr, timeZone)
-  const orderRangeEnd = endDate
 
   const c = await computeProjectCashflow({
-    project, timeZone, startStr, endStr, payoutStartStr,
-    startDate, endDate, orderRangeStart, orderRangeEnd,
+    project, timeZone, startStr, endStr: asOfDate, payoutStartStr,
+    startDate, endDate,
+    orderRangeStart: zonedDayStartUtc(startStr, timeZone),
+    orderRangeEnd: endDate,
     periodIsValid: startDate <= endDate,
-    stockGraceDays: SNAPSHOT_STOCK_GRACE_DAYS,
   })
 
   return prisma.cashflowSnapshot.upsert({

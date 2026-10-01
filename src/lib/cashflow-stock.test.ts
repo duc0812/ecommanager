@@ -14,11 +14,11 @@ describe('liveStockAppliesTo', () => {
     expect(liveStockAppliesTo('2026-09-29', TODAY)).toBe(false)
   })
 
-  it('allows a grace window so the month-end cron can still capture the close', () => {
-    // Cron fires 00:00 on the 1st for a period that ended the day before.
-    expect(liveStockAppliesTo('2026-09-30', '2026-10-01', 2)).toBe(true)
-    // A backfill run weeks later must not stamp today's balance onto February.
-    expect(liveStockAppliesTo('2026-02-28', '2026-09-13', 2)).toBe(false)
+  it('rejects a capture dated before the day it runs, however close', () => {
+    // A month close that runs late, or a backfill weeks later, must not stamp today's
+    // balance onto the instant it claims to describe.
+    expect(liveStockAppliesTo('2026-10-01', '2026-10-03')).toBe(false)
+    expect(liveStockAppliesTo('2026-03-01', '2026-09-13')).toBe(false)
   })
 })
 
