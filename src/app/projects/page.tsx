@@ -165,6 +165,8 @@ export default function ProjectDashboard() {
   const [refreshVersion, setRefreshVersion] = useState(0)
   const [snapshotRows, setSnapshotRows] = useState<any[]>([])
   const [basis, setBasis] = useState<'actual' | 'projected'>('actual')
+  // Rows come back newest first, so the month profit is the gap between the two latest closes.
+  const latestMonthClose = snapshotRows[0] ?? null
 
   useEffect(() => {
     fetch('/api/auto-sync').then(r => r.json()).then(setSyncStatus).catch(() => {})
@@ -390,14 +392,11 @@ export default function ProjectDashboard() {
                       hint={stockHint(analytics.stock, 'nợ ads chưa charge (trừ account đã bỏ qua)')}
                     />
                     <StatCard
-                      label="Vị thế tiền"
-                      icon="account_balance"
-                      value={fmtStock(analytics.stock.projectedCashflow)}
-                      hint={stockHint(
-                        analytics.stock,
-                        `${fmtUSD(analytics.stock.shopifyBalance ?? 0)} balance + ${fmtUSD(analytics.stock.inTransitPayout ?? 0)} in-transit − ${fmtUSD(analytics.stock.pendingInvoiceCharge ?? 0)} nợ Meta`,
-                      )}
-                      negative={(analytics.stock.projectedCashflow ?? 0) < 0}
+                      label="Profit Dự kiến"
+                      icon="calendar_month"
+                      value={fmtStock(latestMonthClose?.expectedProfit ?? null)}
+                      hint={monthCloseHint(latestMonthClose, snapshotRows[1])}
+                      negative={(latestMonthClose?.expectedProfit ?? 0) < 0}
                       strong
                     />
                     <StatCard
@@ -540,6 +539,13 @@ function stockHint(stock: Analytics['stock'], composition: string) {
     ? 'hiện tại'
     : `chốt ${new Date(`${stock.asOf}T00:00:00`).toLocaleDateString('en-US')}`
   return `${when} · ${composition}`
+}
+
+function monthCloseHint(latest: any, previous: any) {
+  if (!latest) return 'chưa có snapshot nào — bấm Backfill'
+  if (latest.expectedProfit === null || latest.expectedProfit === undefined) return `tháng ${latest.periodMonth} · chưa tính được`
+  const base = previous ? `snapshot ${latest.periodMonth} − ${previous.periodMonth}` : `snapshot đầu tiên (${latest.periodMonth})`
+  return `tháng ${latest.periodMonth} · ${base} · chốt 15:00 VN ngày 1`
 }
 
 function StatCard({ label, icon, value, hint, negative = false, strong = false }: { label: string; icon: string; value: string; hint: string; negative?: boolean; strong?: boolean }) {

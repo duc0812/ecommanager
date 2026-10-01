@@ -3,6 +3,8 @@ import type { MetaBillingSyncJob } from '@/lib/meta-billing-sync-types'
 import { getMetaBillingSyncJob, startMetaBillingSync } from '@/lib/meta-billing-sync'
 import { refreshReserveData } from '@/lib/meta-reserve-sync'
 import { syncShopifyPayouts } from '@/lib/shopify-payouts-sync'
+import { snapshotProjectMonth } from '@/lib/cashflow-snapshot-scheduler'
+import { dateKeyInZone } from '@/lib/cashflow-dates'
 
 export const DAILY_SYNC_RESULT_KEY = 'last_daily_sync_result'
 export const DAILY_SYNC_CRON = '0 15 * * *'
@@ -12,7 +14,7 @@ const BILLING_TERMINAL_STATUSES = new Set(['COMPLETED', 'COMPLETED_WITH_ERRORS',
 const BILLING_WAIT_MS = 15 * 60_000
 const BILLING_POLL_MS = 5_000
 
-const STEP_ORDER = ['payouts', 'billing', 'reserve'] as const
+const STEP_ORDER = ['payouts', 'billing', 'reserve', 'snapshot'] as const
 export type DailySyncStepName = typeof STEP_ORDER[number]
 
 export type DailySyncSteps = Record<DailySyncStepName, () => Promise<any>>
@@ -51,6 +53,33 @@ export async function waitForMetaBillingSync({
   }
 }
 
+// The month is closed by the 15:00 run on the 1st, right after the three syncs above, so the
+// snapshot records data refreshed minutes earlier rather than yesterday's.
+export function monthToCloseOn(now: Date): string | null {
+  const todayKey = dateKeyInZone(now, DAILY_SYNC_TIMEZONE)
+  const [year, month, day] = todayKey.split('-').map(Number)
+  if (day !== 1) return null
+  const closing = new Date(Date.UTC(year, month - 2, 1))
+  return `${closing.getUTCFullYear()}-${String(closing.getUTCMonth() + 1).padStart(2, '0')}`
+}
+
+async function snapshotStep(now: Date) {
+  const periodMonth = monthToCloseOn(now)
+  if (!periodMonth) return { skipped: true, reason: 'chỉ chốt tháng vào ngày 1' }
+  const projects = await prisma.project.findMany({ where: { archivedAt: null }, select: { id: true, name: true } })
+  const closed: string[] = []
+  const errors: { project: string; error: string }[] = []
+  for (const project of projects) {
+    try {
+      await snapshotProjectMonth(project.id, periodMonth)
+      closed.push(project.name)
+    } catch (error) {
+      errors.push({ project: project.name, error: error instanceof Error ? error.message : 'Unknown error' })
+    }
+  }
+  return { periodMonth, closed, errors }
+}
+
 async function billingStep() {
   const started = await startMetaBillingSync(null)
   if (started.alreadyRunning) return { skipped: true, reason: 'Meta billing sync đang chạy' }
@@ -72,6 +101,7 @@ const DEFAULT_STEPS: DailySyncSteps = {
   // Billing runs first: the reserve reads thresholds off billing history, and both call the
   // rate-limited Meta API, so they must not overlap.
   reserve: () => refreshReserveData(),
+  snapshot: () => snapshotStep(new Date()),
 }
 
 export async function runDailySync(overrides: Partial<DailySyncSteps> = {}): Promise<DailySyncResult> {

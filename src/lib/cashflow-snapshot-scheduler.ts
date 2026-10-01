@@ -1,5 +1,4 @@
-import cron from 'node-cron'
-import { initOnce, runExclusive } from '@/lib/job-lock'
+import { initOnce } from '@/lib/job-lock'
 import { prisma } from '@/lib/db'
 import { computeProjectCashflow } from '@/lib/repos/cashflow'
 import { monthEndBoundaryUtc, listPeriodMonths } from '@/lib/cashflow-snapshot'
@@ -94,13 +93,10 @@ export async function runMonthEndSnapshots(now = new Date()) {
   return { created, errors }
 }
 
+// The month close now runs as the last step of the 15:00 Asia/Ho_Chi_Minh daily sync (see
+// `monthToCloseOn` in daily-sync.ts), so the snapshot reads data refreshed minutes earlier
+// instead of whatever yesterday's sync left behind. No separate cron.
 export function initCashflowSnapshotScheduler() {
   if (!initOnce('cashflow-snapshot-scheduler')) return
-  // 00:00 ngày 1 mỗi tháng — chốt tháng vừa kết thúc
-  cron.schedule('0 0 1 * *', () => {
-    runExclusive('cashflow-snapshot', () => runMonthEndSnapshots())
-      .then(r => { if (r.skipped) console.warn('[cashflow-snapshot] previous run still active; skipped') })
-      .catch(err => console.error('[cashflow-snapshot] unhandled:', err))
-  }, { timezone: 'America/Denver' })
-  console.log('[cashflow-snapshot] Initialized — monthly snapshot at 00:00 (1st) America/Denver')
+  console.log('[cashflow-snapshot] Month close runs inside the 15:00 Asia/Ho_Chi_Minh daily sync')
 }
