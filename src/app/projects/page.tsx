@@ -418,7 +418,7 @@ export default function ProjectDashboard() {
                     <h3 className="text-headline-sm text-primary">Profit theo tháng</h3>
                     <div className="ml-auto flex gap-xs">
                       <button onClick={() => setBasis('actual')} className={`px-md py-xs rounded-lg text-label-sm ${basis === 'actual' ? 'bg-secondary text-on-secondary' : 'bg-surface-container'}`}>Actual</button>
-                      <button onClick={() => setBasis('projected')} className={`px-md py-xs rounded-lg text-label-sm ${basis === 'projected' ? 'bg-secondary text-on-secondary' : 'bg-surface-container'}`}>Projected</button>
+                      <button onClick={() => setBasis('projected')} className={`px-md py-xs rounded-lg text-label-sm ${basis === 'projected' ? 'bg-secondary text-on-secondary' : 'bg-surface-container'}`}>Dự kiến</button>
                     </div>
                   </div>
                   <div className="bg-surface-container-lowest rounded-xl border border-outline-variant/20 overflow-hidden">
@@ -429,9 +429,9 @@ export default function ProjectDashboard() {
                       {snapshotRows.map((r: any) => (
                         <div key={r.periodMonth} className="flex items-center justify-between px-lg py-md">
                           <span className="text-body-sm text-on-surface-variant">{r.periodMonth}</span>
-                          <span className="text-label-md text-primary">{fmtStock(basis === 'actual' ? r.actualCashflow : r.projectedCashflow)}</span>
-                          <span className={`text-label-md font-semibold ${(basis === 'actual' ? r.actualProfit : r.projectedProfit) < 0 ? 'text-error' : 'text-primary'}`}>
-                            {fmtStock(basis === 'actual' ? r.actualProfit : r.projectedProfit)}
+                          <span className="text-label-md text-primary">{fmtStock(basis === 'actual' ? r.actualCashflow : r.expectedCashflow)}</span>
+                          <span className={`text-label-md font-semibold ${(basis === 'actual' ? r.actualProfit : r.expectedProfit) < 0 ? 'text-error' : 'text-primary'}`}>
+                            {fmtStock(basis === 'actual' ? r.actualProfit : r.expectedProfit)}
                           </span>
                         </div>
                       ))}

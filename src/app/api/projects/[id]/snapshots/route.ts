@@ -16,6 +16,7 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
       ...s,
       actualProfit: monthlyProfit(s.actualCashflow, prev ? prev.actualCashflow : null),
       projectedProfit: monthlyProfit(s.projectedCashflow, prev ? prev.projectedCashflow : null),
+      expectedProfit: monthlyProfit(s.expectedCashflow, prev ? prev.expectedCashflow : null),
     }
   }).reverse()
   return NextResponse.json({ rows })
