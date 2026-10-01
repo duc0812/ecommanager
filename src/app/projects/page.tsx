@@ -406,7 +406,7 @@ export default function ProjectDashboard() {
                       value={fmtUSD(analytics.expectedCashflow)}
                       hint={stockHint(
                         analytics.stock,
-                        `${fmtUSD(analytics.actualCashflow)} tiền kỳ + ${fmtUSD((analytics.stock.shopifyBalance ?? 0) + (analytics.stock.inTransitPayout ?? 0))} Shopify sẽ về − ${fmtUSD(analytics.stock.pendingInvoiceCharge ?? 0)} nợ Meta`,
+                        `${fmtUSD(analytics.actualCashflow)} tiền kỳ + ${fmtUSD(analytics.stock.shopifyBalance ?? 0)} balance + ${fmtUSD(analytics.stock.inTransitPayout ?? 0)} in-transit − ${fmtUSD(analytics.stock.pendingInvoiceCharge ?? 0)} nợ Meta`,
                       )}
                       negative={analytics.expectedCashflow < 0}
                       strong
