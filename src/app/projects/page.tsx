@@ -165,8 +165,27 @@ export default function ProjectDashboard() {
   const [refreshVersion, setRefreshVersion] = useState(0)
   const [snapshotRows, setSnapshotRows] = useState<any[]>([])
   const [basis, setBasis] = useState<'actual' | 'projected'>('actual')
+  const [editingMonth, setEditingMonth] = useState<string | null>(null)
+  const [editValue, setEditValue] = useState('')
+  const [snapshotError, setSnapshotError] = useState<string | null>(null)
   // Rows come back newest first, so the month profit is the gap between the two latest closes.
   const latestMonthClose = snapshotRows[0] ?? null
+
+  async function saveSnapshotOverride(periodMonth: string, raw: string) {
+    setSnapshotError(null)
+    const res = await fetch(`/api/projects/${selectedProject}/snapshots`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ periodMonth, expectedCashflowManual: raw.trim() === '' ? null : raw }),
+    })
+    const json = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      setSnapshotError(json.error || 'Không sửa được snapshot')
+      return
+    }
+    setEditingMonth(null)
+    setRefreshVersion(v => v + 1)
+  }
 
   useEffect(() => {
     fetch('/api/auto-sync').then(r => r.json()).then(setSyncStatus).catch(() => {})
@@ -424,14 +443,55 @@ export default function ProjectDashboard() {
                   </div>
                   <div className="bg-surface-container-lowest rounded-xl border border-outline-variant/20 overflow-hidden">
                     <div className="divide-y divide-outline-variant/10">
+                      {snapshotError && (
+                        <p className="px-lg py-sm text-body-sm text-error">{snapshotError}</p>
+                      )}
                       {snapshotRows.length === 0 && (
                         <div className="px-lg py-md text-body-sm text-on-surface-variant">Chưa có snapshot. Bấm Backfill để tạo.</div>
                       )}
                       {snapshotRows.map((r: any) => (
-                        <div key={r.periodMonth} className="flex items-center justify-between px-lg py-md">
-                          <span className="text-body-sm text-on-surface-variant">{r.periodMonth}</span>
-                          <span className="text-label-md text-primary">{fmtStock(basis === 'actual' ? r.actualCashflow : r.expectedCashflow)}</span>
-                          <span className={`text-label-md font-semibold ${(basis === 'actual' ? r.actualProfit : r.expectedProfit) < 0 ? 'text-error' : 'text-primary'}`}>
+                        <div key={r.periodMonth} className="flex items-center justify-between gap-md px-lg py-md">
+                          <span className="text-body-sm text-on-surface-variant">
+                            {r.periodMonth}
+                            <span className="block text-label-sm">chốt {new Date(`${r.closeDate}T00:00:00`).toLocaleDateString('en-US')}</span>
+                          </span>
+                          {basis === 'projected' && editingMonth === r.periodMonth ? (
+                            <span className="flex items-center gap-xs">
+                              <input
+                                autoFocus
+                                value={editValue}
+                                onChange={e => setEditValue(e.target.value)}
+                                onKeyDown={e => {
+                                  if (e.key === 'Enter') saveSnapshotOverride(r.periodMonth, editValue)
+                                  if (e.key === 'Escape') setEditingMonth(null)
+                                }}
+                                placeholder="để trống = tự tính"
+                                className="w-[140px] bg-surface-container rounded-md px-sm py-xs text-label-md text-right tabular-nums"
+                              />
+                              <button onClick={() => saveSnapshotOverride(r.periodMonth, editValue)} className="p-xs rounded-md text-primary hover:bg-surface-container">
+                                <span className="material-symbols-outlined text-[18px]">check</span>
+                              </button>
+                              <button onClick={() => setEditingMonth(null)} className="p-xs rounded-md text-on-surface-variant hover:bg-surface-container">
+                                <span className="material-symbols-outlined text-[18px]">close</span>
+                              </button>
+                            </span>
+                          ) : (
+                            <button
+                              onClick={() => {
+                                if (basis !== 'projected') return
+                                setEditingMonth(r.periodMonth)
+                                setEditValue(r.expectedCashflowManual === null || r.expectedCashflowManual === undefined ? '' : String(r.expectedCashflowManual))
+                              }}
+                              className={`text-label-md text-primary tabular-nums ${basis === 'projected' ? 'hover:underline' : 'cursor-default'}`}
+                              title={basis === 'projected' ? 'Bấm để sửa tay' : undefined}
+                            >
+                              {fmtStock(basis === 'actual' ? r.actualCashflow : r.expectedCashflowEffective)}
+                              {basis === 'projected' && r.expectedCashflowManual !== null && r.expectedCashflowManual !== undefined && (
+                                <span className="material-symbols-outlined text-[14px] ml-xs align-middle text-secondary">edit</span>
+                              )}
+                            </button>
+                          )}
+                          <span className={`text-label-md font-semibold tabular-nums ${(basis === 'actual' ? r.actualProfit : r.expectedProfit) < 0 ? 'text-error' : 'text-primary'}`}>
                             {fmtStock(basis === 'actual' ? r.actualProfit : r.expectedProfit)}
                           </span>
                         </div>

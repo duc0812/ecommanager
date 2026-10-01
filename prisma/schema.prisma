@@ -972,6 +972,8 @@ model CashflowSnapshot {
   pendingInvoiceCharge Float?
   projectedCashflow    Float?
   expectedCashflow     Float?
+  // Hand-entered correction; a backfill rewrites expectedCashflow and must not touch this.
+  expectedCashflowManual Float?
 
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt

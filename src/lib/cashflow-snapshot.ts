@@ -37,3 +37,20 @@ export function monthlyProfit(current: number | null, prev: number | null): numb
   if (current === null) return null
   return prev === null ? current : Math.round((current - prev) * 100) / 100
 }
+
+// The month is closed on the 1st of the following month, and that close date is how the owner
+// refers to a snapshot ("snapshot 1/9" is the August row).
+export function snapshotCloseDateKey(periodMonth: string): string {
+  const [y, m] = periodMonth.split('-').map(Number)
+  const firstOfNext = new Date(Date.UTC(y, m, 1))
+  return firstOfNext.toISOString().slice(0, 10)
+}
+
+// A hand-entered figure wins over the computed one. Months that closed before any balance was
+// recorded compute too low, so the owner corrects them; a backfill rewrites the computed column
+// and must leave the correction alone.
+export function effectiveExpectedCashflow(
+  row: { expectedCashflow: number | null; expectedCashflowManual: number | null },
+): number | null {
+  return row.expectedCashflowManual ?? row.expectedCashflow
+}

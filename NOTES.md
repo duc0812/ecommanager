@@ -230,6 +230,18 @@ Files: `src/lib/meta-reserve.ts` (pure + test), `meta-reserve-service.ts` (DB), 
 
 Chưa làm: cron/alert Telegram, cộng phí FX 3% vào số cần nạp, lưu lịch sử ngưỡng.
 
+## Snapshot tháng: chốt 15:00 VN ngày 1, sửa tay được — 2026-10-01
+
+Chốt tháng **không còn cron riêng**; nó là bước thứ 4 của daily sync 15:00 Asia/Ho_Chi_Minh (`monthToCloseOn` trong `daily-sync.ts`), chỉ chạy vào ngày 1 và khoá tháng vừa kết thúc — nhờ vậy snapshot ghi dữ liệu vừa sync xong mấy phút trước thay vì dữ liệu hôm qua.
+
+Dashboard: thẻ "Vị thế tiền" đã bỏ (chủ không cần), thay bằng **Profit Dự kiến** = hiệu hai lần chốt gần nhất (`expectedProfit` của dòng mới nhất).
+
+`CashflowSnapshot.expectedCashflowManual` = **số sửa tay**, thắng số tự tính (`effectiveExpectedCashflow`), và backfill **không** chạm vào nó — chỉ ghi lại `expectedCashflow`. Cần vì các tháng đóng trước khi tool ghi số dư thì tính ra thấp, mà Shopify không có API lịch sử số dư để dựng lại. Sửa qua `PATCH /api/projects/[id]/snapshots` (`{ periodMonth, expectedCashflowManual }`, `requireSuperadmin`; để trống = quay về số tự tính), hoặc bấm thẳng vào số trong danh sách "Profit theo tháng" khi đang ở chế độ **Dự kiến**. Dòng nào sửa tay có icon bút chì.
+
+Danh sách tháng hiện cả **ngày chốt** (`snapshotCloseDateKey`: ngày 1 tháng sau) vì chủ gọi snapshot theo ngày chốt — "snapshot 1/9" là dòng `2026-08`.
+
+**Đã set tay:** `2026-08` = 6300 (yêu cầu 2026-10-01).
+
 ## Tách "dòng tiền của kỳ" khỏi "vị thế tiền hiện tại" — 2026-10-01
 
 `shopifyBalance`, `inTransitPayout`, `pendingInvoiceCharge` chỉ miêu tả **lúc này** — Shopify và Meta đều không có API lịch sử cho chúng. Trước đây cả ba bị cộng thẳng vào dòng tiền của kỳ đang xem, nên xem tháng 10 (0 order, 0 payout) vẫn ra "Projected Cashflow 5,575.69", và xem tháng 9 thì hai thẻ `Projected Cashflow` / `Cashflow Dự kiến` **trùng số** vì `pendingPayout` luôn bị kẹp về 0 (doanh thu order ≈ payout nhận trong tháng, trừ thêm ~6.5k ảnh chụp là âm).
