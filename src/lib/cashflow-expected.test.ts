@@ -1,53 +1,43 @@
 import { describe, expect, it } from 'vitest'
 import { expectedPeriodCashflow } from './cashflow-expected'
 
-// The original dashboard formulas, kept verbatim:
-//   pendingPayout    = max(0, orderRevenue − payout − inTransit − balance)
-//   expectedCashflow = actualCashflow + balance + inTransit − metaDebt + pendingPayout
+// Cashflow Dự kiến = the period's cash, plus what Shopify still owes, minus the Meta debt.
+// No "orders not yet in balance" term: the balance and the in-transit payouts already ARE
+// the money on its way in, so adding an estimate of it counted the same cash twice.
 const ALL_TIME = {
   actualCashflow: 5395.6,
-  totalPayout: 115427.21,
-  totalOrderNetRevenue: 123721.14,
-  shopifyBalance: 4315.88,
-  inTransitPayout: 2261.99,
+  shopifyBalance: 1386.53,
+  inTransitPayout: 5241.25,
   pendingInvoiceCharge: 1002.18,
 }
 
 describe('expectedPeriodCashflow', () => {
-  it('reproduces the figures the dashboard showed before', () => {
-    expect(expectedPeriodCashflow(ALL_TIME)).toEqual({
-      pendingPayout: 1716.06,
-      expectedCashflow: 12687.35,
-    })
+  it('adds the money Shopify still holds and takes off the unbilled Meta debt', () => {
+    expect(expectedPeriodCashflow(ALL_TIME)).toBe(11021.2)
   })
 
-  it('clamps the order gap at zero, as the original did', () => {
-    // September: payouts received nearly match orders sold, so the gap goes negative.
-    const r = expectedPeriodCashflow({
-      actualCashflow: 5944.92,
-      totalPayout: 45086,
-      totalOrderNetRevenue: 45814.7,
-      shopifyBalance: 4315.88,
-      inTransitPayout: 2261.99,
-      pendingInvoiceCharge: 1002.18,
-    })
-    expect(r.pendingPayout).toBe(0)
-    expect(r.expectedCashflow).toBe(11520.61)
+  it('never adds an estimate of orders not yet settled', () => {
+    // Order revenue is deliberately not an input: that was the double count.
+    expect(expectedPeriodCashflow({ ...ALL_TIME, actualCashflow: 0 })).toBe(5625.6)
   })
 
-  it('treats an unknown balance as zero so a closed month still gets a figure', () => {
-    // A month whose own snapshot never recorded a balance: the stock terms drop out instead
-    // of borrowing today's numbers, which is what corrupted seven months of snapshots.
+  it('falls back to the period cash alone when the balance is unknown', () => {
+    // A month that closed before any snapshot recorded its balance: the stock terms drop out
+    // instead of borrowing today's figures.
     expect(expectedPeriodCashflow({
       actualCashflow: 2292.71,
-      totalPayout: 32217.29,
-      totalOrderNetRevenue: 33000,
       shopifyBalance: null,
       inTransitPayout: null,
       pendingInvoiceCharge: null,
-    })).toEqual({
-      pendingPayout: 782.71,
-      expectedCashflow: 3075.42,
-    })
+    })).toBe(2292.71)
+  })
+
+  it('reads a closed month from the balance its own snapshot recorded', () => {
+    expect(expectedPeriodCashflow({
+      actualCashflow: 5944.92,
+      shopifyBalance: 1386.53,
+      inTransitPayout: 5241.25,
+      pendingInvoiceCharge: 1002.18,
+    })).toBe(11570.52)
   })
 })

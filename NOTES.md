@@ -236,11 +236,17 @@ Chưa làm: cron/alert Telegram, cộng phí FX 3% vào số cần nạp, lưu l
 
 `src/lib/cashflow-stock.ts` quyết định nguồn số: kỳ chạy tới hôm nay → `LIVE`; kỳ đã đóng → `CashflowSnapshot` có `asOfDate === endStr` → `SNAPSHOT`; không có → `NONE` (UI hiện "—", không hiện số bừa). `Vị thế tiền = balance + in-transit − nợ Meta`, **không** cộng `actualCashflow` nữa.
 
-**Thẻ "Cashflow Dự kiến" giữ nguyên công thức cũ** (`src/lib/cashflow-expected.ts`, có test chốt lại đúng số dashboard từng hiện: 12,687.35 ở kỳ all-time): `pendingPayout = max(0, orderRevenue − payout − inTransit − balance)`, `expectedCashflow = actualCashflow + balance + inTransit − nợ Meta + pendingPayout`. Nó cần cho chuỗi snapshot theo tháng nên **không được bỏ**. Khác biệt duy nhất: số dư không biết thì tính bằng 0 (tháng đã đóng chưa có snapshot) thay vì vay số dư của hôm nay — vẫn ra được con số, không bịa.
+**Thẻ "Cashflow Dự kiến" giữ lại** (`src/lib/cashflow-expected.ts`) — nó là số chuỗi snapshot theo tháng dùng, nên không được bỏ:
+
+```
+expectedCashflow = actualCashflow (kỳ) + shopifyBalance + inTransitPayout − pendingInvoiceCharge
+```
+
+`pendingPayout` (`max(0, orderRevenue − payout − inTransit − balance)`) **đã bỏ hẳn, cột cũng bị drop** (migration `20261001070000`): nó ước lượng "order chưa vào balance", mà balance + in-transit **chính là** tiền đang về, nên cộng thêm là đếm hai lần. Doanh thu order cố tình không phải input của hàm này. Số dư không biết thì tính bằng 0 (tháng đã đóng chưa có snapshot) thay vì vay số dư hôm nay.
 
 Đo bằng API 2026-10-01: `balance.json` = 1,386.53 **khớp tuyệt đối** tổng balance transaction có `payout_status=pending`, còn tx của payout in_transit mang `payout_status=in_transit` → **balance KHÔNG bao gồm in-transit**, tiền rời balance ngay khi Shopify tạo payout. Nên `balance + in-transit` không double count.
 
-Cột snapshot `shopifyBalance` / `inTransitPayout` / `pendingInvoiceCharge` / `projectedCashflow` giờ **nullable**; `pendingPayout` + `expectedCashflow` được ghi lại (nullable, migration `20261001...expected_back`) để chuỗi snapshot tháng dùng. `snapshotProjectMonth` chỉ ghi stock khi `asOfDate` cách hôm nay ≤ `SNAPSHOT_STOCK_GRACE_DAYS` (2) — cron chốt tháng chạy 00:00 ngày 1 nên vẫn ghi được, còn backfill tháng cũ thì ghi null. Migration `20261001020000` null hoá các dòng ghi muộn hơn 2 ngày: trên prod đúng 7 dòng (02→08/2026) đều mang balance 4,606.28 của ngày 13/09.
+Cột snapshot `shopifyBalance` / `inTransitPayout` / `pendingInvoiceCharge` / `projectedCashflow` giờ **nullable**; `expectedCashflow` được ghi lại (nullable) để chuỗi snapshot tháng dùng; `pendingPayout` bị drop hẳn. `snapshotProjectMonth` chỉ ghi stock khi `asOfDate` cách hôm nay ≤ `SNAPSHOT_STOCK_GRACE_DAYS` (2) — cron chốt tháng chạy 00:00 ngày 1 nên vẫn ghi được, còn backfill tháng cũ thì ghi null. Migration `20261001020000` null hoá các dòng ghi muộn hơn 2 ngày: trên prod đúng 7 dòng (02→08/2026) đều mang balance 4,606.28 của ngày 13/09.
 
 ## Daily sync 15:00 giờ VN — 2026-09-30
 

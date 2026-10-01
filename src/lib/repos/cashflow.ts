@@ -234,10 +234,8 @@ export async function computeProjectCashflow(input: ProjectCashflowInput): Promi
     stock = snapshot ? stockFromSnapshot(snapshot) : emptyStock()
   }
   const totalOrderNetRevenue = orders.reduce((sum: number, order: any) => sum + order.expectedPayout, 0)
-  const { pendingPayout, expectedCashflow } = expectedPeriodCashflow({
+  const expectedCashflow = expectedPeriodCashflow({
     actualCashflow,
-    totalPayout,
-    totalOrderNetRevenue,
     shopifyBalance: stock.shopifyBalance,
     inTransitPayout: stock.inTransitPayout,
     pendingInvoiceCharge: stock.pendingInvoiceCharge,
@@ -334,7 +332,6 @@ export async function computeProjectCashflow(input: ProjectCashflowInput): Promi
     pendingInvoiceCharge: stock.pendingInvoiceCharge,
     projectedCashflow: stock.projectedCashflow,
     totalOrderNetRevenue,
-    pendingPayout,
     expectedCashflow,
     grossProfit,
     grossMargin,

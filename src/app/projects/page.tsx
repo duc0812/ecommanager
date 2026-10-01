@@ -115,7 +115,6 @@ type Analytics = {
   }
   shopifyBalanceCurrency: string | null
   totalOrderNetRevenue: number
-  pendingPayout: number
   expectedCashflow: number
   grossProfit: number
   grossMargin: number
@@ -405,7 +404,10 @@ export default function ProjectDashboard() {
                       label="Cashflow Dự kiến"
                       icon="hourglass_top"
                       value={fmtUSD(analytics.expectedCashflow)}
-                      hint={`nếu toàn bộ order payout về · + ${fmtUSD(analytics.pendingPayout)} order chưa vào balance/in-transit`}
+                      hint={stockHint(
+                        analytics.stock,
+                        `${fmtUSD(analytics.actualCashflow)} tiền kỳ + ${fmtUSD((analytics.stock.shopifyBalance ?? 0) + (analytics.stock.inTransitPayout ?? 0))} Shopify sẽ về − ${fmtUSD(analytics.stock.pendingInvoiceCharge ?? 0)} nợ Meta`,
+                      )}
                       negative={analytics.expectedCashflow < 0}
                       strong
                     />

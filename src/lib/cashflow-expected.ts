@@ -1,31 +1,25 @@
 export type ExpectedCashflowInput = {
   actualCashflow: number
-  totalPayout: number
-  totalOrderNetRevenue: number
   shopifyBalance: number | null
   inTransitPayout: number | null
   pendingInvoiceCharge: number | null
-}
-
-export type ExpectedCashflow = {
-  pendingPayout: number
-  expectedCashflow: number
 }
 
 function round2(value: number) {
   return Math.round(value * 100) / 100
 }
 
-// The original dashboard metric, unchanged: what the period's cash becomes if every order in
-// it pays out. A null stock term counts as 0 — a closed month without its own snapshot still
-// gets a figure, without borrowing today's balance the way the old backfill did.
-export function expectedPeriodCashflow(input: ExpectedCashflowInput): ExpectedCashflow {
-  const balance = input.shopifyBalance ?? 0
-  const inTransit = input.inTransitPayout ?? 0
-  const metaDebt = input.pendingInvoiceCharge ?? 0
-  const pendingPayout = Math.max(0, input.totalOrderNetRevenue - input.totalPayout - inTransit - balance)
-  return {
-    pendingPayout: round2(pendingPayout),
-    expectedCashflow: round2(input.actualCashflow + balance + inTransit - metaDebt + pendingPayout),
-  }
+// Cashflow Dự kiến: the period's cash, plus the money Shopify still holds for us, minus the
+// Meta charge that has not hit the card yet. Order revenue is deliberately NOT an input —
+// the balance and the in-transit payouts already are the cash on its way in, so adding an
+// estimate of "orders not yet in balance" on top counted the same money twice. A null stock
+// term counts as 0: a month that closed before any snapshot recorded its balance falls back
+// to its own cash figure instead of borrowing today's.
+export function expectedPeriodCashflow(input: ExpectedCashflowInput): number {
+  return round2(
+    input.actualCashflow
+    + (input.shopifyBalance ?? 0)
+    + (input.inTransitPayout ?? 0)
+    - (input.pendingInvoiceCharge ?? 0),
+  )
 }

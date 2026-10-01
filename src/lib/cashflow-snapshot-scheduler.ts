@@ -42,7 +42,7 @@ export async function snapshotProjectMonth(projectId: string, periodMonth: strin
       actualCashflow: c.actualCashflow, shopifyBalance: c.shopifyBalance,
       inTransitPayout: c.inTransitPayout,
       pendingInvoiceCharge: c.pendingInvoiceCharge, projectedCashflow: c.projectedCashflow,
-      pendingPayout: c.pendingPayout, expectedCashflow: c.expectedCashflow,
+      expectedCashflow: c.expectedCashflow,
       takenAt: new Date(),
     },
     update: {
@@ -52,7 +52,7 @@ export async function snapshotProjectMonth(projectId: string, periodMonth: strin
       actualCashflow: c.actualCashflow, shopifyBalance: c.shopifyBalance,
       inTransitPayout: c.inTransitPayout,
       pendingInvoiceCharge: c.pendingInvoiceCharge, projectedCashflow: c.projectedCashflow,
-      pendingPayout: c.pendingPayout, expectedCashflow: c.expectedCashflow,
+      expectedCashflow: c.expectedCashflow,
       takenAt: new Date(),
     },
   })
