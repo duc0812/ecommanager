@@ -7,6 +7,7 @@ import { getVndCardLast4, sumBillingFxFeesUsd, PAID_META_STATUSES } from '@/lib/
 import { PROJECT_REVENUE_EXCLUDED_STATUSES, summarizeProjectOrderFinancials } from '@/lib/project-metrics'
 import { dateKeyInZone, addDays } from '@/lib/cashflow-dates'
 import { buildLiveStock, emptyStock, liveStockAppliesTo, stockFromSnapshot, type CashflowStock } from '@/lib/cashflow-stock'
+import { expectedPeriodCashflow } from '@/lib/cashflow-expected'
 
 const OTHER_BILL_CATEGORIES = ['APP_TOOL', 'SUBSCRIPTION', 'SUPPLIER', 'OFFICE', 'OTHER'] as const
 
@@ -233,6 +234,14 @@ export async function computeProjectCashflow(input: ProjectCashflowInput): Promi
     stock = snapshot ? stockFromSnapshot(snapshot) : emptyStock()
   }
   const totalOrderNetRevenue = orders.reduce((sum: number, order: any) => sum + order.expectedPayout, 0)
+  const { pendingPayout, expectedCashflow } = expectedPeriodCashflow({
+    actualCashflow,
+    totalPayout,
+    totalOrderNetRevenue,
+    shopifyBalance: stock.shopifyBalance,
+    inTransitPayout: stock.inTransitPayout,
+    pendingInvoiceCharge: stock.pendingInvoiceCharge,
+  })
   const grossProfit = totalOrderProfit - totalOtherCosts - totalAdSpend - metaFxFee
   const grossMargin = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0
   const effectiveAdCost = totalAdSpend + metaFxFee
@@ -325,6 +334,8 @@ export async function computeProjectCashflow(input: ProjectCashflowInput): Promi
     pendingInvoiceCharge: stock.pendingInvoiceCharge,
     projectedCashflow: stock.projectedCashflow,
     totalOrderNetRevenue,
+    pendingPayout,
+    expectedCashflow,
     grossProfit,
     grossMargin,
     adSpendRatio,

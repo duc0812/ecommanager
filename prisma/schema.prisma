@@ -971,6 +971,8 @@ model CashflowSnapshot {
   inTransitPayout      Float?
   pendingInvoiceCharge Float?
   projectedCashflow    Float?
+  pendingPayout        Float?
+  expectedCashflow     Float?
 
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt

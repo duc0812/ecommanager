@@ -4,7 +4,7 @@ import { resolveDatabaseUrl } from '@/lib/database-url'
 import { retryOnBusy } from '@/lib/sqlite-busy'
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient; prismaVersion?: string }
-const SCHEMA_VERSION = 'v51'
+const SCHEMA_VERSION = 'v52'
 
 function applySqlitePragmas(client: PrismaClient, url: string) {
   if (!url.startsWith('file:')) return
