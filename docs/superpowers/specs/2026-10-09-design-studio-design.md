@@ -88,6 +88,10 @@ Errors: `{ error }` with 400 / 403 / 404, as elsewhere.
 - `printAreasForLine(attrs)` — names from `_print_files`, else `['Artwork']`.
 - `markLineDone(lineId, done)` — the flag logic above, reusing `autoDetectStatus` input the sync route builds.
 
+## Known limitation of the local cut
+
+`OrderLine.designDriveLink` feeds the design column of the supplier CSV (`src/app/api/fulfillment/export/route.ts`). With local storage that column carries an app URL (`/api/design-studio/file/<id>`) that an outside supplier cannot open. Acceptable while the studio runs on the office machine; the Drive storage layer replaces it with a shareable link and nothing else changes.
+
 ## Tests
 
 Vitest on `test.db`, fixtures created by each test:
