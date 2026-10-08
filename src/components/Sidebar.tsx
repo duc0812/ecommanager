@@ -35,6 +35,7 @@ const nav: NavEntry[] = [
   { type: 'child', href: '/fulfillment/mapping', icon: 'account_tree', label: 'Product Mapping' },
   { type: 'child', href: '/fulfillment/tracking', icon: 'pin_drop', label: 'Tracking' },
   { type: 'child', href: '/fulfillment/auto-fulfill', icon: 'bolt', label: 'Auto Fulfill' },
+  { type: 'child', href: '/design-studio', icon: 'brush', label: 'Design Studio' },
   { type: 'child', href: '/fulfillment/design-library', icon: 'palette', label: 'Design Library' },
   { type: 'divider' },
   { type: 'group', label: 'Tools' },
