@@ -27,6 +27,7 @@ export const API_ACCESS_RULES: ApiRule[] = [
   { prefix: '/api/fulfillment/auto-fulfill', access: ['fulfillment_dashboard', 'fulfillment_tracking'] },
   { prefix: '/api/fulfillment/crawler', access: ['fulfillment_crawler'] },
   { prefix: '/api/fulfillment/design-', access: ['fulfillment_design_library', 'fulfillment_orders'] },
+  { prefix: '/api/design-studio', access: ['fulfillment_design_library', 'fulfillment_orders'] },
   { prefix: '/api/fulfillment/export', access: ['fulfillment_export'] },
   { prefix: '/api/fulfillment/mapping', access: ['fulfillment_mapping'] },
   { prefix: '/api/fulfillment/normalize', access: ['fulfillment_orders'] },

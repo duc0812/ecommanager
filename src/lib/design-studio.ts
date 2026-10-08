@@ -5,6 +5,7 @@ import { isNonProductLine } from '@/lib/order-lines'
 import { lineDesignStatus, type LineDesignStatus } from '@/lib/design-status'
 import { loadReadyDesignEntries } from '@/lib/repos/design-library'
 import { matchDesignEntry } from '@/lib/design-parent'
+import { autoDetectStatus, type PipelineStatus } from '@/lib/pipeline-status'
 
 export type CustomAttribute = { key: string; value: string }
 export type SourcePrintFile = { printArea: string; url: string }
@@ -175,4 +176,59 @@ export async function loadWorkspace(orderId: string): Promise<Workspace | null> 
     },
     lines,
   }
+}
+
+export async function updateLine(lineId: string, patch: { note?: string | null; done?: boolean }) {
+  const line = await prisma.orderLine.findUnique({
+    where: { id: lineId },
+    include: { artworks: { orderBy: { version: 'desc' } } },
+  })
+  if (!line) return null
+
+  const data: { designNote?: string | null; designDriveLink?: string | null } = {}
+  if (patch.note !== undefined) data.designNote = patch.note === null ? null : patch.note.trim() || null
+  if (patch.done === true) {
+    const attrs = parseAttributes(line.customAttributesJson)
+    const slots = printAreasForLine(attrs)
+    const missing = slots.filter(s => !line.artworks.some(a => a.printArea === s))
+    if (missing.length > 0) throw new Error(`No artwork uploaded for: ${missing.join(', ')}`)
+    const first = line.artworks.filter(a => a.printArea === slots[0]).sort((a, b) => b.version - a.version)[0]
+    data.designDriveLink = artworkUrl(first.id)
+  }
+  if (patch.done === false) data.designDriveLink = null
+
+  const updated = await prisma.orderLine.update({ where: { id: lineId }, data })
+  const order = await recomputeOrderDesign(line.orderId)
+  return {
+    line: { id: updated.id, designDriveLink: updated.designDriveLink, designNote: updated.designNote },
+    order,
+  }
+}
+
+async function recomputeOrderDesign(orderId: string) {
+  const order = await prisma.order.findUnique({ where: { id: orderId }, include: { lines: true } })
+  if (!order) throw new Error('order vanished')
+  const productLines = order.lines.filter(l => !isNonProductLine(l))
+  const designLines = productLines.filter(l => l.customized || l.designDriveLink)
+  const designReady = designLines.length > 0 && designLines.every(l => !!l.designDriveLink)
+  const currentStatus = (designReady && order.pipelineStatus === 'DESIGN_REJECTED'
+    ? 'PENDING_DESIGN'
+    : order.pipelineStatus) as PipelineStatus
+  const pipelineStatus = autoDetectStatus({
+    financialStatus: order.financialStatus,
+    fulfillmentStatus: order.fulfillmentStatus,
+    cancelled: order.pipelineStatus === 'CANCELLED',
+    hasUnmappedSku: productLines.some(l => !l.resolvedSupplierId),
+    hasPendingMapping: false,
+    hasCustomDesignLine: designLines.length > 0,
+    hasDesignLine: designLines.length > 0,
+    hasDesignReady: designReady,
+    currentStatus,
+  })
+  const saved = await prisma.order.update({
+    where: { id: orderId },
+    data: { designReady, pipelineStatus, designDriveLink: designReady ? (designLines[0]?.designDriveLink ?? null) : order.designDriveLink },
+    select: { id: true, designReady: true, pipelineStatus: true },
+  })
+  return saved
 }
