@@ -88,6 +88,10 @@ Errors: `{ error }` with 400 / 403 / 404, as elsewhere.
 - `printAreasForLine(attrs)` — names from `_print_files`, else `['Artwork']`.
 - `markLineDone(lineId, done)` — the flag logic above, reusing `autoDetectStatus` input the sync route builds.
 
+## Next phase (not in this cut): the auto-design agent
+
+Once the workspace holds everything a human needs, the same inputs feed an agent that does the designer's job when the inputs are complete: a print template with defined print areas for the supplier SKU, a master artwork or clone catalogue with named text/image layers, and the customer's attributes. The agent composes the print file per area (and a layered PSD), uploads it into the artwork slots as version 1 by "Tự động", runs the checks a human would (text inside the safe area, resolution per layer, missing glyphs, customer photo size), and marks the line done only when every check passes; otherwise it leaves the files in place with warnings and the line waits for a designer. This mirrors what Customall / Teeinblue / Customily do after an order is placed. It needs the `printcheck` step on the clone tools and a `PrintTemplate` model per supplier SKU, both separate specs.
+
 ## Known limitation of the local cut
 
 `OrderLine.designDriveLink` feeds the design column of the supplier CSV (`src/app/api/fulfillment/export/route.ts`). With local storage that column carries an app URL (`/api/design-studio/file/<id>`) that an outside supplier cannot open. Acceptable while the studio runs on the office machine; the Drive storage layer replaces it with a shareable link and nothing else changes.
