@@ -6,6 +6,7 @@ import { lineDesignStatus, type LineDesignStatus } from '@/lib/design-status'
 import { loadReadyDesignEntries } from '@/lib/repos/design-library'
 import { matchDesignEntry } from '@/lib/design-parent'
 import { autoDetectStatus, type PipelineStatus } from '@/lib/pipeline-status'
+import type { ShopifyOrderLineProps } from '@/lib/shopify-orders'
 
 export type CustomAttribute = { key: string; value: string }
 export type SourcePrintFile = { printArea: string; url: string }
@@ -231,4 +232,23 @@ async function recomputeOrderDesign(orderId: string) {
     select: { id: true, designReady: true, pipelineStatus: true },
   })
   return saved
+}
+
+export async function applyLineProps(orderId: string, props: ShopifyOrderLineProps[]) {
+  const lines = await prisma.orderLine.findMany({ where: { orderId }, orderBy: { linePosition: 'asc' }, select: { id: true, sku: true, productTitle: true } })
+  const byPosition = lines.length === props.length
+  let updated = 0, unmatched = 0
+  const used = new Set<string>()
+  for (let i = 0; i < props.length; i++) {
+    const p = props[i]
+    const line = byPosition
+      ? lines[i]
+      : lines.find(l => !used.has(l.id) && (l.sku ?? '') === (p.sku ?? '') && l.productTitle === p.title)
+    if (!line) { unmatched++; continue }
+    used.add(line.id)
+    const attrs = p.productUrl ? [...p.customAttributes, { key: '_product_url', value: p.productUrl }] : p.customAttributes
+    await prisma.orderLine.update({ where: { id: line.id }, data: { customAttributesJson: JSON.stringify(attrs) } })
+    updated++
+  }
+  return { updated, unmatched }
 }
