@@ -42,7 +42,7 @@ export type Workspace = {
   lines: WorkspaceLine[]
 }
 
-export const DEFAULT_PRINT_AREA = 'Artwork'
+const DEFAULT_PRINT_AREA = 'Artwork'
 
 export function parseAttributes(json: string | null): CustomAttribute[] {
   if (!json) return []
@@ -106,6 +106,7 @@ export async function loadWorkspace(orderId: string): Promise<Workspace | null> 
     },
   })
   if (!order) return null
+  if (!order.store.project) return null
 
   const supplierIds = Array.from(new Set(order.lines.map(l => l.resolvedSupplierId).filter(Boolean) as string[]))
   const skus = Array.from(new Set(order.lines.map(l => l.sku).filter(Boolean) as string[]))
@@ -170,7 +171,7 @@ export async function loadWorkspace(orderId: string): Promise<Workspace | null> 
       id: order.id, shopifyOrderNumber: order.shopifyOrderNumber, placedAt: order.placedAt.toISOString(),
       pipelineStatus: order.pipelineStatus, orderType: order.orderType, designReady: order.designReady,
       trelloCardUrl: order.trelloCardUrl,
-      store: { shop: order.store.shop, projectId: order.store.project!.id, projectName: order.store.project!.name },
+      store: { shop: order.store.shop, projectId: order.store.project.id, projectName: order.store.project.name },
     },
     lines,
   }

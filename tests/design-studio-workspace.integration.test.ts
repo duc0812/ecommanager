@@ -32,6 +32,21 @@ beforeAll(async () => {
           ]),
         },
         { shopifyLineId: 'dsw-2', sku: 'OTHER', productTitle: 'Mug', qty: 1, linePosition: 2, unitPrice: 20, customAttributesJson: null },
+        {
+          shopifyLineId: 'dsw-3', sku: 'DSWS-SKU-2', productTitle: 'Socks 2', qty: 1, linePosition: 3, unitPrice: 50,
+          shopifyVariantId: 'gid://shopify/ProductVariant/123',
+          customAttributesJson: JSON.stringify([
+            { key: '_design', value: JSON.stringify({ v: 'cm1', layout: null, layers: [] }) },
+            { key: '_product_url', value: 'https://shop.example/products/socks' },
+          ]),
+        },
+        {
+          shopifyLineId: 'dsw-4', sku: 'DSWS-SKU-3', productTitle: 'Socks 3', qty: 1, linePosition: 4, unitPrice: 50,
+          shopifyVariantId: 'gid://shopify/ProductVariant/456',
+          customAttributesJson: JSON.stringify([
+            { key: '_design', value: JSON.stringify({ v: 'cm1', layout: null, layers: [] }) },
+          ]),
+        },
       ] },
     },
   })
@@ -50,7 +65,7 @@ describe('loadWorkspace', () => {
   it('joins supplier, template, master artwork and print areas per line', async () => {
     const ws = await loadWorkspace(ORDER_ID)
     expect(ws?.order.shopifyOrderNumber).toBe('#DSW1')
-    const [l1, l2] = ws!.lines
+    const [l1, l2, l3, l4] = ws!.lines
     expect(l1.supplier?.code).toBe('DSWS')
     expect(l1.templateUrl).toBe('https://drive.example/template')
     expect(l1.masterArtworkUrl).toBe('https://drive.example/master')
@@ -61,5 +76,8 @@ describe('loadWorkspace', () => {
     expect(l2.attributesLoaded).toBe(false)
     expect(l2.templateUrl).toBeNull()
     expect(l2.printAreas).toEqual(['Artwork'])
+    expect(l3.customerDesignLink).not.toBeNull()
+    expect(l3.customerDesignLink).toMatch(/^https:\/\/shop\.example\/products\/socks\?variant=123#cm-design=/)
+    expect(l4.customerDesignLink).toBeNull()
   })
 })
