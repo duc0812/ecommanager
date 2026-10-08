@@ -9,11 +9,19 @@ export const ALLOWED_MIME: Record<string, string> = {
   'application/pdf': 'pdf',
   'image/vnd.adobe.photoshop': 'psd',
   'application/x-photoshop': 'psd',
-  'application/octet-stream': 'bin',
   'application/zip': 'zip',
   'application/x-zip-compressed': 'zip',
 }
-const ALLOWED_EXT = new Set(['png', 'jpg', 'jpeg', 'pdf', 'psd', 'zip'])
+
+const EXT_MIME: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  pdf: 'application/pdf',
+  psd: 'image/vnd.adobe.photoshop',
+  zip: 'application/zip',
+}
+const ALLOWED_EXT = new Set(Object.keys(EXT_MIME))
 
 export function storageRoot(): string {
   return process.env.DESIGN_STORAGE_DIR || path.resolve(process.cwd(), 'storage')
@@ -37,6 +45,7 @@ export async function saveArtwork(input: {
 }): Promise<ArtworkRow> {
   const ext = extOf(input.fileName, input.mimeType)
   if (!ext || !ALLOWED_EXT.has(ext)) throw new Error(`File type not allowed: ${input.fileName} (${input.mimeType})`)
+  const mimeType = EXT_MIME[ext]
   const line = await prisma.orderLine.findUnique({
     where: { id: input.lineId },
     select: { id: true, linePosition: true, order: { select: { shopifyOrderNumber: true } } },
@@ -63,7 +72,7 @@ export async function saveArtwork(input: {
   const row = await prisma.designArtwork.create({
     data: {
       orderLineId: line.id, printArea, version, fileName, storagePath: rel.split(path.sep).join('/'),
-      size: input.bytes.length, mimeType: input.mimeType, uploadedById: input.uploadedById,
+      size: input.bytes.length, mimeType, uploadedById: input.uploadedById,
     },
   })
   return {

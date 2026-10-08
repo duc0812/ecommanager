@@ -56,4 +56,14 @@ describe('saveArtwork / readArtwork', () => {
   it('returns null for an unknown id', async () => {
     expect(await readArtwork('nope')).toBeNull()
   })
+  it('derives the stored mime from the extension, ignoring a spoofed client mime', async () => {
+    const a = await saveArtwork({ lineId, printArea: 'Spoof', fileName: 'evil.png', mimeType: 'text/html', bytes: Buffer.from('x'), uploadedById: null })
+    const r = await readArtwork(a.id)
+    expect(r?.mimeType).toBe('image/png')
+  })
+  it('derives the stored mime from the client mime when the filename has no usable extension', async () => {
+    const a = await saveArtwork({ lineId, printArea: 'NoExt', fileName: 'noext', mimeType: 'application/x-zip-compressed', bytes: Buffer.from('x'), uploadedById: null })
+    const r = await readArtwork(a.id)
+    expect(r?.mimeType).toBe('application/zip')
+  })
 })
