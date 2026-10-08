@@ -126,7 +126,7 @@ const FEATURE_PATHS: Record<FeaturePermission, string[]> = {
   fulfillment_suppliers: ['/fulfillment/suppliers', '/setup/suppliers'],
   fulfillment_mapping: ['/fulfillment/mapping'],
   fulfillment_tracking: ['/fulfillment/tracking'],
-  fulfillment_design_library: ['/fulfillment/design-library'],
+  fulfillment_design_library: ['/fulfillment/design-library', '/design-studio'],
   need_to_fix: ['/task-fix'],
   tools_spy_idea: ['/tools/spy-idea'],
   tools_resources: ['/tools/resources'],

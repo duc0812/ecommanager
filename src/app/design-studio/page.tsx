@@ -79,17 +79,17 @@ export default function DesignStudioPage() {
         </div>
 
         <div className="flex flex-wrap gap-sm mb-md">
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Tìm số đơn / SKU"
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Tìm số đơn / SKU" aria-label="Tìm đơn"
             className="px-md py-sm rounded-lg border border-outline-variant/40 bg-surface-container-lowest text-body-sm" />
-          <select value={projectId} onChange={e => setProjectId(e.target.value)} className="px-md py-sm rounded-lg border border-outline-variant/40 bg-surface-container-lowest text-body-sm">
+          <select value={projectId} onChange={e => setProjectId(e.target.value)} aria-label="Store" className="px-md py-sm rounded-lg border border-outline-variant/40 bg-surface-container-lowest text-body-sm">
             <option value="">Mọi store</option>
             {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
-          <select value={supplierId} onChange={e => setSupplierId(e.target.value)} className="px-md py-sm rounded-lg border border-outline-variant/40 bg-surface-container-lowest text-body-sm">
+          <select value={supplierId} onChange={e => setSupplierId(e.target.value)} aria-label="Supplier" className="px-md py-sm rounded-lg border border-outline-variant/40 bg-surface-container-lowest text-body-sm">
             <option value="">Mọi supplier</option>
             {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
-          <select value={type} onChange={e => setType(e.target.value)} className="px-md py-sm rounded-lg border border-outline-variant/40 bg-surface-container-lowest text-body-sm">
+          <select value={type} onChange={e => setType(e.target.value)} aria-label="Loại đơn" className="px-md py-sm rounded-lg border border-outline-variant/40 bg-surface-container-lowest text-body-sm">
             <option value="ALL">Mọi loại</option>
             {Object.entries(TYPE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
           </select>
