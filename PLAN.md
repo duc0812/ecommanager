@@ -180,6 +180,10 @@ Completed 2026-05-19 via subagent-driven development.
 - [x] Niche Performance dashboard (campaign-level Meta spend vs Shopify revenue per niche) — spec `docs/superpowers/specs/2026-09-06-niche-performance-design.md`
 - [ ] Niche Performance: product-type layer inside a niche, per-niche profit (COGS), daily trend chart
 
+### 🟢 Design Studio v1 (2026-10-09, local only)
+- Design Studio v1 (local): order list + workspace + per-area upload — 2026-10-09
+- Next: printcheck on the clone tools, PrintTemplate model, auto-design agent
+
 ---
 
 ## Known Issues / Tech Debt

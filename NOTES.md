@@ -320,3 +320,11 @@ Thứ tự bắt buộc: dự phòng đọc ngưỡng từ lịch sử billing, 
 - Spy: list endpoints `omit rawPayload` and use per-ad summary columns (`firstCollationCount`, `everActive`, `observationCount`, maintained by `ingestAds`; backfill via `scripts/backfill-spy-ad-summary.mjs`); observations older than 120 days pruned; `scan-ads` runs targets sequentially under a lock, quota = 1 per target; domain scans create page targets `active: false`; Apify calls have timeouts, dataset is paged, timed-out runs are aborted; media cache writes atomically, caps 8 MB, allow-lists fbcdn hosts, remembers failed URLs, caches only the ads a scan ingested.
 - Indexes added: Order(storeId,placedAt / shopifyOrderNumber / trelloCardId), OrderLine(orderId / orderId,shopifyLineId), Payout(storeId,status,date), MetaBilling(adAccountId,status,billingDate), PayoutTransaction(payoutId), StaffAssignment(projectId), SpyAd(lastSeenAt).
 - Tests run against `test.db` (recreated from migrations in `tests/global-setup.ts`); the characterization test is opt-in via `RUN_CHARACTERIZATION=1`. Leaked fixtures (`proj_test`, `proj_mbc`, test stores/supplier) were removed from dev.db.
+
+## Design Studio (2026-10-09, local only)
+
+- `/design-studio` lists PENDING_DESIGN + DESIGN_REJECTED orders; `/design-studio/[orderId]` is the per-order workspace.
+- Line-item properties are now persisted on `OrderLine.customAttributesJson` at sync (with `_product_url` appended). Orders synced before this have `null` there — the "Nạp lại từ Shopify" button fills them via `fetchOrderLinePropsByNames` (60-day window, single-store token).
+- Uploaded artwork lives under `storage/design/<order>/<line>/<area>/v<n>-<name>` (`DESIGN_STORAGE_DIR` overrides the root), tracked in `DesignArtwork`, served only via `/api/design-studio/file/<id>`.
+- "Đánh dấu xong" writes `OrderLine.designDriveLink` = the app file URL and recomputes `Order.designReady` + `pipelineStatus` with `autoDetectStatus`. The supplier CSV therefore carries an app URL until Drive storage replaces local storage.
+- Next phase: the auto-design agent (see the spec's "Next phase").
