@@ -142,6 +142,7 @@ export type UpsertOrderInput = {
     shopifyProductType?: string | null
     variantOptions?: string | null
     customized?: boolean
+    customAttributesJson?: string | null
   }>
 }
 
@@ -164,6 +165,8 @@ export async function upsertOrderWithLines(input: UpsertOrderInput) {
       resolvedImportTax: true,
       previewCdnUrl: true,
       designDriveLink: true,
+      customAttributesJson: true,
+      designNote: true,
     },
   })
   const snapshots = new Map(existingLines.map(l => [l.shopifyLineId, l]))
@@ -260,6 +263,8 @@ export async function upsertOrderWithLines(input: UpsertOrderInput) {
           resolvedImportTax: preserveSnapshot ? snap.resolvedImportTax : (l.resolvedImportTax ?? null),
           previewCdnUrl: l.previewCdnUrl ?? snap?.previewCdnUrl ?? null,
           designDriveLink: l.designDriveLink ?? snap?.designDriveLink ?? null,
+          customAttributesJson: l.customAttributesJson !== undefined ? l.customAttributesJson : (snap?.customAttributesJson ?? null),
+          designNote: snap?.designNote ?? null,
           shopifyVariantId: l.shopifyVariantId ?? null,
           shopifyProductType: l.shopifyProductType ?? null,
           variantOptions: l.variantOptions ?? null,

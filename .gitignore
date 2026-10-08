@@ -85,3 +85,6 @@ monitor/db/
 # prod DB snapshots (chứa access token, ~40MB)
 db-backups/
 *.db.bak*
+
+# design studio uploads
+/storage/

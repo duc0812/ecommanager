@@ -372,6 +372,7 @@ export async function POST(req: NextRequest) {
               : null,
             designDriveLink: libraryDesignLinkByIndex.get(idx) ?? null,
             customized: designInputs[idx]?.customized ?? false,
+            customAttributesJson: l.customAttributes.length > 0 ? JSON.stringify(l.customAttributes) : null,
           }
         }),
       })
