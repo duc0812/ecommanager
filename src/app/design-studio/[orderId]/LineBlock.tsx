@@ -36,6 +36,7 @@ export default function LineBlock({ line, onChanged }: { line: WorkspaceLine; on
   }
 
   async function upload(printArea: string, file: File) {
+    if (busy === printArea) return
     setBusy(printArea); setMsg('')
     const fd = new FormData(); fd.set('printArea', printArea); fd.set('file', file)
     const res = await fetch(`/api/design-studio/lines/${line.id}/artwork`, { method: 'POST', body: fd })
@@ -130,7 +131,7 @@ export default function LineBlock({ line, onChanged }: { line: WorkspaceLine; on
                     {busy === area ? 'Đang tải…' : 'Upload'}
                   </button>
                 </div>
-                <div onDragOver={e => { e.preventDefault() }} onDrop={e => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) upload(area, f) }}
+                <div onDragOver={e => { e.preventDefault() }} onDrop={e => { e.preventDefault(); if (busy === area) return; const f = e.dataTransfer.files?.[0]; if (f) upload(area, f) }}
                   className="rounded-md border border-dashed border-outline-variant/50 px-md py-sm text-label-sm text-on-surface-variant text-center">
                   Kéo thả file vào đây (png, jpg, pdf, psd, zip)
                 </div>

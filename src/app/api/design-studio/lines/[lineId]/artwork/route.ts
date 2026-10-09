@@ -6,6 +6,10 @@ const MAX_BYTES = 200 * 1024 * 1024
 
 export async function POST(req: NextRequest, { params }: { params: { lineId: string } }) {
   const { lineId } = params
+  const declared = Number(req.headers.get('content-length'))
+  if (Number.isFinite(declared) && declared > MAX_BYTES) {
+    return NextResponse.json({ error: 'File lớn hơn 200 MB' }, { status: 413 })
+  }
   const user = await getAuthUser(req)
   const form = await req.formData().catch(() => null)
   const file = form?.get('file')
