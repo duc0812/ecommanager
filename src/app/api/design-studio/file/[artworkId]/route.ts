@@ -4,13 +4,15 @@ import { prisma } from '@/lib/db'
 import { localArtworkPath } from '@/lib/design-storage'
 import { DriveAuthError, DriveError, streamFile } from '@/lib/google-drive'
 
+const DRIVE_WEB_PREFIX = 'https://drive.google.com/'
+
 function isPreviewable(mimeType: string) {
   return (mimeType.startsWith('image/') && mimeType !== 'image/vnd.adobe.photoshop') || mimeType === 'application/pdf'
 }
 
 async function serveDrive(row: { fileName: string; mimeType: string; driveFileId: string | null; driveWebViewLink: string | null }) {
   if (!isPreviewable(row.mimeType)) {
-    if (!row.driveWebViewLink) return NextResponse.json({ error: 'Thiếu link Drive' }, { status: 404 })
+    if (!row.driveWebViewLink?.startsWith(DRIVE_WEB_PREFIX)) return NextResponse.json({ error: 'Thiếu link Drive' }, { status: 404 })
     return NextResponse.redirect(row.driveWebViewLink, 302)
   }
   if (!row.driveFileId) return NextResponse.json({ error: 'Thiếu file Drive' }, { status: 404 })
@@ -20,6 +22,7 @@ async function serveDrive(row: { fileName: string; mimeType: string; driveFileId
       'Content-Type': row.mimeType,
       'Content-Disposition': `inline; filename="${row.fileName}"`,
       'Cache-Control': 'private, max-age=3600',
+      'X-Content-Type-Options': 'nosniff',
     }
     return new NextResponse(res.body, { headers })
   } catch (err: any) {
@@ -45,6 +48,7 @@ export async function GET(_req: NextRequest, { params }: { params: { artworkId: 
       'Content-Length': String(bytes.length),
       'Content-Disposition': `inline; filename="${row.fileName}"`,
       'Cache-Control': 'private, max-age=3600',
+      'X-Content-Type-Options': 'nosniff',
     },
   })
 }

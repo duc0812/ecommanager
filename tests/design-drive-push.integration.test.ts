@@ -7,7 +7,8 @@ import { prisma } from '@/lib/db'
 import { GOOGLE_KEYS } from '@/lib/google-oauth'
 import { primeAccessToken, resetDriveCache } from '@/lib/google-drive'
 import { saveArtwork, storageRoot } from '@/lib/design-storage'
-import { updateLine } from '@/lib/design-studio'
+import { artworkUrl, updateLine } from '@/lib/design-studio'
+import { pushArtworkToDrive } from '@/lib/design-drive-push'
 import { transitionTask } from '@/lib/design-tasks'
 import { POST as uploadRoute } from '@/app/api/design-studio/lines/[lineId]/artwork/route'
 import { POST as pushRoute } from '@/app/api/design-studio/artwork/[artworkId]/push/route'
@@ -199,6 +200,9 @@ describe('upload route pushes to Drive', () => {
     expect(body.warning).toMatch(/Sharing disabled/)
     expect(body.artwork.storage).toBe('LOCAL')
     expect(calls.some(c => c.method === 'DELETE' && c.url.includes(`/files/${FILE_ID}`))).toBe(true)
+    const upload = await prisma.designArtworkUpload.findFirstOrThrow({ where: { orderId: ORDER_ID } })
+    expect(upload.driveFileId).toBe(FILE_ID)
+    expect(upload.completedAt).toBeNull()
   })
 
   it('says Drive needs reconnecting when the refresh token is revoked', async () => {
@@ -262,6 +266,7 @@ describe('GET /api/design-studio/file/[artworkId] for DRIVE', () => {
     expect(res.headers.get('content-type')).toBe('image/png')
     expect(res.headers.get('content-disposition')).toBe('inline; filename="a.png"')
     expect(res.headers.get('cache-control')).toBe('private, max-age=3600')
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff')
     expect(Buffer.from(await res.arrayBuffer()).toString()).toBe('png-bytes')
     const media = calls.find(c => c.url.includes('alt=media'))!
     expect(media.url).toBe(`https://www.googleapis.com/drive/v3/files/${FILE_ID}?alt=media`)
@@ -275,6 +280,21 @@ describe('GET /api/design-studio/file/[artworkId] for DRIVE', () => {
     expect(res.status).toBe(302)
     expect(res.headers.get('location')).toBe(WEB_LINK)
     expect(calls).toHaveLength(0)
+  })
+
+  it('refuses to redirect to a link outside drive.google.com', async () => {
+    const art = await driveArtwork('Front', 'a.zip', 'application/zip')
+    await prisma.designArtwork.update({ where: { id: art.id }, data: { driveWebViewLink: 'https://evil.example/x' } })
+    const res = await serveRoute(new NextRequest('http://localhost/x'), { params: { artworkId: art.id } })
+    expect(res.status).toBe(404)
+    expect(res.headers.get('location')).toBeNull()
+  })
+
+  it('sends nosniff on LOCAL files too', async () => {
+    const saved = await saveArtwork({ lineId, printArea: 'Front', fileName: 'l.png', mimeType: 'image/png', bytes: Buffer.from('l'), uploadedById: null })
+    const res = await serveRoute(new NextRequest('http://localhost/x'), { params: { artworkId: saved.id } })
+    expect(res.status).toBe(200)
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff')
   })
 
   it('returns 502 when Drive needs reconnecting', async () => {
@@ -312,5 +332,106 @@ describe('updateLine with a DRIVE artwork', () => {
     const line = await prisma.orderLine.findUniqueOrThrow({ where: { id: lineId } })
     expect(line.designDriveLink).toBe(v2Link)
     await prisma.orderLine.update({ where: { id: lineId }, data: { designDriveLink: null } })
+  })
+})
+
+describe('D2 review fixes', () => {
+  it('a successful retry replaces the app URL on an already approved line and order', async () => {
+    const saved = await saveArtwork({ lineId, printArea: 'Artwork', fileName: 'ok.png', mimeType: 'image/png', bytes: Buffer.from('ok'), uploadedById: null })
+    const r = await updateLine(lineId, { done: true, requiredAreas: ['Artwork'] })
+    expect(r?.line.designDriveLink).toBe(artworkUrl(saved.id))
+    await prisma.order.update({ where: { id: ORDER_ID }, data: { designDriveLink: artworkUrl(saved.id) } })
+    await connect()
+    driveMock()
+
+    const res = await pushRoute(new NextRequest('http://localhost/x', { method: 'POST' }), { params: { artworkId: saved.id } })
+    expect(res.status).toBe(200)
+    expect((await prisma.orderLine.findUniqueOrThrow({ where: { id: lineId } })).designDriveLink).toBe(WEB_LINK)
+    expect((await prisma.order.findUniqueOrThrow({ where: { id: ORDER_ID } })).designDriveLink).toBe(WEB_LINK)
+    await prisma.orderLine.update({ where: { id: lineId }, data: { designDriveLink: null } })
+    await prisma.order.update({ where: { id: ORDER_ID }, data: { designDriveLink: null } })
+  })
+
+  it('leaves a line link that points at another artwork alone', async () => {
+    const saved = await saveArtwork({ lineId, printArea: 'Artwork', fileName: 'o.png', mimeType: 'image/png', bytes: Buffer.from('o'), uploadedById: null })
+    await prisma.orderLine.update({ where: { id: lineId }, data: { designDriveLink: 'https://drive.google.com/file/d/other/view' } })
+    await connect()
+    driveMock()
+    expect((await pushArtworkToDrive(saved.id)).pushed).toBe(true)
+    expect((await prisma.orderLine.findUniqueOrThrow({ where: { id: lineId } })).designDriveLink).toBe('https://drive.google.com/file/d/other/view')
+    await prisma.orderLine.update({ where: { id: lineId }, data: { designDriveLink: null } })
+  })
+
+  it('resumes mid-chunk when a 308 acknowledges fewer bytes than were sent', async () => {
+    const size = 10 * MB
+    const bytes = Buffer.alloc(size)
+    for (let i = 0; i < size; i++) bytes[i] = i % 251
+    const saved = await saveArtwork({ lineId, printArea: 'Resume', fileName: 'r.png', mimeType: 'image/png', bytes, uploadedById: null })
+    await connect()
+    let first = true
+    driveMock({
+      put: () => {
+        if (!first) return null
+        first = false
+        return new Response(null, { status: 308, headers: { Range: `bytes=0-${5 * MB - 1}` } })
+      },
+    })
+    expect(await pushArtworkToDrive(saved.id)).toEqual({ pushed: true, warning: null })
+    const puts = calls.filter(c => c.method === 'PUT')
+    expect(puts.map(c => c.headers.get('Content-Range'))).toEqual(['bytes 0-8388607/10485760', 'bytes 5242880-10485759/10485760'])
+    const second = puts[1].body as Buffer
+    expect(second.length).toBe(5 * MB)
+    expect(second.equals(bytes.subarray(5 * MB))).toBe(true)
+  })
+
+  it('a second push of the same artwork while one runs is refused, and the route answers 409', async () => {
+    const saved = await saveArtwork({ lineId, printArea: 'Twice', fileName: 't.png', mimeType: 'image/png', bytes: Buffer.from('t'), uploadedById: null })
+    await connect()
+    driveMock()
+    const [a, b] = await Promise.all([pushArtworkToDrive(saved.id), pushArtworkToDrive(saved.id)])
+    expect(a.pushed).toBe(true)
+    expect(b).toMatchObject({ pushed: false, inProgress: true })
+    expect(calls.filter(c => c.method === 'PUT')).toHaveLength(1)
+
+    const other = await saveArtwork({ lineId, printArea: 'Twice', fileName: 't2.png', mimeType: 'image/png', bytes: Buffer.from('t'), uploadedById: null })
+    global.__drivePushInflight!.add(other.id)
+    try {
+      const res = await pushRoute(new NextRequest('http://localhost/x', { method: 'POST' }), { params: { artworkId: other.id } })
+      expect(res.status).toBe(409)
+    } finally {
+      global.__drivePushInflight!.delete(other.id)
+    }
+  })
+
+  it('a retry deletes the Drive file left by a crashed push before uploading again', async () => {
+    const saved = await saveArtwork({ lineId, printArea: 'Crash', fileName: 'c.png', mimeType: 'image/png', bytes: Buffer.from('c'), uploadedById: null })
+    const row = await prisma.designArtwork.findUniqueOrThrow({ where: { id: saved.id } })
+    await prisma.designArtworkUpload.create({
+      data: {
+        orderId: ORDER_ID, shopifyLineId: 'p1', printArea: 'Crash', version: row.version, fileName: 'c.png', mimeType: 'image/png',
+        size: 1, sessionUrl: SESSION, folderId: 'folder-x', driveFileId: 'orphan-1',
+      },
+    })
+    await connect()
+    driveMock()
+    expect((await pushArtworkToDrive(saved.id)).pushed).toBe(true)
+    const del = calls.findIndex(c => c.method === 'DELETE' && c.url.includes('/files/orphan-1'))
+    const firstPut = calls.findIndex(c => c.method === 'PUT')
+    expect(del).toBeGreaterThanOrEqual(0)
+    expect(del).toBeLessThan(firstPut)
+    expect(await prisma.designArtworkUpload.count({ where: { orderId: ORDER_ID, driveFileId: 'orphan-1' } })).toBe(0)
+  })
+
+  it('a settings read failure becomes a warning instead of throwing', async () => {
+    const saved = await saveArtwork({ lineId, printArea: 'Db', fileName: 'd.png', mimeType: 'image/png', bytes: Buffer.from('d'), uploadedById: null })
+    const spy = vi.spyOn(prisma.appSetting, 'findMany').mockRejectedValueOnce(new Error('database is locked'))
+    try {
+      const r = await pushArtworkToDrive(saved.id)
+      expect(r.pushed).toBe(false)
+      expect(r.warning).toMatch(/database is locked/)
+    } finally {
+      spy.mockRestore()
+    }
+    expect((await prisma.designArtwork.findUniqueOrThrow({ where: { id: saved.id } })).storage).toBe('LOCAL')
   })
 })

@@ -1,6 +1,7 @@
 import fs from 'fs/promises'
 import { prisma } from '@/lib/db'
 import { localArtworkPath } from '@/lib/design-storage'
+import { artworkUrl } from '@/lib/design-studio'
 import { taskKeyFor } from '@/lib/design-tasks'
 import {
   DriveAuthError, DriveError, deleteFile, folderForTask, getFile, isDriveConnected, shareAnyoneReader,
@@ -10,7 +11,7 @@ import {
 export const DRIVE_CHUNK_SIZE = 8 * 1024 * 1024
 export const RECONNECT_WARNING = 'Google Drive cần kết nối lại'
 
-export type PushResult = { pushed: boolean; warning: string | null }
+export type PushResult = { pushed: boolean; warning: string | null; inProgress?: boolean }
 
 declare global {
   // eslint-disable-next-line no-var
@@ -48,11 +49,11 @@ async function uploadFile(absPath: string, size: number, sessionUrl: string): Pr
 }
 
 export async function pushArtworkToDrive(artworkId: string): Promise<PushResult> {
-  if (!(await isDriveConnected())) return { pushed: false, warning: null }
-  if (inflight().has(artworkId)) return { pushed: false, warning: 'Đang đẩy file này lên Drive, thử lại sau.' }
+  if (inflight().has(artworkId)) return { pushed: false, warning: 'Đang đẩy file này lên Drive, thử lại sau.', inProgress: true }
   inflight().add(artworkId)
   let driveFileId: string | null = null
   try {
+    if (!(await isDriveConnected())) return { pushed: false, warning: null }
     const art = await prisma.designArtwork.findUnique({
       where: { id: artworkId },
       include: { order: { select: { shopifyOrderNumber: true, placedAt: true, store: { select: { shop: true, project: { select: { name: true } } } } } } },
@@ -76,6 +77,8 @@ export async function pushArtworkToDrive(artworkId: string): Promise<PushResult>
     })
     const sessionUrl = await startResumableUpload({ name: `v${art.version}-${art.fileName}`, mimeType: art.mimeType, size, parentId: folderId })
     const key = { orderId: art.orderId, shopifyLineId: art.shopifyLineId, printArea: art.printArea, version: art.version }
+    const stale = await prisma.designArtworkUpload.findMany({ where: { ...key, completedAt: null }, select: { driveFileId: true } })
+    for (const row of stale) if (row.driveFileId) await deleteFile(row.driveFileId).catch(() => {})
     await prisma.designArtworkUpload.deleteMany({ where: { ...key, completedAt: null } })
     const upload = await prisma.designArtworkUpload.create({
       data: { ...key, fileName: art.fileName, mimeType: art.mimeType, size, sessionUrl, folderId, createdById: art.uploadedById },
@@ -84,14 +87,18 @@ export async function pushArtworkToDrive(artworkId: string): Promise<PushResult>
     const file = await uploadFile(absPath, size, sessionUrl)
     if (typeof file?.id !== 'string' || !file.id) throw new DriveError('Google Drive không trả về id file.')
     driveFileId = file.id as string
+    await prisma.designArtworkUpload.update({ where: { id: upload.id }, data: { driveFileId } })
     await shareAnyoneReader(driveFileId)
     const webViewLink = typeof file.webViewLink === 'string' && file.webViewLink
       ? file.webViewLink
       : ((await getFile(driveFileId, 'webViewLink'))?.webViewLink || driveViewLink(driveFileId))
 
+    const appUrl = artworkUrl(art.id)
     await prisma.$transaction([
-      prisma.designArtworkUpload.update({ where: { id: upload.id }, data: { completedAt: new Date(), driveFileId } }),
+      prisma.designArtworkUpload.update({ where: { id: upload.id }, data: { completedAt: new Date() } }),
       prisma.designArtwork.update({ where: { id: art.id }, data: { storage: 'DRIVE', driveFileId, driveWebViewLink: webViewLink, storagePath: null } }),
+      prisma.orderLine.updateMany({ where: { orderId: art.orderId, shopifyLineId: art.shopifyLineId, designDriveLink: appUrl }, data: { designDriveLink: webViewLink } }),
+      prisma.order.updateMany({ where: { id: art.orderId, designDriveLink: appUrl }, data: { designDriveLink: webViewLink } }),
     ])
     await fs.rm(absPath, { force: true }).catch(err => console.error('[drive push] local cleanup failed:', err?.message ?? err))
     return { pushed: true, warning: null }

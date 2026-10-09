@@ -16,6 +16,7 @@ export async function POST(_req: NextRequest, { params }: { params: { artworkId:
   if (!(await isDriveConnected())) return NextResponse.json({ error: 'Google Drive chưa được kết nối' }, { status: 400 })
 
   const push = await pushArtworkToDrive(artworkId)
+  if (push.inProgress) return NextResponse.json({ error: push.warning }, { status: 409 })
   if (!push.pushed) return NextResponse.json({ error: push.warning ?? 'Chưa đẩy được lên Drive' }, { status: 502 })
   return NextResponse.json({ artwork: await loadArtworkRow(artworkId) })
 }
