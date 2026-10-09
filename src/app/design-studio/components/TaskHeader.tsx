@@ -1,7 +1,11 @@
 'use client'
 import { useState, type FormEvent } from 'react'
-import type { TaskDetail, TransitionBody } from './types'
-import { OWNED_MOVES, allSlotsFilled, canTransition, layerOf, postJson, sourceEngine, taskUrl, timeLeft } from './model'
+import Link from 'next/link'
+import type { LayerMapEntry, TaskDetail, TransitionBody } from './types'
+import {
+  OWNED_MOVES, allSlotsFilled, canTransition, findLayer, layerOf, mergeLayerHints, postJson, productPageUrl, productUrl, putJson,
+  requestJson, sourceEngine, taskUrl, timeLeft,
+} from './model'
 import { ErrorBanner, Icon, Pill, READY_META, STATUS_META, btn, btnPrimary, btnWarn, card, input } from './ui'
 
 function hasNonAscii(s: string) { return /[^\x00-\x7F]/.test(s) }
@@ -48,12 +52,23 @@ function CustomTable({ detail, onCopied }: { detail: TaskDetail; onCopied: (msg:
                 {f.value.length > 14 && <Pill tone="warn">{f.value.length} ký tự</Pill>}
               </span>
             </td>
-            <td className="px-sm py-xs font-mono text-label-sm text-secondary">{layerOf(f.key)}</td>
+            <td className="px-sm py-xs font-mono text-label-sm text-secondary"><LayerCell field={f.key} layerMap={detail.profile?.layerMap} /></td>
             <td className="px-sm py-xs text-on-surface-variant">{i === 0 ? (line.variantTitle ?? '—') : ''}</td>
           </tr>
         ))}
       </tbody>
     </table>
+  )
+}
+
+function LayerCell({ field, layerMap }: { field: string; layerMap: LayerMapEntry[] | undefined }) {
+  const entry = findLayer(layerMap, field)
+  if (!entry) return <>{layerOf(field)}</>
+  return (
+    <span className="inline-flex items-center gap-xs" title="Theo hồ sơ sản phẩm">
+      <Icon name="inventory_2" className="text-[14px]" />{entry.layer}
+      <span className="text-on-surface-variant">· {entry.fit}{entry.maxChars ? ` · ≤${entry.maxChars}` : ''}</span>
+    </span>
   )
 }
 
@@ -77,9 +92,10 @@ export default function TaskHeader({ detail, holdCount, onChanged }: { detail: T
   const [kpi, setKpi] = useState(String(task.kpi))
   const [dueHours, setDueHours] = useState(() => String(hoursUntil(task.dueAt, task.slaHours)))
   const [assignNote, setAssignNote] = useState('')
-  const [remember, setRemember] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
+  const [savingProfile, setSavingProfile] = useState(false)
 
+  const isAdmin = me.role === 'SUPERADMIN' || me.role === 'ADMIN'
   const owns = me.isLeader || !task.assigneeId || task.assigneeId === me.id
   const can = (to: TransitionBody['to']) => canTransition(task.status, to, me.isLeader, task.readiness) && (owns || !OWNED_MOVES.includes(to))
   const filled = allSlotsFilled(detail)
@@ -105,6 +121,24 @@ export default function TaskHeader({ detail, holdCount, onChanged }: { detail: T
     const { updated = 0, unmatched = 0 } = r.data ?? {}
     setInfo(`Đã nạp lại ${updated} dòng từ Shopify${unmatched ? `, ${unmatched} dòng không khớp` : ''}`)
     onChanged()
+  }
+
+  async function saveLayersToProfile() {
+    const key = detail.profileRouteKey
+    if (!key || savingProfile) return
+    setSavingProfile(true); setError(''); setInfo('')
+    try {
+      const got = await requestJson<{ profile: { layerMap: LayerMapEntry[] } | null }>(productUrl(key))
+      if (!got.ok) { setError(got.error); return }
+      const { merged, added } = mergeLayerHints(got.data.profile?.layerMap ?? [], line.personalization.map(f => f.key))
+      if (added.length === 0) { setInfo('Hồ sơ đã có layer cho mọi trường của dòng này'); return }
+      const put = await putJson(productUrl(key), { layerMap: merged })
+      if (!put.ok) { setError(put.error); return }
+      setInfo(`Đã lưu ${added.length} layer vào hồ sơ: ${added.map(a => a.field).join(', ')}`)
+      onChanged()
+    } finally {
+      setSavingProfile(false)
+    }
   }
 
   function submitAssign(e: FormEvent) {
@@ -174,6 +208,7 @@ export default function TaskHeader({ detail, holdCount, onChanged }: { detail: T
         <h2 className="font-mono text-headline-sm text-on-surface">{task.taskKey}</h2>
         <Pill tone={status.tone}>{status.label}</Pill>
         <Pill tone={ready.tone} icon={ready.icon}>{ready.label}</Pill>
+        {detail.profile?.status === 'READY' && <Pill tone="ok" icon="inventory_2">Hồ sơ đủ</Pill>}
         <Pill tone={left.tone} icon={left.icon}>{left.label}</Pill>
         <span className="flex-1 min-w-[200px] text-body-sm text-on-surface-variant">{task.productTitle}</span>
       </div>
@@ -190,16 +225,21 @@ export default function TaskHeader({ detail, holdCount, onChanged }: { detail: T
         <button type="button" onClick={refreshFromShopify} disabled={refreshing} className={btn}>
           <Icon name="sync" className="text-[16px]" />{refreshing ? 'Đang nạp…' : 'Nạp lại từ Shopify'}
         </button>
+        {detail.profileRouteKey && (
+          <Link href={productPageUrl(detail.profileRouteKey)} className={btn}>
+            <Icon name="inventory_2" className="text-[16px]" />{detail.profile ? 'Hồ sơ sản phẩm' : 'Tạo hồ sơ sản phẩm'}
+          </Link>
+        )}
       </div>
 
       <CustomTable detail={detail} onCopied={setInfo} />
 
       <div className="flex items-center gap-xs flex-wrap justify-end pt-xs border-t border-dashed border-outline-variant/40">
-        {line.sourcePrintFiles.length > 0 && (
-          <label className="mr-auto inline-flex items-center gap-xs text-label-sm text-on-surface-variant">
-            <input type="checkbox" checked={remember} onChange={e => setRemember(e.target.checked)} className="accent-secondary" />
-            Nhớ cách gắn dữ liệu → layer cho <b className="text-on-surface">{task.sku ?? '—'}</b>
-          </label>
+        {isAdmin && detail.profileRouteKey && line.personalization.length > 0 && (
+          <button type="button" className={`${btn} mr-auto`} onClick={saveLayersToProfile} disabled={savingProfile}
+            title="Ghi layer của các trường này vào hồ sơ sản phẩm (không ghi đè dòng đã có)">
+            <Icon name="save" className="text-[16px]" />{savingProfile ? 'Đang lưu…' : 'Lưu vào hồ sơ'}
+          </button>
         )}
         {info && <span role="status" className="text-label-sm text-on-surface-variant">{info}</span>}
         {actions}

@@ -238,6 +238,7 @@ describe('saving a profile', () => {
       layerMap: [{ field: 'Name', layer: 'name_text', fit: 'shrink', maxChars: 12 }],
     })
     expect(detail?.line.masterArtworkUrl).toBe(MASTER)
+    expect(detail?.profileRouteKey).toBe(key)
   })
 
   it('without a profile template the SKU-matched template is used', async () => {

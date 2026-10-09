@@ -1,0 +1,136 @@
+'use client'
+import { useEffect, useState } from 'react'
+import Link from 'next/link'
+import { useRouter } from 'next/navigation'
+import Sidebar from '@/components/Sidebar'
+import type { ProfileStatus } from '../components/types'
+import { productPageUrl, requestJson } from '../components/model'
+import { ErrorBanner, Icon, Note, PROFILE_META, Pill, card, input } from '../components/ui'
+import type { ProductListRow } from './components/types'
+import { shopLabel } from './components/profile-form'
+
+const FILTERS: { value: ProfileStatus | ''; label: string }[] = [
+  { value: '', label: 'Tất cả' },
+  { value: 'NONE', label: 'Chưa có hồ sơ' },
+  { value: 'NO_TEMPLATE', label: 'Thiếu template' },
+  { value: 'NO_MASTER', label: 'Thiếu master' },
+  { value: 'NO_LAYERS', label: 'Thiếu layer' },
+  { value: 'READY', label: 'Đủ' },
+]
+
+export default function ProductsPage() {
+  const router = useRouter()
+  const [q, setQ] = useState('')
+  const [debouncedQ, setDebouncedQ] = useState('')
+  const [status, setStatus] = useState<ProfileStatus | ''>('')
+  const [rows, setRows] = useState<ProductListRow[]>([])
+  const [withoutProductId, setWithoutProductId] = useState(0)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQ(q.trim()), 300)
+    return () => clearTimeout(t)
+  }, [q])
+
+  useEffect(() => {
+    let alive = true
+    setLoading(true)
+    const params = new URLSearchParams()
+    if (debouncedQ) params.set('q', debouncedQ)
+    if (status) params.set('status', status)
+    requestJson<{ products: ProductListRow[]; withoutProductId: number }>(`/api/design-studio/products?${params.toString()}`).then(r => {
+      if (!alive) return
+      setLoading(false)
+      if (!r.ok) { setError(r.error); return }
+      setError('')
+      setRows(r.data.products)
+      setWithoutProductId(r.data.withoutProductId)
+    })
+    return () => { alive = false }
+  }, [debouncedQ, status])
+
+  return (
+    <div className="flex min-h-screen bg-surface">
+      <Sidebar />
+      <main className="ml-[280px] flex-1 p-xl flex flex-col gap-md">
+        <div className="flex items-center gap-sm flex-wrap">
+          <Icon name="inventory_2" className="text-[28px] text-secondary" />
+          <h1 className="text-headline-sm font-bold text-primary">Design Studio · Sản phẩm</h1>
+          <label className="ml-auto flex items-center gap-xs text-label-sm text-on-surface-variant">
+            <Icon name="search" className="text-[18px]" />
+            <span className="sr-only">Tìm sản phẩm</span>
+            <input type="search" value={q} onChange={e => setQ(e.target.value)} placeholder="Tên sản phẩm hoặc product ID" className={`${input} w-72`} />
+          </label>
+        </div>
+
+        <div className="flex items-center gap-xs flex-wrap" role="group" aria-label="Lọc theo trạng thái hồ sơ">
+          {FILTERS.map(f => {
+            const on = status === f.value
+            return (
+              <button key={f.value || 'ALL'} type="button" aria-pressed={on} onClick={() => setStatus(f.value)}
+                className={`rounded-full px-sm py-[2px] text-label-sm border ${on ? 'bg-secondary text-on-secondary border-transparent font-semibold' : 'bg-surface-container-lowest border-outline-variant/40 text-on-surface-variant hover:bg-surface-container-low'}`}>
+                {f.label}
+              </button>
+            )
+          })}
+          <span className="ml-auto text-label-sm text-on-surface-variant">{loading ? 'Đang tải…' : `${rows.length} sản phẩm · 90 ngày gần nhất`}</span>
+        </div>
+
+        {withoutProductId > 0 && (
+          <Note tone="warn" icon="info">
+            {withoutProductId} dòng đơn chưa có product ID — bấm <b>Đồng bộ task</b> ở <Link href="/design-studio" className="underline">Design Tasks</Link> để nạp
+          </Note>
+        )}
+
+        <ErrorBanner msg={error} onClose={() => setError('')} />
+
+        <div className={`${card} overflow-x-auto`}>
+          <table className="w-full border-collapse text-body-sm">
+            <thead>
+              <tr className="text-label-sm text-on-surface-variant text-left border-b border-outline-variant/20">
+                <th className="px-md py-sm font-medium w-14"><span className="sr-only">Ảnh</span></th>
+                <th className="px-sm py-sm font-medium">Sản phẩm</th>
+                <th className="px-sm py-sm font-medium">Store</th>
+                <th className="px-sm py-sm font-medium text-right">Biến thể</th>
+                <th className="px-sm py-sm font-medium text-right">Đơn</th>
+                <th className="px-sm py-sm font-medium text-right">Task mở</th>
+                <th className="px-sm py-sm font-medium">Hồ sơ</th>
+                <th className="px-md py-sm font-medium w-8"><span className="sr-only">Mở</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              {!loading && rows.length === 0 && !error && (
+                <tr><td colSpan={8} className="px-md py-lg text-center text-on-surface-variant">Không có sản phẩm nào khớp.</td></tr>
+              )}
+              {rows.map(r => {
+                const meta = PROFILE_META[r.status]
+                const href = productPageUrl(r.key)
+                return (
+                  <tr key={r.key} onClick={() => router.push(href)} className="border-b border-outline-variant/20 last:border-b-0 hover:bg-surface-container-low cursor-pointer">
+                    <td className="px-md py-xs">
+                      {r.imageUrl
+                        // eslint-disable-next-line @next/next/no-img-element
+                        ? <img src={r.imageUrl} alt="" className="w-10 h-10 rounded object-cover border border-outline-variant/20" />
+                        : <span className="w-10 h-10 rounded bg-surface-container grid place-items-center"><Icon name="image" className="text-[18px] text-on-surface-variant" /></span>}
+                    </td>
+                    <td className="px-sm py-xs">
+                      <Link href={href} onClick={e => e.stopPropagation()} className="font-semibold text-on-surface hover:text-secondary hover:underline">{r.title}</Link>
+                      <div className="text-label-sm text-on-surface-variant font-mono">{r.shopifyProductId.replace('gid://shopify/Product/', '')}</div>
+                    </td>
+                    <td className="px-sm py-xs text-on-surface-variant">{shopLabel(r.shop)}</td>
+                    <td className="px-sm py-xs text-right">{r.variantsSeen}</td>
+                    <td className="px-sm py-xs text-right">{r.orderCount}</td>
+                    <td className="px-sm py-xs text-right">{r.openTasks > 0 ? <b className="text-on-surface">{r.openTasks}</b> : <span className="text-on-surface-variant">0</span>}</td>
+                    <td className="px-sm py-xs"><Pill tone={meta.tone} icon={meta.icon}>{meta.label}</Pill></td>
+                    <td className="px-md py-xs text-on-surface-variant"><Icon name="chevron_right" className="text-[18px]" /></td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </main>
+    </div>
+  )
+}

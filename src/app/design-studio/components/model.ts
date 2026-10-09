@@ -1,4 +1,4 @@
-import type { ArtworkRow, Readiness, TaskDetail, TaskRow, TaskStatus, TemplateArea, TemplateRow, WorkspaceLine } from './types'
+import type { ArtworkRow, LayerMapEntry, Readiness, TaskDetail, TaskRow, TaskStatus, TemplateArea, TemplateRow, WorkspaceLine } from './types'
 
 export const OPEN_STATUSES: TaskStatus[] = ['NEW', 'ASSIGNED', 'DOING', 'REVIEW', 'REJECTED']
 export const OWNED_MOVES: TaskStatus[] = ['DOING', 'NEW', 'REVIEW', 'ASK_CUSTOMER']
@@ -73,6 +73,32 @@ export function layerOf(key: string): string {
   return `SWAP · ${slug}`
 }
 
+export function layerHint(key: string): LayerMapEntry | null {
+  if (/size|yes or no/i.test(key)) return null
+  const slug = key.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '')
+  if (/number/i.test(key)) return { field: key, layer: 'number', fit: 'shrink' }
+  if (/name|text/i.test(key)) return { field: key, layer: slug || 'text', fit: 'shrink' }
+  return { field: key, layer: slug || 'swap', fit: 'none' }
+}
+
+export function findLayer(layerMap: LayerMapEntry[] | null | undefined, field: string): LayerMapEntry | undefined {
+  const norm = field.toLowerCase().trim()
+  return layerMap?.find(e => e.field.toLowerCase().trim() === norm)
+}
+
+export function mergeLayerHints(layerMap: LayerMapEntry[], fields: string[]): { merged: LayerMapEntry[]; added: LayerMapEntry[] } {
+  const merged = [...layerMap]
+  const added: LayerMapEntry[] = []
+  for (const field of fields) {
+    if (findLayer(merged, field)) continue
+    const hint = layerHint(field)
+    if (!hint) continue
+    merged.push(hint)
+    added.push(hint)
+  }
+  return { merged, added }
+}
+
 export function sourceEngine(line: WorkspaceLine): string {
   return line.sourcePrintFiles.length ? 'Customall (app gốc)' : line.customized ? 'Customizer' : 'Non-custom'
 }
@@ -86,6 +112,18 @@ export async function requestJson<T = any>(url: string, init?: RequestInit): Pro
   } catch (e: any) {
     return { ok: false, error: e?.message ?? 'Lỗi mạng' }
   }
+}
+
+export function putJson<T = any>(url: string, body: unknown) {
+  return requestJson<T>(url, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+}
+
+export function productUrl(key: string): string {
+  return `/api/design-studio/products/${encodeURIComponent(key)}`
+}
+
+export function productPageUrl(key: string): string {
+  return `/design-studio/products/${encodeURIComponent(key)}`
 }
 
 export function postJson<T = any>(url: string, body: unknown) {

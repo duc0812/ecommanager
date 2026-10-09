@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import type { Readiness, TaskStatus } from './types'
+import type { ProfileStatus, Readiness, TaskStatus } from './types'
 import type { Tone } from './model'
 
 export const card = 'bg-surface-container-lowest rounded-xl shadow-card border border-outline-variant/20'
@@ -39,6 +39,14 @@ export const STATUS_META: Record<TaskStatus, { label: string; tone: Tone }> = {
   REJECTED: { label: 'Trả lại sửa', tone: 'bad' },
   DONE: { label: 'Xong', tone: 'ok' },
   CANCELLED: { label: 'Đã huỷ', tone: 'idle' },
+}
+
+export const PROFILE_META: Record<ProfileStatus, { label: string; tone: Tone; icon: string }> = {
+  NONE: { label: 'Chưa có hồ sơ', tone: 'idle', icon: 'add_circle' },
+  NO_TEMPLATE: { label: 'Thiếu template', tone: 'warn', icon: 'dashboard_customize' },
+  NO_MASTER: { label: 'Thiếu master', tone: 'warn', icon: 'image' },
+  NO_LAYERS: { label: 'Thiếu layer', tone: 'warn', icon: 'layers' },
+  READY: { label: 'Đủ', tone: 'ok', icon: 'check_circle' },
 }
 
 export function Icon({ name, className = '' }: { name: string; className?: string }) {

@@ -140,7 +140,7 @@ export type TemplateRow = {
 export type TaskProfile = { key: string; status: ProfileStatus; masterArtworkUrl: string | null; layerMap: LayerMapEntry[] }
 
 export type TaskDetail = {
-  task: TaskRow; line: WorkspaceLine; order: Workspace['order']; template: TemplateRow | null; profile: TaskProfile | null
+  task: TaskRow; line: WorkspaceLine; order: Workspace['order']; template: TemplateRow | null; profile: TaskProfile | null; profileRouteKey: string | null
   events: { id: string; type: string; message: string; actorName: string | null; createdAt: string }[]
   assignable: { id: string; name: string }[]; settings: DesignSettings; prevStatus: TaskStatus | null
   slots: string[]
@@ -357,7 +357,12 @@ export async function loadTask(taskKey: string): Promise<TaskDetail | null> {
     where: { orderId: task.orderId, shopifyLineId: task.shopifyLineId },
     select: { orderId: true, resolvedSupplierId: true, resolvedSupplierSku: true, customAttributesJson: true, shopifyProductId: true },
   })
-  const profileRow = orderLine ? await profileForLine(orderLine) : null
+  const productId = orderLine?.shopifyProductId ?? null
+  const storeId = productId
+    ? (await prisma.order.findUnique({ where: { id: task.orderId }, select: { storeId: true } }))?.storeId ?? null
+    : null
+  const profileRouteKey = storeId && productId ? toRouteKey(storeId, productId) : null
+  const profileRow = storeId && productId ? await findProfile(storeId, productId) : null
   const template = orderLine ? await templateForLine(orderLine, profileRow) : null
   const profile: TaskProfile | null = profileRow
     ? {
@@ -382,7 +387,7 @@ export async function loadTask(taskKey: string): Promise<TaskDetail | null> {
   if (!row) return null
 
   return {
-    task: row, line, order: workspace.order, template, profile,
+    task: row, line, order: workspace.order, template, profile, profileRouteKey,
     events: events.map(e => ({
       id: e.id, type: e.type, message: e.message,
       actorName: e.actorId ? (actorNameById.get(e.actorId) ?? null) : null,

@@ -59,8 +59,14 @@ export type TaskEvent = { id: string; type: string; message: string; actorName: 
 
 export type DesignSettings = { slaCustomHours: number; slaNonCustomHours: number; kpiByType: Record<string, number>; rejectReasons: string[] }
 
+export type ProfileStatus = 'NONE' | 'NO_TEMPLATE' | 'NO_MASTER' | 'NO_LAYERS' | 'READY'
+export type LayerFit = 'shrink' | 'wrap' | 'none'
+export type LayerMapEntry = { field: string; layer: string; font?: string; maxChars?: number; fit: LayerFit }
+export type TaskProfile = { key: string; status: ProfileStatus; masterArtworkUrl: string | null; layerMap: LayerMapEntry[] }
+
 export type TaskDetail = {
   task: TaskRow; line: WorkspaceLine; order: OrderInfo; template: TemplateRow | null
+  profile: TaskProfile | null; profileRouteKey: string | null
   events: TaskEvent[]; assignable: { id: string; name: string }[]; settings: DesignSettings; prevStatus: TaskStatus | null
   slots: string[]; me: Me
 }
