@@ -27,6 +27,7 @@ export type ShopifyOrderLine = {
   selectedOptions: Record<string, string>  // NEW: {"Style":"Tshirt","Size":"S"}
   productUrl?: string | null        // storefront page; null when the product is not published
   imageUrl?: string | null          // variant image, falling back to the product's featured image
+  productId?: string | null         // product GID
 }
 
 export type ShopifyOrder = {
@@ -94,7 +95,7 @@ query SyncOrders($cursor: String, $query: String) {
           originalUnitPriceSet { shopMoney { amount } }
           customAttributes { key value }
           image { url }
-          product { tags productType onlineStoreUrl featuredImage { url } }
+          product { id tags productType onlineStoreUrl featuredImage { url } }
           variant {
             id
             selectedOptions { name value }
@@ -203,6 +204,7 @@ export async function fetchOrdersPage(
         variantId: l.variant?.id ?? null,
         productUrl: l.product?.onlineStoreUrl ?? null,
         imageUrl: l.image?.url ?? l.product?.featuredImage?.url ?? null,
+        productId: l.product?.id ?? null,
         selectedOptions: Object.fromEntries(
           (l.variant?.selectedOptions ?? []).map((o: { name: string; value: string }) => [o.name, o.value])
         ),
@@ -476,6 +478,7 @@ export type ShopifyOrderLineProps = {
   productUrl: string | null
   variantId: string | null
   imageUrl: string | null
+  productId?: string | null
 }
 
 const LINE_PROPS_QUERY = `
@@ -488,7 +491,7 @@ query OrderLineProps($query: String) {
           sku title variantTitle quantity
           customAttributes { key value }
           image { url }
-          product { productType onlineStoreUrl featuredImage { url } }
+          product { id productType onlineStoreUrl featuredImage { url } }
           variant { id }
         }
       }
@@ -530,6 +533,7 @@ export async function fetchOrderLinePropsByNames(
         productUrl: l.product?.onlineStoreUrl ?? null,
         variantId: l.variant?.id ?? null,
         imageUrl: l.image?.url ?? l.product?.featuredImage?.url ?? null,
+        productId: l.product?.id ?? null,
       })))
     }
   }

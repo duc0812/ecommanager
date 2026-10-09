@@ -36,6 +36,23 @@ describe('applyLineProps', () => {
     expect(lines[0].imageUrl).toBe('https://cdn.shopify.com/x.jpg')
     expect(lines[1].imageUrl).toBeNull()
   })
+  it('writes shopifyProductId and keeps it when the props omit it', async () => {
+    const base = { variantTitle: null, quantity: 1, productType: null, customAttributes: [], productUrl: null, variantId: null, imageUrl: null }
+    await applyLineProps(ORDER_ID, [
+      { ...base, sku: 'A', title: 'Socks', productId: 'gid://shopify/Product/501' },
+      { ...base, sku: 'B', title: 'Mug' },
+    ])
+    let lines = await prisma.orderLine.findMany({ where: { orderId: ORDER_ID }, orderBy: { linePosition: 'asc' } })
+    expect(lines[0].shopifyProductId).toBe('gid://shopify/Product/501')
+    expect(lines[1].shopifyProductId).toBeNull()
+    await applyLineProps(ORDER_ID, [
+      { ...base, sku: 'A', title: 'Socks' },
+      { ...base, sku: 'B', title: 'Mug', productId: 'gid://shopify/Product/502' },
+    ])
+    lines = await prisma.orderLine.findMany({ where: { orderId: ORDER_ID }, orderBy: { linePosition: 'asc' } })
+    expect(lines[0].shopifyProductId).toBe('gid://shopify/Product/501')
+    expect(lines[1].shopifyProductId).toBe('gid://shopify/Product/502')
+  })
   it('falls back to sku+title when counts differ', async () => {
     const r = await applyLineProps(ORDER_ID, [
       { sku: 'B', title: 'Mug', variantTitle: null, quantity: 1, productType: null, customAttributes: [{ key: 'Text', value: 'Hi' }], productUrl: null, variantId: null, imageUrl: null },

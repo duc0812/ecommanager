@@ -24,7 +24,7 @@ export async function POST(req: NextRequest) {
     select: {
       id: true, shopifyOrderNumber: true,
       store: { select: { shop: true } },
-      lines: { select: { customAttributesJson: true, imageUrl: true } },
+      lines: { select: { customAttributesJson: true, imageUrl: true, shopifyProductId: true } },
     },
   })
   const refresh = await refreshMissingLineProps(orders)

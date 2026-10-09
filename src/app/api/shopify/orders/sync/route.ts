@@ -374,6 +374,7 @@ export async function POST(req: NextRequest) {
             designDriveLink: libraryDesignLinkByIndex.get(idx) ?? null,
             customized: designInputs[idx]?.customized ?? false,
             imageUrl: l.imageUrl ?? null,
+            shopifyProductId: l.productId ?? null,
             customAttributesJson: (l.customAttributes.length > 0 || l.productUrl)
               ? JSON.stringify(l.productUrl ? [...l.customAttributes, { key: '_product_url', value: l.productUrl }] : l.customAttributes)
               : null,

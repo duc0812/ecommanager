@@ -94,7 +94,7 @@ export async function saveArtwork(input: {
 
 export async function readArtwork(id: string) {
   const row = await prisma.designArtwork.findUnique({ where: { id } })
-  if (!row) return null
+  if (!row || !row.storagePath) return null
   const root = storageRoot()
   const absPath = path.resolve(root, row.storagePath)
   if (!absPath.startsWith(path.resolve(root) + path.sep)) return null

@@ -21,6 +21,7 @@ model ShopifyStore {
   ianaTimezone           String?
   projectId              String?       @unique
   project                Project?      @relation(fields: [projectId], references: [id])
+  productProfiles        ProductProfile[]
 }
 
 model AppUser {
@@ -310,6 +311,7 @@ model Supplier {
 
 model SupplierProduct {
   id                  String   @id @default(cuid())
+  productProfiles     ProductProfile[]
   supplierId          String
   supplier            Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
   sku                 String
@@ -382,6 +384,7 @@ model Order {
   lines                OrderLine[]
   shipments            Shipment[]
   artworks             DesignArtwork[]
+  artworkUploads       DesignArtworkUpload[]
   designTasks          DesignTask[]
   shippingZone         String?
   shippingName         String?
@@ -433,7 +436,9 @@ model OrderLine {
   customAttributesJson    String?
   imageUrl                String?
   designNote              String?
+  shopifyProductId        String?
   @@index([sku])
+  @@index([shopifyProductId])
   @@index([shopifyVariantId])
   @@index([orderId])
   @@index([orderId, shopifyLineId])
@@ -447,7 +452,10 @@ model DesignArtwork {
   printArea     String
   version       Int
   fileName      String
-  storagePath   String
+  storagePath   String?
+  storage       String   @default("LOCAL")
+  driveFileId   String?
+  driveWebViewLink String?
   size          Int
   mimeType      String
   widthPx       Int?
@@ -456,6 +464,46 @@ model DesignArtwork {
   createdAt     DateTime @default(now())
   @@unique([orderId, shopifyLineId, printArea, version])
   @@index([orderId])
+}
+
+model DesignArtworkUpload {
+  id            String    @id @default(cuid())
+  orderId       String
+  order         Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  shopifyLineId String
+  printArea     String
+  version       Int
+  fileName      String
+  mimeType      String
+  size          Int
+  sessionUrl    String
+  folderId      String
+  driveFileId   String?
+  createdById   String?
+  createdAt     DateTime  @default(now())
+  completedAt   DateTime?
+  @@index([orderId])
+}
+
+model ProductProfile {
+  id                String           @id @default(cuid())
+  storeId           String
+  store             ShopifyStore     @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  shopifyProductId  String
+  title             String
+  imageUrl          String?
+  supplierProductId String?
+  supplierProduct   SupplierProduct? @relation(fields: [supplierProductId], references: [id], onDelete: SetNull)
+  overrides         String           @default("[]")
+  printTemplateId   String?
+  printTemplate     PrintTemplate?   @relation(fields: [printTemplateId], references: [id], onDelete: SetNull)
+  masterArtworkUrl  String?
+  masterArtworkId   String?
+  layerMap          String           @default("[]")
+  notes             String?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  @@unique([storeId, shopifyProductId])
 }
 
 model DesignTask {
@@ -496,6 +544,7 @@ model DesignTaskEvent {
 
 model PrintTemplate {
   id             String   @id @default(cuid())
+  productProfiles ProductProfile[]
   supplierId     String
   supplier       Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
   supplierSku    String?

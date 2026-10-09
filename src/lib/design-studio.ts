@@ -275,7 +275,7 @@ export async function applyLineProps(orderId: string, props: ShopifyOrderLinePro
     if (!line) { unmatched++; continue }
     used.add(line.id)
     const attrs = p.productUrl ? [...p.customAttributes, { key: '_product_url', value: p.productUrl }] : p.customAttributes
-    await prisma.orderLine.update({ where: { id: line.id }, data: { customAttributesJson: JSON.stringify(attrs), imageUrl: p.imageUrl ?? null } })
+    await prisma.orderLine.update({ where: { id: line.id }, data: { customAttributesJson: JSON.stringify(attrs), imageUrl: p.imageUrl ?? null, ...(p.productId !== undefined ? { shopifyProductId: p.productId } : {}) } })
     updated++
   }
   return { updated, unmatched }
@@ -283,10 +283,10 @@ export async function applyLineProps(orderId: string, props: ShopifyOrderLinePro
 
 export async function refreshMissingLineProps(orders: Array<{
   id: string; shopifyOrderNumber: string; store: { shop: string }
-  lines: Array<{ customAttributesJson: string | null; imageUrl: string | null }>
+  lines: Array<{ customAttributesJson: string | null; imageUrl: string | null; shopifyProductId: string | null }>
 }>): Promise<{ refreshed: number; notFound: number; otherStore: number; error: string | null }> {
   const result = { refreshed: 0, notFound: 0, otherStore: 0, error: null as string | null }
-  const needing = orders.filter(o => o.lines.some(l => l.customAttributesJson == null || l.imageUrl == null))
+  const needing = orders.filter(o => o.lines.some(l => l.customAttributesJson == null || l.imageUrl == null || l.shopifyProductId == null))
   if (needing.length === 0) return result
   const conn = await getShopifyConnection()
   if (!conn) return { ...result, error: 'Chưa kết nối Shopify' }
