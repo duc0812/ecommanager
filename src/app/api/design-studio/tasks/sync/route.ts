@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { getAuthUser, unauthorized } from '@/lib/api-auth'
-import { syncDesignTasks } from '@/lib/design-tasks'
+import { syncDesignTasks, pruneUntouchedTasksOutside } from '@/lib/design-tasks'
+
+const DEFAULT_SCAN = 100
 
 export async function POST(req: NextRequest) {
   const user = await getAuthUser(req)
@@ -14,15 +16,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ...r, orders: 1 })
   }
 
+  const limit = Math.min(500, Math.max(1, Number(body?.limit) || DEFAULT_SCAN))
   const orders = await prisma.order.findMany({
-    where: {
-      OR: [
-        { pipelineStatus: { in: ['PENDING_DESIGN', 'DESIGN_REJECTED'] } },
-        { designTasks: { some: { status: { notIn: ['DONE', 'CANCELLED'] } } } },
-      ],
-    },
+    orderBy: { placedAt: 'desc' },
+    take: limit,
     select: { id: true, shopifyOrderNumber: true },
   })
+  const pruned = await pruneUntouchedTasksOutside(orders.map(o => o.id))
   let created = 0, cancelled = 0, completed = 0, reopened = 0
   const errors: string[] = []
   for (const o of orders) {
@@ -36,5 +36,5 @@ export async function POST(req: NextRequest) {
       errors.push(`${o.shopifyOrderNumber}: ${e.message}`)
     }
   }
-  return NextResponse.json({ created, cancelled, completed, reopened, orders: orders.length, errors })
+  return NextResponse.json({ created, cancelled, completed, reopened, pruned, orders: orders.length, errors })
 }

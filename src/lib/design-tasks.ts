@@ -359,3 +359,19 @@ export async function loadTask(taskKey: string): Promise<TaskDetail | null> {
     slots: requiredSlotsFor(orderLine ?? { customAttributesJson: null }, template),
   }
 }
+
+export async function pruneUntouchedTasksOutside(keepOrderIds: string[]): Promise<number> {
+  const stale = await prisma.designTask.findMany({
+    where: {
+      orderId: { notIn: keepOrderIds },
+      status: 'NEW',
+      assigneeId: null,
+      events: { none: { type: { not: 'SYSTEM' } } },
+      order: { artworks: { none: {} } },
+    },
+    select: { id: true },
+  })
+  if (stale.length === 0) return 0
+  const r = await prisma.designTask.deleteMany({ where: { id: { in: stale.map(t => t.id) } } })
+  return r.count
+}
