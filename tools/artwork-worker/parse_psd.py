@@ -24,6 +24,7 @@ from typing import Any, Callable, Iterable
 import numpy as np
 from PIL import Image
 from psd_tools import PSDImage
+from psd_tools.constants import Resource
 
 import textrender
 
@@ -120,9 +121,137 @@ def _enum_name(v: Any) -> str:
     return str(getattr(v, 'name', v)).upper()
 
 
+def _desc(e) -> dict:
+    d = getattr(e, 'descriptor', None)
+    return d if d is not None else {}
+
+
+def _dget(d, key: str, default=None):
+    for k, v in dict(d).items():
+        if _key(k) == key.strip():
+            return v
+    return default
+
+
+def _dnum(d, key: str, default: float = 0.0) -> float:
+    v = _dget(d, key)
+    try:
+        return float(getattr(v, 'value', v))
+    except (TypeError, ValueError):
+        return default
+
+
+def _denum(d, key: str) -> str:
+    v = _dget(d, key)
+    if v is None:
+        return ''
+    return _key(getattr(v, 'enum', v))
+
+
+BLEND_MODES = {'Nrml': 'normal', 'Scrn': 'screen', 'Mltp': 'multiply', 'linearDodge': 'linearDodge',
+               'Ovrl': 'overlay', 'CDdg': 'screen', 'lighterColor': 'screen', 'Lghn': 'screen',
+               'linearBurn': 'multiply', 'CBrn': 'multiply', 'Drkn': 'multiply', 'darkerColor': 'multiply'}
+BEVEL_TECHNIQUES = {'SfBL': 'smooth', 'PrBL': 'chiselHard', 'Slmt': 'chiselSoft'}
+INTERPOLATIONS = {'Perc': 'perceptual', 'Lnr ': 'linear', 'Lnr': 'linear', 'Gcls': 'classic'}
+
+
+def _blend_mode(d, key: str, warnings: list[str], where: str) -> str:
+    raw = _denum(d, key)
+    mode = BLEND_MODES.get(raw)
+    if mode is None:
+        warnings.append(f'{where}: blend mode {raw or "?"} drawn as normal')
+        return 'normal'
+    if raw not in ('Nrml', 'Scrn', 'Mltp', 'linearDodge', 'Ovrl'):
+        warnings.append(f'{where}: blend mode {raw} approximated as {mode}')
+    return mode
+
+
+def _contour_points(d) -> list[list[float]] | None:
+    spec = _dget(d, 'TrnS')
+    if spec is None:
+        return None
+    pts = []
+    for p in _dget(spec, 'Crv ', []) or []:
+        pts.append([round(_dnum(p, 'Hrzn'), 2), round(_dnum(p, 'Vrtc'), 2)])
+    if len(pts) < 2 or pts == [[0.0, 0.0], [255.0, 255.0]]:
+        return None
+    return pts
+
+
+def read_gradient(e, warnings: list[str], where: str, canvas: tuple[float, float]) -> dict | None:
+    d = _desc(e)
+    gtype = _denum(d, 'Type')
+    if gtype not in ('Lnr', 'Lnr '):
+        warnings.append(f'{where}: gradient overlay type {gtype or "?"} is not supported (linear only)')
+        return None
+    grad = _dget(d, 'Grad') or {}
+    if _denum(grad, 'GrdF') not in ('CstS', ''):
+        warnings.append(f'{where}: noise gradient is not supported')
+        return None
+    intr = _dnum(grad, 'Intr', 4096.0)
+    stops = []
+    for c in _dget(grad, 'Clrs', []) or []:
+        if _denum(c, 'Type') not in ('UsrS', ''):
+            warnings.append(f'{where}: gradient stop uses foreground/background colour')
+        stops.append({'pos': round(_dnum(c, 'Lctn') / 4096.0, 5), 'color': _desc_color(_dget(c, 'Clr '), warnings, where),
+                      'mid': round(_dnum(c, 'Mdpn', 50) / 100.0, 4)})
+    alpha = []
+    for t in _dget(grad, 'Trns', []) or []:
+        alpha.append({'pos': round(_dnum(t, 'Lctn') / 4096.0, 5), 'opacity': round(_dnum(t, 'Opct', 100) / 100.0, 4),
+                      'mid': round(_dnum(t, 'Mdpn', 50) / 100.0, 4)})
+    off = _dget(d, 'Ofst') or {}
+    g = {
+        'type': 'linear', 'angle': round(_dnum(d, 'Angl'), 3), 'scale': round(_dnum(d, 'Scl ', 100), 3),
+        'offset': {'x': round(_dnum(off, 'Hrzn'), 4), 'y': round(_dnum(off, 'Vrtc'), 4)},
+        'align': bool(_dget(d, 'Algn', True)), 'reverse': bool(_dget(d, 'Rvrs', False)),
+        'opacity': round(_dnum(d, 'Opct', 100) / 100.0, 4),
+        'interpolation': INTERPOLATIONS.get(_denum(d, 'gs99'), 'classic'), 'smoothness': round(intr / 4096.0, 4),
+        'stops': stops,
+    }
+    if any(a['opacity'] < 1 for a in alpha):
+        g['alphaStops'] = alpha
+    if not g['align']:
+        g['frame'] = {'x': 0, 'y': 0, 'w': canvas[0], 'h': canvas[1]}
+    if _denum(d, 'Md  ') != 'Nrml':
+        warnings.append(f'{where}: gradient overlay blend mode {_denum(d, "Md  ")} drawn as normal')
+    return g
+
+
+def read_bevel(e, warnings: list[str], where: str, k: float, global_light: tuple[float, float]) -> dict | None:
+    d = _desc(e)
+    style = _denum(d, 'bvlS')
+    if style not in ('InrB', ''):
+        warnings.append(f'{where}: bevel style {style} is not supported (inner bevel only)')
+        return None
+    if _dget(d, 'useTexture', False):
+        warnings.append(f'{where}: bevel texture is not supported')
+    if _dget(d, 'useShape', False):
+        warnings.append(f'{where}: bevel contour (shape) is not supported')
+    if _dget(d, 'uglg', False):
+        angle, altitude = global_light
+    else:
+        angle, altitude = _dnum(d, 'lagl', 120), _dnum(d, 'Lald', 30)
+    b = {
+        'technique': BEVEL_TECHNIQUES.get(_denum(d, 'bvlT'), 'smooth'),
+        'depth': round(_dnum(d, 'srgR', 100), 3),
+        'direction': 'down' if _denum(d, 'bvlD') == 'Out' else 'up',
+        'size': round(_dnum(d, 'blur') * k, 3), 'soften': round(_dnum(d, 'Sftn') * k, 3),
+        'angle': round(angle, 3), 'altitude': round(altitude, 3),
+        'highlight': {'color': _desc_color(_dget(d, 'hglC'), warnings, where), 'opacity': round(_dnum(d, 'hglO', 75) / 100.0, 4),
+                      'mode': _blend_mode(d, 'hglM', warnings, where)},
+        'shadow': {'color': _desc_color(_dget(d, 'sdwC'), warnings, where), 'opacity': round(_dnum(d, 'sdwO', 75) / 100.0, 4),
+                   'mode': _blend_mode(d, 'sdwM', warnings, where)},
+    }
+    contour = _contour_points(d)
+    if contour:
+        b['contour'] = contour
+    return b
+
+
 # ---------------------------------------------------------------- one type layer
 
-def read_type_layer(l, kx: float, ky: float, warnings: list[str]) -> dict:
+def read_type_layer(l, kx: float, ky: float, warnings: list[str], global_light: tuple[float, float] = (30.0, 30.0),
+                    canvas: tuple[float, float] = (0.0, 0.0)) -> dict:
     """Everything we need from one type layer, already in template px."""
     where = f'layer "{l.name}"'
     k = (kx + ky) / 2.0
@@ -217,7 +346,7 @@ def read_type_layer(l, kx: float, ky: float, warnings: list[str]) -> dict:
     if ws and ws != 'warpNone':
         warnings.append(f'{where}: warped text ({ws}) is not rendered')
 
-    stroke = shadow = None
+    stroke = shadow = gradient = bevel = None
     for e in _effects(l):
         name = type(e).__name__
         if name == 'DropShadow':
@@ -245,6 +374,10 @@ def read_type_layer(l, kx: float, ky: float, warnings: list[str]) -> dict:
         elif name == 'ColorOverlay' and float(e.opacity) >= 100 and _enum_name(e.blend_mode).endswith('NORMAL'):
             color = _desc_color(e.color, warnings, where)
             char_colors = None
+        elif name == 'GradientOverlay':
+            gradient = read_gradient(e, warnings, where, canvas)
+        elif name == 'BevelEmboss':
+            bevel = read_bevel(e, warnings, where, k, global_light)
         else:
             warnings.append(f'{where}: layer style {name} is not supported')
 
@@ -259,7 +392,7 @@ def read_type_layer(l, kx: float, ky: float, warnings: list[str]) -> dict:
     return {
         'name': l.name, 'text': sample, 'font': font, 'sizePx': size_px, 'scaleX': scale_x, 'color': color,
         'charColors': char_colors, 'align': align, 'tracking': float(st.get('Tracking') or 0),
-        'leading': leading, 'stroke': stroke, 'shadow': shadow, 'paraX': para_x,
+        'leading': leading, 'stroke': stroke, 'shadow': shadow, 'gradient': gradient, 'bevel': bevel, 'paraX': para_x,
         'ink': (x0 * kx, y0 * ky, x1 * kx, y1 * ky), 'origin': (tx * kx, ty * ky),
         'visible': l.is_visible(), 'hasEffects': bool(_effects(l)), '_layer': l, '_k': (kx, ky),
     }
@@ -304,6 +437,33 @@ def merge_group(members: list[dict], warnings: list[str], fname: str) -> tuple[d
     return primary, [m['name'] for m in members]
 
 
+def _overlap(a: dict, b: dict) -> bool:
+    ax0, ay0, ax1, ay1 = a['ink']
+    bx0, by0, bx1, by1 = b['ink']
+    return min(ax1, bx1) > max(ax0, bx0) and min(ay1, by1) > max(ay0, by0)
+
+
+def placements(infos: list[dict]) -> list[list[int]]:
+    """Split the layers of one field into placements: layers whose ink boxes overlap (directly or through
+    another member) are one placement (a text plus its effect copies); separate boxes are separate placements
+    where the customer value is drawn again. Order (bottom -> top) is kept inside and across placements."""
+    parent = list(range(len(infos)))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+    for i in range(len(infos)):
+        for j in range(i + 1, len(infos)):
+            if _overlap(infos[i], infos[j]):
+                parent[find(j)] = find(i)
+    clusters: dict[int, list[int]] = {}
+    for i in range(len(infos)):
+        clusters.setdefault(find(i), []).append(i)
+    return sorted(clusters.values(), key=lambda c: c[0])
+
+
 # ---------------------------------------------------------------- geometry
 
 def _area_for(box: dict, areas: list[dict]) -> str | None:
@@ -340,6 +500,10 @@ def build_field(p: dict, fname: str, layers: list[str], font_path: str | None, d
         f['stroke'] = p['stroke']
     if p['shadow']:
         f['shadow'] = p['shadow']
+    if p.get('gradient'):
+        f['gradient'] = p['gradient']
+    if p.get('bevel'):
+        f['bevel'] = p['bevel']
     if len(layers) > 1:
         f['layers'] = layers
 
@@ -356,9 +520,15 @@ def build_field(p: dict, fname: str, layers: list[str], font_path: str | None, d
     else:
         bx0, bx1 = ix0, ix1
     f['box'] = {'x': bx0, 'y': iy0, 'w': bx1 - bx0, 'h': iy1 - iy0}
-    d = {'layer': p['name'], 'psdInkW': round(ix1 - ix0, 1), 'psdInkH': round(iy1 - iy0, 1), 'sizePx': f['sizePx']}
+    d = {'field': fname, 'psdInkW': round(ix1 - ix0, 1), 'psdInkH': round(iy1 - iy0, 1), 'sizePx': f['sizePx']}
 
     if font_path:
+        ref = _layer_alpha(p)
+        if ref is not None:
+            fitted = _fit_tracking(f, font_path, ref[0])
+            if fitted is not None:
+                d['trackingFit'] = {'from': f['tracking'], 'to': fitted[0], 'iouFrom': fitted[1], 'iouTo': fitted[2]}
+                f['tracking'] = fitted[0]
         probe = dict(f, fit='none', box={'x': 0, 'y': 0, 'w': 10, 'h': 10})
         lay = textrender.layout(probe, f['sample'], font_path)
         adv = max(lay['widths'] or [0.0]) * lay['scaleX']
@@ -401,8 +571,64 @@ def build_field(p: dict, fname: str, layers: list[str], font_path: str | None, d
         f['box']['h'] = max(f['box']['h'], math.ceil(h) + 1)
     else:
         f['box'] = {k: int(round(v)) for k, v in f['box'].items()}
-    diag[fname] = d
+    key, n = p['name'], 2
+    while key in diag:
+        key, n = f'{p["name"]} #{n}', n + 1
+    diag[key] = d
     return f
+
+
+TRACKING_FIT_RANGE = 60
+TRACKING_FIT_MIN_GAIN = 0.01
+
+
+def _sample_alpha(f: dict, font_path: str, tracking: float) -> np.ndarray:
+    probe = dict(f, fit='none', tracking=tracking, box={'x': 0, 'y': 0, 'w': 10, 'h': 10})
+    for k in ('stroke', 'shadow', 'gradient', 'bevel', 'charColors'):
+        probe.pop(k, None)
+    _, _, info = textrender.render_field(probe, f['sample'], font_path)
+    a = np.asarray(info['fill'][0], dtype=np.float32) / 255.0
+    ys, xs = np.nonzero(a > 0.02)
+    return a[ys.min():ys.max() + 1, xs.min():xs.max() + 1] if len(ys) else a
+
+
+def _iou_best_shift(ref: np.ndarray, ours: np.ndarray) -> float:
+    from scipy.signal import fftconvolve
+    pad = max(ours.shape) // 4 + 8
+    R = np.pad(ref, ((pad + ours.shape[0], pad + ours.shape[0]), (pad + ours.shape[1], pad + ours.shape[1])))
+    c = fftconvolve(R, ours[::-1, ::-1], mode='valid')
+    y, x = np.unravel_index(int(np.argmax(c)), c.shape)
+    P = np.zeros_like(R)
+    P[y:y + ours.shape[0], x:x + ours.shape[1]] = ours
+    return float(np.minimum(P, R).sum() / max(np.maximum(P, R).sum(), 1e-6))
+
+
+def _fit_tracking(f: dict, font_path: str, ref: Image.Image) -> tuple[float, float, float] | None:
+    """Photoshop and Pillow space glyphs slightly differently (hinting, fractional widths). Fit the tracking
+    that makes our sample overlap the layer's own pixels best; keep the PSD value unless it gains IoU."""
+    sample = f.get('sample') or ''
+    if '\n' in sample or len(sample.strip()) < 2:
+        return None
+    r = np.asarray(ref, dtype=np.float32) / 255.0
+    if r.size == 0 or r.max() <= 0:
+        return None
+    base = float(f.get('tracking') or 0)
+    scores = {}
+
+    def score(t: float) -> float:
+        if t not in scores:
+            scores[t] = _iou_best_shift(r, _sample_alpha(f, font_path, t))
+        return scores[t]
+    best = base
+    for t in np.arange(base - TRACKING_FIT_RANGE, base + TRACKING_FIT_RANGE + 0.1, 10.0):
+        if score(float(t)) > score(best):
+            best = float(t)
+    for t in np.arange(best - 8, best + 8.1, 2.0):
+        if score(float(t)) > score(best):
+            best = float(t)
+    if score(best) - score(base) < TRACKING_FIT_MIN_GAIN:
+        return None
+    return round(best, 1), round(score(base), 4), round(score(best), 4)
 
 
 def _layer_alpha(p: dict):
@@ -509,7 +735,7 @@ def _to_template(im: Image.Image, tw: int, th: int) -> Image.Image:
 
 def parse(psd_path: str, template: dict | None = None,
           font_lookup: Callable[[str], str | None] | None = None,
-          custom_layers: set[str] | None = None, debug_dir: str | None = None):
+          custom_layers: set[str] | dict[str, str] | None = None, debug_dir: str | None = None):
     psd = PSDImage.open(psd_path)
     W, H = psd.width, psd.height
     template = template or {}
@@ -525,20 +751,34 @@ def parse(psd_path: str, template: dict | None = None,
         warnings.append(f'PSD colour mode is {_enum_name(psd.color_mode)}, expected RGB')
     kx, ky = TW / W, TH / H
 
-    def is_custom(l) -> bool:
-        if custom_layers is not None:
-            return l.name in custom_layers
-        return l.name.strip().startswith('@')
+    mapping: dict[str, str] | None = None
+    if isinstance(custom_layers, dict):
+        mapping = {str(k): str(v).strip() for k, v in custom_layers.items() if str(v).strip()}
+    elif custom_layers is not None:
+        mapping = {n: field_name(n) for n in custom_layers}
+
+    def custom_field(l) -> str | None:
+        if mapping is not None and l.name in mapping:
+            return mapping[l.name]
+        if l.name.strip().startswith('@') and (mapping is None or not isinstance(custom_layers, (set, frozenset, list, tuple))):
+            return field_name(l.name)
+        return None
+
+    try:
+        global_light = (float(psd.image_resources.get_data(Resource.GLOBAL_ANGLE, 30.0)),
+                        float(psd.image_resources.get_data(Resource.GLOBAL_ALTITUDE, 30.0)))
+    except Exception:
+        global_light = (30.0, 30.0)
 
     type_layers = [l for l in psd.descendants() if l.kind == 'type']
-    custom = [l for l in type_layers if is_custom(l)]
+    custom = [l for l in type_layers if custom_field(l) is not None]
     custom_ids = {id(l) for l in custom}
     fixed = [{'name': l.name, 'text': _s(l.text).replace('\r', '\n').rstrip('\n'),
               'font': _first_font(l)} for l in type_layers if id(l) not in custom_ids and l.is_visible()]
 
     groups: dict[str, list] = {}
     for l in custom:
-        groups.setdefault(field_name(l.name), []).append(l)
+        groups.setdefault(custom_field(l), []).append(l)
 
     fields: list[dict] = []
     missing: list[str] = []
@@ -546,20 +786,23 @@ def parse(psd_path: str, template: dict | None = None,
     diag: dict[str, Any] = {}
     forced_visible: set[int] = set()
     for fname, layers in groups.items():
-        infos = [read_type_layer(l, kx, ky, warnings) for l in layers]
-        primary, names = merge_group(infos, warnings, fname)
-        if not any(i['visible'] for i in infos):
-            forced_visible.add(id(layers[-1]))
-        ps = primary['font']
-        if ps not in font_paths:
-            font_paths[ps] = font_lookup(ps) if font_lookup else None
-            if font_paths[ps] is None and ps not in missing:
-                missing.append(ps)
-        f = build_field(primary, fname or primary['name'], names, font_paths[ps], diag, TW)
-        area = _area_for(f['box'], areas)
-        if area:
-            f['area'] = area
-        fields.append(f)
+        infos = [read_type_layer(l, kx, ky, warnings, global_light, (TW, TH)) for l in layers]
+        for cluster in placements(infos):
+            members = [layers[i] for i in cluster]
+            cinfos = [infos[i] for i in cluster]
+            primary, names = merge_group(cinfos, warnings, fname)
+            if not any(i['visible'] for i in cinfos):
+                forced_visible.add(id(members[-1]))
+            ps = primary['font']
+            if ps not in font_paths:
+                font_paths[ps] = font_lookup(ps) if font_lookup else None
+                if font_paths[ps] is None and ps not in missing:
+                    missing.append(ps)
+            f = build_field(primary, fname or primary['name'], names, font_paths[ps], diag, TW)
+            area = _area_for(f['box'], areas)
+            if area:
+                f['area'] = area
+            fields.append(f)
     fields.reverse()  # top of the layer panel first
     if not custom:
         warnings.append('no custom text layers found (name them @Field Name)')

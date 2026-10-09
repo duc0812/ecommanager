@@ -14,6 +14,10 @@ MALONE = r'D:\Downloadn\TEE_MALONE.psd'
 CROCS = r'D:\Downloadn\designs_5f6b19b3112ee364cc787c49_quai-dep-crocs.psd'
 MYRIAD_BOLD = r'C:\Windows\Fonts\MyriadPro-Bold.otf'
 ARIAL = r'C:\Windows\Fonts\arial.ttf'
+# HaPo tumbler: "Custom Name" placed twice (one per side), gold gradient + bevel + drop shadow on the type layers.
+HAPO = r'D:\Downloads\DN2509261948 - 20OZ_CUSTOM NAME (chuan).psd'
+HAPO_UNNAMED = r'D:\Downloads\DN2509261948 - 20OZ_CUSTOM NAME.psd'
+HARRYP = r'D:\TIKTOK SHOP TOOL\Tool Auto Mockup\Fonts\HARRYP_.TTF'
 
 
 def need(*paths):

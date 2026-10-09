@@ -35,7 +35,9 @@ Files:
 - Name each custom text layer `@Tên trường`, for example `@Custom Name`. The field is whatever comes after `@`. A trailing Photoshop ` copy` / ` copy 2` is ignored.
 - Every other **visible** text layer is fixed text. It stays in `artwork.png` as Photoshop drew it.
 - Use **paragraph (box) text** to set how wide a name may run. The box width becomes the field width, clipped to the canvas, and longer names shrink to fit it. With point text, the field width is just the sample's width; widen it in the UI.
-- You can give one field several layers by naming them the same, for example `@Name` plus a shadow copy `@Name copy`. Only the top visible layer is drawn; the layers below it add effects:
+- A PSD without `@` names still works: pick each text layer's field on the product page ("Chữ cố định" / "Trường khách: …"). The choice is stored as the entry's `layerFields` and passed to the parser as `custom_layers`; `@` layers keep working alongside it.
+- **Placements:** layers of the same field whose boxes do **not** overlap are separate placements, and the customer's value is drawn at each one (e.g. a tumbler with the name on both sides: two `@Custom Name` layers). Each placement is its own entry in `fields` with the same `field` name.
+- Layers of the same field that **overlap** form one placement. Only the top visible layer is drawn; the layers below it add effects:
   - a layer with a Drop Shadow gives the field's `shadow`;
   - a plain copy at an offset (the "3D" look) gives a hard shadow: `dx/dy` = the offset, `blur 0`, in that copy's colour;
   - a layer with a Stroke gives the field's `stroke`;
@@ -72,10 +74,20 @@ All values are in template px. When the PSD size differs from the template but t
 | `leading` | px between baselines (Auto leading = 1.2 × size) |
 | `stroke` | layer style Stroke: outside = size, center = size/2, inside → warning |
 | `shadow` | Drop Shadow: `dx = -cos(angle)·distance`, `dy = sin(angle)·distance` (global light resolved), `blur` = size, `opacity` 0–1, `spread` = choke % |
+| `gradient` | Gradient Overlay (linear only): angle, scale, offset, align with layer, reverse, opacity, colour stops (location 0-1, colour, midpoint of the segment ending at the stop), opacity stops, interpolation method (`gs99`: Perceptual → Oklab, Linear → linear light, Classic → sRGB + smoothness) |
+| `bevel` | Bevel & Emboss, inner bevel only: technique (Smooth / Chisel Hard / Chisel Soft), depth, direction, size, soften, angle/altitude (global light resolved), gloss contour points, highlight/shadow colour, opacity and blend mode |
+| `tracking` (fitted) | Photoshop spaces glyphs a little differently from Pillow. The parser renders the sample at tracking −60…+60 around the PSD value and keeps the one whose mask best overlaps the layer's own pixels (IoU), when it gains ≥ 0.01. `diagnostics.trackingFit` records it |
 | `box` | horizontal extent: paragraph box (clipped) or ink bbox. Height: font line height. Then the box is moved so our render lines up with the layer's own pixels (FFT cross-correlation of the masks) |
 | `anchor` / `fit` | `center` / `shrink` defaults; the UI edits them |
 
-Extra keys beyond the spec shape: `scaleX`, `charColors`, `layers`, `shadow.spread`. `textrender.py` reads all of them. `result.json` also carries `diagnostics` (PSD vs render ink sizes, correlation shift) and `fonts`.
+Effects sizes are used as stored. The `Scl` (effects scale) value in `lfx2` is **not** applied: on the HaPo tumbler (Scl 416 %) and the crocs strap, Photoshop draws the shadow, stroke and bevel at the stored pixel sizes.
+
+How the styles are drawn (`textrender.py`), in Photoshop's order (shadow, stroke, fill, gradient, bevel):
+- Gradient: `t = 0.5 + ((p − c)·d) / L`, `d = (cos θ, −sin θ)`, `c` = reference-box centre + offset % of the box, `L = (|w cos θ| + |h sin θ|) × scale`. The reference box is the text's ink bbox (align with layer) or `frame`. Colours come from a 2048-entry LUT; inside a segment the midpoint is piecewise-linear.
+- Bevel: height = distance to the edge (on a 4× supersampled mask) ÷ size, clipped to 1 (chisel), or a blurred mask (smooth), blurred by `soften`, negated for direction down, scaled by size × depth. Lambert shading with the light at angle/altitude is passed through the gloss contour and compared with `sin(altitude)`: above → highlight, below → shadow, each drawn with its colour, opacity and blend mode inside the fill.
+- Fitted on the HaPo tumbler (gold "Harry", Ring contour): check score 4.9 against Photoshop's composite.
+
+Extra keys beyond the spec shape: `scaleX`, `charColors`, `layers`, `shadow.spread`, `gradient`, `bevel`. `textrender.py` reads all of them. `result.json` also carries `diagnostics` (PSD vs render ink sizes, correlation shift) and `fonts`.
 
 ## API shapes (see `api.py`, mirrors `src/lib/artwork-worker.ts`)
 
@@ -108,6 +120,7 @@ The tests read real PSDs from `D:\Downloads` / `D:\Downloadn` read-only and skip
   - rotation;
   - vertical text;
   - faux styles;
-  - inner/outer glow, bevel, gradient/pattern overlays;
+  - inner/outer glow, inner shadow, satin, pattern overlays;
+  - bevel styles other than inner bevel, bevel texture, non-linear gradients;
   - layers clipped to custom text.
 - `artwork.png` is composited by psd-tools, which does not draw drop shadows or some smart-object effects exactly like Photoshop. The check compares against Photoshop's embedded composite, so differences near fields lower the score.

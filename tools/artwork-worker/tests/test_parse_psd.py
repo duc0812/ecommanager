@@ -1,7 +1,7 @@
 import pytest
 
-from conftest import CROCS, DC, DES1, MALONE, MYRIAD_BOLD, need
-from parse_psd import ParseError, field_name, parse
+from conftest import CROCS, DC, DES1, HAPO, HAPO_UNNAMED, HARRYP, MALONE, MYRIAD_BOLD, need
+from parse_psd import ParseError, field_name, parse, placements
 
 
 def no_fonts(_ps):
@@ -147,3 +147,80 @@ def test_aspect_mismatch_is_an_error():
     need(CROCS)
     with pytest.raises(ParseError):
         parse(CROCS, {'widthPx': 2894, 'heightPx': 2894}, no_fonts, custom_layers={'Note'})
+
+
+def _info(x0, y0, x1, y1):
+    return {'ink': (x0, y0, x1, y1)}
+
+
+def test_placements_split_far_apart_layers_and_keep_overlapping_copies():
+    far = [_info(0, 0, 100, 50), _info(500, 0, 600, 50)]
+    assert placements(far) == [[0], [1]]
+    copies = [_info(0, 0, 100, 50), _info(4, 4, 104, 54), _info(500, 0, 600, 50), _info(503, 2, 603, 52)]
+    assert placements(copies) == [[0, 1], [2, 3]]
+    chain = [_info(0, 0, 100, 50), _info(90, 0, 190, 50), _info(180, 0, 280, 50)]
+    assert placements(chain) == [[0, 1, 2]]
+
+
+HAPO_TEMPLATE = {'widthPx': 3270, 'heightPx': 1860, 'dpi': 300, 'areas': [{'name': 'Print', 'x': 0, 'y': 0, 'w': 3270, 'h': 1860}]}
+
+
+def harryp(ps):
+    return HARRYP if ps == 'HarryP' else None
+
+
+@pytest.fixture(scope='module')
+def hapo():
+    need(HAPO, HARRYP)
+    return parse(HAPO, HAPO_TEMPLATE, harryp)
+
+
+def test_hapo_same_field_twice_is_two_placements(hapo):
+    result, artwork, _ = hapo
+    fields = sorted(result['fields'], key=lambda f: f['box']['x'])
+    assert [f['field'] for f in fields] == ['Custom Name', 'Custom Name']
+    left, right = fields
+    assert left['box']['x'] + left['box']['w'] < right['box']['x']
+    assert abs(left['box']['y'] - right['box']['y']) <= 1 and left['box']['w'] == pytest.approx(right['box']['w'], abs=2)
+    assert 'shadow' in left and 'layers' not in left  # not merged as an effect copy
+    assert artwork.size == (3270, 1860)
+
+
+def test_hapo_layer_styles_are_read(hapo):
+    result, _, _ = hapo
+    f = result['fields'][0]
+    assert f['font'] == 'HarryP' and f['sizePx'] == pytest.approx(300 * 0.97856 * 1.05, abs=0.2)
+    assert f['scaleX'] == pytest.approx(1.1052, abs=0.001)
+    g = f['gradient']
+    assert g['type'] == 'linear' and g['angle'] == 0 and g['scale'] == 81 and g['align'] is True
+    assert g['offset'] == {'x': pytest.approx(7.544, abs=0.001), 'y': pytest.approx(-78.79, abs=0.01)}
+    assert g['interpolation'] == 'perceptual'
+    assert [s['color'] for s in g['stops']] == ['#a66b24', '#fed98f', '#a66b24', '#fbe6b2', '#fbe6b2']
+    assert [s['mid'] for s in g['stops']] == [0.5, 0.66, 0.39, 0.77, 0.5]
+    assert g['stops'][1]['pos'] == pytest.approx(1148 / 4096, abs=1e-4)
+    b = f['bevel']
+    assert (b['technique'], b['direction'], b['depth'], b['size'], b['soften']) == ('chiselHard', 'down', 396, pytest.approx(3, abs=0.01), pytest.approx(1, abs=0.01))
+    assert (b['angle'], b['altitude']) == (30, 30)  # "use global light": document global angle/altitude
+    assert b['highlight'] == {'color': '#ffffff', 'opacity': 0.74, 'mode': 'screen'}
+    assert b['shadow'] == {'color': '#b17017', 'opacity': 0.64, 'mode': 'multiply'}
+    assert len(b['contour']) == 9
+    sh = f['shadow']  # global light 30 deg, distance 10, choke 20 %, size 5 -- effects scale (lfx2 Scl) not applied
+    assert sh['dx'] == pytest.approx(-8.66, abs=0.02) and sh['dy'] == pytest.approx(5.0, abs=0.02)
+    assert sh['blur'] == pytest.approx(5, abs=0.01) and sh['spread'] == 20
+
+
+def test_hapo_render_matches_photoshop(hapo):
+    result, _, _ = hapo
+    assert result['warnings'] == ['PSD is 3271x1861 px, template is 3270x1860 px; positions were scaled']
+    assert result['checkScore'] is not None and result['checkScore'] <= 6
+    fit = [d['trackingFit'] for d in result['diagnostics'].values()]
+    assert fit and all(-30 <= t['to'] <= 0 and t['iouTo'] > t['iouFrom'] for t in fit)
+
+
+def test_layer_field_mapping_on_an_unnamed_psd():
+    need(HAPO_UNNAMED, HARRYP)
+    result, _, _ = parse(HAPO_UNNAMED, HAPO_TEMPLATE, harryp, custom_layers={'Harry': 'Custom Name', 'Harry copy': 'Custom Name'})
+    assert sorted(f['layer'] for f in result['fields']) == ['Harry', 'Harry copy']
+    assert {f['field'] for f in result['fields']} == {'Custom Name'}
+    assert result['fixedTexts'] == []
+    assert not any('no custom text layers' in w for w in result['warnings'])
