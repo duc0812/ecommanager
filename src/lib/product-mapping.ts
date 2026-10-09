@@ -27,9 +27,25 @@ export type VariantManualMappingData = {
   supplierProductId: string
 }
 
+export type ProductProfileOverride = {
+  combo: Record<string, string>
+  supplierProductId: string
+}
+
+export type ProductProfileResolveData = {
+  supplierProductId: string | null
+  overrides: ProductProfileOverride[]
+}
+
 export type ResolveResult = {
   supplierProductId: string | null
-  resolvedVia: 'variant_manual' | 'product_base_override' | 'product_base_rank' | 'unresolved'
+  resolvedVia:
+    | 'variant_manual'
+    | 'product_profile_override'
+    | 'product_profile'
+    | 'product_base_override'
+    | 'product_base_rank'
+    | 'unresolved'
   // Set only when several bases of the same productType matched this line. The winner is then
   // the first one given, which is a configuration problem, not a decision the resolver can make.
   ambiguousBaseIds?: string[]
@@ -118,16 +134,108 @@ export function matchesAttributeCombo(
   })
 }
 
+export function profileKey(storeId: string, shopifyProductId: string): string {
+  return `${storeId}|${shopifyProductId}`
+}
+
+export function parseProfileOverrides(json: string | null | undefined): ProductProfileOverride[] {
+  if (!json) return []
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(json)
+  } catch {
+    return []
+  }
+  if (!Array.isArray(parsed)) return []
+  const out: ProductProfileOverride[] = []
+  for (const item of parsed) {
+    if (!item || typeof item !== 'object') continue
+    const { combo, supplierProductId } = item as { combo?: unknown; supplierProductId?: unknown }
+    if (typeof supplierProductId !== 'string' || !supplierProductId) continue
+    if (!combo || typeof combo !== 'object' || Array.isArray(combo)) continue
+    const entries = Object.entries(combo as Record<string, unknown>)
+    // An empty combo would match every line, so it is dropped rather than pinning the whole product.
+    if (entries.length === 0 || entries.some(([, v]) => typeof v !== 'string')) continue
+    out.push({ combo: Object.fromEntries(entries) as Record<string, string>, supplierProductId })
+  }
+  return out
+}
+
+export function supplierParentKey(product: {
+  supplierId: string
+  productName: string | null
+  productType: string | null
+  baseSku: string | null
+}): string {
+  return [
+    product.supplierId,
+    product.productName ?? '',
+    product.productType ?? '',
+    product.baseSku ?? '',
+  ].join('|')
+}
+
+type SizeSiblingProduct = {
+  id: string
+  supplierId: string
+  productName: string | null
+  productType: string | null
+  baseSku: string | null
+  variant1Value: string | null
+  variant2Value: string | null
+}
+
+// Manual and override results pin an exact supplier product; every other result names a parent
+// product whose size sibling for this line has to be found.
+export function swapToSizeSibling<P extends SizeSiblingProduct>(
+  supplierProductId: string | null,
+  selectedOptions: Record<string, string>,
+  resolvedVia: ResolveResult['resolvedVia'],
+  rawSupplierProductById: Map<string, P>,
+  supplierProductsByParent: Map<string, P[]>,
+): string | null {
+  if (!supplierProductId) return null
+  if (
+    resolvedVia === 'variant_manual' ||
+    resolvedVia === 'product_base_override' ||
+    resolvedVia === 'product_profile_override'
+  ) {
+    return supplierProductId
+  }
+  const mapped = rawSupplierProductById.get(supplierProductId)
+  if (!mapped) return supplierProductId
+  const optionValues = Object.entries(selectedOptions)
+    .filter(([key]) => normalize(key) === 'size')
+    .map(([, value]) => normalize(value))
+    .filter(Boolean)
+  if (optionValues.length === 0) return supplierProductId
+  const siblings = supplierProductsByParent.get(supplierParentKey(mapped)) ?? []
+  const exact = siblings.find(p =>
+    optionValues.includes(normalize(p.variant1Value ?? '')) ||
+    optionValues.includes(normalize(p.variant2Value ?? ''))
+  )
+  return exact?.id ?? null
+}
+
 export function resolveByProductBase(
   shopifyVariantId: string | null,
   shopifyProductType: string | null,
   variantOptions: Record<string, string>,
   productBases: ProductBaseData[],
   manualMappings: VariantManualMappingData[],
+  profile?: ProductProfileResolveData | null,
 ): ResolveResult {
   if (shopifyVariantId) {
     const manual = manualMappings.find(m => m.shopifyVariantId === shopifyVariantId)
     if (manual) return { supplierProductId: manual.supplierProductId, resolvedVia: 'variant_manual' }
+  }
+
+  if (profile) {
+    const override = profile.overrides.find(o => matchesAttributeCombo(o.combo, variantOptions))
+    if (override) return { supplierProductId: override.supplierProductId, resolvedVia: 'product_profile_override' }
+    if (profile.supplierProductId) {
+      return { supplierProductId: profile.supplierProductId, resolvedVia: 'product_profile' }
+    }
   }
 
   if (!shopifyProductType) {

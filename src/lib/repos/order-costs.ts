@@ -1,26 +1,8 @@
 import { prisma } from '@/lib/db'
 import { autoDetectStatus, isValidPipelineStatus, type PipelineStatus } from '@/lib/pipeline-status'
-import { resolveByProductBase } from '@/lib/product-mapping'
-import { loadProductBasesForResolver, loadVariantManualMappingsForResolver } from '@/lib/repos/mapping'
+import { profileKey, resolveByProductBase, supplierParentKey, swapToSizeSibling } from '@/lib/product-mapping'
+import { loadProductBasesForResolver, loadProductProfilesForResolver, loadVariantManualMappingsForResolver } from '@/lib/repos/mapping'
 import { isNonProductLine } from '@/lib/order-lines'
-
-function normalize(v: string | null | undefined): string {
-  return (v ?? '').toLowerCase().trim()
-}
-
-function supplierParentKey(product: {
-  supplierId: string
-  productName: string | null
-  productType: string | null
-  baseSku: string | null
-}) {
-  return [
-    product.supplierId,
-    product.productName ?? '',
-    product.productType ?? '',
-    product.baseSku ?? '',
-  ].join('|')
-}
 
 function parseVariantOptions(value: string | null): Record<string, string> {
   if (!value) return {}
@@ -39,40 +21,15 @@ type SupplierProductWithSupplier = Awaited<ReturnType<typeof prisma.supplierProd
   include: { supplier: true }
 }>>>[number]
 
-function resolveSupplierProductIdForLine(
-  supplierProductId: string | null,
-  selectedOptions: Record<string, string>,
-  resolvedVia: ReturnType<typeof resolveByProductBase>['resolvedVia'],
-  rawSupplierProductById: Map<string, SupplierProductWithSupplier>,
-  supplierProductsByParent: Map<string, SupplierProductWithSupplier[]>,
-) {
-  if (!supplierProductId) return null
-  if (resolvedVia === 'variant_manual' || resolvedVia === 'product_base_override') {
-    return supplierProductId
-  }
-  const mapped = rawSupplierProductById.get(supplierProductId)
-  if (!mapped) return supplierProductId
-  const optionValues = Object.entries(selectedOptions)
-    .filter(([key]) => ['size'].includes(normalize(key)))
-    .map(([, value]) => normalize(value))
-    .filter(Boolean)
-  if (optionValues.length === 0) return supplierProductId
-  const siblings = supplierProductsByParent.get(supplierParentKey(mapped)) ?? []
-  const exact = siblings.find(p =>
-    optionValues.includes(normalize(p.variant1Value)) ||
-    optionValues.includes(normalize(p.variant2Value))
-  )
-  return exact?.id ?? null
-}
-
 export async function recalculateMissingOrderLineCosts(filter: {
   dateFrom?: Date
   dateTo?: Date
   refreshExisting?: boolean
 } = {}) {
-  const [productBases, manualMappings, supplierProducts, lines] = await Promise.all([
+  const [productBases, manualMappings, productProfiles, supplierProducts, lines] = await Promise.all([
     loadProductBasesForResolver(),
     loadVariantManualMappingsForResolver(),
+    loadProductProfilesForResolver(),
     prisma.supplierProduct.findMany({ include: { supplier: true } }),
     prisma.orderLine.findMany({
       where: {
@@ -87,7 +44,7 @@ export async function recalculateMissingOrderLineCosts(filter: {
           : undefined,
       },
       include: {
-        order: { select: { id: true, shippingZone: true } },
+        order: { select: { id: true, shippingZone: true, storeId: true } },
       },
     }),
   ])
@@ -114,8 +71,9 @@ export async function recalculateMissingOrderLineCosts(filter: {
       selectedOptions,
       productBases,
       manualMappings,
+      line.shopifyProductId ? productProfiles.get(profileKey(line.order.storeId, line.shopifyProductId)) ?? null : null,
     )
-    const supplierProductId = resolveSupplierProductIdForLine(
+    const supplierProductId = swapToSizeSibling(
       result.supplierProductId,
       selectedOptions,
       result.resolvedVia,

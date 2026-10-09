@@ -6,8 +6,8 @@ import { upsertOrderWithLines } from '@/lib/repos/orders'
 import { autoDetectStatus, isValidPipelineStatus, type PipelineStatus } from '@/lib/pipeline-status'
 import { resolveZone, type SupplierZoneOverrides } from '@/lib/regions'
 import { getShopifyConnection } from '@/lib/token-store'
-import { resolveByProductBase } from '@/lib/product-mapping'
-import { loadProductBasesForResolver, loadVariantManualMappingsForResolver } from '@/lib/repos/mapping'
+import { profileKey, resolveByProductBase, supplierParentKey, swapToSizeSibling } from '@/lib/product-mapping'
+import { loadProductBasesForResolver, loadProductProfilesForResolver, loadVariantManualMappingsForResolver } from '@/lib/repos/mapping'
 import { buildTrelloCardContent, customerDesignLink, isLineCustomized, lineFamily, reduceOrderType } from '@/lib/order-classify'
 import { isNonProductLine } from '@/lib/order-lines'
 import { createTrelloCard, addAttachmentToCard, getTrelloConfig, shouldCreateCard } from '@/lib/trello'
@@ -29,19 +29,6 @@ function safeParseShipping(json: string | null): SupplierInput['shippingByRegion
     if (typeof parsed === 'object' && parsed !== null) return parsed
   } catch {}
   return undefined
-}
-
-function supplierParentKey(product: { supplierId: string; productName: string | null; productType: string | null; baseSku: string | null }): string {
-  return [
-    product.supplierId,
-    product.productName ?? '',
-    product.productType ?? '',
-    product.baseSku ?? '',
-  ].join('|')
-}
-
-function normalize(v: string | null | undefined): string {
-  return (v ?? '').toLowerCase().trim()
 }
 
 
@@ -110,6 +97,7 @@ export async function POST(req: NextRequest) {
 
   const productBases = await loadProductBasesForResolver()
   const manualMappings = await loadVariantManualMappingsForResolver()
+  const productProfiles = await loadProductProfilesForResolver(store.id)
   const supplierProducts = await prisma.supplierProduct.findMany({
     include: { supplier: true },
   })
@@ -134,29 +122,11 @@ export async function POST(req: NextRequest) {
     supplierProductsByParent.set(key, existing)
   }
 
-  function resolveSupplierProductIdForLine(
+  const resolveSupplierProductIdForLine = (
     supplierProductId: string | null,
     selectedOptions: Record<string, string>,
     resolvedVia: ReturnType<typeof resolveByProductBase>['resolvedVia'],
-  ) {
-    if (!supplierProductId) return null
-    if (resolvedVia === 'variant_manual' || resolvedVia === 'product_base_override') {
-      return supplierProductId
-    }
-    const mapped = rawSupplierProductById.get(supplierProductId)
-    if (!mapped) return supplierProductId
-    const optionValues = Object.entries(selectedOptions)
-      .filter(([key]) => ['size'].includes(normalize(key)))
-      .map(([, value]) => normalize(value))
-      .filter(Boolean)
-    if (optionValues.length === 0) return supplierProductId
-    const siblings = supplierProductsByParent.get(supplierParentKey(mapped)) ?? []
-    const exact = siblings.find(p =>
-      optionValues.includes(normalize(p.variant1Value)) ||
-      optionValues.includes(normalize(p.variant2Value))
-    )
-    return exact?.id ?? null
-  }
+  ) => swapToSizeSibling(supplierProductId, selectedOptions, resolvedVia, rawSupplierProductById, supplierProductsByParent)
 
   const allOverrides = await prisma.supplierZoneOverride.findMany()
   const overridesBySupplier: Record<string, SupplierZoneOverrides> = {}
@@ -212,6 +182,7 @@ export async function POST(req: NextRequest) {
             l.selectedOptions,
             productBases,
             manualMappings,
+            l.productId ? productProfiles.get(profileKey(store.id, l.productId)) ?? null : null,
           )
           return {
             ...result,

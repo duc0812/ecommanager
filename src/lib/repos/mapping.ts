@@ -1,5 +1,11 @@
 import { prisma } from '@/lib/db'
-import type { ProductBaseData, VariantManualMappingData } from '@/lib/product-mapping'
+import {
+  parseProfileOverrides,
+  profileKey,
+  type ProductBaseData,
+  type ProductProfileResolveData,
+  type VariantManualMappingData,
+} from '@/lib/product-mapping'
 import { isNonProductLine } from '@/lib/order-lines'
 import { autoDetectStatus, isValidPipelineStatus, type PipelineStatus } from '@/lib/pipeline-status'
 
@@ -136,6 +142,17 @@ export async function loadVariantManualMappingsForResolver(): Promise<VariantMan
     shopifyVariantId: m.shopifyVariantId,
     supplierProductId: m.supplierProductId,
   }))
+}
+
+export async function loadProductProfilesForResolver(storeId?: string): Promise<Map<string, ProductProfileResolveData>> {
+  const profiles = await prisma.productProfile.findMany({
+    where: storeId ? { storeId } : undefined,
+    select: { storeId: true, shopifyProductId: true, supplierProductId: true, overrides: true },
+  })
+  return new Map(profiles.map(p => [
+    profileKey(p.storeId, p.shopifyProductId),
+    { supplierProductId: p.supplierProductId, overrides: parseProfileOverrides(p.overrides) },
+  ]))
 }
 
 // ── Manual Mapping ────────────────────────────────────────
