@@ -2,6 +2,7 @@ import { prisma } from '@/lib/db'
 import { visibleCustomAttributes } from '@/lib/order-classify'
 import { parseAttributes } from '@/lib/design-studio'
 import { isLayerlessField } from '@/lib/layer-fields'
+import { isNonProductLine } from '@/lib/order-lines'
 
 export { isLayerlessField }
 
@@ -54,12 +55,29 @@ export function parseLayerMap(json: string | null | undefined): LayerMapEntry[] 
   return out
 }
 
+export type TemplateCoverage = { covered: number; total: number; missingSkus: string[] }
+
+export function summarizeCoverage(lines: Array<{ sku: string | null; hasTemplate: boolean }>): TemplateCoverage {
+  const missing = new Set<string>()
+  let covered = 0
+  for (const l of lines) {
+    if (l.hasTemplate) covered++
+    else missing.add(l.sku?.trim() || '(không SKU)')
+  }
+  return { covered, total: lines.length, missingSkus: Array.from(missing) }
+}
+
+export function templateCovered(profile: { printTemplateId: string | null }, coverage: TemplateCoverage): boolean {
+  return coverage.total > 0 ? coverage.covered === coverage.total : !!profile.printTemplateId
+}
+
 export function profileStatus(
-  profile: { printTemplateId: string | null; masterArtworkUrl: string | null; masterArtworkId: string | null; layerMap: string | LayerMapEntry[] } | null,
+  profile: { masterArtworkUrl: string | null; masterArtworkId: string | null; layerMap: string | LayerMapEntry[] } | null,
   observedFields: string[],
+  template: { templateCovered: boolean },
 ): ProfileStatus {
   if (!profile) return 'NONE'
-  if (!profile.printTemplateId) return 'NO_TEMPLATE'
+  if (!template.templateCovered) return 'NO_TEMPLATE'
   if (!profile.masterArtworkUrl && !profile.masterArtworkId) return 'NO_MASTER'
   const layerMap = typeof profile.layerMap === 'string' ? parseLayerMap(profile.layerMap) : profile.layerMap
   const mapped = new Set(layerMap.map(e => e.field.toLowerCase().trim()))
@@ -79,14 +97,17 @@ export function fieldsFromLines(lines: Array<{ customAttributesJson: string | nu
   return Array.from(seen.values())
 }
 
-export async function observedFields(storeId: string, shopifyProductId: string): Promise<string[]> {
+export async function observedLines(storeId: string, shopifyProductId: string) {
   const lines = await prisma.orderLine.findMany({
     where: { shopifyProductId, order: { storeId, placedAt: { gte: observationSince() } } },
     orderBy: { order: { placedAt: 'desc' } },
     take: OBSERVED_LINE_LIMIT,
-    select: { customAttributesJson: true },
+    select: {
+      orderId: true, sku: true, productTitle: true, shopifyProductType: true, customAttributesJson: true,
+      resolvedSupplierId: true, resolvedSupplierSku: true, shopifyProductId: true,
+    },
   })
-  return fieldsFromLines(lines)
+  return lines.filter(l => !isNonProductLine(l))
 }
 
 export async function findProfile(storeId: string, shopifyProductId: string) {

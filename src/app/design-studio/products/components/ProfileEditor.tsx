@@ -241,6 +241,7 @@ export default function ProfileEditor({ detail, templates, canEdit, onSaved }: {
             {supplierIds.size > 0 && templateOptions.length === 0 && (
               <p className="text-label-sm text-on-surface-variant">Xưởng đã chọn chưa có template — tạo ở trang xưởng › Template in.</p>
             )}
+            <TemplateCoverageNote coverage={detail.templateCoverage} />
           </Card>
 
           <Card icon="image" title="Master artwork">
@@ -331,5 +332,19 @@ export default function ProfileEditor({ detail, templates, canEdit, onSaved }: {
         </div>
       </div>
     </div>
+  )
+}
+
+function TemplateCoverageNote({ coverage }: { coverage: ProductDetail['templateCoverage'] }) {
+  if (coverage.total === 0) return <p className="text-label-sm text-on-surface-variant">Chưa có dòng đơn nào đã map xưởng — trạng thái dựa trên template của hồ sơ.</p>
+  const full = coverage.covered === coverage.total
+  return (
+    <p className={`inline-flex items-start gap-xs text-label-sm ${full ? 'text-on-surface-variant' : 'text-error'}`}>
+      <Icon name={full ? 'check_circle' : 'warning'} className="text-[16px]" />
+      <span>
+        Template: {coverage.covered}/{coverage.total} dòng có template
+        {!full && <> — thiếu: <span className="font-mono">{coverage.missingSkus.join(', ')}</span></>}
+      </span>
+    </p>
   )
 }

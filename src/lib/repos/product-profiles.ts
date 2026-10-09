@@ -1,11 +1,11 @@
 import { prisma } from '@/lib/db'
 import { isNonProductLine } from '@/lib/order-lines'
 import { safeHttpUrl } from '@/lib/design-studio'
-import { syncDesignTasksCounted } from '@/lib/design-tasks'
+import { coverageFor, loadTemplateContext, syncDesignTasksCounted, type CoverageLine } from '@/lib/design-tasks'
 import { parseProfileOverrides, profileKey, type ProductProfileOverride } from '@/lib/product-mapping'
 import { recalculateMissingOrderLineCosts } from '@/lib/repos/order-costs'
 import {
-  fieldsFromLines, fromRouteKey, LAYER_FITS, OBSERVED_LINE_LIMIT, observationSince, parseLayerMap, profileStatus, PROFILE_STATUSES, toRouteKey,
+  fieldsFromLines, fromRouteKey, LAYER_FITS, OBSERVED_LINE_LIMIT, observationSince, parseLayerMap, profileStatus, PROFILE_STATUSES, templateCovered, toRouteKey,
   type LayerFit, type LayerMapEntry, type ProfileStatus,
 } from '@/lib/product-profiles'
 
@@ -42,7 +42,7 @@ export async function listProducts(f: { q?: string; status?: ProfileStatus } = {
       orderBy: { order: { placedAt: 'desc' } },
       select: {
         orderId: true, shopifyLineId: true, shopifyProductId: true, shopifyVariantId: true, productTitle: true,
-        shopifyProductType: true, imageUrl: true, customAttributesJson: true,
+        shopifyProductType: true, imageUrl: true, customAttributesJson: true, sku: true, resolvedSupplierId: true, resolvedSupplierSku: true,
         order: { select: { storeId: true, placedAt: true, store: { select: { shop: true } } } },
       },
     }),
@@ -57,7 +57,7 @@ export async function listProducts(f: { q?: string; status?: ProfileStatus } = {
 
   type Group = {
     storeId: string; shop: string; shopifyProductId: string; title: string; imageUrl: string | null; lastOrderAt: Date
-    variants: Set<string>; orders: Set<string>; openTasks: number; fieldLines: Array<{ customAttributesJson: string | null }>
+    variants: Set<string>; orders: Set<string>; openTasks: number; fieldLines: Array<CoverageLine & { customAttributesJson: string | null }>
   }
   const groups = new Map<string, Group>()
   let withoutProductId = 0
@@ -80,11 +80,17 @@ export async function listProducts(f: { q?: string; status?: ProfileStatus } = {
     if (g.fieldLines.length < OBSERVED_LINE_LIMIT) g.fieldLines.push(l)
   }
 
+  const groupList = Array.from(groups.entries())
+  const ctx = await loadTemplateContext(
+    groupList.flatMap(([, g]) => g.fieldLines.filter(l => l.resolvedSupplierId)),
+    groupList.map(([key]) => profileByKey.get(key)?.printTemplateId),
+  )
   const q = f.q?.trim().toLowerCase()
   const products: ProductListRow[] = []
-  for (const [key, g] of Array.from(groups.entries())) {
+  for (const [key, g] of groupList) {
     const profile = profileByKey.get(key) ?? null
-    const status = profileStatus(profile, fieldsFromLines(g.fieldLines))
+    const coverage = coverageFor(g.fieldLines, profile, ctx)
+    const status = profileStatus(profile, fieldsFromLines(g.fieldLines), { templateCovered: !!profile && templateCovered(profile, coverage) })
     if (f.status && status !== f.status) continue
     if (q && !g.title.toLowerCase().includes(q) && !g.shopifyProductId.toLowerCase().includes(q)) continue
     products.push({
@@ -122,7 +128,7 @@ export async function loadProduct(key: string, opts: { includeCost?: boolean } =
       take: OBSERVED_LINE_LIMIT,
       select: {
         orderId: true, shopifyLineId: true, shopifyVariantId: true, variantTitle: true, variantOptions: true, productTitle: true,
-        shopifyProductType: true, imageUrl: true, customAttributesJson: true, resolvedSupplierId: true, resolvedSupplierSku: true,
+        shopifyProductType: true, imageUrl: true, customAttributesJson: true, resolvedSupplierId: true, resolvedSupplierSku: true, sku: true,
         order: { select: { placedAt: true } },
       },
     }),
@@ -153,11 +159,14 @@ export async function loadProduct(key: string, opts: { includeCost?: boolean } =
     })
   }
   const since = observationSince()
-  const fields = fieldsFromLines(lines.filter(l => l.order.placedAt >= since && !isNonProductLine(l)))
+  const observed = lines.filter(l => l.order.placedAt >= since && !isNonProductLine(l))
+  const fields = fieldsFromLines(observed)
+  const templateCoverage = coverageFor(observed, profile, await loadTemplateContext(observed.filter(l => l.resolvedSupplierId), [profile?.printTemplateId]))
   return {
     key: toRouteKey(storeId, shopifyProductId), storeId, shop: store.shop, shopifyProductId,
     profile: profile ? serializeProfile(profile) : null,
-    status: profileStatus(profile, fields),
+    status: profileStatus(profile, fields, { templateCovered: !!profile && templateCovered(profile, templateCoverage) }),
+    templateCoverage,
     summary: {
       title: lines[0]?.productTitle ?? profile?.title ?? '',
       imageUrl: safeHttpUrl(lines.find(l => safeHttpUrl(l.imageUrl))?.imageUrl) ?? safeHttpUrl(profile?.imageUrl),

@@ -27,6 +27,7 @@ export type ProductDetail = {
   key: string; storeId: string; shop: string; shopifyProductId: string
   profile: SavedProfile | null
   status: ProfileStatus
+  templateCoverage: { covered: number; total: number; missingSkus: string[] }
   summary: {
     title: string; imageUrl: string | null; variants: ProductVariant[]; orderCount: number; openTasks: number; lastOrderAt: string | null
   }

@@ -95,7 +95,7 @@ beforeAll(async () => {
     sku: 'PP-SHOP-SKU', shopifyProductId: GID, customAttributesJson: ATTRS,
     resolvedSupplierId: SUP_B, resolvedSupplierSku: 'PP-NEW', resolvedBaseCost: 7, costSnapshotAt: SNAPSHOT_AT,
   })
-  await order(EXPORTED_ID, storeA, 'proj_pp_a', '#PP2', 'EXPORTED', { sku: 'PP-SHOP-SKU', shopifyProductId: GID, customAttributesJson: ATTRS, ...resolvedOld })
+  await order(EXPORTED_ID, storeA, 'proj_pp_a', '#PP2', 'EXPORTED', { sku: 'PP-SHOP-SKU', shopifyProductId: GID, customAttributesJson: ATTRS, ...resolvedOld, resolvedSupplierSku: 'PP-A' })
   await order(OTHER_STORE_ID, storeB, 'proj_pp_b', '#PP3', 'PENDING_MAPPING', { sku: 'PP-SHOP-SKU', shopifyProductId: GID, customAttributesJson: ATTRS })
   await order(NO_PID_ID, storeA, 'proj_pp_a', '#PP4', 'PENDING_MAPPING', { sku: 'PP-NOPID' })
 
@@ -200,7 +200,7 @@ describe('saving a profile', () => {
 
   it('leaves the exported order untouched', async () => {
     const line = await prisma.orderLine.findFirstOrThrow({ where: { orderId: EXPORTED_ID } })
-    expect(line).toMatchObject({ resolvedSupplierId: SUP_A, resolvedSupplierSku: 'PP-OLD', resolvedBaseCost: 5 })
+    expect(line).toMatchObject({ resolvedSupplierId: SUP_A, resolvedSupplierSku: 'PP-A', resolvedBaseCost: 5 })
     expect(line.costSnapshotAt?.toISOString()).toBe(SNAPSHOT_AT.toISOString())
     expect(await prisma.designTask.count({ where: { orderId: EXPORTED_ID } })).toBe(0)
   })
@@ -241,12 +241,12 @@ describe('saving a profile', () => {
     expect(detail?.profileRouteKey).toBe(key)
   })
 
-  it('without a profile template the SKU-matched template is used', async () => {
+  it('without a profile template the SKU-matched template is used and counts as covered', async () => {
     await put({ printTemplateId: null })
     const task = await prisma.designTask.findFirstOrThrow({ where: { orderId: OPEN_ID, shopifyLineId: '#PP1-l1' } })
     const detail = await loadTask(task.taskKey)
     expect(detail?.template?.id).toBe(TPL_SKU)
-    expect(detail?.profile?.status).toBe('NO_TEMPLATE')
+    expect(detail?.profile?.status).toBe('READY')
     await put({ printTemplateId: TPL_PROFILE })
   })
 })

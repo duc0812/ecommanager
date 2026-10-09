@@ -3,7 +3,7 @@ import { isNonProductLine } from '@/lib/order-lines'
 import { parseAttributes, safeHttpUrl, sourcePrintFiles, printAreasForLine, updateLine, loadWorkspace, type WorkspaceLine, type Workspace } from '@/lib/design-studio'
 import { getDesignSettings, kpiForProductType, type DesignSettings } from '@/lib/design-settings'
 import { visibleCustomAttributes } from '@/lib/order-classify'
-import { findProfile, observedFields, parseLayerMap, profileStatus, toRouteKey, type LayerMapEntry, type ProfileStatus } from '@/lib/product-profiles'
+import { fieldsFromLines, findProfile, observedLines, parseLayerMap, profileStatus, summarizeCoverage, templateCovered, toRouteKey, type LayerMapEntry, type ProfileStatus, type TemplateCoverage } from '@/lib/product-profiles'
 import { isDriveConnected } from '@/lib/google-drive'
 
 export type TaskStatus = 'NEW' | 'ASSIGNED' | 'DOING' | 'REVIEW' | 'REJECTED' | 'ASK_CUSTOMER' | 'DONE' | 'CANCELLED'
@@ -326,21 +326,41 @@ async function profileForLine(line: { orderId: string; shopifyProductId?: string
   return order ? findProfile(order.storeId, line.shopifyProductId) : null
 }
 
-export async function templateForLine(line: TemplateLookupLine, profile?: { printTemplateId: string | null } | null): Promise<TemplateRow | null> {
-  const p = profile !== undefined ? profile : await profileForLine(line)
-  if (p?.printTemplateId) {
-    const fromProfile = await prisma.printTemplate.findUnique({ where: { id: p.printTemplateId } })
+type TemplateRecord = Parameters<typeof mapTemplate>[0] & { supplierId: string; supplierSku: string | null }
+type TemplateContext = { byId: Map<string, TemplateRecord>; productTemplate: Map<string, TemplateRecord>; bySupplier: Map<string, TemplateRecord[]> }
+
+const pairKey = (supplierId: string, sku: string) => `${supplierId} ${sku}`
+
+export async function loadTemplateContext(lines: TemplateLookupLine[], profileTemplateIds: Array<string | null | undefined>): Promise<TemplateContext> {
+  const ids = Array.from(new Set(profileTemplateIds.filter((x): x is string => !!x)))
+  const supplierIds = Array.from(new Set(lines.map(l => l.resolvedSupplierId).filter((x): x is string => !!x)))
+  const skus = Array.from(new Set(lines.filter(l => l.resolvedSupplierId && l.resolvedSupplierSku).map(l => l.resolvedSupplierSku as string)))
+  const [profileTemplates, products, supplierTemplates] = await Promise.all([
+    ids.length ? prisma.printTemplate.findMany({ where: { id: { in: ids } } }) : [],
+    supplierIds.length && skus.length
+      ? prisma.supplierProduct.findMany({ where: { supplierId: { in: supplierIds }, sku: { in: skus }, printTemplateId: { not: null } }, select: { supplierId: true, sku: true, printTemplate: true } })
+      : [],
+    supplierIds.length ? prisma.printTemplate.findMany({ where: { supplierId: { in: supplierIds } } }) : [],
+  ])
+  const byId = new Map<string, TemplateRecord>(profileTemplates.map(t => [t.id, t]))
+  const productTemplate = new Map<string, TemplateRecord>()
+  for (const p of products) if (p.printTemplate) productTemplate.set(pairKey(p.supplierId, p.sku), p.printTemplate)
+  const bySupplier = new Map<string, TemplateRecord[]>()
+  for (const t of supplierTemplates) bySupplier.set(t.supplierId, [...(bySupplier.get(t.supplierId) ?? []), t])
+  return { byId, productTemplate, bySupplier }
+}
+
+export function pickTemplate(line: TemplateLookupLine, profile: { printTemplateId: string | null } | null, ctx: TemplateContext): TemplateRow | null {
+  if (profile?.printTemplateId) {
+    const fromProfile = ctx.byId.get(profile.printTemplateId)
     if (fromProfile && (!line.resolvedSupplierId || fromProfile.supplierId === line.resolvedSupplierId)) return mapTemplate(fromProfile)
   }
   if (!line.resolvedSupplierId) return null
   if (line.resolvedSupplierSku) {
-    const product = await prisma.supplierProduct.findUnique({
-      where: { supplierId_sku: { supplierId: line.resolvedSupplierId, sku: line.resolvedSupplierSku } },
-      select: { printTemplate: true },
-    })
-    if (product?.printTemplate && product.printTemplate.supplierId === line.resolvedSupplierId) return mapTemplate(product.printTemplate)
+    const fromProduct = ctx.productTemplate.get(pairKey(line.resolvedSupplierId, line.resolvedSupplierSku))
+    if (fromProduct && fromProduct.supplierId === line.resolvedSupplierId) return mapTemplate(fromProduct)
   }
-  const templates = await prisma.printTemplate.findMany({ where: { supplierId: line.resolvedSupplierId } })
+  const templates = ctx.bySupplier.get(line.resolvedSupplierId) ?? []
   if (templates.length === 0) return null
 
   const sku = line.resolvedSupplierSku ? line.resolvedSupplierSku.toLowerCase() : null
@@ -353,6 +373,27 @@ export async function templateForLine(line: TemplateLookupLine, profile?: { prin
   if (!picked) picked = templates.find(t => t.supplierSku === null)
   if (!picked) return null
   return mapTemplate(picked)
+}
+
+export async function templateForLine(line: TemplateLookupLine, profile?: { printTemplateId: string | null } | null): Promise<TemplateRow | null> {
+  const p = profile !== undefined ? profile : await profileForLine(line)
+  const ctx = await loadTemplateContext([line], [p?.printTemplateId])
+  return pickTemplate(line, p ?? null, ctx)
+}
+
+export type CoverageLine = TemplateLookupLine & { sku: string | null }
+
+export function coverageFor(lines: CoverageLine[], profile: { printTemplateId: string | null } | null, ctx: TemplateContext): TemplateCoverage {
+  return summarizeCoverage(lines.filter(l => l.resolvedSupplierId).map(l => ({
+    sku: l.resolvedSupplierSku ?? l.sku, hasTemplate: !!pickTemplate(l, profile, ctx),
+  })))
+}
+
+export async function effectiveTemplateCoverage(storeId: string, shopifyProductId: string, profile?: { printTemplateId: string | null } | null): Promise<TemplateCoverage> {
+  const p = profile !== undefined ? profile : await findProfile(storeId, shopifyProductId)
+  const lines = (await observedLines(storeId, shopifyProductId)).filter(l => l.resolvedSupplierId)
+  const ctx = await loadTemplateContext(lines, [p?.printTemplateId])
+  return coverageFor(lines, p ?? null, ctx)
 }
 
 export async function loadTask(taskKey: string): Promise<TaskDetail | null> {
@@ -374,10 +415,14 @@ export async function loadTask(taskKey: string): Promise<TaskDetail | null> {
   const profileRouteKey = storeId && productId ? toRouteKey(storeId, productId) : null
   const profileRow = storeId && productId ? await findProfile(storeId, productId) : null
   const template = orderLine ? await templateForLine(orderLine, profileRow) : null
-  const profile: TaskProfile | null = profileRow
+  const observed = profileRow ? await observedLines(profileRow.storeId, profileRow.shopifyProductId) : []
+  const coverage = profileRow
+    ? coverageFor(observed, profileRow, await loadTemplateContext(observed.filter(l => l.resolvedSupplierId), [profileRow.printTemplateId]))
+    : null
+  const profile: TaskProfile | null = profileRow && coverage
     ? {
         key: toRouteKey(profileRow.storeId, profileRow.shopifyProductId),
-        status: profileStatus(profileRow, await observedFields(profileRow.storeId, profileRow.shopifyProductId)),
+        status: profileStatus(profileRow, fieldsFromLines(observed), { templateCovered: templateCovered(profileRow, coverage) }),
         masterArtworkUrl: safeHttpUrl(profileRow.masterArtworkUrl),
         layerMap: parseLayerMap(profileRow.layerMap),
       }
