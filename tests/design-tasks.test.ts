@@ -36,4 +36,10 @@ describe('canTransition', () => {
     expect(T('CANCELLED', 'DOING', 'LEADER')).toBe(false)
     expect(T('NEW', 'REVIEW', 'DESIGNER')).toBe(false)
   })
+  it('cancel is leader-only and never from DONE', () => {
+    expect(T('DONE', 'CANCELLED', 'LEADER')).toBe(false)
+    expect(T('NEW', 'CANCELLED', 'LEADER')).toBe(true)
+    expect(T('ASK_CUSTOMER', 'CANCELLED', 'LEADER')).toBe(true)
+    expect(T('NEW', 'CANCELLED', 'DESIGNER')).toBe(false)
+  })
 })

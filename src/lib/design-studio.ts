@@ -15,7 +15,7 @@ export type ArtworkRow = {
   mimeType: string; uploadedById: string | null; createdAt: string; url: string
 }
 export type WorkspaceLine = {
-  id: string; linePosition: number; sku: string | null; productTitle: string; variantTitle: string | null
+  id: string; shopifyLineId: string; linePosition: number; sku: string | null; productTitle: string; variantTitle: string | null
   qty: number; isNonProduct: boolean; customized: boolean
   variantOptions: Record<string, string>
   attributesLoaded: boolean
@@ -151,6 +151,7 @@ export async function loadWorkspace(orderId: string): Promise<Workspace | null> 
     const artworks = order.artworks.filter(a => a.shopifyLineId === l.shopifyLineId)
     return {
       id: l.id,
+      shopifyLineId: l.shopifyLineId,
       linePosition: l.linePosition,
       sku: l.sku,
       productTitle: l.productTitle,
