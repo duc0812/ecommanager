@@ -6,6 +6,9 @@ export const card = 'bg-surface-container-lowest rounded-xl shadow-card border b
 export const btn = 'inline-flex items-center gap-xs rounded-lg border border-outline-variant/40 bg-surface-container-lowest px-md py-xs text-label-sm font-semibold text-on-surface hover:bg-surface-container-low disabled:opacity-40 disabled:cursor-not-allowed'
 export const btnPrimary = 'inline-flex items-center gap-xs rounded-lg bg-secondary text-on-secondary px-md py-xs text-label-sm font-semibold hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed'
 export const btnWarn = `${btn} text-amber-900`
+export function chip(on: boolean) {
+  return `inline-flex items-center gap-xs rounded-full border px-sm py-[2px] text-label-sm ${on ? 'bg-secondary/10 text-secondary border-transparent font-semibold' : 'bg-surface-container-lowest border-outline-variant/40 text-on-surface-variant'}`
+}
 export const input = 'rounded-lg border border-outline-variant/40 bg-surface-container-lowest px-sm py-xs text-body-sm text-on-surface min-w-0'
 
 const TONE: Record<Tone, string> = {

@@ -179,7 +179,7 @@ function DesignTasks() {
           {current && (
             <>
               <TaskHeader key={`h-${current.task.taskKey}`} detail={current} holdCount={holdCount} onChanged={reload} />
-              <ImagePanes key={`i-${current.task.taskKey}`} detail={current} />
+              <ImagePanes key={`i-${current.task.taskKey}`} detail={current} onChanged={reload} />
               <Flags detail={current} />
               <LowerGrid key={`l-${current.task.taskKey}`} detail={current} onChanged={reload} />
             </>

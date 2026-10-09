@@ -3,29 +3,9 @@ import { useRef, useState } from 'react'
 import type { ArtworkRow, WorkspaceLine } from './types'
 import { requestJson, versionsFor } from './model'
 import { Card, ErrorBanner, Icon, Note, Pill, btn, fmtSize } from './ui'
+import { ARTWORK_ACCEPT, useArtworkUpload } from './useArtworkUpload'
 
-const ACCEPT = '.png,.jpg,.jpeg,.pdf,.psd,.zip'
 const mini = 'inline-flex items-center gap-xs rounded-md border border-outline-variant/40 px-xs py-[2px] text-label-sm font-semibold text-on-surface hover:bg-surface-container-low disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap'
-
-type UploadResult = { ok: true; data: { artwork?: ArtworkRow; warning?: string } } | { ok: false; error: string }
-
-function postWithProgress(url: string, body: FormData, onProgress: (pct: number) => void): Promise<UploadResult> {
-  return new Promise(resolve => {
-    const xhr = new XMLHttpRequest()
-    xhr.open('POST', url)
-    xhr.upload.onprogress = e => { if (e.lengthComputable && e.total > 0) onProgress(Math.min(100, Math.round((e.loaded / e.total) * 100))) }
-    xhr.upload.onload = () => onProgress(100)
-    xhr.onload = () => {
-      let data: any = {}
-      try { data = JSON.parse(xhr.responseText || '{}') } catch {}
-      if (xhr.status >= 200 && xhr.status < 300) resolve({ ok: true, data })
-      else resolve({ ok: false, error: data?.error ?? `HTTP ${xhr.status}` })
-    }
-    xhr.onerror = () => resolve({ ok: false, error: 'Lỗi mạng' })
-    xhr.onabort = () => resolve({ ok: false, error: 'Đã huỷ tải lên' })
-    xhr.send(body)
-  })
-}
 
 async function copyText(text: string): Promise<boolean> {
   try {
@@ -49,40 +29,12 @@ async function copyText(text: string): Promise<boolean> {
 export default function ArtworkSlots({ line, slots, driveConnected, onUploaded }: {
   line: WorkspaceLine; slots: string[]; driveConnected: boolean; onUploaded: () => void
 }) {
-  const [progress, setProgress] = useState<Record<string, number>>({})
-  const [warnings, setWarnings] = useState<Record<string, string>>({})
+  const { progress, warnings, setWarning, error, setError, upload, busyLabel } = useArtworkUpload(line.id, driveConnected, onUploaded)
   const [pushing, setPushing] = useState<string[]>([])
   const [over, setOver] = useState('')
-  const [error, setError] = useState('')
   const [copied, setCopied] = useState('')
-  const busyRef = useRef(new Set<string>())
   const inputs = useRef<Record<string, HTMLInputElement | null>>({})
   const fileCount = line.artworks.length
-
-  function setWarning(area: string, msg: string) {
-    setWarnings(w => {
-      const next = { ...w }
-      if (msg) next[area] = msg
-      else delete next[area]
-      return next
-    })
-  }
-
-  async function upload(printArea: string, file: File) {
-    if (busyRef.current.has(printArea)) return
-    busyRef.current.add(printArea)
-    setProgress(p => ({ ...p, [printArea]: 0 })); setError(''); setWarning(printArea, '')
-    const fd = new FormData()
-    fd.set('printArea', printArea)
-    fd.set('file', file)
-    const r = await postWithProgress(`/api/design-studio/lines/${encodeURIComponent(line.id)}/artwork`, fd,
-      pct => setProgress(p => ({ ...p, [printArea]: pct })))
-    busyRef.current.delete(printArea)
-    setProgress(p => { const next = { ...p }; delete next[printArea]; return next })
-    if (!r.ok) { setError(`${printArea}: ${r.error}`); return }
-    if (r.data.warning) setWarning(printArea, r.data.warning)
-    onUploaded()
-  }
 
   async function push(area: string, artworkId: string) {
     if (pushing.includes(artworkId)) return
@@ -99,11 +51,6 @@ export default function ArtworkSlots({ line, slots, driveConnected, onUploaded }
     window.setTimeout(() => setCopied(''), 2500)
   }
 
-  function busyLabel(pct: number) {
-    if (pct < 100) return `Đang tải ${pct}%`
-    return driveConnected ? 'Đang đẩy lên Drive…' : 'Đang lưu…'
-  }
-
   return (
     <Card icon="folder_open" title="Artwork theo panel" right={`${fileCount} file`}>
       <ErrorBanner msg={error} onClose={() => setError('')} />
@@ -117,7 +64,7 @@ export default function ArtworkSlots({ line, slots, driveConnected, onUploaded }
             <div className="flex items-center gap-xs text-body-sm font-semibold">
               <span>{area}</span>
               <span className="text-label-sm font-medium text-on-surface-variant">{versions.length ? `${versions.length} phiên bản` : 'chưa có file'}</span>
-              <input ref={el => { inputs.current[area] = el }} type="file" accept={ACCEPT} hidden aria-label={`Chọn file cho ${area}`}
+              <input ref={el => { inputs.current[area] = el }} type="file" accept={ARTWORK_ACCEPT} hidden aria-label={`Chọn file cho ${area}`}
                 onChange={e => { const f = e.target.files?.[0]; if (f) upload(area, f); e.target.value = '' }} />
               <button type="button" disabled={isBusy} onClick={() => inputs.current[area]?.click()} className={`${btn} ml-auto`}>
                 <Icon name="upload" className="text-[16px]" />{isBusy ? busyLabel(pct) : 'Upload'}

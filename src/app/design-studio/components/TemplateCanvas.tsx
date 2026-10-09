@@ -1,12 +1,24 @@
 'use client'
-import { useEffect, useId, useState, type ReactNode } from 'react'
+import { useEffect, useId, useRef, useState, type DragEvent, type HTMLAttributes, type ReactNode, type Ref } from 'react'
 import type { TemplateArea, TemplateRow, WorkspaceLine } from './types'
 import { isImage, newestFor, newestArtwork } from './model'
-import { Icon, Note } from './ui'
+import { ALL_GUIDES, NO_GUIDES, areaAt, clientToTemplate, type Guides, type ViewBox } from './canvas-guides'
+import { Icon, Note, chip } from './ui'
 
 export type CanvasBg = 'checker' | 'white' | 'black'
+export type CanvasUpload = {
+  onDrop: (area: string, file: File) => void
+  onReject: (msg: string) => void
+  busy: { area: string; pct: number; label: string } | null
+}
 
 const W = 1200
+
+function sheetGeometry(template: TemplateRow): { k: number; H: number; viewBox: ViewBox } {
+  const k = W / template.widthPx
+  const H = Math.round(template.heightPx * k)
+  return { k, H, viewBox: { x: -30, y: -22, w: W + 60, h: H + 50 } }
+}
 
 function useNaturalSize(url: string | null): { w: number; h: number } | null {
   const [size, setSize] = useState<{ url: string; w: number; h: number } | null>(null)
@@ -27,12 +39,24 @@ function fit(box: { x: number; y: number; w: number; h: number }, w: number, h: 
   return { x: box.x + (box.w - aw) / 2, y: box.y + (box.h - ah) / 2, w: aw, h: ah, s }
 }
 
-export function CanvasTools({ bg, onBg, guide, onGuide, hasGuide }: { bg: CanvasBg; onBg: (b: CanvasBg) => void; guide: number; onGuide: (n: number) => void; hasGuide: boolean }) {
+export function CanvasTools({ bg, onBg, guide, onGuide, hasGuide, guides, onGuides, hasBleed = true }: {
+  bg: CanvasBg; onBg: (b: CanvasBg) => void; guide: number; onGuide: (n: number) => void; hasGuide: boolean
+  guides?: Guides; onGuides?: (g: Guides) => void; hasBleed?: boolean
+}) {
   const swatches: { k: CanvasBg; label: string; cls: string }[] = [
     { k: 'checker', label: 'Nền ô cờ', cls: 'bg-[repeating-conic-gradient(theme(colors.outline-variant)_0_25%,theme(colors.surface-container-lowest)_0_50%)] bg-[length:8px_8px]' },
     { k: 'white', label: 'Nền trắng', cls: 'bg-white' },
     { k: 'black', label: 'Nền đen', cls: 'bg-black' },
   ]
+  const toggles: { k: keyof Guides; label: string; show: boolean }[] = [
+    { k: 'areas', label: 'Vùng in', show: true },
+    { k: 'safe', label: 'An toàn', show: true },
+    { k: 'bleed', label: 'Bleed', show: hasBleed },
+    { k: 'guide', label: 'Artguide', show: hasGuide },
+  ]
+  const shown = toggles.filter(t => t.show)
+  const allOff = !!guides && shown.every(t => !guides[t.k])
+  const showSlider = hasGuide && (!guides || guides.guide)
   return (
     <div className="flex items-center gap-md flex-wrap text-label-sm text-on-surface-variant">
       <span className="inline-flex items-center gap-xs">Nền
@@ -41,8 +65,20 @@ export function CanvasTools({ bg, onBg, guide, onGuide, hasGuide }: { bg: Canvas
             className={`w-[18px] h-[18px] rounded border border-outline-variant ${s.cls} ${bg === s.k ? 'outline outline-2 outline-offset-1 outline-secondary' : ''}`} />
         ))}
       </span>
-      {hasGuide && (
-        <label className="inline-flex items-center gap-xs">Artguide
+      {guides && onGuides && (
+        <span className="inline-flex items-center gap-xs flex-wrap" role="group" aria-label="Hiện guide">
+          {shown.map(t => (
+            <button key={t.k} type="button" aria-pressed={guides[t.k]} onClick={() => onGuides({ ...guides, [t.k]: !guides[t.k] })} className={chip(guides[t.k])}>
+              {t.label}
+            </button>
+          ))}
+          <button type="button" onClick={() => onGuides(allOff ? ALL_GUIDES : NO_GUIDES)} className={chip(false)}>
+            <Icon name={allOff ? 'visibility' : 'visibility_off'} className="text-[14px]" />{allOff ? 'Hiện lại guide' : 'Chỉ xem artwork'}
+          </button>
+        </span>
+      )}
+      {showSlider && (
+        <label className="inline-flex items-center gap-xs">{guides ? 'Độ mờ' : 'Artguide'}
           <input type="range" min={0} max={100} value={guide} onChange={e => onGuide(Number(e.target.value))} className="w-24 accent-secondary" aria-label="Độ mờ artguide" />
           <span className="w-8 text-right">{guide}%</span>
         </label>
@@ -53,25 +89,29 @@ export function CanvasTools({ bg, onBg, guide, onGuide, hasGuide }: { bg: Canvas
 
 type AreaBox = { x: number; y: number; w: number; h: number }
 
-function Sheet({ template, bg, guide, renderArea, overlay, legend }: {
-  template: TemplateRow; bg: CanvasBg; guide: number
+function Sheet({ template, bg, guide, guides, renderArea, overlay, legend, svgRef, highlight, frameProps, frameOverlay }: {
+  template: TemplateRow; bg: CanvasBg; guide: number; guides: Guides
   renderArea: (a: TemplateArea, box: AreaBox) => ReactNode
   overlay: (k: number) => ReactNode
   legend: ReactNode
+  svgRef?: Ref<SVGSVGElement>
+  highlight?: AreaBox | null
+  frameProps?: HTMLAttributes<HTMLDivElement>
+  frameOverlay?: ReactNode
 }) {
   const rawId = useId()
   const patternId = `ck${rawId.replace(/[^a-zA-Z0-9]/g, '')}`
-  const k = W / template.widthPx
-  const H = Math.round(template.heightPx * k)
+  const { k, H, viewBox } = sheetGeometry(template)
   const bleed = template.bleedIn * template.dpi * k
   const safe = template.safeIn * template.dpi * k
+  const showBleed = guides.bleed && template.bleedIn > 0
   const bgFill = bg === 'checker' ? `url(#${patternId})` : undefined
   const bgCls = bg === 'white' ? 'fill-white' : bg === 'black' ? 'fill-black' : ''
 
   return (
     <div className="flex flex-col gap-sm">
-      <div className="rounded-lg border border-outline-variant/20 bg-surface-container-low p-sm grid place-items-center overflow-hidden">
-        <svg viewBox={`-30 -22 ${W + 60} ${H + 50}`} role="img" aria-label={`Template ${template.name}`} className="block max-w-full h-auto w-full">
+      <div {...frameProps} className={`relative rounded-lg border border-outline-variant/20 bg-surface-container-low p-sm grid place-items-center overflow-hidden ${frameProps?.className ?? ''}`}>
+        <svg ref={svgRef} viewBox={`${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`} role="img" aria-label={`Template ${template.name}`} className="block max-w-full h-auto w-full">
           <defs>
             <pattern id={patternId} width="18" height="18" patternUnits="userSpaceOnUse">
               <rect width="18" height="18" className="fill-surface-container-lowest" />
@@ -84,18 +124,19 @@ function Sheet({ template, bg, guide, renderArea, overlay, legend }: {
             const x = a.x * k, y = a.y * k, w = a.w * k, h = a.h * k
             return (
               <g key={a.name}>
-                <rect x={x} y={y} width={w} height={h} className="fill-outline/20 stroke-outline-variant" />
+                {guides.areas && <rect x={x} y={y} width={w} height={h} className="fill-outline/20 stroke-outline-variant" />}
                 {renderArea(a, { x, y, w, h })}
-                <rect x={x + bleed} y={y + bleed} width={Math.max(0, w - 2 * bleed)} height={Math.max(0, h - 2 * bleed)} fill="none" strokeWidth="1.2" strokeDasharray="5 4" className="stroke-error" />
-                <rect x={x + safe} y={y + safe} width={Math.max(0, w - 2 * safe)} height={Math.max(0, h - 2 * safe)} fill="none" strokeWidth="1.2" strokeDasharray="3 4" className="stroke-on-tertiary-container" />
-                <text x={x + 6} y={y + 14} fontSize="10" className="fill-on-surface-variant font-mono">{a.name} · {a.w}×{a.h}</text>
+                {showBleed && <rect x={x + bleed} y={y + bleed} width={Math.max(0, w - 2 * bleed)} height={Math.max(0, h - 2 * bleed)} fill="none" strokeWidth="1.2" strokeDasharray="5 4" className="stroke-error" />}
+                {guides.safe && <rect x={x + safe} y={y + safe} width={Math.max(0, w - 2 * safe)} height={Math.max(0, h - 2 * safe)} fill="none" strokeWidth="1.2" strokeDasharray="3 4" className="stroke-on-tertiary-container" />}
+                {guides.areas && <text x={x + 6} y={y + 14} fontSize="10" className="fill-on-surface-variant font-mono">{a.name} · {a.w}×{a.h}</text>}
               </g>
             )
           })}
           {overlay(k)}
-          {template.guideImageUrl && (
+          {template.guideImageUrl && guides.guide && (
             <image href={template.guideImageUrl} x={0} y={0} width={W} height={H} preserveAspectRatio="none" opacity={guide / 100} pointerEvents="none" />
           )}
+          {highlight && <rect x={highlight.x} y={highlight.y} width={highlight.w} height={highlight.h} strokeWidth="3" className="fill-secondary/20 stroke-secondary" pointerEvents="none" />}
           <rect width={W} height={H} fill="none" className="stroke-outline-variant" />
           <g fontSize="11" className="fill-on-surface-variant font-mono">
             <line x1="0" y1={H + 12} x2={W} y2={H + 12} className="stroke-outline-variant" />
@@ -104,13 +145,14 @@ function Sheet({ template, bg, guide, renderArea, overlay, legend }: {
             <text x="-16" y={H / 2} textAnchor="middle" transform={`rotate(-90 -16 ${H / 2})`}>{template.heightPx} px</text>
           </g>
         </svg>
+        {frameOverlay}
       </div>
       <div className="flex gap-md flex-wrap text-label-sm text-on-surface-variant">
-        <span className="inline-flex items-center gap-xs text-error"><i className="inline-block w-3.5 border-t-2 border-dashed border-current" />bleed {template.bleedIn}″</span>
-        <span className="inline-flex items-center gap-xs text-on-tertiary-container"><i className="inline-block w-3.5 border-t-2 border-dashed border-current" />an toàn {template.safeIn}″</span>
-        {template.guideImageUrl && <span className="inline-flex items-center gap-xs text-secondary"><Icon name="layers" className="text-[14px]" />artguide</span>}
+        {showBleed && <span className="inline-flex items-center gap-xs text-error"><i className="inline-block w-3.5 border-t-2 border-dashed border-current" />bleed {template.bleedIn}″</span>}
+        {guides.safe && <span className="inline-flex items-center gap-xs text-on-tertiary-container"><i className="inline-block w-3.5 border-t-2 border-dashed border-current" />an toàn {template.safeIn}″</span>}
+        {template.guideImageUrl && guides.guide && <span className="inline-flex items-center gap-xs text-secondary"><Icon name="layers" className="text-[14px]" />artguide</span>}
         {legend}
-        <span>xám = panel phải phủ kín</span>
+        {guides.areas && <span>xám = panel phải phủ kín</span>}
         {template.mirror && <span className="text-amber-900">mirror</span>}
       </div>
     </div>
@@ -135,12 +177,39 @@ function OverlayLegend({ children }: { children: ReactNode }) {
   return <span className="inline-flex items-center gap-xs text-amber-600"><i className="inline-block w-3.5 border-t-2 border-current" />{children}</span>
 }
 
-function TaskCanvas({ template, line, slots, bg, guide }: TaskProps) {
+function hasFiles(e: DragEvent) {
+  return Array.from(e.dataTransfer?.types ?? []).includes('Files')
+}
+
+function UploadOverlay({ busy, target }: { busy: CanvasUpload['busy']; target: string | null }) {
+  if (busy) {
+    return (
+      <div className="absolute inset-0 grid place-items-center bg-surface/70 pointer-events-none" role="status" aria-live="polite">
+        <div className="flex flex-col items-center gap-xs w-56 rounded-lg bg-surface-container-lowest shadow-card border border-outline-variant/20 p-sm">
+          <span className="text-label-sm font-semibold text-on-surface">{busy.area} · {busy.label}</span>
+          <div className="h-1 w-full rounded-full bg-surface-container overflow-hidden" role="progressbar" aria-label={`Tiến độ tải ${busy.area}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={busy.pct}>
+            <div className="h-full bg-secondary transition-all" style={{ width: `${busy.pct}%` }} />
+          </div>
+        </div>
+      </div>
+    )
+  }
+  if (target === null) return null
+  return (
+    <div className="absolute top-sm left-1/2 -translate-x-1/2 rounded-full bg-secondary text-on-secondary px-sm py-[2px] text-label-sm font-semibold pointer-events-none">
+      {target ? `Thả để tải vào ${target}` : 'Kéo vào một vùng in'}
+    </div>
+  )
+}
+
+function TaskCanvas({ template, line, slots, bg, guide, guides, upload }: TaskProps) {
   const firstArea = template?.areas.find(a => a.name === slots[0]) ?? template?.areas[0]
   const sourceUrl = line.sourcePrintFiles[0]?.url ?? null
   const firstHasArt = !!(firstArea && newestFor(line, firstArea.name))
   const showSource = !!(template && firstArea && sourceUrl && !firstHasArt)
   const sourceSize = useNaturalSize(showSource ? sourceUrl : null)
+  const svgRef = useRef<SVGSVGElement>(null)
+  const [drag, setDrag] = useState<string | null>(null)
 
   if (!template) {
     const firstSlotArt = slots[0] ? newestFor(line, slots[0]) : undefined
@@ -162,9 +231,49 @@ function TaskCanvas({ template, line, slots, bg, guide }: TaskProps) {
     )
   }
 
+  const tpl = template
+  const { k, H, viewBox } = sheetGeometry(tpl)
+  const singleArea = new Set(tpl.areas.map(a => a.name)).size === 1
+
+  function areaFor(e: DragEvent): TemplateArea | null {
+    const svg = svgRef.current
+    if (!svg) return null
+    const p = clientToTemplate(svg.getBoundingClientRect(), viewBox, k, e.clientX, e.clientY)
+    return areaAt(tpl.areas, p.x, p.y)
+  }
+
+  const dropAllowed = !!upload && !upload.busy
+  const frameProps: HTMLAttributes<HTMLDivElement> | undefined = upload ? {
+    title: upload.busy ? 'Đang tải file lên — chờ xong rồi thả tiếp' : 'Kéo thả file vào một vùng in để tải lên',
+    onDragOver: e => {
+      if (!hasFiles(e)) return
+      e.preventDefault()
+      const a = dropAllowed ? areaFor(e) : null
+      e.dataTransfer.dropEffect = a ? 'copy' : 'none'
+      const next = a?.name ?? ''
+      if (next !== drag) setDrag(next)
+    },
+    onDragLeave: e => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDrag(null) },
+    onDrop: e => {
+      if (!hasFiles(e)) return
+      e.preventDefault()
+      setDrag(null)
+      if (!dropAllowed) return
+      const a = areaFor(e)
+      const f = e.dataTransfer.files?.[0]
+      if (!f) return
+      if (!a) { upload.onReject('Thả file vào trong một vùng in'); return }
+      upload.onDrop(a.name, f)
+    },
+  } : undefined
+
+  const dragArea = drag ? tpl.areas.find(a => a.name === drag) : undefined
+  const highlight = dragArea ? (singleArea ? { x: 0, y: 0, w: W, h: H } : { x: dragArea.x * k, y: dragArea.y * k, w: dragArea.w * k, h: dragArea.h * k }) : null
+
   return (
     <Sheet
-      template={template} bg={bg} guide={guide}
+      template={tpl} bg={bg} guide={guide} guides={guides} svgRef={svgRef} highlight={highlight} frameProps={frameProps}
+      frameOverlay={upload ? <UploadOverlay busy={upload.busy} target={drag} /> : null}
       renderArea={(a, { x, y, w, h }) => {
         const art = newestFor(line, a.name)
         return (
@@ -174,7 +283,7 @@ function TaskCanvas({ template, line, slots, bg, guide }: TaskProps) {
           </>
         )
       }}
-      overlay={k => (showSource && sourceUrl && firstArea ? <FittedImage url={sourceUrl} area={firstArea} size={sourceSize} label="khối nguồn" k={k} /> : null)}
+      overlay={kk => (showSource && sourceUrl && firstArea ? <FittedImage url={sourceUrl} area={firstArea} size={sourceSize} label="khối nguồn" k={kk} /> : null)}
       legend={showSource && <OverlayLegend>khối artwork nguồn</OverlayLegend>}
     />
   )
@@ -186,7 +295,7 @@ function StandaloneCanvas({ template, masterUrl, bg, guide }: { template: Templa
   const size = useNaturalSize(showMaster ? masterUrl : null)
   return (
     <Sheet
-      template={template} bg={bg} guide={guide}
+      template={template} bg={bg} guide={guide} guides={ALL_GUIDES}
       renderArea={() => null}
       overlay={k => (showMaster && masterUrl && firstArea ? <FittedImage url={masterUrl} area={firstArea} size={size} label="master" k={k} /> : null)}
       legend={showMaster && <OverlayLegend>master artwork</OverlayLegend>}
@@ -194,11 +303,11 @@ function StandaloneCanvas({ template, masterUrl, bg, guide }: { template: Templa
   )
 }
 
-type TaskProps = { template: TemplateRow | null; line: WorkspaceLine; slots: string[]; bg: CanvasBg; guide: number }
+type TaskProps = { template: TemplateRow | null; line: WorkspaceLine; slots: string[]; bg: CanvasBg; guide: number; guides: Guides; upload?: CanvasUpload | null }
 type StandaloneProps = { template: TemplateRow; masterUrl?: string | null; line?: undefined; slots?: undefined; bg?: CanvasBg; guide?: number }
 
-export default function TemplateCanvas(props: TaskProps | StandaloneProps) {
-  if (props.line) return <TaskCanvas template={props.template} line={props.line} slots={props.slots} bg={props.bg} guide={props.guide} />
+export default function TemplateCanvas(props: (Omit<TaskProps, 'guides'> & { guides?: Guides }) | StandaloneProps) {
+  if (props.line) return <TaskCanvas template={props.template} line={props.line} slots={props.slots} bg={props.bg} guide={props.guide} guides={props.guides ?? ALL_GUIDES} upload={props.upload} />
   const p = props as StandaloneProps
   return <StandaloneCanvas template={p.template} masterUrl={p.masterUrl ?? null} bg={p.bg ?? 'checker'} guide={p.guide ?? 50} />
 }
