@@ -5,6 +5,8 @@ import { getDesignSettings, kpiForProductType, type DesignSettings } from '@/lib
 import { visibleCustomAttributes } from '@/lib/order-classify'
 import { fieldsFromLines, findProfile, observedLines, parseLayerMap, profileStatus, summarizeCoverage, templateCovered, toRouteKey, type LayerMapEntry, type ProfileStatus, type TemplateCoverage } from '@/lib/product-profiles'
 import { isDriveConnected } from '@/lib/google-drive'
+import { libraryStateFor } from '@/lib/artwork-library-state'
+import type { TaskLibraryState } from '@/lib/artwork-library-types'
 
 export type TaskStatus = 'NEW' | 'ASSIGNED' | 'DOING' | 'REVIEW' | 'REJECTED' | 'ASK_CUSTOMER' | 'DONE' | 'CANCELLED'
 export type Readiness = 'AUTO' | 'LOW' | 'MANUAL'
@@ -144,7 +146,7 @@ export type TaskDetail = {
   task: TaskRow; line: WorkspaceLine; order: Workspace['order']; template: TemplateRow | null; profile: TaskProfile | null; profileRouteKey: string | null
   events: { id: string; type: string; message: string; actorName: string | null; createdAt: string }[]
   assignable: { id: string; name: string }[]; settings: DesignSettings; prevStatus: TaskStatus | null
-  slots: string[]; driveConnected: boolean
+  slots: string[]; driveConnected: boolean; library: TaskLibraryState | null
 }
 
 export function requiredSlotsFor(line: { customAttributesJson: string | null }, template: TemplateRow | null): string[] {
@@ -451,6 +453,7 @@ export async function loadTask(taskKey: string): Promise<TaskDetail | null> {
     assignable, settings, prevStatus: (task.prevStatus as TaskStatus | null) ?? null,
     slots: requiredSlotsFor(orderLine ?? { customAttributesJson: null }, template),
     driveConnected: await isDriveConnected(),
+    library: await libraryStateFor({ storeId, shopifyProductId: productId, templateId: template?.id ?? null }),
   }
 }
 

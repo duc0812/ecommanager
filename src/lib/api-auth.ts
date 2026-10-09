@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { AUTH_COOKIE, AuthPayload, verifyToken } from '@/lib/auth'
 import { FeaturePermission, UserRole, parsePermissions } from '@/lib/roles'
+import { canCallApi } from '@/lib/api-access'
 
 export type AuthUser = {
   id: string
@@ -57,4 +58,11 @@ export function requireSuperadmin(req: NextRequest) {
 
 export function requireAdmin(req: NextRequest) {
   return requireRole(req, ['SUPERADMIN', 'ADMIN'])
+}
+
+export async function requireApiAccess(req: NextRequest): Promise<{ user: AuthUser } | { error: NextResponse }> {
+  const user = await getAuthUser(req)
+  if (!user) return { error: unauthorized() }
+  if (canCallApi(user.role, user.permissions, req.nextUrl.pathname, req.method) !== 'ok') return { error: forbidden() }
+  return { user }
 }
