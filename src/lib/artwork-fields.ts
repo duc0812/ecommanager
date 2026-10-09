@@ -14,7 +14,8 @@ export type ArtworkField = {
   field: string; layer: string; area?: string; sample: string; font: string; sizePx: number; color: string
   align: FieldAlign; box: Box; anchor: FieldAnchor; tracking: number; leading?: number
   stroke?: { px: number; color: string }
-  shadow?: { dx: number; dy: number; blur: number; color: string; opacity: number }
+  shadow?: { dx: number; dy: number; blur: number; color: string; opacity: number; spread?: number }
+  scaleX?: number; charColors?: string[]; layers?: string[]
   fit: FieldFit; maxChars?: number
 }
 
@@ -96,6 +97,21 @@ export function normalizeField(v: unknown, i: number): ArtworkField {
       blur: num(s.blur, `${w}.shadow.blur`, { min: 0 }) as number, color: color(s.color, `${w}.shadow.color`),
       opacity: num(s.opacity, `${w}.shadow.opacity`, { min: 0 }) as number,
     }
+    const spread = num(s.spread, `${w}.shadow.spread`, { optional: true })
+    if (spread !== undefined) field.shadow.spread = spread
+  }
+  const scaleX = num(o.scaleX, `${w}.scaleX`, { optional: true })
+  if (scaleX !== undefined) {
+    if (scaleX <= 0) throw new FieldValidationError(`${w}.scaleX phải > 0`)
+    field.scaleX = scaleX
+  }
+  if (o.charColors !== undefined && o.charColors !== null) {
+    if (!Array.isArray(o.charColors) || o.charColors.length > 2000) throw new FieldValidationError(`${w}.charColors phải là danh sách màu`)
+    field.charColors = o.charColors.map((c, j) => color(c, `${w}.charColors[${j}]`))
+  }
+  if (o.layers !== undefined && o.layers !== null) {
+    if (!Array.isArray(o.layers) || o.layers.length > 100) throw new FieldValidationError(`${w}.layers phải là danh sách tên layer`)
+    field.layers = o.layers.map((l, j) => str(l, `${w}.layers[${j}]`, { max: 255 }))
   }
   if (o.maxChars !== undefined && o.maxChars !== null) {
     if (typeof o.maxChars !== 'number' || !Number.isInteger(o.maxChars) || o.maxChars <= 0) throw new FieldValidationError(`${w}.maxChars phải là số nguyên dương`)
@@ -153,8 +169,7 @@ export function parseStrings(json: string | null | undefined): string[] {
 
 export function resultStatus(r: { fields: ArtworkField[]; missingFonts: string[]; warnings: string[]; checkScore: number | null }): EntryStatus {
   if (r.missingFonts.length > 0) return 'NEEDS_FONTS'
-  if (r.warnings.length > 0) return 'NEEDS_REVIEW'
-  if (r.fields.length === 0) return 'READY'
+  if (r.warnings.length > 0 || r.fields.length === 0) return 'NEEDS_REVIEW'
   return r.checkScore !== null && r.checkScore <= CHECK_SCORE_MAX ? 'READY' : 'NEEDS_REVIEW'
 }
 

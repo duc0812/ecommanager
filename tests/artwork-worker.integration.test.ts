@@ -235,6 +235,17 @@ describe('result', () => {
     expect((await postResult(job.id, { fields: [FIELD], missingFonts: [], warnings: [], checkScore: 14 })).body.status).toBe('NEEDS_REVIEW')
     job = await freshJob(); await claim()
     expect((await postResult(job.id, { fields: [FIELD], missingFonts: [], warnings: ['Layer @Name dùng warp'], checkScore: 1 })).body.status).toBe('NEEDS_REVIEW')
+    job = await freshJob(); await claim()
+    expect((await postResult(job.id, { fields: [], fixedTexts: [], missingFonts: [], warnings: ['no @ layers'], checkScore: null })).body.status).toBe('NEEDS_REVIEW')
+  })
+
+  it('keeps stretch, per-letter colours, shadow spread and member layers in the stored fields', async () => {
+    const job = await freshJob(); await claim()
+    const rich = { ...FIELD, scaleX: 1.3, charColors: ['#ff0000', '#00ff00'], layers: ['@Name', '@Name 2'], shadow: { dx: 1, dy: 2, blur: 3, color: '#000000', opacity: 0.6, spread: 4 }, psdInkW: 99 }
+    expect((await postResult(job.id, { fields: [rich], checkScore: 2 })).body.status).toBe('READY')
+    const [stored] = JSON.parse((await prisma.artworkEntry.findUniqueOrThrow({ where: { id: entryId } })).fields)
+    expect(stored).toMatchObject({ scaleX: 1.3, charColors: ['#ff0000', '#00ff00'], layers: ['@Name', '@Name 2'], shadow: { spread: 4 } })
+    expect(stored.psdInkW).toBeUndefined()
   })
 
   it('a reparse keeps the field name, fit and max chars edited in the UI', async () => {

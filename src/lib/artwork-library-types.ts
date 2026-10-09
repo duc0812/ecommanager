@@ -29,7 +29,7 @@ export type LibrarySlot = {
   entry: LibraryEntryView | null
 }
 
-export type LibraryChip = { supplierName: string; templateName: string | null; status: SlotStatus }
+export type LibraryChip = { supplierName: string; templateName: string | null; supplierSkus: string[]; status: SlotStatus }
 
 export type LibraryListRow = {
   key: string; storeId: string; shop: string; shopifyProductId: string; title: string; imageUrl: string | null

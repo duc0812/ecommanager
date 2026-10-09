@@ -227,6 +227,7 @@ export async function listLibraryProducts(f: { q?: string; status?: LibraryProdu
     const chips: LibraryChip[] = slots.map(s => ({
       supplierName: suppliers.get(s.supplierId)?.name ?? '?',
       templateName: s.template?.name ?? null,
+      supplierSkus: Array.from(s.skus).sort(),
       status: slotStatus(s, s.templateId ? entryByTemplate.get(s.templateId) : undefined),
     }))
     const stale = productEntries.filter(e => !activeIds.has(e.printTemplateId))

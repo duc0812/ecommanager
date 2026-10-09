@@ -149,9 +149,9 @@ describe('library slots from mapping', () => {
     expect(row.unmapped).toBe(1)
     expect(row.staleCount).toBe(1)
     expect(row.chips).toEqual(expect.arrayContaining([
-      { supplierName: 'PGprints', templateName: 'Tumbler 20oz', status: 'READY' },
-      { supplierName: 'Mangoshao', templateName: 'C450-30OZ', status: 'EMPTY' },
-      { supplierName: 'NoTpl', templateName: null, status: 'NO_TEMPLATE' },
+      { supplierName: 'PGprints', templateName: 'Tumbler 20oz', supplierSkus: ['A-20OZ'], status: 'READY' },
+      { supplierName: 'Mangoshao', templateName: 'C450-30OZ', supplierSkus: ['B-30OZ'], status: 'EMPTY' },
+      { supplierName: 'NoTpl', templateName: null, supplierSkus: ['C-1'], status: 'NO_TEMPLATE' },
     ]))
     expect((await listLibraryProducts({ q: 'alib tumbler', status: 'READY' })).products.some(p => p.storeId === storeId)).toBe(false)
   })
