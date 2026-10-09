@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
 import Sidebar from '@/components/Sidebar'
+import GoogleDriveSetupCard from '@/components/GoogleDriveSetupCard'
 
 type Status = { connected: boolean; shop?: string; connectedAt?: string }
 
@@ -328,6 +329,7 @@ export default function SetupPage() {
             </div>
           </div>
         </div>
+        <GoogleDriveSetupCard />
         {/* Trello Config */}
         <div className="bg-surface-container-lowest rounded-xl border border-outline-variant/20 mb-lg">
           <div className="flex items-center gap-sm px-lg py-md border-b border-outline-variant/20">

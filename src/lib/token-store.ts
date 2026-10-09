@@ -41,12 +41,12 @@ const APP_CRED_KEYS = [
   'shopify.app.shop',
 ]
 
-async function settingsFor(keys: string[]) {
+export async function getSettings(keys: string[]): Promise<Record<string, string>> {
   const settings = await prisma.appSetting.findMany({ where: { key: { in: keys } } })
   return Object.fromEntries(settings.map(setting => [setting.key, setting.value]))
 }
 
-async function saveSetting(key: string, value: string) {
+export async function saveSetting(key: string, value: string) {
   await prisma.appSetting.upsert({
     where: { key },
     create: { key, value },
@@ -54,14 +54,14 @@ async function saveSetting(key: string, value: string) {
   })
 }
 
-async function deleteSettings(keys: string[]) {
+export async function deleteSettings(keys: string[]) {
   await prisma.appSetting.deleteMany({ where: { key: { in: keys } } })
 }
 
 export async function getShopifyConnection(): Promise<ShopifyConnection | null> {
   if (global.__shopifyConnection) return global.__shopifyConnection
 
-  const fromDb = await settingsFor(CONNECTION_KEYS)
+  const fromDb = await getSettings(CONNECTION_KEYS)
   const dbShop = fromDb['shopify.connection.shop']
   const dbToken = fromDb['shopify.connection.token']
   if (dbShop && dbToken) {
@@ -105,7 +105,7 @@ export async function setShopifyAppCredentials(apiKey: string, apiSecret: string
 export async function getShopifyAppCredentials(): Promise<ShopifyAppCredentials | null> {
   if (global.__shopifyAppCreds) return global.__shopifyAppCreds
 
-  const fromDb = await settingsFor(APP_CRED_KEYS)
+  const fromDb = await getSettings(APP_CRED_KEYS)
   const apiKey = fromDb['shopify.app.apiKey']
   const apiSecret = fromDb['shopify.app.apiSecret']
   const shop = fromDb['shopify.app.shop']
