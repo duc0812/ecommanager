@@ -117,7 +117,7 @@ function parseTemplateAreas(json: string): TemplateRow['areas'] {
   } catch { return [] }
 }
 
-function mapTemplate(t: { id: string; name: string; widthPx: number; heightPx: number; dpi: number; bleedIn: number; safeIn: number; mirror: boolean; areas: string; guideImagePath: string | null; templateUrl: string | null }): TemplateRow {
+export function mapTemplate(t: { id: string; name: string; widthPx: number; heightPx: number; dpi: number; bleedIn: number; safeIn: number; mirror: boolean; areas: string; guideImagePath: string | null; templateUrl: string | null }): TemplateRow {
   return {
     id: t.id, name: t.name, widthPx: t.widthPx, heightPx: t.heightPx, dpi: t.dpi, bleedIn: t.bleedIn, safeIn: t.safeIn, mirror: t.mirror,
     areas: parseTemplateAreas(t.areas), guideImageUrl: t.guideImagePath ? `/api/design-studio/file/guide/${t.id}` : null, templateUrl: t.templateUrl,

@@ -2,6 +2,7 @@ import fs from 'fs/promises'
 import path from 'path'
 import { prisma } from '@/lib/db'
 import { artworkUrl, type ArtworkRow } from '@/lib/design-studio'
+import { imageSize } from '@/lib/image-size'
 
 export const ALLOWED_MIME: Record<string, string> = {
   'image/png': 'png',
@@ -76,15 +77,18 @@ export async function saveArtwork(input: {
     }
   }
 
+  const dims = imageSize(input.bytes)
   const row = await prisma.designArtwork.create({
     data: {
       orderId: line.orderId, shopifyLineId: line.shopifyLineId, printArea, version, fileName,
       storagePath: rel.split(path.sep).join('/'), size: input.bytes.length, mimeType, uploadedById: input.uploadedById,
+      widthPx: dims?.width ?? null, heightPx: dims?.height ?? null,
     },
   })
   return {
     id: row.id, printArea: row.printArea, version: row.version, fileName: row.fileName, size: row.size,
     mimeType: row.mimeType, uploadedById: row.uploadedById, createdAt: row.createdAt.toISOString(), url: artworkUrl(row.id),
+    widthPx: row.widthPx, heightPx: row.heightPx,
   }
 }
 

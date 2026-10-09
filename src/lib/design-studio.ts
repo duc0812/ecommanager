@@ -13,6 +13,7 @@ export type SourcePrintFile = { printArea: string; url: string }
 export type ArtworkRow = {
   id: string; printArea: string; version: number; fileName: string; size: number
   mimeType: string; uploadedById: string | null; createdAt: string; url: string
+  widthPx: number | null; heightPx: number | null
 }
 export type WorkspaceLine = {
   id: string; shopifyLineId: string; linePosition: number; sku: string | null; productTitle: string; variantTitle: string | null
@@ -184,6 +185,7 @@ export async function loadWorkspace(orderId: string): Promise<Workspace | null> 
       artworks: artworks.map(a => ({
         id: a.id, printArea: a.printArea, version: a.version, fileName: a.fileName, size: a.size,
         mimeType: a.mimeType, uploadedById: a.uploadedById, createdAt: a.createdAt.toISOString(), url: artworkUrl(a.id),
+        widthPx: a.widthPx, heightPx: a.heightPx,
       })),
     }
   })
