@@ -24,6 +24,7 @@ export type ArtworkRow = {
   id: string; printArea: string; version: number; fileName: string; size: number
   mimeType: string; uploadedById: string | null; createdAt: string; url: string
   widthPx: number | null; heightPx: number | null
+  storage: 'LOCAL' | 'DRIVE'; driveWebViewLink: string | null
 }
 
 export type WorkspaceLine = {
@@ -68,7 +69,7 @@ export type TaskDetail = {
   task: TaskRow; line: WorkspaceLine; order: OrderInfo; template: TemplateRow | null
   profile: TaskProfile | null; profileRouteKey: string | null
   events: TaskEvent[]; assignable: { id: string; name: string }[]; settings: DesignSettings; prevStatus: TaskStatus | null
-  slots: string[]; me: Me
+  slots: string[]; me: Me; driveConnected: boolean
 }
 
 export type TransitionBody = {

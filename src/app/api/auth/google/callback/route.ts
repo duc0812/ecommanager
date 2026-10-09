@@ -51,6 +51,7 @@ export async function GET(req: NextRequest) {
     await saveSetting(GOOGLE_KEYS.rootFolderId, rootId)
   } catch (err: any) {
     console.error('[google oauth] root folder failed:', err?.message ?? err)
+    await deleteSettings([GOOGLE_KEYS.rootFolderId])
     return back('error', 'root_folder')
   }
 

@@ -186,6 +186,19 @@ describe('GET /api/auth/google/callback', () => {
     expect(res.headers.get('location')).toBe('http://localhost:3002/setup?google=error&reason=invalid_grant')
     expect(await setting(GOOGLE_KEYS.refreshToken)).toBeNull()
   })
+
+  it('drops a stale root folder id when creating the root folder fails', async () => {
+    await saveClient()
+    await prisma.appSetting.create({ data: { key: GOOGLE_KEYS.rootFolderId, value: 'old-root' } })
+    saveGoogleOAuthState('state-root-fail')
+    mockFetch((url, init) => (url.startsWith('https://www.googleapis.com/drive/v3/files')
+      ? json({ error: { message: 'Drive API disabled' } }, 403)
+      : googleSuccess(url, init)))
+
+    const res = await callback(req('/api/auth/google/callback?code=c&state=state-root-fail', null))
+    expect(res.headers.get('location')).toBe('http://localhost:3002/setup?google=error&reason=root_folder')
+    expect(await setting(GOOGLE_KEYS.rootFolderId)).toBeNull()
+  })
 })
 
 describe('/api/setup/google-drive', () => {
@@ -228,6 +241,29 @@ describe('/api/setup/google-drive', () => {
     await putSetup(req('/api/setup/google-drive', superToken, { method: 'PUT', body: JSON.stringify({ clientSecret: '' }) }))
     expect(await setting(GOOGLE_KEYS.clientSecret)).toBeNull()
     expect(await setting(GOOGLE_KEYS.clientId)).toBe('my-client')
+  })
+
+  it('PUT with a different client id clears the connection, the same id keeps it', async () => {
+    await saveClient()
+    await prisma.appSetting.createMany({
+      data: [
+        { key: GOOGLE_KEYS.refreshToken, value: REFRESH },
+        { key: GOOGLE_KEYS.email, value: 'owner@gmail.com' },
+        { key: GOOGLE_KEYS.rootFolderId, value: 'root-folder-1' },
+      ],
+    })
+    await putSetup(req('/api/setup/google-drive', superToken, {
+      method: 'PUT', body: JSON.stringify({ clientId: ' cid-123456789.apps.googleusercontent.com ', clientSecret: 'GOCSPX-new' }),
+    }))
+    expect(await setting(GOOGLE_KEYS.refreshToken)).toBe(REFRESH)
+    expect(await setting(GOOGLE_KEYS.rootFolderId)).toBe('root-folder-1')
+
+    const res = await putSetup(req('/api/setup/google-drive', superToken, { method: 'PUT', body: JSON.stringify({ clientId: 'other-client' }) }))
+    expect(res.status).toBe(200)
+    expect(await setting(GOOGLE_KEYS.clientId)).toBe('other-client')
+    expect(await setting(GOOGLE_KEYS.refreshToken)).toBeNull()
+    expect(await setting(GOOGLE_KEYS.email)).toBeNull()
+    expect(await setting(GOOGLE_KEYS.rootFolderId)).toBeNull()
   })
 
   it('PUT and DELETE return 403 for an admin', async () => {

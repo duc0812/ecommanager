@@ -1,39 +1,117 @@
 'use client'
 import { useRef, useState } from 'react'
-import type { WorkspaceLine } from './types'
+import type { ArtworkRow, WorkspaceLine } from './types'
 import { requestJson, versionsFor } from './model'
-import { Card, ErrorBanner, Icon, Pill, btn, fmtSize } from './ui'
+import { Card, ErrorBanner, Icon, Note, Pill, btn, fmtSize } from './ui'
 
 const ACCEPT = '.png,.jpg,.jpeg,.pdf,.psd,.zip'
+const mini = 'inline-flex items-center gap-xs rounded-md border border-outline-variant/40 px-xs py-[2px] text-label-sm font-semibold text-on-surface hover:bg-surface-container-low disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap'
 
-export default function ArtworkSlots({ line, slots, onUploaded }: { line: WorkspaceLine; slots: string[]; onUploaded: () => void }) {
-  const [busy, setBusy] = useState<string[]>([])
+type UploadResult = { ok: true; data: { artwork?: ArtworkRow; warning?: string } } | { ok: false; error: string }
+
+function postWithProgress(url: string, body: FormData, onProgress: (pct: number) => void): Promise<UploadResult> {
+  return new Promise(resolve => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', url)
+    xhr.upload.onprogress = e => { if (e.lengthComputable && e.total > 0) onProgress(Math.min(100, Math.round((e.loaded / e.total) * 100))) }
+    xhr.upload.onload = () => onProgress(100)
+    xhr.onload = () => {
+      let data: any = {}
+      try { data = JSON.parse(xhr.responseText || '{}') } catch {}
+      if (xhr.status >= 200 && xhr.status < 300) resolve({ ok: true, data })
+      else resolve({ ok: false, error: data?.error ?? `HTTP ${xhr.status}` })
+    }
+    xhr.onerror = () => resolve({ ok: false, error: 'Lỗi mạng' })
+    xhr.onabort = () => resolve({ ok: false, error: 'Đã huỷ tải lên' })
+    xhr.send(body)
+  })
+}
+
+async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text)
+    return true
+  } catch {
+    const ta = document.createElement('textarea')
+    ta.value = text
+    ta.setAttribute('readonly', '')
+    ta.style.position = 'fixed'
+    ta.style.opacity = '0'
+    document.body.appendChild(ta)
+    ta.select()
+    let ok = false
+    try { ok = document.execCommand('copy') } catch {}
+    document.body.removeChild(ta)
+    return ok
+  }
+}
+
+export default function ArtworkSlots({ line, slots, driveConnected, onUploaded }: {
+  line: WorkspaceLine; slots: string[]; driveConnected: boolean; onUploaded: () => void
+}) {
+  const [progress, setProgress] = useState<Record<string, number>>({})
+  const [warnings, setWarnings] = useState<Record<string, string>>({})
+  const [pushing, setPushing] = useState<string[]>([])
   const [over, setOver] = useState('')
   const [error, setError] = useState('')
+  const [copied, setCopied] = useState('')
   const busyRef = useRef(new Set<string>())
   const inputs = useRef<Record<string, HTMLInputElement | null>>({})
   const fileCount = line.artworks.length
 
+  function setWarning(area: string, msg: string) {
+    setWarnings(w => {
+      const next = { ...w }
+      if (msg) next[area] = msg
+      else delete next[area]
+      return next
+    })
+  }
+
   async function upload(printArea: string, file: File) {
     if (busyRef.current.has(printArea)) return
     busyRef.current.add(printArea)
-    setBusy(Array.from(busyRef.current)); setError('')
+    setProgress(p => ({ ...p, [printArea]: 0 })); setError(''); setWarning(printArea, '')
     const fd = new FormData()
     fd.set('printArea', printArea)
     fd.set('file', file)
-    const r = await requestJson(`/api/design-studio/lines/${encodeURIComponent(line.id)}/artwork`, { method: 'POST', body: fd })
+    const r = await postWithProgress(`/api/design-studio/lines/${encodeURIComponent(line.id)}/artwork`, fd,
+      pct => setProgress(p => ({ ...p, [printArea]: pct })))
     busyRef.current.delete(printArea)
-    setBusy(Array.from(busyRef.current))
+    setProgress(p => { const next = { ...p }; delete next[printArea]; return next })
     if (!r.ok) { setError(`${printArea}: ${r.error}`); return }
+    if (r.data.warning) setWarning(printArea, r.data.warning)
     onUploaded()
+  }
+
+  async function push(area: string, artworkId: string) {
+    if (pushing.includes(artworkId)) return
+    setPushing(p => [...p, artworkId]); setWarning(area, '')
+    const r = await requestJson(`/api/design-studio/artwork/${encodeURIComponent(artworkId)}/push`, { method: 'POST' })
+    setPushing(p => p.filter(id => id !== artworkId))
+    if (!r.ok) { setWarning(area, r.error); return }
+    onUploaded()
+  }
+
+  async function copyLink(v: ArtworkRow) {
+    if (!v.driveWebViewLink) return
+    setCopied(await copyText(v.driveWebViewLink) ? `Đã chép link Drive v${v.version}` : 'Không chép được link')
+    window.setTimeout(() => setCopied(''), 2500)
+  }
+
+  function busyLabel(pct: number) {
+    if (pct < 100) return `Đang tải ${pct}%`
+    return driveConnected ? 'Đang đẩy lên Drive…' : 'Đang lưu…'
   }
 
   return (
     <Card icon="folder_open" title="Artwork theo panel" right={`${fileCount} file`}>
       <ErrorBanner msg={error} onClose={() => setError('')} />
+      <span role="status" aria-live="polite" className={copied ? 'text-label-sm text-on-surface-variant' : 'sr-only'}>{copied}</span>
       {slots.map(area => {
         const versions = versionsFor(line, area)
-        const isBusy = busy.includes(area)
+        const pct = progress[area]
+        const isBusy = pct !== undefined
         return (
           <div key={area} className="rounded-lg border border-outline-variant/20 p-sm flex flex-col gap-xs">
             <div className="flex items-center gap-xs text-body-sm font-semibold">
@@ -42,25 +120,50 @@ export default function ArtworkSlots({ line, slots, onUploaded }: { line: Worksp
               <input ref={el => { inputs.current[area] = el }} type="file" accept={ACCEPT} hidden aria-label={`Chọn file cho ${area}`}
                 onChange={e => { const f = e.target.files?.[0]; if (f) upload(area, f); e.target.value = '' }} />
               <button type="button" disabled={isBusy} onClick={() => inputs.current[area]?.click()} className={`${btn} ml-auto`}>
-                <Icon name="upload" className="text-[16px]" />{isBusy ? 'Đang tải…' : 'Upload'}
+                <Icon name="upload" className="text-[16px]" />{isBusy ? busyLabel(pct) : 'Upload'}
               </button>
             </div>
-            {versions.map((v, i) => (
-              <div key={v.id} className={`grid grid-cols-[32px_minmax(0,1fr)_auto] gap-sm items-center p-xs rounded-lg border ${i === 0 ? 'border-secondary' : 'border-outline-variant/20'}`}>
-                <span className="w-8 h-8 rounded-md bg-surface-container-low grid place-items-center text-on-surface-variant">
-                  <Icon name={v.mimeType.startsWith('image/') ? 'image' : 'description'} className="text-[18px]" />
-                </span>
-                <span className="min-w-0 flex flex-col">
-                  <span className="text-label-sm font-semibold truncate text-on-surface">v{v.version} · {v.fileName}</span>
-                  <span className="text-label-sm text-on-surface-variant truncate">
-                    {v.widthPx && v.heightPx ? `${v.widthPx}×${v.heightPx} · ` : ''}{fmtSize(v.size)} · {new Date(v.createdAt).toLocaleString('en-US')}
+            {warnings[area] && <Note tone="warn" icon="cloud_off">{warnings[area]}</Note>}
+            {versions.map((v, i) => {
+              const isDrive = v.storage === 'DRIVE'
+              const isPushing = pushing.includes(v.id)
+              return (
+                <div key={v.id} className={`grid grid-cols-[32px_minmax(0,1fr)_auto] gap-sm items-center p-xs rounded-lg border ${i === 0 ? 'border-secondary' : 'border-outline-variant/20'}`}>
+                  <span className="w-8 h-8 rounded-md bg-surface-container-low grid place-items-center text-on-surface-variant">
+                    <Icon name={v.mimeType.startsWith('image/') ? 'image' : 'description'} className="text-[18px]" />
                   </span>
-                </span>
-                <a href={v.url} target="_blank" rel="noreferrer" aria-label={`Tải v${v.version} ${v.fileName}`} className="text-on-surface-variant hover:text-secondary">
-                  <Icon name="download" className="text-[18px]" />
-                </a>
-              </div>
-            ))}
+                  <span className="min-w-0 flex flex-col">
+                    <span className="flex items-center gap-xs min-w-0">
+                      <span className="text-label-sm font-semibold truncate text-on-surface">v{v.version} · {v.fileName}</span>
+                      <Pill tone={isDrive ? 'ok' : 'warn'} icon={isDrive ? 'cloud_done' : 'hard_drive'}>{isDrive ? 'Drive' : 'Local'}</Pill>
+                    </span>
+                    <span className="text-label-sm text-on-surface-variant truncate">
+                      {v.widthPx && v.heightPx ? `${v.widthPx}×${v.heightPx} · ` : ''}{fmtSize(v.size)} · {new Date(v.createdAt).toLocaleString('en-US')}
+                    </span>
+                  </span>
+                  <span className="flex items-center gap-xs">
+                    {isDrive && v.driveWebViewLink && (
+                      <>
+                        <button type="button" onClick={() => copyLink(v)} className={mini} aria-label={`Copy link Drive v${v.version}`}>
+                          <Icon name="content_copy" className="text-[14px]" />Copy link Drive
+                        </button>
+                        <a href={v.driveWebViewLink} target="_blank" rel="noreferrer" className={mini} aria-label={`Mở v${v.version} trên Drive`}>
+                          <Icon name="open_in_new" className="text-[14px]" />Mở trên Drive
+                        </a>
+                      </>
+                    )}
+                    {!isDrive && driveConnected && (
+                      <button type="button" disabled={isPushing} onClick={() => push(area, v.id)} className={mini} aria-label={`Đẩy v${v.version} lên Drive`}>
+                        <Icon name="cloud_upload" className="text-[14px]" />{isPushing ? 'Đang đẩy…' : 'Đẩy lên Drive'}
+                      </button>
+                    )}
+                    <a href={v.url} target="_blank" rel="noreferrer" aria-label={`Tải v${v.version} ${v.fileName}`} className="text-on-surface-variant hover:text-secondary">
+                      <Icon name="download" className="text-[18px]" />
+                    </a>
+                  </span>
+                </div>
+              )
+            })}
             <div role="button" tabIndex={0} aria-label={`Kéo thả hoặc chọn file cho ${area}`}
               onClick={() => inputs.current[area]?.click()}
               onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); inputs.current[area]?.click() } }}
@@ -68,8 +171,14 @@ export default function ArtworkSlots({ line, slots, onUploaded }: { line: Worksp
               onDragLeave={() => setOver('')}
               onDrop={e => { e.preventDefault(); setOver(''); const f = e.dataTransfer.files?.[0]; if (f) upload(area, f) }}
               className={`rounded-lg border-[1.5px] border-dashed px-sm py-xs text-center text-label-sm cursor-pointer ${over === area ? 'border-secondary bg-secondary/10 text-secondary' : 'border-outline-variant text-on-surface-variant'}`}>
-              {isBusy ? 'Đang tải lên…' : 'Kéo thả PNG/JPG/PSD → phiên bản mới'}
+              {isBusy ? busyLabel(pct) : 'Kéo thả PNG/JPG/PSD → phiên bản mới'}
             </div>
+            {isBusy && (
+              <div className="h-1 rounded-full bg-surface-container overflow-hidden" role="progressbar" aria-label={`Tiến độ tải ${area}`}
+                aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct}>
+                <div className="h-full bg-secondary transition-all" style={{ width: `${pct}%` }} />
+              </div>
+            )}
           </div>
         )
       })}

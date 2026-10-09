@@ -133,10 +133,10 @@ describe('Drive calls', () => {
   })
 
   it('startResumableUpload sends the upload headers and returns the Location', async () => {
-    mockFetch(() => new Response(null, { status: 200, headers: { Location: 'https://upload.example/session-1' } }))
+    mockFetch(() => new Response(null, { status: 200, headers: { Location: 'https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&upload_id=session-1' } }))
     const url = await startResumableUpload({ name: 'a.png', mimeType: 'image/png', size: 12345, parentId: 'folder1' })
 
-    expect(url).toBe('https://upload.example/session-1')
+    expect(url).toBe('https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&upload_id=session-1')
     expect(calls[0].url.startsWith('https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable')).toBe(true)
     expect(calls[0].init.method).toBe('POST')
     expect(header(calls[0].init, 'X-Upload-Content-Type')).toBe('image/png')
@@ -147,20 +147,20 @@ describe('Drive calls', () => {
 
   it('uploadChunk returns nextStart on 308 and the file on the final response', async () => {
     mockFetch(() => new Response(null, { status: 308, headers: { Range: 'bytes=0-3' } }))
-    const first = await uploadChunk('https://upload.example/s', Buffer.from('abcd'), 0, 6)
+    const first = await uploadChunk('https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&upload_id=s', Buffer.from('abcd'), 0, 6)
     expect(first).toEqual({ done: false, nextStart: 4 })
     expect(header(calls[0].init, 'Content-Range')).toBe('bytes 0-3/6')
     expect(calls[0].init.method).toBe('PUT')
 
     mockFetch(() => json({ id: 'file1', name: 'a.png' }, 201))
-    const last = await uploadChunk('https://upload.example/s', Buffer.from('ef'), 4, 6)
+    const last = await uploadChunk('https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&upload_id=s', Buffer.from('ef'), 4, 6)
     expect(last).toEqual({ done: true, file: { id: 'file1', name: 'a.png' } })
     expect(header(calls[0].init, 'Content-Range')).toBe('bytes 4-5/6')
   })
 
   it('uploadChunk restarts from 0 when a 308 carries no Range', async () => {
     mockFetch(() => new Response(null, { status: 308 }))
-    expect(await uploadChunk('https://upload.example/s', Buffer.from('ab'), 0, 4)).toEqual({ done: false, nextStart: 0 })
+    expect(await uploadChunk('https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&upload_id=s', Buffer.from('ab'), 0, 4)).toEqual({ done: false, nextStart: 0 })
   })
 
   it('shareAnyoneReader posts an anyone/reader permission', async () => {
@@ -169,5 +169,46 @@ describe('Drive calls', () => {
     expect(calls[0].url.startsWith('https://www.googleapis.com/drive/v3/files/file1/permissions')).toBe(true)
     expect(calls[0].init.method).toBe('POST')
     expect(JSON.parse(String(calls[0].init.body))).toEqual({ role: 'reader', type: 'anyone' })
+  })
+})
+
+describe('D2 hardening', () => {
+  beforeEach(async () => {
+    await connect()
+    primeAccessToken('at-primed', 3600, '1//refresh')
+  })
+
+  it('uploadChunk refuses a session URL that is not on www.googleapis.com', async () => {
+    mockFetch(() => json({ id: 'file1' }))
+    await expect(uploadChunk('https://evil.example/upload?upload_id=x', Buffer.from('ab'), 0, 2)).rejects.toThrow(/www\.googleapis\.com/)
+    await expect(uploadChunk('http://www.googleapis.com/upload?upload_id=x', Buffer.from('ab'), 0, 2)).rejects.toThrow()
+    await expect(uploadChunk('not a url', Buffer.from('ab'), 0, 2)).rejects.toThrow()
+    expect(calls).toHaveLength(0)
+  })
+
+  it('folderForTask creates each folder once when two calls race', async () => {
+    await prisma.appSetting.create({ data: { key: GOOGLE_KEYS.rootFolderId, value: 'root1' } })
+    let id = 0
+    mockFetch(async (url, init) => {
+      await new Promise(r => setTimeout(r, 5))
+      return init.method === 'POST' ? json({ id: `f${++id}` }) : json({ files: [] })
+    })
+    const input = { storeName: 'Litzzy', placedAt: new Date('2026-10-05T12:00:00Z'), orderNumber: '#LIT2', taskKey: 'T-2' }
+
+    const [a, b] = await Promise.all([folderForTask(input), folderForTask(input)])
+    expect(a).toBe('f4')
+    expect(b).toBe('f4')
+    const creates = calls.filter(c => c.init.method === 'POST').map(c => JSON.parse(String(c.init.body)).name)
+    expect(creates).toEqual(['Litzzy', '2026-10', '#LIT2', 'T-2'])
+  })
+
+  it('folderForTask lets a later call retry after a failed create', async () => {
+    await prisma.appSetting.create({ data: { key: GOOGLE_KEYS.rootFolderId, value: 'root1' } })
+    mockFetch(() => json({ error: { message: 'boom' } }, 500))
+    const input = { storeName: 'S', placedAt: new Date('2026-10-05T12:00:00Z'), orderNumber: '#1', taskKey: 'T' }
+    await expect(folderForTask(input)).rejects.toThrow(/boom/)
+    let id = 0
+    mockFetch((url, init) => (init.method === 'POST' ? json({ id: `g${++id}` }) : json({ files: [] })))
+    expect(await folderForTask(input)).toBe('g4')
   })
 })

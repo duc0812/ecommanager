@@ -3,6 +3,7 @@ import { GOOGLE_KEYS, GOOGLE_TOKEN_URL, getGoogleConfig } from '@/lib/google-oau
 
 const FILES_URL = 'https://www.googleapis.com/drive/v3/files'
 const UPLOAD_URL = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable'
+const SESSION_HOST = 'www.googleapis.com'
 const FOLDER_MIME = 'application/vnd.google-apps.folder'
 const REFRESH_MARGIN_MS = 60_000
 export const ROOT_FOLDER_NAME = 'Design Studio'
@@ -29,6 +30,8 @@ declare global {
   var __driveTokenCache: TokenCache | null | undefined
   // eslint-disable-next-line no-var
   var __driveFolderCache: Map<string, string> | undefined
+  // eslint-disable-next-line no-var
+  var __driveFolderInflight: Map<string, Promise<string>> | undefined
 }
 
 function folderCache() {
@@ -36,9 +39,28 @@ function folderCache() {
   return global.__driveFolderCache
 }
 
+function folderInflight() {
+  if (!global.__driveFolderInflight) global.__driveFolderInflight = new Map()
+  return global.__driveFolderInflight
+}
+
 export function resetDriveCache() {
   global.__driveTokenCache = null
   folderCache().clear()
+  folderInflight().clear()
+}
+
+function cachedFolder(pathKey: string, create: () => Promise<string>): Promise<string> {
+  const cached = folderCache().get(pathKey)
+  if (cached) return Promise.resolve(cached)
+  const inflight = folderInflight()
+  const pending = inflight.get(pathKey)
+  if (pending) return pending
+  const promise: Promise<string> = create()
+    .then(id => { folderCache().set(pathKey, id); return id })
+    .finally(() => { if (inflight.get(pathKey) === promise) inflight.delete(pathKey) })
+  inflight.set(pathKey, promise)
+  return promise
 }
 
 export function primeAccessToken(token: string, expiresInSec: number, refreshToken: string) {
@@ -127,9 +149,11 @@ export async function ensureFolder(parentId: string, name: string): Promise<stri
 export async function ensureRootFolder(): Promise<string> {
   const cfg = await getGoogleConfig()
   if (cfg.rootFolderId) return cfg.rootFolderId
-  const id = await ensureFolder('root', ROOT_FOLDER_NAME)
-  await saveSetting(GOOGLE_KEYS.rootFolderId, id)
-  return id
+  return cachedFolder(`root:${cfg.refreshToken}`, async () => {
+    const id = await ensureFolder('root', ROOT_FOLDER_NAME)
+    await saveSetting(GOOGLE_KEYS.rootFolderId, id)
+    return id
+  })
 }
 
 function segment(value: string) {
@@ -145,15 +169,12 @@ export async function folderForTask(input: { storeName: string; placedAt: Date; 
     segment(input.orderNumber),
     segment(input.taskKey),
   ]
-  const cache = folderCache()
   let parent = root
   let pathKey = root
   for (const name of segments) {
     pathKey = `${pathKey}/${name}`
-    const cached = cache.get(pathKey)
-    if (cached) { parent = cached; continue }
-    parent = await ensureFolder(parent, name)
-    cache.set(pathKey, parent)
+    const parentId = parent
+    parent = await cachedFolder(pathKey, () => ensureFolder(parentId, name))
   }
   return parent
 }
@@ -175,7 +196,16 @@ export async function startResumableUpload(input: { name: string; mimeType: stri
 
 export type UploadChunkResult = { done: true; file: any } | { done: false; nextStart: number }
 
+function assertSessionUrl(sessionUrl: string) {
+  let url: URL
+  try { url = new URL(sessionUrl) } catch { throw new DriveError('Upload session URL không hợp lệ.') }
+  if (url.protocol !== 'https:' || url.hostname !== SESSION_HOST) {
+    throw new DriveError(`Upload session phải ở ${SESSION_HOST}.`)
+  }
+}
+
 export async function uploadChunk(sessionUrl: string, chunk: Buffer, start: number, total: number): Promise<UploadChunkResult> {
+  assertSessionUrl(sessionUrl)
   const end = start + chunk.length - 1
   const res = await fetch(sessionUrl, {
     method: 'PUT',

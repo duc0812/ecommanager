@@ -4,6 +4,7 @@ import { parseAttributes, safeHttpUrl, sourcePrintFiles, printAreasForLine, upda
 import { getDesignSettings, kpiForProductType, type DesignSettings } from '@/lib/design-settings'
 import { visibleCustomAttributes } from '@/lib/order-classify'
 import { findProfile, observedFields, parseLayerMap, profileStatus, toRouteKey, type LayerMapEntry, type ProfileStatus } from '@/lib/product-profiles'
+import { isDriveConnected } from '@/lib/google-drive'
 
 export type TaskStatus = 'NEW' | 'ASSIGNED' | 'DOING' | 'REVIEW' | 'REJECTED' | 'ASK_CUSTOMER' | 'DONE' | 'CANCELLED'
 export type Readiness = 'AUTO' | 'LOW' | 'MANUAL'
@@ -143,7 +144,7 @@ export type TaskDetail = {
   task: TaskRow; line: WorkspaceLine; order: Workspace['order']; template: TemplateRow | null; profile: TaskProfile | null; profileRouteKey: string | null
   events: { id: string; type: string; message: string; actorName: string | null; createdAt: string }[]
   assignable: { id: string; name: string }[]; settings: DesignSettings; prevStatus: TaskStatus | null
-  slots: string[]
+  slots: string[]; driveConnected: boolean
 }
 
 export function requiredSlotsFor(line: { customAttributesJson: string | null }, template: TemplateRow | null): string[] {
@@ -234,6 +235,7 @@ export async function transitionTask(taskKey: string, actor: Actor, input: Trans
   if (input.to === 'DONE') {
     const current = await prisma.order.findUniqueOrThrow({ where: { id: task.orderId }, select: { id: true, designReady: true, pipelineStatus: true } })
     const externalLink = !!line.designDriveLink && !line.designDriveLink.startsWith(APP_FILE_PREFIX)
+      && !(await prisma.designArtwork.findFirst({ where: { orderId: line.orderId, shopifyLineId: line.shopifyLineId, driveWebViewLink: line.designDriveLink }, select: { id: true } }))
     if (externalLink && current.pipelineStatus !== 'DESIGN_REJECTED' && !reopenedByFactory(task)) {
       events.splice(0, events.length, ...events.filter(e => e.type !== 'STATUS'), { type: 'SYSTEM', message: 'Design đã có từ ngoài studio — giữ link hiện tại', actorId: actor.id })
       order = current
@@ -395,6 +397,7 @@ export async function loadTask(taskKey: string): Promise<TaskDetail | null> {
     })),
     assignable, settings, prevStatus: (task.prevStatus as TaskStatus | null) ?? null,
     slots: requiredSlotsFor(orderLine ?? { customAttributesJson: null }, template),
+    driveConnected: await isDriveConnected(),
   }
 }
 

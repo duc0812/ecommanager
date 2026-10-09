@@ -43,6 +43,10 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ error: `${field} phải là chuỗi.` }, { status: 400 })
     }
   }
+  const before = await getGoogleConfig()
+  if (body.clientId !== undefined && (body.clientId as string).trim() !== before.clientId) {
+    await deleteSettings([GOOGLE_KEYS.refreshToken, GOOGLE_KEYS.email, GOOGLE_KEYS.rootFolderId, GOOGLE_KEYS.needsReconnect])
+  }
   for (const [field, key] of fields) {
     if (body[field] === undefined) continue
     const value = (body[field] as string).trim()

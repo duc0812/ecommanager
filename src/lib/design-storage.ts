@@ -1,7 +1,7 @@
 import fs from 'fs/promises'
 import path from 'path'
 import { prisma } from '@/lib/db'
-import { artworkUrl, type ArtworkRow } from '@/lib/design-studio'
+import { toArtworkRow, type ArtworkRow } from '@/lib/design-studio'
 import { imageSize } from '@/lib/image-size'
 
 export const ALLOWED_MIME: Record<string, string> = {
@@ -85,18 +85,24 @@ export async function saveArtwork(input: {
       widthPx: dims?.width ?? null, heightPx: dims?.height ?? null,
     },
   })
-  return {
-    id: row.id, printArea: row.printArea, version: row.version, fileName: row.fileName, size: row.size,
-    mimeType: row.mimeType, uploadedById: row.uploadedById, createdAt: row.createdAt.toISOString(), url: artworkUrl(row.id),
-    widthPx: row.widthPx, heightPx: row.heightPx,
-  }
+  return toArtworkRow(row)
+}
+
+export function localArtworkPath(storagePath: string | null): string | null {
+  if (!storagePath) return null
+  const root = path.resolve(storageRoot())
+  const absPath = path.resolve(root, storagePath)
+  return absPath.startsWith(root + path.sep) ? absPath : null
 }
 
 export async function readArtwork(id: string) {
   const row = await prisma.designArtwork.findUnique({ where: { id } })
-  if (!row || !row.storagePath) return null
-  const root = storageRoot()
-  const absPath = path.resolve(root, row.storagePath)
-  if (!absPath.startsWith(path.resolve(root) + path.sep)) return null
+  const absPath = row ? localArtworkPath(row.storagePath) : null
+  if (!row || !absPath) return null
   return { absPath, fileName: row.fileName, mimeType: row.mimeType }
+}
+
+export async function loadArtworkRow(id: string): Promise<ArtworkRow | null> {
+  const row = await prisma.designArtwork.findUnique({ where: { id } })
+  return row ? toArtworkRow(row) : null
 }

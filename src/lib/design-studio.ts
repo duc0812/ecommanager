@@ -15,7 +15,9 @@ export type ArtworkRow = {
   id: string; printArea: string; version: number; fileName: string; size: number
   mimeType: string; uploadedById: string | null; createdAt: string; url: string
   widthPx: number | null; heightPx: number | null
+  storage: ArtworkStorage; driveWebViewLink: string | null
 }
+export type ArtworkStorage = 'LOCAL' | 'DRIVE'
 export type WorkspaceLine = {
   id: string; shopifyLineId: string; linePosition: number; sku: string | null; productTitle: string; variantTitle: string | null
   qty: number; isNonProduct: boolean; customized: boolean
@@ -108,6 +110,22 @@ export function artworkUrl(id: string): string {
   return `/api/design-studio/file/${id}`
 }
 
+export function toArtworkRow(a: {
+  id: string; printArea: string; version: number; fileName: string; size: number; mimeType: string; uploadedById: string | null
+  createdAt: Date; widthPx: number | null; heightPx: number | null; storage: string; driveWebViewLink: string | null
+}): ArtworkRow {
+  return {
+    id: a.id, printArea: a.printArea, version: a.version, fileName: a.fileName, size: a.size,
+    mimeType: a.mimeType, uploadedById: a.uploadedById, createdAt: a.createdAt.toISOString(), url: artworkUrl(a.id),
+    widthPx: a.widthPx, heightPx: a.heightPx,
+    storage: a.storage === 'DRIVE' ? 'DRIVE' : 'LOCAL', driveWebViewLink: a.driveWebViewLink,
+  }
+}
+
+export function artworkDesignLink(a: { id: string; storage: string; driveWebViewLink: string | null }): string {
+  return a.storage === 'DRIVE' && a.driveWebViewLink ? a.driveWebViewLink : artworkUrl(a.id)
+}
+
 function parseVariantOptions(json: string | null): Record<string, string> {
   if (!json) return {}
   try {
@@ -191,11 +209,7 @@ export async function loadWorkspace(orderId: string): Promise<Workspace | null> 
       designDriveLink: l.designDriveLink,
       designNote: l.designNote,
       printAreas: printAreasForLine(attrs),
-      artworks: artworks.map(a => ({
-        id: a.id, printArea: a.printArea, version: a.version, fileName: a.fileName, size: a.size,
-        mimeType: a.mimeType, uploadedById: a.uploadedById, createdAt: a.createdAt.toISOString(), url: artworkUrl(a.id),
-        widthPx: a.widthPx, heightPx: a.heightPx,
-      })),
+      artworks: artworks.map(toArtworkRow),
     }
   })
 
@@ -227,7 +241,7 @@ export async function updateLine(lineId: string, patch: { note?: string | null; 
     const missing = slots.filter(s => !artworks.some(a => a.printArea === s))
     if (missing.length > 0) throw new Error(`No artwork uploaded for: ${missing.join(', ')}`)
     const first = artworks.find(a => a.printArea === slots[0])!
-    data.designDriveLink = artworkUrl(first.id)
+    data.designDriveLink = artworkDesignLink(first)
   }
   if (patch.done === false) data.designDriveLink = null
 
