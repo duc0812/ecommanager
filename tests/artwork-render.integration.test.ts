@@ -172,6 +172,7 @@ describe('RENDER_LINE', () => {
     expect(detail.library?.status).toBe('READY')
     expect(detail.autoRender).toBeNull()
     expect(detail.slots).toEqual(['Print'])
+    expect(detail.task.readiness).toBe('AUTO')
   })
 
   it('queues one job per line, claims it with values, fonts and target, and stores an AUTO artwork', async () => {
@@ -205,8 +206,10 @@ describe('RENDER_LINE', () => {
     expect(preview.headers.get('content-type')).toBe('image/jpeg')
 
     const detail = (await loadTask(taskKey))!
-    expect(detail.task.status).not.toBe('DONE')
-    expect(detail.task.status).not.toBe('REVIEW')
+    expect(stored.body.review).toBe(true)
+    expect(detail.task.status).toBe('REVIEW')
+    expect(detail.task.readiness).toBe('AUTO')
+    expect(detail.events.filter(e => e.message === 'Tự động gửi duyệt (file in tự động)')).toHaveLength(1)
     expect(detail.autoRender).toMatchObject({ status: 'DONE', artworkId: art.id })
     expect(detail.line.artworks.find(a => a.id === art.id)).toMatchObject({ source: 'AUTO', previewUrl: `/api/design-studio/file/${art.id}?preview=1` })
     const files = buildChecklist({ ...detail, me: { isLeader: false } }).items.find(i => i.key === 'files')!
@@ -235,6 +238,35 @@ describe('RENDER_LINE', () => {
     expect(job.status).toBe('FAILED')
     expect(job.error).toMatch(/không còn sẵn sàng/)
     expect((await trigger()).status).toBe(409)
+    await prisma.artworkEntry.update({ where: { id: entryId }, data: { status: 'READY' } })
+  })
+})
+
+describe('readiness from the artwork library', () => {
+  const ORDER2 = 'gid://test/Order/arnd-2'
+  afterAll(async () => { await prisma.order.deleteMany({ where: { id: ORDER2 } }) })
+
+  it('is AUTO only while the entry is READY and the customer filled every field', async () => {
+    await prisma.order.create({ data: {
+      id: ORDER2, projectId: PROJECT, storeId, shopifyOrderNumber: '#ARND2', financialStatus: 'PAID', currency: 'USD',
+      grossAmount: 1, expectedPayout: 1, totalFees: 0, refundedAmount: 0, placedAt: new Date('2026-10-08'),
+      pipelineStatus: 'PENDING_DESIGN', orderType: 'CUSTOM',
+      lines: { create: [
+        { shopifyLineId: 'm1', sku: 'TUMB-20', productTitle: 'Tumbler', qty: 1, linePosition: 1, unitPrice: 1, shopifyProductId: P1,
+          resolvedSupplierId: SUP, resolvedSupplierSku: 'UT2-20OZ', customized: true, customAttributesJson: JSON.stringify([{ key: 'Note', value: 'hi' }]) },
+      ] },
+    } })
+    await syncDesignTasks(ORDER2)
+    const readiness = async () => (await prisma.designTask.findFirstOrThrow({ where: { orderId: ORDER2 } })).readiness
+    expect(await readiness()).toBe('MANUAL')
+
+    await prisma.orderLine.updateMany({ where: { orderId: ORDER2 }, data: { customAttributesJson: JSON.stringify([{ key: 'custom name', value: 'Ann' }]) } })
+    await syncDesignTasks(ORDER2)
+    expect(await readiness()).toBe('AUTO')
+
+    await prisma.artworkEntry.update({ where: { id: entryId }, data: { status: 'NEEDS_REVIEW' } })
+    await syncDesignTasks(ORDER2)
+    expect(await readiness()).toBe('MANUAL')
     await prisma.artworkEntry.update({ where: { id: entryId }, data: { status: 'READY' } })
   })
 })

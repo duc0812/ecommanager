@@ -6,7 +6,7 @@ import { RENDER_LINE, latestRenderJob, renderJobView } from '@/lib/artwork-rende
 import { parseAttributes } from '@/lib/design-studio'
 import { saveArtwork } from '@/lib/design-storage'
 import { pushArtworkToDrive } from '@/lib/design-drive-push'
-import { loadTask, type Actor } from '@/lib/design-tasks'
+import { loadTask, submitAutoRenderForReview, type Actor } from '@/lib/design-tasks'
 import { visibleCustomAttributes } from '@/lib/order-classify'
 import { mapTemplate } from '@/lib/print-template-resolve'
 import type { TempFile } from '@/lib/library-storage'
@@ -129,5 +129,6 @@ export async function applyRenderResult(input: { jobId: string; print: TempFile;
   const notes = [...input.result.warnings, ...(push.warning ? [push.warning] : [])]
   await taskEvent(job.orderId, job.shopifyLineId,
     `Tạo file in tự động ${job.printArea} v${artwork.version} · ${artwork.widthPx ?? '?'}×${artwork.heightPx ?? '?'} px${notes.length ? ` · ${notes.join(' · ')}` : ''}`)
-  return { artworkId: artwork.id, version: artwork.version, warning: push.warning }
+  const review = await submitAutoRenderForReview(job.orderId, job.shopifyLineId)
+  return { artworkId: artwork.id, version: artwork.version, warning: push.warning, review: review.moved }
 }

@@ -12,6 +12,7 @@ import { libraryStateFor } from '@/lib/artwork-library-state'
 import type { TaskLibraryState } from '@/lib/artwork-library-types'
 import type { RenderJobView } from '@/lib/artwork-render-eligibility'
 import { latestRenderJob } from '@/lib/artwork-render-jobs'
+import { autoRenderEligibility } from '@/lib/artwork-render-eligibility'
 
 export { loadTemplateContext, mapTemplate, pickTemplate, type TemplateRow }
 
@@ -41,15 +42,36 @@ export function canTransition(from: TaskStatus, to: TaskStatus, actor: ActorRole
     case 'NEW': return from === 'ASSIGNED'
     case 'DOING': return from === 'NEW' || from === 'ASSIGNED' || from === 'DONE' || from === 'REJECTED'
     case 'REVIEW': return from === 'DOING' || from === 'REJECTED'
-    case 'DONE': return actor === 'LEADER' ? from === 'REVIEW' : (readiness === 'AUTO' && (from === 'NEW' || from === 'ASSIGNED' || from === 'DOING' || from === 'REVIEW'))
+    case 'DONE': return actor === 'LEADER' ? from === 'REVIEW' : (readiness === 'AUTO' && (from === 'NEW' || from === 'ASSIGNED' || from === 'DOING'))
     case 'REJECTED': return actor === 'LEADER' && from === 'REVIEW'
     default: return false
   }
 }
 
-function readinessFor(customAttributesJson: string | null): Readiness {
-  return sourcePrintFiles(parseAttributes(customAttributesJson)).length > 0 ? 'LOW' : 'MANUAL'
+type ReadinessLine = TemplateLookupLine & { customAttributesJson: string | null; variantOptions: string | null }
+
+/** True when the line resolves to a READY artwork-library entry for a single-area template and the customer filled every field it renders. */
+export async function canAutoRenderLine(line: ReadinessLine, storeId: string): Promise<boolean> {
+  if (!line.shopifyProductId || !line.resolvedSupplierId) return false
+  const profile = await findProfile(storeId, line.shopifyProductId)
+  const template = await templateForLine(line, profile)
+  if (!template) return false
+  const slots = requiredSlotsFor(line, template)
+  if (slots.length !== 1) return false
+  const library = await libraryStateFor({
+    storeId, shopifyProductId: line.shopifyProductId, templateId: template.id,
+    variantOptions: line.variantOptions, artworkSplits: profile?.artworkSplits ?? null,
+  })
+  const personalization = visibleCustomAttributes(parseAttributes(line.customAttributesJson))
+  return autoRenderEligibility({ taskStatus: 'NEW', hasTemplate: true, slots, library, personalization, job: null }).ok
 }
+
+export async function readinessForLine(line: ReadinessLine, storeId: string): Promise<Readiness> {
+  if (sourcePrintFiles(parseAttributes(line.customAttributesJson)).length > 0) return 'LOW'
+  return (await canAutoRenderLine(line, storeId)) ? 'AUTO' : 'MANUAL'
+}
+
+const READINESS_REFRESH: TaskStatus[] = ['NEW', 'ASSIGNED', 'DOING', 'REJECTED']
 
 export type SyncResult = { created: number; cancelled: number; completed: number; reopened: number }
 
@@ -94,12 +116,18 @@ export async function syncDesignTasks(orderId: string): Promise<SyncResult> {
       }
       if (!factoryRejected) continue
     }
-    if (existing) continue
+    if (existing) {
+      if (READINESS_REFRESH.includes(existing.status as TaskStatus) && existing.readiness !== 'LOW') {
+        const readiness = await readinessForLine(line, order.storeId)
+        if (readiness !== existing.readiness) await prisma.designTask.update({ where: { id: existing.id }, data: { readiness } })
+      }
+      continue
+    }
     const slaHours = line.customized ? settings.slaCustomHours : settings.slaNonCustomHours
     const reopenNew = factoryRejected && !!line.designDriveLink
     await prisma.designTask.create({ data: {
       orderId, shopifyLineId: line.shopifyLineId, taskKey: taskKeyFor(order.shopifyOrderNumber, line.linePosition),
-      status: 'NEW', readiness: readinessFor(line.customAttributesJson), kpi: kpiForProductType(settings, line.shopifyProductType),
+      status: 'NEW', readiness: await readinessForLine(line, order.storeId), kpi: kpiForProductType(settings, line.shopifyProductType),
       slaHours, dueAt: new Date(order.placedAt.getTime() + slaHours * 3600_000), supplierSnapshot: supplierName.get(line.resolvedSupplierId) ?? null,
       ...(reopenNew ? factoryReopen : {}),
       events: { create: reopenNew ? factoryEvent : { type: 'SYSTEM', message: 'Đơn vào từ Shopify — tạo task' } },
@@ -176,6 +204,9 @@ export async function transitionTask(taskKey: string, actor: Actor, input: Trans
   if (!(input.continue && from === 'ASK_CUSTOMER' && input.to === (task.prevStatus ?? 'NEW')) && !canTransition(from, input.to, role, task.readiness as Readiness)) {
     throw new Error(`Chuyển ${from} → ${input.to} không được phép với vai trò ${role}`)
   }
+  if (role !== 'LEADER' && input.to === 'DONE' && await hasAutoArtwork(task.orderId, task.shopifyLineId)) {
+    throw new Error('File in tự động phải được leader duyệt')
+  }
   if (role !== 'LEADER' && task.assigneeId && task.assigneeId !== actor.id && OWNED_MOVES.includes(input.to)) {
     const owner = await prisma.appUser.findUnique({ where: { id: task.assigneeId }, select: { name: true } })
     throw new Error(`Task đang thuộc về ${owner?.name ?? 'người khác'}`)
@@ -241,6 +272,58 @@ export async function transitionTask(taskKey: string, actor: Actor, input: Trans
   const row = await rowFor(updated.taskKey)
   if (!row) throw new Error('Task row not found after update')
   return { task: row, order }
+}
+
+async function hasAutoArtwork(orderId: string, shopifyLineId: string): Promise<boolean> {
+  return !!(await prisma.designArtwork.findFirst({ where: { orderId, shopifyLineId, removedAt: null, source: 'AUTO' }, select: { id: true } }))
+}
+
+export const AUTO_REVIEW_FROM: TaskStatus[] = ['NEW', 'ASSIGNED', 'DOING', 'REJECTED']
+export const AUTO_REVIEW_MESSAGE = 'Tự động gửi duyệt (file in tự động)'
+
+/**
+ * System move to REVIEW after an auto render, deliberately outside canTransition: no human actor,
+ * and NEW/ASSIGNED → REVIEW is not a move a person may make. Only fires once every print area has a file.
+ */
+export async function submitAutoRenderForReview(orderId: string, shopifyLineId: string): Promise<{ moved: boolean; reason: string | null }> {
+  const task = await prisma.designTask.findUnique({ where: { orderId_shopifyLineId: { orderId, shopifyLineId } } })
+  if (!task) return { moved: false, reason: 'Không có task' }
+  if (!AUTO_REVIEW_FROM.includes(task.status as TaskStatus)) return { moved: false, reason: `Task đang ${task.status}` }
+  const line = await prisma.orderLine.findFirst({ where: { orderId, shopifyLineId } })
+  if (!line) return { moved: false, reason: 'Không tìm thấy dòng đơn' }
+  const missing = await missingArtworkSlots(line)
+  if (missing.length > 0) return { moved: false, reason: `Chưa có artwork cho: ${missing.join(', ')}` }
+  const moved = await prisma.$transaction(async tx => {
+    const r = await tx.designTask.updateMany({ where: { id: task.id, status: task.status }, data: { status: 'REVIEW', readiness: 'AUTO', prevStatus: null } })
+    if (r.count === 0) return false
+    await tx.designTaskEvent.create({ data: { taskId: task.id, type: 'SYSTEM', message: AUTO_REVIEW_MESSAGE } })
+    return true
+  })
+  return moved ? { moved: true, reason: null } : { moved: false, reason: 'Task vừa đổi trạng thái' }
+}
+
+export type ReviewCard = { task: TaskRow; line: WorkspaceLine; slots: string[] }
+
+export async function listReviewCards(f: { assigneeId?: string; q?: string } = {}): Promise<ReviewCard[]> {
+  const rows = await listTasks({ statuses: ['REVIEW'], assigneeId: f.assigneeId, q: f.q, limit: 200 })
+  if (rows.length === 0) return []
+  const orderIds = Array.from(new Set(rows.map(r => r.orderId)))
+  const [orderLines, workspaces] = await Promise.all([
+    prisma.orderLine.findMany({
+      where: { orderId: { in: orderIds } },
+      select: { orderId: true, shopifyLineId: true, resolvedSupplierId: true, resolvedSupplierSku: true, shopifyProductId: true, customAttributesJson: true },
+    }),
+    Promise.all(orderIds.map(id => loadWorkspace(id))),
+  ])
+  const wsById = new Map(workspaces.filter((w): w is Workspace => !!w).map(w => [w.order.id, w]))
+  const cards: ReviewCard[] = []
+  for (const task of rows) {
+    const line = wsById.get(task.orderId)?.lines.find(l => l.shopifyLineId === task.shopifyLineId)
+    const orderLine = orderLines.find(l => l.orderId === task.orderId && l.shopifyLineId === task.shopifyLineId)
+    if (!line || !orderLine) continue
+    cards.push({ task, line, slots: requiredSlotsFor(orderLine, await templateForLine(orderLine)) })
+  }
+  return cards
 }
 
 async function missingArtworkSlots(line: TemplateLookupLine & { shopifyLineId: string; customAttributesJson: string | null }): Promise<string[]> {

@@ -1,7 +1,7 @@
 'use client'
 import { useState, type FormEvent, type ReactNode } from 'react'
 import type { ArtworkRow, TaskDetail, TemplateRow, TransitionBody } from './types'
-import { OWNED_MOVES, allSlotsFilled, canTransition, newestArtwork, postJson, sharpnessRatio, sourceEngine, targetFor, taskUrl, type Tone } from './model'
+import { allSlotsFilled, canMove, newestArtwork, postJson, sharpnessRatio, sourceEngine, targetFor, taskUrl, type Tone } from './model'
 import ArtworkSlots from './ArtworkSlots'
 import AutoRenderBar from './AutoRenderBar'
 import { Avatar, Card, ErrorBanner, ExtLink, Icon, TEXT_TONE, btn, btnPrimary, input } from './ui'
@@ -116,8 +116,7 @@ function Checklist({ detail, onChanged }: { detail: TaskDetail; onChanged: () =>
   const auto: boolean[] = [false, false, ratio !== null && ratio >= 0.95, false, filled]
   const checked = CHECKS.map((_, i) => manual[i] ?? auto[i])
   const done = checked.filter(Boolean).length
-  const owns = me.isLeader || !task.assigneeId || task.assigneeId === me.id
-  const can = (to: TransitionBody['to']) => canTransition(task.status, to, me.isLeader, task.readiness) && (owns || !OWNED_MOVES.includes(to))
+  const can = (to: TransitionBody['to']) => canMove(detail, to)
 
   let action: { to: TransitionBody['to']; label: string; icon: string } | null = null
   if (can('DONE')) action = { to: 'DONE', label: me.isLeader ? 'Duyệt & gửi xưởng' : 'Duyệt nhanh & gửi xưởng', icon: 'send' }

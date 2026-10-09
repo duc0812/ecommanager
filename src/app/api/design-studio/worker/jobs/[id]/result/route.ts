@@ -27,7 +27,7 @@ async function renderResult(jobId: string, parts: MultipartResult, json: any) {
   const warnings = Array.isArray(json.warnings) ? json.warnings.filter((w: unknown): w is string => typeof w === 'string').slice(0, 20) : []
   const applied = await applyRenderResult({ jobId, print, preview, result: { warnings } })
   if (!applied) return bad('Job không còn ở trạng thái RUNNING', 409)
-  return NextResponse.json({ ok: true, status: 'DONE', artworkId: applied.artworkId, version: applied.version, warning: applied.warning })
+  return NextResponse.json({ ok: true, status: 'DONE', artworkId: applied.artworkId, version: applied.version, warning: applied.warning, review: applied.review })
 }
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {

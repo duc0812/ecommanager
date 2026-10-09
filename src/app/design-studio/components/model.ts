@@ -13,10 +13,22 @@ export function canTransition(from: TaskStatus, to: TaskStatus, isLeader: boolea
     case 'NEW': return from === 'ASSIGNED'
     case 'DOING': return from === 'NEW' || from === 'ASSIGNED' || from === 'DONE' || from === 'REJECTED'
     case 'REVIEW': return from === 'DOING' || from === 'REJECTED'
-    case 'DONE': return isLeader ? from === 'REVIEW' : (readiness === 'AUTO' && ['NEW', 'ASSIGNED', 'DOING', 'REVIEW'].includes(from))
+    case 'DONE': return isLeader ? from === 'REVIEW' : (readiness === 'AUTO' && ['NEW', 'ASSIGNED', 'DOING'].includes(from))
     case 'REJECTED': return isLeader && from === 'REVIEW'
     default: return false
   }
+}
+
+export function needsLeaderApproval(line: Pick<WorkspaceLine, 'artworks'>): boolean {
+  return line.artworks.some(a => a.source === 'AUTO')
+}
+
+export function canMove(detail: Pick<TaskDetail, 'task' | 'line' | 'me'>, to: TaskStatus): boolean {
+  const { task, me } = detail
+  if (!canTransition(task.status, to, me.isLeader, task.readiness)) return false
+  if (to === 'DONE' && !me.isLeader && needsLeaderApproval(detail.line)) return false
+  const owns = me.isLeader || !task.assigneeId || task.assigneeId === me.id
+  return owns || !OWNED_MOVES.includes(to)
 }
 
 export function isImage(a: ArtworkRow): boolean {

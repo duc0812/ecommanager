@@ -3,7 +3,7 @@ import { useRef, useState, type FormEvent, type ReactNode } from 'react'
 import Link from 'next/link'
 import type { TaskDetail, TransitionBody } from './types'
 import {
-  OWNED_MOVES, allSlotsFilled, canTransition, copyText, layerForField, postJson, productPageUrl, sourceEngine, taskUrl, timeLeft,
+  OWNED_MOVES, allSlotsFilled, canMove, copyText, layerForField, postJson, productPageUrl, sourceEngine, taskUrl, timeLeft,
 } from './model'
 import { buildChecklist, type CheckItem, type CheckState } from './checklist'
 import { ARTWORK_ACCEPT, useArtworkUpload } from './useArtworkUpload'
@@ -136,7 +136,7 @@ export default function TaskHeader({ detail, holdCount, onChanged }: { detail: T
   const askInput = useRef<HTMLInputElement>(null)
 
   const owns = me.isLeader || !task.assigneeId || task.assigneeId === me.id
-  const can = (to: TransitionBody['to']) => canTransition(task.status, to, me.isLeader, task.readiness) && (owns || !OWNED_MOVES.includes(to))
+  const can = (to: TransitionBody['to']) => canMove(detail, to)
   const filled = allSlotsFilled(detail)
   const ready = READY_META[task.readiness]
   const status = STATUS_META[task.status]
