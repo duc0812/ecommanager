@@ -1,12 +1,12 @@
 'use client'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import Sidebar from '@/components/Sidebar'
 import { STATUS_COLORS, STATUS_LABELS, type PipelineStatus } from '@/lib/pipeline-status'
 
-type Line = { id: string; sku: string | null; productTitle: string; previewCdnUrl: string | null; resolvedSupplierId: string | null; designStatus: string; customized: boolean }
+type Line = { id: string; shopifyLineId: string; sku: string | null; productTitle: string; previewCdnUrl: string | null; resolvedSupplierId: string | null; customized: boolean; designDriveLink: string | null }
 type OrderRow = {
-  id: string; shopifyOrderNumber: string; placedAt: string; updatedAt: string; pipelineStatus: PipelineStatus
+  id: string; shopifyOrderNumber: string; placedAt: string; pipelineStatus: PipelineStatus
   orderType: string; designReady: boolean; projectId: string; lines: Line[]
 }
 type Supplier = { id: string; name: string; code: string }
@@ -26,6 +26,8 @@ export default function DesignStudioPage() {
   const [supplierId, setSupplierId] = useState('')
   const [type, setType] = useState('ALL')
   const [search, setSearch] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
+  const requestId = useRef(0)
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState('')
 
@@ -34,27 +36,36 @@ export default function DesignStudioPage() {
     fetch('/api/projects').then(r => r.json()).then(d => setProjects(Array.isArray(d) ? d : (d.projects ?? []))).catch(() => setProjects([]))
   }, [])
 
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search.trim()), 300)
+    return () => clearTimeout(t)
+  }, [search])
+
   const load = useCallback(async () => {
+    const id = ++requestId.current
     setLoading(true); setErr('')
     try {
       const statuses: PipelineStatus[] = tab === 'TODO' ? ['PENDING_DESIGN', 'DESIGN_REJECTED'] : ['READY_TO_PRODUCTION', 'EXPORTED', 'FULFILLED']
-      const pages = await Promise.all(statuses.map(async s => {
-        const qs = new URLSearchParams({ pipelineStatus: s, page: '1', pageSize: '200' })
-        if (projectId) qs.set('projectId', projectId)
-        if (supplierId) qs.set('supplierId', supplierId)
-        if (search.trim()) qs.set('search', search.trim())
-        if (tab === 'DONE') qs.set('dateFrom', new Date(Date.now() - 7 * 864e5).toISOString().slice(0, 10))
-        const res = await fetch(`/api/fulfillment/orders?${qs}`)
-        if (!res.ok) throw new Error(`${s}: HTTP ${res.status}`)
-        return (await res.json()).orders as OrderRow[]
-      }))
-      let list = pages.flat()
+      const qs = new URLSearchParams({ statuses: statuses.join(','), limit: '500' })
+      if (projectId) qs.set('projectId', projectId)
+      if (supplierId) qs.set('supplierId', supplierId)
+      if (debouncedSearch) qs.set('search', debouncedSearch)
+      if (tab === 'DONE') qs.set('dateFrom', new Date(Date.now() - 7 * 864e5).toISOString().slice(0, 10))
+      const res = await fetch(`/api/design-studio/orders?${qs}`)
+      const d = await res.json().catch(() => ({}))
+      if (id !== requestId.current) return
+      if (!res.ok) throw new Error(d.error ?? `HTTP ${res.status}`)
+      let list = (d.orders ?? []) as OrderRow[]
       if (tab === 'DONE') list = list.filter(o => o.designReady && o.lines.some(l => l.customized))
       if (type !== 'ALL') list = list.filter(o => o.orderType === type)
       list.sort((a, b) => new Date(a.placedAt).getTime() - new Date(b.placedAt).getTime())
       setOrders(list)
-    } catch (e: any) { setErr(e.message) } finally { setLoading(false) }
-  }, [tab, projectId, supplierId, type, search])
+    } catch (e: any) {
+      if (id === requestId.current) setErr(e.message)
+    } finally {
+      if (id === requestId.current) setLoading(false)
+    }
+  }, [tab, projectId, supplierId, type, debouncedSearch])
   useEffect(() => { load() }, [load])
 
   const supplierName = useMemo(() => new Map(suppliers.map(s => [s.id, s.code || s.name])), [suppliers])
