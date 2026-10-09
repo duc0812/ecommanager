@@ -171,10 +171,11 @@ function parseTemplateAreas(json: string): TemplateRow['areas'] {
   } catch { return [] }
 }
 
-export function mapTemplate(t: { id: string; name: string; widthPx: number; heightPx: number; dpi: number; bleedIn: number; safeIn: number; mirror: boolean; areas: string; guideImagePath: string | null; templateUrl: string | null }): TemplateRow {
+export function mapTemplate(t: { id: string; name: string; widthPx: number; heightPx: number; dpi: number; bleedIn: number; safeIn: number; mirror: boolean; areas: string; guideImagePath: string | null; templateUrl: string | null; updatedAt?: Date }): TemplateRow {
+  const version = t.updatedAt ? `?v=${t.updatedAt.getTime()}` : ''
   return {
     id: t.id, name: t.name, widthPx: t.widthPx, heightPx: t.heightPx, dpi: t.dpi, bleedIn: t.bleedIn, safeIn: t.safeIn, mirror: t.mirror,
-    areas: parseTemplateAreas(t.areas), guideImageUrl: t.guideImagePath ? `/api/design-studio/file/guide/${t.id}` : null, templateUrl: t.templateUrl,
+    areas: parseTemplateAreas(t.areas), guideImageUrl: t.guideImagePath ? `/api/design-studio/file/guide/${t.id}${version}` : null, templateUrl: t.templateUrl,
   }
 }
 
@@ -332,6 +333,13 @@ export async function templateForLine(line: TemplateLookupLine, profile?: { prin
     if (fromProfile && (!line.resolvedSupplierId || fromProfile.supplierId === line.resolvedSupplierId)) return mapTemplate(fromProfile)
   }
   if (!line.resolvedSupplierId) return null
+  if (line.resolvedSupplierSku) {
+    const product = await prisma.supplierProduct.findUnique({
+      where: { supplierId_sku: { supplierId: line.resolvedSupplierId, sku: line.resolvedSupplierSku } },
+      select: { printTemplate: true },
+    })
+    if (product?.printTemplate && product.printTemplate.supplierId === line.resolvedSupplierId) return mapTemplate(product.printTemplate)
+  }
   const templates = await prisma.printTemplate.findMany({ where: { supplierId: line.resolvedSupplierId } })
   if (templates.length === 0) return null
 

@@ -47,6 +47,7 @@ describe('canCallApi', () => {
     const perms = DEFAULT_ROLE_PERMISSIONS.SUPPORT
     expect(canCallApi('SUPPORT', perms, '/api/fulfillment/orders', 'GET')).toBe('ok')
     expect(canCallApi('SUPPORT', perms, '/api/suppliers', 'GET')).toBe('ok')
+    expect(canCallApi('SUPPORT', perms, '/api/fulfillment/suppliers/s1/print-templates', 'GET')).toBe('ok')
     expect(canCallApi('SUPPORT', perms, '/api/overview', 'GET')).toBe('forbidden')
     expect(canCallApi('SUPPORT', perms, '/api/spy/ads', 'GET')).toBe('forbidden')
   })
@@ -69,5 +70,12 @@ describe('homePathFor', () => {
     expect(homePathFor('SUPPORT', DEFAULT_ROLE_PERMISSIONS.SUPPORT)).toBe('/fulfillment')
     expect(homePathFor('SELLER', DEFAULT_ROLE_PERMISSIONS.SELLER)).toBe('/projects')
     expect(homePathFor('SELLER', [])).toBeNull()
+  })
+
+  it('supplier print templates: readers may list, only fulfillment_suppliers may write', () => {
+    expect(canCallApi('SELLER', ['design_tasks'], '/api/fulfillment/suppliers/s1/print-templates', 'GET')).toBe('ok')
+    expect(canCallApi('SELLER', ['design_tasks'], '/api/fulfillment/suppliers/s1/print-templates', 'POST')).toBe('forbidden')
+    expect(canCallApi('ADMIN', ['fulfillment_suppliers'], '/api/fulfillment/suppliers/s1/products/print-template', 'PATCH')).toBe('ok')
+    expect(canCallApi('ADMIN', [], '/api/fulfillment/suppliers/s1/print-templates', 'GET')).toBe('forbidden')
   })
 })

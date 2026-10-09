@@ -40,6 +40,8 @@ export const API_ACCESS_RULES: ApiRule[] = [
   { prefix: '/api/fulfillment/tracking/parcelpanel-config', methods: WRITE, access: 'SUPERADMIN' },
   { prefix: '/api/fulfillment/tracking', access: ['fulfillment_tracking'] },
   { prefix: '/api/fulfillment/supplier-performance', access: ['fulfillment_tracking'] },
+  { prefix: '/api/fulfillment/suppliers', methods: READ, access: [...FULFILLMENT_READERS, 'design_tasks'] },
+  { prefix: '/api/fulfillment/suppliers', methods: WRITE, access: ['fulfillment_suppliers'] },
   { prefix: '/api/fulfillment/task-fix', access: ['need_to_fix'] },
   { prefix: '/api/marketing', access: ['marketing_niche'] },
   { prefix: '/api/meta/accounts', methods: READ, access: ['meta_billing', 'setup_meta', 'marketing_niche'] },

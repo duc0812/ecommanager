@@ -29,6 +29,7 @@ export async function GET(_req: NextRequest, { params }: { params: { templateId:
       'Content-Type': mimeType,
       'Content-Length': String(bytes.length),
       'Cache-Control': 'private, max-age=3600',
+      'X-Content-Type-Options': 'nosniff',
     },
   })
 }

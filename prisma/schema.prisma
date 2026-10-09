@@ -332,12 +332,15 @@ model SupplierProduct {
   maxProductionDays   Int?
   shippingByRegion    String?
   textureOfMaterial   String?
+  printTemplateId     String?
+  printTemplate       PrintTemplate? @relation(fields: [printTemplateId], references: [id], onDelete: SetNull)
   baseSupplierMappings  ProductBaseSupplierMapping[]
   baseOverrides         ProductBaseOverride[]
   variantManualMappings VariantManualMapping[]
   @@unique([supplierId, sku])
   @@index([sku])
   @@index([baseSku])
+  @@index([printTemplateId])
 }
 
 model SupplierCostHistory {
@@ -558,6 +561,9 @@ model PrintTemplate {
   areas          String
   guideImagePath String?
   templateUrl    String?
+  sourceFileName String?
+  sourceFilePath String?
+  supplierProducts SupplierProduct[]
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
   @@unique([supplierId, supplierSku])
