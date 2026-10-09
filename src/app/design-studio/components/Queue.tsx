@@ -1,7 +1,7 @@
 'use client'
 import type { TaskRow, TaskStatus } from './types'
 import { timeLeft } from './model'
-import { Avatar, ErrorBanner, Icon, Pill, READY_META, STATUS_META, TEXT_TONE, card } from './ui'
+import { Avatar, ErrorBanner, Icon, Note, Pill, READY_META, STATUS_META, TEXT_TONE, btn, card } from './ui'
 
 const SECTIONS: { title: string; statuses: TaskStatus[] }[] = [
   { title: 'Bị trả lại — sửa trước', statuses: ['REJECTED'] },
@@ -50,9 +50,10 @@ function QueueRow({ t, selected, onSelect }: { t: TaskRow; selected: boolean; on
   )
 }
 
-export default function Queue({ tasks, sel, onSelect, q, onQ, loading, error }: {
+export default function Queue({ tasks, sel, onSelect, q, onQ, loading, error, retrying, emptyText, onClearFilters }: {
   tasks: TaskRow[]; sel: string | null; onSelect: (key: string) => void
-  q: string; onQ: (v: string) => void; loading: boolean; error: string
+  q: string; onQ: (v: string) => void; loading: boolean; error: string; retrying: boolean
+  emptyText: string; onClearFilters: (() => void) | null
 }) {
   const groups = SECTIONS.map(s => ({ ...s, rows: tasks.filter(t => s.statuses.includes(t.status)).sort(byDue) })).filter(g => g.rows.length > 0)
   return (
@@ -64,7 +65,9 @@ export default function Queue({ tasks, sel, onSelect, q, onQ, loading, error }: 
             className="flex-1 min-w-0 bg-transparent py-xs text-body-sm outline-none" />
           {loading && <Icon name="progress_activity" className="text-on-surface-variant text-[16px] animate-spin" />}
         </label>
-        <ErrorBanner msg={error} />
+        {retrying
+          ? <div role="status"><Note tone="warn" icon="cloud_off">Mất kết nối tới máy chủ — đang thử lại…</Note></div>
+          : <ErrorBanner msg={error} />}
       </div>
       <div className="p-xs flex flex-col gap-xs">
         {groups.map(g => (
@@ -75,7 +78,14 @@ export default function Queue({ tasks, sel, onSelect, q, onQ, loading, error }: 
             {g.rows.map(t => <QueueRow key={t.taskKey} t={t} selected={t.taskKey === sel} onSelect={onSelect} />)}
           </div>
         ))}
-        {groups.length === 0 && !loading && <div className="px-sm py-md text-label-sm text-on-surface-variant">Không có task</div>}
+        {groups.length === 0 && !loading && !error && !retrying && (
+          <div className="px-sm py-md flex flex-col items-start gap-sm text-label-sm text-on-surface-variant">
+            <span>{emptyText}</span>
+            {onClearFilters && (
+              <button type="button" onClick={onClearFilters} className={btn}><Icon name="filter_alt_off" className="text-[16px]" />Bỏ lọc</button>
+            )}
+          </div>
+        )}
       </div>
     </aside>
   )

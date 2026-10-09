@@ -115,15 +115,31 @@ export function sourceEngine(line: WorkspaceLine): string {
   return line.sourcePrintFiles.length ? 'Customall (app gốc)' : line.customized ? 'Customizer' : 'Non-custom'
 }
 
-export async function requestJson<T = any>(url: string, init?: RequestInit): Promise<{ ok: true; data: T } | { ok: false; error: string }> {
+/** status 0 = the request never reached the server (offline, dev server restarting). */
+export async function requestJson<T = any>(url: string, init?: RequestInit): Promise<{ ok: true; data: T } | { ok: false; error: string; status: number }> {
   try {
     const res = await fetch(url, init)
     const data = await res.json().catch(() => ({}))
-    if (!res.ok) return { ok: false, error: (data as any)?.error ?? `HTTP ${res.status}` }
+    if (!res.ok) return { ok: false, error: (data as any)?.error ?? `HTTP ${res.status}`, status: res.status }
     return { ok: true, data: data as T }
   } catch (e: any) {
-    return { ok: false, error: e?.message ?? 'Lỗi mạng' }
+    return { ok: false, error: e?.message ?? 'Lỗi mạng', status: 0 }
   }
+}
+
+export const RETRY_DELAYS_MS = [2000, 5000, 10000]
+export const RETRY_STEADY_MS = 30000
+
+export function retryDelay(attempt: number): number {
+  return RETRY_DELAYS_MS[attempt] ?? RETRY_STEADY_MS
+}
+
+export function isRetryable(status: number): boolean {
+  return status === 0 || status >= 500
+}
+
+export function emptyQueueText(f: { readinessLabel: string | null; mine: boolean; q: string }): string {
+  return `Không có task${f.readinessLabel ? ` '${f.readinessLabel}'` : ''}${f.mine ? ' của bạn' : ''}${f.q ? ` khớp "${f.q}"` : ''}`
 }
 
 export function putJson<T = any>(url: string, body: unknown) {

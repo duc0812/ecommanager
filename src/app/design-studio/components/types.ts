@@ -78,6 +78,8 @@ export type TaskDetail = {
   autoRender: RenderJobView | null
 }
 
+export type ReviewCard = { task: TaskRow; line: WorkspaceLine; slots: string[] }
+
 export type TransitionBody = {
   to: TaskStatus; note?: string; reasons?: string[]; assigneeId?: string; kpi?: number; dueHours?: number; continue?: boolean
 }

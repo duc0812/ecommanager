@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { timeLeft, allSlotsFilled, taskImages, canRemoveArtwork } from '@/app/design-studio/components/model'
+import { timeLeft, allSlotsFilled, taskImages, canRemoveArtwork, canMove, retryDelay, isRetryable, emptyQueueText } from '@/app/design-studio/components/model'
 
 const NOW = Date.parse('2026-10-10T12:00:00Z')
 
@@ -44,5 +44,37 @@ describe('canRemoveArtwork', () => {
     expect(canRemoveArtwork({ uploadedById: 'u1' }, { id: 'u2', role: 'SUPPORT' }, 'DOING').ok).toBe(false)
     expect(canRemoveArtwork({ uploadedById: null }, { id: 'u2', role: 'ADMIN' }, 'REVIEW').ok).toBe(true)
     expect(canRemoveArtwork({ uploadedById: 'u1' }, { id: 'u1', role: 'SUPERADMIN' }, 'DONE').ok).toBe(false)
+  })
+})
+
+describe('canMove', () => {
+  const detail = (status: string, isLeader: boolean, sources: string[], readiness = 'AUTO') => ({
+    task: { status, readiness, assigneeId: null } as any,
+    line: { artworks: sources.map(source => ({ source })) } as any,
+    me: { id: 'u', name: 'U', role: isLeader ? 'ADMIN' : 'SUPPORT', isLeader },
+  })
+  it('keeps auto-rendered files behind a leader', () => {
+    expect(canMove(detail('REVIEW', false, ['AUTO']), 'DONE')).toBe(false)
+    expect(canMove(detail('DOING', false, ['AUTO']), 'DONE')).toBe(false)
+    expect(canMove(detail('DOING', false, ['AUTO']), 'REVIEW')).toBe(true)
+    expect(canMove(detail('REVIEW', true, ['AUTO']), 'DONE')).toBe(true)
+    expect(canMove(detail('DOING', false, ['MANUAL']), 'DONE')).toBe(true)
+    expect(canMove(detail('DOING', false, ['MANUAL'], 'MANUAL'), 'DONE')).toBe(false)
+  })
+})
+
+describe('queue retry and empty state', () => {
+  it('backs off 2s, 5s, 10s, then every 30s', () => {
+    expect([0, 1, 2, 3, 4, 9].map(retryDelay)).toEqual([2000, 5000, 10000, 30000, 30000, 30000])
+  })
+  it('retries only when the server was unreachable or failed', () => {
+    expect(isRetryable(0)).toBe(true)
+    expect(isRetryable(502)).toBe(true)
+    expect(isRetryable(401)).toBe(false)
+    expect(isRetryable(403)).toBe(false)
+  })
+  it('names the filter that emptied the list', () => {
+    expect(emptyQueueText({ readinessLabel: 'Tự động đạt', mine: true, q: '' })).toBe("Không có task 'Tự động đạt' của bạn")
+    expect(emptyQueueText({ readinessLabel: null, mine: false, q: 'LIT1' })).toBe('Không có task khớp "LIT1"')
   })
 })

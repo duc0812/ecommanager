@@ -3,15 +3,17 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import { useRouter, useSearchParams } from 'next/navigation'
 import Sidebar from '@/components/Sidebar'
 import type { Me, Readiness, TaskDetail, TaskRow } from './components/types'
-import { postJson, requestJson, taskImages, taskUrl } from './components/model'
+import { emptyQueueText, isRetryable, postJson, requestJson, retryDelay, taskImages, taskUrl } from './components/model'
 import { LightboxProvider } from './components/Lightbox'
 import Queue from './components/Queue'
 import TaskHeader from './components/TaskHeader'
 import ImagePanes from './components/ImagePanes'
 import LowerGrid from './components/LowerGrid'
+import ReviewGrid from './components/ReviewGrid'
 import { ErrorBanner, Icon, Note, READY_META, btnPrimary, card } from './components/ui'
 
 type Filter = 'ALL' | Readiness
+type Mode = 'work' | 'review'
 
 function Flags({ detail }: { detail: TaskDetail }) {
   const { task } = detail
@@ -35,6 +37,9 @@ function DesignTasks() {
   const [me, setMe] = useState<Me | null>(null)
   const [listLoading, setListLoading] = useState(false)
   const [listError, setListError] = useState('')
+  const [retrying, setRetrying] = useState(false)
+  const [mode, setMode] = useState<Mode>('work')
+  const [reviewVersion, setReviewVersion] = useState(0)
   const [sel, setSel] = useState<string | null>(paramTask)
   const [filter, setFilter] = useState<Filter>('ALL')
   const [mine, setMine] = useState(false)
@@ -46,6 +51,10 @@ function DesignTasks() {
   const [syncMsg, setSyncMsg] = useState('')
   const [syncError, setSyncError] = useState('')
   const listReq = useRef(0)
+  const retryAttempt = useRef(0)
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const loadListRef = useRef<() => void>(() => {})
+  const onRecovered = useRef<() => void>(() => {})
   const detailReq = useRef(0)
 
   useEffect(() => {
@@ -58,6 +67,7 @@ function DesignTasks() {
   }, [paramTask])
 
   const loadList = useCallback(async () => {
+    if (retryTimer.current) { clearTimeout(retryTimer.current); retryTimer.current = null }
     const id = ++listReq.current
     setListLoading(true)
     const qs = new URLSearchParams()
@@ -67,8 +77,20 @@ function DesignTasks() {
     const r = await requestJson<{ tasks: TaskRow[]; me: Me }>(`/api/design-studio/tasks${query ? `?${query}` : ''}`)
     if (id !== listReq.current) return
     setListLoading(false)
-    if (!r.ok) { setListError(r.error); return }
+    if (!r.ok) {
+      if (!isRetryable(r.status)) { retryAttempt.current = 0; setRetrying(false); setListError(r.error); return }
+      const delay = retryDelay(retryAttempt.current)
+      retryAttempt.current++
+      setRetrying(true)
+      setListError(r.error)
+      retryTimer.current = setTimeout(() => loadListRef.current(), delay)
+      return
+    }
+    const recovered = retryAttempt.current > 0
+    retryAttempt.current = 0
+    setRetrying(false)
     setListError('')
+    if (recovered) onRecovered.current()
     setTasks(r.data.tasks)
     setMe(r.data.me)
   }, [mine, debouncedQ])
@@ -83,7 +105,12 @@ function DesignTasks() {
     setDetail(r.data)
   }, [])
 
+  useEffect(() => { loadListRef.current = loadList }, [loadList])
+  useEffect(() => {
+    onRecovered.current = () => { if (sel && detailError) loadDetail(sel) }
+  }, [sel, detailError, loadDetail])
   useEffect(() => { loadList() }, [loadList])
+  useEffect(() => () => { if (retryTimer.current) clearTimeout(retryTimer.current) }, [])
 
   useEffect(() => {
     if (sel) loadDetail(sel)
@@ -105,6 +132,11 @@ function DesignTasks() {
     if (sel) loadDetail(sel)
   }, [loadList, loadDetail, sel])
 
+  const selectTask = useCallback((key: string) => {
+    setSel(key)
+    setMode('work')
+  }, [])
+
   async function sync() {
     setSyncing(true); setSyncMsg(''); setSyncError('')
     const r = await postJson<{ created: number; cancelled: number; completed: number; reopened: number; pruned?: number; orders: number; refresh?: { refreshed: number; notFound: number; otherStore: number; error: string | null }; errors?: string[] }>('/api/design-studio/tasks/sync', {})
@@ -114,6 +146,7 @@ function DesignTasks() {
     if (rf?.error) setSyncError(`Nạp từ Shopify lỗi: ${rf.error}`)
     setSyncMsg(`${r.data.orders} đơn · nạp Shopify ${rf?.refreshed ?? 0}${rf?.notFound ? ` (không thấy ${rf.notFound})` : ''}${rf?.otherStore ? ` · store khác ${rf.otherStore}` : ''} · tạo ${r.data.created} · huỷ ${r.data.cancelled} · xong ${r.data.completed} · mở lại ${r.data.reopened}${r.data.errors?.length ? ` · lỗi ${r.data.errors.length}` : ''}`)
     loadList()
+    setReviewVersion(v => v + 1)
   }
 
   const counts = useMemo(() => {
@@ -125,6 +158,11 @@ function DesignTasks() {
       MANUAL: open.filter(t => t.readiness === 'MANUAL').length,
     } as Record<Filter, number>
   }, [tasks])
+
+  const reviewCount = useMemo(() => tasks.filter(t => t.status === 'REVIEW').length, [tasks])
+  const filtered = filter !== 'ALL' || mine || !!debouncedQ
+  const emptyText = emptyQueueText({ readinessLabel: filter === 'ALL' ? null : READY_META[filter].label, mine, q: debouncedQ })
+  const clearFilters = useCallback(() => { setFilter('ALL'); setMine(false); setQ('') }, [])
 
   const holdCount = useMemo(() => {
     const m: Record<string, number> = {}
@@ -151,6 +189,14 @@ function DesignTasks() {
           <button type="button" aria-pressed={mine} onClick={() => setMine(!mine)} className={chipCls(mine)}>
             <Icon name="person" className="text-[14px]" />Của tôi
           </button>
+          <button type="button" aria-pressed={mode === 'review'} onClick={() => setMode(mode === 'review' ? 'work' : 'review')}
+            title={mode === 'review' ? 'Quay lại màn làm task' : 'Xem và duyệt các mẫu đang chờ duyệt'}
+            className={`inline-flex items-center gap-xs rounded-full border px-sm py-[2px] text-label-sm ${mode === 'review'
+              ? 'bg-secondary text-on-secondary border-transparent font-semibold'
+              : reviewCount > 0 ? 'bg-amber-100 text-amber-900 border-amber-300 font-semibold' : 'bg-surface-container-lowest border-outline-variant/40 text-on-surface-variant'}`}>
+            <Icon name="fact_check" className="text-[14px]" />Duyệt mẫu
+            <span className={mode === 'review' ? 'font-semibold' : reviewCount > 0 ? 'font-bold' : 'font-normal'}>{reviewCount}</span>
+          </button>
         </div>
         <div className="ml-auto flex items-center gap-sm">
           {me && <span className="text-label-sm text-on-surface-variant">{me.name} · {me.isLeader ? 'Leader' : 'Designer'}</span>}
@@ -163,9 +209,13 @@ function DesignTasks() {
       {syncError && <div className="mb-md"><ErrorBanner msg={syncError} onClose={() => setSyncError('')} /></div>}
 
       <div className="grid grid-cols-[290px_minmax(0,1fr)] gap-md items-start">
-        <Queue tasks={visible} sel={sel} onSelect={setSel} q={q} onQ={setQ} loading={listLoading} error={listError} />
+        <Queue tasks={visible} sel={mode === 'review' ? null : sel} onSelect={selectTask} q={q} onQ={setQ} loading={listLoading} error={listError} retrying={retrying}
+          emptyText={filtered ? emptyText : 'Không có task'} onClearFilters={filtered ? clearFilters : null} />
+        {mode === 'review' ? (
+          <ReviewGrid mine={mine} q={debouncedQ} version={reviewVersion} onOpenTask={selectTask} onChanged={reload} />
+        ) : (
         <div className="flex flex-col gap-md min-w-0">
-          {!sel && !listLoading && (
+          {!sel && !listLoading && !listError && (
             <div className={`${card} p-lg text-body-sm text-on-surface-variant`}>Chưa có task nào. Bấm &quot;Đồng bộ task&quot; để tạo task từ các đơn đang chờ design.</div>
           )}
           {sel && detailError && (
@@ -185,6 +235,7 @@ function DesignTasks() {
             </LightboxProvider>
           )}
         </div>
+        )}
       </div>
     </>
   )
