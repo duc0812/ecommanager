@@ -11,7 +11,9 @@ const ORDER_ID = 'gid://test/Order/ds-attrs-1'
 const SHOP = 'ds-attrs.myshopify.com'
 const ATTRS = JSON.stringify([{ key: 'Custom Name', value: 'Ashley' }, { key: '_design', value: '{"v":3}' }])
 
-function orderInput(storeId: string, attrs: string | null | undefined) {
+const IMG = 'https://cdn.shopify.com/v.jpg'
+
+function orderInput(storeId: string, attrs: string | null | undefined, imageUrl?: string | null) {
   return {
     id: ORDER_ID, projectId: 'proj_ds_attrs', storeId, shopifyOrderNumber: '#DSA1',
     customerEmail: null, customerName: null, shippingCountry: null, shippingState: null,
@@ -22,6 +24,7 @@ function orderInput(storeId: string, attrs: string | null | undefined) {
       shopifyLineId: 'dsa-line-1', sku: 'DSA-SKU', variantTitle: null, productTitle: 'Socks',
       qty: 1, linePosition: 1, unitPrice: 50, resolvedSupplierId: null, resolvedBaseCost: null,
       customAttributesJson: attrs,
+      imageUrl,
     }],
   }
 }
@@ -50,6 +53,19 @@ describe('OrderLine.customAttributesJson', () => {
     await upsertOrderWithLines(orderInput(storeId, undefined))
     const line = await prisma.orderLine.findFirst({ where: { orderId: ORDER_ID } })
     expect(line?.customAttributesJson).toBe(ATTRS)
+  })
+})
+
+describe('OrderLine.imageUrl', () => {
+  it('stores the image passed at upsert', async () => {
+    await upsertOrderWithLines(orderInput(storeId, ATTRS, IMG))
+    const line = await prisma.orderLine.findFirst({ where: { orderId: ORDER_ID } })
+    expect(line?.imageUrl).toBe(IMG)
+  })
+  it('preserves the image when the next sync passes undefined', async () => {
+    await upsertOrderWithLines(orderInput(storeId, ATTRS, undefined))
+    const line = await prisma.orderLine.findFirst({ where: { orderId: ORDER_ID } })
+    expect(line?.imageUrl).toBe(IMG)
   })
 })
 

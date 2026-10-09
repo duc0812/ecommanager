@@ -431,6 +431,7 @@ model OrderLine {
   designDriveLink         String?
   customized              Boolean   @default(false)
   customAttributesJson    String?
+  imageUrl                String?
   designNote              String?
   @@index([sku])
   @@index([shopifyVariantId])

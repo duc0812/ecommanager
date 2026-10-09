@@ -7,7 +7,7 @@ export type TaskRow = {
   id: string; taskKey: string; status: TaskStatus; readiness: Readiness; assigneeId: string | null; assigneeName: string | null
   kpi: number; dueAt: string | null; slaHours: number; rejectReasons: string[]; rejectNote: string | null
   orderId: string; orderNumber: string; placedAt: string; shopifyLineId: string; linePosition: number
-  sku: string | null; productTitle: string; variantTitle: string | null; previewUrl: string | null
+  sku: string | null; productTitle: string; variantTitle: string | null; previewUrl: string | null; imageUrl: string | null
   supplierName: string | null; customized: boolean; storeName: string
 }
 
@@ -35,6 +35,7 @@ export type WorkspaceLine = {
   customerDesignLink: string | null
   customizedUrl: string | null
   previewUrl: string | null
+  imageUrl: string | null
   sourcePrintFiles: { printArea: string; url: string }[]
   supplier: { id: string; name: string; code: string } | null
   supplierSku: string | null

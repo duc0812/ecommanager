@@ -143,6 +143,7 @@ export type UpsertOrderInput = {
     variantOptions?: string | null
     customized?: boolean
     customAttributesJson?: string | null
+    imageUrl?: string | null
   }>
 }
 
@@ -166,6 +167,7 @@ export async function upsertOrderWithLines(input: UpsertOrderInput) {
       previewCdnUrl: true,
       designDriveLink: true,
       customAttributesJson: true,
+      imageUrl: true,
       designNote: true,
     },
   })
@@ -264,6 +266,7 @@ export async function upsertOrderWithLines(input: UpsertOrderInput) {
           previewCdnUrl: l.previewCdnUrl ?? snap?.previewCdnUrl ?? null,
           designDriveLink: l.designDriveLink ?? snap?.designDriveLink ?? null,
           customAttributesJson: l.customAttributesJson !== undefined ? l.customAttributesJson : (snap?.customAttributesJson ?? null),
+          imageUrl: l.imageUrl !== undefined ? l.imageUrl : (snap?.imageUrl ?? null),
           designNote: snap?.designNote ?? null,
           shopifyVariantId: l.shopifyVariantId ?? null,
           shopifyProductType: l.shopifyProductType ?? null,

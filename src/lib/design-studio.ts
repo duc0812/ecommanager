@@ -24,6 +24,7 @@ export type WorkspaceLine = {
   customerDesignLink: string | null
   customizedUrl: string | null
   previewUrl: string | null
+  imageUrl: string | null
   sourcePrintFiles: SourcePrintFile[]
   supplier: { id: string; name: string; code: string } | null
   supplierSku: string | null
@@ -166,6 +167,7 @@ export async function loadWorkspace(orderId: string): Promise<Workspace | null> 
       customerDesignLink: safeCustomerDesignLink(attrs, productUrl, l.shopifyVariantId),
       customizedUrl: safeHttpUrl(attrs.find(a => a.key === '_customized_url')?.value),
       previewUrl: safeHttpUrl(preview),
+      imageUrl: safeHttpUrl(l.imageUrl),
       sourcePrintFiles: sourcePrintFiles(attrs).flatMap(f => {
         const url = safeHttpUrl(f.url)
         return url ? [{ printArea: f.printArea, url }] : []
@@ -272,7 +274,7 @@ export async function applyLineProps(orderId: string, props: ShopifyOrderLinePro
     if (!line) { unmatched++; continue }
     used.add(line.id)
     const attrs = p.productUrl ? [...p.customAttributes, { key: '_product_url', value: p.productUrl }] : p.customAttributes
-    await prisma.orderLine.update({ where: { id: line.id }, data: { customAttributesJson: JSON.stringify(attrs) } })
+    await prisma.orderLine.update({ where: { id: line.id }, data: { customAttributesJson: JSON.stringify(attrs), imageUrl: p.imageUrl ?? null } })
     updated++
   }
   return { updated, unmatched }

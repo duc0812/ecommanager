@@ -102,6 +102,8 @@ export default function TaskHeader({ detail, holdCount, onChanged }: { detail: T
     const r = await postJson(`/api/design-studio/orders/${encodeURIComponent(task.orderId)}/refresh`, {})
     setRefreshing(false)
     if (!r.ok) { setError(r.error); return }
+    const { updated = 0, unmatched = 0 } = r.data ?? {}
+    setInfo(`Đã nạp lại ${updated} dòng từ Shopify${unmatched ? `, ${unmatched} dòng không khớp` : ''}`)
     onChanged()
   }
 
@@ -185,7 +187,7 @@ export default function TaskHeader({ detail, holdCount, onChanged }: { detail: T
         <span className="inline-flex items-center gap-xs"><Icon name="person" className="text-[16px]" />{task.assigneeName ? <b className="text-on-surface">{task.assigneeName}</b> : 'chưa giao'}</span>
         <span className="inline-flex items-center gap-xs"><Icon name="auto_awesome" className="text-[16px]" />{sourceEngine(line)}</span>
         <span className="inline-flex items-center gap-xs"><Icon name="event" className="text-[16px]" />{new Date(task.placedAt).toLocaleDateString('en-US')}</span>
-        <button type="button" onClick={refreshFromShopify} disabled={refreshing} className="inline-flex items-center gap-xs text-secondary hover:underline disabled:opacity-50">
+        <button type="button" onClick={refreshFromShopify} disabled={refreshing} className={btn}>
           <Icon name="sync" className="text-[16px]" />{refreshing ? 'Đang nạp…' : 'Nạp lại từ Shopify'}
         </button>
       </div>

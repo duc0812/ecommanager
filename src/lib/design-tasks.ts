@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/db'
 import { isNonProductLine } from '@/lib/order-lines'
-import { parseAttributes, sourcePrintFiles, printAreasForLine, updateLine, loadWorkspace, type WorkspaceLine, type Workspace } from '@/lib/design-studio'
+import { parseAttributes, safeHttpUrl, sourcePrintFiles, printAreasForLine, updateLine, loadWorkspace, type WorkspaceLine, type Workspace } from '@/lib/design-studio'
 import { getDesignSettings, kpiForProductType, type DesignSettings } from '@/lib/design-settings'
 import { visibleCustomAttributes } from '@/lib/order-classify'
 
@@ -119,7 +119,7 @@ export type TaskRow = {
   id: string; taskKey: string; status: TaskStatus; readiness: Readiness; assigneeId: string | null; assigneeName: string | null
   kpi: number; dueAt: string | null; slaHours: number; rejectReasons: string[]; rejectNote: string | null
   orderId: string; orderNumber: string; placedAt: string; shopifyLineId: string; linePosition: number
-  sku: string | null; productTitle: string; variantTitle: string | null; previewUrl: string | null
+  sku: string | null; productTitle: string; variantTitle: string | null; previewUrl: string | null; imageUrl: string | null
   supplierName: string | null; customized: boolean; storeName: string
 }
 
@@ -286,7 +286,7 @@ export async function listTasks(f: { statuses?: TaskStatus[]; readiness?: Readin
       rejectReasons: parseRejectReasons(task.rejectReasons), rejectNote: task.rejectNote,
       orderId: task.orderId, orderNumber: task.order.shopifyOrderNumber, placedAt: task.order.placedAt.toISOString(),
       shopifyLineId: task.shopifyLineId, linePosition: line.linePosition, sku: line.sku, productTitle: line.productTitle,
-      variantTitle: line.variantTitle, previewUrl: line.previewCdnUrl, supplierName: task.supplierSnapshot,
+      variantTitle: line.variantTitle, previewUrl: line.previewCdnUrl, imageUrl: safeHttpUrl(line.imageUrl), supplierName: task.supplierSnapshot,
       customized: line.customized, storeName: task.order.store.project?.name ?? task.order.store.shop,
     })
   }

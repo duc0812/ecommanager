@@ -27,9 +27,9 @@ function QueueRow({ t, selected, onSelect }: { t: TaskRow; selected: boolean; on
     <button type="button" onClick={() => onSelect(t.taskKey)} aria-current={selected ? 'true' : undefined}
       className={`grid grid-cols-[44px_minmax(0,1fr)] gap-sm p-sm rounded-lg border text-left w-full ${selected ? 'bg-secondary/10 border-secondary/40' : 'border-transparent hover:bg-surface-container-low'}`}>
       <span className="w-11 h-11 rounded-md bg-surface-container-high border border-outline-variant/20 overflow-hidden grid place-items-center text-on-surface-variant">
-        {t.previewUrl
+        {(t.previewUrl ?? t.imageUrl)
           // eslint-disable-next-line @next/next/no-img-element
-          ? <img src={t.previewUrl} alt="" className="w-full h-full object-cover" loading="lazy" />
+          ? <img src={(t.previewUrl ?? t.imageUrl)!} alt="" className="w-full h-full object-cover" loading="lazy" />
           : <Icon name={t.customized ? 'image' : 'checkroom'} />}
       </span>
       <span className="flex flex-col gap-[2px] min-w-0">

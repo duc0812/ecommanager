@@ -26,6 +26,7 @@ export type ShopifyOrderLine = {
   variantId: string | null          // NEW
   selectedOptions: Record<string, string>  // NEW: {"Style":"Tshirt","Size":"S"}
   productUrl?: string | null        // storefront page; null when the product is not published
+  imageUrl?: string | null          // variant image, falling back to the product's featured image
 }
 
 export type ShopifyOrder = {
@@ -92,7 +93,8 @@ query SyncOrders($cursor: String, $query: String) {
           id sku title variantTitle quantity
           originalUnitPriceSet { shopMoney { amount } }
           customAttributes { key value }
-          product { tags productType onlineStoreUrl }
+          image { url }
+          product { tags productType onlineStoreUrl featuredImage { url } }
           variant {
             id
             selectedOptions { name value }
@@ -200,6 +202,7 @@ export async function fetchOrdersPage(
         customAttributes: l.customAttributes ?? [],
         variantId: l.variant?.id ?? null,
         productUrl: l.product?.onlineStoreUrl ?? null,
+        imageUrl: l.image?.url ?? l.product?.featuredImage?.url ?? null,
         selectedOptions: Object.fromEntries(
           (l.variant?.selectedOptions ?? []).map((o: { name: string; value: string }) => [o.name, o.value])
         ),
@@ -472,6 +475,7 @@ export type ShopifyOrderLineProps = {
   customAttributes: Array<{ key: string; value: string }>
   productUrl: string | null
   variantId: string | null
+  imageUrl: string | null
 }
 
 const LINE_PROPS_QUERY = `
@@ -483,7 +487,8 @@ query OrderLineProps($query: String) {
         nodes {
           sku title variantTitle quantity
           customAttributes { key value }
-          product { productType onlineStoreUrl }
+          image { url }
+          product { productType onlineStoreUrl featuredImage { url } }
           variant { id }
         }
       }
@@ -524,6 +529,7 @@ export async function fetchOrderLinePropsByNames(
         customAttributes: l.customAttributes ?? [],
         productUrl: l.product?.onlineStoreUrl ?? null,
         variantId: l.variant?.id ?? null,
+        imageUrl: l.image?.url ?? l.product?.featuredImage?.url ?? null,
       })))
     }
   }

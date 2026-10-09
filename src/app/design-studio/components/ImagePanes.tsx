@@ -10,7 +10,7 @@ type Side = 'Front' | 'Back'
 
 const PANES: { key: PaneKey; icon: string; title: string }[] = [
   { key: 'tpl', icon: 'print', title: 'File in trên template' },
-  { key: 'prev', icon: 'visibility', title: 'Khách đã thấy' },
+  { key: 'prev', icon: 'photo_library', title: 'Mockup / Preview' },
   { key: 'mock', icon: 'checkroom', title: 'Mockup xưởng' },
 ]
 
@@ -50,6 +50,7 @@ export default function ImagePanes({ detail }: { detail: TaskDetail }) {
   const [bg, setBg] = useState<CanvasBg>('checker')
   const [guide, setGuide] = useState(50)
   const [side, setSide] = useState<Side>('Front')
+  const [swapped, setSwapped] = useState(false)
 
   const areaNames = template?.areas.map(a => a.name) ?? []
   const hasSides = areaNames.some(n => n.startsWith('Front')) && areaNames.some(n => n.startsWith('Back'))
@@ -63,7 +64,7 @@ export default function ImagePanes({ detail }: { detail: TaskDetail }) {
 
   const right: Record<PaneKey, string> = {
     tpl: template ? `${template.name} · ${template.widthPx}×${template.heightPx} · ${template.dpi} DPI` : 'chưa có template',
-    prev: 'preview lúc đặt',
+    prev: line.previewUrl ? 'preview lúc đặt' : line.imageUrl ? 'ảnh Shopify' : 'chưa có ảnh',
     mock: newest.length > 0 ? 'từ file in' : 'file nguồn',
   }
 
@@ -74,17 +75,38 @@ export default function ImagePanes({ detail }: { detail: TaskDetail }) {
         <TemplateCanvas template={template} line={line} slots={detail.slots} bg={bg} guide={guide} />
       </>
     ),
-    prev: () => (
-      <>
-        <div className="rounded-lg border border-outline-variant/20 bg-surface-container-low p-sm grid place-items-center aspect-square overflow-hidden">
-          {line.previewUrl ? <Img src={line.previewUrl} alt="Preview khách thấy" /> : <span className="text-label-sm text-on-surface-variant">Không có preview</span>}
-        </div>
-        <div className="text-label-sm text-on-surface-variant flex flex-wrap gap-x-sm">
-          <span>Ảnh lúc Add to cart · đối chiếu nội dung</span>
-          {line.customerDesignLink && <ExtLink href={line.customerDesignLink}>Mở lại thiết kế ↗</ExtLink>}
-        </div>
-      </>
-    ),
+    prev: () => {
+      const hasBoth = !!line.previewUrl && !!line.imageUrl
+      const showVariant = !line.previewUrl || (hasBoth && swapped)
+      const large = showVariant ? line.imageUrl : line.previewUrl
+      const small = hasBoth ? (swapped ? line.previewUrl : line.imageUrl) : null
+      const caption = !line.previewUrl && line.imageUrl
+        ? 'Chưa có preview riêng — ảnh variant/sản phẩm trên Shopify'
+        : showVariant ? 'Ảnh variant (Shopify)' : 'Preview khách tạo lúc đặt hàng'
+      return (
+        <>
+          <div className="rounded-lg border border-outline-variant/20 bg-surface-container-low p-sm grid place-items-center aspect-square overflow-hidden">
+            {large
+              ? <Img src={large} alt={showVariant ? 'Ảnh variant Shopify' : 'Preview khách thấy'} />
+              : <span className="text-label-sm text-on-surface-variant text-center">Không có preview hay ảnh sản phẩm — bấm Nạp lại từ Shopify</span>}
+          </div>
+          {large && <div className="text-label-sm text-on-surface-variant">{caption}</div>}
+          {small && (
+            <button type="button" onClick={() => setSwapped(!swapped)} title="Bấm để đổi ảnh lớn"
+              className="self-start flex flex-col gap-[2px] items-start rounded-lg border border-outline-variant/40 p-xs hover:bg-surface-container-low">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={small} alt="" className="w-16 h-16 object-cover rounded-md" loading="lazy" />
+              <span className="text-label-sm text-on-surface-variant">{swapped ? 'Preview khách tạo' : 'Ảnh variant (Shopify)'}</span>
+            </button>
+          )}
+          {line.customerDesignLink && (
+            <div className="text-label-sm text-on-surface-variant flex flex-wrap gap-x-sm">
+              <ExtLink href={line.customerDesignLink}>Mở lại thiết kế ↗</ExtLink>
+            </div>
+          )}
+        </>
+      )
+    },
     mock: () => (
       <>
         {hasSides && newest.length > 0 && (

@@ -24,8 +24,8 @@ afterAll(async () => { await prisma.order.deleteMany({ where: { id: ORDER_ID } }
 describe('applyLineProps', () => {
   it('writes attributes by position and appends _product_url', async () => {
     const r = await applyLineProps(ORDER_ID, [
-      { sku: 'A', title: 'Socks', variantTitle: null, quantity: 1, productType: null, customAttributes: [{ key: 'Custom Name', value: 'Ashley' }], productUrl: 'https://shop.example/products/socks', variantId: null },
-      { sku: 'B', title: 'Mug', variantTitle: null, quantity: 1, productType: null, customAttributes: [], productUrl: null, variantId: null },
+      { sku: 'A', title: 'Socks', variantTitle: null, quantity: 1, productType: null, customAttributes: [{ key: 'Custom Name', value: 'Ashley' }], productUrl: 'https://shop.example/products/socks', variantId: null, imageUrl: 'https://cdn.shopify.com/x.jpg' },
+      { sku: 'B', title: 'Mug', variantTitle: null, quantity: 1, productType: null, customAttributes: [], productUrl: null, variantId: null, imageUrl: null },
     ])
     expect(r).toEqual({ updated: 2, unmatched: 0 })
     const lines = await prisma.orderLine.findMany({ where: { orderId: ORDER_ID }, orderBy: { linePosition: 'asc' } })
@@ -33,10 +33,12 @@ describe('applyLineProps', () => {
       { key: 'Custom Name', value: 'Ashley' }, { key: '_product_url', value: 'https://shop.example/products/socks' },
     ])
     expect(lines[1].customAttributesJson).toBe('[]')
+    expect(lines[0].imageUrl).toBe('https://cdn.shopify.com/x.jpg')
+    expect(lines[1].imageUrl).toBeNull()
   })
   it('falls back to sku+title when counts differ', async () => {
     const r = await applyLineProps(ORDER_ID, [
-      { sku: 'B', title: 'Mug', variantTitle: null, quantity: 1, productType: null, customAttributes: [{ key: 'Text', value: 'Hi' }], productUrl: null, variantId: null },
+      { sku: 'B', title: 'Mug', variantTitle: null, quantity: 1, productType: null, customAttributes: [{ key: 'Text', value: 'Hi' }], productUrl: null, variantId: null, imageUrl: null },
     ])
     expect(r).toEqual({ updated: 1, unmatched: 0 })
     const b = await prisma.orderLine.findFirst({ where: { orderId: ORDER_ID, sku: 'B' } })

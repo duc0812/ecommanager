@@ -48,7 +48,7 @@ beforeAll(async () => {
           ]),
         },
         {
-          shopifyLineId: 'dsw-5', sku: 'DSWS-SKU-4', productTitle: 'Socks 4', qty: 1, linePosition: 5, unitPrice: 50,
+          shopifyLineId: 'dsw-5', imageUrl: 'javascript:alert(1)', sku: 'DSWS-SKU-4', productTitle: 'Socks 4', qty: 1, linePosition: 5, unitPrice: 50,
           shopifyVariantId: 'gid://shopify/ProductVariant/789',
           previewCdnUrl: 'javascript:alert(2)',
           customAttributesJson: JSON.stringify([
@@ -63,7 +63,7 @@ beforeAll(async () => {
           ]),
         },
         {
-          shopifyLineId: 'dsw-6', sku: 'DSWS-SKU-5', productTitle: 'Socks 5', qty: 1, linePosition: 6, unitPrice: 50,
+          shopifyLineId: 'dsw-6', imageUrl: 'https://cdn.shopify.com/v.jpg', sku: 'DSWS-SKU-5', productTitle: 'Socks 5', qty: 1, linePosition: 6, unitPrice: 50,
           customAttributesJson: JSON.stringify([
             { key: '_design', value: JSON.stringify({ v: 'cm1', layout: null, layers: [] }) },
             { key: '_product_url', value: 'not a url' },
@@ -107,8 +107,10 @@ describe('loadWorkspace', () => {
     const l5 = ws!.lines[4]
     expect(l5.customizedUrl).toBeNull()
     expect(l5.previewUrl).toBeNull()
+    expect(l5.imageUrl).toBeNull()
     expect(l5.sourcePrintFiles).toEqual([{ printArea: 'Back', url: 'https://cdn.example/back.png' }])
     expect(l5.customerDesignLink).toMatch(/^https:\/\/shop\.example\/products\/real\?variant=789#cm-design=/)
     expect(ws!.lines[5].customerDesignLink).toBeNull()
+    expect(ws!.lines[5].imageUrl).toBe('https://cdn.shopify.com/v.jpg')
   })
 })
