@@ -379,3 +379,25 @@ It is idempotent: existing tasks keep status/assignee; a cancelled/refunded orde
 Also pinned since the fix wave: template-area slots gate DONE and the ownership rule (`tests/design-tasks-transition.integration.test.ts`, 400 at the route in `tests/design-tasks-routes.integration.test.ts`); `timeLeft` / `allSlotsFilled` (`tests/design-tasks-model.test.ts`). Fix wave 2: factory reopen + no auto-complete + status-PATCH cancel (`tests/design-tasks-sync.integration.test.ts`); REVIEW needs artwork, external-link DONE keeps the link, factory-reopened DONE rewrites it, continue → DOING logs "Tiếp tục làm" (`tests/design-tasks-transition.integration.test.ts`); sync-all visits READY orders with open tasks and `mine=1` (`tests/design-tasks-routes.integration.test.ts`).
 
 Not done yet: no browser click-through of the page; `readinessFor` never yields `AUTO`, so "Duyệt nhanh" stays unused until something sets AUTO.
+
+## Product profiles (2026-10-10)
+
+- One `ProductProfile` per Shopify product (`storeId` + `shopifyProductId`): default supplier product, option overrides (`[{combo, supplierProductId}]`), print template, master artwork URL, layer map (`[{field, layer, font?, maxChars?, fit}]`). Edited at `/design-studio/products` (admins write, others read).
+- `OrderLine.shopifyProductId` comes from the order sync; older lines get it when "Đồng bộ task" runs (it refetches lines missing custom attributes, image or product id from Shopify — 60-day token window).
+- Supplier precedence: variant manual mapping > profile override > profile default > ProductBase rules. The size-sibling swap applies to profile defaults, not to overrides.
+- Design precedence: profile template > supplier-SKU template match; profile master > SkuDesign.
+- Saving a profile re-resolves only lines of that product in orders not EXPORTED/FULFILLED/CANCELLED/REFUNDED, keeps the cost snapshot when supplier+SKU are unchanged, skips the cost step when supplier/overrides did not change, then re-syncs tasks.
+- Status: NONE / NO_TEMPLATE / NO_MASTER / NO_LAYERS / READY. Observed fields (last 90 days, newest 200 lines) exclude non-printed keys (`Size`, "Yes or No" toggles — `src/lib/layer-fields.ts`).
+
+## Design artwork on Google Drive (2026-10-10)
+
+- The designer uploads to the tool as before; the tool saves the file, pushes it to Drive in 8 MB resumable chunks, shares it "anyone with the link", records `driveFileId`/`driveWebViewLink`, then deletes the local copy. Folder: `Design Studio/<Store>/<YYYY-MM UTC>/<Order>/<TaskKey>/v<N>-<file>`.
+- Push failure or Drive not connected → the file stays local with a warning; "Đẩy lên Drive" retries. A successful retry also replaces the app URL on an already-approved line/order.
+- Previews: images/PDF streamed from Drive through `/api/design-studio/file/<id>`; PSD/ZIP redirect to the Drive page. On approval the line's `designDriveLink` is the Drive link (what the supplier CSV exports).
+- Connect once on `/setup` → "Google Drive (lưu artwork)" (SUPERADMIN):
+  1. Google Cloud Console → new project → enable **Google Drive API**.
+  2. OAuth consent screen: External, add scope `.../auth/drive.file` (plus `openid`, `email`), **Publish app** (In production) — `drive.file` is non-sensitive, so no verification and no 7-day token expiry.
+  3. Credentials → OAuth client ID → Web application; redirect URIs `http://localhost:3002/api/auth/google/callback` and `https://pod.thecrafthousellc.com/api/auth/google/callback`.
+  4. Paste Client ID/Secret on the Setup card, Save, then "Kết nối Google Drive" with the Google account that should own the files.
+- `drive.file` limitation: the app only sees files it created — files dropped into Drive by hand are invisible to it; upload through the tool.
+- Changing the Client ID clears the connection (reconnect). Upload route still buffers up to 200 MB (≈2× in RAM) and pushes inside the request — check nginx `proxy_read_timeout` before using it on the VPS.
