@@ -116,6 +116,30 @@ describe('GET /api/design-studio/tasks', () => {
     const body = await res.json()
     expect(body.tasks.map((t: any) => t.taskKey)).toContain('DTR1_1')
   })
+
+  it('treats an empty statuses= as not given, falling back to the default queue', async () => {
+    const req = await cookieReq('http://x/api/design-studio/tasks?statuses=', adminToken)
+    const res = await getTasks(req)
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.tasks.map((t: any) => t.taskKey)).toContain('DTR1_1')
+  })
+
+  it('400s when every status value is invalid', async () => {
+    const req = await cookieReq('http://x/api/design-studio/tasks?statuses=BOGUS', adminToken)
+    const res = await getTasks(req)
+    expect(res.status).toBe(400)
+    const body = await res.json()
+    expect(body.error).toMatch(/Unknown status: BOGUS/)
+  })
+
+  it('400s when only some status values are invalid', async () => {
+    const req = await cookieReq('http://x/api/design-studio/tasks?statuses=NEW,BOGUS', adminToken)
+    const res = await getTasks(req)
+    expect(res.status).toBe(400)
+    const body = await res.json()
+    expect(body.error).toMatch(/Unknown status: BOGUS/)
+  })
 })
 
 describe('GET /api/design-studio/tasks/[key]', () => {
@@ -243,6 +267,24 @@ describe('GET/POST /api/design-studio/templates', () => {
     const listRes = await getTemplates(listReq)
     const listBody = await listRes.json()
     expect(listBody.templates.some((t: any) => t.name === 'Jersey template')).toBe(true)
+  })
+
+  it('two sequential POSTs with no supplierSku update the same default template, not create a second one', async () => {
+    const postDefault = (name: string) => cookieReq('http://x/api/design-studio/templates', adminToken, {
+      method: 'POST',
+      body: JSON.stringify({ supplierId: SUP, name, widthPx: 1000, heightPx: 1000, areas: [] }),
+    }).then(postTemplate)
+
+    const r1 = await postDefault('Default v1')
+    expect(r1.status).toBe(200)
+    const r2 = await postDefault('Default v2')
+    expect(r2.status).toBe(200)
+    const body2 = await r2.json()
+    expect(body2.template.name).toBe('Default v2')
+
+    const rows = await prisma.printTemplate.findMany({ where: { supplierId: SUP, supplierSku: null } })
+    expect(rows.length).toBe(1)
+    expect(rows[0].name).toBe('Default v2')
   })
 })
 

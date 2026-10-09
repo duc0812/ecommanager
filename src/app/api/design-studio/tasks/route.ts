@@ -17,9 +17,12 @@ export async function GET(req: NextRequest) {
 
   const sp = req.nextUrl.searchParams
   const statusesParam = sp.get('statuses')
-  const statuses = statusesParam
-    ? statusesParam.split(',').map(s => s.trim()).filter((s): s is TaskStatus => TASK_STATUSES.includes(s as TaskStatus))
-    : undefined
+  const rawStatuses = statusesParam ? statusesParam.split(',').map(s => s.trim()).filter(Boolean) : []
+  const invalidStatuses = rawStatuses.filter(s => !TASK_STATUSES.includes(s as TaskStatus))
+  if (invalidStatuses.length > 0) {
+    return NextResponse.json({ error: `Unknown status: ${invalidStatuses.join(', ')}` }, { status: 400 })
+  }
+  const statuses = rawStatuses.length > 0 ? (rawStatuses as TaskStatus[]) : undefined
   const readinessParam = sp.get('readiness')
   const readiness = readinessParam && READINESS_VALUES.includes(readinessParam as Readiness) ? (readinessParam as Readiness) : undefined
   const q = sp.get('q')?.trim() || undefined

@@ -43,10 +43,13 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const existing = await prisma.printTemplate.findFirst({ where: { supplierId, supplierSku: sku } })
-    const row = existing
-      ? await prisma.printTemplate.update({ where: { id: existing.id }, data })
-      : await prisma.printTemplate.create({ data })
+    const row = await prisma.$transaction(async tx => {
+      const matches = await tx.printTemplate.findMany({ where: { supplierId, supplierSku: sku }, orderBy: { createdAt: 'asc' } })
+      const existing = matches[0]
+      return existing
+        ? await tx.printTemplate.update({ where: { id: existing.id }, data })
+        : await tx.printTemplate.create({ data })
+    })
     return NextResponse.json({ template: mapTemplate(row) })
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 400 })
