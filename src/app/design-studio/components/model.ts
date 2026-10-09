@@ -1,10 +1,10 @@
 import { isLayerlessField } from '@/lib/layer-fields'
-import type { ArtworkRow, LayerMapEntry, Readiness, TaskDetail, TaskRow, TaskStatus, TemplateArea, TemplateRow, WorkspaceLine } from './types'
+import type { ArtworkRow, LayerMapEntry, TaskDetail, TaskRow, TaskStatus, TemplateArea, TemplateRow, WorkspaceLine } from './types'
 
 export const OPEN_STATUSES: TaskStatus[] = ['NEW', 'ASSIGNED', 'DOING', 'REVIEW', 'REJECTED']
 export const OWNED_MOVES: TaskStatus[] = ['DOING', 'NEW', 'REVIEW', 'ASK_CUSTOMER']
 
-export function canTransition(from: TaskStatus, to: TaskStatus, isLeader: boolean, readiness: Readiness): boolean {
+export function canTransition(from: TaskStatus, to: TaskStatus, isLeader: boolean): boolean {
   if (from === to || from === 'CANCELLED') return false
   if (to === 'ASK_CUSTOMER') return OPEN_STATUSES.includes(from)
   if (to === 'CANCELLED') return isLeader && (OPEN_STATUSES.includes(from) || from === 'ASK_CUSTOMER')
@@ -13,7 +13,7 @@ export function canTransition(from: TaskStatus, to: TaskStatus, isLeader: boolea
     case 'NEW': return from === 'ASSIGNED'
     case 'DOING': return from === 'NEW' || from === 'ASSIGNED' || from === 'DONE' || from === 'REJECTED'
     case 'REVIEW': return from === 'DOING' || from === 'REJECTED'
-    case 'DONE': return isLeader ? from === 'REVIEW' : (readiness === 'AUTO' && ['NEW', 'ASSIGNED', 'DOING'].includes(from))
+    case 'DONE': return isLeader && from === 'REVIEW'
     case 'REJECTED': return isLeader && from === 'REVIEW'
     default: return false
   }
@@ -25,7 +25,7 @@ export function needsLeaderApproval(line: Pick<WorkspaceLine, 'artworks'>): bool
 
 export function canMove(detail: Pick<TaskDetail, 'task' | 'line' | 'me'>, to: TaskStatus): boolean {
   const { task, me } = detail
-  if (!canTransition(task.status, to, me.isLeader, task.readiness)) return false
+  if (!canTransition(task.status, to, me.isLeader)) return false
   if (to === 'DONE' && !me.isLeader && needsLeaderApproval(detail.line)) return false
   const owns = me.isLeader || !task.assigneeId || task.assigneeId === me.id
   return owns || !OWNED_MOVES.includes(to)

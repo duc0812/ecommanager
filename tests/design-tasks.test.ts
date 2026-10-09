@@ -9,7 +9,7 @@ describe('taskKeyFor', () => {
 })
 
 describe('canTransition', () => {
-  const T = (f: any, t: any, a: any, r: any = 'LOW') => canTransition(f, t, a, r)
+  const T = (...a: any[]) => canTransition(a[0], a[1], a[2])
   it('leader assigns, designer takes', () => {
     expect(T('NEW', 'ASSIGNED', 'LEADER')).toBe(true)
     expect(T('NEW', 'ASSIGNED', 'DESIGNER')).toBe(false)
@@ -23,9 +23,9 @@ describe('canTransition', () => {
     expect(T('REVIEW', 'DONE', 'LEADER')).toBe(true)
     expect(T('REVIEW', 'DONE', 'DESIGNER')).toBe(false)
     expect(T('REVIEW', 'DONE', 'DESIGNER', 'AUTO')).toBe(false)
-    expect(T('DOING', 'DONE', 'DESIGNER', 'AUTO')).toBe(true)
+    expect(T('DOING', 'DONE', 'DESIGNER', 'AUTO')).toBe(false)
     expect(T('REVIEW', 'DONE', 'LEADER', 'AUTO')).toBe(true)
-    expect(T('NEW', 'DONE', 'DESIGNER', 'AUTO')).toBe(true)
+    expect(T('NEW', 'DONE', 'DESIGNER', 'AUTO')).toBe(false)
     expect(T('REVIEW', 'REJECTED', 'LEADER')).toBe(true)
     expect(T('REVIEW', 'REJECTED', 'DESIGNER')).toBe(false)
   })

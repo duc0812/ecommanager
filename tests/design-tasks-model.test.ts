@@ -58,7 +58,7 @@ describe('canMove', () => {
     expect(canMove(detail('DOING', false, ['AUTO']), 'DONE')).toBe(false)
     expect(canMove(detail('DOING', false, ['AUTO']), 'REVIEW')).toBe(true)
     expect(canMove(detail('REVIEW', true, ['AUTO']), 'DONE')).toBe(true)
-    expect(canMove(detail('DOING', false, ['MANUAL']), 'DONE')).toBe(true)
+    expect(canMove(detail('DOING', false, ['MANUAL']), 'DONE')).toBe(false)
     expect(canMove(detail('DOING', false, ['MANUAL'], 'MANUAL'), 'DONE')).toBe(false)
   })
 })

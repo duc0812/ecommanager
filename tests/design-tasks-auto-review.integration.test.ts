@@ -95,8 +95,8 @@ describe('submitAutoRenderForReview', () => {
   })
 
   it('people still cannot jump NEW → REVIEW', () => {
-    expect(canTransition('NEW', 'REVIEW', 'DESIGNER', 'AUTO')).toBe(false)
-    expect(canTransition('ASSIGNED', 'REVIEW', 'LEADER', 'AUTO')).toBe(false)
+    expect(canTransition('NEW', 'REVIEW', 'DESIGNER')).toBe(false)
+    expect(canTransition('ASSIGNED', 'REVIEW', 'LEADER')).toBe(false)
   })
 })
 
@@ -111,14 +111,15 @@ describe('approving an auto render', () => {
   it('a designer cannot shortcut an AUTO-ready task with an auto file to DONE from DOING', async () => {
     await art('a4', 'PRINT')
     await prisma.designTask.update({ where: { taskKey: 'DTAR1_4' }, data: { status: 'DOING', readiness: 'AUTO', assigneeId: DES.id } })
-    await expect(transitionTask('DTAR1_4', DES, { to: 'DONE' })).rejects.toThrow('File in tự động phải được leader duyệt')
+    await expect(transitionTask('DTAR1_4', DES, { to: 'DONE' })).rejects.toThrow(/không được phép/)
     expect((await transitionTask('DTAR1_4', DES, { to: 'REVIEW' })).task.status).toBe('REVIEW')
   })
 
-  it('a designer may still quick-approve an AUTO-ready task whose files are all manual', async () => {
+  it('a designer cannot finish an AUTO-ready task even when every file is manual', async () => {
     await prisma.designArtwork.updateMany({ where: { orderId: ORDER_ID, shopifyLineId: 'a2' }, data: { removedAt: null, source: 'MANUAL' } })
     await prisma.designTask.update({ where: { taskKey: 'DTAR1_2' }, data: { status: 'DOING', readiness: 'AUTO', assigneeId: DES.id } })
-    expect((await transitionTask('DTAR1_2', DES, { to: 'DONE' })).task.status).toBe('DONE')
+    await expect(transitionTask('DTAR1_2', DES, { to: 'DONE' })).rejects.toThrow(/không được phép/)
+    await prisma.designTask.update({ where: { taskKey: 'DTAR1_2' }, data: { status: 'DONE' } })
   })
 })
 

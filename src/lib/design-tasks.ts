@@ -32,7 +32,7 @@ export function isLeader(role: string): boolean {
   return role === 'SUPERADMIN' || role === 'ADMIN'
 }
 
-export function canTransition(from: TaskStatus, to: TaskStatus, actor: ActorRole, readiness: Readiness): boolean {
+export function canTransition(from: TaskStatus, to: TaskStatus, actor: ActorRole): boolean {
   if (from === to) return false
   if (from === 'CANCELLED') return false
   if (to === 'ASK_CUSTOMER') return OPEN.includes(from)
@@ -42,7 +42,7 @@ export function canTransition(from: TaskStatus, to: TaskStatus, actor: ActorRole
     case 'NEW': return from === 'ASSIGNED'
     case 'DOING': return from === 'NEW' || from === 'ASSIGNED' || from === 'DONE' || from === 'REJECTED'
     case 'REVIEW': return from === 'DOING' || from === 'REJECTED'
-    case 'DONE': return actor === 'LEADER' ? from === 'REVIEW' : (readiness === 'AUTO' && (from === 'NEW' || from === 'ASSIGNED' || from === 'DOING'))
+    case 'DONE': return actor === 'LEADER' && from === 'REVIEW'
     case 'REJECTED': return actor === 'LEADER' && from === 'REVIEW'
     default: return false
   }
@@ -201,7 +201,7 @@ export async function transitionTask(taskKey: string, actor: Actor, input: Trans
   if (!task) throw new Error('Task not found')
   const from = task.status as TaskStatus
   const role = actorRole(actor)
-  if (!(input.continue && from === 'ASK_CUSTOMER' && input.to === (task.prevStatus ?? 'NEW')) && !canTransition(from, input.to, role, task.readiness as Readiness)) {
+  if (!(input.continue && from === 'ASK_CUSTOMER' && input.to === (task.prevStatus ?? 'NEW')) && !canTransition(from, input.to, role)) {
     throw new Error(`Chuyển ${from} → ${input.to} không được phép với vai trò ${role}`)
   }
   if (role !== 'LEADER' && input.to === 'DONE' && await hasAutoArtwork(task.orderId, task.shopifyLineId)) {
