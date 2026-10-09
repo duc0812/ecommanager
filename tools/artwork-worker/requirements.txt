@@ -1,0 +1,6 @@
+psd-tools[composite]>=1.24
+Pillow>=10.1
+numpy>=1.24
+fontTools>=4.40
+requests>=2.31
+pytest>=7
