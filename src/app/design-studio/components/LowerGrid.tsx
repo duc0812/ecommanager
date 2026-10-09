@@ -3,6 +3,7 @@ import { useState, type FormEvent, type ReactNode } from 'react'
 import type { ArtworkRow, TaskDetail, TemplateRow, TransitionBody } from './types'
 import { OWNED_MOVES, allSlotsFilled, canTransition, newestArtwork, postJson, sharpnessRatio, sourceEngine, targetFor, taskUrl, type Tone } from './model'
 import ArtworkSlots from './ArtworkSlots'
+import AutoRenderBar from './AutoRenderBar'
 import { Avatar, Card, ErrorBanner, ExtLink, Icon, TEXT_TONE, btn, btnPrimary, input } from './ui'
 
 const STATUS_ICON: Record<Tone, string> = { ok: 'check_circle', warn: 'error', bad: 'cancel', idle: 'remove', brand: 'info' }
@@ -205,7 +206,8 @@ export default function LowerGrid({ detail, onChanged }: { detail: TaskDetail; o
   return (
     <div className="grid grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] gap-md items-start">
       <div className="flex flex-col gap-md min-w-0">
-        <ArtworkSlots line={detail.line} slots={detail.slots} driveConnected={detail.driveConnected} onUploaded={onChanged} me={detail.me} taskStatus={detail.task.status} />
+        <ArtworkSlots line={detail.line} slots={detail.slots} driveConnected={detail.driveConnected} onUploaded={onChanged} me={detail.me} taskStatus={detail.task.status}
+          autoRender={<AutoRenderBar detail={detail} onChanged={onChanged} />} />
         <SupplierCard detail={detail} />
       </div>
       <div className="flex flex-col gap-md min-w-0">

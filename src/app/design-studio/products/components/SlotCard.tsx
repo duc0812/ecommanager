@@ -9,6 +9,7 @@ import { requestJson } from '../../components/model'
 import { ErrorBanner, Icon, Note, Pill, btn, btnPrimary, card, fmtSize, input } from '../../components/ui'
 import { FONT_ACCEPT, psdUploadUrl, putFile, uploadFonts } from './upload'
 import { LIBRARY_META, fmtDate, isBusy } from './meta'
+import LayerFieldPicker from './LayerFieldPicker'
 
 type View = 'compare' | 'preview' | 'artwork' | 'render'
 type Draft = { field: string; fit: FieldFit; maxChars: string; x: string; y: string; w: string; h: string }
@@ -391,6 +392,11 @@ export default function SlotCard({ slot, stale = false, product, fonts, canAdmin
         </div>
       </div>
 
+      {entry && parsed && (
+        <LayerFieldPicker entry={entry} observedFields={product.observedFields} disabled={busy || busyParse}
+          onSave={layerFields => patch({ layerFields }, 'Đã lưu layer custom — đang đọc lại PSD')} />
+      )}
+
       {entry && fields.length > 0 && (
         <div className="border-t border-outline-variant/20 overflow-x-auto">
           <div className="flex items-center gap-sm px-md py-xs">
@@ -442,6 +448,9 @@ export default function SlotCard({ slot, stale = false, product, fonts, canAdmin
                         <i className="inline-block w-3.5 h-3.5 rounded border border-outline-variant/40" style={{ background: f.color }} />{f.color}
                       </span>
                       {f.stroke && <div className="text-label-sm text-on-surface-variant">viền {f.stroke.px}px {f.stroke.color}</div>}
+                      {f.gradient && <div className="text-label-sm text-on-surface-variant">gradient {f.gradient.stops.length} màu</div>}
+                      {f.bevel && <div className="text-label-sm text-on-surface-variant">bevel {f.bevel.size}px</div>}
+                      {f.shadow && <div className="text-label-sm text-on-surface-variant">đổ bóng {f.shadow.blur}px</div>}
                     </td>
                     <td className="px-sm py-xs">{f.align}</td>
                     <td className="px-sm py-xs">

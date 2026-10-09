@@ -1,5 +1,5 @@
 'use client'
-import { useRef, useState } from 'react'
+import { useRef, useState, type ReactNode } from 'react'
 import type { ArtworkRow, Me, TaskStatus, WorkspaceLine } from './types'
 import { artworkImage, canRemoveArtwork, copyText, isImage, requestJson, versionsFor } from './model'
 import { Card, ErrorBanner, Icon, Note, Pill, btn, fmtSize } from './ui'
@@ -9,8 +9,8 @@ import { useLightbox } from './Lightbox'
 
 const mini = 'inline-flex items-center gap-xs rounded-md border border-outline-variant/40 px-xs py-[2px] text-label-sm font-semibold text-on-surface hover:bg-surface-container-low disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap'
 
-export default function ArtworkSlots({ line, slots, driveConnected, onUploaded, me, taskStatus }: {
-  line: WorkspaceLine; slots: string[]; driveConnected: boolean; onUploaded: () => void; me: Me; taskStatus: TaskStatus
+export default function ArtworkSlots({ line, slots, driveConnected, onUploaded, me, taskStatus, autoRender }: {
+  line: WorkspaceLine; slots: string[]; driveConnected: boolean; onUploaded: () => void; me: Me; taskStatus: TaskStatus; autoRender?: ReactNode
 }) {
   const { progress, warnings, setWarning, error, setError, upload, busyLabel } = useArtworkUpload(line.id, driveConnected, onUploaded)
   const remover = useArtworkRemove(onUploaded)
@@ -39,6 +39,7 @@ export default function ArtworkSlots({ line, slots, driveConnected, onUploaded, 
   return (
     <Card icon="folder_open" title="Artwork theo panel" right={`${fileCount} file`}>
       {remover.dialog}
+      {autoRender}
       <ErrorBanner msg={error} onClose={() => setError('')} />
       <span role="status" aria-live="polite" className={copied ? 'text-label-sm text-on-surface-variant' : 'sr-only'}>{copied}</span>
       {slots.map(area => {
@@ -67,7 +68,7 @@ export default function ArtworkSlots({ line, slots, driveConnected, onUploaded, 
                     ? <button type="button" onClick={() => lightbox.open(v.url, artworkImage(v))} aria-label={`Xem ${v.printArea} v${v.version}`} title="Xem ảnh"
                         className="w-10 h-10 rounded-md overflow-hidden bg-surface-container-low border border-outline-variant/20 hover:ring-2 hover:ring-secondary">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={v.url} alt="" className="w-full h-full object-contain" loading="lazy" />
+                        <img src={v.previewUrl ?? v.url} alt="" className="w-full h-full object-contain" loading="lazy" />
                       </button>
                     : <span className="w-10 h-10 rounded-md bg-surface-container-low grid place-items-center text-on-surface-variant">
                         <Icon name={v.mimeType.startsWith('image/') ? 'image' : 'description'} className="text-[18px]" />
@@ -76,6 +77,7 @@ export default function ArtworkSlots({ line, slots, driveConnected, onUploaded, 
                     <span className="flex items-center gap-xs min-w-0">
                       <span className="text-label-sm font-semibold truncate text-on-surface">v{v.version} · {v.fileName}</span>
                       <Pill tone={isDrive ? 'ok' : 'warn'} icon={isDrive ? 'cloud_done' : 'hard_drive'}>{isDrive ? 'Drive' : 'Local'}</Pill>
+                      {v.source === 'AUTO' && <Pill tone="brand" icon="auto_awesome">Tự động</Pill>}
                     </span>
                     <span className="text-label-sm text-on-surface-variant truncate">
                       {v.widthPx && v.heightPx ? `${v.widthPx}×${v.heightPx} · ` : ''}{fmtSize(v.size)} · {new Date(v.createdAt).toLocaleString('en-US')}
