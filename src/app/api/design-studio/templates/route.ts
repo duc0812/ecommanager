@@ -10,8 +10,14 @@ export async function GET(req: NextRequest) {
   const templates = await prisma.printTemplate.findMany({
     where: supplierId ? { supplierId } : undefined,
     orderBy: { name: 'asc' },
+    include: { supplier: { select: { name: true, code: true } } },
   })
-  return NextResponse.json({ templates: templates.map(mapTemplate) })
+  return NextResponse.json({
+    templates: templates.map(t => ({
+      ...mapTemplate(t),
+      supplierId: t.supplierId, supplierSku: t.supplierSku, supplierName: t.supplier.name, supplierCode: t.supplier.code,
+    })),
+  })
 }
 
 export async function POST(req: NextRequest) {

@@ -18,6 +18,8 @@ export type TemplateRow = {
   areas: TemplateArea[]; guideImageUrl: string | null; templateUrl: string | null
 }
 
+export type TemplateListRow = TemplateRow & { supplierId: string; supplierSku: string | null; supplierName: string; supplierCode: string }
+
 export type ArtworkRow = {
   id: string; printArea: string; version: number; fileName: string; size: number
   mimeType: string; uploadedById: string | null; createdAt: string; url: string
