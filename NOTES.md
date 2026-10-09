@@ -342,9 +342,9 @@ Spec `docs/superpowers/specs/2026-10-10-design-tasks-v2-design.md`, plan `docs/s
 | NEW / DOING / REJECTED → ASSIGNED | Leader | assignee, KPI, due hours, note |
 | ASSIGNED → NEW | assignee | "Từ chối" — clears the assignee |
 | NEW / ASSIGNED / REJECTED / DONE → DOING | owner or unassigned | "Nhận việc" sets assignee = self when empty; DONE → DOING reopens and clears the line's design link |
-| DOING / REJECTED → REVIEW | owner | "Gửi duyệt" (client requires every slot filled) |
+| DOING / REJECTED → REVIEW | owner | "Gửi duyệt" — the server refuses `Chưa có artwork cho: <slots>` unless every required slot has an artwork (not checked on ASK_CUSTOMER → continue) |
 | REVIEW → REJECTED | Leader | ≥1 reason from `rejectReasons` |
-| REVIEW → DONE | Leader | goes through `updateLine(done:true)` |
+| REVIEW → DONE | Leader | goes through `updateLine(done:true)` — except when the line already has a non-studio `designDriveLink` (Trello / Library) and the task was not reopened by the factory: then the task is marked DONE with SYSTEM "Design đã có từ ngoài studio — giữ link hiện tại" and the link/order are left alone |
 | NEW / ASSIGNED / DOING / REVIEW → DONE | Designer, readiness AUTO only | "Duyệt nhanh" |
 | any open → ASK_CUSTOMER | owner | saves `prevStatus`; "Tiếp tục" (`continue: true`) restores it |
 | open / ASK_CUSTOMER → CANCELLED | Leader | |
@@ -355,10 +355,17 @@ Leader = SUPERADMIN or ADMIN (`isLeader`); everyone else is a Designer.
 
 **Slots (required files).** `requiredSlotsFor(line, template)`: the `PrintTemplate` area names when the line's supplier/SKU has a template, else `printAreasForLine` (the `_print_files` areas, or `Artwork`). `loadTask` returns them as `detail.slots`; the upload slots, checklist item 5, "Gửi duyệt"/DONE gating and the canvas all use that list, and `transitionTask(DONE)` passes the same list to `updateLine(done:true, requiredAreas)`, which refuses with `No artwork uploaded for: <missing>`. `designDriveLink` = the newest artwork of the first required slot.
 
-**How tasks are created.** `syncDesignTasks(orderId)` runs at the end of every order in `POST /api/shopify/orders/sync`, and on demand via `POST /api/design-studio/tasks/sync` (body `{orderId}` or `{}` for all PENDING_DESIGN / DESIGN_REJECTED orders; the "Đồng bộ task" button). It is idempotent: existing tasks keep status/assignee; a cancelled/refunded order cancels open tasks; a line that already has `designDriveLink` (Trello / Design Library) marks its task DONE ("done outside").
+**How tasks are created and closed.** `syncDesignTasks(orderId)` runs:
+- at the end of every order in `POST /api/shopify/orders/sync`;
+- after every order touched by `POST /api/trello/sync`, `PATCH /api/fulfillment/orders/[id]/status` and `POST /api/fulfillment/orders/bulk-status` (via `syncDesignTasksForOrders`, only for orders that have a task or sit in PENDING_DESIGN / DESIGN_REJECTED; errors come back as `designTaskErrors`, never fail the write);
+- on demand via `POST /api/design-studio/tasks/sync` (body `{orderId}`, or `{}` for every PENDING_DESIGN / DESIGN_REJECTED order plus every order with a task not DONE/CANCELLED; the "Đồng bộ task" button; per-order errors in `errors`).
+
+It is idempotent: existing tasks keep status/assignee; a cancelled/refunded order cancels open tasks; a line that already has `designDriveLink` (Trello / Design Library) marks its task DONE ("done outside").
+**Factory rejection.** When the order is DESIGN_REJECTED, a DONE task goes to REJECTED with reason `Xưởng trả file` (SYSTEM "Xưởng trả file — mở lại task", counted as `reopened`); a line with a link but no task gets a new task in that state. While the reason `Xưởng trả file` is on the task, sync never auto-completes it from the old link, and studio approval rewrites the link through `updateLine` (a leader's later REJECTED keeps that reason; studio DONE clears the reasons).
 
 **Permission / settings / templates.**
 - Feature permission `design_tasks` (ADMIN + SUPPORT by default); `/api/design-studio` accepts `design_tasks`, `fulfillment_design_library` or `fulfillment_orders`.
+- **Rollout (prod, after deploy):** `node scripts/backfill-design-tasks-permission.mjs` (dry run) then `--apply` with `DATABASE_URL` pointing at the prod DB. Default role permissions only apply to new users, so without it every existing ADMIN/SUPPORT is bounced from `/design-studio` to `/no-access`. It appends `design_tasks` to every user holding `fulfillment_design_library` (dev.db 2026-10-09: 3 of 4 users). `tokenVersion` is not bumped, so nobody is logged out and no re-login is needed: page access is checked by the middleware against the permissions inside the JWT cookie, and the Sidebar/`RoleGate` read `user.permissions` from `GET /api/auth/me`, which reads the DB and re-signs the cookie with the fresh list. So a user gets the page after loading any app page once after the backfill (any page except `/login` and `/no-access`, where `UserProvider` skips the call). Opening `/design-studio` directly with the old cookie still lands on `/no-access` until that happens.
 - Settings live in `AppSetting` key `design.settings` (`src/lib/design-settings.ts`: SLA hours, `kpiByType`, `rejectReasons`), read via `GET /api/design-studio/settings`, saved via `PUT` (SUPERADMIN only).
 - `PrintTemplate` (per supplier, optional `supplierSku`; exact SKU → longest prefix → supplier default). `scripts/seed-print-template-merchize.mjs` seeds the Merchize BAJE jersey template (6 areas). **The BAJE area coordinates are illustrative until the real PSD is measured** — replace `AREAS` then.
 - Uploads record `widthPx/heightPx` for PNG/JPG (null for PSD/PDF/ZIP) for the "Yêu cầu xưởng ↔ file" table.
@@ -369,6 +376,6 @@ Leader = SUPERADMIN or ADMIN (`isLeader`); everyone else is a Designer.
 3. A Designer cannot approve a non-AUTO task or assign; a Leader can (`canTransition` matrix in `tests/design-tasks.test.ts`, route test in `tests/design-tasks-routes.integration.test.ts`).
 4. ASK_CUSTOMER → continue restores the previous status, not NEW (`tests/design-tasks-transition.integration.test.ts`).
 5. A PNG/JPG upload records `widthPx/heightPx`; PSD/PDF records null and does not fail — the probe is pinned in `tests/image-size.test.ts` (PNG, JPEG SOF0/SOF2, null for other bytes, never throws); the upload route writing the columns has no integration test of its own.
-Also pinned since the fix wave: template-area slots gate DONE and the ownership rule (`tests/design-tasks-transition.integration.test.ts`, 400 at the route in `tests/design-tasks-routes.integration.test.ts`); `timeLeft` / `allSlotsFilled` (`tests/design-tasks-model.test.ts`).
+Also pinned since the fix wave: template-area slots gate DONE and the ownership rule (`tests/design-tasks-transition.integration.test.ts`, 400 at the route in `tests/design-tasks-routes.integration.test.ts`); `timeLeft` / `allSlotsFilled` (`tests/design-tasks-model.test.ts`). Fix wave 2: factory reopen + no auto-complete + status-PATCH cancel (`tests/design-tasks-sync.integration.test.ts`); REVIEW needs artwork, external-link DONE keeps the link, factory-reopened DONE rewrites it, continue → DOING logs "Tiếp tục làm" (`tests/design-tasks-transition.integration.test.ts`); sync-all visits READY orders with open tasks and `mine=1` (`tests/design-tasks-routes.integration.test.ts`).
 
 Not done yet: no browser click-through of the page; `readinessFor` never yields `AUTO`, so "Duyệt nhanh" stays unused until something sets AUTO.
