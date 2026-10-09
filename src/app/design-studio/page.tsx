@@ -79,7 +79,7 @@ function DesignTasks() {
     setDetailError('')
     const r = await requestJson<TaskDetail>(taskUrl(key))
     if (id !== detailReq.current) return
-    if (!r.ok) { setDetailError(r.error); setDetail(null); return }
+    if (!r.ok) { setDetailError(r.error); return }
     setDetailError('')
     setDetail(r.data)
   }, [])
@@ -167,7 +167,7 @@ function DesignTasks() {
             <div className={`${card} p-lg text-body-sm text-on-surface-variant`}>Chưa có task nào. Bấm &quot;Đồng bộ task&quot; để tạo task từ các đơn đang chờ design.</div>
           )}
           {sel && detailError && (
-            <div className={`${card} p-md`}><ErrorBanner msg={`${sel}: ${detailError}`} /></div>
+            <div className={`${card} p-md`}><ErrorBanner msg={`${sel}: ${detailError}`} onClose={() => setDetailError('')} /></div>
           )}
           {sel && !detailError && !current && (
             <div className={`${card} p-lg text-body-sm text-on-surface-variant flex items-center gap-sm`}>

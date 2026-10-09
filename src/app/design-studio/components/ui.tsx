@@ -17,7 +17,7 @@ const TONE: Record<Tone, string> = {
 }
 
 export const TEXT_TONE: Record<Tone, string> = {
-  ok: 'text-tertiary',
+  ok: 'text-on-tertiary-container',
   warn: 'text-amber-900',
   bad: 'text-error',
   idle: 'text-on-surface-variant',

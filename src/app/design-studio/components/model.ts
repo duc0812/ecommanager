@@ -58,8 +58,9 @@ export type Tone = 'ok' | 'warn' | 'bad' | 'idle' | 'brand'
 export function timeLeft(t: Pick<TaskRow, 'status' | 'dueAt'>, now = Date.now()): { label: string; tone: Tone; icon: string } {
   if (t.status === 'DONE') return { label: 'đã gửi', tone: 'ok', icon: 'check' }
   if (!t.dueAt) return { label: 'chưa hạn', tone: 'idle', icon: 'schedule' }
-  const h = Math.round((new Date(t.dueAt).getTime() - now) / 3_600_000)
-  if (h < 0) return { label: `quá ${-h}h`, tone: 'bad', icon: 'error' }
+  const ms = new Date(t.dueAt).getTime() - now
+  const h = Math.floor(Math.abs(ms) / 3.6e6)
+  if (ms < 0) return { label: `quá ${h}h`, tone: 'bad', icon: 'error' }
   if (h <= 4) return { label: `còn ${h}h`, tone: 'warn', icon: 'schedule' }
   return { label: `còn ${h}h`, tone: 'idle', icon: 'schedule' }
 }
