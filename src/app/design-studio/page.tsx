@@ -1,153 +1,201 @@
 'use client'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import Link from 'next/link'
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import Sidebar from '@/components/Sidebar'
-import { STATUS_COLORS, STATUS_LABELS, type PipelineStatus } from '@/lib/pipeline-status'
+import type { Me, Readiness, TaskDetail, TaskRow } from './components/types'
+import { postJson, requestJson, taskUrl } from './components/model'
+import Queue from './components/Queue'
+import TaskHeader from './components/TaskHeader'
+import ImagePanes from './components/ImagePanes'
+import LowerGrid from './components/LowerGrid'
+import { ErrorBanner, Icon, Note, READY_META, btnPrimary, card } from './components/ui'
 
-type Line = { id: string; shopifyLineId: string; sku: string | null; productTitle: string; previewCdnUrl: string | null; resolvedSupplierId: string | null; customized: boolean; designDriveLink: string | null }
-type OrderRow = {
-  id: string; shopifyOrderNumber: string; placedAt: string; pipelineStatus: PipelineStatus
-  orderType: string; designReady: boolean; projectId: string; lines: Line[]
+type Filter = 'ALL' | Readiness
+
+function Flags({ detail }: { detail: TaskDetail }) {
+  const { task, line } = detail
+  return (
+    <>
+      {task.status === 'REJECTED' && (
+        <Note tone="bad" icon="undo">
+          <b>Leader trả lại:</b> {task.rejectReasons.join(', ') || '—'}{task.rejectNote ? ` — ${task.rejectNote}` : ''}
+        </Note>
+      )}
+      {!line.supplier && <Note tone="bad" icon="error">Dòng này chưa map xưởng — không biết template / yêu cầu file.</Note>}
+      {line.designNote && <Note tone="idle" icon="sticky_note_2">{line.designNote}</Note>}
+    </>
+  )
 }
-type Supplier = { id: string; name: string; code: string }
-type Project = { id: string; name: string }
-type Tab = 'TODO' | 'DONE'
 
-const TYPE_LABEL: Record<string, string> = { CUSTOM: 'Custom', NON_CUSTOM: 'Non-custom', DUAL: 'Dual', MIXED: 'Mixed', UNKNOWN: '—' }
+function DesignTasks() {
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const paramTask = searchParams.get('task')
 
-function hoursSince(iso: string) { return Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 36e5)) }
-
-export default function DesignStudioPage() {
-  const [tab, setTab] = useState<Tab>('TODO')
-  const [orders, setOrders] = useState<OrderRow[]>([])
-  const [suppliers, setSuppliers] = useState<Supplier[]>([])
-  const [projects, setProjects] = useState<Project[]>([])
-  const [projectId, setProjectId] = useState('')
-  const [supplierId, setSupplierId] = useState('')
-  const [type, setType] = useState('ALL')
-  const [search, setSearch] = useState('')
-  const [debouncedSearch, setDebouncedSearch] = useState('')
-  const requestId = useRef(0)
-  const [loading, setLoading] = useState(false)
-  const [err, setErr] = useState('')
+  const [tasks, setTasks] = useState<TaskRow[]>([])
+  const [me, setMe] = useState<Me | null>(null)
+  const [listLoading, setListLoading] = useState(false)
+  const [listError, setListError] = useState('')
+  const [sel, setSel] = useState<string | null>(paramTask)
+  const [filter, setFilter] = useState<Filter>('ALL')
+  const [mine, setMine] = useState(false)
+  const [q, setQ] = useState('')
+  const [debouncedQ, setDebouncedQ] = useState('')
+  const [detail, setDetail] = useState<TaskDetail | null>(null)
+  const [detailError, setDetailError] = useState('')
+  const [syncing, setSyncing] = useState(false)
+  const [syncMsg, setSyncMsg] = useState('')
+  const [syncError, setSyncError] = useState('')
+  const listReq = useRef(0)
+  const detailReq = useRef(0)
 
   useEffect(() => {
-    fetch('/api/suppliers').then(r => r.json()).then(d => setSuppliers(d.suppliers ?? [])).catch(() => setSuppliers([]))
-    fetch('/api/projects').then(r => r.json()).then(d => setProjects(Array.isArray(d) ? d : (d.projects ?? []))).catch(() => setProjects([]))
+    const t = setTimeout(() => setDebouncedQ(q.trim()), 300)
+    return () => clearTimeout(t)
+  }, [q])
+
+  useEffect(() => {
+    if (paramTask) setSel(paramTask)
+  }, [paramTask])
+
+  const loadList = useCallback(async () => {
+    const id = ++listReq.current
+    setListLoading(true)
+    const qs = new URLSearchParams()
+    if (mine) qs.set('mine', '1')
+    if (debouncedQ) qs.set('q', debouncedQ)
+    const query = qs.toString()
+    const r = await requestJson<{ tasks: TaskRow[]; me: Me }>(`/api/design-studio/tasks${query ? `?${query}` : ''}`)
+    if (id !== listReq.current) return
+    setListLoading(false)
+    if (!r.ok) { setListError(r.error); return }
+    setListError('')
+    setTasks(r.data.tasks)
+    setMe(r.data.me)
+  }, [mine, debouncedQ])
+
+  const loadDetail = useCallback(async (key: string) => {
+    const id = ++detailReq.current
+    setDetailError('')
+    const r = await requestJson<TaskDetail>(taskUrl(key))
+    if (id !== detailReq.current) return
+    if (!r.ok) { setDetailError(r.error); setDetail(null); return }
+    setDetailError('')
+    setDetail(r.data)
   }, [])
 
+  useEffect(() => { loadList() }, [loadList])
+
   useEffect(() => {
-    const t = setTimeout(() => setDebouncedSearch(search.trim()), 300)
-    return () => clearTimeout(t)
-  }, [search])
+    if (sel) loadDetail(sel)
+  }, [sel, loadDetail])
 
-  const load = useCallback(async () => {
-    const id = ++requestId.current
-    setLoading(true); setErr('')
-    try {
-      const statuses: PipelineStatus[] = tab === 'TODO' ? ['PENDING_DESIGN', 'DESIGN_REJECTED'] : ['READY_TO_PRODUCTION', 'EXPORTED', 'FULFILLED']
-      const qs = new URLSearchParams({ statuses: statuses.join(','), limit: '500' })
-      if (projectId) qs.set('projectId', projectId)
-      if (supplierId) qs.set('supplierId', supplierId)
-      if (debouncedSearch) qs.set('search', debouncedSearch)
-      if (tab === 'DONE') qs.set('dateFrom', new Date(Date.now() - 7 * 864e5).toISOString().slice(0, 10))
-      const res = await fetch(`/api/design-studio/orders?${qs}`)
-      const d = await res.json().catch(() => ({}))
-      if (id !== requestId.current) return
-      if (!res.ok) throw new Error(d.error ?? `HTTP ${res.status}`)
-      let list = (d.orders ?? []) as OrderRow[]
-      if (tab === 'DONE') list = list.filter(o => o.designReady && o.lines.some(l => l.customized))
-      if (type !== 'ALL') list = list.filter(o => o.orderType === type)
-      list.sort((a, b) => new Date(a.placedAt).getTime() - new Date(b.placedAt).getTime())
-      setOrders(list)
-    } catch (e: any) {
-      if (id === requestId.current) setErr(e.message)
-    } finally {
-      if (id === requestId.current) setLoading(false)
-    }
-  }, [tab, projectId, supplierId, type, debouncedSearch])
-  useEffect(() => { load() }, [load])
+  const visible = useMemo(() => tasks.filter(t => filter === 'ALL' || t.readiness === filter), [tasks, filter])
 
-  const supplierName = useMemo(() => new Map(suppliers.map(s => [s.id, s.code || s.name])), [suppliers])
+  useEffect(() => {
+    if (!sel && visible.length > 0) setSel(visible[0].taskKey)
+  }, [sel, visible])
 
+  useEffect(() => {
+    if (!sel || paramTask === sel) return
+    router.replace(`/design-studio?task=${encodeURIComponent(sel)}`, { scroll: false })
+  }, [sel, paramTask, router])
+
+  const reload = useCallback(() => {
+    loadList()
+    if (sel) loadDetail(sel)
+  }, [loadList, loadDetail, sel])
+
+  async function sync() {
+    setSyncing(true); setSyncMsg(''); setSyncError('')
+    const r = await postJson<{ created: number; cancelled: number; completed: number; orders: number }>('/api/design-studio/tasks/sync', {})
+    setSyncing(false)
+    if (!r.ok) { setSyncError(r.error); return }
+    setSyncMsg(`${r.data.orders} đơn · tạo ${r.data.created} · huỷ ${r.data.cancelled} · xong ${r.data.completed}`)
+    loadList()
+  }
+
+  const counts = useMemo(() => {
+    const open = tasks.filter(t => t.status !== 'DONE')
+    return {
+      ALL: open.length,
+      AUTO: open.filter(t => t.readiness === 'AUTO').length,
+      LOW: open.filter(t => t.readiness === 'LOW').length,
+      MANUAL: open.filter(t => t.readiness === 'MANUAL').length,
+    } as Record<Filter, number>
+  }, [tasks])
+
+  const holdCount = useMemo(() => {
+    const m: Record<string, number> = {}
+    for (const t of tasks) if (t.assigneeId && t.status !== 'DONE') m[t.assigneeId] = (m[t.assigneeId] ?? 0) + 1
+    return m
+  }, [tasks])
+
+  const current = detail && detail.task.taskKey === sel ? detail : null
+  const chipCls = (on: boolean) => `inline-flex items-center gap-xs rounded-full border px-sm py-[2px] text-label-sm ${on ? 'bg-secondary/10 text-secondary border-transparent font-semibold' : 'bg-surface-container-lowest border-outline-variant/40 text-on-surface-variant'}`
+
+  return (
+    <>
+      <div className="flex items-center gap-md flex-wrap mb-md">
+        <h1 className="text-headline-lg text-on-surface">Design Tasks</h1>
+        <span className="text-label-sm text-on-surface-variant">Task ID = mã đơn_dòng · mỗi task là một dòng hàng cần file in</span>
+        <div className="flex items-center gap-xs flex-wrap">
+          {(['ALL', 'AUTO', 'LOW', 'MANUAL'] as Filter[]).map(f => (
+            <button key={f} type="button" aria-pressed={filter === f} onClick={() => setFilter(f)} className={chipCls(filter === f)}>
+              {f === 'ALL' ? 'Tất cả' : READY_META[f].label}
+              <span className="text-on-surface-variant font-normal">{counts[f]}</span>
+            </button>
+          ))}
+          <button type="button" aria-pressed={mine} onClick={() => setMine(!mine)} className={chipCls(mine)}>
+            <Icon name="person" className="text-[14px]" />Của tôi
+          </button>
+        </div>
+        <div className="ml-auto flex items-center gap-sm">
+          {me && <span className="text-label-sm text-on-surface-variant">{me.name} · {me.isLeader ? 'Leader' : 'Designer'}</span>}
+          {syncMsg && <span role="status" className="text-label-sm text-on-surface-variant">{syncMsg}</span>}
+          <button type="button" onClick={sync} disabled={syncing} className={`${btnPrimary} px-lg py-sm text-label-md`}>
+            <Icon name="sync" className={`text-[18px] ${syncing ? 'animate-spin' : ''}`} />{syncing ? 'Đang đồng bộ…' : 'Đồng bộ task'}
+          </button>
+        </div>
+      </div>
+      {syncError && <div className="mb-md"><ErrorBanner msg={syncError} onClose={() => setSyncError('')} /></div>}
+
+      <div className="grid grid-cols-[290px_minmax(0,1fr)] gap-md items-start">
+        <Queue tasks={visible} sel={sel} onSelect={setSel} q={q} onQ={setQ} loading={listLoading} error={listError} />
+        <div className="flex flex-col gap-md min-w-0">
+          {!sel && !listLoading && (
+            <div className={`${card} p-lg text-body-sm text-on-surface-variant`}>Chưa có task nào. Bấm &quot;Đồng bộ task&quot; để tạo task từ các đơn đang chờ design.</div>
+          )}
+          {sel && detailError && (
+            <div className={`${card} p-md`}><ErrorBanner msg={`${sel}: ${detailError}`} /></div>
+          )}
+          {sel && !detailError && !current && (
+            <div className={`${card} p-lg text-body-sm text-on-surface-variant flex items-center gap-sm`}>
+              <Icon name="progress_activity" className="animate-spin" />Đang tải {sel}…
+            </div>
+          )}
+          {current && (
+            <>
+              <TaskHeader key={`h-${current.task.taskKey}`} detail={current} holdCount={holdCount} onChanged={reload} />
+              <ImagePanes key={`i-${current.task.taskKey}`} detail={current} />
+              <Flags detail={current} />
+              <LowerGrid key={`l-${current.task.taskKey}`} detail={current} onChanged={reload} />
+            </>
+          )}
+        </div>
+      </div>
+    </>
+  )
+}
+
+export default function DesignTasksPage() {
   return (
     <div className="flex min-h-screen bg-surface">
       <Sidebar />
-      <main className="ml-[280px] flex-1 p-xl">
-        <div className="flex items-end gap-md mb-lg">
-          <div>
-            <h1 className="text-headline-lg text-on-surface">Design Studio</h1>
-            <p className="text-body-sm text-on-surface-variant">Mỗi đơn là một workspace: thông tin custom, supplier, template, artwork.</p>
-          </div>
-          <div className="ml-auto flex gap-xs bg-surface-container rounded-lg p-xs">
-            {(['TODO', 'DONE'] as Tab[]).map(t => (
-              <button key={t} onClick={() => setTab(t)}
-                className={`px-md py-xs rounded-md text-label-sm ${tab === t ? 'bg-surface-container-lowest shadow-card text-on-surface' : 'text-on-surface-variant'}`}>
-                {t === 'TODO' ? 'Cần design' : 'Đã xong 7 ngày'}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="flex flex-wrap gap-sm mb-md">
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Tìm số đơn / SKU" aria-label="Tìm đơn"
-            className="px-md py-sm rounded-lg border border-outline-variant/40 bg-surface-container-lowest text-body-sm" />
-          <select value={projectId} onChange={e => setProjectId(e.target.value)} aria-label="Store" className="px-md py-sm rounded-lg border border-outline-variant/40 bg-surface-container-lowest text-body-sm">
-            <option value="">Mọi store</option>
-            {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
-          <select value={supplierId} onChange={e => setSupplierId(e.target.value)} aria-label="Supplier" className="px-md py-sm rounded-lg border border-outline-variant/40 bg-surface-container-lowest text-body-sm">
-            <option value="">Mọi supplier</option>
-            {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-          </select>
-          <select value={type} onChange={e => setType(e.target.value)} aria-label="Loại đơn" className="px-md py-sm rounded-lg border border-outline-variant/40 bg-surface-container-lowest text-body-sm">
-            <option value="ALL">Mọi loại</option>
-            {Object.entries(TYPE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-          </select>
-          <span className="self-center text-body-sm text-on-surface-variant">{loading ? 'Đang tải…' : `${orders.length} đơn`}</span>
-        </div>
-        {err && <div className="mb-md px-md py-sm rounded-lg bg-error-container text-on-error-container text-body-sm">{err}</div>}
-
-        <div className="bg-surface-container-lowest rounded-xl shadow-card border border-outline-variant/20 overflow-hidden">
-          <table className="w-full text-body-sm">
-            <thead className="bg-surface-container-low text-label-sm text-on-surface-variant">
-              <tr>
-                <th className="text-left px-lg py-sm">Đơn</th>
-                <th className="text-left px-md py-sm">Ngày</th>
-                <th className="text-left px-md py-sm">Loại</th>
-                <th className="text-left px-md py-sm">Dòng</th>
-                <th className="text-left px-md py-sm">Supplier</th>
-                <th className="text-left px-md py-sm">Preview</th>
-                <th className="text-right px-md py-sm">Chờ</th>
-                <th className="text-left px-md py-sm">Trạng thái</th>
-              </tr>
-            </thead>
-            <tbody>
-              {orders.map(o => {
-                const sups = Array.from(new Set(o.lines.map(l => l.resolvedSupplierId).filter(Boolean) as string[])).map(id => supplierName.get(id) ?? '?')
-                const preview = o.lines.find(l => l.previewCdnUrl)?.previewCdnUrl
-                const h = hoursSince(o.placedAt)
-                return (
-                  <tr key={o.id} className="border-t border-outline-variant/20 hover:bg-surface-container-low">
-                    <td className="px-lg py-sm">
-                      <Link href={`/design-studio/${encodeURIComponent(o.id)}`} className="text-secondary font-semibold hover:underline">{o.shopifyOrderNumber}</Link>
-                    </td>
-                    <td className="px-md py-sm">{new Date(o.placedAt).toLocaleDateString('en-US')}</td>
-                    <td className="px-md py-sm">{TYPE_LABEL[o.orderType] ?? o.orderType}</td>
-                    <td className="px-md py-sm">{o.lines.filter(l => l.sku).length}</td>
-                    <td className="px-md py-sm">{sups.join(', ') || <span className="text-on-surface-variant">chưa map</span>}</td>
-                    <td className="px-md py-sm">{preview ? <img src={preview} alt="" className="w-10 h-10 rounded-md object-cover border border-outline-variant/30" /> : '—'}</td>
-                    <td className={`px-md py-sm text-right ${h > 24 ? 'text-error font-semibold' : ''}`}>{h}h</td>
-                    <td className="px-md py-sm"><span className={`px-sm py-xs rounded-md text-label-sm ${STATUS_COLORS[o.pipelineStatus]}`}>{STATUS_LABELS[o.pipelineStatus]}</span></td>
-                  </tr>
-                )
-              })}
-              {!loading && orders.length === 0 && (
-                <tr><td colSpan={8} className="px-lg py-xl text-center text-on-surface-variant">Không có đơn nào.</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+      <main className="ml-[280px] flex-1 p-xl min-w-0">
+        <Suspense fallback={<div className="text-body-sm text-on-surface-variant">Đang tải…</div>}>
+          <DesignTasks />
+        </Suspense>
       </main>
     </div>
   )

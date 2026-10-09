@@ -1,0 +1,67 @@
+export type TaskStatus = 'NEW' | 'ASSIGNED' | 'DOING' | 'REVIEW' | 'REJECTED' | 'ASK_CUSTOMER' | 'DONE' | 'CANCELLED'
+export type Readiness = 'AUTO' | 'LOW' | 'MANUAL'
+
+export type Me = { id: string; name: string; role: string; isLeader: boolean }
+
+export type TaskRow = {
+  id: string; taskKey: string; status: TaskStatus; readiness: Readiness; assigneeId: string | null; assigneeName: string | null
+  kpi: number; dueAt: string | null; slaHours: number; rejectReasons: string[]; rejectNote: string | null
+  orderId: string; orderNumber: string; placedAt: string; shopifyLineId: string; linePosition: number
+  sku: string | null; productTitle: string; variantTitle: string | null; previewUrl: string | null
+  supplierName: string | null; customized: boolean; storeName: string
+}
+
+export type TemplateArea = { name: string; x: number; y: number; w: number; h: number }
+
+export type TemplateRow = {
+  id: string; name: string; widthPx: number; heightPx: number; dpi: number; bleedIn: number; safeIn: number; mirror: boolean
+  areas: TemplateArea[]; guideImageUrl: string | null; templateUrl: string | null
+}
+
+export type ArtworkRow = {
+  id: string; printArea: string; version: number; fileName: string; size: number
+  mimeType: string; uploadedById: string | null; createdAt: string; url: string
+  widthPx: number | null; heightPx: number | null
+}
+
+export type WorkspaceLine = {
+  id: string; shopifyLineId: string; linePosition: number; sku: string | null; productTitle: string; variantTitle: string | null
+  qty: number; isNonProduct: boolean; customized: boolean
+  variantOptions: Record<string, string>
+  attributesLoaded: boolean
+  personalization: { key: string; value: string }[]
+  customerDesignLink: string | null
+  customizedUrl: string | null
+  previewUrl: string | null
+  sourcePrintFiles: { printArea: string; url: string }[]
+  supplier: { id: string; name: string; code: string } | null
+  supplierSku: string | null
+  templateUrl: string | null
+  masterArtworkUrl: string | null
+  libraryDesignLink: string | null
+  designStatus: string
+  designDriveLink: string | null
+  designNote: string | null
+  printAreas: string[]
+  artworks: ArtworkRow[]
+}
+
+export type OrderInfo = {
+  id: string; shopifyOrderNumber: string; placedAt: string; pipelineStatus: string; orderType: string
+  designReady: boolean; trelloCardUrl: string | null
+  store: { shop: string; projectId: string; projectName: string }
+}
+
+export type TaskEvent = { id: string; type: string; message: string; actorName: string | null; createdAt: string }
+
+export type DesignSettings = { slaCustomHours: number; slaNonCustomHours: number; kpiByType: Record<string, number>; rejectReasons: string[] }
+
+export type TaskDetail = {
+  task: TaskRow; line: WorkspaceLine; order: OrderInfo; template: TemplateRow | null
+  events: TaskEvent[]; assignable: { id: string; name: string }[]; settings: DesignSettings; prevStatus: TaskStatus | null
+  me: Me
+}
+
+export type TransitionBody = {
+  to: TaskStatus; note?: string; reasons?: string[]; assigneeId?: string; kpi?: number; dueHours?: number; continue?: boolean
+}
