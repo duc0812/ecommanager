@@ -3,8 +3,9 @@ import { prisma } from '@/lib/db'
 import { localArtworkPath } from '@/lib/design-storage'
 import { artworkUrl } from '@/lib/design-studio'
 import { taskKeyFor } from '@/lib/design-tasks'
+import { localLibraryPath } from '@/lib/library-storage'
 import {
-  DriveAuthError, DriveError, deleteFile, folderForTask, getFile, isDriveConnected, shareAnyoneReader,
+  DriveAuthError, DriveError, deleteFile, folderForPath, folderForTask, getFile, isDriveConnected, shareAnyoneReader,
   startResumableUpload, uploadChunk,
 } from '@/lib/google-drive'
 
@@ -109,5 +110,45 @@ export async function pushArtworkToDrive(artworkId: string): Promise<PushResult>
     return { pushed: false, warning: `Chưa đẩy được lên Drive: ${err?.message ?? 'lỗi không rõ'}` }
   } finally {
     inflight().delete(artworkId)
+  }
+}
+
+export async function pushLibraryFileToDrive(fileId: string, folder: string[]): Promise<PushResult> {
+  const key = `lib:${fileId}`
+  if (inflight().has(key)) return { pushed: false, warning: 'Đang đẩy file này lên Drive, thử lại sau.', inProgress: true }
+  inflight().add(key)
+  let driveFileId: string | null = null
+  try {
+    if (!(await isDriveConnected())) return { pushed: false, warning: null }
+    const row = await prisma.libraryFile.findUnique({ where: { id: fileId } })
+    if (!row) throw new Error('File not found')
+    if (row.storage === 'DRIVE') return { pushed: true, warning: null }
+    const absPath = localLibraryPath(row.storagePath)
+    if (!absPath) throw new Error('File không có bản local')
+    const { size } = await fs.stat(absPath)
+    if (size === 0) throw new Error('File rỗng')
+
+    const folderId = await folderForPath(folder)
+    const sessionUrl = await startResumableUpload({ name: row.fileName, mimeType: row.mimeType, size, parentId: folderId })
+    const file = await uploadFile(absPath, size, sessionUrl)
+    if (typeof file?.id !== 'string' || !file.id) throw new DriveError('Google Drive không trả về id file.')
+    driveFileId = file.id as string
+    const webViewLink = typeof file.webViewLink === 'string' && file.webViewLink
+      ? file.webViewLink
+      : ((await getFile(driveFileId, 'webViewLink'))?.webViewLink || driveViewLink(driveFileId))
+    const updated = await prisma.libraryFile.updateMany({
+      where: { id: row.id, storage: 'LOCAL' },
+      data: { storage: 'DRIVE', driveFileId, driveWebViewLink: webViewLink, storagePath: null },
+    })
+    if (updated.count === 0) throw new Error('File đã đổi trong lúc đẩy lên Drive')
+    await fs.rm(absPath, { force: true }).catch(err => console.error('[drive push] local cleanup failed:', err?.message ?? err))
+    return { pushed: true, warning: null }
+  } catch (err: any) {
+    if (driveFileId) await deleteFile(driveFileId).catch(() => {})
+    console.error('[drive push] library file failed:', err?.message ?? err)
+    if (err instanceof DriveAuthError) return { pushed: false, warning: RECONNECT_WARNING }
+    return { pushed: false, warning: `Chưa đẩy được lên Drive: ${err?.message ?? 'lỗi không rõ'}` }
+  } finally {
+    inflight().delete(key)
   }
 }

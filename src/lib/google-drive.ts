@@ -161,22 +161,21 @@ function segment(value: string) {
   return v || '_'
 }
 
-export async function folderForTask(input: { storeName: string; placedAt: Date; orderNumber: string; taskKey: string }): Promise<string> {
+export async function folderForPath(names: string[]): Promise<string> {
   const root = await ensureRootFolder()
-  const segments = [
-    segment(input.storeName),
-    input.placedAt.toISOString().slice(0, 7),
-    segment(input.orderNumber),
-    segment(input.taskKey),
-  ]
   let parent = root
   let pathKey = root
-  for (const name of segments) {
+  for (const raw of names) {
+    const name = segment(raw)
     pathKey = `${pathKey}/${name}`
     const parentId = parent
     parent = await cachedFolder(pathKey, () => ensureFolder(parentId, name))
   }
   return parent
+}
+
+export async function folderForTask(input: { storeName: string; placedAt: Date; orderNumber: string; taskKey: string }): Promise<string> {
+  return folderForPath([input.storeName, input.placedAt.toISOString().slice(0, 7), input.orderNumber, input.taskKey])
 }
 
 export async function startResumableUpload(input: { name: string; mimeType: string; size: number; parentId: string }): Promise<string> {

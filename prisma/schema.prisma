@@ -22,6 +22,7 @@ model ShopifyStore {
   projectId              String?       @unique
   project                Project?      @relation(fields: [projectId], references: [id])
   productProfiles        ProductProfile[]
+  artworkEntries         ArtworkEntry[]
 }
 
 model AppUser {
@@ -307,6 +308,7 @@ model Supplier {
   shipments             Shipment[]
   skuDesigns            SkuSupplierDesign[]
   printTemplates        PrintTemplate[]
+  artworkEntries        ArtworkEntry[]
 }
 
 model SupplierProduct {
@@ -564,6 +566,7 @@ model PrintTemplate {
   sourceFileName String?
   sourceFilePath String?
   supplierProducts SupplierProduct[]
+  artworkEntries ArtworkEntry[]
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
   @@unique([supplierId, supplierSku])
@@ -1116,4 +1119,87 @@ model CashflowSnapshot {
 
   @@unique([projectId, periodMonth])
   @@index([projectId])
+}
+
+model LibraryFile {
+  id               String   @id @default(cuid())
+  kind             String
+  fileName         String
+  mimeType         String
+  size             Int
+  sha256           String
+  storage          String   @default("LOCAL")
+  storagePath      String?
+  driveFileId      String?
+  driveWebViewLink String?
+  uploadedById     String?
+  createdAt        DateTime @default(now())
+  psdEntries       ArtworkEntry[] @relation("EntryPsd")
+  artworkEntries   ArtworkEntry[] @relation("EntryArtwork")
+  previewEntries   ArtworkEntry[] @relation("EntryPreview")
+  fonts            DesignFont[]
+  @@index([kind, sha256])
+}
+
+model ArtworkEntry {
+  id               String        @id @default(cuid())
+  storeId          String
+  store            ShopifyStore  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  shopifyProductId String
+  printTemplateId  String
+  printTemplate    PrintTemplate @relation(fields: [printTemplateId], references: [id], onDelete: Cascade)
+  supplierId       String
+  supplier         Supplier      @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  title            String
+  imageUrl         String?
+  status           String        @default("EMPTY")
+  psdFileId        String?
+  psdFile          LibraryFile?  @relation("EntryPsd", fields: [psdFileId], references: [id], onDelete: SetNull)
+  artworkFileId    String?
+  artworkFile      LibraryFile?  @relation("EntryArtwork", fields: [artworkFileId], references: [id], onDelete: SetNull)
+  previewFileId    String?
+  previewFile      LibraryFile?  @relation("EntryPreview", fields: [previewFileId], references: [id], onDelete: SetNull)
+  fields           String        @default("[]")
+  fixedTexts       String        @default("[]")
+  missingFonts     String        @default("[]")
+  warnings         String        @default("[]")
+  checkScore       Float?
+  error            String?
+  parsedAt         DateTime?
+  approvedAt       DateTime?
+  approvedById     String?
+  notes            String?
+  jobs             ArtworkJob[]
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+  @@unique([storeId, shopifyProductId, printTemplateId])
+  @@index([status])
+  @@index([printTemplateId])
+}
+
+model DesignFont {
+  id             String      @id @default(cuid())
+  postscriptName String      @unique
+  family         String
+  style          String
+  fileId         String
+  file           LibraryFile @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  uploadedById   String?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+}
+
+model ArtworkJob {
+  id         String       @id @default(cuid())
+  kind       String       @default("PARSE_PSD")
+  entryId    String
+  entry      ArtworkEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  status     String       @default("QUEUED")
+  attempts   Int          @default(0)
+  lockedAt   DateTime?
+  error      String?
+  createdAt  DateTime     @default(now())
+  finishedAt DateTime?
+  @@index([status, createdAt])
+  @@index([entryId])
 }
