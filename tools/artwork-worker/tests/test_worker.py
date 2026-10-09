@@ -61,7 +61,7 @@ def test_process_job_end_to_end(tmp_path, monkeypatch):
     # the crocs PSD has no @ layers; rename its "Note" layer on the fly
     import parse_psd
     real_parse = parse_psd.parse
-    monkeypatch.setattr(worker, 'parse', lambda p, t, fl, debug_dir=None: real_parse(p, t, fl, custom_layers={'Note'}))
+    monkeypatch.setattr(worker, 'parse', lambda p, t, fl, custom_layers=None, debug_dir=None: real_parse(p, t, fl, custom_layers={'Note'}))
     fake = FakeApi(CROCS, MYRIAD_BOLD)
     cache = worker.FontCache(fake, tmp_path / 'fonts')
     worker.process(fake, cache, parse_claim(CLAIM))
@@ -95,3 +95,43 @@ def test_unexpected_error_is_reported_for_retry(monkeypatch, tmp_path):
     worker.process(fake, worker.FontCache(fake, tmp_path / 'fonts'), parse_claim(CLAIM))
     (job_id, error, permanent), = fake.failed
     assert not permanent and 'kaboom' in error
+
+
+def test_layer_fields_reach_the_parser(monkeypatch, tmp_path):
+    need(CROCS)
+    seen = {}
+
+    def fake_parse(p, t, fl, custom_layers=None, debug_dir=None):
+        seen['custom_layers'] = custom_layers
+        raise RuntimeError('stop')
+    monkeypatch.setattr(worker, 'parse', fake_parse)
+    claim = parse_claim({**CLAIM, 'entry': {**CLAIM['entry'], 'layerFields': {'Note': 'Custom Name'}}})
+    assert claim.layer_fields == {'Note': 'Custom Name'} and claim.kind == 'PARSE_PSD'
+    fake = FakeApi(CROCS, MYRIAD_BOLD)
+    worker.process(fake, worker.FontCache(fake, tmp_path / 'fonts'), claim)
+    assert seen['custom_layers'] == {'Note': 'Custom Name'}
+    # no mapping -> the @ convention alone
+    assert parse_claim(CLAIM).layer_fields == {}
+
+
+def test_claim_asks_for_both_job_kinds():
+    sent = {}
+
+    class S:
+        headers = {}
+
+        def post(self, url, json=None, timeout=None):
+            sent['json'] = json
+
+            class R:
+                status_code = 200
+                content = b'{"job": null}'
+
+                @staticmethod
+                def json():
+                    return {'job': None}
+            return R()
+    a = WorkerApi('http://localhost:3002', 'dsw_x')
+    a.s = S()
+    assert a.claim() is None
+    assert sent['json'] == {'kinds': ['PARSE_PSD', 'RENDER_LINE']}

@@ -1,8 +1,10 @@
-# Artwork Library parse worker
+# Artwork Library worker
 
-Runs on the design PC. It claims `PARSE_PSD` jobs from Ecom Manager and reads each PSD **once**:
-custom text fields, fixed texts, `artwork.png` (custom text hidden) and `preview.png`. It then uploads
-the result. Spec: `docs/superpowers/specs/2026-10-11-artwork-library-design.md`.
+Runs on the design PC. It claims two kinds of jobs from Ecom Manager:
+- `PARSE_PSD`: reads each PSD **once** (custom text fields, fixed texts, `artwork.png` with the custom text hidden,
+  `preview.png`) and uploads the result.
+- `RENDER_LINE`: the per-order step. It draws one order line's customer values onto the entry's `artwork.png` and
+  uploads the print file (see "Print files" below). Spec: `docs/superpowers/specs/2026-10-11-artwork-library-design.md`.
 
 ## Setup
 
@@ -44,6 +46,21 @@ Files:
   - an identical duplicate is ignored;
   - anything else becomes a warning.
 - Hidden layers are ignored. If every layer of a field is hidden, the top one is used and a warning is added.
+
+## Print files (`RENDER_LINE`)
+
+- A designer presses **"Tạo file in tự động"** on the task. The button works when the line's library entry is READY,
+  the template has a print area, and the customer filled every field the entry uses.
+- The claim carries the entry fields, the template, the `artwork.png` file id (cached by hash in
+  `~/.artwork-worker/artwork/`), the fonts, the customer values and the target line.
+- `render_line.py` draws each field entry with its customer value, so a field placed twice gets the value twice.
+  - `fit: shrink` keeps long values inside the box, and `anchor: center` keeps the sample's visual centre.
+  - Missing glyphs and values shrunk below 60 % come back as warnings.
+- The result is a PNG at template px with the template DPI and an sRGB ICC profile, plus a ≤ 1200 px JPG preview.
+- The server stores it as a new `DesignArtwork` version on the template's first print area with `source AUTO`, and
+  tries the Drive push like a manual upload. The task is not approved automatically; the designer or leader reviews it.
+- A missing value, font or artwork fails the job at once (`permanent`). Other errors are retried, 3 attempts in all.
+  The error shows on the task.
 
 ## Result statuses
 
@@ -91,12 +108,14 @@ Extra keys beyond the spec shape: `scaleX`, `charColors`, `layers`, `shadow.spre
 
 ## API shapes (see `api.py`, mirrors `src/lib/artwork-worker.ts`)
 
-- `POST /api/design-studio/worker/claim` → returns one of:
+- `POST /api/design-studio/worker/claim` with `{"kinds": ["PARSE_PSD", "RENDER_LINE"]}` (no body = PARSE_PSD only) → returns one of:
   - `{job: null}`;
-  - `{job:{id,kind,attempts,createdAt}, entry:{id,storeId,shopifyProductId,title,status,fields}, template:{id,name,widthPx,heightPx,dpi,bleedIn,safeIn,mirror,areas:[{name,x,y,w,h}]}, psdFileId, psd:{id,fileName,size,sha256}}`.
+  - `{job:{id,kind,attempts,createdAt}, entry:{id,storeId,shopifyProductId,title,status,fields,layerFields}, template:{id,name,widthPx,heightPx,dpi,bleedIn,safeIn,mirror,areas:[{name,x,y,w,h}]}, psdFileId, psd:{id,fileName,size,sha256}}`;
+  - for `RENDER_LINE`: `{job, entry:{id,…,fields}, template, artwork:{id,fileName,size,sha256}, fonts:[{postscriptName,fileId,sha256}], values:{field: value}, target:{orderId,shopifyLineId,orderNumber,linePosition,taskKey,printArea}}`.
 - `GET worker/files/<id>` → file bytes. The download is checked against `psd.sha256`, or the `X-Content-SHA256` header when there is no `psd.sha256`.
 - `GET worker/fonts` → `{fonts:[{postscriptName,fileId,sha256,family,style,fileName,size}]}`.
 - `POST worker/jobs/<id>/result` → multipart parts `result` (`result.json`), `artwork` (`artwork.png`), `preview` (`preview.png`). The server computes the final status from fields, missingFonts, warnings and checkScore.
+  - For `RENDER_LINE` the parts are `result` (`{fields, warnings, widthPx, heightPx}`), `print` (`print.png`) and `preview` (`preview.jpg`).
 - `POST worker/jobs/<id>/fail` → `{error, permanent}`.
   - `permanent: true` is used for a ParseError, e.g. an aspect-ratio mismatch.
   - Other errors are retried by the server (3 attempts).
