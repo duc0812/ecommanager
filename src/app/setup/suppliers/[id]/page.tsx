@@ -37,7 +37,10 @@ type Product = {
   maxProductionDays: number | null
   shippingByRegion: string | null
   textureOfMaterial: string | null
+  printTemplateId: string | null
 }
+
+type PrintTemplateOption = { id: string; name: string; widthPx: number; heightPx: number; guideImageUrl: string | null }
 
 type ImportRow = {
   sku: string
@@ -225,6 +228,62 @@ function usShippingDisplay(p: Product): string {
   } catch { return '—' }
 }
 
+function TemplateThumb({ url }: { url: string | null }) {
+  return (
+    <span className="w-10 h-6 shrink-0 rounded border border-outline-variant/40 bg-surface-container-low grid place-items-center overflow-hidden">
+      {url
+        // eslint-disable-next-line @next/next/no-img-element
+        ? <img src={url} alt="" className="max-w-full max-h-full object-contain" />
+        : <span className="material-symbols-outlined text-[14px] text-on-surface-variant">dashboard_customize</span>}
+    </span>
+  )
+}
+
+function TemplatePicker({ templates, currentId, manageHref, onPick, onClose }: {
+  templates: PrintTemplateOption[]; currentId: string | null; manageHref: string
+  onPick: (templateId: string | null) => void; onClose: () => void
+}) {
+  return (
+    <>
+      <div className="fixed inset-0 z-30" onClick={e => { e.stopPropagation(); onClose() }} />
+      <div className="absolute z-40 right-0 top-full mt-xs w-[280px] bg-surface-container-lowest rounded-lg shadow-card border border-outline-variant/30 py-xs text-left cursor-default"
+        onClick={e => e.stopPropagation()}>
+        {templates.length === 0 && (
+          <div className="px-sm py-xs text-label-sm text-on-surface-variant">
+            Chưa có template — <a href={manageHref} className="text-secondary">tạo ở Template in</a>
+          </div>
+        )}
+        {templates.map(t => (
+          <button key={t.id} type="button" onClick={() => onPick(t.id)}
+            className={`w-full flex items-center gap-xs px-sm py-xs hover:bg-surface-container-low ${currentId === t.id ? 'bg-secondary/10' : ''}`}>
+            <TemplateThumb url={t.guideImageUrl} />
+            <span className="flex-1 min-w-0">
+              <span className="block text-label-sm font-medium truncate">{t.name}</span>
+              <span className="block text-[10px] text-on-surface-variant">{t.widthPx}×{t.heightPx} px</span>
+            </span>
+            {currentId === t.id && <span className="material-symbols-outlined text-[16px] text-secondary">check</span>}
+          </button>
+        ))}
+        <div className="border-t border-outline-variant/20 mt-xs pt-xs">
+          <button type="button" onClick={() => onPick(null)} className="w-full text-left px-sm py-xs text-label-sm text-error hover:bg-surface-container-low">
+            Bỏ gán
+          </button>
+        </div>
+      </div>
+    </>
+  )
+}
+
+function TemplateCell({ template, onOpen }: { template: PrintTemplateOption | undefined; onOpen: () => void }) {
+  return (
+    <button type="button" onClick={onOpen} className="inline-flex items-center gap-xs text-left hover:opacity-80">
+      {template
+        ? <><TemplateThumb url={template.guideImageUrl} /><span className="text-label-sm font-medium max-w-[160px] truncate">{template.name}</span></>
+        : <span className="text-label-sm text-secondary whitespace-nowrap">— Gán template</span>}
+    </button>
+  )
+}
+
 export default function SupplierSetupPage() {
   const params = useParams<{ id: string }>()
   const pathname = usePathname()
@@ -248,6 +307,8 @@ export default function SupplierSetupPage() {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
   const [expandForms, setExpandForms] = useState<Record<string, ExpandState>>({})
   const [savingIds, setSavingIds] = useState<Set<string>>(new Set())
+  const [printTemplates, setPrintTemplates] = useState<PrintTemplateOption[]>([])
+  const [picker, setPicker] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
   const loadSupplier = useCallback(async () => {
@@ -264,7 +325,13 @@ export default function SupplierSetupPage() {
     setTotal(d.total ?? 0)
   }, [supplierId, search])
 
+  const loadPrintTemplates = useCallback(async () => {
+    const r = await fetch(`/api/fulfillment/suppliers/${supplierId}/print-templates`)
+    if (r.ok) setPrintTemplates((await r.json()).templates ?? [])
+  }, [supplierId])
+
   useEffect(() => { loadSupplier() }, [loadSupplier])
+  useEffect(() => { loadPrintTemplates() }, [loadPrintTemplates])
   useEffect(() => { loadProducts() }, [loadProducts])
 
   // Recompute generated rows when variant options or base SKU change; preserve existing row data
@@ -409,6 +476,23 @@ export default function SupplierSetupPage() {
     setSavingIds(prev => { const n = new Set(prev); n.delete(p.id); return n })
   }
 
+  const assignTemplate = async (ids: string[], printTemplateId: string | null) => {
+    setPicker(null)
+    if (ids.length === 0) return
+    const r = await fetch(`/api/fulfillment/suppliers/${supplierId}/products/print-template`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ supplierProductIds: ids, printTemplateId }),
+    })
+    if (!r.ok) { alert((await r.json().catch(() => ({}))).error ?? 'Không gán được template'); return }
+    await loadProducts()
+  }
+
+  const templateById = new Map(printTemplates.map(t => [t.id, t]))
+  const printTemplatesHref = `${suppliersPath}/${supplierId}/print-templates`
+  const groupTemplateId = (group: Product[]) =>
+    group.every(p => p.printTemplateId && p.printTemplateId === group[0].printTemplateId) ? group[0].printTemplateId : null
+
   const deleteOne = async (p: Product) => {
     if (!confirm(`Delete ${p.sku}?`)) return
     await fetch(`/api/suppliers/products/${p.id}`, { method: 'DELETE' })
@@ -428,9 +512,14 @@ export default function SupplierSetupPage() {
                 Product catalog, SKU, cost, shipping và fulfillment export.
               </p>
             </div>
-            <a href={`${suppliersPath}/${supplierId}/templates`} className="bg-secondary text-on-secondary px-lg py-sm rounded-lg text-label-md">
-              Export templates
-            </a>
+            <div className="flex items-center gap-sm">
+              <a href={printTemplatesHref} className="border border-secondary text-secondary px-lg py-sm rounded-lg text-label-md whitespace-nowrap">
+                Template in
+              </a>
+              <a href={`${suppliersPath}/${supplierId}/templates`} className="bg-secondary text-on-secondary px-lg py-sm rounded-lg text-label-md whitespace-nowrap">
+                Export templates
+              </a>
+            </div>
           </div>
         </div>
 
@@ -708,6 +797,7 @@ export default function SupplierSetupPage() {
                     <div>US Shipping</div>
                     <div className="text-[10px] font-normal text-on-surface-variant">1st / add.</div>
                   </th>
+                  <th className="px-sm py-xs text-on-surface-variant font-semibold">Template in</th>
                   <th className="w-8" />
                 </tr>
               </thead>
@@ -729,7 +819,7 @@ export default function SupplierSetupPage() {
                         else next.add(groupName)
                         return next
                       })}>
-                      <td colSpan={10} className="px-sm py-xs">
+                      <td colSpan={11} className="px-sm py-xs">
                         <div className="flex items-center gap-xs">
                           <svg viewBox="0 0 24 24" fill="currentColor"
                             className="w-4 h-4 text-secondary transition-transform duration-150 flex-shrink-0"
@@ -738,6 +828,16 @@ export default function SupplierSetupPage() {
                           </svg>
                           <span className="text-label-sm font-semibold text-secondary">{groupName}</span>
                           <span className="text-[11px] text-on-surface-variant font-normal ml-xs">{groupProducts.length} variant{groupProducts.length !== 1 ? 's' : ''}</span>
+                          <span className="relative ml-auto">
+                            <button type="button" onClick={e => { e.stopPropagation(); setPicker(`g:${groupName}`) }}
+                              className="text-[11px] text-secondary font-semibold hover:underline">
+                              Gán cho cả nhóm
+                            </button>
+                            {picker === `g:${groupName}` && (
+                              <TemplatePicker templates={printTemplates} manageHref={printTemplatesHref} currentId={groupTemplateId(groupProducts)}
+                                onPick={id => assignTemplate(groupProducts.map(p => p.id), id)} onClose={() => setPicker(null)} />
+                            )}
+                          </span>
                         </div>
                       </td>
                     </tr>
@@ -758,7 +858,7 @@ export default function SupplierSetupPage() {
                             </button>
                           </td>
                           <td className="px-sm py-sm text-body-sm text-on-surface-variant">{p.productType || '—'}</td>
-                          <td className="px-sm py-sm text-body-sm font-medium">{p.productName || 'â€”'}</td>
+                          <td className="px-sm py-sm text-body-sm font-medium">{p.productName || '—'}</td>
                           <td className="px-sm py-sm font-mono text-xs text-on-surface-variant">{p.baseSku || '—'}</td>
                           <td className="px-sm py-sm bg-secondary/5">
                             {p.variant1Value
@@ -773,13 +873,22 @@ export default function SupplierSetupPage() {
                           <td className="px-sm py-sm font-mono text-xs">{p.sku}</td>
                           <td className="px-sm py-sm text-green-700 font-semibold text-body-sm">{p.currency} {p.baseCost.toFixed(2)}</td>
                           <td className="px-sm py-sm text-body-sm text-center">{usShippingDisplay(p)}</td>
+                          <td className="px-sm py-sm">
+                            <div className="relative inline-block">
+                              <TemplateCell template={p.printTemplateId ? templateById.get(p.printTemplateId) : undefined} onOpen={() => setPicker(`p:${p.id}`)} />
+                              {picker === `p:${p.id}` && (
+                                <TemplatePicker templates={printTemplates} currentId={p.printTemplateId} manageHref={printTemplatesHref}
+                                  onPick={id => assignTemplate([p.id], id)} onClose={() => setPicker(null)} />
+                              )}
+                            </div>
+                          </td>
                           <td className="px-sm py-sm text-center">
                             <button onClick={() => deleteOne(p)} className="text-error text-label-sm hover:opacity-70">✕</button>
                           </td>
                         </tr>
                         {expandedIds.has(p.id) && expandForms[p.id] && (
                           <tr>
-                            <td colSpan={10} className="px-lg py-md bg-secondary/5 border-b border-secondary/20">
+                            <td colSpan={11} className="px-lg py-md bg-secondary/5 border-b border-secondary/20">
                               {/* Row 1: shipping by region */}
                               <div className="grid grid-cols-4 gap-md mb-sm">
                                 {[
@@ -841,7 +950,7 @@ export default function SupplierSetupPage() {
 
                 {products.length === 0 && (
                   <tr>
-                    <td colSpan={10} className="px-lg py-xl text-center text-on-surface-variant">
+                    <td colSpan={11} className="px-lg py-xl text-center text-on-surface-variant">
                       No products yet. Import a sheet or click Add product to add variants.
                     </td>
                   </tr>

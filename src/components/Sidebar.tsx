@@ -40,7 +40,6 @@ const nav: NavEntry[] = [
   { type: 'child', href: '/design-studio/dashboard', icon: 'space_dashboard', label: 'Dashboard' },
   { type: 'child', href: '/design-studio', icon: 'brush', label: 'Design Tasks' },
   { type: 'child', href: '/design-studio/products', icon: 'inventory_2', label: 'Sản phẩm' },
-  { type: 'child', href: '/design-studio/templates', icon: 'dashboard_customize', label: 'Print Templates' },
   { type: 'child', href: '/fulfillment/design-library', icon: 'palette', label: 'Design Library' },
   { type: 'child', href: '/design-studio/settings', icon: 'settings', label: 'Settings' },
   { type: 'divider' },

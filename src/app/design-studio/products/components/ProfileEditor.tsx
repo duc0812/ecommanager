@@ -227,19 +227,19 @@ export default function ProfileEditor({ detail, templates, canEdit, onSaved }: {
             )}
           </Card>
 
-          <Card icon="dashboard_customize" title="Template in" right={<Link href="/design-studio/templates" className="text-secondary hover:underline">Quản lý template</Link>}>
+          <Card icon="dashboard_customize" title="Template in" right={<Link href={supplierIds.size === 1 ? `/fulfillment/suppliers/${Array.from(supplierIds)[0]}/print-templates` : '/fulfillment/suppliers'} className="text-secondary hover:underline">Quản lý template</Link>}>
             <Field label={supplierIds.size > 0 ? 'Template của xưởng đã chọn' : 'Template (chưa chọn xưởng — hiện tất cả)'}>
               <select className={`${input} w-full`} value={form.printTemplateId} onChange={e => set('printTemplateId', e.target.value)} aria-label="Template in">
                 <option value="">— chưa chọn —</option>
                 {currentTemplateHidden && <option value={form.printTemplateId}>{currentTemplateName} (xưởng khác)</option>}
-                {templateOptions.map(t => <option key={t.id} value={t.id}>{t.name} · {t.supplierSku ?? 'mặc định'}</option>)}
+                {templateOptions.map(t => <option key={t.id} value={t.id}>{t.name}{t.supplierSku ? ` · ${t.supplierSku}` : ''}</option>)}
               </select>
             </Field>
             {templateOtherSupplier && (
               <p role="alert" className="inline-flex items-center gap-xs text-label-sm text-error"><Icon name="warning" className="text-[16px]" />Template thuộc xưởng khác — chọn lại</p>
             )}
             {supplierIds.size > 0 && templateOptions.length === 0 && (
-              <p className="text-label-sm text-on-surface-variant">Xưởng đã chọn chưa có template — tạo ở Print Templates.</p>
+              <p className="text-label-sm text-on-surface-variant">Xưởng đã chọn chưa có template — tạo ở trang xưởng › Template in.</p>
             )}
           </Card>
 
