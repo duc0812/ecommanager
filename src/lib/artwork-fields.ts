@@ -1,8 +1,12 @@
 export type EntryStatus = 'EMPTY' | 'QUEUED' | 'PARSING' | 'NEEDS_FONTS' | 'NEEDS_REVIEW' | 'READY' | 'ERROR'
 export const ENTRY_STATUSES: EntryStatus[] = ['EMPTY', 'QUEUED', 'PARSING', 'NEEDS_FONTS', 'NEEDS_REVIEW', 'READY', 'ERROR']
 export type SlotStatus = EntryStatus | 'NO_TEMPLATE'
-export type LibraryProductStatus = 'READY' | 'NO_TEMPLATE' | 'EMPTY' | 'ERROR' | 'NEEDS_FONTS' | 'NEEDS_REVIEW' | 'PARSING' | 'QUEUED'
-export const LIBRARY_PRODUCT_STATUSES: LibraryProductStatus[] = ['NO_TEMPLATE', 'EMPTY', 'ERROR', 'NEEDS_FONTS', 'NEEDS_REVIEW', 'PARSING', 'QUEUED', 'READY']
+export type LibraryProductStatus = 'READY' | 'NO_MAPPING' | 'NO_TEMPLATE' | 'EMPTY' | 'ERROR' | 'NEEDS_FONTS' | 'NEEDS_REVIEW' | 'PARSING' | 'QUEUED'
+export const LIBRARY_PRODUCT_STATUSES: LibraryProductStatus[] = ['NO_MAPPING', 'NO_TEMPLATE', 'EMPTY', 'ERROR', 'NEEDS_FONTS', 'NEEDS_REVIEW', 'PARSING', 'QUEUED', 'READY']
+
+export function isLibraryProductStatus(v: string | null | undefined): v is LibraryProductStatus {
+  return !!v && (LIBRARY_PRODUCT_STATUSES as string[]).includes(v)
+}
 
 export type FieldFit = 'shrink' | 'wrap' | 'none'
 export const FIELD_FITS: FieldFit[] = ['shrink', 'wrap', 'none']
@@ -187,13 +191,20 @@ export function carryOverEdits(next: ArtworkField[], previous: ArtworkField[]): 
 }
 
 const SLOT_RANK: Record<LibraryProductStatus, number> = {
-  NO_TEMPLATE: 0, EMPTY: 1, ERROR: 2, NEEDS_FONTS: 3, NEEDS_REVIEW: 4, PARSING: 5, QUEUED: 5, READY: 6,
+  NO_MAPPING: -1, NO_TEMPLATE: 0, EMPTY: 1, ERROR: 2, NEEDS_FONTS: 3, NEEDS_REVIEW: 4, PARSING: 5, QUEUED: 5, READY: 6,
 }
 
 export function productLibraryStatus(slots: SlotStatus[]): LibraryProductStatus {
   if (slots.length === 0) return 'EMPTY'
   if (slots.every(s => s === 'READY')) return 'READY'
   return slots.reduce<LibraryProductStatus>((worst, s) => (SLOT_RANK[s] < SLOT_RANK[worst] ? s : worst), 'READY')
+}
+
+export function productStatus(input: { active: SlotStatus[]; stale: SlotStatus[]; unmapped: number }): LibraryProductStatus {
+  if (input.unmapped > 0) return 'NO_MAPPING'
+  if (input.active.length > 0) return productLibraryStatus(input.active)
+  if (input.stale.length > 0) return productLibraryStatus(input.stale)
+  return 'NO_TEMPLATE'
 }
 
 export function normField(name: string): string {

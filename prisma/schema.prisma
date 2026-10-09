@@ -507,6 +507,7 @@ model ProductProfile {
   masterArtworkUrl  String?
   masterArtworkId   String?
   layerMap          String           @default("[]")
+  artworkSplits     String           @default("[]")
   notes             String?
   createdAt         DateTime         @default(now())
   updatedAt         DateTime         @updatedAt
@@ -1150,6 +1151,7 @@ model ArtworkEntry {
   shopifyProductId String
   printTemplateId  String
   printTemplate    PrintTemplate @relation(fields: [printTemplateId], references: [id], onDelete: Cascade)
+  optionKey        String        @default("")
   supplierId       String
   supplier         Supplier      @relation(fields: [supplierId], references: [id], onDelete: Cascade)
   title            String
@@ -1174,7 +1176,7 @@ model ArtworkEntry {
   jobs             ArtworkJob[]
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt
-  @@unique([storeId, shopifyProductId, printTemplateId])
+  @@unique([storeId, shopifyProductId, printTemplateId, optionKey])
   @@index([status])
   @@index([printTemplateId])
 }
