@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db'
 import { syncDesignTasks, transitionTask, listTasks, loadTask, type Actor } from '@/lib/design-tasks'
 
 const ORDER_ID = 'gid://test/Order/dtt-1'
+const BARE_ORDER_ID = 'gid://test/Order/dtt-3'
 const SHOP = 'dtt.myshopify.com'
 const SUP = 'sup_dtt'
 const PRINT_FILES = JSON.stringify([{ print_area: 'PRINT', url: 'https://cdn.example/dtt.png' }])
@@ -32,15 +33,28 @@ beforeAll(async () => {
   await prisma.designArtwork.create({
     data: { orderId: ORDER_ID, shopifyLineId: 't1', printArea: 'PRINT', version: 1, fileName: 'a.png', storagePath: 'x/a.png', size: 1, mimeType: 'image/png' },
   })
+  await prisma.order.create({
+    data: {
+      id: BARE_ORDER_ID, projectId: 'proj_dtt', storeId, shopifyOrderNumber: '#DTT3', financialStatus: 'PAID', currency: 'USD',
+      grossAmount: 1, expectedPayout: 1, totalFees: 0, refundedAmount: 0, placedAt: new Date('2026-10-01'),
+      pipelineStatus: 'PENDING_DESIGN', orderType: 'CUSTOM',
+      lines: { create: [
+        { shopifyLineId: 'b1', sku: 'B1', productTitle: 'Jersey', shopifyProductType: 'Baseball Jersey', qty: 1, linePosition: 1, unitPrice: 1,
+          resolvedSupplierId: SUP, customized: true,
+          customAttributesJson: JSON.stringify([{ key: 'Name', value: 'Z' }, { key: '_print_files', value: PRINT_FILES }]) },
+      ] },
+    },
+  })
   leadId = (await prisma.appUser.upsert({ where: { email: 'lead@dt.test' }, create: { name: 'Lead', email: 'lead@dt.test', role: 'ADMIN' }, update: {} })).id
   desId = (await prisma.appUser.upsert({ where: { email: 'des@dt.test' }, create: { name: 'Des', email: 'des@dt.test', role: 'SUPPORT' }, update: {} })).id
   LEAD = { id: leadId, name: 'Lead', role: 'ADMIN' }
   DES = { id: desId, name: 'Des', role: 'SUPPORT' }
   await syncDesignTasks(ORDER_ID)
+  await syncDesignTasks(BARE_ORDER_ID)
 })
 
 afterAll(async () => {
-  await prisma.order.deleteMany({ where: { id: ORDER_ID } })
+  await prisma.order.deleteMany({ where: { id: { in: [ORDER_ID, BARE_ORDER_ID] } } })
   await prisma.supplier.deleteMany({ where: { id: SUP } })
   await prisma.appUser.deleteMany({ where: { email: { in: ['lead@dt.test', 'des@dt.test'] } } })
 })
@@ -55,6 +69,15 @@ describe('transitionTask / listTasks / loadTask', () => {
   it('designer takes, submits for review; review requires artwork', async () => {
     expect((await transitionTask('DTT1_1', DES, { to: 'DOING' })).task.status).toBe('DOING')
     expect((await transitionTask('DTT1_1', DES, { to: 'REVIEW' })).task.status).toBe('REVIEW')
+    expect((await transitionTask('DTT3_1', DES, { to: 'DOING' })).task.status).toBe('DOING')
+    await expect(transitionTask('DTT3_1', DES, { to: 'REVIEW' })).rejects.toThrow('Chưa có artwork cho: PRINT')
+    expect((await loadTask('DTT3_1'))!.task.status).toBe('DOING')
+  })
+  it('continuing from ASK_CUSTOMER back to DOING logs "Tiếp tục làm"', async () => {
+    await transitionTask('DTT3_1', DES, { to: 'ASK_CUSTOMER', note: 'ảnh mờ?' })
+    expect((await transitionTask('DTT3_1', DES, { to: 'DOING', continue: true })).task.status).toBe('DOING')
+    const events = (await loadTask('DTT3_1'))!.events.filter(e => e.type === 'STATUS').map(e => e.message)
+    expect(events).toEqual(['Nhận việc', 'Tiếp tục làm'])
   })
   it('leader rejects with reasons, designer resubmits', async () => {
     const r = await transitionTask('DTT1_1', LEAD, { to: 'REJECTED', reasons: ['Thiếu nét'], note: 'vỡ' })
@@ -135,11 +158,15 @@ describe('template slots and ownership', () => {
     expect((await loadTask('DTT2_1'))!.slots).toEqual(['Front', 'Back'])
   })
 
-  it('DONE is refused until every template area has artwork, then succeeds', async () => {
+  it('REVIEW and DONE are refused until every template area has artwork, then succeed', async () => {
     await transitionTask('DTT2_1', DES, { to: 'DOING' })
-    await transitionTask('DTT2_1', DES, { to: 'REVIEW' })
-    await expect(transitionTask('DTT2_1', LEAD, { to: 'DONE' })).rejects.toThrow('No artwork uploaded for: Front, Back')
+    await expect(transitionTask('DTT2_1', DES, { to: 'REVIEW' })).rejects.toThrow('Chưa có artwork cho: Front, Back')
     await addArtwork('f1', 'Front')
+    await expect(transitionTask('DTT2_1', DES, { to: 'REVIEW' })).rejects.toThrow('Chưa có artwork cho: Back')
+    expect((await loadTask('DTT2_1'))!.task.status).toBe('DOING')
+    await addArtwork('f1', 'Back')
+    expect((await transitionTask('DTT2_1', DES, { to: 'REVIEW' })).task.status).toBe('REVIEW')
+    await prisma.designArtwork.deleteMany({ where: { orderId: TPL_ORDER_ID, shopifyLineId: 'f1', printArea: 'Back' } })
     await expect(transitionTask('DTT2_1', LEAD, { to: 'DONE' })).rejects.toThrow('No artwork uploaded for: Back')
     expect((await loadTask('DTT2_1'))!.task.status).toBe('REVIEW')
     await addArtwork('f1', 'Back')
@@ -168,6 +195,64 @@ describe('template slots and ownership', () => {
     expect(r.task.assigneeId).toBe(des2Id)
     expect((await transitionTask('DTT2_2', DES2, { to: 'DOING' })).task.status).toBe('DOING')
     await expect(transitionTask('DTT2_2', DES, { to: 'REVIEW' })).rejects.toThrow('Task đang thuộc về Des2')
+    await addArtwork('f2', 'Front')
+    await addArtwork('f2', 'Back')
     expect((await transitionTask('DTT2_2', LEAD, { to: 'REVIEW' })).task.status).toBe('REVIEW')
+  })
+})
+
+const EXT_ORDER_ID = 'gid://test/Order/dtt-ext'
+const EXT_LINK = 'https://drive.google.com/file/d/trello-link'
+
+describe('DONE when the design already arrived outside the studio', () => {
+  beforeAll(async () => {
+    const storeId = (await prisma.shopifyStore.findUniqueOrThrow({ where: { shop: SHOP } })).id
+    await prisma.supplier.upsert({ where: { code: 'DTTR' }, create: { id: SUP, name: 'DTT Supplier', code: 'DTTR' }, update: {} })
+    const line = (id: string, pos: number) => ({ shopifyLineId: id, sku: id.toUpperCase(), productTitle: 'Jersey', qty: 1, linePosition: pos, unitPrice: 1,
+      resolvedSupplierId: SUP, customized: true, customAttributesJson: JSON.stringify([{ key: '_print_files', value: PRINT_FILES }]) })
+    await prisma.order.create({
+      data: {
+        id: EXT_ORDER_ID, projectId: 'proj_dtt', storeId, shopifyOrderNumber: '#DTTX', financialStatus: 'PAID', currency: 'USD',
+        grossAmount: 1, expectedPayout: 1, totalFees: 0, refundedAmount: 0, placedAt: new Date('2026-10-01'),
+        pipelineStatus: 'PENDING_DESIGN', orderType: 'CUSTOM', lines: { create: [line('x1', 1), line('x2', 2)] },
+      },
+    })
+    for (const id of ['x1', 'x2']) {
+      await prisma.designArtwork.create({ data: { orderId: EXT_ORDER_ID, shopifyLineId: id, printArea: 'PRINT', version: 1, fileName: 'p.png', storagePath: 'x/p.png', size: 1, mimeType: 'image/png' } })
+    }
+    await syncDesignTasks(EXT_ORDER_ID)
+    for (const key of ['DTTX_1', 'DTTX_2']) {
+      await transitionTask(key, DES, { to: 'DOING' })
+      await transitionTask(key, DES, { to: 'REVIEW' })
+    }
+  })
+  afterAll(async () => {
+    await prisma.order.deleteMany({ where: { id: EXT_ORDER_ID } })
+  })
+
+  it('keeps the external link and does not touch the order', async () => {
+    await prisma.orderLine.updateMany({ where: { orderId: EXT_ORDER_ID, shopifyLineId: 'x1' }, data: { designDriveLink: EXT_LINK } })
+    const r = await transitionTask('DTTX_1', LEAD, { to: 'DONE' })
+    expect(r.task.status).toBe('DONE')
+    expect(r.order).toEqual({ id: EXT_ORDER_ID, designReady: false, pipelineStatus: 'PENDING_DESIGN' })
+    const line = await prisma.orderLine.findFirst({ where: { orderId: EXT_ORDER_ID, shopifyLineId: 'x1' } })
+    expect(line?.designDriveLink).toBe(EXT_LINK)
+    const events = (await loadTask('DTTX_1'))!.events
+    expect(events.at(-1)).toMatchObject({ type: 'SYSTEM', message: 'Design đã có từ ngoài studio — giữ link hiện tại' })
+    expect(events.some(e => e.message === 'Duyệt & gửi xưởng')).toBe(false)
+  })
+
+  it('a factory-reopened task still rewrites the old link when approved in the studio', async () => {
+    await prisma.orderLine.updateMany({ where: { orderId: EXT_ORDER_ID, shopifyLineId: 'x2' }, data: { designDriveLink: EXT_LINK } })
+    await prisma.designTask.update({ where: { taskKey: 'DTTX_2' }, data: { status: 'DONE' } })
+    await prisma.order.update({ where: { id: EXT_ORDER_ID }, data: { pipelineStatus: 'DESIGN_REJECTED' } })
+    expect((await syncDesignTasks(EXT_ORDER_ID)).reopened).toBe(2)
+    await transitionTask('DTTX_2', DES, { to: 'REVIEW' })
+    const r = await transitionTask('DTTX_2', LEAD, { to: 'DONE' })
+    expect(r.task.status).toBe('DONE')
+    expect(r.task.rejectReasons).toEqual([])
+    const art = await prisma.designArtwork.findFirst({ where: { orderId: EXT_ORDER_ID, shopifyLineId: 'x2' } })
+    const line = await prisma.orderLine.findFirst({ where: { orderId: EXT_ORDER_ID, shopifyLineId: 'x2' } })
+    expect(line?.designDriveLink).toBe(`/api/design-studio/file/${art!.id}`)
   })
 })

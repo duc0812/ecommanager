@@ -4,6 +4,7 @@ import { getTrelloConfig, getCardsByList } from '@/lib/trello'
 import { findDriveAttachmentForLine, findDriveAttachmentForSku } from '@/lib/order-line-assets'
 import { isNonProductLine } from '@/lib/order-lines'
 import { markLibraryReadyByCard } from '@/lib/repos/design-library'
+import { syncDesignTasksForOrders } from '@/lib/design-tasks'
 
 function cardMatchesOrder(cardName: string, orderNumber: string, skus: string[]): boolean {
   const normalizedCardName = cardName.toLowerCase()
@@ -26,6 +27,7 @@ export async function POST() {
   }
 
   let updated = 0
+  const designTaskErrors: string[] = []
 
   for (const card of cards) {
     const driveAttachments = card.attachments?.filter(a => a.url.includes('drive.google.com')) ?? []
@@ -146,6 +148,7 @@ export async function POST() {
           data: { pipelineStatus: 'READY_TO_PRODUCTION' },
         })
       }
+      designTaskErrors.push(...await syncDesignTasksForOrders([orderId]))
     }
 
     // CUSTOM orders never reuse designs, so they don't populate the SkuDesign master-artwork library.
@@ -166,5 +169,5 @@ export async function POST() {
     }
   }
 
-  return NextResponse.json({ updated, cardsChecked: cards.length })
+  return NextResponse.json({ updated, cardsChecked: cards.length, ...(designTaskErrors.length > 0 ? { designTaskErrors } : {}) })
 }

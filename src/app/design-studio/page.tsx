@@ -108,10 +108,10 @@ function DesignTasks() {
 
   async function sync() {
     setSyncing(true); setSyncMsg(''); setSyncError('')
-    const r = await postJson<{ created: number; cancelled: number; completed: number; orders: number }>('/api/design-studio/tasks/sync', {})
+    const r = await postJson<{ created: number; cancelled: number; completed: number; reopened: number; orders: number; errors?: string[] }>('/api/design-studio/tasks/sync', {})
     setSyncing(false)
     if (!r.ok) { setSyncError(r.error); return }
-    setSyncMsg(`${r.data.orders} đơn · tạo ${r.data.created} · huỷ ${r.data.cancelled} · xong ${r.data.completed}`)
+    setSyncMsg(`${r.data.orders} đơn · tạo ${r.data.created} · huỷ ${r.data.cancelled} · xong ${r.data.completed} · mở lại ${r.data.reopened}${r.data.errors?.length ? ` · lỗi ${r.data.errors.length}` : ''}`)
     loadList()
   }
 

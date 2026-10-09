@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { bulkUpdateOrderStatus } from '@/lib/repos/orders'
 import { isValidPipelineStatus } from '@/lib/pipeline-status'
+import { syncDesignTasksForOrders } from '@/lib/design-tasks'
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => null)
@@ -17,5 +18,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Max 500 orders per bulk update' }, { status: 400 })
   }
   const result = await bulkUpdateOrderStatus(body.orderIds, body.status)
-  return NextResponse.json(result)
+  const designTaskErrors = await syncDesignTasksForOrders(body.orderIds.filter((id: unknown): id is string => typeof id === 'string'))
+  return NextResponse.json(designTaskErrors.length > 0 ? { ...result, designTaskErrors } : result)
 }

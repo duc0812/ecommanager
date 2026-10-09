@@ -61,3 +61,68 @@ describe('syncDesignTasks', () => {
     expect((await prisma.designTask.findUnique({ where: { taskKey: 'DTS1_1' } }))?.status).toBe('CANCELLED')
   })
 })
+
+const REJ_ORDER_ID = 'gid://test/Order/dt-sync-rej'
+const OLD_REJ_ORDER_ID = 'gid://test/Order/dt-sync-rej-old'
+const STATUS_ORDER_ID = 'gid://test/Order/dt-sync-status'
+
+describe('syncDesignTasks — factory rejection and status changes', () => {
+  beforeAll(async () => {
+    const storeId = (await prisma.shopifyStore.findUniqueOrThrow({ where: { shop: SHOP } })).id
+    await prisma.supplier.upsert({ where: { code: 'DTSYNC' }, create: { id: SUP, name: 'DT Sync Supplier', code: 'DTSYNC' }, update: {} })
+    const base = { projectId: 'proj_dt_sync', storeId, financialStatus: 'PAID', currency: 'USD', grossAmount: 1, expectedPayout: 1, totalFees: 0, refundedAmount: 0, placedAt: new Date('2026-10-01'), orderType: 'CUSTOM' }
+    const line = (id: string, link: string | null) => ({ shopifyLineId: id, sku: id.toUpperCase(), productTitle: 'Mug', qty: 1, linePosition: 1, unitPrice: 1, resolvedSupplierId: SUP, designDriveLink: link })
+    await prisma.order.create({ data: { ...base, id: REJ_ORDER_ID, shopifyOrderNumber: '#DTS2', pipelineStatus: 'PENDING_DESIGN', lines: { create: [line('j1', null)] } } })
+    await prisma.order.create({ data: { ...base, id: OLD_REJ_ORDER_ID, shopifyOrderNumber: '#DTS3', pipelineStatus: 'DESIGN_REJECTED', lines: { create: [line('k1', 'https://drive.example/old')] } } })
+    await prisma.order.create({ data: { ...base, id: STATUS_ORDER_ID, shopifyOrderNumber: '#DTS4', pipelineStatus: 'PENDING_DESIGN', lines: { create: [line('m1', null)] } } })
+  })
+  afterAll(async () => {
+    await prisma.order.deleteMany({ where: { id: { in: [REJ_ORDER_ID, OLD_REJ_ORDER_ID, STATUS_ORDER_ID] } } })
+  })
+
+  it('reopens a DONE task as REJECTED when the factory rejects the order, once', async () => {
+    await syncDesignTasks(REJ_ORDER_ID)
+    await prisma.orderLine.updateMany({ where: { orderId: REJ_ORDER_ID }, data: { designDriveLink: 'https://drive.example/trello' } })
+    expect((await syncDesignTasks(REJ_ORDER_ID)).completed).toBe(1)
+    await prisma.order.update({ where: { id: REJ_ORDER_ID }, data: { pipelineStatus: 'DESIGN_REJECTED' } })
+
+    const r = await syncDesignTasks(REJ_ORDER_ID)
+    expect(r.reopened).toBe(1)
+    const t = await prisma.designTask.findUnique({ where: { taskKey: 'DTS2_1' }, include: { events: true } })
+    expect(t?.status).toBe('REJECTED')
+    expect(JSON.parse(t!.rejectReasons!)).toEqual(['Xưởng trả file'])
+    expect(t?.prevStatus).toBeNull()
+    expect(t?.events.some(e => e.type === 'SYSTEM' && e.message === 'Xưởng trả file — mở lại task')).toBe(true)
+
+    const again = await syncDesignTasks(REJ_ORDER_ID)
+    expect(again).toEqual({ created: 0, cancelled: 0, completed: 0, reopened: 0 })
+    expect((await prisma.designTask.findUnique({ where: { taskKey: 'DTS2_1' } }))?.status).toBe('REJECTED')
+  })
+
+  it('does not auto-complete a factory-reopened task after the order leaves DESIGN_REJECTED', async () => {
+    await prisma.order.update({ where: { id: REJ_ORDER_ID }, data: { pipelineStatus: 'READY_TO_PRODUCTION' } })
+    const r = await syncDesignTasks(REJ_ORDER_ID)
+    expect(r.completed).toBe(0)
+    expect((await prisma.designTask.findUnique({ where: { taskKey: 'DTS2_1' } }))?.status).toBe('REJECTED')
+  })
+
+  it('creates a REJECTED task for a DESIGN_REJECTED order that never had one', async () => {
+    const r = await syncDesignTasks(OLD_REJ_ORDER_ID)
+    expect(r.created).toBe(1)
+    const t = await prisma.designTask.findUnique({ where: { taskKey: 'DTS3_1' } })
+    expect(t?.status).toBe('REJECTED')
+    expect(JSON.parse(t!.rejectReasons!)).toEqual(['Xưởng trả file'])
+  })
+
+  it('the order status PATCH cancels open tasks of an order set to CANCELLED', async () => {
+    const { PATCH } = await import('@/app/api/fulfillment/orders/[id]/status/route')
+    const { NextRequest } = await import('next/server')
+    await syncDesignTasks(STATUS_ORDER_ID)
+    expect((await prisma.designTask.findUnique({ where: { taskKey: 'DTS4_1' } }))?.status).toBe('NEW')
+    const req = new NextRequest('http://x/api/fulfillment/orders/x/status', { method: 'PATCH', body: JSON.stringify({ status: 'CANCELLED' }) })
+    const res = await PATCH(req, { params: { id: STATUS_ORDER_ID } })
+    expect(res.status).toBe(200)
+    expect((await res.json()).designTaskErrors).toBeUndefined()
+    expect((await prisma.designTask.findUnique({ where: { taskKey: 'DTS4_1' } }))?.status).toBe('CANCELLED')
+  })
+})

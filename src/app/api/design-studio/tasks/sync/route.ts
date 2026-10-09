@@ -15,15 +15,26 @@ export async function POST(req: NextRequest) {
   }
 
   const orders = await prisma.order.findMany({
-    where: { pipelineStatus: { in: ['PENDING_DESIGN', 'DESIGN_REJECTED'] } },
-    select: { id: true },
+    where: {
+      OR: [
+        { pipelineStatus: { in: ['PENDING_DESIGN', 'DESIGN_REJECTED'] } },
+        { designTasks: { some: { status: { notIn: ['DONE', 'CANCELLED'] } } } },
+      ],
+    },
+    select: { id: true, shopifyOrderNumber: true },
   })
-  let created = 0, cancelled = 0, completed = 0
+  let created = 0, cancelled = 0, completed = 0, reopened = 0
+  const errors: string[] = []
   for (const o of orders) {
-    const r = await syncDesignTasks(o.id)
-    created += r.created
-    cancelled += r.cancelled
-    completed += r.completed
+    try {
+      const r = await syncDesignTasks(o.id)
+      created += r.created
+      cancelled += r.cancelled
+      completed += r.completed
+      reopened += r.reopened
+    } catch (e: any) {
+      errors.push(`${o.shopifyOrderNumber}: ${e.message}`)
+    }
   }
-  return NextResponse.json({ created, cancelled, completed, orders: orders.length })
+  return NextResponse.json({ created, cancelled, completed, reopened, orders: orders.length, errors })
 }

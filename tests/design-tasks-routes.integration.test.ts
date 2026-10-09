@@ -125,6 +125,24 @@ describe('GET /api/design-studio/tasks', () => {
     expect(body.tasks.map((t: any) => t.taskKey)).toContain('DTR1_1')
   })
 
+  it('mine=1 returns tasks assigned to the caller only', async () => {
+    const otherId = (await prisma.appUser.upsert({ where: { email: 'mine@dtr.test' }, create: { name: 'Mine', email: 'mine@dtr.test', role: 'SUPPORT' }, update: {} })).id
+    try {
+      await prisma.designTask.update({ where: { taskKey: 'DTR2_1' }, data: { assigneeId: supportId } })
+      const otherToken = await signToken({ userId: otherId, email: 'mine@dtr.test', name: 'Mine', role: 'SUPPORT', permissions: [], tv: 0 })
+      const keysFor = async (token: string) => {
+        const res = await getTasks(await cookieReq('http://x/api/design-studio/tasks?mine=1', token))
+        expect(res.status).toBe(200)
+        return (await res.json()).tasks.map((t: any) => t.taskKey)
+      }
+      expect(await keysFor(supportToken)).toContain('DTR2_1')
+      expect(await keysFor(otherToken)).not.toContain('DTR2_1')
+    } finally {
+      await prisma.designTask.update({ where: { taskKey: 'DTR2_1' }, data: { assigneeId: null } })
+      await prisma.appUser.deleteMany({ where: { email: 'mine@dtr.test' } })
+    }
+  })
+
   it('400s when every status value is invalid', async () => {
     const req = await cookieReq('http://x/api/design-studio/tasks?statuses=BOGUS', adminToken)
     const res = await getTasks(req)
@@ -245,7 +263,7 @@ describe('POST /api/design-studio/tasks/sync', () => {
     const res = await postSync(req)
     expect(res.status).toBe(200)
     const body = await res.json()
-    expect(body).toEqual({ created: 0, cancelled: 0, completed: 0, orders: 1 })
+    expect(body).toEqual({ created: 0, cancelled: 0, completed: 0, reopened: 0, orders: 1 })
   })
 
   it('iterates every PENDING_DESIGN/DESIGN_REJECTED order when no id is given', async () => {
@@ -254,6 +272,17 @@ describe('POST /api/design-studio/tasks/sync', () => {
     expect(res.status).toBe(200)
     const body = await res.json()
     expect(body.orders).toBeGreaterThanOrEqual(2)
+    expect(body.errors).toEqual([])
+  })
+
+  it('also visits orders outside the design statuses that still have an open task', async () => {
+    await prisma.order.update({ where: { id: DONE_ORDER_ID }, data: { pipelineStatus: 'READY_TO_PRODUCTION' } })
+    await prisma.orderLine.updateMany({ where: { orderId: DONE_ORDER_ID }, data: { designDriveLink: 'https://drive.google.com/file/d/from-trello' } })
+    expect((await prisma.designTask.findUnique({ where: { taskKey: 'DTR2_1' } }))?.status).toBe('NEW')
+    const req = await cookieReq('http://x/api/design-studio/tasks/sync', adminToken, { method: 'POST', body: JSON.stringify({}) })
+    const body = await (await postSync(req)).json()
+    expect(body.completed).toBeGreaterThanOrEqual(1)
+    expect((await prisma.designTask.findUnique({ where: { taskKey: 'DTR2_1' } }))?.status).toBe('DONE')
   })
 })
 
