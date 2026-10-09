@@ -60,6 +60,7 @@ export async function pushArtworkToDrive(artworkId: string): Promise<PushResult>
       include: { order: { select: { shopifyOrderNumber: true, placedAt: true, store: { select: { shop: true, project: { select: { name: true } } } } } } },
     })
     if (!art) throw new Error('Artwork not found')
+    if (art.removedAt) return { pushed: false, warning: 'File đã bị xoá khỏi task' }
     if (art.storage === 'DRIVE') return { pushed: true, warning: null }
     const absPath = localArtworkPath(art.storagePath)
     if (!absPath) throw new Error('Artwork không có file local')

@@ -259,7 +259,7 @@ export async function transitionTask(taskKey: string, actor: Actor, input: Trans
 async function missingArtworkSlots(line: TemplateLookupLine & { shopifyLineId: string; customAttributesJson: string | null }): Promise<string[]> {
   const template = await templateForLine(line)
   const slots = requiredSlotsFor(line, template)
-  const artworks = await prisma.designArtwork.findMany({ where: { orderId: line.orderId, shopifyLineId: line.shopifyLineId }, select: { printArea: true } })
+  const artworks = await prisma.designArtwork.findMany({ where: { orderId: line.orderId, shopifyLineId: line.shopifyLineId, removedAt: null }, select: { printArea: true } })
   return slots.filter(s => !artworks.some(a => a.printArea === s))
 }
 

@@ -467,6 +467,8 @@ model DesignArtwork {
   heightPx      Int?
   uploadedById  String?
   createdAt     DateTime @default(now())
+  removedAt     DateTime?
+  removedById   String?
   @@unique([orderId, shopifyLineId, printArea, version])
   @@index([orderId])
 }

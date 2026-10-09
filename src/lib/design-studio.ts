@@ -140,7 +140,7 @@ export async function loadWorkspace(orderId: string): Promise<Workspace | null> 
     include: {
       store: { include: { project: { select: { id: true, name: true } } } },
       lines: { orderBy: { linePosition: 'asc' } },
-      artworks: { orderBy: [{ printArea: 'asc' }, { version: 'desc' }] },
+      artworks: { where: { removedAt: null }, orderBy: [{ printArea: 'asc' }, { version: 'desc' }] },
     },
   })
   if (!order) return null
@@ -232,7 +232,7 @@ export async function updateLine(lineId: string, patch: { note?: string | null; 
   if (patch.note !== undefined) data.designNote = patch.note === null ? null : patch.note.trim() || null
   if (patch.done === true) {
     const artworks = await prisma.designArtwork.findMany({
-      where: { orderId: line.orderId, shopifyLineId: line.shopifyLineId },
+      where: { orderId: line.orderId, shopifyLineId: line.shopifyLineId, removedAt: null },
       orderBy: { version: 'desc' },
     })
     const slots = patch.requiredAreas && patch.requiredAreas.length > 0

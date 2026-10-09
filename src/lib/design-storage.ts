@@ -1,7 +1,7 @@
 import fs from 'fs/promises'
 import path from 'path'
 import { prisma } from '@/lib/db'
-import { toArtworkRow, type ArtworkRow } from '@/lib/design-studio'
+import { artworkUrl, toArtworkRow, type ArtworkRow } from '@/lib/design-studio'
 import { imageSize } from '@/lib/image-size'
 
 export const ALLOWED_MIME: Record<string, string> = {
@@ -105,4 +105,33 @@ export async function readArtwork(id: string) {
 export async function loadArtworkRow(id: string): Promise<ArtworkRow | null> {
   const row = await prisma.designArtwork.findUnique({ where: { id } })
   return row ? toArtworkRow(row) : null
+}
+
+export class ArtworkRemoveError extends Error {
+  constructor(message: string, readonly status: number) { super(message) }
+}
+
+export async function removeArtwork(artworkId: string, actor: { id: string; role: string }) {
+  const art = await prisma.designArtwork.findUnique({ where: { id: artworkId } })
+  if (!art || art.removedAt) throw new ArtworkRemoveError('Không tìm thấy file', 404)
+  const isAdmin = actor.role === 'SUPERADMIN' || actor.role === 'ADMIN'
+  if (!isAdmin && art.uploadedById !== actor.id) throw new ArtworkRemoveError('Chỉ người upload hoặc admin được xoá file này', 403)
+  const [task, line] = await Promise.all([
+    prisma.designTask.findUnique({ where: { orderId_shopifyLineId: { orderId: art.orderId, shopifyLineId: art.shopifyLineId } }, select: { id: true, status: true } }),
+    prisma.orderLine.findFirst({ where: { orderId: art.orderId, shopifyLineId: art.shopifyLineId }, select: { designDriveLink: true } }),
+  ])
+  if (task?.status === 'DONE') throw new ArtworkRemoveError('Task đã duyệt & gửi xưởng — bấm "Sửa & gửi lại" trước khi xoá file', 409)
+  const links = [artworkUrl(art.id), art.driveWebViewLink].filter(Boolean)
+  if (line?.designDriveLink && links.includes(line.designDriveLink)) {
+    throw new ArtworkRemoveError('File này đang là file gửi xưởng của dòng — không xoá được', 409)
+  }
+  const removedAt = new Date()
+  const r = await prisma.designArtwork.updateMany({ where: { id: art.id, removedAt: null }, data: { removedAt, removedById: actor.id } })
+  if (r.count === 0) throw new ArtworkRemoveError('Không tìm thấy file', 404)
+  if (task) {
+    await prisma.designTaskEvent.create({
+      data: { taskId: task.id, type: 'ARTWORK', message: `Xoá file ${art.printArea} v${art.version} · ${art.fileName}`, actorId: actor.id },
+    })
+  }
+  return { id: art.id, printArea: art.printArea, version: art.version, removedAt: removedAt.toISOString() }
 }
