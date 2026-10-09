@@ -329,7 +329,7 @@ export async function templateForLine(line: TemplateLookupLine, profile?: { prin
   const p = profile !== undefined ? profile : await profileForLine(line)
   if (p?.printTemplateId) {
     const fromProfile = await prisma.printTemplate.findUnique({ where: { id: p.printTemplateId } })
-    if (fromProfile) return mapTemplate(fromProfile)
+    if (fromProfile && (!line.resolvedSupplierId || fromProfile.supplierId === line.resolvedSupplierId)) return mapTemplate(fromProfile)
   }
   if (!line.resolvedSupplierId) return null
   const templates = await prisma.printTemplate.findMany({ where: { supplierId: line.resolvedSupplierId } })

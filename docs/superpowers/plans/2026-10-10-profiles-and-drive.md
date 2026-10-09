@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development. Steps use checkbox (`- [ ]`) syntax.
 
-**Goal:** (A) per-Shopify-product profiles that decide supplier, print template, master artwork and layer mapping for every variant; (B) artwork uploads stored on Google Drive via OAuth, uploaded browser→Drive directly, shared on approval.
+**Goal:** (A) per-Shopify-product profiles that decide supplier, print template, master artwork and layer mapping for every variant; (B) artwork uploads stored on Google Drive via OAuth, uploaded to the tool, which pushes to Drive (browser→Drive direct was superseded 2026-10-10 by the tool-push flow below), shared on approval.
 
-**Architecture:** One migration adds `OrderLine.shopifyProductId`, `ProductProfile`, Drive columns on `DesignArtwork` and `DesignArtworkUpload`. Supplier resolution gains a profile step in the pure resolver `resolveByProductBase`; design lookups (`templateForLine`, master, layer hints) check the profile first. A thin `src/lib/google-drive.ts` wraps the Drive REST API with `fetch`; the upload path becomes session → browser PUT → complete, falling back to the v1 local path when Drive is not connected.
+**Architecture:** One migration adds `OrderLine.shopifyProductId`, `ProductProfile`, Drive columns on `DesignArtwork` and `DesignArtworkUpload`. Supplier resolution gains a profile step in the pure resolver `resolveByProductBase`; design lookups (`templateForLine`, master, layer hints) check the profile first. A thin `src/lib/google-drive.ts` wraps the Drive REST API with `fetch`; the upload path pushes tool→Drive (session → browser PUT → complete was superseded 2026-10-10 by the tool-push flow below), falling back to the v1 local path when Drive is not connected.
 
 **Tech Stack:** Next.js 14.2 (sync `{ params }`), Prisma v7 SQLite, Vitest (mock `fetch` for Google), Tailwind tokens.
 
@@ -74,10 +74,10 @@
 
 **Files:** `src/lib/google-drive.ts`, `src/lib/google-oauth.ts` (state store like `saveOAuthState/consumeOAuthState` in `src/lib/token-store.ts`), routes `src/app/api/auth/google/route.ts`, `src/app/api/auth/google/callback/route.ts`, `src/app/api/setup/google-drive/route.ts`, `src/lib/api-access.ts`, Setup card component on `src/app/setup/page.tsx`, tests `tests/google-drive.test.ts`, `tests/google-oauth-routes.test.ts`.
 
-- [ ] Functions per Drive spec. Token endpoint `https://oauth2.googleapis.com/token`; userinfo email via `https://www.googleapis.com/oauth2/v2/userinfo` (add scope `openid email` alongside `drive.file`); files API `https://www.googleapis.com/drive/v3/files`, uploads `https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable` with headers `Authorization`, `Content-Type: application/json; charset=UTF-8`, `X-Upload-Content-Type`, `X-Upload-Content-Length`, `Origin`. Folder search query `mimeType='application/vnd.google-apps.folder' and name='<escaped>' and '<parent>' in parents and trashed=false`.
+- [ ] Functions per Drive spec. Token endpoint `https://oauth2.googleapis.com/token`; userinfo email via `https://www.googleapis.com/oauth2/v2/userinfo` (add scope `openid email` alongside `drive.file`); files API `https://www.googleapis.com/drive/v3/files`, uploads `https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable` with headers `Authorization`, `Content-Type: application/json; charset=UTF-8`, `X-Upload-Content-Type`, `X-Upload-Content-Length` (`Origin` is not sent — superseded 2026-10-10 by the tool-push flow below). Folder search query `mimeType='application/vnd.google-apps.folder' and name='<escaped>' and '<parent>' in parents and trashed=false`.
 - [ ] `isDriveConnected()` = refresh token + client id/secret present. Redirect URI built from `NEXT_PUBLIC_APP_URL` (fallback `http://localhost:3002`) + `/api/auth/google/callback`.
 - [ ] Setup card: status (connected email, root folder link), client id (masked) / secret inputs, Connect (navigates to `/api/auth/google`), Disconnect.
-- [ ] Tests with mocked fetch: token refresh cached until expiry; `ensureFolder` reuses an existing folder and creates when missing; resumable initiation sends `Origin` and returns the `Location` header; `shareAnyoneReader` posts `{role:'reader',type:'anyone'}`; callback rejects missing/unknown state with 400 and stores the refresh token on success (mock the token exchange); GET setup never returns the secret or token.
+- [ ] Tests with mocked fetch: token refresh cached until expiry; `ensureFolder` reuses an existing folder and creates when missing; resumable initiation returns the `Location` header; `shareAnyoneReader` posts `{role:'reader',type:'anyone'}`; callback rejects missing/unknown state with 400 and stores the refresh token on success (mock the token exchange); GET setup never returns the secret or token.
 - [ ] Full suite + tsc; commit `feat(drive): Google Drive OAuth connection and client`.
 
 ### Task D2: Tool pushes uploads to Drive, serving, link

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/db'
 import { AUTH_COOKIE, signToken } from '@/lib/auth'
-import { loadTask, syncDesignTasks } from '@/lib/design-tasks'
+import { loadTask, syncDesignTasks, templateForLine } from '@/lib/design-tasks'
 import { profileKey } from '@/lib/product-mapping'
 import { toRouteKey } from '@/lib/product-profiles'
 import { loadProductProfilesForResolver } from '@/lib/repos/mapping'
@@ -248,6 +248,31 @@ describe('saving a profile', () => {
     expect(detail?.template?.id).toBe(TPL_SKU)
     expect(detail?.profile?.status).toBe('NO_TEMPLATE')
     await put({ printTemplateId: TPL_PROFILE })
+  })
+})
+
+describe('templateForLine with a profile template', () => {
+  const profile = { printTemplateId: TPL_PROFILE }
+  const base = { orderId: OPEN_ID, shopifyProductId: GID }
+
+  it('a line resolved to the template supplier gets the profile template', async () => {
+    const t = await templateForLine({ ...base, resolvedSupplierId: SUP_B, resolvedSupplierSku: 'PP-NEW' }, profile)
+    expect(t?.id).toBe(TPL_PROFILE)
+  })
+
+  it('a line without a resolved supplier gets the profile template', async () => {
+    const t = await templateForLine({ ...base, resolvedSupplierId: null, resolvedSupplierSku: null }, profile)
+    expect(t?.id).toBe(TPL_PROFILE)
+  })
+
+  it('an override line resolved to another supplier falls through to that supplier SKU template', async () => {
+    const t = await templateForLine({ ...base, resolvedSupplierId: SUP_A, resolvedSupplierSku: 'PP-A' }, profile)
+    expect(t?.id).toBe(TPL_A)
+  })
+
+  it('an override line on another supplier with no matching template gets none, not the profile template', async () => {
+    const t = await templateForLine({ ...base, resolvedSupplierId: SUP_A, resolvedSupplierSku: 'PP-OLD' }, profile)
+    expect(t).toBeNull()
   })
 })
 

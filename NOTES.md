@@ -385,14 +385,14 @@ Not done yet: no browser click-through of the page; `readinessFor` never yields 
 - One `ProductProfile` per Shopify product (`storeId` + `shopifyProductId`): default supplier product, option overrides (`[{combo, supplierProductId}]`), print template, master artwork URL, layer map (`[{field, layer, font?, maxChars?, fit}]`). Edited at `/design-studio/products` (admins write, others read).
 - `OrderLine.shopifyProductId` comes from the order sync; older lines get it when "Đồng bộ task" runs (it refetches lines missing custom attributes, image or product id from Shopify — 60-day token window).
 - Supplier precedence: variant manual mapping > profile override > profile default > ProductBase rules. The size-sibling swap applies to profile defaults, not to overrides.
-- Design precedence: profile template > supplier-SKU template match; profile master > SkuDesign.
+- Design precedence: profile template (only when its supplier prints the line, or the line has no supplier yet) > supplier-SKU template match; profile master > SkuDesign. Master artwork is link-only; upload is not built yet.
 - Saving a profile re-resolves only lines of that product in orders not EXPORTED/FULFILLED/CANCELLED/REFUNDED, keeps the cost snapshot when supplier+SKU are unchanged, skips the cost step when supplier/overrides did not change, then re-syncs tasks.
 - Status: NONE / NO_TEMPLATE / NO_MASTER / NO_LAYERS / READY. Observed fields (last 90 days, newest 200 lines) exclude non-printed keys (`Size`, "Yes or No" toggles — `src/lib/layer-fields.ts`).
 
 ## Design artwork on Google Drive (2026-10-10)
 
 - The designer uploads to the tool as before; the tool saves the file, pushes it to Drive in 8 MB resumable chunks, shares it "anyone with the link", records `driveFileId`/`driveWebViewLink`, then deletes the local copy. Folder: `Design Studio/<Store>/<YYYY-MM UTC>/<Order>/<TaskKey>/v<N>-<file>`.
-- Push failure or Drive not connected → the file stays local with a warning; "Đẩy lên Drive" retries. A successful retry also replaces the app URL on an already-approved line/order.
+- Drive not connected → the file stays local silently (no warning, "Local" badge). A failed push while connected → local plus a warning; "Đẩy lên Drive" retries. A successful retry also replaces the app URL on an already-approved line/order.
 - Previews: images/PDF streamed from Drive through `/api/design-studio/file/<id>`; PSD/ZIP redirect to the Drive page. On approval the line's `designDriveLink` is the Drive link (what the supplier CSV exports).
 - Connect once on `/setup` → "Google Drive (lưu artwork)" (SUPERADMIN):
   1. Google Cloud Console → new project → enable **Google Drive API**.

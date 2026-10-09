@@ -253,7 +253,7 @@ export default function ProfileEditor({ detail, templates, canEdit, onSaved }: {
                 <img src={masterPreview} alt="Xem trước master artwork" className="max-h-32 max-w-full object-contain" />
               </a>
             )}
-            <p className="text-label-sm text-on-surface-variant">Upload file master sẽ có sau khi nối Google Drive</p>
+            <p className="text-label-sm text-on-surface-variant">Dán link file master (Drive hoặc CDN). Upload trực tiếp chưa có.</p>
           </Card>
 
           <Card icon="layers" title="Bảng layer" right={`${form.layers.filter(l => l.layer.trim()).length}/${form.layers.length} đã gắn`}>

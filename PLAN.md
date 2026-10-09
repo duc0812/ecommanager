@@ -187,6 +187,7 @@ Completed 2026-05-19 via subagent-driven development.
 ### 🟢 Design Tasks v2 (2026-10-10, local)
 - Design Tasks v2 (local): task queue, lifecycle, assign/KPI, image-first workspace — 2026-10-10
 - Product profiles (supplier + template + master + layer map per Shopify product) and Google Drive artwork storage — 2026-10-10; next: auto-design agent (local render worker), streaming uploads
+- Next: master artwork upload in the profile editor
 
 ---
 
