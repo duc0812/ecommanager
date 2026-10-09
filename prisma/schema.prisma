@@ -466,6 +466,8 @@ model DesignArtwork {
   widthPx       Int?
   heightPx      Int?
   uploadedById  String?
+  source        String   @default("MANUAL")
+  previewPath   String?
   createdAt     DateTime @default(now())
   removedAt     DateTime?
   removedById   String?
@@ -1173,6 +1175,7 @@ model ArtworkEntry {
   approvedAt       DateTime?
   approvedById     String?
   notes            String?
+  layerFields      String        @default("{}")
   jobs             ArtworkJob[]
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt
@@ -1202,8 +1205,13 @@ model ArtworkJob {
   attempts   Int          @default(0)
   lockedAt   DateTime?
   error      String?
+  orderId         String?
+  shopifyLineId   String?
+  printArea       String?
+  resultArtworkId String?
   createdAt  DateTime     @default(now())
   finishedAt DateTime?
   @@index([status, createdAt])
   @@index([entryId])
+  @@index([orderId, shopifyLineId])
 }

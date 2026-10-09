@@ -16,6 +16,7 @@ export type ArtworkRow = {
   mimeType: string; uploadedById: string | null; createdAt: string; url: string
   widthPx: number | null; heightPx: number | null
   storage: ArtworkStorage; driveWebViewLink: string | null
+  source: 'MANUAL' | 'AUTO'; previewUrl: string | null
 }
 export type ArtworkStorage = 'LOCAL' | 'DRIVE'
 export type WorkspaceLine = {
@@ -113,12 +114,14 @@ export function artworkUrl(id: string): string {
 export function toArtworkRow(a: {
   id: string; printArea: string; version: number; fileName: string; size: number; mimeType: string; uploadedById: string | null
   createdAt: Date; widthPx: number | null; heightPx: number | null; storage: string; driveWebViewLink: string | null
+  source?: string | null; previewPath?: string | null
 }): ArtworkRow {
   return {
     id: a.id, printArea: a.printArea, version: a.version, fileName: a.fileName, size: a.size,
     mimeType: a.mimeType, uploadedById: a.uploadedById, createdAt: a.createdAt.toISOString(), url: artworkUrl(a.id),
     widthPx: a.widthPx, heightPx: a.heightPx,
     storage: a.storage === 'DRIVE' ? 'DRIVE' : 'LOCAL', driveWebViewLink: a.driveWebViewLink,
+    source: a.source === 'AUTO' ? 'AUTO' : 'MANUAL', previewUrl: a.previewPath ? `${artworkUrl(a.id)}?preview=1` : null,
   }
 }
 

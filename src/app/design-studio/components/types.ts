@@ -1,5 +1,6 @@
 import type { LibraryProductStatus } from '@/lib/artwork-fields'
 import type { TaskLibraryState } from '@/lib/artwork-library-types'
+import type { RenderJobView } from '@/lib/artwork-render-eligibility'
 
 export type TaskStatus = 'NEW' | 'ASSIGNED' | 'DOING' | 'REVIEW' | 'REJECTED' | 'ASK_CUSTOMER' | 'DONE' | 'CANCELLED'
 export type Readiness = 'AUTO' | 'LOW' | 'MANUAL'
@@ -28,6 +29,7 @@ export type ArtworkRow = {
   mimeType: string; uploadedById: string | null; createdAt: string; url: string
   widthPx: number | null; heightPx: number | null
   storage: 'LOCAL' | 'DRIVE'; driveWebViewLink: string | null
+  source: 'MANUAL' | 'AUTO'; previewUrl: string | null
 }
 
 export type WorkspaceLine = {
@@ -73,6 +75,7 @@ export type TaskDetail = {
   events: TaskEvent[]; assignable: { id: string; name: string }[]; settings: DesignSettings; prevStatus: TaskStatus | null
   slots: string[]; me: Me; driveConnected: boolean
   library: TaskLibraryState | null
+  autoRender: RenderJobView | null
 }
 
 export type TransitionBody = {

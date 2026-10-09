@@ -4,15 +4,30 @@ import { FieldValidationError, normalizeFields, normalizeFixedTexts, normalizeSt
 import { TooLargeError } from '@/lib/library-storage'
 import { MultipartError, cleanupMultipart, parseMultipartToTemp, type MultipartFile, type MultipartResult } from '@/lib/multipart-stream'
 import { RESULT_MAX_FILE_BYTES, applyParseResult } from '@/lib/repos/artwork-library'
+import { RENDER_LINE, applyRenderResult } from '@/lib/repos/artwork-render'
+import { prisma } from '@/lib/db'
 
 const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+const JPEG_MAGIC = Buffer.from([0xff, 0xd8, 0xff])
 
 function bad(error: string, status = 400) {
   return NextResponse.json({ error }, { status })
 }
 
-function pickFile(files: MultipartFile[], base: string): MultipartFile | undefined {
-  return files.find(f => f.field === base || f.field === `${base}.png`) ?? files.find(f => f.fileName === `${base}.png`)
+function pickFile(files: MultipartFile[], base: string, ext = 'png'): MultipartFile | undefined {
+  return files.find(f => f.field === base || f.field === `${base}.${ext}`) ?? files.find(f => f.fileName === `${base}.${ext}`)
+}
+
+async function renderResult(jobId: string, parts: MultipartResult, json: any) {
+  const print = pickFile(parts.files, 'print')
+  if (!print) return bad('Thiếu print.png')
+  if (!print.head.subarray(0, 8).equals(PNG_MAGIC)) return bad('print.png không phải PNG')
+  const preview = pickFile(parts.files, 'preview', 'jpg') ?? null
+  if (preview && !preview.head.subarray(0, 3).equals(JPEG_MAGIC)) return bad('preview.jpg không phải JPEG')
+  const warnings = Array.isArray(json.warnings) ? json.warnings.filter((w: unknown): w is string => typeof w === 'string').slice(0, 20) : []
+  const applied = await applyRenderResult({ jobId, print, preview, result: { warnings } })
+  if (!applied) return bad('Job không còn ở trạng thái RUNNING', 409)
+  return NextResponse.json({ ok: true, status: 'DONE', artworkId: applied.artworkId, version: applied.version, warning: applied.warning })
 }
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
@@ -28,6 +43,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     let json: any
     try { json = JSON.parse(raw) } catch { return bad('result.json không phải JSON') }
     if (!json || typeof json !== 'object' || Array.isArray(json)) return bad('result.json phải là object')
+    const job = await prisma.artworkJob.findUnique({ where: { id: params.id }, select: { kind: true } })
+    if (!job) return bad('Không tìm thấy job', 404)
+    if (job.kind === RENDER_LINE) return await renderResult(params.id, parts, json)
     const artwork = pickFile(parts.files, 'artwork')
     if (!artwork) return bad('Thiếu artwork.png')
     const preview = pickFile(parts.files, 'preview') ?? null

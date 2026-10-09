@@ -41,8 +41,11 @@ function extOf(fileName: string, mimeType: string): string {
   return ALLOWED_MIME[mimeType] ?? ''
 }
 
+export type ArtworkSource = 'MANUAL' | 'AUTO'
+
 export async function saveArtwork(input: {
   lineId: string; printArea: string; fileName: string; mimeType: string; bytes: Buffer; uploadedById: string | null
+  source?: ArtworkSource; preview?: Buffer | null
 }): Promise<ArtworkRow> {
   const ext = extOf(input.fileName, input.mimeType)
   if (!ext || !ALLOWED_EXT.has(ext)) throw new Error(`File type not allowed: ${input.fileName} (${input.mimeType})`)
@@ -77,12 +80,18 @@ export async function saveArtwork(input: {
     }
   }
 
+  let previewRel: string | null = null
+  if (input.preview && input.preview.length > 0) {
+    previewRel = path.join(dir, `v${version}-preview.jpg`)
+    await fs.writeFile(path.resolve(root, previewRel), input.preview)
+  }
   const dims = imageSize(input.bytes)
   const row = await prisma.designArtwork.create({
     data: {
       orderId: line.orderId, shopifyLineId: line.shopifyLineId, printArea, version, fileName,
       storagePath: rel.split(path.sep).join('/'), size: input.bytes.length, mimeType, uploadedById: input.uploadedById,
       widthPx: dims?.width ?? null, heightPx: dims?.height ?? null,
+      source: input.source ?? 'MANUAL', previewPath: previewRel ? previewRel.split(path.sep).join('/') : null,
     },
   })
   return toArtworkRow(row)

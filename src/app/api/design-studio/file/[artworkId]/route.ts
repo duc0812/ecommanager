@@ -32,10 +32,30 @@ async function serveDrive(row: { fileName: string; mimeType: string; driveFileId
   }
 }
 
-export async function GET(_req: NextRequest, { params }: { params: { artworkId: string } }) {
+async function servePreview(row: { previewPath: string | null; fileName: string }) {
+  const absPath = localArtworkPath(row.previewPath)
+  if (!absPath) return null
+  let bytes: Buffer
+  try { bytes = await fs.readFile(absPath) } catch { return null }
+  return new NextResponse(bytes as unknown as BodyInit, {
+    headers: {
+      'Content-Type': 'image/jpeg',
+      'Content-Length': String(bytes.length),
+      'Content-Disposition': `inline; filename="${row.fileName.replace(/\.[^.]+$/, '')}-preview.jpg"`,
+      'Cache-Control': 'private, max-age=3600',
+      'X-Content-Type-Options': 'nosniff',
+    },
+  })
+}
+
+export async function GET(req: NextRequest, { params }: { params: { artworkId: string } }) {
   const { artworkId } = params
   const row = await prisma.designArtwork.findUnique({ where: { id: artworkId } })
   if (!row) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  if (req.nextUrl.searchParams.get('preview') === '1') {
+    const preview = await servePreview(row)
+    if (preview) return preview
+  }
   if (row.storage === 'DRIVE') return serveDrive(row)
 
   const absPath = localArtworkPath(row.storagePath)

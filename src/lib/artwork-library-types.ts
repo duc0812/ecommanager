@@ -1,4 +1,4 @@
-import type { ArtworkField, EntryStatus, FixedText, LibraryProductStatus, SlotStatus } from '@/lib/artwork-fields'
+import type { ArtworkField, EntryStatus, FixedText, LayerFields, LibraryProductStatus, SlotStatus } from '@/lib/artwork-fields'
 import type { OptionSummary } from '@/lib/artwork-options'
 
 export type LibraryFileView = {
@@ -8,7 +8,7 @@ export type LibraryFileView = {
 export type LibraryEntryView = {
   id: string; storeId: string; shopifyProductId: string; printTemplateId: string; optionKey: string; optionLabel: string | null; supplierId: string
   status: EntryStatus; psd: LibraryFileView | null; artwork: LibraryFileView | null; preview: LibraryFileView | null
-  fields: ArtworkField[]; fixedTexts: FixedText[]; missingFonts: string[]; warnings: string[]
+  fields: ArtworkField[]; fixedTexts: FixedText[]; missingFonts: string[]; warnings: string[]; layerFields: LayerFields
   checkScore: number | null; error: string | null; parsedAt: string | null; approvedAt: string | null; approvedByName: string | null
   notes: string | null; updatedAt: string
   job: { id: string; status: string; attempts: number; error: string | null; createdAt: string } | null

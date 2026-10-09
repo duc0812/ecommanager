@@ -10,6 +10,8 @@ import type { LibraryProductStatus } from '@/lib/artwork-fields'
 import { isDriveConnected } from '@/lib/google-drive'
 import { libraryStateFor } from '@/lib/artwork-library-state'
 import type { TaskLibraryState } from '@/lib/artwork-library-types'
+import type { RenderJobView } from '@/lib/artwork-render-eligibility'
+import { latestRenderJob } from '@/lib/artwork-render-jobs'
 
 export { loadTemplateContext, mapTemplate, pickTemplate, type TemplateRow }
 
@@ -146,7 +148,7 @@ export type TaskDetail = {
   task: TaskRow; line: WorkspaceLine; order: Workspace['order']; template: TemplateRow | null; profile: TaskProfile | null; profileRouteKey: string | null
   events: { id: string; type: string; message: string; actorName: string | null; createdAt: string }[]
   assignable: { id: string; name: string }[]; settings: DesignSettings; prevStatus: TaskStatus | null
-  slots: string[]; driveConnected: boolean; library: TaskLibraryState | null
+  slots: string[]; driveConnected: boolean; library: TaskLibraryState | null; autoRender: RenderJobView | null
 }
 
 export function requiredSlotsFor(line: { customAttributesJson: string | null }, template: TemplateRow | null): string[] {
@@ -368,6 +370,7 @@ export async function loadTask(taskKey: string): Promise<TaskDetail | null> {
     slots: requiredSlotsFor(orderLine ?? { customAttributesJson: null }, template),
     driveConnected: await isDriveConnected(),
     library,
+    autoRender: await latestRenderJob(task.orderId, task.shopifyLineId),
   }
 }
 

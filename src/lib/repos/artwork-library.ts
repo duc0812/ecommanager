@@ -7,7 +7,7 @@ import { profileKey } from '@/lib/product-mapping'
 import { fieldsFromLines, fromRouteKey, observationSince, toRouteKey } from '@/lib/product-profiles'
 export { libraryStateFor } from '@/lib/artwork-library-state'
 import {
-  carryOverEdits, normalizeFields, parseFields, parseFixedTexts, parseStrings, resultStatus,
+  carryOverEdits, normalizeFields, normalizeLayerFields, parseFields, parseFixedTexts, parseLayerFields, parseStrings, resultStatus,
   type ArtworkField, type EntryStatus, type FixedText, type LibraryProductStatus,
 } from '@/lib/artwork-fields'
 import { isCanonicalOptionKey, optionComboLabel, parseArtworkSplits, parseOptionKey, summarizeOptions, withSplit } from '@/lib/artwork-options'
@@ -65,6 +65,7 @@ export function serializeEntry(e: EntryRow, approverNames: Map<string, string> =
     optionKey: e.optionKey, optionLabel: e.optionKey ? optionComboLabel(e.optionKey) : null, supplierId: e.supplierId,
     status: e.status as EntryStatus, psd: fileView(e.psdFile), artwork: fileView(e.artworkFile), preview: fileView(e.previewFile),
     fields: parseFields(e.fields), fixedTexts: parseFixedTexts(e.fixedTexts), missingFonts: parseStrings(e.missingFonts), warnings: parseStrings(e.warnings),
+    layerFields: parseLayerFields(e.layerFields),
     checkScore: e.checkScore, error: e.error, parsedAt: e.parsedAt?.toISOString() ?? null, approvedAt: e.approvedAt?.toISOString() ?? null,
     approvedByName: e.approvedById ? (approverNames.get(e.approvedById) ?? null) : null,
     notes: e.notes, updatedAt: e.updatedAt.toISOString(),
@@ -456,6 +457,14 @@ export async function updateEntry(entryId: string, body: unknown, actor: { id: s
 
   if (b.reparse === true) {
     await requeueEntry(entryId)
+    return (await loadEntryView(entryId))!
+  }
+  if (b.layerFields !== undefined) {
+    let layerFields
+    try { layerFields = normalizeLayerFields(b.layerFields) } catch (err: any) { throw new LibraryError(err.message) }
+    if (!e.psdFileId) throw new LibraryError('Entry chưa có PSD')
+    await prisma.artworkEntry.update({ where: { id: entryId }, data: { layerFields: JSON.stringify(layerFields) } })
+    await requeueEntry(entryId, 'Đổi layer custom — đọc lại')
     return (await loadEntryView(entryId))!
   }
   const data: Record<string, unknown> = {}

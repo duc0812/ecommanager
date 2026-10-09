@@ -190,14 +190,16 @@ describe('claim', () => {
 })
 
 describe('files and fonts', () => {
-  it('downloads the PSD with its hash and refuses other kinds', async () => {
+  it('downloads the PSD with its hash, serves artwork for renders and refuses other kinds', async () => {
     const res = await workerFile(bearer(token, 'http://localhost/x', { method: 'GET' }), { params: { id: psdId } })
     expect(res.status).toBe(200)
     expect(res.headers.get('x-content-sha256')).toBe('abc')
     expect(Buffer.from(await res.arrayBuffer()).toString()).toBe('8BPS-worker-psd')
     const art = await prisma.libraryFile.create({ data: { kind: 'ARTWORK', fileName: 'a.png', mimeType: 'image/png', size: 1, sha256: 'z', storagePath: 'library/psd/w.psd' } })
-    fileIds.push(art.id)
-    expect((await workerFile(bearer(token, 'http://localhost/x', { method: 'GET' }), { params: { id: art.id } })).status).toBe(404)
+    const prev = await prisma.libraryFile.create({ data: { kind: 'PREVIEW', fileName: 'p.png', mimeType: 'image/png', size: 1, sha256: 'y', storagePath: 'library/psd/w.psd' } })
+    fileIds.push(art.id, prev.id)
+    expect((await workerFile(bearer(token, 'http://localhost/x', { method: 'GET' }), { params: { id: art.id } })).status).toBe(200) // RENDER_LINE draws on artwork.png
+    expect((await workerFile(bearer(token, 'http://localhost/x', { method: 'GET' }), { params: { id: prev.id } })).status).toBe(404)
   })
 
   it('lists fonts with file id and sha256', async () => {

@@ -2,10 +2,14 @@ import crypto from 'crypto'
 import type { NextRequest } from 'next/server'
 import { prisma } from '@/lib/db'
 import { mapTemplate } from '@/lib/print-template-resolve'
+import { parseLayerFields, type LayerFields } from '@/lib/artwork-fields'
+import { RENDER_LINE, renderClaimFor, renderJobFailed, type RenderClaim } from '@/lib/repos/artwork-render'
 
 export const WORKER_TOKEN_KEY = 'design.worker.tokenHash'
 export const JOB_STALE_MS = 15 * 60 * 1000
 export const MAX_JOB_ATTEMPTS = 3
+export const PARSE_PSD = 'PARSE_PSD'
+export const JOB_KINDS = [PARSE_PSD, RENDER_LINE]
 
 function sha256Hex(s: string): string {
   return crypto.createHash('sha256').update(s, 'utf8').digest('hex')
@@ -41,9 +45,11 @@ export function verifyWorkerRequest(req: NextRequest): Promise<boolean> {
   return verifyWorkerToken(req.headers.get('authorization'))
 }
 
-export type ClaimResponse = {
+export type ClaimResponse = ParseClaim | RenderClaim
+
+export type ParseClaim = {
   job: { id: string; kind: string; attempts: number; createdAt: string }
-  entry: { id: string; storeId: string; shopifyProductId: string; printTemplateId: string; optionKey: string; title: string; status: string; fields: unknown[] }
+  entry: { id: string; storeId: string; shopifyProductId: string; printTemplateId: string; optionKey: string; title: string; status: string; fields: unknown[]; layerFields: LayerFields }
   template: {
     id: string; name: string; widthPx: number; heightPx: number; dpi: number; bleedIn: number; safeIn: number; mirror: boolean
     areas: { name: string; x: number; y: number; w: number; h: number }[]
@@ -52,25 +58,35 @@ export type ClaimResponse = {
   psd: { id: string; fileName: string; size: number; sha256: string }
 }
 
-async function failExhausted(jobId: string, entryId: string, error: string) {
-  const r = await prisma.artworkJob.updateMany({ where: { id: jobId, status: 'RUNNING' }, data: { status: 'FAILED', error, finishedAt: new Date() } })
-  if (r.count > 0) await prisma.artworkEntry.updateMany({ where: { id: entryId, status: { in: ['QUEUED', 'PARSING'] } }, data: { status: 'ERROR', error } })
+type JobRef = { id: string; kind: string; entryId: string; orderId: string | null; shopifyLineId: string | null }
+
+async function failExhausted(job: JobRef, error: string) {
+  const r = await prisma.artworkJob.updateMany({ where: { id: job.id, status: { in: ['RUNNING', 'QUEUED'] } }, data: { status: 'FAILED', error, finishedAt: new Date() } })
+  if (r.count === 0) return
+  if (job.kind === RENDER_LINE) await renderJobFailed(job, error, true)
+  else await prisma.artworkEntry.updateMany({ where: { id: job.entryId, status: { in: ['QUEUED', 'PARSING'] } }, data: { status: 'ERROR', error } })
 }
 
-export async function claimJob(now = new Date()): Promise<ClaimResponse | null> {
+export function parseJobKinds(v: unknown): string[] {
+  if (!Array.isArray(v)) return [PARSE_PSD]
+  const kinds = v.filter((k): k is string => typeof k === 'string' && JOB_KINDS.includes(k))
+  return kinds.length ? Array.from(new Set(kinds)) : [PARSE_PSD]
+}
+
+export async function claimJob(now = new Date(), kinds: string[] = [PARSE_PSD]): Promise<ClaimResponse | null> {
   const staleBefore = new Date(now.getTime() - JOB_STALE_MS)
   const reclaimable = { OR: [{ status: 'QUEUED' }, { status: 'RUNNING', lockedAt: { lt: staleBefore } }] }
   for (let round = 0; round < 20; round++) {
     const candidates = await prisma.artworkJob.findMany({
-      where: { kind: 'PARSE_PSD', ...reclaimable },
+      where: { kind: { in: kinds }, ...reclaimable },
       orderBy: { createdAt: 'asc' },
       take: 5,
-      select: { id: true, entryId: true, status: true, attempts: true },
+      select: { id: true, kind: true, entryId: true, orderId: true, shopifyLineId: true, status: true, attempts: true },
     })
     if (candidates.length === 0) return null
     for (const c of candidates) {
       if (c.status === 'RUNNING' && c.attempts >= MAX_JOB_ATTEMPTS) {
-        await failExhausted(c.id, c.entryId, `Worker không trả kết quả sau ${c.attempts} lần`)
+        await failExhausted(c, `Worker không trả kết quả sau ${c.attempts} lần`)
         continue
       }
       const won = await prisma.artworkJob.updateMany({
@@ -78,6 +94,15 @@ export async function claimJob(now = new Date()): Promise<ClaimResponse | null> 
         data: { status: 'RUNNING', lockedAt: now, attempts: { increment: 1 } },
       })
       if (won.count === 0) continue
+      if (c.kind === RENDER_LINE) {
+        const row = await prisma.artworkJob.findUniqueOrThrow({ where: { id: c.id } })
+        const payload = await renderClaimFor(row)
+        if ('error' in payload) {
+          await failExhausted(row, payload.error)
+          continue
+        }
+        return payload
+      }
       const job = await prisma.artworkJob.findUniqueOrThrow({
         where: { id: c.id },
         include: { entry: { include: { printTemplate: true, psdFile: true } } },
@@ -94,7 +119,10 @@ export async function claimJob(now = new Date()): Promise<ClaimResponse | null> 
       try { const v = JSON.parse(entry.fields); if (Array.isArray(v)) fields = v } catch {}
       return {
         job: { id: job.id, kind: job.kind, attempts: job.attempts, createdAt: job.createdAt.toISOString() },
-        entry: { id: entry.id, storeId: entry.storeId, shopifyProductId: entry.shopifyProductId, printTemplateId: entry.printTemplateId, optionKey: entry.optionKey, title: entry.title, status: 'PARSING', fields },
+        entry: {
+          id: entry.id, storeId: entry.storeId, shopifyProductId: entry.shopifyProductId, printTemplateId: entry.printTemplateId, optionKey: entry.optionKey,
+          title: entry.title, status: 'PARSING', fields, layerFields: parseLayerFields(entry.layerFields),
+        },
         template: {
           id: t.id, name: t.name, widthPx: t.widthPx, heightPx: t.heightPx, dpi: t.dpi, bleedIn: t.bleedIn, safeIn: t.safeIn, mirror: t.mirror, areas: t.areas,
         },
@@ -118,6 +146,10 @@ export async function recordJobFailure(jobId: string, error: string, permanent =
       : { status: 'QUEUED', error: message, lockedAt: null },
   })
   if (r.count === 0) return null
+  if (job.kind === RENDER_LINE) {
+    await renderJobFailed(job, message, exhausted)
+    return { status: exhausted ? 'FAILED' : 'QUEUED', attempts: job.attempts }
+  }
   await prisma.artworkEntry.update({
     where: { id: job.entryId },
     data: exhausted ? { status: 'ERROR', error: message } : { status: 'QUEUED', error: message },
