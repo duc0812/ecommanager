@@ -1,6 +1,7 @@
 'use client'
 import { useState, type FormEvent } from 'react'
 import Link from 'next/link'
+import { isLayerlessField } from '@/lib/layer-fields'
 import type { LayerMapEntry, TaskDetail, TransitionBody } from './types'
 import {
   OWNED_MOVES, allSlotsFilled, canTransition, findLayer, layerOf, mergeLayerHints, postJson, productPageUrl, productUrl, putJson,
@@ -235,7 +236,7 @@ export default function TaskHeader({ detail, holdCount, onChanged }: { detail: T
       <CustomTable detail={detail} onCopied={setInfo} />
 
       <div className="flex items-center gap-xs flex-wrap justify-end pt-xs border-t border-dashed border-outline-variant/40">
-        {isAdmin && detail.profileRouteKey && line.personalization.length > 0 && (
+        {isAdmin && detail.profileRouteKey && line.personalization.some(f => !isLayerlessField(f.key)) && (
           <button type="button" className={`${btn} mr-auto`} onClick={saveLayersToProfile} disabled={savingProfile}
             title="Ghi layer của các trường này vào hồ sơ sản phẩm (không ghi đè dòng đã có)">
             <Icon name="save" className="text-[16px]" />{savingProfile ? 'Đang lưu…' : 'Lưu vào hồ sơ'}

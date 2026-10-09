@@ -1,6 +1,9 @@
 import { prisma } from '@/lib/db'
 import { visibleCustomAttributes } from '@/lib/order-classify'
 import { parseAttributes } from '@/lib/design-studio'
+import { isLayerlessField } from '@/lib/layer-fields'
+
+export { isLayerlessField }
 
 export type ProfileStatus = 'NONE' | 'NO_TEMPLATE' | 'NO_MASTER' | 'NO_LAYERS' | 'READY'
 export const PROFILE_STATUSES: ProfileStatus[] = ['NONE', 'NO_TEMPLATE', 'NO_MASTER', 'NO_LAYERS', 'READY']
@@ -60,7 +63,7 @@ export function profileStatus(
   if (!profile.masterArtworkUrl && !profile.masterArtworkId) return 'NO_MASTER'
   const layerMap = typeof profile.layerMap === 'string' ? parseLayerMap(profile.layerMap) : profile.layerMap
   const mapped = new Set(layerMap.map(e => e.field.toLowerCase().trim()))
-  if (observedFields.some(f => !mapped.has(f.toLowerCase().trim()))) return 'NO_LAYERS'
+  if (observedFields.some(f => !isLayerlessField(f) && !mapped.has(f.toLowerCase().trim()))) return 'NO_LAYERS'
   return 'READY'
 }
 
@@ -68,6 +71,7 @@ export function fieldsFromLines(lines: Array<{ customAttributesJson: string | nu
   const seen = new Map<string, string>()
   for (const l of lines) {
     for (const a of visibleCustomAttributes(parseAttributes(l.customAttributesJson))) {
+      if (isLayerlessField(a.key)) continue
       const norm = a.key.toLowerCase().trim()
       if (!seen.has(norm)) seen.set(norm, a.key)
     }

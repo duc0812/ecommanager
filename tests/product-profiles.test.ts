@@ -41,6 +41,9 @@ describe('profileStatus', () => {
     expect(profileStatus(base, ['name'])).toBe('READY')
     expect(profileStatus(base, [])).toBe('READY')
   })
+  it('READY when only size and yes/no toggle fields are unmapped', () => {
+    expect(profileStatus(base, ['Name', 'Size', 'Custom Name: Yes Or No?'])).toBe('READY')
+  })
 })
 
 describe('parseLayerMap', () => {
@@ -66,5 +69,11 @@ describe('fieldsFromLines', () => {
       { customAttributesJson: null },
     ]
     expect(fieldsFromLines(lines)).toEqual(['Name', 'Year'])
+  })
+  it('drops size and yes/no toggle fields, which are never printed', () => {
+    const lines = [{ customAttributesJson: JSON.stringify([
+      { key: 'Size', value: 'XL' }, { key: 'Custom Name: Yes Or No?', value: 'Yes' }, { key: 'Custom Name', value: 'Ann' },
+    ]) }]
+    expect(fieldsFromLines(lines)).toEqual(['Custom Name'])
   })
 })

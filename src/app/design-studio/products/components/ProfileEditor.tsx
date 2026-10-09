@@ -62,6 +62,7 @@ export default function ProfileEditor({ detail, templates, canEdit, onSaved }: {
 }) {
   const ids = useId()
   const [form, setForm] = useState<Form>(() => initForm(detail))
+  const [baseline, setBaseline] = useState(() => JSON.stringify(initForm(detail)))
   const [spFilter, setSpFilter] = useState('')
   const [bg, setBg] = useState<CanvasBg>('checker')
   const [guide, setGuide] = useState(50)
@@ -69,7 +70,7 @@ export default function ProfileEditor({ detail, templates, canEdit, onSaved }: {
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
 
-  const set = <K extends keyof Form>(k: K, v: Form[K]) => setForm(f => ({ ...f, [k]: v }))
+  const set = <K extends keyof Form>(k: K, v: Form[K]) => { setMessage(''); setForm(f => ({ ...f, [k]: v })) }
   const setOverride = (i: number, patch: Partial<OverrideRow>) => set('overrides', form.overrides.map((o, j) => (j === i ? { ...o, ...patch } : o)))
   const setLayer = (i: number, patch: Partial<LayerRow>) => set('layers', form.layers.map((l, j) => (j === i ? { ...l, ...patch } : l)))
 
@@ -81,6 +82,8 @@ export default function ProfileEditor({ detail, templates, canEdit, onSaved }: {
   )
   const templateOptions = supplierIds.size > 0 ? detail.templates.filter(t => supplierIds.has(t.supplierId)) : detail.templates
   const currentTemplateHidden = form.printTemplateId && !templateOptions.some(t => t.id === form.printTemplateId)
+  const templateOtherSupplier = !!currentTemplateHidden && supplierIds.size > 0
+  const dirty = JSON.stringify(form) !== baseline
   const currentTemplateName = detail.templates.find(t => t.id === form.printTemplateId)?.name ?? form.printTemplateId
   const previewTemplate = templates.find(t => t.id === form.printTemplateId) ?? null
   const masterPreview = isHttpUrl(form.masterUrl) ? form.masterUrl.trim() : null
@@ -106,6 +109,7 @@ export default function ProfileEditor({ detail, templates, canEdit, onSaved }: {
     if (!layers.ok) { setError(layers.error); return }
     const overrides = overrideRowsToPayload(form.overrides)
     if (!overrides.ok) { setError(overrides.error); return }
+    if (templateOtherSupplier) { setError('Template thuộc xưởng khác — chọn lại'); return }
     if (form.masterUrl.trim() && !masterPreview) { setError('Link master artwork phải là http(s)'); return }
     setSaving(true)
     const r = await putJson<SaveResponse>(productUrl(detail.key), {
@@ -121,7 +125,11 @@ export default function ProfileEditor({ detail, templates, canEdit, onSaved }: {
     setMessage(`Đã lưu · cập nhật ${ordersUpdated} đơn · ${tasksTouched} task`)
     if (errors.length > 0) setError(`Đồng bộ task lỗi: ${errors.join('; ')}`)
     const fresh = await onSaved()
-    if (fresh) setForm(initForm(fresh))
+    if (fresh) {
+      const next = initForm(fresh)
+      setForm(next)
+      setBaseline(JSON.stringify(next))
+    }
     setSaving(false)
   }
 
@@ -227,6 +235,9 @@ export default function ProfileEditor({ detail, templates, canEdit, onSaved }: {
                 {templateOptions.map(t => <option key={t.id} value={t.id}>{t.name} · {t.supplierSku ?? 'mặc định'}</option>)}
               </select>
             </Field>
+            {templateOtherSupplier && (
+              <p role="alert" className="inline-flex items-center gap-xs text-label-sm text-error"><Icon name="warning" className="text-[16px]" />Template thuộc xưởng khác — chọn lại</p>
+            )}
             {supplierIds.size > 0 && templateOptions.length === 0 && (
               <p className="text-label-sm text-on-surface-variant">Xưởng đã chọn chưa có template — tạo ở Print Templates.</p>
             )}
@@ -308,6 +319,7 @@ export default function ProfileEditor({ detail, templates, canEdit, onSaved }: {
         <div className={`${card} sticky bottom-0 z-10 px-md py-sm flex items-center gap-sm flex-wrap`}>
           <Pill tone={meta.tone} icon={meta.icon}>{meta.label}</Pill>
           {message && <span role="status" className="text-label-sm text-on-tertiary-container">{message}</span>}
+          {canEdit && dirty && <span className="inline-flex items-center gap-xs text-label-sm text-amber-900"><Icon name="edit" className="text-[14px]" />Chưa lưu</span>}
           {canEdit
             ? (
               <button type="button" onClick={() => void save()} disabled={saving} className="ml-auto bg-secondary text-on-secondary px-lg py-sm rounded-lg text-label-md disabled:opacity-40">

@@ -1,3 +1,4 @@
+import { isLayerlessField } from '@/lib/layer-fields'
 import type { ArtworkRow, LayerMapEntry, Readiness, TaskDetail, TaskRow, TaskStatus, TemplateArea, TemplateRow, WorkspaceLine } from './types'
 
 export const OPEN_STATUSES: TaskStatus[] = ['NEW', 'ASSIGNED', 'DOING', 'REVIEW', 'REJECTED']
@@ -66,7 +67,7 @@ export function timeLeft(t: Pick<TaskRow, 'status' | 'dueAt'>, now = Date.now())
 }
 
 export function layerOf(key: string): string {
-  if (/size|yes or no/i.test(key)) return '—'
+  if (isLayerlessField(key)) return '—'
   const slug = key.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '')
   if (/number/i.test(key)) return 'TXT · number'
   if (/name|text/i.test(key)) return `TXT · ${slug}`
@@ -74,7 +75,7 @@ export function layerOf(key: string): string {
 }
 
 export function layerHint(key: string): LayerMapEntry | null {
-  if (/size|yes or no/i.test(key)) return null
+  if (isLayerlessField(key)) return null
   const slug = key.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '')
   if (/number/i.test(key)) return { field: key, layer: 'number', fit: 'shrink' }
   if (/name|text/i.test(key)) return { field: key, layer: slug || 'text', fit: 'shrink' }
