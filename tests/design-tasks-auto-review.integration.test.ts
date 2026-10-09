@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/db'
+import { AUTH_COOKIE, signToken } from '@/lib/auth'
+import { GET as getReview } from '@/app/api/design-studio/tasks/review/route'
 import { AUTO_REVIEW_MESSAGE, canTransition, listReviewCards, submitAutoRenderForReview, syncDesignTasks, transitionTask, type Actor } from '@/lib/design-tasks'
 
 const SHOP = 'dtar.myshopify.com'
@@ -30,6 +33,7 @@ async function art(shopifyLineId: string, printArea: string, source = 'AUTO') {
 const task = (key: string) => prisma.designTask.findUniqueOrThrow({ where: { taskKey: key }, include: { events: true } })
 
 beforeAll(async () => {
+  process.env.AUTH_SECRET = 'test-secret-that-is-long-enough-32chars'
   await prisma.project.upsert({ where: { id: 'proj_dtar' }, create: { id: 'proj_dtar', name: 'DTAR', startDate: new Date('2026-06-01') }, update: {} })
   const storeId = (await prisma.shopifyStore.upsert({ where: { shop: SHOP }, create: { shop: SHOP, projectId: 'proj_dtar' }, update: {} })).id
   await prisma.supplier.upsert({ where: { code: 'DTAR' }, create: { id: SUP, name: 'DTAR Supplier', code: 'DTAR' }, update: {} })
@@ -128,5 +132,17 @@ describe('listReviewCards', () => {
     expect(c.task.variantTitle).toBe('20oz')
     expect(c.line.artworks.map(a => ({ printArea: a.printArea, source: a.source }))).toEqual([{ printArea: 'PRINT', source: 'AUTO' }])
     expect(c.line.personalization).toEqual([{ key: 'Custom Name', value: 'Marie-Pier' }])
+  })
+})
+
+describe('GET /api/design-studio/tasks/review', () => {
+  it('needs a session and returns cards, reject reasons and the viewer role', async () => {
+    expect((await getReview(new NextRequest('http://localhost/api/design-studio/tasks/review'))).status).toBe(401)
+    const req = new NextRequest('http://localhost/api/design-studio/tasks/review?q=DTAR1')
+    req.cookies.set(AUTH_COOKIE, await signToken({ userId: DES.id, email: 'des@dtar.test', name: 'Des', role: 'SUPPORT', permissions: ['design_tasks'], tv: 0 }))
+    const body = await (await getReview(req)).json()
+    expect(body.cards.map((c: any) => c.task.taskKey).sort()).toEqual(['DTAR1_3', 'DTAR1_4'])
+    expect(Array.isArray(body.rejectReasons)).toBe(true)
+    expect(body.me).toMatchObject({ id: DES.id, isLeader: false })
   })
 })
