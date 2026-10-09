@@ -4,7 +4,7 @@
 
 ## Goal
 
-When a designer uploads artwork (or a master artwork for a product profile), the file goes straight to the company Google Drive, in a folder per order and task, and the app records it. Files bigger than the VPS can buffer upload directly from the browser to Google. Approved files get an "anyone with the link" permission so the supplier CSV carries a Drive link the factory can open — the same convention the Trello flow uses today.
+When a designer uploads artwork (or a master artwork for a product profile), the file goes straight to the company Google Drive, in a folder per order and task, and the app records it. Uploads go through the tool (200 MB cap) and the tool pushes them to Drive in chunks. Uploaded files get an "anyone with the link" permission so the supplier CSV carries a Drive link the factory can open — the same convention the Trello flow uses today.
 
 ## Connection
 
@@ -14,12 +14,14 @@ When a designer uploads artwork (or a master artwork for a product profile), the
 - `src/lib/google-drive.ts` (plain `fetch` to the REST API, no `googleapis` dependency): `getAccessToken()` (refresh + in-memory cache until expiry), `ensureFolder(parentId, name)` (search by name+parent among app-created folders, else create), `folderForTask({ storeName, placedAt, orderNumber, taskKey })` → `Design Studio/<Store>/<YYYY-MM>/<Order>/<TaskKey>`, `startResumableUpload({ name, mimeType, size, parentId, origin })` → session URL (initiation request carries `Origin` so the browser can PUT cross-origin), `getFile(id, fields)`, `streamFile(id)` (`alt=media` → `Response.body`, never buffered), `shareAnyoneReader(id)`, `deleteFile(id)`.
 - Setup page: a "Google Drive" card on `/setup` showing connected account, root folder link, Connect/Disconnect, and the client id/secret form.
 
-## Upload flow
+## Upload flow (revised 2026-10-10: designer uploads to the tool, the tool pushes to Drive)
 
-1. Browser `POST /api/design-studio/lines/[lineId]/artwork/session` `{ printArea, fileName, size, mimeType }` → server validates type/size (same allow-list as today, limit raised to 2 GB), resolves version, ensures the folder, starts a resumable upload named `v<version>-<safeFileName>`, stores a pending row in `DesignArtworkUpload` (`id, orderId, shopifyLineId, printArea, version, fileName, mimeType, size, sessionUrl, folderId, createdById, createdAt, completedAt?`) and returns `{ uploadId, sessionUrl }`.
-2. Browser `PUT sessionUrl` with the file (progress bar via XHR `upload.onprogress`). Google returns the file resource (`id`).
-3. Browser `POST /api/design-studio/artwork/complete` `{ uploadId, driveFileId }` → server `getFile` checks the file's parent is the recorded folder and the name matches, reads `imageMediaMetadata.width/height` when present, creates the `DesignArtwork` row (`storage: 'DRIVE'`, `driveFileId`, `driveWebViewLink`), marks the upload complete.
-- When Drive is not connected, the v1 local path is used unchanged (`storage: 'LOCAL'`), so local development works without Google.
+1. Unchanged UI and route: `POST /api/design-studio/lines/[lineId]/artwork` multipart (`printArea`, `file`), 200 MB cap.
+2. The server writes the bytes to a temp file under `storageRoot()/tmp`, then, when Drive is connected: ensures the task folder, starts a resumable upload (no `Origin` needed — server to Google), and PUTs the temp file in 8 MB chunks read from a file stream (`Content-Range`), never holding the whole file twice. On success: `shareAnyoneReader(fileId)`, create the `DesignArtwork` row (`storage: 'DRIVE'`, `driveFileId`, `driveWebViewLink`, width/height from the image probe), delete the temp file.
+3. Drive not connected or the push fails: move the temp file into the v1 local layout and create a `LOCAL` row; the response carries `warning` ("Chưa đẩy được lên Drive: …") which the slot shows. A later "Đẩy lên Drive" action on a LOCAL artwork retries the push.
+4. The response returns the artwork including `driveWebViewLink`; the slot shows a "Copy link Drive" button.
+
+`DesignArtworkUpload` (from the P1 migration) is kept as the record of in-flight pushes: one row per push with `sessionUrl`, cleared on completion; a crashed push leaves a row that the retry action reuses.
 
 ## Schema
 
@@ -28,7 +30,7 @@ When a designer uploads artwork (or a master artwork for a product profile), the
 ## Serving and approving
 
 - `GET /api/design-studio/file/[artworkId]`: `LOCAL` → as today; `DRIVE` → stream via `streamFile` with the stored mime (from the validated extension), `Content-Disposition: inline`; PSD/ZIP → 302 to `driveWebViewLink`.
-- On DONE (`updateLine(done:true)`), for a `DRIVE` artwork: `shareAnyoneReader(fileId)` then `designDriveLink = driveWebViewLink` (a `drive.google.com` URL, so the existing export and Trello attachment logic keep working). `LOCAL` keeps the app URL.
+- On DONE (`updateLine(done:true)`), for a `DRIVE` artwork: `designDriveLink = driveWebViewLink` (already shared at upload) (a `drive.google.com` URL, so the existing export and Trello attachment logic keep working). `LOCAL` keeps the app URL.
 - Reopen does not revoke the share (the factory may already have the link).
 
 ## Failure handling
@@ -37,4 +39,4 @@ Drive errors surface as `{ error }` with the Google message; a failed session le
 
 ## Tests
 
-`google-drive.ts` against a mocked `fetch` (token refresh caching, folder reuse vs create, resumable initiation headers incl. `Origin`, share call); session route validation and version allocation; complete route rejects a file outside the folder and is idempotent; serve route streams Drive and redirects PSD; `updateLine` shares and stores the web link; fallback to LOCAL when not connected; callback rejects a bad state.
+`google-drive.ts` against a mocked `fetch` (token refresh caching, folder reuse vs create, resumable initiation headers incl. `Origin`, share call); upload route pushes in chunks (mock: initiation + N chunk PUTs with correct Content-Range) and shares; falls back to LOCAL with a warning on Drive error; retry action pushes a LOCAL artwork; serve route streams Drive and redirects PSD; `updateLine` shares and stores the web link; fallback to LOCAL when not connected; callback rejects a bad state.

@@ -24,7 +24,7 @@
 
 1. Supplier precedence must be exactly variant manual > profile override > profile default > product base, and the size-sibling swap must still apply to profile results — pinned in P2.
 2. Saving a profile must not re-resolve EXPORTED/FULFILLED/CANCELLED/REFUNDED orders — pinned in P3.
-3. `complete` must refuse a Drive file that is not in the folder the session created (a designer cannot attach an arbitrary Drive file) — pinned in D2.
+3. A Drive push failure must never lose the designer's file: it falls back to LOCAL with a warning and can be retried — pinned in D2.
 4. When Drive is not connected, uploads keep working on the local path — pinned in D2.
 5. The callback must reject a missing/foreign `state` and never echo tokens — pinned in D1.
 
@@ -80,16 +80,16 @@
 - [ ] Tests with mocked fetch: token refresh cached until expiry; `ensureFolder` reuses an existing folder and creates when missing; resumable initiation sends `Origin` and returns the `Location` header; `shareAnyoneReader` posts `{role:'reader',type:'anyone'}`; callback rejects missing/unknown state with 400 and stores the refresh token on success (mock the token exchange); GET setup never returns the secret or token.
 - [ ] Full suite + tsc; commit `feat(drive): Google Drive OAuth connection and client`.
 
-### Task D2: Drive upload path, serving, sharing
+### Task D2: Tool pushes uploads to Drive, serving, link
 
-**Files:** routes `src/app/api/design-studio/lines/[lineId]/artwork/session/route.ts`, `src/app/api/design-studio/artwork/complete/route.ts`, modify `src/app/api/design-studio/file/[artworkId]/route.ts`, `src/lib/design-storage.ts` (version allocation shared by local and Drive; `nextVersion`), `src/lib/design-studio.ts` (`updateLine` share + web link; `ArtworkRow` gains `storage`, `driveWebViewLink`), `src/app/design-studio/components/ArtworkSlots.tsx` (XHR upload with progress: session → PUT → complete; local fallback when the session route answers `{ mode: 'LOCAL' }`), tests.
+**Files:** `src/lib/design-storage.ts` (temp write + `pushToDrive(artworkTempPath, …)`), `src/lib/google-drive.ts` (`uploadFileResumable(path, { name, mimeType, parentId })` chunked 8 MB with `Content-Range`, resuming on 308), `src/app/api/design-studio/lines/[lineId]/artwork/route.ts` (unchanged contract + `warning`), new `src/app/api/design-studio/artwork/[artworkId]/push/route.ts` (retry for LOCAL), `src/app/api/design-studio/file/[artworkId]/route.ts` (DRIVE stream / PSD redirect), `src/lib/design-studio.ts` (`ArtworkRow` gains `storage`, `driveWebViewLink`; `updateLine` uses the web link for DRIVE), `src/app/design-studio/components/ArtworkSlots.tsx` (Copy link Drive, Drive/Local badge, retry button, warning), tests.
 
-- [ ] Session route: if `!isDriveConnected()` → `{ mode: 'LOCAL' }` (client then uses the v1 multipart route); else validate (extension allow-list, size ≤ 2 GB), `nextVersion`, `folderForTask`, `startResumableUpload` with `Origin` = request `origin` header, create `DesignArtworkUpload`, clean pending uploads older than 24 h, return `{ mode: 'DRIVE', uploadId, sessionUrl }`.
-- [ ] Complete route: load the upload (404), idempotent if already completed (return the existing artwork), `getFile(driveFileId, 'id,name,parents,webViewLink,imageMediaMetadata,size')`, require `parents` includes `folderId` and `name` equals the recorded name (else 400), create `DesignArtwork` (`storage:'DRIVE'`, mime from the validated extension, width/height from metadata), mark completed, write a task UPLOAD event if a task exists for the line.
-- [ ] Serve route: DRIVE → images/PDF streamed via `streamFile` (pass `Response.body` through), PSD/ZIP → 302 to `driveWebViewLink`.
-- [ ] `updateLine(done:true)`: for a DRIVE artwork call `shareAnyoneReader` then set `designDriveLink = driveWebViewLink`; LOCAL unchanged.
-- [ ] Tests (mock fetch + `isDriveConnected` via settings rows): session returns LOCAL when not connected; DRIVE session creates a pending row and returns the Location URL; complete rejects a foreign-folder file, accepts the right one, is idempotent; serve redirects PSD; `updateLine` on a DRIVE artwork calls the share endpoint and stores the web link.
-- [ ] Full suite + tsc + lint; commit `feat(drive): direct-to-Drive artwork uploads, streaming and sharing`.
+- [ ] Upload route: write to `storageRoot()/tmp/<uuid>`, if `isDriveConnected()` → folder → `uploadFileResumable` → `shareAnyoneReader` → DRIVE row → delete temp; else/failed → move temp into the v1 local path → LOCAL row + `warning`.
+- [ ] Push route (`requireAdmin` not needed — same access as upload): LOCAL artwork with a file on disk → push → convert the row to DRIVE (keep id, version) → delete the local file.
+- [ ] Serve route: DRIVE images/PDF streamed (`Response.body` pass-through), PSD/ZIP → 302 to `driveWebViewLink`.
+- [ ] `updateLine(done:true)`: DRIVE → `designDriveLink = driveWebViewLink`.
+- [ ] Tests (mock fetch): chunked upload sends initiation then PUTs with `bytes 0-8388607/<size>` …, final 200 → file id; share called; Drive error → LOCAL + warning; push route converts LOCAL→DRIVE; serve redirects PSD; `updateLine` stores the web link.
+- [ ] Full suite + tsc + lint; commit `feat(drive): tool pushes artwork to Drive, streams previews, shares links`.
 
 ### Task Z: Docs
 
