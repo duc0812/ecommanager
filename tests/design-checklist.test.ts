@@ -51,17 +51,19 @@ describe('buildChecklist', () => {
   })
 
   it('reports the library entry state for the line\'s template', () => {
-    const ready = buildChecklist(input({ template, library: { key: 'k1', entryId: 'e', status: 'READY', label: 'Sẵn sàng' } }))
+    const ready = buildChecklist(input({ template, library: { key: 'k1', entryId: 'e', status: 'READY', label: 'Sẵn sàng', optionKey: '', optionLabel: null, layers: [] } }))
     expect(byKey(ready, 'library').state).toBe('done')
-    const none = buildChecklist(input({ template, library: { key: 'k1', entryId: null, status: 'NONE', label: 'Thiếu' } }))
-    expect(byKey(none, 'library')).toMatchObject({ state: 'missing', action: { kind: 'link', href: '/design-studio/library/k1' } })
-    const parsing = buildChecklist(input({ template, library: { key: 'k 1', entryId: 'e', status: 'PARSING', label: 'Đang đọc' } }))
-    expect(byKey(parsing, 'library')).toMatchObject({ state: 'missing', reason: 'Worker đang đọc PSD', action: { href: '/design-studio/library/k%201' } })
+    const none = buildChecklist(input({ template, library: { key: 'k1', entryId: null, status: 'NONE', label: 'Thiếu', optionKey: '', optionLabel: null, layers: [] } }))
+    expect(byKey(none, 'library')).toMatchObject({ state: 'missing', action: { kind: 'link', label: 'Mở trang sản phẩm', href: '/design-studio/products/k1' } })
+    const parsing = buildChecklist(input({ template, library: { key: 'k 1', entryId: 'e', status: 'PARSING', label: 'Đang đọc', optionKey: '', optionLabel: null, layers: [] } }))
+    expect(byKey(parsing, 'library')).toMatchObject({ state: 'missing', reason: 'Worker đang đọc PSD', action: { href: '/design-studio/products/k%201' } })
+    const split = buildChecklist(input({ template, library: { key: 'k1', entryId: 'e', status: 'NEEDS_REVIEW', label: 'Thiếu', optionKey: '{"Size":"30oz"}', optionLabel: 'Size: 30oz', layers: [] } }))
+    expect(byKey(split, 'library').reason).toBe('Đã đọc PSD — cần duyệt trường (Size: 30oz)')
     expect(byKey(buildChecklist(input({ template, library: null })), 'library').state).toBe('na')
   })
 
   it('customer info: profile fields left empty ask the customer; non-custom is n.a.', () => {
-    const profile = { key: 'p', status: 'READY', masterArtworkUrl: null, layerMap: [{ field: 'Name', layer: 'name', fit: 'shrink' }, { field: 'Number', layer: 'number', fit: 'shrink' }] }
+    const profile = { key: 'p', status: 'READY', masterArtworkUrl: null, layerMap: [{ field: 'Name', layer: 'name', fit: 'shrink' }, { field: 'Number', layer: 'number', fit: 'shrink' }] } as any
     const c = buildChecklist(input({ profile }))
     expect(byKey(c, 'customer')).toMatchObject({ state: 'missing', reason: 'Khách chưa điền: Number', action: { kind: 'ask', label: 'Hỏi khách' } })
     expect(byKey(buildChecklist(input({ line: { customized: false, personalization: [] } })), 'customer').state).toBe('na')
@@ -73,6 +75,14 @@ describe('buildChecklist', () => {
   it('missingCustomerFields matches case-insensitively', () => {
     const profile = { layerMap: [{ field: ' name ', layer: 'n', fit: 'none' }] } as any
     expect(missingCustomerFields({ line: { personalization: [{ key: 'NAME', value: 'x' }] } as any, profile })).toEqual([])
+  })
+
+  it('expected customer fields come from the resolved library entry before the old layerMap', () => {
+    const profile = { layerMap: [{ field: 'Name', layer: 'n', fit: 'none' }] } as any
+    const library = { key: 'k', entryId: 'e', status: 'READY', label: 'Sẵn sàng', optionKey: '', optionLabel: null, layers: [{ field: 'Name', layer: '@Name', fit: 'shrink' }, { field: 'Year', layer: '@Year', fit: 'shrink' }] } as any
+    const line = { personalization: [{ key: 'Name', value: 'x' }] } as any
+    expect(missingCustomerFields({ line, profile, library })).toEqual(['Year'])
+    expect(missingCustomerFields({ line, profile, library: { ...library, layers: [] } })).toEqual([])
   })
 
   it('files: missing areas give an upload action for the first one and block the submit', () => {
@@ -96,7 +106,7 @@ describe('buildChecklist', () => {
   })
 
   it('has no next step when everything is done', () => {
-    const c = buildChecklist(input({ template, library: { key: 'k', entryId: 'e', status: 'READY', label: 'Sẵn sàng' }, task: { status: 'DONE' } }))
+    const c = buildChecklist(input({ template, library: { key: 'k', entryId: 'e', status: 'READY', label: 'Sẵn sàng', optionKey: '', optionLabel: null, layers: [] }, task: { status: 'DONE' } }))
     expect(c.next).toBeNull()
     expect(c.done).toBe(c.total)
   })

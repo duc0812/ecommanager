@@ -1,16 +1,8 @@
-import type { LayerFit, LayerMapEntry, ProfileStatus } from '../../components/types'
-
-export type ProductListRow = {
-  key: string; storeId: string; shop: string; shopifyProductId: string; title: string; imageUrl: string | null
-  variantsSeen: number; orderCount: number; openTasks: number; status: ProfileStatus; hasProfile: boolean; lastOrderAt: string
-}
-
 export type ProfileOverride = { combo: Record<string, string>; supplierProductId: string }
 
 export type SavedProfile = {
   id: string; title: string; imageUrl: string | null; supplierProductId: string | null; overrides: ProfileOverride[]
-  printTemplateId: string | null; masterArtworkUrl: string | null; masterArtworkId: string | null
-  layerMap: LayerMapEntry[]; notes: string | null; updatedAt: string
+  printTemplateId: string | null; masterArtworkUrl: string | null; notes: string | null; updatedAt: string
 }
 
 export type SupplierProductOption = {
@@ -20,14 +12,13 @@ export type SupplierProductOption = {
 }
 
 export type ProductVariant = {
-  shopifyVariantId: string; variantTitle: string | null; options: Record<string, string>; supplierId: string | null; supplierSku: string | null
+  shopifyVariantId: string; variantTitle: string | null; options: Record<string, string>
+  supplierId: string | null; supplierSku: string | null; supplierName: string | null
 }
 
 export type ProductDetail = {
   key: string; storeId: string; shop: string; shopifyProductId: string
   profile: SavedProfile | null
-  status: ProfileStatus
-  templateCoverage: { covered: number; total: number; missingSkus: string[] }
   summary: {
     title: string; imageUrl: string | null; variants: ProductVariant[]; orderCount: number; openTasks: number; lastOrderAt: string | null
   }
@@ -42,4 +33,3 @@ export type SaveResponse = {
 }
 
 export type OverrideRow = { option: string; value: string; extra: Record<string, string>; supplierProductId: string }
-export type LayerRow = { field: string; observed: boolean; layer: string; font: string; maxChars: string; fit: LayerFit }

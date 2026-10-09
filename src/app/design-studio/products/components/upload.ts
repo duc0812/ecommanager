@@ -23,8 +23,8 @@ export function putFile<T = any>(url: string, file: File, onProgress: (pct: numb
   })
 }
 
-export function psdUploadUrl(storeId: string, shopifyProductId: string, templateId: string, fileName: string): string {
-  const q = new URLSearchParams({ storeId, productId: shopifyProductId.split('/').pop() ?? shopifyProductId, templateId, fileName })
+export function psdUploadUrl(storeId: string, shopifyProductId: string, templateId: string, optionKey: string, fileName: string): string {
+  const q = new URLSearchParams({ storeId, productId: shopifyProductId.split('/').pop() ?? shopifyProductId, templateId, optionKey, fileName })
   return `/api/design-studio/library/entries/upload?${q.toString()}`
 }
 

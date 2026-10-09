@@ -30,13 +30,95 @@ function hasFiles(e: DragEvent) {
   return Array.from(e.dataTransfer?.types ?? []).includes('Files')
 }
 
+function SlotTitle({ slot, stale }: { slot: LibrarySlot; stale: boolean }) {
+  const meta = LIBRARY_META[slot.status]
+  return (
+    <div className="flex flex-col gap-[2px] min-w-0">
+      <div className="flex items-center gap-sm flex-wrap">
+        <h3 className="text-body-md font-bold text-on-surface">{slot.title}</h3>
+        <Pill tone={meta.tone} icon={meta.icon}>{meta.label}</Pill>
+        {stale && <Pill tone="idle" icon="history">không còn dùng</Pill>}
+      </div>
+      <div className="flex items-center gap-xs flex-wrap text-label-sm text-on-surface-variant">
+        <Icon name="factory" className="text-[16px]" />
+        <b className="text-on-surface">{slot.supplier.name}</b>
+        {slot.supplierSkus.length > 0 && <span>· SKU <span className="font-mono text-on-surface">{slot.supplierSkus.join(', ')}</span></span>}
+        {slot.template && (
+          <span>· template <b className="text-on-surface">{slot.template.name}</b> <span className="font-mono">{slot.template.widthPx}×{slot.template.heightPx} px · {slot.template.dpi} DPI</span></span>
+        )}
+        {slot.lineCount > 0 && <span>· {slot.lineCount} dòng đơn</span>}
+      </div>
+    </div>
+  )
+}
+
+function SplitControl({ slot, productKey, onChanged }: { slot: LibrarySlot; productKey: string; onChanged: () => void }) {
+  const [open, setOpen] = useState(false)
+  const [choice, setChoice] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const template = slot.template
+  if (!template) return null
+  const tplName = template.name
+  const tplId = template.id
+
+  async function send(optionName: string | null) {
+    if (busy) return
+    setBusy(true); setError('')
+    const r = await requestJson(`/api/design-studio/library/products/${encodeURIComponent(productKey)}/split`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ printTemplateId: tplId, optionName }),
+    })
+    setBusy(false)
+    if (!r.ok) { setError(r.error); return }
+    setOpen(false); setChoice('')
+    onChanged()
+  }
+
+  if (slot.splitOption) {
+    return (
+      <div className="flex items-center gap-xs flex-wrap">
+        <span className="text-label-sm text-on-surface-variant">Template này đang tách theo <b className="text-on-surface">{slot.splitOption}</b></span>
+        <button type="button" className={btn} disabled={busy} onClick={() => void send(null)}
+          aria-label={`Gộp lại các slot của template ${tplName}`}
+          title="Gộp mọi giá trị về một artwork chung; artwork đã tách chuyển xuống mục Không còn dùng">
+          <Icon name="call_merge" className="text-[16px]" />Gộp lại
+        </button>
+        {error && <span role="alert" className="text-label-sm text-error">{error}</span>}
+      </div>
+    )
+  }
+  if (slot.splitChoices.length === 0) return null
+  return (
+    <div className="flex items-center gap-xs flex-wrap">
+      {!open ? (
+        <button type="button" className={btn} onClick={() => setOpen(true)} title="Mỗi giá trị của option sẽ có một PSD riêng">
+          <Icon name="call_split" className="text-[16px]" />Tách theo option
+        </button>
+      ) : (
+        <>
+          <label className="flex items-center gap-xs text-label-sm text-on-surface-variant">Tách theo
+            <select className={input} value={choice} onChange={e => setChoice(e.target.value)} aria-label={`Option để tách template ${tplName}`}>
+              <option value="">— chọn option —</option>
+              {slot.splitChoices.map(c => <option key={c.name} value={c.name}>{c.name} ({c.values.length} giá trị: {c.values.join(', ')})</option>)}
+            </select>
+          </label>
+          <button type="button" className={btnPrimary} disabled={!choice || busy} onClick={() => void send(choice)}>
+            <Icon name="call_split" className="text-[16px]" />{busy ? 'Đang tách…' : 'Tách'}
+          </button>
+          <button type="button" className={btn} onClick={() => { setOpen(false); setChoice('') }}>Huỷ</button>
+        </>
+      )}
+      {error && <span role="alert" className="text-label-sm text-error">{error}</span>}
+    </div>
+  )
+}
+
 export default function SlotCard({ slot, stale = false, product, fonts, canAdmin, onChanged }: {
   slot: LibrarySlot; stale?: boolean
-  product: { storeId: string; shopifyProductId: string; observedFields: string[] }
+  product: { key: string; storeId: string; shopifyProductId: string; observedFields: string[] }
   fonts: LibraryFontRow[]; canAdmin: boolean; onChanged: () => void
 }) {
   const { template, entry } = slot
-  const meta = LIBRARY_META[slot.status]
   const fileRef = useRef<HTMLInputElement>(null)
   const fontRef = useRef<HTMLInputElement>(null)
   const [upload, setUpload] = useState<{ pct: number; name: string } | null>(null)
@@ -53,16 +135,10 @@ export default function SlotCard({ slot, stale = false, product, fonts, canAdmin
 
   if (!template) {
     return (
-      <section className={`${card} px-md py-sm flex flex-col gap-sm`}>
-        <div className="flex items-center gap-sm flex-wrap">
-          <Icon name="factory" className="text-[18px] text-on-surface-variant" />
-          <b className="text-body-sm text-on-surface">{slot.supplier.name}</b>
-          <span className="text-label-sm text-on-surface-variant font-mono">{slot.supplierSkus.join(', ') || '(không SKU)'}</span>
-          <Pill tone={meta.tone} icon={meta.icon}>{meta.label}</Pill>
-          <span className="ml-auto text-label-sm text-on-surface-variant">{slot.lineCount} dòng{slot.variants ? ` · ${slot.variants}` : ''}</span>
-        </div>
+      <section aria-label={`Slot ${slot.title} · ${slot.supplier.name} ${slot.supplierSkus.join(', ')}`} className={`${card} px-md py-sm flex flex-col gap-sm`}>
+        <SlotTitle slot={slot} stale={stale} />
         <Note tone="warn" icon="dashboard_customize">
-          SKU xưởng này chưa có print template nên chưa upload PSD được.{' '}
+          Chưa có template cho SKU xưởng <span className="font-mono">{slot.supplierSkus.join(', ') || '(không SKU)'}</span> nên chưa upload PSD được.{' '}
           <Link href={`/setup/suppliers/${encodeURIComponent(slot.supplier.id)}/print-templates`} className="underline font-semibold">Tạo template cho {slot.supplier.name}</Link>
         </Note>
       </section>
@@ -70,6 +146,7 @@ export default function SlotCard({ slot, stale = false, product, fonts, canAdmin
   }
 
   const tpl = template
+  const uploadKey = stale ? (entry?.optionKey ?? '') : slot.optionKey
   const busyParse = isBusy(entry?.status)
   const fields = entry?.fields ?? []
   const parsed = !!entry?.parsedAt
@@ -87,7 +164,7 @@ export default function SlotCard({ slot, stale = false, product, fonts, canAdmin
     if (!/\.psd$/i.test(file.name)) { setError('Chỉ nhận file .psd'); return }
     setError(''); setInfo('')
     setUpload({ pct: 0, name: file.name })
-    const r = await putFile<{ entry: LibraryEntryView; drive: boolean }>(psdUploadUrl(product.storeId, product.shopifyProductId, tpl.id, file.name), file, pct => setUpload({ pct, name: file.name }))
+    const r = await putFile<{ entry: LibraryEntryView; drive: boolean }>(psdUploadUrl(product.storeId, product.shopifyProductId, tpl.id, uploadKey, file.name), file, pct => setUpload({ pct, name: file.name }))
     setUpload(null)
     if (!r.ok) { setError(r.error); return }
     setInfo(r.data.drive ? 'Đã nhận PSD — đang đẩy lên Drive và chờ worker đọc.' : 'Đã nhận PSD — chờ worker đọc.')
@@ -163,23 +240,21 @@ export default function SlotCard({ slot, stale = false, product, fonts, canAdmin
   }
 
   return (
-    <section className={`${card} flex flex-col`}>
-      <div className="flex items-center gap-sm flex-wrap px-md py-sm border-b border-outline-variant/20">
-        <Icon name="factory" className="text-[18px] text-on-surface-variant" />
-        <b className="text-body-sm text-on-surface">{slot.supplier.name}</b>
-        <span className="text-on-surface-variant">·</span>
-        <b className="text-body-sm text-on-surface">{tpl.name}</b>
-        <span className="text-label-sm text-on-surface-variant font-mono">{tpl.widthPx}×{tpl.heightPx} px · {tpl.dpi} DPI</span>
-        <Pill tone={meta.tone} icon={meta.icon}>{meta.label}</Pill>
-        {stale && <Pill tone="idle" icon="history">không còn dùng</Pill>}
-        <span className="ml-auto text-label-sm text-on-surface-variant">
-          {slot.lineCount > 0 && `${slot.lineCount} dòng`}{slot.supplierSkus.length > 0 && ` · SKU ${slot.supplierSkus.join(', ')}`}
-        </span>
+    <section aria-label={`Slot ${slot.title} · ${slot.supplier.name} · ${tpl.name}`} className={`${card} flex flex-col`}>
+      <div className="flex items-start gap-sm flex-wrap px-md py-sm border-b border-outline-variant/20">
+        <SlotTitle slot={slot} stale={stale} />
+        {!stale && <div className="ml-auto"><SplitControl slot={slot} productKey={product.key} onChanged={onChanged} /></div>}
       </div>
-      {(slot.variants || tpl.areas.length > 0) && (
+      {tpl.areas.length > 0 && (
         <div className="px-md pt-sm flex flex-wrap gap-x-md gap-y-xs text-label-sm text-on-surface-variant">
-          {slot.variants && <span className="inline-flex items-center gap-xs"><Icon name="style" className="text-[16px]" />{slot.variants}</span>}
-          {tpl.areas.length > 0 && <span className="inline-flex items-center gap-xs"><Icon name="crop" className="text-[16px]" />{tpl.areas.map(a => `${a.name} ${a.w}×${a.h}`).join(' · ')}</span>}
+          <span className="inline-flex items-center gap-xs"><Icon name="crop" className="text-[16px]" />{tpl.areas.map(a => `${a.name} ${a.w}×${a.h}`).join(' · ')}</span>
+        </div>
+      )}
+      {slot.inherited && entry && (
+        <div className="px-md pt-sm">
+          <Note tone="idle" icon="link">
+            Đang dùng artwork chung của template (trước khi tách). Upload PSD ở đây để <b>{slot.optionLabel ?? slot.title}</b> có artwork riêng.
+          </Note>
         </div>
       )}
 
@@ -211,9 +286,9 @@ export default function SlotCard({ slot, stale = false, product, fonts, canAdmin
             className={`rounded-lg border-2 border-dashed px-md py-md flex flex-col items-center gap-xs text-center ${dragOver ? 'border-secondary bg-secondary/5' : 'border-outline-variant/50 bg-surface-container-low'}`}>
             <Icon name="upload_file" className="text-[28px] text-on-surface-variant" />
             <button type="button" className={btnPrimary} disabled={!!upload} onClick={() => fileRef.current?.click()}>
-              <Icon name="upload" className="text-[18px]" />{entry?.psd ? 'Upload PSD mới' : 'Upload PSD'}
+              <Icon name="upload" className="text-[18px]" />{entry?.psd && !slot.inherited ? 'Upload PSD mới' : 'Upload PSD'}{slot.optionLabel ? ` cho ${slot.optionLabel}` : ''}
             </button>
-            <input ref={fileRef} type="file" accept=".psd" className="hidden" aria-label="Chọn file PSD"
+            <input ref={fileRef} type="file" accept=".psd" className="hidden" aria-label={`Chọn file PSD cho ${slot.title}`}
               onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) void sendPsd(f) }} />
             <span className="text-label-sm text-on-surface-variant">hoặc kéo thả file .psd vào đây · tối đa 1 GB</span>
             <span className="text-label-sm text-on-surface-variant">Layer chữ custom đặt tên <code className="font-mono text-secondary">@Tên trường</code> (vd <code className="font-mono text-secondary">@Custom Name</code>)</span>

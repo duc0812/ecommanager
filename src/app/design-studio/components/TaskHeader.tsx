@@ -1,11 +1,9 @@
 'use client'
 import { useRef, useState, type FormEvent, type ReactNode } from 'react'
 import Link from 'next/link'
-import { isLayerlessField } from '@/lib/layer-fields'
-import type { LayerMapEntry, TaskDetail, TransitionBody } from './types'
+import type { TaskDetail, TransitionBody } from './types'
 import {
-  OWNED_MOVES, allSlotsFilled, canTransition, copyText, findLayer, layerOf, mergeLayerHints, postJson, productPageUrl, productUrl, putJson,
-  requestJson, sourceEngine, taskUrl, timeLeft,
+  OWNED_MOVES, allSlotsFilled, canTransition, copyText, layerForField, postJson, productPageUrl, sourceEngine, taskUrl, timeLeft,
 } from './model'
 import { buildChecklist, type CheckItem, type CheckState } from './checklist'
 import { ARTWORK_ACCEPT, useArtworkUpload } from './useArtworkUpload'
@@ -56,7 +54,7 @@ function CustomTable({ detail, onCopied }: { detail: TaskDetail; onCopied: (msg:
                 {f.value.length > 14 && <Pill tone="warn">{f.value.length} ký tự</Pill>}
               </span>
             </td>
-            <td className="px-xs py-xs font-mono text-label-sm text-secondary"><LayerCell field={f.key} layerMap={detail.profile?.layerMap} /></td>
+            <td className="px-xs py-xs font-mono text-label-sm text-secondary"><LayerCell field={f.key} detail={detail} /></td>
           </tr>
         ))}
       </tbody>
@@ -64,15 +62,33 @@ function CustomTable({ detail, onCopied }: { detail: TaskDetail; onCopied: (msg:
   )
 }
 
-function LayerCell({ field, layerMap }: { field: string; layerMap: LayerMapEntry[] | undefined }) {
-  const entry = findLayer(layerMap, field)
-  if (!entry) return <>{layerOf(field)}</>
-  return (
-    <span className="inline-flex items-center gap-xs flex-wrap" title="Theo hồ sơ sản phẩm">
-      <Icon name="inventory_2" className="text-[14px]" />{entry.layer}
-      <span className="text-on-surface-variant">· {entry.fit}{entry.maxChars ? ` · ≤${entry.maxChars}` : ''}</span>
-    </span>
-  )
+function LayerCell({ field, detail }: { field: string; detail: TaskDetail }) {
+  const src = layerForField(field, detail.library, detail.profile?.layerMap)
+  switch (src.source) {
+    case 'none':
+    case 'guess':
+      return <span title={src.source === 'guess' ? 'Đoán theo tên trường — sản phẩm chưa có PSD' : undefined}>{src.layer}</span>
+    case 'library':
+      return (
+        <span className="inline-flex items-center gap-xs flex-wrap" title={`Theo PSD của sản phẩm${src.optionLabel ? ` (${src.optionLabel})` : ''}`}>
+          <Icon name="photo_library" className="text-[14px]" />{src.layer}
+          <span className="text-on-surface-variant">· {src.fit}{src.maxChars ? ` · ≤${src.maxChars}` : ''}</span>
+        </span>
+      )
+    case 'library-missing':
+      return (
+        <span className="inline-flex items-center gap-xs flex-wrap text-error" title="PSD của sản phẩm không có layer cho trường này">
+          <Icon name="layers_clear" className="text-[14px]" />PSD thiếu {src.layer}
+        </span>
+      )
+    case 'profile':
+      return (
+        <span className="inline-flex items-center gap-xs flex-wrap" title="Theo bảng layer cũ của hồ sơ">
+          <Icon name="inventory_2" className="text-[14px]" />{src.layer}
+          <span className="text-on-surface-variant">· {src.fit}{src.maxChars ? ` · ≤${src.maxChars}` : ''}</span>
+        </span>
+      )
+  }
 }
 
 function Fact({ icon, label, children }: { icon: string; label: string; children: ReactNode }) {
@@ -114,13 +130,11 @@ export default function TaskHeader({ detail, holdCount, onChanged }: { detail: T
   const [dueHours, setDueHours] = useState(() => String(hoursUntil(task.dueAt, task.slaHours)))
   const [assignNote, setAssignNote] = useState('')
   const [refreshing, setRefreshing] = useState(false)
-  const [savingProfile, setSavingProfile] = useState(false)
   const up = useArtworkUpload(line.id, detail.driveConnected, onChanged)
   const uploadInput = useRef<HTMLInputElement>(null)
   const uploadArea = useRef('')
   const askInput = useRef<HTMLInputElement>(null)
 
-  const isAdmin = me.role === 'SUPERADMIN' || me.role === 'ADMIN'
   const owns = me.isLeader || !task.assigneeId || task.assigneeId === me.id
   const can = (to: TransitionBody['to']) => canTransition(task.status, to, me.isLeader, task.readiness) && (owns || !OWNED_MOVES.includes(to))
   const filled = allSlotsFilled(detail)
@@ -148,24 +162,6 @@ export default function TaskHeader({ detail, holdCount, onChanged }: { detail: T
     const { updated = 0, unmatched = 0 } = r.data ?? {}
     setInfo(`Đã nạp lại ${updated} dòng từ Shopify${unmatched ? `, ${unmatched} dòng không khớp` : ''}`)
     onChanged()
-  }
-
-  async function saveLayersToProfile() {
-    const key = detail.profileRouteKey
-    if (!key || savingProfile) return
-    setSavingProfile(true); setError(''); setInfo('')
-    try {
-      const got = await requestJson<{ profile: { layerMap: LayerMapEntry[] } | null }>(productUrl(key))
-      if (!got.ok) { setError(got.error); return }
-      const { merged, added } = mergeLayerHints(got.data.profile?.layerMap ?? [], line.personalization.map(f => f.key))
-      if (added.length === 0) { setInfo('Hồ sơ đã có layer cho mọi trường của dòng này'); return }
-      const put = await putJson(productUrl(key), { layerMap: merged })
-      if (!put.ok) { setError(put.error); return }
-      setInfo(`Đã lưu ${added.length} layer vào hồ sơ: ${added.map(a => a.field).join(', ')}`)
-      onChanged()
-    } finally {
-      setSavingProfile(false)
-    }
   }
 
   function submitAssign(e: FormEvent) {
@@ -282,7 +278,9 @@ export default function TaskHeader({ detail, holdCount, onChanged }: { detail: T
           <h2 className="font-mono text-headline-sm text-on-surface">{task.taskKey}</h2>
           <Pill tone={status.tone}>{status.label}</Pill>
           <Pill tone={ready.tone} icon={ready.icon}>{ready.label}</Pill>
-          {detail.profile?.status === 'READY' && <Pill tone="ok" icon="inventory_2">Hồ sơ đủ</Pill>}
+          {detail.profile?.status === 'READY' && (
+            <span title="Mapping, template và artwork gốc đã đủ cho mọi biến thể của sản phẩm"><Pill tone="ok" icon="inventory_2">Hồ sơ đủ</Pill></span>
+          )}
           <Pill tone={left.tone} icon={left.icon}>{left.label}</Pill>
           <span className="flex-1 min-w-[200px] text-body-sm text-on-surface-variant">{task.productTitle}</span>
         </div>
@@ -369,22 +367,15 @@ export default function TaskHeader({ detail, holdCount, onChanged }: { detail: T
                     </span>
                   : <span className="text-on-surface-variant">không có</span>}
               </Fact>
-              <Fact icon="inventory_2" label="Hồ sơ SP">
+              <Fact icon="inventory_2" label="Sản phẩm">
                 {detail.profileRouteKey
-                  ? <Link href={productPageUrl(detail.profileRouteKey)} className="text-secondary hover:underline">{detail.profile ? 'Mở hồ sơ sản phẩm' : 'Tạo hồ sơ sản phẩm'}</Link>
+                  ? <Link href={productPageUrl(detail.profileRouteKey)} className="text-secondary hover:underline">Mở trang sản phẩm (mapping · artwork)</Link>
                   : <span className="text-on-surface-variant">dòng không gắn sản phẩm Shopify</span>}
+                {detail.library?.optionLabel && <span className="text-on-surface-variant">· artwork {detail.library.optionLabel}</span>}
               </Fact>
             </dl>
             <div className="flex flex-col gap-xs">
-              <div className="flex items-center gap-sm">
-                <b className="text-label-sm text-on-surface">Khách nhập</b>
-                {isAdmin && detail.profileRouteKey && line.personalization.some(f => !isLayerlessField(f.key)) && (
-                  <button type="button" className={`${btn} ml-auto`} onClick={saveLayersToProfile} disabled={savingProfile}
-                    title="Ghi layer của các trường này vào hồ sơ sản phẩm (không ghi đè dòng đã có)">
-                    <Icon name="save" className="text-[16px]" />{savingProfile ? 'Đang lưu…' : 'Lưu vào hồ sơ'}
-                  </button>
-                )}
-              </div>
+              <b className="text-label-sm text-on-surface">Khách nhập</b>
               <CustomTable detail={detail} onCopied={setInfo} />
             </div>
           </div>

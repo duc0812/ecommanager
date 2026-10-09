@@ -74,30 +74,29 @@ export function layerOf(key: string): string {
   return `SWAP · ${slug}`
 }
 
-export function layerHint(key: string): LayerMapEntry | null {
-  if (isLayerlessField(key)) return null
-  const slug = key.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '')
-  if (/number/i.test(key)) return { field: key, layer: 'number', fit: 'shrink' }
-  if (/name|text/i.test(key)) return { field: key, layer: slug || 'text', fit: 'shrink' }
-  return { field: key, layer: slug || 'swap', fit: 'none' }
-}
-
 export function findLayer(layerMap: LayerMapEntry[] | null | undefined, field: string): LayerMapEntry | undefined {
   const norm = field.toLowerCase().trim()
   return layerMap?.find(e => e.field.toLowerCase().trim() === norm)
 }
 
-export function mergeLayerHints(layerMap: LayerMapEntry[], fields: string[]): { merged: LayerMapEntry[]; added: LayerMapEntry[] } {
-  const merged = [...layerMap]
-  const added: LayerMapEntry[] = []
-  for (const field of fields) {
-    if (findLayer(merged, field)) continue
-    const hint = layerHint(field)
-    if (!hint) continue
-    merged.push(hint)
-    added.push(hint)
+export type LayerSource =
+  | { source: 'none'; layer: string }
+  | { source: 'library'; layer: string; fit: string; maxChars?: number; optionLabel: string | null }
+  | { source: 'library-missing'; layer: string; optionLabel: string | null }
+  | { source: 'profile'; layer: string; fit: string; maxChars?: number }
+  | { source: 'guess'; layer: string }
+
+export function layerForField(field: string, library: TaskDetail['library'], layerMap: LayerMapEntry[] | null | undefined): LayerSource {
+  if (isLayerlessField(field)) return { source: 'none', layer: '—' }
+  const norm = field.toLowerCase().trim()
+  if (library?.entryId && library.layers.length > 0) {
+    const hit = library.layers.find(l => l.field.toLowerCase().trim() === norm)
+    if (hit) return { source: 'library', layer: hit.layer, fit: hit.fit, maxChars: hit.maxChars, optionLabel: library.optionLabel }
+    return { source: 'library-missing', layer: `@${field.trim()}`, optionLabel: library.optionLabel }
   }
-  return { merged, added }
+  const legacy = findLayer(layerMap, field)
+  if (legacy) return { source: 'profile', layer: legacy.layer, fit: legacy.fit, maxChars: legacy.maxChars }
+  return { source: 'guess', layer: layerOf(field) }
 }
 
 export function sourceEngine(line: WorkspaceLine): string {

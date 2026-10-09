@@ -1,45 +1,4 @@
-import type { LayerFit, LayerMapEntry } from '../../components/types'
-import type { LayerRow, OverrideRow, ProfileOverride, SupplierProductOption } from './types'
-
-export const FITS: LayerFit[] = ['shrink', 'wrap', 'none']
-
-const norm = (s: string) => s.toLowerCase().trim()
-
-export function toLayerRows(layerMap: LayerMapEntry[], observedFields: string[]): LayerRow[] {
-  const observed = new Set(observedFields.map(norm))
-  const rows: LayerRow[] = layerMap.map(e => ({
-    field: e.field, observed: observed.has(norm(e.field)), layer: e.layer, font: e.font ?? '',
-    maxChars: e.maxChars ? String(e.maxChars) : '', fit: e.fit,
-  }))
-  const mapped = new Set(layerMap.map(e => norm(e.field)))
-  for (const f of observedFields) {
-    if (mapped.has(norm(f))) continue
-    rows.push({ field: f, observed: true, layer: '', font: '', maxChars: '', fit: 'shrink' })
-  }
-  return rows
-}
-
-export function layerRowsToMap(rows: LayerRow[]): { ok: true; layerMap: LayerMapEntry[] } | { ok: false; error: string } {
-  const out: LayerMapEntry[] = []
-  const seen = new Set<string>()
-  for (let i = 0; i < rows.length; i++) {
-    const r = rows[i]
-    const field = r.field.trim(), layer = r.layer.trim()
-    if (!layer && (r.observed || !field)) continue
-    if (!field) return { ok: false, error: `Bảng layer dòng ${i + 1}: thiếu tên trường` }
-    if (!layer) return { ok: false, error: `Bảng layer dòng ${i + 1} (${field}): thiếu layer` }
-    if (seen.has(norm(field))) return { ok: false, error: `Bảng layer có trường trùng: ${field}` }
-    seen.add(norm(field))
-    let maxChars: number | undefined
-    if (r.maxChars.trim()) {
-      const n = Number(r.maxChars)
-      if (!Number.isInteger(n) || n <= 0) return { ok: false, error: `Bảng layer dòng ${i + 1} (${field}): max ký tự phải là số nguyên dương` }
-      maxChars = n
-    }
-    out.push({ field, layer, ...(r.font.trim() ? { font: r.font.trim() } : {}), ...(maxChars ? { maxChars } : {}), fit: r.fit })
-  }
-  return { ok: true, layerMap: out }
-}
+import type { OverrideRow, ProfileOverride, SupplierProductOption } from './types'
 
 export function toOverrideRows(overrides: ProfileOverride[]): OverrideRow[] {
   return overrides.map(o => {
@@ -89,13 +48,6 @@ export function groupBySupplier(products: SupplierProductOption[]): { supplierId
     g.items.push(p)
   }
   return Array.from(groups.values())
-}
-
-export function isHttpUrl(s: string): boolean {
-  try {
-    const u = new URL(s.trim())
-    return u.protocol === 'http:' || u.protocol === 'https:'
-  } catch { return false }
 }
 
 export function shopLabel(shop: string): string {

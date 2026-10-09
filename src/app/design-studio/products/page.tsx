@@ -3,27 +3,32 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import Sidebar from '@/components/Sidebar'
-import type { ProfileStatus } from '../components/types'
+import type { LibraryProductStatus } from '@/lib/artwork-fields'
+import type { LibraryChip, LibraryListRow } from '@/lib/artwork-library-types'
 import { productPageUrl, requestJson } from '../components/model'
-import { ErrorBanner, Icon, Note, PROFILE_META, Pill, card, input } from '../components/ui'
-import type { ProductListRow } from './components/types'
+import { ErrorBanner, Icon, Note, Pill, card, input, TEXT_TONE } from '../components/ui'
 import { shopLabel } from './components/profile-form'
+import { LIBRARY_FILTERS, LIBRARY_META } from './components/meta'
 
-const FILTERS: { value: ProfileStatus | ''; label: string }[] = [
-  { value: '', label: 'Tất cả' },
-  { value: 'NONE', label: 'Chưa có hồ sơ' },
-  { value: 'NO_TEMPLATE', label: 'Thiếu template' },
-  { value: 'NO_MASTER', label: 'Thiếu master' },
-  { value: 'NO_LAYERS', label: 'Thiếu layer' },
-  { value: 'READY', label: 'Đủ' },
-]
+function Chip({ c }: { c: LibraryChip }) {
+  const meta = LIBRARY_META[c.status]
+  const what = c.templateName ?? `${c.supplierSkus.join(', ') || '?'} — chưa có template`
+  const label = `${c.supplierName} · ${what}${c.optionLabel ? ` · ${c.optionLabel}` : ''}`
+  return (
+    <span title={`${label}: ${meta.label}`} className="inline-flex items-center gap-xs rounded-md border border-outline-variant/30 bg-surface-container-lowest px-xs text-label-sm whitespace-nowrap">
+      <span className="text-on-surface">{label}</span>
+      <span className={`material-symbols-outlined text-[14px] ${TEXT_TONE[meta.tone]}`} aria-hidden="true">{c.status === 'READY' ? 'check' : meta.icon}</span>
+      <span className="sr-only">{meta.label}</span>
+    </span>
+  )
+}
 
 export default function ProductsPage() {
   const router = useRouter()
   const [q, setQ] = useState('')
   const [debouncedQ, setDebouncedQ] = useState('')
-  const [status, setStatus] = useState<ProfileStatus | ''>('')
-  const [rows, setRows] = useState<ProductListRow[]>([])
+  const [status, setStatus] = useState<LibraryProductStatus | ''>('')
+  const [rows, setRows] = useState<LibraryListRow[]>([])
   const [withoutProductId, setWithoutProductId] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -39,7 +44,7 @@ export default function ProductsPage() {
     const params = new URLSearchParams()
     if (debouncedQ) params.set('q', debouncedQ)
     if (status) params.set('status', status)
-    requestJson<{ products: ProductListRow[]; withoutProductId: number }>(`/api/design-studio/products?${params.toString()}`).then(r => {
+    requestJson<{ products: LibraryListRow[]; withoutProductId: number }>(`/api/design-studio/products?${params.toString()}`).then(r => {
       if (!alive) return
       setLoading(false)
       if (!r.ok) { setError(r.error); return }
@@ -57,6 +62,9 @@ export default function ProductsPage() {
         <div className="flex items-center gap-sm flex-wrap">
           <Icon name="inventory_2" className="text-[28px] text-secondary" />
           <h1 className="text-headline-sm font-bold text-primary">Design Studio · Sản phẩm</h1>
+          <Link href="/design-studio/products/fonts" className="inline-flex items-center gap-xs text-label-md text-secondary hover:underline">
+            <Icon name="font_download" className="text-[18px]" />Fonts
+          </Link>
           <label className="ml-auto flex items-center gap-xs text-label-sm text-on-surface-variant">
             <Icon name="search" className="text-[18px]" />
             <span className="sr-only">Tìm sản phẩm</span>
@@ -64,8 +72,8 @@ export default function ProductsPage() {
           </label>
         </div>
 
-        <div className="flex items-center gap-xs flex-wrap" role="group" aria-label="Lọc theo trạng thái hồ sơ">
-          {FILTERS.map(f => {
+        <div className="flex items-center gap-xs flex-wrap" role="group" aria-label="Lọc theo trạng thái sản phẩm">
+          {LIBRARY_FILTERS.map(f => {
             const on = status === f.value
             return (
               <button key={f.value || 'ALL'} type="button" aria-pressed={on} onClick={() => setStatus(f.value)}
@@ -76,6 +84,10 @@ export default function ProductsPage() {
           })}
           <span className="ml-auto text-label-sm text-on-surface-variant">{loading ? 'Đang tải…' : `${rows.length} sản phẩm · 90 ngày gần nhất`}</span>
         </div>
+
+        <p className="text-label-sm text-on-surface-variant">
+          Trạng thái = mục kém nhất trong mapping, template và artwork gốc của mọi slot đang dùng.
+        </p>
 
         {withoutProductId > 0 && (
           <Note tone="warn" icon="info">
@@ -92,10 +104,10 @@ export default function ProductsPage() {
                 <th className="px-md py-sm font-medium w-14"><span className="sr-only">Ảnh</span></th>
                 <th className="px-sm py-sm font-medium">Sản phẩm</th>
                 <th className="px-sm py-sm font-medium">Store</th>
-                <th className="px-sm py-sm font-medium text-right">Biến thể</th>
+                <th className="px-sm py-sm font-medium">Slot artwork (xưởng · template · option)</th>
                 <th className="px-sm py-sm font-medium text-right">Đơn</th>
                 <th className="px-sm py-sm font-medium text-right">Task mở</th>
-                <th className="px-sm py-sm font-medium">Hồ sơ</th>
+                <th className="px-sm py-sm font-medium">Trạng thái</th>
                 <th className="px-md py-sm font-medium w-8"><span className="sr-only">Mở</span></th>
               </tr>
             </thead>
@@ -104,10 +116,10 @@ export default function ProductsPage() {
                 <tr><td colSpan={8} className="px-md py-lg text-center text-on-surface-variant">Không có sản phẩm nào khớp.</td></tr>
               )}
               {rows.map(r => {
-                const meta = PROFILE_META[r.status]
+                const meta = LIBRARY_META[r.status]
                 const href = productPageUrl(r.key)
                 return (
-                  <tr key={r.key} onClick={() => router.push(href)} className="border-b border-outline-variant/20 last:border-b-0 hover:bg-surface-container-low cursor-pointer">
+                  <tr key={r.key} onClick={() => router.push(href)} className="border-b border-outline-variant/20 last:border-b-0 hover:bg-surface-container-low cursor-pointer align-top">
                     <td className="px-md py-xs">
                       {r.imageUrl
                         // eslint-disable-next-line @next/next/no-img-element
@@ -116,10 +128,20 @@ export default function ProductsPage() {
                     </td>
                     <td className="px-sm py-xs">
                       <Link href={href} onClick={e => e.stopPropagation()} className="font-semibold text-on-surface hover:text-secondary hover:underline">{r.title}</Link>
-                      <div className="text-label-sm text-on-surface-variant font-mono">{r.shopifyProductId.replace('gid://shopify/Product/', '')}</div>
+                      <div className="text-label-sm text-on-surface-variant font-mono">
+                        {r.shopifyProductId.replace('gid://shopify/Product/', '')}
+                        <span className="font-sans"> · {r.variantsSeen} biến thể</span>
+                      </div>
                     </td>
                     <td className="px-sm py-xs text-on-surface-variant">{shopLabel(r.shop)}</td>
-                    <td className="px-sm py-xs text-right">{r.variantsSeen}</td>
+                    <td className="px-sm py-xs">
+                      <div className="flex flex-wrap gap-xs">
+                        {r.chips.map((c, i) => <Chip key={i} c={c} />)}
+                        {r.unmapped > 0 && <span className="text-label-sm text-error">{r.unmapped} dòng chưa mapping</span>}
+                        {r.staleCount > 0 && <span className="text-label-sm text-on-surface-variant">+{r.staleCount} không còn dùng</span>}
+                        {r.chips.length === 0 && r.unmapped === 0 && r.staleCount === 0 && <span className="text-label-sm text-on-surface-variant">—</span>}
+                      </div>
+                    </td>
                     <td className="px-sm py-xs text-right">{r.orderCount}</td>
                     <td className="px-sm py-xs text-right">{r.openTasks > 0 ? <b className="text-on-surface">{r.openTasks}</b> : <span className="text-on-surface-variant">0</span>}</td>
                     <td className="px-sm py-xs"><Pill tone={meta.tone} icon={meta.icon}>{meta.label}</Pill></td>

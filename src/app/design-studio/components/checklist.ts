@@ -1,5 +1,6 @@
 import { isLayerlessField } from '@/lib/layer-fields'
 import type { TaskDetail } from './types'
+import { productPageUrl } from './model'
 
 export type CheckState = 'done' | 'missing' | 'blocked' | 'na'
 
@@ -20,10 +21,6 @@ export type ChecklistInput = Pick<TaskDetail, 'task' | 'line' | 'template' | 'sl
 }
 
 export type Checklist = { items: CheckItem[]; next: CheckItem | null; done: number; total: number }
-
-export function libraryPageUrl(key: string): string {
-  return `/design-studio/library/${encodeURIComponent(key)}`
-}
 
 export function printTemplatesUrl(supplierId: string): string {
   return `/fulfillment/suppliers/${encodeURIComponent(supplierId)}/print-templates`
@@ -61,19 +58,28 @@ const LIBRARY_REASON: Record<string, string> = {
 }
 
 function libraryItem({ template, library }: ChecklistInput): CheckItem {
-  const title = 'Artwork gốc (Artwork Library)'
+  const title = 'Artwork gốc của sản phẩm'
   if (!template) return { key: 'library', title, state: 'blocked', reason: 'Artwork gốc gắn theo template — cần template trước', action: null }
-  if (!library) return { key: 'library', title, state: 'na', reason: 'Dòng không gắn sản phẩm Shopify — không dùng Artwork Library', action: null }
-  if (library.status === 'READY') return { key: 'library', title, state: 'done', reason: 'Artwork gốc sẵn sàng', action: { kind: 'link', label: 'Xem', href: libraryPageUrl(library.key) } }
+  if (!library) return { key: 'library', title, state: 'na', reason: 'Dòng không gắn sản phẩm Shopify — không có artwork gốc', action: null }
+  const scope = library.optionLabel ? ` (${library.optionLabel})` : ''
+  if (library.status === 'READY') {
+    return { key: 'library', title, state: 'done', reason: `Artwork gốc sẵn sàng${scope}`, action: { kind: 'link', label: 'Xem', href: productPageUrl(library.key) } }
+  }
   return {
-    key: 'library', title, state: 'missing', reason: LIBRARY_REASON[library.status] ?? `Trạng thái ${library.status}`,
-    action: { kind: 'link', label: 'Mở Artwork Library', href: libraryPageUrl(library.key) },
+    key: 'library', title, state: 'missing', reason: `${LIBRARY_REASON[library.status] ?? `Trạng thái ${library.status}`}${scope}`,
+    action: { kind: 'link', label: 'Mở trang sản phẩm', href: productPageUrl(library.key) },
   }
 }
 
-export function missingCustomerFields(input: Pick<ChecklistInput, 'line' | 'profile'>): string[] {
+export function expectedCustomerFields(input: Pick<ChecklistInput, 'profile'> & { library?: ChecklistInput['library'] }): string[] {
+  const fromLibrary = input.library?.entryId ? input.library.layers.map(l => l.field) : []
+  const source = fromLibrary.length > 0 ? fromLibrary : (input.profile?.layerMap ?? []).map(e => e.field)
+  return source.filter(f => !isLayerlessField(f))
+}
+
+export function missingCustomerFields(input: Pick<ChecklistInput, 'line' | 'profile'> & { library?: ChecklistInput['library'] }): string[] {
   const have = new Set(input.line.personalization.map(f => f.key.toLowerCase().trim()))
-  const expected = (input.profile?.layerMap ?? []).map(e => e.field).filter(f => !isLayerlessField(f))
+  const expected = expectedCustomerFields(input)
   return Array.from(new Set(expected.filter(f => !have.has(f.toLowerCase().trim()))))
 }
 

@@ -2,6 +2,7 @@ import type { LibraryProductStatus, SlotStatus } from '@/lib/artwork-fields'
 import type { Tone } from '../../components/model'
 
 export const LIBRARY_META: Record<SlotStatus | LibraryProductStatus, { label: string; tone: Tone; icon: string }> = {
+  NO_MAPPING: { label: 'Chưa mapping', tone: 'bad', icon: 'account_tree' },
   READY: { label: 'Sẵn sàng', tone: 'ok', icon: 'check_circle' },
   NEEDS_REVIEW: { label: 'Chờ xác nhận', tone: 'brand', icon: 'rate_review' },
   NEEDS_FONTS: { label: 'Thiếu font', tone: 'warn', icon: 'font_download_off' },
@@ -14,6 +15,7 @@ export const LIBRARY_META: Record<SlotStatus | LibraryProductStatus, { label: st
 
 export const LIBRARY_FILTERS: { value: LibraryProductStatus | ''; label: string }[] = [
   { value: '', label: 'Tất cả' },
+  { value: 'NO_MAPPING', label: 'Chưa mapping' },
   { value: 'NO_TEMPLATE', label: 'Chưa có template' },
   { value: 'EMPTY', label: 'Chưa có PSD' },
   { value: 'ERROR', label: 'Lỗi' },
@@ -26,10 +28,6 @@ export const LIBRARY_FILTERS: { value: LibraryProductStatus | ''; label: string 
 
 export function isBusy(status: string | null | undefined): boolean {
   return status === 'QUEUED' || status === 'PARSING'
-}
-
-export function libraryPageUrl(key: string): string {
-  return `/design-studio/library/${encodeURIComponent(key)}`
 }
 
 export function fmtDate(iso: string | null | undefined): string {
