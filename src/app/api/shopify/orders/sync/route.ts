@@ -15,6 +15,7 @@ import { extractPreviewCdnUrl } from '@/lib/order-line-assets'
 import { resolveOrderDesignByParent, type DesignLineInputV2 } from '@/lib/design-library'
 import { loadReadyDesignEntries, upsertTaskEntry, loadMasterArtworkBySku } from '@/lib/repos/design-library'
 import { matchDesignEntry, type DesignEntry } from '@/lib/design-parent'
+import { syncDesignTasks } from '@/lib/design-tasks'
 
 type ResolvedSupplierProduct = SupplierInput & {
   sku: string
@@ -484,6 +485,8 @@ export async function POST(req: NextRequest) {
           }
         }
       }
+
+      try { await syncDesignTasks(o.id) } catch (e: any) { errors.push(`design tasks ${o.name}: ${e.message}`) }
 
       totalSynced++
     }
