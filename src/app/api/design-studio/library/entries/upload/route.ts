@@ -13,6 +13,7 @@ export async function PUT(req: NextRequest) {
   const productId = toProductGid(sp.get('productId'))
   const templateId = sp.get('templateId')?.trim() ?? ''
   const fileName = sp.get('fileName')?.trim() ?? ''
+  const rawOptionKey = sp.get('optionKey') ?? ''
   if (!storeId || !productId || !templateId || !fileName) return NextResponse.json({ error: 'Thiếu storeId, productId, templateId hoặc fileName' }, { status: 400 })
   if (!/\.psd$/i.test(fileName)) return NextResponse.json({ error: 'Chỉ nhận file .psd' }, { status: 400 })
   const declared = Number(req.headers.get('content-length'))
@@ -20,11 +21,11 @@ export async function PUT(req: NextRequest) {
 
   let temp: TempFile | null = null
   try {
-    await assertUploadTarget(storeId, productId, templateId)
+    const optionKey = await assertUploadTarget(storeId, productId, templateId, rawOptionKey)
     temp = await streamToTempFile(req.body, PSD_MAX_BYTES)
     if (temp.size === 0) return NextResponse.json({ error: 'File rỗng' }, { status: 400 })
     if (!temp.head.subarray(0, 4).equals(PSD_MAGIC)) return NextResponse.json({ error: 'File không phải PSD (thiếu 8BPS)' }, { status: 400 })
-    const result = await uploadEntryPsd({ storeId, shopifyProductId: productId, templateId, fileName, temp, uploadedById: auth.user.id })
+    const result = await uploadEntryPsd({ storeId, shopifyProductId: productId, templateId, optionKey, fileName, temp, uploadedById: auth.user.id })
     return NextResponse.json(result)
   } catch (err: any) {
     if (err instanceof TooLargeError) return NextResponse.json({ error: 'File lớn hơn 1 GB' }, { status: 413 })

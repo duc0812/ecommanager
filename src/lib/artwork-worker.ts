@@ -1,7 +1,7 @@
 import crypto from 'crypto'
 import type { NextRequest } from 'next/server'
 import { prisma } from '@/lib/db'
-import { mapTemplate } from '@/lib/design-tasks'
+import { mapTemplate } from '@/lib/print-template-resolve'
 
 export const WORKER_TOKEN_KEY = 'design.worker.tokenHash'
 export const JOB_STALE_MS = 15 * 60 * 1000
@@ -43,7 +43,7 @@ export function verifyWorkerRequest(req: NextRequest): Promise<boolean> {
 
 export type ClaimResponse = {
   job: { id: string; kind: string; attempts: number; createdAt: string }
-  entry: { id: string; storeId: string; shopifyProductId: string; title: string; status: string; fields: unknown[] }
+  entry: { id: string; storeId: string; shopifyProductId: string; printTemplateId: string; optionKey: string; title: string; status: string; fields: unknown[] }
   template: {
     id: string; name: string; widthPx: number; heightPx: number; dpi: number; bleedIn: number; safeIn: number; mirror: boolean
     areas: { name: string; x: number; y: number; w: number; h: number }[]
@@ -94,7 +94,7 @@ export async function claimJob(now = new Date()): Promise<ClaimResponse | null> 
       try { const v = JSON.parse(entry.fields); if (Array.isArray(v)) fields = v } catch {}
       return {
         job: { id: job.id, kind: job.kind, attempts: job.attempts, createdAt: job.createdAt.toISOString() },
-        entry: { id: entry.id, storeId: entry.storeId, shopifyProductId: entry.shopifyProductId, title: entry.title, status: 'PARSING', fields },
+        entry: { id: entry.id, storeId: entry.storeId, shopifyProductId: entry.shopifyProductId, printTemplateId: entry.printTemplateId, optionKey: entry.optionKey, title: entry.title, status: 'PARSING', fields },
         template: {
           id: t.id, name: t.name, widthPx: t.widthPx, heightPx: t.heightPx, dpi: t.dpi, bleedIn: t.bleedIn, safeIn: t.safeIn, mirror: t.mirror, areas: t.areas,
         },

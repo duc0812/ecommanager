@@ -13,6 +13,7 @@ import { PATCH as patchEntry, DELETE as deleteEntryRoute } from '@/app/api/desig
 import { PUT as uploadFont } from '@/app/api/design-studio/library/fonts/upload/route'
 import { GET as getFonts } from '@/app/api/design-studio/library/fonts/route'
 import { GET as getFile } from '@/app/api/design-studio/library/files/[id]/route'
+import { PUT as putSplit } from '@/app/api/design-studio/library/products/[key]/split/route'
 import { buildTtf } from './helpers/font-fixture'
 
 const SHOP = 'alib.myshopify.com'
@@ -41,7 +42,16 @@ function uploadReq(q: Record<string, string>, body: Buffer, token: string | null
   return req
 }
 
-const target = (templateId: string, fileName = 'design.psd') => ({ storeId, productId: '9910001', templateId, fileName })
+const target = (templateId: string, fileName = 'design.psd', optionKey?: string) => ({
+  storeId, productId: '9910001', templateId, fileName, ...(optionKey !== undefined ? { optionKey } : {}),
+})
+
+function splitReq(body: unknown, token = editorToken) {
+  const key = toRouteKey(storeId, P1)
+  const req = new NextRequest(`http://localhost/api/design-studio/library/products/${key}/split`, { method: 'PUT', body: JSON.stringify(body), headers: { 'Content-Type': 'application/json' } })
+  req.cookies.set(AUTH_COOKIE, token)
+  return putSplit(req, { params: { key } })
+}
 
 function patchReq(id: string, body: unknown, token = editorToken) {
   const req = new NextRequest(`http://localhost/api/design-studio/library/entries/${id}`, { method: 'PATCH', body: JSON.stringify(body), headers: { 'Content-Type': 'application/json' } })
@@ -110,6 +120,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await prisma.artworkEntry.deleteMany({ where: { storeId } })
+  await prisma.productProfile.deleteMany({ where: { storeId } })
   await prisma.designFont.deleteMany({ where: { postscriptName: { in: FONT_NAMES } } })
   await prisma.libraryFile.deleteMany({ where: { uploadedById: editorId } })
   await prisma.order.deleteMany({ where: { id: ORDER } })
@@ -130,34 +141,35 @@ describe('library slots from mapping', () => {
     expect(d.slots).toHaveLength(3)
     expect(bySupplier('PGprints')).toMatchObject({
       template: { id: TPL_A, widthPx: 2000, heightPx: 1000, dpi: 300 }, supplierSkus: ['A-20OZ'], lineCount: 2,
-      variants: '20oz(No handle) · US, Overseas', status: 'READY',
+      variants: '20oz(No handle) · US, Overseas', title: 'Size: 20oz(No handle) · Ship: Overseas, US', optionKey: '', splitOption: null, status: 'READY',
     })
+    expect(bySupplier('PGprints').splitChoices).toEqual([{ name: 'Size', values: ['20oz(No handle)'] }, { name: 'Ship', values: ['Overseas', 'US'] }])
     expect(bySupplier('PGprints').template!.areas).toEqual([{ name: 'Wrap', x: 0, y: 0, w: 2000, h: 1000 }])
     expect(bySupplier('Mangoshao')).toMatchObject({ template: { id: TPL_B }, status: 'EMPTY', entry: null, supplierSkus: ['B-30OZ'] })
-    expect(bySupplier('NoTpl')).toMatchObject({ template: null, status: 'NO_TEMPLATE', supplierSkus: ['C-1'], lineCount: 1 })
+    expect(bySupplier('NoTpl')).toMatchObject({ template: null, status: 'NO_TEMPLATE', supplierSkus: ['C-1'], lineCount: 1, title: 'Size: 40oz' })
     expect(d.unmapped).toBe(1)
     expect(d.stale.map(s => s.template.id)).toEqual([TPL_OLD])
     expect(d.stale[0].entry.status).toBe('NEEDS_REVIEW')
-    expect(d.status).toBe('NO_TEMPLATE')
+    expect(d.status).toBe('NO_MAPPING')
     expect(d.observedFields).toEqual(['Name', 'Year'])
   })
 
   it('the list shows chips per slot and the worst status', async () => {
     const { products } = await listLibraryProducts({ q: 'alib tumbler' })
     const row = products.find(p => p.storeId === storeId)!
-    expect(row.status).toBe('NO_TEMPLATE')
+    expect(row.status).toBe('NO_MAPPING')
     expect(row.unmapped).toBe(1)
     expect(row.staleCount).toBe(1)
     expect(row.chips).toEqual(expect.arrayContaining([
-      { supplierName: 'PGprints', templateName: 'Tumbler 20oz', supplierSkus: ['A-20OZ'], status: 'READY' },
-      { supplierName: 'Mangoshao', templateName: 'C450-30OZ', supplierSkus: ['B-30OZ'], status: 'EMPTY' },
-      { supplierName: 'NoTpl', templateName: null, supplierSkus: ['C-1'], status: 'NO_TEMPLATE' },
+      { supplierName: 'PGprints', templateName: 'Tumbler 20oz', supplierSkus: ['A-20OZ'], optionLabel: null, status: 'READY' },
+      { supplierName: 'Mangoshao', templateName: 'C450-30OZ', supplierSkus: ['B-30OZ'], optionLabel: null, status: 'EMPTY' },
+      { supplierName: 'NoTpl', templateName: null, supplierSkus: ['C-1'], optionLabel: null, status: 'NO_TEMPLATE' },
     ]))
     expect((await listLibraryProducts({ q: 'alib tumbler', status: 'READY' })).products.some(p => p.storeId === storeId)).toBe(false)
   })
 
   it('the task header state reads the entry for the line template', async () => {
-    expect(await libraryStateFor({ storeId, shopifyProductId: P1, templateId: TPL_A })).toMatchObject({ status: 'READY', label: 'Sẵn sàng' })
+    expect(await libraryStateFor({ storeId, shopifyProductId: P1, templateId: TPL_A })).toMatchObject({ status: 'READY', label: 'Sẵn sàng', optionKey: '', layers: [] })
     expect(await libraryStateFor({ storeId, shopifyProductId: P1, templateId: TPL_B })).toMatchObject({ status: 'NONE', label: 'Thiếu', entryId: null })
   })
 })
@@ -258,7 +270,7 @@ describe('PUT /api/design-studio/library/fonts/upload', () => {
   })
 
   it('stores the font by postscript name and requeues entries that only waited for it', async () => {
-    const waiting = await prisma.artworkEntry.findFirstOrThrow({ where: { storeId, printTemplateId: TPL_A } })
+    const waiting = await prisma.artworkEntry.findFirstOrThrow({ where: { storeId, printTemplateId: TPL_A, optionKey: '' } })
     const stillWaiting = await prisma.artworkEntry.findFirstOrThrow({ where: { storeId, printTemplateId: TPL_OLD } })
     const psd = await prisma.libraryFile.create({ data: { kind: 'PSD', fileName: 'p.psd', mimeType: 'image/vnd.adobe.photoshop', size: 1, sha256: 'p', uploadedById: editorId } })
     await prisma.artworkEntry.update({ where: { id: waiting.id }, data: { status: 'NEEDS_FONTS', psdFileId: psd.id, missingFonts: JSON.stringify(['AlibScript-Bold']) } })
@@ -276,5 +288,80 @@ describe('PUT /api/design-studio/library/fonts/upload', () => {
     await prisma.artworkEntry.update({ where: { id: waiting.id }, data: { fields: JSON.stringify([FIELD]) } })
     const list = await (await getFonts()).json()
     expect(list.fonts.find((f: any) => f.postscriptName === 'AlibScript-Bold')).toMatchObject({ family: 'Alib Script', usedBy: 2 })
+  })
+})
+
+describe('artwork per option', () => {
+  const US = '{"Ship":"US"}'
+  const OVERSEAS = '{"Ship":"Overseas"}'
+
+  it('rejects a split by an option the template lines do not have, or for a template the product does not use', async () => {
+    const bad = await splitReq({ printTemplateId: TPL_A, optionName: 'Color' })
+    expect(bad.status).toBe(400)
+    expect((await bad.json()).error).toMatch(/Color/)
+    expect((await splitReq({ printTemplateId: TPL_X, optionName: 'Size' })).status).toBe(400)
+    expect((await splitReq({ printTemplateId: TPL_A, optionName: '' })).status).toBe(400)
+    expect(await prisma.productProfile.count({ where: { storeId } })).toBe(0)
+  })
+
+  it('"Tách theo option" creates the profile on demand and turns the template slot into one slot per value', async () => {
+    const res = await splitReq({ printTemplateId: TPL_A, optionName: 'Ship' })
+    expect(res.status).toBe(200)
+    const d = await res.json()
+    const slots = d.slots.filter((s: any) => s.template?.id === TPL_A)
+    expect(slots.map((s: any) => [s.optionKey, s.title, s.splitOption, s.inherited])).toEqual([
+      [OVERSEAS, 'Size: 20oz(No handle) · Ship: Overseas', 'Ship', true],
+      [US, 'Size: 20oz(No handle) · Ship: US', 'Ship', true],
+    ])
+    const shared = await prisma.artworkEntry.findFirstOrThrow({ where: { storeId, printTemplateId: TPL_A, optionKey: '' } })
+    expect(slots.every((s: any) => s.entry.id === shared.id)).toBe(true)
+    const profile = await prisma.productProfile.findFirstOrThrow({ where: { storeId, shopifyProductId: P1 } })
+    expect(JSON.parse(profile.artworkSplits)).toEqual([{ printTemplateId: TPL_A, optionName: 'Ship' }])
+    expect(profile.title).toBe('ALIB Tumbler')
+  })
+
+  it('upload validates the optionKey against the product slots', async () => {
+    expect((await uploadPsd(uploadReq(target(TPL_A, 'us.psd', 'not json'), psdBytes()))).status).toBe(400)
+    expect((await uploadPsd(uploadReq(target(TPL_A, 'us.psd', '{ "Ship": "US" }'), psdBytes()))).status).toBe(400)
+    const eu = await uploadPsd(uploadReq(target(TPL_A, 'eu.psd', '{"Ship":"EU"}'), psdBytes()))
+    expect(eu.status).toBe(400)
+    expect((await eu.json()).error).toMatch(/Ship: EU/)
+    expect((await uploadPsd(uploadReq(target(TPL_B, 'b.psd', US), psdBytes()))).status).toBe(400)
+    expect(tmpFiles()).toEqual([])
+  })
+
+  it('upload with an optionKey creates an entry for that value only, and lines resolve to it before the "" entry', async () => {
+    const res = await uploadPsd(uploadReq(target(TPL_A, 'us.psd', US), psdBytes('us only')))
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.entry).toMatchObject({ printTemplateId: TPL_A, optionKey: US, optionLabel: 'Ship: US', status: 'QUEUED' })
+    const shared = await prisma.artworkEntry.findFirstOrThrow({ where: { storeId, printTemplateId: TPL_A, optionKey: '' } })
+    expect(body.entry.id).not.toBe(shared.id)
+
+    const us = await libraryStateFor({ storeId, shopifyProductId: P1, templateId: TPL_A, variantOptions: JSON.stringify({ Size: '20oz(No handle)', Ship: 'US' }) })
+    expect(us).toMatchObject({ entryId: body.entry.id, optionKey: US, optionLabel: 'Ship: US', label: 'Đang đọc' })
+    const overseas = await libraryStateFor({ storeId, shopifyProductId: P1, templateId: TPL_A, variantOptions: JSON.stringify({ Ship: 'Overseas' }) })
+    expect(overseas).toMatchObject({ entryId: shared.id, optionKey: '' })
+
+    const patched = await patchEntry(patchReq(body.entry.id, { notes: 'US artwork' }), { params: { id: body.entry.id } })
+    expect((await patched.json()).entry).toMatchObject({ optionKey: US, notes: 'US artwork' })
+
+    const d = (await loadLibraryProduct(toRouteKey(storeId, P1)))!
+    const slot = (k: string) => d.slots.find(s => s.template?.id === TPL_A && s.optionKey === k)!
+    expect(slot(US)).toMatchObject({ inherited: false, entry: { id: body.entry.id } })
+    expect(slot(OVERSEAS)).toMatchObject({ inherited: true, entry: { id: shared.id } })
+    expect((await listLibraryProducts({ q: 'alib tumbler' })).products.find(p => p.storeId === storeId)!.chips
+      .filter(c => c.templateName === 'Tumbler 20oz').map(c => c.optionLabel)).toEqual(['Ship: Overseas', 'Ship: US'])
+  })
+
+  it('"Gộp lại" undoes the split; the per-value entry stays valid under stale and lines fall back to ""', async () => {
+    const res = await splitReq({ printTemplateId: TPL_A, optionName: null })
+    expect(res.status).toBe(200)
+    const d = await res.json()
+    expect(d.slots.filter((s: any) => s.template?.id === TPL_A).map((s: any) => s.optionKey)).toEqual([''])
+    expect(d.stale.map((s: any) => s.entry.optionKey)).toContain(US)
+    const us = await libraryStateFor({ storeId, shopifyProductId: P1, templateId: TPL_A, variantOptions: { Ship: 'US' } })
+    expect(us?.optionKey).toBe('')
+    expect(await prisma.artworkEntry.count({ where: { storeId, printTemplateId: TPL_A, optionKey: US } })).toBe(1)
   })
 })

@@ -2,14 +2,18 @@ import fsp from 'fs/promises'
 import { prisma } from '@/lib/db'
 import { isNonProductLine } from '@/lib/order-lines'
 import { safeHttpUrl } from '@/lib/design-studio'
-import { loadTemplateContext, mapTemplate, pickTemplate } from '@/lib/design-tasks'
+import { loadTemplateContext, mapTemplate } from '@/lib/print-template-resolve'
 import { profileKey } from '@/lib/product-mapping'
 import { fieldsFromLines, fromRouteKey, observationSince, toRouteKey } from '@/lib/product-profiles'
 export { libraryStateFor } from '@/lib/artwork-library-state'
 import {
-  carryOverEdits, normalizeFields, parseFields, parseFixedTexts, parseStrings, productLibraryStatus, resultStatus,
-  type ArtworkField, type EntryStatus, type FixedText, type LibraryProductStatus, type SlotStatus,
+  carryOverEdits, normalizeFields, parseFields, parseFixedTexts, parseStrings, resultStatus,
+  type ArtworkField, type EntryStatus, type FixedText, type LibraryProductStatus,
 } from '@/lib/artwork-fields'
+import { isCanonicalOptionKey, optionComboLabel, parseArtworkSplits, parseOptionKey, summarizeOptions, withSplit } from '@/lib/artwork-options'
+import {
+  LIBRARY_LINE_LIMIT, SLOT_LINE_SELECT, assignSlotEntries, buildSlotDrafts, computeProductSlots, productSlotLines, slotStatusSummary,
+} from '@/lib/artwork-slots'
 import type {
   LibraryChip, LibraryEntryView, LibraryFileView, LibraryFontRow, LibraryListRow, LibraryProductDetail, LibrarySlot, LibraryTemplateView,
 } from '@/lib/artwork-library-types'
@@ -18,28 +22,18 @@ import { storeLibraryFile, type LibraryKind, type TempFile } from '@/lib/library
 import { pushLibraryFileToDrive } from '@/lib/design-drive-push'
 import { isDriveConnected } from '@/lib/google-drive'
 
+export { LIBRARY_LINE_LIMIT }
+
 export class LibraryError extends Error {
   constructor(message: string, public status = 400) { super(message) }
 }
 
 const CLOSED_TASK_STATUSES = ['DONE', 'CANCELLED']
 const OPEN_JOB_STATUSES = ['QUEUED', 'RUNNING']
-export const LIBRARY_LINE_LIMIT = 500
 export const FONT_MIME: Record<string, string> = { ttf: 'font/ttf', otf: 'font/otf', ttc: 'font/collection' }
 export const PSD_MAX_BYTES = 1024 * 1024 * 1024
 export const FONT_MAX_BYTES = 30 * 1024 * 1024
 export const RESULT_MAX_FILE_BYTES = 1024 * 1024 * 1024
-
-type LineRow = {
-  orderId: string; shopifyLineId: string; shopifyProductId: string | null; productTitle: string; shopifyProductType: string | null
-  imageUrl: string | null; customAttributesJson: string | null; sku: string | null; resolvedSupplierId: string | null; resolvedSupplierSku: string | null
-  variantTitle: string | null; variantOptions: string | null
-}
-
-const LINE_SELECT = {
-  orderId: true, shopifyLineId: true, shopifyProductId: true, productTitle: true, shopifyProductType: true, imageUrl: true,
-  customAttributesJson: true, sku: true, resolvedSupplierId: true, resolvedSupplierSku: true, variantTitle: true, variantOptions: true,
-} as const
 
 type EntryRow = NonNullable<Awaited<ReturnType<typeof loadEntryRow>>>
 
@@ -67,7 +61,8 @@ function fileView(f: { id: string; kind: string; fileName: string; size: number;
 export function serializeEntry(e: EntryRow, approverNames: Map<string, string> = new Map()): LibraryEntryView {
   const job = e.jobs[0] ?? null
   return {
-    id: e.id, storeId: e.storeId, shopifyProductId: e.shopifyProductId, printTemplateId: e.printTemplateId, supplierId: e.supplierId,
+    id: e.id, storeId: e.storeId, shopifyProductId: e.shopifyProductId, printTemplateId: e.printTemplateId,
+    optionKey: e.optionKey, optionLabel: e.optionKey ? optionComboLabel(e.optionKey) : null, supplierId: e.supplierId,
     status: e.status as EntryStatus, psd: fileView(e.psdFile), artwork: fileView(e.artworkFile), preview: fileView(e.previewFile),
     fields: parseFields(e.fields), fixedTexts: parseFixedTexts(e.fixedTexts), missingFonts: parseStrings(e.missingFonts), warnings: parseStrings(e.warnings),
     checkScore: e.checkScore, error: e.error, parsedAt: e.parsedAt?.toISOString() ?? null, approvedAt: e.approvedAt?.toISOString() ?? null,
@@ -115,38 +110,6 @@ export function summarizeVariants(lines: Array<{ variantOptions: string | null; 
   return parts.join(' · ')
 }
 
-type SlotDraft = { key: string; supplierId: string; templateId: string | null; template: LibraryTemplateView | null; skus: Set<string>; lines: LineRow[] }
-
-function slotDrafts(lines: LineRow[], profile: { printTemplateId: string | null } | null, ctx: Awaited<ReturnType<typeof loadTemplateContext>>) {
-  const slots = new Map<string, SlotDraft>()
-  let unmapped = 0
-  for (const l of lines) {
-    if (!l.resolvedSupplierId) { unmapped++; continue }
-    const tpl = pickTemplate(l, profile, ctx)
-    const key = tpl ? `tpl:${tpl.id}` : `none:${l.resolvedSupplierId}`
-    let s = slots.get(key)
-    if (!s) {
-      s = { key, supplierId: l.resolvedSupplierId, templateId: tpl?.id ?? null, template: tpl, skus: new Set(), lines: [] }
-      slots.set(key, s)
-    }
-    const sku = l.resolvedSupplierSku?.trim()
-    if (sku) s.skus.add(sku)
-    s.lines.push(l)
-  }
-  return { slots: Array.from(slots.values()), unmapped }
-}
-
-function slotStatus(draft: { templateId: string | null }, entry: { status: string } | undefined): SlotStatus {
-  if (!draft.templateId) return 'NO_TEMPLATE'
-  return (entry?.status as EntryStatus | undefined) ?? 'EMPTY'
-}
-
-function overallStatus(active: SlotStatus[], stale: SlotStatus[]): LibraryProductStatus {
-  if (active.length > 0) return productLibraryStatus(active)
-  if (stale.length > 0) return productLibraryStatus(stale)
-  return 'NO_TEMPLATE'
-}
-
 async function supplierMap(ids: string[]) {
   const unique = Array.from(new Set(ids))
   if (unique.length === 0) return new Map<string, { id: string; name: string; code: string }>()
@@ -158,22 +121,24 @@ function lineKey(orderId: string, shopifyLineId: string) {
   return `${orderId}::${shopifyLineId}`
 }
 
-export async function listLibraryProducts(f: { q?: string; status?: LibraryProductStatus } = {}): Promise<{ products: LibraryListRow[] }> {
+export async function listLibraryProducts(f: { q?: string; status?: LibraryProductStatus } = {}): Promise<{ products: LibraryListRow[]; withoutProductId: number }> {
   const since = observationSince()
   const [lines, openTasks, profiles, entries] = await Promise.all([
     prisma.orderLine.findMany({
       where: { order: { placedAt: { gte: since } } },
       orderBy: { order: { placedAt: 'desc' } },
-      select: { ...LINE_SELECT, order: { select: { storeId: true, store: { select: { shop: true } } } } },
+      select: { ...SLOT_LINE_SELECT, shopifyVariantId: true, order: { select: { storeId: true, store: { select: { shop: true } } } } },
     }),
     prisma.designTask.findMany({
       where: { status: { notIn: CLOSED_TASK_STATUSES }, order: { placedAt: { gte: since } } },
       select: { orderId: true, shopifyLineId: true },
     }),
-    prisma.productProfile.findMany({ select: { storeId: true, shopifyProductId: true, printTemplateId: true, title: true, imageUrl: true } }),
+    prisma.productProfile.findMany({ select: { storeId: true, shopifyProductId: true, printTemplateId: true, artworkSplits: true, title: true, imageUrl: true } }),
     prisma.artworkEntry.findMany({
-      select: { id: true, storeId: true, shopifyProductId: true, printTemplateId: true, supplierId: true, status: true, title: true, imageUrl: true,
-        printTemplate: { select: { name: true } }, store: { select: { shop: true } } },
+      select: {
+        id: true, storeId: true, shopifyProductId: true, printTemplateId: true, optionKey: true, supplierId: true, status: true, title: true, imageUrl: true,
+        store: { select: { shop: true } },
+      },
     }),
   ])
   const openTaskKeys = new Set(openTasks.map(t => lineKey(t.orderId, t.shopifyLineId)))
@@ -184,18 +149,28 @@ export async function listLibraryProducts(f: { q?: string; status?: LibraryProdu
     entriesByKey.set(k, [...(entriesByKey.get(k) ?? []), e])
   }
 
-  type Group = { storeId: string; shop: string; shopifyProductId: string; title: string; imageUrl: string | null; orders: Set<string>; openTasks: number; lines: LineRow[] }
+  type Line = (typeof lines)[number]
+  type Group = {
+    storeId: string; shop: string; shopifyProductId: string; title: string; imageUrl: string | null
+    orders: Set<string>; variants: Set<string>; openTasks: number; lines: Line[]
+  }
   const groups = new Map<string, Group>()
+  let withoutProductId = 0
   for (const l of lines) {
-    if (isNonProductLine(l) || !l.shopifyProductId) continue
+    if (isNonProductLine(l)) continue
+    if (!l.shopifyProductId) { withoutProductId++; continue }
     const key = profileKey(l.order.storeId, l.shopifyProductId)
     let g = groups.get(key)
     if (!g) {
-      g = { storeId: l.order.storeId, shop: l.order.store.shop, shopifyProductId: l.shopifyProductId, title: l.productTitle, imageUrl: safeHttpUrl(l.imageUrl), orders: new Set(), openTasks: 0, lines: [] }
+      g = {
+        storeId: l.order.storeId, shop: l.order.store.shop, shopifyProductId: l.shopifyProductId, title: l.productTitle, imageUrl: safeHttpUrl(l.imageUrl),
+        orders: new Set(), variants: new Set(), openTasks: 0, lines: [],
+      }
       groups.set(key, g)
     }
     if (!g.imageUrl) g.imageUrl = safeHttpUrl(l.imageUrl)
     g.orders.add(l.orderId)
+    if (l.shopifyVariantId) g.variants.add(l.shopifyVariantId)
     if (openTaskKeys.has(lineKey(l.orderId, l.shopifyLineId))) g.openTasks++
     if (g.lines.length < LIBRARY_LINE_LIMIT) g.lines.push(l)
   }
@@ -205,51 +180,42 @@ export async function listLibraryProducts(f: { q?: string; status?: LibraryProdu
     const profile = profileByKey.get(key)
     groups.set(key, {
       storeId: e.storeId, shop: e.store.shop, shopifyProductId: e.shopifyProductId, title: e.title || profile?.title || '',
-      imageUrl: safeHttpUrl(e.imageUrl) ?? safeHttpUrl(profile?.imageUrl), orders: new Set(), openTasks: 0, lines: [],
+      imageUrl: safeHttpUrl(e.imageUrl) ?? safeHttpUrl(profile?.imageUrl), orders: new Set(), variants: new Set(), openTasks: 0, lines: [],
     })
   }
 
-  const groupList = Array.from(groups.entries())
+  const q = f.q?.trim().toLowerCase()
+  const groupList = Array.from(groups.entries()).filter(([, g]) => !q || g.title.toLowerCase().includes(q) || g.shopifyProductId.toLowerCase().includes(q))
   const ctx = await loadTemplateContext(
     groupList.flatMap(([, g]) => g.lines.filter(l => l.resolvedSupplierId)),
     groupList.map(([key]) => profileByKey.get(key)?.printTemplateId),
   )
-  const drafts = groupList.map(([key, g]) => ({ key, g, ...slotDrafts(g.lines, profileByKey.get(key) ?? null, ctx) }))
-  const suppliers = await supplierMap([...drafts.flatMap(d => d.slots.map(s => s.supplierId)), ...entries.map(e => e.supplierId)])
+  const computed = groupList.map(([key, g]) => {
+    const { slots: drafts, unmapped } = buildSlotDrafts(g.lines, profileByKey.get(key) ?? null, ctx)
+    const { slots, stale } = assignSlotEntries(drafts, entriesByKey.get(key) ?? [])
+    return { key, g, slots, stale, unmapped }
+  })
+  const suppliers = await supplierMap(computed.flatMap(c => c.slots.map(s => s.supplierId)))
 
-  const q = f.q?.trim().toLowerCase()
   const products: LibraryListRow[] = []
-  for (const { key, g, slots, unmapped } of drafts) {
-    if (q && !g.title.toLowerCase().includes(q) && !g.shopifyProductId.toLowerCase().includes(q)) continue
-    const productEntries = entriesByKey.get(key) ?? []
-    const entryByTemplate = new Map(productEntries.map(e => [e.printTemplateId, e]))
-    const activeIds = new Set(slots.map(s => s.templateId).filter(Boolean))
+  for (const { key, g, slots, stale, unmapped } of computed) {
+    const status = slotStatusSummary(slots, stale, unmapped)
+    if (f.status && status !== f.status) continue
     const chips: LibraryChip[] = slots.map(s => ({
       supplierName: suppliers.get(s.supplierId)?.name ?? '?',
       templateName: s.template?.name ?? null,
-      supplierSkus: Array.from(s.skus).sort(),
-      status: slotStatus(s, s.templateId ? entryByTemplate.get(s.templateId) : undefined),
+      supplierSkus: s.skus,
+      optionLabel: s.optionKey ? optionComboLabel(s.optionKey) : null,
+      status: s.status,
     }))
-    const stale = productEntries.filter(e => !activeIds.has(e.printTemplateId))
-    const status = overallStatus(chips.map(c => c.status), stale.map(e => e.status as SlotStatus))
-    if (f.status && status !== f.status) continue
     products.push({
       key: toRouteKey(g.storeId, g.shopifyProductId), storeId: g.storeId, shop: g.shop, shopifyProductId: g.shopifyProductId,
-      title: g.title, imageUrl: g.imageUrl, orderCount: g.orders.size, openTasks: g.openTasks, unmapped, status, chips, staleCount: stale.length,
+      title: g.title, imageUrl: g.imageUrl ?? safeHttpUrl(profileByKey.get(key)?.imageUrl), orderCount: g.orders.size, openTasks: g.openTasks,
+      unmapped, status, chips, staleCount: stale.length, variantsSeen: g.variants.size, hasProfile: profileByKey.has(key),
     })
   }
   products.sort((a, b) => b.openTasks - a.openTasks || b.orderCount - a.orderCount || a.title.localeCompare(b.title))
-  return { products }
-}
-
-async function productLines(storeId: string, shopifyProductId: string): Promise<LineRow[]> {
-  const lines = await prisma.orderLine.findMany({
-    where: { shopifyProductId, order: { storeId, placedAt: { gte: observationSince() } } },
-    orderBy: { order: { placedAt: 'desc' } },
-    take: LIBRARY_LINE_LIMIT,
-    select: LINE_SELECT,
-  })
-  return lines.filter(l => !isNonProductLine(l))
+  return { products, withoutProductId }
 }
 
 export async function loadLibraryProduct(key: string): Promise<LibraryProductDetail | null> {
@@ -259,37 +225,35 @@ export async function loadLibraryProduct(key: string): Promise<LibraryProductDet
   const [store, profile, lines, entries, newest] = await Promise.all([
     prisma.shopifyStore.findUnique({ where: { id: storeId }, select: { id: true, shop: true, project: { select: { name: true } } } }),
     prisma.productProfile.findUnique({ where: { storeId_shopifyProductId: { storeId, shopifyProductId } } }),
-    productLines(storeId, shopifyProductId),
+    productSlotLines(storeId, shopifyProductId),
     prisma.artworkEntry.findMany({ where: { storeId, shopifyProductId }, include: { ...ENTRY_INCLUDE, printTemplate: true, supplier: { select: { id: true, name: true, code: true } } } }),
     prisma.orderLine.findFirst({ where: { shopifyProductId, order: { storeId } }, orderBy: { order: { placedAt: 'desc' } }, select: { productTitle: true, imageUrl: true } }),
   ])
   if (!store) return null
   if (!profile && lines.length === 0 && entries.length === 0 && !newest) return null
 
-  const ctx = await loadTemplateContext(lines.filter(l => l.resolvedSupplierId), [profile?.printTemplateId])
-  const { slots: drafts, unmapped } = slotDrafts(lines, profile, ctx)
-  const suppliers = await supplierMap(drafts.map(d => d.supplierId))
+  const { slots: assigned, stale: staleEntries, unmapped, status } = await computeProductSlots(lines, profile, entries)
+  const suppliers = await supplierMap(assigned.map(d => d.supplierId))
   const names = await approverNames(entries)
-  const entryByTemplate = new Map(entries.map(e => [e.printTemplateId, e]))
 
-  const slots: LibrarySlot[] = drafts.map(d => {
-    const entry = d.templateId ? entryByTemplate.get(d.templateId) : undefined
-    return {
-      key: d.key,
-      supplier: suppliers.get(d.supplierId) ?? { id: d.supplierId, name: '?', code: '?' },
-      supplierSkus: Array.from(d.skus).sort(),
-      variants: summarizeVariants(d.lines),
-      lineCount: d.lines.length,
-      template: d.template,
-      status: slotStatus(d, entry),
-      entry: entry ? serializeEntry(entry, names) : null,
-    }
-  })
-  slots.sort((a, b) => (a.template ? 0 : 1) - (b.template ? 0 : 1) || b.lineCount - a.lineCount)
-  const activeIds = new Set(drafts.map(d => d.templateId).filter(Boolean))
-  const stale = entries.filter(e => !activeIds.has(e.printTemplateId)).map(e => ({
-    template: templateView(e.printTemplate), supplier: e.supplier, entry: serializeEntry(e, names),
+  const slots: LibrarySlot[] = assigned.map(d => ({
+    key: d.key,
+    title: d.title,
+    options: d.options,
+    optionKey: d.optionKey,
+    optionLabel: d.optionKey ? optionComboLabel(d.optionKey) : null,
+    splitOption: d.splitOption,
+    splitChoices: d.splitChoices,
+    supplier: suppliers.get(d.supplierId) ?? { id: d.supplierId, name: '?', code: '?' },
+    supplierSkus: d.skus,
+    variants: summarizeVariants(d.lines),
+    lineCount: d.lines.length,
+    template: d.template,
+    status: d.status,
+    entry: d.entry ? serializeEntry(d.entry, names) : null,
+    inherited: d.inherited,
   }))
+  const stale = staleEntries.map(e => ({ template: templateView(e.printTemplate), supplier: e.supplier, entry: serializeEntry(e, names) }))
   const lineKeys = lines.map(l => ({ orderId: l.orderId, shopifyLineId: l.shopifyLineId }))
   const openTasks = lineKeys.length ? await prisma.designTask.count({ where: { status: { notIn: CLOSED_TASK_STATUSES }, OR: lineKeys } }) : 0
 
@@ -297,11 +261,11 @@ export async function loadLibraryProduct(key: string): Promise<LibraryProductDet
     key: toRouteKey(storeId, shopifyProductId), storeId, shop: store.shop, storeName: store.project?.name ?? store.shop, shopifyProductId,
     title: newest?.productTitle ?? entries[0]?.title ?? profile?.title ?? '',
     imageUrl: safeHttpUrl(lines.find(l => safeHttpUrl(l.imageUrl))?.imageUrl) ?? safeHttpUrl(newest?.imageUrl) ?? safeHttpUrl(entries[0]?.imageUrl) ?? safeHttpUrl(profile?.imageUrl),
-    status: overallStatus(slots.map(s => s.status), stale.map(s => s.entry.status)),
-    slots, stale, unmapped,
+    status, slots, stale, unmapped,
     observedFields: fieldsFromLines(lines),
     openTasks,
     orderCount: new Set(lines.map(l => l.orderId)).size,
+    legacyMasterUrl: safeHttpUrl(profile?.masterArtworkUrl),
   }
 }
 
@@ -311,8 +275,9 @@ export async function loadEntryView(id: string): Promise<LibraryEntryView | null
   return serializeEntry(row, await approverNames([row]))
 }
 
-function driveFolderFor(storeName: string, title: string, supplierName: string, templateName: string): string[] {
-  return ['Library', storeName, title || 'Untitled', `${supplierName} - ${templateName}`]
+function driveFolderFor(storeName: string, title: string, supplierName: string, templateName: string, optionKey: string): string[] {
+  const option = optionKey ? ` - ${optionComboLabel(optionKey)}` : ''
+  return ['Library', storeName, title || 'Untitled', `${supplierName} - ${templateName}${option}`]
 }
 
 export function pushInBackground(fileId: string, folder: string[]) {
@@ -324,19 +289,34 @@ export function pushInBackground(fileId: string, folder: string[]) {
 async function entryDriveFolder(entryId: string): Promise<string[] | null> {
   const e = await prisma.artworkEntry.findUnique({
     where: { id: entryId },
-    select: { title: true, store: { select: { shop: true, project: { select: { name: true } } } }, supplier: { select: { name: true } }, printTemplate: { select: { name: true } } },
+    select: {
+      title: true, optionKey: true, store: { select: { shop: true, project: { select: { name: true } } } },
+      supplier: { select: { name: true } }, printTemplate: { select: { name: true } },
+    },
   })
   if (!e) return null
-  return driveFolderFor(e.store.project?.name ?? e.store.shop, e.title, e.supplier.name, e.printTemplate.name)
+  return driveFolderFor(e.store.project?.name ?? e.store.shop, e.title, e.supplier.name, e.printTemplate.name, e.optionKey)
 }
 
-export async function activeTemplateIds(storeId: string, shopifyProductId: string): Promise<Set<string>> {
+export function slotTarget(templateId: string, optionKey: string): string {
+  return `${templateId}|${optionKey}`
+}
+
+export async function activeSlotTargets(storeId: string, shopifyProductId: string): Promise<Set<string>> {
   const [profile, lines] = await Promise.all([
-    prisma.productProfile.findUnique({ where: { storeId_shopifyProductId: { storeId, shopifyProductId } }, select: { printTemplateId: true } }),
-    productLines(storeId, shopifyProductId),
+    prisma.productProfile.findUnique({ where: { storeId_shopifyProductId: { storeId, shopifyProductId } }, select: { printTemplateId: true, artworkSplits: true } }),
+    productSlotLines(storeId, shopifyProductId),
   ])
   const ctx = await loadTemplateContext(lines.filter(l => l.resolvedSupplierId), [profile?.printTemplateId])
-  return new Set(slotDrafts(lines, profile, ctx).slots.map(s => s.templateId).filter((x): x is string => !!x))
+  return new Set(buildSlotDrafts(lines, profile, ctx).slots.filter(s => s.templateId).map(s => slotTarget(s.templateId as string, s.optionKey)))
+}
+
+export function normalizeOptionKey(raw: string | null | undefined): string {
+  const v = (raw ?? '').trim()
+  if (!v) return ''
+  if (parseOptionKey(v) === null) throw new LibraryError('optionKey không hợp lệ (cần JSON {"Option": "giá trị"})')
+  if (!isCanonicalOptionKey(v)) throw new LibraryError('optionKey phải sắp theo tên option, không có khoảng trắng thừa')
+  return v
 }
 
 const CLEARED_RESULTS = {
@@ -351,14 +331,38 @@ function supersedeJobs(entryId: string, reason: string) {
   })
 }
 
+function entryUnique(storeId: string, shopifyProductId: string, printTemplateId: string, optionKey: string) {
+  return { storeId_shopifyProductId_printTemplateId_optionKey: { storeId, shopifyProductId, printTemplateId, optionKey } }
+}
+
+function missingSlotError(optionKey: string): LibraryError {
+  return new LibraryError(optionKey
+    ? `Sản phẩm không có slot ${optionComboLabel(optionKey)} cho template này`
+    : 'Template này không nhận dòng đơn nào của sản phẩm')
+}
+
+export async function assertUploadTarget(storeId: string, shopifyProductId: string, templateId: string, rawOptionKey?: string | null): Promise<string> {
+  const optionKey = normalizeOptionKey(rawOptionKey)
+  const [store, template, existing] = await Promise.all([
+    prisma.shopifyStore.findUnique({ where: { id: storeId }, select: { id: true } }),
+    prisma.printTemplate.findUnique({ where: { id: templateId }, select: { id: true } }),
+    prisma.artworkEntry.findUnique({ where: entryUnique(storeId, shopifyProductId, templateId, optionKey), select: { id: true } }),
+  ])
+  if (!store) throw new LibraryError('Không tìm thấy store', 404)
+  if (!template) throw new LibraryError('Không tìm thấy template', 404)
+  if (!existing && !(await activeSlotTargets(storeId, shopifyProductId)).has(slotTarget(templateId, optionKey))) throw missingSlotError(optionKey)
+  return optionKey
+}
+
 export async function uploadEntryPsd(input: {
-  storeId: string; shopifyProductId: string; templateId: string; fileName: string; temp: TempFile; uploadedById: string | null
+  storeId: string; shopifyProductId: string; templateId: string; optionKey?: string; fileName: string; temp: TempFile; uploadedById: string | null
 }): Promise<{ entry: LibraryEntryView; drive: boolean }> {
   const { storeId, shopifyProductId, templateId } = input
+  const optionKey = normalizeOptionKey(input.optionKey)
   const [store, template, existing, newest, profile] = await Promise.all([
     prisma.shopifyStore.findUnique({ where: { id: storeId }, select: { id: true, shop: true, project: { select: { name: true } } } }),
     prisma.printTemplate.findUnique({ where: { id: templateId }, include: { supplier: { select: { id: true, name: true } } } }),
-    prisma.artworkEntry.findUnique({ where: { storeId_shopifyProductId_printTemplateId: { storeId, shopifyProductId, printTemplateId: templateId } } }),
+    prisma.artworkEntry.findUnique({ where: entryUnique(storeId, shopifyProductId, templateId, optionKey) }),
     prisma.orderLine.findFirst({ where: { shopifyProductId, order: { storeId } }, orderBy: { order: { placedAt: 'desc' } }, select: { productTitle: true, imageUrl: true } }),
     prisma.productProfile.findUnique({ where: { storeId_shopifyProductId: { storeId, shopifyProductId } }, select: { title: true, imageUrl: true } }),
   ])
@@ -366,14 +370,12 @@ export async function uploadEntryPsd(input: {
   if (!template) throw new LibraryError('Không tìm thấy template', 404)
   const title = newest?.productTitle ?? existing?.title ?? profile?.title
   if (!title) throw new LibraryError('Không tìm thấy sản phẩm', 404)
-  if (!existing && !(await activeTemplateIds(storeId, shopifyProductId)).has(templateId)) {
-    throw new LibraryError('Template này không nhận dòng đơn nào của sản phẩm')
-  }
+  if (!existing && !(await activeSlotTargets(storeId, shopifyProductId)).has(slotTarget(templateId, optionKey))) throw missingSlotError(optionKey)
 
   const numericId = shopifyProductId.split('/').pop() ?? 'product'
+  const relDir = ['psd', storeId, numericId, templateId, ...(optionKey ? [optionComboLabel(optionKey)] : [])]
   const { file } = await storeLibraryFile({
-    temp: input.temp, kind: 'PSD', fileName: input.fileName, mimeType: 'image/vnd.adobe.photoshop',
-    relDir: ['psd', storeId, numericId, templateId], uploadedById: input.uploadedById,
+    temp: input.temp, kind: 'PSD', fileName: input.fileName, mimeType: 'image/vnd.adobe.photoshop', relDir, uploadedById: input.uploadedById,
   })
   const imageUrl = safeHttpUrl(newest?.imageUrl) ?? existing?.imageUrl ?? safeHttpUrl(profile?.imageUrl) ?? null
   const data = {
@@ -381,8 +383,8 @@ export async function uploadEntryPsd(input: {
   }
   const entry = await prisma.$transaction(async tx => {
     const row = await tx.artworkEntry.upsert({
-      where: { storeId_shopifyProductId_printTemplateId: { storeId, shopifyProductId, printTemplateId: templateId } },
-      create: { storeId, shopifyProductId, printTemplateId: templateId, ...data },
+      where: entryUnique(storeId, shopifyProductId, templateId, optionKey),
+      create: { storeId, shopifyProductId, printTemplateId: templateId, optionKey, ...data },
       update: data,
     })
     await tx.artworkJob.updateMany({
@@ -393,8 +395,46 @@ export async function uploadEntryPsd(input: {
     return row
   })
   const drive = file.storage === 'LOCAL' && await isDriveConnected()
-  if (drive) pushInBackground(file.id, driveFolderFor(store.project?.name ?? store.shop, title, template.supplier.name, template.name))
+  if (drive) pushInBackground(file.id, driveFolderFor(store.project?.name ?? store.shop, title, template.supplier.name, template.name, optionKey))
   return { entry: (await loadEntryView(entry.id))!, drive }
+}
+
+export async function setArtworkSplit(key: string, body: unknown): Promise<LibraryProductDetail> {
+  const parsed = fromRouteKey(key)
+  if (!parsed) throw new LibraryError('Mã sản phẩm không hợp lệ')
+  if (!body || typeof body !== 'object' || Array.isArray(body)) throw new LibraryError('Body không hợp lệ')
+  const { printTemplateId, optionName } = body as Record<string, unknown>
+  if (typeof printTemplateId !== 'string' || !printTemplateId.trim()) throw new LibraryError('printTemplateId bắt buộc')
+  if (optionName !== null && (typeof optionName !== 'string' || !optionName.trim())) throw new LibraryError('optionName phải là tên option, hoặc null để gộp lại')
+  const { storeId, shopifyProductId } = parsed
+  const templateId = printTemplateId.trim()
+  const name = typeof optionName === 'string' ? optionName.trim() : null
+  const [profile, lines, newest] = await Promise.all([
+    prisma.productProfile.findUnique({ where: { storeId_shopifyProductId: { storeId, shopifyProductId } } }),
+    productSlotLines(storeId, shopifyProductId),
+    prisma.orderLine.findFirst({ where: { shopifyProductId, order: { storeId } }, orderBy: { order: { placedAt: 'desc' } }, select: { productTitle: true, imageUrl: true } }),
+  ])
+  const current = parseArtworkSplits(profile?.artworkSplits)
+  if (name) {
+    const ctx = await loadTemplateContext(lines.filter(l => l.resolvedSupplierId), [profile?.printTemplateId])
+    const templateLines = buildSlotDrafts(lines, profile, ctx).slots.filter(s => s.templateId === templateId).flatMap(s => s.lines)
+    if (templateLines.length === 0) throw new LibraryError('Template này không nhận dòng đơn nào của sản phẩm')
+    if (!summarizeOptions(templateLines).some(o => o.name === name)) throw new LibraryError(`Không thấy option "${name}" trên các dòng của template này`)
+  }
+  const next = withSplit(current, templateId, name)
+  if (JSON.stringify(next) !== JSON.stringify(current)) {
+    const title = newest?.productTitle ?? profile?.title
+    if (!title) throw new LibraryError('Không tìm thấy sản phẩm', 404)
+    const artworkSplits = JSON.stringify(next)
+    await prisma.productProfile.upsert({
+      where: { storeId_shopifyProductId: { storeId, shopifyProductId } },
+      create: { storeId, shopifyProductId, title, imageUrl: safeHttpUrl(newest?.imageUrl), artworkSplits },
+      update: { artworkSplits },
+    })
+  }
+  const detail = await loadLibraryProduct(key)
+  if (!detail) throw new LibraryError('Không tìm thấy sản phẩm', 404)
+  return detail
 }
 
 export async function requeueEntry(entryId: string, reason = 'Đọc lại PSD'): Promise<void> {
@@ -557,17 +597,4 @@ export function toProductGid(v: string | null | undefined): string | null {
   const s = (v ?? '').trim()
   if (/^\d+$/.test(s)) return `gid://shopify/Product/${s}`
   return /^gid:\/\/shopify\/Product\/\d+$/.test(s) ? s : null
-}
-
-export async function assertUploadTarget(storeId: string, shopifyProductId: string, templateId: string): Promise<void> {
-  const [store, template, existing] = await Promise.all([
-    prisma.shopifyStore.findUnique({ where: { id: storeId }, select: { id: true } }),
-    prisma.printTemplate.findUnique({ where: { id: templateId }, select: { id: true } }),
-    prisma.artworkEntry.findUnique({ where: { storeId_shopifyProductId_printTemplateId: { storeId, shopifyProductId, printTemplateId: templateId } }, select: { id: true } }),
-  ])
-  if (!store) throw new LibraryError('Không tìm thấy store', 404)
-  if (!template) throw new LibraryError('Không tìm thấy template', 404)
-  if (!existing && !(await activeTemplateIds(storeId, shopifyProductId)).has(templateId)) {
-    throw new LibraryError('Template này không nhận dòng đơn nào của sản phẩm')
-  }
 }

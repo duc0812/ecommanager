@@ -128,10 +128,6 @@ describe('PUT /api/design-studio/products/[key] validation', () => {
     ['override to an unknown supplier product', { overrides: [{ combo: { Size: 'XL' }, supplierProductId: 'nope' }] }],
     ['unknown default supplier product', { supplierProductId: 'nope' }],
     ['unknown template', { printTemplateId: 'nope' }],
-    ['non-http master', { masterArtworkUrl: 'javascript:alert(1)' }],
-    ['layer with bad fit', { layerMap: [{ field: 'Name', layer: 'n', fit: 'stretch' }] }],
-    ['layer with non-positive maxChars', { layerMap: [{ field: 'Name', layer: 'n', fit: 'none', maxChars: 0 }] }],
-    ['duplicate layer field', { layerMap: [{ field: 'Name', layer: 'a', fit: 'none' }, { field: 'name', layer: 'b', fit: 'none' }] }],
     ['supplier product of an inactive supplier', { supplierProductId: SP_OFF }],
     ['override to an inactive supplier', { overrides: [{ combo: { Size: 'XL' }, supplierProductId: SP_OFF }] }],
   ])('400 for %s', async (_label, body) => {
@@ -167,12 +163,23 @@ describe('saving a profile', () => {
       supplierProductId: SP_NEW,
       overrides: [{ combo: { Size: '6XL' }, supplierProductId: SP_OLD }],
       printTemplateId: TPL_PROFILE,
-      masterArtworkUrl: MASTER,
-      layerMap: [{ field: 'Name', layer: 'name_text', fit: 'shrink', maxChars: 12 }],
       notes: 'hello',
     })
     expect(res.status).toBe(200)
     saved = await res.json()
+    await prisma.productProfile.update({
+      where: { storeId_shopifyProductId: { storeId: storeA, shopifyProductId: GID } },
+      data: { masterArtworkUrl: MASTER, layerMap: JSON.stringify([{ field: 'Name', layer: 'name_text', fit: 'shrink', maxChars: 12 }]) },
+    })
+  })
+
+  it('ignores the removed master link and layer table in the body and keeps the legacy values', async () => {
+    const res = await put({ masterArtworkUrl: 'https://cdn.example/other.png', layerMap: [{ field: 'Name', layer: 'x', fit: 'none' }] })
+    expect(res.status).toBe(200)
+    const row = await prisma.productProfile.findUniqueOrThrow({ where: { storeId_shopifyProductId: { storeId: storeA, shopifyProductId: GID } } })
+    expect(row.masterArtworkUrl).toBe(MASTER)
+    expect(JSON.parse(row.layerMap)).toEqual([{ field: 'Name', layer: 'name_text', fit: 'shrink', maxChars: 12 }])
+    expect((await res.json()).profile).not.toHaveProperty('layerMap')
   })
 
   it('re-resolves the open line to the profile supplier at the new cost and renames its task supplier', async () => {
@@ -228,15 +235,16 @@ describe('saving a profile', () => {
     expect(body.profile.overrides).toEqual([{ combo: { Size: '6XL' }, supplierProductId: SP_OLD }])
   })
 
-  it('loadTask prefers the profile template and master and exposes the profile', async () => {
+  it('loadTask prefers the profile template, keeps the legacy master and layerMap, and reports the combined status', async () => {
     const task = await prisma.designTask.findFirstOrThrow({ where: { orderId: OPEN_ID, shopifyLineId: '#PP1-l1' } })
     const detail = await loadTask(task.taskKey)
     expect(detail?.template?.id).toBe(TPL_PROFILE)
     expect(detail?.slots).toEqual(['Front'])
     expect(detail?.profile).toEqual({
-      key, status: 'READY', masterArtworkUrl: MASTER,
+      key, status: 'EMPTY',
       layerMap: [{ field: 'Name', layer: 'name_text', fit: 'shrink', maxChars: 12 }],
     })
+    expect(detail?.library).toMatchObject({ status: 'NONE', entryId: null, key })
     expect(detail?.line.masterArtworkUrl).toBe(MASTER)
     expect(detail?.profileRouteKey).toBe(key)
   })
@@ -246,7 +254,7 @@ describe('saving a profile', () => {
     const task = await prisma.designTask.findFirstOrThrow({ where: { orderId: OPEN_ID, shopifyLineId: '#PP1-l1' } })
     const detail = await loadTask(task.taskKey)
     expect(detail?.template?.id).toBe(TPL_SKU)
-    expect(detail?.profile?.status).toBe('READY')
+    expect(detail?.profile?.status).toBe('EMPTY')
     await put({ printTemplateId: TPL_PROFILE })
   })
 })
@@ -284,8 +292,8 @@ describe('GET product routes', () => {
     const rows = body.products.filter((p: any) => p.shopifyProductId === GID)
     expect(rows.map((r: any) => r.shop).sort()).toEqual([SHOP_A, SHOP_B])
     const a = rows.find((r: any) => r.storeId === storeA)
-    expect(a).toMatchObject({ key, orderCount: 3, openTasks: 1, status: 'READY', hasProfile: true })
-    expect(rows.find((r: any) => r.storeId === storeB)).toMatchObject({ status: 'NONE', hasProfile: false })
+    expect(a).toMatchObject({ key, orderCount: 3, openTasks: 1, status: 'EMPTY', hasProfile: true })
+    expect(rows.find((r: any) => r.storeId === storeB)).toMatchObject({ status: 'NO_MAPPING', hasProfile: false, unmapped: 1 })
     expect(body.withoutProductId).toBeGreaterThanOrEqual(1)
   })
 
@@ -302,7 +310,7 @@ describe('GET product routes', () => {
     const body = await res.json()
     expect(body.profile.supplierProductId).toBe(SP_NEW)
     expect(body.observedFields).toEqual(['Name'])
-    expect(body.status).toBe('READY')
+    expect(body).not.toHaveProperty('status')
     expect(body.summary).toMatchObject({ title: 'PP Hoodie', orderCount: 3, openTasks: 1 })
     const sp = body.supplierProducts.find((p: any) => p.id === SP_NEW)
     expect(sp).toBeDefined()

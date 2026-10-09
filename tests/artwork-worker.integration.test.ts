@@ -163,7 +163,7 @@ describe('claim', () => {
     expect(got).toEqual([job.id])
     const winner = a.body.job ? a.body : b.body
     expect(winner).toMatchObject({
-      entry: { id: entryId, status: 'PARSING', title: 'AWRK Mug' },
+      entry: { id: entryId, status: 'PARSING', title: 'AWRK Mug', printTemplateId: TPL, optionKey: '' },
       template: { id: TPL, widthPx: 2475, heightPx: 1155, dpi: 300, areas: [{ name: 'Wrap', x: 0, y: 0, w: 2475, h: 1155 }] },
       psdFileId: psdId, psd: { id: psdId, fileName: 'w.psd', sha256: 'abc' }, job: { id: job.id, attempts: 1 },
     })
