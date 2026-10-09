@@ -1,5 +1,8 @@
 export async function register() {
   // Run in both 'nodejs' runtime and when NEXT_RUNTIME is unset (some dev-mode builds)
+  // A local copy of the prod DB carries live Shopify/Trello credentials; DISABLE_SCHEDULERS=1 keeps
+  // that machine from running the same jobs as the server and creating duplicate cards or fulfillments.
+  if (process.env.DISABLE_SCHEDULERS === '1') return
   if (!process.env.NEXT_RUNTIME || process.env.NEXT_RUNTIME === 'nodejs') {
     const { initAutoSync } = await import('./lib/auto-sync')
     initAutoSync()

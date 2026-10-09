@@ -108,10 +108,12 @@ function DesignTasks() {
 
   async function sync() {
     setSyncing(true); setSyncMsg(''); setSyncError('')
-    const r = await postJson<{ created: number; cancelled: number; completed: number; reopened: number; orders: number; errors?: string[] }>('/api/design-studio/tasks/sync', {})
+    const r = await postJson<{ created: number; cancelled: number; completed: number; reopened: number; pruned?: number; orders: number; refresh?: { refreshed: number; notFound: number; otherStore: number; error: string | null }; errors?: string[] }>('/api/design-studio/tasks/sync', {})
     setSyncing(false)
     if (!r.ok) { setSyncError(r.error); return }
-    setSyncMsg(`${r.data.orders} đơn · tạo ${r.data.created} · huỷ ${r.data.cancelled} · xong ${r.data.completed} · mở lại ${r.data.reopened}${r.data.errors?.length ? ` · lỗi ${r.data.errors.length}` : ''}`)
+    const rf = r.data.refresh
+    if (rf?.error) setSyncError(`Nạp từ Shopify lỗi: ${rf.error}`)
+    setSyncMsg(`${r.data.orders} đơn · nạp Shopify ${rf?.refreshed ?? 0}${rf?.notFound ? ` (không thấy ${rf.notFound})` : ''}${rf?.otherStore ? ` · store khác ${rf.otherStore}` : ''} · tạo ${r.data.created} · huỷ ${r.data.cancelled} · xong ${r.data.completed} · mở lại ${r.data.reopened}${r.data.errors?.length ? ` · lỗi ${r.data.errors.length}` : ''}`)
     loadList()
   }
 

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { getAuthUser, unauthorized } from '@/lib/api-auth'
 import { syncDesignTasks, pruneUntouchedTasksOutside } from '@/lib/design-tasks'
+import { refreshMissingLineProps } from '@/lib/design-studio'
 
 const DEFAULT_SCAN = 100
 
@@ -20,8 +21,13 @@ export async function POST(req: NextRequest) {
   const orders = await prisma.order.findMany({
     orderBy: { placedAt: 'desc' },
     take: limit,
-    select: { id: true, shopifyOrderNumber: true },
+    select: {
+      id: true, shopifyOrderNumber: true,
+      store: { select: { shop: true } },
+      lines: { select: { customAttributesJson: true, imageUrl: true } },
+    },
   })
+  const refresh = await refreshMissingLineProps(orders)
   const pruned = await pruneUntouchedTasksOutside(orders.map(o => o.id))
   let created = 0, cancelled = 0, completed = 0, reopened = 0
   const errors: string[] = []
@@ -36,5 +42,5 @@ export async function POST(req: NextRequest) {
       errors.push(`${o.shopifyOrderNumber}: ${e.message}`)
     }
   }
-  return NextResponse.json({ created, cancelled, completed, reopened, pruned, orders: orders.length, errors })
+  return NextResponse.json({ created, cancelled, completed, reopened, pruned, orders: orders.length, refresh, errors })
 }

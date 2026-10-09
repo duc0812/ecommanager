@@ -6,7 +6,8 @@ import { lineDesignStatus, type LineDesignStatus } from '@/lib/design-status'
 import { loadReadyDesignEntries } from '@/lib/repos/design-library'
 import { matchDesignEntry } from '@/lib/design-parent'
 import { autoDetectStatus, type PipelineStatus } from '@/lib/pipeline-status'
-import type { ShopifyOrderLineProps } from '@/lib/shopify-orders'
+import { fetchOrderLinePropsByNames, type ShopifyOrderLineProps } from '@/lib/shopify-orders'
+import { getShopifyConnection } from '@/lib/token-store'
 
 export type CustomAttribute = { key: string; value: string }
 export type SourcePrintFile = { printArea: string; url: string }
@@ -278,4 +279,31 @@ export async function applyLineProps(orderId: string, props: ShopifyOrderLinePro
     updated++
   }
   return { updated, unmatched }
+}
+
+export async function refreshMissingLineProps(orders: Array<{
+  id: string; shopifyOrderNumber: string; store: { shop: string }
+  lines: Array<{ customAttributesJson: string | null; imageUrl: string | null }>
+}>): Promise<{ refreshed: number; notFound: number; otherStore: number; error: string | null }> {
+  const result = { refreshed: 0, notFound: 0, otherStore: 0, error: null as string | null }
+  const needing = orders.filter(o => o.lines.some(l => l.customAttributesJson == null || l.imageUrl == null))
+  if (needing.length === 0) return result
+  const conn = await getShopifyConnection()
+  if (!conn) return { ...result, error: 'Chưa kết nối Shopify' }
+  const mine = needing.filter(o => o.store.shop === conn.shop)
+  result.otherStore = needing.length - mine.length
+  if (mine.length === 0) return result
+  let props: Map<string, ShopifyOrderLineProps[]>
+  try {
+    props = await fetchOrderLinePropsByNames(conn.shop, conn.token, mine.map(o => o.shopifyOrderNumber))
+  } catch (e: any) {
+    return { ...result, error: e.message }
+  }
+  for (const o of mine) {
+    const p = props.get(o.shopifyOrderNumber)
+    if (!p) { result.notFound++; continue }
+    await applyLineProps(o.id, p)
+    result.refreshed++
+  }
+  return result
 }
