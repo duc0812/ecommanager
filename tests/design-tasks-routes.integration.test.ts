@@ -181,6 +181,21 @@ describe('POST /api/design-studio/tasks/[key]/transition', () => {
     expect(body.task.assigneeId).toBe(supportId)
   })
 
+  it("400s when another designer tries to take the assignee's task", async () => {
+    const otherId = (await prisma.appUser.upsert({ where: { email: 'other@dtr.test' }, create: { name: 'Other', email: 'other@dtr.test', role: 'SUPPORT' }, update: {} })).id
+    try {
+      const otherToken = await signToken({ userId: otherId, email: 'other@dtr.test', name: 'Other', role: 'SUPPORT', permissions: [], tv: 0 })
+      const req = await cookieReq('http://x/api/design-studio/tasks/DTR1_1/transition', otherToken, {
+        method: 'POST', body: JSON.stringify({ to: 'DOING' }),
+      })
+      const res = await postTransition(req, { params: { key: 'DTR1_1' } })
+      expect(res.status).toBe(400)
+      expect((await res.json()).error).toBe('Task đang thuộc về Support')
+    } finally {
+      await prisma.appUser.deleteMany({ where: { email: 'other@dtr.test' } })
+    }
+  })
+
   it('401 without a session', async () => {
     const req = await cookieReq('http://x/api/design-studio/tasks/DTR1_1/transition', null, {
       method: 'POST', body: JSON.stringify({ to: 'DOING' }),
