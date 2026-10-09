@@ -3,6 +3,7 @@ import { isNonProductLine } from '@/lib/order-lines'
 import { parseAttributes, safeHttpUrl, sourcePrintFiles, printAreasForLine, updateLine, loadWorkspace, type WorkspaceLine, type Workspace } from '@/lib/design-studio'
 import { getDesignSettings, kpiForProductType, type DesignSettings } from '@/lib/design-settings'
 import { visibleCustomAttributes } from '@/lib/order-classify'
+import { findProfile, observedFields, parseLayerMap, profileStatus, toRouteKey, type LayerMapEntry, type ProfileStatus } from '@/lib/product-profiles'
 
 export type TaskStatus = 'NEW' | 'ASSIGNED' | 'DOING' | 'REVIEW' | 'REJECTED' | 'ASK_CUSTOMER' | 'DONE' | 'CANCELLED'
 export type Readiness = 'AUTO' | 'LOW' | 'MANUAL'
@@ -98,18 +99,26 @@ export async function syncDesignTasks(orderId: string): Promise<SyncResult> {
   return { created, cancelled, completed, reopened }
 }
 
-export async function syncDesignTasksForOrders(orderIds: string[]): Promise<string[]> {
+export async function syncDesignTasksCounted(orderIds: string[]): Promise<{ tasksTouched: number; errors: string[] }> {
   const ids = Array.from(new Set(orderIds))
-  if (ids.length === 0) return []
+  if (ids.length === 0) return { tasksTouched: 0, errors: [] }
   const targets = await prisma.order.findMany({
     where: { id: { in: ids }, OR: [{ designTasks: { some: {} } }, { pipelineStatus: { in: ['PENDING_DESIGN', 'DESIGN_REJECTED'] } }] },
     select: { id: true, shopifyOrderNumber: true },
   })
   const errors: string[] = []
+  let tasksTouched = 0
   for (const o of targets) {
-    try { await syncDesignTasks(o.id) } catch (e: any) { errors.push(`design tasks ${o.shopifyOrderNumber}: ${e.message}`) }
+    try {
+      const r = await syncDesignTasks(o.id)
+      tasksTouched += r.created + r.cancelled + r.completed + r.reopened
+    } catch (e: any) { errors.push(`design tasks ${o.shopifyOrderNumber}: ${e.message}`) }
   }
-  return errors
+  return { tasksTouched, errors }
+}
+
+export async function syncDesignTasksForOrders(orderIds: string[]): Promise<string[]> {
+  return (await syncDesignTasksCounted(orderIds)).errors
 }
 
 export type Actor = { id: string; name: string; role: string }
@@ -128,8 +137,10 @@ export type TemplateRow = {
   areas: { name: string; x: number; y: number; w: number; h: number }[]; guideImageUrl: string | null; templateUrl: string | null
 }
 
+export type TaskProfile = { key: string; status: ProfileStatus; masterArtworkUrl: string | null; layerMap: LayerMapEntry[] }
+
 export type TaskDetail = {
-  task: TaskRow; line: WorkspaceLine; order: Workspace['order']; template: TemplateRow | null
+  task: TaskRow; line: WorkspaceLine; order: Workspace['order']; template: TemplateRow | null; profile: TaskProfile | null
   events: { id: string; type: string; message: string; actorName: string | null; createdAt: string }[]
   assignable: { id: string; name: string }[]; settings: DesignSettings; prevStatus: TaskStatus | null
   slots: string[]
@@ -240,7 +251,7 @@ export async function transitionTask(taskKey: string, actor: Actor, input: Trans
   return { task: row, order }
 }
 
-async function missingArtworkSlots(line: { orderId: string; shopifyLineId: string; customAttributesJson: string | null; resolvedSupplierId: string | null; resolvedSupplierSku: string | null }): Promise<string[]> {
+async function missingArtworkSlots(line: TemplateLookupLine & { shopifyLineId: string; customAttributesJson: string | null }): Promise<string[]> {
   const template = await templateForLine(line)
   const slots = requiredSlotsFor(line, template)
   const artworks = await prisma.designArtwork.findMany({ where: { orderId: line.orderId, shopifyLineId: line.shopifyLineId }, select: { printArea: true } })
@@ -304,7 +315,20 @@ async function rowFor(taskKey: string): Promise<TaskRow | undefined> {
   return (await listTasks({ taskKeys: [taskKey], statuses: undefined, limit: 1 }))[0]
 }
 
-export async function templateForLine(line: { resolvedSupplierId: string | null; resolvedSupplierSku: string | null }): Promise<TemplateRow | null> {
+type TemplateLookupLine = { orderId: string; resolvedSupplierId: string | null; resolvedSupplierSku: string | null; shopifyProductId?: string | null }
+
+async function profileForLine(line: { orderId: string; shopifyProductId?: string | null }) {
+  if (!line.shopifyProductId) return null
+  const order = await prisma.order.findUnique({ where: { id: line.orderId }, select: { storeId: true } })
+  return order ? findProfile(order.storeId, line.shopifyProductId) : null
+}
+
+export async function templateForLine(line: TemplateLookupLine, profile?: { printTemplateId: string | null } | null): Promise<TemplateRow | null> {
+  const p = profile !== undefined ? profile : await profileForLine(line)
+  if (p?.printTemplateId) {
+    const fromProfile = await prisma.printTemplate.findUnique({ where: { id: p.printTemplateId } })
+    if (fromProfile) return mapTemplate(fromProfile)
+  }
   if (!line.resolvedSupplierId) return null
   const templates = await prisma.printTemplate.findMany({ where: { supplierId: line.resolvedSupplierId } })
   if (templates.length === 0) return null
@@ -331,9 +355,18 @@ export async function loadTask(taskKey: string): Promise<TaskDetail | null> {
 
   const orderLine = await prisma.orderLine.findFirst({
     where: { orderId: task.orderId, shopifyLineId: task.shopifyLineId },
-    select: { resolvedSupplierId: true, resolvedSupplierSku: true, customAttributesJson: true },
+    select: { orderId: true, resolvedSupplierId: true, resolvedSupplierSku: true, customAttributesJson: true, shopifyProductId: true },
   })
-  const template = orderLine ? await templateForLine(orderLine) : null
+  const profileRow = orderLine ? await profileForLine(orderLine) : null
+  const template = orderLine ? await templateForLine(orderLine, profileRow) : null
+  const profile: TaskProfile | null = profileRow
+    ? {
+        key: toRouteKey(profileRow.storeId, profileRow.shopifyProductId),
+        status: profileStatus(profileRow, await observedFields(profileRow.storeId, profileRow.shopifyProductId)),
+        masterArtworkUrl: safeHttpUrl(profileRow.masterArtworkUrl),
+        layerMap: parseLayerMap(profileRow.layerMap),
+      }
+    : null
 
   const events = await prisma.designTaskEvent.findMany({ where: { taskId: task.id }, orderBy: { createdAt: 'asc' } })
   const actorIds = Array.from(new Set(events.map(e => e.actorId).filter((x): x is string => !!x)))
@@ -349,7 +382,7 @@ export async function loadTask(taskKey: string): Promise<TaskDetail | null> {
   if (!row) return null
 
   return {
-    task: row, line, order: workspace.order, template,
+    task: row, line, order: workspace.order, template, profile,
     events: events.map(e => ({
       id: e.id, type: e.type, message: e.message,
       actorName: e.actorId ? (actorNameById.get(e.actorId) ?? null) : null,

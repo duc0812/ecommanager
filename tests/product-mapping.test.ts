@@ -146,6 +146,11 @@ describe('resolveByProductBase with a product profile', () => {
     expect(resolveByProductBase(null, null, line, [tshirt3d], [], null).resolvedVia).toBe('unresolved')
   })
 
+  it('stays unresolved when the profile has no supplier, no matching override and the line has no productType', () => {
+    const r = resolveByProductBase(null, null, { Size: 'M' }, [tshirt3d], [], { supplierProductId: null, overrides: profile.overrides })
+    expect(r).toEqual({ supplierProductId: null, resolvedVia: 'unresolved' })
+  })
+
   it('ignores the profile when none is given', () => {
     expect(resolveByProductBase(null, '3D Clothing', line, [tshirt3d], []).resolvedVia).toBe('product_base_rank')
   })

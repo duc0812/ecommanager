@@ -25,7 +25,19 @@ export async function recalculateMissingOrderLineCosts(filter: {
   dateFrom?: Date
   dateTo?: Date
   refreshExisting?: boolean
+  orderIds?: string[]
+  shopifyProductId?: string
 } = {}) {
+  const placedAt = filter.dateFrom || filter.dateTo
+    ? {
+        ...(filter.dateFrom ? { gte: filter.dateFrom } : {}),
+        ...(filter.dateTo ? { lte: filter.dateTo } : {}),
+      }
+    : undefined
+  const orderScope = {
+    ...(placedAt ? { placedAt } : {}),
+    ...(filter.orderIds ? { id: { in: filter.orderIds } } : {}),
+  }
   const [productBases, manualMappings, productProfiles, supplierProducts, lines] = await Promise.all([
     loadProductBasesForResolver(),
     loadVariantManualMappingsForResolver(),
@@ -34,14 +46,8 @@ export async function recalculateMissingOrderLineCosts(filter: {
     prisma.orderLine.findMany({
       where: {
         ...(!filter.refreshExisting ? { resolvedBaseCost: null } : {}),
-        order: filter.dateFrom || filter.dateTo
-          ? {
-              placedAt: {
-                ...(filter.dateFrom ? { gte: filter.dateFrom } : {}),
-                ...(filter.dateTo ? { lte: filter.dateTo } : {}),
-              },
-            }
-          : undefined,
+        ...(filter.shopifyProductId ? { shopifyProductId: filter.shopifyProductId } : {}),
+        order: Object.keys(orderScope).length > 0 ? orderScope : undefined,
       },
       include: {
         order: { select: { id: true, shippingZone: true, storeId: true } },
@@ -126,14 +132,7 @@ export async function recalculateMissingOrderLineCosts(filter: {
   const mappedPendingOrders = await prisma.order.findMany({
     where: {
       pipelineStatus: { in: ['PENDING_MAPPING', 'PENDING_DESIGN', 'PENDING', 'WARNING', 'READY_TO_PRODUCTION'] },
-      ...(filter.dateFrom || filter.dateTo
-        ? {
-            placedAt: {
-              ...(filter.dateFrom ? { gte: filter.dateFrom } : {}),
-              ...(filter.dateTo ? { lte: filter.dateTo } : {}),
-            },
-          }
-        : {}),
+      ...orderScope,
     },
     select: {
       id: true,

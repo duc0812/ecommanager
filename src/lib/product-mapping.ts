@@ -239,7 +239,7 @@ export function resolveByProductBase(
   }
 
   if (!shopifyProductType) {
-    // Require productType unless a manual variant mapping exists.
+    // Require productType unless a manual variant mapping or a product profile resolved it.
     return { supplierProductId: null, resolvedVia: 'unresolved' }
   }
 

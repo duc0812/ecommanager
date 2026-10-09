@@ -130,7 +130,8 @@ export async function loadWorkspace(orderId: string): Promise<Workspace | null> 
 
   const supplierIds = Array.from(new Set(order.lines.map(l => l.resolvedSupplierId).filter(Boolean) as string[]))
   const skus = Array.from(new Set(order.lines.map(l => l.sku).filter(Boolean) as string[]))
-  const [suppliers, supplierProducts, skuDesigns, designEntries] = await Promise.all([
+  const productIds = Array.from(new Set(order.lines.map(l => l.shopifyProductId).filter(Boolean) as string[]))
+  const [suppliers, supplierProducts, skuDesigns, designEntries, profiles] = await Promise.all([
     supplierIds.length ? prisma.supplier.findMany({ where: { id: { in: supplierIds } }, select: { id: true, name: true, code: true } }) : [],
     supplierIds.length
       ? prisma.supplierProduct.findMany({
@@ -140,7 +141,11 @@ export async function loadWorkspace(orderId: string): Promise<Workspace | null> 
       : [],
     skus.length ? prisma.skuDesign.findMany({ where: { sku: { in: skus } }, select: { sku: true, driveLink: true } }) : [],
     loadReadyDesignEntries(),
+    productIds.length
+      ? prisma.productProfile.findMany({ where: { storeId: order.storeId, shopifyProductId: { in: productIds } }, select: { shopifyProductId: true, masterArtworkUrl: true } })
+      : [],
   ])
+  const profileMasterByProduct = new Map(profiles.map(p => [p.shopifyProductId, safeHttpUrl(p.masterArtworkUrl)]))
   const supplierById = new Map(suppliers.map(s => [s.id, s]))
   const templateByKey = new Map(supplierProducts.map(p => [`${p.supplierId}::${p.sku}`, p.designTemplateUrl]))
   const masterBySku = new Map(skuDesigns.map(d => [d.sku, d.driveLink]))
@@ -176,7 +181,8 @@ export async function loadWorkspace(orderId: string): Promise<Workspace | null> 
       supplier: l.resolvedSupplierId ? (supplierById.get(l.resolvedSupplierId) ?? null) : null,
       supplierSku: l.resolvedSupplierSku,
       templateUrl: l.resolvedSupplierId && l.resolvedSupplierSku ? safeHttpUrl(templateByKey.get(`${l.resolvedSupplierId}::${l.resolvedSupplierSku}`)) : null,
-      masterArtworkUrl: l.sku ? safeHttpUrl(masterBySku.get(l.sku)) : null,
+      masterArtworkUrl: (l.shopifyProductId ? profileMasterByProduct.get(l.shopifyProductId) : null)
+        ?? (l.sku ? safeHttpUrl(masterBySku.get(l.sku)) : null),
       libraryDesignLink: safeHttpUrl(entry?.designLink),
       designStatus: lineDesignStatus({
         isNonProduct, previewCdnUrl: l.previewCdnUrl, designDriveLink: l.designDriveLink,
