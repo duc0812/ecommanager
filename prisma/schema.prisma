@@ -305,6 +305,7 @@ model Supplier {
   zoneOverrides         SupplierZoneOverride[]
   shipments             Shipment[]
   skuDesigns            SkuSupplierDesign[]
+  printTemplates        PrintTemplate[]
 }
 
 model SupplierProduct {
@@ -381,6 +382,7 @@ model Order {
   lines                OrderLine[]
   shipments            Shipment[]
   artworks             DesignArtwork[]
+  designTasks          DesignTask[]
   shippingZone         String?
   shippingName         String?
   shippingAddress1     String?
@@ -447,10 +449,68 @@ model DesignArtwork {
   storagePath   String
   size          Int
   mimeType      String
+  widthPx       Int?
+  heightPx      Int?
   uploadedById  String?
   createdAt     DateTime @default(now())
   @@unique([orderId, shopifyLineId, printArea, version])
   @@index([orderId])
+}
+
+model DesignTask {
+  id               String            @id @default(cuid())
+  orderId          String
+  order            Order             @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  shopifyLineId    String
+  taskKey          String
+  status           String            @default("NEW")
+  readiness        String            @default("MANUAL")
+  assigneeId       String?
+  kpi              Float             @default(0.3)
+  dueAt            DateTime?
+  slaHours         Int               @default(24)
+  rejectReasons    String?
+  rejectNote       String?
+  prevStatus       String?
+  supplierSnapshot String?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  events           DesignTaskEvent[]
+  @@unique([orderId, shopifyLineId])
+  @@unique([taskKey])
+  @@index([status])
+  @@index([assigneeId])
+}
+
+model DesignTaskEvent {
+  id        String     @id @default(cuid())
+  taskId    String
+  task      DesignTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  type      String
+  message   String
+  actorId   String?
+  createdAt DateTime   @default(now())
+  @@index([taskId])
+}
+
+model PrintTemplate {
+  id             String   @id @default(cuid())
+  supplierId     String
+  supplier       Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  supplierSku    String?
+  name           String
+  widthPx        Int
+  heightPx       Int
+  dpi            Int      @default(300)
+  bleedIn        Float    @default(0.125)
+  safeIn         Float    @default(0.2)
+  mirror         Boolean  @default(false)
+  areas          String
+  guideImagePath String?
+  templateUrl    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  @@unique([supplierId, supplierSku])
 }
 
 model Shipment {

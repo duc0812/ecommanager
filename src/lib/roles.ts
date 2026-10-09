@@ -12,6 +12,7 @@ export type FeaturePermission =
   | 'fulfillment_mapping'
   | 'fulfillment_tracking'
   | 'fulfillment_design_library'
+  | 'design_tasks'
   | 'need_to_fix'
   | 'tools_spy_idea'
   | 'tools_resources'
@@ -43,6 +44,7 @@ export const FEATURE_LABELS: Record<FeaturePermission, string> = {
   fulfillment_mapping: 'Product Mapping',
   fulfillment_tracking: 'Tracking',
   fulfillment_design_library: 'Design Library',
+  design_tasks: 'Design Tasks',
   need_to_fix: 'Need To Fix',
   tools_spy_idea: 'Spy Idea',
   tools_resources: 'Resources',
@@ -69,6 +71,7 @@ export const FEATURE_GROUPS: { label: string; permissions: FeaturePermission[] }
       'fulfillment_mapping',
       'fulfillment_tracking',
       'fulfillment_design_library',
+      'design_tasks',
       'need_to_fix',
     ],
   },
@@ -93,6 +96,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, FeaturePermission[]> = {
     'fulfillment_mapping',
     'fulfillment_tracking',
     'fulfillment_design_library',
+    'design_tasks',
     'need_to_fix',
     'tools_spy_idea',
     'tools_resources',
@@ -110,6 +114,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, FeaturePermission[]> = {
     'fulfillment_mapping',
     'fulfillment_tracking',
     'fulfillment_design_library',
+    'design_tasks',
     'need_to_fix',
   ],
 }
@@ -126,7 +131,8 @@ const FEATURE_PATHS: Record<FeaturePermission, string[]> = {
   fulfillment_suppliers: ['/fulfillment/suppliers', '/setup/suppliers'],
   fulfillment_mapping: ['/fulfillment/mapping'],
   fulfillment_tracking: ['/fulfillment/tracking'],
-  fulfillment_design_library: ['/fulfillment/design-library', '/design-studio'],
+  fulfillment_design_library: ['/fulfillment/design-library'],
+  design_tasks: ['/design-studio'],
   need_to_fix: ['/task-fix'],
   tools_spy_idea: ['/tools/spy-idea'],
   tools_resources: ['/tools/resources'],
@@ -196,6 +202,7 @@ const HOME_PRIORITY: FeaturePermission[] = [
   'fulfillment_mapping',
   'fulfillment_suppliers',
   'fulfillment_design_library',
+  'design_tasks',
   'fulfillment_crawler',
   'setup_store',
   'setup_meta',
