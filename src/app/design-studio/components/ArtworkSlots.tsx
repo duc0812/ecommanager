@@ -1,35 +1,20 @@
 'use client'
 import { useRef, useState } from 'react'
-import type { ArtworkRow, WorkspaceLine } from './types'
-import { requestJson, versionsFor } from './model'
+import type { ArtworkRow, Me, TaskStatus, WorkspaceLine } from './types'
+import { artworkImage, canRemoveArtwork, copyText, isImage, requestJson, versionsFor } from './model'
 import { Card, ErrorBanner, Icon, Note, Pill, btn, fmtSize } from './ui'
 import { ARTWORK_ACCEPT, useArtworkUpload } from './useArtworkUpload'
+import { useArtworkRemove } from './useArtworkRemove'
+import { useLightbox } from './Lightbox'
 
 const mini = 'inline-flex items-center gap-xs rounded-md border border-outline-variant/40 px-xs py-[2px] text-label-sm font-semibold text-on-surface hover:bg-surface-container-low disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap'
 
-async function copyText(text: string): Promise<boolean> {
-  try {
-    await navigator.clipboard.writeText(text)
-    return true
-  } catch {
-    const ta = document.createElement('textarea')
-    ta.value = text
-    ta.setAttribute('readonly', '')
-    ta.style.position = 'fixed'
-    ta.style.opacity = '0'
-    document.body.appendChild(ta)
-    ta.select()
-    let ok = false
-    try { ok = document.execCommand('copy') } catch {}
-    document.body.removeChild(ta)
-    return ok
-  }
-}
-
-export default function ArtworkSlots({ line, slots, driveConnected, onUploaded }: {
-  line: WorkspaceLine; slots: string[]; driveConnected: boolean; onUploaded: () => void
+export default function ArtworkSlots({ line, slots, driveConnected, onUploaded, me, taskStatus }: {
+  line: WorkspaceLine; slots: string[]; driveConnected: boolean; onUploaded: () => void; me: Me; taskStatus: TaskStatus
 }) {
   const { progress, warnings, setWarning, error, setError, upload, busyLabel } = useArtworkUpload(line.id, driveConnected, onUploaded)
+  const remover = useArtworkRemove(onUploaded)
+  const lightbox = useLightbox()
   const [pushing, setPushing] = useState<string[]>([])
   const [over, setOver] = useState('')
   const [copied, setCopied] = useState('')
@@ -53,6 +38,7 @@ export default function ArtworkSlots({ line, slots, driveConnected, onUploaded }
 
   return (
     <Card icon="folder_open" title="Artwork theo panel" right={`${fileCount} file`}>
+      {remover.dialog}
       <ErrorBanner msg={error} onClose={() => setError('')} />
       <span role="status" aria-live="polite" className={copied ? 'text-label-sm text-on-surface-variant' : 'sr-only'}>{copied}</span>
       {slots.map(area => {
@@ -74,11 +60,18 @@ export default function ArtworkSlots({ line, slots, driveConnected, onUploaded }
             {versions.map((v, i) => {
               const isDrive = v.storage === 'DRIVE'
               const isPushing = pushing.includes(v.id)
+              const removable = canRemoveArtwork(v, me, taskStatus)
               return (
-                <div key={v.id} className={`grid grid-cols-[32px_minmax(0,1fr)_auto] gap-sm items-center p-xs rounded-lg border ${i === 0 ? 'border-secondary' : 'border-outline-variant/20'}`}>
-                  <span className="w-8 h-8 rounded-md bg-surface-container-low grid place-items-center text-on-surface-variant">
-                    <Icon name={v.mimeType.startsWith('image/') ? 'image' : 'description'} className="text-[18px]" />
-                  </span>
+                <div key={v.id} className={`grid grid-cols-[40px_minmax(0,1fr)_auto] gap-sm items-center p-xs rounded-lg border ${i === 0 ? 'border-secondary' : 'border-outline-variant/20'}`}>
+                  {isImage(v) && lightbox
+                    ? <button type="button" onClick={() => lightbox.open(v.url, artworkImage(v))} aria-label={`Xem ${v.printArea} v${v.version}`} title="Xem ảnh"
+                        className="w-10 h-10 rounded-md overflow-hidden bg-surface-container-low border border-outline-variant/20 hover:ring-2 hover:ring-secondary">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={v.url} alt="" className="w-full h-full object-contain" loading="lazy" />
+                      </button>
+                    : <span className="w-10 h-10 rounded-md bg-surface-container-low grid place-items-center text-on-surface-variant">
+                        <Icon name={v.mimeType.startsWith('image/') ? 'image' : 'description'} className="text-[18px]" />
+                      </span>}
                   <span className="min-w-0 flex flex-col">
                     <span className="flex items-center gap-xs min-w-0">
                       <span className="text-label-sm font-semibold truncate text-on-surface">v{v.version} · {v.fileName}</span>
@@ -104,9 +97,13 @@ export default function ArtworkSlots({ line, slots, driveConnected, onUploaded }
                         <Icon name="cloud_upload" className="text-[14px]" />{isPushing ? 'Đang đẩy…' : 'Đẩy lên Drive'}
                       </button>
                     )}
-                    <a href={v.url} target="_blank" rel="noreferrer" aria-label={`Tải v${v.version} ${v.fileName}`} className="text-on-surface-variant hover:text-secondary">
+                    <a href={v.url} download={v.fileName} aria-label={`Tải v${v.version} ${v.fileName}`} title="Tải file" className="text-on-surface-variant hover:text-secondary">
                       <Icon name="download" className="text-[18px]" />
                     </a>
+                    <button type="button" onClick={() => remover.ask(v)} disabled={!removable.ok} title={removable.why ?? `Xoá ${v.printArea} v${v.version}`}
+                      aria-label={`Xoá ${v.printArea} v${v.version}`} className={`${mini} text-error`}>
+                      <Icon name="delete" className="text-[14px]" />Xoá
+                    </button>
                   </span>
                 </div>
               )
@@ -136,9 +133,13 @@ export default function ArtworkSlots({ line, slots, driveConnected, onUploaded }
             <Pill tone="idle">nguồn</Pill>
             <span className="text-label-sm truncate">{f.printArea} · {f.url.split('/').pop()}</span>
           </span>
-          <a href={f.url} target="_blank" rel="noreferrer" aria-label={`Mở file nguồn ${f.printArea}`} className="text-on-surface-variant hover:text-secondary">
-            <Icon name="open_in_new" className="text-[18px]" />
-          </a>
+          {lightbox
+            ? <button type="button" onClick={() => lightbox.open(f.url, { url: f.url, label: `File nguồn · ${f.printArea}` })} aria-label={`Xem file nguồn ${f.printArea}`} title="Xem ảnh" className="text-on-surface-variant hover:text-secondary">
+                <Icon name="zoom_in" className="text-[18px]" />
+              </button>
+            : <a href={f.url} target="_blank" rel="noreferrer" aria-label={`Mở file nguồn ${f.printArea}`} className="text-on-surface-variant hover:text-secondary">
+                <Icon name="open_in_new" className="text-[18px]" />
+              </a>}
         </div>
       ))}
     </Card>

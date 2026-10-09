@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useId, useRef, useState, type DragEvent, type HTMLAttributes, type ReactNode, type Ref } from 'react'
-import type { TemplateArea, TemplateRow, WorkspaceLine } from './types'
+import type { ArtworkRow, TemplateArea, TemplateRow, WorkspaceLine } from './types'
 import { isImage, newestFor, newestArtwork } from './model'
 import { ALL_GUIDES, NO_GUIDES, areaAt, clientToTemplate, type Guides, type ViewBox } from './canvas-guides'
 import { Icon, Note, chip } from './ui'
@@ -9,7 +9,14 @@ export type CanvasBg = 'checker' | 'white' | 'black'
 export type CanvasUpload = {
   onDrop: (area: string, file: File) => void
   onReject: (msg: string) => void
+  onPick: (area: string) => void
+  fallbackArea: string
   busy: { area: string; pct: number; label: string } | null
+}
+export type CanvasArtActions = {
+  onView: (a: ArtworkRow) => void
+  onRemove: (a: ArtworkRow) => void
+  canRemove: (a: ArtworkRow) => { ok: boolean; why?: string }
 }
 
 const W = 1200
@@ -88,8 +95,9 @@ export function CanvasTools({ bg, onBg, guide, onGuide, hasGuide, guides, onGuid
 }
 
 type AreaBox = { x: number; y: number; w: number; h: number }
+type AreaPct = { left: string; top: string; width: string; height: string }
 
-function Sheet({ template, bg, guide, guides, renderArea, overlay, underlay, legend, svgRef, highlight, frameProps, frameOverlay }: {
+function Sheet({ template, bg, guide, guides, renderArea, overlay, underlay, legend, svgRef, highlight, frameProps, frameOverlay, areaLayer }: {
   template: TemplateRow; bg: CanvasBg; guide: number; guides: Guides
   renderArea: (a: TemplateArea, box: AreaBox) => ReactNode
   overlay: (k: number) => ReactNode
@@ -99,6 +107,7 @@ function Sheet({ template, bg, guide, guides, renderArea, overlay, underlay, leg
   highlight?: AreaBox | null
   frameProps?: HTMLAttributes<HTMLDivElement>
   frameOverlay?: ReactNode
+  areaLayer?: (a: TemplateArea, index: number) => ReactNode
 }) {
   const rawId = useId()
   const patternId = `ck${rawId.replace(/[^a-zA-Z0-9]/g, '')}`
@@ -109,9 +118,15 @@ function Sheet({ template, bg, guide, guides, renderArea, overlay, underlay, leg
   const bgFill = bg === 'checker' ? `url(#${patternId})` : undefined
   const bgCls = bg === 'white' ? 'fill-white' : bg === 'black' ? 'fill-black' : ''
 
+  const pct = (a: TemplateArea): AreaPct => ({
+    left: `${((a.x * k - viewBox.x) / viewBox.w) * 100}%`, top: `${((a.y * k - viewBox.y) / viewBox.h) * 100}%`,
+    width: `${((a.w * k) / viewBox.w) * 100}%`, height: `${((a.h * k) / viewBox.h) * 100}%`,
+  })
+
   return (
-    <div className="flex flex-col gap-sm">
-      <div {...frameProps} className={`relative rounded-lg border border-outline-variant/20 bg-surface-container-low p-sm grid place-items-center overflow-hidden ${frameProps?.className ?? ''}`}>
+    <div className="flex flex-col gap-sm flex-1 min-h-0">
+      <div {...frameProps} className={`relative flex-1 rounded-lg border border-outline-variant/20 bg-surface-container-low p-sm grid place-items-center overflow-hidden ${frameProps?.className ?? ''}`}>
+        <div className="relative w-full">
         <svg ref={svgRef} viewBox={`${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`} role="img" aria-label={`Template ${template.name}`} className="block max-w-full h-auto w-full">
           <defs>
             <pattern id={patternId} width="18" height="18" patternUnits="userSpaceOnUse">
@@ -147,6 +162,12 @@ function Sheet({ template, bg, guide, guides, renderArea, overlay, underlay, leg
             <text x="-16" y={H / 2} textAnchor="middle" transform={`rotate(-90 -16 ${H / 2})`}>{template.heightPx} px</text>
           </g>
         </svg>
+        {areaLayer && (
+          <div className="absolute inset-0 pointer-events-none">
+            {template.areas.map((a, i) => <div key={`${a.name}-${i}`} className="absolute" style={pct(a)}>{areaLayer(a, i)}</div>)}
+          </div>
+        )}
+        </div>
         {frameOverlay}
       </div>
       <div className="flex gap-md flex-wrap text-label-sm text-on-surface-variant">
@@ -204,55 +225,53 @@ function UploadOverlay({ busy, target }: { busy: CanvasUpload['busy']; target: s
   )
 }
 
-function TaskCanvas({ template, line, slots, bg, guide, guides, upload }: TaskProps) {
-  const firstArea = template?.areas.find(a => a.name === slots[0]) ?? template?.areas[0]
-  const sourceUrl = line.sourcePrintFiles[0]?.url ?? null
-  const firstHasArt = !!(firstArea && newestFor(line, firstArea.name))
-  const showSource = !!(template && firstArea && sourceUrl && !firstHasArt)
-  const sourceSize = useNaturalSize(showSource ? sourceUrl : null)
-  const svgRef = useRef<SVGSVGElement>(null)
+export function UploadCta({ area, onPick, disabled, size = 'lg' }: { area: string; onPick: (area: string) => void; disabled?: boolean; size?: 'lg' | 'sm' }) {
+  return (
+    <button type="button" disabled={disabled} onClick={e => { e.stopPropagation(); onPick(area) }} aria-label={`Upload file in cho vùng ${area}`}
+      className={`pointer-events-auto inline-flex flex-col items-center gap-[2px] rounded-xl bg-error text-on-error font-semibold shadow-overlay hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed max-w-[92%] text-center ${size === 'lg' ? 'px-lg py-md text-label-md' : 'px-sm py-xs text-label-sm'}`}>
+      <span className="inline-flex items-center gap-xs"><Icon name="upload" className={size === 'lg' ? 'text-[24px]' : 'text-[18px]'} />Upload file in</span>
+      <span className="font-medium opacity-90 truncate max-w-full">vùng {area}</span>
+    </button>
+  )
+}
+
+const tool = 'pointer-events-auto inline-flex items-center gap-[2px] rounded-md bg-surface-container-lowest/95 border border-outline-variant/40 px-xs py-[2px] text-label-sm font-semibold text-on-surface shadow-card hover:bg-surface-container-low disabled:opacity-50 disabled:cursor-not-allowed'
+
+export function ArtToolbar({ art, actions, onPick }: { art: ArtworkRow; actions?: CanvasArtActions | null; onPick?: (area: string) => void }) {
+  const removable = actions?.canRemove(art) ?? { ok: false }
+  return (
+    <span className="flex items-center gap-[2px] flex-wrap justify-end">
+      {actions && isImage(art) && (
+        <button type="button" onClick={e => { e.stopPropagation(); actions.onView(art) }} className={tool} aria-label={`Xem ${art.printArea} v${art.version}`}>
+          <Icon name="zoom_in" className="text-[14px]" />Xem
+        </button>
+      )}
+      {onPick && (
+        <button type="button" onClick={e => { e.stopPropagation(); onPick(art.printArea) }} className={tool} aria-label={`Thay file ${art.printArea}`}>
+          <Icon name="upload" className="text-[14px]" />Thay file
+        </button>
+      )}
+      {actions && (
+        <button type="button" onClick={e => { e.stopPropagation(); actions.onRemove(art) }} disabled={!removable.ok} title={removable.why}
+          className={`${tool} text-error`} aria-label={`Xoá ${art.printArea} v${art.version}`}>
+          <Icon name="delete" className="text-[14px]" />Xoá
+        </button>
+      )}
+    </span>
+  )
+}
+
+function useDropZone(upload: CanvasUpload | null | undefined, resolve: (e: DragEvent) => string | null) {
   const [drag, setDrag] = useState<string | null>(null)
-
-  if (!template) {
-    const firstSlotArt = slots[0] ? newestFor(line, slots[0]) : undefined
-    const art = firstSlotArt && isImage(firstSlotArt) ? firstSlotArt : newestArtwork(line)
-    const fallback = art && isImage(art) ? art.url : sourceUrl
-    return (
-      <div className="flex flex-col gap-sm">
-        <Note tone="idle" icon="dashboard_customize">
-          <b>Chưa có template cho SKU này</b>
-          <div className="text-label-sm">Xưởng: {line.supplier ? `${line.supplier.name} (${line.supplier.code})` : 'chưa map'}{line.supplierSku ? ` · SKU xưởng ${line.supplierSku}` : ''}</div>
-        </Note>
-        {fallback && (
-          <div className="rounded-lg border border-outline-variant/20 bg-surface-container-low p-sm grid place-items-center">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={fallback} alt="File in hiện có" className="max-w-full max-h-[420px] object-contain" />
-          </div>
-        )}
-      </div>
-    )
-  }
-
-  const tpl = template
-  const { k, H, viewBox } = sheetGeometry(tpl)
-  const singleArea = new Set(tpl.areas.map(a => a.name)).size === 1
-
-  function areaFor(e: DragEvent): TemplateArea | null {
-    const svg = svgRef.current
-    if (!svg) return null
-    const p = clientToTemplate(svg.getBoundingClientRect(), viewBox, k, e.clientX, e.clientY)
-    return areaAt(tpl.areas, p.x, p.y)
-  }
-
   const dropAllowed = !!upload && !upload.busy
   const frameProps: HTMLAttributes<HTMLDivElement> | undefined = upload ? {
     title: upload.busy ? 'Đang tải file lên — chờ xong rồi thả tiếp' : 'Kéo thả file vào một vùng in để tải lên',
     onDragOver: e => {
       if (!hasFiles(e)) return
       e.preventDefault()
-      const a = dropAllowed ? areaFor(e) : null
+      const a = dropAllowed ? resolve(e) : null
       e.dataTransfer.dropEffect = a ? 'copy' : 'none'
-      const next = a?.name ?? ''
+      const next = a ?? ''
       if (next !== drag) setDrag(next)
     },
     onDragLeave: e => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDrag(null) },
@@ -261,13 +280,88 @@ function TaskCanvas({ template, line, slots, bg, guide, guides, upload }: TaskPr
       e.preventDefault()
       setDrag(null)
       if (!dropAllowed) return
-      const a = areaFor(e)
+      const a = resolve(e)
       const f = e.dataTransfer.files?.[0]
       if (!f) return
       if (!a) { upload.onReject('Thả file vào trong một vùng in'); return }
-      upload.onDrop(a.name, f)
+      upload.onDrop(a, f)
     },
   } : undefined
+  return { drag, frameProps }
+}
+
+function NoTemplateCanvas({ line, slots, upload, artActions, sourceUrl }: { line: WorkspaceLine; slots: string[]; upload?: CanvasUpload | null; artActions?: CanvasArtActions | null; sourceUrl: string | null }) {
+  const missing = slots.filter(s => !newestFor(line, s))
+  const firstSlotArt = slots[0] ? newestFor(line, slots[0]) : undefined
+  const art = firstSlotArt ?? newestArtwork(line)
+  const shown = art && isImage(art) ? art.url : !art ? sourceUrl : null
+  const { drag, frameProps } = useDropZone(upload, () => missing[0] ?? upload?.fallbackArea ?? null)
+  return (
+    <div className="flex flex-col gap-sm flex-1 min-h-0">
+      <Note tone="idle" icon="dashboard_customize">
+        <b>Chưa có template cho SKU này</b>
+        <div className="text-label-sm">Xưởng: {line.supplier ? `${line.supplier.name} (${line.supplier.code})` : 'chưa map'}{line.supplierSku ? ` · SKU xưởng ${line.supplierSku}` : ''} · file được xem nguyên khổ</div>
+      </Note>
+      <div {...frameProps} className={`relative flex-1 min-h-[300px] rounded-lg border-2 border-dashed ${drag !== null ? 'border-secondary bg-secondary/10' : 'border-outline-variant/60 bg-surface-container-low'} p-sm flex flex-col items-center justify-center gap-md overflow-hidden`}>
+        {shown && (
+          <div className="relative flex-1 min-h-0 w-full grid place-items-center">
+            {art && isImage(art) && artActions ? (
+              <button type="button" onClick={() => artActions.onView(art)} aria-label={`Xem ${art.printArea} v${art.version} (phóng to)`} className="max-w-full max-h-full grid place-items-center cursor-zoom-in">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={shown} alt={`File in ${art.printArea} v${art.version}`} className="max-w-full max-h-[420px] object-contain" />
+              </button>
+            ) : (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={shown} alt={art ? 'File in hiện có' : 'File nguồn'} className="max-w-full max-h-[420px] object-contain" />
+            )}
+          </div>
+        )}
+        {art && !isImage(art) && (
+          <div className="flex items-center gap-sm rounded-lg bg-surface-container-lowest border border-outline-variant/20 px-md py-sm text-body-sm">
+            <Icon name="description" className="text-[22px] text-on-surface-variant" />
+            <span><b>{art.printArea} · v{art.version}</b> · {art.fileName}</span>
+          </div>
+        )}
+        {art && (
+          <div className="absolute top-sm right-sm pointer-events-none">
+            <ArtToolbar art={art} actions={artActions} onPick={upload?.onPick} />
+          </div>
+        )}
+        {upload && missing.length > 0 && (
+          <div className="flex flex-wrap items-center justify-center gap-sm">
+            {missing.map(area => <UploadCta key={area} area={area} onPick={upload.onPick} disabled={!!upload.busy} />)}
+          </div>
+        )}
+        {upload && missing.length > 0 && <span className="text-label-sm text-on-surface-variant">hoặc kéo thả PNG/JPG/PSD vào khung này</span>}
+        {!art && !upload && !shown && <span className="text-label-sm text-on-surface-variant">Chưa có file in</span>}
+        {upload && <UploadOverlay busy={upload.busy} target={drag} />}
+      </div>
+    </div>
+  )
+}
+
+function TaskCanvas({ template, line, slots, bg, guide, guides, upload, artActions }: TaskProps) {
+  const firstArea = template?.areas.find(a => a.name === slots[0]) ?? template?.areas[0]
+  const sourceUrl = line.sourcePrintFiles[0]?.url ?? null
+  const firstHasArt = !!(firstArea && newestFor(line, firstArea.name))
+  const showSource = !!(template && firstArea && sourceUrl && !firstHasArt)
+  const sourceSize = useNaturalSize(showSource ? sourceUrl : null)
+  const svgRef = useRef<SVGSVGElement>(null)
+  const { drag, frameProps } = useDropZone(template ? upload : null, e => {
+    const svg = svgRef.current
+    if (!svg || !template) return null
+    const g = sheetGeometry(template)
+    const p = clientToTemplate(svg.getBoundingClientRect(), g.viewBox, g.k, e.clientX, e.clientY)
+    return areaAt(template.areas, p.x, p.y)?.name ?? null
+  })
+
+  if (!template) return <NoTemplateCanvas line={line} slots={slots} upload={upload} artActions={artActions} sourceUrl={sourceUrl} />
+
+  const tpl = template
+  const { k, H } = sheetGeometry(tpl)
+  const singleArea = new Set(tpl.areas.map(a => a.name)).size === 1
+  const firstIndex = new Map<string, number>()
+  tpl.areas.forEach((a, i) => { if (!firstIndex.has(a.name)) firstIndex.set(a.name, i) })
 
   const dragArea = drag ? tpl.areas.find(a => a.name === drag) : undefined
   const highlight = dragArea ? (singleArea ? { x: 0, y: 0, w: W, h: H } : { x: dragArea.x * k, y: dragArea.y * k, w: dragArea.w * k, h: dragArea.h * k }) : null
@@ -282,6 +376,22 @@ function TaskCanvas({ template, line, slots, bg, guide, guides, upload }: TaskPr
           <>
             {art && isImage(art) && <image href={art.url} x={x} y={y} width={w} height={h} preserveAspectRatio="xMidYMid meet" />}
             {art && !isImage(art) && <text x={x + w / 2} y={y + h / 2} textAnchor="middle" fontSize="11" className="fill-on-surface-variant font-mono">{art.fileName}</text>}
+          </>
+        )
+      }}
+      areaLayer={(a, i) => {
+        if (firstIndex.get(a.name) !== i) return null
+        const art = newestFor(line, a.name)
+        if (!art) {
+          if (!upload || !slots.includes(a.name)) return null
+          return <div className="absolute inset-0 grid place-items-center"><UploadCta area={a.name} onPick={upload.onPick} disabled={!!upload.busy} size={tpl.areas.length > 2 ? 'sm' : 'lg'} /></div>
+        }
+        return (
+          <>
+            {artActions && isImage(art) && (
+              <button type="button" onClick={() => artActions.onView(art)} aria-label={`Xem ${a.name} v${art.version} (phóng to)`} className="pointer-events-auto absolute inset-0 cursor-zoom-in" />
+            )}
+            <div className="absolute top-xs right-xs"><ArtToolbar art={art} actions={artActions} onPick={upload?.onPick} /></div>
           </>
         )
       }}
@@ -348,11 +458,11 @@ export function LibraryCanvas({ template, imageUrl, boxes, bg, guide, guides, sh
   )
 }
 
-type TaskProps = { template: TemplateRow | null; line: WorkspaceLine; slots: string[]; bg: CanvasBg; guide: number; guides: Guides; upload?: CanvasUpload | null }
+type TaskProps = { template: TemplateRow | null; line: WorkspaceLine; slots: string[]; bg: CanvasBg; guide: number; guides: Guides; upload?: CanvasUpload | null; artActions?: CanvasArtActions | null }
 type StandaloneProps = { template: TemplateRow; masterUrl?: string | null; line?: undefined; slots?: undefined; bg?: CanvasBg; guide?: number }
 
 export default function TemplateCanvas(props: (Omit<TaskProps, 'guides'> & { guides?: Guides }) | StandaloneProps) {
-  if (props.line) return <TaskCanvas template={props.template} line={props.line} slots={props.slots} bg={props.bg} guide={props.guide} guides={props.guides ?? ALL_GUIDES} upload={props.upload} />
+  if (props.line) return <TaskCanvas template={props.template} line={props.line} slots={props.slots} bg={props.bg} guide={props.guide} guides={props.guides ?? ALL_GUIDES} upload={props.upload} artActions={props.artActions} />
   const p = props as StandaloneProps
   return <StandaloneCanvas template={p.template} masterUrl={p.masterUrl ?? null} bg={p.bg ?? 'checker'} guide={p.guide ?? 50} />
 }

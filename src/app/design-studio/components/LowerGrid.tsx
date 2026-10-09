@@ -132,7 +132,7 @@ function Checklist({ detail, onChanged }: { detail: TaskDetail; onChanged: () =>
   }
 
   return (
-    <Card icon="fact_check" title="Checklist gửi xưởng" right={`${done}/${CHECKS.length}`}>
+    <Card icon="fact_check" title="Tự kiểm file trước khi gửi" right={`${done}/${CHECKS.length}`}>
       <div className="flex flex-col">
         {CHECKS.map((c, i) => (
           <label key={c} className="flex items-start gap-sm px-xs py-xs rounded-md text-body-sm cursor-pointer hover:bg-surface-container-low">
@@ -205,7 +205,7 @@ export default function LowerGrid({ detail, onChanged }: { detail: TaskDetail; o
   return (
     <div className="grid grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] gap-md items-start">
       <div className="flex flex-col gap-md min-w-0">
-        <ArtworkSlots line={detail.line} slots={detail.slots} driveConnected={detail.driveConnected} onUploaded={onChanged} />
+        <ArtworkSlots line={detail.line} slots={detail.slots} driveConnected={detail.driveConnected} onUploaded={onChanged} me={detail.me} taskStatus={detail.task.status} />
         <SupplierCard detail={detail} />
       </div>
       <div className="flex flex-col gap-md min-w-0">
