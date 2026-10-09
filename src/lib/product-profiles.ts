@@ -9,7 +9,12 @@ export const LAYER_FITS: LayerFit[] = ['shrink', 'wrap', 'none']
 export type LayerMapEntry = { field: string; layer: string; font?: string; maxChars?: number; fit: LayerFit }
 
 const PRODUCT_GID_PREFIX = 'gid://shopify/Product/'
-const OBSERVED_LINE_LIMIT = 200
+export const OBSERVED_WINDOW_DAYS = 90
+export const OBSERVED_LINE_LIMIT = 200
+
+export function observationSince(now = Date.now()): Date {
+  return new Date(now - OBSERVED_WINDOW_DAYS * 86400_000)
+}
 
 export function toRouteKey(storeId: string, shopifyProductId: string): string {
   const numeric = shopifyProductId.startsWith(PRODUCT_GID_PREFIX) ? shopifyProductId.slice(PRODUCT_GID_PREFIX.length) : shopifyProductId
@@ -72,7 +77,7 @@ export function fieldsFromLines(lines: Array<{ customAttributesJson: string | nu
 
 export async function observedFields(storeId: string, shopifyProductId: string): Promise<string[]> {
   const lines = await prisma.orderLine.findMany({
-    where: { shopifyProductId, order: { storeId } },
+    where: { shopifyProductId, order: { storeId, placedAt: { gte: observationSince() } } },
     orderBy: { order: { placedAt: 'desc' } },
     take: OBSERVED_LINE_LIMIT,
     select: { customAttributesJson: true },

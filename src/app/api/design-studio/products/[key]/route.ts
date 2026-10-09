@@ -7,7 +7,7 @@ export const dynamic = 'force-dynamic'
 export async function GET(req: NextRequest, { params }: { params: { key: string } }) {
   const user = await getAuthUser(req)
   if (!user) return unauthorized()
-  const product = await loadProduct(params.key)
+  const product = await loadProduct(params.key, { includeCost: user.role === 'SUPERADMIN' || user.role === 'ADMIN' })
   if (!product) return NextResponse.json({ error: 'Không tìm thấy sản phẩm' }, { status: 404 })
   return NextResponse.json(product, { headers: { 'Cache-Control': 'no-store' } })
 }

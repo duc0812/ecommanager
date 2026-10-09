@@ -5,7 +5,7 @@ import { syncDesignTasksCounted } from '@/lib/design-tasks'
 import { parseProfileOverrides, profileKey, type ProductProfileOverride } from '@/lib/product-mapping'
 import { recalculateMissingOrderLineCosts } from '@/lib/repos/order-costs'
 import {
-  fieldsFromLines, fromRouteKey, LAYER_FITS, parseLayerMap, profileStatus, PROFILE_STATUSES, toRouteKey,
+  fieldsFromLines, fromRouteKey, LAYER_FITS, OBSERVED_LINE_LIMIT, observationSince, parseLayerMap, profileStatus, PROFILE_STATUSES, toRouteKey,
   type LayerFit, type LayerMapEntry, type ProfileStatus,
 } from '@/lib/product-profiles'
 
@@ -13,8 +13,6 @@ export class ValidationError extends Error {}
 
 export const FROZEN_PIPELINE_STATUSES = ['EXPORTED', 'FULFILLED', 'CANCELLED', 'REFUNDED']
 const CLOSED_TASK_STATUSES = ['DONE', 'CANCELLED']
-const LIST_WINDOW_DAYS = 90
-const OBSERVED_LINE_LIMIT = 200
 
 export type ProductListRow = {
   key: string; storeId: string; shop: string; shopifyProductId: string; title: string; imageUrl: string | null
@@ -37,7 +35,7 @@ function lineKey(orderId: string, shopifyLineId: string) {
 }
 
 export async function listProducts(f: { q?: string; status?: ProfileStatus } = {}): Promise<{ products: ProductListRow[]; withoutProductId: number }> {
-  const since = new Date(Date.now() - LIST_WINDOW_DAYS * 86400_000)
+  const since = observationSince()
   const [lines, openTasks, profiles] = await Promise.all([
     prisma.orderLine.findMany({
       where: { order: { placedAt: { gte: since } } },
@@ -111,7 +109,7 @@ function parseOptions(json: string | null): Record<string, string> {
   } catch { return {} }
 }
 
-export async function loadProduct(key: string) {
+export async function loadProduct(key: string, opts: { includeCost?: boolean } = {}) {
   const parsed = fromRouteKey(key)
   if (!parsed) return null
   const { storeId, shopifyProductId } = parsed
@@ -124,7 +122,7 @@ export async function loadProduct(key: string) {
       take: OBSERVED_LINE_LIMIT,
       select: {
         orderId: true, shopifyLineId: true, shopifyVariantId: true, variantTitle: true, variantOptions: true, productTitle: true,
-        imageUrl: true, customAttributesJson: true, resolvedSupplierId: true, resolvedSupplierSku: true,
+        shopifyProductType: true, imageUrl: true, customAttributesJson: true, resolvedSupplierId: true, resolvedSupplierSku: true,
         order: { select: { placedAt: true } },
       },
     }),
@@ -138,7 +136,7 @@ export async function loadProduct(key: string) {
       where: { supplier: { isActive: true } },
       orderBy: [{ supplierId: 'asc' }, { sku: 'asc' }],
       select: {
-        id: true, sku: true, productName: true, productType: true, baseCost: true, supplierId: true,
+        id: true, sku: true, productName: true, productType: true, baseCost: !!opts.includeCost, supplierId: true,
         variant1Name: true, variant1Value: true, variant2Name: true, variant2Value: true,
         supplier: { select: { name: true, code: true } },
       },
@@ -154,7 +152,8 @@ export async function loadProduct(key: string) {
       supplierId: l.resolvedSupplierId, supplierSku: l.resolvedSupplierSku,
     })
   }
-  const fields = fieldsFromLines(lines)
+  const since = observationSince()
+  const fields = fieldsFromLines(lines.filter(l => l.order.placedAt >= since && !isNonProductLine(l)))
   return {
     key: toRouteKey(storeId, shopifyProductId), storeId, shop: store.shop, shopifyProductId,
     profile: profile ? serializeProfile(profile) : null,
@@ -207,6 +206,7 @@ function validateOverrides(v: unknown): ProductProfileOverride[] | undefined {
 function validateLayerMap(v: unknown): LayerMapEntry[] | undefined {
   if (v === undefined) return undefined
   if (!Array.isArray(v)) throw new ValidationError('layerMap phải là danh sách')
+  const seenFields = new Set<string>()
   return v.map((item, i) => {
     if (!item || typeof item !== 'object' || Array.isArray(item)) throw new ValidationError(`layerMap[${i}] không hợp lệ`)
     const { field, layer, font, maxChars, fit } = item as Record<string, unknown>
@@ -217,6 +217,9 @@ function validateLayerMap(v: unknown): LayerMapEntry[] | undefined {
       throw new ValidationError(`layerMap[${i}].maxChars phải là số nguyên dương`)
     }
     if (!LAYER_FITS.includes(fit as LayerFit)) throw new ValidationError(`layerMap[${i}].fit phải là shrink, wrap hoặc none`)
+    const norm = field.trim().toLowerCase()
+    if (seenFields.has(norm)) throw new ValidationError(`layerMap có field trùng: ${field.trim()}`)
+    seenFields.add(norm)
     return {
       field: field.trim(), layer: layer.trim(),
       ...(typeof font === 'string' && font.trim() ? { font: font.trim() } : {}),
@@ -273,15 +276,23 @@ export async function saveProfile(key: string, input: SaveProfileInput) {
   const printTemplateId = printTemplateIdIn !== undefined ? printTemplateIdIn : (existing?.printTemplateId ?? null)
 
   const spIds = Array.from(new Set([...(supplierProductId ? [supplierProductId] : []), ...overrides.map(o => o.supplierProductId)]))
-  const sps = spIds.length ? await prisma.supplierProduct.findMany({ where: { id: { in: spIds } }, select: { id: true, supplierId: true } }) : []
+  const sps = spIds.length
+    ? await prisma.supplierProduct.findMany({ where: { id: { in: spIds } }, select: { id: true, sku: true, supplierId: true, supplier: { select: { isActive: true } } } })
+    : []
   const missing = spIds.filter(id => !sps.some(s => s.id === id))
   if (missing.length > 0) throw new ValidationError(`Không tìm thấy sản phẩm xưởng: ${missing.join(', ')}`)
+  const inactive = sps.filter(s => !s.supplier.isActive)
+  if (inactive.length > 0) throw new ValidationError(`Xưởng đã ngừng hoạt động: ${inactive.map(s => s.sku).join(', ')}`)
   if (printTemplateId) {
     const template = await prisma.printTemplate.findUnique({ where: { id: printTemplateId }, select: { supplierId: true } })
     if (!template) throw new ValidationError('Không tìm thấy template')
-    const defaultSp = supplierProductId ? sps.find(s => s.id === supplierProductId) : null
-    if (defaultSp && defaultSp.supplierId !== template.supplierId) throw new ValidationError('Template thuộc xưởng khác')
+    const supplierIds = new Set(sps.map(s => s.supplierId))
+    if (supplierIds.size > 0 && !supplierIds.has(template.supplierId)) throw new ValidationError('Template thuộc xưởng khác')
   }
+  const supplierChanged = !existing
+    ? !!supplierProductId || overrides.length > 0
+    : (existing.supplierProductId ?? null) !== supplierProductId
+      || JSON.stringify(parseProfileOverrides(existing.overrides)) !== JSON.stringify(overrides)
 
   const data = {
     title,
@@ -298,7 +309,9 @@ export async function saveProfile(key: string, input: SaveProfileInput) {
     create: { storeId, shopifyProductId, ...data },
     update: data,
   })
-  const reevaluation = await reevaluateProduct(storeId, shopifyProductId)
+  const reevaluation = supplierChanged
+    ? await reevaluateProduct(storeId, shopifyProductId)
+    : { ordersUpdated: 0, tasksTouched: 0, errors: [] }
   return { profile: serializeProfile(profile), reevaluation }
 }
 
@@ -309,7 +322,33 @@ export async function reevaluateProduct(storeId: string, shopifyProductId: strin
   })
   const orderIds = orders.map(o => o.id)
   if (orderIds.length === 0) return { ordersUpdated: 0, tasksTouched: 0, errors: [] }
-  const recalc = await recalculateMissingOrderLineCosts({ orderIds, shopifyProductId, refreshExisting: true })
+  const recalc = await recalculateMissingOrderLineCosts({ orderIds, shopifyProductId, refreshExisting: true, preserveUnchangedSnapshot: true })
   const { tasksTouched, errors } = await syncDesignTasksCounted(orderIds)
-  return { ordersUpdated: recalc.updatedOrders, tasksTouched, errors }
+  const snapshotsUpdated = await refreshTaskSupplierSnapshots(orderIds, shopifyProductId)
+  return { ordersUpdated: recalc.changedOrders, tasksTouched: tasksTouched + snapshotsUpdated, errors }
+}
+
+async function refreshTaskSupplierSnapshots(orderIds: string[], shopifyProductId: string): Promise<number> {
+  const lines = await prisma.orderLine.findMany({
+    where: { orderId: { in: orderIds }, shopifyProductId, resolvedSupplierId: { not: null } },
+    select: { orderId: true, shopifyLineId: true, resolvedSupplierId: true },
+  })
+  if (lines.length === 0) return 0
+  const [suppliers, tasks] = await Promise.all([
+    prisma.supplier.findMany({ where: { id: { in: Array.from(new Set(lines.map(l => l.resolvedSupplierId as string))) } }, select: { id: true, name: true } }),
+    prisma.designTask.findMany({
+      where: { orderId: { in: orderIds }, status: { notIn: CLOSED_TASK_STATUSES } },
+      select: { id: true, orderId: true, shopifyLineId: true, supplierSnapshot: true },
+    }),
+  ])
+  const nameById = new Map(suppliers.map(s => [s.id, s.name]))
+  const nameByLine = new Map(lines.map(l => [lineKey(l.orderId, l.shopifyLineId), nameById.get(l.resolvedSupplierId as string) ?? null]))
+  let updated = 0
+  for (const t of tasks) {
+    const name = nameByLine.get(lineKey(t.orderId, t.shopifyLineId))
+    if (!name || name === t.supplierSnapshot) continue
+    await prisma.designTask.update({ where: { id: t.id }, data: { supplierSnapshot: name } })
+    updated++
+  }
+  return updated
 }

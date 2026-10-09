@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/db'
 import { AUTH_COOKIE, signToken } from '@/lib/auth'
-import { loadTask } from '@/lib/design-tasks'
+import { loadTask, syncDesignTasks } from '@/lib/design-tasks'
 import { profileKey } from '@/lib/product-mapping'
 import { toRouteKey } from '@/lib/product-profiles'
 import { loadProductProfilesForResolver } from '@/lib/repos/mapping'
@@ -13,14 +13,18 @@ import { GET as getRoute, PUT as putRoute } from '@/app/api/design-studio/produc
 const SHOP_A = 'pp-a.myshopify.com'
 const SHOP_B = 'pp-b.myshopify.com'
 const GID = 'gid://shopify/Product/7770001'
+const OTHER_GID = 'gid://shopify/Product/7770002'
 const OPEN_ID = 'gid://test/Order/pp-open'
+const HELD_ID = 'gid://test/Order/pp-held'
 const EXPORTED_ID = 'gid://test/Order/pp-exported'
 const OTHER_STORE_ID = 'gid://test/Order/pp-store-b'
 const NO_PID_ID = 'gid://test/Order/pp-no-pid'
 const SUP_A = 'sup_pp_a'
 const SUP_B = 'sup_pp_b'
+const SUP_OFF = 'sup_pp_off'
 const SP_OLD = 'sp_pp_old'
 const SP_NEW = 'sp_pp_new'
+const SP_OFF = 'sp_pp_off'
 const TPL_SKU = 'tpl_pp_sku'
 const TPL_PROFILE = 'tpl_pp_profile'
 const TPL_A = 'tpl_pp_a'
@@ -49,13 +53,16 @@ function put(body: unknown, token = adminToken, k = key) {
 
 const ATTRS = JSON.stringify([{ key: 'Name', value: 'Ann' }])
 
-function order(id: string, storeId: string, projectId: string, num: string, pipelineStatus: string, line: Record<string, unknown>) {
+function order(id: string, storeId: string, projectId: string, num: string, pipelineStatus: string, line: Record<string, unknown>, extra: Record<string, unknown>[] = []) {
   return prisma.order.create({
     data: {
       id, projectId, storeId, shopifyOrderNumber: num, financialStatus: 'PAID', currency: 'USD',
       grossAmount: 1, expectedPayout: 1, totalFees: 0, refundedAmount: 0, placedAt: new Date(Date.now() - 86400_000),
       pipelineStatus, orderType: 'CUSTOM',
-      lines: { create: [{ shopifyLineId: `${num}-l1`, productTitle: 'PP Hoodie', qty: 1, linePosition: 1, unitPrice: 1, customized: true, ...line }] },
+      lines: { create: [
+        { shopifyLineId: `${num}-l1`, productTitle: 'PP Hoodie', qty: 1, linePosition: 1, unitPrice: 1, customized: true, ...line },
+        ...extra.map((e, i) => ({ shopifyLineId: `${num}-x${i + 2}`, productTitle: 'PP Other', qty: 1, linePosition: i + 2, unitPrice: 1, ...e })),
+      ] },
     },
   })
 }
@@ -71,8 +78,10 @@ beforeAll(async () => {
 
   await prisma.supplier.create({ data: { id: SUP_A, name: 'PP A', code: 'PPSUPA' } })
   await prisma.supplier.create({ data: { id: SUP_B, name: 'PP B', code: 'PPSUPB' } })
+  await prisma.supplier.create({ data: { id: SUP_OFF, name: 'PP Off', code: 'PPSUPOFF', isActive: false } })
   await prisma.supplierProduct.create({ data: { id: SP_OLD, supplierId: SUP_A, sku: 'PP-OLD', baseCost: 5 } })
   await prisma.supplierProduct.create({ data: { id: SP_NEW, supplierId: SUP_B, sku: 'PP-NEW', baseCost: 9 } })
+  await prisma.supplierProduct.create({ data: { id: SP_OFF, supplierId: SUP_OFF, sku: 'PP-OFF', baseCost: 1 } })
   const tpl = { widthPx: 100, heightPx: 100, areas: JSON.stringify([{ name: 'Front', x: 0, y: 0, w: 100, h: 100 }]) }
   await prisma.printTemplate.create({ data: { id: TPL_SKU, supplierId: SUP_B, supplierSku: 'PP-NEW', name: 'By SKU', ...tpl } })
   await prisma.printTemplate.create({ data: { id: TPL_PROFILE, supplierId: SUP_B, supplierSku: 'PP-PROFILE', name: 'By profile', ...tpl } })
@@ -80,7 +89,12 @@ beforeAll(async () => {
   await prisma.skuDesign.create({ data: { sku: 'PP-SHOP-SKU', driveLink: 'https://drive.example/sku-master' } })
 
   const resolvedOld = { resolvedSupplierId: SUP_A, resolvedSupplierSku: 'PP-OLD', resolvedBaseCost: 5, costSnapshotAt: SNAPSHOT_AT }
-  await order(OPEN_ID, storeA, 'proj_pp_a', '#PP1', 'PENDING_DESIGN', { sku: 'PP-SHOP-SKU', shopifyProductId: GID, customAttributesJson: ATTRS, ...resolvedOld })
+  await order(OPEN_ID, storeA, 'proj_pp_a', '#PP1', 'PENDING_DESIGN', { sku: 'PP-SHOP-SKU', shopifyProductId: GID, customAttributesJson: ATTRS, ...resolvedOld },
+    [{ sku: 'PP-OTHER', shopifyProductId: OTHER_GID, ...resolvedOld }])
+  await order(HELD_ID, storeA, 'proj_pp_a', '#PP5', 'ON_HOLD', {
+    sku: 'PP-SHOP-SKU', shopifyProductId: GID, customAttributesJson: ATTRS,
+    resolvedSupplierId: SUP_B, resolvedSupplierSku: 'PP-NEW', resolvedBaseCost: 7, costSnapshotAt: SNAPSHOT_AT,
+  })
   await order(EXPORTED_ID, storeA, 'proj_pp_a', '#PP2', 'EXPORTED', { sku: 'PP-SHOP-SKU', shopifyProductId: GID, customAttributesJson: ATTRS, ...resolvedOld })
   await order(OTHER_STORE_ID, storeB, 'proj_pp_b', '#PP3', 'PENDING_MAPPING', { sku: 'PP-SHOP-SKU', shopifyProductId: GID, customAttributesJson: ATTRS })
   await order(NO_PID_ID, storeA, 'proj_pp_a', '#PP4', 'PENDING_MAPPING', { sku: 'PP-NOPID' })
@@ -92,10 +106,10 @@ beforeAll(async () => {
 })
 
 afterAll(async () => {
-  await prisma.order.deleteMany({ where: { id: { in: [OPEN_ID, EXPORTED_ID, OTHER_STORE_ID, NO_PID_ID] } } })
+  await prisma.order.deleteMany({ where: { id: { in: [OPEN_ID, HELD_ID, EXPORTED_ID, OTHER_STORE_ID, NO_PID_ID] } } })
   await prisma.productProfile.deleteMany({ where: { storeId: { in: [storeA, storeB] } } })
   await prisma.skuDesign.deleteMany({ where: { sku: 'PP-SHOP-SKU' } })
-  await prisma.supplier.deleteMany({ where: { id: { in: [SUP_A, SUP_B] } } })
+  await prisma.supplier.deleteMany({ where: { id: { in: [SUP_A, SUP_B, SUP_OFF] } } })
   await prisma.appUser.deleteMany({ where: { email: { in: EMAILS } } })
   await prisma.shopifyStore.deleteMany({ where: { id: { in: [storeA, storeB] } } })
   await prisma.project.deleteMany({ where: { id: { in: ['proj_pp_a', 'proj_pp_b'] } } })
@@ -117,6 +131,9 @@ describe('PUT /api/design-studio/products/[key] validation', () => {
     ['non-http master', { masterArtworkUrl: 'javascript:alert(1)' }],
     ['layer with bad fit', { layerMap: [{ field: 'Name', layer: 'n', fit: 'stretch' }] }],
     ['layer with non-positive maxChars', { layerMap: [{ field: 'Name', layer: 'n', fit: 'none', maxChars: 0 }] }],
+    ['duplicate layer field', { layerMap: [{ field: 'Name', layer: 'a', fit: 'none' }, { field: 'name', layer: 'b', fit: 'none' }] }],
+    ['supplier product of an inactive supplier', { supplierProductId: SP_OFF }],
+    ['override to an inactive supplier', { overrides: [{ combo: { Size: 'XL' }, supplierProductId: SP_OFF }] }],
   ])('400 for %s', async (_label, body) => {
     const res = await put(body)
     expect(res.status).toBe(400)
@@ -125,6 +142,12 @@ describe('PUT /api/design-studio/products/[key] validation', () => {
 
   it('400 when the template belongs to another supplier', async () => {
     const res = await put({ supplierProductId: SP_NEW, printTemplateId: TPL_A })
+    expect(res.status).toBe(400)
+    expect((await res.json()).error).toBe('Template thuộc xưởng khác')
+  })
+
+  it('400 when the template matches none of the override suppliers', async () => {
+    const res = await put({ overrides: [{ combo: { Size: 'XL' }, supplierProductId: SP_OLD }], printTemplateId: TPL_PROFILE })
     expect(res.status).toBe(400)
     expect((await res.json()).error).toBe('Template thuộc xưởng khác')
   })
@@ -139,6 +162,7 @@ describe('saving a profile', () => {
   let saved: any
 
   beforeAll(async () => {
+    await syncDesignTasks(OPEN_ID)
     const res = await put({
       supplierProductId: SP_NEW,
       overrides: [{ combo: { Size: '6XL' }, supplierProductId: SP_OLD }],
@@ -151,10 +175,27 @@ describe('saving a profile', () => {
     saved = await res.json()
   })
 
-  it('re-resolves the open order to the profile supplier and creates its task', async () => {
+  it('re-resolves the open line to the profile supplier at the new cost and renames its task supplier', async () => {
     expect(saved.reevaluation).toMatchObject({ ordersUpdated: 1, tasksTouched: 1 })
-    const line = await prisma.orderLine.findFirstOrThrow({ where: { orderId: OPEN_ID } })
+    const line = await prisma.orderLine.findFirstOrThrow({ where: { orderId: OPEN_ID, shopifyProductId: GID } })
     expect(line).toMatchObject({ resolvedSupplierId: SUP_B, resolvedSupplierSku: 'PP-NEW', resolvedBaseCost: 9 })
+    expect(line.costSnapshotAt?.toISOString()).not.toBe(SNAPSHOT_AT.toISOString())
+    const task = await prisma.designTask.findFirstOrThrow({ where: { orderId: OPEN_ID, shopifyLineId: line.shopifyLineId } })
+    expect(task.supplierSnapshot).toBe('PP B')
+  })
+
+  it('leaves a line of another product in the same open order untouched', async () => {
+    const line = await prisma.orderLine.findFirstOrThrow({ where: { orderId: OPEN_ID, shopifyProductId: OTHER_GID } })
+    expect(line).toMatchObject({ resolvedSupplierId: SUP_A, resolvedSupplierSku: 'PP-OLD', resolvedBaseCost: 5 })
+    expect(line.costSnapshotAt?.toISOString()).toBe(SNAPSHOT_AT.toISOString())
+    const task = await prisma.designTask.findFirstOrThrow({ where: { orderId: OPEN_ID, shopifyLineId: line.shopifyLineId } })
+    expect(task.supplierSnapshot).toBe('PP A')
+  })
+
+  it('keeps the cost snapshot of an open line already on the profile supplier', async () => {
+    const line = await prisma.orderLine.findFirstOrThrow({ where: { orderId: HELD_ID } })
+    expect(line).toMatchObject({ resolvedSupplierId: SUP_B, resolvedSupplierSku: 'PP-NEW', resolvedBaseCost: 7 })
+    expect(line.costSnapshotAt?.toISOString()).toBe(SNAPSHOT_AT.toISOString())
   })
 
   it('leaves the exported order untouched', async () => {
@@ -174,16 +215,21 @@ describe('saving a profile', () => {
     expect(line.resolvedSupplierId).toBeNull()
   })
 
-  it('keeps fields the body leaves out on a later save', async () => {
+  it('a notes-only save keeps fields the body leaves out and does not reprice', async () => {
+    const before = await prisma.orderLine.findFirstOrThrow({ where: { orderId: OPEN_ID, shopifyProductId: GID } })
     const res = await put({ notes: 'second' })
     expect(res.status).toBe(200)
     const body = await res.json()
+    expect(body.reevaluation).toMatchObject({ ordersUpdated: 0, tasksTouched: 0 })
+    const after = await prisma.orderLine.findFirstOrThrow({ where: { orderId: OPEN_ID, shopifyProductId: GID } })
+    expect(after.resolvedBaseCost).toBe(before.resolvedBaseCost)
+    expect(after.costSnapshotAt?.toISOString()).toBe(before.costSnapshotAt?.toISOString())
     expect(body.profile).toMatchObject({ supplierProductId: SP_NEW, printTemplateId: TPL_PROFILE, masterArtworkUrl: MASTER, notes: 'second' })
     expect(body.profile.overrides).toEqual([{ combo: { Size: '6XL' }, supplierProductId: SP_OLD }])
   })
 
   it('loadTask prefers the profile template and master and exposes the profile', async () => {
-    const task = await prisma.designTask.findFirstOrThrow({ where: { orderId: OPEN_ID } })
+    const task = await prisma.designTask.findFirstOrThrow({ where: { orderId: OPEN_ID, shopifyLineId: '#PP1-l1' } })
     const detail = await loadTask(task.taskKey)
     expect(detail?.template?.id).toBe(TPL_PROFILE)
     expect(detail?.slots).toEqual(['Front'])
@@ -196,7 +242,7 @@ describe('saving a profile', () => {
 
   it('without a profile template the SKU-matched template is used', async () => {
     await put({ printTemplateId: null })
-    const task = await prisma.designTask.findFirstOrThrow({ where: { orderId: OPEN_ID } })
+    const task = await prisma.designTask.findFirstOrThrow({ where: { orderId: OPEN_ID, shopifyLineId: '#PP1-l1' } })
     const detail = await loadTask(task.taskKey)
     expect(detail?.template?.id).toBe(TPL_SKU)
     expect(detail?.profile?.status).toBe('NO_TEMPLATE')
@@ -212,7 +258,7 @@ describe('GET product routes', () => {
     const rows = body.products.filter((p: any) => p.shopifyProductId === GID)
     expect(rows.map((r: any) => r.shop).sort()).toEqual([SHOP_A, SHOP_B])
     const a = rows.find((r: any) => r.storeId === storeA)
-    expect(a).toMatchObject({ key, orderCount: 2, openTasks: 1, status: 'READY', hasProfile: true })
+    expect(a).toMatchObject({ key, orderCount: 3, openTasks: 1, status: 'READY', hasProfile: true })
     expect(rows.find((r: any) => r.storeId === storeB)).toMatchObject({ status: 'NONE', hasProfile: false })
     expect(body.withoutProductId).toBeGreaterThanOrEqual(1)
   })
@@ -224,15 +270,25 @@ describe('GET product routes', () => {
     expect(bad.status).toBe(400)
   })
 
-  it('loads one product with its profile, observed fields and pickers', async () => {
+  it('loads one product with its profile, observed fields and pickers, without costs for non-admins', async () => {
     const res = await getRoute(req(`http://localhost/api/design-studio/products/${key}`, supportToken), { params: { key } })
     expect(res.status).toBe(200)
     const body = await res.json()
     expect(body.profile.supplierProductId).toBe(SP_NEW)
     expect(body.observedFields).toEqual(['Name'])
-    expect(body.summary).toMatchObject({ title: 'PP Hoodie', orderCount: 2, openTasks: 1 })
-    expect(body.supplierProducts.some((p: any) => p.id === SP_NEW)).toBe(true)
+    expect(body.status).toBe('READY')
+    expect(body.summary).toMatchObject({ title: 'PP Hoodie', orderCount: 3, openTasks: 1 })
+    const sp = body.supplierProducts.find((p: any) => p.id === SP_NEW)
+    expect(sp).toBeDefined()
+    expect(sp).not.toHaveProperty('baseCost')
+    expect(body.supplierProducts.some((p: any) => p.id === SP_OFF)).toBe(false)
     expect(body.templates.some((t: any) => t.id === TPL_PROFILE)).toBe(true)
+  })
+
+  it('includes supplier costs for an admin', async () => {
+    const res = await getRoute(req(`http://localhost/api/design-studio/products/${key}`, adminToken), { params: { key } })
+    const body = await res.json()
+    expect(body.supplierProducts.find((p: any) => p.id === SP_NEW).baseCost).toBe(9)
   })
 
   it('404 for an unknown product', async () => {

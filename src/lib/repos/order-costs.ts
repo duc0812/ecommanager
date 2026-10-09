@@ -27,6 +27,7 @@ export async function recalculateMissingOrderLineCosts(filter: {
   refreshExisting?: boolean
   orderIds?: string[]
   shopifyProductId?: string
+  preserveUnchangedSnapshot?: boolean
 } = {}) {
   const placedAt = filter.dateFrom || filter.dateTo
     ? {
@@ -67,6 +68,7 @@ export async function recalculateMissingOrderLineCosts(filter: {
   let updatedLines = 0
   let unresolvedLines = 0
   const touchedOrderIds = new Set<string>()
+  const changedOrderIds = new Set<string>()
 
   for (const line of lines) {
     if (isNonProductLine(line)) continue
@@ -88,7 +90,7 @@ export async function recalculateMissingOrderLineCosts(filter: {
     )
     const supplierProduct = supplierProductId ? rawSupplierProductById.get(supplierProductId) : null
     if (!supplierProduct) {
-      if (filter.refreshExisting) {
+      if (filter.refreshExisting && !(filter.preserveUnchangedSnapshot && !line.resolvedSupplierId)) {
         await prisma.orderLine.update({
           where: { id: line.id },
           data: {
@@ -102,10 +104,19 @@ export async function recalculateMissingOrderLineCosts(filter: {
           },
         })
         touchedOrderIds.add(line.orderId)
+        changedOrderIds.add(line.orderId)
       }
       unresolvedLines++
       continue
     }
+
+    // Same supplier and SKU keep the price the order was costed at, as the order sync does.
+    if (
+      filter.preserveUnchangedSnapshot &&
+      line.resolvedSupplierId === supplierProduct.supplierId &&
+      line.resolvedSupplierSku === supplierProduct.sku &&
+      line.resolvedBaseCost != null
+    ) continue
 
     const zone = line.order.shippingZone ?? 'ROW'
     const shippingByRegion = supplierProduct.shippingByRegion
@@ -126,6 +137,7 @@ export async function recalculateMissingOrderLineCosts(filter: {
       },
     })
     touchedOrderIds.add(line.orderId)
+    changedOrderIds.add(line.orderId)
     updatedLines++
   }
 
@@ -213,5 +225,6 @@ export async function recalculateMissingOrderLineCosts(filter: {
     updatedLines,
     unresolvedLines,
     updatedOrders: touchedOrderIds.size,
+    changedOrders: changedOrderIds.size,
   }
 }
