@@ -184,6 +184,9 @@ Completed 2026-05-19 via subagent-driven development.
 - Design Studio v1 (local): order list + workspace + per-area upload — 2026-10-09
 - Next: printcheck on the clone tools, PrintTemplate model, auto-design agent
 
+### 🟢 Design Tasks v2 (2026-10-10, local)
+- Design Tasks v2 (local): task queue, lifecycle, assign/KPI, image-first workspace — 2026-10-10; next: Print Template editor, Drive storage, local render worker
+
 ---
 
 ## Known Issues / Tech Debt
