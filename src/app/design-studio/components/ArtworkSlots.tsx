@@ -1,19 +1,17 @@
 'use client'
 import { useRef, useState } from 'react'
-import type { TemplateRow, WorkspaceLine } from './types'
-import { requestJson, slotNames, versionsFor } from './model'
+import type { WorkspaceLine } from './types'
+import { requestJson, versionsFor } from './model'
 import { Card, ErrorBanner, Icon, Pill, btn, fmtSize } from './ui'
 
 const ACCEPT = '.png,.jpg,.jpeg,.pdf,.psd,.zip'
 
-export default function ArtworkSlots({ line, template, onUploaded }: { line: WorkspaceLine; template: TemplateRow | null; onUploaded: () => void }) {
+export default function ArtworkSlots({ line, slots, onUploaded }: { line: WorkspaceLine; slots: string[]; onUploaded: () => void }) {
   const [busy, setBusy] = useState<string[]>([])
   const [over, setOver] = useState('')
   const [error, setError] = useState('')
   const busyRef = useRef(new Set<string>())
   const inputs = useRef<Record<string, HTMLInputElement | null>>({})
-  const slots = slotNames(line, template)
-  const templateAreas = new Set(template?.areas.map(a => a.name) ?? [])
   const fileCount = line.artworks.length
 
   async function upload(printArea: string, file: File) {
@@ -36,13 +34,11 @@ export default function ArtworkSlots({ line, template, onUploaded }: { line: Wor
       {slots.map(area => {
         const versions = versionsFor(line, area)
         const isBusy = busy.includes(area)
-        const extra = template !== null && !templateAreas.has(area)
         return (
           <div key={area} className="rounded-lg border border-outline-variant/20 p-sm flex flex-col gap-xs">
             <div className="flex items-center gap-xs text-body-sm font-semibold">
               <span>{area}</span>
               <span className="text-label-sm font-medium text-on-surface-variant">{versions.length ? `${versions.length} phiên bản` : 'chưa có file'}</span>
-              {extra && <Pill tone="warn">cần khi gửi xưởng</Pill>}
               <input ref={el => { inputs.current[area] = el }} type="file" accept={ACCEPT} hidden aria-label={`Chọn file cho ${area}`}
                 onChange={e => { const f = e.target.files?.[0]; if (f) upload(area, f); e.target.value = '' }} />
               <button type="button" disabled={isBusy} onClick={() => inputs.current[area]?.click()} className={`${btn} ml-auto`}>

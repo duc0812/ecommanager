@@ -201,7 +201,7 @@ export async function loadWorkspace(orderId: string): Promise<Workspace | null> 
   }
 }
 
-export async function updateLine(lineId: string, patch: { note?: string | null; done?: boolean }) {
+export async function updateLine(lineId: string, patch: { note?: string | null; done?: boolean; requiredAreas?: string[] }) {
   const line = await prisma.orderLine.findUnique({ where: { id: lineId } })
   if (!line) return null
 
@@ -212,7 +212,9 @@ export async function updateLine(lineId: string, patch: { note?: string | null; 
       where: { orderId: line.orderId, shopifyLineId: line.shopifyLineId },
       orderBy: { version: 'desc' },
     })
-    const slots = printAreasForLine(parseAttributes(line.customAttributesJson))
+    const slots = patch.requiredAreas && patch.requiredAreas.length > 0
+      ? patch.requiredAreas
+      : printAreasForLine(parseAttributes(line.customAttributesJson))
     const missing = slots.filter(s => !artworks.some(a => a.printArea === s))
     if (missing.length > 0) throw new Error(`No artwork uploaded for: ${missing.join(', ')}`)
     const first = artworks.find(a => a.printArea === slots[0])!

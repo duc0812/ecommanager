@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/db'
 import { isNonProductLine } from '@/lib/order-lines'
-import { parseAttributes, sourcePrintFiles, updateLine, loadWorkspace, type WorkspaceLine, type Workspace } from '@/lib/design-studio'
+import { parseAttributes, sourcePrintFiles, printAreasForLine, updateLine, loadWorkspace, type WorkspaceLine, type Workspace } from '@/lib/design-studio'
 import { getDesignSettings, kpiForProductType, type DesignSettings } from '@/lib/design-settings'
 import { visibleCustomAttributes } from '@/lib/order-classify'
 
@@ -98,7 +98,15 @@ export type TaskDetail = {
   task: TaskRow; line: WorkspaceLine; order: Workspace['order']; template: TemplateRow | null
   events: { id: string; type: string; message: string; actorName: string | null; createdAt: string }[]
   assignable: { id: string; name: string }[]; settings: DesignSettings; prevStatus: TaskStatus | null
+  slots: string[]
 }
+
+export function requiredSlotsFor(line: { customAttributesJson: string | null }, template: TemplateRow | null): string[] {
+  const names = template ? Array.from(new Set(template.areas.map(a => a.name).filter(Boolean))) : []
+  return names.length > 0 ? names : printAreasForLine(parseAttributes(line.customAttributesJson))
+}
+
+const OWNED_MOVES: TaskStatus[] = ['DOING', 'NEW', 'REVIEW', 'ASK_CUSTOMER']
 
 function actorRole(a: Actor): ActorRole { return isLeader(a.role) ? 'LEADER' : 'DESIGNER' }
 
@@ -131,6 +139,10 @@ export async function transitionTask(taskKey: string, actor: Actor, input: Trans
   const role = actorRole(actor)
   if (!(input.continue && from === 'ASK_CUSTOMER' && input.to === (task.prevStatus ?? 'NEW')) && !canTransition(from, input.to, role, task.readiness as Readiness)) {
     throw new Error(`Chuyển ${from} → ${input.to} không được phép với vai trò ${role}`)
+  }
+  if (role !== 'LEADER' && task.assigneeId && task.assigneeId !== actor.id && OWNED_MOVES.includes(input.to)) {
+    const owner = await prisma.appUser.findUnique({ where: { id: task.assigneeId }, select: { name: true } })
+    throw new Error(`Task đang thuộc về ${owner?.name ?? 'người khác'}`)
   }
   const line = await prisma.orderLine.findFirst({ where: { orderId: task.orderId, shopifyLineId: task.shopifyLineId } })
   if (!line) throw new Error('Line not found')
@@ -168,7 +180,10 @@ export async function transitionTask(taskKey: string, actor: Actor, input: Trans
   if (input.note && !['ASSIGNED', 'REJECTED', 'ASK_CUSTOMER'].includes(input.to)) say('NOTE', input.note)
 
   let order: { id: string; designReady: boolean; pipelineStatus: string } | null = null
-  if (input.to === 'DONE') order = (await updateLine(line.id, { done: true }))?.order ?? null
+  if (input.to === 'DONE') {
+    const template = await templateForLine(line)
+    order = (await updateLine(line.id, { done: true, requiredAreas: requiredSlotsFor(line, template) }))?.order ?? null
+  }
   if (from === 'DONE' && input.to === 'DOING') order = (await updateLine(line.id, { done: false }))?.order ?? null
 
   const updated = await prisma.designTask.update({ where: { id: task.id }, data: { ...data, events: { create: events } } })
@@ -261,7 +276,7 @@ export async function loadTask(taskKey: string): Promise<TaskDetail | null> {
 
   const orderLine = await prisma.orderLine.findFirst({
     where: { orderId: task.orderId, shopifyLineId: task.shopifyLineId },
-    select: { resolvedSupplierId: true, resolvedSupplierSku: true },
+    select: { resolvedSupplierId: true, resolvedSupplierSku: true, customAttributesJson: true },
   })
   const template = orderLine ? await templateForLine(orderLine) : null
 
@@ -286,5 +301,6 @@ export async function loadTask(taskKey: string): Promise<TaskDetail | null> {
       createdAt: e.createdAt.toISOString(),
     })),
     assignable, settings, prevStatus: (task.prevStatus as TaskStatus | null) ?? null,
+    slots: requiredSlotsFor(orderLine ?? { customAttributesJson: null }, template),
   }
 }

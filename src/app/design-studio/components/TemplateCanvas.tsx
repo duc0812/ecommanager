@@ -51,17 +51,18 @@ export function CanvasTools({ bg, onBg, guide, onGuide, hasGuide }: { bg: Canvas
   )
 }
 
-export default function TemplateCanvas({ template, line, bg, guide }: { template: TemplateRow | null; line: WorkspaceLine; bg: CanvasBg; guide: number }) {
+export default function TemplateCanvas({ template, line, slots, bg, guide }: { template: TemplateRow | null; line: WorkspaceLine; slots: string[]; bg: CanvasBg; guide: number }) {
   const rawId = useId()
   const patternId = `ck${rawId.replace(/[^a-zA-Z0-9]/g, '')}`
-  const firstArea = template?.areas[0]
+  const firstArea = template?.areas.find(a => a.name === slots[0]) ?? template?.areas[0]
   const sourceUrl = line.sourcePrintFiles[0]?.url ?? null
   const firstHasArt = !!(firstArea && newestFor(line, firstArea.name))
   const showSource = !!(template && firstArea && sourceUrl && !firstHasArt)
   const sourceSize = useNaturalSize(showSource ? sourceUrl : null)
 
   if (!template) {
-    const art = newestArtwork(line)
+    const firstSlotArt = slots[0] ? newestFor(line, slots[0]) : undefined
+    const art = firstSlotArt && isImage(firstSlotArt) ? firstSlotArt : newestArtwork(line)
     const fallback = art && isImage(art) ? art.url : sourceUrl
     return (
       <div className="flex flex-col gap-sm">

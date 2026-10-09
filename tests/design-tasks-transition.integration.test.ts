@@ -80,6 +80,94 @@ describe('transitionTask / listTasks / loadTask', () => {
     const mine = await listTasks({ assigneeId: desId }); expect(mine.map(t => t.taskKey)).toContain('DTT1_1')
     expect((await listTasks({ statuses: ['DONE'] })).some(t => t.taskKey === 'DTT1_1')).toBe(false)
     const d = await loadTask('DTT1_1'); expect(d?.line.shopifyLineId ?? d?.task.shopifyLineId).toBe('t1'); expect(d!.events.length).toBeGreaterThan(3)
+    expect(d!.slots).toEqual(['PRINT'])
     expect(await loadTask('NOPE_1')).toBeNull()
+  })
+})
+
+const TPL_ORDER_ID = 'gid://test/Order/dtt-2'
+const TPL_SUP = 'sup_dtt_tpl'
+let des2Id = ''
+let DES2: Actor
+
+async function addArtwork(shopifyLineId: string, printArea: string) {
+  await prisma.designArtwork.create({
+    data: { orderId: TPL_ORDER_ID, shopifyLineId, printArea, version: 1, fileName: `${printArea}.png`, storagePath: `x/${printArea}.png`, size: 1, mimeType: 'image/png' },
+  })
+}
+
+describe('template slots and ownership', () => {
+  beforeAll(async () => {
+    const storeId = (await prisma.shopifyStore.findUniqueOrThrow({ where: { shop: SHOP } })).id
+    await prisma.supplier.upsert({ where: { code: 'DTTTPL' }, create: { id: TPL_SUP, name: 'DTT Template Supplier', code: 'DTTTPL' }, update: {} })
+    await prisma.printTemplate.create({
+      data: {
+        supplierId: TPL_SUP, supplierSku: null, name: 'Jersey FB', widthPx: 2000, heightPx: 1000,
+        areas: JSON.stringify([{ name: 'Front', x: 0, y: 0, w: 1000, h: 1000 }, { name: 'Back', x: 1000, y: 0, w: 1000, h: 1000 }]),
+      },
+    })
+    const attrs = JSON.stringify([{ key: 'Name', value: 'Y' }, { key: '_print_files', value: PRINT_FILES }])
+    await prisma.order.create({
+      data: {
+        id: TPL_ORDER_ID, projectId: 'proj_dtt', storeId, shopifyOrderNumber: '#DTT2', financialStatus: 'PAID', currency: 'USD',
+        grossAmount: 1, expectedPayout: 1, totalFees: 0, refundedAmount: 0, placedAt: new Date('2026-10-01'),
+        pipelineStatus: 'PENDING_DESIGN', orderType: 'CUSTOM',
+        lines: { create: [
+          { shopifyLineId: 'f1', sku: 'F1', productTitle: 'Jersey', shopifyProductType: 'Baseball Jersey', qty: 1, linePosition: 1, unitPrice: 1,
+            resolvedSupplierId: TPL_SUP, customized: true, customAttributesJson: attrs },
+          { shopifyLineId: 'f2', sku: 'F2', productTitle: 'Jersey', shopifyProductType: 'Baseball Jersey', qty: 1, linePosition: 2, unitPrice: 1,
+            resolvedSupplierId: TPL_SUP, customized: true, customAttributesJson: attrs },
+        ] },
+      },
+    })
+    des2Id = (await prisma.appUser.upsert({ where: { email: 'des2@dt.test' }, create: { name: 'Des2', email: 'des2@dt.test', role: 'SUPPORT' }, update: {} })).id
+    DES2 = { id: des2Id, name: 'Des2', role: 'SUPPORT' }
+    await syncDesignTasks(TPL_ORDER_ID)
+  })
+
+  afterAll(async () => {
+    await prisma.order.deleteMany({ where: { id: TPL_ORDER_ID } })
+    await prisma.supplier.deleteMany({ where: { id: TPL_SUP } })
+    await prisma.appUser.deleteMany({ where: { email: 'des2@dt.test' } })
+  })
+
+  it('loadTask exposes the template areas as slots', async () => {
+    expect((await loadTask('DTT2_1'))!.slots).toEqual(['Front', 'Back'])
+  })
+
+  it('DONE is refused until every template area has artwork, then succeeds', async () => {
+    await transitionTask('DTT2_1', DES, { to: 'DOING' })
+    await transitionTask('DTT2_1', DES, { to: 'REVIEW' })
+    await expect(transitionTask('DTT2_1', LEAD, { to: 'DONE' })).rejects.toThrow('No artwork uploaded for: Front, Back')
+    await addArtwork('f1', 'Front')
+    await expect(transitionTask('DTT2_1', LEAD, { to: 'DONE' })).rejects.toThrow('No artwork uploaded for: Back')
+    expect((await loadTask('DTT2_1'))!.task.status).toBe('REVIEW')
+    await addArtwork('f1', 'Back')
+    const r = await transitionTask('DTT2_1', LEAD, { to: 'DONE' })
+    expect(r.task.status).toBe('DONE')
+    const front = await prisma.designArtwork.findFirst({ where: { orderId: TPL_ORDER_ID, shopifyLineId: 'f1', printArea: 'Front' } })
+    const line = await prisma.orderLine.findFirst({ where: { orderId: TPL_ORDER_ID, shopifyLineId: 'f1' } })
+    expect(line?.designDriveLink).toBe(`/api/design-studio/file/${front!.id}`)
+  })
+
+  it("a designer cannot take, decline, submit or ask on another designer's task", async () => {
+    await transitionTask('DTT2_2', LEAD, { to: 'ASSIGNED', assigneeId: desId })
+    const refusal = transitionTask('DTT2_2', DES2, { to: 'DOING' })
+    await expect(refusal).rejects.toThrow('Task đang thuộc về Des')
+    await expect(transitionTask('DTT2_2', DES2, { to: 'DOING' })).rejects.not.toThrow(/not found/i)
+    await expect(transitionTask('DTT2_2', DES2, { to: 'NEW' })).rejects.toThrow(/thuộc về Des/)
+    expect((await transitionTask('DTT2_2', DES, { to: 'DOING' })).task.status).toBe('DOING')
+    await expect(transitionTask('DTT2_2', DES2, { to: 'REVIEW' })).rejects.toThrow(/thuộc về Des/)
+    await expect(transitionTask('DTT2_2', DES2, { to: 'ASK_CUSTOMER', note: 'x' })).rejects.toThrow(/thuộc về Des/)
+    const t = (await loadTask('DTT2_2'))!.task
+    expect(t.status).toBe('DOING'); expect(t.assigneeId).toBe(desId)
+  })
+
+  it('a leader can reassign, and the new owner takes over', async () => {
+    const r = await transitionTask('DTT2_2', LEAD, { to: 'ASSIGNED', assigneeId: des2Id })
+    expect(r.task.assigneeId).toBe(des2Id)
+    expect((await transitionTask('DTT2_2', DES2, { to: 'DOING' })).task.status).toBe('DOING')
+    await expect(transitionTask('DTT2_2', DES, { to: 'REVIEW' })).rejects.toThrow('Task đang thuộc về Des2')
+    expect((await transitionTask('DTT2_2', LEAD, { to: 'REVIEW' })).task.status).toBe('REVIEW')
   })
 })

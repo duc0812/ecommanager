@@ -71,7 +71,7 @@ export default function ImagePanes({ detail }: { detail: TaskDetail }) {
     tpl: () => (
       <>
         {template && <CanvasTools bg={bg} onBg={setBg} guide={guide} onGuide={setGuide} hasGuide={!!template.guideImageUrl} />}
-        <TemplateCanvas template={template} line={line} bg={bg} guide={guide} />
+        <TemplateCanvas template={template} line={line} slots={detail.slots} bg={bg} guide={guide} />
       </>
     ),
     prev: () => (

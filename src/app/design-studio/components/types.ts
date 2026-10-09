@@ -59,7 +59,7 @@ export type DesignSettings = { slaCustomHours: number; slaNonCustomHours: number
 export type TaskDetail = {
   task: TaskRow; line: WorkspaceLine; order: OrderInfo; template: TemplateRow | null
   events: TaskEvent[]; assignable: { id: string; name: string }[]; settings: DesignSettings; prevStatus: TaskStatus | null
-  me: Me
+  slots: string[]; me: Me
 }
 
 export type TransitionBody = {

@@ -1,7 +1,7 @@
 'use client'
 import { useState, type FormEvent, type ReactNode } from 'react'
 import type { ArtworkRow, TaskDetail, TemplateRow, TransitionBody } from './types'
-import { allSlotsFilled, canTransition, newestArtwork, postJson, sharpnessRatio, sourceEngine, targetFor, taskUrl, type Tone } from './model'
+import { OWNED_MOVES, allSlotsFilled, canTransition, newestArtwork, postJson, sharpnessRatio, sourceEngine, targetFor, taskUrl, type Tone } from './model'
 import ArtworkSlots from './ArtworkSlots'
 import { Avatar, Card, ErrorBanner, ExtLink, Icon, TEXT_TONE, btn, btnPrimary, input } from './ui'
 
@@ -110,12 +110,13 @@ function Checklist({ detail, onChanged }: { detail: TaskDetail; onChanged: () =>
   const [manual, setManual] = useState<Record<number, boolean>>({})
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const filled = allSlotsFilled(line, template)
+  const filled = allSlotsFilled(detail)
   const ratio = template ? sharpnessRatio(template, newestArtwork(line)) : null
   const auto: boolean[] = [false, false, ratio !== null && ratio >= 0.95, false, filled]
   const checked = CHECKS.map((_, i) => manual[i] ?? auto[i])
   const done = checked.filter(Boolean).length
-  const can = (to: TransitionBody['to']) => canTransition(task.status, to, me.isLeader, task.readiness)
+  const owns = me.isLeader || !task.assigneeId || task.assigneeId === me.id
+  const can = (to: TransitionBody['to']) => canTransition(task.status, to, me.isLeader, task.readiness) && (owns || !OWNED_MOVES.includes(to))
 
   let action: { to: TransitionBody['to']; label: string; icon: string } | null = null
   if (can('DONE')) action = { to: 'DONE', label: me.isLeader ? 'Duyệt & gửi xưởng' : 'Duyệt nhanh & gửi xưởng', icon: 'send' }
@@ -204,7 +205,7 @@ export default function LowerGrid({ detail, onChanged }: { detail: TaskDetail; o
   return (
     <div className="grid grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] gap-md items-start">
       <div className="flex flex-col gap-md min-w-0">
-        <ArtworkSlots line={detail.line} template={detail.template} onUploaded={onChanged} />
+        <ArtworkSlots line={detail.line} slots={detail.slots} onUploaded={onChanged} />
         <SupplierCard detail={detail} />
       </div>
       <div className="flex flex-col gap-md min-w-0">

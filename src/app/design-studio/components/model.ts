@@ -1,6 +1,7 @@
-import type { ArtworkRow, Readiness, TaskRow, TaskStatus, TemplateArea, TemplateRow, WorkspaceLine } from './types'
+import type { ArtworkRow, Readiness, TaskDetail, TaskRow, TaskStatus, TemplateArea, TemplateRow, WorkspaceLine } from './types'
 
 export const OPEN_STATUSES: TaskStatus[] = ['NEW', 'ASSIGNED', 'DOING', 'REVIEW', 'REJECTED']
+export const OWNED_MOVES: TaskStatus[] = ['DOING', 'NEW', 'REVIEW', 'ASK_CUSTOMER']
 
 export function canTransition(from: TaskStatus, to: TaskStatus, isLeader: boolean, readiness: Readiness): boolean {
   if (from === to || from === 'CANCELLED') return false
@@ -21,10 +22,8 @@ export function isImage(a: ArtworkRow): boolean {
   return a.mimeType === 'image/png' || a.mimeType === 'image/jpeg'
 }
 
-export function slotNames(line: WorkspaceLine, template: TemplateRow | null): string[] {
-  if (!template || template.areas.length === 0) return line.printAreas
-  const names = template.areas.map(a => a.name)
-  return [...names, ...line.printAreas.filter(p => !names.includes(p))]
+export function slotNames(detail: Pick<TaskDetail, 'slots'>): string[] {
+  return detail.slots
 }
 
 export function versionsFor(line: WorkspaceLine, area: string): ArtworkRow[] {
@@ -35,8 +34,8 @@ export function newestFor(line: WorkspaceLine, area: string): ArtworkRow | undef
   return versionsFor(line, area)[0]
 }
 
-export function allSlotsFilled(line: WorkspaceLine, template: TemplateRow | null): boolean {
-  return slotNames(line, template).every(s => line.artworks.some(a => a.printArea === s))
+export function allSlotsFilled(detail: Pick<TaskDetail, 'line' | 'slots'>): boolean {
+  return slotNames(detail).every(s => detail.line.artworks.some(a => a.printArea === s))
 }
 
 export function newestArtwork(line: WorkspaceLine): ArtworkRow | undefined {

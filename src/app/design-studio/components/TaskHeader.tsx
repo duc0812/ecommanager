@@ -1,7 +1,7 @@
 'use client'
 import { useState, type FormEvent } from 'react'
 import type { TaskDetail, TransitionBody } from './types'
-import { allSlotsFilled, canTransition, layerOf, postJson, sourceEngine, taskUrl, timeLeft } from './model'
+import { OWNED_MOVES, allSlotsFilled, canTransition, layerOf, postJson, sourceEngine, taskUrl, timeLeft } from './model'
 import { ErrorBanner, Icon, Pill, READY_META, STATUS_META, btn, btnPrimary, btnWarn, card, input } from './ui'
 
 function hasNonAscii(s: string) { return /[^\x00-\x7F]/.test(s) }
@@ -65,7 +65,7 @@ function hoursUntil(iso: string | null, fallback: number): number {
 }
 
 export default function TaskHeader({ detail, holdCount, onChanged }: { detail: TaskDetail; holdCount: Record<string, number>; onChanged: () => void }) {
-  const { task, line, me, template, settings } = detail
+  const { task, line, me, settings } = detail
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [info, setInfo] = useState('')
@@ -80,8 +80,9 @@ export default function TaskHeader({ detail, holdCount, onChanged }: { detail: T
   const [remember, setRemember] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
 
-  const can = (to: TransitionBody['to']) => canTransition(task.status, to, me.isLeader, task.readiness)
-  const filled = allSlotsFilled(line, template)
+  const owns = me.isLeader || !task.assigneeId || task.assigneeId === me.id
+  const can = (to: TransitionBody['to']) => canTransition(task.status, to, me.isLeader, task.readiness) && (owns || !OWNED_MOVES.includes(to))
+  const filled = allSlotsFilled(detail)
   const ready = READY_META[task.readiness]
   const status = STATUS_META[task.status]
   const left = timeLeft(task)
@@ -135,7 +136,7 @@ export default function TaskHeader({ detail, holdCount, onChanged }: { detail: T
 
   const filesTitle = filled ? undefined : 'Upload đủ file cho mọi panel trước'
   const actions: JSX.Element[] = []
-  if (task.status === 'ASK_CUSTOMER') {
+  if (task.status === 'ASK_CUSTOMER' && (owns || !OWNED_MOVES.includes(detail.prevStatus ?? 'NEW'))) {
     actions.push(<button key="continue" type="button" className={btnPrimary} disabled={busy} onClick={() => go({ to: detail.prevStatus ?? 'NEW', continue: true })}><Icon name="play_arrow" className="text-[18px]" />Tiếp tục</button>)
   }
   if (can('ASK_CUSTOMER')) {
