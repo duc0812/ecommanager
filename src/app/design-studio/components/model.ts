@@ -134,3 +134,49 @@ export function postJson<T = any>(url: string, body: unknown) {
 export function taskUrl(key: string, suffix = ''): string {
   return `/api/design-studio/tasks/${encodeURIComponent(key)}${suffix}`
 }
+
+export async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text)
+    return true
+  } catch {
+    const ta = document.createElement('textarea')
+    ta.value = text
+    ta.setAttribute('readonly', '')
+    ta.style.position = 'fixed'
+    ta.style.opacity = '0'
+    document.body.appendChild(ta)
+    ta.select()
+    let ok = false
+    try { ok = document.execCommand('copy') } catch {}
+    document.body.removeChild(ta)
+    return ok
+  }
+}
+
+export type LightboxImage = { url: string; label: string; openUrl?: string | null; copyUrl?: string | null }
+
+export function artworkImage(a: ArtworkRow): LightboxImage {
+  return { url: a.url, label: `${a.printArea} · v${a.version} · ${a.fileName}`, openUrl: a.url, copyUrl: a.driveWebViewLink ?? a.url }
+}
+
+export function taskImages(detail: Pick<TaskDetail, 'line'>): LightboxImage[] {
+  const { line } = detail
+  const out: LightboxImage[] = []
+  const seen = new Set<string>()
+  const add = (m: LightboxImage) => { if (!seen.has(m.url)) { seen.add(m.url); out.push(m) } }
+  if (line.previewUrl) add({ url: line.previewUrl, label: 'Preview khách tạo lúc đặt hàng' })
+  if (line.imageUrl) add({ url: line.imageUrl, label: 'Ảnh variant (Shopify)' })
+  const arts = line.artworks.filter(isImage)
+  const areas = Array.from(new Set(arts.map(a => a.printArea)))
+  for (const area of areas) add(artworkImage(newestFor({ ...line, artworks: arts }, area)!))
+  for (const a of [...arts].sort((x, y) => x.printArea.localeCompare(y.printArea) || y.version - x.version)) add(artworkImage(a))
+  for (const f of line.sourcePrintFiles) add({ url: f.url, label: `File nguồn · ${f.printArea}` })
+  return out
+}
+
+export function canRemoveArtwork(a: Pick<ArtworkRow, 'uploadedById'>, me: { id: string; role: string }, status: TaskStatus): { ok: boolean; why?: string } {
+  if (status === 'DONE') return { ok: false, why: 'Task đã gửi xưởng — bấm "Sửa & gửi lại" trước khi xoá' }
+  if (me.role === 'SUPERADMIN' || me.role === 'ADMIN' || a.uploadedById === me.id) return { ok: true }
+  return { ok: false, why: 'Chỉ người upload hoặc admin được xoá file này' }
+}

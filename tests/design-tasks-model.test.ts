@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { timeLeft, allSlotsFilled } from '@/app/design-studio/components/model'
+import { timeLeft, allSlotsFilled, taskImages, canRemoveArtwork } from '@/app/design-studio/components/model'
 
 const NOW = Date.parse('2026-10-10T12:00:00Z')
 
@@ -20,5 +20,29 @@ describe('allSlotsFilled', () => {
     expect(allSlotsFilled({ slots: ['Front', 'Back'], line: { artworks: [art('Front')] } as any })).toBe(false)
     expect(allSlotsFilled({ slots: ['Front', 'Back'], line: { artworks: [art('Front'), art('Back')] } as any })).toBe(true)
     expect(allSlotsFilled({ slots: ['Front'], line: { artworks: [art('Front'), art('PRINT')] } as any })).toBe(true)
+  })
+})
+
+describe('taskImages', () => {
+  const art = (id: string, printArea: string, version: number, mimeType = 'image/png') =>
+    ({ id, printArea, version, fileName: `${id}.png`, mimeType, url: `/api/design-studio/file/${id}`, driveWebViewLink: null } as any)
+  it('lists preview, variant, newest artwork per area, older versions and source files once each', () => {
+    const line = {
+      previewUrl: 'https://cdn/p.png', imageUrl: 'https://cdn/v.png',
+      artworks: [art('a1', 'Front', 1), art('a2', 'Front', 2), art('b1', 'Back', 1), art('psd', 'Back', 2, 'image/vnd.adobe.photoshop')],
+      sourcePrintFiles: [{ printArea: 'Print', url: 'https://cdn/s.png' }, { printArea: 'Dup', url: 'https://cdn/p.png' }],
+    } as any
+    expect(taskImages({ line }).map(m => m.url)).toEqual([
+      'https://cdn/p.png', 'https://cdn/v.png', '/api/design-studio/file/a2', '/api/design-studio/file/b1', '/api/design-studio/file/a1', 'https://cdn/s.png',
+    ])
+  })
+})
+
+describe('canRemoveArtwork', () => {
+  it('allows the uploader or an admin until the task is DONE', () => {
+    expect(canRemoveArtwork({ uploadedById: 'u1' }, { id: 'u1', role: 'SUPPORT' }, 'DOING').ok).toBe(true)
+    expect(canRemoveArtwork({ uploadedById: 'u1' }, { id: 'u2', role: 'SUPPORT' }, 'DOING').ok).toBe(false)
+    expect(canRemoveArtwork({ uploadedById: null }, { id: 'u2', role: 'ADMIN' }, 'REVIEW').ok).toBe(true)
+    expect(canRemoveArtwork({ uploadedById: 'u1' }, { id: 'u1', role: 'SUPERADMIN' }, 'DONE').ok).toBe(false)
   })
 })

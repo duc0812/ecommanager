@@ -3,7 +3,8 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import { useRouter, useSearchParams } from 'next/navigation'
 import Sidebar from '@/components/Sidebar'
 import type { Me, Readiness, TaskDetail, TaskRow } from './components/types'
-import { postJson, requestJson, taskUrl } from './components/model'
+import { postJson, requestJson, taskImages, taskUrl } from './components/model'
+import { LightboxProvider } from './components/Lightbox'
 import Queue from './components/Queue'
 import TaskHeader from './components/TaskHeader'
 import ImagePanes from './components/ImagePanes'
@@ -13,7 +14,7 @@ import { ErrorBanner, Icon, Note, READY_META, btnPrimary, card } from './compone
 type Filter = 'ALL' | Readiness
 
 function Flags({ detail }: { detail: TaskDetail }) {
-  const { task, line } = detail
+  const { task } = detail
   return (
     <>
       {task.status === 'REJECTED' && (
@@ -21,8 +22,6 @@ function Flags({ detail }: { detail: TaskDetail }) {
           <b>Leader trả lại:</b> {task.rejectReasons.join(', ') || '—'}{task.rejectNote ? ` — ${task.rejectNote}` : ''}
         </Note>
       )}
-      {!line.supplier && <Note tone="bad" icon="error">Dòng này chưa map xưởng — không biết template / yêu cầu file.</Note>}
-      {line.designNote && <Note tone="idle" icon="sticky_note_2">{line.designNote}</Note>}
     </>
   )
 }
@@ -134,6 +133,7 @@ function DesignTasks() {
   }, [tasks])
 
   const current = detail && detail.task.taskKey === sel ? detail : null
+  const images = useMemo(() => (current ? taskImages(current) : []), [current])
   const chipCls = (on: boolean) => `inline-flex items-center gap-xs rounded-full border px-sm py-[2px] text-label-sm ${on ? 'bg-secondary/10 text-secondary border-transparent font-semibold' : 'bg-surface-container-lowest border-outline-variant/40 text-on-surface-variant'}`
 
   return (
@@ -177,12 +177,12 @@ function DesignTasks() {
             </div>
           )}
           {current && (
-            <>
+            <LightboxProvider images={images}>
+              <Flags detail={current} />
               <TaskHeader key={`h-${current.task.taskKey}`} detail={current} holdCount={holdCount} onChanged={reload} />
               <ImagePanes key={`i-${current.task.taskKey}`} detail={current} onChanged={reload} />
-              <Flags detail={current} />
               <LowerGrid key={`l-${current.task.taskKey}`} detail={current} onChanged={reload} />
-            </>
+            </LightboxProvider>
           )}
         </div>
       </div>
