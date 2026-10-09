@@ -226,6 +226,13 @@ export default function TaskHeader({ detail, holdCount, onChanged }: { detail: T
         <button type="button" onClick={refreshFromShopify} disabled={refreshing} className={btn}>
           <Icon name="sync" className="text-[16px]" />{refreshing ? 'Đang nạp…' : 'Nạp lại từ Shopify'}
         </button>
+        {detail.library && (
+          <Link href={`/design-studio/library/${encodeURIComponent(detail.library.key)}`} title={`Artwork Library cho template của dòng này (${detail.library.status})`}
+            className="inline-flex items-center gap-xs hover:underline">
+            <Icon name="photo_library" className="text-[16px]" />Artwork Library:
+            <Pill tone={detail.library.label === 'Sẵn sàng' ? 'ok' : detail.library.label === 'Đang đọc' ? 'brand' : 'warn'}>{detail.library.label}</Pill>
+          </Link>
+        )}
         {detail.profileRouteKey && (
           <Link href={productPageUrl(detail.profileRouteKey)} className={btn}>
             <Icon name="inventory_2" className="text-[16px]" />{detail.profile ? 'Hồ sơ sản phẩm' : 'Tạo hồ sơ sản phẩm'}

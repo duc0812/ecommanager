@@ -70,6 +70,7 @@ export type TaskDetail = {
   profile: TaskProfile | null; profileRouteKey: string | null
   events: TaskEvent[]; assignable: { id: string; name: string }[]; settings: DesignSettings; prevStatus: TaskStatus | null
   slots: string[]; me: Me; driveConnected: boolean
+  library: { key: string; entryId: string | null; status: string; label: 'Sẵn sàng' | 'Thiếu' | 'Đang đọc' } | null
 }
 
 export type TransitionBody = {

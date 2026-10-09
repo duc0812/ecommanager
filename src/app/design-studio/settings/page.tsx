@@ -7,6 +7,76 @@ import { requestJson } from '../components/model'
 import { Card, ErrorBanner, Icon, Note, btn, input } from '../components/ui'
 
 type KpiRow = { type: string; value: string }
+type TokenInfo = { configured: boolean; updatedAt: string | null }
+
+function WorkerTokenCard({ canManage }: { canManage: boolean }) {
+  const [info, setInfo] = useState<TokenInfo | null>(null)
+  const [token, setToken] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [copied, setCopied] = useState(false)
+
+  useEffect(() => {
+    let alive = true
+    void requestJson<TokenInfo>('/api/design-studio/settings/worker-token').then(r => {
+      if (!alive) return
+      if (r.ok) setInfo(r.data)
+      else setError(r.error)
+    })
+    return () => { alive = false }
+  }, [])
+
+  async function generate() {
+    if (info?.configured && !window.confirm('Tạo token mới sẽ vô hiệu token cũ. Worker đang chạy phải đổi sang token mới. Tiếp tục?')) return
+    setBusy(true); setError(''); setCopied(false)
+    const r = await requestJson<TokenInfo & { token: string }>('/api/design-studio/settings/worker-token', { method: 'POST' })
+    setBusy(false)
+    if (!r.ok) { setError(r.error); return }
+    setToken(r.data.token)
+    setInfo({ configured: r.data.configured, updatedAt: r.data.updatedAt })
+  }
+
+  async function revoke() {
+    if (!window.confirm('Thu hồi token? Worker sẽ không gọi được nữa cho đến khi có token mới.')) return
+    setBusy(true); setError('')
+    const r = await requestJson<TokenInfo>('/api/design-studio/settings/worker-token', { method: 'DELETE' })
+    setBusy(false)
+    if (!r.ok) { setError(r.error); return }
+    setToken('')
+    setInfo(r.data)
+  }
+
+  async function copy() {
+    try { await navigator.clipboard.writeText(token); setCopied(true) } catch { setError('Không chép được — chọn và chép tay') }
+  }
+
+  return (
+    <Card icon="key" title="Artwork worker token" right={info ? (info.configured ? `đang dùng · tạo ${info.updatedAt ? new Date(info.updatedAt).toLocaleDateString('en-US') : ''}` : 'chưa có') : ''}>
+      <p className="text-body-sm text-on-surface-variant">
+        Worker đọc PSD (<code className="font-mono">tools/artwork-worker</code>) chạy trên máy designer, gọi <code className="font-mono">/api/design-studio/worker/*</code> bằng token này
+        qua biến môi trường <code className="font-mono">DESIGN_WORKER_TOKEN</code>. Server chỉ lưu mã băm.
+      </p>
+      {token && (
+        <div className="flex flex-col gap-xs">
+          <Note tone="warn" icon="visibility">Token chỉ hiện một lần — chép ngay.</Note>
+          <div className="flex gap-xs">
+            <input className={`${input} flex-1 font-mono`} readOnly value={token} aria-label="Worker token" onFocus={e => e.currentTarget.select()} />
+            <button type="button" className={btn} onClick={() => void copy()}><Icon name="content_copy" className="text-[16px]" />{copied ? 'Đã chép' : 'Chép'}</button>
+          </div>
+        </div>
+      )}
+      {canManage ? (
+        <div className="flex gap-xs">
+          <button type="button" className={btn} disabled={busy} onClick={() => void generate()}><Icon name="add_moderator" className="text-[16px]" />{info?.configured ? 'Tạo token mới' : 'Tạo token'}</button>
+          {info?.configured && <button type="button" className={btn} disabled={busy} onClick={() => void revoke()}><Icon name="block" className="text-[16px]" />Thu hồi</button>}
+        </div>
+      ) : (
+        <p className="text-label-sm text-on-surface-variant">Chỉ Superadmin tạo hoặc thu hồi token.</p>
+      )}
+      <ErrorBanner msg={error} onClose={() => setError('')} />
+    </Card>
+  )
+}
 
 export default function DesignSettingsPage() {
   const { user } = useCurrentUser()
@@ -135,6 +205,10 @@ export default function DesignSettingsPage() {
               <p className="text-label-sm text-on-surface-variant">Dòng &quot;default&quot; áp dụng cho loại không có trong danh sách.</p>
             </Card>
           </div>
+        )}
+
+        {!loading && (
+          <div className="mt-md max-w-3xl"><WorkerTokenCard canManage={canSave} /></div>
         )}
 
         {canSave && !loading && (

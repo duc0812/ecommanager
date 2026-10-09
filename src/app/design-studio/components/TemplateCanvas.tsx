@@ -89,10 +89,11 @@ export function CanvasTools({ bg, onBg, guide, onGuide, hasGuide, guides, onGuid
 
 type AreaBox = { x: number; y: number; w: number; h: number }
 
-function Sheet({ template, bg, guide, guides, renderArea, overlay, legend, svgRef, highlight, frameProps, frameOverlay }: {
+function Sheet({ template, bg, guide, guides, renderArea, overlay, underlay, legend, svgRef, highlight, frameProps, frameOverlay }: {
   template: TemplateRow; bg: CanvasBg; guide: number; guides: Guides
   renderArea: (a: TemplateArea, box: AreaBox) => ReactNode
   overlay: (k: number) => ReactNode
+  underlay?: (k: number, W: number, H: number) => ReactNode
   legend: ReactNode
   svgRef?: Ref<SVGSVGElement>
   highlight?: AreaBox | null
@@ -120,6 +121,7 @@ function Sheet({ template, bg, guide, guides, renderArea, overlay, legend, svgRe
             </pattern>
           </defs>
           <rect width={W} height={H} fill={bgFill} className={bgCls} />
+          {underlay?.(k, W, H)}
           {template.areas.map(a => {
             const x = a.x * k, y = a.y * k, w = a.w * k, h = a.h * k
             return (
@@ -299,6 +301,49 @@ function StandaloneCanvas({ template, masterUrl, bg, guide }: { template: Templa
       renderArea={() => null}
       overlay={k => (showMaster && masterUrl && firstArea ? <FittedImage url={masterUrl} area={firstArea} size={size} label="master" k={k} /> : null)}
       legend={showMaster && <OverlayLegend>master artwork</OverlayLegend>}
+    />
+  )
+}
+
+export type CanvasText = {
+  key: string; label: string; box: { x: number; y: number; w: number; h: number }
+  text?: { value: string; font: string; sizePx: number; color: string; align: 'left' | 'center' | 'right'; anchor: 'top' | 'center' | 'bottom'; tracking: number; stroke?: { px: number; color: string } }
+}
+
+export function LibraryCanvas({ template, imageUrl, boxes, bg, guide, guides, showBoxes = true }: {
+  template: TemplateRow; imageUrl: string | null; boxes: CanvasText[]; bg: CanvasBg; guide: number; guides: Guides; showBoxes?: boolean
+}) {
+  return (
+    <Sheet
+      template={template} bg={bg} guide={guide} guides={guides}
+      renderArea={() => null}
+      underlay={(_k, w, h) => (imageUrl ? <image href={imageUrl} x={0} y={0} width={w} height={h} preserveAspectRatio="none" /> : null)}
+      overlay={k => (
+        <g>
+          {boxes.map(b => {
+            const x = b.box.x * k, y = b.box.y * k, w = b.box.w * k, h = b.box.h * k
+            const t = b.text
+            const tx = !t || t.align === 'left' ? x : t.align === 'right' ? x + w : x + w / 2
+            const ty = !t || t.anchor === 'top' ? y : t.anchor === 'bottom' ? y + h : y + h / 2
+            return (
+              <g key={b.key}>
+                {t && (
+                  <text x={tx} y={ty} fontFamily={`"${t.font}"`} fontSize={t.sizePx * k} fill={t.color}
+                    textAnchor={t.align === 'left' ? 'start' : t.align === 'right' ? 'end' : 'middle'}
+                    dominantBaseline={t.anchor === 'top' ? 'hanging' : t.anchor === 'bottom' ? 'text-after-edge' : 'central'}
+                    letterSpacing={(t.tracking / 1000) * t.sizePx * k}
+                    stroke={t.stroke?.color} strokeWidth={t.stroke ? t.stroke.px * 2 * k : undefined} paintOrder="stroke">
+                    {t.value}
+                  </text>
+                )}
+                {showBoxes && <rect x={x} y={y} width={w} height={h} fill="none" strokeWidth="1.5" strokeDasharray="6 3" className="stroke-secondary" />}
+                {showBoxes && <text x={x + 3} y={y - 4} fontSize="11" className="fill-secondary font-mono">{b.label}</text>}
+              </g>
+            )
+          })}
+        </g>
+      )}
+      legend={showBoxes && boxes.length > 0 && <span className="inline-flex items-center gap-xs text-secondary"><i className="inline-block w-3.5 border-t-2 border-dashed border-current" />khung trường custom</span>}
     />
   )
 }
