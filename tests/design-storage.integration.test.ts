@@ -6,6 +6,7 @@ import { prisma } from '@/lib/db'
 import { safeFileName, saveArtwork, readArtwork, storageRoot } from '@/lib/design-storage'
 
 const ORDER_ID = 'gid://test/Order/ds-store-1'
+const EVIL_ID = 'gid://test/Order/ds-store-evil'
 const SHOP = 'ds-store.myshopify.com'
 let lineId = ''
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ds-storage-'))
@@ -25,7 +26,7 @@ beforeAll(async () => {
   lineId = o.lines[0].id
 })
 afterAll(async () => {
-  await prisma.order.deleteMany({ where: { id: ORDER_ID } })
+  await prisma.order.deleteMany({ where: { id: { in: [ORDER_ID, EVIL_ID] } } })
   fs.rmSync(tmp, { recursive: true, force: true })
   delete process.env.DESIGN_STORAGE_DIR
 })
@@ -65,5 +66,30 @@ describe('saveArtwork / readArtwork', () => {
     const a = await saveArtwork({ lineId, printArea: 'NoExt', fileName: 'noext', mimeType: 'application/x-zip-compressed', bytes: Buffer.from('x'), uploadedById: null })
     const r = await readArtwork(a.id)
     expect(r?.mimeType).toBe('application/zip')
+  })
+  it('does not overwrite a file already on disk for the next version', async () => {
+    const taken = path.join(storageRoot(), 'design', 'DSS1', '1', 'Collide', 'v1-c.png')
+    fs.mkdirSync(path.dirname(taken), { recursive: true })
+    fs.writeFileSync(taken, 'keep')
+    const a = await saveArtwork({ lineId, printArea: 'Collide', fileName: 'c.png', mimeType: 'image/png', bytes: Buffer.from('new'), uploadedById: null })
+    expect(a.version).toBe(2)
+    expect(fs.readFileSync(taken, 'utf8')).toBe('keep')
+    const r = await readArtwork(a.id)
+    expect(fs.readFileSync(r!.absPath, 'utf8')).toBe('new')
+  })
+  it('keeps the written path under the storage root for hostile order numbers and areas', async () => {
+    const o = await prisma.order.create({
+      data: {
+        id: EVIL_ID, projectId: 'proj_ds_store', storeId: (await prisma.shopifyStore.findUniqueOrThrow({ where: { shop: SHOP } })).id,
+        shopifyOrderNumber: '../../../evil', financialStatus: 'PAID', currency: 'USD', grossAmount: 1, expectedPayout: 1,
+        totalFees: 0, refundedAmount: 0, placedAt: new Date('2026-10-01'),
+        lines: { create: [{ shopifyLineId: 'e1', sku: 'E', productTitle: 'Evil', qty: 1, linePosition: 1, unitPrice: 1 }] },
+      },
+      include: { lines: true },
+    })
+    const a = await saveArtwork({ lineId: o.lines[0].id, printArea: '../../up', fileName: '../../x.png', mimeType: 'image/png', bytes: Buffer.from('x'), uploadedById: null })
+    const r = await readArtwork(a.id)
+    expect(r).not.toBeNull()
+    expect(path.resolve(r!.absPath).startsWith(path.resolve(storageRoot()) + path.sep)).toBe(true)
   })
 })

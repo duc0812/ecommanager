@@ -48,31 +48,38 @@ export async function saveArtwork(input: {
   const mimeType = EXT_MIME[ext]
   const line = await prisma.orderLine.findUnique({
     where: { id: input.lineId },
-    select: { id: true, linePosition: true, order: { select: { shopifyOrderNumber: true } } },
+    select: { orderId: true, shopifyLineId: true, linePosition: true, order: { select: { shopifyOrderNumber: true } } },
   })
   if (!line) throw new Error('Line not found')
 
   const printArea = input.printArea.trim() || 'Artwork'
-  const last = await prisma.designArtwork.findFirst({
-    where: { orderLineId: line.id, printArea }, orderBy: { version: 'desc' }, select: { version: true },
-  })
-  const version = (last?.version ?? 0) + 1
   const fileName = safeFileName(input.fileName)
-  const rel = path.join(
-    'design',
-    line.order.shopifyOrderNumber.replace(/^#/, ''),
-    String(line.linePosition),
-    safeFileName(printArea),
-    `v${version}-${fileName}`,
-  )
-  const abs = path.join(storageRoot(), rel)
-  await fs.mkdir(path.dirname(abs), { recursive: true })
-  await fs.writeFile(abs, input.bytes)
+  const dir = path.join('design', safeFileName(line.order.shopifyOrderNumber.replace(/^#/, '')), String(line.linePosition), safeFileName(printArea))
+  const root = path.resolve(storageRoot())
+
+  let version = 0
+  let rel = ''
+  for (let attempt = 0; ; attempt++) {
+    const last = await prisma.designArtwork.findFirst({
+      where: { orderId: line.orderId, shopifyLineId: line.shopifyLineId, printArea }, orderBy: { version: 'desc' }, select: { version: true },
+    })
+    version = Math.max((last?.version ?? 0) + 1, version + 1)
+    rel = path.join(dir, `v${version}-${fileName}`)
+    const abs = path.resolve(root, rel)
+    if (!abs.startsWith(root + path.sep)) throw new Error('Invalid storage path')
+    await fs.mkdir(path.dirname(abs), { recursive: true })
+    try {
+      await fs.writeFile(abs, input.bytes, { flag: 'wx' })
+      break
+    } catch (e: any) {
+      if (e?.code !== 'EEXIST' || attempt > 0) throw e
+    }
+  }
 
   const row = await prisma.designArtwork.create({
     data: {
-      orderLineId: line.id, printArea, version, fileName, storagePath: rel.split(path.sep).join('/'),
-      size: input.bytes.length, mimeType, uploadedById: input.uploadedById,
+      orderId: line.orderId, shopifyLineId: line.shopifyLineId, printArea, version, fileName,
+      storagePath: rel.split(path.sep).join('/'), size: input.bytes.length, mimeType, uploadedById: input.uploadedById,
     },
   })
   return {

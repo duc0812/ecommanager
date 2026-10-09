@@ -47,6 +47,28 @@ beforeAll(async () => {
             { key: '_design', value: JSON.stringify({ v: 'cm1', layout: null, layers: [] }) },
           ]),
         },
+        {
+          shopifyLineId: 'dsw-5', sku: 'DSWS-SKU-4', productTitle: 'Socks 4', qty: 1, linePosition: 5, unitPrice: 50,
+          shopifyVariantId: 'gid://shopify/ProductVariant/789',
+          previewCdnUrl: 'javascript:alert(2)',
+          customAttributesJson: JSON.stringify([
+            { key: '_product_url', value: 'https://evil.example/products/fake' },
+            { key: '_customized_url', value: 'javascript:alert(1)' },
+            { key: '_print_files', value: JSON.stringify([
+              { print_area: 'Front', url: 'javascript:alert(3)' },
+              { print_area: 'Back', url: 'https://cdn.example/back.png' },
+            ]) },
+            { key: '_design', value: JSON.stringify({ v: 'cm1', layout: null, layers: [] }) },
+            { key: '_product_url', value: 'https://shop.example/products/real' },
+          ]),
+        },
+        {
+          shopifyLineId: 'dsw-6', sku: 'DSWS-SKU-5', productTitle: 'Socks 5', qty: 1, linePosition: 6, unitPrice: 50,
+          customAttributesJson: JSON.stringify([
+            { key: '_design', value: JSON.stringify({ v: 'cm1', layout: null, layers: [] }) },
+            { key: '_product_url', value: 'not a url' },
+          ]),
+        },
       ] },
     },
   })
@@ -79,5 +101,14 @@ describe('loadWorkspace', () => {
     expect(l3.customerDesignLink).not.toBeNull()
     expect(l3.customerDesignLink).toMatch(/^https:\/\/shop\.example\/products\/socks\?variant=123#cm-design=/)
     expect(l4.customerDesignLink).toBeNull()
+  })
+  it('drops URLs that are not http(s) and takes the last _product_url', async () => {
+    const ws = await loadWorkspace(ORDER_ID)
+    const l5 = ws!.lines[4]
+    expect(l5.customizedUrl).toBeNull()
+    expect(l5.previewUrl).toBeNull()
+    expect(l5.sourcePrintFiles).toEqual([{ printArea: 'Back', url: 'https://cdn.example/back.png' }])
+    expect(l5.customerDesignLink).toMatch(/^https:\/\/shop\.example\/products\/real\?variant=789#cm-design=/)
+    expect(ws!.lines[5].customerDesignLink).toBeNull()
   })
 })

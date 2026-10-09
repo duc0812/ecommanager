@@ -84,6 +84,23 @@ export function printAreasForLine(attrs: CustomAttribute[]): string[] {
   return names.length > 0 ? names : [DEFAULT_PRINT_AREA]
 }
 
+export function safeHttpUrl(v: string | null | undefined): string | null {
+  if (!v) return null
+  try {
+    const u = new URL(v)
+    return u.protocol === 'http:' || u.protocol === 'https:' ? v : null
+  } catch { return null }
+}
+
+function lastAttr(attrs: CustomAttribute[], key: string): string | null {
+  for (let i = attrs.length - 1; i >= 0; i--) if (attrs[i].key === key) return attrs[i].value
+  return null
+}
+
+function safeCustomerDesignLink(attrs: CustomAttribute[], productUrl: string | null, variantId: string | null): string | null {
+  try { return safeHttpUrl(customerDesignLink({ customAttributes: attrs, productUrl, variantId })) } catch { return null }
+}
+
 export function artworkUrl(id: string): string {
   return `/api/design-studio/file/${id}`
 }
@@ -101,10 +118,8 @@ export async function loadWorkspace(orderId: string): Promise<Workspace | null> 
     where: { id: orderId },
     include: {
       store: { include: { project: { select: { id: true, name: true } } } },
-      lines: {
-        orderBy: { linePosition: 'asc' },
-        include: { artworks: { orderBy: [{ printArea: 'asc' }, { version: 'desc' }] } },
-      },
+      lines: { orderBy: { linePosition: 'asc' } },
+      artworks: { orderBy: [{ printArea: 'asc' }, { version: 'desc' }] },
     },
   })
   if (!order) return null
@@ -132,7 +147,8 @@ export async function loadWorkspace(orderId: string): Promise<Workspace | null> 
     const isNonProduct = isNonProductLine(l)
     const entry = matchDesignEntry(l.sku, l.resolvedSupplierId, designEntries)
     const preview = l.previewCdnUrl ?? extractPreviewCdnUrl(attrs)
-    const productUrl = attrs.find(a => a.key === '_product_url')?.value ?? null
+    const productUrl = safeHttpUrl(lastAttr(attrs, '_product_url'))
+    const artworks = order.artworks.filter(a => a.shopifyLineId === l.shopifyLineId)
     return {
       id: l.id,
       linePosition: l.linePosition,
@@ -145,15 +161,18 @@ export async function loadWorkspace(orderId: string): Promise<Workspace | null> 
       variantOptions: parseVariantOptions(l.variantOptions),
       attributesLoaded: l.customAttributesJson != null,
       personalization: visibleCustomAttributes(attrs).filter(a => a.value !== preview),
-      customerDesignLink: customerDesignLink({ customAttributes: attrs, productUrl, variantId: l.shopifyVariantId }),
-      customizedUrl: attrs.find(a => a.key === '_customized_url')?.value ?? null,
-      previewUrl: preview,
-      sourcePrintFiles: sourcePrintFiles(attrs),
+      customerDesignLink: safeCustomerDesignLink(attrs, productUrl, l.shopifyVariantId),
+      customizedUrl: safeHttpUrl(attrs.find(a => a.key === '_customized_url')?.value),
+      previewUrl: safeHttpUrl(preview),
+      sourcePrintFiles: sourcePrintFiles(attrs).flatMap(f => {
+        const url = safeHttpUrl(f.url)
+        return url ? [{ printArea: f.printArea, url }] : []
+      }),
       supplier: l.resolvedSupplierId ? (supplierById.get(l.resolvedSupplierId) ?? null) : null,
       supplierSku: l.resolvedSupplierSku,
-      templateUrl: l.resolvedSupplierId && l.resolvedSupplierSku ? (templateByKey.get(`${l.resolvedSupplierId}::${l.resolvedSupplierSku}`) ?? null) : null,
-      masterArtworkUrl: l.sku ? (masterBySku.get(l.sku) ?? null) : null,
-      libraryDesignLink: entry?.designLink ?? null,
+      templateUrl: l.resolvedSupplierId && l.resolvedSupplierSku ? safeHttpUrl(templateByKey.get(`${l.resolvedSupplierId}::${l.resolvedSupplierSku}`)) : null,
+      masterArtworkUrl: l.sku ? safeHttpUrl(masterBySku.get(l.sku)) : null,
+      libraryDesignLink: safeHttpUrl(entry?.designLink),
       designStatus: lineDesignStatus({
         isNonProduct, previewCdnUrl: l.previewCdnUrl, designDriveLink: l.designDriveLink,
         hasLibraryDesign: !!entry, customized: l.customized,
@@ -161,7 +180,7 @@ export async function loadWorkspace(orderId: string): Promise<Workspace | null> 
       designDriveLink: l.designDriveLink,
       designNote: l.designNote,
       printAreas: printAreasForLine(attrs),
-      artworks: l.artworks.map(a => ({
+      artworks: artworks.map(a => ({
         id: a.id, printArea: a.printArea, version: a.version, fileName: a.fileName, size: a.size,
         mimeType: a.mimeType, uploadedById: a.uploadedById, createdAt: a.createdAt.toISOString(), url: artworkUrl(a.id),
       })),
@@ -180,39 +199,41 @@ export async function loadWorkspace(orderId: string): Promise<Workspace | null> 
 }
 
 export async function updateLine(lineId: string, patch: { note?: string | null; done?: boolean }) {
-  const line = await prisma.orderLine.findUnique({
-    where: { id: lineId },
-    include: { artworks: { orderBy: { version: 'desc' } } },
-  })
+  const line = await prisma.orderLine.findUnique({ where: { id: lineId } })
   if (!line) return null
 
   const data: { designNote?: string | null; designDriveLink?: string | null } = {}
   if (patch.note !== undefined) data.designNote = patch.note === null ? null : patch.note.trim() || null
   if (patch.done === true) {
-    const attrs = parseAttributes(line.customAttributesJson)
-    const slots = printAreasForLine(attrs)
-    const missing = slots.filter(s => !line.artworks.some(a => a.printArea === s))
+    const artworks = await prisma.designArtwork.findMany({
+      where: { orderId: line.orderId, shopifyLineId: line.shopifyLineId },
+      orderBy: { version: 'desc' },
+    })
+    const slots = printAreasForLine(parseAttributes(line.customAttributesJson))
+    const missing = slots.filter(s => !artworks.some(a => a.printArea === s))
     if (missing.length > 0) throw new Error(`No artwork uploaded for: ${missing.join(', ')}`)
-    const first = line.artworks.filter(a => a.printArea === slots[0]).sort((a, b) => b.version - a.version)[0]
+    const first = artworks.find(a => a.printArea === slots[0])!
     data.designDriveLink = artworkUrl(first.id)
   }
   if (patch.done === false) data.designDriveLink = null
 
   const updated = await prisma.orderLine.update({ where: { id: lineId }, data })
-  const order = await recomputeOrderDesign(line.orderId)
+  const order = patch.done === undefined
+    ? await prisma.order.findUniqueOrThrow({ where: { id: line.orderId }, select: { id: true, designReady: true, pipelineStatus: true } })
+    : await recomputeOrderDesign(line.orderId, patch.done)
   return {
     line: { id: updated.id, designDriveLink: updated.designDriveLink, designNote: updated.designNote },
     order,
   }
 }
 
-async function recomputeOrderDesign(orderId: string) {
-  const order = await prisma.order.findUnique({ where: { id: orderId }, include: { lines: true } })
+async function recomputeOrderDesign(orderId: string, markedDone: boolean) {
+  const order = await prisma.order.findUnique({ where: { id: orderId }, include: { lines: { orderBy: { linePosition: 'asc' } } } })
   if (!order) throw new Error('order vanished')
   const productLines = order.lines.filter(l => !isNonProductLine(l))
-  const designLines = productLines.filter(l => l.customized || l.designDriveLink)
+  const designLines = productLines.filter(l => !!l.resolvedSupplierId)
   const designReady = designLines.length > 0 && designLines.every(l => !!l.designDriveLink)
-  const currentStatus = (designReady && order.pipelineStatus === 'DESIGN_REJECTED'
+  const currentStatus = (markedDone && designReady && order.pipelineStatus === 'DESIGN_REJECTED'
     ? 'PENDING_DESIGN'
     : order.pipelineStatus) as PipelineStatus
   const pipelineStatus = autoDetectStatus({
@@ -226,12 +247,11 @@ async function recomputeOrderDesign(orderId: string) {
     hasDesignReady: designReady,
     currentStatus,
   })
-  const saved = await prisma.order.update({
+  return prisma.order.update({
     where: { id: orderId },
     data: { designReady, pipelineStatus, designDriveLink: designReady ? (designLines[0]?.designDriveLink ?? null) : order.designDriveLink },
     select: { id: true, designReady: true, pipelineStatus: true },
   })
-  return saved
 }
 
 export async function applyLineProps(orderId: string, props: ShopifyOrderLineProps[]) {

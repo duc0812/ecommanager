@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseAttributes, printAreasForLine, sourcePrintFiles } from '@/lib/design-studio'
+import { parseAttributes, printAreasForLine, safeHttpUrl, sourcePrintFiles } from '@/lib/design-studio'
 
 const PF = JSON.stringify([
   { print_area: 'Front', url: 'https://cdn.example/front.png' },
@@ -44,5 +44,18 @@ describe('printAreasForLine', () => {
   it('dedupes repeated area names', () => {
     const dup = JSON.stringify([{ print_area: 'print', url: 'a' }, { print_area: 'print', url: 'b' }])
     expect(printAreasForLine([{ key: '_print_files', value: dup }])).toEqual(['print'])
+  })
+})
+
+describe('safeHttpUrl', () => {
+  it('keeps http(s) URLs and drops everything else', () => {
+    expect(safeHttpUrl('https://x.y/p')).toBe('https://x.y/p')
+    expect(safeHttpUrl('http://x.y/p')).toBe('http://x.y/p')
+    expect(safeHttpUrl('javascript:alert(1)')).toBeNull()
+    expect(safeHttpUrl('JavaScript:alert(1)')).toBeNull()
+    expect(safeHttpUrl('data:text/html,<b>x</b>')).toBeNull()
+    expect(safeHttpUrl('not a url')).toBeNull()
+    expect(safeHttpUrl(null)).toBeNull()
+    expect(safeHttpUrl(undefined)).toBeNull()
   })
 })

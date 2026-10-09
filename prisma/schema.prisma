@@ -380,6 +380,7 @@ model Order {
   updatedAt            DateTime    @updatedAt
   lines                OrderLine[]
   shipments            Shipment[]
+  artworks             DesignArtwork[]
   shippingZone         String?
   shippingName         String?
   shippingAddress1     String?
@@ -429,7 +430,6 @@ model OrderLine {
   customized              Boolean   @default(false)
   customAttributesJson    String?
   designNote              String?
-  artworks                DesignArtwork[]
   @@index([sku])
   @@index([shopifyVariantId])
   @@index([orderId])
@@ -437,19 +437,20 @@ model OrderLine {
 }
 
 model DesignArtwork {
-  id           String    @id @default(cuid())
-  orderLineId  String
-  orderLine    OrderLine @relation(fields: [orderLineId], references: [id], onDelete: Cascade)
-  printArea    String
-  version      Int
-  fileName     String
-  storagePath  String
-  size         Int
-  mimeType     String
-  uploadedById String?
-  createdAt    DateTime  @default(now())
-  @@unique([orderLineId, printArea, version])
-  @@index([orderLineId])
+  id            String   @id @default(cuid())
+  orderId       String
+  order         Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  shopifyLineId String
+  printArea     String
+  version       Int
+  fileName      String
+  storagePath   String
+  size          Int
+  mimeType      String
+  uploadedById  String?
+  createdAt     DateTime @default(now())
+  @@unique([orderId, shopifyLineId, printArea, version])
+  @@index([orderId])
 }
 
 model Shipment {
