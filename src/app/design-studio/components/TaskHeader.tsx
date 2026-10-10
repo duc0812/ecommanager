@@ -8,6 +8,8 @@ import {
 import { buildChecklist, type CheckItem, type CheckState } from './checklist'
 import { ARTWORK_ACCEPT, useArtworkUpload } from './useArtworkUpload'
 import { ErrorBanner, Icon, Pill, READY_META, STATUS_META, btn, btnPrimary, btnWarn, card, input } from './ui'
+import { isPgprintsSupplier } from '@/lib/pgprints-shared'
+import PgprintsPushModal from '@/components/PgprintsPushModal'
 
 function hasNonAscii(s: string) { return /[^\x00-\x7F]/.test(s) }
 
@@ -130,6 +132,7 @@ export default function TaskHeader({ detail, holdCount, onChanged }: { detail: T
   const [dueHours, setDueHours] = useState(() => String(hoursUntil(task.dueAt, task.slaHours)))
   const [assignNote, setAssignNote] = useState('')
   const [refreshing, setRefreshing] = useState(false)
+  const [pgOpen, setPgOpen] = useState(false)
   const up = useArtworkUpload(line.id, detail.driveConnected, onChanged)
   const uploadInput = useRef<HTMLInputElement>(null)
   const uploadArea = useRef('')
@@ -250,6 +253,9 @@ export default function TaskHeader({ detail, holdCount, onChanged }: { detail: T
   } else if (task.status === 'REVIEW' && !me.isLeader) {
     flow.push(<button key="wait" type="button" className={btnPrimary} disabled><Icon name="hourglass_top" className="text-[18px]" />Chờ leader duyệt</button>)
   }
+  if (task.status === 'DONE' && me.isLeader && isPgprintsSupplier(line.supplier)) {
+    flow.push(<button key="pgprints" type="button" className={btnPrimary} onClick={() => setPgOpen(true)}><Icon name="local_shipping" className="text-[18px]" />Gửi PGprints</button>)
+  }
   if (task.status === 'DONE' && can('DOING')) {
     flow.push(<button key="reopen" type="button" className={btn} disabled={busy} onClick={() => go({ to: 'DOING' })}><Icon name="edit" className="text-[18px]" />Sửa & gửi lại</button>)
   }
@@ -295,6 +301,7 @@ export default function TaskHeader({ detail, holdCount, onChanged }: { detail: T
         )}
         {info && <span role="status" className="text-label-sm text-on-surface-variant">{info}</span>}
         <ErrorBanner msg={error} onClose={() => setError('')} />
+        {pgOpen && <PgprintsPushModal orderId={task.orderId} onClose={() => setPgOpen(false)} onChanged={onChanged} />}
 
         {panel === 'reject' && (
           <div className="flex flex-col gap-sm p-sm rounded-lg bg-surface-container-low border border-outline-variant/20">

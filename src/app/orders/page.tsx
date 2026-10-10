@@ -4,6 +4,7 @@ import Sidebar from '@/components/Sidebar'
 import { PIPELINE_STATUSES, STATUS_LABELS, STATUS_COLORS, type PipelineStatus } from '@/lib/pipeline-status'
 import { computeWarnings, WARNING_TYPES, WARNING_META, type WarningType } from '@/lib/order-warnings'
 import { DESIGN_STATUS_META, type LineDesignStatus } from '@/lib/design-status'
+import PgprintsPushModal from '@/components/PgprintsPushModal'
 
 const DESIGN_STATUS_ORDER: LineDesignStatus[] = ['PENDING', 'LIBRARY', 'DONE']
 
@@ -68,6 +69,7 @@ type OrderRow = {
   trelloCardId: string | null
   trelloCardUrl: string | null
   designReady: boolean
+  pgprints: { candidate: boolean; push: { status: 'SENDING' | 'CREATED' | 'FAILED' | 'CANCELLED'; supplierOrderCode: string | null } | null } | null
 }
 
 type Summary = {
@@ -118,6 +120,7 @@ export default function OrdersPage() {
   const [designFilter, setDesignFilter] = useState<'ALL' | 'HAS' | 'MISSING'>('ALL')
   const [trelloFilter, setTrelloFilter] = useState<'ALL' | 'CREATED' | 'NOT_CREATED'>('ALL')
   const [selectedOrder, setSelectedOrder] = useState<OrderRow | null>(null)
+  const [pgOrderId, setPgOrderId] = useState<string | null>(null)
   const [editingLineId, setEditingLineId] = useState<string | null>(null)
   const [editCost, setEditCost] = useState('')
   const [savingLineCost, setSavingLineCost] = useState(false)
@@ -324,6 +327,37 @@ export default function OrdersPage() {
         timeZone: zone,
       }).format(dt),
     }
+  }
+
+  const pgprintsButton = (o: OrderRow) => {
+    const pg = o.pgprints
+    if (!pg) return null
+    const live = pg.push && (pg.push.status === 'CREATED' || pg.push.status === 'SENDING')
+    if (live) {
+      return (
+        <button
+          type="button"
+          onClick={() => setPgOrderId(o.id)}
+          title="Xem đơn bên PGprints"
+          className="mt-[3px] inline-flex max-w-full items-center gap-[3px] rounded bg-tertiary/15 px-xs py-[2px] text-label-sm text-tertiary"
+        >
+          <span className="material-symbols-outlined text-[14px]">{pg.push!.status === 'CREATED' ? 'check_circle' : 'help'}</span>
+          <span className="truncate font-mono">{pg.push!.supplierOrderCode ?? 'PGprints ?'}</span>
+        </button>
+      )
+    }
+    if (!pg.candidate || !o.designReady) return null
+    return (
+      <button
+        type="button"
+        onClick={() => setPgOrderId(o.id)}
+        title={pg.push?.status === 'FAILED' ? 'Lần gửi trước thất bại — mở để xem và gửi lại' : 'Xem trước và gửi đơn sang PGprints'}
+        className="mt-[3px] inline-flex items-center gap-[3px] rounded bg-secondary px-xs py-[2px] text-label-sm text-on-secondary whitespace-nowrap"
+      >
+        <span className="material-symbols-outlined text-[14px]">local_shipping</span>
+        Gửi PGprints
+      </button>
+    )
   }
 
   const titleCaseStatus = (status: string | null | undefined) =>
@@ -721,10 +755,13 @@ export default function OrdersPage() {
                       {titleCaseStatus(o.fulfillmentStatus)}
                     </span>
                   </td>
-                  <td className="px-sm py-sm truncate">
-                    {o.defaultSupplier?.name ?? (
-                      <span className="text-error text-label-sm">unmapped</span>
-                    )}
+                  <td className="px-sm py-sm">
+                    <div className="truncate">
+                      {o.defaultSupplier?.name ?? (
+                        <span className="text-error text-label-sm">unmapped</span>
+                      )}
+                    </div>
+                    {pgprintsButton(o)}
                   </td>
                   <td className="px-sm py-sm">
                     <span className="font-mono text-label-sm">{o.shippingZone ?? '—'}</span>
@@ -849,13 +886,16 @@ export default function OrdersPage() {
                     </span>
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setSelectedOrder(null)}
-                  className="rounded-lg border border-outline-variant/40 px-md py-xs text-label-md"
-                >
-                  Close
-                </button>
+                <div className="flex items-center gap-sm">
+                  {pgprintsButton(selectedOrder)}
+                  <button
+                    type="button"
+                    onClick={() => setSelectedOrder(null)}
+                    className="rounded-lg border border-outline-variant/40 px-md py-xs text-label-md"
+                  >
+                    Close
+                  </button>
+                </div>
               </div>
 
               <div className="grid gap-lg p-lg lg:grid-cols-[1fr_320px]">
@@ -998,6 +1038,8 @@ export default function OrdersPage() {
             </div>
           </div>
         )}
+
+        {pgOrderId && <PgprintsPushModal orderId={pgOrderId} onClose={() => setPgOrderId(null)} onChanged={load} />}
       </main>
     </div>
   )

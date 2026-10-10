@@ -43,7 +43,7 @@ export type WorkspaceLine = {
   previewUrl: string | null
   imageUrl: string | null
   sourcePrintFiles: { printArea: string; url: string }[]
-  supplier: { id: string; name: string; code: string } | null
+  supplier: { id: string; name: string; code: string; apiType?: string | null } | null
   supplierSku: string | null
   templateUrl: string | null
   masterArtworkUrl: string | null

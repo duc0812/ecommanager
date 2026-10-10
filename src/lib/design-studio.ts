@@ -30,7 +30,7 @@ export type WorkspaceLine = {
   previewUrl: string | null
   imageUrl: string | null
   sourcePrintFiles: SourcePrintFile[]
-  supplier: { id: string; name: string; code: string } | null
+  supplier: { id: string; name: string; code: string; apiType?: string | null } | null
   supplierSku: string | null
   templateUrl: string | null
   masterArtworkUrl: string | null
@@ -153,7 +153,7 @@ export async function loadWorkspace(orderId: string): Promise<Workspace | null> 
   const skus = Array.from(new Set(order.lines.map(l => l.sku).filter(Boolean) as string[]))
   const productIds = Array.from(new Set(order.lines.map(l => l.shopifyProductId).filter(Boolean) as string[]))
   const [suppliers, supplierProducts, skuDesigns, designEntries, profiles] = await Promise.all([
-    supplierIds.length ? prisma.supplier.findMany({ where: { id: { in: supplierIds } }, select: { id: true, name: true, code: true } }) : [],
+    supplierIds.length ? prisma.supplier.findMany({ where: { id: { in: supplierIds } }, select: { id: true, name: true, code: true, apiType: true } }) : [],
     supplierIds.length
       ? prisma.supplierProduct.findMany({
           where: { supplierId: { in: supplierIds }, sku: { in: order.lines.map(l => l.resolvedSupplierSku).filter(Boolean) as string[] } },
