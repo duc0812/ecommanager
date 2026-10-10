@@ -27,7 +27,21 @@ export async function loadOrdersForShipmentSync(storeId: string, since: Date) {
 
 // Idempotent upsert by (orderId, lineKey) so re-syncs refresh tracking without duplicating rows.
 export async function upsertOrderShipments(orderId: string, projectId: string, rows: BuiltShipment[]) {
+  const existing = await prisma.shipment.findMany({
+    where: { orderId },
+    select: { lineKey: true, shopifyFulfillmentId: true, trackingNumber: true },
+  })
+  const supplierTracked = new Set(existing.filter(e => !e.shopifyFulfillmentId && e.trackingNumber).map(e => e.lineKey))
   for (const r of rows) {
+    // A tracking number the supplier pushed (PGprints webhook) has no Shopify fulfillment behind it yet;
+    // it must survive re-syncs until Shopify reports its own fulfillment for the line.
+    if (!r.shopifyFulfillmentId && supplierTracked.has(r.lineKey)) {
+      await prisma.shipment.update({
+        where: { orderId_lineKey: { orderId, lineKey: r.lineKey } },
+        data: { shopifyLineId: r.shopifyLineId, sku: r.sku, productTitle: r.productTitle },
+      })
+      continue
+    }
     const data = {
       shopifyLineId: r.shopifyLineId,
       sku: r.sku,

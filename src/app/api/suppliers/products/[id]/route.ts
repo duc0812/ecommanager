@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { deleteProductMapping, upsertProductMapping } from '@/lib/repos/suppliers'
 import { prisma } from '@/lib/db'
 
+function cleanText(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim().slice(0, 200) : null
+}
+
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   const body = await req.json()
   const existing = await prisma.supplierProduct.findUnique({ where: { id: params.id } })
@@ -27,6 +31,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     maxProductionDays: body.maxProductionDays !== undefined ? body.maxProductionDays : existing.maxProductionDays,
     shippingByRegion: body.shippingByRegion !== undefined ? body.shippingByRegion : existing.shippingByRegion,
     textureOfMaterial: body.textureOfMaterial !== undefined ? body.textureOfMaterial : existing.textureOfMaterial,
+    ...(body.apiSku !== undefined ? { apiSku: cleanText(body.apiSku) } : {}),
+    ...(body.apiShipClass !== undefined ? { apiShipClass: cleanText(body.apiShipClass) } : {}),
   })
   return NextResponse.json(updated)
 }

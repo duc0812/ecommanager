@@ -183,6 +183,8 @@ export type ProductUpsertInput = {
   maxProductionDays?: number | null
   shippingByRegion?: string | null
   textureOfMaterial?: string | null
+  apiSku?: string | null
+  apiShipClass?: string | null
 }
 
 export async function upsertProductMapping(input: ProductUpsertInput) {
@@ -210,6 +212,8 @@ export async function upsertProductMapping(input: ProductUpsertInput) {
         maxProductionDays: input.maxProductionDays ?? null,
         shippingByRegion: input.shippingByRegion ?? null,
         textureOfMaterial: input.textureOfMaterial ?? null,
+        apiSku: input.apiSku ?? null,
+        apiShipClass: input.apiShipClass ?? null,
       },
       update: {
         baseCost: input.baseCost,
@@ -227,6 +231,8 @@ export async function upsertProductMapping(input: ProductUpsertInput) {
         ...(input.maxProductionDays !== undefined ? { maxProductionDays: input.maxProductionDays } : {}),
         ...(input.shippingByRegion !== undefined ? { shippingByRegion: input.shippingByRegion } : {}),
         ...(input.textureOfMaterial !== undefined ? { textureOfMaterial: input.textureOfMaterial } : {}),
+        ...(input.apiSku !== undefined ? { apiSku: input.apiSku } : {}),
+        ...(input.apiShipClass !== undefined ? { apiShipClass: input.apiShipClass } : {}),
       },
     })
     if (existing && existing.baseCost !== input.baseCost) {

@@ -79,3 +79,41 @@ describe('homePathFor', () => {
     expect(canCallApi('ADMIN', [], '/api/fulfillment/suppliers/s1/print-templates', 'GET')).toBe('forbidden')
   })
 })
+
+describe('PGprints API access', () => {
+  const token = 'a'.repeat(64)
+
+  it('the two public routes need no session, and nothing else under /api/public does', () => {
+    expect(canCallApi(null, [], `/api/public/artwork/${token}/main.png`, 'GET')).toBe('ok')
+    expect(canCallApi(null, [], '/api/public/pgprints/tracking', 'POST')).toBe('ok')
+    expect(canCallApi(null, [], '/api/public/pgprints/tracking', 'GET')).toBe('unauthenticated')
+    expect(canCallApi(null, [], '/api/public/pgprints/tracking/extra', 'POST')).toBe('unauthenticated')
+    expect(canCallApi(null, [], '/api/public/pgprints/settings', 'GET')).toBe('unauthenticated')
+    expect(canCallApi(null, [], '/api/public/artwork', 'GET')).toBe('unauthenticated')
+    expect(canCallApi(null, [], '/api/public', 'GET')).toBe('unauthenticated')
+    expect(canCallApi('SELLER', [], '/api/public/other', 'GET')).toBe('forbidden')
+  })
+
+  it('order readers may preview; only admins may push, cancel or refresh', () => {
+    const path = '/api/fulfillment/pgprints/orders/o1'
+    expect(canCallApi('SUPPORT', ['fulfillment_orders'], `${path}/preview`, 'GET')).toBe('ok')
+    expect(canCallApi('SUPPORT', ['fulfillment_export'], `${path}/preview`, 'GET')).toBe('ok')
+    expect(canCallApi('SELLER', ['design_tasks'], `${path}/preview`, 'GET')).toBe('forbidden')
+    expect(canCallApi('SUPPORT', DEFAULT_ROLE_PERMISSIONS.SUPPORT, `${path}/push`, 'POST')).toBe('forbidden')
+    expect(canCallApi('SUPPORT', DEFAULT_ROLE_PERMISSIONS.SUPPORT, `${path}/cancel`, 'POST')).toBe('forbidden')
+    expect(canCallApi('ADMIN', [], `${path}/push`, 'POST')).toBe('ok')
+    expect(canCallApi('ADMIN', [], `${path}/refresh`, 'POST')).toBe('ok')
+    expect(canCallApi(null, [], `${path}/push`, 'POST')).toBe('unauthenticated')
+  })
+
+  it('settings writes are superadmin-only; the connection test is admin', () => {
+    const perms = DEFAULT_ROLE_PERMISSIONS.ADMIN
+    expect(canCallApi('ADMIN', perms, '/api/fulfillment/pgprints/settings', 'PUT')).toBe('forbidden')
+    expect(canCallApi('ADMIN', perms, '/api/fulfillment/pgprints/settings', 'GET')).toBe('ok')
+    expect(canCallApi('ADMIN', perms, '/api/fulfillment/pgprints/settings/test', 'POST')).toBe('ok')
+    expect(canCallApi('SUPPORT', DEFAULT_ROLE_PERMISSIONS.SUPPORT, '/api/fulfillment/pgprints/settings/test', 'POST')).toBe('forbidden')
+    expect(canCallApi('SUPERADMIN', [], '/api/fulfillment/pgprints/settings', 'PUT')).toBe('ok')
+    expect(canCallApi('SELLER', ['fulfillment_suppliers'], '/api/fulfillment/pgprints/catalog', 'GET')).toBe('ok')
+    expect(canCallApi('SELLER', ['fulfillment_orders'], '/api/fulfillment/pgprints/catalog', 'GET')).toBe('forbidden')
+  })
+})

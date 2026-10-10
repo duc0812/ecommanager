@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { ordersWithComputedPL } from '@/lib/repos/reports'
 import { countOrders, type OrderFilter } from '@/lib/repos/orders'
 import { WARNING_TYPES, type WarningType } from '@/lib/order-warnings'
+import { pgprintsFlagsForOrders } from '@/lib/repos/pgprints-push'
 
 const DEFAULT_PAGE_SIZE = 50
 const MAX_PAGE_SIZE = 200
@@ -39,6 +40,8 @@ export async function GET(req: NextRequest) {
   ])
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
+  const flags = await pgprintsFlagsForOrders(orders)
+  const rows = orders.map(o => ({ ...o, pgprints: flags.get(o.id) ?? null }))
 
-  return NextResponse.json({ orders, count: orders.length, total, page, pageSize, totalPages })
+  return NextResponse.json({ orders: rows, count: rows.length, total, page, pageSize, totalPages })
 }
