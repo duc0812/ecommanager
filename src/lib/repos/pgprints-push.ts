@@ -153,7 +153,6 @@ export async function buildPush(orderId: string, opts: { withBalance?: boolean }
 
   const lines: PreviewLine[] = []
   const lineItems: PgprintsLineItem[] = []
-  const notes: { refId: string; note: string }[] = []
 
   for (const l of pushLines) {
     const refId = taskKeyFor(order.shopifyOrderNumber, l.linePosition)
@@ -207,7 +206,6 @@ export async function buildPush(orderId: string, opts: { withBalance?: boolean }
     const mockupUrl = httpsUrl(l.previewCdnUrl ?? l.imageUrl)
     if (!mockupUrl) warning('NO_MOCKUP', `${refId}: không có ảnh mockup (https) để gửi kèm`, refId)
     const note = l.designNote?.trim() || null
-    if (note) notes.push({ refId, note })
 
     lines.push({
       refId, lineId: l.id, linePosition: l.linePosition, productTitle: l.productTitle, variantTitle: l.variantTitle, quantity: l.qty,
@@ -246,9 +244,6 @@ export async function buildPush(orderId: string, opts: { withBalance?: boolean }
 
   let payload: PgprintsOrderPayload | null = null
   if (supplier && baseUrl && pushLines.length > 0) {
-    const productionNote = notes.length === 0
-      ? ''
-      : pushLines.length === 1 ? notes[0].note : notes.map(n => `${n.refId}: ${n.note}`).join('\n')
     payload = {
       order_id: externalOrderId,
       email,
@@ -262,7 +257,6 @@ export async function buildPush(orderId: string, opts: { withBalance?: boolean }
       customer: { first_name: customerName.first, last_name: customerName.last },
       line_items: lineItems,
       response_type: 'normal',
-      ...(productionNote ? { production_note: productionNote } : {}),
     }
   }
   const rawBody = payload ? serializeOrderPayload(payload) : null

@@ -212,7 +212,6 @@ describe('preview payload', () => {
         mockupImages: ['https://cdn.example.com/preview.png'],
       }],
       response_type: 'normal',
-      production_note: 'In đậm tên',
     })
     expect(body.payloadHash).toMatch(/^[0-9a-f]{64}$/)
     expect(body.issues.filter((i: any) => i.level === 'error')).toEqual([])
