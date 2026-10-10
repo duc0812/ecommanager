@@ -547,18 +547,24 @@ export async function refreshPush(orderId: string): Promise<{ push: PushView; fo
     })
     return { push: await viewOf(push.id), found: false, shipments: 0 }
   }
-  const landed = push.status === 'SENDING'
-  await prisma.supplierOrderPush.update({
-    where: { id: push.id },
-    data: {
-      lastSyncedAt, remoteStatus: remoteStatusOf(match),
-      supplierOrderCode: push.supplierOrderCode ?? match.pgcOrderId, supplierInternalId: push.supplierInternalId ?? match.id,
-      totalCost: match.totalCost ?? push.totalCost, shippingFee: match.shippingFee ?? push.shippingFee, handleFee: match.handleFee ?? push.handleFee,
-      ...(landed ? { status: 'CREATED', error: null } : {}),
-    },
-  })
+  // PGprints holds an order under our order_id, so a push we recorded as unanswered or refused did land after all.
+  const landed = push.status === 'SENDING' || push.status === 'FAILED'
+  try {
+    await prisma.supplierOrderPush.update({
+      where: { id: push.id },
+      data: {
+        lastSyncedAt, remoteStatus: remoteStatusOf(match),
+        supplierOrderCode: push.supplierOrderCode ?? match.pgcOrderId, supplierInternalId: push.supplierInternalId ?? match.id,
+        totalCost: match.totalCost ?? push.totalCost, shippingFee: match.shippingFee ?? push.shippingFee, handleFee: match.handleFee ?? push.handleFee,
+        ...(landed ? { status: 'CREATED', error: null, activeKey: activeKeyFor(push.orderId, push.supplierId) } : {}),
+      },
+    })
+  } catch (e: any) {
+    if (isUniqueViolation(e)) throw new PushError(DUPLICATE_MESSAGE, 409, 'DUPLICATE')
+    throw e
+  }
   if (landed) await markPushExported(push)
-  const shipments = push.status === 'CANCELLED' || push.status === 'FAILED' ? 0 : await upsertSupplierTracking(push, match.items)
+  const shipments = push.status === 'CANCELLED' ? 0 : await upsertSupplierTracking(push, match.items)
   return { push: await viewOf(push.id), found: true, shipments }
 }
 

@@ -614,6 +614,30 @@ describe('POST /api/public/pgprints/tracking', () => {
   })
 })
 
+describe('reconciling a refused create', () => {
+  it('a FAILED push whose order_id exists at PGprints becomes CREATED; one PGprints does not know stays FAILED', async () => {
+    const o = await makeOrder()
+    const pre = await (await preview(o.id)).json()
+    handler = call => call.path === '/app/v1/orders/create'
+      ? { status: 500, json: { success: false, message: 'Internal error' } }
+      : { status: 200, json: { success: true, data: {} } }
+    expect((await push(o.id, pre.payloadHash)).status).toBe(502)
+
+    handler = () => ({ status: 200, json: { success: true, data: [] } })
+    const missing = await (await refresh(o.id)).json()
+    expect(missing.found).toBe(false)
+    expect(missing.push.status).toBe('FAILED')
+
+    handler = () => ({ status: 200, json: { success: true, data: [{ id: 'int-late', pgcOrderId: 'PG-LATE', orderId: o.number, itemStatuses: ['cooling-off'], totalCost: 12 }] } })
+    const found = await (await refresh(o.id)).json()
+    expect(found.push).toMatchObject({ status: 'CREATED', supplierOrderCode: 'PG-LATE', totalCost: 12, error: null })
+    const order = await prisma.order.findUniqueOrThrow({ where: { id: o.id } })
+    expect(order.pipelineStatus).toBe('EXPORTED')
+    expect((await push(o.id, pre.payloadHash)).status).toBe(409)
+    expect(callsTo('/orders/create')).toHaveLength(1)
+  })
+})
+
 describe('"Cập nhật trạng thái"', () => {
   it('stores the remote status of one push', async () => {
     const o = await makeOrder()
