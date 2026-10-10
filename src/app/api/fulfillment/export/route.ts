@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { getTemplateById, parseTemplateColumns } from '@/lib/repos/templates'
-import { listOrdersWithLines } from '@/lib/repos/orders'
+import { listOrdersWithLines, markOrdersExported } from '@/lib/repos/orders'
 import { renderCsv, type CsvTemplate as RenderTemplate, type OrderForCsv } from '@/lib/csv-template'
 import { isNonProductLine } from '@/lib/order-lines'
 import { effectiveBaseCost } from '@/lib/order-profit'
@@ -126,18 +126,7 @@ export async function POST(req: NextRequest) {
   if (body.markExported && ordersForCsv.length > 0) {
     const exportedOrderNumbers = new Set(ordersForCsv.map(o => o.shopifyOrderNumber))
     const orderIds = orders.filter(o => exportedOrderNumbers.has(o.shopifyOrderNumber)).map(o => o.id)
-    if (orderIds.length > 0) {
-      // Only production-ready orders move to EXPORTED; pending design/mapping,
-      // on-hold, fulfilled and terminal orders keep their state.
-      await prisma.order.updateMany({
-        where: { id: { in: orderIds }, pipelineStatus: { in: ['READY_TO_PRODUCTION', 'EXPORTED'] } },
-        data: {
-          exportedAt: new Date(),
-          exportedToSupplierId: tmpl.supplierId,
-          pipelineStatus: 'EXPORTED',
-        },
-      })
-    }
+    await markOrdersExported(orderIds, tmpl.supplierId)
   }
 
   // If preview mode, return JSON; otherwise CSV with attachment header

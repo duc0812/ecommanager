@@ -97,6 +97,7 @@ export type UpsertOrderInput = {
   customerName: string | null
   shippingCountry: string | null
   shippingState: string | null
+  shippingStateCode?: string | null
   financialStatus: string
   fulfillmentStatus: string | null
   currency: string
@@ -188,6 +189,7 @@ export async function upsertOrderWithLines(input: UpsertOrderInput) {
         customerName: input.customerName,
         shippingCountry: input.shippingCountry,
         shippingState: input.shippingState,
+        shippingStateCode: input.shippingStateCode ?? null,
         financialStatus: input.financialStatus,
         fulfillmentStatus: input.fulfillmentStatus,
         currency: input.currency,
@@ -234,6 +236,7 @@ export async function upsertOrderWithLines(input: UpsertOrderInput) {
         shippingCity: input.shippingCity ?? null,
         shippingZip: input.shippingZip ?? null,
         shippingPhone: input.shippingPhone ?? null,
+        ...(input.shippingStateCode !== undefined ? { shippingStateCode: input.shippingStateCode } : {}),
         ...(input.pipelineStatus !== undefined ? { pipelineStatus: input.pipelineStatus } : {}),
         ...(input.orderType !== undefined ? { orderType: input.orderType } : {}),
         ...(input.trelloCardId !== undefined ? { trelloCardId: input.trelloCardId } : {}),
@@ -279,6 +282,22 @@ export async function upsertOrderWithLines(input: UpsertOrderInput) {
       }),
     }),
   ])
+}
+
+export const EXPORTABLE_PIPELINE_STATUSES: PipelineStatus[] = ['READY_TO_PRODUCTION', 'EXPORTED']
+
+// Only production-ready orders move to EXPORTED; pending design/mapping,
+// on-hold, fulfilled and terminal orders keep their state.
+export async function markOrdersExported(orderIds: string[], supplierId: string, exportedAt: Date = new Date()) {
+  if (orderIds.length === 0) return { count: 0 }
+  return prisma.order.updateMany({
+    where: { id: { in: orderIds }, pipelineStatus: { in: EXPORTABLE_PIPELINE_STATUSES } },
+    data: {
+      exportedAt,
+      exportedToSupplierId: supplierId,
+      pipelineStatus: 'EXPORTED',
+    },
+  })
 }
 
 export async function updateOrderStatus(orderId: string, status: PipelineStatus) {

@@ -48,6 +48,7 @@ export type ShopifyOrder = {
   customerName: string | null
   shippingCountry: string | null
   shippingState: string | null
+  shippingStateCode: string | null
   shippingName: string | null
   shippingAddress1: string | null
   shippingAddress2: string | null
@@ -87,6 +88,7 @@ query SyncOrders($cursor: String, $query: String) {
         country
         countryCodeV2
         province
+        provinceCode
       }
       taxLines { source priceSet { shopMoney { amount } } }
       lineItems(first: 50) {
@@ -185,6 +187,7 @@ export async function fetchOrdersPage(
       customerName: n.customer?.displayName ?? null,
       shippingCountry: n.shippingAddress?.countryCodeV2 ?? n.shippingAddress?.country ?? null,
       shippingState: n.shippingAddress?.province ?? null,
+      shippingStateCode: n.shippingAddress?.provinceCode ?? null,
       shippingName: n.shippingAddress?.name ?? null,
       shippingAddress1: n.shippingAddress?.address1 ?? null,
       shippingAddress2: n.shippingAddress?.address2 ?? null,

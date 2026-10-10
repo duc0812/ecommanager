@@ -294,6 +294,7 @@ export async function POST(req: NextRequest) {
         customerName: o.customerName,
         shippingCountry: o.shippingCountry,
         shippingState: o.shippingState,
+        shippingStateCode: o.shippingStateCode,
         financialStatus: o.financialStatus,
         fulfillmentStatus: o.fulfillmentStatus,
         currency: o.currency,
