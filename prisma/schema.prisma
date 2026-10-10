@@ -309,6 +309,7 @@ model Supplier {
   skuDesigns            SkuSupplierDesign[]
   printTemplates        PrintTemplate[]
   artworkEntries        ArtworkEntry[]
+  orderPushes           SupplierOrderPush[]
 }
 
 model SupplierProduct {
@@ -336,6 +337,8 @@ model SupplierProduct {
   textureOfMaterial   String?
   printTemplateId     String?
   printTemplate       PrintTemplate? @relation(fields: [printTemplateId], references: [id], onDelete: SetNull)
+  apiSku              String?
+  apiShipClass        String?
   baseSupplierMappings  ProductBaseSupplierMapping[]
   baseOverrides         ProductBaseOverride[]
   variantManualMappings VariantManualMapping[]
@@ -403,6 +406,8 @@ model Order {
   trelloCardUrl        String?
   designReady          Boolean     @default(false)
   designDriveLink      String?
+  shippingStateCode    String?
+  supplierPushes       SupplierOrderPush[]
   @@index([placedAt])
   @@index([pipelineStatus])
   @@index([defaultSupplierId])
@@ -471,6 +476,7 @@ model DesignArtwork {
   createdAt     DateTime @default(now())
   removedAt     DateTime?
   removedById   String?
+  publicToken   String?  @unique
   @@unique([orderId, shopifyLineId, printArea, version])
   @@index([orderId])
 }
@@ -611,6 +617,36 @@ model Shipment {
   @@index([trackingNumber])
   @@index([status])
   @@index([supplierId])
+}
+
+model SupplierOrderPush {
+  id                 String    @id @default(cuid())
+  orderId            String
+  order              Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  supplierId         String
+  supplier           Supplier  @relation(fields: [supplierId], references: [id])
+  externalOrderId    String    @unique
+  activeKey          String?   @unique                 // "<orderId>::<supplierId>" while SENDING/CREATED, null once FAILED/CANCELLED — one live push per order × supplier
+  supplierOrderCode  String?
+  supplierInternalId String?
+  status             String    @default("SENDING")     // SENDING | CREATED | FAILED | CANCELLED
+  remoteStatus       String?
+  totalCost          Float?
+  shippingFee        Float?
+  handleFee          Float?
+  requestJson        String
+  responseJson       String?
+  error              String?
+  pushedById         String?
+  pushedAt           DateTime  @default(now())
+  cancelledAt        DateTime?
+  lastSyncedAt       DateTime?
+  exportMarked       Boolean   @default(false)
+  prevExportJson     String?                           // order export state before this push marked it, restored on cancel
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  @@index([orderId, supplierId])
+  @@index([supplierOrderCode])
 }
 
 model CsvTemplate {
