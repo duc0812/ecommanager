@@ -4,6 +4,9 @@ import { useParams, usePathname } from 'next/navigation'
 import * as XLSX from 'xlsx'
 import Sidebar from '@/components/Sidebar'
 import { parseCsv } from '@/lib/csv-parser'
+import { isPgprintsSupplier } from '@/lib/pgprints-shared'
+import PgprintsSettingsCard from '@/components/PgprintsSettingsCard'
+import PgprintsCatalogLookup from '@/components/PgprintsCatalogLookup'
 
 type Supplier = {
   id: string
@@ -38,6 +41,8 @@ type Product = {
   shippingByRegion: string | null
   textureOfMaterial: string | null
   printTemplateId: string | null
+  apiSku: string | null
+  apiShipClass: string | null
 }
 
 type PrintTemplateOption = { id: string; name: string; widthPx: number; heightPx: number; guideImageUrl: string | null }
@@ -309,6 +314,7 @@ export default function SupplierSetupPage() {
   const [savingIds, setSavingIds] = useState<Set<string>>(new Set())
   const [printTemplates, setPrintTemplates] = useState<PrintTemplateOption[]>([])
   const [picker, setPicker] = useState<string | null>(null)
+  const [lookupId, setLookupId] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
   const loadSupplier = useCallback(async () => {
@@ -488,6 +494,22 @@ export default function SupplierSetupPage() {
     await loadProducts()
   }
 
+  const saveApiFields = async (p: Product, patch: { apiSku?: string; apiShipClass?: string }) => {
+    const changed = (patch.apiSku !== undefined && patch.apiSku.trim() !== (p.apiSku ?? ''))
+      || (patch.apiShipClass !== undefined && patch.apiShipClass.trim() !== (p.apiShipClass ?? ''))
+    if (!changed) return
+    const r = await fetch(`/api/suppliers/products/${p.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    })
+    if (!r.ok) { alert((await r.json().catch(() => ({}))).error ?? 'Không lưu được SKU API'); return }
+    await loadProducts()
+  }
+
+  const isPg = isPgprintsSupplier(supplier)
+  const colCount = isPg ? 13 : 11
+  const lookupTarget = lookupId ? products.find(p => p.id === lookupId) ?? null : null
   const templateById = new Map(printTemplates.map(t => [t.id, t]))
   const printTemplatesHref = `${suppliersPath}/${supplierId}/print-templates`
   const groupTemplateId = (group: Product[]) =>
@@ -538,6 +560,8 @@ export default function SupplierSetupPage() {
             ))}
           </div>
         )}
+
+        {isPg && <PgprintsSettingsCard />}
 
         {/* Import bar */}
         <div className="bg-surface-container-lowest rounded-lg border border-outline-variant/20 p-md mb-md flex items-center gap-lg flex-wrap">
@@ -798,6 +822,8 @@ export default function SupplierSetupPage() {
                     <div className="text-[10px] font-normal text-on-surface-variant">1st / add.</div>
                   </th>
                   <th className="px-sm py-xs text-on-surface-variant font-semibold">Template in</th>
+                  {isPg && <th className="px-sm py-xs text-on-surface-variant font-semibold">SKU API</th>}
+                  {isPg && <th className="px-sm py-xs text-on-surface-variant font-semibold">Ship class</th>}
                   <th className="w-8" />
                 </tr>
               </thead>
@@ -819,7 +845,7 @@ export default function SupplierSetupPage() {
                         else next.add(groupName)
                         return next
                       })}>
-                      <td colSpan={11} className="px-sm py-xs">
+                      <td colSpan={colCount} className="px-sm py-xs">
                         <div className="flex items-center gap-xs">
                           <svg viewBox="0 0 24 24" fill="currentColor"
                             className="w-4 h-4 text-secondary transition-transform duration-150 flex-shrink-0"
@@ -882,13 +908,35 @@ export default function SupplierSetupPage() {
                               )}
                             </div>
                           </td>
+                          {isPg && (
+                            <td className="px-sm py-sm">
+                              <div className="flex items-center gap-xs">
+                                <input key={`sku:${p.id}:${p.apiSku ?? ''}`} defaultValue={p.apiSku ?? ''} placeholder="chưa map" aria-label={`SKU API của ${p.sku}`}
+                                  onBlur={e => saveApiFields(p, { apiSku: e.target.value })}
+                                  onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur() }}
+                                  className={`w-[130px] border rounded px-xs py-[3px] font-mono text-xs ${p.apiSku ? '' : 'border-error/60'}`} />
+                                <button type="button" onClick={() => setLookupId(p.id)} title="Tra catalogue PGprints" aria-label={`Tra catalogue PGprints cho ${p.sku}`}
+                                  className="text-secondary hover:opacity-70 leading-none">
+                                  <span className="material-symbols-outlined text-[18px]">travel_explore</span>
+                                </button>
+                              </div>
+                            </td>
+                          )}
+                          {isPg && (
+                            <td className="px-sm py-sm">
+                              <input key={`ship:${p.id}:${p.apiShipClass ?? ''}`} defaultValue={p.apiShipClass ?? ''} placeholder="mặc định" aria-label={`Ship class của ${p.sku}`}
+                                onBlur={e => saveApiFields(p, { apiShipClass: e.target.value })}
+                                onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur() }}
+                                className="w-[120px] border rounded px-xs py-[3px] text-xs" />
+                            </td>
+                          )}
                           <td className="px-sm py-sm text-center">
                             <button onClick={() => deleteOne(p)} className="text-error text-label-sm hover:opacity-70">✕</button>
                           </td>
                         </tr>
                         {expandedIds.has(p.id) && expandForms[p.id] && (
                           <tr>
-                            <td colSpan={11} className="px-lg py-md bg-secondary/5 border-b border-secondary/20">
+                            <td colSpan={colCount} className="px-lg py-md bg-secondary/5 border-b border-secondary/20">
                               {/* Row 1: shipping by region */}
                               <div className="grid grid-cols-4 gap-md mb-sm">
                                 {[
@@ -950,7 +998,7 @@ export default function SupplierSetupPage() {
 
                 {products.length === 0 && (
                   <tr>
-                    <td colSpan={11} className="px-lg py-xl text-center text-on-surface-variant">
+                    <td colSpan={colCount} className="px-lg py-xl text-center text-on-surface-variant">
                       No products yet. Import a sheet or click Add product to add variants.
                     </td>
                   </tr>
@@ -959,6 +1007,14 @@ export default function SupplierSetupPage() {
             </table>
           </div>
         </div>
+
+        {isPg && lookupTarget && (
+          <PgprintsCatalogLookup
+            target={lookupTarget}
+            onPick={patch => saveApiFields(lookupTarget, patch)}
+            onClose={() => setLookupId(null)}
+          />
+        )}
       </main>
     </div>
   )
