@@ -1,6 +1,9 @@
 import type { LibraryProductStatus } from '@/lib/artwork-fields'
 import type { TaskLibraryState } from '@/lib/artwork-library-types'
 import type { RenderJobView } from '@/lib/artwork-render-eligibility'
+import type { HandoffCard, HandoffLine, HandoffState } from '@/lib/handoff-shared'
+
+export type { HandoffCard, HandoffLine, HandoffState }
 
 export type TaskStatus = 'NEW' | 'ASSIGNED' | 'DOING' | 'REVIEW' | 'REJECTED' | 'ASK_CUSTOMER' | 'DONE' | 'CANCELLED'
 export type Readiness = 'AUTO' | 'LOW' | 'MANUAL'
@@ -76,6 +79,7 @@ export type TaskDetail = {
   slots: string[]; me: Me; driveConnected: boolean
   library: TaskLibraryState | null
   autoRender: RenderJobView | null
+  handoff?: HandoffState | null
 }
 
 export type ReviewCard = { task: TaskRow; line: WorkspaceLine; slots: string[] }

@@ -1,8 +1,8 @@
 import { DEFAULT_ROLE_PERMISSIONS, FeaturePermission, UserRole } from '@/lib/roles'
 
 type ApiMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
-type ApiAccess = 'PUBLIC' | 'ANY' | 'SUPERADMIN' | 'ADMIN' | FeaturePermission[]
-type ApiRule = { prefix: string; exact?: boolean; methods?: ApiMethod[]; access: ApiAccess }
+type ApiAccess = 'PUBLIC' | 'ANY' | 'SUPERADMIN' | 'ADMIN' | FeaturePermission[] | { adminOr: FeaturePermission[] }
+type ApiRule = { prefix: string; suffix?: string; exact?: boolean; methods?: ApiMethod[]; access: ApiAccess }
 
 const READ: ApiMethod[] = ['GET']
 const WRITE: ApiMethod[] = ['POST', 'PUT', 'PATCH', 'DELETE']
@@ -35,10 +35,13 @@ export const API_ACCESS_RULES: ApiRule[] = [
   { prefix: '/api/fulfillment/pgprints/settings', methods: WRITE, access: 'SUPERADMIN' },
   { prefix: '/api/fulfillment/pgprints/settings', methods: READ, access: ['fulfillment_suppliers', 'fulfillment_orders', 'fulfillment_export'] },
   { prefix: '/api/fulfillment/pgprints/catalog', methods: READ, access: ['fulfillment_suppliers'] },
+  { prefix: '/api/fulfillment/pgprints/orders/', suffix: '/preview', methods: READ, access: { adminOr: ['fulfillment_orders', 'fulfillment_export'] } },
+  { prefix: '/api/fulfillment/pgprints/orders/', suffix: '/push', methods: WRITE, access: { adminOr: ['fulfillment_export'] } },
   { prefix: '/api/fulfillment/pgprints', methods: READ, access: ['fulfillment_orders', 'fulfillment_export'] },
   { prefix: '/api/fulfillment/pgprints', methods: WRITE, access: 'ADMIN' },
   { prefix: '/api/fulfillment/design-', access: ['fulfillment_design_library', 'fulfillment_orders'] },
   { prefix: '/api/design-studio/worker/', access: 'PUBLIC' },
+  { prefix: '/api/design-studio/orders/', suffix: '/handoff', methods: WRITE, access: { adminOr: ['fulfillment_export'] } },
   { prefix: '/api/design-studio', access: ['design_tasks', 'fulfillment_design_library', 'fulfillment_orders'] },
   { prefix: '/api/fulfillment/export', access: ['fulfillment_export'] },
   { prefix: '/api/fulfillment/mapping', access: ['fulfillment_mapping'] },
@@ -98,6 +101,7 @@ export const API_ACCESS_RULES: ApiRule[] = [
 function matchRule(rule: ApiRule, pathname: string, method: string) {
   const pathOk = rule.exact ? pathname === rule.prefix : pathname === rule.prefix || pathname.startsWith(rule.prefix)
   if (!pathOk) return false
+  if (rule.suffix && !pathname.endsWith(rule.suffix)) return false
   return !rule.methods || rule.methods.includes(method.toUpperCase() as ApiMethod)
 }
 
@@ -121,5 +125,6 @@ export function canCallApi(
   if (access === 'ANY') return 'ok'
   if (access === 'ADMIN') return role === 'ADMIN' ? 'ok' : 'forbidden'
   const granted = permissions ?? DEFAULT_ROLE_PERMISSIONS[role] ?? []
+  if (!Array.isArray(access)) return role === 'ADMIN' || access.adminOr.some(feature => granted.includes(feature)) ? 'ok' : 'forbidden'
   return access.some(feature => granted.includes(feature)) ? 'ok' : 'forbidden'
 }

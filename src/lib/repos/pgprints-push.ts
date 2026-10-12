@@ -3,7 +3,7 @@ import { prisma } from '@/lib/db'
 import { isNonProductLine } from '@/lib/order-lines'
 import { requiredSlotsFor, taskKeyFor, templateForLine, type TemplateRow } from '@/lib/design-tasks'
 import { artworkUrl } from '@/lib/design-studio'
-import { markOrdersExported } from '@/lib/repos/orders'
+import { logHandoffEvent, markPushExported } from '@/lib/repos/push-export'
 import { STATUS_LABELS, type PipelineStatus } from '@/lib/pipeline-status'
 import { retryOnBusy } from '@/lib/sqlite-busy'
 import { SHIPMENT_STATUS_FULFILLED, SHIPMENT_STATUS_PENDING } from '@/lib/tracking/build-shipments'
@@ -338,26 +338,6 @@ async function reservePush(input: { orderId: string; supplierId: string; externa
   }
 }
 
-async function markPushExported(push: { id: string; orderId: string; supplierId: string; pushedAt: Date }) {
-  const before = await prisma.order.findUnique({
-    where: { id: push.orderId }, select: { pipelineStatus: true, exportedAt: true, exportedToSupplierId: true },
-  })
-  const marked = await markOrdersExported([push.orderId], push.supplierId, push.pushedAt)
-  if (marked.count === 0 || !before) return false
-  await prisma.supplierOrderPush.update({
-    where: { id: push.id },
-    data: {
-      exportMarked: true,
-      prevExportJson: JSON.stringify({
-        pipelineStatus: before.pipelineStatus,
-        exportedAt: before.exportedAt ? before.exportedAt.toISOString() : null,
-        exportedToSupplierId: before.exportedToSupplierId,
-      }),
-    },
-  })
-  return true
-}
-
 async function viewOf(pushId: string): Promise<PushView> {
   const row = await prisma.supplierOrderPush.findUniqueOrThrow({ where: { id: pushId } })
   return (await toPushViews([row]))[0]
@@ -414,7 +394,8 @@ export async function pushOrder(orderId: string, input: { payloadHash: string; u
       responseJson: JSON.stringify(created.raw).slice(0, 200_000),
     },
   })
-  const exported = await markPushExported({ id: reserved.id, orderId, supplierId: built.supplierId, pushedAt: reserved.pushedAt })
+  const exported = await markPushExported({ id: reserved.id, orderId, supplierId: built.supplierId, pushedAt: reserved.pushedAt, pushedById: input.userId })
+  if (exported) await logHandoffEvent(orderId, `Chuyển supplier qua API (PGprints) — mã ${created.order.pgcOrderId ?? built.externalOrderId}`, input.userId)
   return { push: await viewOf(reserved.id), exported }
 }
 
@@ -441,7 +422,10 @@ export async function cancelPush(orderId: string): Promise<{ push: PushView; exp
   })
   let exportReverted = false
   if (r.count === 1 && push.exportMarked) {
-    let prev: { pipelineStatus?: string; exportedAt?: string | null; exportedToSupplierId?: string | null } = {}
+    let prev: {
+      pipelineStatus?: string; exportedAt?: string | null; exportedToSupplierId?: string | null
+      supplierHandoffAt?: string | null; supplierHandoffMode?: string | null; supplierHandoffById?: string | null
+    } = {}
     try { prev = JSON.parse(push.prevExportJson ?? '{}') } catch {}
     // Touch the order only while it still carries exactly the marking this push wrote.
     const reverted = await prisma.order.updateMany({
@@ -450,9 +434,13 @@ export async function cancelPush(orderId: string): Promise<{ push: PushView; exp
         pipelineStatus: prev.pipelineStatus ?? 'READY_TO_PRODUCTION',
         exportedAt: prev.exportedAt ? new Date(prev.exportedAt) : null,
         exportedToSupplierId: prev.exportedToSupplierId ?? null,
+        supplierHandoffAt: prev.supplierHandoffAt ? new Date(prev.supplierHandoffAt) : null,
+        supplierHandoffMode: prev.supplierHandoffAt ? (prev.supplierHandoffMode ?? null) : null,
+        supplierHandoffById: prev.supplierHandoffAt ? (prev.supplierHandoffById ?? null) : null,
       },
     })
     exportReverted = reverted.count === 1
+    if (exportReverted) await logHandoffEvent(orderId, 'Huỷ đơn bên PGprints — đơn trở lại chờ chuyển xưởng', null)
   }
   return { push: await viewOf(push.id), exportReverted }
 }

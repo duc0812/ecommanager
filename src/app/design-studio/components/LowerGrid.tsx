@@ -107,7 +107,7 @@ const CHECKS = [
 ]
 
 function Checklist({ detail, onChanged }: { detail: TaskDetail; onChanged: () => void }) {
-  const { task, line, me, template } = detail
+  const { task, line, template } = detail
   const [manual, setManual] = useState<Record<number, boolean>>({})
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')

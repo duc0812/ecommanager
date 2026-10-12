@@ -10,10 +10,11 @@ import TaskHeader from './components/TaskHeader'
 import ImagePanes from './components/ImagePanes'
 import LowerGrid from './components/LowerGrid'
 import ReviewGrid from './components/ReviewGrid'
+import HandoffGrid from './components/HandoffGrid'
 import { ErrorBanner, Icon, Note, READY_META, btnPrimary, card } from './components/ui'
 
 type Filter = 'ALL' | Readiness
-type Mode = 'work' | 'review'
+type Mode = 'work' | 'review' | 'handoff'
 
 function Flags({ detail }: { detail: TaskDetail }) {
   const { task } = detail
@@ -35,6 +36,7 @@ function DesignTasks() {
 
   const [tasks, setTasks] = useState<TaskRow[]>([])
   const [me, setMe] = useState<Me | null>(null)
+  const [handoffCount, setHandoffCount] = useState(0)
   const [listLoading, setListLoading] = useState(false)
   const [listError, setListError] = useState('')
   const [retrying, setRetrying] = useState(false)
@@ -74,7 +76,7 @@ function DesignTasks() {
     if (mine) qs.set('mine', '1')
     if (debouncedQ) qs.set('q', debouncedQ)
     const query = qs.toString()
-    const r = await requestJson<{ tasks: TaskRow[]; me: Me }>(`/api/design-studio/tasks${query ? `?${query}` : ''}`)
+    const r = await requestJson<{ tasks: TaskRow[]; me: Me; handoffCount?: number }>(`/api/design-studio/tasks${query ? `?${query}` : ''}`)
     if (id !== listReq.current) return
     setListLoading(false)
     if (!r.ok) {
@@ -93,6 +95,7 @@ function DesignTasks() {
     if (recovered) onRecovered.current()
     setTasks(r.data.tasks)
     setMe(r.data.me)
+    setHandoffCount(r.data.handoffCount ?? 0)
   }, [mine, debouncedQ])
 
   const loadDetail = useCallback(async (key: string) => {
@@ -197,6 +200,14 @@ function DesignTasks() {
             <Icon name="fact_check" className="text-[14px]" />Duyệt mẫu
             <span className={mode === 'review' ? 'font-semibold' : reviewCount > 0 ? 'font-bold' : 'font-normal'}>{reviewCount}</span>
           </button>
+          <button type="button" aria-pressed={mode === 'handoff'} onClick={() => setMode(mode === 'handoff' ? 'work' : 'handoff')}
+            title={mode === 'handoff' ? 'Quay lại màn làm task' : 'Các đơn đã duyệt hết design, chờ chuyển supplier (API hoặc lưu chờ xuất CSV)'}
+            className={`inline-flex items-center gap-xs rounded-full border px-sm py-[2px] text-label-sm ${mode === 'handoff'
+              ? 'bg-secondary text-on-secondary border-transparent font-semibold'
+              : handoffCount > 0 ? 'bg-emerald-100 text-emerald-900 border-emerald-300 font-semibold' : 'bg-surface-container-lowest border-outline-variant/40 text-on-surface-variant'}`}>
+            <Icon name="local_shipping" className="text-[14px]" />Chuyển xưởng
+            <span className={mode === 'handoff' ? 'font-semibold' : handoffCount > 0 ? 'font-bold' : 'font-normal'}>{handoffCount}</span>
+          </button>
         </div>
         <div className="ml-auto flex items-center gap-sm">
           {me && <span className="text-label-sm text-on-surface-variant">{me.name} · {me.isLeader ? 'Leader' : 'Designer'}</span>}
@@ -209,10 +220,12 @@ function DesignTasks() {
       {syncError && <div className="mb-md"><ErrorBanner msg={syncError} onClose={() => setSyncError('')} /></div>}
 
       <div className="grid grid-cols-[290px_minmax(0,1fr)] gap-md items-start">
-        <Queue tasks={visible} sel={mode === 'review' ? null : sel} onSelect={selectTask} q={q} onQ={setQ} loading={listLoading} error={listError} retrying={retrying}
+        <Queue tasks={visible} sel={mode === 'work' ? sel : null} onSelect={selectTask} q={q} onQ={setQ} loading={listLoading} error={listError} retrying={retrying}
           emptyText={filtered ? emptyText : 'Không có task'} onClearFilters={filtered ? clearFilters : null} />
         {mode === 'review' ? (
           <ReviewGrid mine={mine} q={debouncedQ} version={reviewVersion} onOpenTask={selectTask} onChanged={reload} />
+        ) : mode === 'handoff' ? (
+          <HandoffGrid q={debouncedQ} version={reviewVersion} onOpenTask={selectTask} onChanged={reload} />
         ) : (
         <div className="flex flex-col gap-md min-w-0">
           {!sel && !listLoading && !listError && (

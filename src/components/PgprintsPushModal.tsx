@@ -5,7 +5,7 @@ import { ErrorBanner, Icon, Note, Pill, btn, btnPrimary } from '@/app/design-stu
 import type { LightboxImage, Tone } from '@/app/design-studio/components/model'
 import type { PreviewFile, PreviewIssue, PushPreview, PushStatus, PushView } from '@/lib/pgprints-shared'
 
-type Preview = PushPreview & { canAct: boolean }
+type Preview = PushPreview & { canAct: boolean; canSend?: boolean }
 type Payload = {
   order_id: string
   email: string
@@ -198,7 +198,8 @@ export default function PgprintsPushModal({ orderId, onClose, onChanged }: { ord
   const errors = preview?.issues.filter(i => i.level === 'error') ?? []
   const active = preview?.activePush ?? null
   const pastPushes = preview?.history.filter(h => h.id !== active?.id) ?? []
-  const blockedReason = !preview ? '' : !preview.canAct ? 'Chỉ Admin được gửi đơn sang PGprints'
+  const canSend = !!preview && (preview.canSend ?? preview.canAct)
+  const blockedReason = !preview ? '' : !canSend ? 'Chỉ Admin hoặc người có quyền CSV Export được gửi đơn sang PGprints'
     : !preview.pushEnabled ? 'Chưa bật gửi đơn ở trang cài đặt xưởng Pgprints'
     : !preview.hasCredentials ? 'Chưa nhập Store ID / Secret key PGprints'
     : errors.length > 0 ? 'Sửa hết lỗi chặn gửi trước' : ''
@@ -360,7 +361,7 @@ export default function PgprintsPushModal({ orderId, onClose, onChanged }: { ord
                 <Icon name="refresh" className="text-[18px]" />{loading ? 'Đang tải…' : 'Dựng lại bản xem trước'}
               </button>
               {!confirming ? (
-                <button type="button" className={btnPrimary} disabled={!preview.canPush || !preview.canAct || !!busy} title={blockedReason || undefined} onClick={() => setConfirming(true)}>
+                <button type="button" className={btnPrimary} disabled={!preview.canPush || !canSend || !!busy} title={blockedReason || undefined} onClick={() => setConfirming(true)}>
                   <Icon name="send" className="text-[18px]" />Xác nhận gửi
                 </button>
               ) : (

@@ -395,7 +395,7 @@ describe('POST push', () => {
     expect(await prisma.supplierOrderPush.count({ where: { orderId: o.id } })).toBe(0)
   })
 
-  it('is admin-only and needs confirm + payloadHash', async () => {
+  it('is refused without admin or the CSV Export permission, and needs confirm + payloadHash', async () => {
     const o = await makeOrder()
     const body = await (await preview(o.id)).json()
     expect((await push(o.id, body.payloadHash, supportToken)).status).toBe(403)

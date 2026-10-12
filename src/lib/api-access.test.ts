@@ -94,13 +94,17 @@ describe('PGprints API access', () => {
     expect(canCallApi('SELLER', [], '/api/public/other', 'GET')).toBe('forbidden')
   })
 
-  it('order readers may preview; only admins may push, cancel or refresh', () => {
+  it('order readers may preview; admins and CSV Export holders may push; only admins cancel or refresh', () => {
     const path = '/api/fulfillment/pgprints/orders/o1'
     expect(canCallApi('SUPPORT', ['fulfillment_orders'], `${path}/preview`, 'GET')).toBe('ok')
     expect(canCallApi('SUPPORT', ['fulfillment_export'], `${path}/preview`, 'GET')).toBe('ok')
     expect(canCallApi('SELLER', ['design_tasks'], `${path}/preview`, 'GET')).toBe('forbidden')
-    expect(canCallApi('SUPPORT', DEFAULT_ROLE_PERMISSIONS.SUPPORT, `${path}/push`, 'POST')).toBe('forbidden')
+    expect(canCallApi('SUPPORT', DEFAULT_ROLE_PERMISSIONS.SUPPORT, `${path}/push`, 'POST')).toBe('ok')
+    expect(canCallApi('SUPPORT', ['fulfillment_export'], `${path}/push`, 'POST')).toBe('ok')
+    expect(canCallApi('SUPPORT', ['fulfillment_orders', 'design_tasks'], `${path}/push`, 'POST')).toBe('forbidden')
     expect(canCallApi('SUPPORT', DEFAULT_ROLE_PERMISSIONS.SUPPORT, `${path}/cancel`, 'POST')).toBe('forbidden')
+    expect(canCallApi('SUPPORT', DEFAULT_ROLE_PERMISSIONS.SUPPORT, `${path}/refresh`, 'POST')).toBe('forbidden')
+    expect(canCallApi('ADMIN', [], `${path}/preview`, 'GET')).toBe('ok')
     expect(canCallApi('ADMIN', [], `${path}/push`, 'POST')).toBe('ok')
     expect(canCallApi('ADMIN', [], `${path}/refresh`, 'POST')).toBe('ok')
     expect(canCallApi(null, [], `${path}/push`, 'POST')).toBe('unauthenticated')

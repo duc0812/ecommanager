@@ -8,8 +8,8 @@ import {
 import { buildChecklist, type CheckItem, type CheckState } from './checklist'
 import { ARTWORK_ACCEPT, useArtworkUpload } from './useArtworkUpload'
 import { ErrorBanner, Icon, Pill, READY_META, STATUS_META, btn, btnPrimary, btnWarn, card, input } from './ui'
-import { isPgprintsSupplier } from '@/lib/pgprints-shared'
-import PgprintsPushModal from '@/components/PgprintsPushModal'
+import { pushChipLabel } from '@/lib/handoff-shared'
+import HandoffButton from './HandoffButton'
 
 function hasNonAscii(s: string) { return /[^\x00-\x7F]/.test(s) }
 
@@ -132,7 +132,6 @@ export default function TaskHeader({ detail, holdCount, onChanged }: { detail: T
   const [dueHours, setDueHours] = useState(() => String(hoursUntil(task.dueAt, task.slaHours)))
   const [assignNote, setAssignNote] = useState('')
   const [refreshing, setRefreshing] = useState(false)
-  const [pgOpen, setPgOpen] = useState(false)
   const up = useArtworkUpload(line.id, detail.driveConnected, onChanged)
   const uploadInput = useRef<HTMLInputElement>(null)
   const uploadArea = useRef('')
@@ -253,8 +252,11 @@ export default function TaskHeader({ detail, holdCount, onChanged }: { detail: T
   } else if (task.status === 'REVIEW' && !me.canApprove) {
     flow.push(<button key="wait" type="button" className={btnPrimary} disabled><Icon name="hourglass_top" className="text-[18px]" />Chờ leader duyệt</button>)
   }
-  if (task.status === 'DONE' && me.isLeader && isPgprintsSupplier(line.supplier)) {
-    flow.push(<button key="pgprints" type="button" className={btnPrimary} onClick={() => setPgOpen(true)}><Icon name="local_shipping" className="text-[18px]" />Gửi PGprints</button>)
+  if (task.status === 'DONE' && detail.handoff) {
+    flow.push(
+      <HandoffButton key="handoff" orderId={task.orderId} state={detail.handoff} canHandoff={me.canHandoff}
+        onChanged={msg => { setError(''); if (msg) setInfo(msg); onChanged() }} onError={setError} />,
+    )
   }
   if (task.status === 'DONE' && can('DOING')) {
     flow.push(<button key="reopen" type="button" className={btn} disabled={busy} onClick={() => go({ to: 'DOING' })}><Icon name="edit" className="text-[18px]" />Sửa & gửi lại</button>)
@@ -288,6 +290,12 @@ export default function TaskHeader({ detail, holdCount, onChanged }: { detail: T
             <span title="Mapping, template và artwork gốc đã đủ cho mọi biến thể của sản phẩm"><Pill tone="ok" icon="inventory_2">Hồ sơ đủ</Pill></span>
           )}
           <Pill tone={left.tone} icon={left.icon}>{left.label}</Pill>
+          {detail.handoff?.push && <Pill tone="warn" icon="local_shipping">{pushChipLabel(detail.handoff.push)}</Pill>}
+          {detail.handoff?.handedOff && (
+            <Pill tone="ok" icon={detail.handoff.handedOff.mode === 'API' ? 'cloud_done' : 'inventory'}>
+              {detail.handoff.handedOff.mode === 'API' ? 'Đã chuyển supplier qua API' : 'Đã lưu chờ xuất CSV'}
+            </Pill>
+          )}
           <span className="flex-1 min-w-[200px] text-body-sm text-on-surface-variant">{task.productTitle}</span>
         </div>
         {groups.length > 0 && (
@@ -301,7 +309,11 @@ export default function TaskHeader({ detail, holdCount, onChanged }: { detail: T
         )}
         {info && <span role="status" className="text-label-sm text-on-surface-variant">{info}</span>}
         <ErrorBanner msg={error} onClose={() => setError('')} />
-        {pgOpen && <PgprintsPushModal orderId={task.orderId} onClose={() => setPgOpen(false)} onChanged={onChanged} />}
+        {task.status === 'DONE' && detail.handoff && !detail.handoff.handedOff && (detail.handoff.blocked || detail.handoff.apiNote) && (
+          <span className="text-label-sm text-on-surface-variant">
+            <Icon name="local_shipping" className="text-[14px]" /> Chuyển supplier: {detail.handoff.blocked ?? detail.handoff.apiNote}
+          </span>
+        )}
 
         {panel === 'reject' && (
           <div className="flex flex-col gap-sm p-sm rounded-lg bg-surface-container-low border border-outline-variant/20">

@@ -288,7 +288,10 @@ export const EXPORTABLE_PIPELINE_STATUSES: PipelineStatus[] = ['READY_TO_PRODUCT
 
 // Only production-ready orders move to EXPORTED; pending design/mapping,
 // on-hold, fulfilled and terminal orders keep their state.
-export async function markOrdersExported(orderIds: string[], supplierId: string, exportedAt: Date = new Date()) {
+export async function markOrdersExported(
+  orderIds: string[], supplierId: string, exportedAt: Date = new Date(),
+  handoff?: { mode: 'API' | 'CSV'; byId: string | null },
+) {
   if (orderIds.length === 0) return { count: 0 }
   return prisma.order.updateMany({
     where: { id: { in: orderIds }, pipelineStatus: { in: EXPORTABLE_PIPELINE_STATUSES } },
@@ -296,6 +299,7 @@ export async function markOrdersExported(orderIds: string[], supplierId: string,
       exportedAt,
       exportedToSupplierId: supplierId,
       pipelineStatus: 'EXPORTED',
+      ...(handoff ? { supplierHandoffAt: exportedAt, supplierHandoffMode: handoff.mode, supplierHandoffById: handoff.byId } : {}),
     },
   })
 }
