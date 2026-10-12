@@ -23,13 +23,13 @@ const AFTER_EXPORT = ['EXPORTED', 'FULFILLED']
 const PGPRINTS_NAME = 'PGprints'
 const MAX_CARDS = 60
 
-/** "Chờ chuyển xưởng": every design is approved, nothing was handed to the supplier yet, and the order is still open. */
+/** "Chờ chuyển xưởng": the order went through Design Studio, every design is approved, nothing was handed to the supplier yet, and the order is still open. */
 export function pendingHandoffWhere() {
   return {
     pipelineStatus: 'READY_TO_PRODUCTION',
     designReady: true,
     supplierHandoffAt: null,
-    designTasks: { none: OPEN_TASK },
+    designTasks: { none: OPEN_TASK, some: { status: 'DONE' } },
     AND: [NOT_FULFILLED, { financialStatus: { notIn: [...CLOSED_FINANCIAL, ...CLOSED_FINANCIAL.map(s => s.toLowerCase())] } }],
   }
 }
