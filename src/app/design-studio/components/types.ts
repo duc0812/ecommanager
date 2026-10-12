@@ -5,7 +5,7 @@ import type { RenderJobView } from '@/lib/artwork-render-eligibility'
 export type TaskStatus = 'NEW' | 'ASSIGNED' | 'DOING' | 'REVIEW' | 'REJECTED' | 'ASK_CUSTOMER' | 'DONE' | 'CANCELLED'
 export type Readiness = 'AUTO' | 'LOW' | 'MANUAL'
 
-export type Me = { id: string; name: string; role: string; isLeader: boolean }
+export type Me = { id: string; name: string; role: string; isLeader: boolean; canApprove: boolean; canHandoff: boolean }
 
 export type TaskRow = {
   id: string; taskKey: string; status: TaskStatus; readiness: Readiness; assigneeId: string | null; assigneeName: string | null
@@ -63,7 +63,7 @@ export type OrderInfo = {
 
 export type TaskEvent = { id: string; type: string; message: string; actorName: string | null; createdAt: string }
 
-export type DesignSettings = { slaCustomHours: number; slaNonCustomHours: number; kpiByType: Record<string, number>; rejectReasons: string[] }
+export type DesignSettings = { slaCustomHours: number; slaNonCustomHours: number; kpiByType: Record<string, number>; rejectReasons: string[]; designerCanApprove: boolean }
 
 export type LayerFit = 'shrink' | 'wrap' | 'none'
 export type LayerMapEntry = { field: string; layer: string; font?: string; maxChars?: number; fit: LayerFit }

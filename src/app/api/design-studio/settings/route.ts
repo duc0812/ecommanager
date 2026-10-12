@@ -13,7 +13,7 @@ export async function PUT(req: NextRequest) {
   if ('error' in auth) return auth.error
 
   const body = await req.json().catch(() => ({} as any))
-  const { slaCustomHours, slaNonCustomHours, kpiByType, rejectReasons } = body ?? {}
+  const { slaCustomHours, slaNonCustomHours, kpiByType, rejectReasons, designerCanApprove } = body ?? {}
 
   if (typeof slaCustomHours !== 'number' || slaCustomHours <= 0) {
     return NextResponse.json({ error: 'slaCustomHours must be > 0' }, { status: 400 })
@@ -33,10 +33,15 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: 'rejectReasons must be a non-empty array of strings' }, { status: 400 })
   }
 
+  if (designerCanApprove !== undefined && typeof designerCanApprove !== 'boolean') {
+    return NextResponse.json({ error: 'designerCanApprove must be a boolean' }, { status: 400 })
+  }
+
   const settings: DesignSettings = {
     slaCustomHours, slaNonCustomHours,
     kpiByType: kpiByType as Record<string, number>,
     rejectReasons: rejectReasons as string[],
+    designerCanApprove: designerCanApprove ?? (await getDesignSettings()).designerCanApprove,
   }
   await saveDesignSettings(settings)
   return NextResponse.json(settings)

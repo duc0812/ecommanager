@@ -21,7 +21,7 @@ function Flags({ detail }: { detail: TaskDetail }) {
     <>
       {task.status === 'REJECTED' && (
         <Note tone="bad" icon="undo">
-          <b>Leader trả lại:</b> {task.rejectReasons.join(', ') || '—'}{task.rejectNote ? ` — ${task.rejectNote}` : ''}
+          <b>Bị trả lại:</b> {task.rejectReasons.join(', ') || '—'}{task.rejectNote ? ` — ${task.rejectNote}` : ''}
         </Note>
       )}
     </>

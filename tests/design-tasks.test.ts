@@ -9,7 +9,7 @@ describe('taskKeyFor', () => {
 })
 
 describe('canTransition', () => {
-  const T = (...a: any[]) => canTransition(a[0], a[1], a[2])
+  const T = (...a: any[]) => canTransition(a[0], a[1], a[2], a[3])
   it('leader assigns, designer takes', () => {
     expect(T('NEW', 'ASSIGNED', 'LEADER')).toBe(true)
     expect(T('NEW', 'ASSIGNED', 'DESIGNER')).toBe(false)
@@ -22,12 +22,23 @@ describe('canTransition', () => {
     expect(T('REJECTED', 'REVIEW', 'DESIGNER')).toBe(true)
     expect(T('REVIEW', 'DONE', 'LEADER')).toBe(true)
     expect(T('REVIEW', 'DONE', 'DESIGNER')).toBe(false)
-    expect(T('REVIEW', 'DONE', 'DESIGNER', 'AUTO')).toBe(false)
-    expect(T('DOING', 'DONE', 'DESIGNER', 'AUTO')).toBe(false)
-    expect(T('REVIEW', 'DONE', 'LEADER', 'AUTO')).toBe(true)
-    expect(T('NEW', 'DONE', 'DESIGNER', 'AUTO')).toBe(false)
     expect(T('REVIEW', 'REJECTED', 'LEADER')).toBe(true)
     expect(T('REVIEW', 'REJECTED', 'DESIGNER')).toBe(false)
+  })
+  it('a designer holding the approve capability approves or returns a REVIEW task, and nothing else changes', () => {
+    expect(T('REVIEW', 'DONE', 'DESIGNER', true)).toBe(true)
+    expect(T('REVIEW', 'REJECTED', 'DESIGNER', true)).toBe(true)
+    expect(T('REVIEW', 'DONE', 'DESIGNER', false)).toBe(false)
+    expect(T('REVIEW', 'DONE', 'LEADER', false)).toBe(false)
+    expect(T('NEW', 'ASSIGNED', 'DESIGNER', true)).toBe(false)
+    expect(T('NEW', 'CANCELLED', 'DESIGNER', true)).toBe(false)
+  })
+  it('nobody skips REVIEW on the way to DONE', () => {
+    for (const from of ['NEW', 'ASSIGNED', 'DOING', 'REJECTED', 'ASK_CUSTOMER']) {
+      expect(T(from, 'DONE', 'DESIGNER', true)).toBe(false)
+      expect(T(from, 'DONE', 'LEADER', true)).toBe(false)
+      expect(T(from, 'REJECTED', 'DESIGNER', true)).toBe(false)
+    }
   })
   it('ask customer from any open status, continue handled by service', () => {
     for (const s of ['NEW', 'ASSIGNED', 'DOING', 'REVIEW', 'REJECTED']) expect(T(s, 'ASK_CUSTOMER', 'DESIGNER')).toBe(true)

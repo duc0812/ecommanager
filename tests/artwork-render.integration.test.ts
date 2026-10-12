@@ -212,7 +212,7 @@ describe('RENDER_LINE', () => {
     expect(detail.events.filter(e => e.message === 'Tự động gửi duyệt (file in tự động)')).toHaveLength(1)
     expect(detail.autoRender).toMatchObject({ status: 'DONE', artworkId: art.id })
     expect(detail.line.artworks.find(a => a.id === art.id)).toMatchObject({ source: 'AUTO', previewUrl: `/api/design-studio/file/${art.id}?preview=1` })
-    const files = buildChecklist({ ...detail, me: { isLeader: false } }).items.find(i => i.key === 'files')!
+    const files = buildChecklist({ ...detail, me: { isLeader: false, canApprove: false } }).items.find(i => i.key === 'files')!
     expect(files.state).toBe('done')
     const events = await prisma.designTaskEvent.findMany({ where: { task: { taskKey } }, orderBy: { createdAt: 'asc' } })
     expect(events.map(e => e.message).join('\n')).toMatch(/Tạo file in tự động Print v1 .*thu nhỏ/)

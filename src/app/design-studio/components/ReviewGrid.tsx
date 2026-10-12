@@ -65,7 +65,7 @@ function Card({ c, me, reasons, selected, busy, onToggle, onApprove, onReject, o
   const { task, line } = c
   const auto = line.artworks.some(a => a.source === 'AUTO')
   const left = timeLeft(task)
-  const leader = !!me?.isLeader
+  const leader = !!me?.canApprove
 
   async function submitReject(e: FormEvent) {
     e.preventDefault()
@@ -109,7 +109,7 @@ function Card({ c, me, reasons, selected, busy, onToggle, onApprove, onReject, o
           {leader ? (
             <>
               <button type="button" className={btnPrimary} disabled={busy} onClick={onApprove}>
-                <Icon name="send" className="text-[16px]" />Duyệt & gửi xưởng
+                <Icon name="verified" className="text-[16px]" />Duyệt design
               </button>
               <button type="button" className={btnWarn} disabled={busy} aria-expanded={rejecting} onClick={() => setRejecting(!rejecting)}>
                 <Icon name="undo" className="text-[16px]" />Trả lại sửa
@@ -198,7 +198,7 @@ export default function ReviewGrid({ mine, q, version, onOpenTask, onChanged }: 
     const err = await move(key, { to: 'DONE' })
     if (err) { setActionError(`${key}: ${err}`); return }
     drop([key])
-    setInfo(`Đã duyệt ${key} và gửi xưởng`)
+    setInfo(`Đã duyệt design ${key}`)
     onChanged()
   }
 
@@ -215,7 +215,7 @@ export default function ReviewGrid({ mine, q, version, onOpenTask, onChanged }: 
   async function approveSelected() {
     const keys = [...selected]
     if (keys.length === 0 || batch) return
-    if (!window.confirm(`Duyệt và gửi xưởng ${keys.length} mẫu đã chọn?`)) return
+    if (!window.confirm(`Duyệt design ${keys.length} mẫu đã chọn?`)) return
     setActionError(''); setInfo('')
     const ok: string[] = []
     const failed: string[] = []
@@ -228,12 +228,12 @@ export default function ReviewGrid({ mine, q, version, onOpenTask, onChanged }: 
     }
     setBatch(null)
     drop(ok)
-    if (ok.length) setInfo(`Đã duyệt ${ok.length} mẫu và gửi xưởng`)
+    if (ok.length) setInfo(`Đã duyệt design ${ok.length} mẫu`)
     if (failed.length) setActionError(`Không duyệt được ${failed.length} mẫu — ${failed.join(' · ')}`)
     onChanged()
   }
 
-  const leader = !!me?.isLeader
+  const leader = !!me?.canApprove
   const allSelected = cards.length > 0 && selected.length === cards.length
 
   return (
@@ -256,7 +256,7 @@ export default function ReviewGrid({ mine, q, version, onOpenTask, onChanged }: 
               </button>
             </>
           )}
-          {!leader && me && <span className="text-label-sm text-on-surface-variant">Chờ leader duyệt — designer chỉ xem</span>}
+          {!leader && me && <span className="text-label-sm text-on-surface-variant">Chờ leader duyệt — bạn chỉ xem</span>}
           <button type="button" className={btn} onClick={load} disabled={loading}><Icon name="refresh" className="text-[16px]" />Tải lại</button>
         </span>
       </div>

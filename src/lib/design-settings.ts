@@ -5,6 +5,7 @@ export type DesignSettings = {
   slaNonCustomHours: number
   kpiByType: Record<string, number>
   rejectReasons: string[]
+  designerCanApprove: boolean
 }
 
 export const DEFAULT_DESIGN_SETTINGS: DesignSettings = {
@@ -12,6 +13,7 @@ export const DEFAULT_DESIGN_SETTINGS: DesignSettings = {
   slaNonCustomHours: 48,
   kpiByType: { jersey: 0.3, shirt: 0.3, hoodie: 0.4, socks: 0.4, ornament: 0.2, tumbler: 0.15, mug: 0.15, default: 0.3 },
   rejectReasons: ['Sai chính tả / nội dung', 'Lệch tâm / ra ngoài vùng an toàn', 'Thiếu nét', 'Sai màu / biến thể', 'Thiếu bleed', 'Font sai'],
+  designerCanApprove: true,
 }
 
 const KEY = 'design.settings'
@@ -26,6 +28,7 @@ export async function getDesignSettings(): Promise<DesignSettings> {
       ...parsed,
       kpiByType: { ...DEFAULT_DESIGN_SETTINGS.kpiByType, ...(parsed.kpiByType ?? {}) },
       rejectReasons: Array.isArray(parsed.rejectReasons) && parsed.rejectReasons.length ? parsed.rejectReasons : DEFAULT_DESIGN_SETTINGS.rejectReasons,
+      designerCanApprove: typeof parsed.designerCanApprove === 'boolean' ? parsed.designerCanApprove : DEFAULT_DESIGN_SETTINGS.designerCanApprove,
     }
   } catch { return DEFAULT_DESIGN_SETTINGS }
 }

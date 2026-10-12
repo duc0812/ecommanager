@@ -119,7 +119,7 @@ function Checklist({ detail, onChanged }: { detail: TaskDetail; onChanged: () =>
   const can = (to: TransitionBody['to']) => canMove(detail, to)
 
   let action: { to: TransitionBody['to']; label: string; icon: string } | null = null
-  if (can('DONE')) action = { to: 'DONE', label: me.isLeader ? 'Duyệt & gửi xưởng' : 'Duyệt nhanh & gửi xưởng', icon: 'send' }
+  if (can('DONE')) action = { to: 'DONE', label: 'Duyệt design', icon: 'verified' }
   else if (can('REVIEW')) action = { to: 'REVIEW', label: 'Gửi duyệt', icon: 'rate_review' }
 
   async function run() {
@@ -144,11 +144,11 @@ function Checklist({ detail, onChanged }: { detail: TaskDetail; onChanged: () =>
       </div>
       <ErrorBanner msg={error} onClose={() => setError('')} />
       {task.status === 'DONE'
-        ? <button type="button" disabled className={`${btnPrimary} w-full justify-center`}><Icon name="send" className="text-[18px]" />Đã gửi xưởng</button>
+        ? <button type="button" disabled className={`${btnPrimary} w-full justify-center`}><Icon name="verified" className="text-[18px]" />Đã duyệt design</button>
         : <button type="button" onClick={run} disabled={!action || busy || !filled || !checked.every(Boolean)}
             title={!action ? 'Không có bước tiếp theo cho vai trò này' : !filled ? 'Upload đủ file cho mọi panel trước' : !checked.every(Boolean) ? 'Tick đủ checklist trước' : undefined}
             className={`${btnPrimary} w-full justify-center`}>
-            <Icon name={action?.icon ?? 'send'} className="text-[18px]" />{action?.label ?? 'Duyệt & gửi xưởng'}
+            <Icon name={action?.icon ?? 'verified'} className="text-[18px]" />{action?.label ?? 'Duyệt design'}
           </button>}
     </Card>
   )

@@ -4,7 +4,7 @@ import type { ArtworkRow, LayerMapEntry, TaskDetail, TaskRow, TaskStatus, Templa
 export const OPEN_STATUSES: TaskStatus[] = ['NEW', 'ASSIGNED', 'DOING', 'REVIEW', 'REJECTED']
 export const OWNED_MOVES: TaskStatus[] = ['DOING', 'NEW', 'REVIEW', 'ASK_CUSTOMER']
 
-export function canTransition(from: TaskStatus, to: TaskStatus, isLeader: boolean): boolean {
+export function canTransition(from: TaskStatus, to: TaskStatus, isLeader: boolean, canApprove: boolean = isLeader): boolean {
   if (from === to || from === 'CANCELLED') return false
   if (to === 'ASK_CUSTOMER') return OPEN_STATUSES.includes(from)
   if (to === 'CANCELLED') return isLeader && (OPEN_STATUSES.includes(from) || from === 'ASK_CUSTOMER')
@@ -13,20 +13,15 @@ export function canTransition(from: TaskStatus, to: TaskStatus, isLeader: boolea
     case 'NEW': return from === 'ASSIGNED'
     case 'DOING': return from === 'NEW' || from === 'ASSIGNED' || from === 'DONE' || from === 'REJECTED'
     case 'REVIEW': return from === 'DOING' || from === 'REJECTED'
-    case 'DONE': return isLeader && from === 'REVIEW'
-    case 'REJECTED': return isLeader && from === 'REVIEW'
+    case 'DONE': return canApprove && from === 'REVIEW'
+    case 'REJECTED': return canApprove && from === 'REVIEW'
     default: return false
   }
 }
 
-export function needsLeaderApproval(line: Pick<WorkspaceLine, 'artworks'>): boolean {
-  return line.artworks.some(a => a.source === 'AUTO')
-}
-
-export function canMove(detail: Pick<TaskDetail, 'task' | 'line' | 'me'>, to: TaskStatus): boolean {
+export function canMove(detail: Pick<TaskDetail, 'task' | 'me'>, to: TaskStatus): boolean {
   const { task, me } = detail
-  if (!canTransition(task.status, to, me.isLeader)) return false
-  if (to === 'DONE' && !me.isLeader && needsLeaderApproval(detail.line)) return false
+  if (!canTransition(task.status, to, me.isLeader, me.canApprove)) return false
   const owns = me.isLeader || !task.assigneeId || task.assigneeId === me.id
   return owns || !OWNED_MOVES.includes(to)
 }
@@ -69,7 +64,7 @@ export function sharpnessRatio(template: TemplateRow, art: ArtworkRow | undefine
 export type Tone = 'ok' | 'warn' | 'bad' | 'idle' | 'brand'
 
 export function timeLeft(t: Pick<TaskRow, 'status' | 'dueAt'>, now = Date.now()): { label: string; tone: Tone; icon: string } {
-  if (t.status === 'DONE') return { label: 'đã gửi', tone: 'ok', icon: 'check' }
+  if (t.status === 'DONE') return { label: 'đã duyệt', tone: 'ok', icon: 'check' }
   if (!t.dueAt) return { label: 'chưa hạn', tone: 'idle', icon: 'schedule' }
   const ms = new Date(t.dueAt).getTime() - now
   const h = Math.floor(Math.abs(ms) / 3.6e6)
@@ -203,7 +198,7 @@ export function taskImages(detail: Pick<TaskDetail, 'line'>): LightboxImage[] {
 }
 
 export function canRemoveArtwork(a: Pick<ArtworkRow, 'uploadedById'>, me: { id: string; role: string }, status: TaskStatus): { ok: boolean; why?: string } {
-  if (status === 'DONE') return { ok: false, why: 'Task đã gửi xưởng — bấm "Sửa & gửi lại" trước khi xoá' }
+  if (status === 'DONE') return { ok: false, why: 'Task đã duyệt design — bấm "Sửa & gửi lại" trước khi xoá' }
   if (me.role === 'SUPERADMIN' || me.role === 'ADMIN' || a.uploadedById === me.id) return { ok: true }
   return { ok: false, why: 'Chỉ người upload hoặc admin được xoá file này' }
 }

@@ -3,6 +3,7 @@ import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/db'
 import { AUTH_COOKIE, signToken } from '@/lib/auth'
 import { GET as getReview } from '@/app/api/design-studio/tasks/review/route'
+import { DEFAULT_DESIGN_SETTINGS, saveDesignSettings } from '@/lib/design-settings'
 import { AUTO_REVIEW_MESSAGE, canTransition, listReviewCards, submitAutoRenderForReview, syncDesignTasks, transitionTask, type Actor } from '@/lib/design-tasks'
 
 const SHOP = 'dtar.myshopify.com'
@@ -101,9 +102,11 @@ describe('submitAutoRenderForReview', () => {
 })
 
 describe('approving an auto render', () => {
-  it('a designer cannot approve a REVIEW task, a leader can', async () => {
+  it('with "designer được duyệt" off a designer cannot approve a REVIEW task, a leader can', async () => {
+    await saveDesignSettings({ ...DEFAULT_DESIGN_SETTINGS, designerCanApprove: false })
     await expect(transitionTask('DTAR1_1', DES, { to: 'DONE' })).rejects.toThrow(/không được phép/)
     const r = await transitionTask('DTAR1_1', LEAD, { to: 'DONE' })
+    await prisma.appSetting.deleteMany({ where: { key: 'design.settings' } })
     expect(r.task.status).toBe('DONE')
     expect((await prisma.orderLine.findFirstOrThrow({ where: { orderId: ORDER_ID, shopifyLineId: 'a1' } })).designDriveLink).toMatch(/^\/api\/design-studio\/file\//)
   })

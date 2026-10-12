@@ -239,7 +239,7 @@ describe('DONE when the design already arrived outside the studio', () => {
     expect(line?.designDriveLink).toBe(EXT_LINK)
     const events = (await loadTask('DTTX_1'))!.events
     expect(events.at(-1)).toMatchObject({ type: 'SYSTEM', message: 'Design đã có từ ngoài studio — giữ link hiện tại' })
-    expect(events.some(e => e.message === 'Duyệt & gửi xưởng')).toBe(false)
+    expect(events.some(e => e.message === 'Duyệt design')).toBe(false)
   })
 
   it('a factory-reopened task still rewrites the old link when approved in the studio', async () => {

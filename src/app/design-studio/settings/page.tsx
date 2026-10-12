@@ -85,6 +85,7 @@ export default function DesignSettingsPage() {
   const [slaNonCustom, setSlaNonCustom] = useState('')
   const [kpi, setKpi] = useState<KpiRow[]>([])
   const [reasons, setReasons] = useState<string[]>([])
+  const [designerCanApprove, setDesignerCanApprove] = useState(true)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -95,6 +96,7 @@ export default function DesignSettingsPage() {
     setSlaNonCustom(String(s.slaNonCustomHours))
     setKpi(Object.entries(s.kpiByType).map(([type, v]) => ({ type, value: String(v) })))
     setReasons(s.rejectReasons)
+    setDesignerCanApprove(s.designerCanApprove !== false)
   }
 
   useEffect(() => {
@@ -124,7 +126,7 @@ export default function DesignSettingsPage() {
     setSaving(true)
     const r = await requestJson<DesignSettings>('/api/design-studio/settings', {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ slaCustomHours, slaNonCustomHours, kpiByType, rejectReasons }),
+      body: JSON.stringify({ slaCustomHours, slaNonCustomHours, kpiByType, rejectReasons, designerCanApprove }),
     })
     setSaving(false)
     if (!r.ok) { setError(r.error); return }
@@ -164,6 +166,19 @@ export default function DesignSettingsPage() {
                     <input className={input} type="number" min={1} value={slaNonCustom} onChange={e => setSlaNonCustom(e.target.value)} disabled={dis} aria-label="SLA đơn không custom (giờ)" />
                   </label>
                 </div>
+              </Card>
+
+              <Card icon="verified" title="Duyệt design" right={designerCanApprove ? 'designer được duyệt' : 'chỉ leader duyệt'}>
+                <label className="flex items-start gap-sm text-body-sm text-on-surface cursor-pointer">
+                  <input type="checkbox" className="mt-[3px] w-4 h-4 accent-secondary" checked={designerCanApprove} onChange={e => setDesignerCanApprove(e.target.checked)} disabled={dis} aria-label="Designer được duyệt design" />
+                  <span className="flex flex-col">
+                    <b>Designer được duyệt design</b>
+                    <span className="text-label-sm text-on-surface-variant">
+                      Khi bật, ai có quyền Design Tasks cũng bấm được &quot;Duyệt design&quot; và &quot;Trả lại sửa&quot; cho mẫu đang chờ duyệt, kể cả file in tự động.
+                      Khi tắt, chỉ leader (Admin / Super Admin) duyệt. Mẫu vẫn phải qua bước &quot;Gửi duyệt&quot; trước khi duyệt.
+                    </span>
+                  </span>
+                </label>
               </Card>
 
               <Card icon="undo" title="Lý do trả lại" right={`${reasons.length} lý do`}>

@@ -12,6 +12,7 @@ import { libraryStateFor } from '@/lib/artwork-library-state'
 import type { TaskLibraryState } from '@/lib/artwork-library-types'
 import type { RenderJobView } from '@/lib/artwork-render-eligibility'
 import { latestRenderJob } from '@/lib/artwork-render-jobs'
+import { canApproveDesign, canHandoffToSupplier, isLeaderRole, type FeaturePermission } from '@/lib/roles'
 import { autoRenderEligibility } from '@/lib/artwork-render-eligibility'
 
 export { loadTemplateContext, mapTemplate, pickTemplate, type TemplateRow }
@@ -23,16 +24,18 @@ export const TASK_STATUSES: TaskStatus[] = ['NEW', 'ASSIGNED', 'DOING', 'REVIEW'
 const OPEN: TaskStatus[] = ['NEW', 'ASSIGNED', 'DOING', 'REVIEW', 'REJECTED']
 export const FACTORY_REJECT_REASON = 'Xưởng trả file'
 const APP_FILE_PREFIX = '/api/design-studio/file/'
+export const APPROVE_MESSAGE = 'Duyệt design'
 
 export function taskKeyFor(orderNumber: string, linePosition: number): string {
   return `${orderNumber.replace(/^#/, '')}_${linePosition}`
 }
 
 export function isLeader(role: string): boolean {
-  return role === 'SUPERADMIN' || role === 'ADMIN'
+  return isLeaderRole(role)
 }
 
-export function canTransition(from: TaskStatus, to: TaskStatus, actor: ActorRole): boolean {
+/** canApprove is the REVIEW → DONE / REJECTED capability; it defaults to leader-only. Nothing reaches DONE except from REVIEW. */
+export function canTransition(from: TaskStatus, to: TaskStatus, actor: ActorRole, canApprove: boolean = actor === 'LEADER'): boolean {
   if (from === to) return false
   if (from === 'CANCELLED') return false
   if (to === 'ASK_CUSTOMER') return OPEN.includes(from)
@@ -42,8 +45,8 @@ export function canTransition(from: TaskStatus, to: TaskStatus, actor: ActorRole
     case 'NEW': return from === 'ASSIGNED'
     case 'DOING': return from === 'NEW' || from === 'ASSIGNED' || from === 'DONE' || from === 'REJECTED'
     case 'REVIEW': return from === 'DOING' || from === 'REJECTED'
-    case 'DONE': return actor === 'LEADER' && from === 'REVIEW'
-    case 'REJECTED': return actor === 'LEADER' && from === 'REVIEW'
+    case 'DONE': return canApprove && from === 'REVIEW'
+    case 'REJECTED': return canApprove && from === 'REVIEW'
     default: return false
   }
 }
@@ -159,7 +162,16 @@ export async function syncDesignTasksForOrders(orderIds: string[]): Promise<stri
   return (await syncDesignTasksCounted(orderIds)).errors
 }
 
-export type Actor = { id: string; name: string; role: string }
+export type Actor = { id: string; name: string; role: string; permissions?: FeaturePermission[] }
+export type Viewer = { id: string; name: string; role: string; isLeader: boolean; canApprove: boolean; canHandoff: boolean }
+
+export function viewerFor(user: Actor, settings: Pick<DesignSettings, 'designerCanApprove'>): Viewer {
+  return {
+    id: user.id, name: user.name, role: user.role, isLeader: isLeader(user.role),
+    canApprove: canApproveDesign(user.role, user.permissions, settings.designerCanApprove),
+    canHandoff: canHandoffToSupplier(user.role, user.permissions),
+  }
+}
 export type TransitionInput = { to: TaskStatus; note?: string; reasons?: string[]; assigneeId?: string; kpi?: number; dueHours?: number; continue?: boolean }
 
 export type TaskRow = {
@@ -201,11 +213,10 @@ export async function transitionTask(taskKey: string, actor: Actor, input: Trans
   if (!task) throw new Error('Task not found')
   const from = task.status as TaskStatus
   const role = actorRole(actor)
-  if (!(input.continue && from === 'ASK_CUSTOMER' && input.to === (task.prevStatus ?? 'NEW')) && !canTransition(from, input.to, role)) {
-    throw new Error(`Chuyển ${from} → ${input.to} không được phép với vai trò ${role}`)
-  }
-  if (role !== 'LEADER' && input.to === 'DONE' && await hasAutoArtwork(task.orderId, task.shopifyLineId)) {
-    throw new Error('File in tự động phải được leader duyệt')
+  const canApprove = canApproveDesign(actor.role, actor.permissions, (await getDesignSettings()).designerCanApprove)
+  if (!(input.continue && from === 'ASK_CUSTOMER' && input.to === (task.prevStatus ?? 'NEW')) && !canTransition(from, input.to, role, canApprove)) {
+    const leaderOnly = from === 'REVIEW' && (input.to === 'DONE' || input.to === 'REJECTED')
+    throw new Error(`Chuyển ${from} → ${input.to} không được phép với vai trò ${role}${leaderOnly ? ' — chỉ leader duyệt hoặc trả lại mẫu (cài đặt "Designer được duyệt design" đang tắt, hoặc bạn không có quyền Design Tasks)' : ''}`)
   }
   if (role !== 'LEADER' && task.assigneeId && task.assigneeId !== actor.id && OWNED_MOVES.includes(input.to)) {
     const owner = await prisma.appUser.findUnique({ where: { id: task.assigneeId }, select: { name: true } })
@@ -245,7 +256,7 @@ export async function transitionTask(taskKey: string, actor: Actor, input: Trans
   } else if (input.to === 'ASK_CUSTOMER') {
     data.prevStatus = from; say('ASK', `Hỏi khách: ${input.note ?? ''}`.trim())
   } else if (input.to === 'DONE') {
-    say('STATUS', role === 'LEADER' ? 'Duyệt & gửi xưởng' : 'Duyệt nhanh (file tự động) & gửi xưởng')
+    say('STATUS', role === 'LEADER' ? APPROVE_MESSAGE : `${APPROVE_MESSAGE} (designer)`)
   } else if (input.to === 'CANCELLED') {
     say('STATUS', 'Huỷ task')
   }
@@ -272,10 +283,6 @@ export async function transitionTask(taskKey: string, actor: Actor, input: Trans
   const row = await rowFor(updated.taskKey)
   if (!row) throw new Error('Task row not found after update')
   return { task: row, order }
-}
-
-async function hasAutoArtwork(orderId: string, shopifyLineId: string): Promise<boolean> {
-  return !!(await prisma.designArtwork.findFirst({ where: { orderId, shopifyLineId, removedAt: null, source: 'AUTO' }, select: { id: true } }))
 }
 
 export const AUTO_REVIEW_FROM: TaskStatus[] = ['NEW', 'ASSIGNED', 'DOING', 'REJECTED']

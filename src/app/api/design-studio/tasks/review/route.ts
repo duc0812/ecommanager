@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getAuthUser, unauthorized } from '@/lib/api-auth'
-import { isLeader, listReviewCards } from '@/lib/design-tasks'
+import { listReviewCards, viewerFor } from '@/lib/design-tasks'
 import { getDesignSettings } from '@/lib/design-settings'
 
 export async function GET(req: NextRequest) {
@@ -13,6 +13,6 @@ export async function GET(req: NextRequest) {
   ])
   return NextResponse.json({
     cards, rejectReasons: settings.rejectReasons,
-    me: { id: user.id, name: user.name, role: user.role, isLeader: isLeader(user.role) },
+    me: viewerFor(user, settings),
   })
 }

@@ -129,7 +129,7 @@ export async function removeArtwork(artworkId: string, actor: { id: string; role
     prisma.designTask.findUnique({ where: { orderId_shopifyLineId: { orderId: art.orderId, shopifyLineId: art.shopifyLineId } }, select: { id: true, status: true } }),
     prisma.orderLine.findFirst({ where: { orderId: art.orderId, shopifyLineId: art.shopifyLineId }, select: { designDriveLink: true } }),
   ])
-  if (task?.status === 'DONE') throw new ArtworkRemoveError('Task đã duyệt & gửi xưởng — bấm "Sửa & gửi lại" trước khi xoá file', 409)
+  if (task?.status === 'DONE') throw new ArtworkRemoveError('Task đã duyệt design — bấm "Sửa & gửi lại" trước khi xoá file', 409)
   const links = [artworkUrl(art.id), art.driveWebViewLink].filter(Boolean)
   if (line?.designDriveLink && links.includes(line.designDriveLink)) {
     throw new ArtworkRemoveError('File này đang là file gửi xưởng của dòng — không xoá được', 409)

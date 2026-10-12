@@ -217,3 +217,21 @@ export function homePathFor(role: UserRole, permissions?: FeaturePermission[]): 
   const feature = HOME_PRIORITY.find(f => granted.includes(f)) ?? granted[0]
   return feature ? FEATURE_PATHS[feature][0] : null
 }
+
+function grantedFor(role: string, permissions?: FeaturePermission[]): FeaturePermission[] {
+  return permissions ?? DEFAULT_ROLE_PERMISSIONS[role as UserRole] ?? []
+}
+
+export function isLeaderRole(role: string): boolean {
+  return role === 'SUPERADMIN' || role === 'ADMIN'
+}
+
+/** REVIEW → DONE / REJECTED: a leader always, a design_tasks holder only while the designerCanApprove setting is on. */
+export function canApproveDesign(role: string, permissions: FeaturePermission[] | undefined, designerCanApprove: boolean): boolean {
+  if (isLeaderRole(role)) return true
+  return designerCanApprove && grantedFor(role, permissions).includes('design_tasks')
+}
+
+export function canHandoffToSupplier(role: string, permissions: FeaturePermission[] | undefined): boolean {
+  return isLeaderRole(role) || grantedFor(role, permissions).includes('fulfillment_export')
+}

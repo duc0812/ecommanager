@@ -17,7 +17,7 @@ export async function POST(req: NextRequest, { params }: { params: { key: string
     dueHours: typeof body.dueHours === 'number' ? body.dueHours : undefined,
     continue: typeof body.continue === 'boolean' ? body.continue : undefined,
   }
-  const actor = { id: user.id, name: user.name, role: user.role }
+  const actor = { id: user.id, name: user.name, role: user.role, permissions: user.permissions }
 
   try {
     const result = await transitionTask(params.key, actor, input)

@@ -4,7 +4,7 @@ import { buildChecklist, missingCustomerFields, type ChecklistInput } from '@/ap
 const art = (printArea: string) => ({ printArea, id: printArea, version: 1 } as any)
 const template = { id: 't1', name: 'Tumbler 40oz', widthPx: 2700, heightPx: 1200, dpi: 300, bleedIn: 0, safeIn: 0, mirror: false, areas: [{ name: 'Wrap', x: 0, y: 0, w: 2700, h: 1200 }], guideImageUrl: null, templateUrl: null }
 
-function input(over: { task?: any; line?: any; template?: any; slots?: string[]; library?: any; profile?: any; isLeader?: boolean; supplierNeedsMockup?: boolean } = {}): ChecklistInput {
+function input(over: { task?: any; line?: any; template?: any; slots?: string[]; library?: any; profile?: any; isLeader?: boolean; canApprove?: boolean; supplierNeedsMockup?: boolean } = {}): ChecklistInput {
   return {
     task: { status: 'DOING', rejectReasons: [], ...over.task },
     line: {
@@ -15,7 +15,7 @@ function input(over: { task?: any; line?: any; template?: any; slots?: string[];
     slots: over.slots ?? ['Artwork'],
     library: 'library' in over ? over.library : null,
     profile: over.profile ?? null,
-    me: { isLeader: over.isLeader ?? false },
+    me: { isLeader: over.isLeader ?? false, canApprove: over.canApprove ?? over.isLeader ?? false },
     supplierNeedsMockup: over.supplierNeedsMockup,
   } as ChecklistInput
 }
@@ -100,9 +100,11 @@ describe('buildChecklist', () => {
     expect(byKey(buildChecklist(input({ task: { status: 'DONE' } })), 'submit').state).toBe('done')
     expect(byKey(buildChecklist(input({ task: { status: 'CANCELLED' } })), 'submit').state).toBe('na')
     expect(byKey(buildChecklist(input({ task: { status: 'REVIEW' } })), 'submit').state).toBe('blocked')
-    expect(byKey(buildChecklist(input({ task: { status: 'REVIEW' }, isLeader: true })), 'submit')).toMatchObject({ state: 'missing', action: { label: 'Duyệt & gửi xưởng' } })
+    expect(byKey(buildChecklist(input({ task: { status: 'REVIEW' }, isLeader: true })), 'submit')).toMatchObject({ state: 'missing', action: { label: 'Duyệt design' } })
+    expect(byKey(buildChecklist(input({ task: { status: 'REVIEW' }, canApprove: true })), 'submit')).toMatchObject({ state: 'missing', action: { label: 'Duyệt design' } })
+    expect(byKey(buildChecklist(input({ task: { status: 'DONE' } })), 'submit')).toMatchObject({ state: 'done', reason: 'Đã duyệt design' })
     expect(byKey(buildChecklist(input({ task: { status: 'REJECTED', rejectReasons: ['Sai chính tả'] } })), 'submit'))
-      .toMatchObject({ reason: 'Leader trả lại: Sai chính tả — sửa rồi gửi lại', action: { label: 'Gửi duyệt lại' } })
+      .toMatchObject({ reason: 'Bị trả lại: Sai chính tả — sửa rồi gửi lại', action: { label: 'Gửi duyệt lại' } })
   })
 
   it('has no next step when everything is done', () => {

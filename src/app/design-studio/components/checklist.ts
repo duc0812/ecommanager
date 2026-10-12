@@ -16,7 +16,7 @@ export type CheckKey = 'mapping' | 'template' | 'library' | 'customer' | 'files'
 export type CheckItem = { key: CheckKey; title: string; state: CheckState; reason: string; action: CheckAction | null }
 
 export type ChecklistInput = Pick<TaskDetail, 'task' | 'line' | 'template' | 'slots' | 'library' | 'profile'> & {
-  me: Pick<TaskDetail['me'], 'isLeader'>
+  me: Pick<TaskDetail['me'], 'isLeader' | 'canApprove'>
   supplierNeedsMockup?: boolean | null
 }
 
@@ -124,19 +124,19 @@ function submitItem(input: ChecklistInput, filesDone: boolean): CheckItem {
   const { task, me } = input
   const title = 'Gửi duyệt / trạng thái'
   switch (task.status) {
-    case 'DONE': return { key: 'submit', title, state: 'done', reason: 'Đã duyệt & gửi xưởng', action: null }
+    case 'DONE': return { key: 'submit', title, state: 'done', reason: 'Đã duyệt design', action: null }
     case 'CANCELLED': return { key: 'submit', title, state: 'na', reason: 'Task đã huỷ', action: null }
     case 'ASK_CUSTOMER': return { key: 'submit', title, state: 'blocked', reason: 'Đang hỏi khách — chờ trả lời rồi tiếp tục', action: null }
     case 'REVIEW':
-      return me.isLeader
-        ? { key: 'submit', title, state: 'missing', reason: 'Designer đã gửi — chờ bạn duyệt', action: { kind: 'submit', label: 'Duyệt & gửi xưởng' } }
+      return me.canApprove
+        ? { key: 'submit', title, state: 'missing', reason: me.isLeader ? 'Designer đã gửi — chờ bạn duyệt' : 'Mẫu đang chờ duyệt — bạn duyệt được', action: { kind: 'submit', label: 'Duyệt design' } }
         : { key: 'submit', title, state: 'blocked', reason: 'Đã gửi duyệt — chờ leader duyệt', action: null }
   }
   if (!filesDone) return { key: 'submit', title, state: 'blocked', reason: 'Cần đủ file cho mọi vùng in trước khi gửi duyệt', action: null }
   const again = task.status === 'REJECTED'
   return {
     key: 'submit', title, state: 'missing',
-    reason: again ? `Leader trả lại${task.rejectReasons.length ? `: ${task.rejectReasons.join(', ')}` : ''} — sửa rồi gửi lại` : 'Đủ file — gửi leader duyệt',
+    reason: again ? `Bị trả lại${task.rejectReasons.length ? `: ${task.rejectReasons.join(', ')}` : ''} — sửa rồi gửi lại` : 'Đủ file — gửi duyệt',
     action: { kind: 'submit', label: again ? 'Gửi duyệt lại' : 'Gửi duyệt' },
   }
 }

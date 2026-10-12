@@ -48,18 +48,24 @@ describe('canRemoveArtwork', () => {
 })
 
 describe('canMove', () => {
-  const detail = (status: string, isLeader: boolean, sources: string[], readiness = 'AUTO') => ({
-    task: { status, readiness, assigneeId: null } as any,
-    line: { artworks: sources.map(source => ({ source })) } as any,
-    me: { id: 'u', name: 'U', role: isLeader ? 'ADMIN' : 'SUPPORT', isLeader },
+  const detail = (status: string, isLeader: boolean, canApprove = isLeader, assigneeId: string | null = null) => ({
+    task: { status, readiness: 'AUTO', assigneeId } as any,
+    me: { id: 'u', name: 'U', role: isLeader ? 'ADMIN' : 'SUPPORT', isLeader, canApprove, canHandoff: isLeader },
   })
-  it('keeps auto-rendered files behind a leader', () => {
-    expect(canMove(detail('REVIEW', false, ['AUTO']), 'DONE')).toBe(false)
-    expect(canMove(detail('DOING', false, ['AUTO']), 'DONE')).toBe(false)
-    expect(canMove(detail('DOING', false, ['AUTO']), 'REVIEW')).toBe(true)
-    expect(canMove(detail('REVIEW', true, ['AUTO']), 'DONE')).toBe(true)
-    expect(canMove(detail('DOING', false, ['MANUAL']), 'DONE')).toBe(false)
-    expect(canMove(detail('DOING', false, ['MANUAL'], 'MANUAL'), 'DONE')).toBe(false)
+  it('without the approve capability a designer waits for a leader', () => {
+    expect(canMove(detail('REVIEW', false), 'DONE')).toBe(false)
+    expect(canMove(detail('REVIEW', false), 'REJECTED')).toBe(false)
+    expect(canMove(detail('DOING', false), 'REVIEW')).toBe(true)
+    expect(canMove(detail('REVIEW', true), 'DONE')).toBe(true)
+  })
+  it('with the approve capability a designer approves or returns any REVIEW task, but never skips REVIEW', () => {
+    expect(canMove(detail('REVIEW', false, true), 'DONE')).toBe(true)
+    expect(canMove(detail('REVIEW', false, true), 'REJECTED')).toBe(true)
+    expect(canMove(detail('REVIEW', false, true, 'someone-else'), 'DONE')).toBe(true)
+    expect(canMove(detail('DOING', false, true), 'DONE')).toBe(false)
+    expect(canMove(detail('NEW', false, true), 'DONE')).toBe(false)
+    expect(canMove(detail('ASSIGNED', false, true), 'DONE')).toBe(false)
+    expect(canMove(detail('NEW', false, true), 'ASSIGNED')).toBe(false)
   })
 })
 

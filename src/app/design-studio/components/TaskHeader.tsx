@@ -229,7 +229,7 @@ export default function TaskHeader({ detail, holdCount, onChanged }: { detail: T
           <button type="button" className={cls} disabled={!submitTo || busy || !filled}
             title={!submitTo ? 'Không có bước này cho vai trò của bạn' : !filled ? 'Upload đủ file cho mọi vùng in trước' : undefined}
             onClick={() => submitTo && go({ to: submitTo })}>
-            <Icon name="send" className="text-[16px]" />{a.label}
+            <Icon name={submitTo === 'DONE' ? 'verified' : 'send'} className="text-[16px]" />{a.label}
           </button>
         )
     }
@@ -249,8 +249,8 @@ export default function TaskHeader({ detail, holdCount, onChanged }: { detail: T
     flow.push(<button key="submit" type="button" className={btnPrimary} disabled={busy || !filled} title={filesTitle} onClick={() => go({ to: 'REVIEW' })}><Icon name="rate_review" className="text-[18px]" />Gửi duyệt</button>)
   }
   if (can('DONE')) {
-    flow.push(<button key="done" type="button" className={btnPrimary} disabled={busy || !filled} title={filesTitle} onClick={() => go({ to: 'DONE' })}><Icon name="send" className="text-[18px]" />{me.isLeader ? 'Duyệt & gửi xưởng' : 'Duyệt nhanh & gửi xưởng'}</button>)
-  } else if (task.status === 'REVIEW' && !me.isLeader) {
+    flow.push(<button key="done" type="button" className={btnPrimary} disabled={busy || !filled} title={filesTitle} onClick={() => go({ to: 'DONE' })}><Icon name="verified" className="text-[18px]" />Duyệt design</button>)
+  } else if (task.status === 'REVIEW' && !me.canApprove) {
     flow.push(<button key="wait" type="button" className={btnPrimary} disabled><Icon name="hourglass_top" className="text-[18px]" />Chờ leader duyệt</button>)
   }
   if (task.status === 'DONE' && me.isLeader && isPgprintsSupplier(line.supplier)) {
