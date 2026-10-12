@@ -343,9 +343,9 @@ Spec `docs/superpowers/specs/2026-10-10-design-tasks-v2-design.md`, plan `docs/s
 | ASSIGNED → NEW | assignee | "Từ chối" — clears the assignee |
 | NEW / ASSIGNED / REJECTED / DONE → DOING | owner or unassigned | "Nhận việc" sets assignee = self when empty; DONE → DOING reopens and clears the line's design link |
 | DOING / REJECTED → REVIEW | owner | "Gửi duyệt" — the server refuses `Chưa có artwork cho: <slots>` unless every required slot has an artwork (not checked on ASK_CUSTOMER → continue) |
-| REVIEW → REJECTED | Leader | ≥1 reason from `rejectReasons` |
-| REVIEW → DONE | Leader | goes through `updateLine(done:true)` — except when the line already has a non-studio `designDriveLink` (Trello / Library) and the task was not reopened by the factory: then the task is marked DONE with SYSTEM "Design đã có từ ngoài studio — giữ link hiện tại" and the link/order are left alone |
-| NEW / ASSIGNED / DOING / REVIEW → DONE | Designer, readiness AUTO only | "Duyệt nhanh" |
+| REVIEW → REJECTED | Leader, or any `design_tasks` holder while `designerCanApprove` is on (default) | ≥1 reason from `rejectReasons` |
+| REVIEW → DONE | Leader, or any `design_tasks` holder while `designerCanApprove` is on (default) | "Duyệt design" — goes through `updateLine(done:true)` — except when the line already has a non-studio `designDriveLink` (Trello / Library) and the task was not reopened by the factory: then the task is marked DONE with SYSTEM "Design đã có từ ngoài studio — giữ link hiện tại" and the link/order are left alone |
+| NEW / ASSIGNED / DOING → DONE | nobody | everything passes REVIEW; an auto render reaches REVIEW through `submitAutoRenderForReview` |
 | any open → ASK_CUSTOMER | owner | saves `prevStatus`; "Tiếp tục" (`continue: true`) restores it |
 | open / ASK_CUSTOMER → CANCELLED | Leader | |
 
@@ -379,6 +379,20 @@ It is idempotent: existing tasks keep status/assignee; a cancelled/refunded orde
 Also pinned since the fix wave: template-area slots gate DONE and the ownership rule (`tests/design-tasks-transition.integration.test.ts`, 400 at the route in `tests/design-tasks-routes.integration.test.ts`); `timeLeft` / `allSlotsFilled` (`tests/design-tasks-model.test.ts`). Fix wave 2: factory reopen + no auto-complete + status-PATCH cancel (`tests/design-tasks-sync.integration.test.ts`); REVIEW needs artwork, external-link DONE keeps the link, factory-reopened DONE rewrites it, continue → DOING logs "Tiếp tục làm" (`tests/design-tasks-transition.integration.test.ts`); sync-all visits READY orders with open tasks and `mine=1` (`tests/design-tasks-routes.integration.test.ts`).
 
 Not done yet: no browser click-through of the page; `readinessFor` never yields `AUTO`, so "Duyệt nhanh" stays unused until something sets AUTO.
+
+## Design approve + supplier handoff (2026-10-12, branch `feat/design-approve-handoff`)
+
+Approving a design and handing it to the supplier are two steps.
+
+- **Approve.** Setting `designerCanApprove` (in `design.settings`, default true, toggle on Design Studio → Settings). `canTransition(from, to, actor, canApprove)` stays pure; `transitionTask` computes the capability with `canApproveDesign` (`src/lib/roles.ts`). The approve event is `Duyệt design` / `Duyệt design (designer)` with the approver as actor. `me` in the task routes carries `canApprove` and `canHandoff`.
+- **Handoff state** on `Order`: `supplierHandoffAt`, `supplierHandoffMode` (`API` | `CSV`), `supplierHandoffById`. "Chờ chuyển xưởng" = `READY_TO_PRODUCTION` + `designReady` + no open design task + `supplierHandoffAt` null + not fulfilled/refunded (`pendingHandoffWhere` in `src/lib/supplier-handoff.ts`).
+- **UI.** Chip "Chuyển xưởng N" on Design Tasks → `HandoffGrid` (one card per order). `HandoffButton` is shared with the task header (shown once the task is DONE).
+- **API mode** (every product line is PGprints, credentials set, every line has `apiSku`): the button opens `PgprintsPushModal`. `markPushExported` (`src/lib/repos/push-export.ts`) marks the order Exported and sets the handoff to API in one `updateMany`; `prevExportJson` keeps the previous export + handoff state and a cancel restores it.
+- **CSV mode** (everything else): `POST /api/design-studio/orders/[id]/handoff {mode:'CSV'}` only writes the three fields — the order stays `READY_TO_PRODUCTION` for `/fulfillment/export`. `DELETE` on the same route = "Hoàn tác", refused once the order is EXPORTED/FULFILLED. Reopening a line (designReady → false) or re-approving after a factory rejection drops a saved CSV handoff. The export page shows a "Design đã chuyển" badge and has a "Chỉ đơn design đã chuyển" filter (`handoffOnly`); a handoff is never required to export.
+- **Permission** for handoff: ADMIN/SUPERADMIN or `fulfillment_export` (`canHandoffToSupplier`), checked in the route (DB-backed) and by `API_ACCESS_RULES` (`{ adminOr: [...] }` + `suffix`). The PGprints **push** route uses the same rule — default SUPPORT holds `fulfillment_export`, so SUPPORT can now send real PGprints orders; cancel/refresh stay admin-only, `pgprints.pushEnabled` still gates everyone.
+- **Reconcile.** An order pushed outside the app has a `CREATED` push with `exportMarked = false`. When it becomes fully approved, `recomputeOrderDesign` calls `reconcilePushedOrder` → marked Exported + API handoff, no PGprints call. Review and handoff cards show "Đã gửi PGprints <code>" while a push is live. For orders already `READY_TO_PRODUCTION`: `node scripts/reconcile-pushed-orders.mjs` (dry run) then `--apply`, with `DATABASE_URL` pointing at the target DB.
+- **Destination guard.** `SupplierProduct.apiShipCountries` (comma-separated ISO codes, empty = anywhere), edited in the "Giao tới" column on the PGprints supplier page. The preview/push returns error `SHIP_COUNTRY` when the order ships elsewhere. Set `US` on `UT2-One_size`; the worldwide 20oz tumbler is `STU`.
+- **Rollout (prod):** `npx prisma migrate deploy` (migration `20261012090000_design_handoff`), then the reconcile script. Every existing `READY_TO_PRODUCTION` + design-ready order shows up under "Chuyển xưởng" the first time.
 
 ## Product profiles (2026-10-10)
 
