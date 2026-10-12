@@ -8,6 +8,7 @@ import { matchDesignEntry } from '@/lib/design-parent'
 import { autoDetectStatus, type PipelineStatus } from '@/lib/pipeline-status'
 import { fetchOrderLinePropsByNames, type ShopifyOrderLineProps } from '@/lib/shopify-orders'
 import { getShopifyConnection } from '@/lib/token-store'
+import { reconcilePushedOrder } from '@/lib/repos/push-export'
 
 export type CustomAttribute = { key: string; value: string }
 export type SourcePrintFile = { printArea: string; url: string }
@@ -281,14 +282,19 @@ async function recomputeOrderDesign(orderId: string, markedDone: boolean) {
   // A design saved for the CSV export is stale once a line is reopened or the factory sent the file back: it has to be handed over again.
   const staleCsvHandoff = order.supplierHandoffMode === 'CSV' && !['EXPORTED', 'FULFILLED'].includes(pipelineStatus)
     && (!designReady || (markedDone && order.pipelineStatus === 'DESIGN_REJECTED'))
-  return prisma.order.update({
+  const select = { id: true, designReady: true, pipelineStatus: true } as const
+  const updated = await prisma.order.update({
     where: { id: orderId },
     data: {
       designReady, pipelineStatus, designDriveLink: designReady ? (designLines[0]?.designDriveLink ?? null) : order.designDriveLink,
       ...(staleCsvHandoff ? { supplierHandoffAt: null, supplierHandoffMode: null, supplierHandoffById: null } : {}),
     },
-    select: { id: true, designReady: true, pipelineStatus: true },
+    select,
   })
+  if (markedDone && updated.pipelineStatus === 'READY_TO_PRODUCTION' && await reconcilePushedOrder(orderId)) {
+    return prisma.order.findUniqueOrThrow({ where: { id: orderId }, select })
+  }
+  return updated
 }
 
 export async function applyLineProps(orderId: string, props: ShopifyOrderLineProps[]) {

@@ -1,9 +1,9 @@
 import type { LibraryProductStatus } from '@/lib/artwork-fields'
 import type { TaskLibraryState } from '@/lib/artwork-library-types'
 import type { RenderJobView } from '@/lib/artwork-render-eligibility'
-import type { HandoffCard, HandoffLine, HandoffState } from '@/lib/handoff-shared'
+import type { HandoffCard, HandoffLine, HandoffPush, HandoffState } from '@/lib/handoff-shared'
 
-export type { HandoffCard, HandoffLine, HandoffState }
+export type { HandoffCard, HandoffLine, HandoffPush, HandoffState }
 
 export type TaskStatus = 'NEW' | 'ASSIGNED' | 'DOING' | 'REVIEW' | 'REJECTED' | 'ASK_CUSTOMER' | 'DONE' | 'CANCELLED'
 export type Readiness = 'AUTO' | 'LOW' | 'MANUAL'
@@ -82,7 +82,7 @@ export type TaskDetail = {
   handoff?: HandoffState | null
 }
 
-export type ReviewCard = { task: TaskRow; line: WorkspaceLine; slots: string[] }
+export type ReviewCard = { task: TaskRow; line: WorkspaceLine; slots: string[]; push?: HandoffPush | null }
 
 export type TransitionBody = {
   to: TaskStatus; note?: string; reasons?: string[]; assigneeId?: string; kpi?: number; dueHours?: number; continue?: boolean

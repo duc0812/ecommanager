@@ -13,6 +13,8 @@ import type { TaskLibraryState } from '@/lib/artwork-library-types'
 import type { RenderJobView } from '@/lib/artwork-render-eligibility'
 import { latestRenderJob } from '@/lib/artwork-render-jobs'
 import { canApproveDesign, canHandoffToSupplier, isLeaderRole, type FeaturePermission } from '@/lib/roles'
+import { activePushByOrder } from '@/lib/repos/push-export'
+import type { HandoffPush } from '@/lib/handoff-shared'
 import { autoRenderEligibility } from '@/lib/artwork-render-eligibility'
 
 export { loadTemplateContext, mapTemplate, pickTemplate, type TemplateRow }
@@ -309,18 +311,19 @@ export async function submitAutoRenderForReview(orderId: string, shopifyLineId: 
   return moved ? { moved: true, reason: null } : { moved: false, reason: 'Task vừa đổi trạng thái' }
 }
 
-export type ReviewCard = { task: TaskRow; line: WorkspaceLine; slots: string[] }
+export type ReviewCard = { task: TaskRow; line: WorkspaceLine; slots: string[]; push: HandoffPush | null }
 
 export async function listReviewCards(f: { assigneeId?: string; q?: string } = {}): Promise<ReviewCard[]> {
   const rows = await listTasks({ statuses: ['REVIEW'], assigneeId: f.assigneeId, q: f.q, limit: 200 })
   if (rows.length === 0) return []
   const orderIds = Array.from(new Set(rows.map(r => r.orderId)))
-  const [orderLines, workspaces] = await Promise.all([
+  const [orderLines, workspaces, pushes] = await Promise.all([
     prisma.orderLine.findMany({
       where: { orderId: { in: orderIds } },
       select: { orderId: true, shopifyLineId: true, resolvedSupplierId: true, resolvedSupplierSku: true, shopifyProductId: true, customAttributesJson: true },
     }),
     Promise.all(orderIds.map(id => loadWorkspace(id))),
+    activePushByOrder(orderIds),
   ])
   const wsById = new Map(workspaces.filter((w): w is Workspace => !!w).map(w => [w.order.id, w]))
   const cards: ReviewCard[] = []
@@ -328,7 +331,11 @@ export async function listReviewCards(f: { assigneeId?: string; q?: string } = {
     const line = wsById.get(task.orderId)?.lines.find(l => l.shopifyLineId === task.shopifyLineId)
     const orderLine = orderLines.find(l => l.orderId === task.orderId && l.shopifyLineId === task.shopifyLineId)
     if (!line || !orderLine) continue
-    cards.push({ task, line, slots: requiredSlotsFor(orderLine, await templateForLine(orderLine)) })
+    const push = pushes.get(task.orderId)
+    cards.push({
+      task, line, slots: requiredSlotsFor(orderLine, await templateForLine(orderLine)),
+      push: push ? { status: push.status, supplierOrderCode: push.supplierOrderCode, externalOrderId: push.externalOrderId } : null,
+    })
   }
   return cards
 }

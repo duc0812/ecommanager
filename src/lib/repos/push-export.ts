@@ -56,3 +56,23 @@ export async function activePushByOrder(orderIds: string[]): Promise<Map<string,
   }
   return out
 }
+
+export function reconcileMessage(code: string | null): string {
+  return `Đơn đã gửi PGprints từ trước${code ? ` (mã ${code})` : ''} — đánh dấu Exported, không gửi lại`
+}
+
+/**
+ * An order pushed to the supplier before its design was approved in the app keeps a CREATED push with exportMarked = false.
+ * Once the order is fully approved this marks it exactly like a push made here would have, so nobody hands it off twice.
+ */
+export async function reconcilePushedOrder(orderId: string): Promise<boolean> {
+  const push = await prisma.supplierOrderPush.findFirst({
+    where: { orderId, status: 'CREATED', exportMarked: false },
+    orderBy: { createdAt: 'desc' },
+    select: { id: true, orderId: true, supplierId: true, pushedAt: true, pushedById: true, supplierOrderCode: true, externalOrderId: true },
+  })
+  if (!push) return false
+  if (!(await markPushExported(push))) return false
+  await logHandoffEvent(orderId, reconcileMessage(push.supplierOrderCode ?? push.externalOrderId), null)
+  return true
+}

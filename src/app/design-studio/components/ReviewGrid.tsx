@@ -4,6 +4,7 @@ import type { Me, ReviewCard } from './types'
 import { postJson, requestJson, taskImages, taskUrl, timeLeft } from './model'
 import { LightboxProvider, useLightbox } from './Lightbox'
 import PrintFileThumb from './PrintFileThumb'
+import { pushChipLabel } from '@/lib/handoff-shared'
 import { ErrorBanner, Icon, Pill, btn, btnPrimary, btnWarn, card, input } from './ui'
 
 type ReviewResponse = { cards: ReviewCard[]; rejectReasons: string[]; me: Me }
@@ -46,12 +47,17 @@ function Card({ c, me, reasons, selected, busy, onToggle, onApprove, onReject, o
   return (
     <LightboxProvider images={images}>
       <article aria-label={`Mẫu ${task.taskKey}`} className={`${card} flex flex-col ${selected ? 'ring-2 ring-secondary/50' : ''}`}>
-        <header className="flex items-center gap-sm px-md py-sm border-b border-outline-variant/20">
+        <header className="flex items-center gap-sm flex-wrap px-md py-sm border-b border-outline-variant/20">
           {leader && (
             <input type="checkbox" checked={selected} onChange={onToggle} aria-label={`Chọn ${task.taskKey}`} className="w-4 h-4 accent-secondary" />
           )}
           <span className="font-mono font-semibold text-body-sm text-on-surface">{task.taskKey}</span>
           {auto && <Pill tone="brand" icon="auto_awesome">Tự động</Pill>}
+          {c.push && (
+            <span title="Đơn này đã được gửi sang PGprints — duyệt xong đơn sẽ tự chuyển Exported, không cần gửi lại">
+              <Pill tone="warn" icon="local_shipping">{pushChipLabel(c.push)}</Pill>
+            </span>
+          )}
           <span className="ml-auto"><Pill tone={left.tone} icon={left.icon}>{left.label}</Pill></span>
         </header>
         <div className="p-md flex gap-md">
