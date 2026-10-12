@@ -241,6 +241,31 @@ describe('CSV handoff — supplier without an API', () => {
     expect(events).toEqual([expect.objectContaining({ message: 'Chuyển supplier — lưu chờ xuất CSV', actorId: EXPORTER.id })])
   })
 
+  it('the export preview badges handed-off orders and "Chỉ đơn design đã chuyển" narrows to them', async () => {
+    const handed = await makeOrder()
+    const waiting = await makeOrder()
+    await saveCsv(handed.id, exportToken)
+
+    const all = await (await exportCsv({ preview: true, pipelineStatus: 'READY_TO_PRODUCTION' })).json()
+    expect(all.orders.find((o: any) => o.shopifyOrderNumber === handed.number)).toMatchObject({ designHandedOff: true, handoffMode: 'CSV', pipelineStatus: 'READY_TO_PRODUCTION' })
+    expect(all.orders.find((o: any) => o.shopifyOrderNumber === waiting.number)).toMatchObject({ designHandedOff: false, handoffMode: null })
+    expect(all.orderCount).toBe(all.orders.length)
+    expect(all.handoffCount).toBe(all.orders.filter((o: any) => o.designHandedOff).length)
+    expect(all.csv).toContain(handed.number)
+    expect(all.csv).toContain(waiting.number)
+
+    const only = await (await exportCsv({ preview: true, pipelineStatus: 'READY_TO_PRODUCTION', handoffOnly: true })).json()
+    expect(only.orders.every((o: any) => o.designHandedOff)).toBe(true)
+    expect(only.csv).toContain(handed.number)
+    expect(only.csv).not.toContain(waiting.number)
+    expect(only.handoffCount).toBe(only.orderCount)
+
+    const download = await exportCsv({ markExported: true, pipelineStatus: 'READY_TO_PRODUCTION', handoffOnly: true })
+    expect(await download.text()).toContain(handed.number)
+    expect((await order(handed.id)).pipelineStatus).toBe('EXPORTED')
+    expect((await order(waiting.id)).pipelineStatus).toBe('READY_TO_PRODUCTION')
+  })
+
   it('a second handoff is refused', async () => {
     const o = await makeOrder()
     expect((await saveCsv(o.id, adminToken)).status).toBe(200)

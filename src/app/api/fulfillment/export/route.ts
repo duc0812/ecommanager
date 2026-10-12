@@ -16,7 +16,7 @@ export async function POST(req: NextRequest) {
   const tmpl = await getTemplateById(body.templateId)
   if (!tmpl) return NextResponse.json({ error: 'Template not found' }, { status: 404 })
 
-  const orders = await listOrdersWithLines({
+  const matched = await listOrdersWithLines({
     projectId: body.projectId || undefined,
     supplierId: tmpl.supplierId,
     pipelineStatus: body.pipelineStatus || undefined,
@@ -24,6 +24,7 @@ export async function POST(req: NextRequest) {
     dateTo: body.dateTo ? new Date(body.dateTo + 'T23:59:59.999Z') : undefined,
     limit: 5000,
   })
+  const orders = body.handoffOnly === true ? matched.filter(o => o.supplierHandoffAt != null) : matched
 
   const supplierSkus = Array.from(new Set(
     orders.flatMap(o => o.lines.map(l => l.resolvedSupplierSku).filter((sku): sku is string => Boolean(sku))),
@@ -131,11 +132,17 @@ export async function POST(req: NextRequest) {
 
   // If preview mode, return JSON; otherwise CSV with attachment header
   if (body.preview) {
+    const inCsv = new Set(ordersForCsv.map(o => o.shopifyOrderNumber))
+    const previewOrders = orders
+      .filter(o => inCsv.has(o.shopifyOrderNumber))
+      .map(o => ({ shopifyOrderNumber: o.shopifyOrderNumber, pipelineStatus: o.pipelineStatus, designHandedOff: o.supplierHandoffAt != null, handoffMode: o.supplierHandoffMode }))
     return NextResponse.json({
       orderCount: ordersForCsv.length,
       csv,
       supplierCode: tmpl.supplier.code,
       supplierName: tmpl.supplier.name,
+      orders: previewOrders,
+      handoffCount: previewOrders.filter(o => o.designHandedOff).length,
     })
   }
 

@@ -139,10 +139,15 @@ export default function ExportPage() {
   const [dateFrom, setDateFrom] = useState<string>(daysAgo(7))
   const [dateTo, setDateTo] = useState<string>(today())
   const [pipelineStatus, setPipelineStatus] = useState<string>('')
+  const [handoffOnly, setHandoffOnly] = useState(false)
 
   const [previewing, setPreviewing] = useState(false)
   const [downloading, setDownloading] = useState(false)
-  const [preview, setPreview] = useState<{ orderCount: number; csv: string; supplierCode: string } | null>(null)
+  const [preview, setPreview] = useState<{
+    orderCount: number; csv: string; supplierCode: string
+    orders?: { shopifyOrderNumber: string; pipelineStatus: string; designHandedOff: boolean; handoffMode: string | null }[]
+    handoffCount?: number
+  } | null>(null)
   const [message, setMessage] = useState('')
 
   const [templateOpen, setTemplateOpen] = useState(false)
@@ -302,6 +307,7 @@ export default function ExportPage() {
         dateFrom: dateFrom || undefined,
         dateTo: dateTo || undefined,
         pipelineStatus: pipelineStatus || undefined,
+        handoffOnly: handoffOnly || undefined,
         preview: true,
         markExported: false,
       }),
@@ -309,11 +315,11 @@ export default function ExportPage() {
     const data = await res.json()
     if (!res.ok) { setMessage(data.error || 'Preview failed'); setPreviewing(false); return }
     setPreview(data); setPreviewing(false)
-  }, [templateId, projectId, dateFrom, dateTo, pipelineStatus])
+  }, [templateId, projectId, dateFrom, dateTo, pipelineStatus, handoffOnly])
 
   const download = async () => {
     if (!templateId) { setMessage('Pick a template'); return }
-    if (!confirm('Download CSV and mark these orders as EXPORTED?')) return
+    if (!confirm(handoffOnly ? 'Download CSV (chỉ đơn design đã chuyển) and mark these orders as EXPORTED?' : 'Download CSV and mark these orders as EXPORTED?')) return
     setDownloading(true); setMessage('')
     const res = await fetch('/api/fulfillment/export', {
       method: 'POST',
@@ -324,6 +330,7 @@ export default function ExportPage() {
         dateFrom: dateFrom || undefined,
         dateTo: dateTo || undefined,
         pipelineStatus: pipelineStatus || undefined,
+        handoffOnly: handoffOnly || undefined,
         markExported: true,
       }),
     })
@@ -418,6 +425,10 @@ export default function ExportPage() {
             <button onClick={download} disabled={downloading || !templateId} className="bg-secondary text-on-secondary px-lg py-sm rounded-lg text-label-md disabled:opacity-50">
               {downloading ? 'Downloading...' : 'Download CSV (mark exported)'}
             </button>
+            <label className="inline-flex items-center gap-xs text-body-sm cursor-pointer" title="Chỉ lấy các đơn Design Studio đã bấm &quot;Lưu chờ xuất CSV&quot; (hoặc đã chuyển qua API)">
+              <input type="checkbox" checked={handoffOnly} onChange={e => { setHandoffOnly(e.target.checked); setPreview(null) }} className="w-4 h-4 accent-secondary" />
+              Chỉ đơn design đã chuyển
+            </label>
             {message && <span className="text-body-sm">{message}</span>}
           </div>
         </div>
@@ -426,8 +437,25 @@ export default function ExportPage() {
           <div className="bg-surface-container-lowest rounded-xl p-lg shadow-card border border-outline-variant/20">
             <div className="flex items-center justify-between mb-md">
               <h2 className="text-headline-sm">Preview - {preview.orderCount} order(s)</h2>
-              <span className="text-label-sm text-on-surface-variant">Supplier: {preview.supplierCode}</span>
+              <span className="text-label-sm text-on-surface-variant">
+                {preview.orders ? `${preview.handoffCount ?? 0}/${preview.orders.length} design đã chuyển · ` : ''}Supplier: {preview.supplierCode}
+              </span>
             </div>
+            {preview.orders && preview.orders.length > 0 && (
+              <div className="mb-md flex flex-wrap gap-xs" aria-label="Đơn trong file CSV">
+                {preview.orders.map(o => (
+                  <span key={o.shopifyOrderNumber} className="inline-flex items-center gap-xs rounded-full border border-outline-variant/40 bg-surface-container-lowest px-sm py-[2px] text-label-sm">
+                    <span className="font-mono">{o.shopifyOrderNumber}</span>
+                    {o.designHandedOff && (
+                      <span className="inline-flex items-center gap-[2px] rounded-full bg-emerald-100 px-xs font-semibold text-emerald-900">
+                        <span className="material-symbols-outlined text-[13px]">verified</span>
+                        Design đã chuyển
+                      </span>
+                    )}
+                  </span>
+                ))}
+              </div>
+            )}
             {preview.orderCount === 0
               ? <p className="text-on-surface-variant">No orders match the filter. Adjust date range or pipeline status.</p>
               : <pre className="bg-surface-container p-sm rounded-lg text-label-sm overflow-x-auto whitespace-pre">{preview.csv}</pre>
