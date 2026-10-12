@@ -21,7 +21,7 @@ const NOT_FULFILLED = { OR: [{ fulfillmentStatus: null }, { fulfillmentStatus: {
 const CLOSED_FINANCIAL = ['REFUNDED', 'VOIDED']
 const AFTER_EXPORT = ['EXPORTED', 'FULFILLED']
 const PGPRINTS_NAME = 'PGprints'
-const MAX_CARDS = 150
+const MAX_CARDS = 60
 
 /** "Chờ chuyển xưởng": every design is approved, nothing was handed to the supplier yet, and the order is still open. */
 export function pendingHandoffWhere() {

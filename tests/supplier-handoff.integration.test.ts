@@ -447,6 +447,21 @@ describe('API handoff — supplier linked to PGprints', () => {
     expect(await handoffStateFor(o.id)).toMatchObject({ pending: true, handedOff: null, push: null })
   })
 
+  it('a factory rejection after the push brings the re-approved order back to the queue, still showing the live push', async () => {
+    const o = await makeOrder({ api: true })
+    const pre = await preview(o.id, adminToken)
+    expect((await push(o.id, pre.payloadHash, adminToken)).status).toBe(200)
+    await prisma.order.update({ where: { id: o.id }, data: { pipelineStatus: 'DESIGN_REJECTED' } })
+    expect((await syncDesignTasks(o.id)).reopened).toBe(1)
+    expect(await handoffStateFor(o.id)).toMatchObject({ pending: false, handedOff: { mode: 'API' } })
+    await transitionTask(o.keys[0], DES, { to: 'REVIEW' })
+    const r = await transitionTask(o.keys[0], DES, { to: 'DONE' })
+    expect(r.order).toMatchObject({ designReady: true, pipelineStatus: 'READY_TO_PRODUCTION' })
+    expect(await order(o.id)).toMatchObject({ supplierHandoffAt: null, supplierHandoffMode: null })
+    expect(await handoffStateFor(o.id)).toMatchObject({ pending: true, handedOff: null, push: { status: 'CREATED' } })
+    expect(createCalls).toBe(1)
+  })
+
   it('a push over an order already saved for CSV restores that CSV handoff when cancelled', async () => {
     const o = await makeOrder({ api: true })
     await saveCsv(o.id, exportToken)

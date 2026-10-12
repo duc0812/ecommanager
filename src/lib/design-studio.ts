@@ -279,15 +279,15 @@ async function recomputeOrderDesign(orderId: string, markedDone: boolean) {
     hasDesignReady: designReady,
     currentStatus,
   })
-  // A design saved for the CSV export is stale once a line is reopened or the factory sent the file back: it has to be handed over again.
-  const staleCsvHandoff = order.supplierHandoffMode === 'CSV' && !['EXPORTED', 'FULFILLED'].includes(pipelineStatus)
+  // A handoff is stale once a line is reopened or the factory sent the file back: the new design has to be handed over again.
+  const staleHandoff = !!order.supplierHandoffAt && !['EXPORTED', 'FULFILLED'].includes(pipelineStatus)
     && (!designReady || (markedDone && order.pipelineStatus === 'DESIGN_REJECTED'))
   const select = { id: true, designReady: true, pipelineStatus: true } as const
   const updated = await prisma.order.update({
     where: { id: orderId },
     data: {
       designReady, pipelineStatus, designDriveLink: designReady ? (designLines[0]?.designDriveLink ?? null) : order.designDriveLink,
-      ...(staleCsvHandoff ? { supplierHandoffAt: null, supplierHandoffMode: null, supplierHandoffById: null } : {}),
+      ...(staleHandoff ? { supplierHandoffAt: null, supplierHandoffMode: null, supplierHandoffById: null } : {}),
     },
     select,
   })
