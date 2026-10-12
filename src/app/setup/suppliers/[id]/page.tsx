@@ -43,6 +43,7 @@ type Product = {
   printTemplateId: string | null
   apiSku: string | null
   apiShipClass: string | null
+  apiShipCountries: string | null
 }
 
 type PrintTemplateOption = { id: string; name: string; widthPx: number; heightPx: number; guideImageUrl: string | null }
@@ -494,9 +495,10 @@ export default function SupplierSetupPage() {
     await loadProducts()
   }
 
-  const saveApiFields = async (p: Product, patch: { apiSku?: string; apiShipClass?: string }) => {
+  const saveApiFields = async (p: Product, patch: { apiSku?: string; apiShipClass?: string; apiShipCountries?: string }) => {
     const changed = (patch.apiSku !== undefined && patch.apiSku.trim() !== (p.apiSku ?? ''))
       || (patch.apiShipClass !== undefined && patch.apiShipClass.trim() !== (p.apiShipClass ?? ''))
+      || (patch.apiShipCountries !== undefined && patch.apiShipCountries.trim().toUpperCase() !== (p.apiShipCountries ?? ''))
     if (!changed) return
     const r = await fetch(`/api/suppliers/products/${p.id}`, {
       method: 'PATCH',
@@ -508,7 +510,7 @@ export default function SupplierSetupPage() {
   }
 
   const isPg = isPgprintsSupplier(supplier)
-  const colCount = isPg ? 13 : 11
+  const colCount = isPg ? 14 : 11
   const lookupTarget = lookupId ? products.find(p => p.id === lookupId) ?? null : null
   const templateById = new Map(printTemplates.map(t => [t.id, t]))
   const printTemplatesHref = `${suppliersPath}/${supplierId}/print-templates`
@@ -824,6 +826,12 @@ export default function SupplierSetupPage() {
                   <th className="px-sm py-xs text-on-surface-variant font-semibold">Template in</th>
                   {isPg && <th className="px-sm py-xs text-on-surface-variant font-semibold">SKU API</th>}
                   {isPg && <th className="px-sm py-xs text-on-surface-variant font-semibold">Ship class</th>}
+                  {isPg && (
+                    <th className="px-sm py-xs text-on-surface-variant font-semibold" title="Mã quốc gia SKU API này giao được, cách nhau bằng dấu phẩy (vd US hoặc US,CA). Để trống = giao mọi nước.">
+                      <div>Giao tới</div>
+                      <div className="text-[10px] font-normal text-on-surface-variant">mã nước · trống = mọi nước</div>
+                    </th>
+                  )}
                   <th className="w-8" />
                 </tr>
               </thead>
@@ -928,6 +936,14 @@ export default function SupplierSetupPage() {
                                 onBlur={e => saveApiFields(p, { apiShipClass: e.target.value })}
                                 onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur() }}
                                 className="w-[120px] border rounded px-xs py-[3px] text-xs" />
+                            </td>
+                          )}
+                          {isPg && (
+                            <td className="px-sm py-sm">
+                              <input key={`countries:${p.id}:${p.apiShipCountries ?? ''}`} defaultValue={p.apiShipCountries ?? ''} placeholder="mọi nước" aria-label={`Nước giao tới của ${p.sku}`}
+                                onBlur={e => saveApiFields(p, { apiShipCountries: e.target.value })}
+                                onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur() }}
+                                className="w-[90px] border rounded px-xs py-[3px] font-mono text-xs uppercase" />
                             </td>
                           )}
                           <td className="px-sm py-sm text-center">

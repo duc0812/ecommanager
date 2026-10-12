@@ -15,7 +15,7 @@ import {
   type PgprintsLineItem, type PgprintsOrderPayload, type PgprintsRemoteOrder,
 } from '@/lib/pgprints'
 import {
-  isPgprintsSupplier,
+  isPgprintsSupplier, parseShipCountries,
   type PreviewFile, type PreviewIssue, type PreviewLine, type PushPreview, type PushStatus, type PushView,
 } from '@/lib/pgprints-shared'
 
@@ -147,12 +147,13 @@ export async function buildPush(orderId: string, opts: { withBalance?: boolean }
 
   const supplierSkus = Array.from(new Set(pushLines.map(l => l.resolvedSupplierSku).filter((x): x is string => !!x)))
   const products = supplier && supplierSkus.length
-    ? await prisma.supplierProduct.findMany({ where: { supplierId: supplier.id, sku: { in: supplierSkus } }, select: { sku: true, apiSku: true, apiShipClass: true } })
+    ? await prisma.supplierProduct.findMany({ where: { supplierId: supplier.id, sku: { in: supplierSkus } }, select: { sku: true, apiSku: true, apiShipClass: true, apiShipCountries: true } })
     : []
   const productBySku = new Map(products.map(p => [p.sku, p]))
 
   const lines: PreviewLine[] = []
   const lineItems: PgprintsLineItem[] = []
+  const countryCode = countryCodeOf(order.shippingCountry)
 
   for (const l of pushLines) {
     const refId = taskKeyFor(order.shopifyOrderNumber, l.linePosition)
@@ -202,6 +203,11 @@ export async function buildPush(orderId: string, opts: { withBalance?: boolean }
     const productShipClass = product?.apiShipClass?.trim() || null
     const shipClass = productShipClass ?? settings.defaultShipClass
     if (!shipClass) error('NO_SHIP_CLASS', `${refId}: chưa có ship class (cột "Ship class" của SKU hoặc ship class mặc định)`, refId)
+    const shipCountries = parseShipCountries(product?.apiShipCountries)
+    if (shipCountries.length > 0 && (!countryCode || !shipCountries.includes(countryCode))) {
+      const destination = countryCode ?? (order.shippingCountry?.trim() || 'không rõ nước')
+      error('SHIP_COUNTRY', `${refId}: SKU ${apiSku ?? l.resolvedSupplierSku ?? '—'} chỉ giao tới: ${shipCountries.join(', ')} — đơn này giao ${destination}`, refId)
+    }
     if (l.qty <= 0) error('BAD_QUANTITY', `${refId}: số lượng phải lớn hơn 0`, refId)
     const mockupUrl = httpsUrl(l.previewCdnUrl ?? l.imageUrl)
     if (!mockupUrl) warning('NO_MOCKUP', `${refId}: không có ảnh mockup (https) để gửi kèm`, refId)
@@ -210,7 +216,7 @@ export async function buildPush(orderId: string, opts: { withBalance?: boolean }
     lines.push({
       refId, lineId: l.id, linePosition: l.linePosition, productTitle: l.productTitle, variantTitle: l.variantTitle, quantity: l.qty,
       supplierSku: l.resolvedSupplierSku, apiSku, shipClass: shipClass ?? null,
-      shipClassSource: productShipClass ? 'product' : shipClass ? 'default' : null,
+      shipClassSource: productShipClass ? 'product' : shipClass ? 'default' : null, shipCountries,
       templateName: template?.name ?? null, mockupUrl, designNote: note, files,
     })
     lineItems.push({
@@ -220,7 +226,6 @@ export async function buildPush(orderId: string, opts: { withBalance?: boolean }
     })
   }
 
-  const countryCode = countryCodeOf(order.shippingCountry)
   const stateCode = resolveStateCode({ countryCode, stateCode: order.shippingStateCode, state: order.shippingState })
   const fullName = (order.shippingName ?? order.customerName ?? '').trim()
   const shipName = splitPersonName(fullName)

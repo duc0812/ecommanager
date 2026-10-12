@@ -255,6 +255,7 @@ export default function PgprintsPushModal({ orderId, onClose, onChanged }: { ord
                         {line.shipClass
                           ? <span>{line.shipClass}{line.shipClassSource === 'default' ? <span className="text-on-surface-variant"> (mặc định)</span> : null}</span>
                           : <Pill tone="bad" icon="error">thiếu</Pill>}
+                        {line.shipCountries.length > 0 && <span className="text-on-surface-variant">· chỉ giao tới <b className="text-on-surface">{line.shipCountries.join(', ')}</b></span>}
                         {line.templateName && <span className="text-on-surface-variant">· template {line.templateName}</span>}
                       </div>
                       <div className="flex items-start gap-md flex-wrap">

@@ -81,6 +81,7 @@ async function setSetting(key: string, value: string | null) {
 type OrderOpts = {
   approved?: boolean; state?: string | null; stateCode?: string | null; pipelineStatus?: string; note?: string | null
   extraLine?: { supplierId: string | null }; withArtwork?: boolean; supplierSku?: string; phone?: string | null
+  country?: string | null; zip?: string | null
 }
 
 async function makeOrder(opts: OrderOpts = {}) {
@@ -95,7 +96,8 @@ async function makeOrder(opts: OrderOpts = {}) {
       pipelineStatus: opts.pipelineStatus ?? 'READY_TO_PRODUCTION', orderType: 'CUSTOM', designReady: opts.approved !== false,
       customerEmail: 'mary@example.com', customerName: 'Mary Jane Watson',
       shippingName: 'Mary Jane Watson', shippingAddress1: '12 Main St', shippingAddress2: 'Apt 4', shippingCity: 'Denver',
-      shippingZip: '80202', shippingPhone: opts.phone === undefined ? '+1 303 555 0100' : opts.phone, shippingCountry: 'US',
+      shippingZip: opts.zip === undefined ? '80202' : opts.zip, shippingPhone: opts.phone === undefined ? '+1 303 555 0100' : opts.phone,
+      shippingCountry: opts.country === undefined ? 'US' : opts.country,
       shippingState: opts.state === undefined ? 'Colorado' : opts.state, shippingStateCode: opts.stateCode ?? null,
       lines: { create: [
         {
@@ -294,6 +296,67 @@ describe('preview payload', () => {
     const res = await preview(o.id, supportToken)
     expect(res.status).toBe(200)
     expect((await res.json()).canAct).toBe(false)
+  })
+})
+
+describe('destination guard (SupplierProduct.apiShipCountries)', () => {
+  const setCountries = (value: string | null) => prisma.supplierProduct.update({ where: { id: productId }, data: { apiShipCountries: value } })
+  afterEach(async () => { await setCountries(null) })
+
+  it('an empty list ships anywhere', async () => {
+    const o = await makeOrder({ country: 'Canada', state: 'Ontario', zip: 'M5V 2T6' })
+    const body = await (await preview(o.id)).json()
+    expect(body.issues.filter((i: any) => i.code === 'SHIP_COUNTRY')).toEqual([])
+    expect(body.lines[0].shipCountries).toEqual([])
+    expect(body.canPush).toBe(true)
+  })
+
+  it('blocks the preview and the push when the order ships outside the SKU list', async () => {
+    await setCountries('US')
+    const o = await makeOrder({ country: 'Canada', state: 'Ontario', zip: 'M5V 2T6' })
+    const body = await (await preview(o.id)).json()
+    const issue = body.issues.find((i: any) => i.code === 'SHIP_COUNTRY')
+    expect(issue).toMatchObject({ level: 'error', refId: `${o.number}_1` })
+    expect(issue.message).toContain('SKU UT2-One_size chỉ giao tới: US — đơn này giao CA')
+    expect(body.lines[0].shipCountries).toEqual(['US'])
+    expect(body.canPush).toBe(false)
+    const res = await push(o.id, body.payloadHash)
+    expect(res.status).toBe(422)
+    expect((await res.json()).issues).toContainEqual(expect.objectContaining({ code: 'SHIP_COUNTRY' }))
+    expect(callsTo('/orders/create')).toHaveLength(0)
+    expect(await prisma.supplierOrderPush.count({ where: { orderId: o.id } })).toBe(0)
+  })
+
+  it('lets an order through when its country is on the list, whatever the spelling', async () => {
+    await setCountries('us, ca')
+    const us = await (await preview((await makeOrder({ country: 'United States' })).id)).json()
+    expect(us.issues.filter((i: any) => i.level === 'error')).toEqual([])
+    expect(us.lines[0].shipCountries).toEqual(['US', 'CA'])
+    const ca = await (await preview((await makeOrder({ country: 'CA', state: 'Ontario', zip: 'M5V 2T6' })).id)).json()
+    expect(ca.issues.filter((i: any) => i.code === 'SHIP_COUNTRY')).toEqual([])
+  })
+
+  it('an order whose country cannot be read is blocked too', async () => {
+    await setCountries('US')
+    const o = await makeOrder({ country: 'Atlantis' })
+    const body = await (await preview(o.id)).json()
+    expect(body.issues.find((i: any) => i.code === 'SHIP_COUNTRY').message).toContain('đơn này giao Atlantis')
+    expect(body.canPush).toBe(false)
+  })
+
+  it('PATCH on a supplier product normalises the list and refuses a bad code', async () => {
+    const patch = (value: unknown) => patchSupplierProduct(
+      new NextRequest(`http://x/api/suppliers/products/${productId}`, { method: 'PATCH', body: JSON.stringify({ apiShipCountries: value }) }),
+      { params: { id: productId } },
+    )
+    expect((await patch(' us; ca ,US ')).status).toBe(200)
+    expect((await prisma.supplierProduct.findUniqueOrThrow({ where: { id: productId } }))).toMatchObject({ apiShipCountries: 'US,CA', apiSku: 'UT2-One_size', baseCost: 8 })
+    const bad = await patch('USA')
+    expect(bad.status).toBe(400)
+    expect((await bad.json()).error).toContain('USA')
+    expect((await prisma.supplierProduct.findUniqueOrThrow({ where: { id: productId } })).apiShipCountries).toBe('US,CA')
+    expect((await patch('')).status).toBe(200)
+    expect((await prisma.supplierProduct.findUniqueOrThrow({ where: { id: productId } })).apiShipCountries).toBeNull()
   })
 })
 

@@ -185,6 +185,7 @@ export type ProductUpsertInput = {
   textureOfMaterial?: string | null
   apiSku?: string | null
   apiShipClass?: string | null
+  apiShipCountries?: string | null
 }
 
 export async function upsertProductMapping(input: ProductUpsertInput) {
@@ -214,6 +215,7 @@ export async function upsertProductMapping(input: ProductUpsertInput) {
         textureOfMaterial: input.textureOfMaterial ?? null,
         apiSku: input.apiSku ?? null,
         apiShipClass: input.apiShipClass ?? null,
+        apiShipCountries: input.apiShipCountries ?? null,
       },
       update: {
         baseCost: input.baseCost,
@@ -233,6 +235,7 @@ export async function upsertProductMapping(input: ProductUpsertInput) {
         ...(input.textureOfMaterial !== undefined ? { textureOfMaterial: input.textureOfMaterial } : {}),
         ...(input.apiSku !== undefined ? { apiSku: input.apiSku } : {}),
         ...(input.apiShipClass !== undefined ? { apiShipClass: input.apiShipClass } : {}),
+        ...(input.apiShipCountries !== undefined ? { apiShipCountries: input.apiShipCountries } : {}),
       },
     })
     if (existing && existing.baseCost !== input.baseCost) {
