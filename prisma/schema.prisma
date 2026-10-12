@@ -339,6 +339,7 @@ model SupplierProduct {
   printTemplate       PrintTemplate? @relation(fields: [printTemplateId], references: [id], onDelete: SetNull)
   apiSku              String?
   apiShipClass        String?
+  apiShipCountries    String?                           // comma-separated ISO codes this API SKU ships to; empty = anywhere
   baseSupplierMappings  ProductBaseSupplierMapping[]
   baseOverrides         ProductBaseOverride[]
   variantManualMappings VariantManualMapping[]
@@ -407,6 +408,9 @@ model Order {
   designReady          Boolean     @default(false)
   designDriveLink      String?
   shippingStateCode    String?
+  supplierHandoffAt    DateTime?
+  supplierHandoffMode  String?                          // API | CSV — design handed to the supplier; null = chờ chuyển xưởng
+  supplierHandoffById  String?
   supplierPushes       SupplierOrderPush[]
   @@index([placedAt])
   @@index([pipelineStatus])
