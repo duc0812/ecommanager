@@ -16,6 +16,8 @@ import { canApproveDesign, canEditDesignNote, canHandoffToSupplier, isLeaderRole
 import { activePushByOrder } from '@/lib/repos/push-export'
 import type { HandoffPush } from '@/lib/handoff-shared'
 import { autoRenderEligibility } from '@/lib/artwork-render-eligibility'
+import { APP_FILE_PREFIX } from '@/lib/design-links'
+import { saveStudioDesignToLibrary } from '@/lib/studio-library'
 
 export { loadTemplateContext, mapTemplate, pickTemplate, type TemplateRow }
 
@@ -25,7 +27,6 @@ export type ActorRole = 'LEADER' | 'DESIGNER'
 export const TASK_STATUSES: TaskStatus[] = ['NEW', 'ASSIGNED', 'DOING', 'REVIEW', 'REJECTED', 'ASK_CUSTOMER', 'DONE', 'CANCELLED']
 const OPEN: TaskStatus[] = ['NEW', 'ASSIGNED', 'DOING', 'REVIEW', 'REJECTED']
 export const FACTORY_REJECT_REASON = 'Xưởng trả file'
-const APP_FILE_PREFIX = '/api/design-studio/file/'
 export const APPROVE_MESSAGE = 'Duyệt design'
 
 export function taskKeyFor(orderNumber: string, linePosition: number): string {
@@ -304,8 +305,14 @@ export async function transitionTask(taskKey: string, actor: Actor, input: Trans
       order = current
     } else {
       const template = await templateForLine(line)
-      order = (await updateLine(line.id, { done: true, requiredAreas: requiredSlotsFor(line, template) }))?.order ?? null
+      const slots = requiredSlotsFor(line, template)
+      order = (await updateLine(line.id, { done: true, requiredAreas: slots }))?.order ?? null
       data.rejectReasons = null; data.rejectNote = null
+      // The approval stands even when the library cannot be written; the reason is logged on the task.
+      const library = await saveStudioDesignToLibrary(line, slots)
+        .catch((e: any) => ({ saved: false, designLink: null, note: `Chưa lưu vào Design Library: ${e?.message ?? e}` }))
+      if (library.saved) events.push({ type: 'SYSTEM', message: `Đã lưu design vào Design Library cho SKU ${line.sku} — đơn sau cùng SKU dùng lại`, actorId: actor.id })
+      else if (library.note) events.push({ type: 'SYSTEM', message: library.note, actorId: actor.id })
     }
   }
   if (from === 'DONE' && input.to === 'DOING') order = (await updateLine(line.id, { done: false }))?.order ?? null
