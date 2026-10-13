@@ -4,7 +4,7 @@ import {
   GOOGLE_KEYS, GoogleOAuthError, consumeGoogleOAuthState, exchangeGoogleCode, fetchGoogleEmail,
   getGoogleConfig, googleAppUrl,
 } from '@/lib/google-oauth'
-import { ROOT_FOLDER_NAME, ensureFolder, primeAccessToken, resetDriveCache } from '@/lib/google-drive'
+import { ROOT_FOLDER_NAME, ensureFolder, primeAccessToken, refreshDriveQuota, resetDriveCache } from '@/lib/google-drive'
 
 export const dynamic = 'force-dynamic'
 
@@ -42,7 +42,7 @@ export async function GET(req: NextRequest) {
   const email = await fetchGoogleEmail(tokens.access_token)
   if (email) await saveSetting(GOOGLE_KEYS.email, email)
   else await deleteSettings([GOOGLE_KEYS.email])
-  await deleteSettings([GOOGLE_KEYS.needsReconnect])
+  await deleteSettings([GOOGLE_KEYS.needsReconnect, GOOGLE_KEYS.quota, GOOGLE_KEYS.testFileId])
 
   resetDriveCache()
   primeAccessToken(tokens.access_token, Number(tokens.expires_in) || 3600, refreshToken)
@@ -54,6 +54,7 @@ export async function GET(req: NextRequest) {
     await deleteSettings([GOOGLE_KEYS.rootFolderId])
     return back('error', 'root_folder')
   }
+  await refreshDriveQuota().catch(() => {})
 
   return back('connected')
 }

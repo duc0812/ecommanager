@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireSuperadmin } from '@/lib/api-auth'
 import { deleteSettings, saveSetting } from '@/lib/token-store'
-import { GOOGLE_KEYS, getGoogleConfig, googleRedirectUri } from '@/lib/google-oauth'
+import { GOOGLE_CONNECTION_KEYS, GOOGLE_KEYS, getGoogleConfig, googleRedirectUri } from '@/lib/google-oauth'
 import { driveFolderUrl, resetDriveCache } from '@/lib/google-drive'
+import { countPendingArtworks, lastSuccessfulPushAt } from '@/lib/drive-push-queue'
 
 export const dynamic = 'force-dynamic'
 
@@ -15,11 +16,16 @@ export async function GET(req: NextRequest) {
   const auth = await requireSuperadmin(req)
   if ('error' in auth) return auth.error
 
-  const cfg = await getGoogleConfig()
+  const [cfg, pendingLocal, lastPushAt] = await Promise.all([getGoogleConfig(), countPendingArtworks(), lastSuccessfulPushAt()])
   const configured = Boolean(cfg.clientId && cfg.clientSecret)
+  const connected = configured && Boolean(cfg.refreshToken)
   return NextResponse.json({
     configured,
-    connected: configured && Boolean(cfg.refreshToken),
+    connected,
+    quota: connected ? cfg.quota : null,
+    pendingLocal,
+    lastPushAt,
+    hasTestFile: Boolean(cfg.testFileId),
     email: cfg.email || null,
     rootFolderId: cfg.rootFolderId || null,
     rootFolderUrl: cfg.rootFolderId ? driveFolderUrl(cfg.rootFolderId) : null,
@@ -45,7 +51,7 @@ export async function PUT(req: NextRequest) {
   }
   const before = await getGoogleConfig()
   if (body.clientId !== undefined && (body.clientId as string).trim() !== before.clientId) {
-    await deleteSettings([GOOGLE_KEYS.refreshToken, GOOGLE_KEYS.email, GOOGLE_KEYS.rootFolderId, GOOGLE_KEYS.needsReconnect])
+    await deleteSettings(GOOGLE_CONNECTION_KEYS)
   }
   for (const [field, key] of fields) {
     if (body[field] === undefined) continue
@@ -63,7 +69,7 @@ export async function DELETE(req: NextRequest) {
   const auth = await requireSuperadmin(req)
   if ('error' in auth) return auth.error
 
-  await deleteSettings([GOOGLE_KEYS.refreshToken, GOOGLE_KEYS.email, GOOGLE_KEYS.rootFolderId, GOOGLE_KEYS.needsReconnect])
+  await deleteSettings(GOOGLE_CONNECTION_KEYS)
   resetDriveCache()
   return NextResponse.json({ ok: true })
 }
