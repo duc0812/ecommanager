@@ -98,3 +98,31 @@ def test_max_chars_truncates():
     a = tr.ink_bbox(base_field(fit='none', maxChars=3), 'Rachel', ARIAL)
     b = tr.ink_bbox(base_field(fit='none'), 'Rac', ARIAL)
     assert a == b
+
+
+def test_synthesized_accents_keep_layout_and_add_ink():
+    """A font without é draws e + a mark: same advance widths as the plain name, extra ink above."""
+    import os
+    import pytest
+    from textrender import accent_subst, layout, render_field
+    font = r'C:\Windows\Fonts\arial.ttf'
+    if not os.path.exists(font):
+        pytest.skip('needs a system font')
+    assert accent_subst(font, 'César') == {}  # Arial has é: nothing is synthesized
+    fake = {'é': ('e', 'acute')}
+    field = {'box': {'x': 0, 'y': 0, 'w': 900, 'h': 300}, 'sizePx': 120, 'color': '#000000', 'align': 'center', 'anchor': 'center', 'fit': 'shrink'}
+    plain = layout(field, 'Cesar', font)
+    import textrender
+    orig = textrender.accent_subst
+    textrender.accent_subst = lambda path, text: {c: fake[c] for c in set(text) if c in fake}
+    try:
+        acc = layout(field, 'César', font)
+        assert acc['widths'] == plain['widths'] and acc['size'] == plain['size']
+        p1, pos1, i1 = render_field(field, 'Cesar', font)
+        p2, pos2, i2 = render_field(field, 'César', font)
+    finally:
+        textrender.accent_subst = orig
+    b1 = i1['fill'][0].getbbox(); b2 = i2['fill'][0].getbbox()
+    top1 = b1[1] + i1['fill'][1][1]; top2 = b2[1] + i2['fill'][1][1]
+    assert top2 < top1  # the mark rises above the plain letters
+    assert abs((b1[0] + i1['fill'][1][0]) - (b2[0] + i2['fill'][1][0])) <= 1  # letters did not move sideways

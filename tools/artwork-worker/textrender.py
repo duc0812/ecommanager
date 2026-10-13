@@ -24,6 +24,7 @@ Effects are drawn in Photoshop's order: drop shadow, stroke, fill (+ gradient ov
 from __future__ import annotations
 
 import math
+import unicodedata
 from functools import lru_cache
 from typing import Any
 
@@ -72,6 +73,76 @@ def load_font(path: str, size_px: float, postscript: str | None = None) -> Image
                               layout_engine=LAYOUT_ENGINE)
 
 
+# Combining marks drawn by hand when the font has the base letter but not the accented one
+# (display fonts such as HarryP ship A-Z a-z only).
+_MARKS = {'\u0301': 'acute', '\u0300': 'grave', '\u0302': 'circumflex', '\u0308': 'diaeresis', '\u0303': 'tilde'}
+
+
+@lru_cache(maxsize=64)
+def _cmap(path: str) -> frozenset[int]:
+    try:
+        from fontTools.ttLib import TTFont
+        return frozenset((TTFont(path, lazy=True, fontNumber=0).getBestCmap() or {}).keys())
+    except Exception:
+        return frozenset()
+
+
+def accent_subst(font_path: str, text: str) -> dict[str, tuple[str, str]]:
+    """Characters the font lacks that can be drawn as base letter + a synthesized mark: {char: (base, mark)}."""
+    cmap = _cmap(font_path)
+    out: dict[str, tuple[str, str]] = {}
+    if not cmap:
+        return out
+    for ch in set(text or ''):
+        if ch.isspace() or ord(ch) in cmap:
+            continue
+        d = unicodedata.normalize('NFD', ch)
+        if len(d) == 2 and d[1] in _MARKS and ord(d[0]) in cmap:
+            out[ch] = (d[0], _MARKS[d[1]])
+    return out
+
+
+def _plain(s: str, subst: dict | None) -> str:
+    return ''.join(subst[c][0] if c in subst else c for c in s) if subst else s
+
+
+def _mark_shapes(mark: str, cx: float, top: float, size: float) -> list[tuple[str, list]]:
+    """Shapes of one mark above a glyph whose ink top is `top` and ink centre is `cx` (mask px)."""
+    gap, mh, mw, th = 0.05 * size, 0.17 * size, 0.13 * size, 0.075 * size
+    yb, yt = top - gap, top - gap - mh
+    if mark in ('acute', 'grave'):
+        sgn = 1.0 if mark == 'acute' else -1.0
+        c = cx + sgn * 0.02 * size
+        pts = [(c - sgn * mw / 2, yb), (c - sgn * (mw / 2 - th * 0.55), yb),
+               (c + sgn * (mw / 2 + th * 0.5), yt), (c + sgn * (mw / 2 - th * 0.5), yt)]
+        return [('poly', pts)]
+    if mark == 'circumflex':
+        hw = mw * 0.85
+        return [('poly', [(cx - hw, yb), (cx, yt), (cx + hw, yb), (cx + hw - th, yb), (cx, yt + th * 1.25), (cx - hw + th, yb)])]
+    if mark == 'diaeresis':
+        r, dx = 0.045 * size, 0.095 * size
+        return [('dot', [cx - dx, yb - r, r]), ('dot', [cx + dx, yb - r, r])]
+    if mark == 'tilde':
+        hw, amp, mid = mw * 0.95, mh * 0.22, (yb + yt) / 2 + mh * 0.15
+        pts = [(cx - hw + 2 * hw * i / 16.0, mid - amp * math.sin(2 * math.pi * i / 16.0)) for i in range(17)]
+        return [('line', [pts, th * 0.8])]
+    return []
+
+
+def _draw_mark(draw: ImageDraw.ImageDraw, shapes: list, grow: float = 0.0) -> None:
+    for kind, data in shapes:
+        if kind == 'poly':
+            draw.polygon(data, fill=255)
+            if grow > 0:
+                draw.line(data + [data[0]], fill=255, width=max(1, int(round(2 * grow))), joint='curve')
+        elif kind == 'dot':
+            x, y, r = data
+            draw.ellipse([x - r - grow, y - r - grow, x + r + grow, y + r + grow], fill=255)
+        elif kind == 'line':
+            pts, w = data
+            draw.line(pts, fill=255, width=max(1, int(round(w + 2 * grow))), joint='curve')
+
+
 def _track_px(field: dict, size: float) -> float:
     return float(field.get('tracking') or 0) / 1000.0 * size
 
@@ -80,11 +151,11 @@ def _per_char(field: dict) -> bool:
     return bool(field.get('tracking')) or bool(field.get('charColors'))
 
 
-def line_width(font: ImageFont.FreeTypeFont, line: str, track: float) -> float:
+def line_width(font: ImageFont.FreeTypeFont, line: str, track: float, subst: dict | None = None) -> float:
     """Advance width in unscaled px. Tracking is added between characters, not after the last."""
     if not line:
         return 0.0
-    return font.getlength(line) + track * max(len(line) - 1, 0)
+    return font.getlength(_plain(line, subst)) + track * max(len(line) - 1, 0)
 
 
 def _metrics(font: ImageFont.FreeTypeFont, size: float, field: dict) -> tuple[float, float, float]:
@@ -94,14 +165,14 @@ def _metrics(font: ImageFont.FreeTypeFont, size: float, field: dict) -> tuple[fl
     return float(ascent), float(descent), lead
 
 
-def _wrap(font, text: str, max_w: float, track: float) -> list[str]:
+def _wrap(font, text: str, max_w: float, track: float, subst: dict | None = None) -> list[str]:
     out: list[str] = []
     for para in text.split('\n'):
         words = para.split(' ')
         cur = ''
         for w in words:
             cand = w if not cur else cur + ' ' + w
-            if not cur or line_width(font, cand, track) <= max_w:
+            if not cur or line_width(font, cand, track, subst) <= max_w:
                 cur = cand
             else:
                 out.append(cur)
@@ -123,13 +194,14 @@ def layout(field: dict, text: str, font_path: str) -> dict:
     size = float(field['sizePx'])
     avail_w = float(box['w']) / scale_x
     avail_h = float(box['h'])
+    subst = accent_subst(font_path, text)
 
     def measure(sz: float, wrap: bool):
         font = load_font(font_path, round(sz, 2), ps)
         track = _track_px(field, sz)
-        lines = _wrap(font, text, avail_w, track) if wrap else text.split('\n')
+        lines = _wrap(font, text, avail_w, track, subst) if wrap else text.split('\n')
         asc, desc, lead = _metrics(font, sz, field)
-        widths = [line_width(font, ln, track) for ln in lines]
+        widths = [line_width(font, ln, track, subst) for ln in lines]
         block_h = asc + desc + lead * (len(lines) - 1)
         return font, track, lines, widths, asc, desc, lead, block_h
 
@@ -145,7 +217,7 @@ def layout(field: dict, text: str, font_path: str) -> dict:
             m = measure(size, fit == 'wrap')
     font, track, lines, widths, asc, desc, lead, block_h = m
     return {'font': font, 'size': size, 'track': track, 'lines': lines, 'widths': widths,
-            'ascent': asc, 'descent': desc, 'leading': lead, 'blockH': block_h, 'scaleX': scale_x}
+            'ascent': asc, 'descent': desc, 'leading': lead, 'blockH': block_h, 'scaleX': scale_x, 'subst': subst}
 
 
 def _draw_masks(lay: dict, field: dict, stroke_px: float, pad: int):
@@ -160,12 +232,24 @@ def _draw_masks(lay: dict, field: dict, stroke_px: float, pad: int):
     df = ImageDraw.Draw(fill)
     ds = ImageDraw.Draw(stroke) if stroke is not None else None
     align = field.get('align') or 'left'
+    subst = lay.get('subst') or {}
     char_i = 0
-    for i, line in enumerate(lines):
+    for i, raw in enumerate(lines):
+        line = _plain(raw, subst)
         lw = widths[i]
         off = 0.0 if align == 'left' else (max_w - lw if align == 'right' else (max_w - lw) / 2.0)
         x0 = pad + off
         base = pad + lay['ascent'] + i * lay['leading']
+        marks = []
+        for j, ch in enumerate(raw):
+            if ch in subst:
+                gl, gt, gr, _ = font.getbbox(line[j], anchor='ls')
+                gx = x0 + font.getlength(line[:j]) + j * lay['track']
+                marks.append((j, _mark_shapes(subst[ch][1], gx + (gl + gr) / 2.0, base + gt, lay['size'])))
+        for _, shapes in marks:
+            _draw_mark(df, shapes)
+            if ds is not None:
+                _draw_mark(ds, shapes, stroke_px)
         if not _per_char(field):
             df.text((x0, base), line, font=font, fill=255, anchor='ls')
             if ds is not None:
@@ -181,6 +265,9 @@ def _draw_masks(lay: dict, field: dict, stroke_px: float, pad: int):
                 if c not in color_masks:
                     color_masks[c] = Image.new('L', fill.size, 0)
                 ImageDraw.Draw(color_masks[c]).text((x, base), ch, font=font, fill=255, anchor='ls')
+                for mj, shapes in marks:
+                    if mj == j:
+                        _draw_mark(ImageDraw.Draw(color_masks[c]), shapes)
                 char_i += 1
     return fill, stroke, color_masks, max_w
 
@@ -421,6 +508,8 @@ def render_field(field: dict, text: str, font_path: str) -> tuple[Image.Image, t
     stroke_px = float(stroke.get('px') or 0) * k if stroke else 0.0
     shadow = field.get('shadow') or None
     pad = int(math.ceil(stroke_px)) + 4
+    if lay.get('subst'):
+        pad += int(math.ceil(0.3 * lay['size']))
     fill_m, stroke_m, color_masks, max_w = _draw_masks(lay, field, stroke_px, pad)
 
     sx = lay['scaleX']

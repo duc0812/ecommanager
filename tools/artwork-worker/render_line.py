@@ -55,7 +55,10 @@ def render_line(artwork: Image.Image, fields: list[dict], values: dict[str, str]
         path = font_lookup(f.get('font') or '')
         if not path:
             raise RenderError(f'Thiếu font {f.get("font") or "?"} trong thư viện')
-        gaps = missing_glyphs(path, value)
+        synth = textrender.accent_subst(path, str(value))
+        gaps = [g for g in missing_glyphs(path, value) if g not in synth]
+        if synth:
+            warnings.append(f'Font {f.get("font")} không có {" ".join(sorted(synth))}: đã vẽ chữ gốc + dấu tự dựng — kiểm tra lại ({name})')
         if gaps:
             warnings.append(f'Font {f.get("font")} không có ký tự {" ".join(gaps)} ({name})')
         info = textrender.draw_field(img, f, str(value), path)
