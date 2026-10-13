@@ -10,7 +10,7 @@ import { GET as getTasks } from '@/app/api/design-studio/tasks/route'
 import { GET as getTask } from '@/app/api/design-studio/tasks/[key]/route'
 import { POST as postTransition } from '@/app/api/design-studio/tasks/[key]/transition/route'
 import { POST as postEvent } from '@/app/api/design-studio/tasks/[key]/events/route'
-import { POST as postSync } from '@/app/api/design-studio/tasks/sync/route'
+import { GET as getSync, POST as postSync } from '@/app/api/design-studio/tasks/sync/route'
 import { GET as getTemplates, POST as postTemplate } from '@/app/api/design-studio/templates/route'
 import { GET as getSettings, PUT as putSettings } from '@/app/api/design-studio/settings/route'
 import { GET as getGuideFile } from '@/app/api/design-studio/file/guide/[templateId]/route'
@@ -273,6 +273,17 @@ describe('POST /api/design-studio/tasks/sync', () => {
     const body = await res.json()
     expect(body.orders).toBeGreaterThanOrEqual(2)
     expect(body.errors).toEqual([])
+    expect(body.trigger).toBe('manual')
+    expect(body).not.toHaveProperty('pruned')
+  })
+
+  it('the task list and GET sync report when the last sync ran', async () => {
+    const list = await (await getTasks(await cookieReq('http://x/api/design-studio/tasks', adminToken))).json()
+    expect(list.lastSync).toMatchObject({ trigger: 'manual', error: null })
+    expect(Number.isNaN(new Date(list.lastSync.ranAt).getTime())).toBe(false)
+    const got = await (await getSync(await cookieReq('http://x/api/design-studio/tasks/sync', adminToken))).json()
+    expect(got.lastSync.ranAt).toBe(list.lastSync.ranAt)
+    expect((await getSync(await cookieReq('http://x/api/design-studio/tasks/sync', null))).status).toBe(401)
   })
 
   it('also visits orders outside the design statuses that still have an open task', async () => {

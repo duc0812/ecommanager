@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { prisma } from '@/lib/db'
 import { getAuthUser, unauthorized } from '@/lib/api-auth'
-import { syncDesignTasks, pruneUntouchedTasksOutside } from '@/lib/design-tasks'
-import { refreshMissingLineProps } from '@/lib/design-studio'
+import { syncDesignTasks } from '@/lib/design-tasks'
+import { getLastDesignTaskSync, runDesignTaskSyncJob } from '@/lib/design-task-sync'
 
-const DEFAULT_SCAN = 100
+export async function GET(req: NextRequest) {
+  const user = await getAuthUser(req)
+  if (!user) return unauthorized()
+  return NextResponse.json({ lastSync: await getLastDesignTaskSync() })
+}
 
 export async function POST(req: NextRequest) {
   const user = await getAuthUser(req)
@@ -17,30 +20,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ...r, orders: 1 })
   }
 
-  const limit = Math.min(500, Math.max(1, Number(body?.limit) || DEFAULT_SCAN))
-  const orders = await prisma.order.findMany({
-    orderBy: { placedAt: 'desc' },
-    take: limit,
-    select: {
-      id: true, shopifyOrderNumber: true,
-      store: { select: { shop: true } },
-      lines: { select: { customAttributesJson: true, imageUrl: true, shopifyProductId: true } },
-    },
-  })
-  const refresh = await refreshMissingLineProps(orders)
-  const pruned = await pruneUntouchedTasksOutside(orders.map(o => o.id))
-  let created = 0, cancelled = 0, completed = 0, reopened = 0
-  const errors: string[] = []
-  for (const o of orders) {
-    try {
-      const r = await syncDesignTasks(o.id)
-      created += r.created
-      cancelled += r.cancelled
-      completed += r.completed
-      reopened += r.reopened
-    } catch (e: any) {
-      errors.push(`${o.shopifyOrderNumber}: ${e.message}`)
-    }
+  const outcome = await runDesignTaskSyncJob('manual')
+  if (outcome.skipped) {
+    return NextResponse.json({ error: 'Đang có một lượt đồng bộ task chạy (tự động mỗi 15 phút hoặc người khác vừa bấm) — thử lại sau ít phút' }, { status: 409 })
   }
-  return NextResponse.json({ created, cancelled, completed, reopened, pruned, orders: orders.length, refresh, errors })
+  return NextResponse.json(outcome.result)
 }

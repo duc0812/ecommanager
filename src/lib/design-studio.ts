@@ -316,12 +316,16 @@ export async function applyLineProps(orderId: string, props: ShopifyOrderLinePro
   return { updated, unmatched }
 }
 
+export function needsLineProps(order: { lines: Array<{ customAttributesJson: string | null; imageUrl: string | null; shopifyProductId: string | null }> }): boolean {
+  return order.lines.some(l => l.customAttributesJson == null || l.imageUrl == null || l.shopifyProductId == null)
+}
+
 export async function refreshMissingLineProps(orders: Array<{
   id: string; shopifyOrderNumber: string; store: { shop: string }
   lines: Array<{ customAttributesJson: string | null; imageUrl: string | null; shopifyProductId: string | null }>
 }>): Promise<{ refreshed: number; notFound: number; otherStore: number; error: string | null }> {
   const result = { refreshed: 0, notFound: 0, otherStore: 0, error: null as string | null }
-  const needing = orders.filter(o => o.lines.some(l => l.customAttributesJson == null || l.imageUrl == null || l.shopifyProductId == null))
+  const needing = orders.filter(needsLineProps)
   if (needing.length === 0) return result
   const conn = await getShopifyConnection()
   if (!conn) return { ...result, error: 'Chưa kết nối Shopify' }

@@ -92,6 +92,7 @@ export async function syncDesignTasks(orderId: string): Promise<SyncResult> {
   const suppliers = supplierIds.length ? await prisma.supplier.findMany({ where: { id: { in: supplierIds } }, select: { id: true, name: true } }) : []
   const supplierName = new Map(suppliers.map(s => [s.id, s.name]))
   const orderClosed = ['CANCELLED', 'REFUNDED'].includes(order.pipelineStatus)
+  const orderShipped = order.pipelineStatus === 'FULFILLED' || (order.fulfillmentStatus ?? '').toLowerCase() === 'fulfilled'
   const factoryRejected = order.pipelineStatus === 'DESIGN_REJECTED'
   let created = 0, cancelled = 0, completed = 0, reopened = 0
   const factoryReopen = { status: 'REJECTED', rejectReasons: JSON.stringify([FACTORY_REJECT_REASON]), rejectNote: null, prevStatus: null }
@@ -100,9 +101,10 @@ export async function syncDesignTasks(orderId: string): Promise<SyncResult> {
   for (const line of order.lines) {
     if (isNonProductLine(line) || !line.resolvedSupplierId) continue
     const existing = order.designTasks.find(t => t.shopifyLineId === line.shopifyLineId)
-    if (orderClosed) {
+    if (orderClosed || orderShipped) {
       if (existing && existing.status !== 'CANCELLED' && existing.status !== 'DONE') {
-        await prisma.designTask.update({ where: { id: existing.id }, data: { status: 'CANCELLED', events: { create: { type: 'SYSTEM', message: 'Đơn huỷ — task tự huỷ' } } } })
+        const message = orderClosed ? 'Đơn huỷ — task tự huỷ' : 'Đơn đã fulfilled — task tự huỷ'
+        await prisma.designTask.update({ where: { id: existing.id }, data: { status: 'CANCELLED', events: { create: { type: 'SYSTEM', message } } } })
         cancelled++
       }
       continue
@@ -469,20 +471,4 @@ export async function loadTask(taskKey: string): Promise<TaskDetail | null> {
     library,
     autoRender: await latestRenderJob(task.orderId, task.shopifyLineId),
   }
-}
-
-export async function pruneUntouchedTasksOutside(keepOrderIds: string[]): Promise<number> {
-  const stale = await prisma.designTask.findMany({
-    where: {
-      orderId: { notIn: keepOrderIds },
-      status: 'NEW',
-      assigneeId: null,
-      events: { none: { type: { not: 'SYSTEM' } } },
-      order: { artworks: { none: {} } },
-    },
-    select: { id: true },
-  })
-  if (stale.length === 0) return 0
-  const r = await prisma.designTask.deleteMany({ where: { id: { in: stale.map(t => t.id) } } })
-  return r.count
 }

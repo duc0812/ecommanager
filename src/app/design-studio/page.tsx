@@ -16,6 +16,10 @@ import { ErrorBanner, Icon, Note, READY_META, btnPrimary, card } from './compone
 type Filter = 'ALL' | Readiness
 type Mode = 'work' | 'review' | 'handoff'
 
+function fmtSyncTime(iso: string) {
+  return new Date(iso).toLocaleString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric', hour: 'numeric', minute: '2-digit' })
+}
+
 function Flags({ detail }: { detail: TaskDetail }) {
   const { task } = detail
   return (
@@ -52,6 +56,7 @@ function DesignTasks() {
   const [syncing, setSyncing] = useState(false)
   const [syncMsg, setSyncMsg] = useState('')
   const [syncError, setSyncError] = useState('')
+  const [lastSync, setLastSync] = useState<{ ranAt: string; trigger: string; error: string | null } | null>(null)
   const listReq = useRef(0)
   const retryAttempt = useRef(0)
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -76,7 +81,7 @@ function DesignTasks() {
     if (mine) qs.set('mine', '1')
     if (debouncedQ) qs.set('q', debouncedQ)
     const query = qs.toString()
-    const r = await requestJson<{ tasks: TaskRow[]; me: Me; handoffCount?: number }>(`/api/design-studio/tasks${query ? `?${query}` : ''}`)
+    const r = await requestJson<{ tasks: TaskRow[]; me: Me; handoffCount?: number; lastSync?: { ranAt: string; trigger: string; error: string | null } | null }>(`/api/design-studio/tasks${query ? `?${query}` : ''}`)
     if (id !== listReq.current) return
     setListLoading(false)
     if (!r.ok) {
@@ -96,6 +101,7 @@ function DesignTasks() {
     setTasks(r.data.tasks)
     setMe(r.data.me)
     setHandoffCount(r.data.handoffCount ?? 0)
+    setLastSync(r.data.lastSync ?? null)
   }, [mine, debouncedQ])
 
   const loadDetail = useCallback(async (key: string) => {
@@ -142,12 +148,12 @@ function DesignTasks() {
 
   async function sync() {
     setSyncing(true); setSyncMsg(''); setSyncError('')
-    const r = await postJson<{ created: number; cancelled: number; completed: number; reopened: number; pruned?: number; orders: number; refresh?: { refreshed: number; notFound: number; otherStore: number; error: string | null }; errors?: string[] }>('/api/design-studio/tasks/sync', {})
+    const r = await postJson<{ created: number; cancelled: number; completed: number; reopened: number; orders: number; refresh?: { refreshed: number; notFound: number; otherStore: number; deferred?: number; error: string | null }; errors?: string[] }>('/api/design-studio/tasks/sync', {})
     setSyncing(false)
     if (!r.ok) { setSyncError(r.error); return }
     const rf = r.data.refresh
     if (rf?.error) setSyncError(`Nạp từ Shopify lỗi: ${rf.error}`)
-    setSyncMsg(`${r.data.orders} đơn · nạp Shopify ${rf?.refreshed ?? 0}${rf?.notFound ? ` (không thấy ${rf.notFound})` : ''}${rf?.otherStore ? ` · store khác ${rf.otherStore}` : ''} · tạo ${r.data.created} · huỷ ${r.data.cancelled} · xong ${r.data.completed} · mở lại ${r.data.reopened}${r.data.errors?.length ? ` · lỗi ${r.data.errors.length}` : ''}`)
+    setSyncMsg(`${r.data.orders} đơn · nạp Shopify ${rf?.refreshed ?? 0}${rf?.notFound ? ` (không thấy ${rf.notFound})` : ''}${rf?.otherStore ? ` · store khác ${rf.otherStore}` : ''}${rf?.deferred ? ` · để lượt sau ${rf.deferred}` : ''} · tạo ${r.data.created} · huỷ ${r.data.cancelled} · xong ${r.data.completed} · mở lại ${r.data.reopened}${r.data.errors?.length ? ` · lỗi ${r.data.errors.length}` : ''}`)
     loadList()
     setReviewVersion(v => v + 1)
   }
@@ -212,6 +218,12 @@ function DesignTasks() {
         <div className="ml-auto flex items-center gap-sm">
           {me && <span className="text-label-sm text-on-surface-variant">{me.name} · {me.isLeader ? 'Leader' : 'Designer'}</span>}
           {syncMsg && <span role="status" className="text-label-sm text-on-surface-variant">{syncMsg}</span>}
+          {lastSync && (
+            <span className={`text-label-sm ${lastSync.error ? 'text-error' : 'text-on-surface-variant'}`}
+              title={lastSync.error ? `Lượt gần nhất lỗi: ${lastSync.error}` : `Task tự đồng bộ mỗi 15 phút · lượt gần nhất ${lastSync.trigger === 'schedule' ? 'tự động' : 'bấm tay'}`}>
+              Đồng bộ lần cuối: {fmtSyncTime(lastSync.ranAt)}
+            </span>
+          )}
           <button type="button" onClick={sync} disabled={syncing} className={`${btnPrimary} px-lg py-sm text-label-md`}>
             <Icon name="sync" className={`text-[18px] ${syncing ? 'animate-spin' : ''}`} />{syncing ? 'Đang đồng bộ…' : 'Đồng bộ task'}
           </button>

@@ -20,5 +20,7 @@ export async function register() {
     initCashflowSnapshotScheduler()
     const { initDailySyncScheduler } = await import('./lib/daily-sync-scheduler')
     initDailySyncScheduler()
+    const { initDesignTaskSyncScheduler } = await import('./lib/design-task-sync-scheduler')
+    initDesignTaskSyncScheduler()
   }
 }

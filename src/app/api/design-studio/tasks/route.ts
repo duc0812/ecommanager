@@ -4,6 +4,7 @@ import { getAuthUser, unauthorized } from '@/lib/api-auth'
 import { listTasks, viewerFor, TASK_STATUSES, type TaskStatus, type Readiness } from '@/lib/design-tasks'
 import { getDesignSettings } from '@/lib/design-settings'
 import { countPendingHandoff } from '@/lib/supplier-handoff'
+import { getLastDesignTaskSync } from '@/lib/design-task-sync'
 
 const READINESS_VALUES: Readiness[] = ['AUTO', 'LOW', 'MANUAL']
 const OPEN_STATUSES: TaskStatus[] = ['NEW', 'ASSIGNED', 'DOING', 'REVIEW', 'REJECTED', 'ASK_CUSTOMER']
@@ -48,6 +49,6 @@ export async function GET(req: NextRequest) {
     tasks = await listTasks({ taskKeys: matching.map(m => m.taskKey), q })
   }
 
-  const [settings, handoffCount] = await Promise.all([getDesignSettings(), countPendingHandoff()])
-  return NextResponse.json({ tasks, me: viewerFor(user, settings), handoffCount })
+  const [settings, handoffCount, lastSync] = await Promise.all([getDesignSettings(), countPendingHandoff(), getLastDesignTaskSync()])
+  return NextResponse.json({ tasks, me: viewerFor(user, settings), handoffCount, lastSync })
 }
