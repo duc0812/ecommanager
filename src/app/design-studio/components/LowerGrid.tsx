@@ -1,7 +1,7 @@
 'use client'
 import { useState, type FormEvent, type ReactNode } from 'react'
 import type { ArtworkRow, TaskDetail, TemplateRow, TransitionBody } from './types'
-import { allSlotsFilled, canMove, newestArtwork, postJson, sharpnessRatio, sourceEngine, targetFor, taskUrl, type Tone } from './model'
+import { allSlotsFilled, canMove, filesMissingHint, newestArtwork, postJson, sharpnessRatio, sourceEngine, targetFor, taskUrl, type Tone } from './model'
 import ArtworkSlots from './ArtworkSlots'
 import AutoRenderBar from './AutoRenderBar'
 import { Avatar, Card, ErrorBanner, ExtLink, Icon, TEXT_TONE, btn, btnPrimary, input } from './ui'
@@ -103,7 +103,7 @@ const CHECKS = [
   'Chữ và hình quan trọng nằm trong vùng an toàn',
   'Độ nét đạt ngưỡng xưởng ở kích thước in',
   'Đúng màu / biến thể khách chọn',
-  'Đủ file cho mọi panel của template',
+  'Đủ file in cho mọi mặt / panel của sản phẩm',
 ]
 
 function Checklist({ detail, onChanged }: { detail: TaskDetail; onChanged: () => void }) {
@@ -146,7 +146,7 @@ function Checklist({ detail, onChanged }: { detail: TaskDetail; onChanged: () =>
       {task.status === 'DONE'
         ? <button type="button" disabled className={`${btnPrimary} w-full justify-center`}><Icon name="verified" className="text-[18px]" />Đã duyệt design</button>
         : <button type="button" onClick={run} disabled={!action || busy || !filled || !checked.every(Boolean)}
-            title={!action ? 'Không có bước tiếp theo cho vai trò này' : !filled ? 'Upload đủ file cho mọi panel trước' : !checked.every(Boolean) ? 'Tick đủ checklist trước' : undefined}
+            title={!action ? 'Không có bước tiếp theo cho vai trò này' : !filled ? filesMissingHint(detail) : !checked.every(Boolean) ? 'Tick đủ checklist trước' : undefined}
             className={`${btnPrimary} w-full justify-center`}>
             <Icon name={action?.icon ?? 'verified'} className="text-[18px]" />{action?.label ?? 'Duyệt design'}
           </button>}
@@ -205,7 +205,8 @@ export default function LowerGrid({ detail, onChanged }: { detail: TaskDetail; o
   return (
     <div className="grid grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] gap-md items-start">
       <div className="flex flex-col gap-md min-w-0">
-        <ArtworkSlots taskKey={detail.task.taskKey} line={detail.line} slots={detail.slots} driveConnected={detail.driveConnected} onUploaded={onChanged} me={detail.me} taskStatus={detail.task.status}
+        <ArtworkSlots taskKey={detail.task.taskKey} line={detail.line} slots={detail.slots} driveConnected={detail.driveConnected} folderUrl={detail.driveFolder?.url}
+          onUploaded={onChanged} me={detail.me} taskStatus={detail.task.status}
           autoRender={<AutoRenderBar detail={detail} onChanged={onChanged} />} />
         <SupplierCard detail={detail} />
       </div>

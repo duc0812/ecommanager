@@ -1,7 +1,7 @@
 'use client'
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
 import type { Me, ReviewCard } from './types'
-import { postJson, requestJson, taskImages, taskUrl, timeLeft } from './model'
+import { mockupFiles, postJson, printPartNames, requestJson, taskImages, taskUrl, timeLeft } from './model'
 import { LightboxProvider, useLightbox } from './Lightbox'
 import PrintFileThumb from './PrintFileThumb'
 import { pushChipLabel } from '@/lib/handoff-shared'
@@ -35,6 +35,8 @@ function Card({ c, me, reasons, selected, busy, onToggle, onApprove, onReject, o
   const images = useMemo(() => taskImages(c), [c])
   const { task, line } = c
   const auto = line.artworks.some(a => a.source === 'AUTO')
+  const parts = printPartNames(line, c.slots)
+  const mockups = mockupFiles(line)
   const left = timeLeft(task)
   const leader = !!me?.canApprove
 
@@ -61,8 +63,12 @@ function Card({ c, me, reasons, selected, busy, onToggle, onApprove, onReject, o
           <span className="ml-auto"><Pill tone={left.tone} icon={left.icon}>{left.label}</Pill></span>
         </header>
         <div className="p-md flex gap-md">
-          <div className={`flex-1 min-w-0 grid gap-sm ${c.slots.length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
-            {c.slots.map(area => <PrintFileThumb key={area} line={c.line} area={area} refLabel={c.task.taskKey} />)}
+          <div className={`flex-1 min-w-0 grid gap-sm ${parts.length + mockups.length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
+            {parts.map(area => <PrintFileThumb key={area} line={c.line} area={area} refLabel={c.task.taskKey} />)}
+            {mockups.map(m => <PrintFileThumb key={`m-${m.printArea}`} line={c.line} area={m.printArea} kind="MOCKUP" refLabel={c.task.taskKey} />)}
+            {parts.length === 0 && mockups.length === 0 && (
+              <div className="aspect-[4/3] rounded-lg border border-dashed border-error/50 grid place-items-center text-label-sm text-error">Chưa có file in</div>
+            )}
           </div>
           <ShopifyImage c={c} />
         </div>

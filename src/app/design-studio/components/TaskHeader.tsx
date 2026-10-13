@@ -3,10 +3,12 @@ import { useRef, useState, type FormEvent, type ReactNode } from 'react'
 import Link from 'next/link'
 import type { TaskDetail, TransitionBody } from './types'
 import {
-  OWNED_MOVES, allSlotsFilled, canMove, copyText, layerForField, patchJson, postJson, productPageUrl, sourceEngine, taskUrl, timeLeft,
+  OWNED_MOVES, allSlotsFilled, canMove, copyText, filesMissingHint, layerForField, patchJson, postJson, productPageUrl, sourceEngine, taskUrl, timeLeft,
 } from './model'
+import { DriveFolderLink } from './ArtworkSlots'
 import { buildChecklist, type CheckItem, type CheckState } from './checklist'
-import { ARTWORK_ACCEPT, useArtworkUpload } from './useArtworkUpload'
+import { ARTWORK_ACCEPT, MOCKUP_ACCEPT, useArtworkUpload } from './useArtworkUpload'
+import type { FileKind } from './types'
 import { ErrorBanner, Icon, Pill, READY_META, STATUS_META, btn, btnPrimary, btnWarn, card, input } from './ui'
 import { pushChipLabel } from '@/lib/handoff-shared'
 import HandoffButton from './HandoffButton'
@@ -184,7 +186,7 @@ export default function TaskHeader({ detail, holdCount, onChanged }: { detail: T
   const [refreshing, setRefreshing] = useState(false)
   const up = useArtworkUpload(detail.task.taskKey, onChanged)
   const uploadInput = useRef<HTMLInputElement>(null)
-  const uploadArea = useRef('')
+  const uploadTarget = useRef<{ area: string; kind: FileKind }>({ area: '', kind: 'PRINT' })
   const askInput = useRef<HTMLInputElement>(null)
 
   const owns = me.isLeader || !task.assigneeId || task.assigneeId === me.id
@@ -266,17 +268,25 @@ export default function TaskHeader({ detail, holdCount, onChanged }: { detail: T
       case 'refresh':
         return <button type="button" className={cls} disabled={refreshing} onClick={refreshFromShopify}><Icon name="sync" className="text-[16px]" />{refreshing ? 'Đang nạp…' : a.label}</button>
       case 'upload': {
-        const pct = up.progress[a.area]
+        const kind = a.fileKind ?? 'PRINT'
+        const running = a.area ? up.active.find(i => i.kind === kind && i.part === a.area) : up.active.find(i => i.kind === kind)
         return (
-          <button type="button" className={cls} disabled={pct !== undefined} onClick={() => { uploadArea.current = a.area; uploadInput.current?.click() }}>
-            <Icon name="upload" className="text-[16px]" />{pct !== undefined ? up.busyLabel(pct) : a.label}
+          <button type="button" className={cls} disabled={!!running} onClick={() => {
+            uploadTarget.current = { area: a.area, kind }
+            const el = uploadInput.current
+            if (!el) return
+            el.accept = kind === 'MOCKUP' ? MOCKUP_ACCEPT : ARTWORK_ACCEPT
+            el.multiple = !a.area
+            el.click()
+          }}>
+            <Icon name="upload" className="text-[16px]" />{running ? up.busyLabel(running.pct) : a.label}
           </button>
         )
       }
       case 'submit':
         return (
           <button type="button" className={cls} disabled={!submitTo || busy || !filled}
-            title={!submitTo ? 'Không có bước này cho vai trò của bạn' : !filled ? 'Upload đủ file cho mọi vùng in trước' : undefined}
+            title={!submitTo ? 'Không có bước này cho vai trò của bạn' : !filled ? filesMissingHint(detail) : undefined}
             onClick={() => submitTo && go({ to: submitTo })}>
             <Icon name={submitTo === 'DONE' ? 'verified' : 'send'} className="text-[16px]" />{a.label}
           </button>
@@ -284,7 +294,7 @@ export default function TaskHeader({ detail, holdCount, onChanged }: { detail: T
     }
   }
 
-  const filesTitle = filled ? undefined : 'Upload đủ file cho mọi panel trước'
+  const filesTitle = filled ? undefined : filesMissingHint(detail)
   const flow: JSX.Element[] = []
   const talk: JSX.Element[] = []
   const manage: JSX.Element[] = []
@@ -426,6 +436,9 @@ export default function TaskHeader({ detail, holdCount, onChanged }: { detail: T
                   <a href={detail.order.trelloCardUrl} target="_blank" rel="noopener noreferrer" className="text-secondary hover:underline">Mở thẻ Trello của đơn ↗</a>
                 </Fact>
               )}
+              <Fact icon="folder" label="Thư mục Drive">
+                <DriveFolderLink folderUrl={detail.driveFolder?.url} driveConnected={detail.driveConnected} onCopied={setInfo} compact />
+              </Fact>
               <Fact icon="event" label="Ngày đặt">{fmtDate(task.placedAt)}</Fact>
               <Fact icon="schedule" label="Hạn">
                 {task.dueAt ? fmtDateTime(task.dueAt) : 'chưa đặt hạn'}
@@ -468,8 +481,15 @@ export default function TaskHeader({ detail, holdCount, onChanged }: { detail: T
             <span id="ds-todo-title">CẦN LÀM</span>
             <span className="ml-auto normal-case tracking-normal font-semibold">{checklist.done}/{checklist.total} xong</span>
           </div>
-          <input ref={uploadInput} type="file" accept={ARTWORK_ACCEPT} hidden aria-label="Chọn file in cho vùng còn thiếu"
-            onChange={e => { const f = e.target.files?.[0]; if (f && uploadArea.current) void up.upload(uploadArea.current, f); e.target.value = '' }} />
+          <input ref={uploadInput} type="file" accept={ARTWORK_ACCEPT} hidden aria-label="Chọn file cho việc đang thiếu"
+            onChange={e => {
+              const files = Array.from(e.target.files ?? [])
+              const { area, kind } = uploadTarget.current
+              e.target.value = ''
+              if (files.length === 0) return
+              if (area) up.upload(area, files[0], kind)
+              else up.uploadFiles(files, { kind })
+            }} />
           <ol className="px-sm py-sm flex flex-col gap-xs">
             {checklist.items.map((item, i) => {
               const meta = STATE_META[item.state]

@@ -1,10 +1,11 @@
 'use client'
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type DragEvent, type ReactNode } from 'react'
 import type { TaskDetail } from './types'
-import { artworkImage, canRemoveArtwork, isImage, newestFor, type LightboxImage } from './model'
+import { artworkImage, canRemoveArtwork, isImage, mockupFiles, printFiles, type LightboxImage } from './model'
 import TemplateCanvas, { CanvasTools, type CanvasArtActions, type CanvasBg, type CanvasUpload } from './TemplateCanvas'
 import { ALL_GUIDES, GUIDES_STORAGE_KEY, parseGuides, type Guides } from './canvas-guides'
-import { ARTWORK_ACCEPT, useArtworkUpload } from './useArtworkUpload'
+import { ARTWORK_ACCEPT, MOCKUP_ACCEPT, useArtworkUpload } from './useArtworkUpload'
+import { UploadList } from './ArtworkSlots'
 import { useArtworkRemove } from './useArtworkRemove'
 import { useLightbox } from './Lightbox'
 import { ErrorBanner, ExtLink, Icon, Note, card, chip, input } from './ui'
@@ -89,13 +90,18 @@ export default function ImagePanes({ detail, onChanged }: { detail: TaskDetail; 
   const [guides, setGuides] = useStoredGuides()
   const [pickedArea, setPickedArea] = useState('')
   const fileInput = useRef<HTMLInputElement>(null)
+  const manyInput = useRef<HTMLInputElement>(null)
+  const mockInput = useRef<HTMLInputElement>(null)
   const pending = useRef('')
   const up = useArtworkUpload(detail.task.taskKey, onChanged)
+  const mockUp = useArtworkUpload(detail.task.taskKey, onChanged)
+  const [mockOver, setMockOver] = useState(false)
   const remover = useArtworkRemove(onChanged)
   const lightbox = useLightbox()
+  const hasSlots = detail.slots.length > 0
   const targetArea = detail.slots.includes(pickedArea) ? pickedArea : (detail.slots[0] ?? '')
-  const busyEntry = Object.entries(up.progress)[0]
-  const busy = busyEntry ? { area: busyEntry[0], pct: busyEntry[1], label: up.busyLabel(busyEntry[1]) } : null
+  const uploading = up.active[0]
+  const busy = uploading ? { area: uploading.part ?? uploading.name, pct: uploading.pct, label: up.busyLabel(uploading.pct), more: up.active.length - 1 } : null
 
   function pick(area: string) {
     pending.current = area
@@ -103,9 +109,17 @@ export default function ImagePanes({ detail, onChanged }: { detail: TaskDetail; 
     fileInput.current?.click()
   }
 
-  const canvasUpload: CanvasUpload | null = detail.slots.length > 0
-    ? { onDrop: (area, file) => { void up.upload(area, file) }, onReject: msg => up.setError(msg), onPick: pick, fallbackArea: targetArea, busy }
-    : null
+  const canvasUpload: CanvasUpload = {
+    onDrop: (area, files) => { if (area && files.length === 1) up.upload(area, files[0]); else up.uploadFiles(files, { kind: 'PRINT' }) },
+    onReject: msg => up.setError(msg), onPick: pick, onPickMany: () => manyInput.current?.click(), fallbackArea: targetArea, busy,
+  }
+
+  function addMockups(files: File[]) {
+    const images = files.filter(f => /\.(png|jpe?g)$/i.test(f.name))
+    if (images.length < files.length) mockUp.setError('Mockup chỉ nhận ảnh PNG hoặc JPG')
+    mockUp.uploadFiles(images, { kind: 'MOCKUP' })
+  }
+  const dragHasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes('Files')
   const artActions: CanvasArtActions = {
     onView: a => lightbox?.open(a.url, artworkImage(a)),
     onRemove: remover.ask,
@@ -114,13 +128,15 @@ export default function ImagePanes({ detail, onChanged }: { detail: TaskDetail; 
 
   const areaNames = template?.areas.map(a => a.name) ?? []
   const hasSides = areaNames.some(n => n.startsWith('Front')) && areaNames.some(n => n.startsWith('Back'))
-  const newest = Array.from(new Set(line.artworks.map(a => a.printArea)))
-    .map(area => newestFor(line, area)!)
-    .filter(a => a && isImage(a))
+  const newest = printFiles(line, detail.slots).filter(isImage)
   const shownArt = hasSides ? newest.filter(a => a.printArea.startsWith(side)) : newest
-  const mockImages: LightboxImage[] = newest.length > 0
-    ? shownArt.map(artworkImage)
-    : line.sourcePrintFiles.map(f => ({ url: f.url, label: `File nguồn · ${f.printArea}` }))
+  const mockups = mockupFiles(line)
+  // Mockups the designer uploaded come first; without one the pane shows what it always did.
+  const mockImages: LightboxImage[] = mockups.length > 0
+    ? mockups.filter(isImage).map(artworkImage)
+    : newest.length > 0
+      ? shownArt.map(artworkImage)
+      : line.sourcePrintFiles.map(f => ({ url: f.url, label: `File nguồn · ${f.printArea}` }))
   const previewImages: LightboxImage[] = [
     ...(line.previewUrl ? [{ url: line.previewUrl, label: 'Preview khách tạo lúc đặt hàng' }] : []),
     ...(line.imageUrl ? [{ url: line.imageUrl, label: line.previewUrl ? 'Ảnh variant (Shopify)' : 'Ảnh variant/sản phẩm Shopify (chưa có preview riêng)' }] : []),
@@ -129,41 +145,60 @@ export default function ImagePanes({ detail, onChanged }: { detail: TaskDetail; 
   const right: Record<PaneKey, string> = {
     tpl: template ? `${template.name} · ${template.widthPx}×${template.heightPx} · ${template.dpi} DPI` : 'chưa có template',
     prev: line.previewUrl ? 'preview lúc đặt' : line.imageUrl ? 'ảnh Shopify' : 'chưa có ảnh',
-    mock: newest.length > 0 ? 'từ file in · chưa dựng lên áo' : 'file nguồn',
+    mock: mockups.length > 0 ? `${mockups.length} mockup đã upload` : newest.length > 0 ? 'từ file in · chưa dựng lên áo' : 'file nguồn',
   }
 
   const actions: Partial<Record<PaneKey, ReactNode>> = {
-    tpl: detail.slots.length > 0 ? (
+    tpl: (
       <span className="flex items-center gap-xs normal-case tracking-normal font-medium">
         {detail.slots.length > 1 && (
           <select value={targetArea} onChange={e => setPickedArea(e.target.value)} aria-label="Vùng in để upload" className={`${input} py-[2px] text-label-sm max-w-[120px]`}>
             {detail.slots.map(s => <option key={s} value={s}>{s}</option>)}
           </select>
         )}
-        <input ref={fileInput} type="file" accept={ARTWORK_ACCEPT} hidden aria-label={`Chọn file cho ${targetArea}`}
+        <input ref={fileInput} type="file" accept={ARTWORK_ACCEPT} hidden aria-label={`Chọn file cho ${targetArea || 'file in'}`}
           onChange={e => {
             const f = e.target.files?.[0]
-            const area = detail.slots.includes(pending.current) ? pending.current : targetArea
+            const area = pending.current || targetArea
             pending.current = ''
-            if (f && area) void up.upload(area, f)
+            if (f && area) up.upload(area, f)
+            else if (f) up.uploadFiles([f], { kind: 'PRINT' })
             e.target.value = ''
           }} />
-        <button type="button" disabled={up.progress[targetArea] !== undefined} onClick={() => pick(targetArea)}
-          title={`Upload vào ${targetArea}`} className={uploadBtn}>
-          <Icon name="upload" className="text-[16px]" />Upload vào vùng in
-        </button>
+        <input ref={manyInput} type="file" accept={ARTWORK_ACCEPT} multiple hidden aria-label="Chọn nhiều file in"
+          onChange={e => { const files = Array.from(e.target.files ?? []); e.target.value = ''; up.uploadFiles(files, { kind: 'PRINT' }) }} />
+        {hasSlots ? (
+          <button type="button" disabled={up.progress[targetArea] !== undefined} onClick={() => pick(targetArea)}
+            title={`Upload vào ${targetArea}`} className={uploadBtn}>
+            <Icon name="upload" className="text-[16px]" />Upload vào vùng in
+          </button>
+        ) : (
+          <button type="button" disabled={up.busy} onClick={() => manyInput.current?.click()} title="Chọn một hoặc nhiều file in" className={uploadBtn}>
+            <Icon name="upload" className="text-[16px]" />Upload file in
+          </button>
+        )}
       </span>
-    ) : undefined,
+    ),
     prev: line.customerDesignLink ? (
       <span className="normal-case tracking-normal font-medium"><ExtLink href={line.customerDesignLink}>Mở lại thiết kế ↗</ExtLink></span>
     ) : undefined,
-    mock: hasSides && newest.length > 0 ? (
-      <span className="flex items-center gap-xs normal-case tracking-normal font-medium" role="group" aria-label="Mặt mockup">
-        {(['Front', 'Back'] as Side[]).map(s => (
-          <button key={s} type="button" aria-pressed={side === s} onClick={() => setSide(s)} className={chip(side === s)}>{s === 'Front' ? 'Trước' : 'Sau'}</button>
-        ))}
+    mock: (
+      <span className="flex items-center gap-xs normal-case tracking-normal font-medium">
+        {hasSides && mockups.length === 0 && newest.length > 0 && (
+          <span className="flex items-center gap-xs" role="group" aria-label="Mặt mockup">
+            {(['Front', 'Back'] as Side[]).map(s => (
+              <button key={s} type="button" aria-pressed={side === s} onClick={() => setSide(s)} className={chip(side === s)}>{s === 'Front' ? 'Trước' : 'Sau'}</button>
+            ))}
+          </span>
+        )}
+        <input ref={mockInput} type="file" accept={MOCKUP_ACCEPT} multiple hidden aria-label="Chọn ảnh mockup"
+          onChange={e => { const files = Array.from(e.target.files ?? []); e.target.value = ''; addMockups(files) }} />
+        <button type="button" disabled={mockUp.busy} onClick={() => mockInput.current?.click()} title="Upload một hoặc nhiều ảnh mockup — vào cùng thư mục Drive của task"
+          className="inline-flex items-center gap-xs rounded-lg border border-outline-variant/40 bg-surface-container-lowest px-sm py-[3px] text-label-sm font-semibold text-on-surface hover:bg-surface-container-low disabled:opacity-40 whitespace-nowrap">
+          <Icon name="upload" className="text-[16px]" />Upload mockup
+        </button>
       </span>
-    ) : undefined,
+    ),
   }
 
   const body: Record<PaneKey, (tall: boolean) => ReactNode> = {
@@ -179,7 +214,18 @@ export default function ImagePanes({ detail, onChanged }: { detail: TaskDetail; 
       </>
     ),
     prev: tall => <Gallery name="Mockup / Preview" images={previewImages} tall={tall} empty="Không có preview hay ảnh sản phẩm — bấm Nạp lại từ Shopify" />,
-    mock: tall => <Gallery key={side} name="Mockup xưởng" images={mockImages} tall={tall} empty="Chưa có file in để xem" />,
+    mock: tall => (
+      <div className={`flex flex-col gap-sm flex-1 min-h-0 rounded-lg ${mockOver ? 'outline outline-2 outline-secondary bg-secondary/10' : ''}`}
+        title="Kéo thả ảnh mockup vào đây để tải lên"
+        onDragOver={e => { if (!dragHasFiles(e)) return; e.preventDefault(); if (!mockOver) setMockOver(true) }}
+        onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setMockOver(false) }}
+        onDrop={e => { if (!dragHasFiles(e)) return; e.preventDefault(); setMockOver(false); addMockups(Array.from(e.dataTransfer.files ?? [])) }}>
+        <ErrorBanner msg={mockUp.error} onClose={() => mockUp.setError('')} />
+        <Gallery key={`${side}-${mockups.length}`} name="Mockup xưởng" images={mockImages} tall={tall}
+          empty="Chưa có mockup hay file in — kéo thả ảnh mockup vào đây, hoặc bấm Upload mockup" />
+        <UploadList items={mockUp.items} onDismiss={mockUp.dismiss} />
+      </div>
+    ),
   }
 
   const render = (p: typeof PANES[number], tall = false) => (

@@ -2,8 +2,9 @@ import type { LibraryProductStatus } from '@/lib/artwork-fields'
 import type { TaskLibraryState } from '@/lib/artwork-library-types'
 import type { RenderJobView } from '@/lib/artwork-render-eligibility'
 import type { HandoffCard, HandoffLine, HandoffPush, HandoffState } from '@/lib/handoff-shared'
+import type { FileKind } from '@/lib/task-files'
 
-export type { HandoffCard, HandoffLine, HandoffPush, HandoffState }
+export type { FileKind, HandoffCard, HandoffLine, HandoffPush, HandoffState }
 
 export type TaskStatus = 'NEW' | 'ASSIGNED' | 'DOING' | 'REVIEW' | 'REJECTED' | 'ASK_CUSTOMER' | 'DONE' | 'CANCELLED'
 export type Readiness = 'AUTO' | 'LOW' | 'MANUAL'
@@ -28,7 +29,7 @@ export type TemplateRow = {
 export type TemplateListRow = TemplateRow & { supplierId: string; supplierSku: string | null; supplierName: string; supplierCode: string }
 
 export type ArtworkRow = {
-  id: string; printArea: string; version: number; fileName: string; size: number
+  id: string; kind: FileKind; printArea: string; version: number; fileName: string; size: number
   mimeType: string; uploadedById: string | null; createdAt: string; url: string
   widthPx: number | null; heightPx: number | null
   storage: 'LOCAL' | 'DRIVE'; driveWebViewLink: string | null
@@ -81,6 +82,7 @@ export type TaskDetail = {
   profile: TaskProfile | null; profileRouteKey: string | null
   events: TaskEvent[]; assignable: { id: string; name: string }[]; settings: DesignSettings; prevStatus: TaskStatus | null
   slots: string[]; me: Me; driveConnected: boolean
+  driveFolder?: { url: string } | null
   library: TaskLibraryState | null
   autoRender: RenderJobView | null
   handoff?: HandoffState | null

@@ -1,17 +1,20 @@
 'use client'
 import { useEffect, useId, useRef, useState, type DragEvent, type HTMLAttributes, type ReactNode, type Ref } from 'react'
 import type { ArtworkRow, TemplateArea, TemplateRow, WorkspaceLine } from './types'
-import { isImage, newestFor, newestArtwork } from './model'
+import { isImage, newestFor, printFiles } from './model'
 import { ALL_GUIDES, NO_GUIDES, areaAt, clientToTemplate, type Guides, type ViewBox } from './canvas-guides'
 import { Icon, Note, chip } from './ui'
 
 export type CanvasBg = 'checker' | 'white' | 'black'
 export type CanvasUpload = {
-  onDrop: (area: string, file: File) => void
+  /** `area` null = the files name their own part (several files dropped at once, or a product without a template). */
+  onDrop: (area: string | null, files: File[]) => void
   onReject: (msg: string) => void
   onPick: (area: string) => void
+  /** Opens the picker for any number of files; each file name becomes its own part. */
+  onPickMany: () => void
   fallbackArea: string
-  busy: { area: string; pct: number; label: string } | null
+  busy: { area: string; pct: number; label: string; more: number } | null
 }
 export type CanvasArtActions = {
   onView: (a: ArtworkRow) => void
@@ -204,12 +207,15 @@ function hasFiles(e: DragEvent) {
   return Array.from(e.dataTransfer?.types ?? []).includes('Files')
 }
 
+const MANY = '\u0000many'
+
 function UploadOverlay({ busy, target }: { busy: CanvasUpload['busy']; target: string | null }) {
   if (busy) {
     return (
       <div className="absolute inset-0 grid place-items-center bg-surface/70 pointer-events-none" role="status" aria-live="polite">
         <div className="flex flex-col items-center gap-xs w-56 rounded-lg bg-surface-container-lowest shadow-card border border-outline-variant/20 p-sm">
-          <span className="text-label-sm font-semibold text-on-surface">{busy.area} · {busy.label}</span>
+          <span className="text-label-sm font-semibold text-on-surface text-center break-all">{busy.area} · {busy.label}</span>
+          {busy.more > 0 && <span className="text-label-sm text-on-surface-variant">còn {busy.more} file chờ tải</span>}
           <div className="h-1 w-full rounded-full bg-surface-container overflow-hidden" role="progressbar" aria-label={`Tiến độ tải ${busy.area}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={busy.pct}>
             <div className="h-full bg-secondary transition-all" style={{ width: `${busy.pct}%` }} />
           </div>
@@ -219,8 +225,8 @@ function UploadOverlay({ busy, target }: { busy: CanvasUpload['busy']; target: s
   }
   if (target === null) return null
   return (
-    <div className="absolute top-sm left-1/2 -translate-x-1/2 rounded-full bg-secondary text-on-secondary px-sm py-[2px] text-label-sm font-semibold pointer-events-none">
-      {target ? `Thả để tải vào ${target}` : 'Kéo vào một vùng in'}
+    <div className="absolute top-sm left-1/2 -translate-x-1/2 rounded-full bg-secondary text-on-secondary px-sm py-[2px] text-label-sm font-semibold pointer-events-none whitespace-nowrap">
+      {target === MANY ? 'Thả để tải lên — mỗi tên file là một file riêng' : target ? `Thả để tải vào ${target}` : 'Kéo vào một vùng in'}
     </div>
   )
 }
@@ -261,15 +267,17 @@ export function ArtToolbar({ art, actions, onPick }: { art: ArtworkRow; actions?
   )
 }
 
-function useDropZone(upload: CanvasUpload | null | undefined, resolve: (e: DragEvent) => string | null) {
+/** `resolve` names the area under the pointer; MANY means "anywhere — the files name their own part". */
+function useDropZone(upload: CanvasUpload | null | undefined, resolve: (e: DragEvent) => string | null, title = 'Kéo thả file vào một vùng in để tải lên') {
   const [drag, setDrag] = useState<string | null>(null)
   const dropAllowed = !!upload && !upload.busy
   const frameProps: HTMLAttributes<HTMLDivElement> | undefined = upload ? {
-    title: upload.busy ? 'Đang tải file lên — chờ xong rồi thả tiếp' : 'Kéo thả file vào một vùng in để tải lên',
+    title: upload.busy ? 'Đang tải file lên — chờ xong rồi thả tiếp' : title,
     onDragOver: e => {
       if (!hasFiles(e)) return
       e.preventDefault()
-      const a = dropAllowed ? resolve(e) : null
+      const several = e.dataTransfer.items && e.dataTransfer.items.length > 1
+      const a = !dropAllowed ? null : several ? MANY : resolve(e)
       e.dataTransfer.dropEffect = a ? 'copy' : 'none'
       const next = a ?? ''
       if (next !== drag) setDrag(next)
@@ -280,27 +288,32 @@ function useDropZone(upload: CanvasUpload | null | undefined, resolve: (e: DragE
       e.preventDefault()
       setDrag(null)
       if (!dropAllowed) return
+      const files = Array.from(e.dataTransfer.files ?? [])
+      if (files.length === 0) return
+      // Several files at once go by their names: `Front.png` lands on the area "Front", any other name becomes its own file.
+      if (files.length > 1) { upload.onDrop(null, files); return }
       const a = resolve(e)
-      const f = e.dataTransfer.files?.[0]
-      if (!f) return
       if (!a) { upload.onReject('Thả file vào trong một vùng in'); return }
-      upload.onDrop(a, f)
+      upload.onDrop(a === MANY ? null : a, files)
     },
   } : undefined
   return { drag, frameProps }
 }
 
-function NoTemplateCanvas({ line, slots, upload, artActions, sourceUrl }: { line: WorkspaceLine; slots: string[]; upload?: CanvasUpload | null; artActions?: CanvasArtActions | null; sourceUrl: string | null }) {
-  const missing = slots.filter(s => !newestFor(line, s))
-  const firstSlotArt = slots[0] ? newestFor(line, slots[0]) : undefined
-  const art = firstSlotArt ?? newestArtwork(line)
+function NoTemplateCanvas({ line, upload, artActions, sourceUrl }: { line: WorkspaceLine; upload?: CanvasUpload | null; artActions?: CanvasArtActions | null; sourceUrl: string | null }) {
+  const files = printFiles(line, [])
+  const [picked, setPicked] = useState('')
+  const art = files.find(f => f.printArea === picked) ?? files[0]
   const shown = art && isImage(art) ? art.url : !art ? sourceUrl : null
-  const { drag, frameProps } = useDropZone(upload, () => missing[0] ?? upload?.fallbackArea ?? null)
+  const { drag, frameProps } = useDropZone(upload, () => MANY, 'Kéo thả một hoặc nhiều file vào đây để tải lên')
   return (
     <div className="flex flex-col gap-sm flex-1 min-h-0">
       <Note tone="idle" icon="dashboard_customize">
-        <b>Chưa có template cho SKU này</b>
-        <div className="text-label-sm">Xưởng: {line.supplier ? `${line.supplier.name} (${line.supplier.code})` : 'chưa map'}{line.supplierSku ? ` · SKU xưởng ${line.supplierSku}` : ''} · file được xem nguyên khổ</div>
+        <b>Chưa có template cho SKU này — upload mọi file in của sản phẩm</b>
+        <div className="text-label-sm">
+          Xưởng: {line.supplier ? `${line.supplier.name} (${line.supplier.code})` : 'chưa map'}{line.supplierSku ? ` · SKU xưởng ${line.supplierSku}` : ''} · mỗi tên file là một file riêng
+          (front.png, back.png, sleeve.png…), upload lại cùng tên là phiên bản mới
+        </div>
       </Note>
       <div {...frameProps} className={`relative flex-1 min-h-[300px] rounded-lg border-2 border-dashed ${drag !== null ? 'border-secondary bg-secondary/10' : 'border-outline-variant/60 bg-surface-container-low'} p-sm flex flex-col items-center justify-center gap-md overflow-hidden`}>
         {shown && (
@@ -327,12 +340,30 @@ function NoTemplateCanvas({ line, slots, upload, artActions, sourceUrl }: { line
             <ArtToolbar art={art} actions={artActions} onPick={upload?.onPick} />
           </div>
         )}
-        {upload && missing.length > 0 && (
-          <div className="flex flex-wrap items-center justify-center gap-sm">
-            {missing.map(area => <UploadCta key={area} area={area} onPick={upload.onPick} disabled={!!upload.busy} />)}
+        {files.length > 1 && (
+          <div className="flex flex-wrap items-center justify-center gap-xs" role="group" aria-label="File in của task">
+            {files.map(f => (
+              <button key={f.printArea} type="button" aria-pressed={f.id === art?.id} onClick={() => setPicked(f.printArea)} title={`${f.printArea} · v${f.version} · ${f.fileName}`}
+                className={`inline-flex items-center gap-xs rounded-lg border px-xs py-[2px] text-label-sm max-w-[160px] ${f.id === art?.id ? 'border-secondary bg-secondary/10 text-secondary font-semibold' : 'border-outline-variant/40 bg-surface-container-lowest text-on-surface'}`}>
+                {isImage(f)
+                  // eslint-disable-next-line @next/next/no-img-element
+                  ? <img src={f.previewUrl ?? f.url} alt="" loading="lazy" className="w-6 h-6 rounded object-contain bg-surface-container-low" />
+                  : <Icon name="description" className="text-[16px]" />}
+                <span className="truncate">{f.printArea}</span>
+              </button>
+            ))}
           </div>
         )}
-        {upload && missing.length > 0 && <span className="text-label-sm text-on-surface-variant">hoặc kéo thả PNG/JPG/PSD vào khung này</span>}
+        {upload && (
+          <button type="button" disabled={!!upload.busy} onClick={upload.onPickMany} aria-label="Upload file in (chọn nhiều file)"
+            className={files.length === 0
+              ? 'inline-flex flex-col items-center gap-[2px] rounded-xl bg-error text-on-error font-semibold shadow-overlay hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed px-lg py-md text-label-md'
+              : 'inline-flex items-center gap-xs rounded-lg border border-outline-variant/40 bg-surface-container-lowest px-md py-xs text-label-sm font-semibold text-on-surface hover:bg-surface-container-low disabled:opacity-40'}>
+            <span className="inline-flex items-center gap-xs"><Icon name="upload" className={files.length === 0 ? 'text-[24px]' : 'text-[16px]'} />{files.length === 0 ? 'Upload file in' : 'Thêm file in'}</span>
+            {files.length === 0 && <span className="font-medium opacity-90">chọn được nhiều file cùng lúc</span>}
+          </button>
+        )}
+        {upload && <span className="text-label-sm text-on-surface-variant">hoặc kéo thả nhiều file PNG/JPG/PSD vào khung này</span>}
         {!art && !upload && !shown && <span className="text-label-sm text-on-surface-variant">Chưa có file in</span>}
         {upload && <UploadOverlay busy={upload.busy} target={drag} />}
       </div>
@@ -355,7 +386,7 @@ function TaskCanvas({ template, line, slots, bg, guide, guides, upload, artActio
     return areaAt(template.areas, p.x, p.y)?.name ?? null
   })
 
-  if (!template) return <NoTemplateCanvas line={line} slots={slots} upload={upload} artActions={artActions} sourceUrl={sourceUrl} />
+  if (!template) return <NoTemplateCanvas line={line} upload={upload} artActions={artActions} sourceUrl={sourceUrl} />
 
   const tpl = template
   const { k, H } = sheetGeometry(tpl)

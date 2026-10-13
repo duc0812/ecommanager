@@ -1,4 +1,5 @@
 import { isLayerlessField } from '@/lib/layer-fields'
+import { currentFiles, extraPrintParts, fileKindOf, missingPrintAreas, orderedPrintFiles, printFilesReady, type FileKind } from '@/lib/task-files'
 import type { ArtworkRow, LayerMapEntry, TaskDetail, TaskRow, TaskStatus, TemplateArea, TemplateRow, WorkspaceLine } from './types'
 
 export const OPEN_STATUSES: TaskStatus[] = ['NEW', 'ASSIGNED', 'DOING', 'REVIEW', 'REJECTED']
@@ -34,20 +35,46 @@ export function slotNames(detail: Pick<TaskDetail, 'slots'>): string[] {
   return detail.slots
 }
 
-export function versionsFor(line: WorkspaceLine, area: string): ArtworkRow[] {
-  return line.artworks.filter(a => a.printArea === area).sort((a, b) => b.version - a.version)
+type Files = Pick<WorkspaceLine, 'artworks'>
+
+export function versionsFor(line: Files, area: string, kind: FileKind = 'PRINT'): ArtworkRow[] {
+  return line.artworks.filter(a => fileKindOf(a.kind) === kind && a.printArea === area).sort((a, b) => b.version - a.version)
 }
 
-export function newestFor(line: WorkspaceLine, area: string): ArtworkRow | undefined {
-  return versionsFor(line, area)[0]
+export function newestFor(line: Files, area: string, kind: FileKind = 'PRINT'): ArtworkRow | undefined {
+  return versionsFor(line, area, kind)[0]
 }
 
+/** The files the factory prints: one per part, template areas first, then every other part by name. */
+export function printFiles(line: Files, slots: string[]): ArtworkRow[] {
+  return orderedPrintFiles(line.artworks, slots)
+}
+
+/** Print parts shown on a card: every template area (filled or not), then the extra parts that have a file. */
+export function printPartNames(line: Files, slots: string[]): string[] {
+  return [...slots, ...extraPrintParts(line.artworks, slots)]
+}
+
+export function mockupFiles(line: Files): ArtworkRow[] {
+  return currentFiles(line.artworks, 'MOCKUP').sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0))
+}
+
+export function missingAreas(detail: Pick<TaskDetail, 'line' | 'slots'>): string[] {
+  return missingPrintAreas(detail.line.artworks, detail.slots)
+}
+
+/** A template task needs a file for every area; a task without a template needs at least one print file. */
 export function allSlotsFilled(detail: Pick<TaskDetail, 'line' | 'slots'>): boolean {
-  return slotNames(detail).every(s => detail.line.artworks.some(a => a.printArea === s))
+  return printFilesReady(detail.line.artworks, slotNames(detail))
 }
 
-export function newestArtwork(line: WorkspaceLine): ArtworkRow | undefined {
-  return [...line.artworks].sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : b.version - a.version))[0]
+export function filesMissingHint(detail: Pick<TaskDetail, 'slots'>): string {
+  return detail.slots.length > 0 ? 'Upload đủ file cho mọi vùng in trước' : 'Upload ít nhất một file in trước'
+}
+
+export function newestArtwork(line: Files): ArtworkRow | undefined {
+  return line.artworks.filter(a => fileKindOf(a.kind) === 'PRINT')
+    .sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : b.version - a.version))[0]
 }
 
 export function targetFor(template: TemplateRow, printArea: string | undefined): { w: number; h: number; area: TemplateArea | null } {
@@ -183,7 +210,14 @@ export async function copyText(text: string): Promise<boolean> {
 export type LightboxImage = { url: string; label: string; openUrl?: string | null; copyUrl?: string | null }
 
 export function artworkImage(a: ArtworkRow): LightboxImage {
-  return { url: a.url, label: `${a.printArea} · v${a.version} · ${a.fileName}`, openUrl: a.url, copyUrl: a.driveWebViewLink ?? a.url }
+  const what = fileKindOf(a.kind) === 'MOCKUP' ? `Mockup · ${a.printArea}` : a.printArea
+  return { url: a.url, label: `${what} · v${a.version} · ${a.fileName}`, openUrl: a.url, copyUrl: a.driveWebViewLink ?? a.url }
+}
+
+/** A link somebody can paste: the Drive link, or the file's address in this app while it is still on the server. */
+export function artworkShareLink(a: ArtworkRow): string {
+  if (a.driveWebViewLink) return a.driveWebViewLink
+  return typeof window === 'undefined' ? a.url : new URL(a.url, window.location.origin).toString()
 }
 
 export function taskImages(detail: Pick<TaskDetail, 'line'>): LightboxImage[] {
@@ -194,9 +228,11 @@ export function taskImages(detail: Pick<TaskDetail, 'line'>): LightboxImage[] {
   if (line.previewUrl) add({ url: line.previewUrl, label: 'Preview khách tạo lúc đặt hàng' })
   if (line.imageUrl) add({ url: line.imageUrl, label: 'Ảnh variant (Shopify)' })
   const arts = line.artworks.filter(isImage)
-  const areas = Array.from(new Set(arts.map(a => a.printArea)))
-  for (const area of areas) add(artworkImage(newestFor({ ...line, artworks: arts }, area)!))
-  for (const a of [...arts].sort((x, y) => x.printArea.localeCompare(y.printArea) || y.version - x.version)) add(artworkImage(a))
+  const images = { artworks: arts }
+  for (const area of Array.from(new Set(arts.filter(x => fileKindOf(x.kind) === 'PRINT').map(x => x.printArea)))) add(artworkImage(newestFor(images, area)!))
+  for (const m of mockupFiles(images)) add(artworkImage(m))
+  const order = (a: ArtworkRow) => (fileKindOf(a.kind) === 'PRINT' ? 0 : 1)
+  for (const a of [...arts].sort((x, y) => order(x) - order(y) || x.printArea.localeCompare(y.printArea) || y.version - x.version)) add(artworkImage(a))
   for (const f of line.sourcePrintFiles) add({ url: f.url, label: `File nguồn · ${f.printArea}` })
   return out
 }

@@ -21,7 +21,7 @@ type DriveStatus = {
 }
 
 type PushStatus = {
-  pending: number; running: boolean; queued: boolean; pushed: number; failed: number; missing: number
+  pending: number; running: boolean; queued: boolean; pushed: number; failed: number; missing: number; organized?: number; stuck?: number
   lastError: string | null; stopped: string | null; finishedAt: string | null
   uploadError: { message: string; at: string } | null
 }
@@ -223,9 +223,9 @@ export default function GoogleDriveSetupCard() {
   const pushLine = !push
     ? ''
     : pushActive
-      ? `Đang đẩy… đã đẩy ${push.pushed} · lỗi ${push.failed} · còn ${push.pending} file trên server`
+      ? `Đang đẩy… đã đẩy ${push.pushed} · lỗi ${push.failed} · còn ${push.pending} file trên server${push.organized ? ` · đã sắp xếp ${push.organized} file vào thư mục task` : ''}`
       : push.finishedAt
-        ? `Lượt gần nhất (${fmtTime(push.finishedAt)}): đã đẩy ${push.pushed} · lỗi ${push.failed}${push.missing ? ` · ${push.missing} file không còn trên server` : ''} · còn ${push.pending} file trên server${push.stopped ? ` · ${STOP_TEXT[push.stopped] ?? push.stopped}` : ''}`
+        ? `Lượt gần nhất (${fmtTime(push.finishedAt)}): đã đẩy ${push.pushed} · lỗi ${push.failed}${push.missing ? ` · ${push.missing} file không còn trên server` : ''} · còn ${push.pending} file trên server${push.organized ? ` · đã sắp xếp ${push.organized} file vào thư mục task` : ''}${push.stuck ? ` · ${push.stuck} file Drive không cho chuyển (giữ nguyên chỗ cũ)` : ''}${push.stopped ? ` · ${STOP_TEXT[push.stopped] ?? push.stopped}` : ''}`
         : ''
   const lastPushError = push?.lastError ?? push?.uploadError?.message ?? ''
 
@@ -301,7 +301,7 @@ export default function GoogleDriveSetupCard() {
                   <span className="material-symbols-outlined text-[18px]">science</span>{busy === 'test' ? 'Đang tạo…' : 'Tạo file thử'}
                 </button>
                 <button type="button" onClick={pushAll} disabled={busy === 'push' || pushActive || !healthy} className={outlineBtn}>
-                  <span className="material-symbols-outlined text-[18px]">cloud_upload</span>Đẩy tất cả file còn trên server lên Drive
+                  <span className="material-symbols-outlined text-[18px]">cloud_upload</span>Đẩy tất cả file lên Drive &amp; sắp xếp lại thư mục
                 </button>
                 <button type="button" onClick={disconnect} className="border border-outline-variant text-error px-lg py-sm rounded-lg text-label-md hover:bg-error/5 transition-colors">
                   Ngắt kết nối

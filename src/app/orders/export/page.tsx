@@ -48,7 +48,8 @@ const SOURCE_OPTIONS: SourceOption[] = [
   { value: 'line.previewCdnUrl', label: 'Mockup preview CDN', needsLine: true },
   { value: 'line.designDriveLink', label: 'Line design link', needsLine: true },
   { value: 'line.designLinks', label: 'Link design — mọi vùng in', needsLine: true },
-  { value: DESIGN_AREA_PREFIX, label: 'Link design — một vùng in', needsLine: true },
+  { value: DESIGN_AREA_PREFIX, label: 'Link design — một vùng in / một file', needsLine: true },
+  { value: 'line.mockupLink', label: 'Link mockup — file mockup của task, không có thì ảnh preview', needsLine: true },
   { value: 'line.crogsPrice', label: 'CROGS price', needsLine: true },
   { value: 'line.crogsTotal', label: 'CROGS total', needsLine: true },
   { value: 'line.supplierProductType', label: 'Supplier product type', needsLine: true },
@@ -277,7 +278,7 @@ export default function ExportPage() {
       .map(c => ({ header: c.header.trim(), source: c.source.startsWith(DESIGN_AREA_PREFIX) ? `${DESIGN_AREA_PREFIX}${sourceArea(c.source).trim()}` : c.source }))
       .filter(c => c.header && c.source)
     if (cleaned.some(c => c.source === DESIGN_AREA_PREFIX)) {
-      setTemplateMessage('Cột "Link design — một vùng in" cần tên vùng in (vd Front)')
+      setTemplateMessage('Cột "Link design — một vùng in / một file" cần tên vùng in hoặc tên file (vd Front)')
       return
     }
     if (!supplierId || !templateName.trim() || cleaned.length === 0) {
@@ -571,8 +572,9 @@ export default function ExportPage() {
                   {printAreas.map(a => <option key={a} value={a} />)}
                 </datalist>
                 <p className="mb-sm text-label-sm text-on-surface-variant">
-                  Link design của dòng duyệt trong Design Studio là link xưởng mở được (Drive hoặc link công khai). Nhiều vùng in thì nối bằng &quot; | &quot;;
-                  dùng &quot;Link design — một vùng in&quot; để tách mỗi vùng một cột{printAreas.length > 0 ? ` (${printAreas.join(', ')})` : ''}.
+                  Link design của dòng duyệt trong Design Studio là thư mục Drive của task (mọi file in nằm trong đó) khi các file đã lên Drive;
+                  file còn trên server thì là link từng file, nối bằng &quot; | &quot;. Dùng &quot;Link design — một vùng in / một file&quot; để tách mỗi file một cột
+                  (tên vùng in của template, hoặc tên file không kèm đuôi){printAreas.length > 0 ? ` (${printAreas.join(', ')})` : ''}.
                 </p>
                 <div className="overflow-hidden rounded-xl border border-outline-variant/30">
                   <table className="w-full text-body-sm">

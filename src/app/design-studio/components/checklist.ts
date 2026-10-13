@@ -1,4 +1,5 @@
 import { isLayerlessField } from '@/lib/layer-fields'
+import { currentFiles, extraPrintParts, missingPrintAreas, type FileKind } from '@/lib/task-files'
 import type { TaskDetail } from './types'
 import { productPageUrl } from './model'
 
@@ -8,16 +9,17 @@ export type CheckAction =
   | { kind: 'link'; label: string; href: string }
   | { kind: 'ask'; label: string }
   | { kind: 'refresh'; label: string }
-  | { kind: 'upload'; label: string; area: string }
+  /** `area` empty = pick any number of files; each file name becomes its own part. */
+  | { kind: 'upload'; label: string; area: string; fileKind?: FileKind }
   | { kind: 'submit'; label: string }
 
 export type CheckKey = 'mapping' | 'template' | 'library' | 'customer' | 'files' | 'mockup' | 'submit'
 
-export type CheckItem = { key: CheckKey; title: string; state: CheckState; reason: string; action: CheckAction | null }
+/** An optional item never becomes "the next step" and never holds up the review. */
+export type CheckItem = { key: CheckKey; title: string; state: CheckState; reason: string; action: CheckAction | null; optional?: boolean }
 
 export type ChecklistInput = Pick<TaskDetail, 'task' | 'line' | 'template' | 'slots' | 'library' | 'profile'> & {
   me: Pick<TaskDetail['me'], 'isLeader' | 'canApprove'>
-  supplierNeedsMockup?: boolean | null
 }
 
 export type Checklist = { items: CheckItem[]; next: CheckItem | null; done: number; total: number }
@@ -107,23 +109,39 @@ function customerItem(input: ChecklistInput): CheckItem {
   return { key: 'customer', title, state: 'done', reason: `${line.personalization.length} trường đã điền`, action: null }
 }
 
+export const NO_PRINT_FILE_REASON = 'Chưa có file in — upload ít nhất một file (sản phẩm nhiều mặt in: mỗi mặt một file)'
+
 function filesItem({ line, slots }: ChecklistInput): CheckItem {
+  const prints = currentFiles(line.artworks, 'PRINT')
+  if (slots.length === 0) {
+    const title = 'File in'
+    if (prints.length === 0) return { key: 'files', title, state: 'missing', reason: NO_PRINT_FILE_REASON, action: { kind: 'upload', label: 'Upload file in', area: '' } }
+    const names = prints.slice(0, 4).map(p => p.printArea).join(', ')
+    return { key: 'files', title, state: 'done', reason: `${prints.length} file in: ${names}${prints.length > 4 ? '…' : ''}`, action: null }
+  }
   const title = 'File in từng vùng'
-  if (slots.length === 0) return { key: 'files', title, state: 'na', reason: 'Không có vùng in nào', action: null }
-  const missing = slots.filter(s => !line.artworks.some(a => a.printArea === s))
+  const missing = missingPrintAreas(line.artworks, slots)
   const have = slots.length - missing.length
-  if (missing.length === 0) return { key: 'files', title, state: 'done', reason: `${have}/${slots.length} vùng in đã có file`, action: null }
+  const extras = extraPrintParts(line.artworks, slots).length
+  const more = extras > 0 ? ` · thêm ${extras} file khác` : ''
+  if (missing.length === 0) return { key: 'files', title, state: 'done', reason: `${have}/${slots.length} vùng in đã có file${more}`, action: null }
   return {
-    key: 'files', title, state: 'missing', reason: `${have}/${slots.length} vùng in có file — thiếu ${missing.join(', ')}`,
+    key: 'files', title, state: 'missing', reason: `${have}/${slots.length} vùng in có file — thiếu ${missing.join(', ')}${more}`,
     action: { kind: 'upload', label: `Upload ${missing[0]}`, area: missing[0] },
   }
 }
 
-function mockupItem({ supplierNeedsMockup, line }: ChecklistInput): CheckItem {
+/** Done with an uploaded mockup, or with the customer preview / product image the factory can follow. Missing never blocks. */
+function mockupItem({ line }: ChecklistInput): CheckItem {
   const title = 'Mockup xưởng'
-  if (!supplierNeedsMockup) return { key: 'mockup', title, state: 'na', reason: 'Xưởng không yêu cầu mockup', action: null }
-  const hasArt = line.artworks.length > 0
-  return { key: 'mockup', title, state: hasArt ? 'missing' : 'blocked', reason: hasArt ? 'Xưởng yêu cầu mockup — dựng từ file in' : 'Cần file in trước khi dựng mockup', action: null }
+  const uploaded = currentFiles(line.artworks, 'MOCKUP').length
+  if (uploaded > 0) return { key: 'mockup', title, state: 'done', reason: `${uploaded} mockup đã upload — nằm cùng thư mục với file in`, action: null, optional: true }
+  if (line.previewUrl) return { key: 'mockup', title, state: 'done', reason: 'Dùng ảnh preview khách tạo lúc đặt hàng', action: null, optional: true }
+  if (line.imageUrl) return { key: 'mockup', title, state: 'done', reason: 'Dùng ảnh sản phẩm Shopify', action: null, optional: true }
+  return {
+    key: 'mockup', title, state: 'missing', optional: true, reason: 'Chưa có mockup và không có ảnh preview — upload mockup cho xưởng (không chặn gửi duyệt)',
+    action: { kind: 'upload', label: 'Upload mockup', area: '', fileKind: 'MOCKUP' },
+  }
 }
 
 function submitItem(input: ChecklistInput, filesDone: boolean): CheckItem {
@@ -138,7 +156,10 @@ function submitItem(input: ChecklistInput, filesDone: boolean): CheckItem {
         ? { key: 'submit', title, state: 'missing', reason: me.isLeader ? 'Designer đã gửi — chờ bạn duyệt' : 'Mẫu đang chờ duyệt — bạn duyệt được', action: { kind: 'submit', label: 'Duyệt design' } }
         : { key: 'submit', title, state: 'blocked', reason: 'Đã gửi duyệt — chờ leader duyệt', action: null }
   }
-  if (!filesDone) return { key: 'submit', title, state: 'blocked', reason: 'Cần đủ file cho mọi vùng in trước khi gửi duyệt', action: null }
+  if (!filesDone) {
+    const reason = input.slots.length > 0 ? 'Cần đủ file cho mọi vùng in trước khi gửi duyệt' : 'Cần ít nhất một file in trước khi gửi duyệt'
+    return { key: 'submit', title, state: 'blocked', reason, action: null }
+  }
   const again = task.status === 'REJECTED'
   return {
     key: 'submit', title, state: 'missing',
@@ -161,7 +182,7 @@ export function buildChecklist(input: ChecklistInput): Checklist {
   const counted = items.filter(i => i.state !== 'na')
   return {
     items,
-    next: items.find(i => i.state === 'missing' || i.state === 'blocked') ?? null,
+    next: items.find(i => !i.optional && (i.state === 'missing' || i.state === 'blocked')) ?? null,
     done: counted.filter(i => i.state === 'done').length,
     total: counted.length,
   }

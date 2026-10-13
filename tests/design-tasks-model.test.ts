@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { timeLeft, allSlotsFilled, taskImages, canRemoveArtwork, canMove, retryDelay, isRetryable, emptyQueueText } from '@/app/design-studio/components/model'
+import {
+  timeLeft, allSlotsFilled, taskImages, canRemoveArtwork, canMove, retryDelay, isRetryable, emptyQueueText, mockupFiles, newestFor, printFiles, printPartNames, versionsFor,
+} from '@/app/design-studio/components/model'
 
 const NOW = Date.parse('2026-10-10T12:00:00Z')
 
@@ -20,6 +22,31 @@ describe('allSlotsFilled', () => {
     expect(allSlotsFilled({ slots: ['Front', 'Back'], line: { artworks: [art('Front')] } as any })).toBe(false)
     expect(allSlotsFilled({ slots: ['Front', 'Back'], line: { artworks: [art('Front'), art('Back')] } as any })).toBe(true)
     expect(allSlotsFilled({ slots: ['Front'], line: { artworks: [art('Front'), art('PRINT')] } as any })).toBe(true)
+  })
+  it('without a template one print file is enough, and a mockup never counts', () => {
+    const mockup = { printArea: 'Front', kind: 'MOCKUP' } as any
+    expect(allSlotsFilled({ slots: [], line: { artworks: [] } as any })).toBe(false)
+    expect(allSlotsFilled({ slots: [], line: { artworks: [mockup] } as any })).toBe(false)
+    expect(allSlotsFilled({ slots: [], line: { artworks: [art('sleeve')] } as any })).toBe(true)
+    expect(allSlotsFilled({ slots: ['Front'], line: { artworks: [mockup] } as any })).toBe(false)
+  })
+})
+
+describe('files of a task', () => {
+  const file = (id: string, kind: string, printArea: string, version: number, createdAt = '2026-10-01T00:00:00Z') => ({ id, kind, printArea, version, createdAt } as any)
+  const line = { artworks: [
+    file('s1', 'PRINT', 'sleeve', 1), file('f1', 'PRINT', 'Front', 1), file('f2', 'PRINT', 'Front', 2), file('c1', 'PRINT', 'Collar', 1),
+    file('m1', 'MOCKUP', 'Front', 1, '2026-10-02T00:00:00Z'), file('m2', 'MOCKUP', 'Look', 1, '2026-10-03T00:00:00Z'),
+  ] }
+  it('keeps print files and mockups apart, part by part', () => {
+    expect(versionsFor(line, 'Front').map(a => a.id)).toEqual(['f2', 'f1'])
+    expect(newestFor(line, 'Front', 'MOCKUP')?.id).toBe('m1')
+    expect(mockupFiles(line).map(a => a.id)).toEqual(['m2', 'm1'])
+  })
+  it('orders print files: template areas first, then the other parts by name', () => {
+    expect(printFiles(line, ['Front', 'Back']).map(a => a.id)).toEqual(['f2', 'c1', 's1'])
+    expect(printPartNames(line, ['Front', 'Back'])).toEqual(['Front', 'Back', 'Collar', 'sleeve'])
+    expect(printFiles(line, []).map(a => a.id)).toEqual(['c1', 'f2', 's1'])
   })
 })
 

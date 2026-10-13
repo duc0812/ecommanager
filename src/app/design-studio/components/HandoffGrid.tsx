@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import type { HandoffCard, Me } from './types'
-import { requestJson, taskImages, type LightboxImage } from './model'
+import { copyText, mockupFiles, printPartNames, requestJson, taskImages, type LightboxImage } from './model'
 import { pushChipLabel } from '@/lib/handoff-shared'
 import { LightboxProvider } from './Lightbox'
 import PrintFileThumb from './PrintFileThumb'
@@ -24,6 +24,7 @@ function OrderCard({ c, me, onOpenTask, onChanged, onError }: {
     return out
   }, [c])
   const { order, state } = c
+  const [copied, setCopied] = useState('')
   const destination = order.countryName ? `${order.countryName} (${order.countryCode})` : order.country || 'chưa rõ nước'
 
   return (
@@ -41,11 +42,19 @@ function OrderCard({ c, me, onOpenTask, onChanged, onError }: {
           </span>
         </header>
         <ul className="divide-y divide-outline-variant/20">
-          {c.lines.map(l => (
+          {c.lines.map(l => {
+            const parts = printPartNames(l.line, l.slots)
+            const mockups = mockupFiles(l.line)
+            return (
             <li key={l.line.id} className="px-md py-sm flex gap-md">
-              <div className={`w-[46%] shrink-0 grid gap-sm ${l.slots.length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
+              <div className={`w-[46%] shrink-0 grid gap-sm content-start ${parts.length + mockups.length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
                 {l.line.artworks.length > 0
-                  ? l.slots.map(area => <PrintFileThumb key={area} line={l.line} area={area} refLabel={l.taskKey} />)
+                  ? (
+                    <>
+                      {parts.map(area => <PrintFileThumb key={area} line={l.line} area={area} refLabel={l.taskKey} />)}
+                      {mockups.map(m => <PrintFileThumb key={`m-${m.printArea}`} line={l.line} area={m.printArea} kind="MOCKUP" refLabel={l.taskKey} />)}
+                    </>
+                  )
                   : (
                     <div className="aspect-[4/3] rounded-lg border border-outline-variant/30 bg-surface-container-low grid place-items-center text-label-sm text-on-surface-variant p-sm text-center">
                       {l.line.designDriveLink && /^https?:/.test(l.line.designDriveLink)
@@ -62,6 +71,24 @@ function OrderCard({ c, me, onOpenTask, onChanged, onError }: {
                   SKU xưởng <span className="font-mono text-on-surface">{l.line.supplierSku ?? '—'}</span>
                   {l.apiSku && <> · SKU API <span className="font-mono text-on-surface">{l.apiSku}</span></>}
                 </span>
+                {l.driveFolderUrl ? (
+                  <span className="inline-flex items-center gap-xs flex-wrap text-label-sm">
+                    <Icon name="folder" className="text-[16px] text-secondary" />
+                    <ExtLink href={l.driveFolderUrl}>Thư mục Drive của task ↗</ExtLink>
+                    <button type="button" aria-label={`Copy link thư mục Drive ${l.taskKey}`} title="Copy link thư mục Drive" className="text-on-surface-variant hover:text-secondary leading-none"
+                      onClick={async () => setCopied(await copyText(l.driveFolderUrl as string) ? l.taskKey : '')}>
+                      <Icon name={copied === l.taskKey ? 'check' : 'content_copy'} className="text-[15px]" />
+                    </button>
+                    {copied === l.taskKey && <span role="status" className="text-on-surface-variant">đã chép link</span>}
+                    {l.line.designDriveLink !== l.driveFolderUrl && l.line.artworks.length > 0 && (
+                      <span className="text-amber-900" title="Còn file chưa lên Drive hoặc chưa nằm trong thư mục — CSV sẽ xuất link từng file cho tới khi đủ">link xưởng: từng file</span>
+                    )}
+                  </span>
+                ) : l.line.artworks.length > 0 && (
+                  <span className="inline-flex items-center gap-xs text-label-sm text-on-surface-variant">
+                    <Icon name="cloud_off" className="text-[16px]" />Chưa có thư mục Drive — CSV xuất link từng file
+                  </span>
+                )}
                 {l.line.personalization.length > 0 && (
                   <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-sm gap-y-[2px] text-label-sm">
                     {l.line.personalization.map((p, i) => (
@@ -74,7 +101,8 @@ function OrderCard({ c, me, onOpenTask, onChanged, onError }: {
                 )}
               </div>
             </li>
-          ))}
+            )
+          })}
         </ul>
         <div className="mt-auto px-md py-sm border-t border-outline-variant/20 flex items-center gap-sm flex-wrap">
           <HandoffButton orderId={order.id} state={state} canHandoff={!!me?.canHandoff} onChanged={onChanged} onError={onError} />

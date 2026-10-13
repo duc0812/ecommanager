@@ -1,12 +1,12 @@
 'use client'
-import type { WorkspaceLine } from './types'
+import type { FileKind, WorkspaceLine } from './types'
 import { artworkImage, isImage, newestFor } from './model'
 import { useLightbox } from './Lightbox'
 import { Icon, Pill } from './ui'
 
-export default function PrintFileThumb({ line, area, refLabel }: { line: WorkspaceLine; area: string; refLabel: string }) {
+export default function PrintFileThumb({ line, area, refLabel, kind = 'PRINT' }: { line: WorkspaceLine; area: string; refLabel: string; kind?: FileKind }) {
   const lb = useLightbox()
-  const art = newestFor(line, area)
+  const art = newestFor(line, area, kind)
   if (!art) {
     return (
       <div className="flex flex-col gap-xs">
@@ -15,7 +15,7 @@ export default function PrintFileThumb({ line, area, refLabel }: { line: Workspa
     )
   }
   const src = art.previewUrl ?? (isImage(art) ? art.url : null)
-  const label = `${refLabel} · ${area} · v${art.version}`
+  const label = `${refLabel} · ${kind === 'MOCKUP' ? 'mockup ' : ''}${area} · v${art.version}`
   return (
     <div className="flex flex-col gap-xs min-w-0">
       <button type="button" onClick={() => lb?.open(art.url, artworkImage(art))} aria-label={`Xem lớn file in ${label}`} title="Bấm để xem lớn"
@@ -26,7 +26,8 @@ export default function PrintFileThumb({ line, area, refLabel }: { line: Workspa
           : <span className="flex flex-col items-center gap-xs text-label-sm text-on-surface-variant"><Icon name="description" className="text-[32px]" />{art.fileName}</span>}
       </button>
       <span className="flex items-center gap-xs text-label-sm text-on-surface-variant min-w-0">
-        <span className="font-semibold text-on-surface">{area}</span>
+        {kind === 'MOCKUP' && <Pill tone="idle" icon="checkroom">Mockup</Pill>}
+        <span className="font-semibold text-on-surface truncate" title={area}>{area}</span>
         <span>v{art.version}</span>
         {art.widthPx && art.heightPx && <span>{art.widthPx}×{art.heightPx}</span>}
         {art.source === 'AUTO' && <Pill tone="brand" icon="auto_awesome">Tự động</Pill>}
