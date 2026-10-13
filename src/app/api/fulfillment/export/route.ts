@@ -6,6 +6,11 @@ import { renderCsv, type CsvTemplate as RenderTemplate, type OrderForCsv } from 
 import { isNonProductLine } from '@/lib/order-lines'
 import { effectiveBaseCost } from '@/lib/order-profit'
 import { pickExportDesignLink } from '@/lib/export-design'
+import { DESIGN_AREA_SOURCE_PREFIX } from '@/lib/csv-template'
+import { exportLinkErrorMessage, resolveExportDesignLinks } from '@/lib/export-design-links'
+
+const LINE_DESIGN_SOURCES = ['line.designDriveLink', 'line.designLinks']
+const ORDER_DESIGN_SOURCE = 'order.designDriveLink'
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => null)
@@ -56,15 +61,38 @@ export async function POST(req: NextRequest) {
     : []
   const skuDesignBySku = new Map(skuDesigns.map(s => [s.sku, s]))
 
+  const exportableLinesOf = (o: (typeof orders)[number]) => o.lines.filter(l =>
+    !isNonProductLine(l) &&
+    l.resolvedSupplierId === tmpl.supplierId &&
+    Boolean(l.resolvedSupplierSku)
+  )
+  const templateColumns = parseTemplateColumns(tmpl.columns)
+  const perOrder = tmpl.rowMode === 'PER_ORDER'
+  const wantsOrderLink = templateColumns.some(c => c.source === ORDER_DESIGN_SOURCE)
+  const wantsLineLinks = !perOrder && templateColumns.some(c => LINE_DESIGN_SOURCES.includes(c.source) || c.source.startsWith(DESIGN_AREA_SOURCE_PREFIX))
+  // Links are resolved only for the columns the template prints, so a template without a design column never fails on one.
+  const designLinks = await resolveExportDesignLinks(
+    wantsOrderLink || wantsLineLinks
+      ? orders.flatMap(o => {
+        const lines = exportableLinesOf(o)
+        if (lines.length === 0) return []
+        return [{ id: o.id, storeId: o.storeId, shopifyOrderNumber: o.shopifyOrderNumber, designDriveLink: o.designDriveLink, lines: wantsLineLinks ? lines : [] }]
+      })
+      : [],
+  )
+  if (designLinks.problems.length > 0) {
+    return NextResponse.json({
+      error: exportLinkErrorMessage(designLinks.problems),
+      orders: Array.from(new Set(designLinks.problems.map(p => p.orderNumber))),
+      problems: designLinks.problems,
+    }, { status: 400 })
+  }
+
   const ordersForCsv: OrderForCsv[] = orders
     .map(o => {
       const productLines = o.lines.filter(l => !isNonProductLine(l))
       const productLineNumberById = new Map(productLines.map((line, idx) => [line.id, idx + 1]))
-      const exportableLines = o.lines.filter(l =>
-        !isNonProductLine(l) &&
-        l.resolvedSupplierId === tmpl.supplierId &&
-        Boolean(l.resolvedSupplierSku)
-      )
+      const exportableLines = exportableLinesOf(o)
       return {
         shopifyOrderNumber: o.shopifyOrderNumber,
         customerName: o.customerName,
@@ -79,18 +107,19 @@ export async function POST(req: NextRequest) {
         shippingPhone: o.shippingPhone,
         financialStatus: o.financialStatus,
         fulfillmentStatus: o.fulfillmentStatus,
-        designDriveLink: o.designDriveLink,
+        designDriveLink: designLinks.translate(o.designDriveLink),
         trelloCardUrl: o.trelloCardUrl,
         placedAt: o.placedAt,
         lines: exportableLines.map(l => {
           const supplierProduct = l.resolvedSupplierSku ? supplierProductBySku.get(l.resolvedSupplierSku) : null
-          const designDriveLink = pickExportDesignLink({
+          const studio = designLinks.byLineId.get(l.id)
+          const designDriveLink = studio?.joined ?? designLinks.translate(pickExportDesignLink({
             lineDesignLink: l.designDriveLink,
             orderDesignLink: o.designDriveLink,
             orderType: o.orderType,
             sku: l.sku,
             skuDesignLink: l.sku ? skuDesignBySku.get(l.sku)?.driveLink ?? null : null,
-          })
+          }))
           const lineNumber = productLineNumberById.get(l.id) ?? 1
           return {
             lineKey: `${o.shopifyOrderNumber.replace(/^#/, '')}_${lineNumber}`,
@@ -109,6 +138,8 @@ export async function POST(req: NextRequest) {
             supplierVariant2Value: supplierProduct?.variant2Value ?? null,
             previewCdnUrl: l.previewCdnUrl,
             designDriveLink,
+            designLinks: designDriveLink,
+            designAreaLinks: studio?.byArea ?? null,
             crogsPrice: effectiveBaseCost(l),
             crogsTotal: effectiveBaseCost(l) == null ? null : effectiveBaseCost(l)! * l.qty,
           }
@@ -118,8 +149,8 @@ export async function POST(req: NextRequest) {
     .filter(o => o.lines.length > 0)
 
   const renderTmpl: RenderTemplate = {
-    rowMode: tmpl.rowMode === 'PER_ORDER' ? 'PER_ORDER' : 'PER_LINE',
-    columns: parseTemplateColumns(tmpl.columns),
+    rowMode: perOrder ? 'PER_ORDER' : 'PER_LINE',
+    columns: templateColumns,
   }
   const csv = renderCsv(renderTmpl, ordersForCsv)
 

@@ -14,6 +14,8 @@ type Template = {
 type TemplateColumn = { header: string; source: string }
 type SourceOption = { value: string; label: string; needsLine?: boolean }
 
+const DESIGN_AREA_PREFIX = 'line.designArea:'
+
 const SOURCE_OPTIONS: SourceOption[] = [
   { value: 'literal:', label: 'Fixed value' },
   { value: 'order.shopifyOrderNumber', label: 'Order number' },
@@ -45,6 +47,8 @@ const SOURCE_OPTIONS: SourceOption[] = [
   { value: 'line.unitPrice', label: 'Unit price', needsLine: true },
   { value: 'line.previewCdnUrl', label: 'Mockup preview CDN', needsLine: true },
   { value: 'line.designDriveLink', label: 'Line design link', needsLine: true },
+  { value: 'line.designLinks', label: 'Link design — mọi vùng in', needsLine: true },
+  { value: DESIGN_AREA_PREFIX, label: 'Link design — một vùng in', needsLine: true },
   { value: 'line.crogsPrice', label: 'CROGS price', needsLine: true },
   { value: 'line.crogsTotal', label: 'CROGS total', needsLine: true },
   { value: 'line.supplierProductType', label: 'Supplier product type', needsLine: true },
@@ -80,7 +84,12 @@ function parseCsvHeader(text: string): string[] {
 }
 
 function sourceBase(source: string) {
+  if (source.startsWith(DESIGN_AREA_PREFIX)) return DESIGN_AREA_PREFIX
   return source.startsWith('literal:') ? 'literal:' : source
+}
+
+function sourceArea(source: string) {
+  return source.startsWith(DESIGN_AREA_PREFIX) ? source.slice(DESIGN_AREA_PREFIX.length) : ''
 }
 
 function sourceLiteral(source: string) {
@@ -158,6 +167,7 @@ export default function ExportPage() {
   const [columns, setColumns] = useState<TemplateColumn[]>([])
   const [templateMessage, setTemplateMessage] = useState('')
   const [savingTemplate, setSavingTemplate] = useState(false)
+  const [printAreas, setPrintAreas] = useState<string[]>([])
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   const selectedSupplier = useMemo(
@@ -196,6 +206,21 @@ export default function ExportPage() {
   useEffect(() => {
     void loadTemplates(supplierId)
   }, [supplierId, loadTemplates])
+
+  useEffect(() => {
+    setPrintAreas([])
+    if (!supplierId) return
+    let alive = true
+    fetch(`/api/design-studio/templates?supplierId=${encodeURIComponent(supplierId)}`)
+      .then(r => (r.ok ? r.json() : { templates: [] }))
+      .then(d => {
+        if (!alive) return
+        const names = (d.templates ?? []).flatMap((t: { areas?: { name?: string }[] }) => (t.areas ?? []).map(a => (a.name ?? '').trim()))
+        setPrintAreas(Array.from(new Set<string>(names.filter(Boolean))).sort())
+      })
+      .catch(() => {})
+    return () => { alive = false }
+  }, [supplierId])
 
   const openTemplateModal = () => {
     if (!supplierId) {
@@ -249,8 +274,12 @@ export default function ExportPage() {
 
   const saveTemplate = async () => {
     const cleaned = columns
-      .map(c => ({ header: c.header.trim(), source: c.source }))
+      .map(c => ({ header: c.header.trim(), source: c.source.startsWith(DESIGN_AREA_PREFIX) ? `${DESIGN_AREA_PREFIX}${sourceArea(c.source).trim()}` : c.source }))
       .filter(c => c.header && c.source)
+    if (cleaned.some(c => c.source === DESIGN_AREA_PREFIX)) {
+      setTemplateMessage('Cột "Link design — một vùng in" cần tên vùng in (vd Front)')
+      return
+    }
     if (!supplierId || !templateName.trim() || cleaned.length === 0) {
       setTemplateMessage('Template name and at least one mapped column are required')
       return
@@ -538,6 +567,13 @@ export default function ExportPage() {
                   </div>
                 </div>
 
+                <datalist id="export-print-areas">
+                  {printAreas.map(a => <option key={a} value={a} />)}
+                </datalist>
+                <p className="mb-sm text-label-sm text-on-surface-variant">
+                  Link design của dòng duyệt trong Design Studio là link xưởng mở được (Drive hoặc link công khai). Nhiều vùng in thì nối bằng &quot; | &quot;;
+                  dùng &quot;Link design — một vùng in&quot; để tách mỗi vùng một cột{printAreas.length > 0 ? ` (${printAreas.join(', ')})` : ''}.
+                </p>
                 <div className="overflow-hidden rounded-xl border border-outline-variant/30">
                   <table className="w-full text-body-sm">
                     <thead className="bg-surface-container">
@@ -552,6 +588,7 @@ export default function ExportPage() {
                       {columns.map((column, index) => {
                         const base = sourceBase(column.source)
                         const isFixed = base === 'literal:'
+                        const isArea = base === DESIGN_AREA_PREFIX
                         return (
                           <tr
                             key={index}
@@ -594,6 +631,16 @@ export default function ExportPage() {
                                     onChange={e => updateColumn(index, { source: `literal:${e.target.value}` })}
                                     className="rounded-lg border px-sm py-xs"
                                     placeholder="Value"
+                                  />
+                                )}
+                                {isArea && (
+                                  <input
+                                    value={sourceArea(column.source)}
+                                    onChange={e => updateColumn(index, { source: `${DESIGN_AREA_PREFIX}${e.target.value}` })}
+                                    list="export-print-areas"
+                                    aria-label="Tên vùng in"
+                                    className="rounded-lg border px-sm py-xs"
+                                    placeholder="Tên vùng in (vd Front)"
                                   />
                                 )}
                               </div>

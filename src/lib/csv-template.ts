@@ -25,8 +25,25 @@ export type OrderLineForCsv = {
   supplierVariant2Value?: string | null
   previewCdnUrl?: string | null
   designDriveLink?: string | null
+  designLinks?: string | null
+  designAreaLinks?: Record<string, string> | null
   crogsPrice?: number | null
   crogsTotal?: number | null
+}
+
+export const DESIGN_AREA_SOURCE_PREFIX = 'line.designArea:'
+
+export function designAreaSource(areaName: string): string {
+  return `${DESIGN_AREA_SOURCE_PREFIX}${areaName}`
+}
+
+function designAreaLink(links: Record<string, string> | null | undefined, areaName: string): string {
+  if (!links) return ''
+  const wanted = areaName.trim()
+  if (!wanted) return ''
+  if (links[wanted] != null) return links[wanted]
+  const key = Object.keys(links).find(k => k.trim().toLowerCase() === wanted.toLowerCase())
+  return key ? links[key] : ''
 }
 
 export type OrderForCsv = {
@@ -55,6 +72,9 @@ function resolveSource(source: string, ctx: { order: OrderForCsv; line: OrderLin
   if (source === 'order.shippingAddressFull') {
     return [ctx.order.shippingAddress1, ctx.order.shippingAddress2].filter(Boolean).join(', ')
   }
+  if (source.startsWith(DESIGN_AREA_SOURCE_PREFIX)) {
+    return ctx.line ? designAreaLink(ctx.line.designAreaLinks, source.slice(DESIGN_AREA_SOURCE_PREFIX.length)) : ''
+  }
   if (source === 'line.designSku' && ctx.line) return ctx.line.sku ?? ''
   if (source === 'line.itemName' && ctx.line) {
     return [ctx.line.productTitle, ctx.line.variantTitle].filter(Boolean).join(' - ')
@@ -70,7 +90,7 @@ function resolveSource(source: string, ctx: { order: OrderForCsv; line: OrderLin
   if (root === 'line' && ctx.line) {
     const key = parts[1] as keyof OrderLineForCsv
     const val = ctx.line[key]
-    return val == null ? '' : String(val)
+    return val == null || typeof val === 'object' ? '' : String(val)
   }
   return ''
 }
