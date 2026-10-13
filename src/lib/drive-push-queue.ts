@@ -5,12 +5,14 @@ import { localArtworkPath } from '@/lib/design-storage'
 import { RECONNECT_WARNING, pushArtworkToDrive } from '@/lib/design-drive-push'
 import { getGoogleConfig, isDriveConfigured } from '@/lib/google-oauth'
 import { refreshDriveQuota } from '@/lib/google-drive'
+import { linesNeedingTidy, tidyTaskFolder } from '@/lib/task-folder'
 
 export const DRIVE_PUSH_JOB = 'drive-push'
 export const DRIVE_PUSH_RESULT_KEY = 'last_drive_push_result'
 export const SCHEDULED_PUSH_LIMIT = 20
 export const BULK_PUSH_LIMIT = 5000
 export const MAX_CONSECUTIVE_FAILURES = 5
+export const SCHEDULED_TIDY_LIMIT = 20
 const SCAN_LIMIT = 5000
 const BACKOFF_BASE_MS = 30 * 60 * 1000
 const BACKOFF_MAX_MS = 6 * 60 * 60 * 1000
@@ -19,6 +21,8 @@ export type PushTrigger = 'schedule' | 'manual'
 export type PushStop = 'not_connected' | 'needs_reconnect' | 'too_many_failures'
 export type PushSummary = {
   pending: number; attempted: number; pushed: number; failed: number; skipped: number; missing: number
+  /** Drive files moved into their task folder or into `_old`, and files Drive would not let the app move. */
+  organized: number; stuck: number
   lastError: string | null; stopped: PushStop | null
 }
 export type PushProgress = PushSummary & { running: boolean; trigger: PushTrigger; startedAt: string; finishedAt: string | null }
@@ -83,6 +87,9 @@ export function enqueueDrivePush(artworkId: string) {
   track(serial(async () => {
     const cfg = await getGoogleConfig()
     if (!isDriveConfigured(cfg) || cfg.needsReconnect) return
+    // The version this upload replaces leaves the folder first, also when the new file never makes it to Drive.
+    const art = await prisma.designArtwork.findUnique({ where: { id: artworkId }, select: { orderId: true, shopifyLineId: true } })
+    if (art) await tidyTaskFolder(art.orderId, art.shopifyLineId).catch(err => console.error('[drive push] folder tidy failed:', err?.message ?? err))
     const result = await pushArtworkToDrive(artworkId)
     const s = state()
     if (result.pushed) {
@@ -93,6 +100,34 @@ export function enqueueDrivePush(artworkId: string) {
       s.uploadError = { message: result.warning, at: new Date().toISOString() }
     }
   }))
+}
+
+/** After a file is removed or a part renamed: the task folder is brought in line in the background, on the same chain as the pushes. */
+export function enqueueFolderTidy(orderId: string, shopifyLineId: string) {
+  track(serial(() => tidyTaskFolder(orderId, shopifyLineId)))
+}
+
+/**
+ * "Sắp xếp lại thư mục": Drive files whose place is unknown (pushed before task folders existed, or a move that failed)
+ * are put into their task folder or its `_old`. A file the app may not touch (404 / 403 under `drive.file`) stays where it is.
+ */
+export async function reorganiseTaskFolders(opts: { limit?: number; retryStuck?: boolean; onLine?: (r: { moved: number; stuck: number }) => void } = {}) {
+  const out = { lines: 0, moved: 0, stuck: 0, failed: 0, lastError: null as string | null, authError: false }
+  const lines = await linesNeedingTidy({ limit: opts.limit ?? SCHEDULED_TIDY_LIMIT, retryStuck: opts.retryStuck })
+  let consecutive = 0
+  for (const line of lines) {
+    const r = await serial(() => tidyTaskFolder(line.orderId, line.shopifyLineId, { retryStuck: opts.retryStuck }))
+    out.lines++
+    out.moved += r.moved
+    out.stuck += r.stuck
+    out.failed += r.failed
+    if (r.lastError) out.lastError = r.lastError
+    opts.onLine?.({ moved: r.moved, stuck: r.stuck })
+    if (r.authError) { out.authError = true; break }
+    consecutive = r.failed > 0 ? consecutive + 1 : 0
+    if (consecutive >= MAX_CONSECUTIVE_FAILURES) break
+  }
+  return out
 }
 
 /** Resolves once every background push and bulk run started so far has settled. */
@@ -118,7 +153,9 @@ async function localFileExists(storagePath: string | null): Promise<boolean> {
  */
 export async function pushPendingArtworksToDrive(opts: { limit?: number; force?: boolean; onProgress?: (p: PushSummary) => void } = {}): Promise<PushSummary> {
   const limit = Math.max(1, opts.limit ?? SCHEDULED_PUSH_LIMIT)
-  const summary: PushSummary = { pending: await countPendingArtworks(), attempted: 0, pushed: 0, failed: 0, skipped: 0, missing: 0, lastError: null, stopped: null }
+  const summary: PushSummary = {
+    pending: await countPendingArtworks(), attempted: 0, pushed: 0, failed: 0, skipped: 0, missing: 0, organized: 0, stuck: 0, lastError: null, stopped: null,
+  }
   const report = () => opts.onProgress?.({ ...summary })
   const cfg = await getGoogleConfig()
   if (!isDriveConfigured(cfg)) { summary.stopped = 'not_connected'; report(); return summary }
@@ -158,6 +195,15 @@ export async function pushPendingArtworksToDrive(opts: { limit?: number; force?:
     report()
     if (summary.stopped) break
   }
+  if (!summary.stopped) {
+    // A forced (bulk) run goes through every task and also retries the files Drive refused before; a scheduled run takes a small batch.
+    const tidy = await reorganiseTaskFolders({
+      limit: opts.force ? limit : Math.min(limit, SCHEDULED_TIDY_LIMIT), retryStuck: opts.force === true,
+      onLine: r => { summary.organized += r.moved; summary.stuck += r.stuck; report() },
+    })
+    if (tidy.authError) { summary.stopped = 'needs_reconnect'; summary.lastError = RECONNECT_WARNING }
+    else if (tidy.failed > 0 && tidy.lastError) summary.lastError = `Sắp xếp thư mục: ${tidy.lastError}`
+  }
   summary.pending = await countPendingArtworks()
   report()
   return summary
@@ -173,7 +219,7 @@ export async function runDrivePushJob(trigger: PushTrigger, opts: { limit: numbe
   return runExclusive(DRIVE_PUSH_JOB, async () => {
     const s = state()
     const startedAt = new Date().toISOString()
-    const blank: PushSummary = { pending: 0, attempted: 0, pushed: 0, failed: 0, skipped: 0, missing: 0, lastError: null, stopped: null }
+    const blank: PushSummary = { pending: 0, attempted: 0, pushed: 0, failed: 0, skipped: 0, missing: 0, organized: 0, stuck: 0, lastError: null, stopped: null }
     s.run = { ...blank, running: true, trigger, startedAt, finishedAt: null }
     try {
       const summary = await pushPendingArtworksToDrive({ ...opts, onProgress: p => { s.run = { ...p, running: true, trigger, startedAt, finishedAt: null } } })
@@ -238,7 +284,7 @@ export async function getLastDrivePush(): Promise<LastDrivePush | null> {
 
 export type DrivePushStatus = {
   pending: number; running: boolean; queued: boolean; trigger: PushTrigger | null
-  pushed: number; failed: number; missing: number; attempted: number
+  pushed: number; failed: number; missing: number; attempted: number; organized: number; stuck: number
   lastError: string | null; stopped: PushStop | null; startedAt: string | null; finishedAt: string | null
   uploadError: { message: string; at: string } | null
 }
@@ -251,6 +297,7 @@ export async function getDrivePushStatus(): Promise<DrivePushStatus> {
     const r = s.run
     return {
       pending, running, queued: s.bulkRequested, trigger: r.trigger, pushed: r.pushed, failed: r.failed, missing: r.missing, attempted: r.attempted,
+      organized: r.organized, stuck: r.stuck,
       lastError: r.lastError, stopped: r.stopped, startedAt: r.startedAt, finishedAt: r.finishedAt, uploadError: s.uploadError,
     }
   }
@@ -258,6 +305,7 @@ export async function getDrivePushStatus(): Promise<DrivePushStatus> {
   return {
     pending, running, queued: s.bulkRequested, trigger: last?.trigger ?? null,
     pushed: last?.pushed ?? 0, failed: last?.failed ?? 0, missing: last?.missing ?? 0, attempted: last?.attempted ?? 0,
+    organized: last?.organized ?? 0, stuck: last?.stuck ?? 0,
     lastError: last?.error ?? last?.lastError ?? null, stopped: last?.stopped ?? null, startedAt: null, finishedAt: last?.ranAt ?? null,
     uploadError: s.uploadError,
   }

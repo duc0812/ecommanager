@@ -12,8 +12,8 @@ export async function runScheduledDrivePush() {
     const r = await runDrivePushJob('schedule', { limit: SCHEDULED_PUSH_LIMIT })
     if (r.skipped) { console.warn('[drive-push] previous run still active; skipped'); return }
     const s = r.result
-    if (s.pushed || s.failed || s.missing || s.stopped) {
-      console.log(`[drive-push] ${s.pushed} pushed, ${s.failed} failed, ${s.missing} missing on disk, ${s.pending} still on the server${s.stopped ? `, stopped: ${s.stopped}` : ''}${s.lastError ? `, last error: ${s.lastError}` : ''}`)
+    if (s.pushed || s.failed || s.missing || s.organized || s.stuck || s.stopped) {
+      console.log(`[drive-push] ${s.pushed} pushed, ${s.failed} failed, ${s.missing} missing on disk, ${s.pending} still on the server, ${s.organized} moved into task folders, ${s.stuck} Drive would not move${s.stopped ? `, stopped: ${s.stopped}` : ''}${s.lastError ? `, last error: ${s.lastError}` : ''}`)
     }
   } catch (e: any) {
     console.error('[drive-push] failed:', e?.message ?? e)

@@ -28,6 +28,7 @@ const SESSION = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=res
 const MB = 1024 * 1024
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dtu-storage-'))
 const driveLink = (n: string | number) => `https://drive.google.com/file/d/dtu-file-${n}/view?usp=drivesdk`
+const FOLDER_LINK = 'https://drive.google.com/drive/folders/folder-4'
 let calls: Call[] = []
 let designerToken = ''
 let outsiderToken = ''
@@ -94,11 +95,13 @@ function streamOf(chunks: Buffer[]): ReadableStream<Uint8Array> {
   })
 }
 
-type UploadOpts = { key?: string; printArea?: string; fileName?: string; type?: string; token?: string | null; headers?: Record<string, string> }
+type UploadOpts = { key?: string; printArea?: string | null; kind?: string; fileName?: string; type?: string; token?: string | null; headers?: Record<string, string> }
 
 function upload(chunks: Buffer[], o: UploadOpts = {}) {
   const key = o.key ?? TASK
-  const qs = new URLSearchParams({ printArea: o.printArea ?? 'Front' })
+  const qs = new URLSearchParams()
+  if (o.printArea !== null) qs.set('printArea', o.printArea ?? 'Front')
+  if (o.kind) qs.set('kind', o.kind)
   if (o.fileName !== '') qs.set('fileName', o.fileName ?? 'a.png')
   const headers: Record<string, string> = { ...(o.headers ?? {}) }
   if (o.type !== '') headers['content-type'] = o.type ?? 'image/png'
@@ -143,6 +146,7 @@ beforeEach(async () => {
   await prisma.appSetting.deleteMany({ where: { key: { in: KEYS } } })
   await prisma.designArtwork.deleteMany({ where: { orderId: ORDER_ID } })
   await prisma.designArtworkUpload.deleteMany({ where: { orderId: ORDER_ID } })
+  await prisma.designTask.updateMany({ where: { orderId: ORDER_ID }, data: { driveFolderId: null, driveFolderUrl: null, status: 'NEW' } })
   await prisma.orderLine.updateMany({ where: { orderId: ORDER_ID }, data: { designDriveLink: null } })
   await prisma.order.update({ where: { id: ORDER_ID }, data: { designDriveLink: null } })
   fs.rmSync(path.join(tmp, 'design'), { recursive: true, force: true })
@@ -196,10 +200,10 @@ describe('PUT /api/design-studio/tasks/[key]/artwork', () => {
     expect(put.headers.get('Content-Range')).toBe(`bytes 0-${bytes.length - 1}/${bytes.length}`)
     expect((put.body as Buffer).equals(bytes)).toBe(true)
     const init = calls.find(c => c.url.startsWith('https://www.googleapis.com/upload/drive/v3/files'))!
-    expect(JSON.parse(init.body)).toMatchObject({ name: 'v1-Ao_dep.png', mimeType: 'image/png' })
+    expect(JSON.parse(init.body)).toMatchObject({ name: 'Front.png', mimeType: 'image/png', parents: ['folder-4'] })
   })
 
-  it('an approved line that points at the app URL gets the Drive link once the background push lands', async () => {
+  it('an approved line that points at the app URL gets the task folder link once the background push lands', async () => {
     await connect()
     let release = () => {}
     const gate = new Promise<void>(resolve => { release = resolve })
@@ -212,8 +216,43 @@ describe('PUT /api/design-studio/tasks/[key]/artwork', () => {
 
     release()
     await drainDrivePushes()
-    expect((await lineRow()).designDriveLink).toBe(driveLink(1))
-    expect((await prisma.order.findUniqueOrThrow({ where: { id: ORDER_ID } })).designDriveLink).toBe(driveLink(1))
+    expect((await lineRow()).designDriveLink).toBe(FOLDER_LINK)
+    expect((await prisma.order.findUniqueOrThrow({ where: { id: ORDER_ID } })).designDriveLink).toBe(FOLDER_LINK)
+  })
+
+  it('without printArea every file name is its own part; the same name again is the next version, whatever its case', async () => {
+    driveMock()
+    for (const fileName of ['front.png', 'back.png', 'Tay áo trái.png']) expect((await upload([png(1, 1)], { printArea: null, fileName })).status).toBe(200)
+    expect((await rows()).map(r => ({ kind: r.kind, part: r.printArea, v: r.version }))).toEqual([
+      { kind: 'PRINT', part: 'front', v: 1 }, { kind: 'PRINT', part: 'back', v: 1 }, { kind: 'PRINT', part: 'Tay áo trái', v: 1 },
+    ])
+
+    const again = await (await upload([png(2, 2)], { printArea: null, fileName: 'FRONT.PNG' })).json()
+    expect(again.artwork).toMatchObject({ kind: 'PRINT', printArea: 'front', version: 2, fileName: 'FRONT.PNG' })
+    const psd = await (await upload([Buffer.from('8BPS')], { printArea: null, fileName: 'front.psd', type: '' })).json()
+    expect(psd.artwork).toMatchObject({ printArea: 'front', version: 3, mimeType: 'image/vnd.adobe.photoshop' })
+    expect((await (await upload([png(1, 1)], { printArea: null, fileName: '.png' })).json()).artwork).toMatchObject({ printArea: 'Artwork', version: 1 })
+    const long = await (await upload([png(1, 1)], { printArea: null, fileName: `${'x'.repeat(80)}.png` })).json()
+    expect(long.artwork.printArea).toBe('x'.repeat(60))
+    expect(await rows()).toHaveLength(7)
+  })
+
+  it('a mockup is a file of its own kind: the same name as a print file does not collide, and only images are taken', async () => {
+    driveMock()
+    const print = await (await upload([png(1, 1)], { printArea: null, fileName: 'front.png' })).json()
+    const mock = await (await upload([png(3, 3)], { printArea: null, fileName: 'front.png', kind: 'MOCKUP' })).json()
+    expect(print.artwork).toMatchObject({ kind: 'PRINT', printArea: 'front', version: 1 })
+    expect(mock.artwork).toMatchObject({ kind: 'MOCKUP', printArea: 'front', version: 1 })
+    const stored = await rows()
+    expect(stored.map(r => r.storagePath)).toEqual(['design/DTU1/1/front/v1-front.png', 'design/DTU1/1/_mockup/front/v1-front.png'])
+    const second = await (await upload([png(3, 3)], { printArea: null, fileName: 'Front.png', kind: 'MOCKUP' })).json()
+    expect(second.artwork).toMatchObject({ kind: 'MOCKUP', printArea: 'front', version: 2 })
+
+    const pdf = await upload([Buffer.from('%PDF')], { printArea: null, fileName: 'mock.pdf', type: 'application/pdf', kind: 'MOCKUP' })
+    expect(pdf.status).toBe(400)
+    expect((await pdf.json()).error).toMatch(/Mockup chỉ nhận ảnh PNG hoặc JPG/)
+    expect((await upload([png(1, 1)], { kind: 'SOURCE' })).status).toBe(400)
+    expect(await rows()).toHaveLength(3)
   })
 
   it('keeps the file on the server without calling Google while Drive is not connected', async () => {

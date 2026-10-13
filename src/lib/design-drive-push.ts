@@ -2,13 +2,14 @@ import fs from 'fs/promises'
 import { prisma } from '@/lib/db'
 import { localArtworkPath } from '@/lib/design-storage'
 import { artworkUrl } from '@/lib/design-studio'
-import { taskKeyFor } from '@/lib/design-tasks'
 import { DESIGN_LINK_SEPARATOR, joinDesignLinks } from '@/lib/design-links'
 import { localLibraryPath } from '@/lib/library-storage'
 import {
-  DriveAuthError, DriveError, deleteFile, folderForPath, folderForTask, getFile, isDriveConnected, shareAnyoneReader,
+  DriveAuthError, DriveError, childFolder, deleteFile, folderForPath, getFile, isDriveConnected, shareAnyoneReader,
   startResumableUpload, uploadChunk,
 } from '@/lib/google-drive'
+import { ensureTaskFolder, tidyTaskFolder } from '@/lib/task-folder'
+import { OLD_FOLDER_NAME, currentFileIds, driveFileName, driveOldFileName, type DrivePlace } from '@/lib/task-files'
 
 export const DRIVE_CHUNK_SIZE = 8 * 1024 * 1024
 export const RECONNECT_WARNING = 'Google Drive cần kết nối lại'
@@ -74,16 +75,18 @@ async function replacePublicLinks(publicToken: string | null, driveLink: string)
   }
 }
 
+/**
+ * Sends one file of a task to its Drive folder. The current version of a part lands in the folder as `<part>.<ext>`
+ * (a mockup as `MOCKUP_<part>.<ext>`); a version that was replaced while it waited on the server goes straight to `_old`.
+ * Older Drive copies of the same part are moved out first, so the folder never shows two versions side by side.
+ */
 export async function pushArtworkToDrive(artworkId: string): Promise<PushResult> {
   if (inflight().has(artworkId)) return { pushed: false, warning: 'Đang đẩy file này lên Drive, thử lại sau.', inProgress: true }
   inflight().add(artworkId)
   let driveFileId: string | null = null
   try {
     if (!(await isDriveConnected())) return { pushed: false, warning: null }
-    const art = await prisma.designArtwork.findUnique({
-      where: { id: artworkId },
-      include: { order: { select: { shopifyOrderNumber: true, placedAt: true, store: { select: { shop: true, project: { select: { name: true } } } } } } },
-    })
+    const art = await prisma.designArtwork.findUnique({ where: { id: artworkId } })
     if (!art) throw new Error('Artwork not found')
     if (art.removedAt) return { pushed: false, warning: 'File đã bị xoá khỏi task' }
     if (art.storage === 'DRIVE') return { pushed: true, warning: null }
@@ -92,30 +95,30 @@ export async function pushArtworkToDrive(artworkId: string): Promise<PushResult>
     const { size } = await fs.stat(absPath)
     if (size === 0) throw new Error('File rỗng')
 
-    const [task, line] = await Promise.all([
-      prisma.designTask.findUnique({ where: { orderId_shopifyLineId: { orderId: art.orderId, shopifyLineId: art.shopifyLineId } }, select: { taskKey: true } }),
-      prisma.orderLine.findFirst({ where: { orderId: art.orderId, shopifyLineId: art.shopifyLineId }, select: { linePosition: true } }),
-    ])
-    const folderId = await folderForTask({
-      storeName: art.order.store.project?.name ?? art.order.store.shop,
-      placedAt: art.order.placedAt,
-      orderNumber: art.order.shopifyOrderNumber,
-      taskKey: task?.taskKey ?? taskKeyFor(art.order.shopifyOrderNumber, line?.linePosition ?? 0),
+    const folder = await ensureTaskFolder(art.orderId, art.shopifyLineId)
+    if (folder.taskId) await tidyTaskFolder(art.orderId, art.shopifyLineId)
+    const siblings = await prisma.designArtwork.findMany({
+      where: { orderId: art.orderId, shopifyLineId: art.shopifyLineId },
+      select: { id: true, kind: true, printArea: true, version: true, storage: true, removedAt: true },
     })
-    const sessionUrl = await startResumableUpload({ name: `v${art.version}-${art.fileName}`, mimeType: art.mimeType, size, parentId: folderId })
-    const key = { orderId: art.orderId, shopifyLineId: art.shopifyLineId, printArea: art.printArea, version: art.version }
+    const place: DrivePlace | null = !folder.taskId ? null : currentFileIds(siblings).has(art.id) ? 'TASK' : 'OLD'
+    const parentId = place === 'OLD' ? await childFolder(folder.id, OLD_FOLDER_NAME) : folder.id
+    const name = place === 'TASK' ? driveFileName(art) : place === 'OLD' ? driveOldFileName(art) : `v${art.version}-${art.fileName}`
+    const sessionUrl = await startResumableUpload({ name, mimeType: art.mimeType, size, parentId })
+    const key = { orderId: art.orderId, shopifyLineId: art.shopifyLineId, kind: art.kind, printArea: art.printArea, version: art.version }
     const stale = await prisma.designArtworkUpload.findMany({ where: { ...key, completedAt: null }, select: { driveFileId: true } })
     for (const row of stale) if (row.driveFileId) await deleteFile(row.driveFileId).catch(() => {})
     await prisma.designArtworkUpload.deleteMany({ where: { ...key, completedAt: null } })
     const upload = await prisma.designArtworkUpload.create({
-      data: { ...key, fileName: art.fileName, mimeType: art.mimeType, size, sessionUrl, folderId, createdById: art.uploadedById },
+      data: { ...key, fileName: art.fileName, mimeType: art.mimeType, size, sessionUrl, folderId: parentId, createdById: art.uploadedById },
     })
 
     const file = await uploadFile(absPath, size, sessionUrl)
     if (typeof file?.id !== 'string' || !file.id) throw new DriveError('Google Drive không trả về id file.')
     driveFileId = file.id as string
     await prisma.designArtworkUpload.update({ where: { id: upload.id }, data: { driveFileId } })
-    await shareAnyoneReader(driveFileId)
+    // Files inherit "anyone with the link" from the task folder; a line without a task has no shared folder.
+    if (!folder.taskId) await shareAnyoneReader(driveFileId)
     const webViewLink = typeof file.webViewLink === 'string' && file.webViewLink
       ? file.webViewLink
       : ((await getFile(driveFileId, 'webViewLink'))?.webViewLink || driveViewLink(driveFileId))
@@ -123,12 +126,15 @@ export async function pushArtworkToDrive(artworkId: string): Promise<PushResult>
     const appUrl = artworkUrl(art.id)
     await prisma.$transaction([
       prisma.designArtworkUpload.update({ where: { id: upload.id }, data: { completedAt: new Date() } }),
-      prisma.designArtwork.update({ where: { id: art.id }, data: { storage: 'DRIVE', driveFileId, driveWebViewLink: webViewLink, storagePath: null } }),
+      prisma.designArtwork.update({ where: { id: art.id }, data: { storage: 'DRIVE', driveFileId, driveWebViewLink: webViewLink, storagePath: null, drivePlace: place } }),
       prisma.orderLine.updateMany({ where: { orderId: art.orderId, shopifyLineId: art.shopifyLineId, designDriveLink: appUrl }, data: { designDriveLink: webViewLink } }),
       prisma.order.updateMany({ where: { id: art.orderId, designDriveLink: appUrl }, data: { designDriveLink: webViewLink } }),
     ])
+    driveFileId = null
     await replacePublicLinks(art.publicToken, webViewLink).catch(err => console.error('[drive push] public link rewrite failed:', err?.message ?? err))
     await fs.rm(absPath, { force: true }).catch(err => console.error('[drive push] local cleanup failed:', err?.message ?? err))
+    // A version uploaded meanwhile makes this one old; and once every print file is in the folder the stored links become the folder link.
+    if (folder.taskId) await tidyTaskFolder(art.orderId, art.shopifyLineId).catch(err => console.error('[drive push] folder tidy failed:', err?.message ?? err))
     return { pushed: true, warning: null }
   } catch (err: any) {
     if (driveFileId) await deleteFile(driveFileId).catch(() => {})

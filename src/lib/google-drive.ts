@@ -203,6 +203,11 @@ export async function folderForPath(names: string[]): Promise<string> {
   return parent
 }
 
+/** A named folder directly under a folder the app already knows, found or created once per process. */
+export function childFolder(parentId: string, name: string): Promise<string> {
+  return cachedFolder(`${parentId}/${segment(name)}`, () => ensureFolder(parentId, segment(name)))
+}
+
 export async function folderForTask(input: { storeName: string; placedAt: Date; orderNumber: string; taskKey: string }): Promise<string> {
   return folderForPath([input.storeName, input.placedAt.toISOString().slice(0, 7), input.orderNumber, input.taskKey])
 }
@@ -255,6 +260,40 @@ export async function uploadChunk(sessionUrl: string, chunk: Buffer, start: numb
 export async function getFile(id: string, fields = DRIVE_FILE_FIELDS): Promise<any> {
   const res = await driveFetch(`${FILES_URL}/${encodeURIComponent(id)}?fields=${encodeURIComponent(fields)}`)
   return res.json()
+}
+
+export type FilePlacement = { parents: string[]; name: string }
+
+export async function getFilePlacement(id: string): Promise<FilePlacement> {
+  const data: any = await getFile(id, 'id,name,parents')
+  return {
+    parents: Array.isArray(data?.parents) ? data.parents.filter((p: unknown): p is string => typeof p === 'string') : [],
+    name: typeof data?.name === 'string' ? data.name : '',
+  }
+}
+
+/** Moves and/or renames a file. Under the `drive.file` scope this only works on files this app created: anything else answers 404 or 403. */
+export async function updateFilePlacement(id: string, change: { addParents?: string[]; removeParents?: string[]; name?: string }): Promise<void> {
+  const query = new URLSearchParams({ fields: 'id' })
+  if (change.addParents?.length) query.set('addParents', change.addParents.join(','))
+  if (change.removeParents?.length) query.set('removeParents', change.removeParents.join(','))
+  await driveFetch(`${FILES_URL}/${encodeURIComponent(id)}?${query}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json; charset=UTF-8' },
+    body: JSON.stringify(change.name ? { name: change.name } : {}),
+  })
+}
+
+/** Puts a file into one folder under one name. Returns false when it already was there. */
+export async function placeFile(id: string, folderId: string, name: string): Promise<boolean> {
+  const now = await getFilePlacement(id)
+  const inFolder = now.parents.includes(folderId)
+  const others = now.parents.filter(p => p !== folderId)
+  if (inFolder && others.length === 0 && now.name === name) return false
+  await updateFilePlacement(id, {
+    addParents: inFolder ? [] : [folderId], removeParents: others, name: now.name === name ? undefined : name,
+  })
+  return true
 }
 
 export async function streamFile(id: string): Promise<Response> {

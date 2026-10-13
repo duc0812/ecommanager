@@ -23,6 +23,8 @@ const PROJECT = 'proj_ddp'
 const SESSION = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&upload_id=sess-1'
 const FILE_ID = 'drive-file-1'
 const WEB_LINK = `https://drive.google.com/file/d/${FILE_ID}/view?usp=drivesdk`
+const TASK_FOLDER = 'folder-4'
+const FOLDER_LINK = `https://drive.google.com/drive/folders/${TASK_FOLDER}`
 const MB = 1024 * 1024
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ddp-storage-'))
 let lineId = ''
@@ -52,7 +54,7 @@ function driveMock(o: Overrides = {}) {
       if (end + 1 < total) return new Response(null, { status: 308, headers: { Range: `bytes=0-${end}` } })
       return json({ id: FILE_ID, name: 'x', webViewLink: WEB_LINK })
     }
-    if (c.url.includes(`/files/${FILE_ID}/permissions`)) return o.share ? o.share() : json({ id: 'anyoneWithLink' })
+    if (c.url.includes('/permissions')) return o.share ? o.share() : json({ id: 'anyoneWithLink' })
     if (c.url.includes('alt=media')) return o.media ? o.media() : new Response(Buffer.from('png-bytes'), { status: 200 })
     if (c.url.startsWith('https://www.googleapis.com/drive/v3/files') && c.method === 'DELETE') return new Response(null, { status: 204 })
     if (c.url.startsWith('https://www.googleapis.com/drive/v3/files?q=')) return json({ files: [] })
@@ -111,6 +113,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await prisma.appSetting.deleteMany({ where: { key: { in: KEYS } } })
+  await prisma.designTask.updateMany({ where: { orderId: ORDER_ID }, data: { driveFolderId: null, driveFolderUrl: null } })
   await prisma.designArtwork.deleteMany({ where: { orderId: ORDER_ID } })
   await prisma.designArtworkUpload.deleteMany({ where: { orderId: ORDER_ID } })
   fs.rmSync(path.join(tmp, 'design'), { recursive: true, force: true })
@@ -130,7 +133,7 @@ afterAll(async () => {
 })
 
 describe('upload route pushes to Drive', () => {
-  it('pushes a 20 MB file as 3 chunk PUTs, shares it, converts the row to DRIVE and deletes the local file', async () => {
+  it('pushes a 20 MB file as 3 chunk PUTs into the shared task folder, converts the row to DRIVE and deletes the local file', async () => {
     await connect()
     driveMock()
     const bytes = Buffer.alloc(20 * MB, 7)
@@ -144,7 +147,7 @@ describe('upload route pushes to Drive', () => {
     expect(folders.map(f => f.name)).toEqual(['DDP Store', '2026-10', '#DDP1', 'DDP1_1-task'])
 
     const init = calls.find(c => c.url.startsWith('https://www.googleapis.com/upload/drive/v3/files'))!
-    expect(JSON.parse(init.body)).toMatchObject({ name: 'v1-big.png', mimeType: 'image/png', parents: ['folder-4'] })
+    expect(JSON.parse(init.body)).toMatchObject({ name: 'Front.png', mimeType: 'image/png', parents: [TASK_FOLDER] })
     expect(init.headers.get('X-Upload-Content-Length')).toBe(String(20 * MB))
 
     const puts = calls.filter(c => c.method === 'PUT')
@@ -154,10 +157,13 @@ describe('upload route pushes to Drive', () => {
       'bytes 16777216-20971519/20971520',
     ])
     expect(puts.map(c => (c.body as Buffer).length)).toEqual([8 * MB, 8 * MB, 4 * MB])
-    expect(calls.some(c => c.url.includes(`/files/${FILE_ID}/permissions`) && JSON.parse(c.body).type === 'anyone')).toBe(true)
+    const shares = calls.filter(c => c.url.includes('/permissions'))
+    expect(shares.map(c => c.url)).toEqual([`https://www.googleapis.com/drive/v3/files/${TASK_FOLDER}/permissions?fields=id`])
+    expect(JSON.parse(shares[0].body)).toEqual({ role: 'reader', type: 'anyone' })
+    expect(await prisma.designTask.findUniqueOrThrow({ where: { taskKey: 'DDP1_1-task' } })).toMatchObject({ driveFolderId: TASK_FOLDER, driveFolderUrl: FOLDER_LINK })
 
     const row = await prisma.designArtwork.findUniqueOrThrow({ where: { id: body.artwork.id } })
-    expect(row).toMatchObject({ storage: 'DRIVE', driveFileId: FILE_ID, driveWebViewLink: WEB_LINK, storagePath: null })
+    expect(row).toMatchObject({ storage: 'DRIVE', driveFileId: FILE_ID, driveWebViewLink: WEB_LINK, storagePath: null, drivePlace: 'TASK', kind: 'PRINT' })
     expect(fs.existsSync(path.join(storageRoot(), 'design', 'DDP1', '1', 'Front', 'v1-big.png'))).toBe(false)
     const upload = await prisma.designArtworkUpload.findFirstOrThrow({ where: { orderId: ORDER_ID } })
     expect(upload.completedAt).not.toBeNull()
@@ -192,17 +198,16 @@ describe('upload route pushes to Drive', () => {
     expect(upload.completedAt).toBeNull()
   })
 
-  it('removes the orphan Drive file when sharing fails and stays LOCAL', async () => {
+  it('stays LOCAL and uploads nothing when the task folder cannot be shared; the folder is not remembered', async () => {
     await connect()
     driveMock({ share: () => json({ error: { message: 'Sharing disabled' } }, 403) })
     const res = await uploadRoute(uploadReq('Front', Buffer.from('x'), 'a.png', 'image/png'), { params: { lineId } })
     const body = await res.json()
     expect(body.warning).toMatch(/Sharing disabled/)
     expect(body.artwork.storage).toBe('LOCAL')
-    expect(calls.some(c => c.method === 'DELETE' && c.url.includes(`/files/${FILE_ID}`))).toBe(true)
-    const upload = await prisma.designArtworkUpload.findFirstOrThrow({ where: { orderId: ORDER_ID } })
-    expect(upload.driveFileId).toBe(FILE_ID)
-    expect(upload.completedAt).toBeNull()
+    expect(calls.some(c => c.url.startsWith('https://www.googleapis.com/upload/drive/v3/files'))).toBe(false)
+    expect(await prisma.designArtworkUpload.count({ where: { orderId: ORDER_ID } })).toBe(0)
+    expect((await prisma.designTask.findUniqueOrThrow({ where: { taskKey: 'DDP1_1-task' } })).driveFolderId).toBeNull()
   })
 
   it('says Drive needs reconnecting when the refresh token is revoked', async () => {
@@ -336,7 +341,7 @@ describe('updateLine with a DRIVE artwork', () => {
 })
 
 describe('D2 review fixes', () => {
-  it('a successful retry replaces the app URL on an already approved line and order', async () => {
+  it('a successful retry turns the app URL on an already approved line and order into the task folder link', async () => {
     const saved = await saveArtwork({ lineId, printArea: 'Artwork', fileName: 'ok.png', mimeType: 'image/png', bytes: Buffer.from('ok'), uploadedById: null })
     const r = await updateLine(lineId, { done: true, requiredAreas: ['Artwork'] })
     expect(r?.line.designDriveLink).toBe(artworkUrl(saved.id))
@@ -346,8 +351,8 @@ describe('D2 review fixes', () => {
 
     const res = await pushRoute(new NextRequest('http://localhost/x', { method: 'POST' }), { params: { artworkId: saved.id } })
     expect(res.status).toBe(200)
-    expect((await prisma.orderLine.findUniqueOrThrow({ where: { id: lineId } })).designDriveLink).toBe(WEB_LINK)
-    expect((await prisma.order.findUniqueOrThrow({ where: { id: ORDER_ID } })).designDriveLink).toBe(WEB_LINK)
+    expect((await prisma.orderLine.findUniqueOrThrow({ where: { id: lineId } })).designDriveLink).toBe(FOLDER_LINK)
+    expect((await prisma.order.findUniqueOrThrow({ where: { id: ORDER_ID } })).designDriveLink).toBe(FOLDER_LINK)
     await prisma.orderLine.update({ where: { id: lineId }, data: { designDriveLink: null } })
     await prisma.order.update({ where: { id: ORDER_ID }, data: { designDriveLink: null } })
   })

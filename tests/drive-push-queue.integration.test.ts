@@ -37,6 +37,7 @@ const SESSION = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=res
 const GB = 1024 ** 3
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dpq-storage-'))
 const driveLink = (n: string | number) => `https://drive.google.com/file/d/dpq-file-${n}/view?usp=drivesdk`
+const FOLDER_LINK = 'https://drive.google.com/drive/folders/folder-4'
 const savedFlag = process.env.DISABLE_SCHEDULERS
 const initKeys = () => (globalThis as typeof globalThis & { __initOnce?: Set<string> }).__initOnce
 let lineId = ''
@@ -98,7 +99,7 @@ async function connect() {
 
 let clock = Date.parse('2026-10-01T00:00:00Z')
 
-async function local(name: string, printArea = 'Front') {
+async function local(name: string, printArea = name.replace(/\.[^.]+$/, '')) {
   const saved = await saveArtwork({ lineId, printArea, fileName: name, mimeType: 'image/png', bytes: Buffer.from(`bytes of ${name}`), uploadedById: null })
   clock += 60_000
   await prisma.designArtwork.update({ where: { id: saved.id }, data: { createdAt: new Date(clock) } })
@@ -145,6 +146,7 @@ beforeEach(async () => {
   await prisma.appSetting.deleteMany({ where: { key: { in: KEYS } } })
   await prisma.designArtwork.deleteMany({ where: { orderId: { in: [ORDER_ID, OTHER_ORDER_ID] } } })
   await prisma.designArtworkUpload.deleteMany({ where: { orderId: ORDER_ID } })
+  await prisma.designTask.updateMany({ where: { orderId: ORDER_ID }, data: { driveFolderId: null, driveFolderUrl: null } })
   await prisma.orderLine.updateMany({ where: { orderId: { in: [ORDER_ID, OTHER_ORDER_ID] } }, data: { designDriveLink: null } })
   await prisma.skuSupplierDesign.deleteMany({ where: { supplierId: SUP } })
   fs.rmSync(path.join(tmp, 'design'), { recursive: true, force: true })
@@ -180,8 +182,8 @@ describe('pushPendingArtworksToDrive', () => {
     driveMock()
 
     const first = await pushPendingArtworksToDrive({ limit: 2 })
-    expect(first).toEqual({ pending: 1, attempted: 2, pushed: 2, failed: 0, skipped: 0, missing: 0, lastError: null, stopped: null })
-    expect(uploadInits().map(i => JSON.parse(i.body).name)).toEqual(['v1-a.png', 'v2-b.png'])
+    expect(first).toEqual({ pending: 1, attempted: 2, pushed: 2, failed: 0, skipped: 0, missing: 0, organized: 0, stuck: 0, lastError: null, stopped: null })
+    expect(uploadInits().map(i => JSON.parse(i.body).name)).toEqual(['a.png', 'b.png'])
     expect((await row(a.id)).storage).toBe('DRIVE')
     expect((await row(b.id)).storage).toBe('DRIVE')
     expect((await row(c.id)).storage).toBe('LOCAL')
@@ -296,7 +298,7 @@ describe('pushPendingArtworksToDrive', () => {
 })
 
 describe('links after a push', () => {
-  it('rewrites the approved line, the design library row and the lines that took the public URL from the library', async () => {
+  it('once every print file is in the task folder: the approved line, the design library row and the lines that took the public URL from the library get the folder link', async () => {
     const art = await local('lib.png', 'Artwork')
     const token = 'ab'.repeat(32)
     await prisma.designArtwork.update({ where: { id: art.id }, data: { publicToken: token } })
@@ -312,9 +314,9 @@ describe('links after a push', () => {
     driveMock()
 
     expect(await pushPendingArtworksToDrive({ limit: 5 })).toMatchObject({ pushed: 1 })
-    expect((await prisma.orderLine.findUniqueOrThrow({ where: { id: lineId } })).designDriveLink).toBe(driveLink(1))
-    expect((await prisma.orderLine.findFirstOrThrow({ where: { orderId: OTHER_ORDER_ID } })).designDriveLink).toBe(driveLink(1))
-    expect(await prisma.skuSupplierDesign.findUniqueOrThrow({ where: { id: joined.id } })).toMatchObject({ designLink: `${driveLink(1)} | ${other}`, ready: true, source: 'STUDIO' })
+    expect((await prisma.orderLine.findUniqueOrThrow({ where: { id: lineId } })).designDriveLink).toBe(FOLDER_LINK)
+    expect((await prisma.orderLine.findFirstOrThrow({ where: { orderId: OTHER_ORDER_ID } })).designDriveLink).toBe(FOLDER_LINK)
+    expect(await prisma.skuSupplierDesign.findUniqueOrThrow({ where: { id: joined.id } })).toMatchObject({ designLink: `${FOLDER_LINK} | ${other}`, ready: true, source: 'STUDIO' })
     expect((await prisma.skuSupplierDesign.findUniqueOrThrow({ where: { id: untouched.id } })).designLink).toContain('/api/public/artwork/')
   })
 })
