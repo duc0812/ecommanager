@@ -4,7 +4,7 @@ import path from 'path'
 import { prisma } from '@/lib/db'
 import { artworkUrl, toArtworkRow, type ArtworkRow } from '@/lib/design-studio'
 import { imageSize } from '@/lib/image-size'
-import { cleanPartLabel, fileKindOf, DEFAULT_PART, partLabelFromFileName, partTaken, resolvePartLabel, type FileKind } from '@/lib/task-files'
+import { cleanPartLabel, fileKindOf, DEFAULT_PART, partForUpload, partTaken, type FileKind } from '@/lib/task-files'
 
 export const ALLOWED_MIME: Record<string, string> = {
   'image/png': 'png',
@@ -97,8 +97,10 @@ async function storeArtwork(target: ArtworkTarget, meta: ArtworkMeta, payload: A
   const line = { orderId: target.orderId, shopifyLineId: target.shopifyLineId, kind }
   let printArea = meta.printArea.trim()
   if (!printArea && meta.derivePart) {
-    const existing = await prisma.designArtwork.findMany({ where: line, select: { printArea: true }, distinct: ['printArea'] })
-    printArea = resolvePartLabel(partLabelFromFileName(meta.fileName), kind === 'PRINT' ? meta.derivePart.slots : [], existing.map(e => e.printArea))
+    const existing = await prisma.designArtwork.findMany({
+      where: { ...line, removedAt: null }, orderBy: { version: 'desc' }, select: { printArea: true, fileName: true },
+    })
+    printArea = partForUpload(meta.fileName, kind === 'PRINT' ? meta.derivePart.slots : [], existing)
   }
   printArea = printArea || DEFAULT_PART
   const fileName = safeFileName(meta.fileName)

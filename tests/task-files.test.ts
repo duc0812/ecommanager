@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   cleanPartLabel, currentFileIds, currentFiles, driveFileName, driveOldFileName, extraPrintParts, fileKindOf, folderHoldsPrintFiles, missingPrintAreas,
-  orderedPrintFiles, partLabelFromFileName, partTaken, printFilesReady, resolvePartLabel,
+  orderedPrintFiles, partForUpload, partLabelFromFileName, partTaken, printFilesReady, resolvePartLabel,
 } from '@/lib/task-files'
 
 const file = (id: string, kind: string, printArea: string, version = 1, extra: Record<string, unknown> = {}) =>
@@ -100,5 +100,22 @@ describe('folderHoldsPrintFiles', () => {
     expect(folderHoldsPrintFiles([file('a1', 'PRINT', 'front', 1, { storage: 'LOCAL', drivePlace: null }), v2])).toBe(true)
     expect(folderHoldsPrintFiles([v2, file('x', 'PRINT', 'gone', 1, { removedAt: new Date() })])).toBe(false)
     expect(folderHoldsPrintFiles([v2, file('x', 'PRINT', 'gone', 1, { removedAt: new Date(), drivePlace: 'OLD' })])).toBe(true)
+  })
+})
+
+describe('partForUpload', () => {
+  it('same name and type is the next version of that part', () => {
+    expect(partForUpload('front.png', [], [{ printArea: 'Front', fileName: 'Front.png' }])).toBe('Front')
+  })
+  it('same name but another type becomes its own part, so a PSD never replaces the PNG', () => {
+    expect(partForUpload('front.psd', [], [{ printArea: 'front', fileName: 'front.png' }])).toBe('front.psd')
+    expect(partForUpload('front.psd', [], [{ printArea: 'front.psd', fileName: 'front.psd' }, { printArea: 'front', fileName: 'front.png' }])).toBe('front.psd')
+  })
+  it('a template area keeps its file when a source file with the same name arrives', () => {
+    expect(partForUpload('Front.psd', ['Front'], [{ printArea: 'Front', fileName: 'Front.png' }])).toBe('Front.psd')
+    expect(partForUpload('front.png', ['Front'], [])).toBe('Front')
+  })
+  it('uses the newest file of the part to compare types', () => {
+    expect(partForUpload('front.png', [], [{ printArea: 'front', fileName: 'front.png' }, { printArea: 'front', fileName: 'front.jpg' }])).toBe('front')
   })
 })

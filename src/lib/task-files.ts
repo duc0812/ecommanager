@@ -40,6 +40,20 @@ export function resolvePartLabel(label: string, slots: string[], existing: strin
   return slots.find(s => sameLabel(s, label)) ?? existing.find(e => sameLabel(e, label)) ?? label
 }
 
+/**
+ * The part an uploaded file lands in. Same name and same type is a new version of that part; same name but another
+ * type (`front.psd` next to `front.png`) is a separate part named with its extension, so a source file never
+ * pushes the print file out of the folder. `existing` lists the task's files newest first.
+ */
+export function partForUpload(fileName: string, slots: string[], existing: Array<{ printArea: string; fileName: string }>): string {
+  const parts = Array.from(new Set(existing.map(e => e.printArea)))
+  const label = resolvePartLabel(partLabelFromFileName(fileName), slots, parts)
+  const current = existing.find(e => sameLabel(e.printArea, label))
+  const ext = extensionOf(fileName)
+  if (!current || !ext || extensionOf(current.fileName) === ext) return label
+  return resolvePartLabel(cleanPartLabel(`${partLabelFromFileName(fileName)}.${ext}`), [], parts)
+}
+
 export function partTaken(label: string, others: string[]): boolean {
   return others.some(o => sameLabel(o, label))
 }

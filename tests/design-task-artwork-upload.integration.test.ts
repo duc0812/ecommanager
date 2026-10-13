@@ -220,7 +220,7 @@ describe('PUT /api/design-studio/tasks/[key]/artwork', () => {
     expect((await prisma.order.findUniqueOrThrow({ where: { id: ORDER_ID } })).designDriveLink).toBe(FOLDER_LINK)
   })
 
-  it('without printArea every file name is its own part; the same name again is the next version, whatever its case', async () => {
+  it('without printArea every file name is its own part; the same name and type again is the next version, whatever its case; another type is its own part', async () => {
     driveMock()
     for (const fileName of ['front.png', 'back.png', 'Tay áo trái.png']) expect((await upload([png(1, 1)], { printArea: null, fileName })).status).toBe(200)
     expect((await rows()).map(r => ({ kind: r.kind, part: r.printArea, v: r.version }))).toEqual([
@@ -230,7 +230,7 @@ describe('PUT /api/design-studio/tasks/[key]/artwork', () => {
     const again = await (await upload([png(2, 2)], { printArea: null, fileName: 'FRONT.PNG' })).json()
     expect(again.artwork).toMatchObject({ kind: 'PRINT', printArea: 'front', version: 2, fileName: 'FRONT.PNG' })
     const psd = await (await upload([Buffer.from('8BPS')], { printArea: null, fileName: 'front.psd', type: '' })).json()
-    expect(psd.artwork).toMatchObject({ printArea: 'front', version: 3, mimeType: 'image/vnd.adobe.photoshop' })
+    expect(psd.artwork).toMatchObject({ printArea: 'front.psd', version: 1, mimeType: 'image/vnd.adobe.photoshop' })
     expect((await (await upload([png(1, 1)], { printArea: null, fileName: '.png' })).json()).artwork).toMatchObject({ printArea: 'Artwork', version: 1 })
     const long = await (await upload([png(1, 1)], { printArea: null, fileName: `${'x'.repeat(80)}.png` })).json()
     expect(long.artwork.printArea).toBe('x'.repeat(60))
