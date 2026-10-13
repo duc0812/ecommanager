@@ -2,12 +2,27 @@
 import { useEffect, useState } from 'react'
 import Sidebar from '@/components/Sidebar'
 import { useCurrentUser } from '@/components/RoleGate'
-import type { DesignSettings } from '../components/types'
+import type { DesignSettings, TrelloMode } from '../components/types'
 import { requestJson } from '../components/model'
 import { Card, ErrorBanner, Icon, Note, btn, input } from '../components/ui'
 
 type KpiRow = { type: string; value: string }
 type TokenInfo = { configured: boolean; updatedAt: string | null }
+
+const TRELLO_MODE_OPTIONS: { value: TrelloMode; label: string; short: string; help: string }[] = [
+  {
+    value: 'BOTH', label: 'Chạy song song', short: 'Trello + Design Studio',
+    help: 'Đơn mới thiếu design vẫn tạo thẻ Trello, và "Sync Trello" vẫn đọc file từ thẻ ở cột DONE. Link từ Trello chỉ điền vào dòng chưa ai làm trong Design Studio — không ghi đè dòng đã có file hoặc đã được nhận việc / duyệt.',
+  },
+  {
+    value: 'READ_ONLY', label: 'Chỉ đọc Trello', short: 'không tạo thẻ mới',
+    help: 'Không tạo thẻ Trello mới cho đơn mới — mọi đơn mới đi qua Design Tasks. Thẻ đang làm dở vẫn được đọc khi bấm "Sync Trello", để chạy nốt các thẻ cũ.',
+  },
+  {
+    value: 'OFF', label: 'Tắt Trello', short: 'chỉ Design Studio',
+    help: 'Không tạo và không đọc thẻ Trello nữa. "Sync Trello" và các công cụ đọc thẻ đều bỏ qua. Chỉ chọn khi không còn thẻ Trello nào đang làm dở.',
+  },
+]
 
 function WorkerTokenCard({ canManage }: { canManage: boolean }) {
   const [info, setInfo] = useState<TokenInfo | null>(null)
@@ -86,6 +101,7 @@ export default function DesignSettingsPage() {
   const [kpi, setKpi] = useState<KpiRow[]>([])
   const [reasons, setReasons] = useState<string[]>([])
   const [designerCanApprove, setDesignerCanApprove] = useState(true)
+  const [trelloMode, setTrelloMode] = useState<TrelloMode>('BOTH')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -97,6 +113,7 @@ export default function DesignSettingsPage() {
     setKpi(Object.entries(s.kpiByType).map(([type, v]) => ({ type, value: String(v) })))
     setReasons(s.rejectReasons)
     setDesignerCanApprove(s.designerCanApprove !== false)
+    setTrelloMode(s.trelloMode ?? 'BOTH')
   }
 
   useEffect(() => {
@@ -126,7 +143,7 @@ export default function DesignSettingsPage() {
     setSaving(true)
     const r = await requestJson<DesignSettings>('/api/design-studio/settings', {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ slaCustomHours, slaNonCustomHours, kpiByType, rejectReasons, designerCanApprove }),
+      body: JSON.stringify({ slaCustomHours, slaNonCustomHours, kpiByType, rejectReasons, designerCanApprove, trelloMode }),
     })
     setSaving(false)
     if (!r.ok) { setError(r.error); return }
@@ -179,6 +196,21 @@ export default function DesignSettingsPage() {
                     </span>
                   </span>
                 </label>
+              </Card>
+
+              <Card icon="view_kanban" title="Trello" right={TRELLO_MODE_OPTIONS.find(o => o.value === trelloMode)?.short}>
+                <div role="radiogroup" aria-label="Chế độ Trello" className="flex flex-col gap-sm">
+                  {TRELLO_MODE_OPTIONS.map(o => (
+                    <label key={o.value} className="flex items-start gap-sm text-body-sm text-on-surface cursor-pointer">
+                      <input type="radio" name="trello-mode" className="mt-[3px] w-4 h-4 accent-secondary" value={o.value} checked={trelloMode === o.value}
+                        onChange={() => setTrelloMode(o.value)} disabled={dis} />
+                      <span className="flex flex-col">
+                        <b>{o.label}</b>
+                        <span className="text-label-sm text-on-surface-variant">{o.help}</span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
               </Card>
 
               <Card icon="undo" title="Lý do trả lại" right={`${reasons.length} lý do`}>

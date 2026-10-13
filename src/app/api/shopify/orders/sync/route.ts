@@ -11,6 +11,7 @@ import { loadProductBasesForResolver, loadProductProfilesForResolver, loadVarian
 import { buildTrelloCardContent, customerDesignLink, isLineCustomized, lineFamily, reduceOrderType } from '@/lib/order-classify'
 import { isNonProductLine } from '@/lib/order-lines'
 import { createTrelloCard, addAttachmentToCard, getTrelloConfig, shouldCreateCard } from '@/lib/trello'
+import { getTrelloMode } from '@/lib/design-settings'
 import { extractPreviewCdnUrl } from '@/lib/order-line-assets'
 import { resolveOrderDesignByParent, type DesignLineInputV2 } from '@/lib/design-library'
 import { loadReadyDesignEntries, upsertTaskEntry, loadMasterArtworkBySku } from '@/lib/repos/design-library'
@@ -138,7 +139,8 @@ export async function POST(req: NextRequest) {
     } catch {}
   }
 
-  const trelloConfig = await getTrelloConfig()
+  // Cards are created only while Trello and Design Studio run side by side; READ_ONLY and OFF create none.
+  const trelloConfig = (await getTrelloMode()) === 'BOTH' ? await getTrelloConfig() : null
   const designEntries = await loadReadyDesignEntries()
   const masterArtworkBySku = await loadMasterArtworkBySku()
 

@@ -371,6 +371,11 @@ export default function TaskHeader({ detail, holdCount, onChanged }: { detail: T
                 <span className="text-on-surface-variant">· SKU xưởng</span>
                 <span className="font-mono">{line.supplierSku ?? '—'}</span>{line.supplierSku && <CopyBtn value={line.supplierSku} label="SKU xưởng" onCopied={setInfo} />}
               </Fact>
+              {detail.order.trelloCardUrl && (
+                <Fact icon="view_kanban" label="Thẻ Trello">
+                  <a href={detail.order.trelloCardUrl} target="_blank" rel="noopener noreferrer" className="text-secondary hover:underline">Mở thẻ Trello của đơn ↗</a>
+                </Fact>
+              )}
               <Fact icon="event" label="Ngày đặt">{fmtDate(task.placedAt)}</Fact>
               <Fact icon="schedule" label="Hạn">
                 {task.dueAt ? fmtDateTime(task.dueAt) : 'chưa đặt hạn'}

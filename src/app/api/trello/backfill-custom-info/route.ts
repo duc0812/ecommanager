@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db'
 import { getTrelloConfig, getCardDesc, updateCardDesc } from '@/lib/trello'
 import { getShopifyConnection } from '@/lib/token-store'
 import { fetchOrderLinePropsByNames, type ShopifyOrderLineProps } from '@/lib/shopify-orders'
+import { getTrelloMode, TRELLO_OFF_MESSAGE } from '@/lib/design-settings'
 import { buildPersonalizationSections, cardHasInlinePersonalization, mergePersonalizationIntoDesc, PERSONALIZATION_MARKER } from '@/lib/order-classify'
 
 // Scoped by a recent time window rather than by design state: orders sitting at
@@ -26,6 +27,7 @@ export async function POST(req: Request) {
   )) as string[]
   const targeted = orderNames.length > 0
 
+  if ((await getTrelloMode()) === 'OFF') return NextResponse.json({ error: TRELLO_OFF_MESSAGE }, { status: 400 })
   const cfg = await getTrelloConfig()
   if (!cfg) {
     return NextResponse.json({ error: 'Trello chưa được cấu hình. Vào Setup để nhập API key.' }, { status: 400 })

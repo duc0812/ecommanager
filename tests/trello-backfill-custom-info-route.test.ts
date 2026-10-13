@@ -11,7 +11,7 @@ const mocks = vi.hoisted(() => ({
   updateCardDesc: vi.fn(async () => {}),
 }))
 
-vi.mock('@/lib/db', () => ({ prisma: { order: { findMany: mocks.orderFindMany } } }))
+vi.mock('@/lib/db', () => ({ prisma: { order: { findMany: mocks.orderFindMany }, appSetting: { findUnique: vi.fn(async () => null) } } }))
 vi.mock('@/lib/trello', () => ({
   getTrelloConfig: mocks.getTrelloConfig,
   getCardDesc: mocks.getCardDesc,

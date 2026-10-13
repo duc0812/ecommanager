@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db'
 import { getTrelloConfig, getCardsByList } from '@/lib/trello'
 import { findDriveAttachmentForLine } from '@/lib/order-line-assets'
 import { isNonProductLine } from '@/lib/order-lines'
+import { getTrelloMode, TRELLO_OFF_MESSAGE } from '@/lib/design-settings'
 
 // DIAGNOSTIC ONLY — read-only. Explains why an order's design files are (not) matched.
 // GET /api/fulfillment/design-diagnose?order=1234
@@ -42,6 +43,7 @@ export async function GET(req: NextRequest) {
 
   const productLines = order.lines.filter(l => !isNonProductLine(l))
 
+  if ((await getTrelloMode()) === 'OFF') return NextResponse.json({ error: TRELLO_OFF_MESSAGE }, { status: 400 })
   const cfg = await getTrelloConfig()
   if (!cfg) return NextResponse.json({ error: 'Trello not configured' }, { status: 400 })
 

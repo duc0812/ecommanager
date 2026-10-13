@@ -77,6 +77,31 @@ export async function readinessForLine(line: ReadinessLine, storeId: string): Pr
 }
 
 const READINESS_REFRESH: TaskStatus[] = ['NEW', 'ASSIGNED', 'DOING', 'REJECTED']
+/** A link from outside the studio closes a task only while nobody has started on it. */
+const AUTO_COMPLETE_FROM: TaskStatus[] = ['NEW', 'ASSIGNED']
+const STUDIO_MOVED: TaskStatus[] = ['DOING', 'REVIEW', 'REJECTED', 'DONE']
+const HUMAN_MOVE_EVENTS = ['STATUS', 'REJECT']
+
+async function linesWithArtwork(orderId: string): Promise<Set<string>> {
+  const rows = await prisma.designArtwork.findMany({ where: { orderId, removedAt: null }, select: { shopifyLineId: true }, distinct: ['shopifyLineId'] })
+  return new Set(rows.map(r => r.shopifyLineId))
+}
+
+/**
+ * Lines Design Studio owns (by shopifyLineId): a file was uploaded, or a person moved the task to DOING / REVIEW / REJECTED / DONE.
+ * A Trello or library link must not overwrite them. A system move (factory reopen, done outside) does not count.
+ */
+export async function studioOwnedLines(orderId: string): Promise<Set<string>> {
+  const [withArtwork, moved] = await Promise.all([
+    linesWithArtwork(orderId),
+    prisma.designTask.findMany({
+      where: { orderId, status: { in: STUDIO_MOVED }, events: { some: { actorId: { not: null }, type: { in: HUMAN_MOVE_EVENTS } } } },
+      select: { shopifyLineId: true },
+    }),
+  ])
+  for (const t of moved) withArtwork.add(t.shopifyLineId)
+  return withArtwork
+}
 
 export type SyncResult = { created: number; cancelled: number; completed: number; reopened: number }
 
@@ -95,6 +120,7 @@ export async function syncDesignTasks(orderId: string): Promise<SyncResult> {
   const orderShipped = order.pipelineStatus === 'FULFILLED' || (order.fulfillmentStatus ?? '').toLowerCase() === 'fulfilled'
   const factoryRejected = order.pipelineStatus === 'DESIGN_REJECTED'
   let created = 0, cancelled = 0, completed = 0, reopened = 0
+  const withArtwork = await linesWithArtwork(orderId)
   const factoryReopen = { status: 'REJECTED', rejectReasons: JSON.stringify([FACTORY_REJECT_REASON]), rejectNote: null, prevStatus: null }
   const factoryEvent = { type: 'SYSTEM', message: 'Xưởng trả file — mở lại task' }
 
@@ -117,7 +143,7 @@ export async function syncDesignTasks(orderId: string): Promise<SyncResult> {
       continue
     }
     if (line.designDriveLink) {
-      if (existing && existing.status !== 'DONE' && existing.status !== 'CANCELLED' && !reopenedByFactory(existing)) {
+      if (existing && AUTO_COMPLETE_FROM.includes(existing.status as TaskStatus) && !withArtwork.has(line.shopifyLineId) && !reopenedByFactory(existing)) {
         await prisma.designTask.update({ where: { id: existing.id }, data: { status: 'DONE', events: { create: { type: 'SYSTEM', message: 'Design có từ ngoài studio (Trello / Library) — task done outside' } } } })
         completed++
       }

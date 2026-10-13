@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getAuthUser, unauthorized, requireSuperadmin } from '@/lib/api-auth'
-import { getDesignSettings, saveDesignSettings, type DesignSettings } from '@/lib/design-settings'
+import { getDesignSettings, isTrelloMode, saveDesignSettings, TRELLO_MODES, type DesignSettings } from '@/lib/design-settings'
 
 export async function GET(req: NextRequest) {
   const user = await getAuthUser(req)
@@ -13,7 +13,7 @@ export async function PUT(req: NextRequest) {
   if ('error' in auth) return auth.error
 
   const body = await req.json().catch(() => ({} as any))
-  const { slaCustomHours, slaNonCustomHours, kpiByType, rejectReasons, designerCanApprove } = body ?? {}
+  const { slaCustomHours, slaNonCustomHours, kpiByType, rejectReasons, designerCanApprove, trelloMode } = body ?? {}
 
   if (typeof slaCustomHours !== 'number' || slaCustomHours <= 0) {
     return NextResponse.json({ error: 'slaCustomHours must be > 0' }, { status: 400 })
@@ -37,11 +37,17 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: 'designerCanApprove must be a boolean' }, { status: 400 })
   }
 
+  if (trelloMode !== undefined && !isTrelloMode(trelloMode)) {
+    return NextResponse.json({ error: `trelloMode must be one of ${TRELLO_MODES.join(', ')}` }, { status: 400 })
+  }
+
+  const current = await getDesignSettings()
   const settings: DesignSettings = {
     slaCustomHours, slaNonCustomHours,
     kpiByType: kpiByType as Record<string, number>,
     rejectReasons: rejectReasons as string[],
-    designerCanApprove: designerCanApprove ?? (await getDesignSettings()).designerCanApprove,
+    designerCanApprove: designerCanApprove ?? current.designerCanApprove,
+    trelloMode: trelloMode ?? current.trelloMode,
   }
   await saveDesignSettings(settings)
   return NextResponse.json(settings)

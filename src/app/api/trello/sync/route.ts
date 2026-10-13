@@ -4,7 +4,8 @@ import { getTrelloConfig, getCardsByList } from '@/lib/trello'
 import { findDriveAttachmentForLine, findDriveAttachmentForSku } from '@/lib/order-line-assets'
 import { isNonProductLine } from '@/lib/order-lines'
 import { markLibraryReadyByCard } from '@/lib/repos/design-library'
-import { syncDesignTasksForOrders } from '@/lib/design-tasks'
+import { studioOwnedLines, syncDesignTasksForOrders } from '@/lib/design-tasks'
+import { getTrelloMode, TRELLO_OFF_MESSAGE } from '@/lib/design-settings'
 
 function cardMatchesOrder(cardName: string, orderNumber: string, skus: string[]): boolean {
   const normalizedCardName = cardName.toLowerCase()
@@ -14,6 +15,9 @@ function cardMatchesOrder(cardName: string, orderNumber: string, skus: string[])
 }
 
 export async function POST() {
+  if ((await getTrelloMode()) === 'OFF') {
+    return NextResponse.json({ updated: 0, cardsChecked: 0, skipped: true, message: TRELLO_OFF_MESSAGE })
+  }
   const cfg = await getTrelloConfig()
   if (!cfg) {
     return NextResponse.json({ error: 'Trello chưa được cấu hình. Vào Setup để nhập API key.' }, { status: 400 })
@@ -27,6 +31,7 @@ export async function POST() {
   }
 
   let updated = 0
+  let studioLinesKept = 0
   const designTaskErrors: string[] = []
 
   for (const card of cards) {
@@ -96,6 +101,7 @@ export async function POST() {
             orderBy: { linePosition: 'asc' },
             select: {
               id: true,
+              shopifyLineId: true,
               sku: true,
               productTitle: true,
               shopifyProductType: true,
@@ -109,6 +115,7 @@ export async function POST() {
       if (!order) continue
 
       const productLines = order.lines.filter(l => !isNonProductLine(l))
+      const studioOwned = await studioOwnedLines(order.id)
       const nextDriveLinks = new Map<string, string>()
       for (let idx = 0; idx < productLines.length; idx += 1) {
         const line = productLines[idx]
@@ -120,6 +127,11 @@ export async function POST() {
           productLines.length,
         )
         if (!attachment) continue
+        // A Trello link may fill a line nobody touched in Design Studio; it never replaces Studio work.
+        if (studioOwned.has(line.shopifyLineId)) {
+          if (line.designDriveLink !== attachment.url) studioLinesKept++
+          continue
+        }
         nextDriveLinks.set(line.id, attachment.url)
         if (line.designDriveLink !== attachment.url) {
           await prisma.orderLine.update({
@@ -169,5 +181,5 @@ export async function POST() {
     }
   }
 
-  return NextResponse.json({ updated, cardsChecked: cards.length, ...(designTaskErrors.length > 0 ? { designTaskErrors } : {}) })
+  return NextResponse.json({ updated, cardsChecked: cards.length, studioLinesKept, ...(designTaskErrors.length > 0 ? { designTaskErrors } : {}) })
 }

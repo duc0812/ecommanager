@@ -221,7 +221,7 @@ export async function loadWorkspace(orderId: string): Promise<Workspace | null> 
     order: {
       id: order.id, shopifyOrderNumber: order.shopifyOrderNumber, placedAt: order.placedAt.toISOString(),
       pipelineStatus: order.pipelineStatus, orderType: order.orderType, designReady: order.designReady,
-      trelloCardUrl: order.trelloCardUrl,
+      trelloCardUrl: safeHttpUrl(order.trelloCardUrl),
       store: { shop: order.store.shop, projectId: order.store.project.id, projectName: order.store.project.name },
     },
     lines,

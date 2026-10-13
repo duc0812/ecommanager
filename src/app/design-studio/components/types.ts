@@ -66,7 +66,8 @@ export type OrderInfo = {
 
 export type TaskEvent = { id: string; type: string; message: string; actorName: string | null; createdAt: string }
 
-export type DesignSettings = { slaCustomHours: number; slaNonCustomHours: number; kpiByType: Record<string, number>; rejectReasons: string[]; designerCanApprove: boolean }
+export type TrelloMode = 'BOTH' | 'READ_ONLY' | 'OFF'
+export type DesignSettings = { slaCustomHours: number; slaNonCustomHours: number; kpiByType: Record<string, number>; rejectReasons: string[]; designerCanApprove: boolean; trelloMode: TrelloMode }
 
 export type LayerFit = 'shrink' | 'wrap' | 'none'
 export type LayerMapEntry = { field: string; layer: string; font?: string; maxChars?: number; fit: LayerFit }

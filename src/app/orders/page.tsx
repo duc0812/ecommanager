@@ -223,7 +223,8 @@ export default function OrdersPage() {
       const res = await fetch('/api/trello/sync', { method: 'POST' })
       const body = await res.json()
       if (!res.ok) setTrelloResult(`Lỗi: ${body.error ?? res.statusText}`)
-      else setTrelloResult(`Đã cập nhật ${body.updated} design(s) từ ${body.cardsChecked} card DONE.`)
+      else if (body.skipped) setTrelloResult(body.message ?? 'Trello đang tắt.')
+      else setTrelloResult(`Đã cập nhật ${body.updated} design(s) từ ${body.cardsChecked} card DONE.${body.studioLinesKept ? ` Giữ nguyên ${body.studioLinesKept} dòng đã làm trong Design Studio.` : ''}`)
       await load()
     } catch (e: any) { setTrelloResult(`Lỗi: ${e.message}`) }
     finally { setSyncingTrello(false) }

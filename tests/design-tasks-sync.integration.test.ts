@@ -44,8 +44,23 @@ describe('syncDesignTasks', () => {
     const t = await prisma.designTask.findUnique({ where: { taskKey: 'DTS1_1' } })
     expect(t?.status).toBe('DOING'); expect(t?.assigneeId).toBe('u1')
   })
-  it('completes a task when the line gained a design link elsewhere', async () => {
+  it('a link from outside does not close a task somebody is working on, nor one that has a Studio file', async () => {
     await prisma.orderLine.updateMany({ where: { orderId: ORDER_ID, shopifyLineId: 's1' }, data: { designDriveLink: 'https://drive.example/x' } })
+    for (const status of ['DOING', 'REVIEW', 'REJECTED', 'ASK_CUSTOMER']) {
+      await prisma.designTask.update({ where: { taskKey: 'DTS1_1' }, data: { status } })
+      expect((await syncDesignTasks(ORDER_ID)).completed).toBe(0)
+      expect((await prisma.designTask.findUnique({ where: { taskKey: 'DTS1_1' } }))?.status).toBe(status)
+    }
+    const art = await prisma.designArtwork.create({ data: { orderId: ORDER_ID, shopifyLineId: 's1', printArea: 'PRINT', version: 1, fileName: 'a.png', storagePath: 'x/a.png', size: 1, mimeType: 'image/png' } })
+    for (const status of ['NEW', 'ASSIGNED']) {
+      await prisma.designTask.update({ where: { taskKey: 'DTS1_1' }, data: { status } })
+      expect((await syncDesignTasks(ORDER_ID)).completed).toBe(0)
+      expect((await prisma.designTask.findUnique({ where: { taskKey: 'DTS1_1' } }))?.status).toBe(status)
+    }
+    await prisma.designArtwork.update({ where: { id: art.id }, data: { removedAt: new Date() } })
+  })
+  it('completes an untouched NEW / ASSIGNED task when the line gained a design link elsewhere', async () => {
+    await prisma.designTask.update({ where: { taskKey: 'DTS1_1' }, data: { status: 'ASSIGNED' } })
     const r = await syncDesignTasks(ORDER_ID)
     expect(r.completed).toBe(1)
     const t = await prisma.designTask.findUnique({ where: { taskKey: 'DTS1_1' }, include: { events: true } })
