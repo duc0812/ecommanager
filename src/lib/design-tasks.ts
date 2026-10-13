@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/db'
 import { isNonProductLine } from '@/lib/order-lines'
-import { parseAttributes, safeHttpUrl, sourcePrintFiles, printAreasForLine, updateLine, loadWorkspace, type WorkspaceLine, type Workspace } from '@/lib/design-studio'
+import { parseAttributes, safeHttpUrl, sourcePrintFiles, updateLine, loadWorkspace, type WorkspaceLine, type Workspace } from '@/lib/design-studio'
 import { getDesignSettings, kpiForProductType, type DesignSettings } from '@/lib/design-settings'
 import { visibleCustomAttributes } from '@/lib/order-classify'
 import { findProfile, parseLayerMap, toRouteKey, type LayerMapEntry } from '@/lib/product-profiles'
@@ -18,6 +18,7 @@ import type { HandoffPush } from '@/lib/handoff-shared'
 import { autoRenderEligibility } from '@/lib/artwork-render-eligibility'
 import { APP_FILE_PREFIX } from '@/lib/design-links'
 import { saveStudioDesignToLibrary } from '@/lib/studio-library'
+import { missingPrintAreas, printFilesReady } from '@/lib/task-files'
 
 export { loadTemplateContext, mapTemplate, pickTemplate, type TemplateRow }
 
@@ -62,7 +63,7 @@ export async function canAutoRenderLine(line: ReadinessLine, storeId: string): P
   const profile = await findProfile(storeId, line.shopifyProductId)
   const template = await templateForLine(line, profile)
   if (!template) return false
-  const slots = requiredSlotsFor(line, template)
+  const slots = requiredSlotsFor(template)
   if (slots.length !== 1) return false
   const library = await libraryStateFor({
     storeId, shopifyProductId: line.shopifyProductId, templateId: template.id,
@@ -227,11 +228,15 @@ export type TaskDetail = {
   events: { id: string; type: string; message: string; actorName: string | null; createdAt: string }[]
   assignable: { id: string; name: string }[]; settings: DesignSettings; prevStatus: TaskStatus | null
   slots: string[]; driveConnected: boolean; library: TaskLibraryState | null; autoRender: RenderJobView | null
+  driveFolder: { url: string } | null
 }
 
-export function requiredSlotsFor(line: { customAttributesJson: string | null }, template: TemplateRow | null): string[] {
-  const names = template ? Array.from(new Set(template.areas.map(a => a.name).filter(Boolean))) : []
-  return names.length > 0 ? names : printAreasForLine(parseAttributes(line.customAttributesJson))
+/**
+ * The print areas a task must fill: the template's areas. A product without a template has none — its task holds whatever
+ * files the designer uploads (one part per file name) and needs at least one print file.
+ */
+export function requiredSlotsFor(template: TemplateRow | null): string[] {
+  return template ? Array.from(new Set(template.areas.map(a => a.name).filter(Boolean))) : []
 }
 
 const OWNED_MOVES: TaskStatus[] = ['DOING', 'NEW', 'REVIEW', 'ASK_CUSTOMER']
@@ -282,8 +287,8 @@ export async function transitionTask(taskKey: string, actor: Actor, input: Trans
     say('STATUS', from === 'ASK_CUSTOMER' ? 'Tiếp tục làm' : from === 'DONE' ? 'Mở lại để sửa' : 'Nhận việc')
   } else if (input.to === 'REVIEW') {
     if (!input.continue) {
-      const missing = await missingArtworkSlots(line)
-      if (missing.length > 0) throw new Error(`Chưa có artwork cho: ${missing.join(', ')}`)
+      const missing = await missingPrintFiles(line)
+      if (missing) throw new Error(missing)
     }
     say('STATUS', from === 'ASK_CUSTOMER' ? 'Tiếp tục sau khi hỏi khách' : 'Gửi duyệt')
   } else if (input.to === 'REJECTED') {
@@ -304,14 +309,14 @@ export async function transitionTask(taskKey: string, actor: Actor, input: Trans
   let order: { id: string; designReady: boolean; pipelineStatus: string } | null = null
   if (input.to === 'DONE') {
     const current = await prisma.order.findUniqueOrThrow({ where: { id: task.orderId }, select: { id: true, designReady: true, pipelineStatus: true } })
-    const externalLink = !!line.designDriveLink && !line.designDriveLink.startsWith(APP_FILE_PREFIX)
+    const externalLink = !!line.designDriveLink && !line.designDriveLink.startsWith(APP_FILE_PREFIX) && line.designDriveLink !== task.driveFolderUrl
       && !(await prisma.designArtwork.findFirst({ where: { orderId: line.orderId, shopifyLineId: line.shopifyLineId, driveWebViewLink: line.designDriveLink }, select: { id: true } }))
     if (externalLink && current.pipelineStatus !== 'DESIGN_REJECTED' && !reopenedByFactory(task)) {
       events.splice(0, events.length, ...events.filter(e => e.type !== 'STATUS'), { type: 'SYSTEM', message: 'Design đã có từ ngoài studio — giữ link hiện tại', actorId: actor.id })
       order = current
     } else {
       const template = await templateForLine(line)
-      const slots = requiredSlotsFor(line, template)
+      const slots = requiredSlotsFor(template)
       order = (await updateLine(line.id, { done: true, requiredAreas: slots }))?.order ?? null
       data.rejectReasons = null; data.rejectNote = null
       // The approval stands even when the library cannot be written; the reason is logged on the task.
@@ -342,8 +347,8 @@ export async function submitAutoRenderForReview(orderId: string, shopifyLineId: 
   if (!AUTO_REVIEW_FROM.includes(task.status as TaskStatus)) return { moved: false, reason: `Task đang ${task.status}` }
   const line = await prisma.orderLine.findFirst({ where: { orderId, shopifyLineId } })
   if (!line) return { moved: false, reason: 'Không tìm thấy dòng đơn' }
-  const missing = await missingArtworkSlots(line)
-  if (missing.length > 0) return { moved: false, reason: `Chưa có artwork cho: ${missing.join(', ')}` }
+  const missing = await missingPrintFiles(line)
+  if (missing) return { moved: false, reason: missing }
   const moved = await prisma.$transaction(async tx => {
     const r = await tx.designTask.updateMany({ where: { id: task.id, status: task.status }, data: { status: 'REVIEW', readiness: 'AUTO', prevStatus: null } })
     if (r.count === 0) return false
@@ -375,18 +380,23 @@ export async function listReviewCards(f: { assigneeId?: string; q?: string } = {
     if (!line || !orderLine) continue
     const push = pushes.get(task.orderId)
     cards.push({
-      task, line, slots: requiredSlotsFor(orderLine, await templateForLine(orderLine)),
+      task, line, slots: requiredSlotsFor(await templateForLine(orderLine)),
       push: push ? { status: push.status, supplierOrderCode: push.supplierOrderCode, externalOrderId: push.externalOrderId } : null,
     })
   }
   return cards
 }
 
-async function missingArtworkSlots(line: TemplateLookupLine & { shopifyLineId: string; customAttributesJson: string | null }): Promise<string[]> {
-  const template = await templateForLine(line)
-  const slots = requiredSlotsFor(line, template)
-  const artworks = await prisma.designArtwork.findMany({ where: { orderId: line.orderId, shopifyLineId: line.shopifyLineId, removedAt: null }, select: { printArea: true } })
-  return slots.filter(s => !artworks.some(a => a.printArea === s))
+export const NO_PRINT_FILE_MESSAGE = 'Chưa có file in nào — upload ít nhất một file in'
+
+/** Why the line cannot go to review yet, or null: a template area without a file, or no print file at all. Mockups never count. */
+async function missingPrintFiles(line: TemplateLookupLine & { shopifyLineId: string }): Promise<string | null> {
+  const slots = requiredSlotsFor(await templateForLine(line))
+  const files = await prisma.designArtwork.findMany({
+    where: { orderId: line.orderId, shopifyLineId: line.shopifyLineId, removedAt: null }, select: { kind: true, printArea: true, version: true },
+  })
+  if (printFilesReady(files, slots)) return null
+  return slots.length > 0 ? `Chưa có artwork cho: ${missingPrintAreas(files, slots).join(', ')}` : NO_PRINT_FILE_MESSAGE
 }
 
 export async function addTaskNote(taskKey: string, actor: Actor, message: string) {
@@ -476,6 +486,13 @@ export async function templateForLine(line: TemplateLookupLine, profile?: { prin
   return pickTemplate(line, p ?? null, ctx)
 }
 
+export async function requiredSlotsForLine(orderId: string, shopifyLineId: string): Promise<string[]> {
+  const line = await prisma.orderLine.findFirst({
+    where: { orderId, shopifyLineId }, select: { orderId: true, resolvedSupplierId: true, resolvedSupplierSku: true, shopifyProductId: true },
+  })
+  return line ? requiredSlotsFor(await templateForLine(line)) : []
+}
+
 export async function loadTask(taskKey: string): Promise<TaskDetail | null> {
   const task = await prisma.designTask.findUnique({ where: { taskKey } })
   if (!task) return null
@@ -524,8 +541,9 @@ export async function loadTask(taskKey: string): Promise<TaskDetail | null> {
       createdAt: e.createdAt.toISOString(),
     })),
     assignable, settings, prevStatus: (task.prevStatus as TaskStatus | null) ?? null,
-    slots: requiredSlotsFor(orderLine ?? { customAttributesJson: null }, template),
+    slots: requiredSlotsFor(template),
     driveConnected: await isDriveConnected(),
+    driveFolder: task.driveFolderUrl ? { url: task.driveFolderUrl } : null,
     library,
     autoRender: await latestRenderJob(task.orderId, task.shopifyLineId),
   }

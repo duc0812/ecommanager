@@ -58,12 +58,15 @@ afterAll(async () => {
 })
 
 describe('submitAutoRenderForReview', () => {
-  it('waits until every print area has a file, then moves NEW → REVIEW as AUTO with one event', async () => {
-    await art('a1', 'FRONT')
-    expect(await submitAutoRenderForReview(ORDER_ID, 'a1')).toEqual({ moved: false, reason: 'Chưa có artwork cho: BACK' })
+  it('waits until the line has a print file (a mockup does not count), then moves NEW → REVIEW as AUTO with one event', async () => {
+    expect(await submitAutoRenderForReview(ORDER_ID, 'a1')).toEqual({ moved: false, reason: 'Chưa có file in nào — upload ít nhất một file in' })
+    await prisma.designArtwork.create({ data: {
+      orderId: ORDER_ID, shopifyLineId: 'a1', kind: 'MOCKUP', printArea: 'FRONT', version: 1, fileName: 'm.png', storagePath: 'x/m.png', size: 1, mimeType: 'image/png',
+    } })
+    expect((await submitAutoRenderForReview(ORDER_ID, 'a1')).moved).toBe(false)
     expect((await task('DTAR1_1')).status).toBe('NEW')
 
-    await art('a1', 'BACK')
+    await art('a1', 'FRONT')
     expect(await submitAutoRenderForReview(ORDER_ID, 'a1')).toEqual({ moved: true, reason: null })
     const t = await task('DTAR1_1')
     expect(t.status).toBe('REVIEW')
@@ -132,9 +135,9 @@ describe('listReviewCards', () => {
     const mine = cards.filter(c => c.task.orderId === ORDER_ID)
     expect(mine.map(c => c.task.taskKey).sort()).toEqual(['DTAR1_3', 'DTAR1_4'])
     const c = mine.find(x => x.task.taskKey === 'DTAR1_4')!
-    expect(c.slots).toEqual(['PRINT'])
+    expect(c.slots).toEqual([])
     expect(c.task.variantTitle).toBe('20oz')
-    expect(c.line.artworks.map(a => ({ printArea: a.printArea, source: a.source }))).toEqual([{ printArea: 'PRINT', source: 'AUTO' }])
+    expect(c.line.artworks.map(a => ({ kind: a.kind, printArea: a.printArea, source: a.source }))).toEqual([{ kind: 'PRINT', printArea: 'PRINT', source: 'AUTO' }])
     expect(c.line.personalization).toEqual([{ key: 'Custom Name', value: 'Marie-Pier' }])
   })
 })

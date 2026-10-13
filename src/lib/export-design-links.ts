@@ -112,7 +112,7 @@ export async function resolveExportDesignLinks(orders: ExportOrderInput[]): Prom
 
   for (const { order, line, artworks: mine } of studio) {
     const template = pickTemplate(line, profileFor(order, line), ctx)
-    let picked = newestPerSlot(mine, requiredSlotsFor(line, template))
+    let picked = newestPerSlot(mine, requiredSlotsFor(template))
     if (picked.length === 0) {
       const approved = mine.find(a => a.id === appFileArtworkId(line.designDriveLink ?? '') || (!!a.driveWebViewLink && a.driveWebViewLink === line.designDriveLink))
       picked = approved ? [{ area: approved.printArea, artwork: approved }] : newestPerSlot(mine, [mine[0].printArea])

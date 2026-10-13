@@ -70,7 +70,7 @@ describe('transitionTask / listTasks / loadTask', () => {
     expect((await transitionTask('DTT1_1', DES, { to: 'DOING' })).task.status).toBe('DOING')
     expect((await transitionTask('DTT1_1', DES, { to: 'REVIEW' })).task.status).toBe('REVIEW')
     expect((await transitionTask('DTT3_1', DES, { to: 'DOING' })).task.status).toBe('DOING')
-    await expect(transitionTask('DTT3_1', DES, { to: 'REVIEW' })).rejects.toThrow('Chưa có artwork cho: PRINT')
+    await expect(transitionTask('DTT3_1', DES, { to: 'REVIEW' })).rejects.toThrow('Chưa có file in nào')
     expect((await loadTask('DTT3_1'))!.task.status).toBe('DOING')
   })
   it('continuing from ASK_CUSTOMER back to DOING logs "Tiếp tục làm"', async () => {
@@ -103,7 +103,8 @@ describe('transitionTask / listTasks / loadTask', () => {
     const mine = await listTasks({ assigneeId: desId }); expect(mine.map(t => t.taskKey)).toContain('DTT1_1')
     expect((await listTasks({ statuses: ['DONE'] })).some(t => t.taskKey === 'DTT1_1')).toBe(false)
     const d = await loadTask('DTT1_1'); expect(d?.line.shopifyLineId ?? d?.task.shopifyLineId).toBe('t1'); expect(d!.events.length).toBeGreaterThan(3)
-    expect(d!.slots).toEqual(['PRINT'])
+    expect(d!.slots).toEqual([])
+    expect(d!.driveFolder).toBeNull()
     expect(await loadTask('NOPE_1')).toBeNull()
   })
 })

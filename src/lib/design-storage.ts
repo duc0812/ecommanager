@@ -4,6 +4,7 @@ import path from 'path'
 import { prisma } from '@/lib/db'
 import { artworkUrl, toArtworkRow, type ArtworkRow } from '@/lib/design-studio'
 import { imageSize } from '@/lib/image-size'
+import { cleanPartLabel, fileKindOf, DEFAULT_PART, partLabelFromFileName, partTaken, resolvePartLabel, type FileKind } from '@/lib/task-files'
 
 export const ALLOWED_MIME: Record<string, string> = {
   'image/png': 'png',
@@ -30,6 +31,8 @@ const ALLOWED_EXT = new Set(Object.keys(EXT_MIME))
 export const MAX_ARTWORK_BYTES = 200 * 1024 * 1024
 export const ARTWORK_TYPES_LABEL = 'PNG, JPG, PDF, PSD, ZIP, TIF'
 const DIMENSION_PROBE_BYTES = 2 * 1024 * 1024
+// Two part labels can share one folder name on disk once sanitised; the version number then skips ahead instead of failing.
+const MAX_VERSION_ATTEMPTS = 50
 
 export function storageRoot(): string {
   return process.env.DESIGN_STORAGE_DIR || path.resolve(process.cwd(), 'storage')
@@ -58,6 +61,9 @@ export type ArtworkSource = 'MANUAL' | 'AUTO'
 export type ArtworkTarget = { orderId: string; shopifyLineId: string; linePosition: number; orderNumber: string }
 type ArtworkMeta = {
   printArea: string; fileName: string; mimeType: string; uploadedById: string | null; source?: ArtworkSource; preview?: Buffer | null
+  kind?: FileKind
+  /** Set when nobody named the part: it is read from the file name and joined to a template area or an existing part of the task. */
+  derivePart?: { slots: string[] }
 }
 type ArtworkPayload = { bytes: Buffer } | { tmpPath: string; size: number }
 
@@ -87,18 +93,25 @@ async function storeArtwork(target: ArtworkTarget, meta: ArtworkMeta, payload: A
   const type = artworkFileType(meta.fileName, meta.mimeType)
   if (!type) throw new Error(`File type not allowed: ${meta.fileName} (${meta.mimeType})`)
 
-  const printArea = meta.printArea.trim() || 'Artwork'
+  const kind = fileKindOf(meta.kind)
+  const line = { orderId: target.orderId, shopifyLineId: target.shopifyLineId, kind }
+  let printArea = meta.printArea.trim()
+  if (!printArea && meta.derivePart) {
+    const existing = await prisma.designArtwork.findMany({ where: line, select: { printArea: true }, distinct: ['printArea'] })
+    printArea = resolvePartLabel(partLabelFromFileName(meta.fileName), kind === 'PRINT' ? meta.derivePart.slots : [], existing.map(e => e.printArea))
+  }
+  printArea = printArea || DEFAULT_PART
   const fileName = safeFileName(meta.fileName)
-  const dir = path.join('design', safeFileName(target.orderNumber.replace(/^#/, '')), String(target.linePosition), safeFileName(printArea))
+  const dir = path.join(
+    'design', safeFileName(target.orderNumber.replace(/^#/, '')), String(target.linePosition), ...(kind === 'MOCKUP' ? ['_mockup'] : []), safeFileName(printArea),
+  )
   const root = path.resolve(storageRoot())
 
   let version = 0
   let rel = ''
   let abs = ''
   for (let attempt = 0; ; attempt++) {
-    const last = await prisma.designArtwork.findFirst({
-      where: { orderId: target.orderId, shopifyLineId: target.shopifyLineId, printArea }, orderBy: { version: 'desc' }, select: { version: true },
-    })
+    const last = await prisma.designArtwork.findFirst({ where: { ...line, printArea }, orderBy: { version: 'desc' }, select: { version: true } })
     version = Math.max((last?.version ?? 0) + 1, version + 1)
     rel = path.join(dir, `v${version}-${fileName}`)
     abs = path.resolve(root, rel)
@@ -109,7 +122,7 @@ async function storeArtwork(target: ArtworkTarget, meta: ArtworkMeta, payload: A
       else await placeTempFile(payload.tmpPath, abs)
       break
     } catch (e: any) {
-      if (e?.code !== 'EEXIST' || attempt > 0) throw e
+      if (e?.code !== 'EEXIST' || attempt >= MAX_VERSION_ATTEMPTS) throw e
     }
   }
 
@@ -122,7 +135,7 @@ async function storeArtwork(target: ArtworkTarget, meta: ArtworkMeta, payload: A
   const dims = imageSize('bytes' in payload ? payload.bytes : await readHead(abs, size))
   const row = await prisma.designArtwork.create({
     data: {
-      orderId: target.orderId, shopifyLineId: target.shopifyLineId, printArea, version, fileName,
+      orderId: target.orderId, shopifyLineId: target.shopifyLineId, kind, printArea, version, fileName,
       storagePath: rel.split(path.sep).join('/'), size, mimeType: type.mimeType, uploadedById: meta.uploadedById,
       widthPx: dims?.width ?? null, heightPx: dims?.height ?? null,
       source: meta.source ?? 'MANUAL', previewPath: previewRel ? previewRel.split(path.sep).join('/') : null,
@@ -133,7 +146,7 @@ async function storeArtwork(target: ArtworkTarget, meta: ArtworkMeta, payload: A
 
 export async function saveArtwork(input: {
   lineId: string; printArea: string; fileName: string; mimeType: string; bytes: Buffer; uploadedById: string | null
-  source?: ArtworkSource; preview?: Buffer | null
+  source?: ArtworkSource; preview?: Buffer | null; kind?: FileKind
 }): Promise<ArtworkRow> {
   if (!artworkFileType(input.fileName, input.mimeType)) throw new Error(`File type not allowed: ${input.fileName} (${input.mimeType})`)
   const line = await prisma.orderLine.findUnique({
@@ -150,6 +163,7 @@ export async function saveArtwork(input: {
 /** Stores a file already streamed to disk: the temp file is moved into place, never read into memory. */
 export async function saveArtworkFromTemp(input: {
   target: ArtworkTarget; printArea: string; fileName: string; mimeType: string; temp: { tmpPath: string; size: number }; uploadedById: string | null
+  kind?: FileKind; derivePart?: { slots: string[] }
 }): Promise<ArtworkRow> {
   return storeArtwork(input.target, input, input.temp)
 }
@@ -214,5 +228,32 @@ export async function removeArtwork(artworkId: string, actor: { id: string; role
       data: { taskId: task.id, type: 'ARTWORK', message: `Xoá file ${art.printArea} v${art.version} · ${art.fileName}`, actorId: actor.id },
     })
   }
-  return { id: art.id, printArea: art.printArea, version: art.version, removedAt: removedAt.toISOString() }
+  return { id: art.id, orderId: art.orderId, shopifyLineId: art.shopifyLineId, printArea: art.printArea, version: art.version, removedAt: removedAt.toISOString() }
+}
+
+/**
+ * Renames a part: every version of it (removed ones too, so version numbers stay in one line) takes the new label.
+ * The Drive copies in the task folder are marked "place unknown" so the folder tidy gives them the new name.
+ */
+export async function renameArtworkPart(taskKey: string, input: { kind: FileKind; from: string; to: string }, actor: { id: string }) {
+  const task = await prisma.designTask.findUnique({ where: { taskKey }, select: { id: true, orderId: true, shopifyLineId: true, status: true } })
+  if (!task) throw new ArtworkRemoveError('Không tìm thấy task', 404)
+  if (task.status === 'DONE') throw new ArtworkRemoveError('Task đã duyệt design — bấm "Sửa & gửi lại" trước khi đổi tên file', 409)
+  const to = cleanPartLabel(input.to)
+  if (!to) throw new ArtworkRemoveError('Tên file không được để trống', 400)
+  const line = { orderId: task.orderId, shopifyLineId: task.shopifyLineId, kind: input.kind }
+  const labels = (await prisma.designArtwork.findMany({ where: line, select: { printArea: true }, distinct: ['printArea'] })).map(r => r.printArea)
+  if (!labels.includes(input.from)) throw new ArtworkRemoveError('Không tìm thấy file này trong task', 404)
+  const result = { orderId: task.orderId, shopifyLineId: task.shopifyLineId, kind: input.kind, from: input.from, to }
+  if (to === input.from) return { ...result, changed: 0 }
+  if (partTaken(to, labels.filter(l => l !== input.from))) throw new ArtworkRemoveError(`Task đã có file tên "${to}" — chọn tên khác`, 409)
+  const where = { ...line, printArea: input.from }
+  const [, renamed] = await prisma.$transaction([
+    prisma.designArtwork.updateMany({ where: { ...where, storage: 'DRIVE', drivePlace: 'TASK' }, data: { drivePlace: null } }),
+    prisma.designArtwork.updateMany({ where, data: { printArea: to } }),
+    prisma.designTaskEvent.create({
+      data: { taskId: task.id, type: 'ARTWORK', message: `Đổi tên ${input.kind === 'MOCKUP' ? 'mockup' : 'file in'} "${input.from}" → "${to}"`, actorId: actor.id },
+    }),
+  ])
+  return { ...result, changed: renamed.count }
 }

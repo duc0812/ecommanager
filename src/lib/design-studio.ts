@@ -9,11 +9,12 @@ import { autoDetectStatus, type PipelineStatus } from '@/lib/pipeline-status'
 import { fetchOrderLinePropsByNames, type ShopifyOrderLineProps } from '@/lib/shopify-orders'
 import { getShopifyConnection } from '@/lib/token-store'
 import { reconcilePushedOrder } from '@/lib/repos/push-export'
+import { fileKindOf, folderHoldsPrintFiles, missingPrintAreas, orderedPrintFiles, type FileKind } from '@/lib/task-files'
 
 export type CustomAttribute = { key: string; value: string }
 export type SourcePrintFile = { printArea: string; url: string }
 export type ArtworkRow = {
-  id: string; printArea: string; version: number; fileName: string; size: number
+  id: string; kind: FileKind; printArea: string; version: number; fileName: string; size: number
   mimeType: string; uploadedById: string | null; createdAt: string; url: string
   widthPx: number | null; heightPx: number | null
   storage: ArtworkStorage; driveWebViewLink: string | null
@@ -114,12 +115,12 @@ export function artworkUrl(id: string): string {
 }
 
 export function toArtworkRow(a: {
-  id: string; printArea: string; version: number; fileName: string; size: number; mimeType: string; uploadedById: string | null
+  id: string; kind?: string | null; printArea: string; version: number; fileName: string; size: number; mimeType: string; uploadedById: string | null
   createdAt: Date; widthPx: number | null; heightPx: number | null; storage: string; driveWebViewLink: string | null
   source?: string | null; previewPath?: string | null
 }): ArtworkRow {
   return {
-    id: a.id, printArea: a.printArea, version: a.version, fileName: a.fileName, size: a.size,
+    id: a.id, kind: fileKindOf(a.kind), printArea: a.printArea, version: a.version, fileName: a.fileName, size: a.size,
     mimeType: a.mimeType, uploadedById: a.uploadedById, createdAt: a.createdAt.toISOString(), url: artworkUrl(a.id),
     widthPx: a.widthPx, heightPx: a.heightPx,
     storage: a.storage === 'DRIVE' ? 'DRIVE' : 'LOCAL', driveWebViewLink: a.driveWebViewLink,
@@ -240,17 +241,18 @@ export async function updateLine(lineId: string, patch: { note?: string | null; 
   const data: { designNote?: string | null; designDriveLink?: string | null } = {}
   if (patch.note !== undefined) data.designNote = patch.note === null ? null : patch.note.trim() || null
   if (patch.done === true) {
-    const artworks = await prisma.designArtwork.findMany({
-      where: { orderId: line.orderId, shopifyLineId: line.shopifyLineId, removedAt: null },
-      orderBy: { version: 'desc' },
-    })
-    const slots = patch.requiredAreas && patch.requiredAreas.length > 0
-      ? patch.requiredAreas
-      : printAreasForLine(parseAttributes(line.customAttributesJson))
-    const missing = slots.filter(s => !artworks.some(a => a.printArea === s))
+    const [files, task] = await Promise.all([
+      prisma.designArtwork.findMany({ where: { orderId: line.orderId, shopifyLineId: line.shopifyLineId } }),
+      prisma.designTask.findUnique({ where: { orderId_shopifyLineId: { orderId: line.orderId, shopifyLineId: line.shopifyLineId } }, select: { driveFolderUrl: true } }),
+    ])
+    const areas = patch.requiredAreas ?? []
+    const live = files.filter(a => !a.removedAt)
+    const missing = missingPrintAreas(live, areas)
     if (missing.length > 0) throw new Error(`No artwork uploaded for: ${missing.join(', ')}`)
-    const first = artworks.find(a => a.printArea === slots[0])!
-    data.designDriveLink = artworkDesignLink(first)
+    const prints = orderedPrintFiles(live, areas)
+    if (prints.length === 0) throw new Error('No artwork uploaded: the task needs at least one print file')
+    // The factory gets the task folder once it holds every print file; until then the line keeps a single-file link the export translates.
+    data.designDriveLink = task?.driveFolderUrl && folderHoldsPrintFiles(files) ? task.driveFolderUrl : artworkDesignLink(prints[0])
   }
   if (patch.done === false) data.designDriveLink = null
 

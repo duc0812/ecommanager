@@ -15,7 +15,7 @@ export type HandoffState = {
   push: HandoffPush | null
 }
 
-export type HandoffLine = { line: WorkspaceLine; slots: string[]; taskKey: string; apiSku: string | null }
+export type HandoffLine = { line: WorkspaceLine; slots: string[]; taskKey: string; apiSku: string | null; driveFolderUrl: string | null }
 
 export type HandoffCard = {
   order: {

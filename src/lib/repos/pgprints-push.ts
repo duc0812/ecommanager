@@ -162,7 +162,7 @@ export async function buildPush(orderId: string, opts: { withBalance?: boolean }
     if (!approved) error('NOT_APPROVED', `${refId}: thiết kế chưa được duyệt (task phải ở trạng thái Xong)`, refId)
 
     const template = await templateForLine(l)
-    const slots = requiredSlotsFor(l, template)
+    const slots = requiredSlotsFor(template)
     const files: PreviewFile[] = []
     const fileUrls: string[] = []
     for (const area of slots) {

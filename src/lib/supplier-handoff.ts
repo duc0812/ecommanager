@@ -147,6 +147,10 @@ async function buildCards(where: any, orderBy: any): Promise<HandoffCard[]> {
     select: { id: true, orderId: true, resolvedSupplierId: true, resolvedSupplierSku: true, shopifyProductId: true, customAttributesJson: true },
   })
   const rowById = new Map(lineRows.map(l => [l.id, l]))
+  const folders = await prisma.designTask.findMany({
+    where: { orderId: { in: orders.map(o => o.id) }, driveFolderUrl: { not: null } }, select: { orderId: true, shopifyLineId: true, driveFolderUrl: true },
+  })
+  const folderByLine = new Map(folders.map(t => [`${t.orderId}\u0000${t.shopifyLineId}`, t.driveFolderUrl]))
   const skuPairs = lineRows.filter(l => l.resolvedSupplierId && l.resolvedSupplierSku)
   const products = skuPairs.length
     ? await prisma.supplierProduct.findMany({
@@ -167,8 +171,9 @@ async function buildCards(where: any, orderBy: any): Promise<HandoffCard[]> {
       const row = rowById.get(line.id)
       lines.push({
         line,
-        slots: row ? requiredSlotsFor(row, await templateForLine(row)) : line.printAreas,
+        slots: row ? requiredSlotsFor(await templateForLine(row)) : [],
         taskKey: taskKeyFor(o.shopifyOrderNumber, line.linePosition),
+        driveFolderUrl: folderByLine.get(`${o.id}\u0000${line.shopifyLineId}`) ?? null,
         apiSku: line.supplierSku ? (apiSkuByKey.get(`${line.supplier.id}::${line.supplierSku}`) ?? null) : null,
       })
     }

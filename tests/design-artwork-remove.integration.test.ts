@@ -162,7 +162,7 @@ describe('DELETE /api/design-studio/artwork/[artworkId]', () => {
     const art = await save(lineId, 'Artwork', designerId)
     await transitionTask('DAR1_1', { id: designerId, name: 'Designer', role: 'SUPPORT' }, { to: 'DOING' })
     expect((await del(art.id, designerToken)).status).toBe(200)
-    await expect(transitionTask('DAR1_1', { id: designerId, name: 'Designer', role: 'SUPPORT' }, { to: 'REVIEW' })).rejects.toThrow(/Chưa có artwork cho: Artwork/)
+    await expect(transitionTask('DAR1_1', { id: designerId, name: 'Designer', role: 'SUPPORT' }, { to: 'REVIEW' })).rejects.toThrow(/Chưa có file in nào/)
   })
 
   it('the Drive push route refuses a removed artwork', async () => {
