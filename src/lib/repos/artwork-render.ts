@@ -5,7 +5,7 @@ import { autoRenderEligibility, customerValues, renderFields, type RenderJobView
 import { RENDER_LINE, latestRenderJob, renderJobView } from '@/lib/artwork-render-jobs'
 import { parseAttributes } from '@/lib/design-studio'
 import { saveArtwork } from '@/lib/design-storage'
-import { pushArtworkToDrive } from '@/lib/design-drive-push'
+import { enqueueDrivePush } from '@/lib/drive-push-queue'
 import { loadTask, submitAutoRenderForReview, type Actor } from '@/lib/design-tasks'
 import { visibleCustomAttributes } from '@/lib/order-classify'
 import { mapTemplate } from '@/lib/print-template-resolve'
@@ -125,10 +125,10 @@ export async function applyRenderResult(input: { jobId: string; print: TempFile;
     await prisma.designArtwork.update({ where: { id: artwork.id }, data: { removedAt: new Date() } })
     return null
   }
-  const push = await pushArtworkToDrive(artwork.id)
-  const notes = [...input.result.warnings, ...(push.warning ? [push.warning] : [])]
+  enqueueDrivePush(artwork.id)
+  const notes = input.result.warnings
   await taskEvent(job.orderId, job.shopifyLineId,
     `Tạo file in tự động ${job.printArea} v${artwork.version} · ${artwork.widthPx ?? '?'}×${artwork.heightPx ?? '?'} px${notes.length ? ` · ${notes.join(' · ')}` : ''}`)
   const review = await submitAutoRenderForReview(job.orderId, job.shopifyLineId)
-  return { artworkId: artwork.id, version: artwork.version, warning: push.warning, review: review.moved }
+  return { artworkId: artwork.id, version: artwork.version, warning: null, review: review.moved }
 }

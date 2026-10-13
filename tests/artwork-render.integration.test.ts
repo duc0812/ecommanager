@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
@@ -6,6 +6,8 @@ import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/db'
 import { AUTH_COOKIE, signToken } from '@/lib/auth'
 import { GOOGLE_KEYS } from '@/lib/google-oauth'
+import { primeAccessToken, resetDriveCache } from '@/lib/google-drive'
+import { drainDrivePushes } from '@/lib/drive-push-queue'
 import { generateWorkerToken } from '@/lib/artwork-worker'
 import { syncDesignTasks, loadTask } from '@/lib/design-tasks'
 import { buildChecklist } from '@/app/design-studio/components/checklist'
@@ -216,6 +218,44 @@ describe('RENDER_LINE', () => {
     expect(files.state).toBe('done')
     const events = await prisma.designTaskEvent.findMany({ where: { task: { taskKey } }, orderBy: { createdAt: 'asc' } })
     expect(events.map(e => e.message).join('\n')).toMatch(/Tạo file in tự động Print v1 .*thu nhỏ/)
+  })
+
+  it('answers the worker before the Drive push; the render then moves to Drive in the background', async () => {
+    expect((await trigger()).status).toBe(200)
+    const c = await claim(['RENDER_LINE'])
+    const link = 'https://drive.google.com/file/d/arnd-auto/view?usp=drivesdk'
+    const session = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&upload_id=arnd'
+    const reply = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    await prisma.appSetting.createMany({ data: [
+      { key: GOOGLE_KEYS.clientId, value: 'cid' }, { key: GOOGLE_KEYS.clientSecret, value: 'secret' },
+      { key: GOOGLE_KEYS.refreshToken, value: '1//refresh' }, { key: GOOGLE_KEYS.rootFolderId, value: 'root-1' },
+    ] })
+    primeAccessToken('at-primed', 3600, '1//refresh')
+    let release = () => {}
+    const gate = new Promise<void>(resolve => { release = resolve })
+    vi.stubGlobal('fetch', vi.fn(async (input: any, init: RequestInit = {}) => {
+      const url = String(input)
+      if (url.startsWith('https://www.googleapis.com/upload/drive/v3/files') && init.method === 'POST') return new Response(null, { status: 200, headers: { Location: session } })
+      if (url === session) { await gate; return reply({ id: 'arnd-auto', webViewLink: link }) }
+      if (url.includes('/permissions')) return reply({ id: 'anyoneWithLink' })
+      if (url.includes('?q=')) return reply({ files: [] })
+      return reply({ id: 'folder-x' })
+    }))
+    try {
+      const stored = await postRender(c.job.id)
+      expect(stored.status).toBe(200)
+      expect(stored.body.warning).toBeNull()
+      expect((await prisma.designArtwork.findUniqueOrThrow({ where: { id: stored.body.artworkId } })).storage).toBe('LOCAL')
+      release()
+      await drainDrivePushes()
+      expect(await prisma.designArtwork.findUniqueOrThrow({ where: { id: stored.body.artworkId } })).toMatchObject({ storage: 'DRIVE', driveWebViewLink: link, source: 'AUTO' })
+    } finally {
+      release()
+      await drainDrivePushes()
+      vi.unstubAllGlobals()
+      await prisma.appSetting.deleteMany({ where: { key: { in: Object.values(GOOGLE_KEYS) } } })
+      resetDriveCache()
+    }
   })
 
   it('a failed render shows on the task and frees the button', async () => {

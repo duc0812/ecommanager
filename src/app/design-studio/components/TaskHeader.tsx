@@ -182,7 +182,7 @@ export default function TaskHeader({ detail, holdCount, onChanged }: { detail: T
   const [dueHours, setDueHours] = useState(() => String(hoursUntil(task.dueAt, task.slaHours)))
   const [assignNote, setAssignNote] = useState('')
   const [refreshing, setRefreshing] = useState(false)
-  const up = useArtworkUpload(line.id, detail.driveConnected, onChanged)
+  const up = useArtworkUpload(detail.task.taskKey, onChanged)
   const uploadInput = useRef<HTMLInputElement>(null)
   const uploadArea = useRef('')
   const askInput = useRef<HTMLInputElement>(null)

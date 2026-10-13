@@ -205,7 +205,7 @@ export default function LowerGrid({ detail, onChanged }: { detail: TaskDetail; o
   return (
     <div className="grid grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] gap-md items-start">
       <div className="flex flex-col gap-md min-w-0">
-        <ArtworkSlots line={detail.line} slots={detail.slots} driveConnected={detail.driveConnected} onUploaded={onChanged} me={detail.me} taskStatus={detail.task.status}
+        <ArtworkSlots taskKey={detail.task.taskKey} line={detail.line} slots={detail.slots} driveConnected={detail.driveConnected} onUploaded={onChanged} me={detail.me} taskStatus={detail.task.status}
           autoRender={<AutoRenderBar detail={detail} onChanged={onChanged} />} />
         <SupplierCard detail={detail} />
       </div>

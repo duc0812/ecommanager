@@ -6,8 +6,10 @@ import { DriveAuthError, DriveError, streamFile } from '@/lib/google-drive'
 
 const DRIVE_WEB_PREFIX = 'https://drive.google.com/'
 
+const NOT_WEB_IMAGES = ['image/vnd.adobe.photoshop', 'image/tiff']
+
 function isPreviewable(mimeType: string) {
-  return (mimeType.startsWith('image/') && mimeType !== 'image/vnd.adobe.photoshop') || mimeType === 'application/pdf'
+  return (mimeType.startsWith('image/') && !NOT_WEB_IMAGES.includes(mimeType)) || mimeType === 'application/pdf'
 }
 
 async function serveDrive(row: { fileName: string; mimeType: string; driveFileId: string | null; driveWebViewLink: string | null }) {

@@ -1,3 +1,4 @@
+import { constants as fsConstants } from 'fs'
 import fs from 'fs/promises'
 import path from 'path'
 import { prisma } from '@/lib/db'
@@ -12,6 +13,7 @@ export const ALLOWED_MIME: Record<string, string> = {
   'application/x-photoshop': 'psd',
   'application/zip': 'zip',
   'application/x-zip-compressed': 'zip',
+  'image/tiff': 'tif',
 }
 
 const EXT_MIME: Record<string, string> = {
@@ -21,8 +23,13 @@ const EXT_MIME: Record<string, string> = {
   pdf: 'application/pdf',
   psd: 'image/vnd.adobe.photoshop',
   zip: 'application/zip',
+  tif: 'image/tiff',
+  tiff: 'image/tiff',
 }
 const ALLOWED_EXT = new Set(Object.keys(EXT_MIME))
+export const MAX_ARTWORK_BYTES = 200 * 1024 * 1024
+export const ARTWORK_TYPES_LABEL = 'PNG, JPG, PDF, PSD, ZIP, TIF'
+const DIMENSION_PROBE_BYTES = 2 * 1024 * 1024
 
 export function storageRoot(): string {
   return process.env.DESIGN_STORAGE_DIR || path.resolve(process.cwd(), 'storage')
@@ -38,42 +45,68 @@ export function safeFileName(name: string): string {
 function extOf(fileName: string, mimeType: string): string {
   const fromName = fileName.includes('.') ? fileName.split('.').pop()!.toLowerCase() : ''
   if (ALLOWED_EXT.has(fromName)) return fromName
-  return ALLOWED_MIME[mimeType] ?? ''
+  return fromName ? '' : ALLOWED_MIME[mimeType] ?? ''
+}
+
+/** The stored mime comes from the extension allow-list, never from what the browser claims. */
+export function artworkFileType(fileName: string, mimeType: string): { ext: string; mimeType: string } | null {
+  const ext = extOf(fileName, mimeType)
+  return ext && ALLOWED_EXT.has(ext) ? { ext, mimeType: EXT_MIME[ext] } : null
 }
 
 export type ArtworkSource = 'MANUAL' | 'AUTO'
+export type ArtworkTarget = { orderId: string; shopifyLineId: string; linePosition: number; orderNumber: string }
+type ArtworkMeta = {
+  printArea: string; fileName: string; mimeType: string; uploadedById: string | null; source?: ArtworkSource; preview?: Buffer | null
+}
+type ArtworkPayload = { bytes: Buffer } | { tmpPath: string; size: number }
 
-export async function saveArtwork(input: {
-  lineId: string; printArea: string; fileName: string; mimeType: string; bytes: Buffer; uploadedById: string | null
-  source?: ArtworkSource; preview?: Buffer | null
-}): Promise<ArtworkRow> {
-  const ext = extOf(input.fileName, input.mimeType)
-  if (!ext || !ALLOWED_EXT.has(ext)) throw new Error(`File type not allowed: ${input.fileName} (${input.mimeType})`)
-  const mimeType = EXT_MIME[ext]
-  const line = await prisma.orderLine.findUnique({
-    where: { id: input.lineId },
-    select: { orderId: true, shopifyLineId: true, linePosition: true, order: { select: { shopifyOrderNumber: true } } },
-  })
-  if (!line) throw new Error('Line not found')
+async function placeTempFile(tmpPath: string, abs: string) {
+  try {
+    await fs.link(tmpPath, abs)
+  } catch (e: any) {
+    if (e?.code === 'EEXIST') throw e
+    await fs.copyFile(tmpPath, abs, fsConstants.COPYFILE_EXCL)
+  }
+  await fs.rm(tmpPath, { force: true }).catch(() => {})
+}
 
-  const printArea = input.printArea.trim() || 'Artwork'
-  const fileName = safeFileName(input.fileName)
-  const dir = path.join('design', safeFileName(line.order.shopifyOrderNumber.replace(/^#/, '')), String(line.linePosition), safeFileName(printArea))
+async function readHead(abs: string, size: number): Promise<Buffer> {
+  const length = Math.min(size, DIMENSION_PROBE_BYTES)
+  const handle = await fs.open(abs, 'r')
+  try {
+    const head = Buffer.alloc(length)
+    const { bytesRead } = await handle.read(head, 0, length, 0)
+    return head.subarray(0, bytesRead)
+  } finally {
+    await handle.close()
+  }
+}
+
+async function storeArtwork(target: ArtworkTarget, meta: ArtworkMeta, payload: ArtworkPayload): Promise<ArtworkRow> {
+  const type = artworkFileType(meta.fileName, meta.mimeType)
+  if (!type) throw new Error(`File type not allowed: ${meta.fileName} (${meta.mimeType})`)
+
+  const printArea = meta.printArea.trim() || 'Artwork'
+  const fileName = safeFileName(meta.fileName)
+  const dir = path.join('design', safeFileName(target.orderNumber.replace(/^#/, '')), String(target.linePosition), safeFileName(printArea))
   const root = path.resolve(storageRoot())
 
   let version = 0
   let rel = ''
+  let abs = ''
   for (let attempt = 0; ; attempt++) {
     const last = await prisma.designArtwork.findFirst({
-      where: { orderId: line.orderId, shopifyLineId: line.shopifyLineId, printArea }, orderBy: { version: 'desc' }, select: { version: true },
+      where: { orderId: target.orderId, shopifyLineId: target.shopifyLineId, printArea }, orderBy: { version: 'desc' }, select: { version: true },
     })
     version = Math.max((last?.version ?? 0) + 1, version + 1)
     rel = path.join(dir, `v${version}-${fileName}`)
-    const abs = path.resolve(root, rel)
+    abs = path.resolve(root, rel)
     if (!abs.startsWith(root + path.sep)) throw new Error('Invalid storage path')
     await fs.mkdir(path.dirname(abs), { recursive: true })
     try {
-      await fs.writeFile(abs, input.bytes, { flag: 'wx' })
+      if ('bytes' in payload) await fs.writeFile(abs, payload.bytes, { flag: 'wx' })
+      else await placeTempFile(payload.tmpPath, abs)
       break
     } catch (e: any) {
       if (e?.code !== 'EEXIST' || attempt > 0) throw e
@@ -81,20 +114,59 @@ export async function saveArtwork(input: {
   }
 
   let previewRel: string | null = null
-  if (input.preview && input.preview.length > 0) {
+  if (meta.preview && meta.preview.length > 0) {
     previewRel = path.join(dir, `v${version}-preview.jpg`)
-    await fs.writeFile(path.resolve(root, previewRel), input.preview)
+    await fs.writeFile(path.resolve(root, previewRel), meta.preview)
   }
-  const dims = imageSize(input.bytes)
+  const size = 'bytes' in payload ? payload.bytes.length : payload.size
+  const dims = imageSize('bytes' in payload ? payload.bytes : await readHead(abs, size))
   const row = await prisma.designArtwork.create({
     data: {
-      orderId: line.orderId, shopifyLineId: line.shopifyLineId, printArea, version, fileName,
-      storagePath: rel.split(path.sep).join('/'), size: input.bytes.length, mimeType, uploadedById: input.uploadedById,
+      orderId: target.orderId, shopifyLineId: target.shopifyLineId, printArea, version, fileName,
+      storagePath: rel.split(path.sep).join('/'), size, mimeType: type.mimeType, uploadedById: meta.uploadedById,
       widthPx: dims?.width ?? null, heightPx: dims?.height ?? null,
-      source: input.source ?? 'MANUAL', previewPath: previewRel ? previewRel.split(path.sep).join('/') : null,
+      source: meta.source ?? 'MANUAL', previewPath: previewRel ? previewRel.split(path.sep).join('/') : null,
     },
   })
   return toArtworkRow(row)
+}
+
+export async function saveArtwork(input: {
+  lineId: string; printArea: string; fileName: string; mimeType: string; bytes: Buffer; uploadedById: string | null
+  source?: ArtworkSource; preview?: Buffer | null
+}): Promise<ArtworkRow> {
+  if (!artworkFileType(input.fileName, input.mimeType)) throw new Error(`File type not allowed: ${input.fileName} (${input.mimeType})`)
+  const line = await prisma.orderLine.findUnique({
+    where: { id: input.lineId },
+    select: { orderId: true, shopifyLineId: true, linePosition: true, order: { select: { shopifyOrderNumber: true } } },
+  })
+  if (!line) throw new Error('Line not found')
+  return storeArtwork(
+    { orderId: line.orderId, shopifyLineId: line.shopifyLineId, linePosition: line.linePosition, orderNumber: line.order.shopifyOrderNumber },
+    input, { bytes: input.bytes },
+  )
+}
+
+/** Stores a file already streamed to disk: the temp file is moved into place, never read into memory. */
+export async function saveArtworkFromTemp(input: {
+  target: ArtworkTarget; printArea: string; fileName: string; mimeType: string; temp: { tmpPath: string; size: number }; uploadedById: string | null
+}): Promise<ArtworkRow> {
+  return storeArtwork(input.target, input, input.temp)
+}
+
+/**
+ * A task is tied to its order line by orderId + shopifyLineId. OrderLine.id is not stable: every order sync
+ * deletes and recreates the rows, so an id held by an open browser tab goes stale.
+ */
+export async function artworkTargetForTask(taskKey: string): Promise<ArtworkTarget | 'no-task' | 'no-line'> {
+  const task = await prisma.designTask.findUnique({ where: { taskKey }, select: { orderId: true, shopifyLineId: true } })
+  if (!task) return 'no-task'
+  const line = await prisma.orderLine.findFirst({
+    where: { orderId: task.orderId, shopifyLineId: task.shopifyLineId },
+    select: { linePosition: true, order: { select: { shopifyOrderNumber: true } } },
+  })
+  if (!line) return 'no-line'
+  return { orderId: task.orderId, shopifyLineId: task.shopifyLineId, linePosition: line.linePosition, orderNumber: line.order.shopifyOrderNumber }
 }
 
 export function localArtworkPath(storagePath: string | null): string | null {

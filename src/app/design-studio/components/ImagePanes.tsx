@@ -90,7 +90,7 @@ export default function ImagePanes({ detail, onChanged }: { detail: TaskDetail; 
   const [pickedArea, setPickedArea] = useState('')
   const fileInput = useRef<HTMLInputElement>(null)
   const pending = useRef('')
-  const up = useArtworkUpload(line.id, detail.driveConnected, onChanged)
+  const up = useArtworkUpload(detail.task.taskKey, onChanged)
   const remover = useArtworkRemove(onChanged)
   const lightbox = useLightbox()
   const targetArea = detail.slots.includes(pickedArea) ? pickedArea : (detail.slots[0] ?? '')

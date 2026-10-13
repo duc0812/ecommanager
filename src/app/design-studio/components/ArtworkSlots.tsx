@@ -9,10 +9,10 @@ import { useLightbox } from './Lightbox'
 
 const mini = 'inline-flex items-center gap-xs rounded-md border border-outline-variant/40 px-xs py-[2px] text-label-sm font-semibold text-on-surface hover:bg-surface-container-low disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap'
 
-export default function ArtworkSlots({ line, slots, driveConnected, onUploaded, me, taskStatus, autoRender }: {
-  line: WorkspaceLine; slots: string[]; driveConnected: boolean; onUploaded: () => void; me: Me; taskStatus: TaskStatus; autoRender?: ReactNode
+export default function ArtworkSlots({ taskKey, line, slots, driveConnected, onUploaded, me, taskStatus, autoRender }: {
+  taskKey: string; line: WorkspaceLine; slots: string[]; driveConnected: boolean; onUploaded: () => void; me: Me; taskStatus: TaskStatus; autoRender?: ReactNode
 }) {
-  const { progress, warnings, setWarning, error, setError, upload, busyLabel } = useArtworkUpload(line.id, driveConnected, onUploaded)
+  const { progress, warnings, setWarning, error, setError, upload, busyLabel } = useArtworkUpload(taskKey, onUploaded)
   const remover = useArtworkRemove(onUploaded)
   const lightbox = useLightbox()
   const [pushing, setPushing] = useState<string[]>([])
@@ -76,7 +76,7 @@ export default function ArtworkSlots({ line, slots, driveConnected, onUploaded, 
                   <span className="min-w-0 flex flex-col">
                     <span className="flex items-center gap-xs min-w-0">
                       <span className="text-label-sm font-semibold truncate text-on-surface">v{v.version} · {v.fileName}</span>
-                      <Pill tone={isDrive ? 'ok' : 'warn'} icon={isDrive ? 'cloud_done' : 'hard_drive'}>{isDrive ? 'Drive' : 'Local'}</Pill>
+                      <Pill tone={isDrive ? 'ok' : 'warn'} icon={isDrive ? 'cloud_done' : 'dns'}>{isDrive ? 'Drive' : 'Server'}</Pill>
                       {v.source === 'AUTO' && <Pill tone="brand" icon="auto_awesome">Tự động</Pill>}
                     </span>
                     <span className="text-label-sm text-on-surface-variant truncate">
@@ -117,7 +117,7 @@ export default function ArtworkSlots({ line, slots, driveConnected, onUploaded, 
               onDragLeave={() => setOver('')}
               onDrop={e => { e.preventDefault(); setOver(''); const f = e.dataTransfer.files?.[0]; if (f) upload(area, f) }}
               className={`rounded-lg border-[1.5px] border-dashed px-sm py-xs text-center text-label-sm cursor-pointer ${over === area ? 'border-secondary bg-secondary/10 text-secondary' : 'border-outline-variant text-on-surface-variant'}`}>
-              {isBusy ? busyLabel(pct) : 'Kéo thả PNG/JPG/PSD → phiên bản mới'}
+              {isBusy ? busyLabel(pct) : 'Kéo thả PNG/JPG/PSD/TIF → phiên bản mới'}
             </div>
             {isBusy && (
               <div className="h-1 rounded-full bg-surface-container overflow-hidden" role="progressbar" aria-label={`Tiến độ tải ${area}`}

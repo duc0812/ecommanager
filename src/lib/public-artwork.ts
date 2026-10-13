@@ -48,7 +48,7 @@ function extensionOf(fileName: string): string {
 }
 
 function sameExtension(a: string, b: string): boolean {
-  const norm = (x: string) => (x === 'jpeg' ? 'jpg' : x)
+  const norm = (x: string) => (x === 'jpeg' ? 'jpg' : x === 'tiff' ? 'tif' : x)
   return norm(a) === norm(b)
 }
 
