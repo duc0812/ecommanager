@@ -7,12 +7,19 @@ export const GOOGLE_KEYS = {
   email: 'google.drive.email',
   rootFolderId: 'google.drive.rootFolderId',
   needsReconnect: 'google.drive.needsReconnect',
+  quota: 'google.drive.quota',
+  testFileId: 'google.drive.testFileId',
 } as const
+
+export const GOOGLE_CONNECTION_KEYS: string[] = [
+  GOOGLE_KEYS.refreshToken, GOOGLE_KEYS.email, GOOGLE_KEYS.rootFolderId, GOOGLE_KEYS.needsReconnect, GOOGLE_KEYS.quota, GOOGLE_KEYS.testFileId,
+]
 
 export const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
 export const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
 export const GOOGLE_USERINFO_URL = 'https://www.googleapis.com/oauth2/v2/userinfo'
 export const GOOGLE_SCOPES = 'openid email https://www.googleapis.com/auth/drive.file'
+export const DRIVE_SCOPES = ['https://www.googleapis.com/auth/drive.file', 'https://www.googleapis.com/auth/drive']
 
 const STATE_TTL_MS = 10 * 60 * 1000
 
@@ -26,6 +33,8 @@ function states() {
   return global.__googleOAuthStates
 }
 
+export type DriveQuota = { limit: number | null; usage: number; checkedAt: string }
+
 export type GoogleConfig = {
   clientId: string
   clientSecret: string
@@ -33,6 +42,23 @@ export type GoogleConfig = {
   email: string
   rootFolderId: string
   needsReconnect: boolean
+  quota: DriveQuota | null
+  testFileId: string
+}
+
+export function parseDriveQuota(json: string | null | undefined): DriveQuota | null {
+  if (!json) return null
+  try {
+    const v = JSON.parse(json)
+    const usage = Number(v?.usage)
+    if (!Number.isFinite(usage) || usage < 0 || typeof v?.checkedAt !== 'string') return null
+    const limit = v.limit === null || v.limit === undefined ? null : Number(v.limit)
+    return { limit: limit !== null && Number.isFinite(limit) && limit > 0 ? limit : null, usage, checkedAt: v.checkedAt }
+  } catch { return null }
+}
+
+export function isDriveConfigured(cfg: Pick<GoogleConfig, 'clientId' | 'clientSecret' | 'refreshToken'>): boolean {
+  return Boolean(cfg.clientId && cfg.clientSecret && cfg.refreshToken)
 }
 
 export async function getGoogleConfig(): Promise<GoogleConfig> {
@@ -44,6 +70,8 @@ export async function getGoogleConfig(): Promise<GoogleConfig> {
     email: s[GOOGLE_KEYS.email] ?? '',
     rootFolderId: s[GOOGLE_KEYS.rootFolderId] ?? '',
     needsReconnect: s[GOOGLE_KEYS.needsReconnect] === '1',
+    quota: parseDriveQuota(s[GOOGLE_KEYS.quota]),
+    testFileId: s[GOOGLE_KEYS.testFileId] ?? '',
   }
 }
 

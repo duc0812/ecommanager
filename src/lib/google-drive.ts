@@ -1,7 +1,8 @@
 import { saveSetting } from '@/lib/token-store'
-import { GOOGLE_KEYS, GOOGLE_TOKEN_URL, getGoogleConfig } from '@/lib/google-oauth'
+import { GOOGLE_KEYS, GOOGLE_TOKEN_URL, getGoogleConfig, type DriveQuota } from '@/lib/google-oauth'
 
 const FILES_URL = 'https://www.googleapis.com/drive/v3/files'
+const ABOUT_URL = 'https://www.googleapis.com/drive/v3/about?fields=user(emailAddress,displayName),storageQuota(limit,usage)'
 const UPLOAD_URL = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable'
 const SESSION_HOST = 'www.googleapis.com'
 const FOLDER_MIME = 'application/vnd.google-apps.folder'
@@ -111,14 +112,14 @@ async function driveError(res: Response): Promise<DriveError> {
   return new DriveError(`Google Drive: ${message} (HTTP ${res.status})`, res.status)
 }
 
-async function driveFetch(url: string, init: RequestInit = {}): Promise<Response> {
+async function driveFetch(url: string, init: RequestInit = {}, accessToken?: string): Promise<Response> {
   const send = async () => {
     const headers = new Headers(init.headers)
-    headers.set('Authorization', `Bearer ${await getAccessToken()}`)
+    headers.set('Authorization', `Bearer ${accessToken ?? await getAccessToken()}`)
     return fetch(url, { ...init, headers })
   }
   let res = await send()
-  if (res.status === 401) {
+  if (res.status === 401 && !accessToken) {
     global.__driveTokenCache = null
     res = await send()
   }
@@ -130,20 +131,48 @@ export function escapeDriveQuery(value: string): string {
   return value.replace(/\\/g, '\\\\').replace(/'/g, "\\'")
 }
 
-export async function ensureFolder(parentId: string, name: string): Promise<string> {
+export async function findOrCreateFolder(parentId: string, name: string, accessToken?: string): Promise<{ id: string; created: boolean }> {
   const q = `mimeType='${FOLDER_MIME}' and name='${escapeDriveQuery(name)}' and '${escapeDriveQuery(parentId)}' in parents and trashed=false`
   const search = new URLSearchParams({ q, fields: 'files(id,name)', pageSize: '1', spaces: 'drive' })
-  const found: any = await (await driveFetch(`${FILES_URL}?${search}`)).json()
+  const found: any = await (await driveFetch(`${FILES_URL}?${search}`, {}, accessToken)).json()
   const existing = found?.files?.[0]?.id
-  if (typeof existing === 'string' && existing) return existing
+  if (typeof existing === 'string' && existing) return { id: existing, created: false }
 
   const created: any = await (await driveFetch(`${FILES_URL}?fields=id`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json; charset=UTF-8' },
     body: JSON.stringify({ name, mimeType: FOLDER_MIME, parents: [parentId] }),
-  })).json()
+  }, accessToken)).json()
   if (typeof created?.id !== 'string') throw new DriveError('Google Drive không trả về id thư mục.')
-  return created.id
+  return { id: created.id, created: true }
+}
+
+export async function ensureFolder(parentId: string, name: string): Promise<string> {
+  return (await findOrCreateFolder(parentId, name)).id
+}
+
+export type DriveAbout = { email: string; displayName: string; quota: DriveQuota }
+
+/** `limit` is absent on accounts with unlimited storage. */
+export async function getDriveAbout(accessToken?: string): Promise<DriveAbout> {
+  const data: any = await (await driveFetch(ABOUT_URL, {}, accessToken)).json()
+  const limit = Number(data?.storageQuota?.limit)
+  const usage = Number(data?.storageQuota?.usage)
+  return {
+    email: typeof data?.user?.emailAddress === 'string' ? data.user.emailAddress : '',
+    displayName: typeof data?.user?.displayName === 'string' ? data.user.displayName : '',
+    quota: {
+      limit: Number.isFinite(limit) && limit > 0 ? limit : null,
+      usage: Number.isFinite(usage) && usage > 0 ? usage : 0,
+      checkedAt: new Date().toISOString(),
+    },
+  }
+}
+
+export async function refreshDriveQuota(): Promise<DriveQuota> {
+  const { quota } = await getDriveAbout()
+  await saveSetting(GOOGLE_KEYS.quota, JSON.stringify(quota))
+  return quota
 }
 
 export async function ensureRootFolder(): Promise<string> {
@@ -248,6 +277,10 @@ export async function deleteFile(id: string): Promise<void> {
     if (err instanceof DriveError && err.status === 404) return
     throw err
   }
+}
+
+export function driveFileViewUrl(id: string) {
+  return `https://drive.google.com/file/d/${encodeURIComponent(id)}/view?usp=drivesdk`
 }
 
 export function driveFolderUrl(id: string) {

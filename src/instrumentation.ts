@@ -22,5 +22,7 @@ export async function register() {
     initDailySyncScheduler()
     const { initDesignTaskSyncScheduler } = await import('./lib/design-task-sync-scheduler')
     initDesignTaskSyncScheduler()
+    const { initDrivePushScheduler } = await import('./lib/drive-push-scheduler')
+    initDrivePushScheduler()
   }
 }

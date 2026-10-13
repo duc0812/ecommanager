@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db'
 import { localArtworkPath } from '@/lib/design-storage'
 import { artworkUrl } from '@/lib/design-studio'
 import { taskKeyFor } from '@/lib/design-tasks'
+import { DESIGN_LINK_SEPARATOR, joinDesignLinks } from '@/lib/design-links'
 import { localLibraryPath } from '@/lib/library-storage'
 import {
   DriveAuthError, DriveError, deleteFile, folderForPath, folderForTask, getFile, isDriveConnected, shareAnyoneReader,
@@ -46,6 +47,30 @@ async function uploadFile(absPath: string, size: number, sessionUrl: string): Pr
     throw new DriveError('Google Drive không nhận hết file sau nhiều lần gửi.')
   } finally {
     await handle.close()
+  }
+}
+
+function swapPublicLink(stored: string, marker: string, driveLink: string): string {
+  return joinDesignLinks(stored.split(DESIGN_LINK_SEPARATOR).map(part => ({ url: part.includes(marker) ? driveLink : part.trim() })).filter(l => l.url))
+}
+
+/**
+ * Before the push, a file the app still held went out as a public URL: into the design library (studio-library) and,
+ * through the library, into lines of later orders. Those copies now get the Drive link, which does not depend on the source task.
+ */
+async function replacePublicLinks(publicToken: string | null, driveLink: string) {
+  if (!publicToken) return
+  const marker = `/api/public/artwork/${publicToken}/`
+  const where = { designLink: { contains: marker } }
+  for (const row of await prisma.skuSupplierDesign.findMany({ where, select: { id: true, designLink: true } })) {
+    await prisma.skuSupplierDesign.updateMany({ where: { id: row.id }, data: { designLink: swapPublicLink(row.designLink ?? '', marker, driveLink) } })
+  }
+  const lineWhere = { designDriveLink: { contains: marker } }
+  for (const row of await prisma.orderLine.findMany({ where: lineWhere, select: { id: true, designDriveLink: true } })) {
+    await prisma.orderLine.updateMany({ where: { id: row.id }, data: { designDriveLink: swapPublicLink(row.designDriveLink ?? '', marker, driveLink) } })
+  }
+  for (const row of await prisma.order.findMany({ where: lineWhere, select: { id: true, designDriveLink: true } })) {
+    await prisma.order.updateMany({ where: { id: row.id }, data: { designDriveLink: swapPublicLink(row.designDriveLink ?? '', marker, driveLink) } })
   }
 }
 
@@ -102,6 +127,7 @@ export async function pushArtworkToDrive(artworkId: string): Promise<PushResult>
       prisma.orderLine.updateMany({ where: { orderId: art.orderId, shopifyLineId: art.shopifyLineId, designDriveLink: appUrl }, data: { designDriveLink: webViewLink } }),
       prisma.order.updateMany({ where: { id: art.orderId, designDriveLink: appUrl }, data: { designDriveLink: webViewLink } }),
     ])
+    await replacePublicLinks(art.publicToken, webViewLink).catch(err => console.error('[drive push] public link rewrite failed:', err?.message ?? err))
     await fs.rm(absPath, { force: true }).catch(err => console.error('[drive push] local cleanup failed:', err?.message ?? err))
     return { pushed: true, warning: null }
   } catch (err: any) {

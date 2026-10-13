@@ -19,6 +19,7 @@ export const API_ACCESS_RULES: ApiRule[] = [
   { prefix: '/api/auth/shopify-config', access: 'SUPERADMIN' },
   { prefix: '/api/auth/google/callback', access: 'PUBLIC' },
   { prefix: '/api/auth/google', access: 'SUPERADMIN' },
+  { prefix: '/api/setup/google-drive/push-local', access: 'ADMIN' },
   { prefix: '/api/setup/google-drive', access: 'SUPERADMIN' },
   { prefix: '/api/auth/shopify', access: 'SUPERADMIN' },
   { prefix: '/api/auth/status', methods: READ, access: ['shopify', 'setup_store'] },
