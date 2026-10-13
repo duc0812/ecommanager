@@ -11,10 +11,14 @@ import ImagePanes from './components/ImagePanes'
 import LowerGrid from './components/LowerGrid'
 import ReviewGrid from './components/ReviewGrid'
 import HandoffGrid from './components/HandoffGrid'
+import DriveHealthBanner from './components/DriveHealthBanner'
 import { ErrorBanner, Icon, Note, READY_META, btnPrimary, card } from './components/ui'
 
 type Filter = 'ALL' | Readiness
 type Mode = 'work' | 'review' | 'handoff'
+
+const DRIVE_BADGE_POLL_MS = [4000, 8000, 15000, 30000, 60000, 120000]
+const DRIVE_BADGE_WINDOW_MS = 15 * 60 * 1000
 
 function fmtSyncTime(iso: string) {
   return new Date(iso).toLocaleString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric', hour: 'numeric', minute: '2-digit' })
@@ -63,6 +67,8 @@ function DesignTasks() {
   const loadListRef = useRef<() => void>(() => {})
   const onRecovered = useRef<() => void>(() => {})
   const detailReq = useRef(0)
+  const [driveVersion, setDriveVersion] = useState(0)
+  const drivePoll = useRef({ key: '', attempts: 0 })
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedQ(q.trim()), 300)
@@ -139,6 +145,7 @@ function DesignTasks() {
   const reload = useCallback(() => {
     loadList()
     if (sel) loadDetail(sel)
+    setDriveVersion(v => v + 1)
   }, [loadList, loadDetail, sel])
 
   const selectTask = useCallback((key: string) => {
@@ -180,6 +187,23 @@ function DesignTasks() {
   }, [tasks])
 
   const current = detail && detail.task.taskKey === sel ? detail : null
+
+  useEffect(() => {
+    if (!current || !current.driveConnected) return
+    const waiting = current.line.artworks.filter(a => a.storage === 'LOCAL' && Date.now() - new Date(a.createdAt).getTime() < DRIVE_BADGE_WINDOW_MS)
+    if (waiting.length === 0) return
+    const key = `${current.task.taskKey}:${waiting.map(a => a.id).join(',')}`
+    if (drivePoll.current.key !== key) drivePoll.current = { key, attempts: 0 }
+    const delay = DRIVE_BADGE_POLL_MS[drivePoll.current.attempts]
+    if (delay === undefined) return
+    const taskKey = current.task.taskKey
+    const t = setTimeout(() => {
+      drivePoll.current.attempts++
+      loadDetail(taskKey)
+      setDriveVersion(v => v + 1)
+    }, delay)
+    return () => clearTimeout(t)
+  }, [current, loadDetail])
   const images = useMemo(() => (current ? taskImages(current) : []), [current])
   const chipCls = (on: boolean) => `inline-flex items-center gap-xs rounded-full border px-sm py-[2px] text-label-sm ${on ? 'bg-secondary/10 text-secondary border-transparent font-semibold' : 'bg-surface-container-lowest border-outline-variant/40 text-on-surface-variant'}`
 
@@ -230,6 +254,7 @@ function DesignTasks() {
         </div>
       </div>
       {syncError && <div className="mb-md"><ErrorBanner msg={syncError} onClose={() => setSyncError('')} /></div>}
+      <DriveHealthBanner version={driveVersion} />
 
       <div className="grid grid-cols-[290px_minmax(0,1fr)] gap-md items-start">
         <Queue tasks={visible} sel={mode === 'work' ? sel : null} onSelect={selectTask} q={q} onQ={setQ} loading={listLoading} error={listError} retrying={retrying}
