@@ -149,6 +149,10 @@ export function productPageUrl(key: string): string {
   return `/design-studio/products/${encodeURIComponent(key)}`
 }
 
+export function patchJson<T = any>(url: string, body: unknown) {
+  return requestJson<T>(url, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+}
+
 export function postJson<T = any>(url: string, body: unknown) {
   return requestJson<T>(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
 }

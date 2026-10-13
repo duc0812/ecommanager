@@ -133,6 +133,26 @@ function customerInputLines(line: ClassifyLine): string[] {
   return out
 }
 
+export type AddOnSummary = { title: string; variantTitle: string | null; qty: number; details: string }
+
+// Digital add-ons of an order ("Custom Text"): non-product lines that carry a SKU. The Trello card
+// and the design task list them from this one function, so the designer reads the same thing in both.
+export function addOnSummaries(lines: Array<{
+  sku: string | null; productTitle: string; shopifyProductType?: string | null; variantTitle: string | null; qty: number
+  customAttributes: Array<{ key: string; value: string }>
+}>): AddOnSummary[] {
+  return lines.filter(l => l.sku && isNonProductLine(l)).map(l => ({
+    title: l.productTitle,
+    variantTitle: l.variantTitle,
+    qty: l.qty,
+    details: l.customAttributes.filter(a => !a.key.startsWith('_')).map(a => `${a.key}: ${a.value}`).join(', '),
+  }))
+}
+
+export function formatAddOn(a: AddOnSummary): string {
+  return `${a.title}${a.variantTitle ? ` [${a.variantTitle}]` : ''} x${a.qty}${a.details ? ` — ${a.details}` : ''}`
+}
+
 export type LineFamily = 'CUSTOM' | 'DUAL' | 'NON_CUSTOM'
 
 export function lineFamily(input: { customized: boolean; designType: string }): LineFamily {
@@ -201,15 +221,9 @@ export function buildTrelloCardContent(
 ): { name: string; desc: string } {
   const skuLines = lines.filter(l => l.sku)
   const productLines = skuLines.filter(l => !isNonProductLine(l))
-  const digitalLines = skuLines.filter(l => isNonProductLine(l))
-  const digitalNote = digitalLines.length === 0 ? '' : '\n\n---\n\n**Add-ons (digital):**\n' +
-    digitalLines.map(l => {
-      const attrs = l.customAttributes
-        .filter(a => !a.key.startsWith('_'))
-        .map(a => `${a.key}: ${a.value}`)
-        .join(', ')
-      return `- ${l.productTitle}${l.variantTitle ? ` [${l.variantTitle}]` : ''} x${l.qty}${attrs ? ` — ${attrs}` : ''}`
-    }).join('\n')
+  const addOns = addOnSummaries(lines)
+  const digitalNote = addOns.length === 0 ? '' : '\n\n---\n\n**Add-ons (digital):**\n' +
+    addOns.map(a => `- ${formatAddOn(a)}`).join('\n')
   const orderToken = orderName.replace(/^#/, '')
   const skuParts = productLines
     .map(l => `${l.sku}${l.variantTitle ? ` [${l.variantTitle}]` : ''}`)

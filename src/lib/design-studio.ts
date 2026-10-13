@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/db'
-import { visibleCustomAttributes, customerDesignLink } from '@/lib/order-classify'
+import { visibleCustomAttributes, customerDesignLink, addOnSummaries, type AddOnSummary } from '@/lib/order-classify'
 import { extractPreviewCdnUrl } from '@/lib/order-line-assets'
 import { isNonProductLine } from '@/lib/order-lines'
 import { lineDesignStatus, type LineDesignStatus } from '@/lib/design-status'
@@ -46,6 +46,7 @@ export type Workspace = {
   order: {
     id: string; shopifyOrderNumber: string; placedAt: string; pipelineStatus: string; orderType: string
     designReady: boolean; trelloCardUrl: string | null
+    addOns: AddOnSummary[]
     store: { shop: string; projectId: string; projectName: string }
   }
   lines: WorkspaceLine[]
@@ -222,6 +223,10 @@ export async function loadWorkspace(orderId: string): Promise<Workspace | null> 
       id: order.id, shopifyOrderNumber: order.shopifyOrderNumber, placedAt: order.placedAt.toISOString(),
       pipelineStatus: order.pipelineStatus, orderType: order.orderType, designReady: order.designReady,
       trelloCardUrl: safeHttpUrl(order.trelloCardUrl),
+      addOns: addOnSummaries(order.lines.map(l => ({
+        sku: l.sku, productTitle: l.productTitle, shopifyProductType: l.shopifyProductType, variantTitle: l.variantTitle, qty: l.qty,
+        customAttributes: parseAttributes(l.customAttributesJson),
+      }))),
       store: { shop: order.store.shop, projectId: order.store.project.id, projectName: order.store.project.name },
     },
     lines,

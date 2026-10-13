@@ -106,7 +106,7 @@ describe('GET /api/design-studio/tasks', () => {
     expect(res.status).toBe(200)
     const body = await res.json()
     expect(body.tasks.map((t: any) => t.taskKey)).toContain('DTR1_1')
-    expect(body.me).toEqual({ id: adminId, name: 'Admin', role: 'ADMIN', isLeader: true, canApprove: true, canHandoff: true })
+    expect(body.me).toEqual({ id: adminId, name: 'Admin', role: 'ADMIN', isLeader: true, canApprove: true, canHandoff: true, canEditNote: true })
   })
 
   it('defaults to open statuses plus DONE tasks updated today when statuses is omitted', async () => {

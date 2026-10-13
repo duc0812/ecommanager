@@ -12,7 +12,7 @@ import { libraryStateFor } from '@/lib/artwork-library-state'
 import type { TaskLibraryState } from '@/lib/artwork-library-types'
 import type { RenderJobView } from '@/lib/artwork-render-eligibility'
 import { latestRenderJob } from '@/lib/artwork-render-jobs'
-import { canApproveDesign, canHandoffToSupplier, isLeaderRole, type FeaturePermission } from '@/lib/roles'
+import { canApproveDesign, canEditDesignNote, canHandoffToSupplier, isLeaderRole, type FeaturePermission } from '@/lib/roles'
 import { activePushByOrder } from '@/lib/repos/push-export'
 import type { HandoffPush } from '@/lib/handoff-shared'
 import { autoRenderEligibility } from '@/lib/artwork-render-eligibility'
@@ -193,13 +193,14 @@ export async function syncDesignTasksForOrders(orderIds: string[]): Promise<stri
 }
 
 export type Actor = { id: string; name: string; role: string; permissions?: FeaturePermission[] }
-export type Viewer = { id: string; name: string; role: string; isLeader: boolean; canApprove: boolean; canHandoff: boolean }
+export type Viewer = { id: string; name: string; role: string; isLeader: boolean; canApprove: boolean; canHandoff: boolean; canEditNote: boolean }
 
 export function viewerFor(user: Actor, settings: Pick<DesignSettings, 'designerCanApprove'>): Viewer {
   return {
     id: user.id, name: user.name, role: user.role, isLeader: isLeader(user.role),
     canApprove: canApproveDesign(user.role, user.permissions, settings.designerCanApprove),
     canHandoff: canHandoffToSupplier(user.role, user.permissions),
+    canEditNote: canEditDesignNote(user.role, user.permissions),
   }
 }
 export type TransitionInput = { to: TaskStatus; note?: string; reasons?: string[]; assigneeId?: string; kpi?: number; dueHours?: number; continue?: boolean }
@@ -379,6 +380,24 @@ export async function addTaskNote(taskKey: string, actor: Actor, message: string
   const task = await prisma.designTask.findUnique({ where: { taskKey }, select: { id: true } })
   if (!task) throw new Error('Task not found')
   await prisma.designTaskEvent.create({ data: { taskId: task.id, type: 'NOTE', message, actorId: actor.id } })
+}
+
+export const CS_NOTE_MAX = 2000
+
+/** The CS note lives on the order line (OrderLine.designNote); every change is logged on the task. */
+export async function setTaskCsNote(taskKey: string, actor: Actor, note: string | null): Promise<{ designNote: string | null; changed: boolean }> {
+  const task = await prisma.designTask.findUnique({ where: { taskKey }, select: { id: true, orderId: true, shopifyLineId: true } })
+  if (!task) throw new Error('Task not found')
+  const line = await prisma.orderLine.findFirst({ where: { orderId: task.orderId, shopifyLineId: task.shopifyLineId }, select: { id: true, designNote: true } })
+  if (!line) throw new Error('Line not found')
+  const next = note?.trim() || null
+  if (next && next.length > CS_NOTE_MAX) throw new Error(`Ghi chú CS dài tối đa ${CS_NOTE_MAX} ký tự`)
+  if (next === (line.designNote ?? null)) return { designNote: next, changed: false }
+  await prisma.$transaction([
+    prisma.orderLine.update({ where: { id: line.id }, data: { designNote: next } }),
+    prisma.designTaskEvent.create({ data: { taskId: task.id, type: 'NOTE', message: next ? `Ghi chú CS: ${next}` : 'Xoá ghi chú CS', actorId: actor.id } }),
+  ])
+  return { designNote: next, changed: true }
 }
 
 export async function listTasks(f: { statuses?: TaskStatus[]; readiness?: Readiness; assigneeId?: string; q?: string; limit?: number; taskKeys?: string[] }): Promise<TaskRow[]> {

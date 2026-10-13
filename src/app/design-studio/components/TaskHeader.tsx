@@ -3,7 +3,7 @@ import { useRef, useState, type FormEvent, type ReactNode } from 'react'
 import Link from 'next/link'
 import type { TaskDetail, TransitionBody } from './types'
 import {
-  OWNED_MOVES, allSlotsFilled, canMove, copyText, layerForField, postJson, productPageUrl, sourceEngine, taskUrl, timeLeft,
+  OWNED_MOVES, allSlotsFilled, canMove, copyText, layerForField, patchJson, postJson, productPageUrl, sourceEngine, taskUrl, timeLeft,
 } from './model'
 import { buildChecklist, type CheckItem, type CheckState } from './checklist'
 import { ARTWORK_ACCEPT, useArtworkUpload } from './useArtworkUpload'
@@ -98,6 +98,56 @@ function Fact({ icon, label, children }: { icon: string; label: string; children
     <>
       <dt className="flex items-center gap-xs text-on-surface-variant whitespace-nowrap"><Icon name={icon} className="text-[16px]" />{label}</dt>
       <dd className="min-w-0 flex items-center gap-xs flex-wrap text-on-surface">{children}</dd>
+    </>
+  )
+}
+
+function CsNote({ detail, lastAsk, onChanged }: { detail: TaskDetail; lastAsk: string | null; onChanged: () => void }) {
+  const { line, task, me } = detail
+  const canEdit = me.isLeader || me.canEditNote === true
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(line.designNote ?? '')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  async function save(e: FormEvent) {
+    e.preventDefault()
+    if (busy) return
+    setBusy(true); setError('')
+    const r = await patchJson(taskUrl(task.taskKey), { designNote: draft.trim() || null })
+    setBusy(false)
+    if (!r.ok) { setError(r.error); return }
+    setEditing(false)
+    onChanged()
+  }
+
+  if (editing) {
+    return (
+      <form onSubmit={save} className="flex flex-col gap-xs w-full">
+        <textarea value={draft} onChange={e => setDraft(e.target.value)} rows={3} maxLength={2000} autoFocus aria-label="Ghi chú CS"
+          placeholder="Ghi chú của CS cho designer (để trống = xoá ghi chú)" className={`${input} w-full`} />
+        <span className="flex items-center gap-xs">
+          <button type="submit" className={btnPrimary} disabled={busy}><Icon name="save" className="text-[16px]" />{busy ? 'Đang lưu…' : 'Lưu'}</button>
+          <button type="button" className={btn} disabled={busy} onClick={() => { setEditing(false); setDraft(line.designNote ?? ''); setError('') }}>Huỷ</button>
+        </span>
+        <ErrorBanner msg={error} onClose={() => setError('')} />
+      </form>
+    )
+  }
+  return (
+    <>
+      {line.designNote || lastAsk
+        ? <span className="flex flex-col">
+            {line.designNote && <span className="whitespace-pre-wrap">{line.designNote}</span>}
+            {lastAsk && <span className="text-amber-900">{lastAsk}</span>}
+          </span>
+        : <span className="text-on-surface-variant">không có</span>}
+      {canEdit && (
+        <button type="button" onClick={() => { setDraft(line.designNote ?? ''); setEditing(true) }} aria-label="Sửa ghi chú CS" title="Sửa ghi chú CS"
+          className="text-on-surface-variant hover:text-secondary leading-none">
+          <Icon name="edit" className="text-[15px]" />
+        </button>
+      )}
     </>
   )
 }
@@ -384,13 +434,20 @@ export default function TaskHeader({ detail, holdCount, onChanged }: { detail: T
               </Fact>
               <Fact icon="auto_awesome" label="Nguồn">{sourceEngine(line)}</Fact>
               <Fact icon="sticky_note_2" label="Ghi chú CS">
-                {line.designNote || (task.status === 'ASK_CUSTOMER' && lastAsk)
-                  ? <span className="flex flex-col">
-                      {line.designNote && <span className="whitespace-pre-wrap">{line.designNote}</span>}
-                      {task.status === 'ASK_CUSTOMER' && lastAsk && <span className="text-amber-900">{lastAsk.message}</span>}
-                    </span>
-                  : <span className="text-on-surface-variant">không có</span>}
+                <CsNote detail={detail} lastAsk={task.status === 'ASK_CUSTOMER' && lastAsk ? lastAsk.message : null} onChanged={onChanged} />
               </Fact>
+              {(detail.order.addOns?.length ?? 0) > 0 && (
+                <Fact icon="add_circle" label="Add-on của đơn">
+                  <ul className="flex flex-col gap-[2px] min-w-0">
+                    {detail.order.addOns!.map((a, i) => (
+                      <li key={`${a.title}-${i}`} className="break-words">
+                        <b>{a.title}</b>{a.variantTitle ? ` [${a.variantTitle}]` : ''} <span className="text-on-surface-variant">x{a.qty}</span>
+                        {a.details && <span> — {a.details}</span>}
+                      </li>
+                    ))}
+                  </ul>
+                </Fact>
+              )}
               <Fact icon="inventory_2" label="Sản phẩm">
                 {detail.profileRouteKey
                   ? <Link href={productPageUrl(detail.profileRouteKey)} className="text-secondary hover:underline">Mở trang sản phẩm (mapping · artwork)</Link>

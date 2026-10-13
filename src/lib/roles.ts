@@ -232,6 +232,11 @@ export function canApproveDesign(role: string, permissions: FeaturePermission[] 
   return designerCanApprove && grantedFor(role, permissions).includes('design_tasks')
 }
 
+/** Editing the CS note of a design task: a leader, or anyone holding design_tasks. */
+export function canEditDesignNote(role: string, permissions: FeaturePermission[] | undefined): boolean {
+  return isLeaderRole(role) || grantedFor(role, permissions).includes('design_tasks')
+}
+
 export function canHandoffToSupplier(role: string, permissions: FeaturePermission[] | undefined): boolean {
   return isLeaderRole(role) || grantedFor(role, permissions).includes('fulfillment_export')
 }

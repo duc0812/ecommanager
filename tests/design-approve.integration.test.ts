@@ -193,7 +193,7 @@ describe('designer approval while the setting is on (default)', () => {
     expect(res.status).toBe(200)
     expect((await res.json()).task.status).toBe('DONE')
     const list = await (await getTasks(cookieReq('http://x/api/design-studio/tasks?statuses=DONE', desToken))).json()
-    expect(list.me).toEqual({ id: DES.id, name: 'Des', role: 'SUPPORT', isLeader: false, canApprove: true, canHandoff: false })
+    expect(list.me).toEqual({ id: DES.id, name: 'Des', role: 'SUPPORT', isLeader: false, canApprove: true, canHandoff: false, canEditNote: true })
     const detail = await (await getTask(cookieReq(`http://x/api/design-studio/tasks/${t.key}`, csToken), { params: { key: t.key } })).json()
     expect(detail.me).toMatchObject({ canApprove: false, canHandoff: false })
   })

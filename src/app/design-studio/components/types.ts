@@ -8,7 +8,7 @@ export type { HandoffCard, HandoffLine, HandoffPush, HandoffState }
 export type TaskStatus = 'NEW' | 'ASSIGNED' | 'DOING' | 'REVIEW' | 'REJECTED' | 'ASK_CUSTOMER' | 'DONE' | 'CANCELLED'
 export type Readiness = 'AUTO' | 'LOW' | 'MANUAL'
 
-export type Me = { id: string; name: string; role: string; isLeader: boolean; canApprove: boolean; canHandoff: boolean }
+export type Me = { id: string; name: string; role: string; isLeader: boolean; canApprove: boolean; canHandoff: boolean; canEditNote?: boolean }
 
 export type TaskRow = {
   id: string; taskKey: string; status: TaskStatus; readiness: Readiness; assigneeId: string | null; assigneeName: string | null
@@ -61,8 +61,11 @@ export type WorkspaceLine = {
 export type OrderInfo = {
   id: string; shopifyOrderNumber: string; placedAt: string; pipelineStatus: string; orderType: string
   designReady: boolean; trelloCardUrl: string | null
+  addOns?: AddOn[]
   store: { shop: string; projectId: string; projectName: string }
 }
+
+export type AddOn = { title: string; variantTitle: string | null; qty: number; details: string }
 
 export type TaskEvent = { id: string; type: string; message: string; actorName: string | null; createdAt: string }
 
