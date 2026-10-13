@@ -34,16 +34,18 @@ function mappingItem({ line }: ChecklistInput): CheckItem {
   return { key: 'mapping', title, state: 'missing', reason: 'Dòng này chưa map xưởng — chưa biết template và yêu cầu file', action: { kind: 'link', label: 'Mở Mapping', href: '/fulfillment/mapping' } }
 }
 
-function templateItem({ line, template }: ChecklistInput): CheckItem {
+export const NO_TEMPLATE_REASON = 'Sản phẩm chưa có template — upload file in theo yêu cầu của xưởng'
+
+function templateItem({ line, template, me }: ChecklistInput): CheckItem {
   const title = 'Template in'
   if (template) {
     return { key: 'template', title, state: 'done', reason: `${template.name} · ${template.widthPx}×${template.heightPx} · ${template.areas.length} vùng in`, action: null }
   }
   if (!line.supplier) return { key: 'template', title, state: 'blocked', reason: 'Cần map xưởng trước', action: null }
-  const sku = line.supplierSku ?? line.sku ?? '—'
+  // A template is optional: without one the designer uploads the print file straight away. Only admins can open the template setup.
   return {
-    key: 'template', title, state: 'missing', reason: `Chưa có template cho ${sku} (${line.supplier.name})`,
-    action: { kind: 'link', label: 'Thêm template', href: printTemplatesUrl(line.supplier.id) },
+    key: 'template', title, state: 'na', reason: NO_TEMPLATE_REASON,
+    action: me.isLeader ? { kind: 'link', label: 'Thêm template', href: printTemplatesUrl(line.supplier.id) } : null,
   }
 }
 
@@ -57,9 +59,13 @@ const LIBRARY_REASON: Record<string, string> = {
   ERROR: 'Đọc PSD lỗi — xem lại file',
 }
 
-function libraryItem({ template, library }: ChecklistInput): CheckItem {
+function libraryItem({ line, template, library }: ChecklistInput): CheckItem {
   const title = 'Artwork gốc của sản phẩm'
-  if (!template) return { key: 'library', title, state: 'blocked', reason: 'Artwork gốc gắn theo template — cần template trước', action: null }
+  if (!template) {
+    return line.supplier
+      ? { key: 'library', title, state: 'na', reason: 'Artwork gốc gắn theo template — sản phẩm chưa có template nên bỏ qua', action: null }
+      : { key: 'library', title, state: 'blocked', reason: 'Artwork gốc gắn theo template — cần map xưởng trước', action: null }
+  }
   if (!library) return { key: 'library', title, state: 'na', reason: 'Dòng không gắn sản phẩm Shopify — không có artwork gốc', action: null }
   const scope = library.optionLabel ? ` (${library.optionLabel})` : ''
   if (library.status === 'READY') {

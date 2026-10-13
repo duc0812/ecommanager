@@ -23,31 +23,43 @@ function input(over: { task?: any; line?: any; template?: any; slots?: string[];
 const byKey = (c: ReturnType<typeof buildChecklist>, key: string) => c.items.find(i => i.key === key)!
 
 describe('buildChecklist', () => {
-  it('LIT4610_1: mapped, no template, one artwork — the template is the next step and links to the supplier setup', () => {
+  it('LIT4610_1: mapped, no template, one artwork — template and master artwork are not applicable, the task goes straight on', () => {
     const c = buildChecklist(input())
     expect(c.items.map(i => i.key)).toEqual(['mapping', 'template', 'library', 'customer', 'files', 'mockup', 'submit'])
     expect(byKey(c, 'mapping').state).toBe('done')
     const tpl = byKey(c, 'template')
-    expect(tpl).toMatchObject({ state: 'missing', reason: 'Chưa có template cho TU20-40OZ (Mangoshao)' })
-    expect(tpl.action).toEqual({ kind: 'link', label: 'Thêm template', href: '/fulfillment/suppliers/sup1/print-templates' })
-    expect(byKey(c, 'library').state).toBe('blocked')
+    expect(tpl).toMatchObject({ state: 'na', reason: 'Sản phẩm chưa có template — upload file in theo yêu cầu của xưởng' })
+    expect(tpl.action).toBeNull()
+    expect(byKey(c, 'library').state).toBe('na')
     expect(byKey(c, 'files')).toMatchObject({ state: 'done', reason: '1/1 vùng in đã có file' })
     expect(byKey(c, 'mockup').state).toBe('na')
     expect(byKey(c, 'submit')).toMatchObject({ state: 'missing', action: { kind: 'submit', label: 'Gửi duyệt' } })
-    expect(c.next?.key).toBe('template')
-    expect(c.total).toBe(6)
+    expect(c.next?.key).toBe('submit')
+    expect(c.total).toBe(4)
     expect(c.done).toBe(3)
+  })
+
+  it('no template and no file yet: the next step is the print file, not the template', () => {
+    const c = buildChecklist(input({ line: { artworks: [] } }))
+    expect(byKey(c, 'template').state).toBe('na')
+    expect(byKey(c, 'library').state).toBe('na')
+    expect(c.next).toMatchObject({ key: 'files', state: 'missing', action: { kind: 'upload', area: 'Artwork' } })
+    expect(byKey(c, 'submit').state).toBe('blocked')
+  })
+
+  it('only an admin gets the link to the template setup; it never becomes the next step', () => {
+    const admin = buildChecklist(input({ isLeader: true, line: { artworks: [] } }))
+    expect(byKey(admin, 'template')).toMatchObject({ state: 'na', action: { kind: 'link', label: 'Thêm template', href: '/fulfillment/suppliers/sup1/print-templates' } })
+    expect(admin.next?.key).toBe('files')
+    expect(byKey(buildChecklist(input({ isLeader: false, canApprove: true })), 'template').action).toBeNull()
   })
 
   it('an unmapped line links to the mapping page and blocks the template', () => {
     const c = buildChecklist(input({ line: { supplier: null, supplierSku: null } }))
     expect(byKey(c, 'mapping')).toMatchObject({ state: 'missing', action: { kind: 'link', href: '/fulfillment/mapping' } })
     expect(byKey(c, 'template').state).toBe('blocked')
+    expect(byKey(c, 'library').state).toBe('blocked')
     expect(c.next?.key).toBe('mapping')
-  })
-
-  it('falls back to the shop SKU in the template reason when there is no supplier SKU', () => {
-    expect(byKey(buildChecklist(input({ line: { supplierSku: null } })), 'template').reason).toBe('Chưa có template cho HAPO-40 (Mangoshao)')
   })
 
   it('reports the library entry state for the line\'s template', () => {
