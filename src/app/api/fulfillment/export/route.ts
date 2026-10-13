@@ -76,7 +76,12 @@ export async function POST(req: NextRequest) {
       ? orders.flatMap(o => {
         const lines = exportableLinesOf(o)
         if (lines.length === 0) return []
-        return [{ id: o.id, storeId: o.storeId, shopifyOrderNumber: o.shopifyOrderNumber, designDriveLink: o.designDriveLink, lines: wantsLineLinks ? lines : [] }]
+        // The order-level link is printed by its own column, or as the fallback of a line that has no link.
+        const orderLinkUsed = wantsOrderLink || lines.some(l => !l.designDriveLink)
+        return [{
+          id: o.id, storeId: o.storeId, shopifyOrderNumber: o.shopifyOrderNumber,
+          designDriveLink: orderLinkUsed ? o.designDriveLink : null, lines: wantsLineLinks ? lines : [],
+        }]
       })
       : [],
   )

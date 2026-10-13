@@ -176,6 +176,24 @@ describe('supplier CSV design links', () => {
     expect(body.orders).toEqual([o.number])
   })
 
+  it('the order-level link: translated for its own column, ignored when stale and no line falls back to it', async () => {
+    const o = await makeOrder({ arts: [{ area: 'Artwork' }] })
+    await prisma.order.update({ where: { id: o.id }, data: { designDriveLink: `/api/design-studio/file/${o.artworkIds[0]}` } })
+    const perOrder = await prisma.csvTemplate.create({ data: { supplierId: SUP, name: 'per-order', rowMode: 'PER_ORDER',
+      columns: JSON.stringify([COLUMNS[0], { header: 'Design', source: 'order.designDriveLink' }]) } })
+    const first = await run({ templateId: perOrder.id })
+    expect(first.status).toBe(200)
+    expect(rowsOf(first.body.csv)[o.number].Design).toMatch(new RegExp(`^${BASE}/api/public/artwork/[0-9a-f]{64}/artwork-v1\\.png$`))
+
+    const stale = await makeOrder({ link: 'https://drive.google.com/file/d/line-link/view', task: null, orderLink: '/api/design-studio/file/gone' })
+    const lines = await run()
+    expect(lines.status).toBe(200)
+    expect(rowsOf(lines.body.csv)[stale.number].Design).toBe('https://drive.google.com/file/d/line-link/view')
+    const orderCol = await run({ templateId: perOrder.id })
+    expect(orderCol.status).toBe(400)
+    expect(orderCol.body.orders).toEqual([stale.number])
+  })
+
   it('a template without a design column exports whatever the base URL is', async () => {
     delete process.env.NEXT_PUBLIC_APP_URL
     const o = await makeOrder({ arts: [{ area: 'Artwork' }] })
