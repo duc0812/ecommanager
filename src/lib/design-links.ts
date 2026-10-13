@@ -18,19 +18,10 @@ export function appFileArtworkId(link: string): string | null {
   return id || null
 }
 
-/** A link Design Studio wrote: the app file URL of a local artwork, or the Drive link of one of the line's artworks. */
-export function isStudioLink(link: string | null | undefined, artworks: Array<{ driveWebViewLink: string | null }>): boolean {
+/** A link Design Studio wrote: the task's Drive folder, the app file URL of a local artwork, or the Drive link of one of the line's artworks. */
+export function isStudioLink(link: string | null | undefined, artworks: Array<{ driveWebViewLink: string | null }>, folderUrl?: string | null): boolean {
   if (!link) return false
-  return isAppFileLink(link) || artworks.some(a => a.driveWebViewLink === link)
-}
-
-export function newestPerSlot<T extends { printArea: string; version: number }>(artworks: T[], slots: string[]): Array<{ area: string; artwork: T }> {
-  const out: Array<{ area: string; artwork: T }> = []
-  for (const area of slots) {
-    const newest = artworks.filter(a => a.printArea === area).sort((a, b) => b.version - a.version)[0]
-    if (newest) out.push({ area, artwork: newest })
-  }
-  return out
+  return isAppFileLink(link) || (!!folderUrl && link === folderUrl) || artworks.some(a => a.driveWebViewLink === link)
 }
 
 /** Reads NEXT_PUBLIC_APP_URL only when a local file needs a public link, and only once. Throws PublicUrlError. */

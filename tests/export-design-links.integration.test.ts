@@ -22,9 +22,12 @@ const COLUMNS = [
   { header: 'Back', source: 'line.designArea:back' },
 ]
 
-type Art = { area: string; version?: number; drive?: string | null; removed?: boolean }
+type Art = { area: string; version?: number; drive?: string | null; removed?: boolean; kind?: 'PRINT' | 'MOCKUP'; place?: string; at?: string }
 
-async function makeOrder(opts: { link?: string | null; arts?: Art[]; printAreas?: string[]; task?: string | null; status?: string; orderLink?: string | null }) {
+async function makeOrder(opts: {
+  link?: string | null; arts?: Art[]; printAreas?: string[]; task?: string | null; status?: string; orderLink?: string | null
+  supplierSku?: string; folder?: string; preview?: string | null; image?: string | null
+}) {
   seq += 1
   const id = `gid://test/Order/export-links-${seq}`
   const number = `#EXL${seq}`
@@ -36,21 +39,26 @@ async function makeOrder(opts: { link?: string | null; arts?: Art[]; printAreas?
     grossAmount: 1, expectedPayout: 1, totalFees: 0, refundedAmount: 0, placedAt: new Date('2026-10-05T10:00:00Z'),
     pipelineStatus: opts.status ?? 'READY_TO_PRODUCTION', designReady: true, designDriveLink: opts.orderLink ?? null, defaultSupplierId: SUP,
     lines: { create: [{ shopifyLineId: 'l1', sku: `EXL-${seq}`, productTitle: 'Jersey', qty: 1, linePosition: 1, unitPrice: 10,
-      resolvedSupplierId: SUP, resolvedSupplierSku: 'EXL-SKU', customAttributesJson: attrs }] },
+      resolvedSupplierId: SUP, resolvedSupplierSku: opts.supplierSku ?? 'EXL-SKU', customAttributesJson: attrs,
+      previewCdnUrl: opts.preview ?? null, imageUrl: opts.image ?? null }] },
   } })
   const ids: string[] = []
   for (const a of opts.arts ?? []) {
     const row = await prisma.designArtwork.create({ data: {
-      orderId: id, shopifyLineId: 'l1', printArea: a.area, version: a.version ?? 1, fileName: `${a.area.toLowerCase()}-v${a.version ?? 1}.png`,
+      orderId: id, shopifyLineId: 'l1', kind: a.kind ?? 'PRINT', printArea: a.area, version: a.version ?? 1, fileName: `${a.area.toLowerCase()}-v${a.version ?? 1}.png`,
       storagePath: a.drive ? null : `x/${seq}-${a.area}.png`, storage: a.drive ? 'DRIVE' : 'LOCAL', driveFileId: a.drive ? `f-${seq}-${a.area}` : null,
-      driveWebViewLink: a.drive ?? null, size: 1, mimeType: 'image/png', removedAt: a.removed ? new Date() : null,
+      driveWebViewLink: a.drive ?? null, drivePlace: a.place ?? null, size: 1, mimeType: 'image/png', removedAt: a.removed ? new Date() : null,
+      ...(a.at ? { createdAt: new Date(a.at) } : {}),
     } })
     ids.push(row.id)
   }
   const link = opts.link === undefined ? (ids[0] ? `/api/design-studio/file/${ids[0]}` : null) : opts.link
   await prisma.orderLine.updateMany({ where: { orderId: id }, data: { designDriveLink: link } })
   if (opts.task !== null) {
-    await prisma.designTask.create({ data: { orderId: id, shopifyLineId: 'l1', taskKey: `${number.slice(1)}_1`, status: opts.task ?? 'DONE' } })
+    await prisma.designTask.create({ data: {
+      orderId: id, shopifyLineId: 'l1', taskKey: `${number.slice(1)}_1`, status: opts.task ?? 'DONE',
+      driveFolderId: opts.folder ? opts.folder.split('/').pop() : null, driveFolderUrl: opts.folder ?? null,
+    } })
   }
   return { id, number, artworkIds: ids }
 }
@@ -109,22 +117,100 @@ describe('supplier CSV design links', () => {
     expect((await prisma.designArtwork.findUniqueOrThrow({ where: { id: o.artworkIds[0] } })).publicToken).toBeNull()
   })
 
-  it('joins the newest file of every required area with " | " and fills the per-area sources', async () => {
+  it('no template: joins the newest version of every print file by name with " | ", fills the per-part sources and leaves mockups out', async () => {
     const back = 'https://drive.google.com/file/d/exl-back/view'
     const o = await makeOrder({
       printAreas: ['Front', 'Back'],
-      arts: [{ area: 'Front', version: 1 }, { area: 'Front', version: 2 }, { area: 'Back', drive: back }, { area: 'Sleeve' }],
+      arts: [
+        { area: 'Front', version: 1 }, { area: 'Front', version: 2 }, { area: 'Back', drive: back }, { area: 'Sleeve' },
+        { area: 'Look', kind: 'MOCKUP', drive: 'https://drive.google.com/file/d/exl-mock/view' },
+      ],
     })
     const { status, body } = await run()
     expect(status).toBe(200)
     const row = rowsOf(body.csv)[o.number]
-    const [front, second] = row.Design.split(' | ')
+    const [first, front, sleeve] = row.Design.split(' | ')
+    expect(first).toBe(back)
     expect(front).toMatch(/front-v2\.png$/)
-    expect(second).toBe(back)
+    expect(sleeve).toMatch(/sleeve-v1\.png$/)
     expect(row.All).toBe(row.Design)
     expect(row.Front).toBe(front)
     expect(row.Back).toBe(back)
-    expect(row.Design).not.toContain('sleeve')
+    expect(row.Design).not.toContain('exl-mock')
+  })
+
+  it('a template puts its areas first, in template order, then the extra files by name', async () => {
+    await prisma.printTemplate.create({ data: {
+      supplierId: SUP, supplierSku: 'EXL-TPL', name: 'Jersey', widthPx: 2000, heightPx: 1000,
+      areas: JSON.stringify([{ name: 'Front', x: 0, y: 0, w: 1000, h: 1000 }, { name: 'Back', x: 1000, y: 0, w: 1000, h: 1000 }]),
+    } })
+    const link = (n: string) => `https://drive.google.com/file/d/exl-${n}/view`
+    const o = await makeOrder({
+      supplierSku: 'EXL-TPL', link: link('front'),
+      arts: [{ area: 'Sleeve', drive: link('sleeve') }, { area: 'Back', drive: link('back') }, { area: 'Collar', drive: link('collar') }, { area: 'Front', drive: link('front') }],
+    })
+    const row = rowsOf((await run()).body.csv)[o.number]
+    expect(row.Design).toBe([link('front'), link('back'), link('collar'), link('sleeve')].join(' | '))
+    expect(row).toMatchObject({ Front: link('front'), Back: link('back') })
+  })
+
+  it('a line whose stored link is its task folder exports the folder as is; per-part sources still give each file', async () => {
+    const folder = 'https://drive.google.com/drive/folders/exl-folder-1'
+    const front = 'https://drive.google.com/file/d/exl-f/view'
+    const back = 'https://drive.google.com/file/d/exl-b/view'
+    const o = await makeOrder({
+      folder, link: folder,
+      arts: [{ area: 'Front', drive: front, place: 'TASK' }, { area: 'Back', drive: back, place: 'TASK' }, { area: 'Look', kind: 'MOCKUP', drive: 'https://drive.google.com/file/d/exl-m/view', place: 'TASK' }],
+    })
+    const row = rowsOf((await run()).body.csv)[o.number]
+    expect(row).toMatchObject({ Design: folder, All: folder, Front: front, Back: back })
+
+    process.env.NEXT_PUBLIC_APP_URL = 'http://localhost:3002'
+    const designOnly = await prisma.csvTemplate.create({ data: { supplierId: SUP, name: 'design-only', rowMode: 'PER_LINE', columns: JSON.stringify(COLUMNS.slice(0, 3)) } })
+    const mixed = await makeOrder({ folder: 'https://drive.google.com/drive/folders/exl-folder-2', link: 'https://drive.google.com/drive/folders/exl-folder-2', arts: [{ area: 'Front' }] })
+    const only = await run({ templateId: designOnly.id })
+    expect(only.status).toBe(200)
+    expect(rowsOf(only.body.csv)[mixed.number]).toMatchObject({ Design: 'https://drive.google.com/drive/folders/exl-folder-2', All: 'https://drive.google.com/drive/folders/exl-folder-2' })
+    expect(rowsOf(only.body.csv)[o.number].Design).toBe(folder)
+  })
+
+  it('line.mockupLink: the newest uploaded mockup (Drive link or public URL), else the customer preview, else the product image', async () => {
+    const tmpl = await prisma.csvTemplate.create({ data: { supplierId: SUP, name: 'mockup', rowMode: 'PER_LINE',
+      columns: JSON.stringify([COLUMNS[0], { header: 'Mockup', source: 'line.mockupLink' }]) } })
+    const preview = 'https://cdn.example/preview.png'
+    const image = 'https://cdn.shopify.com/product.png'
+    const newest = 'https://drive.google.com/file/d/exl-mock-new/view'
+    const onDrive = await makeOrder({
+      preview, image, link: 'https://drive.google.com/file/d/exl-art/view',
+      arts: [
+        { area: 'Artwork', drive: 'https://drive.google.com/file/d/exl-art/view' },
+        { area: 'Look A', kind: 'MOCKUP', drive: 'https://drive.google.com/file/d/exl-mock-old/view', at: '2026-10-01T00:00:00Z' },
+        { area: 'Look B', kind: 'MOCKUP', drive: newest, at: '2026-10-02T00:00:00Z' },
+        { area: 'Look C', kind: 'MOCKUP', drive: 'https://drive.google.com/file/d/exl-mock-removed/view', at: '2026-10-03T00:00:00Z', removed: true },
+      ],
+    })
+    const local = await makeOrder({ preview, arts: [{ area: 'Artwork' }, { area: 'Look', kind: 'MOCKUP' }] })
+    const fromPreview = await makeOrder({ preview, image, arts: [{ area: 'Artwork' }] })
+    const fromImage = await makeOrder({ image, link: 'https://drive.google.com/file/d/from-trello/view', task: null })
+    const none = await makeOrder({ link: 'https://drive.google.com/file/d/from-trello/view', task: null })
+
+    const { status, body } = await run({ templateId: tmpl.id })
+    expect(status).toBe(200)
+    const rows = rowsOf(body.csv)
+    expect(rows[onDrive.number].Mockup).toBe(newest)
+    expect(rows[local.number].Mockup).toMatch(new RegExp(`^${BASE}/api/public/artwork/[0-9a-f]{64}/look-v1\\.png$`))
+    const [, , , , token, fileName] = new URL(rows[local.number].Mockup).pathname.split('/')
+    expect((await findPublicArtwork(token, fileName))?.id).toBe(local.artworkIds[1])
+    expect(rows[fromPreview.number].Mockup).toBe(preview)
+    expect(rows[fromImage.number].Mockup).toBe(image)
+    expect(rows[none.number].Mockup).toBe('')
+    expect((await prisma.designArtwork.findUniqueOrThrow({ where: { id: local.artworkIds[0] } })).publicToken).toBeNull()
+
+    await prisma.designTask.updateMany({ where: { orderId: local.id }, data: { status: 'REVIEW' } })
+    expect(await findPublicArtwork(token, fileName)).toBeNull()
+    const blocked = await run({ templateId: tmpl.id })
+    expect(blocked.status).toBe(400)
+    expect(blocked.body.orders).toEqual([local.number])
   })
 
   it('leaves Trello, library and manual links untouched, even when the line also has Studio files', async () => {

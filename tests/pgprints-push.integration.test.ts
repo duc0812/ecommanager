@@ -620,6 +620,74 @@ describe('GET /api/public/artwork/[token]/[fileName]', () => {
   })
 })
 
+describe('several print files and uploaded mockups', () => {
+  const fetchArt = async (token: string, fileName: string) =>
+    getPublicArtwork(new NextRequest(`http://x/api/public/artwork/${token}/${fileName}`), { params: { token, fileName } })
+  let n = 0
+
+  async function addFile(o: { id: string; lineId: string }, kind: 'PRINT' | 'MOCKUP', printArea: string, fileName: string, extra: Record<string, unknown> = {}) {
+    const rel = `design/pgp-extra/${++n}-${fileName}`
+    fs.mkdirSync(path.dirname(path.join(tmp, rel)), { recursive: true })
+    fs.writeFileSync(path.join(tmp, rel), PNG)
+    return prisma.designArtwork.create({
+      data: { orderId: o.id, shopifyLineId: o.lineId, kind, printArea, version: 1, fileName, storagePath: rel, size: PNG.length, mimeType: 'image/png', ...extra },
+    })
+  }
+  const publicUrl = async (id: string, fileName: string) =>
+    `${APP_URL}/api/public/artwork/${(await prisma.designArtwork.findUniqueOrThrow({ where: { id } })).publicToken}/${fileName}`
+
+  it('fileUrls: the template areas in template order, then the other parts by name; mockupImages: the uploaded mockups, newest first, instead of the preview', async () => {
+    const o = await makeOrder()
+    const sleeve = await addFile(o, 'PRINT', 'Sleeve', 'sleeve.png')
+    await addFile(o, 'PRINT', 'collar', 'collar-old.png')
+    const collar = await addFile(o, 'PRINT', 'collar', 'collar.png', { version: 2 })
+    await addFile(o, 'PRINT', 'Gone', 'gone.png', { removedAt: new Date() })
+    const look1 = await addFile(o, 'MOCKUP', 'Look 1', 'look1.png', { createdAt: new Date('2026-10-01T00:00:00Z') })
+    const look2 = await addFile(o, 'MOCKUP', 'Look 2', 'look2.png', { createdAt: new Date('2026-10-02T00:00:00Z') })
+    await addFile(o, 'MOCKUP', 'Main', 'not-a-print-file.png', { removedAt: new Date() })
+
+    const body = await (await preview(o.id)).json()
+    const item = body.payload.line_items[0]
+    expect(item.fileUrls).toEqual([
+      await publicUrl(o.artworkId!, 'main.png'), await publicUrl(collar.id, 'collar.png'), await publicUrl(sleeve.id, 'sleeve.png'),
+    ])
+    expect(item.mockupImages).toEqual([await publicUrl(look2.id, 'look2.png'), await publicUrl(look1.id, 'look1.png')])
+    expect(body.lines[0].files.map((f: any) => f.area)).toEqual(['Main', 'collar', 'Sleeve'])
+    expect(body.lines[0].mockupUrl).toBe(`/api/design-studio/file/${look2.id}`)
+    expect(body.issues.filter((i: any) => i.level === 'error')).toEqual([])
+    expect(body.issues.filter((i: any) => i.code === 'EXTRA_FILE')).toHaveLength(2)
+    expect(body.canPush).toBe(true)
+
+    const [, , , , token, fileName] = new URL(item.mockupImages[0]).pathname.split('/')
+    const res = await fetchArt(token, fileName)
+    expect(res.status).toBe(200)
+    expect(Buffer.from(await res.arrayBuffer()).equals(PNG)).toBe(true)
+    await prisma.orderLine.updateMany({ where: { orderId: o.id }, data: { designDriveLink: null } })
+    expect((await fetchArt(token, fileName)).status).toBe(404)
+  })
+
+  it('a line without a template sends every print file by name; with no print file at all it is blocked', async () => {
+    await prisma.supplierProduct.create({ data: { supplierId: SUP, sku: 'SOCK-NOTPL', baseCost: 4, apiSku: 'SOCK-One_size' } })
+    const o = await makeOrder({ supplierSku: 'SOCK-NOTPL' })
+    const right = await addFile(o, 'PRINT', 'right', 'right.png')
+    const left = await addFile(o, 'PRINT', 'Left', 'left.png')
+    const body = await (await preview(o.id)).json()
+    expect(body.lines[0].templateName).toBeNull()
+    expect(body.payload.line_items[0].fileUrls).toEqual([
+      await publicUrl(left.id, 'left.png'), await publicUrl(o.artworkId!, 'main.png'), await publicUrl(right.id, 'right.png'),
+    ])
+    expect(body.payload.line_items[0].mockupImages).toEqual(['https://cdn.example.com/preview.png'])
+    expect(body.issues.filter((i: any) => i.level === 'error')).toEqual([])
+    expect(body.issues).toContainEqual(expect.objectContaining({ level: 'warning', code: 'NO_TEMPLATE' }))
+
+    const empty = await makeOrder({ supplierSku: 'SOCK-NOTPL', withArtwork: false })
+    await addFile(empty, 'MOCKUP', 'Look', 'look.png')
+    const blocked = await (await preview(empty.id)).json()
+    expect(blocked.issues).toContainEqual(expect.objectContaining({ level: 'error', code: 'NO_ARTWORK' }))
+    expect(blocked.canPush).toBe(false)
+  })
+})
+
 describe('POST /api/public/pgprints/tracking', () => {
   const hook = (body: unknown, secret: string | null) => postTracking(new NextRequest('http://x/api/public/pgprints/tracking', {
     method: 'POST', body: JSON.stringify(body), headers: { 'Content-Type': 'application/json', ...(secret ? { 'X-Store-Secret': secret } : {}) },

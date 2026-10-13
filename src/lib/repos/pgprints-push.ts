@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db'
 import { isNonProductLine } from '@/lib/order-lines'
 import { requiredSlotsFor, taskKeyFor, templateForLine, type TemplateRow } from '@/lib/design-tasks'
 import { artworkUrl } from '@/lib/design-studio'
+import { currentFiles, extraPrintParts } from '@/lib/task-files'
 import { logHandoffEvent, markPushExported } from '@/lib/repos/push-export'
 import { STATUS_LABELS, type PipelineStatus } from '@/lib/pipeline-status'
 import { retryOnBusy } from '@/lib/sqlite-busy'
@@ -163,11 +164,16 @@ export async function buildPush(orderId: string, opts: { withBalance?: boolean }
 
     const template = await templateForLine(l)
     const slots = requiredSlotsFor(template)
+    const lineFiles = order.artworks.filter(a => a.shopifyLineId === l.shopifyLineId)
+    const prints = currentFiles(lineFiles, 'PRINT')
+    // One file per print part in a fixed order: the template's areas, then every other part by name.
+    const parts = [...slots, ...extraPrintParts(lineFiles, slots)]
+    if (parts.length === 0) error('NO_ARTWORK', `${refId}: chưa có file in nào`, refId)
     const files: PreviewFile[] = []
     const fileUrls: string[] = []
-    for (const area of slots) {
-      const art = order.artworks.find(a => a.shopifyLineId === l.shopifyLineId && a.printArea === area) ?? null
-      const target = expectedSize(template, area)
+    for (const area of parts) {
+      const art = prints.find(a => a.printArea === area) ?? null
+      const target = slots.includes(area) ? expectedSize(template, area) : null
       if (!art) {
         error('NO_ARTWORK', `${refId}: chưa có file in cho vùng "${area}"`, refId)
         files.push({
@@ -183,6 +189,7 @@ export async function buildPush(orderId: string, opts: { withBalance?: boolean }
         ? null
         : (art.widthPx === target.w && art.heightPx === target.h) || (art.widthPx === template.widthPx && art.heightPx === template.heightPx)
       if (!template) warning('NO_TEMPLATE', `${refId}: SKU xưởng chưa gán template in — không đối chiếu được kích thước file`, refId)
+      else if (!target) warning('EXTRA_FILE', `${refId}: file "${area}" nằm ngoài các vùng in của template — vẫn gửi kèm cho xưởng`, refId)
       else if (sizeOk === null) warning('SIZE_UNKNOWN', `${refId}: không đọc được kích thước px của file "${area}"`, refId)
       else if (!sizeOk) warning('SIZE_MISMATCH', `${refId}: file "${area}" ${art.widthPx}×${art.heightPx}px khác khổ template ${target!.w}×${target!.h}px`, refId)
       let publicUrl: string | null = null
@@ -209,7 +216,20 @@ export async function buildPush(orderId: string, opts: { withBalance?: boolean }
       error('SHIP_COUNTRY', `${refId}: SKU ${apiSku ?? l.resolvedSupplierSku ?? '—'} chỉ giao tới: ${shipCountries.join(', ')} — đơn này giao ${destination}`, refId)
     }
     if (l.qty <= 0) error('BAD_QUANTITY', `${refId}: số lượng phải lớn hơn 0`, refId)
-    const mockupUrl = httpsUrl(l.previewCdnUrl ?? l.imageUrl)
+    // Mockups the designer uploaded come first; without one the customer preview / product image is sent as before.
+    const mockupFiles = currentFiles(lineFiles, 'MOCKUP')
+      .filter(a => a.mimeType === 'image/png' || a.mimeType === 'image/jpeg')
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+    const mockupImages: string[] = []
+    if (baseUrl && approved) {
+      for (const m of mockupFiles) {
+        const url = httpsUrl(publicArtworkUrl(baseUrl, await ensurePublicToken(m.id), m))
+        if (url) mockupImages.push(url)
+      }
+    }
+    const fallbackMockup = httpsUrl(l.previewCdnUrl ?? l.imageUrl)
+    if (mockupImages.length === 0 && fallbackMockup) mockupImages.push(fallbackMockup)
+    const mockupUrl = mockupFiles[0] ? artworkUrl(mockupFiles[0].id) : fallbackMockup
     if (!mockupUrl) warning('NO_MOCKUP', `${refId}: không có ảnh mockup (https) để gửi kèm`, refId)
     const note = l.designNote?.trim() || null
 
@@ -222,7 +242,7 @@ export async function buildPush(orderId: string, opts: { withBalance?: boolean }
     lineItems.push({
       name: l.variantTitle ? `${l.productTitle} - ${l.variantTitle}` : l.productTitle,
       refId, quantity: l.qty, sku: apiSku ?? '', shipClass: shipClass ?? '',
-      fileUrls, mockupImages: mockupUrl ? [mockupUrl] : [],
+      fileUrls, mockupImages,
     })
   }
 

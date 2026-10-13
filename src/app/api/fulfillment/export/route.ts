@@ -6,7 +6,7 @@ import { renderCsv, type CsvTemplate as RenderTemplate, type OrderForCsv } from 
 import { isNonProductLine } from '@/lib/order-lines'
 import { effectiveBaseCost } from '@/lib/order-profit'
 import { pickExportDesignLink } from '@/lib/export-design'
-import { DESIGN_AREA_SOURCE_PREFIX } from '@/lib/csv-template'
+import { DESIGN_AREA_SOURCE_PREFIX, MOCKUP_LINK_SOURCE } from '@/lib/csv-template'
 import { exportLinkErrorMessage, resolveExportDesignLinks } from '@/lib/export-design-links'
 
 const LINE_DESIGN_SOURCES = ['line.designDriveLink', 'line.designLinks']
@@ -69,21 +69,25 @@ export async function POST(req: NextRequest) {
   const templateColumns = parseTemplateColumns(tmpl.columns)
   const perOrder = tmpl.rowMode === 'PER_ORDER'
   const wantsOrderLink = templateColumns.some(c => c.source === ORDER_DESIGN_SOURCE)
-  const wantsLineLinks = !perOrder && templateColumns.some(c => LINE_DESIGN_SOURCES.includes(c.source) || c.source.startsWith(DESIGN_AREA_SOURCE_PREFIX))
+  const wantsJoinedLinks = !perOrder && templateColumns.some(c => LINE_DESIGN_SOURCES.includes(c.source))
+  const wantsAreaLinks = !perOrder && templateColumns.some(c => c.source.startsWith(DESIGN_AREA_SOURCE_PREFIX))
+  const wantsMockupLinks = !perOrder && templateColumns.some(c => c.source === MOCKUP_LINK_SOURCE)
+  const wantsLineLinks = wantsJoinedLinks || wantsAreaLinks
   // Links are resolved only for the columns the template prints, so a template without a design column never fails on one.
   const designLinks = await resolveExportDesignLinks(
-    wantsOrderLink || wantsLineLinks
+    wantsOrderLink || wantsLineLinks || wantsMockupLinks
       ? orders.flatMap(o => {
         const lines = exportableLinesOf(o)
         if (lines.length === 0) return []
         // The order-level link is printed by its own column, or as the fallback of a line that has no link.
-        const orderLinkUsed = wantsOrderLink || lines.some(l => !l.designDriveLink)
+        const orderLinkUsed = wantsOrderLink || (wantsLineLinks && lines.some(l => !l.designDriveLink))
         return [{
           id: o.id, storeId: o.storeId, shopifyOrderNumber: o.shopifyOrderNumber,
-          designDriveLink: orderLinkUsed ? o.designDriveLink : null, lines: wantsLineLinks ? lines : [],
+          designDriveLink: orderLinkUsed ? o.designDriveLink : null, lines: wantsLineLinks || wantsMockupLinks ? lines : [],
         }]
       })
       : [],
+    { design: wantsJoinedLinks, areas: wantsAreaLinks, mockup: wantsMockupLinks },
   )
   if (designLinks.problems.length > 0) {
     return NextResponse.json({
@@ -145,6 +149,7 @@ export async function POST(req: NextRequest) {
             designDriveLink,
             designLinks: designDriveLink,
             designAreaLinks: studio?.byArea ?? null,
+            mockupLink: designLinks.mockupByLineId.get(l.id) ?? l.previewCdnUrl ?? l.imageUrl ?? null,
             crogsPrice: effectiveBaseCost(l),
             crogsTotal: effectiveBaseCost(l) == null ? null : effectiveBaseCost(l)! * l.qty,
           }

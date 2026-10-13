@@ -27,11 +27,14 @@ export type OrderLineForCsv = {
   designDriveLink?: string | null
   designLinks?: string | null
   designAreaLinks?: Record<string, string> | null
+  mockupLink?: string | null
   crogsPrice?: number | null
   crogsTotal?: number | null
 }
 
 export const DESIGN_AREA_SOURCE_PREFIX = 'line.designArea:'
+/** The mockup the factory should follow: the newest mockup file uploaded in Design Studio, else the customer preview, else the product image. */
+export const MOCKUP_LINK_SOURCE = 'line.mockupLink'
 
 export function designAreaSource(areaName: string): string {
   return `${DESIGN_AREA_SOURCE_PREFIX}${areaName}`

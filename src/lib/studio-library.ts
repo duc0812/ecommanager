@@ -3,7 +3,8 @@ import { matchDesignEntry } from '@/lib/design-parent'
 import { isLineCustomized } from '@/lib/order-classify'
 import { extractPreviewCdnUrl } from '@/lib/order-line-assets'
 import { PublicUrlError } from '@/lib/public-artwork'
-import { factoryLinkFor, joinDesignLinks, lazyPublicBase, newestPerSlot } from '@/lib/design-links'
+import { factoryLinkFor, joinDesignLinks, lazyPublicBase } from '@/lib/design-links'
+import { folderHoldsPrintFiles, orderedPrintFiles } from '@/lib/task-files'
 
 export const STUDIO_LIBRARY_SOURCE = 'STUDIO'
 
@@ -33,26 +34,31 @@ export type LibrarySaveResult = { saved: boolean; designLink: string | null; not
 /**
  * After a non-customized line is approved in Design Studio, the approved files become the library design of its SKU × supplier,
  * so the next order of that SKU needs no task — what the Trello sync does for a card in the Done list.
- * The library gets a link the factory can open: the Drive link, or the public URL while the file is still local.
+ * The library gets a link the factory can open: the task folder once it holds every print file, else one link per print part
+ * (the Drive link, or the public URL while the file is still local) — the Drive push turns those into the folder link later.
  */
 export async function saveStudioDesignToLibrary(line: LibraryLine, slots: string[]): Promise<LibrarySaveResult> {
   if (!isReusableDesignLine(line)) return { saved: false, designLink: null, note: null }
-  const artworks = await prisma.designArtwork.findMany({
-    where: { orderId: line.orderId, shopifyLineId: line.shopifyLineId, removedAt: null },
-    orderBy: { version: 'desc' },
-  })
-  const picked = newestPerSlot(artworks, slots)
+  const [files, task] = await Promise.all([
+    prisma.designArtwork.findMany({ where: { orderId: line.orderId, shopifyLineId: line.shopifyLineId } }),
+    prisma.designTask.findUnique({ where: { orderId_shopifyLineId: { orderId: line.orderId, shopifyLineId: line.shopifyLineId } }, select: { driveFolderUrl: true } }),
+  ])
+  const picked = orderedPrintFiles(files.filter(a => !a.removedAt), slots)
   if (picked.length === 0) return { saved: false, designLink: null, note: null }
 
   let designLink: string
-  try {
-    const publicBase = lazyPublicBase()
-    const links: Array<{ url: string }> = []
-    for (const p of picked) links.push(await factoryLinkFor(p.artwork, publicBase))
-    designLink = joinDesignLinks(links)
-  } catch (e: any) {
-    if (!(e instanceof PublicUrlError)) throw e
-    return { saved: false, designLink: null, note: `Chưa lưu vào Design Library (đơn sau cùng SKU sẽ tạo task mới): ${e.message}` }
+  if (task?.driveFolderUrl && folderHoldsPrintFiles(files)) {
+    designLink = task.driveFolderUrl
+  } else {
+    try {
+      const publicBase = lazyPublicBase()
+      const links: Array<{ url: string }> = []
+      for (const p of picked) links.push(await factoryLinkFor(p, publicBase))
+      designLink = joinDesignLinks(links)
+    } catch (e: any) {
+      if (!(e instanceof PublicUrlError)) throw e
+      return { saved: false, designLink: null, note: `Chưa lưu vào Design Library (đơn sau cùng SKU sẽ tạo task mới): ${e.message}` }
+    }
   }
 
   const supplierId = line.resolvedSupplierId as string

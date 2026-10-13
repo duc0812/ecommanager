@@ -3,8 +3,9 @@ import { findProfile } from '@/lib/product-profiles'
 import { loadTemplateContext, pickTemplate, requiredSlotsFor } from '@/lib/design-tasks'
 import { PublicUrlError, isLineApproved } from '@/lib/public-artwork'
 import {
-  appFileArtworkId, factoryLinkFor, isAppFileLink, isStudioLink, joinDesignLinks, lazyPublicBase, newestPerSlot, type LinkArtwork, type SlotLink,
+  appFileArtworkId, factoryLinkFor, isAppFileLink, isStudioLink, joinDesignLinks, lazyPublicBase, type LinkArtwork, type SlotLink,
 } from '@/lib/design-links'
+import { currentFiles, orderedPrintFiles } from '@/lib/task-files'
 
 export type ExportLineInput = {
   id: string; orderId: string; shopifyLineId: string; linePosition: number; designDriveLink: string | null
@@ -14,18 +15,28 @@ export type ExportOrderInput = { id: string; storeId: string; shopifyOrderNumber
 
 export type StudioLineLinks = { joined: string; byArea: Record<string, string> }
 export type ExportLinkProblem = { orderNumber: string; reason: string }
+export type ExportLinkNeeds = {
+  /** The joined design link of a line (`line.designDriveLink`, `line.designLinks`). */
+  design?: boolean
+  /** One link per print part (`line.designArea:<part>`). */
+  areas?: boolean
+  /** The newest mockup file of a line (`line.mockupLink`). */
+  mockup?: boolean
+}
 export type ExportDesignLinks = {
   byLineId: Map<string, StudioLineLinks>
+  /** Lines with an uploaded mockup file: the link of the newest one. */
+  mockupByLineId: Map<string, string>
   /** A stored value as the factory can open it: an app file path becomes the Drive or public link, anything else is returned untouched. */
   translate: (stored: string | null) => string | null
   problems: ExportLinkProblem[]
 }
 
-type ArtworkRecord = LinkArtwork & { orderId: string; shopifyLineId: string; removedAt: Date | null }
+type ArtworkRecord = LinkArtwork & { orderId: string; shopifyLineId: string; kind: string; removedAt: Date | null; createdAt: Date }
 
 const ARTWORK_SELECT = {
-  id: true, orderId: true, shopifyLineId: true, printArea: true, version: true, fileName: true, mimeType: true,
-  storage: true, driveWebViewLink: true, removedAt: true,
+  id: true, orderId: true, shopifyLineId: true, kind: true, printArea: true, version: true, fileName: true, mimeType: true,
+  storage: true, driveWebViewLink: true, removedAt: true, createdAt: true,
 } as const
 const CHUNK = 400
 const lineKey = (orderId: string, shopifyLineId: string) => `${orderId}\u0000${shopifyLineId}`
@@ -37,12 +48,14 @@ function chunks<T>(list: T[]): T[][] {
 }
 
 /**
- * Links for a supplier CSV. A line approved in Design Studio gets one link per required print area (Drive link, or the
- * public artwork URL while the file is still local). Every other line keeps its stored link. An app-relative
+ * Links for a supplier CSV. A line approved in Design Studio whose stored link is its task folder exports that folder as is.
+ * Any other Studio line gets one link per print part (template areas first, then the other parts; Drive link, or the public
+ * artwork URL while the file is still local), joined. Every other line keeps its stored link. An app-relative
  * `/api/design-studio/file/...` path never leaves this function: it is translated, or reported as a problem.
  */
-export async function resolveExportDesignLinks(orders: ExportOrderInput[]): Promise<ExportDesignLinks> {
+export async function resolveExportDesignLinks(orders: ExportOrderInput[], needs: ExportLinkNeeds = { design: true, areas: true }): Promise<ExportDesignLinks> {
   const byLineId = new Map<string, StudioLineLinks>()
+  const mockupByLineId = new Map<string, string>()
   const stored = new Map<string, string>()
   const problems: ExportLinkProblem[] = []
   const seenProblem = new Set<string>()
@@ -53,12 +66,19 @@ export async function resolveExportDesignLinks(orders: ExportOrderInput[]): Prom
     problems.push({ orderNumber, reason })
   }
   const translate = (value: string | null) => (value && isAppFileLink(value) ? stored.get(value) ?? null : value)
-  if (orders.length === 0) return { byLineId, translate, problems }
+  if (orders.length === 0) return { byLineId, mockupByLineId, translate, problems }
 
   const orderIds = orders.map(o => o.id)
   const artworks: ArtworkRecord[] = []
+  const taskStatus = new Map<string, string>()
+  const folderUrl = new Map<string, string>()
   for (const ids of chunks(orderIds)) {
     artworks.push(...await prisma.designArtwork.findMany({ where: { orderId: { in: ids }, removedAt: null }, select: ARTWORK_SELECT, orderBy: { version: 'desc' } }))
+    const tasks = await prisma.designTask.findMany({ where: { orderId: { in: ids } }, select: { orderId: true, shopifyLineId: true, status: true, driveFolderUrl: true } })
+    for (const t of tasks) {
+      taskStatus.set(lineKey(t.orderId, t.shopifyLineId), t.status)
+      if (t.driveFolderUrl) folderUrl.set(lineKey(t.orderId, t.shopifyLineId), t.driveFolderUrl)
+    }
   }
   const byLine = new Map<string, ArtworkRecord[]>()
   for (const a of artworks) {
@@ -66,30 +86,31 @@ export async function resolveExportDesignLinks(orders: ExportOrderInput[]): Prom
     byLine.set(key, [...(byLine.get(key) ?? []), a])
   }
 
-  const studio: Array<{ order: ExportOrderInput; line: ExportLineInput; artworks: ArtworkRecord[] }> = []
+  type StudioLine = { order: ExportOrderInput; line: ExportLineInput; artworks: ArtworkRecord[]; folder: string | null }
+  const studio: StudioLine[] = []
+  const withMockup: StudioLine[] = []
   for (const order of orders) {
     for (const line of order.lines) {
-      const mine = byLine.get(lineKey(order.id, line.shopifyLineId)) ?? []
-      if (mine.length > 0 && isStudioLink(line.designDriveLink, mine)) studio.push({ order, line, artworks: mine })
+      const key = lineKey(order.id, line.shopifyLineId)
+      const mine = byLine.get(key) ?? []
+      const folder = folderUrl.get(key) ?? null
+      const entry = { order, line, artworks: mine, folder }
+      if (currentFiles(mine, 'PRINT').length > 0 && isStudioLink(line.designDriveLink, mine, folder)) studio.push(entry)
+      if (needs.mockup && currentFiles(mine, 'MOCKUP').length > 0) withMockup.push(entry)
     }
   }
 
-  const taskStatus = new Map<string, string>()
-  const studioOrderIds = Array.from(new Set(studio.map(s => s.order.id)))
-  for (const ids of chunks(studioOrderIds)) {
-    const tasks = await prisma.designTask.findMany({ where: { orderId: { in: ids } }, select: { orderId: true, shopifyLineId: true, status: true } })
-    for (const t of tasks) taskStatus.set(lineKey(t.orderId, t.shopifyLineId), t.status)
-  }
-
+  const wantsDesign = !!(needs.design || needs.areas)
+  const templated = wantsDesign ? studio : []
   const profiles = new Map<string, { printTemplateId: string | null } | null>()
-  for (const { order, line } of studio) {
+  for (const { order, line } of templated) {
     if (!line.shopifyProductId) continue
     const key = `${order.storeId}\u0000${line.shopifyProductId}`
     if (!profiles.has(key)) profiles.set(key, await findProfile(order.storeId, line.shopifyProductId))
   }
   const profileFor = (order: ExportOrderInput, line: ExportLineInput) =>
     line.shopifyProductId ? profiles.get(`${order.storeId}\u0000${line.shopifyProductId}`) ?? null : null
-  const ctx = await loadTemplateContext(studio.map(s => s.line), studio.map(s => profileFor(s.order, s.line)?.printTemplateId))
+  const ctx = await loadTemplateContext(templated.map(s => s.line), templated.map(s => profileFor(s.order, s.line)?.printTemplateId))
   const publicBase = lazyPublicBase()
 
   async function link(order: ExportOrderInput, line: { designDriveLink: string | null; linePosition?: number }, art: ArtworkRecord, area: string): Promise<SlotLink | null> {
@@ -110,30 +131,35 @@ export async function resolveExportDesignLinks(orders: ExportOrderInput[]): Prom
     }
   }
 
-  for (const { order, line, artworks: mine } of studio) {
+  for (const { order, line, artworks: mine, folder } of templated) {
+    const handsFolder = !!folder && line.designDriveLink === folder
+    // The folder link needs no per-file link; those are only resolved for a column that prints one part.
+    if (handsFolder && !needs.areas) { byLineId.set(line.id, { joined: folder, byArea: {} }); continue }
     const template = pickTemplate(line, profileFor(order, line), ctx)
-    let picked = newestPerSlot(mine, requiredSlotsFor(template))
-    if (picked.length === 0) {
-      const approved = mine.find(a => a.id === appFileArtworkId(line.designDriveLink ?? '') || (!!a.driveWebViewLink && a.driveWebViewLink === line.designDriveLink))
-      picked = approved ? [{ area: approved.printArea, artwork: approved }] : newestPerSlot(mine, [mine[0].printArea])
-    }
+    const picked = orderedPrintFiles(mine, requiredSlotsFor(template))
     const links: SlotLink[] = []
     for (const p of picked) {
-      const l = await link(order, line, p.artwork, p.area)
+      const l = await link(order, line, p, p.printArea)
       if (l) links.push(l)
     }
     if (links.length === picked.length) {
-      byLineId.set(line.id, { joined: joinDesignLinks(links), byArea: Object.fromEntries(links.map(l => [l.area, l.url])) })
+      byLineId.set(line.id, { joined: handsFolder ? folder : joinDesignLinks(links), byArea: Object.fromEntries(links.map(l => [l.area, l.url])) })
     }
   }
 
+  for (const { order, line, artworks: mine } of withMockup) {
+    const newest = currentFiles(mine, 'MOCKUP').sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0]
+    const l = await link(order, line, newest, newest.printArea)
+    if (l) mockupByLineId.set(line.id, l.url)
+  }
+
   // Stored app paths outside the Studio lines above: an order-level link, or a line whose artworks were all removed.
-  const studioLineIds = new Set(studio.map(s => s.line.id))
+  const studioLineIds = new Set(templated.map(s => s.line.id))
   const pending = new Map<string, ExportOrderInput>()
   for (const order of orders) {
     if (isAppFileLink(order.designDriveLink)) pending.set(order.designDriveLink, order)
     for (const line of order.lines) {
-      if (!studioLineIds.has(line.id) && isAppFileLink(line.designDriveLink)) pending.set(line.designDriveLink, order)
+      if (wantsDesign && !studioLineIds.has(line.id) && isAppFileLink(line.designDriveLink)) pending.set(line.designDriveLink, order)
     }
   }
   if (pending.size > 0) {
@@ -156,7 +182,7 @@ export async function resolveExportDesignLinks(orders: ExportOrderInput[]): Prom
     }
   }
 
-  return { byLineId, translate, problems }
+  return { byLineId, mockupByLineId, translate, problems }
 }
 
 export function exportLinkErrorMessage(problems: ExportLinkProblem[]): string {
