@@ -15,7 +15,7 @@ const tokens: Record<string, string> = {}
 async function user(name: string, role: string, permissions: string[] | null) {
   const email = `${name}@dtn.test`
   const row = await prisma.appUser.upsert({
-    where: { email }, create: { name, email, role, permissions: permissions ? JSON.stringify(permissions) : null }, update: {},
+    where: { email }, create: { name, email, role, permissions: permissions ? JSON.stringify(permissions) : undefined }, update: {},
   })
   tokens[name] = await signToken({ userId: row.id, email, name, role: role as any, permissions: (permissions ?? []) as any, tv: 0 })
   return row.id
