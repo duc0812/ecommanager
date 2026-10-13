@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { taskKeyFor, canTransition } from '@/lib/design-tasks'
+import { taskKeyFor, canTransition, dueForNewTask } from '@/lib/design-tasks'
 
 describe('taskKeyFor', () => {
   it('strips # and joins with _', () => {
@@ -54,5 +54,15 @@ describe('canTransition', () => {
     expect(T('NEW', 'CANCELLED', 'LEADER')).toBe(true)
     expect(T('ASK_CUSTOMER', 'CANCELLED', 'LEADER')).toBe(true)
     expect(T('NEW', 'CANCELLED', 'DESIGNER')).toBe(false)
+  })
+})
+
+describe('dueForNewTask', () => {
+  const now = new Date('2026-10-13T00:00:00Z').getTime()
+  it('counts the SLA from the order date while that deadline is still ahead', () => {
+    expect(dueForNewTask(new Date('2026-10-12T20:00:00Z'), 24, now).toISOString()).toBe('2026-10-13T20:00:00.000Z')
+  })
+  it('gives a backlog order a full SLA from now', () => {
+    expect(dueForNewTask(new Date('2026-10-05T00:00:00Z'), 24, now).toISOString()).toBe('2026-10-14T00:00:00.000Z')
   })
 })

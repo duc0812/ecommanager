@@ -104,6 +104,12 @@ export async function studioOwnedLines(orderId: string): Promise<Set<string>> {
   return withArtwork
 }
 
+/** SLA runs from the order date; a task created after that deadline (backlog, late mapping) gets a full SLA from now instead of being born overdue. */
+export function dueForNewTask(placedAt: Date, slaHours: number, now = Date.now()): Date {
+  const fromOrder = placedAt.getTime() + slaHours * 3600_000
+  return new Date(fromOrder > now ? fromOrder : now + slaHours * 3600_000)
+}
+
 export type SyncResult = { created: number; cancelled: number; completed: number; reopened: number }
 
 function reopenedByFactory(task: { rejectReasons: string | null }): boolean {
@@ -162,7 +168,7 @@ export async function syncDesignTasks(orderId: string): Promise<SyncResult> {
     await prisma.designTask.create({ data: {
       orderId, shopifyLineId: line.shopifyLineId, taskKey: taskKeyFor(order.shopifyOrderNumber, line.linePosition),
       status: 'NEW', readiness: await readinessForLine(line, order.storeId), kpi: kpiForProductType(settings, line.shopifyProductType),
-      slaHours, dueAt: new Date(order.placedAt.getTime() + slaHours * 3600_000), supplierSnapshot: supplierName.get(line.resolvedSupplierId) ?? null,
+      slaHours, dueAt: dueForNewTask(order.placedAt, slaHours), supplierSnapshot: supplierName.get(line.resolvedSupplierId) ?? null,
       ...(reopenNew ? factoryReopen : {}),
       events: { create: reopenNew ? factoryEvent : { type: 'SYSTEM', message: 'Đơn vào từ Shopify — tạo task' } },
     } })
