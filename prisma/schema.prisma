@@ -463,6 +463,7 @@ model DesignArtwork {
   orderId       String
   order         Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
   shopifyLineId String
+  kind          String   @default("PRINT")
   printArea     String
   version       Int
   fileName      String
@@ -470,6 +471,7 @@ model DesignArtwork {
   storage       String   @default("LOCAL")
   driveFileId   String?
   driveWebViewLink String?
+  drivePlace    String?
   size          Int
   mimeType      String
   widthPx       Int?
@@ -481,7 +483,7 @@ model DesignArtwork {
   removedAt     DateTime?
   removedById   String?
   publicToken   String?  @unique
-  @@unique([orderId, shopifyLineId, printArea, version])
+  @@unique([orderId, shopifyLineId, kind, printArea, version])
   @@index([orderId])
 }
 
@@ -490,6 +492,7 @@ model DesignArtworkUpload {
   orderId       String
   order         Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
   shopifyLineId String
+  kind          String    @default("PRINT")
   printArea     String
   version       Int
   fileName      String
@@ -542,6 +545,8 @@ model DesignTask {
   rejectNote       String?
   prevStatus       String?
   supplierSnapshot String?
+  driveFolderId    String?
+  driveFolderUrl   String?
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
   events           DesignTaskEvent[]
