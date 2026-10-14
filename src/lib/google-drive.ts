@@ -250,6 +250,7 @@ export async function uploadChunk(sessionUrl: string, chunk: Buffer, start: numb
     body: chunk as unknown as BodyInit,
   })
   if (res.status === 308) {
+    await res.body?.cancel()
     const match = /bytes=0-(\d+)/.exec(res.headers.get('range') ?? '')
     return { done: false, nextStart: match ? Number(match[1]) + 1 : 0 }
   }
@@ -298,6 +299,17 @@ export async function placeFile(id: string, folderId: string, name: string): Pro
 
 export async function streamFile(id: string): Promise<Response> {
   return driveFetch(`${FILES_URL}/${encodeURIComponent(id)}?alt=media`)
+}
+
+/** Google's own small rendering of an image file (a few dozen KB), or null when Drive has not made one yet. */
+export async function streamThumbnail(id: string, sizePx = 480): Promise<Response | null> {
+  const meta = await getFile(id, 'thumbnailLink')
+  const link = typeof meta?.thumbnailLink === 'string' ? meta.thumbnailLink : null
+  if (!link || !/^https:\/\/[a-z0-9.-]+\.googleusercontent\.com\//i.test(link)) return null
+  const sized = /=s\d+$/.test(link) ? link.replace(/=s\d+$/, `=s${sizePx}`) : link
+  const res = await fetch(sized, { headers: { Authorization: `Bearer ${await getAccessToken()}` } })
+  if (!res.ok || !res.body) { await res.body?.cancel(); return null }
+  return res
 }
 
 export async function shareAnyoneReader(id: string): Promise<any> {

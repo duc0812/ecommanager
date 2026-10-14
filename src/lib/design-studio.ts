@@ -114,6 +114,9 @@ export function artworkUrl(id: string): string {
   return `/api/design-studio/file/${id}`
 }
 
+// Small renderings for lists and strips; the full file is only loaded when it is opened.
+const THUMBABLE = ['image/png', 'image/jpeg', 'image/webp', 'image/gif']
+
 export function toArtworkRow(a: {
   id: string; kind?: string | null; printArea: string; version: number; fileName: string; size: number; mimeType: string; uploadedById: string | null
   createdAt: Date; widthPx: number | null; heightPx: number | null; storage: string; driveWebViewLink: string | null
@@ -124,7 +127,7 @@ export function toArtworkRow(a: {
     mimeType: a.mimeType, uploadedById: a.uploadedById, createdAt: a.createdAt.toISOString(), url: artworkUrl(a.id),
     widthPx: a.widthPx, heightPx: a.heightPx,
     storage: a.storage === 'DRIVE' ? 'DRIVE' : 'LOCAL', driveWebViewLink: a.driveWebViewLink,
-    source: a.source === 'AUTO' ? 'AUTO' : 'MANUAL', previewUrl: a.previewPath ? `${artworkUrl(a.id)}?preview=1` : null,
+    source: a.source === 'AUTO' ? 'AUTO' : 'MANUAL', previewUrl: a.previewPath ? `${artworkUrl(a.id)}?preview=1` : THUMBABLE.includes(a.mimeType) ? `${artworkUrl(a.id)}?thumb=1` : null,
   }
 }
 
