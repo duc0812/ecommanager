@@ -13,8 +13,9 @@ export async function logHandoffEvent(orderId: string, message: string, actorId:
 }
 
 /**
- * The one place a supplier push marks its order: Exported, the API handoff, and the state a cancel restores.
- * Returns false when the order is not in an exportable status (it then stays as it is).
+ * The one place a supplier push marks its order: the pushed supplier's lines (exportedAt = pushedAt, which is how a
+ * cancel finds them again), Exported + the API handoff once every line is sent, and the state a cancel restores.
+ * Returns false when nothing was marked (the order is not in an exportable status, or has no line of this supplier).
  */
 export async function markPushExported(push: PushRef): Promise<boolean> {
   const before = await prisma.order.findUnique({
@@ -37,6 +38,7 @@ export async function markPushExported(push: PushRef): Promise<boolean> {
         supplierHandoffAt: before.supplierHandoffAt ? before.supplierHandoffAt.toISOString() : null,
         supplierHandoffMode: before.supplierHandoffMode,
         supplierHandoffById: before.supplierHandoffById,
+        linesMarked: marked.lines,
       }),
     },
   })

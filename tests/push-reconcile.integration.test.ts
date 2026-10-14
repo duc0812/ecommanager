@@ -168,8 +168,11 @@ describe('order pushed to PGprints before its design was approved in the app', (
     expect(push).toMatchObject({ status: 'CREATED', exportMarked: true })
     expect(JSON.parse(push.prevExportJson!)).toEqual({
       pipelineStatus: 'READY_TO_PRODUCTION', exportedAt: null, exportedToSupplierId: null,
-      supplierHandoffAt: null, supplierHandoffMode: null, supplierHandoffById: null,
+      supplierHandoffAt: null, supplierHandoffMode: null, supplierHandoffById: null, linesMarked: expect.any(Number),
     })
+    const pgLines = await prisma.orderLine.findMany({ where: { orderId: o.id, resolvedSupplierId: PG_SUP } })
+    expect(pgLines.length).toBeGreaterThan(0)
+    expect(pgLines.every(l => l.exportedToSupplierId === PG_SUP && l.exportedAt?.getTime() === PUSHED_AT.getTime())).toBe(true)
     expect(createCalls()).toBe(0)
     expect(await countPendingHandoff()).toBe(pending)
     expect((await listHandoffCards()).pending.some(c => c.order.id === o.id)).toBe(false)
@@ -254,8 +257,11 @@ describe('scripts/reconcile-pushed-orders.mjs', () => {
     expect(push.exportMarked).toBe(true)
     expect(JSON.parse(push.prevExportJson!)).toEqual({
       pipelineStatus: 'READY_TO_PRODUCTION', exportedAt: null, exportedToSupplierId: null,
-      supplierHandoffAt: null, supplierHandoffMode: null, supplierHandoffById: null,
+      supplierHandoffAt: null, supplierHandoffMode: null, supplierHandoffById: null, linesMarked: expect.any(Number),
     })
+    const scriptLines = await prisma.orderLine.findMany({ where: { orderId: ready.id, resolvedSupplierId: PG_SUP } })
+    expect(scriptLines.length).toBeGreaterThan(0)
+    expect(scriptLines.every(l => l.exportedToSupplierId === PG_SUP && l.exportedAt?.getTime() === PUSHED_AT.getTime())).toBe(true)
     expect(await order(unknown.id)).toMatchObject({ pipelineStatus: 'READY_TO_PRODUCTION', supplierHandoffAt: null })
     expect(await order(notReady.id)).toMatchObject({ pipelineStatus: 'PENDING_DESIGN', supplierHandoffAt: null })
     expect(await order(noPush.id)).toMatchObject({ pipelineStatus: 'READY_TO_PRODUCTION', supplierHandoffAt: null })

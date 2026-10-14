@@ -9,6 +9,7 @@ import { autoDetectStatus, type PipelineStatus } from '@/lib/pipeline-status'
 import { fetchOrderLinePropsByNames, type ShopifyOrderLineProps } from '@/lib/shopify-orders'
 import { getShopifyConnection } from '@/lib/token-store'
 import { reconcilePushedOrder } from '@/lib/repos/push-export'
+import { clearLineExports } from '@/lib/repos/orders'
 import { fileKindOf, folderHoldsPrintFiles, missingPrintAreas, orderedPrintFiles, type FileKind } from '@/lib/task-files'
 
 export type CustomAttribute = { key: string; value: string }
@@ -292,6 +293,8 @@ async function recomputeOrderDesign(orderId: string, markedDone: boolean) {
   // A handoff is stale once a line is reopened or the factory sent the file back: the new design has to be handed over again.
   const staleHandoff = !!order.supplierHandoffAt && !['EXPORTED', 'FULFILLED'].includes(pipelineStatus)
     && (!designReady || (markedDone && order.pipelineStatus === 'DESIGN_REJECTED'))
+  // Re-approved after the factory sent the design back: every task was reopened, so every line goes to its supplier again.
+  if (markedDone && designReady && order.pipelineStatus === 'DESIGN_REJECTED') await clearLineExports([orderId])
   const select = { id: true, designReady: true, pipelineStatus: true } as const
   const updated = await prisma.order.update({
     where: { id: orderId },

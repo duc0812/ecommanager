@@ -459,6 +459,8 @@ describe('API handoff — supplier linked to PGprints', () => {
     const r = await transitionTask(o.keys[0], DES, { to: 'DONE' })
     expect(r.order).toMatchObject({ designReady: true, pipelineStatus: 'READY_TO_PRODUCTION' })
     expect(await order(o.id)).toMatchObject({ supplierHandoffAt: null, supplierHandoffMode: null })
+    // The redone design goes out again: the line marks of the earlier send are gone.
+    expect(await prisma.orderLine.count({ where: { orderId: o.id, exportedAt: { not: null } } })).toBe(0)
     expect(await handoffStateFor(o.id)).toMatchObject({ pending: true, handedOff: null, push: { status: 'CREATED' } })
     expect(createCalls).toBe(1)
   })

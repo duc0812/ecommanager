@@ -573,6 +573,8 @@ describe('POST cancel', () => {
     const order = await prisma.order.findUniqueOrThrow({ where: { id: o.id } })
     expect(order.pipelineStatus).toBe('EXPORTED')
     expect(order.exportedAt?.getTime()).toBe(later.getTime())
+    const line = await prisma.orderLine.findFirstOrThrow({ where: { orderId: o.id, resolvedSupplierId: SUP } })
+    expect(line.exportedToSupplierId).toBe(SUP)
   })
 })
 

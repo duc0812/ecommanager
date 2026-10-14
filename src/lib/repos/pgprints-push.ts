@@ -459,7 +459,15 @@ export async function cancelPush(orderId: string): Promise<{ push: PushView; exp
         supplierHandoffById: prev.supplierHandoffAt ? (prev.supplierHandoffById ?? null) : null,
       },
     })
-    exportReverted = reverted.count === 1
+    // Only the lines this push marked carry its supplier and its pushedAt; lines sent another way keep their mark.
+    // An order re-marked Exported after the push keeps its lines too, or it would be Exported with unsent lines.
+    const stillExported = reverted.count === 0
+      && (await prisma.order.count({ where: { id: orderId, pipelineStatus: 'EXPORTED' } })) > 0
+    const lines = stillExported ? { count: 0 } : await prisma.orderLine.updateMany({
+      where: { orderId, exportedToSupplierId: push.supplierId, exportedAt: push.pushedAt },
+      data: { exportedAt: null, exportedToSupplierId: null },
+    })
+    exportReverted = reverted.count === 1 || lines.count > 0
     if (exportReverted) await logHandoffEvent(orderId, 'Huỷ đơn bên PGprints — đơn trở lại chờ chuyển xưởng', null)
   }
   return { push: await viewOf(push.id), exportReverted }

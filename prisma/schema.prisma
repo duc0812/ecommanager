@@ -451,8 +451,11 @@ model OrderLine {
   imageUrl                String?
   designNote              String?
   shopifyProductId        String?
+  exportedAt              DateTime?
+  exportedToSupplierId    String?
   @@index([sku])
   @@index([shopifyProductId])
+  @@index([exportedToSupplierId])
   @@index([shopifyVariantId])
   @@index([orderId])
   @@index([orderId, shopifyLineId])

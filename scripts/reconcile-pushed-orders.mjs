@@ -4,7 +4,8 @@ import path from 'path'
 
 // Orders pushed to PGprints outside the app keep a CREATED SupplierOrderPush with exportMarked = 0. Once such an order is
 // READY_TO_PRODUCTION it would be offered for handoff again. This marks it exactly like markPushExported in
-// src/lib/repos/push-export.ts: order → EXPORTED + API handoff at the push time, push → exportMarked + prevExportJson.
+// src/lib/repos/push-export.ts: the pushed supplier's lines + order → EXPORTED + API handoff at the push time,
+// push → exportMarked + prevExportJson.
 // It never calls PGprints. Dry run by default; pass --apply to write. Safe to re-run: marked pushes no longer match.
 const url = process.env.DATABASE_URL?.trim() || `file:${path.resolve(process.cwd(), 'dev.db')}`
 const apply = process.argv.includes('--apply')
@@ -47,6 +48,11 @@ if (apply) {
         args: [r.pushedAt, r.supplierId, r.pushedAt, r.pushedById ?? null, at, r.orderId],
       })
       if (order.rowsAffected === 1) {
+        // The pushed supplier's lines carry the push time, which is how a cancel in the app finds them again.
+        const lines = await tx.execute({
+          sql: `UPDATE "OrderLine" SET exportedAt=?, exportedToSupplierId=? WHERE orderId=? AND resolvedSupplierId=? AND exportedAt IS NULL`,
+          args: [r.pushedAt, r.supplierId, r.orderId, r.supplierId],
+        })
         const prev = JSON.stringify({
           pipelineStatus: r.pipelineStatus,
           exportedAt: iso(r.exportedAt),
@@ -54,6 +60,7 @@ if (apply) {
           supplierHandoffAt: iso(r.supplierHandoffAt),
           supplierHandoffMode: r.supplierHandoffMode ?? null,
           supplierHandoffById: r.supplierHandoffById ?? null,
+          linesMarked: lines.rowsAffected,
         })
         const push = await tx.execute({
           sql: `UPDATE "SupplierOrderPush" SET exportMarked=1, prevExportJson=?, updatedAt=? WHERE id=? AND status='CREATED' AND exportMarked=0`,
