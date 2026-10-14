@@ -8,6 +8,7 @@ import { lineDesignStatus } from '@/lib/design-status'
 import { sumMetaAmountsUsdDated } from '@/lib/meta-currency'
 import { getMetaRateSchedule } from '@/lib/meta-exchange-rates'
 import { PAID_META_STATUSES } from '@/lib/meta-fee'
+import { exportProgress, exportProgressLabel, exportedSupplierOf } from '@/lib/line-export'
 
 export type PlSummary = {
   orderCount: number
@@ -51,6 +52,13 @@ export type EnrichedOrder = Awaited<ReturnType<typeof listOrdersWithLines>>[numb
     isEstimated: boolean
   }
   mappingSummary: { mapped: number; total: number; complete: boolean }
+  exportProgress: OrderExportProgress
+}
+
+export type OrderExportProgress = {
+  partial: boolean
+  label: string | null
+  suppliers: Array<{ id: string; name: string; positions: number[]; exported: number; total: number; done: boolean; lastExportedAt: string | null }>
 }
 
 export async function ordersWithComputedPL(filter: OrderFilter): Promise<EnrichedOrder[]> {
@@ -64,8 +72,14 @@ export async function ordersWithComputedPL(filter: OrderFilter): Promise<Enriche
   const skuDesignMap = new Map(skuDesigns.map(s => [s.sku, s]))
   // Ready per-(parent × supplier) designs — powers the "Design Library" line status.
   const designEntries = await loadReadyDesignEntries()
+  const lineSupplierIds = Array.from(new Set(orders.flatMap(o => o.lines.flatMap(l => [l.resolvedSupplierId, l.exportedToSupplierId]).filter((x): x is string => !!x))))
+  const lineSuppliers = lineSupplierIds.length > 0
+    ? await prisma.supplier.findMany({ where: { id: { in: lineSupplierIds } }, select: { id: true, name: true } })
+    : []
+  const supplierNameById = new Map(lineSuppliers.map(s => [s.id, s.name]))
 
   return orders.map(o => {
+    const progress = exportProgress(o)
     const mappableLines = productLines(o.lines)
     const totalQty = mappableLines.reduce((s, l) => s + l.qty, 0)
     const estimate = estimateOrderCostAndProfit(o.expectedPayout, mappableLines)
@@ -88,6 +102,10 @@ export async function ordersWithComputedPL(filter: OrderFilter): Promise<Enriche
       ...o,
       lines: o.lines.map(l => ({
         ...l,
+        exportedSupplierName: (() => {
+          const sentTo = exportedSupplierOf(o, l)
+          return sentTo ? (supplierNameById.get(sentTo) ?? 'xưởng không rõ') : null
+        })(),
         lineKey: productLineNumberById.has(l.id)
           ? `${o.shopifyOrderNumber.replace(/^#/, '')}_${productLineNumberById.get(l.id)}`
           : '',
@@ -117,6 +135,14 @@ export async function ordersWithComputedPL(filter: OrderFilter): Promise<Enriche
       },
       designReady,
       driveLink,
+      exportProgress: {
+        partial: progress.partial,
+        label: progress.partial ? exportProgressLabel(progress) : null,
+        suppliers: progress.groups.map(g => ({
+          id: g.supplierId, name: supplierNameById.get(g.supplierId) ?? 'xưởng không rõ',
+          positions: g.positions, exported: g.exported, total: g.total, done: g.done, lastExportedAt: g.lastExportedAt,
+        })),
+      },
     }
   })
 }

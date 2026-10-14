@@ -53,7 +53,15 @@ type OrderRow = {
     designDriveLink: string | null
     previewCdnUrl: string | null
     designStatus: LineDesignStatus
+    linePosition: number
+    exportedAt: string | null
+    exportedSupplierName: string | null
   }>
+  exportProgress?: {
+    partial: boolean
+    label: string | null
+    suppliers: Array<{ id: string; name: string; positions: number[]; exported: number; total: number; done: boolean; lastExportedAt: string | null }>
+  }
   computed: {
     baseCost: number
     knownCogs: number
@@ -80,7 +88,15 @@ type Summary = {
 type Project = { id: string; name: string; shopifyStore: { shop: string } | null }
 type Supplier = { id: string; name: string }
 type StatusCounts = Record<PipelineStatus, number>
-type CountsResponse = StatusCounts & { warnings: Record<WarningType, number> }
+type CountsResponse = StatusCounts & { warnings: Record<WarningType, number>; partiallyExported?: number }
+
+const PARTIAL_EXPORT_TONE = 'bg-indigo-50 text-indigo-900'
+
+function supplierExportTitle(p: NonNullable<OrderRow['exportProgress']>): string {
+  return p.suppliers
+    .map(s => `${s.name} (dòng ${s.positions.join(', ')}): ${s.done ? 'đã xuất' : s.exported > 0 ? `đã xuất ${s.exported}/${s.total} dòng` : 'chưa xuất'}`)
+    .join('\n')
+}
 
 async function fetchJson<T>(url: string): Promise<T> {
   const res = await fetch(url)
@@ -560,6 +576,11 @@ export default function OrdersPage() {
                 }`}
               >
                 {STATUS_LABELS[s]}{c > 0 && <span className="text-label-sm ml-xs">{c}</span>}
+                {s === 'READY_TO_PRODUCTION' && (counts?.partiallyExported ?? 0) > 0 && (
+                  <span className={`ml-xs rounded px-xs text-label-sm ${PARTIAL_EXPORT_TONE}`} title="Đơn đã xuất cho một xưởng, còn dòng của xưởng khác chưa xuất">
+                    {counts!.partiallyExported} đã xuất 1 phần
+                  </span>
+                )}
               </button>
             )
           })}
@@ -799,15 +820,34 @@ export default function OrdersPage() {
                     })()}
                   </td>
                   <td className="px-sm py-sm">
-                    <select
-                      value={o.pipelineStatus}
-                      onChange={e => changeOneStatus(o.id, e.target.value as PipelineStatus)}
-                      className={`w-full text-label-sm rounded px-xs py-[2px] ${STATUS_COLORS[o.pipelineStatus]}`}
-                    >
-                      {PIPELINE_STATUSES.map(s => (
-                        <option key={s} value={s}>{STATUS_LABELS[s]}</option>
-                      ))}
-                    </select>
+                    {(() => {
+                      const ep = o.exportProgress
+                      const partial = !!ep?.partial && o.pipelineStatus === 'READY_TO_PRODUCTION'
+                      return (
+                        <>
+                          <select
+                            value={o.pipelineStatus}
+                            onChange={e => changeOneStatus(o.id, e.target.value as PipelineStatus)}
+                            title={partial ? supplierExportTitle(ep!) : undefined}
+                            className={`w-full text-label-sm rounded px-xs py-[2px] ${partial ? PARTIAL_EXPORT_TONE : STATUS_COLORS[o.pipelineStatus]}`}
+                          >
+                            {PIPELINE_STATUSES.map(s => (
+                              <option key={s} value={s}>{partial && s === o.pipelineStatus ? ep!.label : STATUS_LABELS[s]}</option>
+                            ))}
+                          </select>
+                          {partial && (
+                            <div className="mt-[3px] flex flex-wrap gap-[3px]" title={supplierExportTitle(ep!)}>
+                              {ep!.suppliers.map(s => (
+                                <span key={s.id} className={`inline-flex items-center gap-[2px] rounded px-xs py-[1px] text-[10px] leading-none ${s.done ? 'bg-indigo-100 text-indigo-900' : 'bg-surface-container text-on-surface-variant'}`}>
+                                  <span className="material-symbols-outlined text-[12px]">{s.done ? 'check' : 'schedule'}</span>
+                                  {s.name}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </>
+                      )
+                    })()}
                   </td>
                 </tr>
               ))}
@@ -885,6 +925,11 @@ export default function OrdersPage() {
                     <span className={`rounded px-xs py-[2px] text-label-sm ${statusTone(selectedOrder.fulfillmentStatus)}`}>
                       {titleCaseStatus(selectedOrder.fulfillmentStatus)}
                     </span>
+                    {selectedOrder.exportProgress?.partial && selectedOrder.pipelineStatus === 'READY_TO_PRODUCTION' && (
+                      <span className={`rounded px-xs py-[2px] text-label-sm ${PARTIAL_EXPORT_TONE}`} title={supplierExportTitle(selectedOrder.exportProgress)}>
+                        {selectedOrder.exportProgress.label}
+                      </span>
+                    )}
                   </div>
                 </div>
                 <div className="flex items-center gap-sm">
@@ -914,6 +959,7 @@ export default function OrdersPage() {
                           <th className="px-md py-sm text-right">Price</th>
                           <th className="px-md py-sm text-right">Total</th>
                           <th className="px-md py-sm text-right">Base cost</th>
+                          <th className="px-md py-sm">Xuất xưởng</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -979,6 +1025,21 @@ export default function OrdersPage() {
                                 </span>
                               ) : (
                                 <span>—</span>
+                              )}
+                            </td>
+                            <td className="px-md py-sm text-label-sm">
+                              {line.exportedSupplierName ? (
+                                <span
+                                  className="inline-flex items-center gap-[2px] rounded bg-indigo-100 px-xs py-[1px] text-indigo-900"
+                                  title={line.exportedAt ? `Xuất lúc ${new Date(line.exportedAt).toLocaleString('en-US')}` : 'Đánh dấu theo lần xuất cũ của cả đơn'}
+                                >
+                                  <span className="material-symbols-outlined text-[13px]">check</span>
+                                  {line.exportedSupplierName}
+                                </span>
+                              ) : line.resolvedSupplierId && line.lineKey ? (
+                                <span className="text-on-surface-variant">Chưa xuất</span>
+                              ) : (
+                                <span className="text-on-surface-variant">—</span>
                               )}
                             </td>
                           </tr>

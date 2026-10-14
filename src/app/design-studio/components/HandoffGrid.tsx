@@ -36,6 +36,7 @@ function OrderCard({ c, me, onOpenTask, onChanged, onError }: {
           {c.suppliers.map(s => <Pill key={s.id} tone="idle" icon="factory">{s.name}</Pill>)}
           {c.suppliers.length === 0 && <Pill tone="bad" icon="factory">chưa map xưởng</Pill>}
           {state.push && <Pill tone="warn" icon="local_shipping">{pushChipLabel(state.push)}</Pill>}
+          {c.exportNote && <Pill tone="warn" icon="call_split">{c.exportNote}</Pill>}
           <span className="ml-auto inline-flex items-center gap-xs text-label-sm text-on-surface" title="Nước giao hàng">
             <Icon name="public" className="text-[16px] text-on-surface-variant" /><b>{destination}</b>
             {order.shipTo && <span className="text-on-surface-variant">· {order.shipTo}</span>}
@@ -64,7 +65,11 @@ function OrderCard({ c, me, onOpenTask, onChanged, onError }: {
                   )}
               </div>
               <div className="flex-1 min-w-0 flex flex-col gap-xs text-body-sm">
-                <button type="button" onClick={() => onOpenTask(l.taskKey)} title="Mở task" className="self-start font-mono font-semibold text-secondary hover:underline">{l.taskKey}</button>
+                <span className="flex items-center gap-xs flex-wrap">
+                  <button type="button" onClick={() => onOpenTask(l.taskKey)} title="Mở task" className="font-mono font-semibold text-secondary hover:underline">{l.taskKey}</button>
+                  {l.line.supplier && <span className="text-label-sm text-on-surface-variant">{l.line.supplier.name}</span>}
+                  {l.exportedTo && <Pill tone="ok" icon="check">Đã xuất {l.exportedTo}</Pill>}
+                </span>
                 <span className="text-on-surface font-semibold break-words">{l.line.productTitle}</span>
                 <span className="text-label-sm text-on-surface-variant">{l.line.variantTitle ? `${l.line.variantTitle} · ` : ''}SL {l.line.qty}</span>
                 <span className="text-label-sm text-on-surface-variant">

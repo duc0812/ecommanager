@@ -8,6 +8,7 @@ import { credentialsOf, getPgprintsSettings } from '@/lib/pgprints-settings'
 import { isPgprintsSupplier } from '@/lib/pgprints-shared'
 import { activePushByOrder, logHandoffEvent } from '@/lib/repos/push-export'
 import type { HandoffCard, HandoffLine, HandoffState } from '@/lib/handoff-shared'
+import { exportProgress, exportProgressLabel, exportedSupplierOf } from '@/lib/line-export'
 
 export class HandoffError extends Error {
   constructor(message: string, readonly status: number, readonly code: string) {
@@ -144,9 +145,15 @@ async function buildCards(where: any, orderBy: any): Promise<HandoffCard[]> {
   const wsById = new Map(workspaces.filter((w): w is Workspace => !!w).map(w => [w.order.id, w]))
   const lineRows = await prisma.orderLine.findMany({
     where: { orderId: { in: orders.map(o => o.id) } },
-    select: { id: true, orderId: true, resolvedSupplierId: true, resolvedSupplierSku: true, shopifyProductId: true, customAttributesJson: true },
+    select: {
+      id: true, orderId: true, resolvedSupplierId: true, resolvedSupplierSku: true, shopifyProductId: true, customAttributesJson: true,
+      sku: true, productTitle: true, shopifyProductType: true, linePosition: true, exportedAt: true, exportedToSupplierId: true,
+    },
   })
   const rowById = new Map(lineRows.map(l => [l.id, l]))
+  const exportSupplierIds = Array.from(new Set(lineRows.flatMap(l => [l.resolvedSupplierId, l.exportedToSupplierId]).filter((x): x is string => !!x)))
+  const exportSuppliers = exportSupplierIds.length ? await prisma.supplier.findMany({ where: { id: { in: exportSupplierIds } }, select: { id: true, name: true } }) : []
+  const supplierNameById = new Map(exportSuppliers.map(s => [s.id, s.name]))
   const folders = await prisma.designTask.findMany({
     where: { orderId: { in: orders.map(o => o.id) }, driveFolderUrl: { not: null } }, select: { orderId: true, shopifyLineId: true, driveFolderUrl: true },
   })
@@ -165,18 +172,26 @@ async function buildCards(where: any, orderBy: any): Promise<HandoffCard[]> {
     const ws = wsById.get(o.id)
     const state = states.get(o.id)
     if (!ws || !state) continue
+    const exportOrder = { pipelineStatus: o.pipelineStatus, exportedAt: o.exportedAt, exportedToSupplierId: o.exportedToSupplierId, lines: lineRows.filter(l => l.orderId === o.id) }
     const lines: HandoffLine[] = []
     for (const line of ws.lines) {
       if (line.isNonProduct || !line.supplier) continue
       const row = rowById.get(line.id)
+      const sentTo = row ? exportedSupplierOf(exportOrder, row) : null
       lines.push({
         line,
         slots: row ? requiredSlotsFor(await templateForLine(row)) : [],
         taskKey: taskKeyFor(o.shopifyOrderNumber, line.linePosition),
         driveFolderUrl: folderByLine.get(`${o.id}\u0000${line.shopifyLineId}`) ?? null,
         apiSku: line.supplierSku ? (apiSkuByKey.get(`${line.supplier.id}::${line.supplierSku}`) ?? null) : null,
+        exportedTo: sentTo ? (supplierNameById.get(sentTo) ?? 'xưởng không rõ') : null,
       })
     }
+    const progress = exportProgress(exportOrder)
+    // A partly sent order stays in the queue for the suppliers whose lines are still waiting.
+    const exportNote = progress.partial
+      ? `${exportProgressLabel(progress)} — còn chờ: ${progress.groups.filter(g => !g.done).map(g => supplierNameById.get(g.supplierId) ?? 'xưởng không rõ').join(', ')}`
+      : null
     const suppliers = Array.from(new Map(lines.map(l => [l.line.supplier!.id, { id: l.line.supplier!.id, name: l.line.supplier!.name, code: l.line.supplier!.code }])).values())
     const countryCode = countryCodeOf(o.shippingCountry)
     cards.push({
@@ -186,7 +201,7 @@ async function buildCards(where: any, orderBy: any): Promise<HandoffCard[]> {
         country: o.shippingCountry, countryCode, countryName: countryCode ? countryNameOf(countryCode) : null,
         shipTo: [o.shippingCity, o.shippingStateCode ?? o.shippingState].filter(Boolean).join(', ') || null,
       },
-      suppliers, lines, state,
+      suppliers, lines, state, exportNote,
     })
   }
   return cards

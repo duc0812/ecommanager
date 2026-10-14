@@ -15,7 +15,11 @@ export type HandoffState = {
   push: HandoffPush | null
 }
 
-export type HandoffLine = { line: WorkspaceLine; slots: string[]; taskKey: string; apiSku: string | null; driveFolderUrl: string | null }
+export type HandoffLine = {
+  line: WorkspaceLine; slots: string[]; taskKey: string; apiSku: string | null; driveFolderUrl: string | null
+  /** Supplier this line was already sent to, null while it waits. */
+  exportedTo: string | null
+}
 
 export type HandoffCard = {
   order: {
@@ -25,6 +29,8 @@ export type HandoffCard = {
   suppliers: { id: string; name: string; code: string }[]
   lines: HandoffLine[]
   state: HandoffState
+  /** "Đã xuất 1/2 xưởng — còn chờ: Jomall" while some suppliers already got their lines. */
+  exportNote: string | null
 }
 
 export const HANDOFF_LABELS = {
