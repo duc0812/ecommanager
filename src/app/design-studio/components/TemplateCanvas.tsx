@@ -300,11 +300,12 @@ function useDropZone(upload: CanvasUpload | null | undefined, resolve: (e: DragE
   return { drag, frameProps }
 }
 
-function NoTemplateCanvas({ line, upload, artActions, sourceUrl }: { line: WorkspaceLine; upload?: CanvasUpload | null; artActions?: CanvasArtActions | null; sourceUrl: string | null }) {
+function NoTemplateCanvas({ line, upload, artActions }: { line: WorkspaceLine; upload?: CanvasUpload | null; artActions?: CanvasArtActions | null; sourceUrl?: string | null }) {
   const files = printFiles(line, [])
   const [picked, setPicked] = useState('')
   const art = files.find(f => f.printArea === picked) ?? files[0]
-  const shown = art && isImage(art) ? art.url : !art ? sourceUrl : null
+  // Only the designer's own print files belong here; the customer's source file is shown with the order info, never as if it were artwork.
+  const shown = art && isImage(art) ? art.url : null
   const { drag, frameProps } = useDropZone(upload, () => MANY, 'Kéo thả một hoặc nhiều file vào đây để tải lên')
   return (
     <div className="flex flex-col gap-sm flex-1 min-h-0">
@@ -325,7 +326,7 @@ function NoTemplateCanvas({ line, upload, artActions, sourceUrl }: { line: Works
               </button>
             ) : (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={shown} alt={art ? 'File in hiện có' : 'File nguồn'} className="max-w-full max-h-[420px] object-contain" />
+              <img src={shown} alt="File in hiện có" className="max-w-full max-h-[420px] object-contain" />
             )}
           </div>
         )}
@@ -352,6 +353,12 @@ function NoTemplateCanvas({ line, upload, artActions, sourceUrl }: { line: Works
                 <span className="truncate">{f.printArea}</span>
               </button>
             ))}
+          </div>
+        )}
+        {files.length === 0 && (
+          <div className="flex flex-col items-center gap-xs text-on-surface-variant">
+            <Icon name="image_not_supported" className="text-[40px] opacity-60" />
+            <span className="text-body-sm font-semibold">Chưa có file in — designer chưa upload file nào</span>
           </div>
         )}
         {upload && (
