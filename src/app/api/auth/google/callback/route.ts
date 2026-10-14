@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { deleteSettings, saveSetting } from '@/lib/token-store'
 import {
-  GOOGLE_KEYS, GoogleOAuthError, consumeGoogleOAuthState, exchangeGoogleCode, fetchGoogleEmail,
+  DRIVE_SCOPES, GOOGLE_KEYS, GoogleOAuthError, consumeGoogleOAuthState, exchangeGoogleCode, fetchGoogleEmail,
   getGoogleConfig, googleAppUrl,
 } from '@/lib/google-oauth'
 import { ROOT_FOLDER_NAME, ensureFolder, primeAccessToken, refreshDriveQuota, resetDriveCache } from '@/lib/google-drive'
@@ -35,6 +35,10 @@ export async function GET(req: NextRequest) {
     return back('error', reason)
   }
 
+  // Google's consent screen lets the user untick the Drive permission; without it nothing can be uploaded.
+  const granted = String(tokens.scope ?? '').split(/\s+/)
+  if (!granted.some(s => DRIVE_SCOPES.includes(s))) return back('error', 'no_drive_scope')
+
   const refreshToken = tokens.refresh_token || cfg.refreshToken
   if (!refreshToken) return back('error', 'no_refresh_token')
   if (tokens.refresh_token) await saveSetting(GOOGLE_KEYS.refreshToken, tokens.refresh_token)
@@ -51,7 +55,7 @@ export async function GET(req: NextRequest) {
     await saveSetting(GOOGLE_KEYS.rootFolderId, rootId)
   } catch (err: any) {
     console.error('[google oauth] root folder failed:', err?.message ?? err)
-    await deleteSettings([GOOGLE_KEYS.rootFolderId])
+    await deleteSettings([GOOGLE_KEYS.rootFolderId, GOOGLE_KEYS.refreshToken, GOOGLE_KEYS.email])
     return back('error', 'root_folder')
   }
   await refreshDriveQuota().catch(() => {})

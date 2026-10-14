@@ -54,7 +54,7 @@ async function saveClient() {
 }
 
 function googleSuccess(url: string, init: RequestInit) {
-  if (url === 'https://oauth2.googleapis.com/token') return json({ access_token: ACCESS, refresh_token: REFRESH, expires_in: 3599 })
+  if (url === 'https://oauth2.googleapis.com/token') return json({ access_token: ACCESS, refresh_token: REFRESH, expires_in: 3599, scope: 'openid https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/drive.file' })
   if (url === 'https://www.googleapis.com/oauth2/v2/userinfo') return json({ email: 'owner@gmail.com' })
   if (url.startsWith('https://www.googleapis.com/drive/v3/files')) {
     return init.method === 'POST' ? json({ id: 'root-folder-1' }) : json({ files: [] })
@@ -168,7 +168,7 @@ describe('GET /api/auth/google/callback', () => {
     await prisma.appSetting.create({ data: { key: GOOGLE_KEYS.refreshToken, value: 'old-refresh' } })
     saveGoogleOAuthState('state-keep')
     mockFetch((url, init) => (url === 'https://oauth2.googleapis.com/token'
-      ? json({ access_token: ACCESS, expires_in: 3599 })
+      ? json({ access_token: ACCESS, expires_in: 3599, scope: 'https://www.googleapis.com/auth/drive.file' })
       : googleSuccess(url, init)))
 
     const res = await callback(req('/api/auth/google/callback?code=c&state=state-keep', null))
@@ -197,6 +197,20 @@ describe('GET /api/auth/google/callback', () => {
 
     const res = await callback(req('/api/auth/google/callback?code=c&state=state-root-fail', null))
     expect(res.headers.get('location')).toBe('http://localhost:3002/setup?google=error&reason=root_folder')
+    expect(await setting(GOOGLE_KEYS.rootFolderId)).toBeNull()
+    expect(await setting(GOOGLE_KEYS.refreshToken)).toBeNull()
+  })
+
+  it('refuses a consent where the Drive permission was left unticked, and stores nothing', async () => {
+    await saveClient()
+    saveGoogleOAuthState('state-no-drive')
+    mockFetch((url, init) => (url === 'https://oauth2.googleapis.com/token'
+      ? json({ access_token: ACCESS, refresh_token: REFRESH, expires_in: 3599, scope: 'openid https://www.googleapis.com/auth/userinfo.email' })
+      : googleSuccess(url, init)))
+
+    const res = await callback(req('/api/auth/google/callback?code=c&state=state-no-drive', null))
+    expect(res.headers.get('location')).toBe('http://localhost:3002/setup?google=error&reason=no_drive_scope')
+    expect(await setting(GOOGLE_KEYS.refreshToken)).toBeNull()
     expect(await setting(GOOGLE_KEYS.rootFolderId)).toBeNull()
   })
 })

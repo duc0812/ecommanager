@@ -34,6 +34,7 @@ const REASON_TEXT: Record<string, string> = {
   missing_code: 'Google không trả về mã xác thực',
   no_refresh_token: 'Google không trả về refresh token — hãy gỡ quyền app trong tài khoản Google rồi kết nối lại',
   root_folder: 'đã kết nối nhưng không tạo được thư mục "Design Studio"',
+  no_drive_scope: 'chưa cấp quyền Google Drive — khi đăng nhập Google, hãy TICK vào ô quyền Google Drive ("See, edit, create… files you use with this app") rồi bấm Continue',
   invalid_client: 'Client ID / Client Secret sai',
   invalid_grant: 'mã xác thực hết hạn, thử lại',
   redirect_uri_mismatch: 'Redirect URI chưa khai báo trong OAuth client',
