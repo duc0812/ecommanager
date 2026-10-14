@@ -8,6 +8,7 @@ import { effectiveBaseCost } from '@/lib/order-profit'
 import { pickExportDesignLink } from '@/lib/export-design'
 import { DESIGN_AREA_SOURCE_PREFIX, MOCKUP_LINK_SOURCE } from '@/lib/csv-template'
 import { exportLinkErrorMessage, resolveExportDesignLinks } from '@/lib/export-design-links'
+import { exportProgress, exportProgressLabel, isLineExported, mixedSupplierNote } from '@/lib/line-export'
 
 const LINE_DESIGN_SOURCES = ['line.designDriveLink', 'line.designLinks']
 const ORDER_DESIGN_SOURCE = 'order.designDriveLink'
@@ -21,15 +22,33 @@ export async function POST(req: NextRequest) {
   const tmpl = await getTemplateById(body.templateId)
   if (!tmpl) return NextResponse.json({ error: 'Template not found' }, { status: 404 })
 
+  const reExport = body.reExport === true
+  // Every order with a line of this supplier, also when another supplier holds most of it (defaultSupplierId).
   const matched = await listOrdersWithLines({
     projectId: body.projectId || undefined,
-    supplierId: tmpl.supplierId,
+    lineSupplierId: tmpl.supplierId,
     pipelineStatus: body.pipelineStatus || undefined,
     dateFrom: body.dateFrom ? new Date(body.dateFrom + 'T00:00:00Z') : undefined,
     dateTo: body.dateTo ? new Date(body.dateTo + 'T23:59:59.999Z') : undefined,
     limit: 5000,
   })
-  const orders = body.handoffOnly === true ? matched.filter(o => o.supplierHandoffAt != null) : matched
+  const handedOff = body.handoffOnly === true ? matched.filter(o => o.supplierHandoffAt != null) : matched
+
+  const supplierLinesOf = (o: (typeof matched)[number]) => o.lines.filter(l =>
+    !isNonProductLine(l) &&
+    l.resolvedSupplierId === tmpl.supplierId &&
+    Boolean(l.resolvedSupplierSku)
+  )
+  // Lines already sent to a supplier stay out of the file unless the operator asks to send them again.
+  const includedIds = new Set<string>()
+  let skippedExportedLines = 0
+  for (const o of handedOff) {
+    for (const l of supplierLinesOf(o)) {
+      if (!reExport && isLineExported(o, l)) skippedExportedLines++
+      else includedIds.add(l.id)
+    }
+  }
+  const orders = handedOff.filter(o => o.lines.some(l => includedIds.has(l.id)))
 
   const supplierSkus = Array.from(new Set(
     orders.flatMap(o => o.lines.map(l => l.resolvedSupplierSku).filter((sku): sku is string => Boolean(sku))),
@@ -61,11 +80,7 @@ export async function POST(req: NextRequest) {
     : []
   const skuDesignBySku = new Map(skuDesigns.map(s => [s.sku, s]))
 
-  const exportableLinesOf = (o: (typeof orders)[number]) => o.lines.filter(l =>
-    !isNonProductLine(l) &&
-    l.resolvedSupplierId === tmpl.supplierId &&
-    Boolean(l.resolvedSupplierSku)
-  )
+  const exportableLinesOf = (o: (typeof orders)[number]) => supplierLinesOf(o).filter(l => includedIds.has(l.id))
   const templateColumns = parseTemplateColumns(tmpl.columns)
   const perOrder = tmpl.rowMode === 'PER_ORDER'
   const wantsOrderLink = templateColumns.some(c => c.source === ORDER_DESIGN_SOURCE)
@@ -164,19 +179,41 @@ export async function POST(req: NextRequest) {
   }
   const csv = renderCsv(renderTmpl, ordersForCsv)
 
-  // Mark exported if requested
-  if (body.markExported && ordersForCsv.length > 0) {
-    const exportedOrderNumbers = new Set(ordersForCsv.map(o => o.shopifyOrderNumber))
-    const orderIds = orders.filter(o => exportedOrderNumbers.has(o.shopifyOrderNumber)).map(o => o.id)
-    await markOrdersExported(orderIds, tmpl.supplierId)
+  const inCsv = new Set(ordersForCsv.map(o => o.shopifyOrderNumber))
+  const csvOrders = orders.filter(o => inCsv.has(o.shopifyOrderNumber))
+
+  let marked = { count: 0, lines: 0, completed: [] as string[] }
+  if (body.markExported && csvOrders.length > 0) {
+    const lineIds = csvOrders.flatMap(o => exportableLinesOf(o).map(l => l.id))
+    marked = await markOrdersExported(csvOrders.map(o => o.id), tmpl.supplierId, new Date(), undefined, { lineIds })
   }
 
-  // If preview mode, return JSON; otherwise CSV with attachment header
   if (body.preview) {
-    const inCsv = new Set(ordersForCsv.map(o => o.shopifyOrderNumber))
-    const previewOrders = orders
-      .filter(o => inCsv.has(o.shopifyOrderNumber))
-      .map(o => ({ shopifyOrderNumber: o.shopifyOrderNumber, pipelineStatus: o.pipelineStatus, designHandedOff: o.supplierHandoffAt != null, handoffMode: o.supplierHandoffMode }))
+    const otherIds = Array.from(new Set(csvOrders.flatMap(o => o.lines.map(l => l.resolvedSupplierId).filter((x): x is string => !!x && x !== tmpl.supplierId))))
+    const others = otherIds.length ? await prisma.supplier.findMany({ where: { id: { in: otherIds } }, select: { id: true, name: true } }) : []
+    const nameById = new Map([[tmpl.supplierId, tmpl.supplier.name], ...others.map(s => [s.id, s.name] as [string, string])])
+    const nameOf = (id: string) => nameById.get(id) ?? 'xưởng không rõ'
+    const previewOrders = csvOrders.map(o => {
+      const productLines = o.lines.filter(l => !isNonProductLine(l))
+      const productLineNumberById = new Map(productLines.map((line, idx) => [line.id, idx + 1]))
+      const progress = exportProgress(o)
+      return {
+        shopifyOrderNumber: o.shopifyOrderNumber,
+        pipelineStatus: o.pipelineStatus,
+        designHandedOff: o.supplierHandoffAt != null,
+        handoffMode: o.supplierHandoffMode,
+        lines: supplierLinesOf(o).map(l => ({
+          linePosition: l.linePosition,
+          lineKey: `${o.shopifyOrderNumber.replace(/^#/, '')}_${productLineNumberById.get(l.id) ?? 1}`,
+          productTitle: l.productTitle,
+          variantTitle: l.variantTitle,
+          included: includedIds.has(l.id),
+          alreadyExported: isLineExported(o, l),
+        })),
+        mixedNote: mixedSupplierNote(o, nameOf),
+        exportProgress: progress.partial ? exportProgressLabel(progress) : null,
+      }
+    })
     return NextResponse.json({
       orderCount: ordersForCsv.length,
       csv,
@@ -184,6 +221,8 @@ export async function POST(req: NextRequest) {
       supplierName: tmpl.supplier.name,
       orders: previewOrders,
       handoffCount: previewOrders.filter(o => o.designHandedOff).length,
+      reExport,
+      skippedExportedLines,
     })
   }
 
@@ -194,6 +233,9 @@ export async function POST(req: NextRequest) {
     headers: {
       'Content-Type': 'text/csv; charset=utf-8',
       'Content-Disposition': `attachment; filename="${filename}"`,
+      'X-Export-Lines-Marked': String(marked.lines),
+      'X-Export-Orders-Completed': String(marked.completed.length),
+      'X-Export-Orders-Partial': String(Math.max(0, marked.count - marked.completed.length)),
     },
   })
 }

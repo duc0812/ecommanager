@@ -12,6 +12,11 @@ type Template = {
   columns?: string
 }
 type TemplateColumn = { header: string; source: string }
+type PreviewLine = { linePosition: number; lineKey: string; productTitle: string; variantTitle: string | null; included: boolean; alreadyExported: boolean }
+type PreviewOrder = {
+  shopifyOrderNumber: string; pipelineStatus: string; designHandedOff: boolean; handoffMode: string | null
+  lines?: PreviewLine[]; mixedNote?: string | null; exportProgress?: string | null
+}
 type SourceOption = { value: string; label: string; needsLine?: boolean }
 
 const DESIGN_AREA_PREFIX = 'line.designArea:'
@@ -150,13 +155,15 @@ export default function ExportPage() {
   const [dateTo, setDateTo] = useState<string>(today())
   const [pipelineStatus, setPipelineStatus] = useState<string>('')
   const [handoffOnly, setHandoffOnly] = useState(false)
+  const [reExport, setReExport] = useState(false)
 
   const [previewing, setPreviewing] = useState(false)
   const [downloading, setDownloading] = useState(false)
   const [preview, setPreview] = useState<{
-    orderCount: number; csv: string; supplierCode: string
-    orders?: { shopifyOrderNumber: string; pipelineStatus: string; designHandedOff: boolean; handoffMode: string | null }[]
+    orderCount: number; csv: string; supplierCode: string; supplierName?: string
+    orders?: PreviewOrder[]
     handoffCount?: number
+    skippedExportedLines?: number
   } | null>(null)
   const [message, setMessage] = useState('')
 
@@ -338,6 +345,7 @@ export default function ExportPage() {
         dateTo: dateTo || undefined,
         pipelineStatus: pipelineStatus || undefined,
         handoffOnly: handoffOnly || undefined,
+        reExport: reExport || undefined,
         preview: true,
         markExported: false,
       }),
@@ -345,11 +353,12 @@ export default function ExportPage() {
     const data = await res.json()
     if (!res.ok) { setMessage(data.error || 'Preview failed'); setPreviewing(false); return }
     setPreview(data); setPreviewing(false)
-  }, [templateId, projectId, dateFrom, dateTo, pipelineStatus, handoffOnly])
+  }, [templateId, projectId, dateFrom, dateTo, pipelineStatus, handoffOnly, reExport])
 
   const download = async () => {
     if (!templateId) { setMessage('Pick a template'); return }
-    if (!confirm(handoffOnly ? 'Download CSV (chỉ đơn design đã chuyển) and mark these orders as EXPORTED?' : 'Download CSV and mark these orders as EXPORTED?')) return
+    const scope = [handoffOnly ? 'chỉ đơn design đã chuyển' : '', reExport ? 'gồm cả dòng đã xuất' : ''].filter(Boolean).join(', ')
+    if (!confirm(`Tải CSV${scope ? ` (${scope})` : ''} và đánh dấu các dòng của xưởng này là đã xuất? Đơn chỉ chuyển sang Exported khi mọi xưởng của đơn đã nhận dòng của mình.`)) return
     setDownloading(true); setMessage('')
     const res = await fetch('/api/fulfillment/export', {
       method: 'POST',
@@ -361,6 +370,7 @@ export default function ExportPage() {
         dateTo: dateTo || undefined,
         pipelineStatus: pipelineStatus || undefined,
         handoffOnly: handoffOnly || undefined,
+        reExport: reExport || undefined,
         markExported: true,
       }),
     })
@@ -381,7 +391,10 @@ export default function ExportPage() {
     a.click()
     a.remove()
     URL.revokeObjectURL(url)
-    setMessage('Downloaded and marked orders as EXPORTED')
+    const linesMarked = Number(res.headers.get('x-export-lines-marked') ?? 0)
+    const completed = Number(res.headers.get('x-export-orders-completed') ?? 0)
+    const partial = Number(res.headers.get('x-export-orders-partial') ?? 0)
+    setMessage(`Đã tải CSV · ${linesMarked} dòng đánh dấu đã xuất · ${completed} đơn chuyển Exported${partial > 0 ? ` · ${partial} đơn còn dòng của xưởng khác (vẫn Ready)` : ''}`)
     setDownloading(false)
     setPreview(null)
   }
@@ -453,11 +466,15 @@ export default function ExportPage() {
               {previewing ? 'Loading...' : 'Preview'}
             </button>
             <button onClick={download} disabled={downloading || !templateId} className="bg-secondary text-on-secondary px-lg py-sm rounded-lg text-label-md disabled:opacity-50">
-              {downloading ? 'Downloading...' : 'Download CSV (mark exported)'}
+              {downloading ? 'Downloading...' : 'Download CSV (đánh dấu đã xuất)'}
             </button>
             <label className="inline-flex items-center gap-xs text-body-sm cursor-pointer" title="Chỉ lấy các đơn Design Studio đã bấm &quot;Lưu chờ xuất CSV&quot; (hoặc đã chuyển qua API)">
               <input type="checkbox" checked={handoffOnly} onChange={e => { setHandoffOnly(e.target.checked); setPreview(null) }} className="w-4 h-4 accent-secondary" />
               Chỉ đơn design đã chuyển
+            </label>
+            <label className="inline-flex items-center gap-xs text-body-sm cursor-pointer" title="Mặc định file chỉ có các dòng chưa gửi cho xưởng này. Bật để gửi lại cả dòng đã xuất (ngày xuất của các dòng đó không đổi).">
+              <input type="checkbox" checked={reExport} onChange={e => { setReExport(e.target.checked); setPreview(null) }} className="w-4 h-4 accent-secondary" />
+              Xuất lại cả dòng đã xuất
             </label>
             {message && <span className="text-body-sm">{message}</span>}
           </div>
@@ -471,18 +488,41 @@ export default function ExportPage() {
                 {preview.orders ? `${preview.handoffCount ?? 0}/${preview.orders.length} design đã chuyển · ` : ''}Supplier: {preview.supplierCode}
               </span>
             </div>
+            {(preview.skippedExportedLines ?? 0) > 0 && (
+              <p className="mb-md flex items-center gap-xs text-body-sm text-on-surface-variant">
+                <span className="material-symbols-outlined text-[18px]">filter_alt</span>
+                Bỏ qua {preview.skippedExportedLines} dòng đã xuất cho {preview.supplierName ?? preview.supplierCode} — bật &quot;Xuất lại cả dòng đã xuất&quot; để gửi lại.
+              </p>
+            )}
             {preview.orders && preview.orders.length > 0 && (
-              <div className="mb-md flex flex-wrap gap-xs" aria-label="Đơn trong file CSV">
+              <div className="mb-md flex flex-col gap-xs" aria-label="Đơn trong file CSV">
                 {preview.orders.map(o => (
-                  <span key={o.shopifyOrderNumber} className="inline-flex items-center gap-xs rounded-full border border-outline-variant/40 bg-surface-container-lowest px-sm py-[2px] text-label-sm">
-                    <span className="font-mono">{o.shopifyOrderNumber}</span>
+                  <div key={o.shopifyOrderNumber} className="flex flex-wrap items-center gap-xs rounded-lg border border-outline-variant/30 bg-surface-container-lowest px-sm py-xs text-label-sm">
+                    <span className="font-mono font-semibold">{o.shopifyOrderNumber}</span>
                     {o.designHandedOff && (
                       <span className="inline-flex items-center gap-[2px] rounded-full bg-emerald-100 px-xs font-semibold text-emerald-900">
                         <span className="material-symbols-outlined text-[13px]">verified</span>
                         Design đã chuyển
                       </span>
                     )}
-                  </span>
+                    {o.exportProgress && (
+                      <span className="inline-flex items-center gap-[2px] rounded-full bg-indigo-100 px-xs text-indigo-900">
+                        <span className="material-symbols-outlined text-[13px]">call_split</span>
+                        {o.exportProgress}
+                      </span>
+                    )}
+                    {(o.lines ?? []).map(l => (
+                      <span
+                        key={l.lineKey}
+                        title={`${l.productTitle}${l.variantTitle ? ` · ${l.variantTitle}` : ''}`}
+                        className={`inline-flex items-center gap-[2px] rounded px-xs ${l.included ? 'bg-secondary/10 text-secondary' : 'bg-surface-container text-on-surface-variant line-through'}`}
+                      >
+                        <span className="material-symbols-outlined text-[13px]">{l.included ? (l.alreadyExported ? 'replay' : 'check') : 'block'}</span>
+                        dòng {l.linePosition}{l.included ? (l.alreadyExported ? ' · xuất lại' : '') : ' · đã xuất'}
+                      </span>
+                    ))}
+                    {o.mixedNote && <span className="text-amber-900">{o.mixedNote}</span>}
+                  </div>
                 ))}
               </div>
             )}
