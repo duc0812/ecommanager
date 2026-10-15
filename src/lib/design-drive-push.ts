@@ -5,11 +5,11 @@ import { artworkUrl } from '@/lib/design-studio'
 import { DESIGN_LINK_SEPARATOR, joinDesignLinks } from '@/lib/design-links'
 import { localLibraryPath } from '@/lib/library-storage'
 import {
-  DriveAuthError, DriveError, childFolder, deleteFile, folderForPath, getFile, isDriveConnected, shareAnyoneReader,
+  DriveAuthError, DriveError, deleteFile, folderForPath, getFile, isDriveConnected, shareAnyoneReader,
   startResumableUpload, uploadChunk,
 } from '@/lib/google-drive'
-import { ensureTaskFolder, tidyTaskFolder } from '@/lib/task-folder'
-import { OLD_FOLDER_NAME, currentFileIds, driveFileName, driveOldFileName, type DrivePlace } from '@/lib/task-files'
+import { ensureTaskFolder, oldFolderFor, tidyTaskFolder } from '@/lib/task-folder'
+import { currentFileIds, driveFileName, driveOldFileName, type DrivePlace } from '@/lib/task-files'
 
 export const DRIVE_CHUNK_SIZE = 8 * 1024 * 1024
 export const RECONNECT_WARNING = 'Google Drive cần kết nối lại'
@@ -102,7 +102,7 @@ export async function pushArtworkToDrive(artworkId: string): Promise<PushResult>
       select: { id: true, kind: true, printArea: true, version: true, storage: true, removedAt: true },
     })
     const place: DrivePlace | null = !folder.taskId ? null : currentFileIds(siblings).has(art.id) ? 'TASK' : 'OLD'
-    const parentId = place === 'OLD' ? await childFolder(folder.id, OLD_FOLDER_NAME) : folder.id
+    const parentId = place === 'OLD' ? await oldFolderFor(art.orderId, art.shopifyLineId) : folder.id
     const name = place === 'TASK' ? driveFileName(art) : place === 'OLD' ? driveOldFileName(art) : `v${art.version}-${art.fileName}`
     const sessionUrl = await startResumableUpload({ name, mimeType: art.mimeType, size, parentId })
     const key = { orderId: art.orderId, shopifyLineId: art.shopifyLineId, kind: art.kind, printArea: art.printArea, version: art.version }

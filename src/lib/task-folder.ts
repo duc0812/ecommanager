@@ -3,7 +3,7 @@ import { artworkUrl } from '@/lib/design-studio'
 import { taskKeyFor } from '@/lib/design-tasks'
 import { DESIGN_LINK_SEPARATOR, joinDesignLinks } from '@/lib/design-links'
 import { getGoogleConfig, isDriveConfigured } from '@/lib/google-oauth'
-import { DriveAuthError, DriveError, childFolder, driveFolderUrl, folderForTask, placeFile, shareAnyoneReader } from '@/lib/google-drive'
+import { DriveAuthError, DriveError, driveFolderUrl, folderForPath, placeFile, removeEmptyChildFolder, shareAnyoneReader } from '@/lib/google-drive'
 import { OLD_FOLDER_NAME, currentFileIds, driveFileName, driveOldFileName, folderHoldsPrintFiles, type DrivePlace } from '@/lib/task-files'
 
 export type TaskFolder = { id: string; url: string; taskId: string | null }
@@ -36,31 +36,46 @@ export function resetTaskFolderState() {
 
 const lineKey = (orderId: string, shopifyLineId: string) => `${orderId}\u0000${shopifyLineId}`
 
-async function resolveTaskFolder(orderId: string, shopifyLineId: string): Promise<TaskFolder> {
-  const task = await prisma.designTask.findUnique({
-    where: { orderId_shopifyLineId: { orderId, shopifyLineId } }, select: { id: true, taskKey: true, driveFolderId: true, driveFolderUrl: true },
-  })
-  if (task?.driveFolderId) return { id: task.driveFolderId, url: task.driveFolderUrl ?? driveFolderUrl(task.driveFolderId), taskId: task.id }
+/** `[<Store>, <YYYY-MM>, <Order>, <TaskKey>]`, the Drive path of a line's folder under the Design Studio root. */
+async function taskFolderPath(orderId: string, shopifyLineId: string, taskKey?: string): Promise<string[]> {
   const [order, line] = await Promise.all([
     prisma.order.findUnique({
       where: { id: orderId },
       select: { shopifyOrderNumber: true, placedAt: true, store: { select: { shop: true, project: { select: { name: true } } } } },
     }),
-    prisma.orderLine.findFirst({ where: { orderId, shopifyLineId }, select: { linePosition: true } }),
+    taskKey ? null : prisma.orderLine.findFirst({ where: { orderId, shopifyLineId }, select: { linePosition: true } }),
   ])
   if (!order) throw new Error('Order not found')
-  const id = await folderForTask({
-    storeName: order.store.project?.name ?? order.store.shop,
-    placedAt: order.placedAt,
-    orderNumber: order.shopifyOrderNumber,
-    taskKey: task?.taskKey ?? taskKeyFor(order.shopifyOrderNumber, line?.linePosition ?? 0),
+  return [
+    order.store.project?.name ?? order.store.shop,
+    order.placedAt.toISOString().slice(0, 7),
+    order.shopifyOrderNumber,
+    taskKey ?? taskKeyFor(order.shopifyOrderNumber, line?.linePosition ?? 0),
+  ]
+}
+
+async function resolveTaskFolder(orderId: string, shopifyLineId: string): Promise<TaskFolder> {
+  const task = await prisma.designTask.findUnique({
+    where: { orderId_shopifyLineId: { orderId, shopifyLineId } }, select: { id: true, taskKey: true, driveFolderId: true, driveFolderUrl: true },
   })
+  if (task?.driveFolderId) return { id: task.driveFolderId, url: task.driveFolderUrl ?? driveFolderUrl(task.driveFolderId), taskId: task.id }
+  const id = await folderForPath(await taskFolderPath(orderId, shopifyLineId, task?.taskKey))
   const url = driveFolderUrl(id)
   if (!task) return { id, url, taskId: null }
   // The folder is shared before it is remembered: a failed share is retried by the next push instead of leaving a private folder behind.
   await shareAnyoneReader(id)
   await prisma.designTask.updateMany({ where: { id: task.id, driveFolderId: null }, data: { driveFolderId: id, driveFolderUrl: url } })
   return { id, url, taskId: task.id }
+}
+
+/**
+ * Where superseded and removed versions of a task go: `<Order>/_old/<TaskKey>`, beside the task folders and never inside the
+ * folder the factory has a link to, so the factory only ever sees the current files.
+ */
+export async function oldFolderFor(orderId: string, shopifyLineId: string): Promise<string> {
+  const task = await prisma.designTask.findUnique({ where: { orderId_shopifyLineId: { orderId, shopifyLineId } }, select: { taskKey: true } })
+  const [store, month, order, taskKey] = await taskFolderPath(orderId, shopifyLineId, task?.taskKey)
+  return folderForPath([store, month, order, OLD_FOLDER_NAME, taskKey])
 }
 
 /**
@@ -157,11 +172,12 @@ async function tidy(orderId: string, shopifyLineId: string, retryStuck: boolean)
       return { ...result, failed: todo.length, lastError: err?.message ?? String(err), authError: err instanceof DriveAuthError }
     }
     if (!folder.taskId) return result
+    let oldFolder: string | null = null
     for (const f of todo) {
       const place = wanted(f)
       const where = { id: f.id, driveFileId: f.driveFileId }
       try {
-        const target = place === 'TASK' ? folder.id : await childFolder(folder.id, OLD_FOLDER_NAME)
+        const target = place === 'TASK' ? folder.id : (oldFolder ??= await oldFolderFor(orderId, shopifyLineId))
         await placeFile(f.driveFileId as string, target, place === 'TASK' ? driveFileName(f) : driveOldFileName(f))
         await prisma.designArtwork.updateMany({ where, data: { drivePlace: place } })
         result.moved++
@@ -186,6 +202,8 @@ async function tidy(orderId: string, shopifyLineId: string, retryStuck: boolean)
         result.failed++
       }
     }
+    // Before old versions moved out, they sat in an `_old` inside the task folder; once it is empty it goes.
+    if (oldFolder && result.failed === 0) await removeEmptyChildFolder(folder.id, OLD_FOLDER_NAME).catch(() => false)
   }
   result.promoted = await promoteFolderLink(orderId, shopifyLineId)
   return result
@@ -193,7 +211,7 @@ async function tidy(orderId: string, shopifyLineId: string, retryStuck: boolean)
 
 /**
  * Makes the task folder match the task: every current file (the newest version of each part, mockups included) sits in the
- * folder under its part name, every superseded or removed file sits in `_old`. Runs one at a time per task.
+ * folder under its part name, every superseded or removed file sits in the order's `_old/<TaskKey>`. Runs one at a time per task.
  */
 export function tidyTaskFolder(orderId: string, shopifyLineId: string, opts: { retryStuck?: boolean } = {}): Promise<TidyResult> {
   const key = lineKey(orderId, shopifyLineId)

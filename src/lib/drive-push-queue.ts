@@ -109,7 +109,7 @@ export function enqueueFolderTidy(orderId: string, shopifyLineId: string) {
 
 /**
  * "Sắp xếp lại thư mục": Drive files whose place is unknown (pushed before task folders existed, or a move that failed)
- * are put into their task folder or its `_old`. A file the app may not touch (404 / 403 under `drive.file`) stays where it is.
+ * are put into their task folder or the order's `_old/<TaskKey>`. A file the app may not touch (404 / 403 under `drive.file`) stays where it is.
  */
 export async function reorganiseTaskFolders(opts: { limit?: number; retryStuck?: boolean; onLine?: (r: { moved: number; stuck: number }) => void } = {}) {
   const out = { lines: 0, moved: 0, stuck: 0, failed: 0, lastError: null as string | null, authError: false }

@@ -77,7 +77,7 @@ export function Lightbox({ images, index, onIndex, onClose }: { images: Lightbox
         <div onClick={e => { if (e.target === e.currentTarget) onClose() }}
           className={`absolute inset-0 ${actual ? 'overflow-auto' : 'grid place-items-center overflow-hidden'} px-3xl pb-md`}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={image.url} alt={image.label} onClick={() => setActual(!actual)}
+          <img src={image.url} alt={image.label} referrerPolicy="no-referrer" onClick={() => setActual(!actual)}
             className={actual ? 'max-w-none m-auto block cursor-zoom-out' : 'max-w-full max-h-full object-contain cursor-zoom-in'} />
         </div>
         {many && (

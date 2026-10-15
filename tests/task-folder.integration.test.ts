@@ -74,6 +74,7 @@ function driveMock() {
       const q = new URL(url).searchParams.get('q') ?? ''
       const name = /name='((?:[^'\\]|\\.)*)'/.exec(q)?.[1].replace(/\\(.)/g, '$1')
       const parent = /'([^']*)' in parents/.exec(q)?.[1]
+      if (name === undefined) return json({ files: Array.from(drive.values()).filter(f => f.parents.includes(parent ?? '')).map(f => ({ id: f.id })) })
       const hit = Array.from(drive.values()).find(f => f.folder && f.name === name && f.parents[0] === parent)
       return json({ files: hit ? [{ id: hit.id, name: hit.name }] : [] })
     }
@@ -108,7 +109,12 @@ function driveMock() {
 }
 
 const inFolder = (folderId: string) => Array.from(drive.values()).filter(f => !f.folder && f.parents.includes(folderId)).map(f => f.name).sort()
-const folderNamed = (name: string, parent?: string) => Array.from(drive.values()).find(f => f.folder && f.name === name && (!parent || f.parents[0] === parent))
+const folderNamed = (name: string, parent?: string) => Array.from(drive.values()).find(f => f.folder && f.name === name && (parent ? f.parents[0] === parent : drive.get(f.parents[0])?.name !== '_old'))
+/** Old versions of a task live beside the task folders: `<Order>/_old/<TaskKey>`. */
+const oldFolderOf = (folder: DriveFile) => {
+  const old = folderNamed('_old', folder.parents[0])
+  return old && folderNamed(folder.name, old.id)
+}
 const shares = () => calls.filter(c => c.url.includes('/permissions'))
 const moves = () => calls.filter(c => c.method === 'PATCH')
 
@@ -266,14 +272,16 @@ describe('one task = one Drive folder', () => {
     const v1 = await upload(t, 'front.png')
     const back = await upload(t, 'back.png')
     const folder = folderNamed(t.key)!
-    expect(folderNamed('_old', folder.id)).toBeUndefined()
+    expect(oldFolderOf(folder)).toBeUndefined()
 
     const before = calls.length
     const v2 = await upload(t, 'front.png')
     expect(v2).toMatchObject({ printArea: 'front', version: 2, drivePlace: 'TASK' })
-    const old = folderNamed('_old', folder.id)!
+    const old = oldFolderOf(folder)!
     expect(inFolder(folder.id)).toEqual(['back.png', 'front.png'])
     expect(inFolder(old.id)).toEqual(['v1_front.png'])
+    expect(folderNamed('_old', folder.id)).toBeUndefined()
+    expect(folderNamed('_old')!.parents).toEqual([folderNamed(t.number)!.id])
     expect(drive.get(v1.driveFileId!)).toMatchObject({ parents: [old.id], name: 'v1_front.png' })
     expect(drive.get(v2.driveFileId!)).toMatchObject({ parents: [folder.id], name: 'front.png' })
     expect((await row(v1.id)).drivePlace).toBe('OLD')
@@ -304,7 +312,7 @@ describe('one task = one Drive folder', () => {
     expect(await pushPendingArtworksToDrive({ limit: 10 })).toMatchObject({ pushed: 2, organized: 0, stuck: 0 })
     const folder = folderNamed(t.key)!
     expect(inFolder(folder.id)).toEqual(['front.png'])
-    expect(inFolder(folderNamed('_old', folder.id)!.id)).toEqual(['v1_front.png'])
+    expect(inFolder(oldFolderOf(folder)!.id)).toEqual(['v1_front.png'])
     expect(moves()).toHaveLength(0)
     expect([(await row(v1.id)).drivePlace, (await row(v2.id)).drivePlace]).toEqual(['OLD', 'TASK'])
   })
@@ -315,7 +323,7 @@ describe('one task = one Drive folder', () => {
     const v2 = await upload(t, 'front.png')
     const mock = await upload(t, 'look.png', { kind: 'MOCKUP' })
     const folder = folderNamed(t.key)!
-    const old = folderNamed('_old', folder.id)!
+    const old = oldFolderOf(folder)!
 
     const del = async (id: string) => {
       const req = new NextRequest(`http://x/api/design-studio/artwork/${id}`, { method: 'DELETE' })
@@ -399,7 +407,7 @@ describe('one task = one Drive folder', () => {
     expect((await transitionTask(t.key, { id: designerId, name: 'Designer', role: 'SUPPORT' }, { to: 'REVIEW' })).task.status).toBe('REVIEW')
     const folder = folderNamed(t.key)!
     expect(inFolder(folder.id)).toEqual(['Back.png', 'Front.png', 'sleeve.png'])
-    expect(inFolder(folderNamed('_old', folder.id)!.id)).toEqual(['v1_Front.png'])
+    expect(inFolder(oldFolderOf(folder)!.id)).toEqual(['v1_Front.png'])
   })
 })
 
@@ -484,7 +492,7 @@ describe('"Sắp xếp lại thư mục" for files pushed before task folders', 
     const summary = await pushPendingArtworksToDrive({ limit: 50, force: true })
     expect(summary).toMatchObject({ pending: 0, pushed: 0, failed: 0, organized: 3, stuck: 2, stopped: null })
     const folder = folderNamed(t.key)!
-    const old = folderNamed('_old', folder.id)!
+    const old = oldFolderOf(folder)!
     expect(inFolder(folder.id)).toEqual(['Front.png'])
     expect(inFolder(old.id)).toEqual(['v1_Collar.png', 'v1_Front.png'])
     expect(drive.get('legacy-gone')!.parents).toEqual(['legacy-folder'])
@@ -527,5 +535,20 @@ describe('"Sắp xếp lại thư mục" for files pushed before task folders', 
     refused.delete('legacy-gone')
     expect(await pushPendingArtworksToDrive({ limit: 5 })).toMatchObject({ organized: 1 })
     expect((await row(gone.id)).drivePlace).toBe('TASK')
+  })
+  it('old versions left in an _old inside the task folder move beside it, and the emptied folder is deleted', async () => {
+    const t = await makeTask()
+    const v1 = await upload(t, 'front.png')
+    await upload(t, 'front.png')
+    const folder = folderNamed(t.key)!
+    drive.set('inner-old', { id: 'inner-old', name: '_old', parents: [folder.id], folder: true })
+    drive.get(v1.driveFileId!)!.parents = ['inner-old']
+    await prisma.designArtwork.update({ where: { id: v1.id }, data: { drivePlace: null } })
+
+    expect(await pushPendingArtworksToDrive({ limit: 5 })).toMatchObject({ organized: 1 })
+    expect(drive.get(v1.driveFileId!)!.parents).toEqual([oldFolderOf(folder)!.id])
+    expect(drive.has('inner-old')).toBe(false)
+    expect(Array.from(drive.values()).filter(f => f.parents.includes(folder.id)).map(f => f.name)).toEqual(['front.png'])
+    expect((await row(v1.id)).drivePlace).toBe('OLD')
   })
 })

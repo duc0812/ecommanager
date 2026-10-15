@@ -6,6 +6,7 @@ import { copyText, mockupFiles, printPartNames, requestJson, taskImages, type Li
 import { pushChipLabel } from '@/lib/handoff-shared'
 import { LightboxProvider } from './Lightbox'
 import PrintFileThumb from './PrintFileThumb'
+import ExternalDesignPreview from './ExternalDesignPreview'
 import HandoffButton from './HandoffButton'
 import { ErrorBanner, ExtLink, Icon, Pill, btn, card } from './ui'
 
@@ -56,13 +57,13 @@ function OrderCard({ c, me, onOpenTask, onChanged, onError }: {
                       {mockups.map(m => <PrintFileThumb key={`m-${m.printArea}`} line={l.line} area={m.printArea} kind="MOCKUP" refLabel={l.taskKey} />)}
                     </>
                   )
-                  : (
-                    <div className="aspect-[4/3] rounded-lg border border-outline-variant/30 bg-surface-container-low grid place-items-center text-label-sm text-on-surface-variant p-sm text-center">
-                      {l.line.designDriveLink && /^https?:/.test(l.line.designDriveLink)
-                        ? <ExtLink href={l.line.designDriveLink}>Design ngoài studio — mở link</ExtLink>
-                        : 'Design có từ ngoài studio'}
-                    </div>
-                  )}
+                  : l.line.designDriveLink && /^https?:/.test(l.line.designDriveLink)
+                    ? <ExternalDesignPreview link={l.line.designDriveLink} refLabel={l.taskKey} />
+                    : (
+                      <div className="aspect-[4/3] rounded-lg border border-outline-variant/30 bg-surface-container-low grid place-items-center text-label-sm text-on-surface-variant p-sm text-center">
+                        Design có từ ngoài studio
+                      </div>
+                    )}
               </div>
               <div className="flex-1 min-w-0 flex flex-col gap-xs text-body-sm">
                 <span className="flex items-center gap-xs flex-wrap">

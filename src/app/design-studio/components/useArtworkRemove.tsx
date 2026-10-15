@@ -61,7 +61,7 @@ export function useArtworkRemove(onRemoved: () => void) {
     <ConfirmDialog title={`Xoá file ${target.printArea} v${target.version}?`} confirmLabel="Xoá file" busy={busy} error={error}
       onConfirm={confirm} onCancel={() => { if (!busy) setTarget(null) }}>
       <p><b className="text-on-surface">{target.fileName}</b> sẽ bị gỡ khỏi task và không còn tính là {target.kind === 'MOCKUP' ? 'mockup' : 'file in'} &quot;{target.printArea}&quot;.</p>
-      <p className="mt-xs">Bản trên Drive (nếu có) được chuyển sang thư mục con _old của task, xưởng không còn thấy nó trong thư mục chính; số phiên bản v{target.version} sẽ không được dùng lại.</p>
+      <p className="mt-xs">Bản trên Drive (nếu có) được chuyển sang thư mục _old của đơn, nằm ngoài thư mục gửi xưởng nên xưởng không còn thấy nó; số phiên bản v{target.version} sẽ không được dùng lại.</p>
     </ConfirmDialog>
   ) : null
 

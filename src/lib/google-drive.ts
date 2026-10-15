@@ -212,6 +212,20 @@ export async function folderForTask(input: { storeName: string; placedAt: Date; 
   return folderForPath([input.storeName, input.placedAt.toISOString().slice(0, 7), input.orderNumber, input.taskKey])
 }
 
+/** Deletes a sub-folder once nothing is left in it. Returns true when it was deleted. */
+export async function removeEmptyChildFolder(parentId: string, name: string): Promise<boolean> {
+  const q = `mimeType='${FOLDER_MIME}' and name='${escapeDriveQuery(name)}' and '${escapeDriveQuery(parentId)}' in parents and trashed=false`
+  const found: any = await (await driveFetch(`${FILES_URL}?${new URLSearchParams({ q, fields: 'files(id,name)', pageSize: '1', spaces: 'drive' })}`)).json()
+  const id = found?.files?.[0]?.id
+  if (typeof id !== 'string' || !id) return false
+  const inside = `'${escapeDriveQuery(id)}' in parents and trashed=false`
+  const children: any = await (await driveFetch(`${FILES_URL}?${new URLSearchParams({ q: inside, fields: 'files(id)', pageSize: '1', spaces: 'drive' })}`)).json()
+  if (Array.isArray(children?.files) && children.files.length > 0) return false
+  await deleteFile(id)
+  folderCache().delete(`${parentId}/${segment(name)}`)
+  return true
+}
+
 export async function startResumableUpload(input: { name: string; mimeType: string; size: number; parentId: string }): Promise<string> {
   const res = await driveFetch(`${UPLOAD_URL}&fields=${encodeURIComponent(DRIVE_FILE_FIELDS)}`, {
     method: 'POST',
