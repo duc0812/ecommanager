@@ -102,10 +102,7 @@ export default function OverviewPage() {
     setSyncError(null)
     try {
       await fetch('/api/shopify/orders/sync', { method: 'POST' })
-      const [metaRes] = await Promise.all([
-        fetch('/api/meta/sync-insights', { method: 'POST' }),
-        fetch('/api/trello/sync', { method: 'POST' }),
-      ])
+      const metaRes = await fetch('/api/meta/sync-insights', { method: 'POST' })
       const metaJson = await metaRes.json().catch(() => ({}))
       const metaErr = metaJson.error ?? (metaJson.errors?.length ? metaJson.errors.join('; ') : null)
       if (metaErr) setSyncError(`Meta: ${metaErr}`)

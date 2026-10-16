@@ -129,9 +129,6 @@ export default function OrdersPage() {
   const [bulkStatus, setBulkStatus] = useState<PipelineStatus>('EXPORTED')
   const [syncing, setSyncing] = useState(false)
   const [syncResult, setSyncResult] = useState('')
-  const [syncingTrello, setSyncingTrello] = useState(false)
-  const [trelloResult, setTrelloResult] = useState('')
-  const [backfillingCustom, setBackfillingCustom] = useState(false)
   const [typeFilter, setTypeFilter] = useState<'ALL' | 'CUSTOM' | 'NON_CUSTOM' | 'DUAL' | 'MIXED'>('ALL')
   const [designFilter, setDesignFilter] = useState<'ALL' | 'HAS' | 'MISSING'>('ALL')
   const [trelloFilter, setTrelloFilter] = useState<'ALL' | 'CREATED' | 'NOT_CREATED'>('ALL')
@@ -231,40 +228,6 @@ export default function OrdersPage() {
     } finally {
       setSavingLineCost(false)
     }
-  }
-
-  const syncTrello = async () => {
-    setSyncingTrello(true); setTrelloResult('Đang sync Trello...')
-    try {
-      const res = await fetch('/api/trello/sync', { method: 'POST' })
-      const body = await res.json()
-      if (!res.ok) setTrelloResult(`Lỗi: ${body.error ?? res.statusText}`)
-      else if (body.skipped) setTrelloResult(body.message ?? 'Trello đang tắt.')
-      else setTrelloResult(`Đã cập nhật ${body.updated} design(s) từ ${body.cardsChecked} card DONE.${body.studioLinesKept ? ` Giữ nguyên ${body.studioLinesKept} dòng đã làm trong Design Studio.` : ''}`)
-      await load()
-    } catch (e: any) { setTrelloResult(`Lỗi: ${e.message}`) }
-    finally { setSyncingTrello(false) }
-  }
-
-  const backfillCustomInfo = async () => {
-    setBackfillingCustom(true); setTrelloResult('Đang bổ sung thông tin custom lên Trello...')
-    try {
-      const res = await fetch('/api/trello/backfill-custom-info', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sinceDays: 7 }),
-      })
-      const body = await res.json()
-      if (!res.ok) setTrelloResult(`Lỗi: ${body.error ?? res.statusText}`)
-      else setTrelloResult(
-        `Đã bổ sung thông tin custom cho ${body.cardsUpdated}/${body.cardsChecked} card ` +
-        `trong ${body.sinceDays} ngày gần nhất ` +
-        `(${body.alreadyComplete + body.cardsUnchanged} card đã có sẵn thông tin, ` +
-        `${body.noPersonalization} đơn không có custom text)` +
-        (body.errors?.length ? ` — ${body.errors.length} lỗi: ${body.errors.slice(0, 3).join('; ')}` : ''),
-      )
-    } catch (e: any) { setTrelloResult(`Lỗi: ${e.message}`) }
-    finally { setBackfillingCustom(false) }
   }
 
   const sync = async () => {
@@ -425,21 +388,6 @@ export default function OrdersPage() {
               ))}
             </select>
             <button
-              onClick={syncTrello}
-              disabled={syncingTrello}
-              className="border border-outline-variant/40 px-lg py-sm rounded-lg text-label-md disabled:opacity-50"
-            >
-              {syncingTrello ? 'Syncing…' : 'Sync Trello'}
-            </button>
-            <button
-              onClick={backfillCustomInfo}
-              disabled={backfillingCustom}
-              title="Bổ sung nội dung custom (tên/text khách nhập) vào các card Trello của đơn trong 7 ngày gần nhất"
-              className="border border-outline-variant/40 px-lg py-sm rounded-lg text-label-md disabled:opacity-50"
-            >
-              {backfillingCustom ? 'Đang bổ sung…' : 'Bổ sung info custom'}
-            </button>
-            <button
               onClick={sync}
               disabled={syncing}
               className="bg-secondary text-on-secondary px-lg py-sm rounded-lg text-label-md disabled:opacity-50"
@@ -449,7 +397,6 @@ export default function OrdersPage() {
           </div>
         </div>
         {syncResult && <p className="mb-md text-body-sm text-on-surface-variant">{syncResult}</p>}
-        {trelloResult && <p className="mb-md text-body-sm text-on-surface-variant">{trelloResult}</p>}
 
         {/* Search + More filters */}
         <div className="bg-surface-container-lowest rounded-xl border border-outline-variant/20 mb-md">
