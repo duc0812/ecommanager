@@ -75,6 +75,64 @@ describe('customallFields', () => {
     expect(customallFields(v, POMO)).toEqual([{ key: 'Custom Name', value: 'Lumepa' }])
   })
 
+  it('finds text layers nested in a group layer (PoMo 30th, product 8898377908381)', () => {
+    const campaign = {
+      artworks: [{
+        id: 'spOHHdJiH',
+        templates: [{ title: 'Default', layers: [
+          { id: '_yn', type: 'Option', title: 'Custom Name Yes or No', options: [{ label: 'Yes', value: 'aaaaaaaaa' }] },
+          { id: '_grp', type: 'Group', title: 'Name block', layers: [
+            { id: '_igd9l', type: 'Text', title: 'Enter Name' },
+            { id: '_ucwyf', type: 'Text', title: 'Enter Number' },
+          ] },
+        ] }],
+      }],
+    }
+    expect(customallFields({ spOHHdJiH: { template: 0, _yn: 'aaaaaaaaa', _igd9l: 'Tory', _ucwyf: '005' } }, campaign)).toEqual([
+      { key: 'Custom Name Yes or No', value: 'Yes' },
+      { key: 'Enter Name', value: 'Tory' },
+      { key: 'Enter Number', value: '005' },
+    ])
+  })
+
+  it('matches an artwork stored as <printAreaKey>_<artworkId> (two-sided shirt, #LIT4842)', () => {
+    const campaign = {
+      artworks: [
+        { id: 'DOIDxIuv7', templates: [{ title: 'Front', layers: [{ id: '_e9g45', type: 'Option', title: 'Choose Quote Front', options: [{ label: 'Best Dad', value: 'baftbrdul' }] }] }] },
+        { id: 'UVY4kO5jE', templates: [{ title: 'Back', layers: [{ id: '_g', type: 'Group', layers: [{ id: '_z8914', type: 'Text', title: "Enter Dad's Name" }] }] }] },
+      ],
+    }
+    const v = {
+      lmBTIFdYB_DOIDxIuv7: { template: 0, _e9g45: 'baftbrdul' },
+      QQwBMQdU4_UVY4kO5jE: { template: 0, _z8914: 'Ryan', _1870z: { id: 'dAumeI7r3', title: 'x' } },
+      uxgtEiBi5_DOIDxIuv7: { template: 0 },
+    }
+    expect(customallFields(v, campaign)).toEqual([
+      { key: 'Choose Quote Front', value: 'Best Dad' },
+      { key: "Enter Dad's Name", value: 'Ryan' },
+    ])
+  })
+
+  it('names a layer found in another template of the campaign', () => {
+    const campaign = {
+      artworks: [
+        { id: 'A', templates: [{ title: 'One', layers: [] }] },
+        { id: 'B', templates: [{ title: 'Two', layers: [{ id: '_n', type: 'Text', title: 'Name' }, { id: '_p', type: 'Image', title: 'Pet' }] }] },
+      ],
+    }
+    expect(customallFields({ A: { template: 0, _n: 'Kolson', _p: 'baftbrdul' } }, campaign)).toEqual([{ key: 'Name', value: 'Kolson' }])
+  })
+
+  it('leaves out the sub-values a picture layer keeps under <layerId>_<suffix>', () => {
+    const v = { AhbLWbU1L: { template: 0, _l8n04_uMO3EAC30: 'oePs6qvtY', _4j531: 'ANGIE' } }
+    expect(customallFields(v, POMO)).toEqual([{ key: 'Custom Name', value: 'ANGIE' }])
+  })
+
+  it('drops an option-N value whose layer is gone: it is an option, not text', () => {
+    expect(customallFields({ AhbLWbU1L: { template: 0, _0ixi8: 'option-1', _4j531: 'CASSIE' } }, POMO))
+      .toEqual([{ key: 'Custom Name', value: 'CASSIE' }])
+  })
+
   it('still shows a value whose layer is gone from the campaign, under its layer id', () => {
     const v = { AhbLWbU1L: { template: 0, _gone1: 'Jesse' } }
     expect(customallFields(v, POMO)).toEqual([{ key: 'Layer _gone1', value: 'Jesse' }])

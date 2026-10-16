@@ -18,7 +18,7 @@ const RETRY_MS = 6 * 3600_000
 
 export type CustomallField = { key: string; value: string }
 export type CustomallValues = Record<string, unknown>
-type Layer = { id?: string; type?: string; title?: string; options?: Array<{ label?: string; value?: string }> }
+type Layer = { id?: string; type?: string; title?: string; options?: Array<{ label?: string; value?: string }>; layers?: Layer[] }
 type Artwork = { id?: string; templateDisplayLabel?: string; templates?: Array<{ title?: string; layers?: Layer[] }> }
 export type Campaign = { artworks?: Artwork[] }
 
@@ -59,6 +59,10 @@ export function parseCustomallFields(json: string | null): CustomallField[] | nu
   } catch { return null }
 }
 
+function flattenLayers(layers: Layer[] | undefined): Layer[] {
+  return (layers ?? []).flatMap(l => (l && typeof l === 'object' ? [l, ...flattenLayers(l.layers)] : []))
+}
+
 /** The shopper's own input, named by the campaign's layer titles. Picture layers hold item ids, not text, and are left out. */
 export function customallFields(values: CustomallValues, campaign: Campaign | null): CustomallField[] {
   const out: CustomallField[] = []
@@ -72,23 +76,36 @@ export function customallFields(values: CustomallValues, campaign: Campaign | nu
     seen.add(id)
     out.push({ key, value })
   }
-  for (const [artworkId, chosen] of Object.entries(values)) {
+  const pushLayer = (layer: Layer, raw: unknown) => {
+    if (layer.type === 'Text') push(layer.title?.trim() || 'Text', raw)
+    else if (layer.type === 'Option') push(layer.title?.trim() || 'Option', layer.options?.find(o => o.value === raw)?.label ?? raw)
+  }
+  const anyLayer = new Map<string, Layer>()
+  for (const a of campaign?.artworks ?? []) {
+    for (const t of a.templates ?? []) for (const l of flattenLayers(t.layers)) if (l.id && !anyLayer.has(l.id)) anyLayer.set(l.id, l)
+  }
+  for (const [artworkKey, chosen] of Object.entries(values)) {
     if (!chosen || typeof chosen !== 'object' || Array.isArray(chosen)) continue
     const picked = chosen as Record<string, unknown>
-    const artwork = campaign?.artworks?.find(a => a.id === artworkId)
+    // Products with several print areas store each artwork as `<areaKey>_<artworkId>`.
+    const artwork = campaign?.artworks?.find(a => !!a.id && (a.id === artworkKey || artworkKey.endsWith(`_${a.id}`)))
     const templates = artwork?.templates ?? []
     const template = templates[typeof picked.template === 'number' ? picked.template : 0]
     if (templates.length > 1 && template?.title) push(artwork?.templateDisplayLabel?.trim() || 'Template', template.title)
     const known = new Set<string>()
-    for (const layer of template?.layers ?? []) {
+    for (const layer of flattenLayers(template?.layers)) {
       if (!layer.id) continue
       known.add(layer.id)
-      const raw = picked[layer.id]
-      if (layer.type === 'Text') push(layer.title?.trim() || 'Text', raw)
-      else if (layer.type === 'Option') push(layer.title?.trim() || 'Option', layer.options?.find(o => o.value === raw)?.label ?? raw)
+      pushLayer(layer, picked[layer.id])
     }
-    for (const [layerId, raw] of Object.entries(picked)) {
-      if (layerId !== 'template' && !known.has(layerId)) push(`Layer ${layerId}`, raw)
+    for (const [key, raw] of Object.entries(picked)) {
+      if (key === 'template' || known.has(key)) continue
+      const elsewhere = anyLayer.get(key)
+      if (elsewhere) { pushLayer(elsewhere, raw); continue }
+      // A picture layer keeps extra picks under `<layerId>_<suffix>`; those are item ids too.
+      if (Array.from(anyLayer.keys()).some(id => key.startsWith(`${id}_`))) continue
+      if (typeof raw === 'string' && /^option-\d+$/.test(raw)) continue
+      push(`Layer ${key}`, raw)
     }
   }
   return out
