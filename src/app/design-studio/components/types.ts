@@ -41,7 +41,8 @@ export type WorkspaceLine = {
   qty: number; isNonProduct: boolean; customized: boolean
   variantOptions: Record<string, string>
   attributesLoaded: boolean
-  personalization: { key: string; value: string }[]
+  personalization: { key: string; value: string; source?: 'customall' }[]
+  customallPending: boolean
   customerDesignLink: string | null
   customizedUrl: string | null
   previewUrl: string | null

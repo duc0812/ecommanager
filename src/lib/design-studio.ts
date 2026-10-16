@@ -11,8 +11,11 @@ import { getShopifyConnection } from '@/lib/token-store'
 import { reconcilePushedOrder } from '@/lib/repos/push-export'
 import { clearLineExports } from '@/lib/repos/orders'
 import { fileKindOf, folderHoldsPrintFiles, missingPrintAreas, orderedPrintFiles, type FileKind } from '@/lib/task-files'
+import { customizationIdOf, parseCustomallFields } from '@/lib/customall-fields'
 
 export type CustomAttribute = { key: string; value: string }
+/** A field the customer filled; `source: 'customall'` = read back from the Customall app, not a Shopify line property. */
+export type PersonalizationField = CustomAttribute & { source?: 'customall' }
 export type SourcePrintFile = { printArea: string; url: string }
 export type ArtworkRow = {
   id: string; kind: FileKind; printArea: string; version: number; fileName: string; size: number
@@ -27,7 +30,9 @@ export type WorkspaceLine = {
   qty: number; isNonProduct: boolean; customized: boolean
   variantOptions: Record<string, string>
   attributesLoaded: boolean
-  personalization: CustomAttribute[]
+  personalization: PersonalizationField[]
+  /** The line is a Customall order whose typed text has not been read from Customall yet. */
+  customallPending: boolean
   customerDesignLink: string | null
   customizedUrl: string | null
   previewUrl: string | null
@@ -185,6 +190,7 @@ export async function loadWorkspace(orderId: string): Promise<Workspace | null> 
     const preview = l.previewCdnUrl ?? extractPreviewCdnUrl(attrs)
     const productUrl = safeHttpUrl(lastAttr(attrs, '_product_url'))
     const artworks = order.artworks.filter(a => a.shopifyLineId === l.shopifyLineId)
+    const customall = parseCustomallFields(l.customallFieldsJson)
     return {
       id: l.id,
       shopifyLineId: l.shopifyLineId,
@@ -197,7 +203,11 @@ export async function loadWorkspace(orderId: string): Promise<Workspace | null> 
       customized: l.customized,
       variantOptions: parseVariantOptions(l.variantOptions),
       attributesLoaded: l.customAttributesJson != null,
-      personalization: visibleCustomAttributes(attrs).filter(a => a.value !== preview),
+      personalization: [
+        ...visibleCustomAttributes(attrs).filter(a => a.value !== preview),
+        ...(customall ?? []).map(f => ({ ...f, source: 'customall' as const })),
+      ],
+      customallPending: customall === null && customizationIdOf(attrs) !== null,
       customerDesignLink: safeCustomerDesignLink(attrs, productUrl, l.shopifyVariantId),
       customizedUrl: safeHttpUrl(attrs.find(a => a.key === '_customized_url')?.value),
       previewUrl: safeHttpUrl(preview),

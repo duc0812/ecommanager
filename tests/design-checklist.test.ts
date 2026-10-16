@@ -83,6 +83,14 @@ describe('buildChecklist', () => {
     expect(byKey(buildChecklist(input({ task: { status: 'ASK_CUSTOMER' } })), 'customer').state).toBe('blocked')
   })
 
+  it('customer info: a Customall line whose text is not read yet asks for a reload, not the customer', () => {
+    const pending = { personalization: [], customallPending: true, sourcePrintFiles: [{ printArea: 'Print', url: 'https://cdn.customall.io/x.png' }] }
+    expect(byKey(buildChecklist(input({ line: pending })), 'customer'))
+      .toMatchObject({ state: 'missing', action: { kind: 'refresh', label: 'Nạp lại từ Shopify' } })
+    const read = { personalization: [{ key: 'Custom Name', value: 'Ianetta', source: 'customall' as const }], customallPending: false }
+    expect(byKey(buildChecklist(input({ line: read })), 'customer').state).toBe('done')
+  })
+
   it('missingCustomerFields matches case-insensitively', () => {
     const profile = { layerMap: [{ field: ' name ', layer: 'n', fit: 'none' }] } as any
     expect(missingCustomerFields({ line: { personalization: [{ key: 'NAME', value: 'x' }] } as any, profile })).toEqual([])

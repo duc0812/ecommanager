@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db'
 import { getShopifyConnection } from '@/lib/token-store'
 import { fetchOrderLinePropsByNames } from '@/lib/shopify-orders'
 import { applyLineProps } from '@/lib/design-studio'
+import { fillCustomallFields } from '@/lib/customall-fields'
 
 export async function POST(_req: NextRequest, { params }: { params: { id: string } }) {
   const order = await prisma.order.findUnique({
@@ -23,5 +24,6 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
   }
   if (!props) return NextResponse.json({ error: 'Shopify không trả về đơn này (quá 60 ngày hoặc sai store)' }, { status: 404 })
   const r = await applyLineProps(params.id, props)
-  return NextResponse.json(r)
+  const customall = await fillCustomallFields([params.id], { force: true })
+  return NextResponse.json({ ...r, customall: { filled: customall.filled, failed: customall.failed } })
 }

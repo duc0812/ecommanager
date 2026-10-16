@@ -100,6 +100,9 @@ function customerItem(input: ChecklistInput): CheckItem {
   if (!line.attributesLoaded) {
     return { key: 'customer', title, state: 'missing', reason: 'Chưa có dữ liệu custom — nạp lại từ Shopify', action: { kind: 'refresh', label: 'Nạp lại từ Shopify' } }
   }
+  if (line.customallPending && line.personalization.length === 0) {
+    return { key: 'customer', title, state: 'missing', reason: 'Chưa lấy được text khách gõ từ Customall — nạp lại', action: { kind: 'refresh', label: 'Nạp lại từ Shopify' } }
+  }
   const missing = missingCustomerFields(input)
   if (missing.length > 0) return { key: 'customer', title, state: 'missing', reason: `Khách chưa điền: ${missing.join(', ')}`, action: ask }
   if (line.personalization.length === 0) {

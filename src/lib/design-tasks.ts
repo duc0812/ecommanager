@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/db'
 import { isNonProductLine } from '@/lib/order-lines'
 import { parseAttributes, safeHttpUrl, sourcePrintFiles, updateLine, loadWorkspace, type WorkspaceLine, type Workspace } from '@/lib/design-studio'
+import { fillCustomallFields } from '@/lib/customall-fields'
 import { getDesignSettings, kpiForProductType, type DesignSettings } from '@/lib/design-settings'
 import { visibleCustomAttributes } from '@/lib/order-classify'
 import { findProfile, parseLayerMap, toRouteKey, type LayerMapEntry } from '@/lib/product-profiles'
@@ -496,6 +497,7 @@ export async function requiredSlotsForLine(orderId: string, shopifyLineId: strin
 export async function loadTask(taskKey: string): Promise<TaskDetail | null> {
   const task = await prisma.designTask.findUnique({ where: { taskKey } })
   if (!task) return null
+  await fillCustomallFields([task.orderId], { throttle: true }).catch(() => null)
   const workspace = await loadWorkspace(task.orderId)
   if (!workspace) return null
   const line = workspace.lines.find(l => l.shopifyLineId === task.shopifyLineId)

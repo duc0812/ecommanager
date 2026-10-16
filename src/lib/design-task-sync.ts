@@ -2,6 +2,7 @@ import { prisma } from '@/lib/db'
 import { runExclusive } from '@/lib/job-lock'
 import { syncDesignTasks } from '@/lib/design-tasks'
 import { needsLineProps, refreshMissingLineProps } from '@/lib/design-studio'
+import { fillCustomallFields } from '@/lib/customall-fields'
 
 export const DESIGN_TASK_SYNC_KEY = 'last_design_task_sync_result'
 export const DESIGN_TASK_SYNC_JOB = 'design-task-sync'
@@ -21,7 +22,7 @@ export type DesignTaskSyncSummary = {
   trigger: SyncTrigger; startedAt: string; ranAt: string
   orders: number; scope: { design: number; openTasks: number; recent: number }
   created: number; cancelled: number; completed: number; reopened: number
-  refresh: RefreshSummary; errors: string[]
+  refresh: RefreshSummary; customall: { filled: number; failed: number }; errors: string[]
 }
 
 declare global {
@@ -85,6 +86,15 @@ export async function runDesignTaskSync(opts: { trigger?: SyncTrigger; now?: num
 
   let created = 0, cancelled = 0, completed = 0, reopened = 0
   const errors: string[] = []
+  const customall = { filled: 0, failed: 0 }
+  try {
+    const r = await fillCustomallFields(orders.map(o => o.id), { throttle: true, now })
+    customall.filled = r.filled
+    customall.failed = r.failed
+    errors.push(...r.errors.slice(0, 5).map(e => `Customall text ${e}`))
+  } catch (e: any) {
+    errors.push(`Customall text: ${e.message}`)
+  }
   for (const o of orders) {
     try {
       const r = await syncDesignTasks(o.id)
@@ -99,7 +109,7 @@ export async function runDesignTaskSync(opts: { trigger?: SyncTrigger; now?: num
   return {
     trigger, startedAt, ranAt: new Date().toISOString(),
     orders: orders.length, scope: { design, openTasks, recent: recent.length },
-    created, cancelled, completed, reopened, refresh, errors,
+    created, cancelled, completed, reopened, refresh, customall, errors,
   }
 }
 

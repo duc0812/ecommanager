@@ -482,3 +482,11 @@ Migration `20261014104355_line_export` (two `ADD COLUMN` + one index, no rebuild
 - **Chuyển xưởng.** A partly sent order stays listed (it is still Ready); the card shows "Đã xuất 1/2 xưởng — còn chờ: Jomall" and "Đã xuất <xưởng>" on sent lines.
 - **Not handled.** Profile re-resolve and order sync may re-map a sent line; it stays sent (to `exportedToSupplierId`). A hand-set reopen reopens every supplier — use `--reopen` for one order's other suppliers.
 - **Rollout.** `npx prisma migrate deploy`, restart, then `DATABASE_URL=file:<db> node scripts/backfill-line-export.mjs` (dry run, read the "Cần kiểm tra" list), `--apply`, then for orders whose other-supplier lines were really never sent: `node scripts/backfill-line-export.mjs --apply --reopen LIT4628,LIT4528,…` and export those suppliers.
+
+## Customall typed text in Design Studio (2026-10-16, branch `feat/line-export`)
+
+Customall-app orders (vendor `customall`) carry no readable text, only `_customallcustomid` + an 800×800 mockup in `_customall_print_file`; designers read names off the picture (#LIT4156: "IANETTA" read as L). Migration `20261016143942_order_line_customall_fields` adds `OrderLine.customallFieldsJson` (`null` = not read yet, `[]` = nothing typed); `SCHEMA_VERSION` `v69`. New deps `lz-string`, `jsonpack` (deploy needs `npm install`).
+
+- **Source** (`src/lib/customall-fields.ts`). `order-info/<hex({customization_id})>` on apis-v2.customall.io gives `{artworkId: {template, layerId: value}}`; the field names come from the product's campaign (`hash/<shop>/<pid>` → `<shop>/<pid>/<hash>`, lz-string + jsonpack). Text layers → value, Option layers → option label, picture layers left out, values trimmed, a layer missing from today's campaign shows as `Layer <id>`.
+- **When it is read.** Order sync (after `upsertOrderWithLines`), the 15-minute design-task sync (open tasks + 100 newest orders), opening a task / order workspace — each only for lines still `null`, at most once per 6 h per customization id when Customall fails (it answers 500 for an unknown id). "Nạp lại từ Shopify" reads every Customall line of the order again. The value survives re-sync like `designNote`.
+- **Shown** as normal personalization rows (task table, review, handoff) with a "Customall" pill; a line not read yet says so instead of "Khách không nhập gì" and the checklist asks for a reload.

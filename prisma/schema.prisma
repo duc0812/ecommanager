@@ -448,6 +448,7 @@ model OrderLine {
   designDriveLink         String?
   customized              Boolean   @default(false)
   customAttributesJson    String?
+  customallFieldsJson     String?
   imageUrl                String?
   designNote              String?
   shopifyProductId        String?

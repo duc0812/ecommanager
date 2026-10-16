@@ -33,6 +33,9 @@ function CustomTable({ detail, onCopied }: { detail: TaskDetail; onCopied: (msg:
     return <div className="text-body-sm text-on-surface-variant">Chưa có dữ liệu custom cho dòng này — bấm &quot;Nạp lại từ Shopify&quot;.</div>
   }
   if (line.personalization.length === 0) {
+    if (line.customallPending) {
+      return <div className="text-body-sm text-amber-900">Chưa lấy được text khách gõ từ Customall — bấm &quot;Nạp lại từ Shopify&quot;, đừng đọc tên từ ảnh mockup.</div>
+    }
     return <div className="text-body-sm text-on-surface-variant">{line.customized ? 'Khách không nhập gì.' : 'Non-custom: 1 design cho SKU × xưởng.'}</div>
   }
   return (
@@ -49,7 +52,12 @@ function CustomTable({ detail, onCopied }: { detail: TaskDetail; onCopied: (msg:
         {line.personalization.map((f, i) => (
           <tr key={`${f.key}-${i}`} className="border-b border-outline-variant/20 last:border-b-0 align-top">
             <td className="px-xs py-xs text-on-surface-variant">{i + 1}</td>
-            <td className="px-xs py-xs">{f.key}</td>
+            <td className="px-xs py-xs">
+              <span className="flex items-center gap-xs flex-wrap">
+                {f.key}
+                {f.source === 'customall' && <span title="Text khách gõ, lấy từ dữ liệu Customall lưu cho đơn này"><Pill tone="brand">Customall</Pill></span>}
+              </span>
+            </td>
             <td className="px-xs py-xs">
               <span className="flex items-center gap-xs flex-wrap">
                 <span className="font-mono font-semibold break-all text-on-surface">{f.value}</span>

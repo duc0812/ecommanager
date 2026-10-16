@@ -17,6 +17,7 @@ import { resolveOrderDesignByParent, type DesignLineInputV2 } from '@/lib/design
 import { loadReadyDesignEntries, upsertTaskEntry, loadMasterArtworkBySku } from '@/lib/repos/design-library'
 import { matchDesignEntry, type DesignEntry } from '@/lib/design-parent'
 import { syncDesignTasks } from '@/lib/design-tasks'
+import { fillCustomallFields } from '@/lib/customall-fields'
 
 type ResolvedSupplierProduct = SupplierInput & {
   sku: string
@@ -355,6 +356,11 @@ export async function POST(req: NextRequest) {
           }
         }),
       })
+
+      try {
+        const customall = await fillCustomallFields([o.id], { throttle: true })
+        if (customall.failed > 0) errors.push(`Customall text ${o.name}: ${customall.errors[0]}`)
+      } catch (e: any) { errors.push(`Customall text ${o.name}: ${e.message}`) }
 
       // Persist re-evaluated order type on every sync (non-sticky)
       const existingOrder = await prisma.order.findUnique({
