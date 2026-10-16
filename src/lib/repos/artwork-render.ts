@@ -21,15 +21,10 @@ async function taskEvent(orderId: string, shopifyLineId: string, message: string
   if (task) await prisma.designTaskEvent.create({ data: { taskId: task.id, type: 'ARTWORK', message, actorId } })
 }
 
-export async function queueRenderLine(taskKey: string, actor: Actor): Promise<RenderJobView> {
-  const detail = await loadTask(taskKey)
-  if (!detail) throw new LibraryError('Không tìm thấy task', 404)
-  const { task, line, library, template, slots } = detail
-  const job = await latestRenderJob(task.orderId, task.shopifyLineId)
-  const check = autoRenderEligibility({
-    taskStatus: task.status, hasTemplate: !!template, slots, library, personalization: line.personalization, job,
-  })
-  if (!check.ok) throw new LibraryError(check.reason ?? 'Chưa tạo được file in tự động', 409)
+type LoadedTask = NonNullable<Awaited<ReturnType<typeof loadTask>>>
+
+async function enqueueRender(detail: LoadedTask, actorId: string | null, how: string): Promise<RenderJobView> {
+  const { task, library, slots } = detail
   const created = await prisma.$transaction(async tx => {
     const open = await tx.artworkJob.count({ where: { kind: RENDER_LINE, orderId: task.orderId, shopifyLineId: task.shopifyLineId, status: { in: OPEN } } })
     if (open > 0) throw new LibraryError('Đang dựng file in…', 409)
@@ -37,8 +32,71 @@ export async function queueRenderLine(taskKey: string, actor: Actor): Promise<Re
       data: { kind: RENDER_LINE, entryId: library!.entryId!, orderId: task.orderId, shopifyLineId: task.shopifyLineId, printArea: slots[0] },
     })
   })
-  await taskEvent(task.orderId, task.shopifyLineId, `Xếp hàng tạo file in tự động (${slots[0]}) từ artwork gốc${library?.optionLabel ? ` ${library.optionLabel}` : ''}`, actor.id)
+  await taskEvent(task.orderId, task.shopifyLineId, `${how} (${slots[0]}) từ artwork gốc${library?.optionLabel ? ` ${library.optionLabel}` : ''}`, actorId)
   return renderJobView(created)
+}
+
+async function renderCheck(detail: LoadedTask) {
+  const { task, line, library, template, slots } = detail
+  const job = await latestRenderJob(task.orderId, task.shopifyLineId)
+  return autoRenderEligibility({ taskStatus: task.status, hasTemplate: !!template, slots, library, personalization: line.personalization, job })
+}
+
+export async function queueRenderLine(taskKey: string, actor: Actor): Promise<RenderJobView> {
+  const detail = await loadTask(taskKey)
+  if (!detail) throw new LibraryError('Không tìm thấy task', 404)
+  const check = await renderCheck(detail)
+  if (!check.ok) throw new LibraryError(check.reason ?? 'Chưa tạo được file in tự động', 409)
+  return enqueueRender(detail, actor.id, 'Xếp hàng tạo file in tự động')
+}
+
+/** Statuses the daily run picks up: nobody has started on the task yet. */
+export const SCHEDULED_RENDER_FROM = ['NEW', 'ASSIGNED']
+const SCHEDULED_SCAN_LIMIT = 400
+
+export type ScheduledRenderSummary = { scanned: number; queued: { taskKey: string; jobId: string }[]; skipped: { reason: string; count: number }[] }
+
+/**
+ * The daily auto-render: every task nobody has started whose product has a READY artwork for its template and whose customer
+ * filled every field gets a RENDER_LINE job. A line is tried once: one that already has a print file (uploaded or rendered)
+ * or any earlier render job is left to the designer, so a failed render or a rejected one is never redone on its own.
+ */
+export async function queueScheduledRenders(opts: { limit?: number } = {}): Promise<ScheduledRenderSummary> {
+  const tasks = await prisma.designTask.findMany({
+    where: { status: { in: SCHEDULED_RENDER_FROM } },
+    select: { taskKey: true, orderId: true, shopifyLineId: true },
+    orderBy: { createdAt: 'asc' }, take: opts.limit ?? SCHEDULED_SCAN_LIMIT,
+  })
+  const summary: ScheduledRenderSummary = { scanned: tasks.length, queued: [], skipped: [] }
+  if (tasks.length === 0) return summary
+  const orderIds = Array.from(new Set(tasks.map(t => t.orderId)))
+  const key = (orderId: string, shopifyLineId: string) => `${orderId}\u0000${shopifyLineId}`
+  const [files, jobs] = await Promise.all([
+    prisma.designArtwork.findMany({ where: { orderId: { in: orderIds }, kind: 'PRINT', removedAt: null }, select: { orderId: true, shopifyLineId: true }, distinct: ['orderId', 'shopifyLineId'] }),
+    prisma.artworkJob.findMany({ where: { kind: RENDER_LINE, orderId: { in: orderIds } }, select: { orderId: true, shopifyLineId: true }, distinct: ['orderId', 'shopifyLineId'] }),
+  ])
+  const hasFile = new Set(files.map(f => key(f.orderId, f.shopifyLineId)))
+  const tried = new Set(jobs.map(j => key(j.orderId as string, j.shopifyLineId as string)))
+  const reasons = new Map<string, number>()
+  const skip = (reason: string) => reasons.set(reason, (reasons.get(reason) ?? 0) + 1)
+
+  for (const t of tasks) {
+    const k = key(t.orderId, t.shopifyLineId)
+    if (hasFile.has(k)) { skip('Đã có file in'); continue }
+    if (tried.has(k)) { skip('Đã từng dựng tự động'); continue }
+    try {
+      const detail = await loadTask(t.taskKey)
+      if (!detail) { skip('Không tìm thấy task'); continue }
+      const check = await renderCheck(detail)
+      if (!check.ok) { skip(check.reason?.startsWith('Khách chưa điền') ? 'Khách chưa điền đủ' : check.reason ?? 'Không đủ điều kiện'); continue }
+      const job = await enqueueRender(detail, null, 'Lịch hằng ngày: xếp hàng tạo file in tự động')
+      summary.queued.push({ taskKey: t.taskKey, jobId: job.id })
+    } catch (err: any) {
+      skip(`Lỗi: ${err?.message ?? String(err)}`.slice(0, 120))
+    }
+  }
+  summary.skipped = Array.from(reasons, ([reason, count]) => ({ reason, count })).sort((a, b) => b.count - a.count)
+  return summary
 }
 
 export type RenderClaim = {

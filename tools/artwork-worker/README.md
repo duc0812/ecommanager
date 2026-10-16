@@ -26,6 +26,18 @@ $env:DESIGN_WORKER_TOKEN = "dsw_..."               # Design Studio > Settings (S
 .venv\Scripts\python worker.py --once --debug-dir C:\tmp\aw   # also keep reference.png / check.png
 ```
 
+### Daily auto-render (07:00)
+
+`run-daily.ps1` runs `worker.py --auto-render --drain` against prod from the Windows Task Scheduler task
+"EcomManager Auto Render" (daily 07:00, runs as soon as the PC is on if 07:00 was missed). `--auto-render` asks the
+server to queue a `RENDER_LINE` job for every task still NEW/ASSIGNED whose product has a READY artwork for its template
+and whose customer filled every field; `--drain` works the queue and exits. A line is tried once: a line that already
+has a print file or an earlier render job is left to the designer. Rendered tasks go to REVIEW as usual.
+
+- Token: create it in Design Studio > Settings on prod, then run `.\set-token.ps1` and paste it at the prompt.
+  It is saved to `%USERPROFILE%\.artwork-worker\prod.env`.
+- Logs: `%USERPROFILE%\.artwork-worker\logs\auto-render-<date>.log`, kept 30 days.
+
 The worker never prints the token. Exit codes: `0` ok or no job, `1` the server can't be reached or rejects the token, `2` env missing.
 
 Files:

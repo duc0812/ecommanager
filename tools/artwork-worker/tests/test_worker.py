@@ -135,3 +135,41 @@ def test_claim_asks_for_both_job_kinds():
     a.s = S()
     assert a.claim() is None
     assert sent['json'] == {'kinds': ['PARSE_PSD', 'RENDER_LINE']}
+
+
+class DailyApi:
+    """Two queued jobs, then an empty queue."""
+    def __init__(self, fail_auto=False):
+        self.calls, self.jobs, self.fail_auto = [], ['j1', 'j2'], fail_auto
+
+    def auto_render(self):
+        self.calls.append('auto-render')
+        if self.fail_auto:
+            raise worker.ApiError('auto-render: HTTP 401 Unauthorized', 401)
+        return {'scanned': 5, 'queued': [{'taskKey': 'LIT1_1', 'jobId': 'j1'}, {'taskKey': 'LIT2_1', 'jobId': 'j2'}],
+                'skipped': [{'reason': 'Khách chưa điền đủ', 'count': 3}]}
+
+    def claim(self, kinds=None):
+        self.calls.append('claim')
+        return self.jobs.pop(0) if self.jobs else None
+
+
+def test_daily_run_queues_renders_works_the_queue_and_exits(monkeypatch, capsys):
+    fake = DailyApi()
+    monkeypatch.setattr(worker, 'WorkerApi', lambda url, token: fake)
+    processed = []
+    monkeypatch.setattr(worker, 'process', lambda api, fonts, claim, debug_dir, artworks: processed.append(claim))
+    assert worker.run(False, 10.0, None, drain=True, auto_render=True) == 0
+    assert fake.calls == ['auto-render', 'claim', 'claim', 'claim']
+    assert processed == ['j1', 'j2']
+    out = capsys.readouterr().out
+    assert '5 task(s) scanned, 2 queued (LIT1_1, LIT2_1)' in out
+    assert 'skipped 3: Khách chưa điền đủ' in out
+    assert 'no job queued (2 processed)' in out
+
+
+def test_daily_run_stops_when_the_server_refuses(monkeypatch):
+    fake = DailyApi(fail_auto=True)
+    monkeypatch.setattr(worker, 'WorkerApi', lambda url, token: fake)
+    assert worker.run(False, 10.0, None, drain=True, auto_render=True) == 1
+    assert fake.calls == ['auto-render']

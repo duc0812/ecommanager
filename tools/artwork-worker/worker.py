@@ -4,6 +4,7 @@
     set DESIGN_WORKER_TOKEN=dsw_...
     python worker.py --once        # one job (if any), then exit
     python worker.py --poll 10     # loop, sleeping 10 s when the queue is empty
+    python worker.py --auto-render --drain   # the daily run: queue renders for new orders, work the queue, exit
 """
 from __future__ import annotations
 
@@ -185,27 +186,40 @@ def _fail(api: WorkerApi, claim: Claim | RenderClaim, error: str, permanent: boo
         log(f'  could not report failure: {e}')
 
 
-def run(once: bool, poll: float, debug_dir: str | None) -> int:
+def run(once: bool, poll: float, debug_dir: str | None, drain: bool = False, auto_render: bool = False) -> int:
     api = WorkerApi(os.environ.get('ECOM_URL', ''), os.environ.get('DESIGN_WORKER_TOKEN', ''))
     fonts = FontCache(api)
     artworks = ArtworkCache(api)
     log(f'worker started against {os.environ.get("ECOM_URL")}')
+    if auto_render:
+        try:
+            summary = api.auto_render()
+        except (ApiError, OSError) as e:
+            log(f'auto-render failed: {e}')
+            return 1
+        queued = summary.get('queued') or []
+        log(f'auto-render: {summary.get("scanned", 0)} task(s) scanned, {len(queued)} queued'
+            + (f' ({", ".join(q["taskKey"] for q in queued)})' if queued else ''))
+        for s in summary.get('skipped') or []:
+            log(f'  skipped {s["count"]}: {s["reason"]}')
+    done = 0
     while True:
         try:
             claim = api.claim()
         except (ApiError, OSError) as e:
             log(f'claim failed: {e}')
-            if once:
+            if once or drain:
                 return 1
             time.sleep(poll)
             continue
         if claim is None:
-            if once:
-                log('no job queued')
+            if once or drain:
+                log(f'no job queued ({done} processed)' if drain else 'no job queued')
                 return 0
             time.sleep(poll)
             continue
         process(api, fonts, claim, debug_dir, artworks)
+        done += 1
         if once:
             return 0
 
@@ -215,10 +229,12 @@ def main(argv: list[str] | None = None) -> int:
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument('--once', action='store_true', help='process at most one job and exit')
     g.add_argument('--poll', type=float, metavar='SECONDS', help='loop forever, sleeping SECONDS when idle')
+    g.add_argument('--drain', action='store_true', help='process jobs until the queue is empty, then exit')
+    ap.add_argument('--auto-render', action='store_true', help='first ask the server to queue renders for new orders that can be rendered')
     ap.add_argument('--debug-dir', help='also save reference.png / check.png (parse) or <job>-print.png (render) here')
     a = ap.parse_args(argv)
     try:
-        return run(a.once, a.poll or 10.0, a.debug_dir)
+        return run(a.once, a.poll or 10.0, a.debug_dir, drain=a.drain, auto_render=a.auto_render)
     except KeyboardInterrupt:
         log('stopped')
         return 0

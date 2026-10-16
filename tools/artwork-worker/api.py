@@ -8,6 +8,8 @@ POST worker/jobs/<id>/result     -> PARSE_PSD: multipart artwork (artwork.png), 
                                     RENDER_LINE: multipart print (print.png), preview (preview.jpg), result (result.json)
                                     -> {"ok": true, "status": "DONE", "artworkId": "...", "version": n, "warning": str|null}
 POST worker/jobs/<id>/fail       -> JSON {"error": str, "permanent": bool} -> {"ok", "jobStatus", "attempts"}
+POST worker/auto-render          -> queues RENDER_LINE jobs for untouched tasks that can be rendered
+                                    -> {"scanned": n, "queued": [{taskKey, jobId}], "skipped": [{reason, count}]}
 All requests carry `Authorization: Bearer <DESIGN_WORKER_TOKEN>`. The token is never logged.
 """
 from __future__ import annotations
@@ -188,6 +190,9 @@ class WorkerApi:
             files.append(('preview', ('preview.jpg', preview_jpg, 'image/jpeg')))
         r = self.s.post(f'{self.base}/jobs/{job_id}/result', files=files, timeout=TIMEOUT)
         return self._check(r, 'result').json()
+
+    def auto_render(self) -> dict:
+        return self._check(self.s.post(f'{self.base}/auto-render', timeout=TIMEOUT), 'auto-render').json()
 
     def fail(self, job_id: str, error: str, permanent: bool = False) -> dict:
         r = self.s.post(f'{self.base}/jobs/{job_id}/fail', json={'error': error[:2000] or 'error', 'permanent': permanent},
