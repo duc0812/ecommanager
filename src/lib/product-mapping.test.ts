@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { resolveByProductBase } from '@/lib/product-mapping'
+import { matchesShipTo, resolveByProductBase } from '@/lib/product-mapping'
 
 const productBases = [
   {
@@ -138,5 +138,40 @@ describe('a "Special Case" may name a value outside its base, but still only for
   it('does not fire when the line carries no Type at all', () => {
     const r = resolveByProductBase(null, '3D Clothing', { Size: '6XL' }, [tshirtBase], [])
     expect(r.resolvedVia).toBe('unresolved')
+  })
+})
+
+describe('product profile overrides by destination ("Ship to")', () => {
+  const profile = {
+    supplierProductId: null,
+    overrides: [
+      { combo: { Size: '20oz(No handle)', 'Ship to': '!US' }, supplierProductId: 'sp_china' },
+      { combo: { Size: '20oz(No handle)' }, supplierProductId: 'sp_us' },
+    ],
+  }
+  const opts = { 'Produced In And Shipped From': 'Overseas', Size: '20oz(No handle)' }
+  const resolve = (shipTo: string | null, options: Record<string, string> = opts) =>
+    resolveByProductBase('v1', 'Tumbler', options, [], [], profile, shipTo).supplierProductId
+
+  it('sends a line abroad to the international supplier and a US line to the US one', () => {
+    expect(resolve('GB')).toBe('sp_china')
+    expect(resolve('ca')).toBe('sp_china')
+    expect(resolve('US')).toBe('sp_us')
+  })
+
+  it('an unknown destination matches no Ship to rule and falls through to the next override', () => {
+    expect(resolve(null)).toBe('sp_us')
+    expect(resolve('')).toBe('sp_us')
+  })
+
+  it('other sizes are untouched', () => {
+    expect(resolveByProductBase('v1', null, { Size: '30oz' }, [], [], profile, 'GB').supplierProductId).toBeNull()
+  })
+
+  it('reads lists and negated lists', () => {
+    expect(matchesShipTo('US,CA', 'CA')).toBe(true)
+    expect(matchesShipTo('!US,CA', 'CA')).toBe(false)
+    expect(matchesShipTo('!US,CA', 'AU')).toBe(true)
+    expect(matchesShipTo('!', 'AU')).toBe(false)
   })
 })

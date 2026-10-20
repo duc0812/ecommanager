@@ -134,6 +134,35 @@ export function matchesAttributeCombo(
   })
 }
 
+/** Reserved key of a product-profile override combo: the destination country, not a variant option. */
+export const SHIP_TO_KEY = 'Ship to'
+
+/**
+ * `US`, `US,CA` or `!US` against the order's ISO2 destination. An unknown destination matches neither
+ * form, so a line whose order has no address falls through to the next rule.
+ */
+export function matchesShipTo(rule: string, shipTo: string | null | undefined): boolean {
+  const dest = (shipTo ?? '').trim().toUpperCase()
+  if (!dest) return false
+  const negate = rule.trim().startsWith('!')
+  const codes = rule.trim().replace(/^!/, '').split(',').map(c => c.trim().toUpperCase()).filter(Boolean)
+  if (codes.length === 0) return false
+  return negate ? !codes.includes(dest) : codes.includes(dest)
+}
+
+/** A profile override: every variant option in the combo matches, and `Ship to`, when present, matches the destination. */
+export function matchesProfileCombo(combo: Record<string, string>, variantOptions: Record<string, string>, shipTo?: string | null): boolean {
+  const options: Record<string, string> = {}
+  for (const [k, v] of Object.entries(combo)) {
+    if (normalize(k) === normalize(SHIP_TO_KEY)) {
+      if (!matchesShipTo(v, shipTo)) return false
+    } else {
+      options[k] = v
+    }
+  }
+  return matchesAttributeCombo(options, variantOptions)
+}
+
 export function profileKey(storeId: string, shopifyProductId: string): string {
   return `${storeId}|${shopifyProductId}`
 }
@@ -224,6 +253,7 @@ export function resolveByProductBase(
   productBases: ProductBaseData[],
   manualMappings: VariantManualMappingData[],
   profile?: ProductProfileResolveData | null,
+  shipTo?: string | null,
 ): ResolveResult {
   if (shopifyVariantId) {
     const manual = manualMappings.find(m => m.shopifyVariantId === shopifyVariantId)
@@ -231,7 +261,7 @@ export function resolveByProductBase(
   }
 
   if (profile) {
-    const override = profile.overrides.find(o => matchesAttributeCombo(o.combo, variantOptions))
+    const override = profile.overrides.find(o => matchesProfileCombo(o.combo, variantOptions, shipTo))
     if (override) return { supplierProductId: override.supplierProductId, resolvedVia: 'product_profile_override' }
     if (profile.supplierProductId) {
       return { supplierProductId: profile.supplierProductId, resolvedVia: 'product_profile' }

@@ -186,6 +186,7 @@ export async function POST(req: NextRequest) {
             productBases,
             manualMappings,
             l.productId ? productProfiles.get(profileKey(store.id, l.productId)) ?? null : null,
+            o.shippingCountry,
           )
           return {
             ...result,

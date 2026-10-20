@@ -51,7 +51,7 @@ export async function recalculateMissingOrderLineCosts(filter: {
         order: Object.keys(orderScope).length > 0 ? orderScope : undefined,
       },
       include: {
-        order: { select: { id: true, shippingZone: true, storeId: true } },
+        order: { select: { id: true, shippingZone: true, storeId: true, shippingCountry: true } },
       },
     }),
   ])
@@ -80,6 +80,7 @@ export async function recalculateMissingOrderLineCosts(filter: {
       productBases,
       manualMappings,
       line.shopifyProductId ? productProfiles.get(profileKey(line.order.storeId, line.shopifyProductId)) ?? null : null,
+      line.order.shippingCountry,
     )
     const supplierProductId = swapToSizeSibling(
       result.supplierProductId,

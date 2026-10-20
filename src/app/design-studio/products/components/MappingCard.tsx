@@ -5,6 +5,7 @@ import { productUrl, putJson } from '../../components/model'
 import { ErrorBanner, Icon, Note, btn, card, input } from '../../components/ui'
 import type { OverrideRow, ProductDetail, SaveResponse, SupplierProductOption } from './types'
 import { groupBySupplier, overrideRowsToPayload, referencedSupplierIds, supplierProductLabel, toOverrideRows } from './profile-form'
+import { SHIP_TO_KEY } from '@/lib/product-mapping'
 
 type Form = { supplierProductId: string; overrides: OverrideRow[]; printTemplateId: string; notes: string }
 
@@ -174,7 +175,8 @@ export default function MappingCard({ detail, canEdit, onSaved }: {
           <div className="xl:col-span-2">
             <Section icon="call_split" title="Ghi đè theo option" right={`${form.overrides.length} dòng`}>
               {form.overrides.length === 0 && <p className="text-body-sm text-on-surface-variant">Chưa có ghi đè — mọi biến thể dùng sản phẩm xưởng mặc định.</p>}
-              <datalist id={`${ids}-options`}>{optionNames.map(n => <option key={n} value={n} />)}</datalist>
+              <p className="text-label-sm text-on-surface-variant">Dòng trên được xét trước. Option <b>Ship to</b> = nước giao (mã ISO2): <code>US</code>, <code>US,CA</code> hoặc <code>!US</code> (ngoài Mỹ).</p>
+              <datalist id={`${ids}-options`}>{[...optionNames, SHIP_TO_KEY].map(n => <option key={n} value={n} />)}</datalist>
               {form.overrides.map((o, i) => (
                 <div key={i} className="flex flex-col gap-xs">
                   <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,2fr)_auto] gap-xs items-center">
