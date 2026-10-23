@@ -44,6 +44,27 @@ Files:
 - Fonts are cached by content hash in `~/.artwork-worker/fonts/<sha256>`; set `ARTWORK_WORKER_HOME` to move the cache.
 - Each PSD goes to a temp folder that is deleted after the job, whether the job succeeds or fails.
 
+### PSDs on the NAS (`--scan-nas`)
+
+PSDs are kept on the office NAS, not on the server (a 70 MB PSD per product × size fills the VPS fast). Set the root once
+with `.\set-nas-root.ps1 -Path '\\Tmteam\<share>\PSD Design'`; `run-daily.ps1` then runs `--scan-nas` before the renders.
+
+```
+<root>\<Store>\<code> - <short title>\<size or template> - <supplier> <SKU>\<the PSD>.psd
+                                                                         \_old\   older PSDs, moved here by the worker
+```
+
+- The server lists every product × template × option slot (`GET worker/nas/slots`); the scan creates any missing folder,
+  so designers only drop the PSD into the folder Artwork Library shows (with a Copy button).
+- An existing product folder named `<code> …` is reused, so renaming a product never splits its PSDs. Once an entry has a
+  PSD, its slot keeps that PSD's folder.
+- The newest `.psd`/`.psb` in a folder is the one used; older ones move to `_old\` (never overwritten).
+- The scan reports path + sha256 (`POST worker/nas/report`; hashes cached in `~/.artwork-worker/nas-hashes.json`). The server
+  links the same file without re-parsing (tuned fields and the approval stay) and queues one parse for a new or changed PSD.
+- A parse job for a NAS PSD copies it from the NAS to a temp file and checks the sha256; a file edited after the scan fails the
+  job and the next scan queues it again.
+- Rendering print files only needs `artwork.png` + fonts from the server, so the NAS being offline never blocks the daily renders.
+
 ## Layer convention (for designers)
 
 - Name each custom text layer `@Tên trường`, for example `@Custom Name`. The field is whatever comes after `@`. A trailing Photoshop ` copy` / ` copy 2` is ignored.

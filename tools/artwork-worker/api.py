@@ -10,6 +10,11 @@ POST worker/jobs/<id>/result     -> PARSE_PSD: multipart artwork (artwork.png), 
 POST worker/jobs/<id>/fail       -> JSON {"error": str, "permanent": bool} -> {"ok", "jobStatus", "attempts"}
 POST worker/auto-render          -> queues RENDER_LINE jobs for untouched tasks that can be rendered
                                     -> {"scanned": n, "queued": [{taskKey, jobId}], "skipped": [{reason, count}]}
+GET  worker/nas/slots            -> {"slots": [{storeId, shopifyProductId, templateId, optionKey, title, folder: [..],
+                                     productKey, entryId, activeSha256, nasPath}]}
+POST worker/nas/report           -> JSON {root, found: [{storeId, shopifyProductId, templateId, optionKey, nasPath, sha256,
+                                     size, modifiedAt}], missing: [nasPath]} -> {linked, queued, unchanged, errors}
+A PARSE_PSD claim whose psd.nasPath is set has psdFileId null: read the PSD from ARTWORK_NAS_ROOT/<nasPath>.
 All requests carry `Authorization: Bearer <DESIGN_WORKER_TOKEN>`. The token is never logged.
 """
 from __future__ import annotations
@@ -55,6 +60,7 @@ class Claim:
     psd_sha256: str | None
     layer_fields: dict[str, str] = field(default_factory=dict)
     kind: str = PARSE_PSD
+    psd_nas_path: str | None = None
 
 
 @dataclass
@@ -113,6 +119,7 @@ def parse_claim(data: dict | None) -> Claim | RenderClaim | None:
         psd_file_id=data.get('psdFileId') or psd.get('id'), psd_file_name=psd.get('fileName', 'artwork.psd'),
         psd_size=int(psd.get('size') or 0), psd_sha256=psd.get('sha256'),
         layer_fields={str(k): str(v) for k, v in lf.items()} if isinstance(lf, dict) else {},
+        psd_nas_path=psd.get('nasPath') or None,
     )
 
 
@@ -190,6 +197,12 @@ class WorkerApi:
             files.append(('preview', ('preview.jpg', preview_jpg, 'image/jpeg')))
         r = self.s.post(f'{self.base}/jobs/{job_id}/result', files=files, timeout=TIMEOUT)
         return self._check(r, 'result').json()
+
+    def nas_slots(self) -> list[dict]:
+        return self._check(self.s.get(f'{self.base}/nas/slots', timeout=TIMEOUT), 'nas slots').json().get('slots') or []
+
+    def nas_report(self, payload: dict) -> dict:
+        return self._check(self.s.post(f'{self.base}/nas/report', json=payload, timeout=TIMEOUT), 'nas report').json()
 
     def auto_render(self) -> dict:
         return self._check(self.s.post(f'{self.base}/auto-render', timeout=TIMEOUT), 'auto-render').json()

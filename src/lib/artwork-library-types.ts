@@ -8,6 +8,8 @@ export type LibraryFileView = {
 export type LibraryEntryView = {
   id: string; storeId: string; shopifyProductId: string; printTemplateId: string; optionKey: string; optionLabel: string | null; supplierId: string
   status: EntryStatus; psd: LibraryFileView | null; artwork: LibraryFileView | null; preview: LibraryFileView | null
+  /** The PSD on the NAS (path relative to the NAS root); when set, `psd` is null even if an old upload is still attached. */
+  nas: { path: string; size: number | null; modifiedAt: string | null } | null
   fields: ArtworkField[]; fixedTexts: FixedText[]; missingFonts: string[]; warnings: string[]; layerFields: LayerFields
   checkScore: number | null; error: string | null; parsedAt: string | null; approvedAt: string | null; approvedByName: string | null
   notes: string | null; updatedAt: string
@@ -35,6 +37,8 @@ export type LibrarySlot = {
   status: SlotStatus
   entry: LibraryEntryView | null
   inherited: boolean
+  /** Where the slot's PSD goes on the NAS, relative to the NAS root ("/" separated); null without a template. */
+  nasFolder: string | null
 }
 
 export type LibraryChip = { supplierName: string; templateName: string | null; supplierSkus: string[]; optionLabel: string | null; status: SlotStatus }
@@ -50,6 +54,8 @@ export type LibraryProductDetail = {
   status: LibraryProductStatus; slots: LibrarySlot[]; stale: Array<{ template: LibraryTemplateView; supplier: { id: string; name: string; code: string }; entry: LibraryEntryView }>
   unmapped: number; observedFields: string[]; openTasks: number; orderCount: number
   legacyMasterUrl: string | null
+  /** Set once the worker has scanned the NAS: PSDs then go into NAS folders instead of being uploaded. */
+  nas: { root: string; lastScanAt: string | null } | null
 }
 
 export type LibraryFontRow = {

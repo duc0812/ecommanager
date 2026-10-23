@@ -54,8 +54,9 @@ export type ParseClaim = {
     id: string; name: string; widthPx: number; heightPx: number; dpi: number; bleedIn: number; safeIn: number; mirror: boolean
     areas: { name: string; x: number; y: number; w: number; h: number }[]
   }
-  psdFileId: string
-  psd: { id: string; fileName: string; size: number; sha256: string }
+  /** Null when the PSD lives on the NAS: the worker reads `psd.nasPath` under its ARTWORK_NAS_ROOT instead of downloading. */
+  psdFileId: string | null
+  psd: { id: string | null; fileName: string; size: number; sha256: string | null; nasPath: string | null }
 }
 
 type JobRef = { id: string; kind: string; entryId: string; orderId: string | null; shopifyLineId: string | null }
@@ -108,7 +109,7 @@ export async function claimJob(now = new Date(), kinds: string[] = [PARSE_PSD]):
         include: { entry: { include: { printTemplate: true, psdFile: true } } },
       })
       const { entry } = job
-      if (!entry.psdFile) {
+      if (!entry.psdFile && !entry.nasPath) {
         await prisma.artworkJob.update({ where: { id: job.id }, data: { status: 'FAILED', error: 'Entry không có PSD', finishedAt: new Date() } })
         await prisma.artworkEntry.update({ where: { id: entry.id }, data: { status: 'ERROR', error: 'Entry không có PSD' } })
         continue
@@ -126,8 +127,15 @@ export async function claimJob(now = new Date(), kinds: string[] = [PARSE_PSD]):
         template: {
           id: t.id, name: t.name, widthPx: t.widthPx, heightPx: t.heightPx, dpi: t.dpi, bleedIn: t.bleedIn, safeIn: t.safeIn, mirror: t.mirror, areas: t.areas,
         },
-        psdFileId: entry.psdFile.id,
-        psd: { id: entry.psdFile.id, fileName: entry.psdFile.fileName, size: entry.psdFile.size, sha256: entry.psdFile.sha256 },
+        ...(entry.nasPath
+          ? {
+              psdFileId: null,
+              psd: { id: null, fileName: entry.nasPath.split('/').pop() ?? 'artwork.psd', size: entry.nasSize ?? 0, sha256: entry.nasSha256, nasPath: entry.nasPath },
+            }
+          : {
+              psdFileId: entry.psdFile!.id,
+              psd: { id: entry.psdFile!.id, fileName: entry.psdFile!.fileName, size: entry.psdFile!.size, sha256: entry.psdFile!.sha256, nasPath: null },
+            }),
       }
     }
   }

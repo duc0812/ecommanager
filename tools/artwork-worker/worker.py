@@ -5,6 +5,7 @@
     python worker.py --once        # one job (if any), then exit
     python worker.py --poll 10     # loop, sleeping 10 s when the queue is empty
     python worker.py --auto-render --drain   # the daily run: queue renders for new orders, work the queue, exit
+    python worker.py --scan-nas --drain      # find new / changed PSDs on the NAS (ARTWORK_NAS_ROOT), parse them, exit
 """
 from __future__ import annotations
 
@@ -23,6 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from PIL import Image
 
 from api import ApiError, Claim, FontRef, RenderClaim, WorkerApi
+import nas
 from parse_psd import ParseError, parse
 from render_line import RenderError, preview_jpg, print_png, render_line
 
@@ -119,8 +121,15 @@ def process(api: WorkerApi, fonts: FontCache, claim: Claim | RenderClaim, debug_
     work = tempfile.mkdtemp(prefix='artwork-job-')
     try:
         psd_path = os.path.join(work, 'input.psd')
-        api.download(claim.psd_file_id, psd_path, claim.psd_sha256)
-        log(f'  PSD downloaded ({os.path.getsize(psd_path) / 1e6:.1f} MB)')
+        if claim.psd_nas_path:
+            root = nas.nas_root()
+            if root is None:
+                raise RuntimeError('ARTWORK_NAS_ROOT chưa cấu hình trên máy worker — không đọc được PSD trên NAS')
+            nas.copy_psd(root, claim.psd_nas_path, psd_path, claim.psd_sha256)
+            log(f'  PSD copied from NAS {claim.psd_nas_path} ({os.path.getsize(psd_path) / 1e6:.1f} MB)')
+        else:
+            api.download(claim.psd_file_id, psd_path, claim.psd_sha256)
+            log(f'  PSD downloaded ({os.path.getsize(psd_path) / 1e6:.1f} MB)')
         fonts.refresh()
         result, artwork, preview = parse(psd_path, claim.template.as_dict(), fonts.lookup,
                                          custom_layers=claim.layer_fields or None,
@@ -129,7 +138,7 @@ def process(api: WorkerApi, fonts: FontCache, claim: Claim | RenderClaim, debug_
             f'score {result["checkScore"]}, missing {result["missingFonts"]}, {len(result["warnings"])} warning(s)')
         resp = api.submit_result(claim.job_id, result, _png(artwork), _png(preview))
         log(f'  stored -> {resp.get("status")} ({time.time() - t0:.1f}s)')
-    except ParseError as e:
+    except (ParseError, nas.ChangedError) as e:
         log(f'  parse error: {e}')
         _fail(api, claim, str(e), permanent=True)
     except ApiError as e:
@@ -186,11 +195,34 @@ def _fail(api: WorkerApi, claim: Claim | RenderClaim, error: str, permanent: boo
         log(f'  could not report failure: {e}')
 
 
-def run(once: bool, poll: float, debug_dir: str | None, drain: bool = False, auto_render: bool = False) -> int:
+def scan_nas(api) -> bool:
+    root = nas.nas_root()
+    if root is None:
+        log('scan-nas: ARTWORK_NAS_ROOT is not set - skipped')
+        return False
+    try:
+        r = nas.scan(api, root, nas.HashCache(CACHE_DIR / 'nas-hashes.json'), log)
+    except (ApiError, OSError) as e:
+        log(f'scan-nas failed: {e}')
+        return False
+    log(f'scan-nas: {r["slots"]} slot(s), {r["created"]} folder(s) created, {r["found"]} PSD(s) found, '
+        f'{len(r["queued"])} queued for parsing, {len(r["linked"])} linked, {r["retired"]} moved to _old')
+    for q in r['queued']:
+        log(f'  queued {q}')
+    for m in r['missing']:
+        log(f'  missing on NAS: {m}')
+    for e in r['errors']:
+        log(f'  error: {e}')
+    return True
+
+
+def run(once: bool, poll: float, debug_dir: str | None, drain: bool = False, auto_render: bool = False, scan: bool = False) -> int:
     api = WorkerApi(os.environ.get('ECOM_URL', ''), os.environ.get('DESIGN_WORKER_TOKEN', ''))
     fonts = FontCache(api)
     artworks = ArtworkCache(api)
     log(f'worker started against {os.environ.get("ECOM_URL")}')
+    if scan:
+        scan_nas(api)
     if auto_render:
         try:
             summary = api.auto_render()
@@ -231,10 +263,11 @@ def main(argv: list[str] | None = None) -> int:
     g.add_argument('--poll', type=float, metavar='SECONDS', help='loop forever, sleeping SECONDS when idle')
     g.add_argument('--drain', action='store_true', help='process jobs until the queue is empty, then exit')
     ap.add_argument('--auto-render', action='store_true', help='first ask the server to queue renders for new orders that can be rendered')
+    ap.add_argument('--scan-nas', action='store_true', help='first look for new / changed PSDs under ARTWORK_NAS_ROOT and queue them for parsing')
     ap.add_argument('--debug-dir', help='also save reference.png / check.png (parse) or <job>-print.png (render) here')
     a = ap.parse_args(argv)
     try:
-        return run(a.once, a.poll or 10.0, a.debug_dir, drain=a.drain, auto_render=a.auto_render)
+        return run(a.once, a.poll or 10.0, a.debug_dir, drain=a.drain, auto_render=a.auto_render, scan=a.scan_nas)
     except KeyboardInterrupt:
         log('stopped')
         return 0
