@@ -33,9 +33,9 @@ function NasDrop({ root, folder, lastScanAt, hasPsd, optionLabel }: { root: stri
   const sep = root.includes('/') && !root.includes('\\') ? '/' : '\\'
   const full = `${root.replace(/[\\/]+$/, '')}${sep}${folder.split('/').join(sep)}`
   return (
-    <div className="rounded-lg border-2 border-dashed border-outline-variant/50 bg-surface-container-low px-md py-md flex flex-col gap-xs">
-      <span className="inline-flex items-center gap-xs text-label-md font-semibold text-on-surface">
-        <Icon name="lan" className="text-[18px] text-secondary" />{hasPsd ? 'Thay PSD' : 'Thêm PSD'}{optionLabel ? ` cho ${optionLabel}` : ''}: thả file .psd vào thư mục NAS
+    <div className="rounded-lg border border-outline-variant/30 bg-surface-container-low px-md py-sm flex flex-col gap-xs">
+      <span className="inline-flex items-center gap-xs text-label-sm font-semibold text-on-surface">
+        <Icon name="lan" className="text-[16px] text-secondary" />Thư mục NAS{optionLabel ? ` của ${optionLabel}` : ''} — ở văn phòng có thể {hasPsd ? 'thay PSD' : 'thêm PSD'} bằng cách thả thẳng vào đây
       </span>
       <span className="flex items-start gap-xs">
         <code className="font-mono text-label-sm text-on-surface break-all bg-surface-container-lowest rounded px-xs py-[2px] border border-outline-variant/30 flex-1">{full}</code>
@@ -45,9 +45,8 @@ function NasDrop({ root, folder, lastScanAt, hasPsd, optionLabel }: { root: stri
       </span>
       <span className="text-label-sm text-on-surface-variant">
         Mỗi thư mục giữ một PSD đang dùng; file mới nhất được dùng, bản cũ tự chuyển vào <code className="font-mono">_old</code>.
-        Worker quét NAS lúc 7:00 sáng{lastScanAt ? ` · lần quét gần nhất ${fmtDate(lastScanAt)}` : ''}.
+        Máy văn phòng quét NAS định kỳ{lastScanAt ? ` · lần quét gần nhất ${fmtDate(lastScanAt)}` : ''}.
       </span>
-      <span className="text-label-sm text-on-surface-variant">Layer chữ custom đặt tên <code className="font-mono text-secondary">@Tên trường</code> (vd <code className="font-mono text-secondary">@Custom Name</code>)</span>
     </div>
   )
 }
@@ -308,9 +307,6 @@ export default function SlotCard({ slot, stale = false, product, fonts, canAdmin
         </div>
 
         <div className="flex flex-col gap-sm min-w-0">
-          {product.nas && slot.nasFolder ? (
-            <NasDrop root={product.nas.root} folder={slot.nasFolder} lastScanAt={product.nas.lastScanAt} hasPsd={!!entry?.nas || !!entry?.psd} optionLabel={slot.optionLabel} />
-          ) : (
           <div {...dropProps}
             className={`rounded-lg border-2 border-dashed px-md py-md flex flex-col items-center gap-xs text-center ${dragOver ? 'border-secondary bg-secondary/5' : 'border-outline-variant/50 bg-surface-container-low'}`}>
             <Icon name="upload_file" className="text-[28px] text-on-surface-variant" />
@@ -319,7 +315,9 @@ export default function SlotCard({ slot, stale = false, product, fonts, canAdmin
             </button>
             <input ref={fileRef} type="file" accept=".psd" className="hidden" aria-label={`Chọn file PSD cho ${slot.title}`}
               onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) void sendPsd(f) }} />
-            <span className="text-label-sm text-on-surface-variant">hoặc kéo thả file .psd vào đây · tối đa 1 GB</span>
+            <span className="text-label-sm text-on-surface-variant">
+              hoặc kéo thả file .psd vào đây · tối đa 1 GB{product.nas ? ' · file lên Drive rồi máy văn phòng tự kéo về NAS' : ''}
+            </span>
             <span className="text-label-sm text-on-surface-variant">Layer chữ custom đặt tên <code className="font-mono text-secondary">@Tên trường</code> (vd <code className="font-mono text-secondary">@Custom Name</code>)</span>
             {upload && (
               <div className="w-full flex flex-col gap-[2px]" role="status" aria-live="polite">
@@ -330,6 +328,8 @@ export default function SlotCard({ slot, stale = false, product, fonts, canAdmin
               </div>
             )}
           </div>
+          {product.nas && slot.nasFolder && (
+            <NasDrop root={product.nas.root} folder={slot.nasFolder} lastScanAt={product.nas.lastScanAt} hasPsd={!!entry?.nas || !!entry?.psd} optionLabel={slot.optionLabel} />
           )}
 
           {entry?.nas && (
@@ -346,6 +346,7 @@ export default function SlotCard({ slot, stale = false, product, fonts, canAdmin
               <span className="font-mono text-on-surface break-all">{entry.psd.fileName}</span>
               <span>{fmtSize(entry.psd.size)} · {fmtDate(entry.psd.createdAt)}</span>
               {entry.psd.storage === 'DRIVE' && <Pill tone="ok" icon="cloud_done">Drive</Pill>}
+              {product.nas && !entry.nas && <Pill tone="warn" icon="sync">Chờ máy văn phòng kéo về NAS</Pill>}
             </div>
           )}
 

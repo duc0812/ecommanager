@@ -205,7 +205,7 @@ def scan_nas(api) -> bool:
     except (ApiError, OSError) as e:
         log(f'scan-nas failed: {e}')
         return False
-    log(f'scan-nas: {r["slots"]} slot(s), {r["created"]} folder(s) created, {r["found"]} PSD(s) found, '
+    log(f'scan-nas: {r["slots"]} slot(s), {r["created"]} folder(s) created, {r.get("pulled", 0)} upload(s) pulled, {r["found"]} PSD(s) found, '
         f'{len(r["queued"])} queued for parsing, {len(r["linked"])} linked, {r["retired"]} moved to _old')
     for q in r['queued']:
         log(f'  queued {q}')

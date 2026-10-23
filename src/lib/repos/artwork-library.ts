@@ -396,6 +396,8 @@ export async function uploadEntryPsd(input: {
   const imageUrl = safeHttpUrl(newest?.imageUrl) ?? existing?.imageUrl ?? safeHttpUrl(profile?.imageUrl) ?? null
   const data = {
     supplierId: template.supplierId, title, imageUrl, status: 'QUEUED', psdFileId: file.id, ...CLEARED_RESULTS,
+    // The upload is now the PSD in use; the worker copies it into the NAS folder (the old one goes to _old) on its next scan.
+    nasPath: null, nasSha256: null, nasSize: null, nasModifiedAt: null,
   }
   const entry = await prisma.$transaction(async tx => {
     const row = await tx.artworkEntry.upsert({

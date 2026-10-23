@@ -93,11 +93,35 @@ def retire(files: list[Path], folder: Path) -> list[Path]:
     return moved
 
 
+def upload_name(raw: str) -> str:
+    """The uploaded file's own name, made safe for a Windows folder; always .psd/.psb."""
+    name = ''.join(' ' if c in '<>:"/\\|?*' or ord(c) < 32 else c for c in Path(str(raw)).name).strip().rstrip('. ')
+    if not name.lower().endswith(PSD_EXT):
+        name = (name or 'artwork') + '.psd'
+    return name
+
+
+def pull_upload(api, folder: Path, pending: dict, hashes: HashCache, log: Callable[[str], None]) -> Path:
+    """Download a PSD a designer uploaded in the tool into the slot folder, where it becomes the newest PSD (the scan below
+    then retires the previous one to _old and reports it; the server deletes the uploaded copy once linked)."""
+    name = upload_name(pending.get('fileName') or 'artwork.psd')
+    part = folder / f'.{name}.part'
+    sha = api.download(str(pending['fileId']), str(part), pending.get('sha256'))
+    dest = folder / name
+    if dest.exists():
+        retire([dest], folder)
+    os.replace(part, dest)
+    st = dest.stat()
+    hashes.data[str(dest)] = {'size': st.st_size, 'mtime': st.st_mtime, 'sha256': sha}
+    log(f'  pulled upload {name} ({st.st_size / 1048576:.1f} MB) into {folder.name}')
+    return dest
+
+
 def scan(api, root: Path, hashes: HashCache, log: Callable[[str], None]) -> dict:
     if not root.is_dir():
         raise OSError(f'NAS root {root} is not reachable')
     slots = api.nas_slots()
-    found, missing, created, retired = [], [], 0, 0
+    found, missing, created, retired, pulled, errors = [], [], 0, 0, 0, []
     seen: set[str] = set()
     for s in slots:
         folder = slot_dir(root, s)
@@ -105,6 +129,14 @@ def scan(api, root: Path, hashes: HashCache, log: Callable[[str], None]) -> dict
             folder.mkdir(parents=True, exist_ok=True)
             created += 1
             log(f'  created {folder.relative_to(root).as_posix()}')
+        if s.get('pendingUpload'):
+            try:
+                pull_upload(api, folder, s['pendingUpload'], hashes, log)
+                pulled += 1
+            except Exception as e:  # one bad upload must not stop the scan
+                errors.append(f'{folder.relative_to(root).as_posix()}: không kéo được PSD upload ({e})')
+                for leftover in folder.glob('.*.part'):
+                    leftover.unlink(missing_ok=True)
         files = psds_in(folder)
         if len(files) > 1:
             moved = retire(files[1:], folder)
@@ -126,8 +158,8 @@ def scan(api, root: Path, hashes: HashCache, log: Callable[[str], None]) -> dict
     hashes.save()
     missing = [m for m in missing if m not in seen]
     resp = api.nas_report({'root': str(root), 'found': found, 'missing': missing})
-    return {'slots': len(slots), 'created': created, 'retired': retired, 'found': len(found), 'missing': missing,
-            'queued': resp.get('queued') or [], 'linked': resp.get('linked') or [], 'errors': resp.get('errors') or []}
+    return {'slots': len(slots), 'created': created, 'retired': retired, 'found': len(found), 'missing': missing, 'pulled': pulled,
+            'queued': resp.get('queued') or [], 'linked': resp.get('linked') or [], 'errors': errors + (resp.get('errors') or [])}
 
 
 def nas_root() -> Path | None:

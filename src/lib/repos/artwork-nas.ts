@@ -1,4 +1,7 @@
+import fsp from 'fs/promises'
 import { prisma } from '@/lib/db'
+import { deleteFile } from '@/lib/google-drive'
+import { localLibraryPath } from '@/lib/library-storage'
 import { isNonProductLine } from '@/lib/order-lines'
 import { safeHttpUrl } from '@/lib/design-studio'
 import { loadTemplateContext } from '@/lib/print-template-resolve'
@@ -27,6 +30,8 @@ export type NasSlot = {
   /** sha256 of the PSD the entry was parsed from (NAS or an old upload); the same file on the NAS is linked without re-parsing. */
   activeSha256: string | null
   nasPath: string | null
+  /** A PSD a designer uploaded in the tool (kept on Drive) that is not on the NAS yet: the worker downloads it into the folder. */
+  pendingUpload: { fileId: string; fileName: string; sha256: string; size: number } | null
 }
 
 export type NasFound = { storeId: string; shopifyProductId: string; templateId: string; optionKey: string; nasPath: string; sha256: string; size: number; modifiedAt: string }
@@ -51,7 +56,10 @@ export async function listNasSlots(): Promise<NasSlot[]> {
     }),
     prisma.productProfile.findMany({ select: { storeId: true, shopifyProductId: true, printTemplateId: true, artworkSplits: true, title: true } }),
     prisma.artworkEntry.findMany({
-      select: { id: true, storeId: true, shopifyProductId: true, printTemplateId: true, optionKey: true, title: true, nasPath: true, nasSha256: true, psdFile: { select: { sha256: true } } },
+      select: {
+        id: true, storeId: true, shopifyProductId: true, printTemplateId: true, optionKey: true, title: true, nasPath: true, nasSha256: true,
+        psdFile: { select: { id: true, fileName: true, sha256: true, size: true } },
+      },
     }),
     prisma.shopifyStore.findMany({ select: { id: true, shop: true, project: { select: { name: true } } } }),
   ])
@@ -90,6 +98,9 @@ export async function listNasSlots(): Promise<NasSlot[]> {
         storeId: g.storeId, shopifyProductId: g.shopifyProductId, templateId: tpl.id, optionKey: s.optionKey, title: g.title, folder,
         productKey: nasProductKey(g.title, g.shopifyProductId), entryId: entry?.id ?? null,
         activeSha256: entry?.nasSha256 ?? entry?.psdFile?.sha256 ?? null, nasPath: entry?.nasPath ?? null,
+        pendingUpload: entry?.psdFile && entry.psdFile.sha256 !== entry.nasSha256
+          ? { fileId: entry.psdFile.id, fileName: entry.psdFile.fileName, sha256: entry.psdFile.sha256, size: entry.psdFile.size }
+          : null,
       })
     }
   }
@@ -155,8 +166,9 @@ export async function reportNasScan(body: unknown): Promise<NasReportResult> {
     }
     const active = existing?.nasSha256 ?? existing?.psdFile?.sha256 ?? null
     if (existing && active === f.sha256) {
-      if (existing.nasPath === f.nasPath && existing.nasSha256 === f.sha256) { out.unchanged++; continue }
-      await prisma.artworkEntry.update({ where: { id: existing.id }, data: nas })
+      if (existing.nasPath === f.nasPath && existing.nasSha256 === f.sha256 && !existing.psdFileId) { out.unchanged++; continue }
+      await prisma.artworkEntry.update({ where: { id: existing.id }, data: { ...nas, psdFileId: null } })
+      if (existing.psdFileId) await releaseUploadedPsd(existing.psdFileId, out.errors)
       out.linked.push(f.nasPath)
       continue
     }
@@ -164,7 +176,7 @@ export async function reportNasScan(body: unknown): Promise<NasReportResult> {
     if (!existing && !base) { out.errors.push(`${f.nasPath}: không tìm thấy sản phẩm hoặc template`); continue }
     await prisma.$transaction(async tx => {
       const row = existing
-        ? await tx.artworkEntry.update({ where: { id: existing.id }, data: { status: 'QUEUED', ...CLEARED_RESULTS, ...nas } })
+        ? await tx.artworkEntry.update({ where: { id: existing.id }, data: { status: 'QUEUED', ...CLEARED_RESULTS, ...nas, psdFileId: null } })
         : await tx.artworkEntry.create({
             data: { storeId: f.storeId, shopifyProductId: f.shopifyProductId, printTemplateId: f.templateId, optionKey: f.optionKey, ...base!, status: 'QUEUED', ...CLEARED_RESULTS, ...nas },
           })
@@ -174,6 +186,7 @@ export async function reportNasScan(body: unknown): Promise<NasReportResult> {
       })
       await tx.artworkJob.create({ data: { entryId: row.id, kind: 'PARSE_PSD' } })
     })
+    if (existing?.psdFileId) await releaseUploadedPsd(existing.psdFileId, out.errors)
     out.queued.push(f.nasPath)
   }
 
@@ -182,6 +195,24 @@ export async function reportNasScan(body: unknown): Promise<NasReportResult> {
   }
   await prisma.appSetting.upsert({ where: { key: NAS_SCAN_KEY }, create: { key: NAS_SCAN_KEY, value: JSON.stringify(state) }, update: { value: JSON.stringify(state) } })
   return out
+}
+
+/**
+ * Once the NAS holds the PSD, the uploaded copy (on Drive, or on the server disk when Drive was not connected) is deleted —
+ * unless another entry still parses from it (two products sharing one PSD upload).
+ */
+async function releaseUploadedPsd(fileId: string, errors: string[]): Promise<void> {
+  if (await prisma.artworkEntry.count({ where: { psdFileId: fileId } }) > 0) return
+  const row = await prisma.libraryFile.findUnique({ where: { id: fileId } })
+  if (!row) return
+  try {
+    if (row.storage === 'DRIVE' && row.driveFileId) await deleteFile(row.driveFileId)
+    const abs = localLibraryPath(row.storagePath)
+    if (abs) await fsp.rm(abs, { force: true })
+    await prisma.libraryFile.delete({ where: { id: fileId } })
+  } catch (e: any) {
+    errors.push(`Không xoá được bản upload ${row.fileName}: ${e?.message ?? e}`)
+  }
 }
 
 async function newEntryBase(storeId: string, shopifyProductId: string, templateId: string) {

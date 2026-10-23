@@ -2,6 +2,9 @@
 # Scans the NAS for new / changed PSDs (when ARTWORK_NAS_ROOT is set), asks Ecom Manager to queue print renders for new
 # orders whose product has a READY artwork, works the queue (PSD parses + renders), then exits.
 # Settings come from %USERPROFILE%\.artwork-worker\prod.env (set-token.ps1, set-nas-root.ps1); output goes to logs\auto-render-<date>.log.
+# -SyncOnly (task "EcomManager NAS Sync", every 30 min): pull PSDs uploaded in the tool onto the NAS and work the queue,
+# without queueing the day's auto renders.
+param([switch]$SyncOnly)
 $ErrorActionPreference = 'Stop'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $workerHome = if ($env:ARTWORK_WORKER_HOME) { $env:ARTWORK_WORKER_HOME } else { Join-Path $env:USERPROFILE '.artwork-worker' }
@@ -23,5 +26,6 @@ $python = Join-Path $here '.venv\Scripts\python.exe'
 $worker = Join-Path $here 'worker.py'
 # cmd does the redirect so the log stays UTF-8 (PowerShell 5.1 would write UTF-16 and wrap stderr lines).
 $scan = if ($env:ARTWORK_NAS_ROOT) { '--scan-nas ' } else { '' }
-cmd /c "`"$python`" `"$worker`" $scan--auto-render --drain >> `"$log`" 2>&1"
+$render = if ($SyncOnly) { '' } else { '--auto-render ' }
+cmd /c "`"$python`" `"$worker`" $scan$render--drain >> `"$log`" 2>&1"
 exit $LASTEXITCODE

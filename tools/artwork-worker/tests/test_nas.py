@@ -174,3 +174,55 @@ def test_daily_run_scans_the_nas_first(monkeypatch, tmp_path):
     monkeypatch.setenv('ARTWORK_NAS_ROOT', str(tmp_path))
     assert worker.run(False, 10.0, None, drain=True, auto_render=True, scan=True) == 0
     assert calls == ['nas-slots', 'auto-render', 'claim']
+
+
+class PullApi(NasApi):
+    """Fake server for uploads waiting on Drive: download() writes the uploaded bytes like the real client."""
+
+    def __init__(self, slots, files):
+        super().__init__(slots)
+        self.files, self.downloads = files, []
+
+    def download(self, file_id, dest, expect_sha256=None):
+        self.downloads.append(file_id)
+        data = self.files[file_id]
+        with open(dest, 'wb') as fh:
+            fh.write(data)
+        digest = hashlib.sha256(data).hexdigest()
+        if expect_sha256 and digest != expect_sha256:
+            os.remove(dest)
+            raise RuntimeError('sha256 mismatch')
+        return digest
+
+
+def test_a_psd_uploaded_in_the_tool_is_pulled_into_its_folder_and_replaces_the_old_one(tmp_path):
+    folder = tmp_path.joinpath(*SLOT['folder'])
+    write(folder / 'HaPo-20oz.psd', b'old-psd', time.time() - 100)
+    upload = {'fileId': 'f1', 'fileName': 'HaPo 20oz v2.psd', 'sha256': hashlib.sha256(b'designer-v2').hexdigest(), 'size': 11}
+    api = PullApi([{**SLOT, 'pendingUpload': upload}], {'f1': b'designer-v2'})
+    r = nas.scan(api, tmp_path, nas.HashCache(tmp_path / 'h.json'), lambda m: None)
+    assert api.downloads == ['f1'] and r['pulled'] == 1 and r['retired'] == 1
+    assert (folder / 'HaPo 20oz v2.psd').read_bytes() == b'designer-v2'
+    assert [p.name for p in (folder / '_old').iterdir()] == ['HaPo-20oz.psd']
+    assert not list(folder.glob('.*.part'))
+    (found,) = api.reports[0]['found']
+    assert found['nasPath'].endswith('/HaPo 20oz v2.psd') and found['sha256'] == upload['sha256']
+
+
+def test_a_failed_pull_is_reported_and_leaves_the_folder_as_it_was(tmp_path):
+    folder = tmp_path.joinpath(*SLOT['folder'])
+    write(folder / 'current.psd', b'current')
+    upload = {'fileId': 'f1', 'fileName': 'new.psd', 'sha256': 'f' * 64, 'size': 3}
+    api = PullApi([{**SLOT, 'pendingUpload': upload}], {'f1': b'not-what-was-uploaded'})
+    r = nas.scan(api, tmp_path, nas.HashCache(tmp_path / 'h.json'), lambda m: None)
+    assert r['pulled'] == 0 and len(r['errors']) == 1
+    assert sorted(p.name for p in folder.iterdir()) == ['current.psd']
+    (found,) = api.reports[0]['found']
+    assert found['nasPath'].endswith('/current.psd')
+
+
+def test_upload_names_are_safe_for_a_windows_folder():
+    assert nas.upload_name('HaPo: 40oz?.psd') == 'HaPo  40oz .psd'
+    assert nas.upload_name('Ly 40oz.PSB') == 'Ly 40oz.PSB'
+    assert nas.upload_name('notes.txt') == 'notes.txt.psd'
+    assert nas.upload_name('') == 'artwork.psd'
