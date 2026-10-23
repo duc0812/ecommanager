@@ -63,6 +63,7 @@ export type WorkspaceLine = {
 export type OrderInfo = {
   id: string; shopifyOrderNumber: string; placedAt: string; pipelineStatus: string; orderType: string
   designReady: boolean; trelloCardUrl: string | null
+  shipTo?: { countryCode: string | null; countryName: string | null; place: string | null }
   addOns?: AddOn[]
   store: { shop: string; projectId: string; projectName: string }
 }

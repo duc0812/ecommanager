@@ -439,11 +439,12 @@ export default function TaskHeader({ detail, holdCount, onChanged }: { detail: T
                 <span className="text-on-surface-variant">· SKU xưởng</span>
                 <span className="font-mono">{line.supplierSku ?? '—'}</span>{line.supplierSku && <CopyBtn value={line.supplierSku} label="SKU xưởng" onCopied={setInfo} />}
               </Fact>
-              {detail.order.trelloCardUrl && (
-                <Fact icon="view_kanban" label="Thẻ Trello">
-                  <a href={detail.order.trelloCardUrl} target="_blank" rel="noopener noreferrer" className="text-secondary hover:underline">Mở thẻ Trello của đơn ↗</a>
-                </Fact>
-              )}
+              <Fact icon="public" label="Giao tới">
+                {detail.order.shipTo?.countryName
+                  ? <><b>{detail.order.shipTo.countryName}</b>{detail.order.shipTo.countryCode && <span className="text-on-surface-variant">({detail.order.shipTo.countryCode})</span>}
+                    {detail.order.shipTo.place && <span className="text-on-surface-variant">· {detail.order.shipTo.place}</span>}</>
+                  : <span className="text-on-surface-variant">chưa có địa chỉ giao</span>}
+              </Fact>
               <Fact icon="folder" label="Thư mục Drive">
                 <DriveFolderLink folderUrl={detail.driveFolder?.url} driveConnected={detail.driveConnected} onCopied={setInfo} compact />
               </Fact>

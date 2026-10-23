@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { matchesShipTo, resolveByProductBase } from '@/lib/product-mapping'
+import { matchesShipTo, resolveByProductBase, type ProductProfileResolveData } from '@/lib/product-mapping'
 
 const productBases = [
   {
@@ -142,7 +142,7 @@ describe('a "Special Case" may name a value outside its base, but still only for
 })
 
 describe('product profile overrides by destination ("Ship to")', () => {
-  const profile = {
+  const profile: ProductProfileResolveData = {
     supplierProductId: null,
     overrides: [
       { combo: { Size: '20oz(No handle)', 'Ship to': '!US' }, supplierProductId: 'sp_china' },

@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/db'
+import { countryCodeOf, countryNameOf } from '@/lib/shipping-address'
 import { visibleCustomAttributes, customerDesignLink, addOnSummaries, type AddOnSummary } from '@/lib/order-classify'
 import { extractPreviewCdnUrl } from '@/lib/order-line-assets'
 import { isNonProductLine } from '@/lib/order-lines'
@@ -49,10 +50,23 @@ export type WorkspaceLine = {
   printAreas: string[]
   artworks: ArtworkRow[]
 }
+/** Where the order ships: ISO2 code, country name and city / state, for routing the order to the right supplier. */
+export type ShipTo = { countryCode: string | null; countryName: string | null; place: string | null }
+
+function shipToOf(o: { shippingCountry: string | null; shippingCity: string | null; shippingState: string | null; shippingStateCode: string | null }): ShipTo {
+  const countryCode = countryCodeOf(o.shippingCountry)
+  return {
+    countryCode,
+    countryName: countryCode ? countryNameOf(countryCode) : (o.shippingCountry || null),
+    place: [o.shippingCity, o.shippingStateCode ?? o.shippingState].filter(Boolean).join(', ') || null,
+  }
+}
+
 export type Workspace = {
   order: {
     id: string; shopifyOrderNumber: string; placedAt: string; pipelineStatus: string; orderType: string
     designReady: boolean; trelloCardUrl: string | null
+    shipTo: ShipTo
     addOns: AddOnSummary[]
     store: { shop: string; projectId: string; projectName: string }
   }
@@ -238,6 +252,7 @@ export async function loadWorkspace(orderId: string): Promise<Workspace | null> 
       id: order.id, shopifyOrderNumber: order.shopifyOrderNumber, placedAt: order.placedAt.toISOString(),
       pipelineStatus: order.pipelineStatus, orderType: order.orderType, designReady: order.designReady,
       trelloCardUrl: safeHttpUrl(order.trelloCardUrl),
+      shipTo: shipToOf(order),
       addOns: addOnSummaries(order.lines.map(l => ({
         sku: l.sku, productTitle: l.productTitle, shopifyProductType: l.shopifyProductType, variantTitle: l.variantTitle, qty: l.qty,
         customAttributes: parseAttributes(l.customAttributesJson),
