@@ -14,6 +14,7 @@ export type FeaturePermission =
   | 'fulfillment_design_library'
   | 'design_tasks'
   | 'need_to_fix'
+  | 'cs'
   | 'tools_spy_idea'
   | 'tools_resources'
   | 'projects'
@@ -46,6 +47,7 @@ export const FEATURE_LABELS: Record<FeaturePermission, string> = {
   fulfillment_design_library: 'Design Library',
   design_tasks: 'Design Tasks',
   need_to_fix: 'Need To Fix',
+  cs: 'Customer Service',
   tools_spy_idea: 'Spy Idea',
   tools_resources: 'Resources',
   projects: 'Project Management',
@@ -75,6 +77,7 @@ export const FEATURE_GROUPS: { label: string; permissions: FeaturePermission[] }
       'need_to_fix',
     ],
   },
+  { label: 'Customer Service', permissions: ['cs'] },
   { label: 'Tools', permissions: ['tools_spy_idea', 'tools_resources'] },
   { label: 'Project Management', permissions: ['projects'] },
   { label: 'Marketing', permissions: ['marketing_niche'] },
@@ -98,6 +101,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, FeaturePermission[]> = {
     'fulfillment_design_library',
     'design_tasks',
     'need_to_fix',
+    'cs',
     'tools_spy_idea',
     'tools_resources',
     'projects',
@@ -116,6 +120,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, FeaturePermission[]> = {
     'fulfillment_design_library',
     'design_tasks',
     'need_to_fix',
+    'cs',
   ],
 }
 
@@ -134,6 +139,7 @@ const FEATURE_PATHS: Record<FeaturePermission, string[]> = {
   fulfillment_design_library: ['/fulfillment/design-library'],
   design_tasks: ['/design-studio'],
   need_to_fix: ['/task-fix'],
+  cs: ['/cs'],
   tools_spy_idea: ['/tools/spy-idea'],
   tools_resources: ['/tools/resources'],
   projects: ['/projects'],
@@ -191,6 +197,7 @@ const HOME_PRIORITY: FeaturePermission[] = [
   'fulfillment_dashboard',
   'fulfillment_orders',
   'need_to_fix',
+  'cs',
   'shopify',
   'meta_billing',
   'other_bills',

@@ -1264,3 +1264,101 @@ model ArtworkJob {
   @@index([entryId])
   @@index([orderId, shopifyLineId])
 }
+
+model CsTicket {
+  id              String   @id @default(cuid())
+  fdTicketId      Int      @unique
+  subject         String
+  fdStatus        Int
+  fdPriority      Int
+  fdTags          String   @default("[]")
+  requesterEmail  String?
+  requesterName   String?
+  orderId         String?
+  orderNumber     String?
+  orderMatch      String   @default("NONE")
+  category        String?
+  urgency         String?
+  sentiment       String?
+  needsHuman      Boolean  @default(true)
+  autoReplied     Boolean  @default(false)
+  resolvedInTool  Boolean  @default(false)
+  fdCreatedAt     DateTime
+  fdUpdatedAt     DateTime
+  lastCustomerAt  DateTime?
+  lastReplyAt     DateTime?
+  lastAnalysisAt  DateTime?
+  lastNoteHash    String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  messages        CsMessage[]
+  analyses        CsAnalysis[]
+  @@index([needsHuman, urgency, lastCustomerAt])
+  @@index([fdUpdatedAt])
+}
+
+model CsMessage {
+  id               String   @id @default(cuid())
+  ticketId         String
+  ticket           CsTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  fdConversationId String?  @unique
+  author           String
+  private          Boolean  @default(false)
+  bodyText         String
+  bodyHtml         String?
+  fromEmail        String?
+  createdAt        DateTime
+  @@index([ticketId, createdAt])
+}
+
+model CsAnalysis {
+  id                String   @id @default(cuid())
+  ticketId          String
+  ticket            CsTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  runAt             DateTime @default(now())
+  model             String
+  inputHash         String
+  outputJson        String
+  category          String
+  urgency           String
+  sentiment         String
+  summary           String
+  proposal          String
+  draftReply        String?
+  needsHuman        Boolean
+  citedCaseIds      String   @default("[]")
+  autoReplyEligible Boolean  @default(false)
+  gateJson          String   @default("{}")
+  tokensIn          Int      @default(0)
+  tokensOut         Int      @default(0)
+  @@index([ticketId, runAt])
+}
+
+model CsCase {
+  id                   String   @id @default(cuid())
+  title                String
+  category             String
+  situation            String
+  resolution           String
+  toneNotes            String?
+  forbidden            String?
+  exampleReply         String?
+  active               Boolean  @default(true)
+  source               String   @default("MANUAL")
+  promotedFromTicketId String?
+  createdById          String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  @@index([category, active])
+}
+
+model CsAgentRun {
+  id           String   @id @default(cuid())
+  startedAt    DateTime @default(now())
+  finishedAt   DateTime?
+  ticketsSeen  Int      @default(0)
+  analysed     Int      @default(0)
+  autoReplied  Int      @default(0)
+  fdRequests   Int      @default(0)
+  error        String?
+}
