@@ -6,10 +6,24 @@ export type Llm = {
   analyze(input: { system: string; user: string; model: string }): Promise<{ output: Analysis; tokensIn: number; tokensOut: number }>
 }
 
+export type LlmProvider = 'anthropic' | 'kie'
+export const LLM_PROVIDERS: LlmProvider[] = ['anthropic', 'kie']
+
 export class LlmError extends Error {}
 
-export function anthropicLlm(apiKey: string): Llm {
-  const client = new Anthropic({ apiKey, maxRetries: 2 })
+const KIE_CLAUDE_BASE_URL = 'https://api.kie.ai/claude'
+
+export function llmClientOptions(provider: LlmProvider, key: string): ConstructorParameters<typeof Anthropic>[0] {
+  if (provider === 'kie') return { baseURL: KIE_CLAUDE_BASE_URL, authToken: key, maxRetries: 2 }
+  return { apiKey: key, maxRetries: 2 }
+}
+
+export function pickLlmKey(provider: LlmProvider, secrets: { anthropicApiKey: string | null; kieApiKey: string | null }): string | null {
+  return provider === 'kie' ? secrets.kieApiKey : secrets.anthropicApiKey
+}
+
+export function claudeLlm(provider: LlmProvider, key: string): Llm {
+  const client = new Anthropic(llmClientOptions(provider, key))
   return {
     async analyze({ system, user, model }) {
       const res = await client.messages.parse({
@@ -26,12 +40,18 @@ export function anthropicLlm(apiKey: string): Llm {
   }
 }
 
-export async function pingAnthropic(apiKey: string, model: string): Promise<{ ok: true } | { ok: false; error: string }> {
+export function anthropicLlm(apiKey: string): Llm {
+  return claudeLlm('anthropic', apiKey)
+}
+
+export async function pingLlm(provider: LlmProvider, key: string, model: string): Promise<{ ok: true } | { ok: false; error: string }> {
   try {
-    const client = new Anthropic({ apiKey, maxRetries: 0 })
+    const client = new Anthropic({ ...llmClientOptions(provider, key), maxRetries: 0 })
     await client.messages.create({ model, max_tokens: 16, messages: [{ role: 'user', content: 'ping' }] })
     return { ok: true }
   } catch (err: any) {
     return { ok: false, error: err?.message ?? String(err) }
   }
 }
+
+export const pingAnthropic = (apiKey: string, model: string) => pingLlm('anthropic', apiKey, model)

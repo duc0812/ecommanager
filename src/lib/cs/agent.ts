@@ -1,7 +1,7 @@
 import { prisma } from '@/lib/db'
 import type { CsAgentRun } from '@/generated/prisma/client'
 import { FreshdeskBudgetExceeded, FreshdeskClient } from '@/lib/cs/freshdesk'
-import { anthropicLlm, type Llm } from '@/lib/llm/anthropic'
+import { claudeLlm, pickLlmKey, type Llm } from '@/lib/llm/anthropic'
 import { syncTickets } from '@/lib/cs/sync'
 import { analyzeTicket } from '@/lib/cs/analyze'
 import { analysisHash, autoReply, notify, writeBack, type Notifier } from '@/lib/cs/actions'
@@ -18,7 +18,7 @@ export async function defaultDeps(): Promise<CycleDeps | null> {
   if (!secrets.freshdeskApiKey) return null
   return {
     fd: new FreshdeskClient({ domain: settings.freshdeskDomain, apiKey: secrets.freshdeskApiKey }),
-    llm: secrets.anthropicApiKey ? anthropicLlm(secrets.anthropicApiKey) : null,
+    llm: (() => { const key = pickLlmKey(settings.llmProvider, secrets); return key ? claudeLlm(settings.llmProvider, key) : null })(),
     notifier: text => sendTelegramMessage(text),
     appUrl: process.env.NEXT_PUBLIC_APP_URL ?? '',
   }

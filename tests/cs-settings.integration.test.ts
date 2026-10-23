@@ -22,11 +22,22 @@ describe('cs settings', () => {
   })
 
   it('secrets are masked in the view and never returned raw', async () => {
-    await saveCsSecrets({ freshdeskApiKey: 'fwapABCDEFGH1234', anthropicApiKey: 'sk-ant-xyz' })
+    await saveCsSecrets({ freshdeskApiKey: 'fwapABCDEFGH1234', anthropicApiKey: 'sk-ant-xyz', kieApiKey: 'kie0123456789abcdef' })
     const view = toCsSettingsView(await getCsSettings(), await getCsSecrets())
     expect(view.freshdeskApiKeyMasked).toBe('fwap…1234')
     expect(view.hasAnthropicApiKey).toBe(true)
+    expect(view.hasKieApiKey).toBe(true)
+    expect(view.kieApiKeyMasked).toBe('kie0…cdef')
     expect(JSON.stringify(view)).not.toContain('sk-ant-xyz')
     expect(JSON.stringify(view)).not.toContain('fwapABCDEFGH1234')
+    expect(JSON.stringify(view)).not.toContain('kie0123456789abcdef')
+  })
+
+  it('llm provider defaults to kie and only accepts known providers', async () => {
+    expect(DEFAULT_CS_SETTINGS.llmProvider).toBe('kie')
+    await saveCsSettings({ llmProvider: 'anthropic' })
+    expect((await getCsSettings()).llmProvider).toBe('anthropic')
+    await saveCsSettings({ llmProvider: 'nope' as any })
+    expect((await getCsSettings()).llmProvider).toBe('kie')
   })
 })

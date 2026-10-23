@@ -9,9 +9,9 @@ import { URGENCY_LABELS } from '@/lib/cs/labels'
 import { fmtDate } from '@/components/cs/UrgencyChip'
 
 type View = {
-  freshdeskDomain: string; model: string; pollEnabled: boolean; killSwitch: boolean; autoReplyEnabled: boolean; autoReplyCategories: string[]; autoReplyDailyCap: number
+  freshdeskDomain: string; llmProvider: 'anthropic' | 'kie'; model: string; pollEnabled: boolean; killSwitch: boolean; autoReplyEnabled: boolean; autoReplyCategories: string[]; autoReplyDailyCap: number
   notifyLevels: string[]; productionDays: number; shippingDays: number; syncUpdatedSince: string | null
-  hasFreshdeskApiKey: boolean; freshdeskApiKeyMasked: string | null; hasAnthropicApiKey: boolean; anthropicApiKeyMasked: string | null
+  hasFreshdeskApiKey: boolean; freshdeskApiKeyMasked: string | null; hasAnthropicApiKey: boolean; anthropicApiKeyMasked: string | null; hasKieApiKey: boolean; kieApiKeyMasked: string | null
 }
 type LastRun = { ranAt: string; ticketsSeen: number; analysed: number; autoReplied: number; fdRequests: number; error: string | null } | null
 
@@ -19,7 +19,7 @@ export default function CsSettingsPage() {
   const [view, setView] = useState<View | null>(null)
   const [lastRun, setLastRun] = useState<LastRun>(null)
   const [form, setForm] = useState<Partial<View>>({})
-  const [secrets, setSecrets] = useState({ freshdeskApiKey: '', anthropicApiKey: '' })
+  const [secrets, setSecrets] = useState({ freshdeskApiKey: '', anthropicApiKey: '', kieApiKey: '' })
   const [message, setMessage] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
 
@@ -33,12 +33,12 @@ export default function CsSettingsPage() {
   async function save() {
     setBusy('save')
     setMessage(null)
-    const body = { ...form, ...(secrets.freshdeskApiKey ? { freshdeskApiKey: secrets.freshdeskApiKey } : {}), ...(secrets.anthropicApiKey ? { anthropicApiKey: secrets.anthropicApiKey } : {}) }
+    const body = { ...form, ...(secrets.freshdeskApiKey ? { freshdeskApiKey: secrets.freshdeskApiKey } : {}), ...(secrets.anthropicApiKey ? { anthropicApiKey: secrets.anthropicApiKey } : {}), ...(secrets.kieApiKey ? { kieApiKey: secrets.kieApiKey } : {}) }
     const res = await fetch('/api/cs/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
     const data = await res.json().catch(() => ({}))
     setBusy(null)
     if (!res.ok) { setMessage(data.error ?? 'Lưu thất bại (cần quyền Super Admin)'); return }
-    setSecrets({ freshdeskApiKey: '', anthropicApiKey: '' })
+    setSecrets({ freshdeskApiKey: '', anthropicApiKey: '', kieApiKey: '' })
     setMessage('Đã lưu.')
     load()
   }
@@ -50,7 +50,7 @@ export default function CsSettingsPage() {
     const data = await res.json().catch(() => ({}))
     setBusy(null)
     if (!res.ok) { setMessage(data.error ?? 'Không test được'); return }
-    setMessage(`Freshdesk: ${data.freshdesk.ok ? `OK (${data.freshdesk.tickets} ticket trong 1h)` : data.freshdesk.error} · Claude: ${data.anthropic.ok ? 'OK' : data.anthropic.error}`)
+    setMessage(`Freshdesk: ${data.freshdesk.ok ? `OK (${data.freshdesk.tickets} ticket trong 1h)` : data.freshdesk.error} · Model: ${data.llm.ok ? 'OK' : data.llm.error}`)
   }
 
   const toggleIn = (key: 'autoReplyCategories' | 'notifyLevels', value: string) => {
@@ -105,12 +105,21 @@ export default function CsSettingsPage() {
               <p className="text-label-sm text-on-surface-variant">Mốc đồng bộ: {view.syncUpdatedSince ? fmtDate(view.syncUpdatedSince, true) : 'chưa chạy (lần đầu lấy 7 ngày)'}</p>
             </>)}
 
-            {card('Claude (Anthropic)', <>
+            {card('Model phân tích', <>
+              <div className="flex gap-lg text-body-sm">
+                <label className="flex items-center gap-sm"><input type="radio" name="llmProvider" checked={form.llmProvider === 'kie'} onChange={() => setForm({ ...form, llmProvider: 'kie' })} /> Kie.ai (api.kie.ai/claude)</label>
+                <label className="flex items-center gap-sm"><input type="radio" name="llmProvider" checked={form.llmProvider === 'anthropic'} onChange={() => setForm({ ...form, llmProvider: 'anthropic' })} /> Anthropic trực tiếp</label>
+              </div>
               <label className="block">
-                <span className="text-label-sm text-on-surface-variant">API key {view.hasAnthropicApiKey ? `· đang dùng ${view.anthropicApiKeyMasked}` : '· chưa có — agent chưa phân tích được'}</span>
+                <span className="text-label-sm text-on-surface-variant">Kie API key {view.hasKieApiKey ? `· đang dùng ${view.kieApiKeyMasked}` : '· chưa có'}</span>
+                <input type="password" value={secrets.kieApiKey} onChange={e => setSecrets({ ...secrets, kieApiKey: e.target.value })} placeholder="Dán key mới để thay" className="mt-xs w-full rounded-lg border border-outline-variant/40 bg-surface px-md py-sm text-body-sm" />
+                <span className="text-label-sm text-on-surface-variant">Key phải được bật quyền model chat (Claude) tại kie.ai/api-key — bấm "Test kết nối" để kiểm tra.</span>
+              </label>
+              <label className="block">
+                <span className="text-label-sm text-on-surface-variant">Anthropic API key {view.hasAnthropicApiKey ? `· đang dùng ${view.anthropicApiKeyMasked}` : '· chưa có'}</span>
                 <input type="password" value={secrets.anthropicApiKey} onChange={e => setSecrets({ ...secrets, anthropicApiKey: e.target.value })} placeholder="sk-ant-…" className="mt-xs w-full rounded-lg border border-outline-variant/40 bg-surface px-md py-sm text-body-sm" />
               </label>
-              {input('Model', 'model')}
+              {input('Model (id Claude, ví dụ claude-opus-5-5 / claude-sonnet-5-5 / claude-haiku-5-5)', 'model')}
             </>)}
 
             {card('Agent', <>

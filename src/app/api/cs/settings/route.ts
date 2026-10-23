@@ -10,7 +10,7 @@ export async function GET() {
   return NextResponse.json({ settings: toCsSettingsView(settings, secrets), lastRun: lastRun ? JSON.parse(lastRun.value) : null })
 }
 
-const PATCH_KEYS: (keyof CsSettings)[] = ['freshdeskDomain', 'model', 'pollEnabled', 'killSwitch', 'autoReplyEnabled', 'autoReplyCategories', 'autoReplyDailyCap', 'notifyLevels', 'productionDays', 'shippingDays']
+const PATCH_KEYS: (keyof CsSettings)[] = ['freshdeskDomain', 'llmProvider', 'model', 'pollEnabled', 'killSwitch', 'autoReplyEnabled', 'autoReplyCategories', 'autoReplyDailyCap', 'notifyLevels', 'productionDays', 'shippingDays']
 
 export async function POST(req: NextRequest) {
   const auth = await requireSuperadmin(req)
@@ -19,6 +19,6 @@ export async function POST(req: NextRequest) {
   const patch: Partial<CsSettings> = {}
   for (const k of PATCH_KEYS) if (body[k] !== undefined) (patch as any)[k] = body[k]
   const settings = await saveCsSettings(patch)
-  await saveCsSecrets({ freshdeskApiKey: body.freshdeskApiKey, anthropicApiKey: body.anthropicApiKey })
+  await saveCsSecrets({ freshdeskApiKey: body.freshdeskApiKey, anthropicApiKey: body.anthropicApiKey, kieApiKey: body.kieApiKey })
   return NextResponse.json({ settings: toCsSettingsView(settings, await getCsSecrets()) })
 }

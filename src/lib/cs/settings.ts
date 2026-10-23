@@ -2,8 +2,11 @@ import { prisma } from '@/lib/db'
 import { getSettings, saveSetting } from '@/lib/token-store'
 import { maskApiKey } from '@/lib/tracking/parcelpanel-config'
 
+export type LlmProvider = 'anthropic' | 'kie'
+
 export type CsSettings = {
   freshdeskDomain: string
+  llmProvider: LlmProvider
   model: string
   pollEnabled: boolean
   killSwitch: boolean
@@ -20,6 +23,7 @@ export type CsSettings = {
 
 export const DEFAULT_CS_SETTINGS: CsSettings = {
   freshdeskDomain: 'litzzy',
+  llmProvider: 'kie',
   model: 'claude-opus-5-5',
   pollEnabled: true,
   killSwitch: false,
@@ -34,17 +38,19 @@ export const DEFAULT_CS_SETTINGS: CsSettings = {
   syncUpdatedSince: null,
 }
 
-export type CsSecrets = { freshdeskApiKey: string | null; anthropicApiKey: string | null }
+export type CsSecrets = { freshdeskApiKey: string | null; anthropicApiKey: string | null; kieApiKey: string | null }
 
 export type CsSettingsView = CsSettings & {
   hasFreshdeskApiKey: boolean
   freshdeskApiKeyMasked: string | null
   hasAnthropicApiKey: boolean
   anthropicApiKeyMasked: string | null
+  hasKieApiKey: boolean
+  kieApiKeyMasked: string | null
 }
 
 const KEY = 'cs.settings'
-const SECRET_KEYS = { freshdeskApiKey: 'cs.freshdeskApiKey', anthropicApiKey: 'cs.anthropicApiKey' } as const
+const SECRET_KEYS = { freshdeskApiKey: 'cs.freshdeskApiKey', anthropicApiKey: 'cs.anthropicApiKey', kieApiKey: 'cs.kieApiKey' } as const
 
 const num = (v: unknown, d: number) => (typeof v === 'number' && Number.isFinite(v) ? v : d)
 const bool = (v: unknown, d: boolean) => (typeof v === 'boolean' ? v : d)
@@ -55,6 +61,7 @@ function normalize(parsed: any): CsSettings {
   const d = DEFAULT_CS_SETTINGS
   return {
     freshdeskDomain: typeof parsed.freshdeskDomain === 'string' && parsed.freshdeskDomain.trim() ? parsed.freshdeskDomain.trim() : d.freshdeskDomain,
+    llmProvider: parsed.llmProvider === 'anthropic' || parsed.llmProvider === 'kie' ? parsed.llmProvider : d.llmProvider,
     model: typeof parsed.model === 'string' && parsed.model.trim() ? parsed.model.trim() : d.model,
     pollEnabled: bool(parsed.pollEnabled, d.pollEnabled),
     killSwitch: bool(parsed.killSwitch, d.killSwitch),
@@ -89,12 +96,14 @@ export async function getCsSecrets(): Promise<CsSecrets> {
   return {
     freshdeskApiKey: pick(SECRET_KEYS.freshdeskApiKey, process.env.FRESHDESK_API_KEY),
     anthropicApiKey: pick(SECRET_KEYS.anthropicApiKey, process.env.ANTHROPIC_API_KEY),
+    kieApiKey: pick(SECRET_KEYS.kieApiKey, process.env.KIE_API_KEY),
   }
 }
 
-export async function saveCsSecrets(p: { freshdeskApiKey?: string; anthropicApiKey?: string }) {
+export async function saveCsSecrets(p: { freshdeskApiKey?: string; anthropicApiKey?: string; kieApiKey?: string }) {
   if (p.freshdeskApiKey?.trim()) await saveSetting(SECRET_KEYS.freshdeskApiKey, p.freshdeskApiKey.trim())
   if (p.anthropicApiKey?.trim()) await saveSetting(SECRET_KEYS.anthropicApiKey, p.anthropicApiKey.trim())
+  if (p.kieApiKey?.trim()) await saveSetting(SECRET_KEYS.kieApiKey, p.kieApiKey.trim())
 }
 
 export function toCsSettingsView(s: CsSettings, secrets: CsSecrets): CsSettingsView {
@@ -104,5 +113,7 @@ export function toCsSettingsView(s: CsSettings, secrets: CsSecrets): CsSettingsV
     freshdeskApiKeyMasked: maskApiKey(secrets.freshdeskApiKey),
     hasAnthropicApiKey: !!secrets.anthropicApiKey,
     anthropicApiKeyMasked: maskApiKey(secrets.anthropicApiKey),
+    hasKieApiKey: !!secrets.kieApiKey,
+    kieApiKeyMasked: maskApiKey(secrets.kieApiKey),
   }
 }
