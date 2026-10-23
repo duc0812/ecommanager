@@ -136,7 +136,7 @@ describe('runAgentCycle', () => {
     const { texts, notifier } = collector()
     await runAgentCycle({ ...d, notifier })
     const notesBefore = d.fd.calls.filter(c => c.kind === 'note').length
-    const run2 = await runAgentCycle({ ...d, notifier }, { force: true })
+    const run2 = await runAgentCycle({ ...d, notifier })
     expect(run2.analysed).toBe(0)
     expect(d.fd.calls.filter(c => c.kind === 'note').length).toBe(notesBefore)
     expect(texts).toHaveLength(1)
@@ -153,6 +153,50 @@ describe('runAgentCycle', () => {
     expect(await prisma.csAnalysis.count()).toBe(0)
     const last = await prisma.appSetting.findUnique({ where: { key: 'last_cs_run_result' } })
     expect(JSON.parse(last!.value).ticketsSeen).toBe(3)
+  })
+
+  it('manual re-analysis never auto-replies and posts no second note or alert', async () => {
+    await saveCsSettings({ autoReplyEnabled: true })
+    const d = deps()
+    const { texts, notifier } = collector()
+    await runAgentCycle({ ...d, notifier })
+    const t195 = await prisma.csTicket.findUnique({ where: { fdTicketId: 195 } })
+    const t119 = await prisma.csTicket.findUnique({ where: { fdTicketId: 119 } })
+    await prisma.csTicket.update({ where: { id: t195!.id }, data: { autoReplied: false, needsHuman: true } })
+    const replies = d.fd.calls.filter(c => c.kind === 'reply').length
+    const notes = d.fd.calls.filter(c => c.kind === 'note').length
+    await runAgentCycle({ ...d, notifier }, { ticketIds: [t195!.id, t119!.id], force: true, autoReply: false })
+    expect(d.llm.calls).toBe(5)
+    expect(d.fd.calls.filter(c => c.kind === 'reply').length).toBe(replies)
+    expect(d.fd.calls.filter(c => c.kind === 'note').length).toBe(notes)
+    expect(texts).toHaveLength(1)
+    expect(await prisma.csAnalysis.count({ where: { ticketId: t119!.id } })).toBe(2)
+  })
+
+  it('a failing notifier does not lose the ticket or skip the Freshdesk write-back', async () => {
+    const d = deps()
+    const run = await runAgentCycle({ ...d, notifier: async () => { throw new Error('telegram down') } })
+    expect(run.error).toContain('telegram down')
+    const t119 = await prisma.csTicket.findUnique({ where: { fdTicketId: 119 } })
+    expect(t119!.needsHuman).toBe(true)
+    expect(d.fd.calls.some(c => c.kind === 'update' && c.id === 119)).toBe(true)
+    expect(d.fd.calls.some(c => c.kind === 'note' && c.id === 119)).toBe(true)
+  })
+
+  it('retries tickets that were never analysed', async () => {
+    const d = deps()
+    await runAgentCycle({ ...d, llm: null, notifier: collector().notifier })
+    const run = await runAgentCycle({ ...d, notifier: collector().notifier })
+    expect(run.analysed).toBe(3)
+  })
+
+  it('pushes cf_order_id only for a matched order', async () => {
+    const d = deps()
+    await runAgentCycle({ ...d, notifier: collector().notifier })
+    const update194 = d.fd.calls.find(c => c.kind === 'update' && c.id === 194)!
+    expect(update194.payload.custom_fields).toBeUndefined()
+    const update195 = d.fd.calls.find(c => c.kind === 'update' && c.id === 195)!
+    expect(update195.payload.custom_fields).toEqual({ cf_order_id: '#LIT3910' })
   })
 
   it('never analyses closed or resolved tickets', async () => {

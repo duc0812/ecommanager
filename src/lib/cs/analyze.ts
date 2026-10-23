@@ -24,7 +24,7 @@ function startOfToday(now: Date): Date {
   return d
 }
 
-export async function analyzeTicket(ticketId: string, deps: { llm: Llm; now?: Date }): Promise<CsAnalysis> {
+export async function analyzeTicket(ticketId: string, deps: { llm: Llm; now?: Date; force?: boolean }): Promise<CsAnalysis> {
   const now = deps.now ?? new Date()
   const ticket = await prisma.csTicket.findUniqueOrThrow({
     where: { id: ticketId },
@@ -34,7 +34,7 @@ export async function analyzeTicket(ticketId: string, deps: { llm: Llm; now?: Da
   const order = await buildOrderContext({ subject: ticket.subject, texts: customerTexts, cfOrderId: ticket.orderNumber, email: ticket.requesterEmail })
   const inputHash = inputHashFor(ticket.messages, order)
   const latest = ticket.analyses[0]
-  if (latest && latest.inputHash === inputHash) return latest
+  if (latest && latest.inputHash === inputHash && !deps.force) return latest
 
   const settings = await getCsSettings()
   const cases = await prisma.csCase.findMany({ where: { active: true }, orderBy: { updatedAt: 'desc' } })
@@ -45,11 +45,10 @@ export async function analyzeTicket(ticketId: string, deps: { llm: Llm; now?: Da
   })
 
   const customerCount = ticket.messages.filter(m => m.author === 'CUSTOMER').length
-  const replies = ticket.messages.filter(m => (m.author === 'STAFF' || m.author === 'AGENT') && !m.private)
-  const lastCustomerAt = ticket.lastCustomerAt ?? ticket.messages.filter(m => m.author === 'CUSTOMER').at(-1)?.createdAt ?? null
-  const lastReplyAt = ticket.lastReplyAt ?? replies.at(-1)?.createdAt ?? null
-  const unanswered = lastCustomerAt && (!lastReplyAt || lastReplyAt < lastCustomerAt)
-  const hoursUnanswered = unanswered ? Math.max(0, (now.getTime() - lastCustomerAt!.getTime()) / 3600_000) : 0
+  const replies = ticket.messages.filter(m => (m.author === 'STAFF' || m.author === 'AGENT' || m.author === 'SYSTEM') && !m.private)
+  const lastReplyAt = replies.at(-1)?.createdAt ?? null
+  const firstUnanswered = ticket.messages.find(m => m.author === 'CUSTOMER' && (!lastReplyAt || m.createdAt > lastReplyAt))
+  const hoursUnanswered = firstUnanswered ? Math.max(0, (now.getTime() - firstUnanswered.createdAt.getTime()) / 3600_000) : 0
 
   const urgency = finalUrgency(output.urgency, ruleUrgency({ category: output.category, factoryState: order.order?.factoryState ?? null, sentiment: output.sentiment, hoursUnanswered }))
 
@@ -64,7 +63,7 @@ export async function analyzeTicket(ticketId: string, deps: { llm: Llm; now?: Da
     orderMatch: order.match,
     customerMessageCount: customerCount,
     hasAnyReply: replies.length > 0,
-    hasTracking: !!order.order?.shipments.some(s => s.trackingNumber),
+    hasTracking: !!order.order?.shipments.some(s => s.trackingNumber && s.status !== 'EXPIRED' && s.status !== 'EXCEPTION'),
     placedAt: order.order?.placedAt ?? null,
     now,
     textMentionsRefundAddressOrCancel: mentionsRefundAddressOrCancel([ticket.subject, ...customerTexts].join('\n')),
@@ -100,9 +99,9 @@ export async function analyzeTicket(ticketId: string, deps: { llm: Llm; now?: Da
       urgency,
       sentiment: output.sentiment,
       orderId: order.order?.id ?? null,
-      orderNumber: order.order?.shopifyOrderNumber ?? ticket.orderNumber ?? output.orderNumber,
+      orderNumber: order.order?.shopifyOrderNumber ?? ticket.orderNumber,
       orderMatch: order.match,
-      needsHuman,
+      needsHuman: true,
       lastAnalysisAt: now,
     },
   })

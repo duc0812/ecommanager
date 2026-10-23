@@ -11,8 +11,8 @@ export type Notifier = (text: string) => Promise<unknown>
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 const ticketUrl = (appUrl: string, ticket: Pick<CsTicket, 'id'>) => `${appUrl.replace(/\/$/, '')}/cs/${ticket.id}`
 
-export function analysisHash(a: Pick<CsAnalysis, 'summary' | 'proposal' | 'urgency' | 'category'>): string {
-  return createHash('sha1').update([a.category, a.urgency, a.summary, a.proposal].join('|')).digest('hex')
+export function analysisHash(a: Pick<CsAnalysis, 'inputHash' | 'urgency' | 'category'>, orderNumber: string | null = null): string {
+  return createHash('sha1').update([a.category, a.urgency, orderNumber ?? '', a.inputHash].join('|')).digest('hex')
 }
 
 export function textToHtml(text: string): string {
@@ -42,7 +42,7 @@ export function telegramText(a: CsAnalysis, ticket: CsTicket, appUrl: string): s
 
 export async function notify(notifier: Notifier, ticket: CsTicket, a: CsAnalysis, settings: CsSettings, appUrl: string): Promise<boolean> {
   if (!settings.notifyLevels.includes(a.urgency)) return false
-  if (ticket.lastNoteHash === analysisHash(a)) return false
+  if (ticket.lastNoteHash === analysisHash(a, ticket.orderNumber)) return false
   await notifier(telegramText(a, ticket, appUrl))
   return true
 }
@@ -53,10 +53,10 @@ export async function writeBack(fd: Pick<FreshdeskClient, 'update' | 'note'>, ti
     priority: urgencyToPriority(a.urgency as CsUrgency),
     tags: tagsFor(a.category as CsCategory, a.urgency as CsUrgency, existingTags),
   }
-  if (ticket.orderNumber) patch.custom_fields = { cf_order_id: ticket.orderNumber }
+  if (ticket.orderNumber && (ticket.orderMatch === 'EXACT' || ticket.orderMatch === 'BY_EMAIL')) patch.custom_fields = { cf_order_id: ticket.orderNumber }
   await fd.update(ticket.fdTicketId, patch)
   await prisma.csTicket.update({ where: { id: ticket.id }, data: { fdPriority: patch.priority, fdTags: JSON.stringify(patch.tags) } })
-  const hash = analysisHash(a)
+  const hash = analysisHash(a, ticket.orderNumber)
   if (ticket.lastNoteHash === hash) return { noted: false }
   await fd.note(ticket.fdTicketId, noteHtml(a, ticket, appUrl))
   await prisma.csTicket.update({ where: { id: ticket.id }, data: { lastNoteHash: hash } })

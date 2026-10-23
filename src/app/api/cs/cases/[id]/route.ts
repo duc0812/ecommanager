@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
-import { getAuthUser, unauthorized } from '@/lib/api-auth'
-import { parseCaseBody } from '@/app/api/cs/cases/route'
+import { getAuthUser, requireSuperadmin, unauthorized } from '@/lib/api-auth'
+import { parseCaseBody } from '@/lib/cs/cases'
 
 export const dynamic = 'force-dynamic'
 
@@ -18,8 +18,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 }
 
 export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
-  const user = await getAuthUser(req)
-  if (!user) return unauthorized()
+  const auth = await requireSuperadmin(req)
+  if ('error' in auth) return auth.error
   const existing = await prisma.csCase.findUnique({ where: { id: params.id } })
   if (!existing) return NextResponse.json({ error: 'Không tìm thấy case' }, { status: 404 })
   await prisma.csCase.delete({ where: { id: params.id } })

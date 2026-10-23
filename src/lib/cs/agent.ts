@@ -4,13 +4,14 @@ import { FreshdeskBudgetExceeded, FreshdeskClient } from '@/lib/cs/freshdesk'
 import { anthropicLlm, type Llm } from '@/lib/llm/anthropic'
 import { syncTickets } from '@/lib/cs/sync'
 import { analyzeTicket } from '@/lib/cs/analyze'
-import { autoReply, notify, writeBack, type Notifier } from '@/lib/cs/actions'
+import { analysisHash, autoReply, notify, writeBack, type Notifier } from '@/lib/cs/actions'
 import { getCsSecrets, getCsSettings } from '@/lib/cs/settings'
 import { sendTelegramMessage } from '@/lib/telegram'
 
 export type CycleDeps = { fd: FreshdeskClient; llm: Llm | null; notifier: Notifier; appUrl: string; now?: Date }
 
 const LAST_RUN_KEY = 'last_cs_run_result'
+const RETRY_PER_CYCLE = 10
 
 export async function defaultDeps(): Promise<CycleDeps | null> {
   const [settings, secrets] = await Promise.all([getCsSettings(), getCsSecrets()])
@@ -23,7 +24,7 @@ export async function defaultDeps(): Promise<CycleDeps | null> {
   }
 }
 
-export async function runAgentCycle(deps: CycleDeps, opts: { ticketIds?: string[]; force?: boolean } = {}): Promise<CsAgentRun> {
+export async function runAgentCycle(deps: CycleDeps, opts: { ticketIds?: string[]; force?: boolean; autoReply?: boolean } = {}): Promise<CsAgentRun> {
   const now = deps.now ?? new Date()
   const run = await prisma.csAgentRun.create({ data: {} })
   const errors: string[] = []
@@ -43,21 +44,29 @@ export async function runAgentCycle(deps: CycleDeps, opts: { ticketIds?: string[
     let targets: string[]
     if (opts.ticketIds) targets = opts.ticketIds
     else if (opts.force) targets = open
-    else targets = sync.changed.filter(id => open.includes(id))
+    else {
+      const changed = sync.changed.filter(id => open.includes(id))
+      const retry = (await prisma.csTicket.findMany({ where: { id: { in: open, notIn: changed }, lastAnalysisAt: null }, orderBy: { lastCustomerAt: 'asc' }, take: RETRY_PER_CYCLE, select: { id: true } })).map(t => t.id)
+      targets = [...changed, ...retry]
+    }
 
     if (deps.llm) {
       for (const id of targets) {
         try {
           const before = await prisma.csTicket.findUniqueOrThrow({ where: { id } })
-          const analysis = await analyzeTicket(id, { llm: deps.llm, now })
+          const analysis = await analyzeTicket(id, { llm: deps.llm, now, force: opts.force })
           const fresh = analysis.runAt.getTime() >= run.startedAt.getTime()
           if (!fresh && !opts.ticketIds) continue
           analysed += fresh ? 1 : 0
           const ticket = await prisma.csTicket.findUniqueOrThrow({ where: { id } })
-          await notify(deps.notifier, ticket, analysis, settings, deps.appUrl)
+          const shouldNotify = settings.notifyLevels.includes(analysis.urgency) && ticket.lastNoteHash !== analysisHash(analysis, ticket.orderNumber)
           await writeBack(deps.fd, ticket, analysis, settings, deps.appUrl)
+          if (shouldNotify) {
+            try { await notify(deps.notifier, { ...ticket, lastNoteHash: null }, analysis, settings, deps.appUrl) }
+            catch (err: any) { errors.push(`notify ${id}: ${err?.message ?? String(err)}`) }
+          }
           const gate = JSON.parse(analysis.gateJson || '{}')
-          if (fresh && gate.allowed && !analysis.needsHuman && analysis.draftReply && !before.autoReplied) {
+          if (opts.autoReply !== false && fresh && gate.allowed && !analysis.needsHuman && analysis.draftReply && !before.autoReplied) {
             await autoReply(deps.fd, ticket, analysis, now)
             autoReplied += 1
           }

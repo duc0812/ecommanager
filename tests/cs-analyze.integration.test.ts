@@ -87,6 +87,50 @@ describe('analyzeTicket', () => {
     expect(llm.calls).toBe(2)
   })
 
+  it('keeps the ticket needsHuman until a reply is actually sent, even when the gate allows', async () => {
+    await saveCsSettings({ autoReplyEnabled: true })
+    const t = await makeTicket(7010, ['Where is my order?'])
+    const llm = fakeLlm({ category: 'ORDER_STATUS', sentiment: 'CALM', needsHuman: false, autoReplyEligible: true, draftReply: 'On its way.' })
+    const a = await analyzeTicket(t.id, { llm, now: new Date('2026-10-23T00:00:00Z') })
+    expect(JSON.parse(a.gateJson).allowed).toBe(true)
+    expect((await prisma.csTicket.findUnique({ where: { id: t.id } }))!.needsHuman).toBe(true)
+  })
+
+  it('force re-analyses without new input', async () => {
+    const t = await makeTicket(7011, ['hello'])
+    const llm = fakeLlm({})
+    await analyzeTicket(t.id, { llm })
+    await analyzeTicket(t.id, { llm, force: true })
+    expect(llm.calls).toBe(2)
+  })
+
+  it('measures the unanswered time from the first unanswered customer message', async () => {
+    const t = await makeTicket(7012, ['Where is my order?', 'Hello? Anyone there?'])
+    const llm = fakeLlm({ category: 'ORDER_STATUS', sentiment: 'CALM' })
+    const a = await analyzeTicket(t.id, { llm, now: new Date('2026-10-21T08:00:00Z') })
+    expect(a.urgency).toBe('HIGH')
+  })
+
+  it('does not persist the model guessed order number', async () => {
+    const t = await makeTicket(7013, ['no number here'])
+    await prisma.csTicket.update({ where: { id: t.id }, data: { subject: 'help', requesterEmail: 'nobody@an.test' } })
+    const llm = fakeLlm({ orderNumber: '#LIT9999', category: 'OTHER' })
+    await analyzeTicket(t.id, { llm })
+    const ticket = await prisma.csTicket.findUnique({ where: { id: t.id } })
+    expect(ticket!.orderNumber).toBeNull()
+    expect(ticket!.orderMatch).toBe('NONE')
+  })
+
+  it('a dead tracking (EXPIRED) does not count as tracking for the gate', async () => {
+    await saveCsSettings({ autoReplyEnabled: true })
+    await prisma.shipment.create({ data: { orderId: ORDER, projectId: PROJECT, lineKey: '7001_1', trackingNumber: 'DEAD1', status: 'EXPIRED' } })
+    const t = await makeTicket(7014, ['Where is my order?'])
+    const llm = fakeLlm({ category: 'ORDER_STATUS', sentiment: 'CALM', needsHuman: false, autoReplyEligible: true, draftReply: 'On its way.' })
+    const a = await analyzeTicket(t.id, { llm, now: new Date('2026-12-01T00:00:00Z') })
+    expect(JSON.parse(a.gateJson).reasons.join(' ')).toContain('tracking')
+    await prisma.shipment.deleteMany({ where: { orderId: ORDER } })
+  })
+
   it('marks needsHuman when the model says eligible but the gate blocks', async () => {
     await saveCsSettings({ autoReplyEnabled: true })
     const t = await makeTicket(7004, ['Where is my order?'])

@@ -46,9 +46,10 @@ describe('/api/cs/cases', () => {
     expect((await patched.json()).case.active).toBe(false)
     expect((await prisma.csCase.findUnique({ where: { id: c.id } }))!.forbidden).toBe('never promise a refund')
 
-    const del = await deleteCase(req(`/api/cs/cases/${c.id}`, { method: 'DELETE' }), { params: { id: c.id } })
-    expect(del.status).toBe(200)
-    expect(await prisma.csCase.count()).toBe(0)
+    const forbidden = await deleteCase(req(`/api/cs/cases/${c.id}`, { method: 'DELETE' }), { params: { id: c.id } })
+    expect(forbidden.status).toBe(403)
+    expect(await prisma.csCase.count()).toBe(1)
+    await prisma.csCase.delete({ where: { id: c.id } })
   })
 
   it('rejects a case with an unknown category or missing fields', async () => {

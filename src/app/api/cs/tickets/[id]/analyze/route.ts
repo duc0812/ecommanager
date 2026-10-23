@@ -10,7 +10,6 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
   const deps = await defaultDeps()
   if (!deps) return NextResponse.json({ error: 'Chưa cấu hình Freshdesk API key' }, { status: 400 })
   if (!deps.llm) return NextResponse.json({ error: 'Chưa cấu hình Anthropic API key' }, { status: 400 })
-  await prisma.csAnalysis.deleteMany({ where: { ticketId: ticket.id } })
-  const run = await runAgentCycle(deps, { ticketIds: [ticket.id] })
+  const run = await runAgentCycle(deps, { ticketIds: [ticket.id], force: true, autoReply: false })
   return NextResponse.json({ run })
 }

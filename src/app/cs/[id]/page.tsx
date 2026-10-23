@@ -39,7 +39,7 @@ export default function CsTicketPage() {
     if (!res.ok) { setDetail(null); return }
     const d: Detail = await res.json()
     setDetail(d)
-    setReply(prev => prev || d.analysis?.draftReply || '')
+    if (!d.ticket.lastReplyAt) setReply(prev => prev || d.analysis?.draftReply || '')
   }, [id])
   useEffect(() => { load() }, [load])
 

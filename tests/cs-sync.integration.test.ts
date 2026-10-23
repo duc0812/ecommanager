@@ -40,6 +40,7 @@ describe('authorOf', () => {
     expect(authorOf(conv119[4], s, new Set())).toBe('CUSTOMER')
     expect(authorOf(conv119[3], s, new Set())).toBe('STAFF')
     expect(authorOf(conv119[0], s, new Set())).toBe('SKIP')
+    expect(authorOf({ ...conv119[0], private: false }, s, new Set())).toBe('SYSTEM')
     expect(authorOf(conv119[3], s, new Set(['158049449778']))).toBe('AGENT')
   })
 })
@@ -120,6 +121,16 @@ describe('syncTickets', () => {
     await syncTickets(fakeFd(), { since: '2026-10-19T00:00:00Z' })
     const m = await prisma.csMessage.findUnique({ where: { fdConversationId: '158049449778' } })
     expect(m!.author).toBe('AGENT')
+  })
+
+  it('counts a public reply from another agent as a reply', async () => {
+    const fd = fakeFd()
+    const orig = fd.getConversations
+    fd.getConversations = async (id: number) => (id === 119 ? [...conv119, { ...conv119[0], id: 777, private: false, created_at: '2026-10-23T15:00:00Z' }] : orig(id))
+    await syncTickets(fd, { since: '2026-10-19T00:00:00Z' })
+    const t = await prisma.csTicket.findUnique({ where: { fdTicketId: 119 }, include: { messages: true } })
+    expect(t!.messages.find(m => m.fdConversationId === '777')!.author).toBe('SYSTEM')
+    expect(t!.lastReplyAt?.toISOString()).toBe('2026-10-23T15:00:00.000Z')
   })
 
   it('uses the stored cursor and defaults', async () => {

@@ -12,9 +12,9 @@ const DEFAULT_SINCE_DAYS = 7
 export function authorOf(c: FdConversation, s: Pick<CsSettings, 'supportAgentId' | 'ignoredAgentIds'>, knownAgentIds: Set<string>): MessageAuthor {
   if (knownAgentIds.has(String(c.id))) return 'AGENT'
   if (c.incoming) return 'CUSTOMER'
-  if (s.ignoredAgentIds.includes(c.user_id)) return 'SKIP'
   if (c.user_id === s.supportAgentId) return 'STAFF'
-  return c.private ? 'SKIP' : 'SYSTEM'
+  if (c.private) return 'SKIP'
+  return 'SYSTEM'
 }
 
 export function htmlToText(html: string | null | undefined): string {
@@ -85,7 +85,7 @@ async function upsertConversations(ticketId: string, convs: FdConversation[], se
 async function refreshTimestamps(ticketId: string) {
   const [lastCustomer, lastReply] = await Promise.all([
     prisma.csMessage.findFirst({ where: { ticketId, author: 'CUSTOMER' }, orderBy: { createdAt: 'desc' } }),
-    prisma.csMessage.findFirst({ where: { ticketId, author: { in: ['STAFF', 'AGENT'] }, private: false }, orderBy: { createdAt: 'desc' } }),
+    prisma.csMessage.findFirst({ where: { ticketId, author: { in: ['STAFF', 'AGENT', 'SYSTEM'] }, private: false }, orderBy: { createdAt: 'desc' } }),
   ])
   await prisma.csTicket.update({ where: { id: ticketId }, data: { lastCustomerAt: lastCustomer?.createdAt ?? null, lastReplyAt: lastReply?.createdAt ?? null } })
   return lastCustomer?.createdAt ?? null

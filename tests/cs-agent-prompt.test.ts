@@ -7,6 +7,7 @@ const settings = { productionDays: 5, shippingDays: 15 }
 describe('buildSystemPrompt', () => {
   it('carries brand rules and POD facts', () => {
     const s = buildSystemPrompt([], settings).toLowerCase()
+    expect(buildSystemPrompt([], { productionDays: 5, shippingDays: 20 })).toContain('7–20 days')
     for (const needle of [
       'believe the customer', 'where it is wrong', 'never ask for a photo as proof', 'made to order', '5 business days', '7–15 days',
       'before the order is handed to the factory', 'refund', 'citedcaseids', 'vietnamese', 'english', 'litzzy support',
