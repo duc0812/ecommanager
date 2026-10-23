@@ -22,20 +22,32 @@ export function pickLlmKey(provider: LlmProvider, secrets: { anthropicApiKey: st
   return provider === 'kie' ? secrets.kieApiKey : secrets.anthropicApiKey
 }
 
-export function claudeLlm(provider: LlmProvider, key: string): Llm {
-  const client = new Anthropic(llmClientOptions(provider, key))
+function envelopeError(provider: LlmProvider, res: unknown): LlmError | null {
+  const r = res as { content?: unknown; code?: unknown; msg?: unknown; error?: { message?: unknown } }
+  if (Array.isArray(r?.content)) return null
+  const msg = typeof r?.msg === 'string' ? r.msg : typeof r?.error?.message === 'string' ? r.error.message : JSON.stringify(res).slice(0, 200)
+  return new LlmError(`${provider} error${r?.code !== undefined ? ` ${r.code}` : ''}: ${msg}`)
+}
+
+export function claudeLlm(provider: LlmProvider, key: string, extra: { fetch?: typeof fetch } = {}): Llm {
+  const client = new Anthropic({ ...llmClientOptions(provider, key), ...extra })
   return {
     async analyze({ system, user, model }) {
-      const res = await client.messages.parse({
+      const res = await client.messages.create({
         model,
         max_tokens: 4000,
         output_config: { effort: 'low', format: zodOutputFormat(AnalysisSchema) },
         system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
         messages: [{ role: 'user', content: user }],
       })
+      const envelope = envelopeError(provider, res)
+      if (envelope) throw envelope
       if (res.stop_reason === 'refusal') throw new LlmError(`Claude refused: ${res.stop_details?.explanation ?? 'no explanation'}`)
-      if (!res.parsed_output) throw new LlmError(`Claude returned no parsable analysis (stop_reason ${res.stop_reason})`)
-      return { output: res.parsed_output, tokensIn: res.usage.input_tokens, tokensOut: res.usage.output_tokens }
+      const text = res.content.find(b => b.type === 'text')?.text
+      if (!text) throw new LlmError(`Claude returned no text analysis (stop_reason ${res.stop_reason})`)
+      let parsed: Analysis
+      try { parsed = AnalysisSchema.parse(JSON.parse(text)) } catch (err: any) { throw new LlmError(`Claude returned an unparsable analysis: ${err?.message ?? err}`) }
+      return { output: parsed, tokensIn: res.usage.input_tokens, tokensOut: res.usage.output_tokens }
     },
   }
 }
