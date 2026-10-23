@@ -189,6 +189,11 @@ Completed 2026-05-19 via subagent-driven development.
 - Product profiles (supplier + template + master + layer map per Shopify product) and Google Drive artwork storage — 2026-10-10; next: auto-design agent (local render worker), streaming uploads
 - Next: master artwork upload in the profile editor
 
+### 🟢 Customer Service agent (2026-10-23, branch `feat/cs-agent`)
+- Freshdesk sync + Claude analysis (category, urgency, summary, proposal, draft) + Telegram alerts + gated auto-reply + case library; pages `/cs`, `/cs/[id]`, `/cs/cases`, `/cs/settings`
+- Rollout: poll on / auto-reply off first; needs an Anthropic API key in Cài đặt CS; add permission `cs` to existing ADMIN/SUPPORT users
+- Next: promote-to-case review flow, per-category reply templates, Reminiso/Rosterpress mailboxes
+
 ---
 
 ## Known Issues / Tech Debt
