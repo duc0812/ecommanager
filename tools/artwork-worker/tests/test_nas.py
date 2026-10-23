@@ -226,3 +226,18 @@ def test_upload_names_are_safe_for_a_windows_folder():
     assert nas.upload_name('Ly 40oz.PSB') == 'Ly 40oz.PSB'
     assert nas.upload_name('notes.txt') == 'notes.txt.psd'
     assert nas.upload_name('') == 'artwork.psd'
+
+
+def test_an_upload_already_on_the_nas_is_copied_there_not_downloaded_again(tmp_path):
+    data = b'shared-psd'
+    sha = hashlib.sha256(data).hexdigest()
+    upload = {'fileId': 'f1', 'fileName': 'shared.psd', 'sha256': sha, 'size': len(data)}
+    sibling = {**SLOT, 'shopifyProductId': 'gid://shopify/Product/10', 'productKey': 'DN1610261054',
+               'folder': ['Litzzy', 'DN1610261054 - HaPo Tumbler copy', SLOT['folder'][2]], 'pendingUpload': upload}
+    first = tmp_path.joinpath(*SLOT['folder'])
+    write(first / 'shared.psd', data)
+    api = PullApi([{**SLOT, 'pendingUpload': upload}, sibling], {})
+    r = nas.scan(api, tmp_path, nas.HashCache(tmp_path / 'h.json'), lambda m: None)
+    assert api.downloads == [] and r['errors'] == []
+    assert (tmp_path.joinpath(*sibling['folder']) / 'shared.psd').read_bytes() == data
+    assert [f['sha256'] for f in api.reports[0]['found']] == [sha, sha]

@@ -48,6 +48,20 @@ class HashCache:
         self.data[key] = {'size': st.st_size, 'mtime': st.st_mtime, 'sha256': digest}
         return digest
 
+    def find(self, sha256: str) -> Path | None:
+        """A file already on the NAS with this content (unchanged since it was hashed), e.g. a sibling product's copy."""
+        for key, hit in self.data.items():
+            if hit.get('sha256') != sha256:
+                continue
+            p = Path(key)
+            try:
+                st = p.stat()
+            except OSError:
+                continue
+            if st.st_size == hit.get('size') and st.st_mtime == hit.get('mtime'):
+                return p
+        return None
+
     def save(self) -> None:
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -105,8 +119,19 @@ def pull_upload(api, folder: Path, pending: dict, hashes: HashCache, log: Callab
     """Download a PSD a designer uploaded in the tool into the slot folder, where it becomes the newest PSD (the scan below
     then retires the previous one to _old and reports it; the server deletes the uploaded copy once linked)."""
     name = upload_name(pending.get('fileName') or 'artwork.psd')
+    want = str(pending.get('sha256') or '').lower()
+    current = psds_in(folder)
+    if want and current and hashes.get(current[0]) == want:
+        log(f'  upload {name} is already in {folder.name}')
+        return current[0]
     part = folder / f'.{name}.part'
-    sha = api.download(str(pending['fileId']), str(part), pending.get('sha256'))
+    local = hashes.find(want) if want else None
+    if local is not None:
+        shutil.copyfile(local, part)
+        sha = want
+        log(f'  copied upload {name} from {local.parent.name} (same file already on the NAS)')
+    else:
+        sha = api.download(str(pending['fileId']), str(part), pending.get('sha256'))
     dest = folder / name
     if dest.exists():
         retire([dest], folder)
