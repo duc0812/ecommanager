@@ -19,6 +19,31 @@ export type HandoffLine = {
   line: WorkspaceLine; slots: string[]; taskKey: string; apiSku: string | null; driveFolderUrl: string | null
   /** Supplier this line was already sent to, null while it waits. */
   exportedTo: string | null
+  /** Print parts whose newest file does not match the template size. */
+  wrongSizeAreas: string[]
+  /** What today's mapping would pick when it differs from the supplier the line was costed with (an order older than the mapping). */
+  mappingNow: { supplierName: string; sku: string } | null
+}
+
+/** PGprints holds a new order this long (set on the PGprints account) before it goes to production; it can be cancelled until then. */
+export const COOLING_OFF_HOURS = 2
+
+export type SentStage = 'CSV_WAITING' | 'CSV_EXPORTED' | 'API_SENDING' | 'API_COOLING' | 'API_SENT' | 'TRACKING' | 'FULFILLED'
+
+export type HandoffSent = {
+  stage: SentStage; via: HandoffMode; at: string | null; byName: string | null
+  code: string | null; remoteStatus: string | null; cancelUntil: string | null
+  tracking: { number: string; carrier: string | null; url: string | null }[]
+}
+
+export const SENT_STAGE_LABELS: Record<SentStage, string> = {
+  CSV_WAITING: 'Chờ xuất CSV',
+  CSV_EXPORTED: 'Đã xuất CSV',
+  API_SENDING: 'Đang gửi API — chưa rõ kết quả',
+  API_COOLING: 'Đã gửi API — còn huỷ được',
+  API_SENT: 'Đã gửi API — xưởng đang xử lý',
+  TRACKING: 'Đã có tracking',
+  FULFILLED: 'Đã giao (Shopify fulfilled)',
 }
 
 export type HandoffCard = {
@@ -31,6 +56,8 @@ export type HandoffCard = {
   state: HandoffState
   /** "Đã xuất 1/2 xưởng — còn chờ: Jomall" while some suppliers already got their lines. */
   exportNote: string | null
+  /** Set on the "Đã chuyển xưởng" list only. */
+  sent: HandoffSent | null
 }
 
 export const HANDOFF_LABELS = {

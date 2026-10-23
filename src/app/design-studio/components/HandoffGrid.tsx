@@ -1,6 +1,5 @@
 'use client'
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import Link from 'next/link'
 import type { HandoffCard, Me } from './types'
 import { copyText, mockupFiles, printPartNames, requestJson, taskImages, type LightboxImage } from './model'
 import { pushChipLabel } from '@/lib/handoff-shared'
@@ -10,13 +9,57 @@ import ExternalDesignPreview from './ExternalDesignPreview'
 import HandoffButton from './HandoffButton'
 import { ErrorBanner, ExtLink, Icon, Pill, btn, card } from './ui'
 
-type HandoffResponse = { pending: HandoffCard[]; saved: HandoffCard[]; pendingCount: number; me: Me }
+type HandoffResponse = { pending: HandoffCard[]; pendingCount: number; me: Me }
 
 const fmtDate = (iso: string) => new Date(iso).toLocaleDateString('en-US')
-const fmtDateTime = (iso: string) => new Date(iso).toLocaleString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric', hour: 'numeric', minute: '2-digit' })
+export const fmtDateTime = (iso: string) => new Date(iso).toLocaleString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric', hour: 'numeric', minute: '2-digit' })
 
-function OrderCard({ c, me, onOpenTask, onChanged, onError }: {
+/** What must be fixed before the order goes to a supplier: lines costed with an older mapping, print files off the template size. */
+function PreSendChecks({ c, canHandoff, onChanged, onError }: { c: HandoffCard; canHandoff: boolean; onChanged: (info: string) => void; onError: (msg: string) => void }) {
+  const [busy, setBusy] = useState(false)
+  const remaps = c.lines.filter(l => l.mappingNow)
+  const sizes = c.lines.filter(l => l.wrongSizeAreas.length > 0)
+  if (remaps.length === 0 && sizes.length === 0) return null
+
+  async function remap() {
+    if (busy) return
+    setBusy(true)
+    const r = await requestJson<{ changed: string[] }>(`/api/design-studio/orders/${encodeURIComponent(c.order.id)}/handoff`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'REMAP' }),
+    })
+    setBusy(false)
+    if (!r.ok) { onError(r.error); return }
+    onChanged(r.data.changed.length ? `${c.order.orderNumber}: đã cập nhật xưởng — ${r.data.changed.join('; ')}` : `${c.order.orderNumber}: xưởng đã đúng mapping, không đổi gì`)
+  }
+
+  return (
+    <div role="alert" className="mx-md mt-sm p-sm rounded-lg border border-error/40 bg-error-container/40 flex flex-col gap-xs text-label-sm">
+      <b className="text-on-error-container inline-flex items-center gap-xs"><Icon name="warning" className="text-[16px]" />Kiểm tra trước khi gửi xưởng</b>
+      {remaps.map(l => (
+        <span key={`m-${l.taskKey}`} className="text-on-surface">
+          <span className="font-mono font-semibold">{l.taskKey}</span>: đang ghi <b>{l.line.supplier?.name} {l.line.supplierSku ?? ''}</b>, mapping hiện tại chọn <b>{l.mappingNow!.supplierName} {l.mappingNow!.sku}</b> (đơn vào trước khi đổi mapping)
+        </span>
+      ))}
+      {sizes.map(l => (
+        <span key={`s-${l.taskKey}`} className="text-on-surface">
+          <span className="font-mono font-semibold">{l.taskKey}</span>: file {l.wrongSizeAreas.join(', ')} sai khổ template — mở task để sửa
+        </span>
+      ))}
+      {remaps.length > 0 && canHandoff && (
+        <span>
+          <button type="button" className={btn} disabled={busy} onClick={remap} title="Gán lại xưởng cho các dòng theo mapping hiện tại — chỉ được khi đơn chưa chuyển xưởng">
+            <Icon name="sync_alt" className="text-[16px]" />{busy ? 'Đang cập nhật…' : 'Cập nhật xưởng theo mapping'}
+          </button>
+        </span>
+      )}
+    </div>
+  )
+}
+
+export function OrderCard({ c, me, onOpenTask, onChanged, onError, footer }: {
   c: HandoffCard; me: Me | null; onOpenTask: (key: string) => void; onChanged: (info: string) => void; onError: (msg: string) => void
+  /** Replaces the hand-off button row (the "Đã chuyển xưởng" list shows where the order is instead). */
+  footer?: JSX.Element
 }) {
   const images = useMemo(() => {
     const out: LightboxImage[] = []
@@ -30,7 +73,7 @@ function OrderCard({ c, me, onOpenTask, onChanged, onError }: {
 
   return (
     <LightboxProvider images={images}>
-      <article aria-label={`Đơn ${order.orderNumber}`} className={`${card} flex flex-col`}>
+      <article aria-label={`Đơn ${order.orderNumber}`} className={`${card} flex flex-col ${c.lines.some(l => l.mappingNow || l.wrongSizeAreas.length) ? 'ring-1 ring-error/40' : ''}`}>
         <header className="flex items-center gap-sm flex-wrap px-md py-sm border-b border-outline-variant/20">
           <span className="font-mono font-semibold text-body-md text-on-surface">{order.orderNumber}</span>
           <span className="text-label-sm text-on-surface-variant">{order.storeName} · {fmtDate(order.placedAt)}</span>
@@ -43,6 +86,7 @@ function OrderCard({ c, me, onOpenTask, onChanged, onError }: {
             {order.shipTo && <span className="text-on-surface-variant">· {order.shipTo}</span>}
           </span>
         </header>
+        <PreSendChecks c={c} canHandoff={!!me?.canHandoff} onChanged={onChanged} onError={onError} />
         <ul className="divide-y divide-outline-variant/20">
           {c.lines.map(l => {
             const parts = printPartNames(l.line, l.slots)
@@ -53,7 +97,7 @@ function OrderCard({ c, me, onOpenTask, onChanged, onError }: {
                 {l.line.artworks.length > 0
                   ? (
                     <>
-                      {parts.map(area => <PrintFileThumb key={area} line={l.line} area={area} refLabel={l.taskKey} />)}
+                      {parts.map(area => <PrintFileThumb key={area} line={l.line} area={area} refLabel={l.taskKey} wrongSize={l.wrongSizeAreas.includes(area)} />)}
                       {mockups.map(m => <PrintFileThumb key={`m-${m.printArea}`} line={l.line} area={m.printArea} kind="MOCKUP" refLabel={l.taskKey} />)}
                     </>
                   )
@@ -110,6 +154,7 @@ function OrderCard({ c, me, onOpenTask, onChanged, onError }: {
             )
           })}
         </ul>
+        {footer ?? (
         <div className="mt-auto px-md py-sm border-t border-outline-variant/20 flex items-center gap-sm flex-wrap">
           <HandoffButton orderId={order.id} state={state} canHandoff={!!me?.canHandoff} onChanged={onChanged} onError={onError} />
           {state.handedOff && (
@@ -119,6 +164,7 @@ function OrderCard({ c, me, onOpenTask, onChanged, onError }: {
           )}
           {!state.handedOff && state.apiNote && <span className="text-label-sm text-amber-900">{state.apiNote}</span>}
         </div>
+        )}
       </article>
     </LightboxProvider>
   )
@@ -153,17 +199,16 @@ export default function HandoffGrid({ q, version, onOpenTask, onChanged }: {
 
   const fail = useCallback((message: string) => { setInfo(''); setActionError(message) }, [])
   const pending = data?.pending ?? []
-  const saved = data?.saved ?? []
   const me = data?.me ?? null
   const grid = 'grid grid-cols-[repeat(auto-fill,minmax(460px,1fr))] gap-md items-start'
 
   return (
-    <section aria-label="Chuyển xưởng" className="flex flex-col gap-md min-w-0">
+    <section aria-label="Duyệt sản xuất" className="flex flex-col gap-md min-w-0">
       <div className={`${card} px-md py-sm flex items-center gap-sm flex-wrap`}>
-        <Icon name="local_shipping" className="text-secondary text-[20px]" />
-        <h2 className="text-body-md font-semibold text-on-surface">Chuyển xưởng</h2>
+        <Icon name="precision_manufacturing" className="text-secondary text-[20px]" />
+        <h2 className="text-body-md font-semibold text-on-surface">Duyệt sản xuất</h2>
         <span className="text-label-sm text-on-surface-variant">
-          {pending.length} đơn đã duyệt hết design, chờ chuyển supplier{data && data.pendingCount > pending.length && !q ? ` (đang hiện ${pending.length}/${data.pendingCount})` : ''} · mỗi thẻ là một đơn
+          {pending.length} đơn đã duyệt hết design, chờ gửi xưởng{data && data.pendingCount > pending.length && !q ? ` (đang hiện ${pending.length}/${data.pendingCount})` : ''} · gửi xong đơn chuyển sang tab &quot;Đã chuyển xưởng&quot;
         </span>
         {loading && <Icon name="progress_activity" className="text-on-surface-variant text-[16px] animate-spin" />}
         <span className="ml-auto flex items-center gap-sm flex-wrap">
@@ -176,25 +221,12 @@ export default function HandoffGrid({ q, version, onOpenTask, onChanged }: {
       <ErrorBanner msg={error} />
       {!loading && !error && pending.length === 0 && (
         <div className={`${card} p-lg text-body-sm text-on-surface-variant flex items-center gap-sm`}>
-          <Icon name="task_alt" className="text-on-tertiary-container" />Không có đơn nào chờ chuyển xưởng.
+          <Icon name="task_alt" className="text-on-tertiary-container" />Không có đơn nào chờ gửi xưởng.
         </div>
       )}
       <div className={grid}>
         {pending.map(c => <OrderCard key={c.order.id} c={c} me={me} onOpenTask={onOpenTask} onChanged={changed} onError={fail} />)}
       </div>
-      {saved.length > 0 && (
-        <>
-          <div className="flex items-center gap-sm flex-wrap pt-sm">
-            <Icon name="inventory" className="text-on-surface-variant text-[18px]" />
-            <h3 className="text-body-sm font-semibold text-on-surface">Đã lưu chờ xuất CSV ({saved.length})</h3>
-            <span className="text-label-sm text-on-surface-variant">Đơn vẫn ở Ready to Production cho tới khi xuất CSV</span>
-            <Link href="/fulfillment/export" className="text-label-sm text-secondary hover:underline">Mở trang CSV Export</Link>
-          </div>
-          <div className={grid}>
-            {saved.map(c => <OrderCard key={c.order.id} c={c} me={me} onOpenTask={onOpenTask} onChanged={changed} onError={fail} />)}
-          </div>
-        </>
-      )}
     </section>
   )
 }

@@ -21,6 +21,48 @@ type SupplierProductWithSupplier = Awaited<ReturnType<typeof prisma.supplierProd
   include: { supplier: true }
 }>>>[number]
 
+export type ResolvableLine = {
+  shopifyVariantId: string | null; shopifyProductType: string | null; variantOptions: string | null; shopifyProductId: string | null
+  order: { storeId: string; shippingCountry: string | null }
+}
+
+/** The supplier product today's mapping picks for a line: product base / manual mapping / product profile, then the size sibling. */
+export async function loadLineResolver(): Promise<(line: ResolvableLine) => SupplierProductWithSupplier | null> {
+  const [productBases, manualMappings, productProfiles, supplierProducts] = await Promise.all([
+    loadProductBasesForResolver(),
+    loadVariantManualMappingsForResolver(),
+    loadProductProfilesForResolver(),
+    prisma.supplierProduct.findMany({ include: { supplier: true } }),
+  ])
+  const activeSupplierProducts = supplierProducts.filter(p => p.supplier.isActive)
+  const rawSupplierProductById = new Map(activeSupplierProducts.map(p => [p.id, p]))
+  const supplierProductsByParent = new Map<string, SupplierProductWithSupplier[]>()
+  for (const p of activeSupplierProducts) {
+    const key = supplierParentKey(p)
+    supplierProductsByParent.set(key, [...(supplierProductsByParent.get(key) ?? []), p])
+  }
+  return line => {
+    const selectedOptions = parseVariantOptions(line.variantOptions)
+    const result = resolveByProductBase(
+      line.shopifyVariantId,
+      line.shopifyProductType ?? null,
+      selectedOptions,
+      productBases,
+      manualMappings,
+      line.shopifyProductId ? productProfiles.get(profileKey(line.order.storeId, line.shopifyProductId)) ?? null : null,
+      line.order.shippingCountry,
+    )
+    const supplierProductId = swapToSizeSibling(
+      result.supplierProductId,
+      selectedOptions,
+      result.resolvedVia,
+      rawSupplierProductById,
+      supplierProductsByParent,
+    )
+    return supplierProductId ? rawSupplierProductById.get(supplierProductId) ?? null : null
+  }
+}
+
 export async function recalculateMissingOrderLineCosts(filter: {
   dateFrom?: Date
   dateTo?: Date
@@ -39,11 +81,8 @@ export async function recalculateMissingOrderLineCosts(filter: {
     ...(placedAt ? { placedAt } : {}),
     ...(filter.orderIds ? { id: { in: filter.orderIds } } : {}),
   }
-  const [productBases, manualMappings, productProfiles, supplierProducts, lines] = await Promise.all([
-    loadProductBasesForResolver(),
-    loadVariantManualMappingsForResolver(),
-    loadProductProfilesForResolver(),
-    prisma.supplierProduct.findMany({ include: { supplier: true } }),
+  const [resolveLine, lines] = await Promise.all([
+    loadLineResolver(),
     prisma.orderLine.findMany({
       where: {
         ...(!filter.refreshExisting ? { resolvedBaseCost: null } : {}),
@@ -56,14 +95,6 @@ export async function recalculateMissingOrderLineCosts(filter: {
     }),
   ])
 
-  const activeSupplierProducts = supplierProducts.filter(p => p.supplier.isActive)
-  const rawSupplierProductById = new Map(activeSupplierProducts.map(p => [p.id, p]))
-  const supplierProductsByParent = new Map<string, SupplierProductWithSupplier[]>()
-  for (const p of activeSupplierProducts) {
-    const key = supplierParentKey(p)
-    supplierProductsByParent.set(key, [...(supplierProductsByParent.get(key) ?? []), p])
-  }
-
   const now = new Date()
   let updatedLines = 0
   let unresolvedLines = 0
@@ -72,24 +103,7 @@ export async function recalculateMissingOrderLineCosts(filter: {
 
   for (const line of lines) {
     if (isNonProductLine(line)) continue
-    const selectedOptions = parseVariantOptions(line.variantOptions)
-    const result = resolveByProductBase(
-      line.shopifyVariantId,
-      line.shopifyProductType ?? null,
-      selectedOptions,
-      productBases,
-      manualMappings,
-      line.shopifyProductId ? productProfiles.get(profileKey(line.order.storeId, line.shopifyProductId)) ?? null : null,
-      line.order.shippingCountry,
-    )
-    const supplierProductId = swapToSizeSibling(
-      result.supplierProductId,
-      selectedOptions,
-      result.resolvedVia,
-      rawSupplierProductById,
-      supplierProductsByParent,
-    )
-    const supplierProduct = supplierProductId ? rawSupplierProductById.get(supplierProductId) : null
+    const supplierProduct = resolveLine(line)
     if (!supplierProduct) {
       if (filter.refreshExisting && !(filter.preserveUnchangedSnapshot && !line.resolvedSupplierId)) {
         await prisma.orderLine.update({

@@ -6,11 +6,11 @@ import { canCallApi } from '@/lib/api-access'
 import { DEFAULT_ROLE_PERMISSIONS } from '@/lib/roles'
 import { PGPRINTS_KEYS } from '@/lib/pgprints-settings'
 import { syncDesignTasks, transitionTask, type Actor } from '@/lib/design-tasks'
-import { countPendingHandoff, handoffStateFor, listHandoffCards } from '@/lib/supplier-handoff'
+import { countPendingHandoff, handoffStateFor, listHandoffCards, listSentCards } from '@/lib/supplier-handoff'
 import { GET as getTasks } from '@/app/api/design-studio/tasks/route'
 import { GET as getTask } from '@/app/api/design-studio/tasks/[key]/route'
 import { GET as getHandoff } from '@/app/api/design-studio/handoff/route'
-import { POST as postHandoff, DELETE as deleteHandoff } from '@/app/api/design-studio/orders/[id]/handoff/route'
+import { POST as postHandoff, DELETE as deleteHandoff, PATCH as patchHandoff } from '@/app/api/design-studio/orders/[id]/handoff/route'
 import { GET as getPreview } from '@/app/api/fulfillment/pgprints/orders/[orderId]/preview/route'
 import { POST as postPush } from '@/app/api/fulfillment/pgprints/orders/[orderId]/push/route'
 import { POST as postCancel } from '@/app/api/fulfillment/pgprints/orders/[orderId]/cancel/route'
@@ -234,7 +234,9 @@ describe('CSV handoff — supplier without an API', () => {
 
     const cards = await listHandoffCards()
     expect(cards.pending.some(c => c.order.id === o.id)).toBe(false)
-    expect(cards.saved.find(c => c.order.id === o.id)?.state.handedOff).toMatchObject({ mode: 'CSV', byName: 'Exporter' })
+    const sent = await listSentCards()
+    expect(sent.sent.find(c => c.order.id === o.id)?.sent).toMatchObject({ stage: 'CSV_WAITING', via: 'CSV', byName: 'Exporter', code: null })
+    expect(sent.sent.find(c => c.order.id === o.id)?.state.handedOff).toMatchObject({ mode: 'CSV', byName: 'Exporter' })
 
     const exported = await (await exportCsv({ preview: true, pipelineStatus: 'READY_TO_PRODUCTION' })).json()
     expect(exported.csv).toContain(o.number)
@@ -335,6 +337,43 @@ describe('CSV handoff — supplier without an API', () => {
   })
 })
 
+describe('Duyệt sản xuất checks', () => {
+  const PRODUCT = 'gid://shopify/Product/hof-remap'
+  afterEach(async () => { await prisma.productProfile.deleteMany({ where: { storeId, shopifyProductId: PRODUCT } }) })
+
+  async function mappedToPgprints() {
+    const o = await makeOrder()
+    await prisma.orderLine.updateMany({ where: { orderId: o.id }, data: { shopifyProductId: PRODUCT } })
+    const ut2 = await prisma.supplierProduct.findFirstOrThrow({ where: { supplierId: PG_SUP, sku: 'UT2-20OZ' } })
+    await prisma.productProfile.create({ data: { storeId, shopifyProductId: PRODUCT, title: 'Custom Tumbler', supplierProductId: ut2.id } })
+    return o
+  }
+  const remap = (id: string, token: string | null, body: unknown = { action: 'REMAP' }) => patchHandoff(req(handoffUrl(id), token, json('PATCH', body)), { params: { id } })
+
+  it('flags a line whose supplier predates today\'s mapping, and "Cập nhật xưởng" moves it', async () => {
+    const o = await mappedToPgprints()
+    const card = (await listHandoffCards()).pending.find(c => c.order.id === o.id)!
+    expect(card.lines[0]).toMatchObject({ mappingNow: { supplierName: 'Pgprints', sku: 'UT2-20OZ' }, wrongSizeAreas: [] })
+
+    expect((await remap(o.id, desToken)).status).toBe(403)
+    const res = await remap(o.id, exportToken)
+    expect(res.status).toBe(200)
+    expect((await res.json()).changed).toEqual([`${o.keys[0]}: CSV-TUMBLER → UT2-20OZ`])
+    expect(await prisma.orderLine.findFirstOrThrow({ where: { orderId: o.id } })).toMatchObject({ resolvedSupplierId: PG_SUP, resolvedSupplierSku: 'UT2-20OZ' })
+    expect((await listHandoffCards()).pending.find(c => c.order.id === o.id)?.lines[0].mappingNow).toBeNull()
+    const events = await prisma.designTaskEvent.findMany({ where: { task: { orderId: o.id }, type: 'HANDOFF' } })
+    expect(events.map(e => e.message)).toEqual([`Cập nhật xưởng theo mapping hiện tại — ${o.keys[0]}: CSV-TUMBLER → UT2-20OZ`])
+  })
+
+  it('never re-maps an order already handed to a supplier', async () => {
+    const o = await mappedToPgprints()
+    await saveCsv(o.id, exportToken)
+    const res = await remap(o.id, adminToken)
+    expect(res.status).toBe(409)
+    expect(await prisma.orderLine.findFirstOrThrow({ where: { orderId: o.id } })).toMatchObject({ resolvedSupplierId: CSV_SUP })
+  })
+})
+
 describe('handoff permission', () => {
   it('admin or a fulfillment_export holder may hand off and undo; a designer may not', async () => {
     const o = await makeOrder()
@@ -420,6 +459,24 @@ describe('API handoff — supplier linked to PGprints', () => {
     const refused = await undo(o.id, adminToken)
     expect(refused.status).toBe(409)
     expect((await refused.json()).code).toBe('NOT_CSV')
+
+    const listed = await (await getHandoff(req(`http://x/api/design-studio/handoff?view=sent&q=${encodeURIComponent(o.number)}`, desToken))).json()
+    expect(listed.sent.map((c: any) => c.order.id)).toEqual([o.id])
+    const sent = listed.sent[0].sent
+    expect(sent).toMatchObject({ stage: 'API_COOLING', via: 'API', code: `PG-${o.number.slice(1)}`, byName: 'Exporter', tracking: [] })
+    expect(new Date(sent.cancelUntil).getTime() - row.pushedAt.getTime()).toBe(2 * 3600 * 1000)
+    expect((await listHandoffCards()).pending.some(c => c.order.id === o.id)).toBe(false)
+  })
+
+  it('past the cancel window the card says the factory has it, and a tracking number moves it on', async () => {
+    const o = await makeOrder({ api: true })
+    const pre = await preview(o.id, exportToken)
+    expect((await push(o.id, pre.payloadHash, exportToken)).status).toBe(200)
+    await prisma.supplierOrderPush.updateMany({ where: { orderId: o.id }, data: { pushedAt: new Date(Date.now() - 3 * 3600 * 1000) } })
+    const stageOf = async () => (await listSentCards({ q: o.number })).sent.find(c => c.order.id === o.id)?.sent
+    expect(await stageOf()).toMatchObject({ stage: 'API_SENT', cancelUntil: null })
+    await prisma.shipment.create({ data: { orderId: o.id, projectId: PROJECT, lineKey: `${o.number.slice(1)}_1`, trackingNumber: 'YT123', carrier: 'YunExpress' } })
+    expect(await stageOf()).toMatchObject({ stage: 'TRACKING', tracking: [{ number: 'YT123', carrier: 'YunExpress', url: null }] })
   })
 
   it('a designer without the export permission cannot push; pushEnabled still gates everyone', async () => {

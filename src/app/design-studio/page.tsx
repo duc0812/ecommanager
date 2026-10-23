@@ -11,11 +11,12 @@ import ImagePanes from './components/ImagePanes'
 import LowerGrid from './components/LowerGrid'
 import ReviewGrid from './components/ReviewGrid'
 import HandoffGrid from './components/HandoffGrid'
+import SentGrid from './components/SentGrid'
 import DriveHealthBanner from './components/DriveHealthBanner'
 import { ErrorBanner, Icon, Note, READY_META, btnPrimary, card } from './components/ui'
 
 type Filter = 'ALL' | Readiness
-type Mode = 'work' | 'review' | 'handoff'
+type Mode = 'work' | 'review' | 'handoff' | 'sent'
 
 const DRIVE_BADGE_POLL_MS = [4000, 8000, 15000, 30000, 60000, 120000]
 const DRIVE_BADGE_WINDOW_MS = 15 * 60 * 1000
@@ -231,12 +232,19 @@ function DesignTasks() {
             <span className={mode === 'review' ? 'font-semibold' : reviewCount > 0 ? 'font-bold' : 'font-normal'}>{reviewCount}</span>
           </button>
           <button type="button" aria-pressed={mode === 'handoff'} onClick={() => setMode(mode === 'handoff' ? 'work' : 'handoff')}
-            title={mode === 'handoff' ? 'Quay lại màn làm task' : 'Các đơn đã duyệt hết design, chờ chuyển supplier (API hoặc lưu chờ xuất CSV)'}
+            title={mode === 'handoff' ? 'Quay lại màn làm task' : 'Các đơn đã duyệt hết design, chờ gửi xưởng (API hoặc lưu chờ xuất CSV)'}
             className={`inline-flex items-center gap-xs rounded-full border px-sm py-[2px] text-label-sm ${mode === 'handoff'
               ? 'bg-secondary text-on-secondary border-transparent font-semibold'
               : handoffCount > 0 ? 'bg-emerald-100 text-emerald-900 border-emerald-300 font-semibold' : 'bg-surface-container-lowest border-outline-variant/40 text-on-surface-variant'}`}>
-            <Icon name="local_shipping" className="text-[14px]" />Chuyển xưởng
+            <Icon name="precision_manufacturing" className="text-[14px]" />Duyệt sản xuất
             <span className={mode === 'handoff' ? 'font-semibold' : handoffCount > 0 ? 'font-bold' : 'font-normal'}>{handoffCount}</span>
+          </button>
+          <button type="button" aria-pressed={mode === 'sent'} onClick={() => setMode(mode === 'sent' ? 'work' : 'sent')}
+            title={mode === 'sent' ? 'Quay lại màn làm task' : 'Các đơn đã gửi xưởng: chờ xuất CSV, đã xuất, đã gửi API (còn huỷ được hay chưa), đã có tracking'}
+            className={`inline-flex items-center gap-xs rounded-full border px-sm py-[2px] text-label-sm ${mode === 'sent'
+              ? 'bg-secondary text-on-secondary border-transparent font-semibold'
+              : 'bg-surface-container-lowest border-outline-variant/40 text-on-surface-variant'}`}>
+            <Icon name="local_shipping" className="text-[14px]" />Đã chuyển xưởng
           </button>
         </div>
         <div className="ml-auto flex items-center gap-sm">
@@ -263,6 +271,8 @@ function DesignTasks() {
           <ReviewGrid mine={mine} q={debouncedQ} version={reviewVersion} onOpenTask={selectTask} onChanged={reload} />
         ) : mode === 'handoff' ? (
           <HandoffGrid q={debouncedQ} version={reviewVersion} onOpenTask={selectTask} onChanged={reload} />
+        ) : mode === 'sent' ? (
+          <SentGrid q={debouncedQ} version={reviewVersion} onOpenTask={selectTask} onChanged={reload} />
         ) : (
         <div className="flex flex-col gap-md min-w-0">
           {!sel && !listLoading && !listError && (
