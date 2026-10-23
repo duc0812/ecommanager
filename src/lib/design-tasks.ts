@@ -359,33 +359,39 @@ export async function submitAutoRenderForReview(orderId: string, shopifyLineId: 
   return moved ? { moved: true, reason: null } : { moved: false, reason: 'Task vừa đổi trạng thái' }
 }
 
-export type ReviewCard = { task: TaskRow; line: WorkspaceLine; slots: string[]; push: HandoffPush | null }
+export type ReviewCard = {
+  task: TaskRow; line: WorkspaceLine; slots: string[]; push: HandoffPush | null
+  template: TemplateRow | null; profile: TaskProfile | null; library: TaskLibraryState | null; shipTo: Workspace['order']['shipTo'] | null
+}
 
 export async function listReviewCards(f: { assigneeId?: string; q?: string } = {}): Promise<ReviewCard[]> {
   const rows = await listTasks({ statuses: ['REVIEW'], assigneeId: f.assigneeId, q: f.q, limit: 200 })
   if (rows.length === 0) return []
   const orderIds = Array.from(new Set(rows.map(r => r.orderId)))
-  const [orderLines, workspaces, pushes] = await Promise.all([
+  const [orderLines, orders, workspaces, pushes] = await Promise.all([
     prisma.orderLine.findMany({
       where: { orderId: { in: orderIds } },
-      select: { orderId: true, shopifyLineId: true, resolvedSupplierId: true, resolvedSupplierSku: true, shopifyProductId: true, customAttributesJson: true },
+      select: { orderId: true, shopifyLineId: true, resolvedSupplierId: true, resolvedSupplierSku: true, shopifyProductId: true, customAttributesJson: true, variantOptions: true },
     }),
+    prisma.order.findMany({ where: { id: { in: orderIds } }, select: { id: true, storeId: true } }),
     Promise.all(orderIds.map(id => loadWorkspace(id))),
     activePushByOrder(orderIds),
   ])
   const wsById = new Map(workspaces.filter((w): w is Workspace => !!w).map(w => [w.order.id, w]))
-  const cards: ReviewCard[] = []
-  for (const task of rows) {
-    const line = wsById.get(task.orderId)?.lines.find(l => l.shopifyLineId === task.shopifyLineId)
+  const storeByOrder = new Map(orders.map(o => [o.id, o.storeId]))
+  const built = await Promise.all(rows.map(async (task): Promise<ReviewCard | null> => {
+    const ws = wsById.get(task.orderId)
+    const line = ws?.lines.find(l => l.shopifyLineId === task.shopifyLineId)
     const orderLine = orderLines.find(l => l.orderId === task.orderId && l.shopifyLineId === task.shopifyLineId)
-    if (!line || !orderLine) continue
+    if (!ws || !line || !orderLine) return null
     const push = pushes.get(task.orderId)
-    cards.push({
-      task, line, slots: requiredSlotsFor(await templateForLine(orderLine)),
+    const { template, profile, library } = await lineContext(orderLine, storeByOrder.get(task.orderId) ?? null)
+    return {
+      task, line, slots: requiredSlotsFor(template), template, profile, library, shipTo: ws.order.shipTo ?? null,
       push: push ? { status: push.status, supplierOrderCode: push.supplierOrderCode, externalOrderId: push.externalOrderId } : null,
-    })
-  }
-  return cards
+    }
+  }))
+  return built.filter((c): c is ReviewCard => !!c)
 }
 
 export const NO_PRINT_FILE_MESSAGE = 'Chưa có file in nào — upload ít nhất một file in'
@@ -494,6 +500,24 @@ export async function requiredSlotsForLine(orderId: string, shopifyLineId: strin
   return line ? requiredSlotsFor(await templateForLine(line)) : []
 }
 
+type ContextLine = TemplateLookupLine & { variantOptions: string | null }
+
+/** The template, product profile and artwork-library state a line is checked against — shared by the task page and the review grid. */
+async function lineContext(orderLine: ContextLine | null, storeId: string | null) {
+  const productId = orderLine?.shopifyProductId ?? null
+  const profileRouteKey = storeId && productId ? toRouteKey(storeId, productId) : null
+  const profileRow = storeId && productId ? await findProfile(storeId, productId) : null
+  const template = orderLine ? await templateForLine(orderLine, profileRow) : null
+  const profile: TaskProfile | null = storeId && productId && profileRouteKey
+    ? { key: profileRouteKey, status: await productArtworkStatus(storeId, productId), layerMap: parseLayerMap(profileRow?.layerMap) }
+    : null
+  const library = await libraryStateFor({
+    storeId, shopifyProductId: productId, templateId: template?.id ?? null,
+    variantOptions: orderLine?.variantOptions ?? null, artworkSplits: profileRow?.artworkSplits ?? null,
+  })
+  return { template, profile, profileRouteKey, library }
+}
+
 export async function loadTask(taskKey: string): Promise<TaskDetail | null> {
   const task = await prisma.designTask.findUnique({ where: { taskKey } })
   if (!task) return null
@@ -511,16 +535,7 @@ export async function loadTask(taskKey: string): Promise<TaskDetail | null> {
   const storeId = productId
     ? (await prisma.order.findUnique({ where: { id: task.orderId }, select: { storeId: true } }))?.storeId ?? null
     : null
-  const profileRouteKey = storeId && productId ? toRouteKey(storeId, productId) : null
-  const profileRow = storeId && productId ? await findProfile(storeId, productId) : null
-  const template = orderLine ? await templateForLine(orderLine, profileRow) : null
-  const profile: TaskProfile | null = storeId && productId && profileRouteKey
-    ? { key: profileRouteKey, status: await productArtworkStatus(storeId, productId), layerMap: parseLayerMap(profileRow?.layerMap) }
-    : null
-  const library = await libraryStateFor({
-    storeId, shopifyProductId: productId, templateId: template?.id ?? null,
-    variantOptions: orderLine?.variantOptions ?? null, artworkSplits: profileRow?.artworkSplits ?? null,
-  })
+  const { template, profile, profileRouteKey, library } = await lineContext(orderLine, storeId)
 
   const events = await prisma.designTaskEvent.findMany({ where: { taskId: task.id }, orderBy: { createdAt: 'asc' } })
   const actorIds = Array.from(new Set(events.map(e => e.actorId).filter((x): x is string => !!x)))

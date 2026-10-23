@@ -4,7 +4,7 @@ import { artworkImage, isImage, newestFor } from './model'
 import { useLightbox } from './Lightbox'
 import { Icon, Pill } from './ui'
 
-export default function PrintFileThumb({ line, area, refLabel, kind = 'PRINT' }: { line: WorkspaceLine; area: string; refLabel: string; kind?: FileKind }) {
+export default function PrintFileThumb({ line, area, refLabel, kind = 'PRINT', wrongSize = false }: { line: WorkspaceLine; area: string; refLabel: string; kind?: FileKind; wrongSize?: boolean }) {
   const lb = useLightbox()
   const art = newestFor(line, area, kind)
   if (!art) {
@@ -19,7 +19,7 @@ export default function PrintFileThumb({ line, area, refLabel, kind = 'PRINT' }:
   return (
     <div className="flex flex-col gap-xs min-w-0">
       <button type="button" onClick={() => lb?.open(art.url, artworkImage(art))} aria-label={`Xem lớn file in ${label}`} title="Bấm để xem lớn"
-        className="relative aspect-[4/3] rounded-lg overflow-hidden border border-outline-variant/30 bg-[repeating-conic-gradient(theme(colors.outline-variant)_0_25%,theme(colors.surface-container-lowest)_0_50%)] bg-[length:12px_12px] grid place-items-center hover:ring-2 hover:ring-secondary/40">
+        className={`relative aspect-[4/3] rounded-lg overflow-hidden border border-outline-variant/30 bg-[repeating-conic-gradient(theme(colors.outline-variant)_0_25%,theme(colors.surface-container-lowest)_0_50%)] bg-[length:12px_12px] grid place-items-center hover:ring-2 hover:ring-secondary/40 ${wrongSize ? 'ring-2 ring-error' : ''}`}>
         {src
           // eslint-disable-next-line @next/next/no-img-element
           ? <img src={src} alt={`File in ${label}`} loading="lazy" className="max-w-full max-h-full object-contain" />
@@ -29,7 +29,7 @@ export default function PrintFileThumb({ line, area, refLabel, kind = 'PRINT' }:
         {kind === 'MOCKUP' && <Pill tone="idle" icon="checkroom">Mockup</Pill>}
         <span className="font-semibold text-on-surface truncate" title={area}>{area}</span>
         <span>v{art.version}</span>
-        {art.widthPx && art.heightPx && <span>{art.widthPx}×{art.heightPx}</span>}
+        {art.widthPx && art.heightPx && <span className={wrongSize ? 'text-error font-semibold' : ''}>{art.widthPx}×{art.heightPx}</span>}
         {art.source === 'AUTO' && <Pill tone="brand" icon="auto_awesome">Tự động</Pill>}
       </span>
     </div>

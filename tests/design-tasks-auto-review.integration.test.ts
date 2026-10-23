@@ -139,6 +139,10 @@ describe('listReviewCards', () => {
     expect(c.task.variantTitle).toBe('20oz')
     expect(c.line.artworks.map(a => ({ kind: a.kind, printArea: a.printArea, source: a.source }))).toEqual([{ kind: 'PRINT', printArea: 'PRINT', source: 'AUTO' }])
     expect(c.line.personalization).toEqual([{ key: 'Custom Name', value: 'Marie-Pier' }])
+    expect(c.template).toBeNull()
+    expect(c).toHaveProperty('shipTo')
+    expect(c).toHaveProperty('library')
+    expect(c).toHaveProperty('profile')
   })
 })
 

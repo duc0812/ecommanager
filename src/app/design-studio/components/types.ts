@@ -90,7 +90,10 @@ export type TaskDetail = {
   handoff?: HandoffState | null
 }
 
-export type ReviewCard = { task: TaskRow; line: WorkspaceLine; slots: string[]; push?: HandoffPush | null }
+export type ReviewCard = {
+  task: TaskRow; line: WorkspaceLine; slots: string[]; push?: HandoffPush | null
+  template?: TemplateRow | null; profile?: TaskProfile | null; library?: TaskLibraryState | null; shipTo?: OrderInfo['shipTo'] | null
+}
 
 export type TransitionBody = {
   to: TaskStatus; note?: string; reasons?: string[]; assigneeId?: string; kpi?: number; dueHours?: number; continue?: boolean

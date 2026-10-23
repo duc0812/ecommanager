@@ -1,13 +1,119 @@
 'use client'
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
 import type { Me, ReviewCard } from './types'
-import { mockupFiles, postJson, printPartNames, requestJson, taskImages, taskUrl, timeLeft } from './model'
+import { mockupFiles, newestFor, postJson, printPartNames, requestJson, taskImages, taskUrl, timeLeft } from './model'
+import { buildChecklist, type CheckItem } from './checklist'
+import { fileFormatLabel, printFileFit, type FileFit } from '@/lib/print-file-fit'
 import { LightboxProvider, useLightbox } from './Lightbox'
 import PrintFileThumb from './PrintFileThumb'
 import { pushChipLabel } from '@/lib/handoff-shared'
 import { ErrorBanner, Icon, Pill, btn, btnPrimary, btnWarn, card, input } from './ui'
 
 type ReviewResponse = { cards: ReviewCard[]; rejectReasons: string[]; me: Me }
+
+type PartCheck = { area: string; fit: FileFit | null; size: string | null; format: string | null }
+type ReviewCheck = { items: CheckItem[]; parts: PartCheck[]; problems: string[]; doubts: string[] }
+
+const SHOWN_CHECKS: CheckItem['key'][] = ['mapping', 'library', 'customer', 'files', 'mockup']
+
+/** What a reviewer must trust before approving: the task checklist (without the review step itself) and each print file against its template. */
+function reviewCheck(c: ReviewCard, me: Me | null): ReviewCheck {
+  const template = c.template ?? null
+  const list = buildChecklist({
+    task: c.task, line: c.line, template, slots: c.slots, library: c.library ?? null, profile: c.profile ?? null,
+    me: { isLeader: !!me?.isLeader, canApprove: !!me?.canApprove },
+  })
+  const items = list.items.filter(i => SHOWN_CHECKS.includes(i.key))
+  const parts = printPartNames(c.line, c.slots).map((area): PartCheck => {
+    const art = newestFor(c.line, area, 'PRINT')
+    if (!art) return { area, fit: null, size: null, format: null }
+    return {
+      area, fit: printFileFit(template, area, art), format: fileFormatLabel(art.mimeType),
+      size: art.widthPx && art.heightPx ? `${art.widthPx}×${art.heightPx}` : null,
+    }
+  })
+  const problems = items.filter(i => !i.optional && (i.state === 'missing' || i.state === 'blocked')).map(i => `${i.title}: ${i.reason}`)
+  const doubts: string[] = []
+  for (const p of parts) {
+    if (p.fit?.state === 'bad') problems.push(`${p.area}: file ${p.size} — template cần ${p.fit.expected.w}×${p.fit.expected.h}`)
+    if (p.fit?.state === 'unknown') doubts.push(`${p.area}: không đọc được kích thước file`)
+  }
+  if (!template && c.line.supplier) doubts.push('Sản phẩm chưa có template — tự kiểm tra khổ file theo yêu cầu xưởng')
+  return { items, parts, problems, doubts }
+}
+
+type CheckTone = 'ok' | 'bad' | 'warn' | 'idle'
+
+const CHECK_LOOK: Record<CheckItem['state'], { icon: string; tone: CheckTone }> = {
+  done: { icon: 'check_circle', tone: 'ok' },
+  missing: { icon: 'cancel', tone: 'bad' },
+  blocked: { icon: 'block', tone: 'warn' },
+  na: { icon: 'remove', tone: 'idle' },
+}
+
+const CHECK_LABEL: Partial<Record<CheckItem['key'], string>> = {
+  mapping: 'Xưởng', library: 'Artwork gốc', customer: 'Thông tin khách', files: 'Đủ file', mockup: 'Mockup',
+}
+
+function partVerdict(p: PartCheck): { tone: CheckTone; icon: string; text: string } {
+  if (!p.fit) return { tone: 'bad', icon: 'cancel', text: 'chưa có file' }
+  switch (p.fit.state) {
+    case 'ok': return { tone: 'ok', icon: 'check_circle', text: 'đúng khổ template' }
+    case 'bad': return { tone: 'bad', icon: 'cancel', text: `sai khổ — template cần ${p.fit.expected.w}×${p.fit.expected.h}` }
+    case 'unknown': return { tone: 'warn', icon: 'help', text: 'không đọc được kích thước' }
+    case 'extra': return { tone: 'idle', icon: 'add_circle', text: 'file thêm, ngoài vùng in của template' }
+    default: return { tone: 'warn', icon: 'help', text: 'không có template để đối chiếu' }
+  }
+}
+
+function ReviewChecks({ c, check }: { c: ReviewCard; check: ReviewCheck }) {
+  const template = c.template ?? null
+  const country = c.shipTo?.countryName ?? c.shipTo?.countryCode ?? null
+  return (
+    <section aria-label={`Đối chiếu ${c.task.taskKey}`} className="mx-md mb-sm p-sm rounded-lg border border-outline-variant/30 bg-surface-container-low flex flex-col gap-xs text-label-sm">
+      <div className="flex items-center gap-xs flex-wrap min-w-0">
+        <Icon name="straighten" className="text-[16px] text-on-surface-variant" />
+        {template
+          ? <span className="text-on-surface"><b>{template.name}</b> · {template.widthPx}×{template.heightPx}px · {template.dpi} DPI</span>
+          : <span className="text-amber-900 font-semibold">Chưa có template in</span>}
+        {c.line.supplier && <span className="text-on-surface-variant">· {c.line.supplier.name}{c.line.supplierSku ? ` ${c.line.supplierSku}` : ''}</span>}
+        {country && <span className="text-on-surface-variant inline-flex items-center gap-[2px]">· <Icon name="public" className="text-[13px]" />{country}</span>}
+      </div>
+      {check.parts.map(p => {
+        const v = partVerdict(p)
+        const detail = [p.size, p.format].filter(Boolean).join(' · ')
+        return (
+          <div key={p.area} className="flex items-center gap-xs min-w-0">
+            <Pill tone={v.tone} icon={v.icon}>{p.area}</Pill>
+            <span className={`truncate ${v.tone === 'bad' ? 'text-error font-semibold' : 'text-on-surface'}`}>{detail ? `${detail} — ` : ''}{v.text}</span>
+          </div>
+        )
+      })}
+      <div className="flex flex-wrap gap-xs">
+        {check.items.map(i => {
+          const look = CHECK_LOOK[i.state]
+          return (
+            <span key={i.key} title={`${i.title}: ${i.reason}`}>
+              <Pill tone={i.optional && look.tone === 'bad' ? 'warn' : look.tone} icon={look.icon}>{CHECK_LABEL[i.key] ?? i.title}</Pill>
+            </span>
+          )
+        })}
+      </div>
+      {check.problems.length > 0 && (
+        <ul className="list-disc pl-md text-error font-semibold">{check.problems.map(p => <li key={p}>{p}</li>)}</ul>
+      )}
+      {check.doubts.length > 0 && (
+        <ul className="list-disc pl-md text-amber-900">{check.doubts.map(p => <li key={p}>{p}</li>)}</ul>
+      )}
+    </section>
+  )
+}
+
+function CheckSummary({ check }: { check: ReviewCheck }) {
+  if (check.problems.length > 0) return <Pill tone="bad" icon="error">Chưa đạt · {check.problems.length} lỗi</Pill>
+  if (check.doubts.length > 0) return <Pill tone="warn" icon="help">Cần xem lại</Pill>
+  return <Pill tone="ok" icon="verified">Đạt checklist</Pill>
+}
 
 function ShopifyImage({ c }: { c: ReviewCard }) {
   const lb = useLightbox()
@@ -39,6 +145,7 @@ function Card({ c, me, reasons, selected, busy, onToggle, onApprove, onReject, o
   const mockups = mockupFiles(line)
   const left = timeLeft(task)
   const leader = !!me?.canApprove
+  const check = useMemo(() => reviewCheck(c, me), [c, me])
 
   async function submitReject(e: FormEvent) {
     e.preventDefault()
@@ -48,12 +155,13 @@ function Card({ c, me, reasons, selected, busy, onToggle, onApprove, onReject, o
 
   return (
     <LightboxProvider images={images}>
-      <article aria-label={`Mẫu ${task.taskKey}`} className={`${card} flex flex-col ${selected ? 'ring-2 ring-secondary/50' : ''}`}>
+      <article aria-label={`Mẫu ${task.taskKey}`} className={`${card} flex flex-col ${selected ? 'ring-2 ring-secondary/50' : check.problems.length > 0 ? 'ring-1 ring-error/40' : ''}`}>
         <header className="flex items-center gap-sm flex-wrap px-md py-sm border-b border-outline-variant/20">
           {leader && (
             <input type="checkbox" checked={selected} onChange={onToggle} aria-label={`Chọn ${task.taskKey}`} className="w-4 h-4 accent-secondary" />
           )}
           <span className="font-mono font-semibold text-body-sm text-on-surface">{task.taskKey}</span>
+          <CheckSummary check={check} />
           {auto && <Pill tone="brand" icon="auto_awesome">Tự động</Pill>}
           {c.push && (
             <span title="Đơn này đã được gửi sang PGprints — duyệt xong đơn sẽ tự chuyển Exported, không cần gửi lại">
@@ -64,7 +172,9 @@ function Card({ c, me, reasons, selected, busy, onToggle, onApprove, onReject, o
         </header>
         <div className="p-md flex gap-md">
           <div className={`flex-1 min-w-0 grid gap-sm ${parts.length + mockups.length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
-            {parts.map(area => <PrintFileThumb key={area} line={c.line} area={area} refLabel={c.task.taskKey} />)}
+            {parts.map(area => (
+              <PrintFileThumb key={area} line={c.line} area={area} refLabel={c.task.taskKey} wrongSize={check.parts.find(p => p.area === area)?.fit?.state === 'bad'} />
+            ))}
             {mockups.map(m => <PrintFileThumb key={`m-${m.printArea}`} line={c.line} area={m.printArea} kind="MOCKUP" refLabel={c.task.taskKey} />)}
             {parts.length === 0 && mockups.length === 0 && (
               <div className="aspect-[4/3] rounded-lg border border-dashed border-error/50 grid place-items-center text-label-sm text-error">Chưa có file in</div>
@@ -72,6 +182,7 @@ function Card({ c, me, reasons, selected, busy, onToggle, onApprove, onReject, o
           </div>
           <ShopifyImage c={c} />
         </div>
+        <ReviewChecks c={c} check={check} />
         <div className="px-md pb-sm flex flex-col gap-xs text-body-sm min-w-0">
           <span className="text-on-surface font-semibold truncate" title={task.productTitle}>{task.productTitle}</span>
           {task.variantTitle && <span className="text-label-sm text-on-surface-variant">{task.variantTitle}</span>}

@@ -1,7 +1,7 @@
 import { createHash } from 'crypto'
 import { prisma } from '@/lib/db'
 import { isNonProductLine } from '@/lib/order-lines'
-import { requiredSlotsFor, taskKeyFor, templateForLine, type TemplateRow } from '@/lib/design-tasks'
+import { requiredSlotsFor, taskKeyFor, templateForLine } from '@/lib/design-tasks'
 import { artworkUrl } from '@/lib/design-studio'
 import { currentFiles, extraPrintParts } from '@/lib/task-files'
 import { logHandoffEvent, markPushExported } from '@/lib/repos/push-export'
@@ -11,6 +11,7 @@ import { SHIPMENT_STATUS_FULFILLED, SHIPMENT_STATUS_PENDING } from '@/lib/tracki
 import { countryCodeOf, countryNameOf, resolveStateCode, splitPersonName } from '@/lib/shipping-address'
 import { PublicUrlError, ensurePublicToken, isLineApproved, publicArtworkUrl, requirePublicBaseUrl } from '@/lib/public-artwork'
 import { credentialsOf, getPgprintsSettings } from '@/lib/pgprints-settings'
+import { expectedSize, printFileFit } from '@/lib/print-file-fit'
 import {
   PgprintsError, cancelOrder, createOrder, getBalance, searchOrders, serializeOrderPayload,
   type PgprintsLineItem, type PgprintsOrderPayload, type PgprintsRemoteOrder,
@@ -76,12 +77,6 @@ async function toPushViews(rows: PushRow[]): Promise<PushView[]> {
     pushedAt: r.pushedAt.toISOString(), pushedByName: r.pushedById ? (nameById.get(r.pushedById) ?? null) : null,
     cancelledAt: r.cancelledAt ? r.cancelledAt.toISOString() : null, lastSyncedAt: r.lastSyncedAt ? r.lastSyncedAt.toISOString() : null,
   }))
-}
-
-function expectedSize(template: TemplateRow | null, area: string): { w: number; h: number } | null {
-  if (!template) return null
-  const hit = template.areas.find(a => a.name === area)
-  return hit && hit.w > 0 && hit.h > 0 ? { w: hit.w, h: hit.h } : { w: template.widthPx, h: template.heightPx }
 }
 
 export type BuiltPush = { preview: PushPreview; rawBody: string | null; externalOrderId: string; supplierId: string | null }
@@ -184,10 +179,8 @@ export async function buildPush(orderId: string, opts: { withBalance?: boolean }
       }
       if (art.mimeType === 'image/jpeg') warning('FILE_TYPE', `${refId}: file "${area}" là JPG — PGprints yêu cầu PNG 300 DPI`, refId)
       else if (art.mimeType !== 'image/png') error('FILE_TYPE', `${refId}: file "${area}" (${art.fileName}) không phải PNG — xưởng không in được`, refId)
-      const hasPx = !!(art.widthPx && art.heightPx)
-      const sizeOk = !hasPx || !target || !template
-        ? null
-        : (art.widthPx === target.w && art.heightPx === target.h) || (art.widthPx === template.widthPx && art.heightPx === template.heightPx)
+      const fit = slots.includes(area) ? printFileFit(template, area, art) : null
+      const sizeOk = fit?.state === 'ok' ? true : fit?.state === 'bad' ? false : null
       if (!template) warning('NO_TEMPLATE', `${refId}: SKU xưởng chưa gán template in — không đối chiếu được kích thước file`, refId)
       else if (!target) warning('EXTRA_FILE', `${refId}: file "${area}" nằm ngoài các vùng in của template — vẫn gửi kèm cho xưởng`, refId)
       else if (sizeOk === null) warning('SIZE_UNKNOWN', `${refId}: không đọc được kích thước px của file "${area}"`, refId)
