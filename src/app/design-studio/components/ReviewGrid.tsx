@@ -32,7 +32,8 @@ function reviewCheck(c: ReviewCard, me: Me | null): ReviewCheck {
       size: art.widthPx && art.heightPx ? `${art.widthPx}×${art.heightPx}` : null,
     }
   })
-  const problems = items.filter(i => !i.optional && (i.state === 'missing' || i.state === 'blocked')).map(i => `${i.title}: ${i.reason}`)
+  // No artwork library entry only means the product cannot render by itself; a hand-made file is still reviewable.
+  const problems = items.filter(i => !i.optional && i.key !== 'library' && (i.state === 'missing' || i.state === 'blocked')).map(i => `${i.title}: ${i.reason}`)
   const doubts: string[] = []
   for (const p of parts) {
     if (p.fit?.state === 'bad') problems.push(`${p.area}: file ${p.size} — template cần ${p.fit.expected.w}×${p.fit.expected.h}`)
@@ -94,7 +95,7 @@ function ReviewChecks({ c, check }: { c: ReviewCard; check: ReviewCheck }) {
           const look = CHECK_LOOK[i.state]
           return (
             <span key={i.key} title={`${i.title}: ${i.reason}`}>
-              <Pill tone={i.optional && look.tone === 'bad' ? 'warn' : look.tone} icon={look.icon}>{CHECK_LABEL[i.key] ?? i.title}</Pill>
+              <Pill tone={look.tone !== 'bad' ? look.tone : i.key === 'library' ? 'idle' : i.optional ? 'warn' : 'bad'} icon={look.icon}>{CHECK_LABEL[i.key] ?? i.title}</Pill>
             </span>
           )
         })}
