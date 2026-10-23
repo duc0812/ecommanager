@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireSuperadmin } from '@/lib/api-auth'
 import { getCsSecrets, getCsSettings } from '@/lib/cs/settings'
 import { FreshdeskClient } from '@/lib/cs/freshdesk'
-import { pickLlmKey, pingLlm } from '@/lib/llm/anthropic'
+import { pickLlmKey, pingFor } from '@/lib/llm/anthropic'
 
 export const dynamic = 'force-dynamic'
 
@@ -23,7 +23,7 @@ export async function POST(req: NextRequest) {
   }
   const llmKey = pickLlmKey(settings.llmProvider, secrets)
   const llm = llmKey
-    ? await pingLlm(settings.llmProvider, llmKey, settings.model)
+    ? await pingFor(settings.llmProvider, settings.model, llmKey)
     : { ok: false, error: `Chưa có API key cho ${settings.llmProvider === 'kie' ? 'Kie' : 'Anthropic'} (bỏ qua)` }
   return NextResponse.json({ freshdesk, llm, anthropic: llm })
 }

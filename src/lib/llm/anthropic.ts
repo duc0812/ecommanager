@@ -1,15 +1,19 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod'
 import { AnalysisSchema, type Analysis } from '@/lib/cs/analysis-schema'
+import { LlmError, type Llm, type LlmProvider } from '@/lib/llm/types'
+import { kieResponsesLlm, pingKieResponses } from '@/lib/llm/kie-responses'
 
-export type Llm = {
-  analyze(input: { system: string; user: string; model: string }): Promise<{ output: Analysis; tokensIn: number; tokensOut: number }>
+export { LlmError, LLM_PROVIDERS } from '@/lib/llm/types'
+export type { Llm, LlmProvider } from '@/lib/llm/types'
+
+export function normalizeModelId(raw: string): string {
+  return raw.trim().toLowerCase().replace(/\s+/g, '-')
 }
 
-export type LlmProvider = 'anthropic' | 'kie'
-export const LLM_PROVIDERS: LlmProvider[] = ['anthropic', 'kie']
-
-export class LlmError extends Error {}
+export function isClaudeModel(model: string): boolean {
+  return /^claude-/.test(model)
+}
 
 const KIE_CLAUDE_BASE_URL = 'https://api.kie.ai/claude'
 
@@ -67,3 +71,15 @@ export async function pingLlm(provider: LlmProvider, key: string, model: string)
 }
 
 export const pingAnthropic = (apiKey: string, model: string) => pingLlm('anthropic', apiKey, model)
+
+export function llmFor(provider: LlmProvider, model: string, key: string, extra: { fetch?: typeof fetch } = {}): Llm {
+  if (isClaudeModel(model)) return claudeLlm(provider, key, extra)
+  if (provider === 'kie') return kieResponsesLlm(key, extra)
+  throw new LlmError(`Model ${model} không phải model Claude — Anthropic trực tiếp chỉ chạy claude-*; chọn Kie.ai cho model này`)
+}
+
+export function pingFor(provider: LlmProvider, model: string, key: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (isClaudeModel(model)) return pingLlm(provider, key, model)
+  if (provider === 'kie') return pingKieResponses(key, model)
+  return Promise.resolve({ ok: false, error: `Model ${model} không chạy được trên Anthropic trực tiếp` })
+}

@@ -33,6 +33,11 @@ describe('cs settings', () => {
     expect(JSON.stringify(view)).not.toContain('kie0123456789abcdef')
   })
 
+  it('normalises a model display name to its slug', async () => {
+    await saveCsSettings({ model: 'GPT 6.1 Sol' })
+    expect((await getCsSettings()).model).toBe('gpt-6.1-sol')
+  })
+
   it('llm provider defaults to kie and only accepts known providers', async () => {
     expect(DEFAULT_CS_SETTINGS.llmProvider).toBe('kie')
     await saveCsSettings({ llmProvider: 'anthropic' })

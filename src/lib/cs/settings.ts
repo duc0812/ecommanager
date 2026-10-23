@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/db'
 import { getSettings, saveSetting } from '@/lib/token-store'
 import { maskApiKey } from '@/lib/tracking/parcelpanel-config'
+import { normalizeModelId } from '@/lib/llm/anthropic'
 
 export type LlmProvider = 'anthropic' | 'kie'
 
@@ -62,7 +63,7 @@ function normalize(parsed: any): CsSettings {
   return {
     freshdeskDomain: typeof parsed.freshdeskDomain === 'string' && parsed.freshdeskDomain.trim() ? parsed.freshdeskDomain.trim() : d.freshdeskDomain,
     llmProvider: parsed.llmProvider === 'anthropic' || parsed.llmProvider === 'kie' ? parsed.llmProvider : d.llmProvider,
-    model: typeof parsed.model === 'string' && parsed.model.trim() ? parsed.model.trim() : d.model,
+    model: typeof parsed.model === 'string' && parsed.model.trim() ? normalizeModelId(parsed.model) : d.model,
     pollEnabled: bool(parsed.pollEnabled, d.pollEnabled),
     killSwitch: bool(parsed.killSwitch, d.killSwitch),
     autoReplyEnabled: bool(parsed.autoReplyEnabled, d.autoReplyEnabled),

@@ -119,7 +119,7 @@ export default function CsSettingsPage() {
                 <span className="text-label-sm text-on-surface-variant">Anthropic API key {view.hasAnthropicApiKey ? `· đang dùng ${view.anthropicApiKeyMasked}` : '· chưa có'}</span>
                 <input type="password" value={secrets.anthropicApiKey} onChange={e => setSecrets({ ...secrets, anthropicApiKey: e.target.value })} placeholder="sk-ant-…" className="mt-xs w-full rounded-lg border border-outline-variant/40 bg-surface px-md py-sm text-body-sm" />
               </label>
-              {input('Model (id Claude, ví dụ claude-opus-5-5 / claude-sonnet-5-5 / claude-haiku-5-5)', 'model')}
+              {input('Model (slug trên Kie: gpt-6.1-sol, gpt-6-luna, claude-opus-5-5…; Anthropic trực tiếp chỉ nhận claude-*)', 'model')}
             </>)}
 
             {card('Agent', <>
