@@ -1210,6 +1210,10 @@ model ArtworkEntry {
   status           String        @default("EMPTY")
   psdFileId        String?
   psdFile          LibraryFile?  @relation("EntryPsd", fields: [psdFileId], references: [id], onDelete: SetNull)
+  nasPath          String?                                   // PSD on the NAS, relative to the worker's ARTWORK_NAS_ROOT ("/" separated); wins over psdFile
+  nasSha256        String?
+  nasSize          Int?
+  nasModifiedAt    DateTime?
   artworkFileId    String?
   artworkFile      LibraryFile?  @relation("EntryArtwork", fields: [artworkFileId], references: [id], onDelete: SetNull)
   previewFileId    String?

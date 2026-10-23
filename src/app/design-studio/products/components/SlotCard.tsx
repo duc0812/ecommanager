@@ -5,7 +5,7 @@ import { FIELD_FITS, normField, type ArtworkField, type FieldFit } from '@/lib/a
 import type { LibraryEntryView, LibraryFontRow, LibrarySlot } from '@/lib/artwork-library-types'
 import { LibraryCanvas, CanvasTools, type CanvasBg, type CanvasText } from '../../components/TemplateCanvas'
 import { ALL_GUIDES, type Guides } from '../../components/canvas-guides'
-import { requestJson } from '../../components/model'
+import { copyText, requestJson } from '../../components/model'
 import { ErrorBanner, Icon, Note, Pill, btn, btnPrimary, card, fmtSize, input } from '../../components/ui'
 import { FONT_ACCEPT, psdUploadUrl, putFile, uploadFonts } from './upload'
 import { LIBRARY_META, fmtDate, isBusy } from './meta'
@@ -25,6 +25,31 @@ function canvasBoxes(fields: ArtworkField[], withText: boolean): CanvasText[] {
     key: `${f.layer}-${i}`, label: f.field, box: f.box,
     text: withText ? { value: f.sample || f.field, font: f.font, sizePx: f.sizePx, color: f.color, align: f.align, anchor: f.anchor, tracking: f.tracking, stroke: f.stroke } : undefined,
   }))
+}
+
+/** NAS mode: the designer drops the PSD into the slot's folder; the worker picks it up on its next scan. */
+function NasDrop({ root, folder, lastScanAt, hasPsd, optionLabel }: { root: string; folder: string; lastScanAt: string | null; hasPsd: boolean; optionLabel: string | null }) {
+  const [copied, setCopied] = useState(false)
+  const sep = root.includes('/') && !root.includes('\\') ? '/' : '\\'
+  const full = `${root.replace(/[\\/]+$/, '')}${sep}${folder.split('/').join(sep)}`
+  return (
+    <div className="rounded-lg border-2 border-dashed border-outline-variant/50 bg-surface-container-low px-md py-md flex flex-col gap-xs">
+      <span className="inline-flex items-center gap-xs text-label-md font-semibold text-on-surface">
+        <Icon name="lan" className="text-[18px] text-secondary" />{hasPsd ? 'Thay PSD' : 'Thêm PSD'}{optionLabel ? ` cho ${optionLabel}` : ''}: thả file .psd vào thư mục NAS
+      </span>
+      <span className="flex items-start gap-xs">
+        <code className="font-mono text-label-sm text-on-surface break-all bg-surface-container-lowest rounded px-xs py-[2px] border border-outline-variant/30 flex-1">{full}</code>
+        <button type="button" className={btn} onClick={async () => setCopied(await copyText(full))} aria-label="Copy đường dẫn thư mục NAS">
+          <Icon name={copied ? 'check' : 'content_copy'} className="text-[16px]" />{copied ? 'Đã chép' : 'Copy'}
+        </button>
+      </span>
+      <span className="text-label-sm text-on-surface-variant">
+        Mỗi thư mục giữ một PSD đang dùng; file mới nhất được dùng, bản cũ tự chuyển vào <code className="font-mono">_old</code>.
+        Worker quét NAS lúc 7:00 sáng{lastScanAt ? ` · lần quét gần nhất ${fmtDate(lastScanAt)}` : ''}.
+      </span>
+      <span className="text-label-sm text-on-surface-variant">Layer chữ custom đặt tên <code className="font-mono text-secondary">@Tên trường</code> (vd <code className="font-mono text-secondary">@Custom Name</code>)</span>
+    </div>
+  )
 }
 
 function hasFiles(e: DragEvent) {
@@ -116,7 +141,7 @@ function SplitControl({ slot, productKey, onChanged }: { slot: LibrarySlot; prod
 
 export default function SlotCard({ slot, stale = false, product, fonts, canAdmin, onChanged }: {
   slot: LibrarySlot; stale?: boolean
-  product: { key: string; storeId: string; shopifyProductId: string; observedFields: string[] }
+  product: { key: string; storeId: string; shopifyProductId: string; observedFields: string[]; nas: { root: string; lastScanAt: string | null } | null }
   fonts: LibraryFontRow[]; canAdmin: boolean; onChanged: () => void
 }) {
   const { template, entry } = slot
@@ -283,6 +308,9 @@ export default function SlotCard({ slot, stale = false, product, fonts, canAdmin
         </div>
 
         <div className="flex flex-col gap-sm min-w-0">
+          {product.nas && slot.nasFolder ? (
+            <NasDrop root={product.nas.root} folder={slot.nasFolder} lastScanAt={product.nas.lastScanAt} hasPsd={!!entry?.nas || !!entry?.psd} optionLabel={slot.optionLabel} />
+          ) : (
           <div {...dropProps}
             className={`rounded-lg border-2 border-dashed px-md py-md flex flex-col items-center gap-xs text-center ${dragOver ? 'border-secondary bg-secondary/5' : 'border-outline-variant/50 bg-surface-container-low'}`}>
             <Icon name="upload_file" className="text-[28px] text-on-surface-variant" />
@@ -302,7 +330,16 @@ export default function SlotCard({ slot, stale = false, product, fonts, canAdmin
               </div>
             )}
           </div>
+          )}
 
+          {entry?.nas && (
+            <div className="flex items-center gap-xs flex-wrap text-label-sm text-on-surface-variant">
+              <Icon name="lan" className="text-[16px]" />
+              <span className="font-mono text-on-surface break-all">{entry.nas.path.split('/').pop()}</span>
+              <span>{entry.nas.size ? fmtSize(entry.nas.size) : ''}{entry.nas.modifiedAt ? ` · sửa ${fmtDate(entry.nas.modifiedAt)}` : ''}</span>
+              <Pill tone="ok" icon="lan">NAS</Pill>
+            </div>
+          )}
           {entry?.psd && (
             <div className="flex items-center gap-xs flex-wrap text-label-sm text-on-surface-variant">
               <Icon name="description" className="text-[16px]" />
@@ -365,7 +402,7 @@ export default function SlotCard({ slot, stale = false, product, fonts, canAdmin
                   <Icon name="verified" className="text-[18px]" />Xác nhận dùng
                 </button>
               )}
-              {entry.psd && (
+              {(entry.psd || entry.nas) && (
                 <button type="button" className={btn} disabled={busy || busyParse} onClick={() => void patch({ reparse: true }, 'Đã xếp hàng đọc lại')}>
                   <Icon name="refresh" className="text-[16px]" />Đọc lại PSD
                 </button>

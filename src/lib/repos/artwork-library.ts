@@ -20,6 +20,7 @@ import type {
 import { parseFontNames, FontParseError } from '@/lib/font-name'
 import { storeLibraryFile, type LibraryKind, type TempFile } from '@/lib/library-storage'
 import { pushLibraryFileToDrive } from '@/lib/design-drive-push'
+import { nasSlotPath } from '@/lib/artwork-nas-paths'
 import { isDriveConnected } from '@/lib/google-drive'
 
 export { LIBRARY_LINE_LIMIT }
@@ -63,7 +64,8 @@ export function serializeEntry(e: EntryRow, approverNames: Map<string, string> =
   return {
     id: e.id, storeId: e.storeId, shopifyProductId: e.shopifyProductId, printTemplateId: e.printTemplateId,
     optionKey: e.optionKey, optionLabel: e.optionKey ? optionComboLabel(e.optionKey) : null, supplierId: e.supplierId,
-    status: e.status as EntryStatus, psd: fileView(e.psdFile), artwork: fileView(e.artworkFile), preview: fileView(e.previewFile),
+    status: e.status as EntryStatus, psd: e.nasPath ? null : fileView(e.psdFile), artwork: fileView(e.artworkFile), preview: fileView(e.previewFile),
+    nas: e.nasPath ? { path: e.nasPath, size: e.nasSize, modifiedAt: e.nasModifiedAt?.toISOString() ?? null } : null,
     fields: parseFields(e.fields), fixedTexts: parseFixedTexts(e.fixedTexts), missingFonts: parseStrings(e.missingFonts), warnings: parseStrings(e.warnings),
     layerFields: parseLayerFields(e.layerFields),
     checkScore: e.checkScore, error: e.error, parsedAt: e.parsedAt?.toISOString() ?? null, approvedAt: e.approvedAt?.toISOString() ?? null,
@@ -236,6 +238,12 @@ export async function loadLibraryProduct(key: string): Promise<LibraryProductDet
   const { slots: assigned, stale: staleEntries, unmapped, status } = await computeProductSlots(lines, profile, entries)
   const suppliers = await supplierMap(assigned.map(d => d.supplierId))
   const names = await approverNames(entries)
+  const templateIds = Array.from(new Set(assigned.map(d => d.templateId).filter((x): x is string => !!x)))
+  const templateSku = new Map((templateIds.length ? await prisma.printTemplate.findMany({ where: { id: { in: templateIds } }, select: { id: true, supplierSku: true } }) : []).map(t => [t.id, t.supplierSku]))
+  const nasScan = await prisma.appSetting.findUnique({ where: { key: 'design.nas.scan' } })
+  let nas: LibraryProductDetail['nas'] = null
+  try { if (nasScan) { const v = JSON.parse(nasScan.value); nas = { root: typeof v.root === 'string' ? v.root : '', lastScanAt: typeof v.at === 'string' ? v.at : null } } } catch {}
+  const productTitle = newest?.productTitle ?? entries[0]?.title ?? profile?.title ?? ''
 
   const slots: LibrarySlot[] = assigned.map(d => ({
     key: d.key,
@@ -253,6 +261,13 @@ export async function loadLibraryProduct(key: string): Promise<LibraryProductDet
     status: d.status,
     entry: d.entry ? serializeEntry(d.entry, names) : null,
     inherited: d.inherited,
+    nasFolder: d.template
+      ? nasSlotPath({
+          storeName: store.project?.name ?? store.shop, title: productTitle, shopifyProductId, templateName: d.template.name,
+          supplierName: suppliers.get(d.supplierId)?.name ?? 'Xưởng', supplierSku: templateSku.get(d.template.id) ?? d.skus[0] ?? null,
+          optionKey: d.optionKey, nasPath: d.entry && !d.inherited ? d.entry.nasPath : null,
+        }).join('/')
+      : null,
   }))
   const stale = staleEntries.map(e => ({ template: templateView(e.printTemplate), supplier: e.supplier, entry: serializeEntry(e, names) }))
   const lineKeys = lines.map(l => ({ orderId: l.orderId, shopifyLineId: l.shopifyLineId }))
@@ -260,7 +275,7 @@ export async function loadLibraryProduct(key: string): Promise<LibraryProductDet
 
   return {
     key: toRouteKey(storeId, shopifyProductId), storeId, shop: store.shop, storeName: store.project?.name ?? store.shop, shopifyProductId,
-    title: newest?.productTitle ?? entries[0]?.title ?? profile?.title ?? '',
+    title: productTitle, nas,
     imageUrl: safeHttpUrl(lines.find(l => safeHttpUrl(l.imageUrl))?.imageUrl) ?? safeHttpUrl(newest?.imageUrl) ?? safeHttpUrl(entries[0]?.imageUrl) ?? safeHttpUrl(profile?.imageUrl),
     status, slots, stale, unmapped,
     observedFields: fieldsFromLines(lines),
@@ -439,9 +454,9 @@ export async function setArtworkSplit(key: string, body: unknown): Promise<Libra
 }
 
 export async function requeueEntry(entryId: string, reason = 'Đọc lại PSD'): Promise<void> {
-  const e = await prisma.artworkEntry.findUnique({ where: { id: entryId }, select: { id: true, psdFileId: true } })
+  const e = await prisma.artworkEntry.findUnique({ where: { id: entryId }, select: { id: true, psdFileId: true, nasPath: true } })
   if (!e) throw new LibraryError('Không tìm thấy entry', 404)
-  if (!e.psdFileId) throw new LibraryError('Entry chưa có PSD')
+  if (!e.psdFileId && !e.nasPath) throw new LibraryError('Entry chưa có PSD')
   await prisma.$transaction([
     supersedeJobs(entryId, reason),
     prisma.artworkJob.create({ data: { entryId, kind: 'PARSE_PSD' } }),

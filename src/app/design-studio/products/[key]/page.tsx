@@ -136,11 +136,11 @@ export default function ProductPage() {
   const usedFonts = Array.from(new Set(entries.flatMap(e => e?.fields.map(f => f.font) ?? []).filter(Boolean))).sort().join('|')
   useLibraryFonts(fonts, usedFonts)
 
-  const slotProduct = library ? { key: library.key, storeId: library.storeId, shopifyProductId: library.shopifyProductId, observedFields: library.observedFields } : null
+  const slotProduct = library ? { key: library.key, storeId: library.storeId, shopifyProductId: library.shopifyProductId, observedFields: library.observedFields, nas: library.nas } : null
   const staleSlots: LibrarySlot[] = library?.stale.map(s => ({
     key: `stale:${s.entry.id}`, title: s.entry.optionLabel ?? 'Mọi biến thể', options: [], optionKey: s.entry.optionKey, optionLabel: s.entry.optionLabel,
     splitOption: null, splitChoices: [], supplier: s.supplier, supplierSkus: [], variants: '', lineCount: 0, template: s.template,
-    status: s.entry.status, entry: s.entry, inherited: false,
+    status: s.entry.status, entry: s.entry, inherited: false, nasFolder: s.entry.nas ? s.entry.nas.path.split('/').slice(0, -1).join('/') : null,
   })) ?? []
   const refreshAll = () => { void load() }
 
