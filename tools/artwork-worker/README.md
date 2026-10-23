@@ -64,6 +64,13 @@ with `.\set-nas-root.ps1 -Path '\\Tmteam\<share>\PSD Design'`; `run-daily.ps1` t
 - A parse job for a NAS PSD copies it from the NAS to a temp file and checks the sha256; a file edited after the scan fails the
   job and the next scan queues it again.
 - Rendering print files only needs `artwork.png` + fonts from the server, so the NAS being offline never blocks the daily renders.
+- Designers working away from the office upload the PSD in the tool instead. The server keeps it on Google Drive only; the
+  slot lists it as `pendingUpload` until the scan downloads it into the folder (newest wins, the old PSD goes to `_old/`).
+  Once the scan reports that file, the server deletes the Drive copy (unless another entry still parses from it).
+- Drive files are fetched straight from Google (`files/<id>?direct=1` hands the worker a short-lived drive.file token): the
+  office line reaches Google ~60x faster than the VPS. Anything else, or a failed direct fetch, streams through the server.
+- `run-daily.ps1 -SyncOnly` (task "EcomManager NAS Sync", every 30 min) pulls uploads and works the queue without the
+  day's auto renders.
 
 ## Layer convention (for designers)
 

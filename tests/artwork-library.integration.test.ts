@@ -212,11 +212,14 @@ describe('PUT /api/design-studio/library/entries/upload', () => {
     const art = await prisma.libraryFile.create({ data: { kind: 'ARTWORK', fileName: 'a.png', mimeType: 'image/png', size: 1, sha256: 'x', uploadedById: editorId } })
     await prisma.artworkEntry.update({ where: { id: before.id }, data: {
       status: 'NEEDS_REVIEW', fields: JSON.stringify([FIELD]), warnings: '["warp"]', checkScore: 9, artworkFileId: art.id, parsedAt: new Date(),
+      nasPath: 'Store/P/slot/v1.psd', nasSha256: 'c'.repeat(64), nasSize: 5, nasModifiedAt: new Date(),
     } })
     const res = await uploadPsd(uploadReq(target(TPL_B, 'v2.psd'), psdBytes('second version')))
     expect(res.status).toBe(200)
     const after = await prisma.artworkEntry.findUniqueOrThrow({ where: { id: before.id }, include: { jobs: { orderBy: { createdAt: 'asc' } } } })
     expect(after).toMatchObject({ status: 'QUEUED', fields: '[]', warnings: '[]', checkScore: null, artworkFileId: null, parsedAt: null })
+    // the upload is now the PSD in use: the parse reads it, and the next NAS scan copies it over the old NAS file
+    expect(after).toMatchObject({ nasPath: null, nasSha256: null, nasSize: null, nasModifiedAt: null })
     expect(after.psdFileId).not.toBe(oldPsd)
     expect(await prisma.libraryFile.count({ where: { id: { in: [oldPsd, art.id] } } })).toBe(2)
     expect(after.jobs.map(j => j.status)).toEqual(['FAILED', 'QUEUED'])

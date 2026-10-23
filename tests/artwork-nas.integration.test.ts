@@ -113,12 +113,31 @@ describe('worker NAS scan', () => {
       where: { id: (await entry()).id },
       data: { nasPath: null, nasSha256: null, psdFileId, status: 'READY', fields: '[{"field":"Custom Name","sizePx":285}]', approvedAt: new Date() },
     })
+    const slotOf = async () => (await (await getSlots(req('http://x/api/design-studio/worker/nas/slots'))).json()).slots.find((s: any) => s.storeId === storeId)
+    expect((await slotOf()).pendingUpload).toEqual({ fileId: psdFileId, fileName: 'old.psd', sha256: SHA_OLD, size: 10 })
+
     const res = await (await report([item({ sha256: SHA_OLD, nasPath: `${FOLDER}/old.psd` })])).json()
-    expect(res).toMatchObject({ linked: [`${FOLDER}/old.psd`], queued: [] })
+    expect(res).toMatchObject({ linked: [`${FOLDER}/old.psd`], queued: [], errors: [] })
     const e = await entry()
-    expect(e).toMatchObject({ status: 'READY', nasPath: `${FOLDER}/old.psd`, nasSha256: SHA_OLD, fields: '[{"field":"Custom Name","sizePx":285}]' })
+    expect(e).toMatchObject({ status: 'READY', nasPath: `${FOLDER}/old.psd`, nasSha256: SHA_OLD, psdFileId: null, fields: '[{"field":"Custom Name","sizePx":285}]' })
     expect(e.approvedAt).not.toBeNull()
     expect(await prisma.artworkJob.count({ where: { entryId: e.id, status: 'QUEUED' } })).toBe(0)
+    // the NAS now holds the PSD, so the uploaded copy is gone and nothing is left to pull
+    expect(await prisma.libraryFile.findUnique({ where: { id: psdFileId } })).toBeNull()
+    expect((await slotOf()).pendingUpload).toBeNull()
+  })
+
+  it('an upload still used by another entry is kept until that entry is on the NAS too', async () => {
+    const shared = await prisma.libraryFile.create({ data: { kind: 'PSD', fileName: 'shared.psd', mimeType: 'image/vnd.adobe.photoshop', size: 10, sha256: SHA_OLD, storagePath: 'library/psd/x/shared.psd' } })
+    const e = await entry()
+    await prisma.artworkEntry.update({ where: { id: e.id }, data: { nasPath: null, nasSha256: null, psdFileId: shared.id } })
+    const other = await prisma.artworkEntry.create({ data: {
+      storeId, shopifyProductId: 'gid://shopify/Product/9950002', printTemplateId: TPL, optionKey: '', supplierId: SUP, title: 'Copy', status: 'READY', psdFileId: shared.id,
+    } })
+    await report([item({ sha256: SHA_OLD, nasPath: `${FOLDER}/old.psd` })])
+    expect(await prisma.libraryFile.findUnique({ where: { id: shared.id } })).not.toBeNull()
+    await prisma.artworkEntry.delete({ where: { id: other.id } })
+    await prisma.libraryFile.delete({ where: { id: shared.id } })
   })
 
   it('an edited PSD clears the old result and queues one parse', async () => {

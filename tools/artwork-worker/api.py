@@ -28,6 +28,7 @@ from typing import Any
 import requests
 
 TIMEOUT = (15, 300)
+GOOGLE_FILES = 'https://www.googleapis.com/drive/v3/files/'
 PARSE_PSD = 'PARSE_PSD'
 RENDER_LINE = 'RENDER_LINE'
 KINDS = [PARSE_PSD, RENDER_LINE]
@@ -163,20 +164,53 @@ class WorkerApi:
                         fileName=f.get('fileName', '')) for f in rows]
 
     def download(self, file_id: str, dest: str, expect_sha256: str | None = None) -> str:
-        """Stream a library file to `dest`, verifying sha256 when known. Returns the sha256."""
+        """Stream a library file to `dest`, verifying sha256 when known. Returns the sha256.
+
+        A file kept on Google Drive comes straight from Google (the office line reaches Google far faster than the
+        server); anything else, or a failed direct fetch, streams through the server."""
         h = hashlib.sha256()
-        with self.s.get(f'{self.base}/files/{file_id}', timeout=TIMEOUT, stream=True) as r:
+        expect = expect_sha256
+        with self.s.get(f'{self.base}/files/{file_id}', params={'direct': '1'}, timeout=TIMEOUT, stream=True) as r:
             self._check(r, f'download {file_id}')
-            expect = expect_sha256 or r.headers.get('X-Content-SHA256')
-            with open(dest, 'wb') as fh:
-                for chunk in r.iter_content(CHUNK):
-                    fh.write(chunk)
-                    h.update(chunk)
+            direct = r.json() if r.headers.get('Content-Type', '').startswith('application/json') else None
+            if direct is None:
+                expect = expect or r.headers.get('X-Content-SHA256')
+                with open(dest, 'wb') as fh:
+                    for chunk in r.iter_content(CHUNK):
+                        fh.write(chunk)
+                        h.update(chunk)
+        if direct is not None:
+            expect = expect or direct.get('sha256')
+            if not self._from_google(direct, dest, h):
+                h = hashlib.sha256()
+                with self.s.get(f'{self.base}/files/{file_id}', timeout=TIMEOUT, stream=True) as r:
+                    self._check(r, f'download {file_id}')
+                    with open(dest, 'wb') as fh:
+                        for chunk in r.iter_content(CHUNK):
+                            fh.write(chunk)
+                            h.update(chunk)
         digest = h.hexdigest()
         if expect and digest.lower() != expect.lower():
             os.remove(dest)
             raise ApiError(f'download {file_id}: sha256 mismatch')
         return digest
+
+    @staticmethod
+    def _from_google(direct: dict, dest: str, h) -> bool:
+        url, token = str(direct.get('url') or ''), str(direct.get('accessToken') or '')
+        if not url.startswith(GOOGLE_FILES) or not token:
+            return False
+        try:
+            with requests.get(url, headers={'Authorization': f'Bearer {token}'}, timeout=TIMEOUT, stream=True) as g:
+                if g.status_code != 200:
+                    return False
+                with open(dest, 'wb') as fh:
+                    for chunk in g.iter_content(CHUNK):
+                        fh.write(chunk)
+                        h.update(chunk)
+            return True
+        except requests.RequestException:
+            return False
 
     def submit_result(self, job_id: str, result: dict, artwork_png: bytes, preview_png: bytes | None) -> dict:
         files: list[tuple[str, tuple[str, Any, str]]] = [
