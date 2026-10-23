@@ -24,7 +24,9 @@ const TRACKING_PAGE = 'https://litzzy.com/apps/trackingorder?nums='
 
 export function extractOrderNumbers(text: string): string[] {
   const out: string[] = []
-  for (const m of text.matchAll(/#?\bLIT\s?(\d{3,6})\b/gi)) {
+  const re = /#?\bLIT\s?(\d{3,6})\b/gi
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text)) !== null) {
     const n = `#LIT${m[1]}`
     if (!out.includes(n)) out.push(n)
   }
