@@ -11,7 +11,7 @@ import { autoReplyGate, mentionsRefundAddressOrCancel } from '@/lib/cs/policy'
 export function inputHashFor(messages: Pick<CsMessage, 'id' | 'author'>[], order: OrderContext): string {
   const parts = [
     ...messages.filter(m => m.author === 'CUSTOMER').map(m => m.id),
-    order.match,
+    order.order ? order.order.id : order.match,
     order.order?.factoryState ?? '',
     ...(order.order?.shipments.map(s => s.status) ?? []),
   ]
@@ -100,7 +100,7 @@ export async function analyzeTicket(ticketId: string, deps: { llm: Llm; now?: Da
       urgency,
       sentiment: output.sentiment,
       orderId: order.order?.id ?? null,
-      orderNumber: order.order?.shopifyOrderNumber ?? output.orderNumber ?? ticket.orderNumber,
+      orderNumber: order.order?.shopifyOrderNumber ?? ticket.orderNumber ?? output.orderNumber,
       orderMatch: order.match,
       needsHuman,
       lastAnalysisAt: now,

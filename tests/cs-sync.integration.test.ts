@@ -52,6 +52,7 @@ describe('syncTickets', () => {
     const t = await prisma.csTicket.findUnique({ where: { fdTicketId: 119 }, include: { messages: { orderBy: { createdAt: 'asc' } } } })
     expect(t).not.toBeNull()
     expect(t!.requesterEmail).toBe('paul.test@example.com')
+    expect(t!.orderNumber).toBe('#LIT4525')
     expect(t!.messages.map(m => [m.author, m.private])).toEqual([
       ['CUSTOMER', false],
       ['STAFF', true],

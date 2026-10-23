@@ -2,6 +2,7 @@ import { prisma } from '@/lib/db'
 import type { FdConversation, FdTicket, FreshdeskClient } from '@/lib/cs/freshdesk'
 import { FreshdeskBudgetExceeded } from '@/lib/cs/freshdesk'
 import { getCsSettings, saveCsSettings, type CsSettings } from '@/lib/cs/settings'
+import { extractOrderNumbers } from '@/lib/cs/order-context'
 
 export type FdLike = Pick<FreshdeskClient, 'listTickets' | 'getConversations' | 'requests'>
 export type MessageAuthor = 'CUSTOMER' | 'STAFF' | 'AGENT' | 'SYSTEM' | 'SKIP'
@@ -49,9 +50,10 @@ async function upsertTicket(t: FdTicket) {
     fdUpdatedAt: new Date(t.updated_at),
   }
   const existing = await prisma.csTicket.findUnique({ where: { fdTicketId: t.id } })
+  const cfNumber = extractOrderNumbers(t.custom_fields?.cf_order_id ?? '')[0] ?? null
   const ticket = existing
-    ? await prisma.csTicket.update({ where: { id: existing.id }, data })
-    : await prisma.csTicket.create({ data: { ...data, fdTicketId: t.id } })
+    ? await prisma.csTicket.update({ where: { id: existing.id }, data: { ...data, orderNumber: existing.orderNumber ?? cfNumber } })
+    : await prisma.csTicket.create({ data: { ...data, fdTicketId: t.id, orderNumber: cfNumber } })
   const descId = `desc-${t.id}`
   const descText = t.description_text?.trim() || htmlToText(t.description)
   const descExists = await prisma.csMessage.findUnique({ where: { fdConversationId: descId } })
