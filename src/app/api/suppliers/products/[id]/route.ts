@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { deleteProductMapping, upsertProductMapping } from '@/lib/repos/suppliers'
 import { prisma } from '@/lib/db'
-import { normalizeShipCountries } from '@/lib/pgprints-shared'
+import { normalizeApiFileFormat, normalizeShipCountries } from '@/lib/pgprints-shared'
 
 function cleanText(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim().slice(0, 200) : null
@@ -16,6 +16,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   }
   const shipCountries = body.apiShipCountries !== undefined ? normalizeShipCountries(body.apiShipCountries) : null
   if (shipCountries && !shipCountries.ok) return NextResponse.json({ error: shipCountries.error }, { status: 400 })
+  const fileFormat = body.apiFileFormat !== undefined ? normalizeApiFileFormat(body.apiFileFormat) : null
+  if (fileFormat && !fileFormat.ok) return NextResponse.json({ error: fileFormat.error }, { status: 400 })
   const updated = await upsertProductMapping({
     supplierId: existing.supplierId,
     sku: existing.sku,
@@ -37,6 +39,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     ...(body.apiSku !== undefined ? { apiSku: cleanText(body.apiSku) } : {}),
     ...(body.apiShipClass !== undefined ? { apiShipClass: cleanText(body.apiShipClass) } : {}),
     ...(shipCountries?.ok ? { apiShipCountries: shipCountries.value } : {}),
+    ...(fileFormat?.ok ? { apiFileFormat: fileFormat.value } : {}),
   })
   return NextResponse.json(updated)
 }

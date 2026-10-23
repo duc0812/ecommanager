@@ -44,6 +44,7 @@ type Product = {
   apiSku: string | null
   apiShipClass: string | null
   apiShipCountries: string | null
+  apiFileFormat: string | null
 }
 
 type PrintTemplateOption = { id: string; name: string; widthPx: number; heightPx: number; guideImageUrl: string | null }
@@ -495,10 +496,11 @@ export default function SupplierSetupPage() {
     await loadProducts()
   }
 
-  const saveApiFields = async (p: Product, patch: { apiSku?: string; apiShipClass?: string; apiShipCountries?: string }) => {
+  const saveApiFields = async (p: Product, patch: { apiSku?: string; apiShipClass?: string; apiShipCountries?: string; apiFileFormat?: string }) => {
     const changed = (patch.apiSku !== undefined && patch.apiSku.trim() !== (p.apiSku ?? ''))
       || (patch.apiShipClass !== undefined && patch.apiShipClass.trim() !== (p.apiShipClass ?? ''))
       || (patch.apiShipCountries !== undefined && patch.apiShipCountries.trim().toUpperCase() !== (p.apiShipCountries ?? ''))
+      || (patch.apiFileFormat !== undefined && patch.apiFileFormat.trim().toUpperCase() !== (p.apiFileFormat ?? ''))
     if (!changed) return
     const r = await fetch(`/api/suppliers/products/${p.id}`, {
       method: 'PATCH',
@@ -510,7 +512,7 @@ export default function SupplierSetupPage() {
   }
 
   const isPg = isPgprintsSupplier(supplier)
-  const colCount = isPg ? 14 : 11
+  const colCount = isPg ? 15 : 11
   const lookupTarget = lookupId ? products.find(p => p.id === lookupId) ?? null : null
   const templateById = new Map(printTemplates.map(t => [t.id, t]))
   const printTemplatesHref = `${suppliersPath}/${supplierId}/print-templates`
@@ -832,6 +834,11 @@ export default function SupplierSetupPage() {
                       <div className="text-[10px] font-normal text-on-surface-variant">mã nước · trống = mọi nước</div>
                     </th>
                   )}
+                  {isPg && (
+                    <th className="px-sm py-xs text-on-surface-variant font-semibold" title="Định dạng file in SKU API này nhận (catalogue PGprints: PNG RGB hoặc JPEG CMYK). Để trống = PNG.">
+                      File in
+                    </th>
+                  )}
                   <th className="w-8" />
                 </tr>
               </thead>
@@ -944,6 +951,17 @@ export default function SupplierSetupPage() {
                                 onBlur={e => saveApiFields(p, { apiShipCountries: e.target.value })}
                                 onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur() }}
                                 className="w-[90px] border rounded px-xs py-[3px] font-mono text-xs uppercase" />
+                            </td>
+                          )}
+                          {isPg && (
+                            <td className="px-sm py-sm">
+                              <select key={`format:${p.id}:${p.apiFileFormat ?? ''}`} defaultValue={p.apiFileFormat ?? ''} aria-label={`Định dạng file in của ${p.sku}`}
+                                onChange={e => saveApiFields(p, { apiFileFormat: e.target.value })}
+                                className="border rounded px-xs py-[3px] font-mono text-xs bg-surface-container-lowest">
+                                <option value="">PNG (mặc định)</option>
+                                <option value="PNG">PNG</option>
+                                <option value="JPEG">JPEG</option>
+                              </select>
                             </td>
                           )}
                           <td className="px-sm py-sm text-center">

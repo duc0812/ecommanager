@@ -186,6 +186,7 @@ export type ProductUpsertInput = {
   apiSku?: string | null
   apiShipClass?: string | null
   apiShipCountries?: string | null
+  apiFileFormat?: string | null
 }
 
 export async function upsertProductMapping(input: ProductUpsertInput) {
@@ -216,6 +217,7 @@ export async function upsertProductMapping(input: ProductUpsertInput) {
         apiSku: input.apiSku ?? null,
         apiShipClass: input.apiShipClass ?? null,
         apiShipCountries: input.apiShipCountries ?? null,
+        apiFileFormat: input.apiFileFormat ?? null,
       },
       update: {
         baseCost: input.baseCost,
@@ -236,6 +238,7 @@ export async function upsertProductMapping(input: ProductUpsertInput) {
         ...(input.apiSku !== undefined ? { apiSku: input.apiSku } : {}),
         ...(input.apiShipClass !== undefined ? { apiShipClass: input.apiShipClass } : {}),
         ...(input.apiShipCountries !== undefined ? { apiShipCountries: input.apiShipCountries } : {}),
+        ...(input.apiFileFormat !== undefined ? { apiFileFormat: input.apiFileFormat } : {}),
       },
     })
     if (existing && existing.baseCost !== input.baseCost) {

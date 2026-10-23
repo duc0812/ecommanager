@@ -17,7 +17,7 @@ import {
   type PgprintsLineItem, type PgprintsOrderPayload, type PgprintsRemoteOrder,
 } from '@/lib/pgprints'
 import {
-  isPgprintsSupplier, parseShipCountries,
+  API_FILE_MIME, apiFileFormatOf, isPgprintsSupplier, parseShipCountries,
   type PreviewFile, type PreviewIssue, type PreviewLine, type PushPreview, type PushStatus, type PushView,
 } from '@/lib/pgprints-shared'
 
@@ -143,7 +143,7 @@ export async function buildPush(orderId: string, opts: { withBalance?: boolean }
 
   const supplierSkus = Array.from(new Set(pushLines.map(l => l.resolvedSupplierSku).filter((x): x is string => !!x)))
   const products = supplier && supplierSkus.length
-    ? await prisma.supplierProduct.findMany({ where: { supplierId: supplier.id, sku: { in: supplierSkus } }, select: { sku: true, apiSku: true, apiShipClass: true, apiShipCountries: true } })
+    ? await prisma.supplierProduct.findMany({ where: { supplierId: supplier.id, sku: { in: supplierSkus } }, select: { sku: true, apiSku: true, apiShipClass: true, apiShipCountries: true, apiFileFormat: true } })
     : []
   const productBySku = new Map(products.map(p => [p.sku, p]))
 
@@ -157,6 +157,9 @@ export async function buildPush(orderId: string, opts: { withBalance?: boolean }
     const approved = isLineApproved(l, task)
     if (!approved) error('NOT_APPROVED', `${refId}: thiết kế chưa được duyệt (task phải ở trạng thái Xong)`, refId)
 
+    const product = l.resolvedSupplierSku ? productBySku.get(l.resolvedSupplierSku) : undefined
+    const wantedFormat = apiFileFormatOf(product)
+    const wantedMime = API_FILE_MIME[wantedFormat]
     const template = await templateForLine(l)
     const slots = requiredSlotsFor(template)
     const lineFiles = order.artworks.filter(a => a.shopifyLineId === l.shopifyLineId)
@@ -177,8 +180,14 @@ export async function buildPush(orderId: string, opts: { withBalance?: boolean }
         })
         continue
       }
-      if (art.mimeType === 'image/jpeg') warning('FILE_TYPE', `${refId}: file "${area}" là JPG — PGprints yêu cầu PNG 300 DPI`, refId)
-      else if (art.mimeType !== 'image/png') error('FILE_TYPE', `${refId}: file "${area}" (${art.fileName}) không phải PNG — xưởng không in được`, refId)
+      if (art.mimeType !== wantedMime) {
+        if (art.mimeType === 'image/png' || art.mimeType === 'image/jpeg') {
+          const got = art.mimeType === 'image/png' ? 'PNG' : 'JPG'
+          warning('FILE_TYPE', `${refId}: file "${area}" là ${got} — SKU xưởng ${l.resolvedSupplierSku ?? '—'} yêu cầu ${wantedFormat} 300 DPI`, refId)
+        } else {
+          error('FILE_TYPE', `${refId}: file "${area}" (${art.fileName}) không phải ${wantedFormat} — xưởng không in được`, refId)
+        }
+      }
       const fit = slots.includes(area) ? printFileFit(template, area, art) : null
       const sizeOk = fit?.state === 'ok' ? true : fit?.state === 'bad' ? false : null
       if (!template) warning('NO_TEMPLATE', `${refId}: SKU xưởng chưa gán template in — không đối chiếu được kích thước file`, refId)
@@ -197,7 +206,6 @@ export async function buildPush(orderId: string, opts: { withBalance?: boolean }
       })
     }
 
-    const product = l.resolvedSupplierSku ? productBySku.get(l.resolvedSupplierSku) : undefined
     const apiSku = product?.apiSku?.trim() || null
     if (!apiSku) error('NO_API_SKU', `${refId}: SKU xưởng ${l.resolvedSupplierSku ?? '—'} chưa có "SKU API" — điền ở trang cài đặt xưởng Pgprints`, refId)
     const productShipClass = product?.apiShipClass?.trim() || null

@@ -28,6 +28,7 @@ const SECRET = 'pgp-secret-key-0123456789'
 const STORE_ID = 'pgp-store-id-123456'
 const APP_URL = 'https://tool.shop-example.com'
 const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(40, 7)])
+const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(40, 7)])
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pgp-storage-'))
 
 let storeId = ''
@@ -81,7 +82,7 @@ async function setSetting(key: string, value: string | null) {
 type OrderOpts = {
   approved?: boolean; state?: string | null; stateCode?: string | null; pipelineStatus?: string; note?: string | null
   extraLine?: { supplierId: string | null }; withArtwork?: boolean; supplierSku?: string; phone?: string | null
-  country?: string | null; zip?: string | null
+  country?: string | null; zip?: string | null; artwork?: { mimeType: 'image/png' | 'image/jpeg'; fileName: string }
 }
 
 async function makeOrder(opts: OrderOpts = {}) {
@@ -116,13 +117,14 @@ async function makeOrder(opts: OrderOpts = {}) {
   })
   let artworkId: string | null = null
   if (opts.withArtwork !== false) {
-    const rel = `design/pgp-${seq}/main.png`
+    const art = opts.artwork ?? { mimeType: 'image/png', fileName: 'main.png' }
+    const rel = `design/pgp-${seq}/${art.fileName}`
     fs.mkdirSync(path.dirname(path.join(tmp, rel)), { recursive: true })
-    fs.writeFileSync(path.join(tmp, rel), PNG)
+    fs.writeFileSync(path.join(tmp, rel), art.mimeType === 'image/jpeg' ? JPEG : PNG)
     artworkId = (await prisma.designArtwork.create({
       data: {
-        orderId: id, shopifyLineId: lineId, printArea: 'Main', version: 1, fileName: 'main.png', storagePath: rel,
-        size: PNG.length, mimeType: 'image/png', widthPx: 3270, heightPx: 1860,
+        orderId: id, shopifyLineId: lineId, printArea: 'Main', version: 1, fileName: art.fileName, storagePath: rel,
+        size: PNG.length, mimeType: art.mimeType, widthPx: 3270, heightPx: 1860,
       },
     })).id
   }
@@ -144,6 +146,7 @@ beforeAll(async () => {
     data: { supplierId: SUP, sku: 'UT2-20OZ', baseSku: 'UT2', baseCost: 8, printTemplateId: template.id, apiSku: 'UT2-One_size' },
   })).id
   await prisma.supplierProduct.create({ data: { supplierId: SUP, sku: 'NO-API-SKU', baseCost: 5, printTemplateId: template.id } })
+  await prisma.supplierProduct.create({ data: { supplierId: SUP, sku: 'STU-20OZ', baseSku: 'STU', baseCost: 8, printTemplateId: template.id, apiSku: 'STU-One_size', apiShipClass: 'Standard', apiFileFormat: 'JPEG' } })
 
   adminId = (await prisma.appUser.upsert({ where: { email: 'admin@pgp.test' }, create: { name: 'Admin', email: 'admin@pgp.test', role: 'ADMIN', permissions: JSON.stringify(DEFAULT_ROLE_PERMISSIONS.ADMIN) }, update: {} })).id
   const supportId = (await prisma.appUser.upsert({ where: { email: 'support@pgp.test' }, create: { name: 'Support', email: 'support@pgp.test', role: 'SUPPORT', permissions: JSON.stringify(['fulfillment_orders']) }, update: {} })).id
@@ -296,6 +299,50 @@ describe('preview payload', () => {
     const res = await preview(o.id, supportToken)
     expect(res.status).toBe(200)
     expect((await res.json()).canAct).toBe(false)
+  })
+})
+
+describe('file format per API SKU (SupplierProduct.apiFileFormat)', () => {
+  const fileIssues = (pre: any) => pre.issues.filter((i: any) => i.code === 'FILE_TYPE')
+
+  it('a JPEG file on a SKU without a declared format still warns that PGprints wants PNG', async () => {
+    const o = await makeOrder({ artwork: { mimeType: 'image/jpeg', fileName: 'main.jpg' } })
+    const pre = await (await preview(o.id)).json()
+    expect(fileIssues(pre)).toEqual([expect.objectContaining({ level: 'warning', message: expect.stringContaining('PNG') })])
+    expect(pre.canPush).toBe(true)
+  })
+
+  it('a JPEG file on a JPEG SKU passes without a file-type issue, and is sent with its .jpg name', async () => {
+    const o = await makeOrder({ supplierSku: 'STU-20OZ', artwork: { mimeType: 'image/jpeg', fileName: 'main.jpg' } })
+    const pre = await (await preview(o.id)).json()
+    expect(fileIssues(pre)).toEqual([])
+    expect(pre.canPush).toBe(true)
+    expect(pre.payload.line_items[0].sku).toBe('STU-One_size')
+    expect(pre.payload.line_items[0].fileUrls[0]).toMatch(/\/main\.jpg$/)
+  })
+
+  it('a PNG file on a JPEG SKU warns that this SKU wants JPEG, and a PSD is blocked whatever the SKU', async () => {
+    const o = await makeOrder({ supplierSku: 'STU-20OZ' })
+    const pre = await (await preview(o.id)).json()
+    expect(fileIssues(pre)).toEqual([expect.objectContaining({ level: 'warning', message: expect.stringContaining('JPEG') })])
+    expect(pre.canPush).toBe(true)
+    await prisma.designArtwork.update({ where: { id: o.artworkId! }, data: { mimeType: 'image/vnd.adobe.photoshop', fileName: 'main.psd' } })
+    const blocked = await (await preview(o.id)).json()
+    expect(fileIssues(blocked)).toEqual([expect.objectContaining({ level: 'error' })])
+    expect(blocked.canPush).toBe(false)
+  })
+
+  it('PATCH on a supplier product saves the format in upper case, clears it on blank and refuses anything but PNG/JPEG', async () => {
+    const patch = (body: unknown) => patchSupplierProduct(
+      new NextRequest(`http://x/api/suppliers/products/${productId}`, { method: 'PATCH', body: JSON.stringify(body) }),
+      { params: { id: productId } },
+    )
+    expect((await patch({ apiFileFormat: 'jpeg' })).status).toBe(200)
+    expect((await prisma.supplierProduct.findUniqueOrThrow({ where: { id: productId } })).apiFileFormat).toBe('JPEG')
+    expect((await patch({ apiFileFormat: 'gif' })).status).toBe(400)
+    expect((await prisma.supplierProduct.findUniqueOrThrow({ where: { id: productId } })).apiFileFormat).toBe('JPEG')
+    expect((await patch({ apiFileFormat: '' })).status).toBe(200)
+    expect((await prisma.supplierProduct.findUniqueOrThrow({ where: { id: productId } })).apiFileFormat).toBeNull()
   })
 })
 

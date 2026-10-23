@@ -73,6 +73,32 @@ export type PushPreview = {
   history: PushView[]
 }
 
+export type ApiFileFormat = 'PNG' | 'JPEG'
+export const API_FILE_FORMATS: ApiFileFormat[] = ['PNG', 'JPEG']
+export const API_FILE_MIME: Record<ApiFileFormat, string> = { PNG: 'image/png', JPEG: 'image/jpeg' }
+
+/** The format an API SKU wants; PGprints products default to PNG unless the catalogue says JPEG. */
+export function apiFileFormatOf(product: { apiFileFormat?: string | null } | null | undefined): ApiFileFormat {
+  return product?.apiFileFormat === 'JPEG' ? 'JPEG' : 'PNG'
+}
+
+export function normalizeApiFileFormat(value: unknown): { ok: true; value: ApiFileFormat | null } | { ok: false; error: string } {
+  if (value === null || value === undefined) return { ok: true, value: null }
+  if (typeof value !== 'string') return { ok: false, error: 'Định dạng file in phải là PNG hoặc JPEG' }
+  const v = value.trim().toUpperCase().replace(/^JPG$/, 'JPEG')
+  if (!v) return { ok: true, value: null }
+  if (!(API_FILE_FORMATS as string[]).includes(v)) return { ok: false, error: `Định dạng file in không hợp lệ: ${value} — chỉ nhận PNG hoặc JPEG` }
+  return { ok: true, value: v as ApiFileFormat }
+}
+
+/** Reads the format out of a catalogue file note such as "JPEG, 300 DPI, CMYK, <100MB". */
+export function apiFileFormatFromNote(note: string | null | undefined): ApiFileFormat | null {
+  const n = (note ?? '').toUpperCase()
+  if (/\bJPE?G\b/.test(n)) return 'JPEG'
+  if (/\bPNG\b/.test(n)) return 'PNG'
+  return null
+}
+
 /** "us, ca" → ["US", "CA"]; an empty list means the SKU ships anywhere. */
 export function parseShipCountries(value: string | null | undefined): string[] {
   const out: string[] = []

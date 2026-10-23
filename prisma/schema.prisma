@@ -340,6 +340,7 @@ model SupplierProduct {
   apiSku              String?
   apiShipClass        String?
   apiShipCountries    String?                           // comma-separated ISO codes this API SKU ships to; empty = anywhere
+  apiFileFormat       String?                           // print file format the API SKU wants: PNG (default) or JPEG
   baseSupplierMappings  ProductBaseSupplierMapping[]
   baseOverrides         ProductBaseOverride[]
   variantManualMappings VariantManualMapping[]

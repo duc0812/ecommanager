@@ -1,5 +1,6 @@
 'use client'
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { apiFileFormatFromNote } from '@/lib/pgprints-shared'
 
 type CatalogProduct = {
   sku: string
@@ -9,14 +10,14 @@ type CatalogProduct = {
   variants: { sku: string }[]
 }
 
-export type CatalogTarget = { id: string; sku: string; baseSku: string | null; apiSku: string | null; apiShipClass: string | null }
+export type CatalogTarget = { id: string; sku: string; baseSku: string | null; apiSku: string | null; apiShipClass: string | null; apiFileFormat: string | null }
 
 const pick = (on: boolean) =>
   `rounded-full border px-sm py-[2px] text-label-sm font-mono ${on ? 'bg-secondary text-on-secondary border-transparent' : 'border-outline-variant/40 hover:border-secondary hover:text-secondary'}`
 
 export default function PgprintsCatalogLookup({ target, onPick, onClose }: {
   target: CatalogTarget
-  onPick: (patch: { apiSku?: string; apiShipClass?: string }) => void
+  onPick: (patch: { apiSku?: string; apiShipClass?: string; apiFileFormat?: string }) => void
   onClose: () => void
 }) {
   const [query, setQuery] = useState(target.baseSku || target.sku)
@@ -62,6 +63,7 @@ export default function PgprintsCatalogLookup({ target, onPick, onClose }: {
               Điền cho SKU <span className="font-mono">{target.sku}</span>
               {' · '}SKU API: <span className="font-mono">{target.apiSku ?? 'chưa có'}</span>
               {' · '}Ship class: {target.apiShipClass ?? 'chưa có'}
+              {' · '}File in: {target.apiFileFormat ?? 'PNG (mặc định)'}
             </div>
           </div>
           <button type="button" onClick={onClose} className="border border-outline-variant/40 rounded-lg px-md py-xs text-label-md">Đóng</button>
@@ -88,12 +90,15 @@ export default function PgprintsCatalogLookup({ target, onPick, onClose }: {
               </div>
               <div className="px-md py-sm flex flex-col gap-sm">
                 <div>
-                  <div className="text-label-sm text-on-surface-variant mb-xs">Biến thể — bấm để điền &quot;SKU API&quot;</div>
+                  <div className="text-label-sm text-on-surface-variant mb-xs">Biến thể — bấm để điền &quot;SKU API&quot; (và định dạng file in nếu catalogue ghi)</div>
                   <div className="flex flex-wrap gap-xs">
                     {p.variants.length === 0 && <span className="text-label-sm text-on-surface-variant">không có biến thể</span>}
-                    {p.variants.map(v => (
-                      <button key={v.sku} type="button" onClick={() => onPick({ apiSku: v.sku })} className={pick(target.apiSku === v.sku)}>{v.sku}</button>
-                    ))}
+                    {p.variants.map(v => {
+                      const format = apiFileFormatFromNote(p.files[0]?.note)
+                      return (
+                        <button key={v.sku} type="button" onClick={() => onPick({ apiSku: v.sku, ...(format ? { apiFileFormat: format } : {}) })} className={pick(target.apiSku === v.sku)}>{v.sku}</button>
+                      )
+                    })}
                   </div>
                 </div>
                 <div>
@@ -114,6 +119,11 @@ export default function PgprintsCatalogLookup({ target, onPick, onClose }: {
                         <b>{f.name}</b>
                         <span className="font-mono">{f.sizeWidth && f.sizeHeight ? `${f.sizeWidth}×${f.sizeHeight} px` : 'không rõ khổ'}</span>
                         {f.note && <span className="text-on-surface-variant">{f.note}</span>}
+                        {apiFileFormatFromNote(f.note) && (
+                          <button type="button" onClick={() => onPick({ apiFileFormat: apiFileFormatFromNote(f.note)! })} className={pick(target.apiFileFormat === apiFileFormatFromNote(f.note))}>
+                            file in {apiFileFormatFromNote(f.note)}
+                          </button>
+                        )}
                       </li>
                     ))}
                   </ul>
