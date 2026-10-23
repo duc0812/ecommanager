@@ -1365,4 +1365,5 @@ model CsAgentRun {
   autoReplied  Int      @default(0)
   fdRequests   Int      @default(0)
   error        String?
+  partial      String?
 }

@@ -38,7 +38,7 @@ function minusOneSecond(iso: string): string {
   return new Date(new Date(iso).getTime() - 1000).toISOString().replace(/\.\d{3}Z$/, 'Z')
 }
 
-async function upsertTicket(t: FdTicket) {
+async function upsertTicket(t: FdTicket, existing: { id: string; orderNumber: string | null } | null) {
   const data = {
     subject: t.subject ?? '',
     fdStatus: t.status,
@@ -49,11 +49,11 @@ async function upsertTicket(t: FdTicket) {
     fdCreatedAt: new Date(t.created_at),
     fdUpdatedAt: new Date(t.updated_at),
   }
-  const existing = await prisma.csTicket.findUnique({ where: { fdTicketId: t.id } })
-  const cfNumber = extractOrderNumbers(t.custom_fields?.cf_order_id ?? '')[0] ?? null
+  const hinted = extractOrderNumbers(`${t.custom_fields?.cf_order_id ?? ''}
+${t.subject ?? ''}`)[0] ?? null
   const ticket = existing
-    ? await prisma.csTicket.update({ where: { id: existing.id }, data: { ...data, orderNumber: existing.orderNumber ?? cfNumber } })
-    : await prisma.csTicket.create({ data: { ...data, fdTicketId: t.id, orderNumber: cfNumber } })
+    ? await prisma.csTicket.update({ where: { id: existing.id }, data: { ...data, orderNumber: existing.orderNumber ?? hinted } })
+    : await prisma.csTicket.create({ data: { ...data, fdTicketId: t.id, orderNumber: hinted } })
   const descId = `desc-${t.id}`
   const descText = t.description_text?.trim() || htmlToText(t.description)
   const descExists = await prisma.csMessage.findUnique({ where: { fdConversationId: descId } })
@@ -62,8 +62,7 @@ async function upsertTicket(t: FdTicket) {
       data: { ticketId: ticket.id, fdConversationId: descId, author: 'CUSTOMER', private: false, bodyText: descText, bodyHtml: t.description ?? null, fromEmail: t.requester?.email ?? null, createdAt: new Date(t.created_at) },
     })
   }
-  const moved = !existing || existing.fdUpdatedAt.getTime() !== new Date(t.updated_at).getTime()
-  return { ticket, moved }
+  return ticket
 }
 
 async function upsertConversations(ticketId: string, convs: FdConversation[], settings: CsSettings) {
@@ -92,34 +91,38 @@ async function refreshTimestamps(ticketId: string) {
   return lastCustomer?.createdAt ?? null
 }
 
-export async function syncTickets(fd: FdLike, opts: { since?: string } = {}): Promise<{ seen: number; changed: string[]; cursor: string | null; error?: string }> {
+export async function syncTickets(fd: FdLike, opts: { since?: string } = {}): Promise<{ seen: number; changed: string[]; cursor: string | null; partial?: boolean; error?: string }> {
   const settings = await getCsSettings()
   const since = opts.since ?? settings.syncUpdatedSince ?? new Date(Date.now() - DEFAULT_SINCE_DAYS * 86400_000).toISOString().replace(/\.\d{3}Z$/, 'Z')
   let seen = 0
   const changed: string[] = []
   let lastProcessed: string | null = null
   let error: string | undefined
+  let partial = false
 
   try {
     for (let page = 1; page <= 10; page++) {
       const batch = await fd.listTickets(since, page)
       for (const t of batch) {
+        const existing = await prisma.csTicket.findUnique({ where: { fdTicketId: t.id }, select: { id: true, orderNumber: true, fdUpdatedAt: true, lastCustomerAt: true } })
+        const moved = !existing || existing.fdUpdatedAt.getTime() !== new Date(t.updated_at).getTime()
+        const convs = moved ? await fd.getConversations(t.id) : []
         seen += 1
-        const before = await prisma.csTicket.findUnique({ where: { fdTicketId: t.id }, select: { lastCustomerAt: true } })
-        const { ticket, moved } = await upsertTicket(t)
-        if (moved) await upsertConversations(ticket.id, await fd.getConversations(t.id), settings)
+        const ticket = await upsertTicket(t, existing)
+        if (moved) await upsertConversations(ticket.id, convs, settings)
         const lastCustomerAt = await refreshTimestamps(ticket.id)
-        const grew = !before || (lastCustomerAt?.getTime() ?? 0) > (before.lastCustomerAt?.getTime() ?? 0)
+        const grew = !existing || (lastCustomerAt?.getTime() ?? 0) > (existing.lastCustomerAt?.getTime() ?? 0)
         if (grew) changed.push(ticket.id)
         lastProcessed = t.updated_at
       }
       if (batch.length < 100) break
     }
   } catch (err: any) {
-    error = err instanceof FreshdeskBudgetExceeded ? err.message : (err?.message ?? String(err))
+    if (err instanceof FreshdeskBudgetExceeded) partial = true
+    else error = err?.message ?? String(err)
   }
 
-  const cursor = error ? since : (lastProcessed ? minusOneSecond(lastProcessed) : since)
-  if (!error && lastProcessed) await saveCsSettings({ syncUpdatedSince: cursor })
-  return { seen, changed, cursor, error }
+  const cursor = lastProcessed ? minusOneSecond(lastProcessed) : since
+  if (lastProcessed) await saveCsSettings({ syncUpdatedSince: cursor })
+  return { seen, changed, cursor, partial: partial || undefined, error }
 }

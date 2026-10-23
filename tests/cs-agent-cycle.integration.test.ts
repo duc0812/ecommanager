@@ -155,6 +155,16 @@ describe('runAgentCycle', () => {
     expect(JSON.parse(last!.value).ticketsSeen).toBe(3)
   })
 
+  it('never analyses closed or resolved tickets', async () => {
+    const d = deps()
+    const closed = tickets.map(t => (t.id === 194 ? { ...t, status: 5 } : t))
+    d.fd.listTickets = async (_s: string, page = 1) => (page === 1 ? closed : []) as any
+    const run = await runAgentCycle({ ...d, notifier: collector().notifier })
+    expect(run.analysed).toBe(2)
+    expect(d.llm.calls).toBe(2)
+    expect((await prisma.csTicket.findUnique({ where: { fdTicketId: 194 }, include: { analyses: true } }))!.analyses).toHaveLength(0)
+  })
+
   it('keeps going when one ticket analysis throws and records the error', async () => {
     const d = deps()
     const llm: Llm = { async analyze(i) { if (i.user.includes('Ticket #194')) throw new Error('boom'); return d.llm.analyze(i) } }

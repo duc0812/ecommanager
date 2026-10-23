@@ -27,6 +27,7 @@ export async function runAgentCycle(deps: CycleDeps, opts: { ticketIds?: string[
   const now = deps.now ?? new Date()
   const run = await prisma.csAgentRun.create({ data: {} })
   const errors: string[] = []
+  let partialNote: string | null = null
   let analysed = 0
   let autoReplied = 0
   let ticketsSeen = 0
@@ -37,10 +38,12 @@ export async function runAgentCycle(deps: CycleDeps, opts: { ticketIds?: string[
     ticketsSeen = sync.seen
     if (sync.error) errors.push(`sync: ${sync.error}`)
 
+    if (sync.partial) partialNote = 'còn ticket chưa lấy hết, lượt sau tiếp tục'
+    const open = (await prisma.csTicket.findMany({ where: { fdStatus: { notIn: [4, 5] }, resolvedInTool: false }, select: { id: true } })).map(t => t.id)
     let targets: string[]
     if (opts.ticketIds) targets = opts.ticketIds
-    else if (opts.force) targets = (await prisma.csTicket.findMany({ where: { fdStatus: { notIn: [4, 5] } }, select: { id: true } })).map(t => t.id)
-    else targets = sync.changed
+    else if (opts.force) targets = open
+    else targets = sync.changed.filter(id => open.includes(id))
 
     if (deps.llm) {
       for (const id of targets) {
@@ -70,9 +73,9 @@ export async function runAgentCycle(deps: CycleDeps, opts: { ticketIds?: string[
 
   const finished = await prisma.csAgentRun.update({
     where: { id: run.id },
-    data: { finishedAt: new Date(), ticketsSeen, analysed, autoReplied, fdRequests: deps.fd.requests, error: errors.length ? errors.join(' | ') : null },
+    data: { finishedAt: new Date(), ticketsSeen, analysed, autoReplied, fdRequests: deps.fd.requests, error: errors.length ? errors.join(' | ') : null, partial: partialNote },
   })
-  const value = JSON.stringify({ ranAt: finished.finishedAt, ticketsSeen, analysed, autoReplied, fdRequests: finished.fdRequests, error: finished.error })
+  const value = JSON.stringify({ ranAt: finished.finishedAt, ticketsSeen, analysed, autoReplied, fdRequests: finished.fdRequests, error: finished.error, partial: finished.partial })
   await prisma.appSetting.upsert({ where: { key: LAST_RUN_KEY }, create: { key: LAST_RUN_KEY, value }, update: { value } })
   return finished
 }

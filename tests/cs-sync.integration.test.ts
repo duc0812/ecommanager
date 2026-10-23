@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterAll } from 'vitest'
 import { prisma } from '@/lib/db'
 import type { FdConversation, FdTicket } from '@/lib/cs/freshdesk'
-import { FreshdeskError } from '@/lib/cs/freshdesk'
+import { FreshdeskBudgetExceeded, FreshdeskError } from '@/lib/cs/freshdesk'
 import { authorOf, syncTickets, type FdLike } from '@/lib/cs/sync'
 import { DEFAULT_CS_SETTINGS } from '@/lib/cs/settings'
 import ticketsPage from './fixtures/cs/tickets-page.json'
@@ -75,13 +75,41 @@ describe('syncTickets', () => {
     expect(again.changed).toEqual([])
   })
 
-  it('does not advance the cursor when a fetch fails mid-cycle', async () => {
+  it('advances the cursor only to the last fully processed ticket when a fetch fails mid-cycle', async () => {
     const res = await syncTickets(fakeFd({ failOn: 194 }), { since: '2026-10-19T00:00:00Z' })
     expect(res.error).toContain('503')
-    expect(res.cursor).toBe('2026-10-19T00:00:00Z')
+    expect(res.cursor).toBe('2026-10-23T14:16:18Z')
     expect(await prisma.csTicket.findUnique({ where: { fdTicketId: 119 } })).not.toBeNull()
+    expect(await prisma.csTicket.findUnique({ where: { fdTicketId: 194 } })).toBeNull()
     const settings = await prisma.appSetting.findUnique({ where: { key: 'cs.settings' } })
-    expect(settings ? JSON.parse(settings.value).syncUpdatedSince : null).toBeNull()
+    expect(JSON.parse(settings!.value).syncUpdatedSince).toBe('2026-10-23T14:16:18Z')
+    const again = await syncTickets(fakeFd(), { since: res.cursor! })
+    expect(again.changed).toHaveLength(2)
+    expect(await prisma.csTicket.findUnique({ where: { fdTicketId: 194 } })).not.toBeNull()
+  })
+
+  it('reports a budget stop as partial, not as an error, and keeps the cursor before the unfetched tickets', async () => {
+    const fd = fakeFd()
+    let calls = 0
+    const budgeted: FdLike = {
+      requests: 0,
+      listTickets: fd.listTickets,
+      async getConversations(id: number) {
+        if (++calls > 1) throw new FreshdeskBudgetExceeded(2)
+        return fd.getConversations(id)
+      },
+    }
+    const res = await syncTickets(budgeted, { since: '2026-10-19T00:00:00Z' })
+    expect(res.error).toBeUndefined()
+    expect(res.partial).toBe(true)
+    expect(res.changed).toHaveLength(1)
+    expect(res.cursor).toBe('2026-10-23T14:16:18Z')
+  })
+
+  it('takes the order number from the subject when the custom field is empty', async () => {
+    await syncTickets(fakeFd(), { since: '2026-10-19T00:00:00Z' })
+    expect((await prisma.csTicket.findUnique({ where: { fdTicketId: 194 } }))!.orderNumber).toBe('#LIT5037')
+    expect((await prisma.csTicket.findUnique({ where: { fdTicketId: 195 } }))!.orderNumber).toBe('#LIT3910')
   })
 
   it('tags conversation ids we posted as AGENT', async () => {
