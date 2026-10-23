@@ -27,9 +27,11 @@ export default function CsInboxPage() {
   const [message, setMessage] = useState<string | null>(null)
 
   const load = useCallback(async () => {
-    const res = await fetch(`/api/cs/tickets?tab=${tab}&q=${encodeURIComponent(q)}`)
-    const data = await res.json().catch(() => ({}))
-    setRows(data.tickets ?? [])
+    try {
+      const res = await fetch(`/api/cs/tickets?tab=${tab}&q=${encodeURIComponent(q)}`)
+      const data = await res.json().catch(() => ({}))
+      setRows(data.tickets ?? [])
+    } catch {}
     setLoading(false)
   }, [tab, q])
 
@@ -47,7 +49,7 @@ export default function CsInboxPage() {
     if (!res.ok) setMessage(data.error ?? 'Đồng bộ thất bại')
     else {
       const r = data.run
-      setMessage(`Đã xem ${r.ticketsSeen} ticket · phân tích ${r.analysed} · agent trả lời ${r.autoReplied}${r.error ? ` · lỗi: ${r.error}` : ''}`)
+      setMessage(`Đã xem ${r.ticketsSeen} ticket · phân tích ${r.analysed} · agent trả lời ${r.autoReplied}${r.partial ? ` · ${r.partial}` : ''}${r.error ? ` · lỗi: ${r.error}` : ''}`)
     }
     setSyncing(false)
     load()
