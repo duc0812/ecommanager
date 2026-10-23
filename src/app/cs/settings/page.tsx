@@ -113,7 +113,7 @@ export default function CsSettingsPage() {
               <label className="block">
                 <span className="text-label-sm text-on-surface-variant">Kie API key {view.hasKieApiKey ? `· đang dùng ${view.kieApiKeyMasked}` : '· chưa có'}</span>
                 <input type="password" value={secrets.kieApiKey} onChange={e => setSecrets({ ...secrets, kieApiKey: e.target.value })} placeholder="Dán key mới để thay" className="mt-xs w-full rounded-lg border border-outline-variant/40 bg-surface px-md py-sm text-body-sm" />
-                <span className="text-label-sm text-on-surface-variant">Key phải được bật quyền model chat (Claude) tại kie.ai/api-key — bấm "Test kết nối" để kiểm tra.</span>
+                <span className="text-label-sm text-on-surface-variant">Key phải được bật quyền model chat (Claude) tại kie.ai/api-key — bấm &quot;Test kết nối&quot; để kiểm tra.</span>
               </label>
               <label className="block">
                 <span className="text-label-sm text-on-surface-variant">Anthropic API key {view.hasAnthropicApiKey ? `· đang dùng ${view.anthropicApiKeyMasked}` : '· chưa có'}</span>
