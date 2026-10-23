@@ -21,6 +21,12 @@ if (-not (Test-Path $envFile)) {
 foreach ($line in Get-Content $envFile) {
   if ($line -match '^\s*(ECOM_URL|DESIGN_WORKER_TOKEN|ARTWORK_NAS_ROOT)\s*=\s*(.+?)\s*$') { Set-Item -Path "env:$($Matches[1])" -Value $Matches[2] }
 }
+# One worker at a time: the 30-minute sync and the 07:00 run must not move the same NAS files at once.
+$mutex = New-Object System.Threading.Mutex($false, 'Local\EcomManagerArtworkWorker')
+if (-not $mutex.WaitOne(0)) {
+  Add-Content -Path $log -Encoding UTF8 -Value "[$(Get-Date -Format HH:mm:ss)] another worker run is still going - skipped"
+  exit 0
+}
 $env:PYTHONIOENCODING = 'utf-8'
 $python = Join-Path $here '.venv\Scripts\python.exe'
 $worker = Join-Path $here 'worker.py'
@@ -28,4 +34,6 @@ $worker = Join-Path $here 'worker.py'
 $scan = if ($env:ARTWORK_NAS_ROOT) { '--scan-nas ' } else { '' }
 $render = if ($SyncOnly) { '' } else { '--auto-render ' }
 cmd /c "`"$python`" `"$worker`" $scan$render--drain >> `"$log`" 2>&1"
-exit $LASTEXITCODE
+$code = $LASTEXITCODE
+$mutex.ReleaseMutex()
+exit $code
