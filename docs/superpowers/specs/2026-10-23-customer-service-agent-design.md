@@ -87,7 +87,7 @@ Staff read, draft, and **send from `/cs`**; the tool posts to Freshdesk (reply o
 Freshdesk UI remains usable; anything done there is picked up on the next poll. Reason: the summary,
 order card and draft live here, and sending here is what makes the agent's draft a one-click action.
 
-### 5.2 LLM — my call: Anthropic Messages API, model `claude-sonnet-5-5`
+### 5.2 LLM — my call: Anthropic Messages API, model `claude-opus-5-5` (effort low; model id editable in settings)
 Key in AppSetting `cs.anthropicApiKey` (env fallback `ANTHROPIC_API_KEY`), entered on the CS settings
 card. Structured JSON output (tool-use with a fixed schema). One call per analysis; temperature low.
 The builder reads the `claude-api` skill before writing the helper (`src/lib/llm/anthropic.ts`).
