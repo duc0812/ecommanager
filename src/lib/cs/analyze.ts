@@ -1,0 +1,109 @@
+import { createHash } from 'crypto'
+import { prisma } from '@/lib/db'
+import type { CsAnalysis, CsMessage } from '@/generated/prisma/client'
+import type { Llm } from '@/lib/llm/anthropic'
+import { buildOrderContext, type OrderContext } from '@/lib/cs/order-context'
+import { buildSystemPrompt, buildUserPrompt } from '@/lib/cs/agent-prompt'
+import { getCsSettings } from '@/lib/cs/settings'
+import { finalUrgency, ruleUrgency } from '@/lib/cs/triage'
+import { autoReplyGate, mentionsRefundAddressOrCancel } from '@/lib/cs/policy'
+
+export function inputHashFor(messages: Pick<CsMessage, 'id' | 'author'>[], order: OrderContext): string {
+  const parts = [
+    ...messages.filter(m => m.author === 'CUSTOMER').map(m => m.id),
+    order.order ? order.order.id : order.match,
+    order.order?.factoryState ?? '',
+    ...(order.order?.shipments.map(s => s.status) ?? []),
+  ]
+  return createHash('sha1').update(parts.join('|')).digest('hex')
+}
+
+function startOfToday(now: Date): Date {
+  const d = new Date(now)
+  d.setHours(0, 0, 0, 0)
+  return d
+}
+
+export async function analyzeTicket(ticketId: string, deps: { llm: Llm; now?: Date; force?: boolean }): Promise<CsAnalysis> {
+  const now = deps.now ?? new Date()
+  const ticket = await prisma.csTicket.findUniqueOrThrow({
+    where: { id: ticketId },
+    include: { messages: { orderBy: { createdAt: 'asc' } }, analyses: { orderBy: { runAt: 'desc' }, take: 3 } },
+  })
+  const customerTexts = ticket.messages.filter(m => m.author === 'CUSTOMER').map(m => m.bodyText)
+  const order = await buildOrderContext({ subject: ticket.subject, texts: customerTexts, cfOrderId: ticket.orderNumber, email: ticket.requesterEmail })
+  const inputHash = inputHashFor(ticket.messages, order)
+  const latest = ticket.analyses[0]
+  if (latest && latest.inputHash === inputHash && !deps.force) return latest
+
+  const settings = await getCsSettings()
+  const cases = await prisma.csCase.findMany({ where: { active: true }, orderBy: { updatedAt: 'desc' } })
+  const { output, tokensIn, tokensOut } = await deps.llm.analyze({
+    system: buildSystemPrompt(cases, settings),
+    user: buildUserPrompt({ ticket, messages: ticket.messages, order, previous: ticket.analyses }),
+    model: settings.model,
+  })
+
+  const customerCount = ticket.messages.filter(m => m.author === 'CUSTOMER').length
+  const replies = ticket.messages.filter(m => (m.author === 'STAFF' || m.author === 'AGENT' || m.author === 'SYSTEM') && !m.private)
+  const lastReplyAt = replies.at(-1)?.createdAt ?? null
+  const firstUnanswered = ticket.messages.find(m => m.author === 'CUSTOMER' && (!lastReplyAt || m.createdAt > lastReplyAt))
+  const hoursUnanswered = firstUnanswered ? Math.max(0, (now.getTime() - firstUnanswered.createdAt.getTime()) / 3600_000) : 0
+
+  const urgency = finalUrgency(output.urgency, ruleUrgency({ category: output.category, factoryState: order.order?.factoryState ?? null, sentiment: output.sentiment, hoursUnanswered }))
+
+  const [autoRepliesToday, activeCases] = await Promise.all([
+    prisma.csMessage.count({ where: { author: 'AGENT', createdAt: { gte: startOfToday(now) } } }),
+    prisma.csCase.count({ where: { active: true, category: output.category } }),
+  ])
+  const gate = autoReplyGate({
+    settings,
+    category: output.category,
+    sentiment: output.sentiment,
+    orderMatch: order.match,
+    customerMessageCount: customerCount,
+    hasAnyReply: replies.length > 0,
+    hasTracking: !!order.order?.shipments.some(s => s.trackingNumber && s.status !== 'EXPIRED' && s.status !== 'EXCEPTION'),
+    placedAt: order.order?.placedAt ?? null,
+    now,
+    textMentionsRefundAddressOrCancel: mentionsRefundAddressOrCancel([ticket.subject, ...customerTexts].join('\n')),
+    autoRepliesToday,
+    hasActiveCaseForCategory: activeCases > 0,
+  })
+  const needsHuman = output.needsHuman || !gate.allowed || !output.draftReply
+
+  const analysis = await prisma.csAnalysis.create({
+    data: {
+      ticketId,
+      model: settings.model,
+      inputHash,
+      outputJson: JSON.stringify(output),
+      category: output.category,
+      urgency,
+      sentiment: output.sentiment,
+      summary: output.summary,
+      proposal: output.proposal,
+      draftReply: output.draftReply,
+      needsHuman,
+      citedCaseIds: JSON.stringify(output.citedCaseIds),
+      autoReplyEligible: output.autoReplyEligible,
+      gateJson: JSON.stringify(gate),
+      tokensIn,
+      tokensOut,
+    },
+  })
+  await prisma.csTicket.update({
+    where: { id: ticketId },
+    data: {
+      category: output.category,
+      urgency,
+      sentiment: output.sentiment,
+      orderId: order.order?.id ?? null,
+      orderNumber: order.order?.shopifyOrderNumber ?? ticket.orderNumber,
+      orderMatch: order.match,
+      needsHuman: true,
+      lastAnalysisAt: now,
+    },
+  })
+  return analysis
+}
