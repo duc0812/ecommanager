@@ -117,6 +117,17 @@ describe('GET /api/design-studio/tasks', () => {
     expect(body.tasks.map((t: any) => t.taskKey)).toContain('DTR1_1')
   })
 
+  it('a search finds a task finished before today, which the default queue hides', async () => {
+    const before = await prisma.designTask.findFirstOrThrow({ where: { orderId: DONE_ORDER_ID } })
+    await prisma.designTask.update({ where: { id: before.id }, data: { status: 'DONE', updatedAt: new Date('2026-10-02T00:00:00Z') } })
+    const keys = async (url: string) => (await (await getTasks(await cookieReq(url, adminToken))).json()).tasks.map((t: any) => t.taskKey)
+    expect(await keys('http://x/api/design-studio/tasks')).not.toContain('DTR2_1')
+    expect(await keys('http://x/api/design-studio/tasks?q=%23DTR2')).toEqual(['DTR2_1'])
+    expect(await keys('http://x/api/design-studio/tasks?q=mug')).toContain('DTR2_1')
+    expect(await keys('http://x/api/design-studio/tasks?q=DTR')).toEqual(expect.arrayContaining(['DTR1_1', 'DTR2_1']))
+    await prisma.designTask.update({ where: { id: before.id }, data: { status: before.status } })
+  })
+
   it('treats an empty statuses= as not given, falling back to the default queue', async () => {
     const req = await cookieReq('http://x/api/design-studio/tasks?statuses=', adminToken)
     const res = await getTasks(req)

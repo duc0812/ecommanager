@@ -14,6 +14,8 @@ function startOfTodayUtc(): Date {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
 }
 
+const SEARCH_LIMIT = 200
+
 export async function GET(req: NextRequest) {
   const user = await getAuthUser(req)
   if (!user) return unauthorized()
@@ -28,12 +30,29 @@ export async function GET(req: NextRequest) {
   const statuses = rawStatuses.length > 0 ? (rawStatuses as TaskStatus[]) : undefined
   const readinessParam = sp.get('readiness')
   const readiness = readinessParam && READINESS_VALUES.includes(readinessParam as Readiness) ? (readinessParam as Readiness) : undefined
-  const q = sp.get('q')?.trim() || undefined
+  // "#LIT5199" and "LIT5199" find the same order
+  const q = sp.get('q')?.trim().replace(/^#/, '') || undefined
   const assigneeId = sp.get('mine') === '1' ? user.id : undefined
 
   let tasks
   if (statuses) {
     tasks = await listTasks({ statuses, readiness, assigneeId, q })
+  } else if (q) {
+    // A search looks through every task, finished or cancelled too: the default queue hides DONE tasks
+    // after the day they were approved, so an order already sent to the factory could not be found.
+    // Narrowed in the database first, so a search never loads the whole task history.
+    const matching = await prisma.designTask.findMany({
+      where: {
+        OR: [
+          { taskKey: { contains: q } },
+          { order: { lines: { some: { OR: [{ sku: { contains: q } }, { productTitle: { contains: q } }, { customAttributesJson: { contains: q } }] } } } },
+        ],
+        ...(readiness ? { readiness } : {}),
+        ...(assigneeId ? { assigneeId } : {}),
+      },
+      select: { taskKey: true }, orderBy: { createdAt: 'desc' }, take: SEARCH_LIMIT,
+    })
+    tasks = await listTasks({ taskKeys: matching.map(m => m.taskKey), q })
   } else {
     const matching = await prisma.designTask.findMany({
       where: {

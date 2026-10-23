@@ -12,6 +12,13 @@ const SECTIONS: { title: string; statuses: TaskStatus[] }[] = [
   { title: 'Xong hôm nay', statuses: ['DONE'] },
 ]
 
+// A search reaches every task, so finished ones are not only today's and cancelled ones show too.
+const SEARCH_SECTIONS: { title: string; statuses: TaskStatus[] }[] = [
+  ...SECTIONS.slice(0, -1),
+  { title: 'Đã duyệt', statuses: ['DONE'] },
+  { title: 'Đã huỷ', statuses: ['CANCELLED'] },
+]
+
 function byDue(a: TaskRow, b: TaskRow): number {
   if (a.dueAt === b.dueAt) return 0
   if (a.dueAt === null) return 1
@@ -55,7 +62,7 @@ export default function Queue({ tasks, sel, onSelect, q, onQ, loading, error, re
   q: string; onQ: (v: string) => void; loading: boolean; error: string; retrying: boolean
   emptyText: string; onClearFilters: (() => void) | null
 }) {
-  const groups = SECTIONS.map(s => ({ ...s, rows: tasks.filter(t => s.statuses.includes(t.status)).sort(byDue) })).filter(g => g.rows.length > 0)
+  const groups = (q.trim() ? SEARCH_SECTIONS : SECTIONS).map(s => ({ ...s, rows: tasks.filter(t => s.statuses.includes(t.status)).sort(byDue) })).filter(g => g.rows.length > 0)
   return (
     <aside className={`${card} sticky top-md max-h-[calc(100vh-2rem)] overflow-auto flex flex-col`}>
       <div className="p-sm border-b border-outline-variant/20 flex flex-col gap-sm sticky top-0 bg-surface-container-lowest z-10">
