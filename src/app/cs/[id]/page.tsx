@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
 import Sidebar from '@/components/Sidebar'
-import { RoleGate } from '@/components/RoleGate'
+import { RoleGate, useCurrentUser } from '@/components/RoleGate'
 import { UrgencyChip, fmtDate, hoursLabel } from '@/components/cs/UrgencyChip'
 import { CATEGORY_LABELS, FACTORY_LABELS, ISSUE_LABELS, SENTIMENT_LABELS, STAGE_LABELS } from '@/lib/cs/labels'
 import { STAGES } from '@/lib/cs/root-cause-prompt'
@@ -11,6 +11,7 @@ import { RUBRIC_LABELS } from '@/lib/cs/review-prompt'
 
 type Message = { id: string; author: string; private: boolean; bodyText: string; displayText: string; quoted: string | null; createdAt: string; fromEmail: string | null; source: string; sentiment: string | null }
 type ReviewRow = { messageId: string; score: number; issues: string; reason: string; rewrite: string | null }
+type Directive = { id: string; body: string; createdByName: string | null; createdAt: string; resolvedAt: string | null }
 type Analysis = { id: string; runAt: string; category: string; urgency: string; sentiment: string; summary: string; proposal: string; draftReply: string | null; needsHuman: boolean; citedCaseIds: string; gateJson: string; outputJson: string; model: string; rootCauseStage: string | null; rootCauseEvidence: string | null; rootCauseConfidence: string | null; issueType: string | null }
 type Order = {
   shopifyOrderNumber: string; placedAt: string; customerName: string | null; shipTo: string; factoryState: keyof typeof FACTORY_LABELS; pipelineStatus: string; supplierHandoffAt: string | null
@@ -25,6 +26,7 @@ type Detail = {
   order: { match: string; order: Order | null; candidates: string[] }
   cases: { id: string; title: string }[]
   reviews: ReviewRow[]
+  directives: Directive[]
 }
 
 const FACTORY_COLOR: Record<string, string> = { NOT_SENT: 'text-on-tertiary-container', AT_FACTORY: 'text-secondary', SHIPPED: 'text-primary', DELIVERED: 'text-on-surface-variant', CANCELLED: 'text-error' }
@@ -38,6 +40,9 @@ export default function CsTicketPage() {
   const [message, setMessage] = useState<string | null>(null)
   const [lastSent, setLastSent] = useState<string | null>(null)
   const [rootCauseForm, setRootCauseForm] = useState<{ stage: string; note: string } | null>(null)
+  const [directiveText, setDirectiveText] = useState('')
+  const { user } = useCurrentUser()
+  const isAdmin = user?.role === 'ADMIN' || user?.role === 'SUPERADMIN'
 
   const load = useCallback(async () => {
     const res = await fetch(`/api/cs/tickets/${id}`)
@@ -68,6 +73,21 @@ export default function CsTicketPage() {
     load()
   }
 
+  async function sendDirective() {
+    if (!directiveText.trim()) return
+    const data = await post(`/api/cs/tickets/${id}/directives`, { body: directiveText }, 'directive')
+    if (!data) return
+    setDirectiveText('')
+    setReply('')
+    setMessage(data.analysed ? 'Đã lưu chỉ đạo và agent đã viết lại bản nháp theo chỉ đạo.' : `Đã lưu chỉ đạo${data.analysisError ? ` (agent chưa phân tích lại: ${data.analysisError})` : ''}.`)
+    load()
+  }
+
+  async function toggleDirective(d: Directive) {
+    await fetch(`/api/cs/directives/${d.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ resolved: !d.resolvedAt }) })
+    load()
+  }
+
   async function promote() {
     if (!lastSent) return
     const data = await post('/api/cs/cases/promote', { ticketId: id, replyBody: lastSent }, 'promote')
@@ -82,7 +102,7 @@ export default function CsTicketPage() {
     )
   }
 
-  const { ticket, messages, analysis, order, cases, reviews } = detail
+  const { ticket, messages, analysis, order, cases, reviews, directives } = detail
   const reviewByMessage = new Map(reviews.map(r => [r.messageId, r]))
   const effectiveStage = ticket.rootCauseStageOverride ?? analysis?.rootCauseStage ?? null
   const o = order.order
@@ -166,6 +186,27 @@ export default function CsTicketPage() {
           </section>
 
           <aside className="space-y-md">
+            <div className={`rounded-xl border bg-surface-container-lowest shadow-card ${directives.some(d => !d.resolvedAt) ? 'border-secondary/50' : 'border-outline-variant/20'}`}>
+              <div className="border-b border-outline-variant/20 px-lg py-md"><h3 className="text-headline-sm text-primary">Chỉ đạo của admin</h3></div>
+              <div className="space-y-sm p-lg text-body-sm">
+                {directives.length === 0 && <p className="text-on-surface-variant">Chưa có chỉ đạo. Admin ghi hướng xử lý ở đây (ví dụ: &quot;resend hàng mới, báo khách ship hôm nay&quot;) — nhân sự làm theo, agent viết lại bản nháp theo đúng chỉ đạo.</p>}
+                {directives.map(d => (
+                  <div key={d.id} className={`rounded-lg p-sm ${d.resolvedAt ? 'bg-surface-container text-on-surface-variant line-through' : 'bg-secondary/10'}`}>
+                    <p className="whitespace-pre-wrap">{d.body}</p>
+                    <p className="mt-xs flex items-center gap-sm text-label-sm text-on-surface-variant no-underline">
+                      <span>{d.createdByName ?? 'admin'} · {fmtDate(d.createdAt, true)}</span>
+                      <button onClick={() => toggleDirective(d)} className="text-secondary">{d.resolvedAt ? 'Mở lại' : 'Đã xử lý'}</button>
+                    </p>
+                  </div>
+                ))}
+                {isAdmin && (
+                  <div className="space-y-xs">
+                    <textarea value={directiveText} onChange={e => setDirectiveText(e.target.value)} rows={3} placeholder="Ví dụ: Resend hàng mới cho khách, báo khách sẽ ship trong hôm nay, không hoàn tiền." className="w-full rounded-lg border border-outline-variant/40 bg-surface px-md py-sm text-body-sm" />
+                    <button onClick={sendDirective} disabled={busy !== null || !directiveText.trim()} className="rounded-lg bg-secondary px-lg py-sm text-label-md text-on-secondary disabled:opacity-50">{busy === 'directive' ? 'Đang lưu & phân tích…' : 'Gửi chỉ đạo (agent viết lại nháp)'}</button>
+                  </div>
+                )}
+              </div>
+            </div>
             <div className="rounded-xl border border-outline-variant/20 bg-surface-container-lowest shadow-card">
               <div className="border-b border-outline-variant/20 px-lg py-md"><h3 className="text-headline-sm text-primary">Đơn hàng</h3></div>
               <div className="space-y-sm p-lg text-body-sm">

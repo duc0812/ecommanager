@@ -9,8 +9,9 @@ import { finalUrgency, ruleUrgency } from '@/lib/cs/triage'
 import { autoReplyGate, mentionsRefundAddressOrCancel } from '@/lib/cs/policy'
 import { withCap } from '@/lib/llm/cap'
 
-export function inputHashFor(messages: Pick<CsMessage, 'id' | 'author'>[], order: OrderContext): string {
+export function inputHashFor(messages: Pick<CsMessage, 'id' | 'author'>[], order: OrderContext, directiveIds: string[] = []): string {
   const parts = [
+    ...directiveIds,
     ...messages.filter(m => m.author === 'CUSTOMER').map(m => m.id),
     order.order ? order.order.id : order.match,
     order.order?.factoryState ?? '',
@@ -29,11 +30,11 @@ export async function analyzeTicket(ticketId: string, deps: { llm: Llm; now?: Da
   const now = deps.now ?? new Date()
   const ticket = await prisma.csTicket.findUniqueOrThrow({
     where: { id: ticketId },
-    include: { messages: { orderBy: { createdAt: 'asc' } }, analyses: { orderBy: { runAt: 'desc' }, take: 3 } },
+    include: { messages: { orderBy: { createdAt: 'asc' } }, analyses: { orderBy: { runAt: 'desc' }, take: 3 }, directives: { where: { resolvedAt: null }, orderBy: { createdAt: 'asc' } } },
   })
   const customerTexts = ticket.messages.filter(m => m.author === 'CUSTOMER').map(m => m.bodyText)
   const order = await buildOrderContext({ subject: ticket.subject, texts: customerTexts, cfOrderId: ticket.orderNumber, email: ticket.requesterEmail })
-  const inputHash = inputHashFor(ticket.messages, order)
+  const inputHash = inputHashFor(ticket.messages, order, ticket.directives.map(d => d.id))
   const latest = ticket.analyses[0]
   if (latest && latest.inputHash === inputHash && !deps.force) return latest
 
@@ -41,7 +42,7 @@ export async function analyzeTicket(ticketId: string, deps: { llm: Llm; now?: Da
   const cases = await prisma.csCase.findMany({ where: { active: true }, orderBy: { updatedAt: 'desc' } })
   const { output, tokensIn, tokensOut } = await withCap(settings.llmDailyCallCap, () => deps.llm.analyze({
     system: buildSystemPrompt(cases, settings),
-    user: buildUserPrompt({ ticket, messages: ticket.messages, order, previous: ticket.analyses }),
+    user: buildUserPrompt({ ticket, messages: ticket.messages, order, previous: ticket.analyses, directives: ticket.directives }),
     model: settings.model,
   }), now)
 

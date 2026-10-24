@@ -1310,6 +1310,7 @@ model CsTicket {
   messages        CsMessage[]
   analyses        CsAnalysis[]
   reviews         CsReplyReview[]
+  directives      CsDirective[]
   @@index([needsHuman, urgency, lastCustomerAt])
   @@index([fdUpdatedAt])
 }
@@ -1412,4 +1413,18 @@ model CsAgentRun {
   fdRequests   Int      @default(0)
   error        String?
   partial      String?
+}
+
+model CsDirective {
+  id            String   @id @default(cuid())
+  ticketId      String
+  ticket        CsTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  body          String
+  createdById   String?
+  createdByName String?
+  createdAt     DateTime @default(now())
+  resolvedAt    DateTime?
+  resolvedById  String?
+  fdNoteId      String?
+  @@index([ticketId, resolvedAt])
 }

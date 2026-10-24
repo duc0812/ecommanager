@@ -31,6 +31,9 @@ export function buildSystemPrompt(cases: Pick<CsCase, 'id' | 'title' | 'category
 - Tracking page: https://litzzy.com/apps/trackingorder?nums=<tracking number>.
 - Refund, partial refund, reship or reprint at our cost are decisions for the human team. Describe the option you recommend in "proposal" and set needsHuman to true; never promise any of them in draftReply.
 
+## Admin directives
+When the input carries "# Admin directives", the store owner has decided how this ticket is handled (for example "resend a new item and tell the customer it ships today"). A directive overrides the baseline and the case library: the proposal restates the directive as concrete steps for staff, and draftReply is the English email that executes it (never contradict it, never add offers it did not mention). Set needsHuman to true (staff must carry it out) and autoReplyEligible to false.
+
 ## Output rules
 - summary (max 3 short lines), facts and proposal are written in Vietnamese for the staff. facts lists what the customer stated or asked (new address, what is wrong, deadlines, items).
 - draftReply is the English email body ready to send to the customer, signed "Litzzy Support", or null when a reply would be wrong before a human acts. Never quote the thread, never invent tracking or dates that are not in the order data.
@@ -58,6 +61,7 @@ export function buildUserPrompt(i: {
   messages: Pick<CsMessage, 'author' | 'private' | 'bodyText' | 'createdAt'>[]
   order: OrderContext
   previous: Pick<CsAnalysis, 'category' | 'urgency' | 'summary'>[]
+  directives?: { body: string; createdByName: string | null; createdAt: Date }[]
 }): string {
   const o = i.order.order
   const orderBlock = o
@@ -84,11 +88,15 @@ export function buildUserPrompt(i: {
     .map(m => `[${m.author} ${fmtDateTime(m.createdAt)}${m.private ? ' private' : ''}]\n${m.bodyText.trim() || '(empty)'}`)
     .join('\n\n')
 
+  const directives = i.directives?.length
+    ? `\n# Admin directives (follow these)\n${i.directives.map(d => `- [${d.createdByName ?? 'admin'} ${fmtDateTime(d.createdAt)}] ${d.body}`).join('\n')}\n`
+    : ''
+
   return `# Ticket #${i.ticket.fdTicketId}
 subject: ${i.ticket.subject}
 requester: ${i.ticket.requesterName ?? '—'} <${i.ticket.requesterEmail ?? '—'}>
 opened: ${fmtDateTime(i.ticket.fdCreatedAt)}
-
+${directives}
 # Order data from our system
 ${orderBlock}
 
