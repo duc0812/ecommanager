@@ -38,8 +38,24 @@ function minusOneSecond(iso: string): string {
   return new Date(new Date(iso).getTime() - 1000).toISOString().replace(/\.\d{3}Z$/, 'Z')
 }
 
-async function upsertTicket(t: FdTicket, existing: { id: string; orderNumber: string | null } | null) {
+type Existing = { id: string; orderNumber: string | null; fdUpdatedAt: Date; lastCustomerAt: Date | null; closedAt: Date | null; fdReopenedAt: Date | null; reopenCount: number }
+
+const at = (v: string | null | undefined) => (v ? new Date(v) : null)
+
+async function upsertTicket(t: FdTicket, existing: Existing | null) {
+  const closedNow = t.status === 4 || t.status === 5
+  const fdResolvedAt = at(t.stats?.resolved_at)
+  const fdClosedAt = at(t.stats?.closed_at)
+  const fdReopenedAt = at(t.stats?.reopened_at)
+  const reopenedAdvanced = !!fdReopenedAt && (!existing?.fdReopenedAt || fdReopenedAt.getTime() > existing.fdReopenedAt.getTime())
+  const closedAt = closedNow ? (existing?.closedAt ?? fdResolvedAt ?? fdClosedAt ?? new Date(t.updated_at)) : (reopenedAdvanced ? null : existing?.closedAt ?? null)
   const data = {
+    fdFirstRespondedAt: at(t.stats?.first_responded_at),
+    fdResolvedAt,
+    fdClosedAt,
+    fdReopenedAt,
+    closedAt,
+    reopenCount: (existing?.reopenCount ?? 0) + (reopenedAdvanced ? 1 : 0),
     subject: t.subject ?? '',
     fdStatus: t.status,
     fdPriority: t.priority,
@@ -91,6 +107,13 @@ async function refreshTimestamps(ticketId: string) {
   return lastCustomer?.createdAt ?? null
 }
 
+async function detectReopen(ticketId: string, lastCustomerAt: Date | null) {
+  if (!lastCustomerAt) return
+  const t = await prisma.csTicket.findUnique({ where: { id: ticketId }, select: { closedAt: true, reopenCount: true, fdStatus: true } })
+  if (!t?.closedAt || lastCustomerAt.getTime() <= t.closedAt.getTime()) return
+  await prisma.csTicket.update({ where: { id: ticketId }, data: { reopenCount: t.reopenCount + 1, closedAt: t.fdStatus === 4 || t.fdStatus === 5 ? t.closedAt : null } })
+}
+
 export async function syncTickets(fd: FdLike, opts: { since?: string } = {}): Promise<{ seen: number; changed: string[]; cursor: string | null; partial?: boolean; error?: string }> {
   const settings = await getCsSettings()
   const since = opts.since ?? settings.syncUpdatedSince ?? new Date(Date.now() - DEFAULT_SINCE_DAYS * 86400_000).toISOString().replace(/\.\d{3}Z$/, 'Z')
@@ -104,13 +127,14 @@ export async function syncTickets(fd: FdLike, opts: { since?: string } = {}): Pr
     for (let page = 1; page <= 10; page++) {
       const batch = await fd.listTickets(since, page)
       for (const t of batch) {
-        const existing = await prisma.csTicket.findUnique({ where: { fdTicketId: t.id }, select: { id: true, orderNumber: true, fdUpdatedAt: true, lastCustomerAt: true } })
+        const existing = await prisma.csTicket.findUnique({ where: { fdTicketId: t.id }, select: { id: true, orderNumber: true, fdUpdatedAt: true, lastCustomerAt: true, closedAt: true, fdReopenedAt: true, reopenCount: true } })
         const moved = !existing || existing.fdUpdatedAt.getTime() !== new Date(t.updated_at).getTime()
         const convs = moved ? await fd.getConversations(t.id) : []
         seen += 1
         const ticket = await upsertTicket(t, existing)
         if (moved) await upsertConversations(ticket.id, convs, settings)
         const lastCustomerAt = await refreshTimestamps(ticket.id)
+        await detectReopen(ticket.id, lastCustomerAt)
         const grew = !existing || (lastCustomerAt?.getTime() ?? 0) > (existing.lastCustomerAt?.getTime() ?? 0)
         if (grew) changed.push(ticket.id)
         lastProcessed = t.updated_at

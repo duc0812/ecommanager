@@ -10,6 +10,7 @@ export type FdTicket = {
   description?: string
   requester?: { email?: string; name?: string }
   custom_fields?: { cf_order_id?: string | null }
+  stats?: { first_responded_at?: string | null; agent_responded_at?: string | null; resolved_at?: string | null; closed_at?: string | null; reopened_at?: string | null }
 }
 
 export type FdConversation = {
@@ -71,7 +72,7 @@ export class FreshdeskClient {
   listTickets(updatedSince: string, page = 1): Promise<FdTicket[]> {
     const q = new URLSearchParams({
       updated_since: updatedSince,
-      include: 'requester,description',
+      include: 'requester,description,stats',
       per_page: '100',
       order_by: 'updated_at',
       order_type: 'asc',

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { getAuthUser, unauthorized } from '@/lib/api-auth'
 import { defaultDeps } from '@/lib/cs/agent'
-import { sendStaffReply } from '@/lib/cs/actions'
+import { replySource, sendStaffReply } from '@/lib/cs/actions'
 
 export const dynamic = 'force-dynamic'
 
@@ -18,7 +18,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const deps = await defaultDeps()
   if (!deps) return NextResponse.json({ error: 'Chưa cấu hình Freshdesk API key' }, { status: 400 })
   try {
-    const message = await sendStaffReply(deps.fd, ticket, text, { private: isPrivate })
+    const latest = await prisma.csAnalysis.findFirst({ where: { ticketId: ticket.id }, orderBy: { runAt: 'desc' }, select: { draftReply: true } })
+    const source = isPrivate ? 'OWN' : replySource(text, latest?.draftReply ?? null)
+    const message = await sendStaffReply(deps.fd, ticket, text, { private: isPrivate, source })
     return NextResponse.json({ message })
   } catch (err: any) {
     return NextResponse.json({ error: `Freshdesk: ${err?.message ?? err}` }, { status: 502 })

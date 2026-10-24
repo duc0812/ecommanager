@@ -5,7 +5,7 @@ import { FreshdeskBudgetExceeded } from '@/lib/cs/freshdesk'
 import type { Analysis } from '@/lib/cs/analysis-schema'
 import type { Llm } from '@/lib/llm/anthropic'
 import { runAgentCycle } from '@/lib/cs/agent'
-import { dailyDigest, resendAlerts } from '@/lib/cs/actions'
+import { dailyDigest, replySource, resendAlerts, sendStaffReply } from '@/lib/cs/actions'
 import { saveCsSettings } from '@/lib/cs/settings'
 import ticketsPage from './fixtures/cs/tickets-page.json'
 import conversations119 from './fixtures/cs/conversations-119.json'
@@ -237,6 +237,24 @@ describe('runAgentCycle', () => {
     const run = await runAgentCycle({ ...d, llm, notifier: collector().notifier })
     expect(run.analysed).toBe(2)
     expect(run.error).toContain('boom')
+  })
+})
+
+describe('reply source', () => {
+  it('replySource tells unchanged, edited and own replies apart', () => {
+    expect(replySource('Hi\n\nthere ', 'Hi there')).toBe('DRAFT_UNCHANGED')
+    expect(replySource('Hi there!', 'Hi there')).toBe('DRAFT_EDITED')
+    expect(replySource('x', null)).toBe('OWN')
+  })
+  it('sendStaffReply stores the source', async () => {
+    const d = deps()
+    await runAgentCycle({ ...d, notifier: collector().notifier })
+    const ticket = await prisma.csTicket.findUnique({ where: { fdTicketId: 195 } })
+    const msg = await sendStaffReply(d.fd, ticket!, 'Hi, your order is on its way.\n\nLitzzy Support', { private: false, source: 'DRAFT_UNCHANGED' })
+    expect(msg.source).toBe('DRAFT_UNCHANGED')
+    expect(msg.author).toBe('STAFF')
+    const own = await sendStaffReply(d.fd, ticket!, 'Custom text', { private: false })
+    expect(own.source).toBe('OWN')
   })
 })
 
