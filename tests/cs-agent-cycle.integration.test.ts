@@ -40,6 +40,7 @@ const base: Analysis = {
 function fakeLlm(): Llm & { calls: number } {
   const llm = {
     calls: 0,
+    async complete(): Promise<any> { throw new Error('complete not used here') },
     async analyze({ user }: { user: string }) {
       llm.calls++
       const output: Analysis = user.includes('Ticket #119')
@@ -232,7 +233,7 @@ describe('runAgentCycle', () => {
 
   it('keeps going when one ticket analysis throws and records the error', async () => {
     const d = deps()
-    const llm: Llm = { async analyze(i) { if (i.user.includes('Ticket #194')) throw new Error('boom'); return d.llm.analyze(i) } }
+    const llm: Llm = { complete: d.llm.complete, async analyze(i) { if (i.user.includes('Ticket #194')) throw new Error('boom'); return d.llm.analyze(i) } }
     const run = await runAgentCycle({ ...d, llm, notifier: collector().notifier })
     expect(run.analysed).toBe(2)
     expect(run.error).toContain('boom')

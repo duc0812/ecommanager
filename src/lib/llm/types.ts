@@ -1,7 +1,12 @@
+import type { z } from 'zod'
 import type { Analysis } from '@/lib/cs/analysis-schema'
 
+export type StructuredInput<T> = { system: string; user: string; model: string; schema: z.ZodType<T>; schemaName: string }
+export type LlmResult<T> = { output: T; tokensIn: number; tokensOut: number }
+
 export type Llm = {
-  analyze(input: { system: string; user: string; model: string }): Promise<{ output: Analysis; tokensIn: number; tokensOut: number }>
+  complete<T>(input: StructuredInput<T>): Promise<LlmResult<T>>
+  analyze(input: { system: string; user: string; model: string }): Promise<LlmResult<Analysis>>
 }
 
 export type LlmProvider = 'anthropic' | 'kie'

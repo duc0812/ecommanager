@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { AnalysisSchema, type Analysis } from '@/lib/cs/analysis-schema'
-import { LlmError, type Llm } from '@/lib/llm/types'
+import { LlmError, type Llm, type StructuredInput } from '@/lib/llm/types'
 
 const KIE_RESPONSES_URL = 'https://api.kie.ai/openai/v1/responses'
 
@@ -49,8 +49,8 @@ export function analysisJsonSchema(): Record<string, unknown> {
 
 export function kieResponsesLlm(apiKey: string, extra: { fetch?: typeof fetch } = {}): Llm {
   const fetchImpl = extra.fetch ?? fetch
-  return {
-    async analyze({ system, user, model }) {
+  const llm: Llm = {
+    async complete<T>({ system, user, model, schema, schemaName }: StructuredInput<T>) {
       const res = await fetchImpl(KIE_RESPONSES_URL, {
         method: 'POST',
         headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
@@ -60,17 +60,19 @@ export function kieResponsesLlm(apiKey: string, extra: { fetch?: typeof fetch } 
           instructions: system,
           input: user,
           reasoning: { effort: 'low' },
-          text: { format: { type: 'json_schema', name: 'cs_analysis', strict: true, schema: analysisJsonSchema() } },
+          text: { format: { type: 'json_schema', name: schemaName, strict: true, schema: z.toJSONSchema(schema as any) } },
         }),
       })
       const body = await res.text()
       if (!res.ok && !body.trim().startsWith('{') && !body.trim().startsWith('event:')) throw new LlmError(`kie responses HTTP ${res.status}: ${body.slice(0, 200)}`)
       const { text, usage } = parseResponsesBody(body)
-      let parsed: Analysis
-      try { parsed = AnalysisSchema.parse(JSON.parse(text)) } catch (err: any) { throw new LlmError(`kie responses returned an unparsable analysis: ${err?.message ?? err}`) }
+      let parsed: T
+      try { parsed = schema.parse(JSON.parse(text)) } catch (err: any) { throw new LlmError(`kie responses returned an unparsable ${schemaName}: ${err?.message ?? err}`) }
       return { output: parsed, tokensIn: usage.input, tokensOut: usage.output }
     },
+    analyze: input => llm.complete<Analysis>({ ...input, schema: AnalysisSchema, schemaName: 'cs_analysis' }),
   }
+  return llm
 }
 
 export async function pingKieResponses(apiKey: string, model: string, extra: { fetch?: typeof fetch } = {}): Promise<{ ok: true } | { ok: false; error: string }> {

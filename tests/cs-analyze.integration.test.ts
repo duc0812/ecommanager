@@ -17,6 +17,7 @@ function fakeLlm(output: Partial<Analysis>): Llm & { calls: number } {
   }
   const llm = {
     calls: 0,
+    async complete(): Promise<any> { throw new Error('complete not used here') },
     async analyze() { llm.calls += 1; return { output: { ...base, ...output }, tokensIn: 100, tokensOut: 50 } },
   }
   return llm
