@@ -1,6 +1,6 @@
 # CS Insights & Staff Performance — Design
 
-Date: 2026-10-24 · Status: draft for builder check · Builds on `2026-10-23-customer-service-agent-design.md`
+Date: 2026-10-24 · Status: built (branch `feat/cs-insights`) · Builds on `2026-10-23-customer-service-agent-design.md`
 (Freshdesk sync, `CsTicket`/`CsMessage`/`CsAnalysis`, GPT 6.1 Sol via Kie, pages under `/cs`).
 
 ## 1. Intent
