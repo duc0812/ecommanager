@@ -4,7 +4,7 @@ import type { FdConversation, FdTicket, FreshdeskClient } from '@/lib/cs/freshde
 import type { Analysis } from '@/lib/cs/analysis-schema'
 import type { Llm } from '@/lib/llm/anthropic'
 import { runAgentCycle } from '@/lib/cs/agent'
-import { dailyDigest } from '@/lib/cs/actions'
+import { dailyDigest, resendAlerts } from '@/lib/cs/actions'
 import { saveCsSettings } from '@/lib/cs/settings'
 import ticketsPage from './fixtures/cs/tickets-page.json'
 import conversations119 from './fixtures/cs/conversations-119.json'
@@ -233,5 +233,22 @@ describe('dailyDigest', () => {
     const { texts, notifier } = collector()
     expect(await dailyDigest(notifier, 'http://app.test')).toBe(false)
     expect(texts).toHaveLength(0)
+  })
+})
+
+describe('resendAlerts', () => {
+  it('re-sends one alert per open needs-human ticket at a notify level, urgent first', async () => {
+    const mk = async (fdId: number, urgency: string, patch: Record<string, unknown> = {}) => {
+      const t = await prisma.csTicket.create({ data: { fdTicketId: fdId, subject: `s${fdId}`, fdStatus: 2, fdPriority: 1, urgency, needsHuman: true, orderNumber: `#LIT${fdId}`, fdCreatedAt: new Date(), fdUpdatedAt: new Date(), ...patch } })
+      await prisma.csAnalysis.create({ data: { ticketId: t.id, model: 'm', inputHash: 'h', outputJson: '{}', category: 'ORDER_STATUS', urgency, sentiment: 'CALM', summary: `sum${fdId}`, proposal: 'p', needsHuman: true } })
+      return t
+    }
+    await mk(11, 'HIGH'); await mk(12, 'URGENT'); await mk(13, 'NORMAL'); await mk(14, 'URGENT', { fdStatus: 5 }); await mk(15, 'HIGH', { needsHuman: false })
+    const { texts, notifier } = collector()
+    const r = await resendAlerts(notifier, 'http://app.test', { notifyLevels: ['URGENT', 'HIGH'] }, 0)
+    expect(r.sent).toBe(2)
+    expect(texts[0]).toContain('#LIT12')
+    expect(texts[1]).toContain('#LIT11')
+    expect(texts.join(' ')).not.toContain('#LIT13')
   })
 })

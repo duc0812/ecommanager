@@ -91,6 +91,7 @@ export const API_ACCESS_RULES: ApiRule[] = [
   { prefix: '/api/suppliers', methods: WRITE, access: ['fulfillment_suppliers'] },
   { prefix: '/api/tools/resources', access: ['tools_resources'] },
   { prefix: '/api/cs/settings', methods: WRITE, access: 'SUPERADMIN' },
+  { prefix: '/api/cs/notify', methods: WRITE, access: 'SUPERADMIN' },
   { prefix: '/api/cs', access: ['cs'] },
   { prefix: '/api/tools/telegram', methods: READ, access: ['tools_resources'] },
   { prefix: '/api/tools/telegram', methods: WRITE, access: 'SUPERADMIN' },

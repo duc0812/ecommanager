@@ -110,3 +110,26 @@ export async function dailyDigest(notifier: Notifier, appUrl: string): Promise<b
   await notifier([`<b>CS sáng nay</b> — ticket chờ xử lý`, ...lines, `<a href="${appUrl.replace(/\/$/, '')}/cs">Mở danh sách</a>`].join('\n'))
   return true
 }
+
+const URGENCY_ORDER: Record<string, number> = { URGENT: 0, HIGH: 1, NORMAL: 2, LOW: 3 }
+
+export async function resendAlerts(notifier: Notifier, appUrl: string, settings: Pick<CsSettings, 'notifyLevels'>, delayMs = 300): Promise<{ sent: number; failed: number }> {
+  const tickets = await prisma.csTicket.findMany({
+    where: { needsHuman: true, resolvedInTool: false, fdStatus: { notIn: [4, 5] }, urgency: { in: settings.notifyLevels } },
+    include: { analyses: { orderBy: { runAt: 'desc' }, take: 1 } },
+  })
+  const rows = tickets
+    .filter(t => t.analyses[0])
+    .sort((a, b) => (URGENCY_ORDER[a.urgency ?? ''] ?? 9) - (URGENCY_ORDER[b.urgency ?? ''] ?? 9) || (a.lastCustomerAt?.getTime() ?? 0) - (b.lastCustomerAt?.getTime() ?? 0))
+  let sent = 0
+  let failed = 0
+  for (const t of rows) {
+    const { analyses, ...ticket } = t
+    try {
+      await notifier(telegramText(analyses[0], ticket as CsTicket, appUrl))
+      sent += 1
+    } catch { failed += 1 }
+    if (delayMs) await new Promise(r => setTimeout(r, delayMs))
+  }
+  return { sent, failed }
+}

@@ -53,6 +53,15 @@ export default function CsSettingsPage() {
     setMessage(`Freshdesk: ${data.freshdesk.ok ? `OK (${data.freshdesk.tickets} ticket trong 1h)` : data.freshdesk.error} · Model: ${data.llm.ok ? 'OK' : data.llm.error}`)
   }
 
+  async function resend() {
+    setBusy('resend')
+    setMessage(null)
+    const res = await fetch('/api/cs/notify/resend', { method: 'POST' })
+    const data = await res.json().catch(() => ({}))
+    setBusy(null)
+    setMessage(res.ok ? `Đã gửi ${data.sent} thông báo${data.failed ? `, lỗi ${data.failed}` : ''}.` : (data.error ?? 'Không gửi được'))
+  }
+
   const toggleIn = (key: 'autoReplyCategories' | 'notifyLevels', value: string) => {
     const list = (form[key] ?? []) as string[]
     setForm({ ...form, [key]: list.includes(value) ? list.filter(x => x !== value) : [...list, value] })
@@ -149,6 +158,7 @@ export default function CsSettingsPage() {
                 ))}
               </div>
               <p className="text-label-sm text-on-surface-variant">Digest 09:00 mỗi sáng: số ticket chờ xử lý theo mức.</p>
+              <button onClick={resend} disabled={busy !== null} className="rounded-lg border border-outline-variant/40 px-lg py-sm text-label-md text-primary disabled:opacity-50">{busy === 'resend' ? 'Đang gửi…' : 'Bắn lại thông báo cho ticket đang chờ'}</button>
             </>)}
 
             {card('Lần chạy gần nhất', lastRun ? (
