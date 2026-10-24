@@ -10,7 +10,7 @@ export async function GET() {
   return NextResponse.json({ settings: toCsSettingsView(settings, secrets), lastRun: lastRun ? JSON.parse(lastRun.value) : null })
 }
 
-const PATCH_KEYS: (keyof CsSettings)[] = ['freshdeskDomain', 'llmProvider', 'model', 'pollEnabled', 'killSwitch', 'autoReplyEnabled', 'autoReplyCategories', 'autoReplyDailyCap', 'notifyLevels', 'productionDays', 'shippingDays']
+const PATCH_KEYS: (keyof CsSettings)[] = ['freshdeskDomain', 'llmProvider', 'model', 'pollEnabled', 'killSwitch', 'autoReplyEnabled', 'autoReplyCategories', 'autoReplyDailyCap', 'notifyLevels', 'productionDays', 'shippingDays', 'reviewEnabled', 'weeklyReport', 'reviewModel', 'llmDailyCallCap']
 
 export async function POST(req: NextRequest) {
   const auth = await requireSuperadmin(req)
