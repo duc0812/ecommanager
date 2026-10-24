@@ -97,6 +97,8 @@ export const API_ACCESS_RULES: ApiRule[] = [
   { prefix: '/api/tools/telegram', methods: READ, access: ['tools_resources'] },
   { prefix: '/api/tools/telegram', methods: WRITE, access: 'SUPERADMIN' },
   { prefix: '/api/tools/spy-idea', access: ['tools_spy_idea'] },
+  { prefix: '/api/tools/creative/settings', methods: WRITE, access: 'SUPERADMIN' },
+  { prefix: '/api/tools/creative', access: ['tools_creative'] },
   { prefix: '/api/trello/config', methods: READ, access: ['setup_store'] },
   { prefix: '/api/trello/config', methods: WRITE, access: 'SUPERADMIN' },
   { prefix: '/api/trello', access: ['fulfillment_orders', 'overview'] },
