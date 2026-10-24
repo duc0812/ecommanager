@@ -1428,3 +1428,22 @@ model CsDirective {
   fdNoteId      String?
   @@index([ticketId, resolvedAt])
 }
+
+model CreativeJob {
+  id             String    @id @default(cuid())
+  provider       String
+  model          String
+  prompt         String
+  inputJson      String    @default("{}")
+  refImages      String    @default("[]")
+  status         String    @default("queued")
+  providerTaskId String?
+  resultFiles    String    @default("[]")
+  error          String?
+  cost           String?
+  durationMs     Int?
+  createdBy      String?
+  createdAt      DateTime  @default(now())
+  completedAt    DateTime?
+  @@index([createdAt])
+}

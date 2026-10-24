@@ -53,6 +53,7 @@ const nav: NavEntry[] = [
   { type: 'group', label: 'Tools' },
   { type: 'child', href: '/tools/spy-idea', icon: 'travel_explore', label: 'Spy Idea' },
   { type: 'child', href: '/tools/resources', icon: 'dns', label: 'Resources' },
+  { type: 'child', href: '/tools/creative', icon: 'auto_awesome', label: 'Creative' },
   { type: 'divider' },
   { type: 'group', label: 'Setup' },
   { type: 'child', href: '/setup', icon: 'store', label: 'Store' },
