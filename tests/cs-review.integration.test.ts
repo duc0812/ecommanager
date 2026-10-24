@@ -31,7 +31,7 @@ function fakeLlm(build: (user: string) => any) {
 }
 
 beforeEach(async () => { await prisma.csTicket.deleteMany({}); await prisma.appSetting.deleteMany({ where: { key: { startsWith: 'cs.llmCalls.' } } }); await saveCsSettings({ llmDailyCallCap: 500 }) })
-afterAll(async () => { await prisma.csTicket.deleteMany({}) })
+afterAll(async () => { await prisma.csTicket.deleteMany({}); await saveCsSettings({ llmDailyCallCap: 500 }) })
 
 describe('reviewDue', () => {
   const now = T('2026-10-24T12:00:00Z')

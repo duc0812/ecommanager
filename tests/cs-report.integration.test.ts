@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { prisma } from '@/lib/db'
 import type { Llm } from '@/lib/llm/types'
 import { buildReportInput, generateReport } from '@/lib/cs/report'
+import { saveCsSettings } from '@/lib/cs/settings'
 
 const T = (iso: string) => new Date(iso)
 const period = { from: T('2026-10-19T17:00:00Z'), to: T('2026-10-25T16:59:59Z') }
@@ -10,6 +11,7 @@ beforeAll(async () => {
   await prisma.csTicket.deleteMany({})
   await prisma.csPerformanceReport.deleteMany({})
   await prisma.appSetting.deleteMany({ where: { key: { startsWith: 'cs.llmCalls.' } } })
+  await saveCsSettings({ llmDailyCallCap: 500 })
   const t = await prisma.csTicket.create({ data: { fdTicketId: 501, subject: 'rep', fdStatus: 5, fdPriority: 1, fdCreatedAt: T('2026-10-20T08:00:00Z'), fdUpdatedAt: T('2026-10-20T08:00:00Z'), lastCustomerAt: T('2026-10-20T08:00:00Z'), reviewedAt: T('2026-10-21T00:00:00Z') } })
   const c = await prisma.csMessage.create({ data: { ticketId: t.id, fdConversationId: 'rep-0', author: 'CUSTOMER', bodyText: 'wrong name', createdAt: T('2026-10-20T08:00:00Z'), sentiment: 'FRUSTRATED' } })
   const s = await prisma.csMessage.create({ data: { ticketId: t.id, fdConversationId: 'rep-1', author: 'STAFF', bodyText: 'Please send a photo of the label.', createdAt: T('2026-10-21T20:00:00Z') } })

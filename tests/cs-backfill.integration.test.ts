@@ -45,7 +45,7 @@ beforeEach(async () => {
   await prisma.appSetting.deleteMany({ where: { key: { startsWith: 'cs.llmCalls.' } } })
   await saveCsSettings({ llmDailyCallCap: 500 })
 })
-afterAll(async () => { await prisma.csTicket.deleteMany({}); await prisma.order.deleteMany({ where: { id: ORDER } }) })
+afterAll(async () => { await prisma.csTicket.deleteMany({}); await prisma.order.deleteMany({ where: { id: ORDER } }); await saveCsSettings({ llmDailyCallCap: 500 }) })
 
 describe('runReviewBackfill', () => {
   it('processes oldest first and resumes from progress', async () => {
