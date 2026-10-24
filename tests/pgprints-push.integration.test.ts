@@ -239,6 +239,21 @@ describe('preview payload', () => {
     expect(body.lines[0].shipClassSource).toBe('product')
   })
 
+  it('moves the part of address1 past 32 characters to address2, with a warning, and keeps short ones as they are', async () => {
+    const o = await makeOrder()
+    await prisma.order.update({ where: { id: o.id }, data: { shippingAddress1: '5173 Privateer Blvd Barataria, LA 70036', shippingAddress2: null } })
+    const pre = await (await preview(o.id)).json()
+    expect(pre.payload.shipping_address).toMatchObject({ address1: '5173 Privateer Blvd Barataria,', address2: 'LA 70036' })
+    expect(pre.issues).toContainEqual(expect.objectContaining({ level: 'warning', code: 'ADDRESS_SPLIT' }))
+    expect(pre.canPush).toBe(true)
+    await prisma.order.update({ where: { id: o.id }, data: { shippingAddress1: '1734 66 Street Brooklyn, Ny 11204', shippingAddress2: 'Apt 2' } })
+    const pre2 = await (await preview(o.id)).json()
+    expect(pre2.payload.shipping_address).toMatchObject({ address1: '1734 66 Street Brooklyn, Ny', address2: '11204, Apt 2' })
+    const short = await (await preview((await makeOrder()).id)).json()
+    expect(short.payload.shipping_address).toMatchObject({ address1: '12 Main St', address2: 'Apt 4' })
+    expect(short.issues.some((i: any) => i.code === 'ADDRESS_SPLIT')).toBe(false)
+  })
+
   it('a balance failure is a warning, not a block', async () => {
     handler = () => ({ status: 500, json: { success: false, message: 'down' } })
     const o = await makeOrder()

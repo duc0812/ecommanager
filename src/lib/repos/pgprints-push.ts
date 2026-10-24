@@ -8,7 +8,7 @@ import { logHandoffEvent, markPushExported } from '@/lib/repos/push-export'
 import { STATUS_LABELS, type PipelineStatus } from '@/lib/pipeline-status'
 import { retryOnBusy } from '@/lib/sqlite-busy'
 import { SHIPMENT_STATUS_FULFILLED, SHIPMENT_STATUS_PENDING } from '@/lib/tracking/build-shipments'
-import { countryCodeOf, countryNameOf, resolveStateCode, splitPersonName } from '@/lib/shipping-address'
+import { PGPRINTS_ADDRESS_LINE_MAX, countryCodeOf, countryNameOf, resolveStateCode, splitAddressLine, splitPersonName } from '@/lib/shipping-address'
 import { PublicUrlError, ensurePublicToken, isLineApproved, publicArtworkUrl, requirePublicBaseUrl } from '@/lib/public-artwork'
 import { credentialsOf, getPgprintsSettings } from '@/lib/pgprints-settings'
 import { expectedSize, printFileFit } from '@/lib/print-file-fit'
@@ -266,6 +266,8 @@ export async function buildPush(orderId: string, opts: { withBalance?: boolean }
     else if (countryCode === 'CA') warning('ADDRESS_STATE', `Không xác định được mã tỉnh bang Canada từ "${order.shippingState ?? ''}"`)
   }
   if (!phone) warning('ADDRESS_PHONE', 'Thiếu số điện thoại người nhận')
+  const addressLines = splitAddressLine(order.shippingAddress1 ?? '', order.shippingAddress2 ?? '')
+  if (addressLines.split) warning('ADDRESS_SPLIT', `Địa chỉ dòng 1 dài hơn ${PGPRINTS_ADDRESS_LINE_MAX} ký tự (giới hạn PGprints) — gửi "${addressLines.address1}" và chuyển phần còn lại xuống dòng 2: "${addressLines.address2}"`)
   if (!email) warning('ADDRESS_EMAIL', 'Thiếu email khách hàng')
 
   let payload: PgprintsOrderPayload | null = null
@@ -275,7 +277,7 @@ export async function buildPush(orderId: string, opts: { withBalance?: boolean }
       email,
       shipping_address: {
         first_name: shipName.first, last_name: shipName.last, name: fullName, email, phone,
-        address1: order.shippingAddress1?.trim() ?? '', address2: order.shippingAddress2?.trim() ?? '', company: '',
+        address1: addressLines.address1, address2: addressLines.address2, company: '',
         city: order.shippingCity?.trim() ?? '', zip: order.shippingZip?.trim() ?? '',
         province: order.shippingState?.trim() ?? '', province_code: stateCode ?? '',
         country: countryCode ? countryNameOf(countryCode) : (order.shippingCountry ?? ''), country_code: countryCode ?? '',

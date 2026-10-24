@@ -79,3 +79,20 @@ export function resolveStateCode(input: { countryCode: string | null; stateCode:
   if (stored) return stored.toUpperCase()
   return stateCodeFromName(input.countryCode, input.state)
 }
+
+export const PGPRINTS_ADDRESS_LINE_MAX = 32
+
+/**
+ * PGprints refuses an address1 longer than 32 characters. The overflow moves to the front of address2,
+ * cut at the last space that still fits (or hard at the limit when there is none).
+ */
+export function splitAddressLine(address1: string, address2: string, max = PGPRINTS_ADDRESS_LINE_MAX): { address1: string; address2: string; split: boolean } {
+  const a1 = address1.trim()
+  const a2 = address2.trim()
+  if (a1.length <= max) return { address1: a1, address2: a2, split: false }
+  const cut = a1.lastIndexOf(' ', max)
+  const at = cut > 0 ? cut : max
+  const head = a1.slice(0, at).trim()
+  const tail = a1.slice(at).trim()
+  return { address1: head, address2: [tail, a2].filter(Boolean).join(', '), split: true }
+}
