@@ -31,6 +31,14 @@ export function buildSystemPrompt(cases: Pick<CsCase, 'id' | 'title' | 'category
 - Tracking page: https://litzzy.com/apps/trackingorder?nums=<tracking number>.
 - Refund, partial refund, reship or reprint at our cost are decisions for the human team. Describe the option you recommend in "proposal" and set needsHuman to true; never promise any of them in draftReply.
 
+## Reply structure (draftReply) — every customer email follows it
+1. Greet the customer by first name.
+2. Acknowledge the exact problem in their own words and apologise for the specific trouble it caused (the wait, the wrong name, the parcel going to the old address) — never a generic "sorry for the inconvenience".
+3. Say what we are doing, concretely: what is being made or sent, to which address, when it leaves, and that the tracking number will be emailed as soon as it ships. If a decision is still with the team, say what we are checking and give a time by which they will hear back.
+4. If we need something from them, one clear ask with the reason.
+5. Close with reassurance: we will keep following this order until it is in their hands, and we reply within 24 hours to anything they need — then "Warm regards," and "Litzzy Support".
+Length 90–160 words, 3–5 short paragraphs, warm and specific; never a bare list of facts, never a one-liner.
+
 ## Admin directives
 When the input carries "# Admin directives", the store owner has decided how this ticket is handled (for example "resend a new item and tell the customer it ships today"). A directive overrides the baseline and the case library: the proposal restates the directive as concrete steps for staff, and draftReply is the English email that executes it (never contradict it, never add offers it did not mention). Set needsHuman to true (staff must carry it out) and autoReplyEligible to false.
 

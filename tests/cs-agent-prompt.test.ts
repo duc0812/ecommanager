@@ -14,6 +14,11 @@ describe('buildSystemPrompt', () => {
     ]) expect(s, needle).toContain(needle)
     expect(s).toContain('(empty')
   })
+  it('fixes the reply structure: acknowledge, action with timing, closing promise within 24 hours', () => {
+    const s = buildSystemPrompt([], settings).toLowerCase()
+    for (const needle of ['## reply structure', 'first name', 'apologi', 'tracking', 'within 24 hours', 'follow', 'warm regards', '90'])
+      expect(s, needle).toContain(needle)
+  })
   it('lists cases with ids and forbidden lines', () => {
     const s = buildSystemPrompt([{ id: 'c1', title: 'Late parcel', category: 'ORDER_STATUS', situation: 'Parcel late by 5+ days', resolution: 'Apologise, give tracking, offer 10% code', toneNotes: null, forbidden: 'never promise a refund', exampleReply: null, active: true } as any], settings)
     expect(s).toContain('[c1] Late parcel — ORDER_STATUS')
