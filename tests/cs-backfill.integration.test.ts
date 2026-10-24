@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterAll, beforeAll } from 'vitest'
 import { prisma } from '@/lib/db'
-import type { Llm } from '@/lib/llm/types'
+import { LlmError, type Llm } from '@/lib/llm/types'
 import { runReviewBackfill } from '@/lib/cs/backfill'
 import { saveCsSettings } from '@/lib/cs/settings'
 
@@ -72,6 +72,29 @@ describe('runReviewBackfill', () => {
     await runReviewBackfill({ llm, now: T('2026-10-24T12:00:00Z'), maxCalls: 5 })
     expect(llm.calls).toEqual(['cs_review'])
     expect((await prisma.csAnalysis.findFirst({ where: { ticketId: t.id } }))!.rootCauseStage).toBe('DESIGN')
+  })
+  it('still owns a closed ticket without an analysis even when the cycle already stamped reviewedAt', async () => {
+    const t = await mk(407, '2026-10-20T08:00:00Z', { reviewedAt: T('2026-10-23T00:00:00Z') })
+    const llm = fakeLlm()
+    const r = await runReviewBackfill({ llm, now: T('2026-10-24T12:00:00Z'), maxCalls: 5 })
+    expect(r.processed).toBe(1)
+    expect(llm.calls).toEqual(['cs_combined'])
+    expect((await prisma.csTicket.findUnique({ where: { id: t.id } }))!.category).toBe('WRONG_ITEM')
+  })
+  it('skips open tickets (the cycle triages them) and records a model error without blocking the batch', async () => {
+    await mk(408, '2026-10-20T08:00:00Z', { fdStatus: 2 })
+    const bad = await mk(409, '2026-10-21T08:00:00Z')
+    await mk(410, '2026-10-22T08:00:00Z')
+    const base = fakeLlm()
+    const llm: Llm = { analyze: base.analyze, async complete(i: any) { if (i.user.includes('#409')) throw new LlmError('unparsable'); return base.complete(i) } }
+    const r = await runReviewBackfill({ llm, now: T('2026-10-24T12:00:00Z'), maxCalls: 5 })
+    expect(r.processed).toBe(1)
+    expect(r.failed).toEqual([{ fdTicketId: 409, error: 'unparsable' }])
+    const badT = await prisma.csTicket.findUnique({ where: { id: bad.id }, include: { analyses: true } })
+    expect(badT!.reviewedAt).not.toBeNull()
+    expect(badT!.analyses[0].rootCauseStage).toBe('UNKNOWN')
+    expect((await prisma.csTicket.findUnique({ where: { fdTicketId: 408 } }))!.reviewedAt).toBeNull()
+    expect(r.remaining).toBe(0)
   })
   it('stops at the daily cap and reports it', async () => {
     await saveCsSettings({ llmDailyCallCap: 1 })

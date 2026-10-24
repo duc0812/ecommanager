@@ -107,8 +107,11 @@ export async function buildOrderTimeline(orderId: string, settings: Pick<CsSetti
     gaps.push({ name: 'handoff', days: d, budgetDays: HANDOFF_BUDGET_DAYS, late: d > HANDOFF_BUDGET_DAYS })
   }
   if (handoffAt) {
-    const d = daysBetween(handoffAt, firstScan ?? now)
-    gaps.push({ name: 'production', days: d, budgetDays: settings.productionDays, late: d > settings.productionDays })
+    if (!firstScan && shipments.length) gaps.push({ name: 'production', days: null, budgetDays: settings.productionDays, late: false })
+    else {
+      const d = daysBetween(handoffAt, firstScan ?? now)
+      gaps.push({ name: 'production', days: d, budgetDays: settings.productionDays, late: d > settings.productionDays })
+    }
   }
   if (firstScan) {
     const d = daysBetween(firstScan, delivered ? lastScan ?? now : now)

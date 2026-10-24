@@ -7,6 +7,7 @@ import { buildSystemPrompt, buildUserPrompt } from '@/lib/cs/agent-prompt'
 import { getCsSettings } from '@/lib/cs/settings'
 import { finalUrgency, ruleUrgency } from '@/lib/cs/triage'
 import { autoReplyGate, mentionsRefundAddressOrCancel } from '@/lib/cs/policy'
+import { withCap } from '@/lib/llm/cap'
 
 export function inputHashFor(messages: Pick<CsMessage, 'id' | 'author'>[], order: OrderContext): string {
   const parts = [
@@ -38,11 +39,11 @@ export async function analyzeTicket(ticketId: string, deps: { llm: Llm; now?: Da
 
   const settings = await getCsSettings()
   const cases = await prisma.csCase.findMany({ where: { active: true }, orderBy: { updatedAt: 'desc' } })
-  const { output, tokensIn, tokensOut } = await deps.llm.analyze({
+  const { output, tokensIn, tokensOut } = await withCap(settings.llmDailyCallCap, () => deps.llm.analyze({
     system: buildSystemPrompt(cases, settings),
     user: buildUserPrompt({ ticket, messages: ticket.messages, order, previous: ticket.analyses }),
     model: settings.model,
-  })
+  }), now)
 
   const customerCount = ticket.messages.filter(m => m.author === 'CUSTOMER').length
   const replies = ticket.messages.filter(m => (m.author === 'STAFF' || m.author === 'AGENT' || m.author === 'SYSTEM') && !m.private)

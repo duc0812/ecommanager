@@ -84,11 +84,10 @@ export async function reviewTicket(ticketId: string, deps: { llm: Llm; now?: Dat
 }
 
 export async function pendingReviews(limit: number, now: Date): Promise<string[]> {
-  const candidates = await prisma.csTicket.findMany({
-    where: { messages: { some: { author: { in: ['STAFF', 'AGENT'] }, private: false } } },
-    orderBy: { lastCustomerAt: 'asc' },
-    select: { id: true, fdStatus: true, reviewedAt: true, lastCustomerAt: true, lastReplyAt: true, messages: { where: { private: false, author: { in: ['STAFF', 'AGENT'] } }, orderBy: { createdAt: 'desc' }, take: 1, select: { createdAt: true } } },
-    take: 200,
-  })
-  return candidates.filter(t => reviewDue(t, t.messages[0]?.createdAt ?? null, now)).slice(0, limit).map(t => t.id)
+  const select = { id: true, fdStatus: true, reviewedAt: true, lastCustomerAt: true, lastReplyAt: true, messages: { where: { private: false, author: { in: ['STAFF', 'AGENT'] } }, orderBy: { createdAt: 'desc' as const }, take: 1, select: { createdAt: true } } }
+  const base = { analyses: { some: {} }, messages: { some: { author: { in: ['STAFF', 'AGENT'] }, private: false } } }
+  const fresh = await prisma.csTicket.findMany({ where: { ...base, reviewedAt: null }, orderBy: { lastCustomerAt: 'asc' }, select, take: 100 })
+  const again = await prisma.csTicket.findMany({ where: { ...base, reviewedAt: { not: null } }, orderBy: { updatedAt: 'desc' }, select, take: 100 })
+  const due = (rows: typeof fresh) => rows.filter(t => reviewDue(t, t.messages[0]?.createdAt ?? null, now)).map(t => t.id)
+  return [...due(fresh), ...due(again)].slice(0, limit)
 }

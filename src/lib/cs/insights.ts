@@ -108,7 +108,7 @@ export function insightsCsv(rows: InsightsRow[]): string {
   for (const r of rows) {
     lines.push([r.fdTicketId, r.orderNumber, r.stage, r.issueType, r.confidence, r.category, r.createdAt.toISOString().slice(0, 10), r.products.join(' | '), r.supplierId, r.evidence].map(csvCell).join(','))
   }
-  return lines.join('\n') + '\n'
+  return '\uFEFF' + lines.join('\n') + '\n'
 }
 
 export function parsePeriod(params: URLSearchParams, now = new Date()): { from: Date; to: Date } {

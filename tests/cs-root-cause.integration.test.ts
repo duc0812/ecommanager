@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { prisma } from '@/lib/db'
 import type { Llm } from '@/lib/llm/types'
-import { buildRootCausePrompt, investigateTicket, needsInvestigation } from '@/lib/cs/root-cause'
+import { buildRootCausePrompt, investigateTicket, needsInvestigation, pendingInvestigations } from '@/lib/cs/root-cause'
 import { buildOrderTimeline } from '@/lib/cs/timeline'
 
 const PROJECT = 'cs-rc-project'
@@ -70,6 +70,21 @@ describe('root cause', () => {
     expect(needsInvestigation({ ...a, category: 'PRODUCT_QUESTION' }, t, timeline)).toBe('SKIP')
     expect(needsInvestigation({ ...a, category: 'WRONG_ITEM' }, { ...t, orderMatch: 'NONE' }, null)).toBe('UNKNOWN')
     expect(needsInvestigation({ ...a, category: 'WRONG_ITEM', rootCauseAt: day(22) }, t, timeline)).toBe('SKIP')
+  })
+  it('pendingInvestigations stamps superseded analyses so they stop blocking the queue', async () => {
+    const { t, a } = await mkTicket(8105, 'WRONG_ITEM', ORDER, 'EXACT')
+    await prisma.csAnalysis.create({ data: { ticketId: t.id, model: 'm', inputHash: 'h2', outputJson: '{}', category: 'WRONG_ITEM', urgency: 'HIGH', sentiment: 'CALM', summary: 's', proposal: 'p', needsHuman: true, rootCauseAt: day(22), rootCauseStage: 'FACTORY', runAt: day(23) } })
+    const ids = await pendingInvestigations(5)
+    expect(ids).not.toContain(t.id)
+    expect((await prisma.csAnalysis.findUnique({ where: { id: a.id } }))!.rootCauseAt).not.toBeNull()
+  })
+  it('coerces a LATE_* issue type the timeline does not support', async () => {
+    const { t } = await mkTicket(8106, 'WRONG_ITEM', ORDER, 'EXACT')
+    const llm = fakeLlm({ ...rc, stage: 'DESIGN', issueType: 'LATE_DESIGN' })
+    const a = await investigateTicket(t.id, { llm, now: day(22) })
+    expect(a.issueType).toBe('OTHER')
+    expect(a.rootCauseConfidence).toBe('LOW')
+    expect(a.rootCauseEvidence).toContain('không có khâu nào trễ')
   })
   it('prompt carries the gap flags and the customer inputs', async () => {
     const { t } = await mkTicket(8104, 'WRONG_ITEM', ORDER, 'EXACT')

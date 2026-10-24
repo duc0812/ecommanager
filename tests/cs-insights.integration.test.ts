@@ -71,6 +71,7 @@ describe('insights', () => {
     const csv = insightsCsv(r.rows)
     const lines = csv.trim().split('\n')
     expect(lines).toHaveLength(3)
+    expect(csv.charCodeAt(0)).toBe(0xfeff)
     expect(lines[0]).toContain('ticket,order,stage')
     expect(lines[1]).toContain('"File ""duyệt"", in sai, lỗi xưởng"')
   })

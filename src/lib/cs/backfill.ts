@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { prisma } from '@/lib/db'
-import type { Llm } from '@/lib/llm/types'
+import { LlmError, type Llm } from '@/lib/llm/types'
 import { LlmCapReached, withCap } from '@/lib/llm/cap'
 import { getCsSettings } from '@/lib/cs/settings'
 import { CS_CATEGORIES, CS_SENTIMENTS, CS_URGENCIES } from '@/lib/cs/triage'
@@ -30,20 +30,29 @@ Also return: category (one of ${CS_CATEGORIES.join(', ')}), urgency (LOW/NORMAL/
 
 ${buildRootCausePrompt({ thread: '', timeline: '', category: 'OTHER', summary: '' }).system}`
 
-async function remainingCount(): Promise<number> {
-  return prisma.csTicket.count({ where: { reviewedAt: null, messages: { some: { author: { in: ['STAFF', 'AGENT'] }, private: false } } } })
+const CANDIDATE_WHERE = {
+  fdStatus: { in: [4, 5] },
+  messages: { some: { author: { in: ['STAFF', 'AGENT'] }, private: false } },
+  OR: [{ reviewedAt: null }, { analyses: { none: {} } }],
 }
 
-export async function runReviewBackfill(deps: { llm: Llm; now?: Date; maxCalls?: number }): Promise<{ processed: number; remaining: number; capReached: boolean }> {
+export async function remainingBackfill(): Promise<number> {
+  return prisma.csTicket.count({ where: CANDIDATE_WHERE })
+}
+
+export type BackfillResult = { processed: number; remaining: number; capReached: boolean; failed: { fdTicketId: number; error: string }[] }
+
+export async function runReviewBackfill(deps: { llm: Llm; now?: Date; maxCalls?: number }): Promise<BackfillResult> {
   const now = deps.now ?? new Date()
   const settings = await getCsSettings()
   const model = settings.reviewModel ?? settings.model
   const limit = deps.maxCalls ?? 20
   let processed = 0
   let capReached = false
+  const failed: { fdTicketId: number; error: string }[] = []
 
   const candidates = await prisma.csTicket.findMany({
-    where: { reviewedAt: null, messages: { some: { author: { in: ['STAFF', 'AGENT'] }, private: false } } },
+    where: CANDIDATE_WHERE,
     orderBy: { lastCustomerAt: 'asc' },
     take: limit,
     include: { messages: { orderBy: { createdAt: 'asc' } }, analyses: { orderBy: { runAt: 'desc' }, take: 1 } },
@@ -78,14 +87,25 @@ ${timeline ? formatTimeline(timeline) : '(no order matched — rootCause must be
         await applyReview(t, output.review, model, now)
       }
       processed += 1
-    } catch (err) {
+    } catch (err: any) {
       if (err instanceof LlmCapReached) { capReached = true; break }
-      throw err
+      failed.push({ fdTicketId: t.fdTicketId, error: err?.message ?? String(err) })
+      if (err instanceof LlmError) await markUnreviewable(t.id, model, now, err.message)
     }
   }
 
-  const remaining = await remainingCount()
-  const value = JSON.stringify({ ranAt: now.toISOString(), processed, remaining, capReached })
+  const remaining = await remainingBackfill()
+  const value = JSON.stringify({ ranAt: now.toISOString(), processed, remaining, capReached, failed })
   await prisma.appSetting.upsert({ where: { key: PROGRESS_KEY }, create: { key: PROGRESS_KEY, value }, update: { value } })
-  return { processed, remaining, capReached }
+  return { processed, remaining, capReached, failed }
+}
+
+async function markUnreviewable(ticketId: string, model: string, now: Date, error: string) {
+  const hasAnalysis = await prisma.csAnalysis.count({ where: { ticketId } })
+  if (!hasAnalysis) {
+    await prisma.csAnalysis.create({
+      data: { ticketId, model, inputHash: `backfill-error-${ticketId}`, outputJson: '{}', category: 'OTHER', urgency: 'LOW', sentiment: 'CALM', summary: 'Model không phân tích được ticket này (backfill).', proposal: '', needsHuman: false, gateJson: JSON.stringify({ allowed: false, reasons: ['backfill-error'] }), rootCauseStage: 'UNKNOWN', rootCauseConfidence: 'LOW', issueType: 'OTHER', rootCauseEvidence: `Lỗi model: ${error.slice(0, 200)}`, rootCauseAt: now },
+    })
+  }
+  await prisma.csTicket.update({ where: { id: ticketId }, data: { reviewedAt: now } })
 }

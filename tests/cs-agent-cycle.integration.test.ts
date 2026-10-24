@@ -64,6 +64,7 @@ function collector() {
 }
 
 async function clean() {
+  await prisma.appSetting.deleteMany({ where: { key: { startsWith: 'cs.llmCalls.' } } })
   await prisma.csTicket.deleteMany({})
   await prisma.csAgentRun.deleteMany({})
   await prisma.csCase.deleteMany({})
@@ -241,6 +242,19 @@ describe('runAgentCycle', () => {
     const run = await runAgentCycle({ ...d, llm, notifier: collector().notifier })
     expect(run.analysed).toBe(2)
     expect(run.error).toContain('boom')
+  })
+})
+
+describe('llm cap in the cycle', () => {
+  it('stops triage at the cap, reports it as partial and leaves tickets unanalysed', async () => {
+    await saveCsSettings({ llmDailyCallCap: 1 })
+    const d = deps()
+    const run = await runAgentCycle({ ...d, notifier: collector().notifier })
+    expect(run.analysed).toBe(1)
+    expect(run.error).toBeNull()
+    expect(run.partial).toContain('trần')
+    expect(await prisma.csTicket.count({ where: { lastAnalysisAt: null, fdStatus: { notIn: [4, 5] } } })).toBe(2)
+    await saveCsSettings({ llmDailyCallCap: 500 })
   })
 })
 

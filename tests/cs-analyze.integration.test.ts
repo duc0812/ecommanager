@@ -4,6 +4,7 @@ import { analyzeTicket } from '@/lib/cs/analyze'
 import type { Analysis } from '@/lib/cs/analysis-schema'
 import type { Llm } from '@/lib/llm/anthropic'
 import { saveCsSettings } from '@/lib/cs/settings'
+import { LlmCapReached } from '@/lib/llm/cap'
 
 const PROJECT = 'cs-an-project'
 const SHOP = 'cs-an.myshopify.com'
@@ -44,6 +45,7 @@ beforeEach(async () => {
   await prisma.csTicket.deleteMany({})
   await prisma.csCase.deleteMany({})
   await prisma.appSetting.deleteMany({ where: { key: 'cs.settings' } })
+  await prisma.appSetting.deleteMany({ where: { key: { startsWith: 'cs.llmCalls.' } } })
 })
 afterAll(async () => {
   await prisma.csTicket.deleteMany({})
@@ -51,6 +53,16 @@ afterAll(async () => {
 })
 
 describe('analyzeTicket', () => {
+  it('honours the daily cap before calling the model', async () => {
+    await saveCsSettings({ llmDailyCallCap: 0 })
+    const t = await makeTicket(7020, ['hello'])
+    const llm = fakeLlm({})
+    await expect(analyzeTicket(t.id, { llm })).rejects.toBeInstanceOf(LlmCapReached)
+    expect(llm.calls).toBe(0)
+    expect((await prisma.csTicket.findUnique({ where: { id: t.id } }))!.lastAnalysisAt).toBeNull()
+    await saveCsSettings({ llmDailyCallCap: 500 })
+  })
+
   it('stores CsAnalysis with rule-raised urgency and updates the ticket', async () => {
     const t = await makeTicket(7001, ['You are sending it to the wrong place, it should go to 12 Test St'])
     const llm = fakeLlm({})

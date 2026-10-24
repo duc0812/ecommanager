@@ -58,7 +58,8 @@ function responseSamples(tickets: Loaded[], isReply: (m: CsMessage) => boolean, 
     if (!firstCustomer) continue
     const firstReply = msgs.find(m => isReply(m) && m.createdAt > firstCustomer.createdAt)
     if (firstReply) {
-      const at = useStats && t.fdFirstRespondedAt && t.fdFirstRespondedAt > firstCustomer.createdAt ? t.fdFirstRespondedAt : firstReply.createdAt
+      const agentFirst = msgs.some(m => isAgentReply(m) && m.createdAt > firstCustomer.createdAt && m.createdAt < firstReply.createdAt)
+      const at = useStats && !agentFirst && t.fdFirstRespondedAt && t.fdFirstRespondedAt > firstCustomer.createdAt && t.fdFirstRespondedAt <= firstReply.createdAt ? t.fdFirstRespondedAt : firstReply.createdAt
       first.push({ ticketId: t.id, fdTicketId: t.fdTicketId, hours: round1((at.getTime() - firstCustomer.createdAt.getTime()) / H) })
     }
     const laterCustomers = msgs.filter(m => m.author === 'CUSTOMER' && m.createdAt > firstCustomer.createdAt)

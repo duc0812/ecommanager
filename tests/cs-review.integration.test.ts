@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterAll } from 'vitest'
 import { prisma } from '@/lib/db'
 import type { Llm } from '@/lib/llm/types'
-import { reviewDue, reviewTicket } from '@/lib/cs/review'
+import { pendingReviews, reviewDue, reviewTicket } from '@/lib/cs/review'
 import { LlmCapReached } from '@/lib/llm/cap'
 import { saveCsSettings } from '@/lib/cs/settings'
 
@@ -43,6 +43,25 @@ describe('reviewDue', () => {
     expect(reviewDue({ ...base, reviewedAt: T('2026-10-24T10:30:00Z') }, base.lastReplyAt, now)).toBe(true)
     expect(reviewDue({ ...base, fdStatus: 5, reviewedAt: T('2026-10-24T11:30:00Z') }, base.lastReplyAt, now)).toBe(false)
     expect(reviewDue({ ...base, fdStatus: 5 }, null, now)).toBe(false)
+  })
+})
+
+describe('pendingReviews', () => {
+  it('never picks a ticket that has no analysis (the backfill owns it) and still finds due tickets behind 200 reviewed ones', async () => {
+    const now = T('2026-10-24T12:00:00Z')
+    const untriaged = await mk(310, [{ author: 'CUSTOMER', at: '2026-10-01T08:00:00Z' }, { author: 'STAFF', at: '2026-10-01T09:00:00Z' }], { fdStatus: 5 })
+    for (let i = 0; i < 201; i++) {
+      const { t } = await mk(1000 + i, [{ author: 'CUSTOMER', at: '2026-10-02T08:00:00Z' }, { author: 'STAFF', at: '2026-10-02T09:00:00Z' }], { fdStatus: 5, reviewedAt: T('2026-10-03T00:00:00Z') })
+      await prisma.csAnalysis.create({ data: { ticketId: t.id, model: 'm', inputHash: 'h', outputJson: '{}', category: 'OTHER', urgency: 'LOW', sentiment: 'CALM', summary: 's', proposal: 'p', needsHuman: false } })
+    }
+    const { t: due } = await mk(311, [{ author: 'CUSTOMER', at: '2026-10-20T08:00:00Z' }, { author: 'STAFF', at: '2026-10-20T09:00:00Z' }], { fdStatus: 5 })
+    await prisma.csAnalysis.create({ data: { ticketId: due.id, model: 'm', inputHash: 'h', outputJson: '{}', category: 'OTHER', urgency: 'LOW', sentiment: 'CALM', summary: 's', proposal: 'p', needsHuman: false } })
+    const { t: newer } = await mk(312, [{ author: 'CUSTOMER', at: '2026-10-21T08:00:00Z' }, { author: 'STAFF', at: '2026-10-21T09:00:00Z' }, { author: 'STAFF', at: '2026-10-23T09:00:00Z' }], { fdStatus: 5, reviewedAt: T('2026-10-22T00:00:00Z') })
+    await prisma.csAnalysis.create({ data: { ticketId: newer.id, model: 'm', inputHash: 'h', outputJson: '{}', category: 'OTHER', urgency: 'LOW', sentiment: 'CALM', summary: 's', proposal: 'p', needsHuman: false } })
+    const ids = await pendingReviews(5, now)
+    expect(ids).toContain(due.id)
+    expect(ids).toContain(newer.id)
+    expect(ids).not.toContain(untriaged.t.id)
   })
 })
 

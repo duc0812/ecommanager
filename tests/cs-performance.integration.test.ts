@@ -48,17 +48,19 @@ beforeAll(async () => {
     { author: 'CUSTOMER', at: '2026-10-24T08:00:00Z', sentiment: 'ANGRY' },
   ], { fdStatus: 2, fdResolvedAt: T('2026-10-23T09:30:00Z'), reopenCount: 1 })
   await mk(6, [{ author: 'CUSTOMER', at: '2026-10-10T08:00:00Z', sentiment: 'CALM' }, { author: 'STAFF', at: '2026-10-10T09:00:00Z' }])
+  await mk(7, [{ author: 'CUSTOMER', at: '2026-10-24T08:00:00Z', sentiment: 'CALM' }, { author: 'AGENT', at: '2026-10-24T08:05:00Z' }, { author: 'STAFF', at: '2026-10-24T20:00:00Z' }], { fdFirstRespondedAt: T('2026-10-24T08:05:00Z') })
 })
 afterAll(async () => { await prisma.csTicket.deleteMany({}) })
 
 describe('computePerformance', () => {
   it('measures first and next response times for staff', async () => {
     const m = await computePerformance(period)
-    expect(m.tickets).toBe(5)
-    expect(m.staff.firstResponse.count).toBe(3)
-    expect(m.staff.firstResponse.medianH).toBe(2)
+    expect(m.tickets).toBe(6)
+    expect(m.staff.firstResponse.count).toBe(4)
+    expect(m.staff.firstResponse.worst.find(w => w.fdTicketId === 7)!.hours).toBe(12)
+    expect(m.staff.firstResponse.medianH).toBe(7)
     expect(m.staff.firstResponse.p90H).toBe(36)
-    expect(m.staff.firstResponse.over24hPct).toBeCloseTo(33.3, 0)
+    expect(m.staff.firstResponse.over24hPct).toBe(25)
     expect(m.staff.firstResponse.worst[0].fdTicketId).toBe(2)
     expect(m.staff.nextResponse.count).toBe(2)
     expect(m.staff.nextResponse.medianH).toBe(15.5)
@@ -66,7 +68,7 @@ describe('computePerformance', () => {
   it('counts replies per ticket excluding unchanged drafts', async () => {
     const m = await computePerformance(period)
     expect(m.staff.repliesPerTicket.over3).toEqual([{ ticketId: expect.any(String), fdTicketId: 2, replies: 4 }])
-    expect(m.staff.repliesPerTicket.mean).toBeCloseTo(2.33, 1)
+    expect(m.staff.repliesPerTicket.mean).toBeCloseTo(2, 1)
     expect(m.staff.draftUnchanged).toBe(1)
   })
   it('counts premature closes with the reopening sentiment', async () => {
@@ -79,7 +81,7 @@ describe('computePerformance', () => {
     expect(m.staff.sentimentAfterReply).toMatchObject({ improved: 1, same: 0, worse: 2 })
     expect(m.staff.sentimentAfterReply.worseItems.map(w => w.fdTicketId).sort()).toEqual([2, 5])
     expect(m.agent.sentimentAfterReply).toMatchObject({ improved: 0, same: 2, worse: 0 })
-    expect(m.agent.firstResponse.count).toBe(2)
+    expect(m.agent.firstResponse.count).toBe(3)
   })
   it('weekBounds returns Monday 00:00 VN to Sunday 23:59:59 VN', () => {
     const w = weekBounds(new Date('2026-10-24T03:00:00Z'))

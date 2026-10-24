@@ -62,6 +62,18 @@ describe('buildOrderTimeline', () => {
     expect(text).toContain('LATE')
     expect(text).toContain('Name = "Laurance"')
   })
+  it('does not call production late when a shipment exists but has no scan yet', async () => {
+    const C = 'cs-tl-order-c'
+    const storeId = (await prisma.shopifyStore.findUnique({ where: { shop: SHOP } }))!.id
+    await prisma.order.create({ data: { id: C, projectId: PROJECT, storeId, shopifyOrderNumber: '#LIT8003', financialStatus: 'PAID', currency: 'USD', grossAmount: 10, expectedPayout: 9, placedAt: T0, exportedAt: day(1),
+      shipments: { create: [{ projectId: PROJECT, lineKey: '8003_1', trackingNumber: 'TLC1', status: 'DELIVERED' }] } } })
+    const t = (await buildOrderTimeline(C, settings, day(40)))!
+    const prod = t.gaps.find(g => g.name === 'production')!
+    expect(prod.days).toBeNull()
+    expect(prod.late).toBe(false)
+    expect(formatTimeline(t)).toContain('production ?')
+    await prisma.order.delete({ where: { id: C } })
+  })
   it('returns null for an unknown order', async () => {
     expect(await buildOrderTimeline('nope', settings)).toBeNull()
   })

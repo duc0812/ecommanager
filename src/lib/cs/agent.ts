@@ -8,6 +8,7 @@ import { analysisHash, autoReply, notify, writeBack, type Notifier } from '@/lib
 import { getCsSecrets, getCsSettings } from '@/lib/cs/settings'
 import { investigateTicket, pendingInvestigations } from '@/lib/cs/root-cause'
 import { LlmCapReached, withCap } from '@/lib/llm/cap'
+import { LlmError } from '@/lib/llm/types'
 import { pendingReviews, reviewTicket } from '@/lib/cs/review'
 import { sendTelegramMessage } from '@/lib/telegram'
 
@@ -79,26 +80,29 @@ export async function runAgentCycle(deps: CycleDeps, opts: { ticketIds?: string[
           }
         } catch (err: any) {
           if (err instanceof FreshdeskBudgetExceeded) { errors.push(err.message); break }
+          if (err instanceof LlmCapReached) { partialNote = `đã chạm trần ${settings.llmDailyCallCap} lần gọi model hôm nay`; console.warn('[cs] llm daily cap reached'); break }
           errors.push(`ticket ${id}: ${err?.message ?? String(err)}`)
         }
       }
     }
-    if (deps.llm && !opts.ticketIds) {
+    if (deps.llm && !opts.ticketIds && !partialNote) {
       for (const id of await pendingInvestigations(INVESTIGATIONS_PER_CYCLE)) {
         try {
-          await withCap(settings.llmDailyCallCap, () => investigateTicket(id, { llm: deps.llm!, now }), now)
+          await investigateTicket(id, { llm: deps.llm!, now })
         } catch (err: any) {
-          if (err instanceof LlmCapReached) { errors.push(err.message); console.warn('[cs] llm daily cap reached'); break }
+          if (err instanceof LlmCapReached) { partialNote = `đã chạm trần ${settings.llmDailyCallCap} lần gọi model hôm nay`; console.warn('[cs] llm daily cap reached'); break }
           errors.push(`root cause ${id}: ${err?.message ?? String(err)}`)
+          if (err instanceof LlmError) await prisma.csAnalysis.updateMany({ where: { ticketId: id, rootCauseAt: null }, data: { rootCauseAt: now, rootCauseStage: 'UNKNOWN', rootCauseConfidence: 'LOW', issueType: 'OTHER', rootCauseEvidence: `Lỗi model: ${err.message.slice(0, 200)}` } })
         }
       }
-      if (settings.reviewEnabled) {
+      if (settings.reviewEnabled && !partialNote) {
         for (const id of await pendingReviews(REVIEWS_PER_CYCLE, now)) {
           try {
             await reviewTicket(id, { llm: deps.llm, now })
           } catch (err: any) {
-            if (err instanceof LlmCapReached) { errors.push(err.message); console.warn('[cs] llm daily cap reached'); break }
+            if (err instanceof LlmCapReached) { partialNote = `đã chạm trần ${settings.llmDailyCallCap} lần gọi model hôm nay`; console.warn('[cs] llm daily cap reached'); break }
             errors.push(`review ${id}: ${err?.message ?? String(err)}`)
+            if (err instanceof LlmError) await prisma.csTicket.update({ where: { id }, data: { reviewedAt: now } })
           }
         }
       }

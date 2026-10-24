@@ -48,7 +48,7 @@ async function upsertTicket(t: FdTicket, existing: Existing | null) {
   const fdClosedAt = at(t.stats?.closed_at)
   const fdReopenedAt = at(t.stats?.reopened_at)
   const reopenedAdvanced = !!fdReopenedAt && (!existing?.fdReopenedAt || fdReopenedAt.getTime() > existing.fdReopenedAt.getTime())
-  const closedAt = closedNow ? (existing?.closedAt ?? fdResolvedAt ?? fdClosedAt ?? new Date(t.updated_at)) : (reopenedAdvanced ? null : existing?.closedAt ?? null)
+  const closedAt = closedNow ? ((reopenedAdvanced || !existing?.closedAt) ? (fdResolvedAt ?? fdClosedAt ?? new Date(t.updated_at)) : existing.closedAt) : (reopenedAdvanced ? null : existing?.closedAt ?? null)
   const data = {
     fdFirstRespondedAt: at(t.stats?.first_responded_at),
     fdResolvedAt,
@@ -107,6 +107,11 @@ async function refreshTimestamps(ticketId: string) {
   return lastCustomer?.createdAt ?? null
 }
 
+function reopenedAdvanced(t: FdTicket, existing: { fdReopenedAt: Date | null }): boolean {
+  const r = at(t.stats?.reopened_at)
+  return !!r && (!existing.fdReopenedAt || r.getTime() > existing.fdReopenedAt.getTime())
+}
+
 async function detectReopen(ticketId: string, lastCustomerAt: Date | null) {
   if (!lastCustomerAt) return
   const t = await prisma.csTicket.findUnique({ where: { id: ticketId }, select: { closedAt: true, reopenCount: true, fdStatus: true } })
@@ -134,9 +139,9 @@ export async function syncTickets(fd: FdLike, opts: { since?: string } = {}): Pr
         const ticket = await upsertTicket(t, existing)
         if (moved) await upsertConversations(ticket.id, convs, settings)
         const lastCustomerAt = await refreshTimestamps(ticket.id)
-        await detectReopen(ticket.id, lastCustomerAt)
         const grew = !existing || (lastCustomerAt?.getTime() ?? 0) > (existing.lastCustomerAt?.getTime() ?? 0)
         if (grew) changed.push(ticket.id)
+        if (grew && existing && !reopenedAdvanced(t, existing)) await detectReopen(ticket.id, lastCustomerAt)
         lastProcessed = t.updated_at
       }
       if (batch.length < 100) break

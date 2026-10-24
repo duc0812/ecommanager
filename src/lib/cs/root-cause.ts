@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db'
 import type { CsAnalysis, CsTicket } from '@/generated/prisma/client'
 import type { Llm } from '@/lib/llm/types'
 import { getCsSettings } from '@/lib/cs/settings'
+import { withCap } from '@/lib/llm/cap'
 import { buildOrderTimeline, formatTimeline, type OrderTimeline } from '@/lib/cs/timeline'
 import { buildRootCausePrompt, ISSUE_TYPES, STAGES } from '@/lib/cs/root-cause-prompt'
 import type { CsCategory } from '@/lib/cs/triage'
@@ -51,11 +52,22 @@ export async function investigateTicket(ticketId: string, deps: { llm: Llm; now?
     .map(m => `[${m.author} ${fmtDateTime(m.createdAt)}]\n${m.bodyText.trim() || '(empty)'}`)
     .join('\n\n')
   const { system, user } = buildRootCausePrompt({ thread, timeline: formatTimeline(timeline!), category: analysis.category as CsCategory, summary: analysis.summary })
-  const { output } = await deps.llm.complete<RootCause>({ system, user, model: settings.reviewModel ?? settings.model, schema: RootCauseSchema, schemaName: 'root_cause' })
+  const { output } = await withCap(settings.llmDailyCallCap, () => deps.llm.complete<RootCause>({ system, user, model: settings.reviewModel ?? settings.model, schema: RootCauseSchema, schemaName: 'root_cause' }), now)
+  const fixed = coerceLateIssue(output, timeline!)
   return prisma.csAnalysis.update({
     where: { id: analysis.id },
-    data: { rootCauseStage: output.stage, issueType: output.issueType, rootCauseConfidence: output.confidence, rootCauseEvidence: output.evidence, affectedLineIds: JSON.stringify(output.affectedLineIds), rootCauseAt: now },
+    data: { rootCauseStage: fixed.stage, issueType: fixed.issueType, rootCauseConfidence: fixed.confidence, rootCauseEvidence: fixed.evidence, affectedLineIds: JSON.stringify(fixed.affectedLineIds), rootCauseAt: now },
   })
+}
+
+const LATE_GAP: Record<string, string> = { LATE_DESIGN: 'design', LATE_HANDOFF: 'handoff', LATE_PRODUCTION: 'production', LATE_SHIPPING: 'transit' }
+
+export function coerceLateIssue(o: RootCause, timeline: OrderTimeline): RootCause {
+  const gap = LATE_GAP[o.issueType]
+  if (!gap) return o
+  const supported = timeline.gaps.some(g => (g.name === gap || (gap === 'transit' && g.name === 'stalled')) && g.late)
+  if (supported) return o
+  return { ...o, issueType: 'OTHER', confidence: 'LOW', evidence: `${o.evidence}\n(Model chọn ${o.issueType} nhưng timeline không có khâu nào trễ tương ứng — đã hạ xuống OTHER.)` }
 }
 
 export async function pendingInvestigations(limit: number): Promise<string[]> {
@@ -65,13 +77,16 @@ export async function pendingInvestigations(limit: number): Promise<string[]> {
     select: { ticketId: true, id: true },
     take: limit * 3,
   })
-  const latest = new Set<string>()
+  const seen = new Set<string>()
   const out: string[] = []
   for (const r of rows) {
-    if (latest.has(r.ticketId)) continue
+    if (seen.has(r.ticketId)) continue
+    seen.add(r.ticketId)
     const newest = await prisma.csAnalysis.findFirst({ where: { ticketId: r.ticketId }, orderBy: { runAt: 'desc' }, select: { id: true } })
-    if (newest?.id !== r.id) continue
-    latest.add(r.ticketId)
+    if (newest?.id !== r.id) {
+      await prisma.csAnalysis.update({ where: { id: r.id }, data: { rootCauseAt: new Date() } })
+      continue
+    }
     out.push(r.ticketId)
     if (out.length >= limit) break
   }
