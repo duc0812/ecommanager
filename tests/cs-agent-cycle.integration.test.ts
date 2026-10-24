@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { prisma } from '@/lib/db'
 import type { FdConversation, FdTicket, FreshdeskClient } from '@/lib/cs/freshdesk'
+import { FreshdeskBudgetExceeded } from '@/lib/cs/freshdesk'
 import type { Analysis } from '@/lib/cs/analysis-schema'
 import type { Llm } from '@/lib/llm/anthropic'
 import { runAgentCycle } from '@/lib/cs/agent'
@@ -197,6 +198,26 @@ describe('runAgentCycle', () => {
     expect(update194.payload.custom_fields).toBeUndefined()
     const update195 = d.fd.calls.find(c => c.kind === 'update' && c.id === 195)!
     expect(update195.payload.custom_fields).toEqual({ cf_order_id: '#LIT3910' })
+  })
+
+  it('finishes the write-back and alert of a ticket whose first cycle ran out of Freshdesk budget', async () => {
+    const d = deps()
+    const { texts, notifier } = collector()
+    const realNote = d.fd.note.bind(d.fd)
+    let cut = true
+    d.fd.note = async (id: number, body: string) => {
+      if (cut && id === 119) { cut = false; throw new FreshdeskBudgetExceeded(25) }
+      return realNote(id, body)
+    }
+    const run1 = await runAgentCycle({ ...d, notifier })
+    expect(run1.error).toContain('budget')
+    expect(d.fd.calls.some(c => c.kind === 'note' && c.id === 119)).toBe(false)
+    expect(d.llm.calls).toBe(1)
+    const run2 = await runAgentCycle({ ...d, notifier })
+    expect(d.llm.calls).toBe(3)
+    expect(d.fd.calls.some(c => c.kind === 'note' && c.id === 119)).toBe(true)
+    expect(texts.filter(t => t.includes('#LIT4525'))).toHaveLength(1)
+    expect(run2.error).toBeNull()
   })
 
   it('never analyses closed or resolved tickets', async () => {

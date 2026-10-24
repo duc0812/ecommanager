@@ -46,8 +46,9 @@ export async function runAgentCycle(deps: CycleDeps, opts: { ticketIds?: string[
     else if (opts.force) targets = open
     else {
       const changed = sync.changed.filter(id => open.includes(id))
-      const retry = (await prisma.csTicket.findMany({ where: { id: { in: open, notIn: changed }, lastAnalysisAt: null }, orderBy: { lastCustomerAt: 'asc' }, take: RETRY_PER_CYCLE, select: { id: true } })).map(t => t.id)
-      targets = [...changed, ...retry]
+      const pendingWriteBack = (await prisma.csTicket.findMany({ where: { id: { in: open, notIn: changed }, lastAnalysisAt: { not: null }, lastNoteHash: null }, orderBy: { lastAnalysisAt: 'asc' }, take: RETRY_PER_CYCLE, select: { id: true } })).map(t => t.id)
+      const retry = (await prisma.csTicket.findMany({ where: { id: { in: open, notIn: [...changed, ...pendingWriteBack] }, lastAnalysisAt: null }, orderBy: { lastCustomerAt: 'asc' }, take: RETRY_PER_CYCLE, select: { id: true } })).map(t => t.id)
+      targets = [...changed, ...pendingWriteBack, ...retry]
     }
 
     if (deps.llm) {
@@ -56,10 +57,11 @@ export async function runAgentCycle(deps: CycleDeps, opts: { ticketIds?: string[
           const before = await prisma.csTicket.findUniqueOrThrow({ where: { id } })
           const analysis = await analyzeTicket(id, { llm: deps.llm, now, force: opts.force })
           const fresh = analysis.runAt.getTime() >= run.startedAt.getTime()
-          if (!fresh && !opts.ticketIds) continue
-          analysed += fresh ? 1 : 0
           const ticket = await prisma.csTicket.findUniqueOrThrow({ where: { id } })
-          const shouldNotify = settings.notifyLevels.includes(analysis.urgency) && ticket.lastNoteHash !== analysisHash(analysis, ticket.orderNumber)
+          const writeBackPending = ticket.lastNoteHash !== analysisHash(analysis, ticket.orderNumber)
+          if (!fresh && !writeBackPending && !opts.ticketIds) continue
+          analysed += fresh ? 1 : 0
+          const shouldNotify = settings.notifyLevels.includes(analysis.urgency) && writeBackPending
           await writeBack(deps.fd, ticket, analysis, settings, deps.appUrl)
           if (shouldNotify) {
             try { await notify(deps.notifier, { ...ticket, lastNoteHash: null }, analysis, settings, deps.appUrl) }
