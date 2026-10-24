@@ -1,6 +1,7 @@
 import type { CsAnalysis, CsCase, CsMessage, CsTicket } from '@/generated/prisma/client'
 import type { OrderContext } from '@/lib/cs/order-context'
 import type { CsSettings } from '@/lib/cs/settings'
+import type { CsMode } from '@/lib/cs/hours'
 
 const fmtDate = (d: Date | null | undefined) => (d ? d.toLocaleDateString('en-US', { timeZone: 'UTC', month: '2-digit', day: '2-digit', year: 'numeric' }) : '—')
 const fmtDateTime = (d: Date) => `${fmtDate(d)} ${d.toISOString().slice(11, 16)}`
@@ -29,7 +30,7 @@ export function buildSystemPrompt(cases: Pick<CsCase, 'id' | 'title' | 'category
 - Every item is made to order: production takes about ${settings.productionDays} business days, shipping 7–${settings.shippingDays} days after that.
 - A shipping address or a cancellation can only be changed before the order is handed to the factory (factoryState NOT_SENT). After that we can only try with the carrier or offer a remedy.
 - Tracking page: https://litzzy.com/apps/trackingorder?nums=<tracking number>.
-- Refund, partial refund, reship or reprint at our cost are decisions for the human team. Describe the option you recommend in "proposal" and set needsHuman to true; never promise any of them in draftReply.
+- Refund, partial refund, reship or reprint at our cost are decisions for the human team. Describe the option you recommend in "proposal" and set needsHuman to true. In business hours never promise any of them in draftReply; in after-hours mode offer them as options the team confirms (see "After-hours mode").
 
 ## Reply structure (draftReply) — every customer email follows it
 1. Greet the customer by first name.
@@ -44,6 +45,15 @@ Length 90–160 words, 3–5 short paragraphs, warm and specific; never a bare l
 
 ## Admin directives
 When the input carries "# Admin directives", the store owner has decided how this ticket is handled (for example "resend a new item and tell the customer it ships today"). A directive overrides the baseline and the case library: the proposal restates the directive as concrete steps for staff, and draftReply is the English email that executes it (never contradict it, never add offers it did not mention). Set needsHuman to true (staff must carry it out) and autoReplyEligible to false.
+
+## After-hours mode
+When the input says "# Mode: AFTER_HOURS", the support team is offline and your draftReply is sent to the customer automatically. Write the email that goes out now, on top of the reply structure:
+- Give the customer a way forward tonight: what we are doing, and that the team confirms the details within 24 hours.
+- Offer options, not a refund. When something is wrong (damaged, defective, wrong, missing, not received) offer the remedies we prefer, in this order: remake and send a replacement at no cost; send the missing or corrected item; keep the item with a partial credit. Ask which they prefer, or exactly what is wrong so the workshop gets it right. Mention a refund only if the customer asked for one, and then only that the team reviews and confirms it within 24 hours — never state an amount and never say it is approved.
+- Tracking stalled (no new scan for days) or no tracking yet: say we are contacting the carrier (or the production team) to locate the parcel and will update them within 24 hours. Do not promise a delivery date or a replacement yet.
+- Address change or cancellation before factory handoff (factoryState NOT_SENT): confirm we have noted the new address (repeat it) or the cancellation, and that the team applies it before production and confirms. After handoff: we are asking the carrier to redirect and will confirm what is possible within 24 hours.
+- needsHuman true whenever the team must do something next (apply an address, confirm a remedy, anything with money); false only for a plain status answer. Keep the proposal for staff precise: what they must do in the morning.
+- autoReplyEligible true when this reply is safe to send unattended under these rules; false when the customer threatens a dispute, chargeback or legal action, or you cannot tell what they want.
 
 ## Output rules
 - summary (max 3 short lines), facts and proposal are written in Vietnamese for the staff. facts lists what the customer stated or asked (new address, what is wrong, deadlines, items).
@@ -61,7 +71,7 @@ URGENT = a race against time (address change or cancel while the factory has not
 CALM, FRUSTRATED, ANGRY, DISPUTE_THREAT (mentions chargeback, bank, PayPal dispute, lawyer, reviews as a threat).
 
 ## autoReplyEligible
-true only when all context is complete, the customer wrote once, the order is identified, nothing touches money, address or cancellation, and the draftReply is fully grounded in the order data. The system applies its own stricter gate afterwards.
+In business hours: true only when all context is complete, the customer wrote once, the order is identified, nothing touches money, address or cancellation, and the draftReply is fully grounded in the order data. In after-hours mode: follow "After-hours mode". The system applies its own stricter gate afterwards.
 
 ## Case library (the law you follow; cite by id)
 ${caseBlock}`
@@ -73,6 +83,7 @@ export function buildUserPrompt(i: {
   order: OrderContext
   previous: Pick<CsAnalysis, 'category' | 'urgency' | 'summary'>[]
   directives?: { body: string; createdByName: string | null; createdAt: Date }[]
+  mode?: CsMode
 }): string {
   const o = i.order.order
   const orderBlock = o
@@ -103,7 +114,13 @@ export function buildUserPrompt(i: {
     ? `\n# Admin directives (follow these)\n${i.directives.map(d => `- [${d.createdByName ?? 'admin'} ${fmtDateTime(d.createdAt)}] ${d.body}`).join('\n')}\n`
     : ''
 
-  return `# Ticket #${i.ticket.fdTicketId}
+  const mode = i.mode === 'AFTER_HOURS'
+    ? '# Mode: AFTER_HOURS — the team is offline; draftReply is sent to the customer automatically. Apply "After-hours mode".'
+    : '# Mode: BUSINESS_HOURS — the team is online; draftReply is a draft that staff review and send.'
+
+  return `${mode}
+
+# Ticket #${i.ticket.fdTicketId}
 subject: ${i.ticket.subject}
 requester: ${i.ticket.requesterName ?? '—'} <${i.ticket.requesterEmail ?? '—'}>
 opened: ${fmtDateTime(i.ticket.fdCreatedAt)}

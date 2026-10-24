@@ -4,7 +4,8 @@ import { FreshdeskBudgetExceeded, FreshdeskClient } from '@/lib/cs/freshdesk'
 import { llmFor, pickLlmKey, type Llm } from '@/lib/llm/anthropic'
 import { syncTickets } from '@/lib/cs/sync'
 import { analyzeTicket } from '@/lib/cs/analyze'
-import { analysisHash, autoReply, notify, writeBack, type Notifier } from '@/lib/cs/actions'
+import { afterHoursText, analysisHash, autoReply, notify, writeBack, type Notifier } from '@/lib/cs/actions'
+import { effectiveMode } from '@/lib/cs/hours'
 import { getCsSecrets, getCsSettings } from '@/lib/cs/settings'
 import { investigateTicket, pendingInvestigations } from '@/lib/cs/root-cause'
 import { LlmCapReached, withCap } from '@/lib/llm/cap'
@@ -18,6 +19,7 @@ const LAST_RUN_KEY = 'last_cs_run_result'
 const RETRY_PER_CYCLE = 10
 const INVESTIGATIONS_PER_CYCLE = 5
 const REVIEWS_PER_CYCLE = 5
+const WAITING_PER_CYCLE = 10
 
 export async function defaultDeps(): Promise<CycleDeps | null> {
   const [settings, secrets] = await Promise.all([getCsSettings(), getCsSecrets()])
@@ -28,6 +30,20 @@ export async function defaultDeps(): Promise<CycleDeps | null> {
     notifier: text => sendTelegramMessage(text),
     appUrl: process.env.NEXT_PUBLIC_APP_URL ?? '',
   }
+}
+
+async function waitingForAfterHours(open: string[], exclude: string[], take: number): Promise<string[]> {
+  const rows = await prisma.csTicket.findMany({
+    where: { id: { in: open, notIn: exclude }, lastCustomerAt: { not: null }, lastAnalysisAt: { not: null } },
+    select: { id: true, lastCustomerAt: true, lastReplyAt: true, analyses: { orderBy: { runAt: 'desc' }, take: 1, select: { gateJson: true } } },
+    orderBy: { lastCustomerAt: 'asc' },
+  })
+  const modeOf = (gateJson?: string) => { try { return JSON.parse(gateJson || '{}').mode } catch { return undefined } }
+  return rows
+    .filter(r => !r.lastReplyAt || r.lastReplyAt.getTime() < r.lastCustomerAt!.getTime())
+    .filter(r => modeOf(r.analyses[0]?.gateJson) !== 'AFTER_HOURS')
+    .slice(0, take)
+    .map(r => r.id)
 }
 
 export async function runAgentCycle(deps: CycleDeps, opts: { ticketIds?: string[]; force?: boolean; autoReply?: boolean } = {}): Promise<CsAgentRun> {
@@ -41,6 +57,7 @@ export async function runAgentCycle(deps: CycleDeps, opts: { ticketIds?: string[
 
   try {
     const settings = await getCsSettings()
+    const mode = effectiveMode(now, settings)
     const sync = await syncTickets(deps.fd)
     ticketsSeen = sync.seen
     if (sync.error) errors.push(`sync: ${sync.error}`)
@@ -54,7 +71,8 @@ export async function runAgentCycle(deps: CycleDeps, opts: { ticketIds?: string[
       const changed = sync.changed.filter(id => open.includes(id))
       const pendingWriteBack = (await prisma.csTicket.findMany({ where: { id: { in: open, notIn: changed }, lastAnalysisAt: { not: null }, lastNoteHash: null }, orderBy: { lastAnalysisAt: 'asc' }, take: RETRY_PER_CYCLE, select: { id: true } })).map(t => t.id)
       const retry = (await prisma.csTicket.findMany({ where: { id: { in: open, notIn: [...changed, ...pendingWriteBack] }, lastAnalysisAt: null }, orderBy: { lastCustomerAt: 'asc' }, take: RETRY_PER_CYCLE, select: { id: true } })).map(t => t.id)
-      targets = [...changed, ...pendingWriteBack, ...retry]
+      const waiting = mode === 'AFTER_HOURS' ? await waitingForAfterHours(open, [...changed, ...pendingWriteBack, ...retry], WAITING_PER_CYCLE) : []
+      targets = [...changed, ...pendingWriteBack, ...retry, ...waiting]
     }
 
     if (deps.llm) {
@@ -74,9 +92,15 @@ export async function runAgentCycle(deps: CycleDeps, opts: { ticketIds?: string[
             catch (err: any) { errors.push(`notify ${id}: ${err?.message ?? String(err)}`) }
           }
           const gate = JSON.parse(analysis.gateJson || '{}')
-          if (opts.autoReply !== false && fresh && gate.allowed && !analysis.needsHuman && analysis.draftReply && !before.autoReplied) {
-            await autoReply(deps.fd, ticket, analysis, now)
+          const afterHours = gate.mode === 'AFTER_HOURS'
+          const sendable = afterHours ? analysis.autoReplyEligible : (!analysis.needsHuman && !before.autoReplied)
+          if (opts.autoReply !== false && fresh && gate.allowed && analysis.draftReply && sendable) {
+            await autoReply(deps.fd, ticket, analysis, now, { afterHours })
             autoReplied += 1
+            if (afterHours && analysis.needsHuman) {
+              try { await deps.notifier(afterHoursText(analysis, ticket, deps.appUrl)) }
+              catch (err: any) { errors.push(`notify ${id}: ${err?.message ?? String(err)}`) }
+            }
           }
         } catch (err: any) {
           if (err instanceof FreshdeskBudgetExceeded) { errors.push(err.message); break }

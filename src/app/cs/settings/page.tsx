@@ -12,6 +12,7 @@ type View = {
   freshdeskDomain: string; llmProvider: 'anthropic' | 'kie'; model: string; pollEnabled: boolean; killSwitch: boolean; autoReplyEnabled: boolean; autoReplyCategories: string[]; autoReplyDailyCap: number
   notifyLevels: string[]; productionDays: number; shippingDays: number; syncUpdatedSince: string | null
   reviewEnabled: boolean; weeklyReport: boolean; reviewModel: string | null; llmDailyCallCap: number
+  afterHoursAutoReply: boolean; afterHoursCategories: string[]; businessHoursStart: number; businessHoursEnd: number; weekendIsAfterHours: boolean
   hasFreshdeskApiKey: boolean; freshdeskApiKeyMasked: string | null; hasAnthropicApiKey: boolean; anthropicApiKeyMasked: string | null; hasKieApiKey: boolean; kieApiKeyMasked: string | null
 }
 type LastRun = { ranAt: string; ticketsSeen: number; analysed: number; autoReplied: number; fdRequests: number; error: string | null } | null
@@ -88,7 +89,7 @@ export default function CsSettingsPage() {
     return () => clearInterval(id)
   }, [backfill?.running])
 
-  const toggleIn = (key: 'autoReplyCategories' | 'notifyLevels', value: string) => {
+  const toggleIn = (key: 'autoReplyCategories' | 'notifyLevels' | 'afterHoursCategories', value: string) => {
     const list = (form[key] ?? []) as string[]
     setForm({ ...form, [key]: list.includes(value) ? list.filter(x => x !== value) : [...list, value] })
   }
@@ -173,6 +174,23 @@ export default function CsSettingsPage() {
                 {input('Tối đa thư tự gửi / ngày', 'autoReplyDailyCap', 'number')}
                 {input('Ngày sản xuất', 'productionDays', 'number')}
                 {input('Ngày vận chuyển', 'shippingDays', 'number')}
+              </div>
+            </>)}
+
+            {card('Trực ngoài giờ', <>
+              {check('Agent tự trả lời khách ngoài giờ hành chính (giờ Việt Nam)', 'afterHoursAutoReply')}
+              <div className="grid grid-cols-3 gap-md">
+                {input('Giờ bắt đầu làm việc (0–23)', 'businessHoursStart', 'number')}
+                {input('Giờ kết thúc làm việc (0–23)', 'businessHoursEnd', 'number')}
+              </div>
+              {check('Thứ 7 & Chủ nhật tính là ngoài giờ', 'weekendIsAfterHours')}
+              <div>
+                <p className="text-label-sm text-on-surface-variant">Loại ticket agent được tự trả lời ngoài giờ. Thư đưa lựa chọn cho khách, không ưu tiên hoàn tiền; ticket cần nhân sự làm tiếp sẽ về Pending và báo Telegram để sáng hôm sau xác nhận. Không bao giờ tự gửi khi khách doạ dispute, không tìm thấy đơn, đang có chỉ đạo admin, hoặc đã tự trả lời 2 lần/24h.</p>
+                <div className="mt-xs grid grid-cols-2 gap-xs">
+                  {CS_CATEGORIES.filter(c => c !== 'SPAM').map(c => (
+                    <label key={c} className="flex items-center gap-sm text-body-sm"><input type="checkbox" checked={(form.afterHoursCategories ?? []).includes(c)} onChange={() => toggleIn('afterHoursCategories', c)} /> {CATEGORY_LABELS[c]}</label>
+                  ))}
+                </div>
               </div>
             </>)}
 

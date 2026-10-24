@@ -19,6 +19,11 @@ describe('buildSystemPrompt', () => {
     for (const needle of ['## reply structure', 'first name', 'entirely our', 'put this right', 'frustrated, angry', 'calm', 'do not apologise', 'apologi', 'tracking', 'within 24 hours', 'follow', 'warm regards', '90', 'never open with "you'])
       expect(s, needle).toContain(needle)
   })
+  it('carries the after-hours rules: options before refund, carrier contact on stalled tracking, 24-hour confirmation', () => {
+    const s = buildSystemPrompt([], settings).toLowerCase()
+    for (const needle of ['## after-hours mode', 'sent to the customer automatically', 'replacement', 'refund only if the customer asked', 'never state an amount', 'contacting the carrier', 'within 24 hours', 'noted the new address', 'needshuman'])
+      expect(s, needle).toContain(needle)
+  })
   it('lists cases with ids and forbidden lines', () => {
     const s = buildSystemPrompt([{ id: 'c1', title: 'Late parcel', category: 'ORDER_STATUS', situation: 'Parcel late by 5+ days', resolution: 'Apologise, give tracking, offer 10% code', toneNotes: null, forbidden: 'never promise a refund', exampleReply: null, active: true } as any], settings)
     expect(s).toContain('[c1] Late parcel — ORDER_STATUS')
@@ -59,6 +64,17 @@ describe('buildUserPrompt', () => {
     expect(p).toContain('[STAFF 10/23/2026 09:24 private]')
     expect(p).toContain('Khách hỏi đơn')
     expect(p.indexOf('wrong place')).toBeLessThan(p.indexOf('my cousin'))
+  })
+  it('names the mode: after hours tells the model the draft goes out unattended, business hours that staff send it', () => {
+    const ticket = { id: 't1', fdTicketId: 119, subject: 'Wrong place', requesterEmail: 'p@x.com', requesterName: 'Paul', fdCreatedAt: new Date('2026-10-20T05:48:29Z') } as any
+    const base = { ticket, messages: [], order: { match: 'NONE', order: null, candidates: [] } as any, previous: [] }
+    const night = buildUserPrompt({ ...base, mode: 'AFTER_HOURS' })
+    expect(night).toContain('# Mode: AFTER_HOURS')
+    expect(night.toLowerCase()).toContain('sent to the customer automatically')
+    const day = buildUserPrompt({ ...base, mode: 'BUSINESS' })
+    expect(day).toContain('# Mode: BUSINESS_HOURS')
+    expect(day).not.toContain('AFTER_HOURS')
+    expect(buildUserPrompt(base)).toContain('# Mode: BUSINESS_HOURS')
   })
   it('names candidates when the match is ambiguous', () => {
     const p = buildUserPrompt({ ticket: { id: 't', fdTicketId: 1, subject: 's', fdCreatedAt: new Date() } as any, messages: [], order: { match: 'AMBIGUOUS', order: null, candidates: ['#LIT1', '#LIT2'] }, previous: [] })

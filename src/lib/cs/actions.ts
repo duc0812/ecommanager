@@ -80,15 +80,28 @@ async function storeOutgoing(ticket: CsTicket, fdId: number, author: 'AGENT' | '
   return msg
 }
 
-export async function autoReply(fd: Pick<FreshdeskClient, 'reply' | 'update'>, ticket: CsTicket, a: CsAnalysis, now = new Date()): Promise<CsMessage> {
+export async function autoReply(fd: Pick<FreshdeskClient, 'reply' | 'update'>, ticket: CsTicket, a: CsAnalysis, now = new Date(), opts: { afterHours?: boolean } = {}): Promise<CsMessage> {
   if (!a.draftReply) throw new Error('autoReply called without a draft')
+  const followUp = !!opts.afterHours && a.needsHuman
   const sent = await fd.reply(ticket.fdTicketId, textToHtml(a.draftReply))
   const existingTags: string[] = (() => { try { return JSON.parse(ticket.fdTags) } catch { return [] } })()
-  const tags = existingTags.includes('em-auto-replied') ? existingTags : [...existingTags, 'em-auto-replied']
-  await fd.update(ticket.fdTicketId, { status: 6, tags })
+  const wanted = opts.afterHours ? ['em-auto-replied', 'em-after-hours'] : ['em-auto-replied']
+  const tags = [...existingTags, ...wanted.filter(t => !existingTags.includes(t))]
+  const status = followUp ? 3 : 6
+  await fd.update(ticket.fdTicketId, { status, tags })
   const msg = await storeOutgoing(ticket, sent.id, 'AGENT', a.draftReply, false, now, 'AGENT')
-  await prisma.csTicket.update({ where: { id: ticket.id }, data: { autoReplied: true, needsHuman: false, fdStatus: 6, fdTags: JSON.stringify(tags) } })
+  await prisma.csTicket.update({ where: { id: ticket.id }, data: { autoReplied: true, needsHuman: followUp, fdStatus: status, fdTags: JSON.stringify(tags) } })
   return msg
+}
+
+export function afterHoursText(a: CsAnalysis, ticket: CsTicket, appUrl: string): string {
+  const cat = CATEGORY_LABELS[a.category as CsCategory] ?? a.category
+  return [
+    `<b>🌙 Agent đã trả lời ngoài giờ</b> · ${esc(cat)}${ticket.orderNumber ? ` · <b>${esc(ticket.orderNumber)}</b>` : ''}`,
+    `#${ticket.fdTicketId} ${esc(ticket.subject)}`,
+    `Sáng mai nhân sự cần: ${esc(a.proposal)}`,
+    `<a href="${ticketUrl(appUrl, ticket)}">Mở trong tool</a>`,
+  ].join('\n')
 }
 
 export async function sendStaffReply(fd: Pick<FreshdeskClient, 'reply' | 'note' | 'update'>, ticket: CsTicket, body: string, opts: { private: boolean; source?: MessageSource }, now = new Date()): Promise<CsMessage> {

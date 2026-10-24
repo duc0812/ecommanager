@@ -73,7 +73,7 @@ describe('root cause', () => {
   })
   it('pendingInvestigations stamps superseded analyses so they stop blocking the queue', async () => {
     const { t, a } = await mkTicket(8105, 'WRONG_ITEM', ORDER, 'EXACT')
-    await prisma.csAnalysis.create({ data: { ticketId: t.id, model: 'm', inputHash: 'h2', outputJson: '{}', category: 'WRONG_ITEM', urgency: 'HIGH', sentiment: 'CALM', summary: 's', proposal: 'p', needsHuman: true, rootCauseAt: day(22), rootCauseStage: 'FACTORY', runAt: day(23) } })
+    await prisma.csAnalysis.create({ data: { ticketId: t.id, model: 'm', inputHash: 'h2', outputJson: '{}', category: 'WRONG_ITEM', urgency: 'HIGH', sentiment: 'CALM', summary: 's', proposal: 'p', needsHuman: true, rootCauseAt: day(22), rootCauseStage: 'FACTORY', runAt: new Date(Date.now() + 60_000) } })
     const ids = await pendingInvestigations(5)
     expect(ids).not.toContain(t.id)
     expect((await prisma.csAnalysis.findUnique({ where: { id: a.id } }))!.rootCauseAt).not.toBeNull()

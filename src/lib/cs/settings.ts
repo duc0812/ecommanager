@@ -24,7 +24,14 @@ export type CsSettings = {
   weeklyReport: boolean
   reviewModel: string | null
   llmDailyCallCap: number
+  afterHoursAutoReply: boolean
+  afterHoursCategories: string[]
+  businessHoursStart: number
+  businessHoursEnd: number
+  weekendIsAfterHours: boolean
 }
+
+export const AFTER_HOURS_DEFAULT_CATEGORIES = ['ORDER_STATUS', 'ADDRESS_CHANGE', 'CANCEL_ORDER', 'DAMAGED_OR_DEFECTIVE', 'WRONG_ITEM', 'MISSING_ITEM', 'DELIVERED_NOT_RECEIVED', 'REFUND_REQUEST', 'PRODUCT_QUESTION', 'PERSONALIZATION_ISSUE']
 
 export const DEFAULT_CS_SETTINGS: CsSettings = {
   freshdeskDomain: 'litzzy',
@@ -45,6 +52,11 @@ export const DEFAULT_CS_SETTINGS: CsSettings = {
   weeklyReport: true,
   reviewModel: null,
   llmDailyCallCap: 500,
+  afterHoursAutoReply: false,
+  afterHoursCategories: AFTER_HOURS_DEFAULT_CATEGORIES,
+  businessHoursStart: 8,
+  businessHoursEnd: 17,
+  weekendIsAfterHours: true,
 }
 
 export type CsSecrets = { freshdeskApiKey: string | null; anthropicApiKey: string | null; kieApiKey: string | null }
@@ -62,6 +74,7 @@ const KEY = 'cs.settings'
 const SECRET_KEYS = { freshdeskApiKey: 'cs.freshdeskApiKey', anthropicApiKey: 'cs.anthropicApiKey', kieApiKey: 'cs.kieApiKey' } as const
 
 const num = (v: unknown, d: number) => (typeof v === 'number' && Number.isFinite(v) ? v : d)
+const hour = (v: unknown, d: number) => (typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 23 ? v : d)
 const bool = (v: unknown, d: boolean) => (typeof v === 'boolean' ? v : d)
 const strList = (v: unknown, d: string[]) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : d)
 const numList = (v: unknown, d: number[]) => (Array.isArray(v) ? v.filter((x): x is number => typeof x === 'number') : d)
@@ -87,6 +100,11 @@ function normalize(parsed: any): CsSettings {
     weeklyReport: bool(parsed.weeklyReport, d.weeklyReport),
     reviewModel: typeof parsed.reviewModel === 'string' && parsed.reviewModel.trim() ? normalizeModelId(parsed.reviewModel) : null,
     llmDailyCallCap: num(parsed.llmDailyCallCap, d.llmDailyCallCap),
+    afterHoursAutoReply: bool(parsed.afterHoursAutoReply, d.afterHoursAutoReply),
+    afterHoursCategories: strList(parsed.afterHoursCategories, d.afterHoursCategories),
+    businessHoursStart: hour(parsed.businessHoursStart, d.businessHoursStart),
+    businessHoursEnd: hour(parsed.businessHoursEnd, d.businessHoursEnd),
+    weekendIsAfterHours: bool(parsed.weekendIsAfterHours, d.weekendIsAfterHours),
   }
 }
 

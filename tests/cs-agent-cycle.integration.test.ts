@@ -47,7 +47,9 @@ function fakeLlm(): Llm & { calls: number; rootCauseCalls: number } {
     },
     async analyze({ user }: { user: string }) {
       llm.calls++
-      const output: Analysis = user.includes('Ticket #119')
+      const output: Analysis = user.includes('Ticket #119') && user.includes('# Mode: AFTER_HOURS')
+        ? { ...base, category: 'ADDRESS_CHANGE', urgency: 'HIGH', sentiment: 'ANGRY', orderNumber: '#LIT4525', summary: 'Khách báo gửi sai địa chỉ', facts: ['Địa chỉ mới: 12 Test St'], proposal: 'Áp địa chỉ mới trước khi xuất xưởng', draftReply: 'Hi Paul,\n\nThis is entirely on us. We have noted 12 Test St and the team applies it before production.\n\nWarm regards,\nLitzzy Support', needsHuman: true, needsHumanReason: 'staff applies the address', autoReplyEligible: true, autoReplyReason: 'after hours' }
+        : user.includes('Ticket #119')
         ? { ...base, category: 'ADDRESS_CHANGE', urgency: 'HIGH', sentiment: 'ANGRY', orderNumber: '#LIT4525', summary: 'Khách báo gửi sai địa chỉ', facts: ['Địa chỉ mới: 12 Test St'], proposal: 'Liên hệ carrier đổi địa chỉ', draftReply: null, needsHuman: true, needsHumanReason: 'address', autoReplyEligible: false }
         : user.includes('Ticket #195')
           ? { ...base, orderNumber: '#LIT3910' }
@@ -129,6 +131,45 @@ describe('runAgentCycle', () => {
     expect(statusUpdate).toBeDefined()
     expect(statusUpdate!.payload.tags).toContain('em-auto-replied')
     expect(run.autoReplied).toBe(1)
+  })
+
+  it('after hours: replies to the waiting address-change ticket, leaves it Pending for staff and alerts Telegram', async () => {
+    await saveCsSettings({ afterHoursAutoReply: true, afterHoursCategories: ['ADDRESS_CHANGE'] })
+    const d = deps()
+    const c = collector()
+    const run = await runAgentCycle({ ...d, notifier: c.notifier })
+    const replies = d.fd.calls.filter(c => c.kind === 'reply')
+    expect(replies.map(r => r.id)).toEqual([119])
+    expect(replies[0].payload).toContain('noted 12 Test St')
+    const t = await prisma.csTicket.findUnique({ where: { fdTicketId: 119 }, include: { messages: true, analyses: { orderBy: { runAt: 'desc' }, take: 1 } } })
+    expect(t!.autoReplied).toBe(true)
+    expect(t!.needsHuman).toBe(true)
+    expect(t!.fdStatus).toBe(3)
+    expect(JSON.parse(t!.analyses[0].gateJson).mode).toBe('AFTER_HOURS')
+    const statusUpdate = d.fd.calls.find(c => c.kind === 'update' && c.id === 119 && c.payload.status === 3)
+    expect(statusUpdate!.payload.tags).toEqual(expect.arrayContaining(['em-auto-replied', 'em-after-hours']))
+    expect(c.texts.some(x => x.includes('ngoài giờ') && x.includes('#119'))).toBe(true)
+    expect(run.autoReplied).toBe(1)
+    const d2 = { ...deps(), now: new Date('2026-10-23T15:10:00Z') }
+    await runAgentCycle({ ...d2, notifier: collector().notifier })
+    expect(d2.fd.calls.filter(c => c.kind === 'reply')).toHaveLength(0)
+  })
+
+  it('after hours: a ticket analysed in business mode and still waiting is re-analysed and answered once night falls', async () => {
+    const day = { ...deps(), now: new Date('2026-10-23T03:00:00Z') }
+    await runAgentCycle({ ...day, notifier: collector().notifier })
+    expect(day.fd.calls.filter(c => c.kind === 'reply')).toHaveLength(0)
+    await saveCsSettings({ afterHoursAutoReply: true, afterHoursCategories: ['ADDRESS_CHANGE'] })
+    const night = { ...deps(), now: new Date('2026-10-23T15:00:00Z') }
+    await runAgentCycle({ ...night, notifier: collector().notifier })
+    expect(night.fd.calls.filter(c => c.kind === 'reply').map(r => r.id)).toEqual([119])
+  })
+
+  it('during business hours the after-hours switch changes nothing', async () => {
+    await saveCsSettings({ afterHoursAutoReply: true, afterHoursCategories: ['ADDRESS_CHANGE', 'ORDER_STATUS'] })
+    const d = { ...deps(), now: new Date('2026-10-23T03:00:00Z') }
+    await runAgentCycle({ ...d, notifier: collector().notifier })
+    expect(d.fd.calls.filter(c => c.kind === 'reply')).toHaveLength(0)
   })
 
   it('does not auto-reply when autoReplyEnabled is false', async () => {

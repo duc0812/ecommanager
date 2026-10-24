@@ -3,17 +3,21 @@ import { autoReplyGate, mentionsRefundAddressOrCancel, type GateInput } from '@/
 
 const now = new Date('2026-10-23T12:00:00Z')
 const passing: GateInput = {
-  settings: { autoReplyEnabled: true, autoReplyCategories: ['ORDER_STATUS'], autoReplyDailyCap: 30, killSwitch: false, productionDays: 5, shippingDays: 15 },
+  settings: { autoReplyEnabled: true, autoReplyCategories: ['ORDER_STATUS'], autoReplyDailyCap: 30, killSwitch: false, productionDays: 5, shippingDays: 15, afterHoursAutoReply: false, afterHoursCategories: [] },
+  mode: 'BUSINESS',
   category: 'ORDER_STATUS',
   sentiment: 'CALM',
   orderMatch: 'EXACT',
   customerMessageCount: 1,
   hasAnyReply: false,
+  pendingCustomerMessage: true,
   hasTracking: true,
   placedAt: new Date('2026-10-10T00:00:00Z'),
   now,
   textMentionsRefundAddressOrCancel: false,
   autoRepliesToday: 0,
+  autoRepliesOnTicket24h: 0,
+  openDirectives: 0,
   hasActiveCaseForCategory: false,
 }
 
@@ -25,7 +29,7 @@ function blocked(patch: Partial<GateInput>, reason: string) {
 
 describe('autoReplyGate', () => {
   it('passes the reference input', () => {
-    expect(autoReplyGate(passing)).toEqual({ allowed: true, reasons: [] })
+    expect(autoReplyGate(passing)).toEqual({ allowed: true, reasons: [], mode: 'BUSINESS' })
   })
   it('blocked when auto-reply is disabled', () => blocked({ settings: { ...passing.settings, autoReplyEnabled: false } }, 'disabled'))
   it('blocked by the kill switch', () => blocked({ settings: { ...passing.settings, killSwitch: true } }, 'kill switch'))

@@ -8,9 +8,11 @@ import { getCsSettings } from '@/lib/cs/settings'
 import { finalUrgency, ruleUrgency } from '@/lib/cs/triage'
 import { autoReplyGate, mentionsRefundAddressOrCancel } from '@/lib/cs/policy'
 import { withCap } from '@/lib/llm/cap'
+import { effectiveMode, type CsMode } from '@/lib/cs/hours'
 
-export function inputHashFor(messages: Pick<CsMessage, 'id' | 'author'>[], order: OrderContext, directiveIds: string[] = []): string {
+export function inputHashFor(messages: Pick<CsMessage, 'id' | 'author'>[], order: OrderContext, directiveIds: string[] = [], mode: CsMode = 'BUSINESS'): string {
   const parts = [
+    ...(mode === 'AFTER_HOURS' ? ['AFTER_HOURS'] : []),
     ...directiveIds,
     ...messages.filter(m => m.author === 'CUSTOMER').map(m => m.id),
     order.order ? order.order.id : order.match,
@@ -34,15 +36,16 @@ export async function analyzeTicket(ticketId: string, deps: { llm: Llm; now?: Da
   })
   const customerTexts = ticket.messages.filter(m => m.author === 'CUSTOMER').map(m => m.bodyText)
   const order = await buildOrderContext({ subject: ticket.subject, texts: customerTexts, cfOrderId: ticket.orderNumber, email: ticket.requesterEmail })
-  const inputHash = inputHashFor(ticket.messages, order, ticket.directives.map(d => d.id))
+  const settings = await getCsSettings()
+  const mode = effectiveMode(now, settings)
+  const inputHash = inputHashFor(ticket.messages, order, ticket.directives.map(d => d.id), mode)
   const latest = ticket.analyses[0]
   if (latest && latest.inputHash === inputHash && !deps.force) return latest
 
-  const settings = await getCsSettings()
   const cases = await prisma.csCase.findMany({ where: { active: true }, orderBy: { updatedAt: 'desc' } })
   const { output, tokensIn, tokensOut } = await withCap(settings.llmDailyCallCap, () => deps.llm.analyze({
     system: buildSystemPrompt(cases, settings),
-    user: buildUserPrompt({ ticket, messages: ticket.messages, order, previous: ticket.analyses, directives: ticket.directives }),
+    user: buildUserPrompt({ ticket, messages: ticket.messages, order, previous: ticket.analyses, directives: ticket.directives, mode }),
     model: settings.model,
   }), now)
 
@@ -54,22 +57,27 @@ export async function analyzeTicket(ticketId: string, deps: { llm: Llm; now?: Da
 
   const urgency = finalUrgency(output.urgency, ruleUrgency({ category: output.category, factoryState: order.order?.factoryState ?? null, sentiment: output.sentiment, hoursUnanswered }))
 
-  const [autoRepliesToday, activeCases] = await Promise.all([
+  const [autoRepliesToday, autoRepliesOnTicket24h, activeCases] = await Promise.all([
     prisma.csMessage.count({ where: { author: 'AGENT', createdAt: { gte: startOfToday(now) } } }),
+    prisma.csMessage.count({ where: { ticketId, author: 'AGENT', private: false, createdAt: { gte: new Date(now.getTime() - 86400_000) } } }),
     prisma.csCase.count({ where: { active: true, category: output.category } }),
   ])
   const gate = autoReplyGate({
     settings,
+    mode,
     category: output.category,
     sentiment: output.sentiment,
     orderMatch: order.match,
     customerMessageCount: customerCount,
     hasAnyReply: replies.length > 0,
+    pendingCustomerMessage: !!firstUnanswered,
     hasTracking: !!order.order?.shipments.some(s => s.trackingNumber && s.status !== 'EXPIRED' && s.status !== 'EXCEPTION'),
     placedAt: order.order?.placedAt ?? null,
     now,
     textMentionsRefundAddressOrCancel: mentionsRefundAddressOrCancel([ticket.subject, ...customerTexts].join('\n')),
     autoRepliesToday,
+    autoRepliesOnTicket24h,
+    openDirectives: ticket.directives.length,
     hasActiveCaseForCategory: activeCases > 0,
   })
   const needsHuman = output.needsHuman || !gate.allowed || !output.draftReply
