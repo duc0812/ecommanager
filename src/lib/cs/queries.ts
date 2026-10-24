@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/db'
 import type { CsAnalysis, CsCase, CsMessage, CsReplyReview, CsTicket } from '@/generated/prisma/client'
 import { buildOrderContext, type OrderContext } from '@/lib/cs/order-context'
+import { displayText, splitQuoted } from '@/lib/cs/message-text'
 
 export type TicketTab = 'todo' | 'agent' | 'done'
 
@@ -79,9 +80,11 @@ export async function listTickets(tab: TicketTab, q?: string, now = new Date()):
   return rows
 }
 
+export type DetailMessage = CsMessage & { displayText: string; quoted: string | null }
+
 export type TicketDetail = {
   ticket: CsTicket
-  messages: CsMessage[]
+  messages: DetailMessage[]
   analysis: CsAnalysis | null
   order: OrderContext
   cases: Pick<CsCase, 'id' | 'title'>[]
@@ -105,5 +108,6 @@ export async function ticketDetail(id: string): Promise<TicketDetail | null> {
   const citedIds: string[] = analysis ? (() => { try { return JSON.parse(analysis.citedCaseIds) } catch { return [] } })() : []
   const cases = citedIds.length ? await prisma.csCase.findMany({ where: { id: { in: citedIds } }, select: { id: true, title: true } }) : []
   const reviews = await prisma.csReplyReview.findMany({ where: { ticketId: id } })
-  return { ticket: rest as CsTicket, messages, analysis, order, cases, reviews }
+  const shaped: DetailMessage[] = messages.map(m => { const { main, quoted } = splitQuoted(displayText(m.bodyHtml, m.bodyText)); return { ...m, displayText: main, quoted } })
+  return { ticket: rest as CsTicket, messages: shaped, analysis, order, cases, reviews }
 }

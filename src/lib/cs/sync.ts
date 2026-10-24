@@ -3,6 +3,7 @@ import type { FdConversation, FdTicket, FreshdeskClient } from '@/lib/cs/freshde
 import { FreshdeskBudgetExceeded } from '@/lib/cs/freshdesk'
 import { getCsSettings, saveCsSettings, type CsSettings } from '@/lib/cs/settings'
 import { extractOrderNumbers } from '@/lib/cs/order-context'
+import { displayText } from '@/lib/cs/message-text'
 
 export type FdLike = Pick<FreshdeskClient, 'listTickets' | 'getConversations' | 'requests'>
 export type MessageAuthor = 'CUSTOMER' | 'STAFF' | 'AGENT' | 'SYSTEM' | 'SKIP'
@@ -71,7 +72,7 @@ ${t.subject ?? ''}`)[0] ?? null
     ? await prisma.csTicket.update({ where: { id: existing.id }, data: { ...data, orderNumber: existing.orderNumber ?? hinted } })
     : await prisma.csTicket.create({ data: { ...data, fdTicketId: t.id, orderNumber: hinted } })
   const descId = `desc-${t.id}`
-  const descText = t.description_text?.trim() || htmlToText(t.description)
+  const descText = displayText(t.description, t.description_text?.trim() || htmlToText(t.description))
   const descExists = await prisma.csMessage.findUnique({ where: { fdConversationId: descId } })
   if (!descExists) {
     await prisma.csMessage.create({
@@ -93,7 +94,7 @@ async function upsertConversations(ticketId: string, convs: FdConversation[], se
     const existing = await prisma.csMessage.findUnique({ where: { fdConversationId: id } })
     if (existing) continue
     await prisma.csMessage.create({
-      data: { ticketId, fdConversationId: id, author, private: !!c.private, bodyText: c.body_text?.trim() || htmlToText(c.body), bodyHtml: c.body ?? null, fromEmail: c.from_email ?? null, createdAt: new Date(c.created_at) },
+      data: { ticketId, fdConversationId: id, author, private: !!c.private, bodyText: displayText(c.body, c.body_text?.trim() || htmlToText(c.body)), bodyHtml: c.body ?? null, fromEmail: c.from_email ?? null, createdAt: new Date(c.created_at) },
     })
   }
 }

@@ -9,7 +9,7 @@ import { CATEGORY_LABELS, FACTORY_LABELS, ISSUE_LABELS, SENTIMENT_LABELS, STAGE_
 import { STAGES } from '@/lib/cs/root-cause-prompt'
 import { RUBRIC_LABELS } from '@/lib/cs/review-prompt'
 
-type Message = { id: string; author: string; private: boolean; bodyText: string; createdAt: string; fromEmail: string | null; source: string; sentiment: string | null }
+type Message = { id: string; author: string; private: boolean; bodyText: string; displayText: string; quoted: string | null; createdAt: string; fromEmail: string | null; source: string; sentiment: string | null }
 type ReviewRow = { messageId: string; score: number; issues: string; reason: string; rewrite: string | null }
 type Analysis = { id: string; runAt: string; category: string; urgency: string; sentiment: string; summary: string; proposal: string; draftReply: string | null; needsHuman: boolean; citedCaseIds: string; gateJson: string; outputJson: string; model: string; rootCauseStage: string | null; rootCauseEvidence: string | null; rootCauseConfidence: string | null; issueType: string | null }
 type Order = {
@@ -123,7 +123,13 @@ export default function CsTicketPage() {
                         <p className={`mb-xs text-label-sm ${m.private ? 'text-on-surface-variant' : mine ? 'text-on-secondary-container/80' : 'text-on-surface-variant'}`}>
                           {m.author === 'CUSTOMER' ? 'Khách' : m.author === 'AGENT' ? 'Agent' : m.author === 'STAFF' ? 'Nhân sự' : m.author}{m.private ? ' · Ghi chú nội bộ' : ''} · {fmtDate(m.createdAt, true)}
                         </p>
-                        <p className="whitespace-pre-wrap text-body-sm">{m.bodyText || '(trống)'}</p>
+                        <p className="whitespace-pre-wrap text-body-sm leading-relaxed">{m.displayText || m.bodyText || '(trống)'}</p>
+                        {m.quoted && (
+                          <details className="mt-xs">
+                            <summary className="cursor-pointer text-label-sm text-on-surface-variant">Phần trích dẫn / chữ ký</summary>
+                            <p className="mt-xs whitespace-pre-wrap text-label-sm text-on-surface-variant">{m.quoted}</p>
+                          </details>
+                        )}
                         {m.author === 'STAFF' && m.source === 'DRAFT_UNCHANGED' && <p className="mt-xs text-label-sm text-on-secondary-container/80">gửi nguyên nháp agent</p>}
                         {m.author === 'STAFF' && m.source === 'DRAFT_EDITED' && <p className="mt-xs text-label-sm text-on-secondary-container/80">nháp agent đã sửa</p>}
                         {m.author === 'CUSTOMER' && m.sentiment && <p className="mt-xs text-label-sm text-on-surface-variant">{SENTIMENT_LABELS[m.sentiment as keyof typeof SENTIMENT_LABELS] ?? m.sentiment}</p>}
