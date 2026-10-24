@@ -6,12 +6,15 @@ import { syncTickets } from '@/lib/cs/sync'
 import { analyzeTicket } from '@/lib/cs/analyze'
 import { analysisHash, autoReply, notify, writeBack, type Notifier } from '@/lib/cs/actions'
 import { getCsSecrets, getCsSettings } from '@/lib/cs/settings'
+import { investigateTicket, pendingInvestigations } from '@/lib/cs/root-cause'
+import { LlmCapReached, withCap } from '@/lib/llm/cap'
 import { sendTelegramMessage } from '@/lib/telegram'
 
 export type CycleDeps = { fd: FreshdeskClient; llm: Llm | null; notifier: Notifier; appUrl: string; now?: Date }
 
 const LAST_RUN_KEY = 'last_cs_run_result'
 const RETRY_PER_CYCLE = 10
+const INVESTIGATIONS_PER_CYCLE = 5
 
 export async function defaultDeps(): Promise<CycleDeps | null> {
   const [settings, secrets] = await Promise.all([getCsSettings(), getCsSecrets()])
@@ -75,6 +78,16 @@ export async function runAgentCycle(deps: CycleDeps, opts: { ticketIds?: string[
         } catch (err: any) {
           if (err instanceof FreshdeskBudgetExceeded) { errors.push(err.message); break }
           errors.push(`ticket ${id}: ${err?.message ?? String(err)}`)
+        }
+      }
+    }
+    if (deps.llm && !opts.ticketIds) {
+      for (const id of await pendingInvestigations(INVESTIGATIONS_PER_CYCLE)) {
+        try {
+          await withCap(settings.llmDailyCallCap, () => investigateTicket(id, { llm: deps.llm!, now }), now)
+        } catch (err: any) {
+          if (err instanceof LlmCapReached) { errors.push(err.message); console.warn('[cs] llm daily cap reached'); break }
+          errors.push(`root cause ${id}: ${err?.message ?? String(err)}`)
         }
       }
     }

@@ -37,10 +37,14 @@ const base: Analysis = {
   category: 'ORDER_STATUS', urgency: 'NORMAL', sentiment: 'CALM', orderNumber: null, summary: 'Khách hỏi đơn đến đâu', facts: [], proposal: 'Gửi tracking',
   citedCaseIds: [], draftReply: 'Hi, your order is on its way.\n\nLitzzy Support', needsHuman: false, needsHumanReason: '', autoReplyEligible: true, autoReplyReason: 'first wismo',
 }
-function fakeLlm(): Llm & { calls: number } {
+function fakeLlm(): Llm & { calls: number; rootCauseCalls: number } {
   const llm = {
     calls: 0,
-    async complete(): Promise<any> { throw new Error('complete not used here') },
+    rootCauseCalls: 0,
+    async complete(i: any): Promise<any> {
+      if (i.schemaName === 'root_cause') { llm.rootCauseCalls += 1; return { output: { stage: 'FACTORY', issueType: 'WRONG_TEXT', confidence: 'HIGH', evidence: 'e', affectedLineIds: [] }, tokensIn: 1, tokensOut: 1 } }
+      throw new Error('complete not used here')
+    },
     async analyze({ user }: { user: string }) {
       llm.calls++
       const output: Analysis = user.includes('Ticket #119')
@@ -237,6 +241,23 @@ describe('runAgentCycle', () => {
     const run = await runAgentCycle({ ...d, llm, notifier: collector().notifier })
     expect(run.analysed).toBe(2)
     expect(run.error).toContain('boom')
+  })
+})
+
+describe('root cause in the cycle', () => {
+  it('investigates at most 5 problem tickets per run', async () => {
+    const d = deps()
+    await runAgentCycle({ ...d, notifier: collector().notifier })
+    const storeId = (await prisma.shopifyStore.findUnique({ where: { shop: SHOP } }))!.id
+    for (let i = 0; i < 6; i++) {
+      const t = await prisma.csTicket.create({ data: { fdTicketId: 7000 + i, subject: `p${i}`, fdStatus: 2, fdPriority: 1, category: 'WRONG_ITEM', orderId: ORDERS[0], orderNumber: '#LIT4525', orderMatch: 'EXACT', fdCreatedAt: new Date(), fdUpdatedAt: new Date(), lastCustomerAt: new Date(Date.now() - i * 1000), lastAnalysisAt: new Date(), lastNoteHash: 'x' } })
+      await prisma.csAnalysis.create({ data: { ticketId: t.id, model: 'm', inputHash: 'h', outputJson: '{}', category: 'WRONG_ITEM', urgency: 'HIGH', sentiment: 'CALM', summary: 's', proposal: 'p', needsHuman: true } })
+    }
+    void storeId
+    const before = d.llm.rootCauseCalls
+    await runAgentCycle({ ...d, notifier: collector().notifier })
+    expect(d.llm.rootCauseCalls - before).toBe(5)
+    expect(await prisma.csAnalysis.count({ where: { rootCauseStage: 'FACTORY' } })).toBeGreaterThanOrEqual(5)
   })
 })
 
