@@ -1,7 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod'
 import { AnalysisSchema, type Analysis } from '@/lib/cs/analysis-schema'
-import { LlmError, type Llm, type LlmProvider } from '@/lib/llm/types'
+import { LlmError, type Llm, type LlmProvider, type StructuredInput } from '@/lib/llm/types'
 import { kieResponsesLlm, pingKieResponses } from '@/lib/llm/kie-responses'
 
 export { LlmError, LLM_PROVIDERS } from '@/lib/llm/types'
@@ -35,12 +35,12 @@ function envelopeError(provider: LlmProvider, res: unknown): LlmError | null {
 
 export function claudeLlm(provider: LlmProvider, key: string, extra: { fetch?: typeof fetch } = {}): Llm {
   const client = new Anthropic({ ...llmClientOptions(provider, key), ...extra })
-  return {
-    async analyze({ system, user, model }) {
+  const llm: Llm = {
+    async complete<T>({ system, user, model, schema, schemaName }: StructuredInput<T>) {
       const res = await client.messages.create({
         model,
         max_tokens: 4000,
-        output_config: { effort: 'low', format: zodOutputFormat(AnalysisSchema) },
+        output_config: { effort: 'low', format: zodOutputFormat(schema as any) },
         system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
         messages: [{ role: 'user', content: user }],
       })
@@ -48,12 +48,14 @@ export function claudeLlm(provider: LlmProvider, key: string, extra: { fetch?: t
       if (envelope) throw envelope
       if (res.stop_reason === 'refusal') throw new LlmError(`Claude refused: ${res.stop_details?.explanation ?? 'no explanation'}`)
       const text = res.content.find(b => b.type === 'text')?.text
-      if (!text) throw new LlmError(`Claude returned no text analysis (stop_reason ${res.stop_reason})`)
-      let parsed: Analysis
-      try { parsed = AnalysisSchema.parse(JSON.parse(text)) } catch (err: any) { throw new LlmError(`Claude returned an unparsable analysis: ${err?.message ?? err}`) }
+      if (!text) throw new LlmError(`Claude returned no text for ${schemaName} (stop_reason ${res.stop_reason})`)
+      let parsed: T
+      try { parsed = schema.parse(JSON.parse(text)) } catch (err: any) { throw new LlmError(`Claude returned an unparsable ${schemaName}: ${err?.message ?? err}`) }
       return { output: parsed, tokensIn: res.usage.input_tokens, tokensOut: res.usage.output_tokens }
     },
+    analyze: input => llm.complete<Analysis>({ ...input, schema: AnalysisSchema, schemaName: 'cs_analysis' }),
   }
+  return llm
 }
 
 export function anthropicLlm(apiKey: string): Llm {

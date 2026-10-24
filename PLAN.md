@@ -194,6 +194,12 @@ Completed 2026-05-19 via subagent-driven development.
 - Rollout: poll on / auto-reply off first; needs an Anthropic API key in Cài đặt CS; add permission `cs` to existing ADMIN/SUPPORT users
 - Next: promote-to-case review flow, per-category reply templates, Reminiso/Rosterpress mailboxes
 
+### 🟢 CS insights & staff performance (2026-10-24, branch `feat/cs-insights`)
+- Root-cause stage per problem ticket from the order timeline (Design/Fulfillment/Xưởng/Vận chuyển/Khách/Listing), `/cs/insights` with CSV
+- Staff metrics (response times, replies/ticket, premature closes, sentiment after reply) vs agent, AI review of every reply, weekly write-up — `/cs/performance`
+- Rollout: deploy (migration needs `pm2 stop` first), then "Chạy backfill" in Cài đặt CS until remaining = 0
+- Next: Lark notifications, business-hours response times, per-product root-cause drill-down
+
 ---
 
 ## Known Issues / Tech Debt

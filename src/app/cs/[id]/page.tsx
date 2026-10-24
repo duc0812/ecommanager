@@ -5,10 +5,13 @@ import { useParams, useRouter } from 'next/navigation'
 import Sidebar from '@/components/Sidebar'
 import { RoleGate } from '@/components/RoleGate'
 import { UrgencyChip, fmtDate, hoursLabel } from '@/components/cs/UrgencyChip'
-import { CATEGORY_LABELS, FACTORY_LABELS, SENTIMENT_LABELS } from '@/lib/cs/labels'
+import { CATEGORY_LABELS, FACTORY_LABELS, ISSUE_LABELS, SENTIMENT_LABELS, STAGE_LABELS } from '@/lib/cs/labels'
+import { STAGES } from '@/lib/cs/root-cause-prompt'
+import { RUBRIC_LABELS } from '@/lib/cs/review-prompt'
 
-type Message = { id: string; author: string; private: boolean; bodyText: string; createdAt: string; fromEmail: string | null }
-type Analysis = { id: string; runAt: string; category: string; urgency: string; sentiment: string; summary: string; proposal: string; draftReply: string | null; needsHuman: boolean; citedCaseIds: string; gateJson: string; outputJson: string; model: string }
+type Message = { id: string; author: string; private: boolean; bodyText: string; createdAt: string; fromEmail: string | null; source: string; sentiment: string | null }
+type ReviewRow = { messageId: string; score: number; issues: string; reason: string; rewrite: string | null }
+type Analysis = { id: string; runAt: string; category: string; urgency: string; sentiment: string; summary: string; proposal: string; draftReply: string | null; needsHuman: boolean; citedCaseIds: string; gateJson: string; outputJson: string; model: string; rootCauseStage: string | null; rootCauseEvidence: string | null; rootCauseConfidence: string | null; issueType: string | null }
 type Order = {
   shopifyOrderNumber: string; placedAt: string; customerName: string | null; shipTo: string; factoryState: keyof typeof FACTORY_LABELS; pipelineStatus: string; supplierHandoffAt: string | null
   lines: { title: string; variant: string | null; qty: number; customized: boolean }[]
@@ -16,11 +19,12 @@ type Order = {
   designTaskStatuses: string[]
 }
 type Detail = {
-  ticket: { id: string; fdTicketId: number; subject: string; requesterEmail: string | null; requesterName: string | null; orderNumber: string | null; urgency: string | null; category: string | null; sentiment: string | null; needsHuman: boolean; autoReplied: boolean; resolvedInTool: boolean; fdStatus: number; lastCustomerAt: string | null; lastReplyAt: string | null }
+  ticket: { id: string; fdTicketId: number; subject: string; requesterEmail: string | null; requesterName: string | null; orderNumber: string | null; urgency: string | null; category: string | null; sentiment: string | null; needsHuman: boolean; autoReplied: boolean; resolvedInTool: boolean; fdStatus: number; lastCustomerAt: string | null; lastReplyAt: string | null; rootCauseStageOverride: string | null; rootCauseNote: string | null }
   messages: Message[]
   analysis: Analysis | null
   order: { match: string; order: Order | null; candidates: string[] }
   cases: { id: string; title: string }[]
+  reviews: ReviewRow[]
 }
 
 const FACTORY_COLOR: Record<string, string> = { NOT_SENT: 'text-on-tertiary-container', AT_FACTORY: 'text-secondary', SHIPPED: 'text-primary', DELIVERED: 'text-on-surface-variant', CANCELLED: 'text-error' }
@@ -33,6 +37,7 @@ export default function CsTicketPage() {
   const [busy, setBusy] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [lastSent, setLastSent] = useState<string | null>(null)
+  const [rootCauseForm, setRootCauseForm] = useState<{ stage: string; note: string } | null>(null)
 
   const load = useCallback(async () => {
     const res = await fetch(`/api/cs/tickets/${id}`)
@@ -77,7 +82,9 @@ export default function CsTicketPage() {
     )
   }
 
-  const { ticket, messages, analysis, order, cases } = detail
+  const { ticket, messages, analysis, order, cases, reviews } = detail
+  const reviewByMessage = new Map(reviews.map(r => [r.messageId, r]))
+  const effectiveStage = ticket.rootCauseStageOverride ?? analysis?.rootCauseStage ?? null
   const o = order.order
   const gate: { allowed?: boolean; reasons?: string[] } = analysis ? (() => { try { return JSON.parse(analysis.gateJson) } catch { return {} } })() : {}
   const facts: string[] = analysis ? (() => { try { return JSON.parse(analysis.outputJson).facts ?? [] } catch { return [] } })() : []
@@ -117,6 +124,17 @@ export default function CsTicketPage() {
                           {m.author === 'CUSTOMER' ? 'Khách' : m.author === 'AGENT' ? 'Agent' : m.author === 'STAFF' ? 'Nhân sự' : m.author}{m.private ? ' · Ghi chú nội bộ' : ''} · {fmtDate(m.createdAt, true)}
                         </p>
                         <p className="whitespace-pre-wrap text-body-sm">{m.bodyText || '(trống)'}</p>
+                        {m.author === 'STAFF' && m.source === 'DRAFT_UNCHANGED' && <p className="mt-xs text-label-sm text-on-secondary-container/80">gửi nguyên nháp agent</p>}
+                        {m.author === 'STAFF' && m.source === 'DRAFT_EDITED' && <p className="mt-xs text-label-sm text-on-secondary-container/80">nháp agent đã sửa</p>}
+                        {m.author === 'CUSTOMER' && m.sentiment && <p className="mt-xs text-label-sm text-on-surface-variant">{SENTIMENT_LABELS[m.sentiment as keyof typeof SENTIMENT_LABELS] ?? m.sentiment}</p>}
+                        {reviewByMessage.get(m.id) && (() => { const r = reviewByMessage.get(m.id)!; const issues: string[] = (() => { try { return JSON.parse(r.issues) } catch { return [] } })(); return (
+                          <div className={`mt-sm rounded-lg p-sm text-label-sm ${mine ? 'bg-surface-container-lowest/80 text-on-surface' : 'bg-surface'}`}>
+                            <span className={`mr-xs rounded-full px-sm ${r.score <= 2 ? 'bg-error text-on-error' : r.score === 3 ? 'bg-surface-container-high' : 'bg-tertiary-container text-on-tertiary-container'}`}>{r.score}/5</span>
+                            {issues.map(i => <span key={i} className="mr-xs rounded-full bg-surface-container px-sm">{RUBRIC_LABELS[i as keyof typeof RUBRIC_LABELS] ?? i}</span>)}
+                            <p className="mt-xs">{r.reason}</p>
+                            {r.rewrite && <p className="mt-xs italic">Nên viết: {r.rewrite}</p>}
+                          </div>
+                        ) })()}
                       </div>
                     </div>
                   )
@@ -195,6 +213,37 @@ export default function CsTicketPage() {
                 )}
                 {!ticket.resolvedInTool && (
                   <button onClick={async () => { if (await post(`/api/cs/tickets/${id}/resolve`, undefined, 'resolve')) load() }} disabled={busy !== null} className="mt-sm w-full rounded-lg border border-outline-variant/40 px-lg py-sm text-label-md text-primary disabled:opacity-50">{busy === 'resolve' ? 'Đang cập nhật…' : 'Đánh dấu xong'}</button>
+                )}
+              </div>
+            </div>
+            <div className="rounded-xl border border-outline-variant/20 bg-surface-container-lowest shadow-card">
+              <div className="border-b border-outline-variant/20 px-lg py-md"><h3 className="text-headline-sm text-primary">Nguyên nhân</h3></div>
+              <div className="space-y-sm p-lg text-body-sm">
+                {!effectiveStage && <p className="text-on-surface-variant">Chưa điều tra (chỉ ticket có vấn đề và có đơn khớp mới được điều tra).</p>}
+                {effectiveStage && (
+                  <>
+                    <p className="flex flex-wrap items-center gap-xs">
+                      <span className="rounded-full bg-primary px-sm py-xs text-label-sm text-on-primary">{STAGE_LABELS[effectiveStage as keyof typeof STAGE_LABELS] ?? effectiveStage}</span>
+                      {analysis?.issueType && <span className="rounded-full bg-surface-container px-sm py-xs text-label-sm">{ISSUE_LABELS[analysis.issueType as keyof typeof ISSUE_LABELS] ?? analysis.issueType}</span>}
+                      {ticket.rootCauseStageOverride ? <span className="text-label-sm text-secondary">sửa tay</span> : analysis?.rootCauseConfidence && <span className="text-label-sm text-on-surface-variant">tin cậy {analysis.rootCauseConfidence}</span>}
+                    </p>
+                    <p className="whitespace-pre-wrap text-on-surface-variant">{ticket.rootCauseNote ?? analysis?.rootCauseEvidence}</p>
+                  </>
+                )}
+                {rootCauseForm ? (
+                  <div className="space-y-xs">
+                    <select value={rootCauseForm.stage} onChange={e => setRootCauseForm({ ...rootCauseForm, stage: e.target.value })} className="w-full rounded-lg border border-outline-variant/40 bg-surface px-md py-xs">
+                      <option value="">— theo agent —</option>
+                      {STAGES.map(s => <option key={s} value={s}>{STAGE_LABELS[s]}</option>)}
+                    </select>
+                    <textarea value={rootCauseForm.note} onChange={e => setRootCauseForm({ ...rootCauseForm, note: e.target.value })} rows={2} placeholder="Ghi chú (vì sao)" className="w-full rounded-lg border border-outline-variant/40 bg-surface px-md py-xs" />
+                    <div className="flex gap-sm">
+                      <button onClick={async () => { const res = await fetch(`/api/cs/tickets/${id}/root-cause`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stage: rootCauseForm.stage || null, note: rootCauseForm.note }) }); if (res.ok) { setRootCauseForm(null); load() } else setMessage((await res.json().catch(() => ({}))).error ?? 'Lưu thất bại') }} className="rounded-lg bg-secondary px-md py-xs text-label-md text-on-secondary">Lưu</button>
+                      <button onClick={() => setRootCauseForm(null)} className="rounded-lg border border-outline-variant/40 px-md py-xs text-label-md">Huỷ</button>
+                    </div>
+                  </div>
+                ) : (
+                  <button onClick={() => setRootCauseForm({ stage: ticket.rootCauseStageOverride ?? '', note: ticket.rootCauseNote ?? '' })} className="text-label-sm text-secondary">Sửa khâu lỗi</button>
                 )}
               </div>
             </div>

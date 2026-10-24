@@ -5,7 +5,7 @@ import { FreshdeskBudgetExceeded } from '@/lib/cs/freshdesk'
 import type { Analysis } from '@/lib/cs/analysis-schema'
 import type { Llm } from '@/lib/llm/anthropic'
 import { runAgentCycle } from '@/lib/cs/agent'
-import { dailyDigest, resendAlerts } from '@/lib/cs/actions'
+import { dailyDigest, replySource, resendAlerts, sendStaffReply } from '@/lib/cs/actions'
 import { saveCsSettings } from '@/lib/cs/settings'
 import ticketsPage from './fixtures/cs/tickets-page.json'
 import conversations119 from './fixtures/cs/conversations-119.json'
@@ -37,9 +37,14 @@ const base: Analysis = {
   category: 'ORDER_STATUS', urgency: 'NORMAL', sentiment: 'CALM', orderNumber: null, summary: 'Khách hỏi đơn đến đâu', facts: [], proposal: 'Gửi tracking',
   citedCaseIds: [], draftReply: 'Hi, your order is on its way.\n\nLitzzy Support', needsHuman: false, needsHumanReason: '', autoReplyEligible: true, autoReplyReason: 'first wismo',
 }
-function fakeLlm(): Llm & { calls: number } {
+function fakeLlm(): Llm & { calls: number; rootCauseCalls: number } {
   const llm = {
     calls: 0,
+    rootCauseCalls: 0,
+    async complete(i: any): Promise<any> {
+      if (i.schemaName === 'root_cause') { llm.rootCauseCalls += 1; return { output: { stage: 'FACTORY', issueType: 'WRONG_TEXT', confidence: 'HIGH', evidence: 'e', affectedLineIds: [] }, tokensIn: 1, tokensOut: 1 } }
+      throw new Error('complete not used here')
+    },
     async analyze({ user }: { user: string }) {
       llm.calls++
       const output: Analysis = user.includes('Ticket #119')
@@ -59,6 +64,7 @@ function collector() {
 }
 
 async function clean() {
+  await prisma.appSetting.deleteMany({ where: { key: { startsWith: 'cs.llmCalls.' } } })
   await prisma.csTicket.deleteMany({})
   await prisma.csAgentRun.deleteMany({})
   await prisma.csCase.deleteMany({})
@@ -232,10 +238,58 @@ describe('runAgentCycle', () => {
 
   it('keeps going when one ticket analysis throws and records the error', async () => {
     const d = deps()
-    const llm: Llm = { async analyze(i) { if (i.user.includes('Ticket #194')) throw new Error('boom'); return d.llm.analyze(i) } }
+    const llm: Llm = { complete: d.llm.complete, async analyze(i) { if (i.user.includes('Ticket #194')) throw new Error('boom'); return d.llm.analyze(i) } }
     const run = await runAgentCycle({ ...d, llm, notifier: collector().notifier })
     expect(run.analysed).toBe(2)
     expect(run.error).toContain('boom')
+  })
+})
+
+describe('llm cap in the cycle', () => {
+  it('stops triage at the cap, reports it as partial and leaves tickets unanalysed', async () => {
+    await saveCsSettings({ llmDailyCallCap: 1 })
+    const d = deps()
+    const run = await runAgentCycle({ ...d, notifier: collector().notifier })
+    expect(run.analysed).toBe(1)
+    expect(run.error).toBeNull()
+    expect(run.partial).toContain('trần')
+    expect(await prisma.csTicket.count({ where: { lastAnalysisAt: null, fdStatus: { notIn: [4, 5] } } })).toBe(2)
+    await saveCsSettings({ llmDailyCallCap: 500 })
+  })
+})
+
+describe('root cause in the cycle', () => {
+  it('investigates at most 5 problem tickets per run', async () => {
+    const d = deps()
+    await runAgentCycle({ ...d, notifier: collector().notifier })
+    const storeId = (await prisma.shopifyStore.findUnique({ where: { shop: SHOP } }))!.id
+    for (let i = 0; i < 6; i++) {
+      const t = await prisma.csTicket.create({ data: { fdTicketId: 7000 + i, subject: `p${i}`, fdStatus: 2, fdPriority: 1, category: 'WRONG_ITEM', orderId: ORDERS[0], orderNumber: '#LIT4525', orderMatch: 'EXACT', fdCreatedAt: new Date(), fdUpdatedAt: new Date(), lastCustomerAt: new Date(Date.now() - i * 1000), lastAnalysisAt: new Date(), lastNoteHash: 'x' } })
+      await prisma.csAnalysis.create({ data: { ticketId: t.id, model: 'm', inputHash: 'h', outputJson: '{}', category: 'WRONG_ITEM', urgency: 'HIGH', sentiment: 'CALM', summary: 's', proposal: 'p', needsHuman: true } })
+    }
+    void storeId
+    const before = d.llm.rootCauseCalls
+    await runAgentCycle({ ...d, notifier: collector().notifier })
+    expect(d.llm.rootCauseCalls - before).toBe(5)
+    expect(await prisma.csAnalysis.count({ where: { rootCauseStage: 'FACTORY' } })).toBeGreaterThanOrEqual(5)
+  })
+})
+
+describe('reply source', () => {
+  it('replySource tells unchanged, edited and own replies apart', () => {
+    expect(replySource('Hi\n\nthere ', 'Hi there')).toBe('DRAFT_UNCHANGED')
+    expect(replySource('Hi there!', 'Hi there')).toBe('DRAFT_EDITED')
+    expect(replySource('x', null)).toBe('OWN')
+  })
+  it('sendStaffReply stores the source', async () => {
+    const d = deps()
+    await runAgentCycle({ ...d, notifier: collector().notifier })
+    const ticket = await prisma.csTicket.findUnique({ where: { fdTicketId: 195 } })
+    const msg = await sendStaffReply(d.fd, ticket!, 'Hi, your order is on its way.\n\nLitzzy Support', { private: false, source: 'DRAFT_UNCHANGED' })
+    expect(msg.source).toBe('DRAFT_UNCHANGED')
+    expect(msg.author).toBe('STAFF')
+    const own = await sendStaffReply(d.fd, ticket!, 'Custom text', { private: false })
+    expect(own.source).toBe('OWN')
   })
 })
 

@@ -38,6 +38,13 @@ describe('cs settings', () => {
     expect((await getCsSettings()).model).toBe('gpt-6.1-sol')
   })
 
+  it('review settings default on with a 500 call cap', async () => {
+    const s = await getCsSettings()
+    expect(s.reviewEnabled).toBe(true); expect(s.weeklyReport).toBe(true); expect(s.reviewModel).toBeNull(); expect(s.llmDailyCallCap).toBe(500)
+    await saveCsSettings({ reviewModel: ' GPT 6 Luna ', llmDailyCallCap: 50 })
+    const t = await getCsSettings(); expect(t.reviewModel).toBe('gpt-6-luna'); expect(t.llmDailyCallCap).toBe(50)
+  })
+
   it('llm provider defaults to kie and only accepts known providers', async () => {
     expect(DEFAULT_CS_SETTINGS.llmProvider).toBe('kie')
     await saveCsSettings({ llmProvider: 'anthropic' })

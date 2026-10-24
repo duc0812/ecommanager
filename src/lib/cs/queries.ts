@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/db'
-import type { CsAnalysis, CsCase, CsMessage, CsTicket } from '@/generated/prisma/client'
+import type { CsAnalysis, CsCase, CsMessage, CsReplyReview, CsTicket } from '@/generated/prisma/client'
 import { buildOrderContext, type OrderContext } from '@/lib/cs/order-context'
 
 export type TicketTab = 'todo' | 'agent' | 'done'
@@ -85,6 +85,7 @@ export type TicketDetail = {
   analysis: CsAnalysis | null
   order: OrderContext
   cases: Pick<CsCase, 'id' | 'title'>[]
+  reviews: CsReplyReview[]
 }
 
 export async function ticketDetail(id: string): Promise<TicketDetail | null> {
@@ -103,5 +104,6 @@ export async function ticketDetail(id: string): Promise<TicketDetail | null> {
   })
   const citedIds: string[] = analysis ? (() => { try { return JSON.parse(analysis.citedCaseIds) } catch { return [] } })() : []
   const cases = citedIds.length ? await prisma.csCase.findMany({ where: { id: { in: citedIds } }, select: { id: true, title: true } }) : []
-  return { ticket: rest as CsTicket, messages, analysis, order, cases }
+  const reviews = await prisma.csReplyReview.findMany({ where: { ticketId: id } })
+  return { ticket: rest as CsTicket, messages, analysis, order, cases, reviews }
 }

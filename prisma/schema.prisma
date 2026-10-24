@@ -1294,10 +1294,22 @@ model CsTicket {
   lastReplyAt     DateTime?
   lastAnalysisAt  DateTime?
   lastNoteHash    String?
+  closedAt        DateTime?
+  reopenCount     Int      @default(0)
+  fdFirstRespondedAt DateTime?
+  fdResolvedAt    DateTime?
+  fdClosedAt      DateTime?
+  fdReopenedAt    DateTime?
+  rootCauseStageOverride String?
+  rootCauseNote   String?
+  rootCauseById   String?
+  reviewedAt      DateTime?
+  reviewSeq       Int      @default(0)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
   messages        CsMessage[]
   analyses        CsAnalysis[]
+  reviews         CsReplyReview[]
   @@index([needsHuman, urgency, lastCustomerAt])
   @@index([fdUpdatedAt])
 }
@@ -1312,6 +1324,8 @@ model CsMessage {
   bodyText         String
   bodyHtml         String?
   fromEmail        String?
+  sentiment        String?
+  source           String   @default("FRESHDESK")
   createdAt        DateTime
   @@index([ticketId, createdAt])
 }
@@ -1336,7 +1350,38 @@ model CsAnalysis {
   gateJson          String   @default("{}")
   tokensIn          Int      @default(0)
   tokensOut         Int      @default(0)
+  rootCauseStage    String?
+  rootCauseEvidence String?
+  rootCauseConfidence String?
+  issueType         String?
+  affectedLineIds   String   @default("[]")
+  rootCauseAt       DateTime?
   @@index([ticketId, runAt])
+}
+
+model CsReplyReview {
+  id        String   @id @default(cuid())
+  ticketId  String
+  ticket    CsTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  messageId String   @unique
+  score     Int
+  issues    String   @default("[]")
+  reason    String
+  rewrite   String?
+  runAt     DateTime @default(now())
+  model     String
+  @@index([ticketId])
+}
+
+model CsPerformanceReport {
+  id          String   @id @default(cuid())
+  periodStart DateTime
+  periodEnd   DateTime
+  kind        String
+  metricsJson String
+  body        String
+  createdAt   DateTime @default(now())
+  @@index([periodStart])
 }
 
 model CsCase {

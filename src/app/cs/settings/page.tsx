@@ -11,6 +11,7 @@ import { fmtDate } from '@/components/cs/UrgencyChip'
 type View = {
   freshdeskDomain: string; llmProvider: 'anthropic' | 'kie'; model: string; pollEnabled: boolean; killSwitch: boolean; autoReplyEnabled: boolean; autoReplyCategories: string[]; autoReplyDailyCap: number
   notifyLevels: string[]; productionDays: number; shippingDays: number; syncUpdatedSince: string | null
+  reviewEnabled: boolean; weeklyReport: boolean; reviewModel: string | null; llmDailyCallCap: number
   hasFreshdeskApiKey: boolean; freshdeskApiKeyMasked: string | null; hasAnthropicApiKey: boolean; anthropicApiKeyMasked: string | null; hasKieApiKey: boolean; kieApiKeyMasked: string | null
 }
 type LastRun = { ranAt: string; ticketsSeen: number; analysed: number; autoReplied: number; fdRequests: number; error: string | null } | null
@@ -22,11 +23,13 @@ export default function CsSettingsPage() {
   const [secrets, setSecrets] = useState({ freshdeskApiKey: '', anthropicApiKey: '', kieApiKey: '' })
   const [message, setMessage] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
+  const [backfill, setBackfill] = useState<{ last: any; remaining: number } | null>(null)
 
   const load = useCallback(async () => {
     const data = await fetch('/api/cs/settings').then(r => r.json()).catch(() => ({}))
     if (data.settings) { setView(data.settings); setForm(data.settings) }
     setLastRun(data.lastRun ?? null)
+    fetch('/api/cs/review/backfill').then(r => r.json()).then(setBackfill).catch(() => {})
   }, [])
   useEffect(() => { load() }, [load])
 
@@ -60,6 +63,16 @@ export default function CsSettingsPage() {
     const data = await res.json().catch(() => ({}))
     setBusy(null)
     setMessage(res.ok ? `Đã gửi ${data.sent} thông báo${data.failed ? `, lỗi ${data.failed}` : ''}.` : (data.error ?? 'Không gửi được'))
+  }
+
+  async function runBackfill() {
+    setBusy('backfill')
+    setMessage(null)
+    const res = await fetch('/api/cs/review/backfill', { method: 'POST' })
+    const data = await res.json().catch(() => ({}))
+    setBusy(null)
+    setMessage(res.ok ? `Backfill: đã chấm ${data.processed} ticket, còn ${data.remaining}${data.capReached ? ' (chạm trần ngày)' : ''}. Bấm tiếp để chạy lô kế.` : (data.error ?? 'Không chạy được'))
+    load()
   }
 
   const toggleIn = (key: 'autoReplyCategories' | 'notifyLevels', value: string) => {
@@ -147,6 +160,19 @@ export default function CsSettingsPage() {
                 {input('Tối đa thư tự gửi / ngày', 'autoReplyDailyCap', 'number')}
                 {input('Ngày sản xuất', 'productionDays', 'number')}
                 {input('Ngày vận chuyển', 'shippingDays', 'number')}
+              </div>
+            </>)}
+
+            {card('Đánh giá & điều tra', <>
+              {check('Agent chấm điểm từng thư trả lời (review)', 'reviewEnabled')}
+              {check('Tự viết bản đánh giá tuần (thứ Hai 08:00)', 'weeklyReport')}
+              <div className="grid grid-cols-2 gap-md">
+                {input('Model cho review/điều tra (trống = dùng model chính)', 'reviewModel')}
+                {input('Trần số lần gọi model / ngày', 'llmDailyCallCap', 'number')}
+              </div>
+              <div className="rounded-lg bg-surface-container-low p-md text-body-sm">
+                <p>Backfill lịch sử: {backfill ? `${backfill.remaining} ticket chưa chấm` : '…'}{backfill?.last ? ` · lần cuối ${fmtDate(backfill.last.ranAt, true)}: chấm ${backfill.last.processed}` : ''}</p>
+                <button onClick={runBackfill} disabled={busy !== null || (backfill?.remaining ?? 0) === 0} className="mt-sm rounded-lg border border-outline-variant/40 px-lg py-sm text-label-md text-primary disabled:opacity-50">{busy === 'backfill' ? 'Đang chấm…' : 'Chạy backfill (20 ticket / lượt)'}</button>
               </div>
             </>)}
 

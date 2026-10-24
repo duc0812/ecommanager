@@ -20,6 +20,10 @@ export type CsSettings = {
   supportAgentId: number
   ignoredAgentIds: number[]
   syncUpdatedSince: string | null
+  reviewEnabled: boolean
+  weeklyReport: boolean
+  reviewModel: string | null
+  llmDailyCallCap: number
 }
 
 export const DEFAULT_CS_SETTINGS: CsSettings = {
@@ -37,6 +41,10 @@ export const DEFAULT_CS_SETTINGS: CsSettings = {
   supportAgentId: 158024049112,
   ignoredAgentIds: [158024416092, 158024416093],
   syncUpdatedSince: null,
+  reviewEnabled: true,
+  weeklyReport: true,
+  reviewModel: null,
+  llmDailyCallCap: 500,
 }
 
 export type CsSecrets = { freshdeskApiKey: string | null; anthropicApiKey: string | null; kieApiKey: string | null }
@@ -75,6 +83,10 @@ function normalize(parsed: any): CsSettings {
     supportAgentId: num(parsed.supportAgentId, d.supportAgentId),
     ignoredAgentIds: numList(parsed.ignoredAgentIds, d.ignoredAgentIds),
     syncUpdatedSince: typeof parsed.syncUpdatedSince === 'string' ? parsed.syncUpdatedSince : null,
+    reviewEnabled: bool(parsed.reviewEnabled, d.reviewEnabled),
+    weeklyReport: bool(parsed.weeklyReport, d.weeklyReport),
+    reviewModel: typeof parsed.reviewModel === 'string' && parsed.reviewModel.trim() ? normalizeModelId(parsed.reviewModel) : null,
+    llmDailyCallCap: num(parsed.llmDailyCallCap, d.llmDailyCallCap),
   }
 }
 

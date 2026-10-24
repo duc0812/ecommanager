@@ -7,6 +7,14 @@ import { tagsFor, urgencyToPriority, type CsCategory, type CsUrgency } from '@/l
 import { CATEGORY_LABELS, URGENCY_LABELS } from '@/lib/cs/labels'
 
 export type Notifier = (text: string) => Promise<unknown>
+export type MessageSource = 'FRESHDESK' | 'OWN' | 'DRAFT_EDITED' | 'DRAFT_UNCHANGED' | 'AGENT'
+
+const squash = (s: string) => s.replace(/\s+/g, ' ').trim()
+
+export function replySource(body: string, draft: string | null): 'OWN' | 'DRAFT_EDITED' | 'DRAFT_UNCHANGED' {
+  if (!draft) return 'OWN'
+  return squash(body) === squash(draft) ? 'DRAFT_UNCHANGED' : 'DRAFT_EDITED'
+}
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 const ticketUrl = (appUrl: string, ticket: Pick<CsTicket, 'id'>) => `${appUrl.replace(/\/$/, '')}/cs/${ticket.id}`
@@ -64,9 +72,9 @@ export async function writeBack(fd: Pick<FreshdeskClient, 'update' | 'note'>, ti
   return { noted: true }
 }
 
-async function storeOutgoing(ticket: CsTicket, fdId: number, author: 'AGENT' | 'STAFF', body: string, isPrivate: boolean, now: Date): Promise<CsMessage> {
+async function storeOutgoing(ticket: CsTicket, fdId: number, author: 'AGENT' | 'STAFF', body: string, isPrivate: boolean, now: Date, source: MessageSource): Promise<CsMessage> {
   const msg = await prisma.csMessage.create({
-    data: { ticketId: ticket.id, fdConversationId: String(fdId), author, private: isPrivate, bodyText: body, bodyHtml: textToHtml(body), fromEmail: 'support@litzzy.com', createdAt: now },
+    data: { ticketId: ticket.id, fdConversationId: String(fdId), author, private: isPrivate, bodyText: body, bodyHtml: textToHtml(body), fromEmail: 'support@litzzy.com', createdAt: now, source },
   })
   if (!isPrivate) await prisma.csTicket.update({ where: { id: ticket.id }, data: { lastReplyAt: now } })
   return msg
@@ -78,19 +86,19 @@ export async function autoReply(fd: Pick<FreshdeskClient, 'reply' | 'update'>, t
   const existingTags: string[] = (() => { try { return JSON.parse(ticket.fdTags) } catch { return [] } })()
   const tags = existingTags.includes('em-auto-replied') ? existingTags : [...existingTags, 'em-auto-replied']
   await fd.update(ticket.fdTicketId, { status: 6, tags })
-  const msg = await storeOutgoing(ticket, sent.id, 'AGENT', a.draftReply, false, now)
+  const msg = await storeOutgoing(ticket, sent.id, 'AGENT', a.draftReply, false, now, 'AGENT')
   await prisma.csTicket.update({ where: { id: ticket.id }, data: { autoReplied: true, needsHuman: false, fdStatus: 6, fdTags: JSON.stringify(tags) } })
   return msg
 }
 
-export async function sendStaffReply(fd: Pick<FreshdeskClient, 'reply' | 'note' | 'update'>, ticket: CsTicket, body: string, opts: { private: boolean }, now = new Date()): Promise<CsMessage> {
+export async function sendStaffReply(fd: Pick<FreshdeskClient, 'reply' | 'note' | 'update'>, ticket: CsTicket, body: string, opts: { private: boolean; source?: MessageSource }, now = new Date()): Promise<CsMessage> {
   const html = textToHtml(body)
   const sent = opts.private ? await fd.note(ticket.fdTicketId, html) : await fd.reply(ticket.fdTicketId, html)
   if (!opts.private) {
     await fd.update(ticket.fdTicketId, { status: 6 })
     await prisma.csTicket.update({ where: { id: ticket.id }, data: { fdStatus: 6, needsHuman: false } })
   }
-  return storeOutgoing(ticket, sent.id, 'STAFF', body, opts.private, now)
+  return storeOutgoing(ticket, sent.id, 'STAFF', body, opts.private, now, opts.source ?? 'OWN')
 }
 
 export async function dailyDigest(notifier: Notifier, appUrl: string): Promise<boolean> {

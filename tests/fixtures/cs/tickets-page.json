@@ -19,6 +19,13 @@
   },
   "custom_fields": {
    "cf_order_id": "#LIT4525"
+  },
+  "stats": {
+   "first_responded_at": "2026-10-23T09:26:05Z",
+   "agent_responded_at": "2026-10-23T09:26:05Z",
+   "resolved_at": null,
+   "closed_at": null,
+   "reopened_at": null
   }
  },
  {

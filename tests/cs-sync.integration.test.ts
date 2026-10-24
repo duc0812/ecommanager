@@ -133,6 +133,48 @@ describe('syncTickets', () => {
     expect(t!.lastReplyAt?.toISOString()).toBe('2026-10-23T15:00:00.000Z')
   })
 
+  it('stores freshdesk stats timestamps', async () => {
+    await syncTickets(fakeFd(), { since: '2026-10-19T00:00:00Z' })
+    const t = await prisma.csTicket.findUnique({ where: { fdTicketId: 119 } })
+    expect(t!.fdFirstRespondedAt?.toISOString()).toBe('2026-10-23T09:26:05.000Z')
+    expect(t!.fdResolvedAt).toBeNull()
+    expect(t!.closedAt).toBeNull()
+  })
+
+  it('counts a customer message after resolution as a reopen', async () => {
+    const closed = tickets.map(t => (t.id === 195 ? { ...t, status: 5, stats: { resolved_at: '2026-10-23T15:00:00Z', closed_at: '2026-10-23T15:00:00Z' } } : t))
+    const fd1 = fakeFd(); fd1.listTickets = async (_s: string, p = 1) => (p === 1 ? closed : []) as any
+    await syncTickets(fd1, { since: '2026-10-19T00:00:00Z' })
+    let t = await prisma.csTicket.findUnique({ where: { fdTicketId: 195 } })
+    expect(t!.closedAt?.toISOString()).toBe('2026-10-23T15:00:00.000Z')
+    expect(t!.reopenCount).toBe(0)
+    const reopened = tickets.map(t => (t.id === 195 ? { ...t, status: 2, updated_at: '2026-10-24T08:00:00Z', stats: { resolved_at: '2026-10-23T15:00:00Z', closed_at: null } } : t))
+    const fd2 = fakeFd(); fd2.listTickets = async (_s: string, p = 1) => (p === 1 ? reopened : []) as any
+    fd2.getConversations = async (id: number) => (id === 195 ? [{ id: 9195, incoming: true, private: false, user_id: 1, body: '<p>still waiting</p>', body_text: 'still waiting', created_at: '2026-10-24T07:59:00Z' }] : []) as any
+    await syncTickets(fd2, { since: '2026-10-19T00:00:00Z' })
+    t = await prisma.csTicket.findUnique({ where: { fdTicketId: 195 } })
+    expect(t!.reopenCount).toBe(1)
+    expect(t!.closedAt).toBeNull()
+  })
+
+  it('counts one reopen when the ticket is re-resolved before the next sync, and not again later', async () => {
+    const closed = tickets.map(t => (t.id === 195 ? { ...t, status: 5, stats: { resolved_at: '2026-10-23T15:00:00Z' } } : t))
+    const fd1 = fakeFd(); fd1.listTickets = async (_s: string, p = 1) => (p === 1 ? closed : []) as any
+    await syncTickets(fd1, { since: '2026-10-19T00:00:00Z' })
+    const reclosed = tickets.map(t => (t.id === 195 ? { ...t, status: 4, updated_at: '2026-10-24T09:00:00Z', stats: { resolved_at: '2026-10-24T08:30:00Z', reopened_at: '2026-10-24T08:00:00Z' } } : t))
+    const fd2 = fakeFd(); fd2.listTickets = async (_s: string, p = 1) => (p === 1 ? reclosed : []) as any
+    fd2.getConversations = async (id: number) => (id === 195 ? [{ id: 9196, incoming: true, private: false, user_id: 1, body: '<p>not fixed</p>', body_text: 'not fixed', created_at: '2026-10-24T08:00:00Z' }] : []) as any
+    await syncTickets(fd2, { since: '2026-10-19T00:00:00Z' })
+    let t = await prisma.csTicket.findUnique({ where: { fdTicketId: 195 } })
+    expect(t!.reopenCount).toBe(1)
+    expect(t!.closedAt?.toISOString()).toBe('2026-10-24T08:30:00.000Z')
+    const fd3 = fakeFd(); fd3.listTickets = async (_s: string, p = 1) => (p === 1 ? reclosed.map(x => (x.id === 195 ? { ...x, updated_at: '2026-10-24T10:00:00Z' } : x)) : []) as any
+    fd3.getConversations = fd2.getConversations
+    await syncTickets(fd3, { since: '2026-10-19T00:00:00Z' })
+    t = await prisma.csTicket.findUnique({ where: { fdTicketId: 195 } })
+    expect(t!.reopenCount).toBe(1)
+  })
+
   it('uses the stored cursor and defaults', async () => {
     expect(DEFAULT_CS_SETTINGS.syncUpdatedSince).toBeNull()
     const fd = fakeFd()
