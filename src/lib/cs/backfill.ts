@@ -109,3 +109,23 @@ async function markUnreviewable(ticketId: string, model: string, now: Date, erro
   }
   await prisma.csTicket.update({ where: { id: ticketId }, data: { reviewedAt: now } })
 }
+
+export async function runBackfillUntilDone(deps: { llm: Llm; now?: Date }, opts: { batchSize?: number; maxBatches?: number } = {}): Promise<{ batches: number; processed: number; remaining: number; capReached: boolean; failed: { fdTicketId: number; error: string }[] }> {
+  const batchSize = opts.batchSize ?? 20
+  const maxBatches = opts.maxBatches ?? 50
+  let batches = 0
+  let processed = 0
+  let remaining = await remainingBackfill()
+  let capReached = false
+  const failed: { fdTicketId: number; error: string }[] = []
+  while (remaining > 0 && batches < maxBatches) {
+    const r = await runReviewBackfill({ llm: deps.llm, now: deps.now, maxCalls: batchSize })
+    batches += 1
+    processed += r.processed
+    failed.push(...r.failed)
+    capReached = r.capReached
+    if (r.capReached || (r.processed === 0 && r.failed.length === 0)) { remaining = r.remaining; break }
+    remaining = r.remaining
+  }
+  return { batches, processed, remaining, capReached, failed }
+}

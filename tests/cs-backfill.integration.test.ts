@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterAll, beforeAll } from 'vitest'
 import { prisma } from '@/lib/db'
 import { LlmError, type Llm } from '@/lib/llm/types'
-import { runReviewBackfill } from '@/lib/cs/backfill'
+import { runBackfillUntilDone, runReviewBackfill } from '@/lib/cs/backfill'
 import { saveCsSettings } from '@/lib/cs/settings'
 
 const T = (iso: string) => new Date(iso)
@@ -95,6 +95,15 @@ describe('runReviewBackfill', () => {
     expect(badT!.analyses[0].rootCauseStage).toBe('UNKNOWN')
     expect((await prisma.csTicket.findUnique({ where: { fdTicketId: 408 } }))!.reviewedAt).toBeNull()
     expect(r.remaining).toBe(0)
+  })
+  it('runBackfillUntilDone loops over batches until nothing remains', async () => {
+    await mk(411, '2026-10-20T08:00:00Z'); await mk(412, '2026-10-21T08:00:00Z'); await mk(413, '2026-10-22T08:00:00Z')
+    const llm = fakeLlm()
+    const r = await runBackfillUntilDone({ llm, now: T('2026-10-24T12:00:00Z') }, { batchSize: 2, maxBatches: 10 })
+    expect(r.batches).toBe(2)
+    expect(r.processed).toBe(3)
+    expect(r.remaining).toBe(0)
+    expect(llm.calls).toHaveLength(3)
   })
   it('stops at the daily cap and reports it', async () => {
     await saveCsSettings({ llmDailyCallCap: 1 })

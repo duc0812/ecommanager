@@ -23,7 +23,7 @@ export default function CsSettingsPage() {
   const [secrets, setSecrets] = useState({ freshdeskApiKey: '', anthropicApiKey: '', kieApiKey: '' })
   const [message, setMessage] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
-  const [backfill, setBackfill] = useState<{ last: any; remaining: number } | null>(null)
+  const [backfill, setBackfill] = useState<{ last: any; remaining: number; running?: boolean } | null>(null)
 
   const load = useCallback(async () => {
     const data = await fetch('/api/cs/settings').then(r => r.json()).catch(() => ({}))
@@ -71,9 +71,22 @@ export default function CsSettingsPage() {
     const res = await fetch('/api/cs/review/backfill', { method: 'POST' })
     const data = await res.json().catch(() => ({}))
     setBusy(null)
-    setMessage(res.ok ? `Backfill: đã chấm ${data.processed} ticket, còn ${data.remaining}${data.capReached ? ' (chạm trần ngày)' : ''}. Bấm tiếp để chạy lô kế.` : (data.error ?? 'Không chạy được'))
-    load()
+    if (!res.ok) { setMessage(data.error ?? 'Không chạy được'); return }
+    setMessage(data.started ? `Backfill đang chạy nền (${data.remaining} ticket, 20 ticket/lô, tự chạy tới khi xong hoặc chạm trần ngày).` : 'Không còn ticket nào cần chấm.')
+    setBackfill(b => (b ? { ...b, running: data.started } : b))
   }
+
+  useEffect(() => {
+    if (!backfill?.running) return
+    const id = setInterval(async () => {
+      try {
+        const b = await (await fetch('/api/cs/review/backfill')).json()
+        setBackfill(b)
+        if (!b.running) setMessage(`Backfill xong: còn ${b.remaining} ticket${b.last?.capReached ? ' (chạm trần ngày — mai chạy tiếp)' : ''}${b.last?.failed?.length ? ` · ${b.last.failed.length} ticket model không chấm được` : ''}.`)
+      } catch {}
+    }, 5000)
+    return () => clearInterval(id)
+  }, [backfill?.running])
 
   const toggleIn = (key: 'autoReplyCategories' | 'notifyLevels', value: string) => {
     const list = (form[key] ?? []) as string[]
@@ -171,8 +184,8 @@ export default function CsSettingsPage() {
                 {input('Trần số lần gọi model / ngày', 'llmDailyCallCap', 'number')}
               </div>
               <div className="rounded-lg bg-surface-container-low p-md text-body-sm">
-                <p>Backfill lịch sử: {backfill ? `${backfill.remaining} ticket chưa chấm` : '…'}{backfill?.last ? ` · lần cuối ${fmtDate(backfill.last.ranAt, true)}: chấm ${backfill.last.processed}` : ''}</p>
-                <button onClick={runBackfill} disabled={busy !== null || (backfill?.remaining ?? 0) === 0} className="mt-sm rounded-lg border border-outline-variant/40 px-lg py-sm text-label-md text-primary disabled:opacity-50">{busy === 'backfill' ? 'Đang chấm…' : 'Chạy backfill (20 ticket / lượt)'}</button>
+                <p>Backfill lịch sử: {backfill ? `${backfill.remaining} ticket chưa chấm` : '…'}{backfill?.running ? ' · đang chạy nền…' : ''}{backfill?.last ? ` · lô cuối ${fmtDate(backfill.last.ranAt, true)}: chấm ${backfill.last.processed}` : ''}</p>
+                <button onClick={runBackfill} disabled={busy !== null || !!backfill?.running || (backfill?.remaining ?? 0) === 0} className="mt-sm rounded-lg border border-outline-variant/40 px-lg py-sm text-label-md text-primary disabled:opacity-50">{backfill?.running ? 'Đang chấm nền…' : 'Chạy backfill (chạy nền tới khi xong)'}</button>
               </div>
             </>)}
 
