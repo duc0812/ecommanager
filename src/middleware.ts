@@ -49,5 +49,5 @@ export async function middleware(req: NextRequest) {
 
 export const config = {
   // Large uploads skip middleware: Next 14 buffers the whole request body for it. Those routes check access themselves.
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|api/design-studio/library/entries/upload|api/design-studio/library/fonts/upload|api/design-studio/tasks/[^/]+/artwork|api/design-studio/worker/).*)'],
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|api/design-studio/library/entries/upload|api/design-studio/library/fonts/upload|api/design-studio/tasks/[^/]+/artwork|api/design-studio/worker/|api/tools/creative/jobs).*)'],
 }

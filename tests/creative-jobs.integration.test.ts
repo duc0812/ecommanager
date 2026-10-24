@@ -25,6 +25,7 @@ function fakeKie(opts: { schema: any; polls: PollResult[] }) {
 }
 
 const downloadFetch = (async (url: any) => new Response(Buffer.from('png-bytes-' + String(url)), { status: 200, headers: { 'Content-Type': 'image/png' } })) as unknown as typeof fetch
+const brokenFetch = (async () => { throw new Error('ECONNRESET') }) as unknown as typeof fetch
 
 const editSchema = { type: 'object', required: ['prompt', 'image_urls', 'aspect_ratio'], properties: { prompt: { type: 'string' }, image_urls: { type: 'array', items: { type: 'string' } }, aspect_ratio: { type: 'string', enum: ['1:1', '16:9'] } } }
 const textSchema = { type: 'object', required: ['prompt'], properties: { prompt: { type: 'string' } } }
@@ -68,6 +69,13 @@ describe('createJob', () => {
     await expect(createJob({ provider: 'kie', model: 'm', prompt: 'p', images: [{ dataUrl: 'data:image/gif;base64,AAAA', name: 'a.gif' }], options: {} }, { kie: kie.client })).rejects.toThrow(/PNG, JPG, WEBP/)
   })
 
+  it('rejects a model slug that is not owner/name or a bare name', async () => {
+    const kie = fakeKie({ schema: textSchema, polls: [] })
+    for (const bad of ['../../v1/account', 'a/b/c', 'owner/ name', '/x', 'x/']) {
+      await expect(createJob({ provider: 'kie', model: bad, prompt: 'p', images: [], options: {} }, { kie: kie.client })).rejects.toThrow(/Model không hợp lệ/)
+    }
+  })
+
   it('fails when the provider has no key', async () => {
     await expect(createJob({ provider: 'replicate', model: 'qwen/qwen-image', prompt: 'p', images: [], options: {} }, {})).rejects.toThrow('Chưa có API key replicate')
   })
@@ -92,6 +100,39 @@ describe('refreshJob', () => {
     const view = jobView(done)
     expect(view.resultFiles).toEqual(['out-0.png', 'out-1.png'])
     expect(view.input).toEqual({ prompt: 'p' })
+  })
+
+  it('keeps a job running when the poll itself throws, and records the last poll error', async () => {
+    const providers: Providers = { kie: { ...fakeKie({ schema: textSchema, polls: [] }).client, poll: async () => { throw new Error('kie recordInfo 429: Too many requests') } } }
+    const job = await createJob({ provider: 'kie', model: 'qwen/text-to-image', prompt: 'p', images: [], options: {} }, providers)
+    const after = await refreshJob(job.id, providers, downloadFetch)
+    expect(after.status).toBe('running')
+    expect(after.error).toMatch(/429/)
+  })
+
+  it('keeps the result urls when the download fails and finishes on the next refresh', async () => {
+    const kie = fakeKie({ schema: textSchema, polls: [{ state: 'done', urls: ['https://tempfile.redpandaai.co/z/1.png'], credits: 1, costTime: 5 }] })
+    const providers: Providers = { kie: kie.client }
+    const job = await createJob({ provider: 'kie', model: 'qwen/text-to-image', prompt: 'p', images: [], options: {} }, providers)
+    const pending = await refreshJob(job.id, providers, brokenFetch)
+    expect(pending.status).toBe('running')
+    expect(JSON.parse(pending.resultUrls)).toEqual(['https://tempfile.redpandaai.co/z/1.png'])
+    expect(pending.error).toMatch(/ECONNRESET/)
+    const done = await refreshJob(job.id, { kie: { ...kie.client, poll: async () => { throw new Error('must not poll again') } } }, downloadFetch)
+    expect(done.status).toBe('done')
+    expect(JSON.parse(done.resultFiles)).toEqual(['out-0.png'])
+    expect(done.cost).toBe('1 credits')
+    expect(done.error).toBeNull()
+  })
+
+  it('gives up on a job that has been running for more than 30 minutes', async () => {
+    const kie = fakeKie({ schema: textSchema, polls: [{ state: 'running' }] })
+    const providers: Providers = { kie: kie.client }
+    const job = await createJob({ provider: 'kie', model: 'qwen/text-to-image', prompt: 'p', images: [], options: {} }, providers)
+    await prisma.creativeJob.update({ where: { id: job.id }, data: { createdAt: new Date(Date.now() - 31 * 60 * 1000) } })
+    const stale = await refreshJob(job.id, providers, downloadFetch)
+    expect(stale.status).toBe('failed')
+    expect(stale.error).toMatch(/30 phút/)
   })
 
   it('marks the job failed with the provider error', async () => {
@@ -122,7 +163,7 @@ describe('listJobs and deleteJob', () => {
     expect(all[0].createdAt.getTime()).toBeGreaterThanOrEqual(all[all.length - 1].createdAt.getTime())
     const done = await listJobs({ status: 'done', provider: 'kie', model: 'qwen/text-to-image' })
     expect(done.every(j => j.status === 'done' && j.model === 'qwen/text-to-image')).toBe(true)
-    expect(done.length).toBe(2)
+    expect(done.length).toBe(3)
     const target = done[0]
     await deleteJob(target.id)
     expect(await prisma.creativeJob.findUnique({ where: { id: target.id } })).toBeNull()

@@ -9,6 +9,7 @@ CREATE TABLE "CreativeJob" (
     "status" TEXT NOT NULL DEFAULT 'queued',
     "providerTaskId" TEXT,
     "resultFiles" TEXT NOT NULL DEFAULT '[]',
+    "resultUrls" TEXT NOT NULL DEFAULT '[]',
     "error" TEXT,
     "cost" TEXT,
     "durationMs" INTEGER,

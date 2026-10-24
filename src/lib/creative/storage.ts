@@ -25,9 +25,7 @@ export function extForMime(mime: string): string | null {
   return MIME_EXT[mime] ?? null
 }
 
-export async function saveRef(jobId: string, index: number, dataUrl: string): Promise<{ name: string; mime: string; bytes: Buffer }> {
-  const parsed = parseDataUrl(dataUrl)
-  if (!parsed) throw new Error('bad data url')
+export async function saveRef(jobId: string, index: number, parsed: { mime: string; bytes: Buffer }): Promise<{ name: string; mime: string; bytes: Buffer }> {
   const ext = extForMime(parsed.mime)
   if (!ext) throw new Error('unsupported mime')
   const name = `ref-${index}.${ext}`

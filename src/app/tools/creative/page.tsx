@@ -27,7 +27,9 @@ export default function CreativePage() {
   const [settings, setSettings] = useState<SettingsView | null>(null)
   const [tokenInput, setTokenInput] = useState('')
   const [tokenMessage, setTokenMessage] = useState<string | null>(null)
-  const pollers = useRef<Set<string>>(new Set())
+  const timers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
+  const filterRef = useRef(filter)
+  filterRef.current = filter
 
   const loadJobs = useCallback(async () => {
     const q = new URLSearchParams()
@@ -42,33 +44,46 @@ export default function CreativePage() {
   useEffect(() => { loadJobs() }, [loadJobs])
   useEffect(() => { fetch('/api/tools/creative/settings').then(r => r.json()).then(setSettings).catch(() => {}) }, [])
 
+  const matchesFilter = useCallback((job: Job) => {
+    const f = filterRef.current
+    return (!f.provider || job.provider === f.provider) && (!f.model || job.model === f.model) && (!f.status || job.status === f.status)
+  }, [])
+
   const upsert = useCallback((job: Job) => {
     setJobs(prev => {
       const i = prev.findIndex(j => j.id === job.id)
+      if (!matchesFilter(job)) return i === -1 ? prev : prev.filter(j => j.id !== job.id)
       if (i === -1) return [job, ...prev]
       const next = prev.slice(); next[i] = job; return next
     })
-  }, [])
+  }, [matchesFilter])
 
   useEffect(() => {
     const active = jobs.filter(j => j.status === 'queued' || j.status === 'running')
     for (const job of active) {
-      if (pollers.current.has(job.id)) continue
-      pollers.current.add(job.id)
+      if (timers.current.has(job.id)) continue
+      let failures = 0
+      const schedule = (ms: number) => { timers.current.set(job.id, setTimeout(tick, ms)) }
+      const stop = () => { const t = timers.current.get(job.id); if (t) clearTimeout(t); timers.current.delete(job.id) }
       const tick = async () => {
         try {
           const res = await fetch(`/api/tools/creative/jobs/${job.id}`)
           const json = await res.json()
-          if (!res.ok) { pollers.current.delete(job.id); return }
+          if (!res.ok) { stop(); return }
+          failures = 0
           upsert(json.job)
-          if (json.job.status === 'queued' || json.job.status === 'running') setTimeout(tick, POLL_MS)
-          else pollers.current.delete(job.id)
+          if (json.job.status === 'queued' || json.job.status === 'running') schedule(POLL_MS)
+          else stop()
         } catch {
-          setTimeout(tick, POLL_MS * 2)
+          failures += 1
+          if (failures >= 10) stop()
+          else schedule(POLL_MS * 2)
         }
       }
-      setTimeout(tick, POLL_MS)
+      schedule(POLL_MS)
     }
+    const map = timers.current
+    return () => { map.forEach(t => clearTimeout(t)); map.clear() }
   }, [jobs, upsert])
 
   async function submit() {

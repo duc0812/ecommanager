@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { requireApiAccess } from '@/lib/api-auth'
 import { CreativeInputError, deleteJob, jobView, refreshJob } from '@/lib/creative/jobs'
 import { loadProviders } from '@/lib/creative/providers'
 
 export const dynamic = 'force-dynamic'
 
-export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+  const auth = await requireApiAccess(req)
+  if ('error' in auth) return auth.error
   try {
     const job = await refreshJob(params.id, await loadProviders())
     return NextResponse.json({ job: jobView(job) })
@@ -14,7 +17,9 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
   }
 }
 
-export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+  const auth = await requireApiAccess(req)
+  if ('error' in auth) return auth.error
   await deleteJob(params.id)
   return NextResponse.json({ ok: true })
 }

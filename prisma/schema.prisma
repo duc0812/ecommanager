@@ -1439,6 +1439,7 @@ model CreativeJob {
   status         String    @default("queued")
   providerTaskId String?
   resultFiles    String    @default("[]")
+  resultUrls     String    @default("[]")
   error          String?
   cost           String?
   durationMs     Int?

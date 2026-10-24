@@ -47,7 +47,10 @@ export function replicateClient(token: string, fetchImpl: typeof fetch = fetch) 
     },
 
     async createPrediction(slug: string, input: Record<string, unknown>): Promise<string> {
-      const json = await call(`/models/${slug}/predictions`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ input }) })
+      const doc = await call(`/models/${slug}`)
+      const version = doc?.latest_version?.id
+      if (!version) throw new Error(`replicate model ${slug} has no runnable version`)
+      const json = await call('/predictions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ version: String(version), input }) })
       if (!json?.id) throw new Error('replicate prediction returned no id')
       return String(json.id)
     },

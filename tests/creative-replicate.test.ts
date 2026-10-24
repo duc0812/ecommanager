@@ -56,16 +56,22 @@ describe('replicateClient', () => {
     expect(file.type).toBe('image/png')
   })
 
-  it('creates a prediction on the model endpoint and returns its id', async () => {
-    const { fn, calls } = fakeFetch(() => ({ status: 201, body: { id: 'p-1', status: 'starting' } }))
+  it('creates a prediction by the model latest version so community models work too', async () => {
+    const { fn, calls } = fakeFetch(url => url.endsWith('/predictions') ? { status: 201, body: { id: 'p-1', status: 'starting' } } : { body: modelDoc })
     const id = await replicateClient('r', fn).createPrediction('qwen/qwen-image', { prompt: 'hi' })
     expect(id).toBe('p-1')
-    expect(calls[0].url).toBe('https://api.replicate.com/v1/models/qwen/qwen-image/predictions')
-    expect(JSON.parse(String(calls[0].init?.body))).toEqual({ input: { prompt: 'hi' } })
+    expect(calls[0].url).toBe('https://api.replicate.com/v1/models/qwen/qwen-image')
+    expect(calls[1].url).toBe('https://api.replicate.com/v1/predictions')
+    expect(JSON.parse(String(calls[1].init?.body))).toEqual({ version: 'v1', input: { prompt: 'hi' } })
+  })
+
+  it('fails clearly when the model has no version to run', async () => {
+    const { fn } = fakeFetch(() => ({ body: { owner: 'a', name: 'b', latest_version: null } }))
+    await expect(replicateClient('r', fn).createPrediction('a/b', {})).rejects.toThrow(/no runnable version/)
   })
 
   it('throws on a non-2xx response with the status and detail', async () => {
-    const { fn } = fakeFetch(() => ({ status: 422, body: { detail: 'prompt is required' } }))
+    const { fn } = fakeFetch(url => url.endsWith('/predictions') ? { status: 422, body: { detail: 'prompt is required' } } : { body: modelDoc })
     await expect(replicateClient('r', fn).createPrediction('a/b', {})).rejects.toThrow('replicate HTTP 422: prompt is required')
   })
 

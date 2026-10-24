@@ -5,6 +5,34 @@ import { type CatalogModel, type Draft, type ModelForm, type Provider, type RefI
 const MAX_IMAGES = 4
 const MAX_BYTES = 10 * 1024 * 1024
 const ACCEPT = ['image/png', 'image/jpeg', 'image/webp']
+const MAX_EDGE = 2048
+const SHRINK_ABOVE_BYTES = 1.5 * 1024 * 1024
+
+function readAsDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader()
+    r.onload = () => resolve(String(r.result))
+    r.onerror = () => reject(r.error)
+    r.readAsDataURL(blob)
+  })
+}
+
+// Phone photos are 3-12 MB; nginx and the JSON body cannot take four of them. Shrink to ≤2048 px JPEG unless the file is already small.
+async function shrinkImage(file: File): Promise<string> {
+  const bitmap = await createImageBitmap(file).catch(() => null)
+  if (!bitmap) return readAsDataUrl(file)
+  const scale = Math.min(1, MAX_EDGE / Math.max(bitmap.width, bitmap.height))
+  if (scale === 1 && file.size <= SHRINK_ABOVE_BYTES) { bitmap.close(); return readAsDataUrl(file) }
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.round(bitmap.width * scale)
+  canvas.height = Math.round(bitmap.height * scale)
+  canvas.getContext('2d')!.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+  bitmap.close()
+  const type = file.type === 'image/png' ? 'image/png' : 'image/jpeg'
+  const dataUrl = canvas.toDataURL(type, 0.88)
+  if (type === 'image/png' && dataUrl.length > SHRINK_ABOVE_BYTES * 1.37) return canvas.toDataURL('image/jpeg', 0.88)
+  return dataUrl
+}
 
 type Props = {
   draft: Draft
@@ -23,6 +51,7 @@ export function GenerateForm({ draft, onChange, onSubmit, busy, error }: Props) 
   const [formError, setFormError] = useState<string | null>(null)
   const [pricing, setPricing] = useState<string | null>(null)
   const [customModel, setCustomModel] = useState('')
+  const [customMode, setCustomMode] = useState(false)
   const [dragOver, setDragOver] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
 
@@ -63,11 +92,12 @@ export function GenerateForm({ draft, onChange, onSubmit, busy, error }: Props) 
 
   const china = models.filter(m => m.china)
   const others = models.filter(m => !m.china)
-  const isCustom = draft.provider === 'replicate' && !!draft.model && !models.some(m => m.slug === draft.model)
+  const isCustom = draft.provider === 'replicate' && (customMode || (!!draft.model && !models.some(m => m.slug === draft.model)))
 
   function setProvider(provider: Provider) {
     onChange({ ...draft, provider, model: '', options: {} })
     setCustomModel('')
+    setCustomMode(false)
   }
 
   function setModel(model: string) {
@@ -80,13 +110,7 @@ export function GenerateForm({ draft, onChange, onSubmit, busy, error }: Props) 
     for (const f of list) {
       if (next.length >= MAX_IMAGES) break
       if (!ACCEPT.includes(f.type) || f.size > MAX_BYTES) continue
-      const dataUrl = await new Promise<string>((resolve, reject) => {
-        const r = new FileReader()
-        r.onload = () => resolve(String(r.result))
-        r.onerror = () => reject(r.error)
-        r.readAsDataURL(f)
-      })
-      next.push({ dataUrl, name: f.name })
+      next.push({ dataUrl: await shrinkImage(f), name: f.name })
     }
     onChange({ ...draft, images: next })
   }
@@ -133,7 +157,7 @@ export function GenerateForm({ draft, onChange, onSubmit, busy, error }: Props) 
                 </button>
               )}
             </div>
-            <select value={isCustom ? '__custom' : draft.model} onChange={e => e.target.value === '__custom' ? setModel(customModel) : setModel(e.target.value)}
+            <select value={isCustom ? '__custom' : draft.model} onChange={e => { if (e.target.value === '__custom') { setCustomMode(true); setModel(customModel.trim()) } else { setCustomMode(false); setModel(e.target.value) } }}
               className="mt-xs w-full rounded-lg border border-outline-variant/40 bg-surface px-md py-sm text-body-sm">
               <option value="">— Chọn model —</option>
               {china.length > 0 && (
@@ -148,8 +172,9 @@ export function GenerateForm({ draft, onChange, onSubmit, busy, error }: Props) 
               )}
               {draft.provider === 'replicate' && <option value="__custom">Nhập slug khác (owner/name)…</option>}
             </select>
-            {draft.provider === 'replicate' && (isCustom || (!draft.model && customModel !== '')) && (
-              <input value={isCustom ? draft.model : customModel} onChange={e => { setCustomModel(e.target.value); setModel(e.target.value.trim()) }} placeholder="owner/name, ví dụ qwen/qwen-image"
+            {isCustom && (
+              <input value={customModel} onChange={e => setCustomModel(e.target.value)} onBlur={() => setModel(customModel.trim())}
+                onKeyDown={e => { if (e.key === 'Enter') setModel(customModel.trim()) }} placeholder="owner/name, ví dụ qwen/qwen-image — Enter để tải schema"
                 className="mt-xs w-full rounded-lg border border-outline-variant/40 bg-surface px-md py-sm text-body-sm font-mono" />
             )}
             {!configured && <p className="mt-xs text-body-sm text-error">Chưa có API key {PROVIDER_LABEL[draft.provider]}. {draft.provider === 'kie' ? 'Nhập ở Cài đặt CS.' : 'Nhập token ở khung bên phải.'}</p>}
