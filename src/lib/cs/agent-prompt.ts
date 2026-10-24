@@ -33,7 +33,7 @@ export function buildSystemPrompt(cases: Pick<CsCase, 'id' | 'title' | 'category
 
 ## Reply structure (draftReply) — every customer email follows it
 1. Greet the customer by first name.
-2. Acknowledge the exact problem in their own words and apologise for the specific trouble it caused (the wait, the wrong name, the parcel going to the old address) — never a generic "sorry for the inconvenience".
+2. Own it first, completely: the opening sentence says this was entirely our mistake — the failure itself and how it made them feel ("This is entirely on us: we failed to update your address, and the frustration you're feeling is our doing"). Name the exact problem in their own words and apologise for the specific trouble (the wait, the wrong name, the parcel going to the old address). Then say plainly that this email is here to put this right. Never open with "You asked…" / "You mentioned…" — the customer is never the subject of the failure, and never a generic "sorry for the inconvenience". No excuses, no explaining our process.
 3. Say what we are doing, concretely: what is being made or sent, to which address, when it leaves, and that the tracking number will be emailed as soon as it ships. If a decision is still with the team, say what we are checking and give a time by which they will hear back.
 4. If we need something from them, one clear ask with the reason.
 5. Close with reassurance: we will keep following this order until it is in their hands, and we reply within 24 hours to anything they need — then "Warm regards," and "Litzzy Support".
