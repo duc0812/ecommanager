@@ -200,6 +200,12 @@ Completed 2026-05-19 via subagent-driven development.
 - Rollout: deploy (migration needs `pm2 stop` first), then "Chạy backfill" in Cài đặt CS until remaining = 0
 - Next: Lark notifications, business-hours response times, per-product root-cause drill-down
 
+### 🟢 Creative tool (2026-10-24, branch `feat/creative-tool`)
+- `/tools/creative`: prompt + up to 4 reference images + model on Kie (live catalog, China models first) or Replicate (curated China list + free `owner/name`), job history with stored result files, filters, re-use, delete
+- Generic OpenAPI → form mapper (`src/lib/creative/schema-map.ts`) so every model's enum options render without per-model code
+- Permission `tools_creative`; rollout: deploy (migration `creative_job`), enter Replicate token on the page, tick `tools_creative` on seller Nghĩa in `/setup/users`, he signs in again; the Kie key must have image-model permissions enabled at kie.ai/api-key (dev key returns 401 for every image model)
+- Next: video models, per-job cost roll-up, side-by-side compare view
+
 ---
 
 ## Known Issues / Tech Debt
