@@ -474,7 +474,7 @@ export async function listTasks(f: { statuses?: TaskStatus[]; readiness?: Readin
     if (b.dueAt === null) return -1
     return a.dueAt < b.dueAt ? -1 : 1
   })
-  return rows.slice(0, f.limit ?? 300)
+  return f.limit !== undefined ? rows.slice(0, f.limit) : rows
 }
 
 async function rowFor(taskKey: string): Promise<TaskRow | undefined> {

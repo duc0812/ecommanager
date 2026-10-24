@@ -154,6 +154,32 @@ describe('GET /api/design-studio/tasks', () => {
     }
   })
 
+  it('the default queue is not cut off at 300 tasks: the newest order is still listed', async () => {
+    const storeId = (await prisma.shopifyStore.findUniqueOrThrow({ where: { shop: SHOP } })).id
+    const ids: string[] = []
+    for (let i = 0; i < 305; i++) {
+      const id = `gid://test/Order/dtr-bulk-${i}`
+      ids.push(id)
+      await prisma.order.create({
+        data: {
+          id, projectId: 'proj_dtr', storeId, shopifyOrderNumber: `#DTRB${1000 + i}`, financialStatus: 'PAID', currency: 'USD',
+          grossAmount: 1, expectedPayout: 1, totalFees: 0, refundedAmount: 0, placedAt: new Date(Date.UTC(2026, 9, 1, 0, i)),
+          pipelineStatus: 'PENDING_DESIGN', orderType: 'CUSTOM',
+          lines: { create: [{ shopifyLineId: `b${i}`, sku: 'B', productTitle: 'Bulk', qty: 1, linePosition: 1, unitPrice: 1, resolvedSupplierId: SUP, customized: true }] },
+          designTasks: { create: [{ shopifyLineId: `b${i}`, taskKey: `DTRB${1000 + i}_1`, status: 'NEW', dueAt: new Date(Date.UTC(2026, 9, 2, 0, i)) }] },
+        },
+      })
+    }
+    try {
+      const body = await (await getTasks(await cookieReq('http://x/api/design-studio/tasks', adminToken))).json()
+      const keys = body.tasks.map((t: any) => t.taskKey)
+      expect(keys.length).toBeGreaterThanOrEqual(305)
+      expect(keys).toContain('DTRB1304_1')
+    } finally {
+      await prisma.order.deleteMany({ where: { id: { in: ids } } })
+    }
+  })
+
   it('400s when every status value is invalid', async () => {
     const req = await cookieReq('http://x/api/design-studio/tasks?statuses=BOGUS', adminToken)
     const res = await getTasks(req)
