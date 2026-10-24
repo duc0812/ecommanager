@@ -16,7 +16,7 @@ describe('buildSystemPrompt', () => {
   })
   it('fixes the reply structure: acknowledge, action with timing, closing promise within 24 hours', () => {
     const s = buildSystemPrompt([], settings).toLowerCase()
-    for (const needle of ['## reply structure', 'first name', 'entirely our', 'put this right', 'apologi', 'tracking', 'within 24 hours', 'follow', 'warm regards', '90', 'never open with "you'])
+    for (const needle of ['## reply structure', 'first name', 'entirely our', 'put this right', 'frustrated, angry', 'calm', 'do not apologise', 'apologi', 'tracking', 'within 24 hours', 'follow', 'warm regards', '90', 'never open with "you'])
       expect(s, needle).toContain(needle)
   })
   it('lists cases with ids and forbidden lines', () => {
