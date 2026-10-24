@@ -6,7 +6,8 @@ import { GenerateForm } from '@/components/creative/GenerateForm'
 import { JobCard } from '@/components/creative/JobCard'
 import { type Draft, type Job, type Provider, type RefImage, PROVIDER_LABEL, STATUS_LABEL } from '@/components/creative/types'
 
-type SettingsView = { hasKie: boolean; kieMasked: string | null; hasReplicate: boolean; replicateMasked: string | null }
+type SettingsView = { hasKie: boolean; kieMasked: string | null; kieSource: 'creative' | 'cs' | 'env' | null; hasReplicate: boolean; replicateMasked: string | null }
+const KIE_SOURCE_LABEL = { creative: 'key riêng của Creative', cs: 'key dùng chung từ Cài đặt CS', env: 'key trong .env của server' }
 
 const CHINA_MARKERS = ['qwen', 'bytedance', 'seedream', 'wan', 'hunyuan', 'tencent', 'kling', 'minimax', 'hailuo', 'vidu', 'zhipu', 'z-image', 'glm']
 const emptyDraft: Draft = { provider: 'kie', model: '', prompt: '', images: [], options: {} }
@@ -25,7 +26,8 @@ export default function CreativePage() {
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [filter, setFilter] = useState({ provider: '', model: '', status: '' })
   const [settings, setSettings] = useState<SettingsView | null>(null)
-  const [tokenInput, setTokenInput] = useState('')
+  const [keyInputs, setKeyInputs] = useState({ kieApiKey: '', replicateToken: '' })
+  const [keySaving, setKeySaving] = useState(false)
   const [tokenMessage, setTokenMessage] = useState<string | null>(null)
   const timers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
   const filterRef = useRef(filter)
@@ -123,14 +125,19 @@ export default function CreativePage() {
     setJobs(prev => prev.filter(j => j.id !== job.id))
   }
 
-  async function saveToken() {
+  async function saveKeys(body: Record<string, unknown>) {
     setTokenMessage(null)
-    const res = await fetch('/api/tools/creative/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ replicateToken: tokenInput }) })
-    const json = await res.json()
-    if (!res.ok) { setTokenMessage(json.error || 'Không lưu được token'); return }
-    setSettings(json)
-    setTokenInput('')
-    setTokenMessage('Đã lưu Replicate token.')
+    setKeySaving(true)
+    try {
+      const res = await fetch('/api/tools/creative/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      const json = await res.json()
+      if (!res.ok) { setTokenMessage(json.error || 'Không lưu được key'); return }
+      setSettings(json)
+      setKeyInputs({ kieApiKey: '', replicateToken: '' })
+      setTokenMessage(body.clearKieApiKey ? 'Đã bỏ key Kie riêng, quay về key chung.' : 'Đã lưu. Chọn model và tạo ảnh được ngay.')
+    } finally {
+      setKeySaving(false)
+    }
   }
 
   const modelChoices = useMemo(() => Array.from(new Set(jobs.map(j => j.model))).sort(), [jobs])
@@ -156,20 +163,31 @@ export default function CreativePage() {
                 <span className="material-symbols-outlined text-secondary">key</span>
                 <h3 className="text-headline-sm text-primary">API keys</h3>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-lg p-lg">
-                <div>
-                  <p className="text-label-sm text-on-surface-variant">Kie API key {settings?.hasKie ? `· đang dùng ${settings.kieMasked}` : '· chưa có'}</p>
-                  <p className="mt-xs text-body-sm text-on-surface-variant">Dùng chung key đã lưu ở <a href="/cs/settings" className="text-secondary hover:underline">Cài đặt CS</a>.</p>
-                </div>
-                <div>
-                  <p className="text-label-sm text-on-surface-variant">Replicate token {settings?.hasReplicate ? `· đang dùng ${settings.replicateMasked}` : '· chưa có'}</p>
-                  <div className="mt-xs flex gap-sm">
-                    <input type="password" value={tokenInput} onChange={e => setTokenInput(e.target.value)} placeholder="r8_… dán token mới để thay"
-                      className="flex-1 rounded-lg border border-outline-variant/40 bg-surface px-md py-sm text-body-sm" />
-                    <button type="button" onClick={saveToken} disabled={!tokenInput.trim()} className="bg-secondary text-on-secondary px-lg py-sm rounded-lg text-label-md disabled:opacity-50">Lưu</button>
+              <div className="p-lg">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-lg">
+                  <div>
+                    <p className="text-label-sm text-on-surface-variant">Kie API key {settings?.hasKie ? `· đang dùng ${settings.kieMasked}` : '· chưa có'}</p>
+                    <div className="mt-xs flex gap-sm">
+                      <input type="password" value={keyInputs.kieApiKey} onChange={e => setKeyInputs({ ...keyInputs, kieApiKey: e.target.value })} placeholder="Dán key từ kie.ai/api-key"
+                        className="flex-1 rounded-lg border border-outline-variant/40 bg-surface px-md py-sm text-body-sm" />
+                      <button type="button" onClick={() => saveKeys({ kieApiKey: keyInputs.kieApiKey })} disabled={keySaving || !keyInputs.kieApiKey.trim()} className="bg-secondary text-on-secondary px-lg py-sm rounded-lg text-label-md disabled:opacity-50">Lưu</button>
+                    </div>
+                    <p className="mt-xs text-body-sm text-on-surface-variant">
+                      {settings?.kieSource ? `Đang dùng ${KIE_SOURCE_LABEL[settings.kieSource]}. ` : ''}
+                      Key phải được bật quyền cho các model ảnh muốn dùng (Kie cấp quyền theo từng model trên từng key).
+                      {settings?.kieSource === 'creative' && <> <button type="button" onClick={() => saveKeys({ clearKieApiKey: true })} className="text-secondary hover:underline">Bỏ key riêng</button></>}
+                    </p>
                   </div>
-                  {tokenMessage && <p className="mt-xs text-body-sm text-on-surface-variant">{tokenMessage}</p>}
+                  <div>
+                    <p className="text-label-sm text-on-surface-variant">Replicate token {settings?.hasReplicate ? `· đang dùng ${settings.replicateMasked}` : '· chưa có'}</p>
+                    <div className="mt-xs flex gap-sm">
+                      <input type="password" value={keyInputs.replicateToken} onChange={e => setKeyInputs({ ...keyInputs, replicateToken: e.target.value })} placeholder="r8_… từ replicate.com/account/api-tokens"
+                        className="flex-1 rounded-lg border border-outline-variant/40 bg-surface px-md py-sm text-body-sm" />
+                      <button type="button" onClick={() => saveKeys({ replicateToken: keyInputs.replicateToken })} disabled={keySaving || !keyInputs.replicateToken.trim()} className="bg-secondary text-on-secondary px-lg py-sm rounded-lg text-label-md disabled:opacity-50">Lưu</button>
+                    </div>
+                  </div>
                 </div>
+                {tokenMessage && <p className="mt-md text-body-sm text-on-surface-variant">{tokenMessage}</p>}
               </div>
             </section>
           )}

@@ -177,7 +177,7 @@ export function GenerateForm({ draft, onChange, onSubmit, busy, error }: Props) 
                 onKeyDown={e => { if (e.key === 'Enter') setModel(customModel.trim()) }} placeholder="owner/name, ví dụ qwen/qwen-image — Enter để tải schema"
                 className="mt-xs w-full rounded-lg border border-outline-variant/40 bg-surface px-md py-sm text-body-sm font-mono" />
             )}
-            {!configured && <p className="mt-xs text-body-sm text-error">Chưa có API key {PROVIDER_LABEL[draft.provider]}. {draft.provider === 'kie' ? 'Nhập ở Cài đặt CS.' : 'Nhập token ở khung bên phải.'}</p>}
+            {!configured && <p className="mt-xs text-body-sm text-error">Chưa có API key {PROVIDER_LABEL[draft.provider]}. Dán key ở khung API keys bên dưới rồi làm mới.</p>}
             {modelsError && <p className="mt-xs text-body-sm text-error">{modelsError}</p>}
             {formError && <p className="mt-xs text-body-sm text-error">{formError}</p>}
           </div>
