@@ -40,7 +40,7 @@ describe('buildUserPrompt', () => {
       order: {
         id: 'o1', shopifyOrderNumber: '#LIT4525', placedAt: new Date('2026-10-02T10:00:00Z'), customerName: 'Paul', customerEmail: 'p@x.com', shipTo: '12 Test St, Testville FL 00000, United States',
         factoryState: 'SHIPPED', supplierHandoffAt: new Date('2026-10-05T00:00:00Z'), pipelineStatus: 'EXPORTED',
-        lines: [{ title: 'Family Ornament', variant: '3 people', qty: 1, customized: true }],
+        lines: [{ title: 'Family Ornament', variant: '3 people', qty: 1, customized: true, personalization: 'Custom Name: Maree' }],
         shipments: [{ trackingNumber: 'SWX1', carrier: 'USPS', status: 'IN_TRANSIT', lastCheckpointAt: new Date('2026-10-20T00:00:00Z'), trackingUrl: 'https://litzzy.com/apps/trackingorder?nums=SWX1' }],
         designTaskStatuses: ['DONE'],
       },
@@ -60,6 +60,7 @@ describe('buildUserPrompt', () => {
     expect(p).toContain('SHIPPED')
     expect(p).toContain('Testville')
     expect(p).toContain('SWX1')
+    expect(p).toContain('[personalised: Custom Name: Maree]')
     expect(p).toContain('[CUSTOMER 10/20/2026')
     expect(p).toContain('[STAFF 10/23/2026 09:24 private]')
     expect(p).toContain('Khách hỏi đơn')
@@ -75,6 +76,11 @@ describe('buildUserPrompt', () => {
     expect(day).toContain('# Mode: BUSINESS_HOURS')
     expect(day).not.toContain('AFTER_HOURS')
     expect(buildUserPrompt(base)).toContain('# Mode: BUSINESS_HOURS')
+  })
+  it('shows the personalisation the customer typed on each line and tells the model to quote it, never guess', () => {
+    const s = buildSystemPrompt([], settings).toLowerCase()
+    for (const needle of ['personalisation the customer typed', 'quote it exactly', 'never guess'])
+      expect(s, needle).toContain(needle)
   })
   it('names candidates when the match is ambiguous', () => {
     const p = buildUserPrompt({ ticket: { id: 't', fdTicketId: 1, subject: 's', fdCreatedAt: new Date() } as any, messages: [], order: { match: 'AMBIGUOUS', order: null, candidates: ['#LIT1', '#LIT2'] }, previous: [] })

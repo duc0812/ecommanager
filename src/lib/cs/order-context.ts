@@ -13,7 +13,7 @@ export type OrderContextOrder = {
   factoryState: FactoryState
   supplierHandoffAt: Date | null
   pipelineStatus: string
-  lines: { title: string; variant: string | null; qty: number; customized: boolean }[]
+  lines: { title: string; variant: string | null; qty: number; customized: boolean; personalization: string | null }[]
   shipments: { trackingNumber: string | null; carrier: string | null; status: string; lastCheckpointAt: Date | null; trackingUrl: string | null }[]
   designTaskStatuses: string[]
 }
@@ -31,6 +31,43 @@ export function extractOrderNumbers(text: string): string[] {
     if (!out.includes(n)) out.push(n)
   }
   return out
+}
+
+type KV = { key: string; value: string }
+
+function parseKv(json: string | null): KV[] {
+  if (!json) return []
+  try {
+    const v = JSON.parse(json)
+    return Array.isArray(v) ? v.filter((x): x is KV => x && typeof x.key === 'string' && typeof x.value === 'string') : []
+  } catch { return [] }
+}
+
+const showValue = (v: string) => (v !== v.trim() ? JSON.stringify(v) : v)
+
+function designPayloadTexts(attrs: KV[]): string[] {
+  const raw = attrs.find(a => a.key === '_design')?.value
+  if (!raw) return []
+  try {
+    const data = JSON.parse(raw)?.data
+    if (!data || typeof data !== 'object') return []
+    return Object.values(data as Record<string, any>).map(f => f?.text).filter((t): t is string => typeof t === 'string' && t.trim() !== '').map(t => `text: ${showValue(t)}`)
+  } catch { return [] }
+}
+
+export function personalizationOf(l: { customAttributesJson: string | null; customallFieldsJson: string | null; designNote: string | null }): string | null {
+  const attrs = parseKv(l.customAttributesJson)
+  const seen = new Set<string>()
+  const parts: string[] = []
+  for (const kv of [...attrs.filter(a => !a.key.startsWith('_')), ...parseKv(l.customallFieldsJson)]) {
+    const k = kv.key.trim().toLowerCase()
+    if (seen.has(k) || kv.value.trim() === '') continue
+    seen.add(k)
+    parts.push(`${kv.key.trim()}: ${showValue(kv.value)}`)
+  }
+  if (!parts.length) parts.push(...designPayloadTexts(attrs))
+  if (l.designNote?.trim()) parts.push(`note: ${l.designNote.trim()}`)
+  return parts.length ? parts.join('; ') : null
 }
 
 export function factoryStateOf(o: {
@@ -68,7 +105,7 @@ function toContextOrder(o: Loaded): OrderContextOrder {
     factoryState: factoryStateOf(o),
     supplierHandoffAt: o.supplierHandoffAt,
     pipelineStatus: o.pipelineStatus,
-    lines: o.lines.map(l => ({ title: l.productTitle, variant: l.variantTitle, qty: l.qty, customized: l.customized })),
+    lines: o.lines.map(l => ({ title: l.productTitle, variant: l.variantTitle, qty: l.qty, customized: l.customized, personalization: personalizationOf(l) })),
     shipments: o.shipments.map(s => ({
       trackingNumber: s.trackingNumber,
       carrier: s.lastMileCarrier ?? s.detectedCarrier ?? s.carrier,
