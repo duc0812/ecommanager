@@ -26,7 +26,7 @@ describe('buildSystemPrompt', () => {
   })
   it('cancellations: ask the reason once, keep the customer in control, never argue', () => {
     const s = buildSystemPrompt([], settings).toLowerCase()
-    for (const needle of ['## cancellation requests', 'what made them change their mind', 'holding it so nothing is made', 'one ask only', 'do not ask again', 'cancel as requested'])
+    for (const needle of ['## cancellation requests', 'what made them change their mind', 'holding it so nothing is made', 'one ask only', 'the question is mandatory', 'without asking', 'not our mistake', 'do not ask again', 'cancel as requested'])
       expect(s, needle).toContain(needle)
   })
   it('lists cases with ids and forbidden lines', () => {
