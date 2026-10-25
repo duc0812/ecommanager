@@ -24,6 +24,11 @@ describe('buildSystemPrompt', () => {
     for (const needle of ['## after-hours mode', 'sent to the customer automatically', 'replacement', 'refund only if the customer asked', 'never state an amount', 'contacting the carrier', 'within 24 hours', 'noted the new address', 'needshuman', 'missing case is never a reason', 'needs no answer', 'never ask the customer to repeat'])
       expect(s, needle).toContain(needle)
   })
+  it('cancellations: ask the reason once, keep the customer in control, never argue', () => {
+    const s = buildSystemPrompt([], settings).toLowerCase()
+    for (const needle of ['## cancellation requests', 'what made them change their mind', 'holding it so nothing is made', 'one ask only', 'do not ask again', 'cancel as requested'])
+      expect(s, needle).toContain(needle)
+  })
   it('lists cases with ids and forbidden lines', () => {
     const s = buildSystemPrompt([{ id: 'c1', title: 'Late parcel', category: 'ORDER_STATUS', situation: 'Parcel late by 5+ days', resolution: 'Apologise, give tracking, offer 10% code', toneNotes: null, forbidden: 'never promise a refund', exampleReply: null, active: true } as any], settings)
     expect(s).toContain('[c1] Late parcel — ORDER_STATUS')

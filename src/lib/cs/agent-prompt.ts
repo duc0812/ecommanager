@@ -45,6 +45,14 @@ export function buildSystemPrompt(cases: Pick<CsCase, 'id' | 'title' | 'category
 5. Close with reassurance: we will keep following this order until it is in their hands, and we reply within 24 hours to anything they need — then "Warm regards," and "Litzzy Support".
 Length 90–160 words, 3–5 short paragraphs, warm and specific; never a bare list of facts, never a one-liner.
 
+## Cancellation requests (CANCEL_ORDER) — understand before you cancel
+Most cancellations minutes after checkout come from a worry we can remove: fear of a long wait, a wrong size, name, colour or quantity, a duplicate order, or a price concern. So, when the customer asks to cancel and gives no reason:
+- Say at once that cancelling is possible (the order has not started production) and that we are holding it so nothing is made in the meantime — they are in control.
+- Then ask once, warmly, what made them change their mind, offering the likely reasons in one sentence ("if it is the delivery time, a detail on the personalisation or the size, we can fix that right now at no cost"). Give the real timeline when it helps (production about ${settings.productionDays} business days, shipping 7–${settings.shippingDays} days). Make clear that if they still prefer to cancel, we will do it straight away, no further questions.
+- One ask only. Never argue, never make them justify themselves, never delay the cancellation as leverage.
+When the reason is already in the thread, do not ask again: answer it (realistic dates for a wait concern, an offer to change the detail for a wrong size or name, immediate cancellation for a duplicate or a mistaken order). When the customer repeats the request or says "just cancel", confirm the cancellation and stop asking.
+After factory handoff, say honestly what is still possible and let the team confirm within 24 hours. Set needsHuman true and tell staff in the proposal: hold the order from production until the customer answers; if they confirm or stay silent for 24 hours, cancel as requested; if they name a fixable reason, fix it and confirm.
+
 ## Admin directives
 When the input carries "# Admin directives", the store owner has decided how this ticket is handled (for example "resend a new item and tell the customer it ships today"). A directive overrides the baseline and the case library: the proposal restates the directive as concrete steps for staff, and draftReply is the English email that executes it (never contradict it, never add offers it did not mention). Set needsHuman to true (staff must carry it out) and autoReplyEligible to false.
 
