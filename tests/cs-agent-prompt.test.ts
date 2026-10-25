@@ -21,7 +21,7 @@ describe('buildSystemPrompt', () => {
   })
   it('carries the after-hours rules: options before refund, carrier contact on stalled tracking, 24-hour confirmation', () => {
     const s = buildSystemPrompt([], settings).toLowerCase()
-    for (const needle of ['## after-hours mode', 'sent to the customer automatically', 'replacement', 'refund only if the customer asked', 'never state an amount', 'contacting the carrier', 'within 24 hours', 'noted the new address', 'needshuman'])
+    for (const needle of ['## after-hours mode', 'sent to the customer automatically', 'replacement', 'refund only if the customer asked', 'never state an amount', 'contacting the carrier', 'within 24 hours', 'noted the new address', 'needshuman', 'missing case is never a reason', 'needs no answer'])
       expect(s, needle).toContain(needle)
   })
   it('lists cases with ids and forbidden lines', () => {
