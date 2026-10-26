@@ -107,6 +107,17 @@ describe('syncTickets', () => {
     expect(res.cursor).toBe('2026-10-23T14:16:18Z')
   })
 
+  it('stores the description of an outbound email ticket (source 10) as our STAFF message, so nothing reads it as a customer waiting', async () => {
+    const outbound = { ...tickets[0], id: 9010, source: 10, subject: 'About your order #LIT4404', description_text: 'Hi Susan, we are sorry' } as any
+    const fd: FdLike = { requests: 0, async listTickets(_s: string, page = 1) { return page === 1 ? [outbound] : [] }, async getConversations() { return [] } } as any
+    const r = await syncTickets(fd)
+    const t = await prisma.csTicket.findUnique({ where: { fdTicketId: 9010 }, include: { messages: true } })
+    expect(t!.messages).toHaveLength(1)
+    expect(t!.messages[0].author).toBe('STAFF')
+    expect(t!.lastCustomerAt).toBeNull()
+    expect(t!.lastReplyAt).not.toBeNull()
+    expect(r.changed).not.toContain(t!.id)
+  })
   it('takes the order number from the subject when the custom field is empty', async () => {
     await syncTickets(fakeFd(), { since: '2026-10-19T00:00:00Z' })
     expect((await prisma.csTicket.findUnique({ where: { fdTicketId: 194 } }))!.orderNumber).toBe('#LIT5037')

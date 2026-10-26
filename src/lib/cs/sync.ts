@@ -10,6 +10,8 @@ export type MessageAuthor = 'CUSTOMER' | 'STAFF' | 'AGENT' | 'SYSTEM' | 'SKIP'
 
 const DEFAULT_SINCE_DAYS = 7
 
+const OUTBOUND_EMAIL = 10
+
 export function authorOf(c: FdConversation, s: Pick<CsSettings, 'supportAgentId' | 'ignoredAgentIds'>, knownAgentIds: Set<string>): MessageAuthor {
   if (knownAgentIds.has(String(c.id))) return 'AGENT'
   if (c.incoming) return 'CUSTOMER'
@@ -72,11 +74,12 @@ ${t.subject ?? ''}`)[0] ?? null
     ? await prisma.csTicket.update({ where: { id: existing.id }, data: { ...data, orderNumber: existing.orderNumber ?? hinted } })
     : await prisma.csTicket.create({ data: { ...data, fdTicketId: t.id, orderNumber: hinted } })
   const descId = `desc-${t.id}`
+  const outbound = t.source === OUTBOUND_EMAIL
   const descText = displayText(t.description, t.description_text?.trim() || htmlToText(t.description))
   const descExists = await prisma.csMessage.findUnique({ where: { fdConversationId: descId } })
   if (!descExists) {
     await prisma.csMessage.create({
-      data: { ticketId: ticket.id, fdConversationId: descId, author: 'CUSTOMER', private: false, bodyText: descText, bodyHtml: t.description ?? null, fromEmail: t.requester?.email ?? null, createdAt: new Date(t.created_at) },
+      data: { ticketId: ticket.id, fdConversationId: descId, author: outbound ? 'STAFF' : 'CUSTOMER', private: false, bodyText: descText, bodyHtml: t.description ?? null, fromEmail: outbound ? null : t.requester?.email ?? null, createdAt: new Date(t.created_at) },
     })
   }
   return ticket
@@ -140,7 +143,7 @@ export async function syncTickets(fd: FdLike, opts: { since?: string } = {}): Pr
         const ticket = await upsertTicket(t, existing)
         if (moved) await upsertConversations(ticket.id, convs, settings)
         const lastCustomerAt = await refreshTimestamps(ticket.id)
-        const grew = !existing || (lastCustomerAt?.getTime() ?? 0) > (existing.lastCustomerAt?.getTime() ?? 0)
+        const grew = lastCustomerAt !== null && (!existing || lastCustomerAt.getTime() > (existing.lastCustomerAt?.getTime() ?? 0))
         if (grew) changed.push(ticket.id)
         if (grew && existing && !reopenedAdvanced(t, existing)) await detectReopen(ticket.id, lastCustomerAt)
         lastProcessed = t.updated_at

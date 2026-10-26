@@ -3,6 +3,7 @@ export type FdTicket = {
   subject: string
   status: number
   priority: number
+  source?: number
   tags: string[]
   created_at: string
   updated_at: string
