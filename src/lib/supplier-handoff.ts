@@ -6,6 +6,7 @@ import { STATUS_LABELS, type PipelineStatus } from '@/lib/pipeline-status'
 import { countryCodeOf, countryNameOf } from '@/lib/shipping-address'
 import { credentialsOf, getPgprintsSettings } from '@/lib/pgprints-settings'
 import { isPgprintsSupplier } from '@/lib/pgprints-shared'
+import { isMerchizeSupplier, merchizeCredentials } from '@/lib/merchize'
 import { activePushByOrder, logHandoffEvent } from '@/lib/repos/push-export'
 import { COOLING_OFF_HOURS, type HandoffCard, type HandoffLine, type HandoffSent, type HandoffState, type SentStage } from '@/lib/handoff-shared'
 import { loadLineResolver, recalculateMissingOrderLineCosts } from '@/lib/repos/order-costs'
@@ -25,6 +26,7 @@ const NOT_FULFILLED = { OR: [{ fulfillmentStatus: null }, { fulfillmentStatus: {
 const CLOSED_FINANCIAL = ['REFUNDED', 'VOIDED']
 const AFTER_EXPORT = ['EXPORTED', 'FULFILLED']
 const PGPRINTS_NAME = 'PGprints'
+const MERCHIZE_NAME = 'Merchize'
 const MAX_CARDS = 60
 
 /** "Chờ chuyển xưởng": the order went through Design Studio, every design is approved, nothing was handed to the supplier yet, and the order is still open. */
@@ -73,6 +75,9 @@ export async function handoffStates(orders: StateOrder[]): Promise<Map<string, H
   ])
   const pgHits = suppliers.filter(isPgprintsSupplier)
   const pg = pgHits.find(s => s.isActive) ?? pgHits[0] ?? null
+  const mzHits = suppliers.filter(isMerchizeSupplier)
+  const mz = mzHits.find(s => s.isActive) ?? mzHits[0] ?? null
+  const hasMerchizeCredentials = !!merchizeCredentials()
   const hasCredentials = !!credentialsOf(settings)
   const pgSkus = pg
     ? Array.from(new Set(orders.flatMap(o => o.lines.filter(l => l.resolvedSupplierId === pg.id).map(l => l.resolvedSupplierSku).filter((x): x is string => !!x))))
@@ -88,9 +93,13 @@ export async function handoffStates(orders: StateOrder[]): Promise<Map<string, H
   for (const o of orders) {
     const productLines = o.lines.filter(l => !isNonProductLine(l))
     const allPg = !!pg && productLines.length > 0 && productLines.every(l => l.resolvedSupplierId === pg.id)
+    const allMz = !!mz && productLines.length > 0 && productLines.every(l => l.resolvedSupplierId === mz.id)
     const missingApiSku = allPg ? productLines.filter(l => !l.resolvedSupplierSku || !apiSkuBySku.get(l.resolvedSupplierSku)).map(l => l.resolvedSupplierSku ?? '—') : []
-    const api = allPg && hasCredentials && missingApiSku.length === 0
-    const apiNote = !allPg || api ? null
+    const pgApi = allPg && hasCredentials && missingApiSku.length === 0
+    const mzApi = allMz && hasMerchizeCredentials
+    const api = pgApi || mzApi
+    const apiNote = allMz ? (mzApi ? null : 'Server chưa có khoá API Merchize — lưu chờ xuất CSV')
+      : !allPg || api ? null
       : !hasCredentials ? 'Xưởng PGprints chưa có Store ID / Secret key — lưu chờ xuất CSV'
       : `SKU xưởng ${Array.from(new Set(missingApiSku)).join(', ')} chưa có "SKU API" — lưu chờ xuất CSV`
     const openTasks = o.designTasks.filter(t => t.status !== 'DONE' && t.status !== 'CANCELLED').length
@@ -107,7 +116,8 @@ export async function handoffStates(orders: StateOrder[]): Promise<Map<string, H
       pending,
       blocked: pending || handedOff ? null : blockedReason(o, openTasks),
       mode: api ? 'API' : 'CSV',
-      apiName: api ? PGPRINTS_NAME : null,
+      apiName: api ? (mzApi ? MERCHIZE_NAME : PGPRINTS_NAME) : null,
+      apiKind: allMz ? 'merchize' : 'pgprints',
       apiNote,
       handedOff,
       canUndo: !!handedOff && handedOff.mode === 'CSV' && !AFTER_EXPORT.includes(o.pipelineStatus),

@@ -4,21 +4,36 @@ import { Lightbox } from '@/app/design-studio/components/Lightbox'
 import { ErrorBanner, Icon, Note, Pill, btn, btnPrimary } from '@/app/design-studio/components/ui'
 import type { LightboxImage, Tone } from '@/app/design-studio/components/model'
 import type { PreviewFile, PreviewIssue, PushPreview, PushStatus, PushView } from '@/lib/pgprints-shared'
+import type { SupplierApiKind } from '@/lib/handoff-shared'
 
 type Preview = PushPreview & { canAct: boolean; canSend?: boolean }
 type Payload = {
   order_id: string
-  email: string
-  shipping_address: Record<string, string>
+  email?: string
+  shipping_address?: Record<string, string>
+  shipping_info?: Record<string, string>
   production_note?: string
 }
 
-const STATUS_META: Record<PushStatus, { label: string; tone: Tone; icon: string }> = {
-  SENDING: { label: 'Chưa rõ kết quả', tone: 'warn', icon: 'help' },
-  CREATED: { label: 'Đã gửi PGprints', tone: 'ok', icon: 'check_circle' },
-  FAILED: { label: 'Gửi thất bại', tone: 'bad', icon: 'error' },
-  CANCELLED: { label: 'Đã huỷ bên PGprints', tone: 'idle', icon: 'cancel' },
+type SupplierCopy = { name: string; settingsHint: string; credentialsHint: string; methodLabel: string; chargeNote: string }
+
+const SUPPLIERS: Record<SupplierApiKind, SupplierCopy> = {
+  pgprints: {
+    name: 'PGprints', settingsHint: 'Chưa bật gửi đơn ở trang cài đặt xưởng Pgprints', credentialsHint: 'Chưa nhập Store ID / Secret key PGprints',
+    methodLabel: 'Ship class', chargeNote: 'PGprints sẽ trừ tiền sau thời gian chờ',
+  },
+  merchize: {
+    name: 'Merchize', settingsHint: 'Server chưa có khoá API Merchize', credentialsHint: 'Server chưa có MERCHIZE_API_URL / MERCHIZE_API_TOKEN',
+    methodLabel: 'Kiểu in', chargeNote: 'Merchize đưa đơn vào sản xuất ngay và trừ tiền',
+  },
 }
+
+const statusMeta = (name: string): Record<PushStatus, { label: string; tone: Tone; icon: string }> => ({
+  SENDING: { label: 'Chưa rõ kết quả', tone: 'warn', icon: 'help' },
+  CREATED: { label: `Đã gửi ${name}`, tone: 'ok', icon: 'check_circle' },
+  FAILED: { label: 'Gửi thất bại', tone: 'bad', icon: 'error' },
+  CANCELLED: { label: `Đã huỷ bên ${name}`, tone: 'idle', icon: 'cancel' },
+})
 
 const usd = (n: number | null | undefined) =>
   n == null ? '—' : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n)
@@ -84,16 +99,16 @@ function IssueList({ issues }: { issues: PreviewIssue[] }) {
   )
 }
 
-function PushPanel({ push, canAct, busy, onRefresh, onCancel }: {
-  push: PushView; canAct: boolean; busy: string; onRefresh: () => void; onCancel: () => void
+function PushPanel({ push, canAct, busy, name, onRefresh, onCancel }: {
+  push: PushView; canAct: boolean; busy: string; name: string; onRefresh: () => void; onCancel: () => void
 }) {
-  const meta = STATUS_META[push.status]
+  const meta = statusMeta(name)[push.status]
   const [confirmCancel, setConfirmCancel] = useState(false)
   return (
     <section className="rounded-xl border border-secondary/30 bg-secondary/5 px-md py-sm flex flex-col gap-sm">
       <div className="flex items-center gap-sm flex-wrap">
         <Pill tone={meta.tone} icon={meta.icon}>{meta.label}</Pill>
-        <span className="text-body-sm text-on-surface-variant">Mã đơn PGprints</span>
+        <span className="text-body-sm text-on-surface-variant">Mã đơn {name}</span>
         <b className="font-mono text-body-md">{push.supplierOrderCode ?? '—'}</b>
         <span className="text-body-sm text-on-surface-variant">· order_id <span className="font-mono">{push.externalOrderId}</span></span>
       </div>
@@ -114,12 +129,12 @@ function PushPanel({ push, canAct, busy, onRefresh, onCancel }: {
           </button>
           {push.status === 'CREATED' && !confirmCancel && (
             <button type="button" className={`${btn} text-error`} disabled={!!busy} onClick={() => setConfirmCancel(true)}>
-              <Icon name="cancel" className="text-[18px]" />Huỷ đơn bên PGprints
+              <Icon name="cancel" className="text-[18px]" />Huỷ đơn bên {name}
             </button>
           )}
           {push.status === 'CREATED' && confirmCancel && (
             <span className="inline-flex items-center gap-xs flex-wrap rounded-lg bg-error-container text-on-error-container px-sm py-xs text-label-sm">
-              Huỷ đơn {push.supplierOrderCode ?? push.externalOrderId} bên PGprints?
+              Huỷ đơn {push.supplierOrderCode ?? push.externalOrderId} bên {name}?
               <button type="button" className={`${btn} text-error`} disabled={!!busy} onClick={() => { setConfirmCancel(false); onCancel() }}>
                 {busy === 'cancel' ? 'Đang huỷ…' : 'Huỷ thật'}
               </button>
@@ -128,13 +143,18 @@ function PushPanel({ push, canAct, busy, onRefresh, onCancel }: {
           )}
         </div>
       ) : (
-        <span className="text-label-sm text-on-surface-variant">Chỉ Admin được huỷ hoặc cập nhật trạng thái đơn bên PGprints.</span>
+        <span className="text-label-sm text-on-surface-variant">Chỉ Admin được huỷ hoặc cập nhật trạng thái đơn bên {name}.</span>
       )}
     </section>
   )
 }
 
-export default function PgprintsPushModal({ orderId, onClose, onChanged }: { orderId: string; onClose: () => void; onChanged?: () => void }) {
+export default function PgprintsPushModal({ orderId, supplier = 'pgprints', onClose, onChanged }: {
+  orderId: string; supplier?: SupplierApiKind; onClose: () => void; onChanged?: () => void
+}) {
+  const copy = SUPPLIERS[supplier]
+  const name = copy.name
+  const STATUS_META = statusMeta(name)
   const [preview, setPreview] = useState<Preview | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -143,7 +163,7 @@ export default function PgprintsPushModal({ orderId, onClose, onChanged }: { ord
   const [confirming, setConfirming] = useState(false)
   const [showPayload, setShowPayload] = useState(false)
   const [lightbox, setLightbox] = useState<number | null>(null)
-  const base = `/api/fulfillment/pgprints/orders/${encodeURIComponent(orderId)}`
+  const base = `/api/fulfillment/${supplier}/orders/${encodeURIComponent(orderId)}`
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -187,29 +207,34 @@ export default function PgprintsPushModal({ orderId, onClose, onChanged }: { ord
   }
 
   const send = () => act('push', { confirm: true, payloadHash: preview?.payloadHash }, d =>
-    `Đã gửi PGprints — mã ${d.push?.supplierOrderCode ?? '—'}, chi phí ${usd(d.push?.totalCost)}${d.exported ? ', đơn chuyển sang Exported' : ''}`)
+    `Đã gửi ${name} — mã ${d.push?.supplierOrderCode ?? d.push?.externalOrderId ?? '—'}${d.push?.totalCost != null ? `, chi phí ${usd(d.push.totalCost)}` : ''}${d.exported ? ', đơn chuyển sang Exported' : ''}`)
   const cancelPush = () => act('cancel', { confirm: true }, d =>
-    `Đã huỷ đơn bên PGprints${d.exportReverted ? ' — đơn trở lại trạng thái trước khi gửi' : ''}`)
+    `Đã huỷ đơn bên ${name}${d.exportReverted ? ' — đơn trở lại trạng thái trước khi gửi' : ''}`)
   const refreshPush = () => act('refresh', {}, d =>
-    d.found ? `Trạng thái bên xưởng: ${d.push?.remoteStatus ?? 'không rõ'}` : 'PGprints không trả về đơn này')
+    d.found ? `Trạng thái bên xưởng: ${d.push?.remoteStatus ?? 'không rõ'}` : `${name} không trả về đơn này`)
 
   const payload = preview?.payload as Payload | null | undefined
-  const address = payload?.shipping_address
+  const shipInfo = payload?.shipping_info
+  const address = payload?.shipping_address ?? (shipInfo ? {
+    name: shipInfo.full_name, address1: shipInfo.address_1, address2: shipInfo.address_2, city: shipInfo.city, province_code: shipInfo.state,
+    zip: shipInfo.postcode, country: shipInfo.country, country_code: shipInfo.country, phone: shipInfo.phone, email: shipInfo.email,
+  } as Record<string, string> : undefined)
+  const email = payload?.email ?? shipInfo?.email
   const errors = preview?.issues.filter(i => i.level === 'error') ?? []
   const active = preview?.activePush ?? null
   const pastPushes = preview?.history.filter(h => h.id !== active?.id) ?? []
   const canSend = !!preview && (preview.canSend ?? preview.canAct)
-  const blockedReason = !preview ? '' : !canSend ? 'Chỉ Admin hoặc người có quyền CSV Export được gửi đơn sang PGprints'
-    : !preview.pushEnabled ? 'Chưa bật gửi đơn ở trang cài đặt xưởng Pgprints'
-    : !preview.hasCredentials ? 'Chưa nhập Store ID / Secret key PGprints'
+  const blockedReason = !preview ? '' : !canSend ? `Chỉ Admin hoặc người có quyền CSV Export được gửi đơn sang ${name}`
+    : !preview.pushEnabled ? copy.settingsHint
+    : !preview.hasCredentials ? copy.credentialsHint
     : errors.length > 0 ? 'Sửa hết lỗi chặn gửi trước' : ''
 
   return (
-    <div role="dialog" aria-modal="true" aria-label="Gửi đơn sang PGprints" className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-lg">
+    <div role="dialog" aria-modal="true" aria-label={`Gửi đơn sang ${name}`} className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-lg">
       <div className="max-h-[92vh] w-full max-w-5xl overflow-auto rounded-xl bg-surface-container-lowest shadow-xl">
         <div className="sticky top-0 z-10 flex items-center gap-sm border-b border-outline-variant/20 bg-surface-container-lowest px-lg py-md">
           <Icon name="local_shipping" className="text-secondary text-[22px]" />
-          <h2 className="text-headline-sm font-semibold">Gửi PGprints</h2>
+          <h2 className="text-headline-sm font-semibold">Gửi {name}</h2>
           {preview && <span className="font-mono text-body-md">{preview.order.shopifyOrderNumber}</span>}
           {preview && <span className="text-body-sm text-on-surface-variant">· {preview.order.storeName}</span>}
           <button type="button" onClick={onClose} className={`${btn} ml-auto`}><Icon name="close" className="text-[18px]" />Đóng</button>
@@ -220,14 +245,14 @@ export default function PgprintsPushModal({ orderId, onClose, onChanged }: { ord
           <ErrorBanner msg={error} onClose={() => setError('')} />
           {loading && !preview && <p className="text-body-sm text-on-surface-variant">Đang dựng bản xem trước…</p>}
 
-          {preview && active && <PushPanel push={active} canAct={preview.canAct} busy={busy} onRefresh={refreshPush} onCancel={cancelPush} />}
+          {preview && active && <PushPanel push={active} canAct={preview.canAct} busy={busy} name={name} onRefresh={refreshPush} onCancel={cancelPush} />}
 
           {preview && !active && (
             <>
-              {!preview.pushEnabled && (
+              {supplier === 'pgprints' && !preview.pushEnabled && (
                 <Note tone="warn" icon="toggle_off">Gửi đơn sang PGprints đang tắt. Super Admin bật ở trang cài đặt xưởng Pgprints — bản xem trước vẫn dùng được.</Note>
               )}
-              {!preview.hasCredentials && <Note tone="warn" icon="key_off">Chưa nhập Store ID / Secret key PGprints.</Note>}
+              {!preview.hasCredentials && <Note tone="warn" icon="key_off">{copy.credentialsHint}.</Note>}
               <IssueList issues={preview.issues} />
             </>
           )}
@@ -252,7 +277,7 @@ export default function PgprintsPushModal({ orderId, onClose, onChanged }: { ord
                         <Icon name="arrow_forward" className="text-[14px] text-on-surface-variant" />
                         <span className="text-on-surface-variant">SKU API</span>
                         {line.apiSku ? <span className="font-mono font-semibold">{line.apiSku}</span> : <Pill tone="bad" icon="error">chưa map</Pill>}
-                        <span className="text-on-surface-variant">· Ship class</span>
+                        <span className="text-on-surface-variant">· {copy.methodLabel}</span>
                         {line.shipClass
                           ? <span>{line.shipClass}{line.shipClassSource === 'default' ? <span className="text-on-surface-variant"> (mặc định)</span> : null}</span>
                           : <Pill tone="bad" icon="error">thiếu</Pill>}
@@ -284,7 +309,7 @@ export default function PgprintsPushModal({ orderId, onClose, onChanged }: { ord
                       {line.designNote && <span className="text-label-sm text-on-surface-variant">Ghi chú sản xuất: <span className="text-on-surface whitespace-pre-wrap">{line.designNote}</span></span>}
                     </li>
                   ))}
-                  {preview.lines.length === 0 && <li className="px-md py-md text-body-sm text-on-surface-variant">Đơn không có dòng nào của PGprints.</li>}
+                  {preview.lines.length === 0 && <li className="px-md py-md text-body-sm text-on-surface-variant">Đơn không có dòng nào của {name}.</li>}
                 </ul>
               </section>
 
@@ -294,18 +319,18 @@ export default function PgprintsPushModal({ orderId, onClose, onChanged }: { ord
                   {address ? (
                     <div className="text-body-sm space-y-[2px]">
                       <p className="font-semibold">{address.name}</p>
-                      <p className="text-label-sm text-on-surface-variant">Tên: {address.first_name} · Họ: {address.last_name}</p>
+                      {address.first_name !== undefined && <p className="text-label-sm text-on-surface-variant">Tên: {address.first_name} · Họ: {address.last_name}</p>}
                       <p>{address.address1}</p>
                       {address.address2 && <p>{address.address2}</p>}
                       <p>{[address.city, address.province_code || address.province, address.zip].filter(Boolean).join(', ')}</p>
                       <p>{address.country} ({address.country_code || '—'})</p>
                       <p className="text-on-surface-variant">{address.phone || 'không có số điện thoại'}</p>
-                      <p className="text-on-surface-variant">{payload?.email || 'không có email'}</p>
+                      <p className="text-on-surface-variant">{email || 'không có email'}</p>
                     </div>
                   ) : <p className="text-body-sm text-on-surface-variant">Chưa dựng được nội dung gửi — xem lỗi phía trên.</p>}
                 </section>
 
-                <section className="rounded-xl border border-outline-variant/20 px-md py-sm">
+                {supplier === 'pgprints' && <section className="rounded-xl border border-outline-variant/20 px-md py-sm">
                   <h3 className="flex items-center gap-xs text-body-sm font-semibold mb-xs"><Icon name="account_balance_wallet" className="text-on-surface-variant text-[18px]" />Số dư PGprints</h3>
                   {preview.balance ? (
                     <dl className="text-body-sm space-y-[2px]">
@@ -315,7 +340,7 @@ export default function PgprintsPushModal({ orderId, onClose, onChanged }: { ord
                       <div className="flex justify-between"><dt className="text-on-surface-variant">Đã trả</dt><dd>{usd(preview.balance.paidAmount)}</dd></div>
                     </dl>
                   ) : <p className="text-body-sm text-on-surface-variant">Không lấy được số dư.</p>}
-                </section>
+                </section>}
               </div>
             </div>
           )}
@@ -325,7 +350,7 @@ export default function PgprintsPushModal({ orderId, onClose, onChanged }: { ord
               <button type="button" onClick={() => setShowPayload(v => !v)} aria-expanded={showPayload}
                 className="w-full flex items-center gap-sm px-md py-sm text-body-sm font-semibold text-left">
                 <Icon name={showPayload ? 'expand_less' : 'expand_more'} className="text-[18px] text-on-surface-variant" />
-                Nội dung gửi sang PGprints (đúng từng ký tự)
+                Nội dung gửi sang {name} (đúng từng ký tự)
               </button>
               {showPayload && <pre className="px-md pb-md text-[11px] leading-snug font-mono overflow-auto max-h-[320px] whitespace-pre-wrap break-all">{JSON.stringify(preview.payload, null, 2)}</pre>}
             </section>
@@ -336,8 +361,8 @@ export default function PgprintsPushModal({ orderId, onClose, onChanged }: { ord
               <h3 className="flex items-center gap-xs text-body-sm font-semibold mb-xs">
                 <Icon name="history" className="text-on-surface-variant text-[18px]" />Các lần gửi trước
                 {!active && preview?.canAct && pastPushes[0].status === 'FAILED' && (
-                  <button type="button" className={`${btn} ml-auto`} disabled={!!busy} onClick={refreshPush} title="Hỏi PGprints xem lần gửi lỗi gần nhất có thật sự tạo đơn không">
-                    <Icon name="sync" className="text-[16px]" />{busy === 'refresh' ? 'Đang kiểm tra…' : 'Kiểm tra lại bên PGprints'}
+                  <button type="button" className={`${btn} ml-auto`} disabled={!!busy} onClick={refreshPush} title={`Hỏi ${name} xem lần gửi lỗi gần nhất có thật sự tạo đơn không`}>
+                    <Icon name="sync" className="text-[16px]" />{busy === 'refresh' ? 'Đang kiểm tra…' : `Kiểm tra lại bên ${name}`}
                   </button>
                 )}
               </h3>
@@ -367,7 +392,7 @@ export default function PgprintsPushModal({ orderId, onClose, onChanged }: { ord
               ) : (
                 <span className="inline-flex items-center gap-sm flex-wrap rounded-lg bg-amber-100 text-amber-900 px-sm py-xs text-label-sm">
                   <Icon name="payments" className="text-[18px]" />
-                  Đơn thật — PGprints sẽ trừ tiền sau thời gian chờ. Gửi {preview.order.shopifyOrderNumber}?
+                  Đơn thật — {copy.chargeNote}. Gửi {preview.order.shopifyOrderNumber}?
                   <button type="button" className={btnPrimary} disabled={!!busy} onClick={send}>
                     <Icon name="send" className="text-[18px]" />{busy === 'push' ? 'Đang gửi…' : 'Gửi đơn thật'}
                   </button>

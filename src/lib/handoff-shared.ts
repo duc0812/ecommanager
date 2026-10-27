@@ -1,6 +1,7 @@
 import type { WorkspaceLine } from '@/lib/design-studio'
 
 export type HandoffMode = 'API' | 'CSV'
+export type SupplierApiKind = 'pgprints' | 'merchize'
 
 export type HandoffPush = { status: string; supplierOrderCode: string | null; externalOrderId: string }
 
@@ -9,6 +10,8 @@ export type HandoffState = {
   blocked: string | null
   mode: HandoffMode
   apiName: string | null
+  /** Which supplier's push window the order opens; every line of a Merchize order belongs to Merchize. */
+  apiKind?: SupplierApiKind
   apiNote: string | null
   handedOff: { at: string; mode: HandoffMode; byName: string | null } | null
   canUndo: boolean

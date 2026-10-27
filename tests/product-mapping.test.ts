@@ -220,3 +220,39 @@ describe('swapToSizeSibling', () => {
     expect(swapToSizeSibling(null, { Size: 'S' }, 'product_profile', byId, byParent)).toBeNull()
   })
 })
+
+describe('swapToSizeSibling on colour-keyed SKUs', () => {
+  const mk = (id: string, size: string, colour: string) => ({
+    id,
+    supplierId: 'mz',
+    productName: 'Classic Unisex T-Shirt Gildan 5000',
+    productType: 'T-Shirt',
+    baseSku: '5000US',
+    variant1Value: size,
+    variant2Name: 'Color' as string | null,
+    variant2Value: colour as string | null,
+  })
+  const parent = [mk('blk_s', 'S', 'Black'), mk('blk_l', 'L', 'Black'), mk('lb_s', 'S', 'Light Blue'), mk('lb_l', 'L', 'Light Blue')]
+  const byId = new Map(parent.map(p => [p.id, p]))
+  const byParent = new Map([[supplierParentKey(parent[0]), parent]])
+
+  it('swaps a profile override pin to the colour and size of the line', () => {
+    expect(swapToSizeSibling('blk_s', { Style: 'Tshirt', Size: 'L', Color: 'Light Blue' }, 'product_profile_override', byId, byParent)).toBe('lb_l')
+  })
+
+  it('swaps base-rank results on colour too', () => {
+    expect(swapToSizeSibling('blk_s', { size: 'l', colour: 'black' }, 'product_base_rank', byId, byParent)).toBe('blk_l')
+  })
+
+  it('keeps the pinned colour when the line has no colour option', () => {
+    expect(swapToSizeSibling('lb_s', { Size: 'L' }, 'product_base_override', byId, byParent)).toBe('lb_l')
+  })
+
+  it('returns null when the supplier has no SKU for that colour', () => {
+    expect(swapToSizeSibling('blk_s', { Size: 'L', Color: 'Maroon' }, 'product_profile_override', byId, byParent)).toBeNull()
+  })
+
+  it('still leaves a manual variant pin alone', () => {
+    expect(swapToSizeSibling('blk_s', { Size: 'L', Color: 'Light Blue' }, 'variant_manual', byId, byParent)).toBe('blk_s')
+  })
+})

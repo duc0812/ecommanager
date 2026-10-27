@@ -94,8 +94,8 @@ describe('PGprints API access', () => {
     expect(canCallApi('SELLER', [], '/api/public/other', 'GET')).toBe('forbidden')
   })
 
-  it('order readers may preview; admins and CSV Export holders may push; only admins cancel or refresh', () => {
-    const path = '/api/fulfillment/pgprints/orders/o1'
+  it.each(['pgprints', 'merchize'])('%s: order readers may preview; admins and CSV Export holders may push; only admins cancel or refresh', supplier => {
+    const path = `/api/fulfillment/${supplier}/orders/o1`
     expect(canCallApi('SUPPORT', ['fulfillment_orders'], `${path}/preview`, 'GET')).toBe('ok')
     expect(canCallApi('SUPPORT', ['fulfillment_export'], `${path}/preview`, 'GET')).toBe('ok')
     expect(canCallApi('SELLER', ['design_tasks'], `${path}/preview`, 'GET')).toBe('forbidden')

@@ -212,10 +212,20 @@ type SizeSiblingProduct = {
   baseSku: string | null
   variant1Value: string | null
   variant2Value: string | null
+  variant2Name?: string | null
+}
+
+const isColourName = (name: string | null | undefined) => ['color', 'colour'].includes(normalize(name ?? ''))
+
+function optionValue(selectedOptions: Record<string, string>, match: (key: string) => boolean): string | null {
+  const hit = Object.entries(selectedOptions).find(([key, value]) => match(key) && normalize(value))
+  return hit ? normalize(hit[1]) : null
 }
 
 // Manual and override results pin an exact supplier product; every other result names a parent
-// product whose size sibling for this line has to be found.
+// product whose size sibling for this line has to be found. A supplier whose SKUs are keyed on
+// colour too (Merchize: one SKU per colour × size) is swapped on both, override pins included,
+// because pinning such a product can only ever name its parent.
 export function swapToSizeSibling<P extends SizeSiblingProduct>(
   supplierProductId: string | null,
   selectedOptions: Record<string, string>,
@@ -224,14 +234,18 @@ export function swapToSizeSibling<P extends SizeSiblingProduct>(
   supplierProductsByParent: Map<string, P[]>,
 ): string | null {
   if (!supplierProductId) return null
-  if (
-    resolvedVia === 'variant_manual' ||
-    resolvedVia === 'product_base_override' ||
-    resolvedVia === 'product_profile_override'
-  ) {
+  if (resolvedVia === 'variant_manual') return supplierProductId
+  const mapped = rawSupplierProductById.get(supplierProductId)
+  if (mapped && isColourName(mapped.variant2Name)) {
+    const size = optionValue(selectedOptions, k => normalize(k) === 'size') ?? normalize(mapped.variant1Value ?? '')
+    const colour = optionValue(selectedOptions, isColourName) ?? normalize(mapped.variant2Value ?? '')
+    const siblings = supplierProductsByParent.get(supplierParentKey(mapped)) ?? []
+    const exact = siblings.find(p => normalize(p.variant1Value ?? '') === size && normalize(p.variant2Value ?? '') === colour)
+    return exact?.id ?? null
+  }
+  if (resolvedVia === 'product_base_override' || resolvedVia === 'product_profile_override') {
     return supplierProductId
   }
-  const mapped = rawSupplierProductById.get(supplierProductId)
   if (!mapped) return supplierProductId
   const optionValues = Object.entries(selectedOptions)
     .filter(([key]) => normalize(key) === 'size')

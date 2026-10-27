@@ -32,9 +32,11 @@ export default function HandoffButton({ orderId, state, canHandoff, onChanged, o
     onChanged('Đã hoàn tác — đơn trở lại chờ chuyển xưởng')
   }
 
+  const supplier = state.apiKind ?? 'pgprints'
+  const supplierName = supplier === 'merchize' ? 'Merchize' : 'PGprints'
   const viewPush = (
     <button type="button" className={btn} onClick={() => setModal(true)}>
-      <Icon name="open_in_new" className="text-[16px]" />Xem đơn PGprints
+      <Icon name="open_in_new" className="text-[16px]" />Xem đơn {supplierName}
     </button>
   )
   let body: JSX.Element
@@ -52,7 +54,7 @@ export default function HandoffButton({ orderId, state, canHandoff, onChanged, o
   } else if (state.handedOff) {
     body = <><Pill tone="ok" icon="cloud_done">Đã chuyển supplier qua API</Pill>{canHandoff && viewPush}</>
   } else if (state.push) {
-    body = canHandoff ? viewPush : <span className="text-label-sm text-on-surface-variant">Đơn đã gửi PGprints</span>
+    body = canHandoff ? viewPush : <span className="text-label-sm text-on-surface-variant">Đơn đã gửi {supplierName}</span>
   } else if (!state.pending) {
     body = (
       <button type="button" className={btnPrimary} disabled title={state.blocked ?? undefined}>
@@ -83,7 +85,7 @@ export default function HandoffButton({ orderId, state, canHandoff, onChanged, o
     <>
       {body}
       {modal && (
-        <PgprintsPushModal orderId={orderId} onChanged={() => { dirty.current = true }}
+        <PgprintsPushModal orderId={orderId} supplier={supplier} onChanged={() => { dirty.current = true }}
           onClose={() => { setModal(false); if (dirty.current) { dirty.current = false; onChanged('') } }} />
       )}
     </>
