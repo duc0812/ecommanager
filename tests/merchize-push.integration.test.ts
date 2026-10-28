@@ -354,6 +354,29 @@ describe('printing method', () => {
 })
 
 describe('handoff state', () => {
+  it('sends only the Merchize lines of a mixed order and leaves the other supplier\'s line open', async () => {
+    const o = await makeOrder()
+    await prisma.supplier.upsert({ where: { code: 'mango_mz_test' }, create: { id: 'sup_mango_mz', name: 'Mangoshao', code: 'mango_mz_test' }, update: {} })
+    await prisma.orderLine.create({
+      data: {
+        orderId: o.id, shopifyLineId: `mzl-other-${seq}`, productTitle: 'Jeep Girl Hoodie', variantTitle: 'Pullover Hoodie / L', qty: 1, linePosition: 2,
+        unitPrice: 39.95, resolvedSupplierId: 'sup_mango_mz', resolvedSupplierSku: 'GAF-L', customized: false, sku: 'TN2805261455-PULLOVER-HOODIE-L',
+      },
+    })
+    const p = await (await preview(o.id)).json()
+    expect(p.issues.find((i: any) => i.code === 'MIXED_SUPPLIER')).toMatchObject({ level: 'warning' })
+    expect(p.issues.filter((i: any) => i.level === 'error')).toEqual([])
+    expect(p.payload.items).toHaveLength(1)
+    const res = await push(o.id, p.payloadHash)
+    expect(res.status).toBe(200)
+    const lines = await prisma.orderLine.findMany({ where: { orderId: o.id }, orderBy: { linePosition: 'asc' } })
+    expect(lines[0].exportedToSupplierId).toBe(SUP)
+    expect(lines[1].exportedAt).toBeNull()
+    expect((await prisma.order.findUniqueOrThrow({ where: { id: o.id } })).pipelineStatus).toBe('READY_TO_PRODUCTION')
+    await prisma.orderLine.deleteMany({ where: { orderId: o.id, linePosition: 2 } })
+    await prisma.supplier.deleteMany({ where: { id: 'sup_mango_mz' } })
+  })
+
   it('offers the Merchize API window for an all-Merchize order', async () => {
     const o = await makeOrder()
     const order = await prisma.order.findUniqueOrThrow({

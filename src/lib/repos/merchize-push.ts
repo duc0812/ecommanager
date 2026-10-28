@@ -144,8 +144,10 @@ export async function buildMerchizePush(orderId: string): Promise<BuiltMerchizeP
   const foreign = productLines.filter(l => l.resolvedSupplierId && l.resolvedSupplierId !== supplier?.id)
   if (unmapped.length > 0) error('UNMAPPED_LINE', `Dòng ${unmapped.map(l => taskKeyFor(order.shopifyOrderNumber, l.linePosition)).join(', ')} chưa map xưởng`)
   if (supplier && foreign.length > 0) {
+    // Only the Merchize lines go out (owner 2026-10-29, LIT5235: the tee to Merchize, the hoodie stays with Mangoshao). The export
+    // marks are per line, so the other lines stay open for their own supplier and the order turns EXPORTED once they are sent too.
     const others = await prisma.supplier.findMany({ where: { id: { in: foreign.map(l => l.resolvedSupplierId as string) } }, select: { name: true } })
-    error('MIXED_SUPPLIER', `Đơn có dòng thuộc xưởng khác (${others.map(s => s.name).join(', ') || 'không rõ'}) — chỉ gửi được đơn mà mọi dòng đều của Merchize`)
+    warning('MIXED_SUPPLIER', `Chỉ gửi các dòng Merchize; dòng ${foreign.map(l => taskKeyFor(order.shopifyOrderNumber, l.linePosition)).join(', ')} thuộc ${others.map(s => s.name).join(', ') || 'xưởng khác'} — xuất riêng cho xưởng đó`)
   }
   const pushLines = supplier ? productLines.filter(l => l.resolvedSupplierId === supplier.id) : []
   // A line already exported to Merchize another way (CSV import) is an order Merchize already holds; an API create would duplicate it.
