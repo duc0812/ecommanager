@@ -14,7 +14,7 @@ import { PushError, hashPayload } from '@/lib/repos/pgprints-push'
 import {
   MerchizeError, cancelOrder, createOrder, getOrderDetail, isMerchizeSupplier, merchizeCredentials, merchizePrintingMethod,
   pushToProduction, searchCatalog, serializeOrderPayload,
-  type MerchizeCatalogVariant, type MerchizeOrderItem, type MerchizeOrderPayload,
+  type MerchizeCatalogVariant, type MerchizeCredentials, type MerchizeOrderItem, type MerchizeOrderPayload,
 } from '@/lib/merchize'
 import type { PreviewFile, PreviewIssue, PreviewLine, PushPreview, PushStatus, PushView } from '@/lib/pgprints-shared'
 
@@ -382,23 +382,38 @@ export async function pushMerchizeOrder(orderId: string, input: { payloadHash: s
     throw new PushError(`Merchize từ chối đơn: ${message}`, 502, 'CREATE_FAILED')
   }
 
-  let pushNote: string | null = null
-  try {
-    await pushToProduction(creds, built.externalOrderId, built.identifier)
-  } catch (e: any) {
-    // The order exists either way; an unpushed order only waits for "Push" on the Merchize dashboard.
-    pushNote = `Đã tạo đơn nhưng chưa đẩy vào sản xuất: ${e?.message ?? e} — bấm Push trên dashboard Merchize`
-  }
+  const { code, note: pushNote } = await pushWhenImported(creds, built.externalOrderId, built.identifier)
   await prisma.supplierOrderPush.update({
     where: { id: reserved.id },
     data: {
-      status: 'CREATED', error: pushNote, supplierInternalId: created.id,
+      status: 'CREATED', error: pushNote, supplierInternalId: created.id, supplierOrderCode: code,
       remoteStatus: pushNote ? 'created' : 'pushed', responseJson: JSON.stringify(created.raw).slice(0, 200_000),
     },
   })
   const exported = await markPushExported({ id: reserved.id, orderId, supplierId: built.supplierId, pushedAt: reserved.pushedAt, pushedById: input.userId })
   if (exported) await logHandoffEvent(orderId, `Chuyển supplier qua API (Merchize) — external number ${built.externalOrderId}`, input.userId)
   return { push: await viewOf(reserved.id), exported }
+}
+
+export const IMPORT_WAIT = { attempts: 8, delayMs: 1500 }
+
+/**
+ * Merchize imports an API order asynchronously: a push sent right after the create answers "Order not found"
+ * (#LIT5000, 2026-10-28). Wait until order-detail sees the order, then push it into production.
+ */
+async function pushWhenImported(creds: MerchizeCredentials, externalNumber: string, identifier: string): Promise<{ code: string | null; note: string | null }> {
+  let code: string | null = null
+  for (let i = 0; i < IMPORT_WAIT.attempts && !code; i++) {
+    if (i > 0) await new Promise(r => setTimeout(r, IMPORT_WAIT.delayMs))
+    code = await getOrderDetail(creds, externalNumber, identifier).then(o => o?.code ?? null, () => null)
+  }
+  try {
+    await pushToProduction(creds, externalNumber, identifier)
+    return { code, note: null }
+  } catch (e: any) {
+    // The order exists either way; an unpushed order only waits for "Push" on the Merchize dashboard.
+    return { code, note: `Đã tạo đơn nhưng chưa đẩy vào sản xuất: ${e?.message ?? e} — bấm Push trên dashboard Merchize` }
+  }
 }
 
 async function latestPush(orderId: string, supplierId: string, statuses: PushStatus[]): Promise<PushRow | null> {

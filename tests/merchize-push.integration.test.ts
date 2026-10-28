@@ -7,6 +7,7 @@ import { prisma } from '@/lib/db'
 import { AUTH_COOKIE, signToken } from '@/lib/auth'
 import { DEFAULT_ROLE_PERMISSIONS } from '@/lib/roles'
 import { handoffStates } from '@/lib/supplier-handoff'
+import { IMPORT_WAIT } from '@/lib/repos/merchize-push'
 import { GET as getPreview } from '@/app/api/fulfillment/merchize/orders/[orderId]/preview/route'
 import { POST as postPush } from '@/app/api/fulfillment/merchize/orders/[orderId]/push/route'
 import { POST as postCancel } from '@/app/api/fulfillment/merchize/orders/[orderId]/cancel/route'
@@ -254,6 +255,25 @@ describe('Merchize push', () => {
     const again = await push(o.id, p.payloadHash)
     expect(again.status).toBe(409)
     expect(callsTo('/order/external/orders')).toHaveLength(1)
+  })
+
+  it('waits for Merchize to import the order before pushing it into production', async () => {
+    const o = await makeOrder()
+    let lookups = 0
+    handler = call => {
+      if (call.path.endsWith('/order/external/orders/order-detail')) {
+        lookups++
+        if (lookups < 3) return { status: 200, json: { success: false, message: 'Order does not exist' } }
+      }
+      if (call.path.endsWith('/order/external/orders/push') && lookups < 3) return { status: 200, json: { success: false, message: 'Order not found' } }
+      return defaultHandler(call)
+    }
+    IMPORT_WAIT.delayMs = 5
+    const p = await (await preview(o.id)).json()
+    const out = await (await push(o.id, p.payloadHash)).json()
+    expect(out.push).toMatchObject({ status: 'CREATED', supplierOrderCode: `RX-${o.number}`, remoteStatus: 'pushed', error: null })
+    expect(lookups).toBe(3)
+    expect(callsTo('/order/external/orders/push')).toHaveLength(1)
   })
 
   it('records a refusal as FAILED and lets the retry reuse the order id', async () => {
