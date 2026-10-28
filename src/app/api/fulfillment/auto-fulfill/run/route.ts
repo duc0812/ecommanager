@@ -16,11 +16,14 @@ export async function POST(req: NextRequest) {
   const stream = new ReadableStream({
     async start(controller) {
       const send = (o: any) => controller.enqueue(encoder.encode(JSON.stringify(o) + '\n'))
+      // First bytes go out before any slow work, so the proxy sees a response straight away.
+      send({ type: 'stage', stage: 'sheets', done: 0, total: sheets.filter(s => s.enabled).length })
       try {
         const result = await runAutoFulfill({
           shop: conn.shop, accessToken: conn.token, storeId: store.id,
           sheets, minAgeDays, apply,
           onProgress: (done, total) => send({ type: 'progress', done, total }),
+          onStage: (stage, done, total) => send({ type: 'stage', stage, done, total }),
         })
         send({ type: 'done', apply, ...result })
       } catch (e: any) {

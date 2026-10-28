@@ -12,13 +12,32 @@ export type AutoFulfillSummary = {
   notFound: number; needsManual: number; errored: number; rows: OrderResultRow[]
 }
 
+export type AutoFulfillStage = 'sheets' | 'shopify'
+
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
+
+// Same verdicts buildFulfillmentPlan reaches first (too_recent, then already_fulfilled), taken
+// from the DB copy of Shopify's displayFulfillmentStatus. Anything else returns null → ask Shopify.
+export function settleFromDb(
+  baseOrder: string,
+  db: { placedAt: Date | null; fulfillmentStatus: string | null } | undefined,
+  now: Date, minAgeDays: number,
+): ReturnType<typeof buildFulfillmentPlan> | null {
+  if (!db?.placedAt) return null
+  const ageDays = Math.floor((now.getTime() - db.placedAt.getTime()) / 86_400_000)
+  if (ageDays < minAgeDays) return { baseOrder, status: 'too_recent', fulfillments: [], message: `Mới ${ageDays} ngày`, ageDays }
+  if ((db.fulfillmentStatus ?? '').toUpperCase() === 'FULFILLED') return { baseOrder, status: 'already_fulfilled', fulfillments: [], ageDays }
+  return null
+}
 
 export async function runAutoFulfill(opts: {
   shop: string; accessToken: string; storeId: string
   sheets: SheetConfig[]
   minAgeDays: number; apply: boolean; now?: Date
   onProgress?: (done: number, total: number) => void
+  // Fires during the slow read phase (sheets, then ~1 Shopify request per 25 orders) so a
+  // streaming caller can keep sending bytes; nginx drops a request that is silent for 60s.
+  onStage?: (stage: AutoFulfillStage, done: number, total: number) => void
 }): Promise<AutoFulfillSummary> {
   const now = opts.now ?? new Date()
 
@@ -27,7 +46,10 @@ export async function runAutoFulfill(opts: {
   //    own sheet, so keeping only the first sheet's rows would silently skip the others.
   const byOrder = new Map<string, { rows: Array<{ lineKey: string; tracking: string }>; storeBase: string }>()
   const sheetErrorRows: OrderResultRow[] = []
-  for (const sheet of opts.sheets.filter(s => s.enabled)) {
+  const enabledSheets = opts.sheets.filter(s => s.enabled)
+  let sheetsRead = 0
+  for (const sheet of enabledSheets) {
+    opts.onStage?.('sheets', sheetsRead++, enabledSheets.length)
     const ref = parseSheetUrl(sheet.url)
     if (!ref) continue
     let text: string
@@ -51,11 +73,10 @@ export async function runAutoFulfill(opts: {
   }
   if (names.length === 0) return summary
 
-  const foMap = await fetchOrderFulfillmentOrdersByNames(opts.shop, opts.accessToken, names)
   const orders = await prisma.order.findMany({
     where: { storeId: opts.storeId, shopifyOrderNumber: { in: [...names, ...names.map(n => `#${n}`)] } },
     select: {
-      id: true, shopifyOrderNumber: true, placedAt: true, pipelineStatus: true,
+      id: true, shopifyOrderNumber: true, placedAt: true, pipelineStatus: true, fulfillmentStatus: true,
       shipments: { select: { id: true, lineKey: true, shopifyLineId: true } },
       // Non-product lines (Shipping protection / Tip / Custom Text) have no Shipment row and
       // never appear in a supplier sheet, but Shopify still waits for them to be fulfilled.
@@ -64,6 +85,16 @@ export async function runAutoFulfill(opts: {
   })
   const dbByName = new Map(orders.map(o => [o.shopifyOrderNumber.replace(/^#/, ''), o]))
 
+  // The sheets keep every order ever shipped, so most rows are long done. Settle those from the
+  // DB and only ask Shopify (needed anyway for fulfillment-order ids) about the rest.
+  const settled = new Map<string, ReturnType<typeof buildFulfillmentPlan>>()
+  for (const base of names) {
+    const plan = settleFromDb(base, dbByName.get(base), now, opts.minAgeDays)
+    if (plan) settled.set(base, plan)
+  }
+  const foMap = await fetchOrderFulfillmentOrdersByNames(opts.shop, opts.accessToken, names.filter(n => !settled.has(n)), undefined,
+    (done, total) => opts.onStage?.('shopify', done, total))
+
   // 3) Evaluate every sheet order in-memory (the Shopify + DB fetches above already ran).
   type Evaluated = { base: string; plan: ReturnType<typeof buildFulfillmentPlan>; storeBase: string; db: (typeof orders)[number] | undefined; fulfilledLines: number }
   const evaluated: Evaluated[] = []
@@ -71,7 +102,7 @@ export async function runAutoFulfill(opts: {
   for (const [base, { rows, storeBase }] of Array.from(byOrder)) {
     const db = dbByName.get(base)
     const fo = foMap.get(base)
-    const plan = buildFulfillmentPlan({
+    const plan = settled.get(base) ?? buildFulfillmentPlan({
       baseOrder: base, rows,
       shipments: db?.shipments ?? [],
       fulfillmentOrders: fo ? fo.fulfillmentOrders : null,

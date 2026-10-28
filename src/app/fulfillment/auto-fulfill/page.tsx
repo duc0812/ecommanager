@@ -23,7 +23,7 @@ export default function AutoFulfillPage() {
   const [sheets, setSheets] = useState<SheetConfig[]>([])
   const [minAgeDays, setMinAgeDays] = useState(5)
   const [running, setRunning] = useState(false)
-  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null)
+  const [progress, setProgress] = useState<{ done: number; total: number; label?: string } | null>(null)
   const [rows, setRows] = useState<ResultRow[]>([])
   const [message, setMessage] = useState('')
 
@@ -74,7 +74,8 @@ export default function AutoFulfillPage() {
         for (const line of sp.lines) {
           let m: any
           try { m = JSON.parse(line) } catch { continue }
-          if (m.type === 'progress') setProgress({ done: m.done, total: m.total })
+          if (m.type === 'stage') setProgress({ done: m.done, total: m.total, label: m.stage === 'shopify' ? 'Đang đọc Shopify' : 'Đang đọc sheet' })
+          else if (m.type === 'progress') setProgress({ done: m.done, total: m.total })
           else if (m.type === 'done') doneMsg = m
           else if (m.type === 'error') err = m.error
         }
@@ -105,7 +106,7 @@ export default function AutoFulfillPage() {
           </div>
           <div className="flex items-center gap-xs">
             <button onClick={() => run(false)} disabled={running} className="bg-surface-container-lowest text-on-surface border border-outline-variant/40 px-lg py-sm rounded-lg text-label-md disabled:opacity-50">Preview</button>
-            <button onClick={() => run(true)} disabled={running} className="bg-secondary text-on-secondary px-lg py-sm rounded-lg text-label-md disabled:opacity-50">{running ? (progress ? `Đang chạy ${progress.done}/${progress.total}…` : 'Đang chạy…') : 'Apply now'}</button>
+            <button onClick={() => run(true)} disabled={running} className="bg-secondary text-on-secondary px-lg py-sm rounded-lg text-label-md disabled:opacity-50">{running ? (progress ? `${progress.label ?? 'Đang chạy'} ${progress.done}/${progress.total}…` : 'Đang chạy…') : 'Apply now'}</button>
           </div>
         </div>
         {message && <p className="mb-md text-body-sm text-on-surface-variant">{message}</p>}

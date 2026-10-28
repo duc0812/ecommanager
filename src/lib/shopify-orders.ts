@@ -600,6 +600,7 @@ export function mapFulfillmentOrdersResponse(nodes: any[]): Map<string, ShopifyO
 
 export async function fetchOrderFulfillmentOrdersByNames(
   shop: string, accessToken: string, names: string[], apiVersion = '2024-10',
+  onBatch?: (done: number, total: number) => void,
 ): Promise<Map<string, ShopifyOrderFO>> {
   const out = new Map<string, ShopifyOrderFO>()
   const uniq = Array.from(new Set(names.map(n => n.replace(/^#/, '')).filter(Boolean)))
@@ -631,6 +632,7 @@ export async function fetchOrderFulfillmentOrdersByNames(
     const json = await res.json()
     if (json.errors) throw new Error(`GraphQL errors: ${JSON.stringify(json.errors).slice(0, 300)}`)
     mapFulfillmentOrdersResponse(json.data?.orders?.nodes ?? []).forEach((v, k) => out.set(k, v))
+    onBatch?.(Math.min(i + 25, uniq.length), uniq.length)
     await new Promise(r => setTimeout(r, 300))
   }
   return out
