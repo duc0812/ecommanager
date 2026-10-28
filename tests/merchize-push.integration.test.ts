@@ -7,7 +7,7 @@ import { prisma } from '@/lib/db'
 import { AUTH_COOKIE, signToken } from '@/lib/auth'
 import { DEFAULT_ROLE_PERMISSIONS } from '@/lib/roles'
 import { handoffStates } from '@/lib/supplier-handoff'
-import { IMPORT_WAIT } from '@/lib/repos/merchize-push'
+import { IMPORT_WAIT, methodFor } from '@/lib/repos/merchize-push'
 import { GET as getPreview } from '@/app/api/fulfillment/merchize/orders/[orderId]/preview/route'
 import { POST as postPush } from '@/app/api/fulfillment/merchize/orders/[orderId]/push/route'
 import { POST as postCancel } from '@/app/api/fulfillment/merchize/orders/[orderId]/cancel/route'
@@ -341,6 +341,15 @@ describe('Merchize push', () => {
     const res = await push(o.id, 'f'.repeat(64))
     expect(res.status).toBe(409)
     expect(callsTo('/order/external/orders')).toHaveLength(0)
+  })
+})
+
+describe('printing method', () => {
+  it('keeps the store default unless the blank does not offer it', () => {
+    expect(methodFor({ methods: ['DTF', 'DTG'] }, 'DTF')).toBe('DTF')
+    expect(methodFor({ methods: ['DTG'] }, 'DTF')).toBe('DTG')
+    expect(methodFor({ methods: [] }, 'DTF')).toBe('DTF')
+    expect(methodFor(undefined, 'DTG')).toBe('DTG')
   })
 })
 

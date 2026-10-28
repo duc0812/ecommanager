@@ -3,6 +3,7 @@
 //
 //   node scripts/import-merchize-catalog.mjs --sku 5000US --colors "Black,Light Blue" \
 //     --template "Merchize Gildan 5000US (front)" --size 4200x4800 --dpi 300 --areas Front [--method DTF] [--apply]
+//   Areas of different sizes: --areas "FRONT=4500x3000,BACK=4200x4800" (--size then not needed).
 //
 // Reads MERCHIZE_API_URL / MERCHIZE_API_TOKEN and DATABASE_URL from the environment.
 import { createClient } from '@libsql/client'
@@ -22,9 +23,13 @@ const colourFilter = (arg('colors') || '').split(',').map(s => s.trim().toLowerC
 const templateName = arg('template')
 const sizeArg = arg('size')
 const dpi = Number(arg('dpi', '300'))
-const areaNames = (arg('areas', 'Front') || 'Front').split(',').map(s => s.trim()).filter(Boolean)
+const areaSpecs = (arg('areas', 'Front') || 'Front').split(',').map(s => s.trim()).filter(Boolean).map(spec => {
+  const [name, dims] = spec.split('=').map(x => x.trim())
+  const m = (dims || sizeArg || '').match(/^(\d+)x(\d+)$/)
+  return { name, w: m ? Number(m[1]) : 0, h: m ? Number(m[2]) : 0 }
+})
 if (!parentSku) { console.error('--sku is required'); process.exit(1) }
-if (templateName && !/^\d+x\d+$/.test(sizeArg || '')) { console.error('--template needs --size WxH'); process.exit(1) }
+if (templateName && areaSpecs.some(a => !a.w || !a.h)) { console.error('--template needs --size WxH or --areas Name=WxH,...'); process.exit(1) }
 
 const apiUrl = process.env.MERCHIZE_API_URL?.trim().replace(/\/+$/, '')
 const token = process.env.MERCHIZE_API_TOKEN?.trim()
@@ -38,7 +43,9 @@ if (!product) { console.error(`Merchize catalogue has no ${parentSku}`); process
 const tierName = `${method.toLowerCase()}_tier1`
 function priceOf(v) {
   const tiers = v.tiers ?? []
-  return tiers.find(t => t.name === tierName)?.price ?? tiers.find(t => t.name === 'tier1')?.price ?? null
+  // A blank without the wanted method (Gildan 18600US is DTG only) is priced at the method it offers.
+  return tiers.find(t => t.name === tierName)?.price ?? tiers.find(t => t.name === 'tier1')?.price
+    ?? tiers.find(t => /_tier1$/.test(t.name) && t.price != null)?.price ?? null
 }
 function attr(v, type) {
   return (v.attributes ?? []).find(a => a.type === type || a.name === type)?.value_text ?? null
@@ -68,11 +75,12 @@ const now = new Date().toISOString()
 
 let templateId = null
 if (templateName) {
-  const [w, h] = sizeArg.split('x').map(Number)
-  const areas = areaNames.map(name => ({ name, x: 0, y: 0, w, h }))
+  const w = Math.max(...areaSpecs.map(a => a.w))
+  const h = Math.max(...areaSpecs.map(a => a.h))
+  const areas = areaSpecs.map(a => ({ name: a.name, x: 0, y: 0, w: a.w, h: a.h }))
   const existing = (await db.execute({ sql: `SELECT id FROM "PrintTemplate" WHERE supplierId = ? AND supplierSku = ?`, args: [supplier.id, parentSku] })).rows[0]
   templateId = existing?.id ?? randomUUID()
-  console.log(`  template ${existing ? 'update' : 'create'}: ${templateName} ${w}x${h} @${dpi}, areas ${areaNames.join(', ')}`)
+  console.log(`  template ${existing ? 'update' : 'create'}: ${templateName} ${w}x${h} @${dpi}, areas ${areas.map(a => `${a.name} ${a.w}x${a.h}`).join(', ')}`)
   if (apply) {
     if (existing) {
       await db.execute({

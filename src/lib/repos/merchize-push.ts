@@ -14,7 +14,7 @@ import { PushError, hashPayload } from '@/lib/repos/pgprints-push'
 import {
   MerchizeError, cancelOrder, createOrder, getOrderDetail, isMerchizeSupplier, merchizeCredentials, merchizePrintingMethod,
   pushToProduction, searchCatalog, serializeOrderPayload,
-  type MerchizeCatalogVariant, type MerchizeCredentials, type MerchizeOrderItem, type MerchizeOrderPayload,
+  type MerchizeCatalogVariant, type MerchizeCredentials, type MerchizePrintingMethod, type MerchizeOrderItem, type MerchizeOrderPayload,
 } from '@/lib/merchize'
 import type { PreviewFile, PreviewIssue, PreviewLine, PushPreview, PushStatus, PushView } from '@/lib/pgprints-shared'
 
@@ -47,6 +47,12 @@ function isUniqueViolation(e: any): boolean {
   if (e?.code === 'P2002') return true
   const msg = `${e?.message ?? ''} ${e?.cause?.message ?? ''}`
   return msg.includes('UNIQUE constraint failed') || msg.includes('Unique constraint failed')
+}
+
+/** The store default (DTF) unless the blank does not offer it: Gildan 18600US is DTG only. */
+export function methodFor(variant: { methods: string[] } | undefined, preferred: MerchizePrintingMethod): MerchizePrintingMethod {
+  const offered = (variant?.methods ?? []).map(m => m.toUpperCase()).filter((m): m is MerchizePrintingMethod => m === 'DTF' || m === 'DTG')
+  return offered.length === 0 || offered.includes(preferred) ? preferred : offered[0]
 }
 
 /** The Merchize print side a part name stands for; "Artwork" (one-part templates) is the front. */
@@ -156,12 +162,12 @@ export async function buildMerchizePush(orderId: string): Promise<BuiltMerchizeP
   const productBySku = new Map(products.map(p => [p.sku, p]))
 
   // The catalogue is read live: the variant's attributes are what Merchize expects on the item, and a SKU it dropped blocks the send.
-  const catalogVariants = new Map<string, MerchizeCatalogVariant & { productId: string }>()
+  const catalogVariants = new Map<string, MerchizeCatalogVariant & { productId: string; methods: string[] }>()
   const parents = Array.from(new Set(products.map(p => p.baseSku).filter((x): x is string => !!x)))
   if (creds && parents.length > 0) {
     try {
       for (const p of await searchCatalog(creds, parents)) {
-        for (const v of p.variants) catalogVariants.set(v.sku, { ...v, productId: p._id })
+        for (const v of p.variants) catalogVariants.set(v.sku, { ...v, productId: p._id, methods: p.printing_methods ?? [] })
       }
     } catch (e: any) {
       error('CATALOG', `Không đọc được catalog Merchize: ${e?.message ?? e}`)
@@ -224,6 +230,7 @@ export async function buildMerchizePush(orderId: string): Promise<BuiltMerchizeP
         viewUrl: artworkUrl(art.id), thumbUrl: art.previewPath ? `${artworkUrl(art.id)}?preview=1` : artworkUrl(art.id),
       })
     }
+    const method = methodFor(variant, printingMethod)
     if (l.qty <= 0) error('BAD_QUANTITY', `${refId}: số lượng phải lớn hơn 0`, refId)
 
     const mockupFiles = currentFiles(lineFiles, 'MOCKUP')
@@ -239,13 +246,13 @@ export async function buildMerchizePush(orderId: string): Promise<BuiltMerchizeP
 
     lines.push({
       refId, lineId: l.id, linePosition: l.linePosition, productTitle: l.productTitle, variantTitle: l.variantTitle, quantity: l.qty,
-      supplierSku: l.resolvedSupplierSku, apiSku, shipClass: printingMethod, shipClassSource: 'default', shipCountries: [],
+      supplierSku: l.resolvedSupplierSku, apiSku, shipClass: method, shipClassSource: method === printingMethod ? 'default' : 'product', shipCountries: [],
       templateName: template?.name ?? null, mockupUrl, designNote: note, files,
     })
     items.push({
       name: l.variantTitle ? `${l.productTitle} - ${l.variantTitle}` : l.productTitle,
       sku: apiSku ?? '', merchize_sku: apiSku ?? '', product_id: variant?.productId ?? '',
-      quantity: l.qty, price: l.unitPrice, currency: order.currency || 'USD', printing_method: printingMethod, image: image ?? '',
+      quantity: l.qty, price: l.unitPrice, currency: order.currency || 'USD', printing_method: method, image: image ?? '',
       ...designs,
       attributes: (variant?.attributes ?? []).map(a => ({ name: a.name, option: a.value_code })),
     })
