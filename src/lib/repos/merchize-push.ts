@@ -142,6 +142,12 @@ export async function buildMerchizePush(orderId: string): Promise<BuiltMerchizeP
     error('MIXED_SUPPLIER', `Đơn có dòng thuộc xưởng khác (${others.map(s => s.name).join(', ') || 'không rõ'}) — chỉ gửi được đơn mà mọi dòng đều của Merchize`)
   }
   const pushLines = supplier ? productLines.filter(l => l.resolvedSupplierId === supplier.id) : []
+  // A line already exported to Merchize another way (CSV import) is an order Merchize already holds; an API create would duplicate it.
+  const exportedElsewhere = active ? [] : pushLines.filter(l => l.exportedAt && l.exportedToSupplierId === supplier?.id)
+  if (exportedElsewhere.length > 0) {
+    const when = exportedElsewhere[0].exportedAt!.toISOString().replace('T', ' ').slice(0, 16)
+    error('ALREADY_EXPORTED', `Dòng ${exportedElsewhere.map(l => taskKeyFor(order.shopifyOrderNumber, l.linePosition)).join(', ')} đã xuất cho Merchize lúc ${when} UTC (CSV) — gửi API nữa sẽ thành đơn trùng`)
+  }
 
   const supplierSkus = Array.from(new Set(pushLines.map(l => l.resolvedSupplierSku).filter((x): x is string => !!x)))
   const products = supplier && supplierSkus.length

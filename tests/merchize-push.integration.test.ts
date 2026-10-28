@@ -217,6 +217,17 @@ describe('Merchize preview', () => {
     expect(gone.issues.map((i: any) => i.code)).toContain('NOT_IN_CATALOG')
   })
 
+  it('blocks a line already exported to Merchize by CSV, so the API never makes a second order', async () => {
+    const o = await makeOrder()
+    await prisma.orderLine.updateMany({ where: { orderId: o.id }, data: { exportedAt: new Date('2026-10-28T01:30:51Z'), exportedToSupplierId: SUP } })
+    await prisma.order.update({ where: { id: o.id }, data: { pipelineStatus: 'EXPORTED' } })
+    const body = await (await preview(o.id)).json()
+    expect(body.issues.map((i: any) => i.code)).toContain('ALREADY_EXPORTED')
+    expect(body.canPush).toBe(false)
+    expect((await push(o.id, body.payloadHash)).status).toBe(422)
+    expect(callsTo('/order/external/orders')).toHaveLength(0)
+  })
+
   it('needs the server credentials', async () => {
     delete process.env.MERCHIZE_API_TOKEN
     const body = await (await preview((await makeOrder()).id)).json()
