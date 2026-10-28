@@ -13,7 +13,7 @@ function formatDate(v: string | null) {
   return new Intl.DateTimeFormat('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }).format(new Date(v))
 }
 
-export default function AdCard({ a, onSave }: { a: Ad; onSave: (a: Ad) => void }) {
+export default function AdCard({ a, onSave }: { a: Ad; onSave?: (a: Ad) => void }) {
   const s = a.signals
   const [open, setOpen] = useState(false)
   return (
@@ -67,7 +67,7 @@ export default function AdCard({ a, onSave }: { a: Ad; onSave: (a: Ad) => void }
             )}
             <div className="ml-auto flex gap-[6px]">
               <button onClick={() => setOpen(true)} className="flex h-[28px] items-center rounded-[7px] border border-[#E6E3DE] bg-white px-[10px] text-[11.5px] text-[#57534E] transition-colors hover:bg-[#F7F6F4] hover:text-[#1B1A17]">Detail</button>
-              <button onClick={() => onSave(a)} className="flex h-[28px] items-center rounded-[7px] bg-[#3F3AC4] px-[10px] text-[11.5px] font-medium text-white transition-colors hover:bg-[#201C8F]">+ Save idea</button>
+              {onSave && <button onClick={() => onSave(a)} className="flex h-[28px] items-center rounded-[7px] bg-[#3F3AC4] px-[10px] text-[11.5px] font-medium text-white transition-colors hover:bg-[#201C8F]">+ Save idea</button>}
             </div>
           </div>
         </div>

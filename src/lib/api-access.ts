@@ -87,6 +87,7 @@ export const API_ACCESS_RULES: ApiRule[] = [
   { prefix: '/api/spy/config', methods: READ, access: ['setup_store', 'tools_spy_idea'] },
   { prefix: '/api/spy/config', methods: WRITE, access: 'SUPERADMIN' },
   { prefix: '/api/spy/cron', methods: WRITE, access: 'SUPERADMIN' },
+  { prefix: '/api/spy/presumptions', methods: WRITE, access: 'SUPERADMIN' },
   { prefix: '/api/spy', access: ['tools_spy_idea'] },
   { prefix: '/api/staff', methods: READ, access: ['setup_hr', 'projects'] },
   { prefix: '/api/staff', methods: WRITE, access: ['setup_hr'] },

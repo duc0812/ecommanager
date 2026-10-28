@@ -24,7 +24,7 @@ function TrendBadge({ delta }: { delta?: number | null }) {
   return <span className={`${base} bg-[#F2F1EE] text-[#78716C]`}>—</span>
 }
 
-export default function ProductCard({ p, onSave, rank, rankDelta }: { p: Product; onSave: (p: Product) => void; rank?: number; rankDelta?: number | null }) {
+export default function ProductCard({ p, onSave, rank, rankDelta, badge }: { p: Product; onSave?: (p: Product) => void; rank?: number; rankDelta?: number | null; badge?: { label: string; className: string } }) {
   const url = productUrl(p)
   const media = p.imageUrl ? (
     // eslint-disable-next-line @next/next/no-img-element
@@ -39,6 +39,9 @@ export default function ProductCard({ p, onSave, rank, rankDelta }: { p: Product
           <span className="rounded-[6px] bg-[#1B1A17]/80 px-[8px] py-[4px] font-[family-name:var(--font-plex-mono)] font-medium text-[10px] text-white backdrop-blur-sm">#{rank}</span>
           <TrendBadge delta={rankDelta} />
         </div>
+      )}
+      {badge && (
+        <span className={`absolute left-[10px] top-[10px] z-10 rounded-[6px] px-[9px] py-[4px] text-[11px] font-semibold tracking-[0.01em] shadow-sm ${badge.className}`}>{badge.label}</span>
       )}
       {url ? (
         <a href={url} target="_blank" rel="noreferrer" title={p.title ?? 'Mở sản phẩm'} className="block aspect-[4/5] overflow-hidden bg-[#F2F1EE]">{media}</a>
@@ -65,7 +68,7 @@ export default function ProductCard({ p, onSave, rank, rankDelta }: { p: Product
           ) : (
             <span className="text-[11.5px] text-[#78716C]">Không có link</span>
           )}
-          <button onClick={() => onSave(p)} className="ml-auto flex h-[28px] items-center rounded-[7px] bg-[#3F3AC4] px-[10px] text-[11.5px] font-medium text-white transition-colors hover:bg-[#201C8F]">+ Save idea</button>
+          {onSave && <button onClick={() => onSave(p)} className="ml-auto flex h-[28px] items-center rounded-[7px] bg-[#3F3AC4] px-[10px] text-[11.5px] font-medium text-white transition-colors hover:bg-[#201C8F]">+ Save idea</button>}
         </div>
       </div>
     </article>

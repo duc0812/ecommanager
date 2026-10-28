@@ -843,6 +843,7 @@ model SpyStore {
   advertisers SpyAdvertiser[]
   pageTargets SpyPageTarget[]
   bestSellers SpyBestSeller[]
+  presumptions SpyPresumption[]
 
   @@index([status])
 }
@@ -870,6 +871,7 @@ model SpyProduct {
   lastSeenAt            DateTime  @default(now())
   snapshots             SpyProductSnapshot[]
   bestSellers           SpyBestSeller[]
+  presumption           SpyPresumption?
 
   @@unique([storeId, externalProductId])
   @@index([firstSeenAt])
@@ -1112,6 +1114,23 @@ model SpyBestSeller {
   @@index([scanId])
 }
 
+// One row per product the daily rules presume is selling; rebuilt after each scheduled scan.
+// `rules` keeps the rule ids that fired for debugging; the UI only shows `level`.
+model SpyPresumption {
+  id             String     @id @default(cuid())
+  productId      String     @unique
+  product        SpyProduct @relation(fields: [productId], references: [id], onDelete: Cascade)
+  storeId        String
+  store          SpyStore   @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  level          String
+  rules          String     @default("[]")
+  firstFlaggedAt DateTime   @default(now())
+  levelSince     DateTime   @default(now())
+  computedAt     DateTime   @default(now())
+
+  @@index([level])
+  @@index([storeId])
+}
 model SpyScanQuota {
   id     String @id @default(cuid())
   userId String

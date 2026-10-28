@@ -4,6 +4,7 @@ import { runStoreProductScan, runStoreBestSellerScan } from './scan-runner'
 import { runPageAdScan } from './scan-ads'
 import { parseCronConfig, cronExpr, SPY_CRON_CONFIG_KEY, type SpyCronConfig } from './cron-config'
 import { initOnce, runExclusive } from '@/lib/job-lock'
+import { recomputePresumptions } from './presumptions'
 
 const TZ = 'Asia/Ho_Chi_Minh'
 const OBSERVATION_RETENTION_DAYS = 120
@@ -35,6 +36,15 @@ export async function pruneOldObservations(retentionDays = OBSERVATION_RETENTION
   return result.count
 }
 
+// Both scan groups end here; the second call sees the fresher of the two inputs.
+async function refreshPresumptions() {
+  const outcome = await runExclusive('spy:presumptions', async () => {
+    const r = await recomputePresumptions()
+    console.log(`[spy-scheduler] presumptions: ${r.flagged} product(s) ${JSON.stringify(r.byLevel)}`)
+  })
+  if (outcome.skipped) console.warn('[spy-scheduler] presumptions already recomputing; skipped')
+}
+
 async function scanAllStores() {
   const outcome = await runExclusive('spy:store-scan', async () => {
     const stores = await prisma.spyStore.findMany({ where: { status: 'active' } })
@@ -45,6 +55,7 @@ async function scanAllStores() {
       catch (e) { console.error('[spy-scheduler] best-seller scan failed for', s.domain, e) }
     }
     console.log(`[spy-scheduler] product + best-seller scan done for ${stores.length} store(s)`)
+    await refreshPresumptions().catch(e => console.error('[spy-scheduler] presumptions failed', e))
   })
   if (outcome.skipped) console.warn('[spy-scheduler] store scan still running from previous tick; skipped')
 }
@@ -58,6 +69,7 @@ export async function scanAllPageTargets() {
     }
     await pruneOldObservations().catch(e => console.error('[spy-scheduler] prune failed', e))
     console.log(`[spy-scheduler] ad scan done for ${targets.length} page target(s)`)
+    await refreshPresumptions().catch(e => console.error('[spy-scheduler] presumptions failed', e))
   })
   if (outcome.skipped) console.warn('[spy-scheduler] ad scan still running from previous tick; skipped')
 }

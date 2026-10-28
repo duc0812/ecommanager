@@ -16,7 +16,7 @@ function formatDate(v: string | null) {
   return new Intl.DateTimeFormat('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }).format(new Date(v))
 }
 
-export default function AdDetailModal({ ad, onClose, onSave }: { ad: Ad; onClose: () => void; onSave: (a: Ad) => void }) {
+export default function AdDetailModal({ ad, onClose, onSave }: { ad: Ad; onClose: () => void; onSave?: (a: Ad) => void }) {
   const [detail, setDetail] = useState<Detail | null>(null)
 
   useEffect(() => {
@@ -117,7 +117,7 @@ export default function AdDetailModal({ ad, onClose, onSave }: { ad: Ad; onClose
           <a href={`/tools/spy-idea/ads/${ad.id}`} className="text-[12px] text-[#8A847C] transition-colors hover:text-[#1B1A17]">Open full page ↗</a>
           <div className="ml-auto flex gap-[8px]">
             <button onClick={onClose} className="h-[34px] rounded-[8px] border border-[#E6E3DE] bg-white px-[14px] text-[12.5px] text-[#57534E] transition-colors hover:bg-[#F7F6F4]">Close</button>
-            <button onClick={() => onSave(ad)} className="h-[34px] rounded-[8px] bg-[#3F3AC4] px-[14px] text-[12.5px] font-medium text-white transition-colors hover:bg-[#201C8F]">+ Save idea</button>
+            {onSave && <button onClick={() => onSave(ad)} className="h-[34px] rounded-[8px] bg-[#3F3AC4] px-[14px] text-[12.5px] font-medium text-white transition-colors hover:bg-[#201C8F]">+ Save idea</button>}
           </div>
         </div>
       </div>

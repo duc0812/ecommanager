@@ -3,8 +3,9 @@ import { useCallback, useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import AdCard, { Ad } from '@/components/spy/AdCard'
 import ProductCard, { Product } from '@/components/spy/ProductCard'
+import { LEVEL_LABELS, type Level } from '@/lib/spy/presumption-levels'
 
-type Idea = { id: string; title: string; note: string | null; status: string; createdAt: string }
+type Presumed = Product & { level: Level }
 type Area = 'ads' | 'products' | 'ideas'
 type BestSellerItem = Product & { rank: number; prevRank: number | null; delta: number | null }
 type BestSellerGroup = { store: { domain: string }; items: BestSellerItem[] }
@@ -19,6 +20,21 @@ const PRODUCT_VIEWS = [
   { key: 'new-add', label: 'New Product Add' },
   { key: 'best-seller', label: 'Best Seller' },
 ]
+const LEVEL_VIEWS: { key: 'all' | Level; label: string }[] = [
+  { key: 'all', label: 'Tất cả' },
+  { key: 'NEW_NEW_SCALE', label: LEVEL_LABELS.NEW_NEW_SCALE },
+  { key: 'SCALE_STRONG', label: LEVEL_LABELS.SCALE_STRONG },
+  { key: 'SCALE', label: LEVEL_LABELS.SCALE },
+  { key: 'SALES_STRONG', label: LEVEL_LABELS.SALES_STRONG },
+  { key: 'SALES', label: LEVEL_LABELS.SALES },
+]
+const LEVEL_BADGE: Record<Level, string> = {
+  NEW_NEW_SCALE: 'bg-[#B3261E] text-white',
+  SCALE_STRONG: 'bg-[#C2410C] text-white',
+  SCALE: 'bg-[#FCE9D9] text-[#9A3412]',
+  SALES_STRONG: 'bg-[#3F3AC4] text-white',
+  SALES: 'bg-[#EDEBFB] text-[#4B45C6]',
+}
 const AREA_TABS: { key: Area; label: string }[] = [
   { key: 'ads', label: 'Ad Library' },
   { key: 'products', label: 'Product Spy' },
@@ -27,13 +43,14 @@ const AREA_TABS: { key: Area; label: string }[] = [
 const AREA_META: Record<Area, { title: string; subtitle: string }> = {
   ads: { title: 'Ad Library', subtitle: 'Creatives from your tracked domains.' },
   products: { title: 'Product Spy', subtitle: 'New products and best sellers across your stores.' },
-  ideas: { title: 'Ideas', subtitle: 'Ads and products you saved.' },
+  ideas: { title: 'Ideas', subtitle: 'Sản phẩm các bên được giả định có sales, cập nhật mỗi sáng 8h.' },
 }
 const GRID = 'grid grid-cols-[repeat(auto-fill,minmax(290px,1fr))] gap-5'
 
 function formatDate(v: string) {
   return new Intl.DateTimeFormat('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }).format(new Date(v))
 }
+function defaultView(a: Area) { return a === 'products' ? 'new-add' : 'all' }
 
 export default function SpyIdeaPage() {
   const router = useRouter()
@@ -41,14 +58,16 @@ export default function SpyIdeaPage() {
 
   const rawArea = params.get('area')
   const area: Area = (['ads', 'products', 'ideas'].includes(rawArea || '') ? rawArea : 'ads') as Area
-  const view = params.get('view') || (area === 'products' ? 'new-add' : area === 'ads' ? 'all' : 'ideas')
+  const view = params.get('view') || defaultView(area)
   const domain = params.get('domain')
   const niche = params.get('niche')
   const type = params.get('type')
 
   const [ads, setAds] = useState<Ad[]>([])
   const [products, setProducts] = useState<Product[]>([])
-  const [ideas, setIdeas] = useState<Idea[]>([])
+  const [presumed, setPresumed] = useState<Presumed[]>([])
+  const [levelCounts, setLevelCounts] = useState<Record<string, number>>({})
+  const [computedAt, setComputedAt] = useState<string | null>(null)
   const [bestSellers, setBestSellers] = useState<BestSellerGroup[]>([])
   const [limit, setLimit] = useState(200)
   const [adsFetched, setAdsFetched] = useState(0)
@@ -68,7 +87,7 @@ export default function SpyIdeaPage() {
   }
 
   function go(nextArea: Area, nextView?: string) {
-    const v = nextView ?? (nextArea === 'products' ? 'new-add' : nextArea === 'ads' ? 'all' : 'ideas')
+    const v = nextView ?? defaultView(nextArea)
     router.replace(buildUrl(nextArea, v))
   }
   function pickView(v: string) { router.replace(buildUrl(area, v)) }
@@ -92,18 +111,16 @@ export default function SpyIdeaPage() {
       const lim = domain ? 50 : 12
       fetch(`/api/spy/best-sellers?limit=${lim}&${filterQuery()}`).then(r => r.json()).then(d => setBestSellers(d.groups ?? [])).catch(() => {})
     } else if (area === 'ideas') {
-      fetch('/api/spy/ideas').then(r => r.json()).then(setIdeas).catch(() => {})
+      const lv = view !== 'all' ? `level=${view}&` : ''
+      fetch(`/api/spy/presumptions?${lv}limit=${limit}&${filterQuery()}`).then(r => r.json())
+        .then(d => { setPresumed(d.items ?? []); setLevelCounts(d.counts ?? {}); setComputedAt(d.computedAt ?? null) }).catch(() => {})
     }
   }, [area, view, filterQuery, limit, domain])
 
-  async function saveAdIdea(a: Ad) {
-    await fetch('/api/spy/ideas', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: a.title ?? a.advertiser.pageName ?? 'Ad', refType: 'AD', refAdId: a.id, snapshotJson: a }) })
-  }
-  async function saveProductIdea(p: Product) {
-    await fetch('/api/spy/ideas', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: p.title ?? 'Untitled', refType: 'PRODUCT', refProductId: p.id, snapshotJson: p }) })
-  }
-
-  const subViews = area === 'ads' ? AD_VIEWS : area === 'products' ? PRODUCT_VIEWS : []
+  const totalPresumed = Object.values(levelCounts).reduce((n, c) => n + c, 0)
+  const subViews = area === 'ads' ? AD_VIEWS : area === 'products' ? PRODUCT_VIEWS
+    : LEVEL_VIEWS.map(v => ({ key: v.key, label: `${v.label} · ${v.key === 'all' ? totalPresumed : (levelCounts[v.key] ?? 0)}` }))
+  const presumedTotal = view === 'all' ? totalPresumed : (levelCounts[view] ?? 0)
   const meta = AREA_META[area]
   const resultLabel = area === 'ads'
     ? `${ads.length}${adsFetched >= limit ? '+' : ''} creatives`
@@ -111,7 +128,7 @@ export default function SpyIdeaPage() {
       ? `${products.length}${productsFetched >= limit ? '+' : ''} products`
       : area === 'products'
         ? `${bestSellers.reduce((n, g) => n + g.items.length, 0)} products`
-        : ''
+        : computedAt ? `Cập nhật ${formatDate(computedAt)}` : ''
 
   return (
     <div>
@@ -139,7 +156,7 @@ export default function SpyIdeaPage() {
       {area === 'ads' && (
         <>
           <div className={`mt-[22px] ${GRID}`}>
-            {ads.map(a => <AdCard key={a.id} a={a} onSave={saveAdIdea} />)}
+            {ads.map(a => <AdCard key={a.id} a={a} />)}
             {ads.length === 0 && <p className="text-[13px] text-[#78716C]">No ads for this filter.</p>}
           </div>
           {adsFetched >= limit && (
@@ -153,7 +170,7 @@ export default function SpyIdeaPage() {
       {area === 'products' && view === 'new-add' && (
         <>
           <div className={`mt-[22px] ${GRID}`}>
-            {products.map(p => <ProductCard key={p.id} p={p} onSave={saveProductIdea} />)}
+            {products.map(p => <ProductCard key={p.id} p={p} />)}
             {products.length === 0 && <p className="text-[13px] text-[#78716C]">No products for this filter.</p>}
           </div>
           {productsFetched >= limit && (
@@ -170,7 +187,7 @@ export default function SpyIdeaPage() {
             <section key={g.store.domain}>
               <h3 className="mb-[16px] text-[16px] font-semibold tracking-[-0.01em] text-[#1B1A17]">{g.store.domain}</h3>
               <div className={GRID}>
-                {g.items.map(it => <ProductCard key={it.id} p={it} onSave={saveProductIdea} rank={it.rank} rankDelta={it.delta} />)}
+                {g.items.map(it => <ProductCard key={it.id} p={it} rank={it.rank} rankDelta={it.delta} />)}
               </div>
             </section>
           ))}
@@ -179,15 +196,17 @@ export default function SpyIdeaPage() {
       )}
 
       {area === 'ideas' && (
-        <ul className="mt-[22px] space-y-2">
-          {ideas.map(i => (
-            <li key={i.id} className="rounded-[12px] border border-[#E6E3DE] bg-white px-[16px] py-[14px]">
-              <p className="text-[14px] font-semibold text-[#1B1A17]">{i.title}</p>
-              <p className="mt-1 font-[family-name:var(--font-plex-mono)] font-medium text-[11px] text-[#78716C]">{i.status} · {formatDate(i.createdAt)}</p>
-            </li>
-          ))}
-          {ideas.length === 0 && <p className="text-[13px] text-[#78716C]">No ideas saved yet.</p>}
-        </ul>
+        <>
+          <div className={`mt-[22px] ${GRID}`}>
+            {presumed.map(p => <ProductCard key={p.id} p={p} badge={{ label: LEVEL_LABELS[p.level], className: LEVEL_BADGE[p.level] }} />)}
+            {presumed.length === 0 && <p className="text-[13px] text-[#78716C]">Chưa có sản phẩm nào cho bộ lọc này.</p>}
+          </div>
+          {presumed.length < presumedTotal && presumed.length >= limit && (
+            <div className="mt-[24px] flex justify-center">
+              <button onClick={() => setLimit(l => l + 200)} className="h-[38px] rounded-[10px] border border-[#E6E3DE] bg-white px-[20px] text-[13px] font-medium text-[#1B1A17] transition-colors hover:bg-[#F2F1EE]">Load more</button>
+            </div>
+          )}
+        </>
       )}
     </div>
   )

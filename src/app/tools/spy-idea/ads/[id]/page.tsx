@@ -19,12 +19,6 @@ export default function AdDetailPage() {
 
   useEffect(() => { fetch(`/api/spy/ads/${id}`).then(r => r.json()).then(setData).catch(() => {}) }, [id])
 
-  async function saveIdea() {
-    if (!data) return
-    await fetch('/api/spy/ideas', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: data.ad.title ?? data.ad.advertiser.pageName ?? 'Ad', refType: 'AD', refAdId: data.ad.id, snapshotJson: data.ad }) })
-  }
-
   return (
     <>
       <a href="/tools/spy-idea" className="text-secondary text-label-sm hover:underline">← Back to Spy</a>
@@ -50,7 +44,6 @@ export default function AdDetailPage() {
             <div className="mt-md flex gap-md text-label-sm">
               {data.ad.linkUrl && <a href={data.ad.linkUrl} target="_blank" rel="noreferrer" className="text-secondary hover:underline">Landing page</a>}
               {data.ad.adLibraryUrl && <a href={data.ad.adLibraryUrl} target="_blank" rel="noreferrer" className="text-secondary hover:underline">Ad Library</a>}
-              <button onClick={saveIdea} className="text-secondary hover:underline">＋ Save IDEA</button>
             </div>
           </div>
           <h3 className="mt-lg mb-sm text-headline-sm text-primary">Run timeline</h3>
