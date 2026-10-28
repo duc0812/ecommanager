@@ -282,15 +282,21 @@ describe('preview payload', () => {
     expect(body.canPush).toBe(false)
   })
 
-  it('blocks mixed-supplier orders', async () => {
+  it('sends only the PGprints lines of a mixed order and leaves the other supplier\'s line open', async () => {
     const o = await makeOrder({ extraLine: { supplierId: OTHER_SUP } })
     const body = await (await preview(o.id)).json()
     const issue = body.issues.find((i: any) => i.code === 'MIXED_SUPPLIER')
-    expect(issue.level).toBe('error')
+    expect(issue.level).toBe('warning')
     expect(issue.message).toContain('Other Factory')
+    expect(body.issues.filter((i: any) => i.level === 'error')).toEqual([])
+    expect(body.payload.line_items).toHaveLength(1)
     const res = await push(o.id, body.payloadHash)
-    expect(res.status).toBe(422)
-    expect(callsTo('/orders/create')).toHaveLength(0)
+    expect(res.status).toBe(200)
+    expect(callsTo('/orders/create')).toHaveLength(1)
+    const lines = await prisma.orderLine.findMany({ where: { orderId: o.id }, orderBy: { linePosition: 'asc' } })
+    expect(lines[0].exportedToSupplierId).toBe(SUP)
+    expect(lines[1].exportedAt).toBeNull()
+    expect((await prisma.order.findUniqueOrThrow({ where: { id: o.id } })).pipelineStatus).toBe('READY_TO_PRODUCTION')
   })
 
   it('blocks unapproved lines and lines without artwork, and issues no public token for them', async () => {

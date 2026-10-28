@@ -136,8 +136,10 @@ export async function buildPush(orderId: string, opts: { withBalance?: boolean }
     error('UNMAPPED_LINE', `Dòng ${unmapped.map(l => taskKeyFor(order.shopifyOrderNumber, l.linePosition)).join(', ')} chưa map xưởng`)
   }
   if (supplier && foreign.length > 0) {
+    // Only the PGprints lines go out (owner 2026-10-29, LIT5235: the tee to PGprints, the hoodie stays with Mangoshao). The export
+    // marks are per line, so the other lines stay open for their own supplier and the order turns EXPORTED once they are sent too.
     const others = await prisma.supplier.findMany({ where: { id: { in: foreign.map(l => l.resolvedSupplierId as string) } }, select: { name: true } })
-    error('MIXED_SUPPLIER', `Đơn có dòng thuộc xưởng khác (${others.map(s => s.name).join(', ') || 'không rõ'}) — bản này chỉ gửi được đơn mà mọi dòng đều của PGprints`)
+    warning('MIXED_SUPPLIER', `Chỉ gửi các dòng PGprints; dòng ${foreign.map(l => taskKeyFor(order.shopifyOrderNumber, l.linePosition)).join(', ')} thuộc ${others.map(s => s.name).join(', ') || 'xưởng khác'} — xuất riêng cho xưởng đó`)
   }
   const pushLines = supplier ? productLines.filter(l => l.resolvedSupplierId === supplier.id) : []
 
@@ -657,7 +659,7 @@ export async function applyTrackingWebhook(input: TrackingWebhookInput): Promise
 
 export type OrderPgprintsFlag = { candidate: boolean; push: { status: PushStatus; supplierOrderCode: string | null } | null }
 
-/** Cheap per-row hint for order lists: is this a pure-PGprints order, and has it been sent. Full eligibility lives in buildPush. */
+/** Cheap per-row hint for order lists: does this order have PGprints lines to send, and has it been sent. Full eligibility lives in buildPush. */
 export async function pgprintsFlagsForOrders(orders: Array<{
   id: string; pipelineStatus: string
   lines: Array<{ sku: string | null; productTitle: string; shopifyProductType: string | null; resolvedSupplierId: string | null }>
@@ -672,7 +674,7 @@ export async function pgprintsFlagsForOrders(orders: Array<{
   })
   for (const o of orders) {
     const productLines = o.lines.filter(l => !isNonProductLine(l))
-    const candidate = productLines.length > 0 && productLines.every(l => l.resolvedSupplierId === supplier.id) && !CLOSED_PIPELINE.includes(o.pipelineStatus)
+    const candidate = productLines.some(l => l.resolvedSupplierId === supplier.id) && !CLOSED_PIPELINE.includes(o.pipelineStatus)
     const mine = pushes.filter(p => p.orderId === o.id)
     const shown = mine.find(p => isActive(p.status)) ?? mine[0] ?? null
     if (!candidate && !shown) continue
