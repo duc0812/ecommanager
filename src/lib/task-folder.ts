@@ -179,6 +179,11 @@ async function tidy(orderId: string, shopifyLineId: string, retryStuck: boolean)
       try {
         const target = place === 'TASK' ? folder.id : (oldFolder ??= await oldFolderFor(orderId, shopifyLineId))
         await placeFile(f.driveFileId as string, target, place === 'TASK' ? driveFileName(f) : driveOldFileName(f))
+        // _old is not shared: a file another line still prints from (shared non-custom print, shortcut in its folder)
+        // would lose the folder's "anyone with the link" there, and the supplier gets "no access" (LIT5399, 10/29/2026).
+        if (place === 'OLD' && await prisma.designArtwork.findFirst({
+          where: { driveFileId: f.driveFileId, removedAt: null, NOT: { orderId, shopifyLineId } }, select: { id: true },
+        })) await shareAnyoneReader(f.driveFileId as string)
         await prisma.designArtwork.updateMany({ where, data: { drivePlace: place } })
         result.moved++
       } catch (err: any) {

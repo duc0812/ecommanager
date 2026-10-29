@@ -300,6 +300,28 @@ describe('one task = one Drive folder', () => {
     expect(Array.from(drive.values()).filter(f => f.folder && f.name === '_old')).toHaveLength(1)
   })
 
+  it('a file another line still prints from gets its own "anyone with the link" when it moves to _old', async () => {
+    const t = await makeTask()
+    const other = await makeTask()
+    const v1 = await upload(t, 'cuff.png')
+    // the other line reuses this print (a shared non-custom file: same Drive file id, shortcut in its folder)
+    await prisma.designArtwork.create({ data: {
+      orderId: other.orderId, shopifyLineId: 'l1', kind: 'PRINT', printArea: 'cuff', version: 1, fileName: 'cuff.png', mimeType: 'image/png',
+      size: 1, storage: 'DRIVE', storagePath: null, driveFileId: v1.driveFileId, drivePlace: 'TASK', source: 'AUTO',
+    } as any })
+    const before = shares().length
+    await upload(t, 'cuff.png')
+    expect((await row(v1.id)).drivePlace).toBe('OLD')
+    expect(shares().slice(before).map(c => c.url)).toEqual([`${FILES}/${v1.driveFileId}/permissions?fields=id`])
+
+    const solo = await makeTask()
+    const s1 = await upload(solo, 'cuff.png')
+    const mark = shares().length
+    await upload(solo, 'cuff.png')
+    expect((await row(s1.id)).drivePlace).toBe('OLD')
+    expect(shares().slice(mark).filter(c => c.url.includes(s1.driveFileId!))).toHaveLength(0)
+  })
+
   it('an old version still on the server needs no move: it goes straight into _old when it is pushed', async () => {
     const t = await makeTask()
     await prisma.appSetting.deleteMany({ where: { key: { in: KEYS } } })
