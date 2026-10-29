@@ -400,6 +400,9 @@ function TaskCanvas({ template, line, slots, bg, guide, guides, upload, artActio
   const singleArea = new Set(tpl.areas.map(a => a.name)).size === 1
   const firstIndex = new Map<string, number>()
   tpl.areas.forEach((a, i) => { if (!firstIndex.has(a.name)) firstIndex.set(a.name, i) })
+  // Once any part has a file, per-area upload buttons would sit on top of the artwork: the empty parts are reached through
+  // the pane's "Upload vào vùng in" (preset to the first missing part) or by dropping a file on them.
+  const anyArt = tpl.areas.some(a => !!newestFor(line, a.name))
 
   const dragArea = drag ? tpl.areas.find(a => a.name === drag) : undefined
   const highlight = dragArea ? (singleArea ? { x: 0, y: 0, w: W, h: H } : { x: dragArea.x * k, y: dragArea.y * k, w: dragArea.w * k, h: dragArea.h * k }) : null
@@ -421,7 +424,7 @@ function TaskCanvas({ template, line, slots, bg, guide, guides, upload, artActio
         if (firstIndex.get(a.name) !== i) return null
         const art = newestFor(line, a.name)
         if (!art) {
-          if (!upload || !slots.includes(a.name)) return null
+          if (!upload || !slots.includes(a.name) || anyArt) return null
           return <div className="absolute inset-0 grid place-items-center"><UploadCta area={a.name} onPick={upload.onPick} disabled={!!upload.busy} size={tpl.areas.length > 2 ? 'sm' : 'lg'} /></div>
         }
         return (

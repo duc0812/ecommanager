@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useRef, useState, type DragEvent, type ReactNode } from 'react'
 import type { TaskDetail } from './types'
-import { artworkImage, canRemoveArtwork, isImage, mockupFiles, printFiles, type LightboxImage } from './model'
+import { artworkImage, canRemoveArtwork, isImage, mockupFiles, newestFor, printFiles, type LightboxImage } from './model'
 import TemplateCanvas, { CanvasTools, type CanvasArtActions, type CanvasBg, type CanvasUpload } from './TemplateCanvas'
 import { ALL_GUIDES, GUIDES_STORAGE_KEY, parseGuides, type Guides } from './canvas-guides'
 import { ARTWORK_ACCEPT, MOCKUP_ACCEPT, useArtworkUpload } from './useArtworkUpload'
@@ -99,7 +99,7 @@ export default function ImagePanes({ detail, onChanged }: { detail: TaskDetail; 
   const remover = useArtworkRemove(onChanged)
   const lightbox = useLightbox()
   const hasSlots = detail.slots.length > 0
-  const targetArea = detail.slots.includes(pickedArea) ? pickedArea : (detail.slots[0] ?? '')
+  const targetArea = detail.slots.includes(pickedArea) ? pickedArea : (detail.slots.find(s => !newestFor(line, s)) ?? detail.slots[0] ?? '')
   const uploading = up.active[0]
   const busy = uploading ? { area: uploading.part ?? uploading.name, pct: uploading.pct, label: up.busyLabel(uploading.pct), more: up.active.length - 1 } : null
 
