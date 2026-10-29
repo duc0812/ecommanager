@@ -38,6 +38,8 @@ export type WorkspaceLine = {
   customizedUrl: string | null
   previewUrl: string | null
   imageUrl: string | null
+  /** imageUrl is the variant's own image (a variant mockup); false = the product's image; null = not known (older sync) */
+  imageIsVariant: boolean | null
   sourcePrintFiles: SourcePrintFile[]
   supplier: { id: string; name: string; code: string; apiType?: string | null } | null
   supplierSku: string | null
@@ -230,6 +232,7 @@ export async function loadWorkspace(orderId: string): Promise<Workspace | null> 
       customizedUrl: safeHttpUrl(attrs.find(a => a.key === '_customized_url')?.value),
       previewUrl: safeHttpUrl(preview),
       imageUrl: safeHttpUrl(l.imageUrl),
+      imageIsVariant: l.imageIsVariant ?? null,
       sourcePrintFiles: sourcePrintFiles(attrs).flatMap(f => {
         const url = safeHttpUrl(f.url)
         return url ? [{ printArea: f.printArea, url }] : []
@@ -353,7 +356,7 @@ export async function applyLineProps(orderId: string, props: ShopifyOrderLinePro
     if (!line) { unmatched++; continue }
     used.add(line.id)
     const attrs = p.productUrl ? [...p.customAttributes, { key: '_product_url', value: p.productUrl }] : p.customAttributes
-    await prisma.orderLine.update({ where: { id: line.id }, data: { customAttributesJson: JSON.stringify(attrs), imageUrl: p.imageUrl ?? null, ...(p.productId !== undefined ? { shopifyProductId: p.productId } : {}) } })
+    await prisma.orderLine.update({ where: { id: line.id }, data: { customAttributesJson: JSON.stringify(attrs), imageUrl: p.imageUrl ?? null, imageIsVariant: p.imageUrl ? (p.imageIsVariant ?? null) : null, ...(p.productId !== undefined ? { shopifyProductId: p.productId } : {}) } })
     updated++
   }
   return { updated, unmatched }

@@ -220,13 +220,26 @@ export function artworkShareLink(a: ArtworkRow): string {
   return typeof window === 'undefined' ? a.url : new URL(a.url, window.location.origin).toString()
 }
 
+/**
+ * What the customer saw: the custom preview (Customily, Customall, our builder) and the variant's own mockup image.
+ * The plain product image comes only when neither exists, since it does not show the chosen variant.
+ */
+export function previewImages(line: Pick<TaskDetail['line'], 'previewUrl' | 'imageUrl' | 'imageIsVariant'>): LightboxImage[] {
+  const out: LightboxImage[] = []
+  if (line.previewUrl) out.push({ url: line.previewUrl, label: 'Preview custom khách tạo lúc đặt hàng' })
+  if (line.imageUrl && line.imageIsVariant) out.push({ url: line.imageUrl, label: 'Mockup variant (Shopify)' })
+  if (out.length === 0 && line.imageUrl) {
+    out.push({ url: line.imageUrl, label: line.imageIsVariant === false ? 'Ảnh sản phẩm Shopify (variant không có ảnh riêng)' : 'Ảnh Shopify (đơn đồng bộ trước — bấm Nạp lại từ Shopify để biết ảnh variant)' })
+  }
+  return out
+}
+
 export function taskImages(detail: Pick<TaskDetail, 'line'>): LightboxImage[] {
   const { line } = detail
   const out: LightboxImage[] = []
   const seen = new Set<string>()
   const add = (m: LightboxImage) => { if (!seen.has(m.url)) { seen.add(m.url); out.push(m) } }
-  if (line.previewUrl) add({ url: line.previewUrl, label: 'Preview khách tạo lúc đặt hàng' })
-  if (line.imageUrl) add({ url: line.imageUrl, label: 'Ảnh variant (Shopify)' })
+  for (const m of previewImages(line)) add(m)
   const arts = line.artworks.filter(isImage)
   const images = { artworks: arts }
   for (const area of Array.from(new Set(arts.filter(x => fileKindOf(x.kind) === 'PRINT').map(x => x.printArea)))) add(artworkImage(newestFor(images, area)!))

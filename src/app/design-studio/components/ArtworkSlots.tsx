@@ -315,8 +315,8 @@ export default function ArtworkSlots({ taskKey, line, slots, driveConnected, fol
 
       <section aria-label="Mockup" className="flex flex-col gap-xs">
         <h3 className="flex items-center gap-xs text-label-sm font-bold uppercase tracking-wider text-on-surface-variant">
-          <Icon name="checkroom" className="text-[16px]" />Mockup xưởng
-          <span className="normal-case tracking-normal font-medium">không bắt buộc · vào cùng thư mục với tên MOCKUP_…</span>
+          <Icon name="checkroom" className="text-[16px]" />Mockup từ files in
+          <span className="normal-case tracking-normal font-medium">không bắt buộc · ảnh mockup dựng từ file in để QA · vào cùng thư mục với tên MOCKUP_…</span>
         </h3>
         {mockups.length > 0 && (
           <ul className="flex flex-col gap-xs">

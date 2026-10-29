@@ -130,9 +130,10 @@ describe('buildChecklist', () => {
   })
 
   it('mockup: done with an uploaded mockup or a preview / product image; missing never becomes the next step nor blocks the submit', () => {
-    expect(byKey(buildChecklist(input({ line: { artworks: [art('Artwork'), art('look', 'MOCKUP')] } })), 'mockup')).toMatchObject({ state: 'done', reason: '1 mockup đã upload — nằm cùng thư mục với file in' })
-    expect(byKey(buildChecklist(input({ line: { previewUrl: 'https://cdn/p.png' } })), 'mockup')).toMatchObject({ state: 'done', reason: 'Dùng ảnh preview khách tạo lúc đặt hàng' })
-    expect(byKey(buildChecklist(input({ line: { imageUrl: 'https://cdn/v.png' } })), 'mockup')).toMatchObject({ state: 'done', reason: 'Dùng ảnh sản phẩm Shopify' })
+    expect(byKey(buildChecklist(input({ line: { artworks: [art('Artwork'), art('look', 'MOCKUP')] } })), 'mockup')).toMatchObject({ state: 'done', reason: '1 mockup — so với mockup gốc / preview để QA' })
+    // a customer preview or a product photo is not a factory mockup
+    expect(byKey(buildChecklist(input({ line: { previewUrl: 'https://cdn/p.png' } })), 'mockup')).toMatchObject({ state: 'missing', optional: true })
+    expect(byKey(buildChecklist(input({ line: { imageUrl: 'https://cdn/v.png' } })), 'mockup')).toMatchObject({ state: 'missing', optional: true })
 
     const none = buildChecklist(input())
     expect(byKey(none, 'mockup')).toMatchObject({ state: 'missing', optional: true, action: { kind: 'upload', area: '', fileKind: 'MOCKUP', label: 'Upload mockup' } })
@@ -156,7 +157,7 @@ describe('buildChecklist', () => {
 
   it('has no next step when everything is done', () => {
     const c = buildChecklist(input({
-      template, slots: ['Wrap'], line: { artworks: [art('Wrap')], previewUrl: 'https://cdn/p.png' },
+      template, slots: ['Wrap'], line: { artworks: [art('Wrap'), art('Mặt trước', 'MOCKUP')], previewUrl: 'https://cdn/p.png' },
       library: { key: 'k', entryId: 'e', status: 'READY', label: 'Sẵn sàng', optionKey: '', optionLabel: null, layers: [] }, task: { status: 'DONE' },
     }))
     expect(c.next).toBeNull()

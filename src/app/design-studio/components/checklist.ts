@@ -134,15 +134,17 @@ function filesItem({ line, slots }: ChecklistInput): CheckItem {
   }
 }
 
-/** Done with an uploaded mockup, or with the customer preview / product image the factory can follow. Missing never blocks. */
+/**
+ * Done once a mockup made from the print files is uploaded (rendered locally from the supplier's mockup PSD), so the
+ * print can be checked against the listing mockup / customer preview. The preview or product photo never count. Missing never blocks.
+ */
 function mockupItem({ line }: ChecklistInput): CheckItem {
-  const title = 'Mockup xưởng'
-  const uploaded = currentFiles(line.artworks, 'MOCKUP').length
-  if (uploaded > 0) return { key: 'mockup', title, state: 'done', reason: `${uploaded} mockup đã upload — nằm cùng thư mục với file in`, action: null, optional: true }
-  if (line.previewUrl) return { key: 'mockup', title, state: 'done', reason: 'Dùng ảnh preview khách tạo lúc đặt hàng', action: null, optional: true }
-  if (line.imageUrl) return { key: 'mockup', title, state: 'done', reason: 'Dùng ảnh sản phẩm Shopify', action: null, optional: true }
+  const title = 'Mockup từ files in'
+  const have = currentFiles(line.artworks, 'MOCKUP').length
+  if (have > 0) return { key: 'mockup', title, state: 'done', reason: `${have} mockup — so với mockup gốc / preview để QA`, action: null, optional: true }
   return {
-    key: 'mockup', title, state: 'missing', optional: true, reason: 'Chưa có mockup và không có ảnh preview — upload mockup cho xưởng (không chặn gửi duyệt)',
+    key: 'mockup', title, state: 'missing', optional: true,
+    reason: 'Chưa có mockup dựng từ file in — upload ảnh mockup để QA với mockup gốc / preview (không chặn gửi duyệt)',
     action: { kind: 'upload', label: 'Upload mockup', area: '', fileKind: 'MOCKUP' },
   }
 }

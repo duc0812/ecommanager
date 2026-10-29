@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  timeLeft, allSlotsFilled, taskImages, canRemoveArtwork, canMove, retryDelay, isRetryable, emptyQueueText, mockupFiles, newestFor, printFiles, printPartNames, versionsFor,
+  previewImages, timeLeft, allSlotsFilled, taskImages, canRemoveArtwork, canMove, retryDelay, isRetryable, emptyQueueText, mockupFiles, newestFor, printFiles, printPartNames, versionsFor,
 } from '@/app/design-studio/components/model'
 
 const NOW = Date.parse('2026-10-10T12:00:00Z')
@@ -55,7 +55,7 @@ describe('taskImages', () => {
     ({ id, printArea, version, fileName: `${id}.png`, mimeType, url: `/api/design-studio/file/${id}`, driveWebViewLink: null } as any)
   it('lists preview, variant, newest artwork per area, older versions and source files once each', () => {
     const line = {
-      previewUrl: 'https://cdn/p.png', imageUrl: 'https://cdn/v.png',
+      previewUrl: 'https://cdn/p.png', imageUrl: 'https://cdn/v.png', imageIsVariant: true,
       artworks: [art('a1', 'Front', 1), art('a2', 'Front', 2), art('b1', 'Back', 1), art('psd', 'Back', 2, 'image/vnd.adobe.photoshop')],
       sourcePrintFiles: [{ printArea: 'Print', url: 'https://cdn/s.png' }, { printArea: 'Dup', url: 'https://cdn/p.png' }],
     } as any
@@ -109,5 +109,21 @@ describe('queue retry and empty state', () => {
   it('names the filter that emptied the list', () => {
     expect(emptyQueueText({ readinessLabel: 'Tự động đạt', mine: true, q: '' })).toBe("Không có task 'Tự động đạt' của bạn")
     expect(emptyQueueText({ readinessLabel: null, mine: false, q: 'LIT1' })).toBe('Không có task khớp "LIT1"')
+  })
+})
+
+describe('previewImages', () => {
+  const line = (o: { previewUrl?: string | null; imageUrl?: string | null; imageIsVariant?: boolean | null }) =>
+    ({ previewUrl: null, imageUrl: null, imageIsVariant: null, ...o })
+
+  it('shows the custom preview and the variant mockup, never the plain product photo beside them', () => {
+    expect(previewImages(line({ previewUrl: 'https://cdn/p.png', imageUrl: 'https://cdn/v.png', imageIsVariant: true })).map(i => i.url)).toEqual(['https://cdn/p.png', 'https://cdn/v.png'])
+    expect(previewImages(line({ previewUrl: 'https://cdn/p.png', imageUrl: 'https://cdn/product.png', imageIsVariant: false })).map(i => i.url)).toEqual(['https://cdn/p.png'])
+    expect(previewImages(line({ imageUrl: 'https://cdn/v.png', imageIsVariant: true }))[0].label).toBe('Mockup variant (Shopify)')
+  })
+  it('falls back to the product photo only when there is neither', () => {
+    expect(previewImages(line({ imageUrl: 'https://cdn/product.png', imageIsVariant: false }))).toEqual([{ url: 'https://cdn/product.png', label: 'Ảnh sản phẩm Shopify (variant không có ảnh riêng)' }])
+    expect(previewImages(line({ imageUrl: 'https://cdn/old.png' }))[0].label).toContain('Nạp lại từ Shopify')
+    expect(previewImages(line({}))).toEqual([])
   })
 })

@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useRef, useState, type DragEvent, type ReactNode } from 'react'
 import type { TaskDetail } from './types'
-import { artworkImage, canRemoveArtwork, isImage, mockupFiles, newestFor, printFiles, type LightboxImage } from './model'
+import { artworkImage, canRemoveArtwork, isImage, mockupFiles, newestFor, previewImages, type LightboxImage } from './model'
 import TemplateCanvas, { CanvasTools, type CanvasArtActions, type CanvasBg, type CanvasUpload } from './TemplateCanvas'
 import { ALL_GUIDES, GUIDES_STORAGE_KEY, parseGuides, type Guides } from './canvas-guides'
 import { ARTWORK_ACCEPT, MOCKUP_ACCEPT, useArtworkUpload } from './useArtworkUpload'
@@ -11,12 +11,11 @@ import { useLightbox } from './Lightbox'
 import { ErrorBanner, ExtLink, Icon, Note, card, chip, input } from './ui'
 
 type PaneKey = 'tpl' | 'prev' | 'mock'
-type Side = 'Front' | 'Back'
 
 const PANES: { key: PaneKey; icon: string; title: string }[] = [
   { key: 'tpl', icon: 'print', title: 'File in trên template' },
   { key: 'prev', icon: 'photo_library', title: 'Mockup / Preview' },
-  { key: 'mock', icon: 'checkroom', title: 'Mockup xưởng' },
+  { key: 'mock', icon: 'checkroom', title: 'Mockup từ files in' },
 ]
 
 const uploadBtn = 'inline-flex items-center gap-xs rounded-lg bg-error text-on-error px-sm py-[3px] text-label-sm font-semibold shadow-card hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap'
@@ -86,7 +85,6 @@ export default function ImagePanes({ detail, onChanged }: { detail: TaskDetail; 
   const [expand, setExpand] = useState<PaneKey | null>(null)
   const [bg, setBg] = useState<CanvasBg>('checker')
   const [guide, setGuide] = useState(50)
-  const [side, setSide] = useState<Side>('Front')
   const [guides, setGuides] = useStoredGuides()
   const [pickedArea, setPickedArea] = useState('')
   const fileInput = useRef<HTMLInputElement>(null)
@@ -126,26 +124,16 @@ export default function ImagePanes({ detail, onChanged }: { detail: TaskDetail; 
     canRemove: a => canRemoveArtwork(a, detail.me, detail.task.status),
   }
 
-  const areaNames = template?.areas.map(a => a.name) ?? []
-  const hasSides = areaNames.some(n => n.startsWith('Front')) && areaNames.some(n => n.startsWith('Back'))
-  const newest = printFiles(line, detail.slots).filter(isImage)
-  const shownArt = hasSides ? newest.filter(a => a.printArea.startsWith(side)) : newest
+  // Mockups made from the print files (rendered locally from the supplier's mockup PSD) and uploaded here, to QA the print
+  // against the listing mockup / customer preview beside it. Never the print file itself.
   const mockups = mockupFiles(line)
-  // Mockups the designer uploaded come first; without one the pane shows what it always did.
-  const mockImages: LightboxImage[] = mockups.length > 0
-    ? mockups.filter(isImage).map(artworkImage)
-    : newest.length > 0
-      ? shownArt.map(artworkImage)
-      : line.sourcePrintFiles.map(f => ({ url: f.url, label: `File nguồn · ${f.printArea}` }))
-  const previewImages: LightboxImage[] = [
-    ...(line.previewUrl ? [{ url: line.previewUrl, label: 'Preview khách tạo lúc đặt hàng' }] : []),
-    ...(line.imageUrl ? [{ url: line.imageUrl, label: line.previewUrl ? 'Ảnh variant (Shopify)' : 'Ảnh variant/sản phẩm Shopify (chưa có preview riêng)' }] : []),
-  ]
+  const mockImages: LightboxImage[] = mockups.filter(isImage).map(artworkImage)
+  const shown = previewImages(line)
 
   const right: Record<PaneKey, string> = {
     tpl: template ? `${template.name} · ${template.widthPx}×${template.heightPx} · ${template.dpi} DPI` : 'chưa có template',
-    prev: line.previewUrl ? 'preview lúc đặt' : line.imageUrl ? 'ảnh Shopify' : 'chưa có ảnh',
-    mock: mockups.length > 0 ? `${mockups.length} mockup đã upload` : newest.length > 0 ? 'từ file in · chưa dựng lên áo' : 'file nguồn',
+    prev: line.previewUrl ? 'preview custom' : line.imageUrl && line.imageIsVariant ? 'mockup variant' : line.imageUrl ? 'ảnh sản phẩm' : 'chưa có ảnh',
+    mock: mockups.length > 0 ? `${mockups.length} mockup` : 'chưa upload',
   }
 
   const actions: Partial<Record<PaneKey, ReactNode>> = {
@@ -184,13 +172,6 @@ export default function ImagePanes({ detail, onChanged }: { detail: TaskDetail; 
     ) : undefined,
     mock: (
       <span className="flex items-center gap-xs normal-case tracking-normal font-medium">
-        {hasSides && mockups.length === 0 && newest.length > 0 && (
-          <span className="flex items-center gap-xs" role="group" aria-label="Mặt mockup">
-            {(['Front', 'Back'] as Side[]).map(s => (
-              <button key={s} type="button" aria-pressed={side === s} onClick={() => setSide(s)} className={chip(side === s)}>{s === 'Front' ? 'Trước' : 'Sau'}</button>
-            ))}
-          </span>
-        )}
         <input ref={mockInput} type="file" accept={MOCKUP_ACCEPT} multiple hidden aria-label="Chọn ảnh mockup"
           onChange={e => { const files = Array.from(e.target.files ?? []); e.target.value = ''; addMockups(files) }} />
         <button type="button" disabled={mockUp.busy} onClick={() => mockInput.current?.click()} title="Upload một hoặc nhiều ảnh mockup — vào cùng thư mục Drive của task"
@@ -213,7 +194,7 @@ export default function ImagePanes({ detail, onChanged }: { detail: TaskDetail; 
         <TemplateCanvas template={template} line={line} slots={detail.slots} bg={bg} guide={guide} guides={guides} upload={canvasUpload} artActions={artActions} />
       </>
     ),
-    prev: tall => <Gallery name="Mockup / Preview" images={previewImages} tall={tall} empty="Không có preview hay ảnh sản phẩm — bấm Nạp lại từ Shopify" />,
+    prev: tall => <Gallery name="Mockup / Preview" images={shown} tall={tall} empty="Không có preview custom, mockup variant hay ảnh sản phẩm — bấm Nạp lại từ Shopify" />,
     mock: tall => (
       <div className={`flex flex-col gap-sm flex-1 min-h-0 rounded-lg ${mockOver ? 'outline outline-2 outline-secondary bg-secondary/10' : ''}`}
         title="Kéo thả ảnh mockup vào đây để tải lên"
@@ -221,8 +202,8 @@ export default function ImagePanes({ detail, onChanged }: { detail: TaskDetail; 
         onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setMockOver(false) }}
         onDrop={e => { if (!dragHasFiles(e)) return; e.preventDefault(); setMockOver(false); addMockups(Array.from(e.dataTransfer.files ?? [])) }}>
         <ErrorBanner msg={mockUp.error} onClose={() => mockUp.setError('')} />
-        <Gallery key={`${side}-${mockups.length}`} name="Mockup xưởng" images={mockImages} tall={tall}
-          empty="Chưa có mockup hay file in — kéo thả ảnh mockup vào đây, hoặc bấm Upload mockup" />
+        <Gallery key={mockups.length} name="Mockup từ files in" images={mockImages} tall={tall}
+          empty="Chưa có mockup dựng từ file in — kéo thả ảnh vào đây hoặc bấm Upload mockup, để so với Mockup / Preview" />
         <UploadList items={mockUp.items} onDismiss={mockUp.dismiss} />
       </div>
     ),

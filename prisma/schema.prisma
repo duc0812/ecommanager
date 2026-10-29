@@ -451,6 +451,7 @@ model OrderLine {
   customAttributesJson    String?
   customallFieldsJson     String?
   imageUrl                String?
+  imageIsVariant          Boolean?
   designNote              String?
   shopifyProductId        String?
   exportedAt              DateTime?
@@ -596,6 +597,7 @@ model PrintTemplate {
   updatedAt      DateTime @updatedAt
   @@unique([supplierId, supplierSku])
 }
+
 
 model Shipment {
   id                   String    @id @default(cuid())

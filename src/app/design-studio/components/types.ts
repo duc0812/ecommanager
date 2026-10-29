@@ -47,6 +47,7 @@ export type WorkspaceLine = {
   customizedUrl: string | null
   previewUrl: string | null
   imageUrl: string | null
+  imageIsVariant: boolean | null
   sourcePrintFiles: { printArea: string; url: string }[]
   supplier: { id: string; name: string; code: string; apiType?: string | null } | null
   supplierSku: string | null

@@ -27,6 +27,7 @@ export type ShopifyOrderLine = {
   selectedOptions: Record<string, string>  // NEW: {"Style":"Tshirt","Size":"S"}
   productUrl?: string | null        // storefront page; null when the product is not published
   imageUrl?: string | null          // variant image, falling back to the product's featured image
+  imageIsVariant?: boolean          // imageUrl is the variant's own image (a variant mockup), not the product's
   productId?: string | null         // product GID
 }
 
@@ -100,6 +101,7 @@ query SyncOrders($cursor: String, $query: String) {
           product { id tags productType onlineStoreUrl featuredImage { url } }
           variant {
             id
+            image { url }
             selectedOptions { name value }
           }
         }
@@ -206,7 +208,7 @@ export async function fetchOrdersPage(
         customAttributes: l.customAttributes ?? [],
         variantId: l.variant?.id ?? null,
         productUrl: l.product?.onlineStoreUrl ?? null,
-        imageUrl: l.image?.url ?? l.product?.featuredImage?.url ?? null,
+        ...lineImage(l),
         productId: l.product?.id ?? null,
         selectedOptions: Object.fromEntries(
           (l.variant?.selectedOptions ?? []).map((o: { name: string; value: string }) => [o.name, o.value])
@@ -481,7 +483,14 @@ export type ShopifyOrderLineProps = {
   productUrl: string | null
   variantId: string | null
   imageUrl: string | null
+  imageIsVariant?: boolean
   productId?: string | null
+}
+
+/** The line's picture: the variant's own image (a variant mockup) when it has one, else the product's featured image. */
+export function lineImage(l: any): { imageUrl: string | null; imageIsVariant: boolean } {
+  const variant = l.variant?.image?.url ?? null
+  return { imageUrl: variant ?? l.image?.url ?? l.product?.featuredImage?.url ?? null, imageIsVariant: !!variant }
 }
 
 const LINE_PROPS_QUERY = `
@@ -495,7 +504,7 @@ query OrderLineProps($query: String) {
           customAttributes { key value }
           image { url }
           product { id productType onlineStoreUrl featuredImage { url } }
-          variant { id }
+          variant { id image { url } }
         }
       }
     }
@@ -535,7 +544,7 @@ export async function fetchOrderLinePropsByNames(
         customAttributes: l.customAttributes ?? [],
         productUrl: l.product?.onlineStoreUrl ?? null,
         variantId: l.variant?.id ?? null,
-        imageUrl: l.image?.url ?? l.product?.featuredImage?.url ?? null,
+        ...lineImage(l),
         productId: l.product?.id ?? null,
       })))
     }
