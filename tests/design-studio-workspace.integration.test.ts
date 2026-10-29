@@ -13,8 +13,8 @@ beforeAll(async () => {
   await prisma.supplier.upsert({ where: { code: 'DSWS' }, create: { id: SUP, name: 'DS WS Supplier', code: 'DSWS' }, update: {} })
   await prisma.supplierProduct.upsert({
     where: { supplierId_sku: { supplierId: SUP, sku: 'SUP-SOCK' } },
-    create: { supplierId: SUP, sku: 'SUP-SOCK', baseCost: 5, designTemplateUrl: 'https://drive.example/template' },
-    update: { designTemplateUrl: 'https://drive.example/template' },
+    create: { supplierId: SUP, sku: 'SUP-SOCK', baseCost: 5, designTemplateUrl: 'https://drive.example/template', productName: 'Crew Socks', variant1Value: 'L' },
+    update: { designTemplateUrl: 'https://drive.example/template', productName: 'Crew Socks', variant1Value: 'L' },
   })
   await prisma.skuDesign.upsert({ where: { sku: 'DSWS-SKU' }, create: { sku: 'DSWS-SKU', driveLink: 'https://drive.example/master' }, update: { driveLink: 'https://drive.example/master' } })
   await prisma.order.create({
@@ -90,6 +90,8 @@ describe('loadWorkspace', () => {
     const [l1, l2, l3, l4] = ws!.lines
     expect(l1.supplier?.code).toBe('DSWS')
     expect(l1.templateUrl).toBe('https://drive.example/template')
+    expect(l1.supplierProduct).toBe('Crew Socks · L')
+    expect(l2.supplierProduct).toBeNull()
     expect(l1.masterArtworkUrl).toBe('https://drive.example/master')
     expect(l1.personalization).toEqual([{ key: 'Custom Name', value: 'Ashley' }])
     expect(l1.printAreas).toEqual(['Front'])

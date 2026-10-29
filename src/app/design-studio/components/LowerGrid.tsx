@@ -27,6 +27,7 @@ function SupplierCard({ detail }: { detail: TaskDetail }) {
       <dl className="grid grid-cols-[110px_minmax(0,1fr)] gap-x-sm gap-y-xs text-body-sm">
         {row('Xưởng', line.supplier ? <b>{line.supplier.name} <span className="font-normal text-on-surface-variant">({line.supplier.code})</span></b> : <span className="text-error">chưa map</span>)}
         {row('SKU xưởng', line.supplierSku ?? '—')}
+        {line.supplierSku && row('Sản phẩm xưởng', line.supplierProduct ? <b>{line.supplierProduct}</b> : <span className="text-amber-900">không có trong bảng giá xưởng</span>)}
         {row('Template', template
           ? <span className="flex flex-col">
               {tplLink ? <ExtLink href={tplLink}>{template.name} ↗</ExtLink> : <span>{template.name}</span>}

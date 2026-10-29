@@ -438,6 +438,8 @@ export default function TaskHeader({ detail, holdCount, onChanged }: { detail: T
                   : <span className="text-error">chưa map{task.supplierName ? ` (trước: ${task.supplierName})` : ''}</span>}
                 <span className="text-on-surface-variant">· SKU xưởng</span>
                 <span className="font-mono">{line.supplierSku ?? '—'}</span>{line.supplierSku && <CopyBtn value={line.supplierSku} label="SKU xưởng" onCopied={setInfo} />}
+                {line.supplierSku && <><span className="text-on-surface-variant">· sản phẩm xưởng</span>
+                  {line.supplierProduct ? <b>{line.supplierProduct}</b> : <span className="text-amber-900">không có trong bảng giá xưởng</span>}</>}
               </Fact>
               <Fact icon="public" label="Giao tới">
                 {detail.order.shipTo?.countryName

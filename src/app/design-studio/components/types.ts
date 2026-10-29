@@ -50,6 +50,7 @@ export type WorkspaceLine = {
   sourcePrintFiles: { printArea: string; url: string }[]
   supplier: { id: string; name: string; code: string; apiType?: string | null } | null
   supplierSku: string | null
+  supplierProduct?: string | null
   templateUrl: string | null
   masterArtworkUrl: string | null
   libraryDesignLink: string | null

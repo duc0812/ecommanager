@@ -41,6 +41,8 @@ export type WorkspaceLine = {
   sourcePrintFiles: SourcePrintFile[]
   supplier: { id: string; name: string; code: string; apiType?: string | null } | null
   supplierSku: string | null
+  /** What the supplier SKU is in the supplier's catalogue ("Hoodie · M", "Cardigan · Crewneck"), so a wrong mapping shows. */
+  supplierProduct: string | null
   templateUrl: string | null
   masterArtworkUrl: string | null
   libraryDesignLink: string | null
@@ -183,7 +185,7 @@ export async function loadWorkspace(orderId: string): Promise<Workspace | null> 
     supplierIds.length
       ? prisma.supplierProduct.findMany({
           where: { supplierId: { in: supplierIds }, sku: { in: order.lines.map(l => l.resolvedSupplierSku).filter(Boolean) as string[] } },
-          select: { supplierId: true, sku: true, designTemplateUrl: true },
+          select: { supplierId: true, sku: true, designTemplateUrl: true, productName: true, variant1Value: true, variant2Value: true },
         })
       : [],
     skus.length ? prisma.skuDesign.findMany({ where: { sku: { in: skus } }, select: { sku: true, driveLink: true } }) : [],
@@ -195,6 +197,8 @@ export async function loadWorkspace(orderId: string): Promise<Workspace | null> 
   const profileMasterByProduct = new Map(profiles.map(p => [p.shopifyProductId, safeHttpUrl(p.masterArtworkUrl)]))
   const supplierById = new Map(suppliers.map(s => [s.id, s]))
   const templateByKey = new Map(supplierProducts.map(p => [`${p.supplierId}::${p.sku}`, p.designTemplateUrl]))
+  const supplierProductByKey = new Map(supplierProducts.map(p => [`${p.supplierId}::${p.sku}`,
+    [p.productName, p.variant1Value, p.variant2Value].filter(Boolean).join(' · ') || null]))
   const masterBySku = new Map(skuDesigns.map(d => [d.sku, d.driveLink]))
 
   const lines: WorkspaceLine[] = order.lines.map(l => {
@@ -232,6 +236,7 @@ export async function loadWorkspace(orderId: string): Promise<Workspace | null> 
       }),
       supplier: l.resolvedSupplierId ? (supplierById.get(l.resolvedSupplierId) ?? null) : null,
       supplierSku: l.resolvedSupplierSku,
+      supplierProduct: l.resolvedSupplierId && l.resolvedSupplierSku ? (supplierProductByKey.get(`${l.resolvedSupplierId}::${l.resolvedSupplierSku}`) ?? null) : null,
       templateUrl: l.resolvedSupplierId && l.resolvedSupplierSku ? safeHttpUrl(templateByKey.get(`${l.resolvedSupplierId}::${l.resolvedSupplierSku}`)) : null,
       masterArtworkUrl: (l.shopifyProductId ? profileMasterByProduct.get(l.shopifyProductId) : null)
         ?? (l.sku ? safeHttpUrl(masterBySku.get(l.sku)) : null),
