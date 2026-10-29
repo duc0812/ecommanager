@@ -297,3 +297,19 @@ describe('standard product types (aliases)', () => {
     expect(r.ambiguousBaseIds).toEqual(['b1', 'b2'])
   })
 })
+
+describe('legacy product type (renamed on Shopify)', () => {
+  const base = (id: string, type: string, sp: string): ProductBaseData => ({ id, shopifyProductType: type, variantConditions: '[]', supplierMappings: [{ preferenceRank: 1, supplierProductId: sp }], overrides: [] })
+  const bases = [base('old', '2D Print Cothing', 'sp-mango-2daf'), base('new', 'AOP Apparel', 'sp-canonical')]
+
+  it('a renamed product keeps resolving through the product_type it had', () => {
+    expect(resolveByProductBase(null, 'AOP Apparel', {}, bases, [], null, null, null, '2D Print Cothing').supplierProductId).toBe('sp-mango-2daf')
+  })
+  it('a product without a legacy type uses its current product_type', () => {
+    expect(resolveByProductBase(null, 'AOP Apparel', {}, bases, [], null, null, null, null).supplierProductId).toBe('sp-canonical')
+    expect(resolveByProductBase(null, 'AOP Apparel', {}, bases, [], null, null, null, '  ').supplierProductId).toBe('sp-canonical')
+  })
+  it('a legacy type is enough even when Shopify sends no product_type', () => {
+    expect(resolveByProductBase(null, null, {}, bases, [], null, null, null, '2D Print Cothing').supplierProductId).toBe('sp-mango-2daf')
+  })
+})

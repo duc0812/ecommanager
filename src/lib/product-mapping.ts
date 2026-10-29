@@ -297,6 +297,7 @@ export function resolveByProductBase(
   profile?: ProductProfileResolveData | null,
   shipTo?: string | null,
   aliases?: TypeAliases | null,
+  legacyType?: string | null,
 ): ResolveResult {
   if (shopifyVariantId) {
     const manual = manualMappings.find(m => m.shopifyVariantId === shopifyVariantId)
@@ -311,14 +312,17 @@ export function resolveByProductBase(
     }
   }
 
-  if (!shopifyProductType) {
+  // A product renamed on Shopify keeps mapping through the product_type it had before (ProductLegacyType): its
+  // mapping group's bases and overrides were written for that spelling.
+  const productType = legacyType?.trim() || shopifyProductType
+  if (!productType) {
     // Require productType unless a manual variant mapping or a product profile resolved it.
     return { supplierProductId: null, resolvedVia: 'unresolved' }
   }
 
-  const lineType = typeKey(shopifyProductType, aliases)
+  const lineType = typeKey(productType, aliases)
   const sameType = productBases.filter(b => typeKey(b.shopifyProductType, aliases) === lineType)
-  const matching = sameType.filter(b => matchesProductBase(shopifyProductType, variantOptions, b, aliases))
+  const matching = sameType.filter(b => matchesProductBase(productType, variantOptions, b, aliases))
   const ambiguousBaseIds = matching.length > 1 ? matching.map(b => b.id) : undefined
 
   // An override only speaks for its own base. Scanning every base of the productType (as this
@@ -334,7 +338,7 @@ export function resolveByProductBase(
       }
       if (!matchesAttributeCombo(combo, variantOptions)) continue
       const pinned = new Set(Object.keys(combo).map(normalize))
-      if (!matchesProductBaseIgnoring(shopifyProductType, variantOptions, base, pinned, aliases)) continue
+      if (!matchesProductBaseIgnoring(productType, variantOptions, base, pinned, aliases)) continue
       return { supplierProductId: override.supplierProductId, resolvedVia: 'product_base_override', ambiguousBaseIds }
     }
   }

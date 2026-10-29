@@ -733,6 +733,18 @@ model ProductType {
   updatedAt DateTime @updatedAt
 }
 
+/// The Shopify product_type a product had before the shop's standard rename. The mapping resolver keeps using it for
+/// that product, so renaming on Shopify never moves an existing product to another mapping group. Written once (by the
+/// snapshot / rename scripts), never overwritten.
+model ProductLegacyType {
+  id               String   @id @default(cuid())
+  storeId          String
+  shopifyProductId String
+  productType      String
+  createdAt        DateTime @default(now())
+  @@unique([storeId, shopifyProductId])
+}
+
 model ProductBase {
   id                 String   @id @default(cuid())
   name               String

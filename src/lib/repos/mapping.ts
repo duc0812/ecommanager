@@ -153,6 +153,12 @@ export async function loadVariantManualMappingsForResolver(): Promise<VariantMan
   }))
 }
 
+/** profileKey(store, product) -> the product_type the product had before the standard rename. */
+export async function loadLegacyTypesForResolver(storeId?: string): Promise<Map<string, string>> {
+  const rows = await prisma.productLegacyType.findMany({ where: storeId ? { storeId } : undefined, select: { storeId: true, shopifyProductId: true, productType: true } })
+  return new Map(rows.map(r => [profileKey(r.storeId, r.shopifyProductId), r.productType]))
+}
+
 export async function loadProductProfilesForResolver(storeId?: string): Promise<Map<string, ProductProfileResolveData>> {
   const profiles = await prisma.productProfile.findMany({
     where: storeId ? { storeId } : undefined,
