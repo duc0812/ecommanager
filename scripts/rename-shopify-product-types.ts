@@ -4,6 +4,8 @@
 //
 //   DATABASE_URL=… npx tsx scripts/rename-shopify-product-types.ts --type "Tumbler"            # dry run: list products
 //   DATABASE_URL=… npx tsx scripts/rename-shopify-product-types.ts --type "Tumbler" --apply
+//   --exclude "enamel,camper"   leave products whose title contains any of these words (case-insensitive)
+// ADDON types (app products such as Kaching upsell / PPLR hidden products) are never renamed.
 import { prisma } from '@/lib/db'
 import { getShopifyConnection } from '@/lib/token-store'
 import { typeKey } from '@/lib/product-mapping'
@@ -33,6 +35,8 @@ async function main() {
   if (!type) throw new Error(`No ProductType "${name}"`)
   const aliases: string[] = JSON.parse(type.aliases || '[]')
   if (aliases.length === 0) throw new Error(`"${name}" is held back (no aliases): its mapping groups must be cleaned up first`)
+  if (type.kind === 'ADDON') throw new Error(`"${name}" is an add-on type: its products belong to apps and are never renamed`)
+  const exclude = (arg('exclude') ?? '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
   const conn = await getShopifyConnection()
   if (!conn) throw new Error('Shopify not connected')
   const store = await prisma.shopifyStore.findUnique({ where: { shop: conn.shop }, select: { id: true } })
@@ -46,7 +50,11 @@ async function main() {
       const data = await gql(conn.shop, conn.token, `query($q: String!, $after: String) { products(first: 100, after: $after, query: $q) { nodes { id title productType status } pageInfo { hasNextPage endCursor } } }`,
         { q: `product_type:"${old.replace(/"/g, '\\"')}"`, after })
       // the search is fuzzy: keep exact spellings only (case and spaces aside)
-      for (const p of data.products.nodes) if (typeKey(p.productType) === typeKey(old)) products.push(p)
+      for (const p of data.products.nodes) {
+        if (typeKey(p.productType) !== typeKey(old)) continue
+        if (exclude.some(w => p.title.toLowerCase().includes(w))) { console.log(`  skip (excluded): ${p.title.slice(0, 80)}`); continue }
+        products.push(p)
+      }
       after = data.products.pageInfo.hasNextPage ? data.products.pageInfo.endCursor : null
     } while (after)
   }
