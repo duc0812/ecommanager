@@ -1,4 +1,4 @@
-import { isNonProductLine } from '@/lib/order-lines'
+import { isNonProductLine, lineKeysOf } from '@/lib/order-lines'
 
 // Pure mapping from an order's product lines + Shopify fulfillments to per-sub-order
 // shipment rows. Kept side-effect free so it can be unit tested without a DB.
@@ -39,15 +39,14 @@ export const SHIPMENT_STATUS_PENDING = 'PENDING'
 export const SHIPMENT_STATUS_DELIVERED = 'DELIVERED'
 export const SHIPMENT_STATUS_FULFILLED = 'FULFILLED'
 
-// One row per product sub-order (matches order management's lineKey coding: "<orderNumber>_<n>").
+// One row per product sub-order, keyed by the order's line key (lineKeysOf).
 export function buildOrderShipments(input: {
   shopifyOrderNumber: string
   lines: ShipmentSourceLine[]
   fulfillments: ShipmentSourceFulfillment[]
 }): BuiltShipment[] {
-  const orderNo = input.shopifyOrderNumber.replace(/^#/, '')
+  const lineKeys = lineKeysOf(input.shopifyOrderNumber, input.lines)
 
-  // Product lines only, ordered by linePosition — same rule as reports.ts lineKey numbering.
   const productLines = input.lines
     .filter(l => !isNonProductLine({ sku: l.sku, productTitle: l.productTitle, shopifyProductType: l.shopifyProductType }))
     .sort((a, b) => a.linePosition - b.linePosition)
@@ -60,10 +59,10 @@ export function buildOrderShipments(input: {
     }
   }
 
-  return productLines.map((line, idx) => {
+  return productLines.map(line => {
     const f = fulfillmentByLineId.get(line.shopifyLineId) ?? null
     return {
-      lineKey: `${orderNo}_${idx + 1}`,
+      lineKey: lineKeys.get(line.shopifyLineId)!,
       shopifyLineId: line.shopifyLineId,
       sku: line.sku,
       productTitle: line.productTitle,

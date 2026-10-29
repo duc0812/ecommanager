@@ -80,7 +80,7 @@ export default function TemplatesPage() {
           placedAt: new Date(o.placedAt),
           lines: (o.lines ?? []).map((l: any) => ({
             sku: l.sku,
-            lineKey: l.lineKey ?? `${o.shopifyOrderNumber.replace(/^#/, '')}_${l.linePosition || 1}`,
+            lineKey: l.lineKey ?? '',
             supplierSku: l.resolvedSupplierSku,
             qty: l.qty,
             productTitle: l.productTitle,

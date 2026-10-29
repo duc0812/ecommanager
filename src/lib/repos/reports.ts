@@ -2,7 +2,7 @@ import { listOrdersWithLines, type OrderFilter } from './orders'
 import { loadReadyDesignEntries } from './design-library'
 import { prisma } from '@/lib/db'
 import { estimateOrderCostAndProfit, effectiveBaseCost } from '@/lib/order-profit'
-import { productLinesOnly, isNonProductLine } from '@/lib/order-lines'
+import { productLinesOnly, isNonProductLine, lineKeysOf } from '@/lib/order-lines'
 import { matchDesignEntry } from '@/lib/design-parent'
 import { lineDesignStatus } from '@/lib/design-status'
 import { sumMetaAmountsUsdDated } from '@/lib/meta-currency'
@@ -89,7 +89,7 @@ export async function ordersWithComputedPL(filter: OrderFilter): Promise<Enriche
     const profit = estimate?.profit ?? 0
     const margin = o.expectedPayout === 0 ? 0 : (profit / o.expectedPayout) * 100
     const hasUnmappedSku = estimate?.hasUnmapped ?? false
-    const productLineNumberById = new Map(mappableLines.map((line, idx) => [line.id, idx + 1]))
+    const lineKeys = lineKeysOf(o.shopifyOrderNumber, o.lines)
     const mappedLineCount = mappableLines.filter(l => l.resolvedSupplierId && effectiveBaseCost(l) != null).length
     const orderSkus = mappableLines.map(l => l.sku).filter(Boolean) as string[]
     const designReady = o.designReady
@@ -106,9 +106,7 @@ export async function ordersWithComputedPL(filter: OrderFilter): Promise<Enriche
           const sentTo = exportedSupplierOf(o, l)
           return sentTo ? (supplierNameById.get(sentTo) ?? 'xưởng không rõ') : null
         })(),
-        lineKey: productLineNumberById.has(l.id)
-          ? `${o.shopifyOrderNumber.replace(/^#/, '')}_${productLineNumberById.get(l.id)}`
-          : '',
+        lineKey: lineKeys.get(l.shopifyLineId) ?? '',
         designStatus: lineDesignStatus({
           isNonProduct: isNonProductLine(l),
           previewCdnUrl: l.previewCdnUrl,

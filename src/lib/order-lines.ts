@@ -27,3 +27,23 @@ export function isNonProductLine(line: LineForClassification): boolean {
 export function productLinesOnly<T extends LineForClassification>(lines: T[]): T[] {
   return lines.filter(l => !isNonProductLine(l))
 }
+
+type KeyedLine = LineForClassification & { shopifyLineId: string; linePosition: number }
+
+/**
+ * The one numbering of an order's lines: "<order>_<n>" with n counting product lines only, in Shopify order
+ * (owner 2026-10-29, LIT5092: a Custom Text add-on on line 1 made the design task _2 while the order page,
+ * the supplier CSV and the tracking sheets said _1). Design tasks, Drive folders, CSV exports, shipments and
+ * supplier API refs all use it. Add-on lines get no key.
+ */
+export function lineKeysOf(orderNumber: string, lines: KeyedLine[]): Map<string, string> {
+  const orderNo = orderNumber.replace(/^#/, '')
+  const keys = new Map<string, string>()
+  const products = lines.filter(l => !isNonProductLine(l)).sort((a, b) => a.linePosition - b.linePosition)
+  products.forEach((l, i) => keys.set(l.shopifyLineId, `${orderNo}_${i + 1}`))
+  return keys
+}
+
+export function lineKeyOf(orderNumber: string, lines: KeyedLine[], line: Pick<KeyedLine, 'shopifyLineId'>): string | null {
+  return lineKeysOf(orderNumber, lines).get(line.shopifyLineId) ?? null
+}

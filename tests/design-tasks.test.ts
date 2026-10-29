@@ -1,10 +1,32 @@
 import { describe, it, expect } from 'vitest'
-import { taskKeyFor, canTransition, dueForNewTask } from '@/lib/design-tasks'
+import { canTransition, dueForNewTask } from '@/lib/design-tasks'
+import { lineKeysOf } from '@/lib/order-lines'
 
-describe('taskKeyFor', () => {
-  it('strips # and joins with _', () => {
-    expect(taskKeyFor('#LIT4545', 1)).toBe('LIT4545_1')
-    expect(taskKeyFor('RMS1187', 2)).toBe('RMS1187_2')
+describe('lineKeysOf', () => {
+  const line = (shopifyLineId: string, linePosition: number, productTitle: string, shopifyProductType: string | null = null) =>
+    ({ shopifyLineId, linePosition, productTitle, shopifyProductType })
+
+  it('strips # and numbers lines from 1', () => {
+    expect(Array.from(lineKeysOf('#LIT4545', [line('a', 1, 'Tumbler')]).values())).toEqual(['LIT4545_1'])
+  })
+
+  it('counts product lines only, so an add-on before them shifts nothing (LIT5092)', () => {
+    const keys = lineKeysOf('#LIT5092', [
+      line('fee', 1, 'Custom Text TN915', 'Custom Text'),
+      line('sweat', 2, 'Honey Bear Shirt'),
+      line('tee', 3, 'Honey Bear Shirt'),
+      line('tip', 4, 'Tip'),
+    ])
+    expect(keys.get('fee')).toBeUndefined()
+    expect(keys.get('tip')).toBeUndefined()
+    expect(keys.get('sweat')).toBe('LIT5092_1')
+    expect(keys.get('tee')).toBe('LIT5092_2')
+  })
+
+  it('follows Shopify line order, not array order', () => {
+    const keys = lineKeysOf('RMS1187', [line('b', 3, 'Mug'), line('x', 1, 'Shipping Protection'), line('a', 2, 'Shirt')])
+    expect(keys.get('a')).toBe('RMS1187_1')
+    expect(keys.get('b')).toBe('RMS1187_2')
   })
 })
 

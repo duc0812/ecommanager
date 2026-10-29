@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/db'
 import { artworkUrl } from '@/lib/design-studio'
-import { taskKeyFor } from '@/lib/design-tasks'
+import { lineKeyOf } from '@/lib/order-lines'
 import { DESIGN_LINK_SEPARATOR, joinDesignLinks } from '@/lib/design-links'
 import { getGoogleConfig, isDriveConfigured } from '@/lib/google-oauth'
 import { DriveAuthError, DriveError, driveFolderUrl, folderForPath, placeFile, removeEmptyChildFolder, shareAnyoneReader } from '@/lib/google-drive'
@@ -38,19 +38,19 @@ const lineKey = (orderId: string, shopifyLineId: string) => `${orderId}\u0000${s
 
 /** `[<Store>, <YYYY-MM>, <Order>, <TaskKey>]`, the Drive path of a line's folder under the Design Studio root. */
 async function taskFolderPath(orderId: string, shopifyLineId: string, taskKey?: string): Promise<string[]> {
-  const [order, line] = await Promise.all([
+  const [order, lines] = await Promise.all([
     prisma.order.findUnique({
       where: { id: orderId },
       select: { shopifyOrderNumber: true, placedAt: true, store: { select: { shop: true, project: { select: { name: true } } } } },
     }),
-    taskKey ? null : prisma.orderLine.findFirst({ where: { orderId, shopifyLineId }, select: { linePosition: true } }),
+    taskKey ? null : prisma.orderLine.findMany({ where: { orderId }, select: { shopifyLineId: true, linePosition: true, productTitle: true, shopifyProductType: true } }),
   ])
   if (!order) throw new Error('Order not found')
   return [
     order.store.project?.name ?? order.store.shop,
     order.placedAt.toISOString().slice(0, 7),
     order.shopifyOrderNumber,
-    taskKey ?? taskKeyFor(order.shopifyOrderNumber, line?.linePosition ?? 0),
+    taskKey ?? lineKeyOf(order.shopifyOrderNumber, lines ?? [], { shopifyLineId }) ?? shopifyLineId,
   ]
 }
 

@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/db'
-import { isNonProductLine } from '@/lib/order-lines'
-import { requiredSlotsFor, taskKeyFor, templateForLine } from '@/lib/design-tasks'
+import { isNonProductLine, lineKeysOf } from '@/lib/order-lines'
+import { requiredSlotsFor, templateForLine } from '@/lib/design-tasks'
 import { artworkUrl } from '@/lib/design-studio'
 import { currentFiles, extraPrintParts } from '@/lib/task-files'
 import { logHandoffEvent, markPushExported } from '@/lib/repos/push-export'
@@ -139,22 +139,24 @@ export async function buildMerchizePush(orderId: string): Promise<BuiltMerchizeP
   }
 
   const productLines = order.lines.filter(l => !isNonProductLine(l))
+  const lineKeys = lineKeysOf(order.shopifyOrderNumber, order.lines)
+  const keyOf = (l: { shopifyLineId: string }) => lineKeys.get(l.shopifyLineId) ?? l.shopifyLineId
   if (productLines.length === 0) error('NO_LINES', 'Đơn không có dòng sản phẩm nào để gửi')
   const unmapped = productLines.filter(l => !l.resolvedSupplierId)
   const foreign = productLines.filter(l => l.resolvedSupplierId && l.resolvedSupplierId !== supplier?.id)
-  if (unmapped.length > 0) error('UNMAPPED_LINE', `Dòng ${unmapped.map(l => taskKeyFor(order.shopifyOrderNumber, l.linePosition)).join(', ')} chưa map xưởng`)
+  if (unmapped.length > 0) error('UNMAPPED_LINE', `Dòng ${unmapped.map(l => keyOf(l)).join(', ')} chưa map xưởng`)
   if (supplier && foreign.length > 0) {
     // Only the Merchize lines go out (owner 2026-10-29, LIT5235: the tee to Merchize, the hoodie stays with Mangoshao). The export
     // marks are per line, so the other lines stay open for their own supplier and the order turns EXPORTED once they are sent too.
     const others = await prisma.supplier.findMany({ where: { id: { in: foreign.map(l => l.resolvedSupplierId as string) } }, select: { name: true } })
-    warning('MIXED_SUPPLIER', `Chỉ gửi các dòng Merchize; dòng ${foreign.map(l => taskKeyFor(order.shopifyOrderNumber, l.linePosition)).join(', ')} thuộc ${others.map(s => s.name).join(', ') || 'xưởng khác'} — xuất riêng cho xưởng đó`)
+    warning('MIXED_SUPPLIER', `Chỉ gửi các dòng Merchize; dòng ${foreign.map(l => keyOf(l)).join(', ')} thuộc ${others.map(s => s.name).join(', ') || 'xưởng khác'} — xuất riêng cho xưởng đó`)
   }
   const pushLines = supplier ? productLines.filter(l => l.resolvedSupplierId === supplier.id) : []
   // A line already exported to Merchize another way (CSV import) is an order Merchize already holds; an API create would duplicate it.
   const exportedElsewhere = active ? [] : pushLines.filter(l => l.exportedAt && l.exportedToSupplierId === supplier?.id)
   if (exportedElsewhere.length > 0) {
     const when = exportedElsewhere[0].exportedAt!.toISOString().replace('T', ' ').slice(0, 16)
-    error('ALREADY_EXPORTED', `Dòng ${exportedElsewhere.map(l => taskKeyFor(order.shopifyOrderNumber, l.linePosition)).join(', ')} đã xuất cho Merchize lúc ${when} UTC (CSV) — gửi API nữa sẽ thành đơn trùng`)
+    error('ALREADY_EXPORTED', `Dòng ${exportedElsewhere.map(l => keyOf(l)).join(', ')} đã xuất cho Merchize lúc ${when} UTC (CSV) — gửi API nữa sẽ thành đơn trùng`)
   }
 
   const supplierSkus = Array.from(new Set(pushLines.map(l => l.resolvedSupplierSku).filter((x): x is string => !!x)))
@@ -181,7 +183,7 @@ export async function buildMerchizePush(orderId: string): Promise<BuiltMerchizeP
   const items: MerchizeOrderItem[] = []
 
   for (const l of pushLines) {
-    const refId = taskKeyFor(order.shopifyOrderNumber, l.linePosition)
+    const refId = keyOf(l)
     const task = order.designTasks.find(t => t.shopifyLineId === l.shopifyLineId) ?? null
     const approved = isLineApproved(l, task)
     if (!approved) error('NOT_APPROVED', `${refId}: thiết kế chưa được duyệt (task phải ở trạng thái Xong)`, refId)
@@ -489,15 +491,14 @@ async function upsertTracking(push: PushRow, tracking: { number: string; company
     },
   })
   if (!order) return 0
-  const orderNo = order.shopifyOrderNumber.replace(/^#/, '')
-  // Shipment.lineKey numbers product lines only (see buildOrderShipments); Merchize ships the order as one package.
+  // Merchize ships the order as one package.
   const productLines = order.lines.filter(l => !isNonProductLine(l))
+  const lineKeys = lineKeysOf(order.shopifyOrderNumber, order.lines)
   const t = tracking[0]
   let touched = 0
-  for (let index = 0; index < productLines.length; index++) {
-    const line = productLines[index]
+  for (const line of productLines) {
     if (line.resolvedSupplierId !== push.supplierId) continue
-    const lineKey = `${orderNo}_${index + 1}`
+    const lineKey = lineKeys.get(line.shopifyLineId)!
     const existing = await prisma.shipment.findUnique({ where: { orderId_lineKey: { orderId: order.id, lineKey } } })
     if (!existing) {
       await prisma.shipment.create({

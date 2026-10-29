@@ -814,6 +814,29 @@ describe('POST /api/public/pgprints/tracking', () => {
     }])
     expect((await prisma.shipment.findFirstOrThrow({ where: { orderId: o.id } }))).toMatchObject({ trackingNumber: 'USPS123', status: 'IN_TRANSIT' })
   })
+
+  it('keys refs and shipments by line key when an add-on sits before the product, and still reads refs sent by line position', async () => {
+    const o = await makeOrder()
+    await prisma.orderLine.updateMany({ where: { orderId: o.id }, data: { linePosition: 2 } })
+    await prisma.orderLine.create({
+      data: { orderId: o.id, shopifyLineId: `${o.lineId}-fee`, productTitle: 'Custom Text TN915', shopifyProductType: 'Custom Text', variantTitle: 'Add Text', qty: 1, linePosition: 1, unitPrice: 5, customized: false },
+    })
+    const pre = await (await preview(o.id)).json()
+    expect(pre.payload.line_items.map((li: any) => li.refId)).toEqual([`${o.number}_1`])
+    expect((await push(o.id, pre.payloadHash)).status).toBe(200)
+
+    // A push sent before 2026-10-29 numbered refs by Shopify line position (_2 here); the item name still finds the line.
+    const row = await prisma.supplierOrderPush.findFirstOrThrow({ where: { orderId: o.id } })
+    await prisma.supplierOrderPush.update({ where: { id: row.id }, data: { requestJson: row.requestJson.replace(`"${o.number}_1"`, `"${o.number}_2"`) } })
+    const res = await hook({
+      id: 'evt-fee', sku: 'UT2-One_size', storeId: STORE_ID, pgcOrderId: `PG-${o.number}`, orderId: o.number,
+      trackingNumber: 'YT0000000000000009', carrierCode: 'yunexpress', trackingedAt: '2026-10-02T17:00:00.000Z',
+    }, SECRET)
+    expect(await res.json()).toMatchObject({ ignored: false, shipments: 1 })
+    expect(await prisma.shipment.findMany({ where: { orderId: o.id } })).toEqual([
+      expect.objectContaining({ lineKey: `${o.number}_1`, shopifyLineId: o.lineId, trackingNumber: 'YT0000000000000009' }),
+    ])
+  })
 })
 
 describe('syncPgprintsTracking (Auto Fulfill)', () => {

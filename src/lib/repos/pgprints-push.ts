@@ -1,7 +1,7 @@
 import { createHash } from 'crypto'
 import { prisma } from '@/lib/db'
-import { isNonProductLine } from '@/lib/order-lines'
-import { requiredSlotsFor, taskKeyFor, templateForLine } from '@/lib/design-tasks'
+import { isNonProductLine, lineKeysOf } from '@/lib/order-lines'
+import { requiredSlotsFor, templateForLine } from '@/lib/design-tasks'
 import { artworkUrl } from '@/lib/design-studio'
 import { currentFiles, extraPrintParts } from '@/lib/task-files'
 import { logHandoffEvent, markPushExported } from '@/lib/repos/push-export'
@@ -129,17 +129,19 @@ export async function buildPush(orderId: string, opts: { withBalance?: boolean }
   }
 
   const productLines = order.lines.filter(l => !isNonProductLine(l))
+  const lineKeys = lineKeysOf(order.shopifyOrderNumber, order.lines)
+  const keyOf = (l: { shopifyLineId: string }) => lineKeys.get(l.shopifyLineId) ?? l.shopifyLineId
   if (productLines.length === 0) error('NO_LINES', 'Đơn không có dòng sản phẩm nào để gửi')
   const unmapped = productLines.filter(l => !l.resolvedSupplierId)
   const foreign = productLines.filter(l => l.resolvedSupplierId && l.resolvedSupplierId !== supplier?.id)
   if (unmapped.length > 0) {
-    error('UNMAPPED_LINE', `Dòng ${unmapped.map(l => taskKeyFor(order.shopifyOrderNumber, l.linePosition)).join(', ')} chưa map xưởng`)
+    error('UNMAPPED_LINE', `Dòng ${unmapped.map(l => keyOf(l)).join(', ')} chưa map xưởng`)
   }
   if (supplier && foreign.length > 0) {
     // Only the PGprints lines go out (owner 2026-10-29, LIT5235: the tee to PGprints, the hoodie stays with Mangoshao). The export
     // marks are per line, so the other lines stay open for their own supplier and the order turns EXPORTED once they are sent too.
     const others = await prisma.supplier.findMany({ where: { id: { in: foreign.map(l => l.resolvedSupplierId as string) } }, select: { name: true } })
-    warning('MIXED_SUPPLIER', `Chỉ gửi các dòng PGprints; dòng ${foreign.map(l => taskKeyFor(order.shopifyOrderNumber, l.linePosition)).join(', ')} thuộc ${others.map(s => s.name).join(', ') || 'xưởng khác'} — xuất riêng cho xưởng đó`)
+    warning('MIXED_SUPPLIER', `Chỉ gửi các dòng PGprints; dòng ${foreign.map(l => keyOf(l)).join(', ')} thuộc ${others.map(s => s.name).join(', ') || 'xưởng khác'} — xuất riêng cho xưởng đó`)
   }
   const pushLines = supplier ? productLines.filter(l => l.resolvedSupplierId === supplier.id) : []
 
@@ -154,7 +156,7 @@ export async function buildPush(orderId: string, opts: { withBalance?: boolean }
   const countryCode = countryCodeOf(order.shippingCountry)
 
   for (const l of pushLines) {
-    const refId = taskKeyFor(order.shopifyOrderNumber, l.linePosition)
+    const refId = keyOf(l)
     const task = order.designTasks.find(t => t.shopifyLineId === l.shopifyLineId) ?? null
     const approved = isLineApproved(l, task)
     if (!approved) error('NOT_APPROVED', `${refId}: thiết kế chưa được duyệt (task phải ở trạng thái Xong)`, refId)
@@ -487,27 +489,32 @@ async function upsertSupplierTracking(push: Pick<PushRow, 'orderId' | 'supplierI
     where: { id: push.orderId },
     select: {
       id: true, projectId: true, shopifyOrderNumber: true,
-      lines: { orderBy: { linePosition: 'asc' }, select: { shopifyLineId: true, sku: true, productTitle: true, shopifyProductType: true, linePosition: true } },
+      lines: { orderBy: { linePosition: 'asc' }, select: { shopifyLineId: true, sku: true, productTitle: true, variantTitle: true, shopifyProductType: true, linePosition: true } },
     },
   })
   if (!order) return 0
-  let sent: { refId?: string; sku?: string }[] = []
+  let sent: { refId?: string; sku?: string; name?: string }[] = []
   try {
     const parsed = JSON.parse(push.requestJson)
     if (Array.isArray(parsed?.line_items)) sent = parsed.line_items
   } catch {}
-  const orderNo = order.shopifyOrderNumber.replace(/^#/, '')
-  // Shipment.lineKey numbers product lines only (see buildOrderShipments), unlike refId which carries linePosition.
   const productLines = order.lines.filter(l => !isNonProductLine(l))
+  const lineKeys = lineKeysOf(order.shopifyOrderNumber, order.lines)
+  // A ref finds its line by the item name we sent; the number is only a fallback for two lines of the same product. Pushes sent
+  // before 2026-10-29 numbered refIds by Shopify line position, later ones by line key, so the number alone is ambiguous.
+  const lineOfRef = (ref: { refId?: string; name?: string }) => {
+    const named = productLines.filter(l => ref.name === (l.variantTitle ? `${l.productTitle} - ${l.variantTitle}` : l.productTitle))
+    if (named.length === 1) return named[0]
+    const n = Number(String(ref.refId).split('_').pop())
+    return productLines.find(l => lineKeys.get(l.shopifyLineId) === `${order.shopifyOrderNumber.replace(/^#/, '')}_${n}`) ?? null
+  }
   let touched = 0
   for (const item of tracked) {
     const refs = sent.filter(li => typeof li.refId === 'string' && (!item.sku || li.sku === item.sku))
     for (const ref of refs) {
-      const position = Number(String(ref.refId).split('_').pop())
-      const index = productLines.findIndex(l => l.linePosition === position)
-      if (index < 0) continue
-      const line = productLines[index]
-      const lineKey = `${orderNo}_${index + 1}`
+      const line = lineOfRef(ref)
+      if (!line) continue
+      const lineKey = lineKeys.get(line.shopifyLineId)!
       const existing = await prisma.shipment.findUnique({ where: { orderId_lineKey: { orderId: order.id, lineKey } } })
       if (!existing) {
         await prisma.shipment.create({

@@ -3,7 +3,7 @@ import { prisma } from '@/lib/db'
 import { getTemplateById, parseTemplateColumns } from '@/lib/repos/templates'
 import { listOrdersWithLines, markOrdersExported } from '@/lib/repos/orders'
 import { renderCsv, type CsvTemplate as RenderTemplate, type OrderForCsv } from '@/lib/csv-template'
-import { isNonProductLine } from '@/lib/order-lines'
+import { isNonProductLine, lineKeysOf } from '@/lib/order-lines'
 import { effectiveBaseCost } from '@/lib/order-profit'
 import { pickExportDesignLink } from '@/lib/export-design'
 import { DESIGN_AREA_SOURCE_PREFIX, MOCKUP_LINK_SOURCE } from '@/lib/csv-template'
@@ -114,8 +114,7 @@ export async function POST(req: NextRequest) {
 
   const ordersForCsv: OrderForCsv[] = orders
     .map(o => {
-      const productLines = o.lines.filter(l => !isNonProductLine(l))
-      const productLineNumberById = new Map(productLines.map((line, idx) => [line.id, idx + 1]))
+      const lineKeys = lineKeysOf(o.shopifyOrderNumber, o.lines)
       const exportableLines = exportableLinesOf(o)
       return {
         shopifyOrderNumber: o.shopifyOrderNumber,
@@ -144,9 +143,8 @@ export async function POST(req: NextRequest) {
             sku: l.sku,
             skuDesignLink: l.sku ? skuDesignBySku.get(l.sku)?.driveLink ?? null : null,
           }))
-          const lineNumber = productLineNumberById.get(l.id) ?? 1
           return {
-            lineKey: `${o.shopifyOrderNumber.replace(/^#/, '')}_${lineNumber}`,
+            lineKey: lineKeys.get(l.shopifyLineId) ?? '',
             sku: l.sku,
             supplierSku: l.resolvedSupplierSku,
             supplierBaseSku: supplierProduct?.baseSku ?? null,
@@ -194,8 +192,7 @@ export async function POST(req: NextRequest) {
     const nameById = new Map([[tmpl.supplierId, tmpl.supplier.name], ...others.map(s => [s.id, s.name] as [string, string])])
     const nameOf = (id: string) => nameById.get(id) ?? 'xưởng không rõ'
     const previewOrders = csvOrders.map(o => {
-      const productLines = o.lines.filter(l => !isNonProductLine(l))
-      const productLineNumberById = new Map(productLines.map((line, idx) => [line.id, idx + 1]))
+      const lineKeys = lineKeysOf(o.shopifyOrderNumber, o.lines)
       const progress = exportProgress(o)
       return {
         shopifyOrderNumber: o.shopifyOrderNumber,
@@ -204,7 +201,7 @@ export async function POST(req: NextRequest) {
         handoffMode: o.supplierHandoffMode,
         lines: supplierLinesOf(o).map(l => ({
           linePosition: l.linePosition,
-          lineKey: `${o.shopifyOrderNumber.replace(/^#/, '')}_${productLineNumberById.get(l.id) ?? 1}`,
+          lineKey: lineKeys.get(l.shopifyLineId) ?? '',
           productTitle: l.productTitle,
           variantTitle: l.variantTitle,
           included: includedIds.has(l.id),

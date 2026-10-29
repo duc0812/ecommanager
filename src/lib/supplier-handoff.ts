@@ -1,7 +1,7 @@
 import { prisma } from '@/lib/db'
-import { isNonProductLine } from '@/lib/order-lines'
+import { isNonProductLine, lineKeysOf } from '@/lib/order-lines'
 import { loadWorkspace, type Workspace } from '@/lib/design-studio'
-import { requiredSlotsFor, taskKeyFor, templateForLine } from '@/lib/design-tasks'
+import { requiredSlotsFor, templateForLine } from '@/lib/design-tasks'
 import { STATUS_LABELS, type PipelineStatus } from '@/lib/pipeline-status'
 import { countryCodeOf, countryNameOf } from '@/lib/shipping-address'
 import { credentialsOf, getPgprintsSettings } from '@/lib/pgprints-settings'
@@ -155,7 +155,7 @@ async function buildCards(where: any, orderBy: any, opts: { checks?: boolean; se
   const lineRows = await prisma.orderLine.findMany({
     where: { orderId: { in: orders.map(o => o.id) } },
     select: {
-      id: true, orderId: true, resolvedSupplierId: true, resolvedSupplierSku: true, shopifyProductId: true, customAttributesJson: true,
+      id: true, orderId: true, shopifyLineId: true, resolvedSupplierId: true, resolvedSupplierSku: true, shopifyProductId: true, customAttributesJson: true,
       sku: true, productTitle: true, shopifyProductType: true, linePosition: true, exportedAt: true, exportedToSupplierId: true,
     },
   })
@@ -189,6 +189,7 @@ async function buildCards(where: any, orderBy: any, opts: { checks?: boolean; se
     const state = states.get(o.id)
     if (!ws || !state) continue
     const exportOrder = { pipelineStatus: o.pipelineStatus, exportedAt: o.exportedAt, exportedToSupplierId: o.exportedToSupplierId, lines: lineRows.filter(l => l.orderId === o.id) }
+    const lineKeys = lineKeysOf(o.shopifyOrderNumber, exportOrder.lines)
     const lines: HandoffLine[] = []
     for (const line of ws.lines) {
       if (line.isNonProduct || !line.supplier) continue
@@ -209,7 +210,7 @@ async function buildCards(where: any, orderBy: any, opts: { checks?: boolean; se
         slots,
         wrongSizeAreas,
         mappingNow,
-        taskKey: taskKeyFor(o.shopifyOrderNumber, line.linePosition),
+        taskKey: lineKeys.get(line.shopifyLineId) ?? '',
         driveFolderUrl: folderByLine.get(`${o.id}\u0000${line.shopifyLineId}`) ?? null,
         apiSku: line.supplierSku ? (apiSkuByKey.get(`${line.supplier.id}::${line.supplierSku}`) ?? null) : null,
         exportedTo: sentTo ? (supplierNameById.get(sentTo) ?? 'xưởng không rõ') : null,
@@ -380,8 +381,9 @@ export async function remapOrderSuppliers(orderId: string, userId: string | null
   }
   await recalculateMissingOrderLineCosts({ orderIds: [orderId], refreshExisting: true, preserveUnchangedSnapshot: true })
   const after = await prisma.orderLine.findMany({
-    where: { orderId }, select: { shopifyLineId: true, linePosition: true, resolvedSupplierId: true, resolvedSupplierSku: true },
+    where: { orderId }, select: { shopifyLineId: true, linePosition: true, productTitle: true, shopifyProductType: true, resolvedSupplierId: true, resolvedSupplierSku: true },
   })
+  const lineKeys = lineKeysOf(before.shopifyOrderNumber, after)
   const suppliers = await prisma.supplier.findMany({
     where: { id: { in: Array.from(new Set(after.map(l => l.resolvedSupplierId).filter((x): x is string => !!x))) } }, select: { id: true, name: true },
   })
@@ -390,7 +392,7 @@ export async function remapOrderSuppliers(orderId: string, userId: string | null
   for (const l of after) {
     const old = before.lines.find(b => b.shopifyLineId === l.shopifyLineId)
     if (!old || (old.resolvedSupplierId === l.resolvedSupplierId && old.resolvedSupplierSku === l.resolvedSupplierSku)) continue
-    changed.push(`${taskKeyFor(before.shopifyOrderNumber, l.linePosition)}: ${old.resolvedSupplierSku ?? '—'} → ${l.resolvedSupplierSku ?? 'chưa map'}`)
+    changed.push(`${lineKeys.get(l.shopifyLineId) ?? l.shopifyLineId}: ${old.resolvedSupplierSku ?? '—'} → ${l.resolvedSupplierSku ?? 'chưa map'}`)
     const name = l.resolvedSupplierId ? (nameById.get(l.resolvedSupplierId) ?? null) : null
     await prisma.designTask.updateMany({ where: { orderId, shopifyLineId: l.shopifyLineId }, data: { supplierSnapshot: name } })
   }

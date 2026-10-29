@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/db'
-import { isNonProductLine } from '@/lib/order-lines'
+import { isNonProductLine, lineKeysOf } from '@/lib/order-lines'
 import { parseAttributes, safeHttpUrl, sourcePrintFiles, updateLine, loadWorkspace, type WorkspaceLine, type Workspace } from '@/lib/design-studio'
 import { fillCustomallFields } from '@/lib/customall-fields'
 import { getDesignSettings, kpiForProductType, type DesignSettings } from '@/lib/design-settings'
@@ -30,10 +30,6 @@ export const TASK_STATUSES: TaskStatus[] = ['NEW', 'ASSIGNED', 'DOING', 'REVIEW'
 const OPEN: TaskStatus[] = ['NEW', 'ASSIGNED', 'DOING', 'REVIEW', 'REJECTED']
 export const FACTORY_REJECT_REASON = 'Xưởng trả file'
 export const APPROVE_MESSAGE = 'Duyệt design'
-
-export function taskKeyFor(orderNumber: string, linePosition: number): string {
-  return `${orderNumber.replace(/^#/, '')}_${linePosition}`
-}
 
 export function isLeader(role: string): boolean {
   return isLeaderRole(role)
@@ -130,6 +126,7 @@ export async function syncDesignTasks(orderId: string): Promise<SyncResult> {
   const factoryRejected = order.pipelineStatus === 'DESIGN_REJECTED'
   let created = 0, cancelled = 0, completed = 0, reopened = 0
   const withArtwork = await linesWithArtwork(orderId)
+  const keys = lineKeysOf(order.shopifyOrderNumber, order.lines)
   const factoryReopen = { status: 'REJECTED', rejectReasons: JSON.stringify([FACTORY_REJECT_REASON]), rejectNote: null, prevStatus: null }
   const factoryEvent = { type: 'SYSTEM', message: 'Xưởng trả file — mở lại task' }
 
@@ -168,7 +165,7 @@ export async function syncDesignTasks(orderId: string): Promise<SyncResult> {
     const slaHours = line.customized ? settings.slaCustomHours : settings.slaNonCustomHours
     const reopenNew = factoryRejected && !!line.designDriveLink
     await prisma.designTask.create({ data: {
-      orderId, shopifyLineId: line.shopifyLineId, taskKey: taskKeyFor(order.shopifyOrderNumber, line.linePosition),
+      orderId, shopifyLineId: line.shopifyLineId, taskKey: keys.get(line.shopifyLineId)!,
       status: 'NEW', readiness: await readinessForLine(line, order.storeId), kpi: kpiForProductType(settings, line.shopifyProductType),
       slaHours, dueAt: dueForNewTask(order.placedAt, slaHours), supplierSnapshot: supplierName.get(line.resolvedSupplierId) ?? null,
       ...(reopenNew ? factoryReopen : {}),

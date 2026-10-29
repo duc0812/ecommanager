@@ -1,3 +1,4 @@
+import { lineKeyOf } from '@/lib/order-lines'
 import fsp from 'fs/promises'
 import { prisma } from '@/lib/db'
 import { parseFields } from '@/lib/artwork-fields'
@@ -163,16 +164,16 @@ export async function applyRenderResult(input: { jobId: string; print: TempFile;
   if (!job.orderId || !job.shopifyLineId || !job.printArea) return null
   const line = await prisma.orderLine.findFirst({
     where: { orderId: job.orderId, shopifyLineId: job.shopifyLineId },
-    select: { id: true, linePosition: true, order: { select: { shopifyOrderNumber: true } } },
+    select: { id: true, shopifyLineId: true, order: { select: { shopifyOrderNumber: true, lines: { select: { shopifyLineId: true, linePosition: true, productTitle: true, shopifyProductType: true } } } } },
   })
   if (!line) return null
   const [bytes, preview] = await Promise.all([
     fsp.readFile(input.print.tmpPath),
     input.preview ? fsp.readFile(input.preview.tmpPath) : Promise.resolve(null),
   ])
-  const order = line.order.shopifyOrderNumber.replace(/^#/, '')
+  const lineKey = lineKeyOf(line.order.shopifyOrderNumber, line.order.lines, line) ?? line.order.shopifyOrderNumber.replace(/^#/, '')
   const artwork = await saveArtwork({
-    lineId: line.id, printArea: job.printArea, fileName: `${order}_${line.linePosition}_${job.printArea}_auto.png`, mimeType: 'image/png',
+    lineId: line.id, printArea: job.printArea, fileName: `${lineKey}_${job.printArea}_auto.png`, mimeType: 'image/png',
     bytes, uploadedById: null, source: 'AUTO', preview,
   })
   const claimed = await prisma.artworkJob.updateMany({
