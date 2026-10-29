@@ -8,6 +8,7 @@
     {"name": "T-Shirt (AOP)", "code": "TSA", "shopify": ["AOP Shirt", "3D Clothing"], "blanks": [["MERCHIZE", "T5HAVN"]]},
     {"name": "Hoodie (AOP)", "code": "HDA", "shopify": ["Hoodie", "3D Clothing", "AOP Shirt"], "blanks": [["MERCHIZE", "MWHDVN"]]},
     {"name": "Zip Hoodie (AOP)", "code": "ZHA", "shopify": ["3D Clothing", "AOP Shirt"], "blanks": [["MERCHIZE", "MWZHVN"]]},
+    {"name": "Fleece Zip Hoodie (AOP)", "code": "FZH", "shopify": [], "blanks": [["MANGO", "WZIP"]]},
     {"name": "Sweatshirt (AOP)", "code": "SWA", "shopify": ["3D Clothing", "AOP Shirt"], "blanks": [["MERCHIZE", "MWSSVN"]]},
     {"name": "Sweatshirt (Embroidered)", "code": "SWE", "shopify": [], "blanks": [["MERCHIZE", "EBSSVN"]]},
     {"name": "Bomber Jacket (AOP Fleece)", "code": "BJF", "shopify": ["Varsity Jacket"], "blanks": [["MERCHIZE", "FEBOVN"]]},
