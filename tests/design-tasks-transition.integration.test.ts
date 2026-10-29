@@ -168,7 +168,7 @@ describe('template slots and ownership', () => {
     await addArtwork('f1', 'Back')
     expect((await transitionTask('DTT2_1', DES, { to: 'REVIEW' })).task.status).toBe('REVIEW')
     await prisma.designArtwork.deleteMany({ where: { orderId: TPL_ORDER_ID, shopifyLineId: 'f1', printArea: 'Back' } })
-    await expect(transitionTask('DTT2_1', LEAD, { to: 'DONE' })).rejects.toThrow('No artwork uploaded for: Back')
+    await expect(transitionTask('DTT2_1', LEAD, { to: 'DONE' })).rejects.toThrow('Chưa có file cho vùng: Back')
     expect((await loadTask('DTT2_1'))!.task.status).toBe('REVIEW')
     await addArtwork('f1', 'Back')
     const r = await transitionTask('DTT2_1', LEAD, { to: 'DONE' })
@@ -176,6 +176,19 @@ describe('template slots and ownership', () => {
     const front = await prisma.designArtwork.findFirst({ where: { orderId: TPL_ORDER_ID, shopifyLineId: 'f1', printArea: 'Front' } })
     const line = await prisma.orderLine.findFirst({ where: { orderId: TPL_ORDER_ID, shopifyLineId: 'f1' } })
     expect(line?.designDriveLink).toBe(`/api/design-studio/file/${front!.id}`)
+  })
+
+  it('a leader may approve a set that leaves a template area empty once they accept it; it is not saved to the library', async () => {
+    await prisma.designArtwork.deleteMany({ where: { orderId: TPL_ORDER_ID, shopifyLineId: 'f1' } })
+    await prisma.designTask.update({ where: { taskKey: 'DTT2_1' }, data: { status: 'REVIEW' } })
+    await addArtwork('f1', 'Front')
+    await expect(transitionTask('DTT2_1', LEAD, { to: 'DONE' })).rejects.toThrow('Chưa có file cho vùng: Back')
+    const r = await transitionTask('DTT2_1', LEAD, { to: 'DONE', acceptMissingAreas: true })
+    expect(r.task.status).toBe('DONE')
+    const events = await prisma.designTaskEvent.findMany({ where: { task: { taskKey: 'DTT2_1' } }, orderBy: { createdAt: 'desc' }, take: 3 })
+    expect(events.map(e => e.message)).toContain('Duyệt khi chưa có file cho vùng: Back — không lưu vào Design Library')
+    const front = await prisma.designArtwork.findFirst({ where: { orderId: TPL_ORDER_ID, shopifyLineId: 'f1', printArea: 'Front' } })
+    expect((await prisma.orderLine.findFirst({ where: { orderId: TPL_ORDER_ID, shopifyLineId: 'f1' } }))?.designDriveLink).toBe(`/api/design-studio/file/${front!.id}`)
   })
 
   it("a designer cannot take, decline, submit or ask on another designer's task", async () => {

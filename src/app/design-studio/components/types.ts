@@ -97,5 +97,5 @@ export type ReviewCard = {
 }
 
 export type TransitionBody = {
-  to: TaskStatus; note?: string; reasons?: string[]; assigneeId?: string; kpi?: number; dueHours?: number; continue?: boolean
+  to: TaskStatus; note?: string; reasons?: string[]; assigneeId?: string; kpi?: number; dueHours?: number; continue?: boolean; acceptMissingAreas?: boolean
 }

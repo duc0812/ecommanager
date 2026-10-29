@@ -19,7 +19,7 @@ import type { HandoffPush } from '@/lib/handoff-shared'
 import { autoRenderEligibility } from '@/lib/artwork-render-eligibility'
 import { APP_FILE_PREFIX } from '@/lib/design-links'
 import { saveStudioDesignToLibrary } from '@/lib/studio-library'
-import { missingPrintAreas, outdatedParts, printFilesReady } from '@/lib/task-files'
+import { MISSING_AREAS_PREFIX, missingPrintAreas, outdatedParts, printFilesReady } from '@/lib/task-files'
 
 export { loadTemplateContext, mapTemplate, pickTemplate, type TemplateRow }
 
@@ -209,7 +209,7 @@ export function viewerFor(user: Actor, settings: Pick<DesignSettings, 'designerC
     canEditNote: canEditDesignNote(user.role, user.permissions),
   }
 }
-export type TransitionInput = { to: TaskStatus; note?: string; reasons?: string[]; assigneeId?: string; kpi?: number; dueHours?: number; continue?: boolean }
+export type TransitionInput = { to: TaskStatus; note?: string; reasons?: string[]; assigneeId?: string; kpi?: number; dueHours?: number; continue?: boolean; acceptMissingAreas?: boolean }
 
 export type TaskRow = {
   id: string; taskKey: string; status: TaskStatus; readiness: Readiness; assigneeId: string | null; assigneeName: string | null
@@ -315,13 +315,23 @@ export async function transitionTask(taskKey: string, actor: Actor, input: Trans
     } else {
       const template = await templateForLine(line)
       const slots = requiredSlotsFor(template)
-      order = (await updateLine(line.id, { done: true, requiredAreas: slots }))?.order ?? null
+      // A leader may approve a set that does not follow the template's areas (pieces for a one-sheet template, one sleeve
+      // for both); such a set is not saved to the library, so a later order of the SKU does not reuse it unseen.
+      const files = await prisma.designArtwork.findMany({ where: { orderId: line.orderId, shopifyLineId: line.shopifyLineId, removedAt: null }, select: { kind: true, printArea: true, version: true } })
+      const missing = missingPrintAreas(files, slots)
+      const accepted = missing.length > 0 && input.acceptMissingAreas === true && canApprove
+      if (missing.length > 0 && !accepted) throw new Error(`${MISSING_AREAS_PREFIX}${missing.join(', ')}`)
+      order = (await updateLine(line.id, { done: true, requiredAreas: accepted ? [] : slots }))?.order ?? null
       data.rejectReasons = null; data.rejectNote = null
-      // The approval stands even when the library cannot be written; the reason is logged on the task.
-      const library = await saveStudioDesignToLibrary(line, slots)
-        .catch((e: any) => ({ saved: false, designLink: null, note: `Chưa lưu vào Design Library: ${e?.message ?? e}` }))
-      if (library.saved) events.push({ type: 'SYSTEM', message: `Đã lưu design vào Design Library cho SKU ${line.sku} — đơn sau cùng SKU dùng lại`, actorId: actor.id })
-      else if (library.note) events.push({ type: 'SYSTEM', message: library.note, actorId: actor.id })
+      if (accepted) {
+        events.push({ type: 'SYSTEM', message: `Duyệt khi chưa có file cho vùng: ${missing.join(', ')} — không lưu vào Design Library`, actorId: actor.id })
+      } else {
+        // The approval stands even when the library cannot be written; the reason is logged on the task.
+        const library = await saveStudioDesignToLibrary(line, slots)
+          .catch((e: any) => ({ saved: false, designLink: null, note: `Chưa lưu vào Design Library: ${e?.message ?? e}` }))
+        if (library.saved) events.push({ type: 'SYSTEM', message: `Đã lưu design vào Design Library cho SKU ${line.sku} — đơn sau cùng SKU dùng lại`, actorId: actor.id })
+        else if (library.note) events.push({ type: 'SYSTEM', message: library.note, actorId: actor.id })
+      }
     }
   }
   if (from === 'DONE' && input.to === 'DOING') order = (await updateLine(line.id, { done: false }))?.order ?? null

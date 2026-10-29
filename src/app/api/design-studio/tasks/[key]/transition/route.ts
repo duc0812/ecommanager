@@ -16,6 +16,7 @@ export async function POST(req: NextRequest, { params }: { params: { key: string
     kpi: typeof body.kpi === 'number' ? body.kpi : undefined,
     dueHours: typeof body.dueHours === 'number' ? body.dueHours : undefined,
     continue: typeof body.continue === 'boolean' ? body.continue : undefined,
+    acceptMissingAreas: body.acceptMissingAreas === true ? true : undefined,
   }
   const actor = { id: user.id, name: user.name, role: user.role, permissions: user.permissions }
 

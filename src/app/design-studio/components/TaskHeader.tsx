@@ -3,7 +3,7 @@ import { useRef, useState, type FormEvent, type ReactNode } from 'react'
 import Link from 'next/link'
 import type { TaskDetail, TransitionBody } from './types'
 import {
-  OWNED_MOVES, allSlotsFilled, canMove, copyText, filesMissingHint, layerForField, patchJson, postJson, productPageUrl, sourceEngine, taskUrl, timeLeft,
+  OWNED_MOVES, allSlotsFilled, canMove, copyText, filesMissingHint, layerForField, missingAreas, patchJson, postJson, productPageUrl, sourceEngine, taskUrl, timeLeft,
 } from './model'
 import { DriveFolderLink } from './ArtworkSlots'
 import { buildChecklist, type CheckItem, type CheckState } from './checklist'
@@ -316,7 +316,14 @@ export default function TaskHeader({ detail, holdCount, onChanged }: { detail: T
     flow.push(<button key="submit" type="button" className={btnPrimary} disabled={busy || !filled} title={filesTitle} onClick={() => go({ to: 'REVIEW' })}><Icon name="rate_review" className="text-[18px]" />Gửi duyệt</button>)
   }
   if (can('DONE')) {
-    flow.push(<button key="done" type="button" className={btnPrimary} disabled={busy || !filled} title={filesTitle} onClick={() => go({ to: 'DONE' })}><Icon name="verified" className="text-[18px]" />Duyệt design</button>)
+    // A leader may approve a set that does not follow the template's areas (pieces for a one-sheet template, one sleeve
+    // for both) after saying so; the review grid already lets them. Submitting for review still needs every area.
+    const approve = () => {
+      const missing = missingAreas(detail)
+      if (!filled && !window.confirm(`${missing.length ? `Chưa có file cho vùng: ${missing.join(', ')}` : 'Chưa có file in nào'}. Vẫn duyệt design?`)) return
+      go(filled ? { to: 'DONE' } : { to: 'DONE', acceptMissingAreas: true })
+    }
+    flow.push(<button key="done" type="button" className={btnPrimary} disabled={busy} title={filesTitle} onClick={approve}><Icon name="verified" className="text-[18px]" />Duyệt design</button>)
   } else if (task.status === 'REVIEW' && !me.canApprove) {
     flow.push(<button key="wait" type="button" className={btnPrimary} disabled><Icon name="hourglass_top" className="text-[18px]" />Chờ leader duyệt</button>)
   }

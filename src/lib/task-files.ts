@@ -5,6 +5,8 @@ export const FILE_KINDS: FileKind[] = ['PRINT', 'MOCKUP']
 export const DEFAULT_PART = 'Artwork'
 export const PART_MAX = 60
 export const OLD_FOLDER_NAME = '_old'
+/** Start of the error an approval gets when a template area has no file; the leader is asked and the approval retried. */
+export const MISSING_AREAS_PREFIX = 'Chưa có file cho vùng: '
 
 type PartFile = { kind?: string | null; printArea: string; version: number }
 

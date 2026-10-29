@@ -7,6 +7,7 @@ import { fileFormatLabel, printFileFit, type FileFit } from '@/lib/print-file-fi
 import { LightboxProvider, useLightbox } from './Lightbox'
 import PrintFileThumb from './PrintFileThumb'
 import { pushChipLabel } from '@/lib/handoff-shared'
+import { MISSING_AREAS_PREFIX } from '@/lib/task-files'
 import { ErrorBanner, Icon, Pill, btn, btnPrimary, btnWarn, card, input } from './ui'
 
 type ReviewResponse = { cards: ReviewCard[]; rejectReasons: string[]; me: Me }
@@ -287,9 +288,13 @@ export default function ReviewGrid({ mine, q, version, onOpenTask, onChanged }: 
     return r.ok ? null : r.error
   }
 
+  // A set that does not fill every template area is approved only after the leader says so.
+  const missingAreas = (err: string | null) => !!err && err.startsWith(MISSING_AREAS_PREFIX)
+
   async function approve(key: string) {
     setActionError(''); setInfo('')
-    const err = await move(key, { to: 'DONE' })
+    let err = await move(key, { to: 'DONE' })
+    if (missingAreas(err) && window.confirm(`${key}: ${err}. Vẫn duyệt design?`)) err = await move(key, { to: 'DONE', acceptMissingAreas: true })
     if (err) { setActionError(`${key}: ${err}`); return }
     drop([key])
     setInfo(`Đã duyệt design ${key}`)
@@ -314,12 +319,22 @@ export default function ReviewGrid({ mine, q, version, onOpenTask, onChanged }: 
     const ok: string[] = []
     const failed: string[] = []
     setBatch({ done: 0, total: keys.length })
+    const short: Array<{ key: string; err: string }> = []
     for (const key of keys) {
       const err = await move(key, { to: 'DONE' })
-      if (err) failed.push(`${key}: ${err}`)
+      if (missingAreas(err)) short.push({ key, err: err! })
+      else if (err) failed.push(`${key}: ${err}`)
       else ok.push(key)
-      setBatch({ done: ok.length + failed.length, total: keys.length })
+      setBatch({ done: ok.length + failed.length + short.length, total: keys.length })
     }
+    const list = short.map(s => `${s.key}: ${s.err}`).join('\n')
+    if (short.length && window.confirm(`${short.length} mẫu chưa đủ file cho mọi vùng in:\n${list}\n\nVẫn duyệt các mẫu này?`)) {
+      for (const s of short) {
+        const err = await move(s.key, { to: 'DONE', acceptMissingAreas: true })
+        if (err) failed.push(`${s.key}: ${err}`)
+        else ok.push(s.key)
+      }
+    } else failed.push(...short.map(s => `${s.key}: ${s.err}`))
     setBatch(null)
     drop(ok)
     if (ok.length) setInfo(`Đã duyệt design ${ok.length} mẫu`)
