@@ -130,6 +130,22 @@ describe('resolveOrderDesignByParent', () => {
     const r = resolveOrderDesignByParent([pLine({ existingDesignLink: 'own', customized: true })], parentEntry)
     expect(r.orderDesignReady).toBe(true)
   })
+  it('a product line with no supplier yet is not ready (no design step skipped once it gets mapped)', () => {
+    const r = resolveOrderDesignByParent([pLine({ requiresDesign: false, resolvedSupplierId: null })], parentEntry)
+    expect(r.orderDesignReady).toBe(false)
+    expect(r.missing).toEqual([])
+  })
+  it('an unmapped line next to a ready line keeps the order not ready', () => {
+    const r = resolveOrderDesignByParent([
+      pLine({ index: 0 }),
+      pLine({ index: 1, sku: 'upload-3DSOCK/PRB', requiresDesign: false, resolvedSupplierId: null }),
+    ], parentEntry)
+    expect(r.orderDesignReady).toBe(false)
+  })
+  it('non-product lines without a supplier do not block', () => {
+    const r = resolveOrderDesignByParent([pLine(), pLine({ index: 1, isNonProduct: true, requiresDesign: false, resolvedSupplierId: null })], parentEntry)
+    expect(r.orderDesignReady).toBe(true)
+  })
 })
 
 describe('parseDesignLibraryCsv', () => {

@@ -3,6 +3,7 @@ import { autoDetectStatus, isValidPipelineStatus, type PipelineStatus } from '@/
 import { profileKey, resolveByProductBase, supplierParentKey, swapToSizeSibling } from '@/lib/product-mapping'
 import { loadProductBasesForResolver, loadProductProfilesForResolver, loadVariantManualMappingsForResolver } from '@/lib/repos/mapping'
 import { isNonProductLine } from '@/lib/order-lines'
+import { designReadyHolds } from '@/lib/design-library'
 
 function parseVariantOptions(value: string | null): Record<string, string> {
   if (!value) return {}
@@ -191,6 +192,7 @@ export async function recalculateMissingOrderLineCosts(filter: {
         pipelineStatus: true,
         orderType: true,
         designReady: true,
+        trelloCardId: true,
         lines: {
           select: {
             sku: true,
@@ -199,6 +201,7 @@ export async function recalculateMissingOrderLineCosts(filter: {
             resolvedSupplierId: true,
             resolvedBaseCost: true,
             qty: true,
+            designDriveLink: true,
           },
         },
       },
@@ -218,6 +221,7 @@ export async function recalculateMissingOrderLineCosts(filter: {
     const currentStatus = isValidPipelineStatus(order.pipelineStatus)
       ? order.pipelineStatus as PipelineStatus
       : null
+    const designReady = designReadyHolds(order)
     const pipelineStatus = autoDetectStatus({
       financialStatus: order.financialStatus,
       fulfillmentStatus: order.fulfillmentStatus,
@@ -225,13 +229,13 @@ export async function recalculateMissingOrderLineCosts(filter: {
       hasPendingMapping,
       hasCustomDesignLine: order.orderType === 'CUSTOM',
       hasDesignLine,
-      hasDesignReady: order.designReady,
+      hasDesignReady: designReady,
       currentStatus,
     })
 
     await prisma.order.update({
       where: { id: orderId },
-      data: { defaultSupplierId, pipelineStatus },
+      data: { defaultSupplierId, pipelineStatus, designReady },
     })
   }
 

@@ -7,6 +7,7 @@ import {
   type VariantManualMappingData,
 } from '@/lib/product-mapping'
 import { isNonProductLine } from '@/lib/order-lines'
+import { designReadyHolds } from '@/lib/design-library'
 import { autoDetectStatus, isValidPipelineStatus, type PipelineStatus } from '@/lib/pipeline-status'
 
 // ── ProductBase ───────────────────────────────────────────
@@ -258,6 +259,7 @@ export async function saveManualMapping(input: SaveManualMappingInput) {
         select: {
           id: true,
           designReady: true,
+          trelloCardId: true,
           financialStatus: true,
           fulfillmentStatus: true,
           pipelineStatus: true,
@@ -269,6 +271,7 @@ export async function saveManualMapping(input: SaveManualMappingInput) {
               shopifyProductType: true,
               resolvedSupplierId: true,
               shopifyVariantId: true,
+              designDriveLink: true,
             },
           },
         },
@@ -277,6 +280,7 @@ export async function saveManualMapping(input: SaveManualMappingInput) {
         const skuLines = order.lines.filter(l => l.sku && !isNonProductLine(l))
         const willBeMapped = skuLines.length > 0 && skuLines.every(l => l.resolvedSupplierId)
         const currentStatus = isValidPipelineStatus(order.pipelineStatus) ? order.pipelineStatus as PipelineStatus : null
+        const designReady = designReadyHolds(order)
         const pipelineStatus = autoDetectStatus({
           financialStatus: order.financialStatus,
           fulfillmentStatus: order.fulfillmentStatus,
@@ -284,10 +288,10 @@ export async function saveManualMapping(input: SaveManualMappingInput) {
           hasPendingMapping: !willBeMapped,
           hasCustomDesignLine: order.orderType === 'CUSTOM',
           hasDesignLine: skuLines.some(l => l.resolvedSupplierId),
-          hasDesignReady: order.designReady,
+          hasDesignReady: designReady,
           currentStatus,
         })
-        await tx.order.update({ where: { id: order.id }, data: { pipelineStatus } })
+        await tx.order.update({ where: { id: order.id }, data: { pipelineStatus, designReady } })
       }
     }
 

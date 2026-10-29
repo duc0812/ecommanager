@@ -1,4 +1,15 @@
 import { matchDesignEntry, type DesignEntry } from '@/lib/design-parent'
+import { isNonProductLine } from '@/lib/order-lines'
+
+type ReadyCheckLine = { sku: string | null; productTitle: string; shopifyProductType: string | null; resolvedSupplierId: string | null; designDriveLink: string | null }
+
+/** Whether a stored designReady still holds once lines change supplier: a Trello card, or a design link on every product
+ *  line. A flag stored while a line was unmapped has neither, and must not skip the design step after the mapping. */
+export function designReadyHolds(order: { designReady: boolean; trelloCardId: string | null; lines: ReadyCheckLine[] }): boolean {
+  if (!order.designReady) return false
+  if (order.trelloCardId) return true
+  return order.lines.filter(l => l.sku && !isNonProductLine(l)).every(l => l.resolvedSupplierId && l.designDriveLink)
+}
 
 export function designKey(sku: string, supplierId: string): string {
   return `${sku}::${supplierId}`
@@ -69,7 +80,10 @@ export function resolveOrderDesignByParent(
     }
     missing.push({ index: line.index, sku: line.sku, supplierId: line.resolvedSupplierId })
   }
-  return { orderDesignReady: missing.length === 0, lineLinks, missing }
+  // A product line with no supplier yet has no design either: calling the order ready let a later mapping skip the
+  // design step entirely (LIT5089 went to the factory with no print file).
+  const unmapped = lines.some(l => !l.isNonProduct && !l.resolvedSupplierId && !l.existingDesignLink)
+  return { orderDesignReady: missing.length === 0 && !unmapped, lineLinks, missing }
 }
 
 export type DesignImportRow = { sku: string; supplierCode: string; designLink: string }
