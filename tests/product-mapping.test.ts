@@ -9,6 +9,8 @@ import {
   type ProductProfileResolveData,
   type ProductBaseData,
   type VariantManualMappingData,
+  buildTypeAliases,
+  typeKey,
 } from '@/lib/product-mapping'
 
 const tshirt3d: ProductBaseData = {
@@ -254,5 +256,44 @@ describe('swapToSizeSibling on colour-keyed SKUs', () => {
 
   it('still leaves a manual variant pin alone', () => {
     expect(swapToSizeSibling('blk_s', { Size: 'L', Color: 'Light Blue' }, 'variant_manual', byId, byParent)).toBe('blk_s')
+  })
+})
+
+describe('standard product types (aliases)', () => {
+  const aliases = buildTypeAliases([
+    { name: 'AOP Apparel', aliases: '["3D Clothing", "3D Clothingg", "AOP Shirttt"]' },
+    { name: 'Crew Socks', aliases: ['Crew Socks', 'Socks'] },
+  ])
+  const base = (id: string, type: string, cond: object[], sp: string): ProductBaseData => ({
+    id, shopifyProductType: type, variantConditions: JSON.stringify(cond), supplierMappings: [{ preferenceRank: 1, supplierProductId: sp }], overrides: [],
+  })
+
+  it('maps every spelling to the standard name, and an unknown type to itself', () => {
+    expect(typeKey('3D Clothingg', aliases)).toBe('aop apparel')
+    expect(typeKey(' AOP  Apparel ', aliases)).toBe('aop apparel')
+    expect(typeKey('Socks', aliases)).toBe('crew socks')
+    expect(typeKey('Tote Bag', aliases)).toBe('tote bag')
+    expect(typeKey('3D Clothingg')).toBe('3d clothingg')
+  })
+
+  it('a base saved under an old spelling answers a line with the new type, and the other way round', () => {
+    const bases = [base('b1', '3D Clothingg', [{ optionName: 'Style', value: 'Hoodie' }], 'sp-hoodie')]
+    expect(resolveByProductBase(null, 'AOP Apparel', { Style: 'Hoodie' }, bases, [], null, null, aliases).supplierProductId).toBe('sp-hoodie')
+    expect(resolveByProductBase(null, '3D Clothing', { Style: 'Hoodie' }, bases, [], null, null, aliases).supplierProductId).toBe('sp-hoodie')
+    expect(resolveByProductBase(null, 'AOP Apparel', { Style: 'Hoodie' }, bases, [], null, null).supplierProductId).toBeNull()
+  })
+
+  it('without aliases nothing changes', () => {
+    const bases = [base('b1', 'Crew Socks', [], 'sp-socks')]
+    expect(resolveByProductBase(null, 'crew socks', {}, bases, [], null, null).supplierProductId).toBe('sp-socks')
+    expect(resolveByProductBase(null, 'Socks', {}, bases, [], null, null).supplierProductId).toBeNull()
+    expect(resolveByProductBase(null, 'Socks', {}, bases, [], null, null, aliases).supplierProductId).toBe('sp-socks')
+  })
+
+  it('two spellings merged into one type surface as ambiguous when both match', () => {
+    const bases = [base('b1', '3D Clothing', [{ optionName: 'Style', value: 'Tshirt' }], 'sp-a'), base('b2', 'AOP Shirttt', [{ optionName: 'Style', value: 'Tshirt' }], 'sp-b')]
+    const r = resolveByProductBase(null, 'AOP Apparel', { Style: 'Tshirt' }, bases, [], null, null, aliases)
+    expect(r.supplierProductId).toBe('sp-a')
+    expect(r.ambiguousBaseIds).toEqual(['b1', 'b2'])
   })
 })

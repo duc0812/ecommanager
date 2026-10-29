@@ -7,7 +7,7 @@ import { autoDetectStatus, isValidPipelineStatus, type PipelineStatus } from '@/
 import { resolveZone, type SupplierZoneOverrides } from '@/lib/regions'
 import { getShopifyConnection } from '@/lib/token-store'
 import { profileKey, resolveByProductBase, supplierParentKey, swapToSizeSibling } from '@/lib/product-mapping'
-import { loadProductBasesForResolver, loadProductProfilesForResolver, loadVariantManualMappingsForResolver } from '@/lib/repos/mapping'
+import { loadProductBasesForResolver, loadProductProfilesForResolver, loadTypeAliasesForResolver, loadVariantManualMappingsForResolver } from '@/lib/repos/mapping'
 import { buildTrelloCardContent, customerDesignLink, isLineCustomized, lineFamily, reduceOrderType } from '@/lib/order-classify'
 import { isNonProductLine } from '@/lib/order-lines'
 import { createTrelloCard, addAttachmentToCard, getTrelloConfig, shouldCreateCard } from '@/lib/trello'
@@ -98,6 +98,7 @@ export async function POST(req: NextRequest) {
   const shopTimezone = shopInfo.ianaTimezone ?? store.ianaTimezone ?? null
 
   const productBases = await loadProductBasesForResolver()
+  const typeAliases = await loadTypeAliasesForResolver()
   const manualMappings = await loadVariantManualMappingsForResolver()
   const productProfiles = await loadProductProfilesForResolver(store.id)
   const supplierProducts = await prisma.supplierProduct.findMany({
@@ -187,6 +188,7 @@ export async function POST(req: NextRequest) {
             manualMappings,
             l.productId ? productProfiles.get(profileKey(store.id, l.productId)) ?? null : null,
             o.shippingCountry,
+            typeAliases,
           )
           return {
             ...result,

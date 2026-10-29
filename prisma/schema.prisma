@@ -719,6 +719,20 @@ model SkuSupplierDesign {
   @@index([trelloCardId])
 }
 
+/// The shop's standard listing types (= the Shopify product_type to converge on, after macorner / familystore). aliases holds
+/// every other spelling in use (JSON array); the mapping resolver treats a type and its aliases as one. kind ADDON = fee /
+/// protection / upsell lines, not products.
+model ProductType {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  code      String   @unique
+  category  String?
+  kind      String   @default("PRODUCT")
+  aliases   String   @default("[]")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
 model ProductBase {
   id                 String   @id @default(cuid())
   name               String

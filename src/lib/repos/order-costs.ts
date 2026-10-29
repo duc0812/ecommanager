@@ -1,7 +1,7 @@
 import { prisma } from '@/lib/db'
 import { autoDetectStatus, isValidPipelineStatus, type PipelineStatus } from '@/lib/pipeline-status'
 import { profileKey, resolveByProductBase, supplierParentKey, swapToSizeSibling } from '@/lib/product-mapping'
-import { loadProductBasesForResolver, loadProductProfilesForResolver, loadVariantManualMappingsForResolver } from '@/lib/repos/mapping'
+import { loadProductBasesForResolver, loadProductProfilesForResolver, loadTypeAliasesForResolver, loadVariantManualMappingsForResolver } from '@/lib/repos/mapping'
 import { isNonProductLine } from '@/lib/order-lines'
 import { designReadyHolds } from '@/lib/design-library'
 
@@ -29,11 +29,12 @@ export type ResolvableLine = {
 
 /** The supplier product today's mapping picks for a line: product base / manual mapping / product profile, then the size sibling. */
 export async function loadLineResolver(): Promise<(line: ResolvableLine) => SupplierProductWithSupplier | null> {
-  const [productBases, manualMappings, productProfiles, supplierProducts] = await Promise.all([
+  const [productBases, manualMappings, productProfiles, supplierProducts, typeAliases] = await Promise.all([
     loadProductBasesForResolver(),
     loadVariantManualMappingsForResolver(),
     loadProductProfilesForResolver(),
     prisma.supplierProduct.findMany({ include: { supplier: true } }),
+    loadTypeAliasesForResolver(),
   ])
   const activeSupplierProducts = supplierProducts.filter(p => p.supplier.isActive)
   const rawSupplierProductById = new Map(activeSupplierProducts.map(p => [p.id, p]))
@@ -52,6 +53,7 @@ export async function loadLineResolver(): Promise<(line: ResolvableLine) => Supp
       manualMappings,
       line.shopifyProductId ? productProfiles.get(profileKey(line.order.storeId, line.shopifyProductId)) ?? null : null,
       line.order.shippingCountry,
+      typeAliases,
     )
     const supplierProductId = swapToSizeSibling(
       result.supplierProductId,

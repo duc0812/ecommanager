@@ -1,0 +1,315 @@
+# Thư viện thiết kế: template, mockup xưởng, artwork, font
+
+Ngày: 29/10/2026. Trạng thái: plan. Chủ shop đã chốt 4 điểm ở mục 8 cùng ngày 29/10.
+
+Mục tiêu:
+- **Mỗi sản phẩm của mỗi xưởng** có template in và mockup PSD của chính xưởng đó.
+- **Mỗi SKU × variant × xưởng** có artwork đã duyệt (file in phẳng, file in không chữ + font, hoặc PSD), kèm font.
+- **Đơn mới tìm ra file dùng lại trong vài giây,** không phải lục NAS, Trello hay Drive.
+- **Tất cả nằm trong một thư mục gốc duy nhất,** và chỉ nhận file qua tool có kiểm tra.
+
+---
+
+## 1. Hiện trạng (đếm trên prod và máy văn phòng ngày 29/10/2026)
+
+### Số liệu
+
+| Hạng mục | Số liệu | Vấn đề |
+|---|---|---|
+| Template in (`PrintTemplate`) | 52 (Mango 22, Jomall 12, Merchize 11, PGprints 4, Printway 2, Bondre 1) | Chỉ 4 template có artguide, 1 có file nguồn. Chỉ 116 trên 1.091 variant xưởng được gắn template. |
+| Mockup PSD của xưởng | 0 trong tool | Nằm rải rác trên Drive xưởng: Mango "WZ-袜子 / 效果图模板", Merchize "mockup_and_templates_link". Mỗi lần cần lại phải tải về. |
+| Artwork Library (`ArtworkEntry`) | 4 READY trên prod (93 dòng render ở máy local) | Mới phủ vài sản phẩm custom. |
+| File in đã làm (`DesignArtwork`) | 2.993 file in, khoảng 25 GB trên Drive; 908 mockup | Lưu theo đơn (LIT…), không theo SKU/variant, nên khó dùng lại. |
+| Font (`DesignFont`) | 1 | Font nằm trong PSD, trên máy designer, hoặc trang Customall. Mỗi đơn phải dò lại. |
+| PSD | NAS `\\TMTEAM\TEMPLATE\2026` (theo tháng, T5…T10, MERCHIZE…), `D:\Ecom manager\artwork-builder\<SKU>` (dựng bằng AI và Photoshop), Drive designer, Trello cũ | Không có quy ước tên. Cùng một mã nằm ở 3–4 nơi. |
+
+### Thời gian đang mất ở mỗi mẫu
+1. Tìm PSD hoặc template đúng: lục NAS, Trello, Drive, rồi hỏi designer.
+2. Xác định đúng blank: Crewneck hay V-Neck, kid hay adult, hoodie hay zip.
+3. Tìm font.
+4. Tải mockup PSD của xưởng để QA.
+5. Gỡ khóa duyệt do tên vùng in lệch.
+
+---
+
+## 2. Một thư mục gốc duy nhất: `\\TMTEAM\TEMPLATE\LIBRARY`
+
+Thư mục nằm trong share TEMPLATE đang dùng. Designer **không ghi thẳng** vào đây: mọi file vào thư viện đều đi qua tool và bước kiểm tra (mục 3.1). Chỉ worker ở máy văn phòng ghi vào thư mục này.
+
+```
+TEMPLATE\LIBRARY\
+  _staging\                       ← file nộp qua tool đang chờ kiểm tra/duyệt (worker ghi, không ai sửa tay)
+  _fonts\
+    <Family>\<Family>-<Style>.otf|ttf
+    fonts.json                    ← family, style, postscript, nguồn (Customall id / dafont / mua), license
+  templates\
+    <Product Type>\               ← loại sản phẩm chuẩn (mục 2.1): Crew Socks, Hoodie (AOP), Knitted Cardigan, Color Changing Mug…
+      <XƯỞNG> - <MÃ PHÔI>\        ← vd. MERCHIZE - MWHDVN, MANGO - WZ, JOMALL - PULLOVER-HOODIE
+      blank.json                  ← productType, typeCode, tên phôi của xưởng, size, màu, phương pháp in, link nguồn xưởng,
+                                     sản phẩm Jomall dùng chung template, luật riêng (mục 5)
+      template\
+        <BLANK>_<SIZE|ALL>_v<YYYYMMDD>.psd|tif   ← template gốc của xưởng (1 file / size hoặc ALL)
+        <BLANK>_<SIZE|ALL>_cutlines.png          ← đường cắt + vùng an toàn (làm artguide)
+      mockup\
+        <BLANK>_<GÓC>_v<YYYYMMDD>.psd            ← mockup PSD của xưởng; smart object tên chuẩn DESIGN / DESIGN_BACK…
+        mockup.json                              ← smart object nào nhận vùng in nào
+      _old\
+  products\
+    <MÃ SP>\                      ← DN1907262114, TN0309261821, HB21041432…
+      product.json                ← tên, store, link, danh sách variant → xưởng/blank (bản chụp mapping)
+      reference\                  ← ảnh listing, mockup gốc, preview khách (để QA)
+      artwork\
+        <SKU>-<Variant1>-<Variant2>-<XƯỞNG>-<YYYYMMDD>\
+          print\<VÙNG>.png|tif    ← file in phẳng đúng template (sản phẩm không custom: dùng luôn)
+          base\<VÙNG>.png|tif     ← file in KHÔNG có chữ custom (sản phẩm custom chữ): chỉ cần thêm chữ là in được
+          text.json               ← mỗi field: font, cỡ, màu, viền, vị trí/khung, căn lề, cong/warp, chữ mẫu đã duyệt
+          master.psd              ← PSD gốc (khi có); layer text đặt tên @<Field>
+          mockup\<GÓC>.jpg        ← mockup dựng từ file in bằng PSD xưởng (QA)
+          asset.json              ← loại asset, font, field, template/version, đơn nguồn (LIT…), kết quả kiểm tra, người duyệt
+      _old\
+```
+
+### 2.1 Product type chuẩn (khóa chung với Shopify)
+
+Template xếp theo **loại sản phẩm** trước, xưởng sau. Lý do:
+- Một loại có thể in ở nhiều xưởng (Hoodie AOP: Merchize MWHDVN, Jomall PULLOVER-HOODIE dùng cùng template).
+- Loại sản phẩm là thứ đồng bộ với `product_type` trên Shopify.
+
+Học theo familystore.com và macorner.co (đã đọc `products.json` ngày 29/10):
+- **`product_type` rõ ràng, mỗi loại một tên:**
+  - Familystore: Ornament, Mug, Crew Socks, Ugly Sweater, Quilted Bedding Set…
+  - Macorner: Socks, Mug, Hoodie, Cardigan, Tote Bag…
+- **Mã loại nằm trong SKU:**
+  - Familystore: `CU6102943OCS-OCS01-Custom Shape Ornament-3.5 inches-1PCS`.
+  - Macorner: `PR-XMA271002LNKL-SCSOCK-KID-10Y`.
+  - Shop mình đã có vài SKU theo kiểu này (`DN3009261002-HCS01-Crew Socks-…`), nhưng chỉ 54 trên khoảng 4.000 dòng đơn.
+- **Tag** thêm loại con và nhóm lớn (Crew Socks / Footwear).
+
+Hiện trạng shop: `product_type` đang lộn xộn, có lỗi gõ và trùng nghĩa ("3D Clothing" / "3D Clothingg", "2D Cothing", "AOP Product" / "AOP Products"…).
+
+Danh sách chuẩn nằm ở `tools/library/product_types.json`. Mỗi loại có:
+- **`name`:** tên thư mục, cũng là `product_type` đích trên Shopify.
+- **`code`:** mã loại 3 chữ để đưa vào SKU. Mã đã có trong SKU thì giữ (HCS = Crew Socks).
+- **`shopify`:** các `product_type` cũ sẽ gom về loại này.
+- **`blanks`:** các phôi xưởng của loại đó.
+
+Phôi chưa có loại nằm tạm ở `templates\_unsorted\`. Việc đổi `product_type` trên Shopify là việc riêng, làm dần khi anh duyệt danh sách.
+
+### Quy tắc đặt tên thư mục artwork
+- **Định dạng:** `SKU-Variant1-Variant2-Xưởng-NgàyThángNăm`, ví dụ `DN1907262114-HOODIE-TURQUOISE-MERCHIZE-20261029`.
+- **Variant không đổi artwork** (vd. size, khi sheet dùng chung mọi size) ghi `ALL`: `DN2508261111-VNECK-ALL-JOMALL-20261029`.
+- **Ngày** là ngày duyệt. Bản mới không ghi đè mà tạo thư mục ngày mới; bản cũ vào `_old` khi bị thay.
+- **Không dấu, không khoảng trắng,** viết HOA.
+- **Tên variant chuẩn hóa dần** (mục 4.4). Thư mục cũ giữ tên cũ, bảng alias trỏ tới nó; tool có nút đổi tên thư mục khi variant đó đã chuẩn hóa.
+
+### Chuyển dữ liệu cũ sang (giai đoạn 1)
+- **Copy, không di chuyển.** Script sao `\\TMTEAM\TEMPLATE\2026\MERCHIZE`, `D:\Ecom manager\artwork-builder\*`, `clipart-clones`, `clipart-originals` vào đúng chỗ, với trạng thái "chưa kiểm tra". Kèm báo cáo các file không xác định được mã.
+- **Giữ thư mục cũ** cho tới khi anh xác nhận.
+
+---
+
+## 3. Database trong tool: chỉ lưu metadata, file nằm ở NAS
+
+Tool không giữ PSD hay mockup xưởng. Worker ở máy văn phòng làm mọi việc nặng trên NAS; tool chỉ biết **file nào ở đâu, cho variant nào, đã kiểm tra và duyệt chưa**.
+
+### Bảng
+
+| Bảng | Một dòng là | Trường chính |
+|---|---|---|
+| `SupplierBlank` (mới) | 1 blank của 1 xưởng (MERCHIZE/MWHDVN) | `supplierId`, `code`, `name`, `nasDir`, `sizes`, `colors`, `rules`. Gom các `SupplierProduct` cùng blank. |
+| `PrintTemplate` (có sẵn, thêm trường) | 1 template in | Thêm `blankId`, `sizeScope` (ALL hoặc danh sách size), `version` (ngày), `nasPath`, `cutlinesPath`, `status` (ACTIVE/RETIRED). Tên vùng in là chuẩn mà file in phải theo đúng, kể cả hoa/thường. |
+| `SupplierMockup` (mới, chỉ metadata) | 1 mockup PSD của xưởng | `blankId`, `view` (FRONT/BACK/SIDE…), `nasPath`, `smartObjects` (smart object → vùng in), `version`. |
+| `ArtworkAsset` (thay dần `ArtworkEntry`) | 1 bộ artwork | `productCode`, `sku`, `variantKey` (chuẩn hóa dần), `supplierId`, `blankId`, `templateId` + version, `kind` (FLAT_PRINT / BASE_PLUS_TEXT / CUSTOM_PSD), `nasDir`, `sha256`, `fields`, `textSpec`, `fonts`, `status` (STAGING / CHECK_FAILED / WAITING_APPROVAL / APPROVED / RETIRED), `checks`, `sourceOrder` (LIT…), `submittedBy`, `approvedBy`, `approvedAt`. |
+| `FontAsset` (thay `DesignFont`) | 1 file font | `family`, `style`, `postscript`, `nasPath`, `sha256`, `source`, `license`. |
+| `VariantAlias` (mới) | 1 cách gọi variant | `raw` ("9 x 30 cm (For Kid)") → `normalized` (KID), theo store hoặc sản phẩm; `folderRenamed` (đã đổi tên thư mục chưa). |
+
+Dữ liệu đơn hàng giữ như hiện tại (`DesignArtwork` vẫn là file của từng đơn).
+
+### Ba loại asset, xếp theo tốc độ xử lý
+- **FLAT_PRINT:** sản phẩm không custom. File in phẳng được lưu, đơn sau dùng lại luôn link.
+- **BASE_PLUS_TEXT:** sản phẩm custom chữ (đa số). Lưu file in **không có chữ** (`base\`) và mô tả chữ (`text.json`). Đơn mới chỉ cần vẽ tên lên base, nhanh hơn nhiều so với mở PSD.
+  - **Font là phần bắt buộc:** asset không vào được thư viện nếu font chưa có trong `_fonts`.
+- **CUSTOM_PSD:** sản phẩm custom hình hoặc nhiều lớp (chọn nhân vật, đổi màu theo variant…), cần render PSD master.
+
+### 3.1 Nộp file qua tool và kiểm tra trước khi vào thư viện
+
+Designer nộp bằng nút "Lưu vào thư viện" trên task (sau khi đơn được duyệt), hoặc trên trang Thư viện. Không ai chép tay vào NAS.
+
+1. **Chọn:** tool đã biết sản phẩm, SKU, variant, xưởng và template từ dòng đơn, nên tự đặt tên thư mục. Designer chỉ chọn loại asset và tải file.
+   - FLAT_PRINT: file in.
+   - BASE_PLUS_TEXT: base, font, rồi điền vị trí và kiểu chữ (hoặc tải PSD để tool đọc ra `text.json`).
+   - CUSTOM_PSD: PSD và font.
+2. **Đặt chỗ:** file vào `_staging`. Worker ở máy văn phòng kéo về, kiểm tra, rồi trả kết quả từng mục lên tool.
+3. **Kiểm tra tự động:**
+   - **Mọi loại:**
+     - khổ px, dpi, hệ màu đúng template từng vùng;
+     - tên vùng khớp template (kể cả hoa/thường);
+     - đủ mọi vùng;
+     - không vượt vùng an toàn (cảnh báo).
+   - **CUSTOM_PSD (layer custom):**
+     - có đủ layer @Field cho mọi field khách nhập của sản phẩm (đối chiếu field Customall/YMQ/builder, tên field giữ như bản cũ);
+     - layer @Field là layer text thật, không bị rasterize;
+     - không còn chữ mẫu ở layer ẩn hoặc hiện;
+     - render thử với chữ dài nhất từng gặp mà chữ không tràn khung;
+     - mọi font PSD dùng đều có trong `_fonts`, thiếu thì chặn.
+   - **BASE_PLUS_TEXT:**
+     - base không còn chữ custom (so với bản in cũ có chữ);
+     - `text.json` đủ font, cỡ, màu, vị trí;
+     - render thử một tên ngắn và một tên dài, đặt cạnh mockup listing.
+   - **Mockup QA:** dựng từ PSD mockup của xưởng (nếu blank đã có), đặt cạnh mockup listing hoặc preview.
+4. **Duyệt:** leader xem ảnh kiểm tra và bấm duyệt. Lúc đó worker mới chuyển từ `_staging` vào đúng thư mục `SKU-Variant1-Variant2-Xưởng-Ngày`. Bản cũ cùng chỗ vào `_old`.
+5. **Không đạt:** trả lại designer kèm lý do từng mục; file vẫn ở `_staging`.
+
+Khi một đơn được duyệt mà chưa có asset cho SKU/variant/xưởng đó, tool gợi ý "Lưu vào thư viện" (không tự lưu).
+
+---
+
+## 4. Kiến trúc truy xuất nhanh
+
+### 4.1 Chỉ mục hai tầng
+- **Ở máy văn phòng:** worker quét `LIBRARY` (nhanh nhờ cache hash theo path + size + mtime, như `nas.py` đang làm), giữ một chỉ mục SQLite local và đẩy metadata lên tool. File không rời NAS. Bản sao nóng lưu trên SSD theo sha256.
+- **Trên tool:** các bảng ở mục 3 có index theo `(productCode, variantKey, supplierId)` và `(blankId)`. Tra một đơn chỉ là 1–2 query.
+
+### 4.2 Thứ tự tìm file cho một dòng đơn mới
+1. **Khớp tuyệt đối:** `ArtworkAsset` APPROVED cùng SKU, variant và xưởng.
+   - FLAT_PRINT: dùng lại luôn link file in (quy tắc "no-custom = one link").
+   - BASE_PLUS_TEXT: vẽ tên lên base bằng font đã lưu (không cần Photoshop mở PSD), rồi QA.
+   - CUSTOM_PSD: render PSD master.
+2. **Cùng sản phẩm, variant khác nhưng cùng sheet** (Mango sheet chữ nhật dùng cho mọi size, áo kid KWY…): dùng lại theo luật trong `blank.json`.
+3. **Cùng mã thiết kế, xưởng khác:** báo "cần dàn lại theo template X", đính kèm asset gần nhất.
+4. **Không có gì:** mở task cho designer, đính sẵn ảnh listing, template và cutlines đúng size, asset gần nhất, font và mockup PSD xưởng. Designer không phải đi tìm.
+
+### 4.3 Kiểm tra trước khi giao việc
+Mỗi sản phẩm có trạng thái sẵn sàng 5 ô: Template, Mockup xưởng, Artwork, Font, Mapping variant. Trang tổng hợp lọc được "sản phẩm đang có đơn nhưng thiếu ô nào". Worker quét lại mỗi đêm, hoặc khi anh bấm.
+
+### 4.4 Chuẩn hóa variant (làm dần)
+Bảng `VariantAlias` đổi mọi cách ghi về một mã: `Hoodie / Red / S` → `HOODIE-RED-S`, `9 x 30 cm (For Kid)` → `KID`, `Knitted Cardigan V-Neck` → `VNECK`.
+- **Lợi ích:** tên thư mục đúng một kiểu, luật dùng lại sheet chạy đúng, không còn chọn nhầm template do đọc mỗi SKU.
+- **Thời gian chuyển:** tra theo cả tên cũ lẫn mã chuẩn. Mỗi lần một sản phẩm có đơn, tool đề xuất mã chuẩn; anh hoặc leader xác nhận thì đổi tên thư mục.
+
+### 4.5 Một lệnh xử lý đơn
+Mở rộng `process-new-orders` thành chuỗi: snapshot → tra thư viện (4.2) → render (BASE_PLUS_TEXT bằng font, CUSTOM_PSD bằng Photoshop local) → dựng mockup từ PSD xưởng → ảnh QA (file in, mockup xưởng, mockup listing đặt cạnh nhau) → đẩy REVIEW, mỗi chunk một dòng → anh duyệt trên prod.
+- **Song song:** 2–3 việc một lúc. Photoshop mở một lần, dùng cho nhiều việc.
+
+---
+
+## 5. Kinh nghiệm rút ra khi làm mẫu (đưa thành luật trong tool)
+
+1. **Đọc tên sản phẩm và variant trước khi chọn template,** không chỉ đọc SKU. Đã nhầm Crewneck với V-Neck, kid với adult, hoodie với zip, và áo len P-nust bị map nhầm sang Hoodie. Template phải gắn với blank và size, kèm ảnh nhận diện.
+2. **Một sheet có thể có nhiều đường cắt khác tỉ lệ** (túi QTTB, size M khác L): template theo size range, kèm cutlines để phủ lên kiểm.
+3. **Tên vùng in phải khớp template từng chữ,** kể cả hoa/thường. Lệch tên làm khóa duyệt và để file cũ nằm lại thư mục xưởng (20 dòng ngày 29/10). Kiểm tra ngay lúc nộp.
+4. **Pin template trong profile sản phẩm thắng mọi luật SKU,** nên phải hiện rõ; pin sai từng khóa 10 dòng.
+5. **Font lấy từ nguồn,** theo thứ tự: OTF mà Customall tải về; nếu không có thì so ứng viên với bản in cũ. Lưu font cạnh artwork, ghi license (Lastgirl chỉ là bản demo).
+6. **Thay PSD thì giữ tên @Field cũ,** nếu không thì render mất chữ (LIT5541).
+7. **Không custom thì dùng một link** cho mọi đơn của thiết kế đó; không upload một bản cho mỗi đơn.
+8. **Vẽ lại bằng AI:**
+   - Dùng GPT Image 2.5 trước.
+   - GPT từ chối nhân vật bản quyền (Pooh, Star Wars) thì chuyển sang seedream và ghi lại nguồn.
+   - Họa tiết giả thêu, giả len phải giữ hiệu ứng.
+   - Nền tách lớp riêng; không dùng content-aware fill, vì nó kéo chữ ra mép.
+9. **Đặc thù từng loại hàng:**
+   - **Vớ:** đế quay 180° và chẻ đôi ở đường nối.
+   - **Cốc:** chữ nằm trong safe zone, in hai mặt ở 1/4 và 3/4 vòng cốc.
+   - **Hoodie Jomall:** ô giữa trên của sheet là mặt ngoài mũ.
+   - **Merchize:** cốc nhập về bị trống trường size.
+
+   Ghi vào `blank.json` để worker tự kiểm.
+10. **QA bằng mockup PSD của xưởng,** đặt cạnh mockup listing, trước khi đẩy. Bắt được lỗi logo cắt ở đường may và chữ sát mép.
+11. **So file CMYK của designer phải qua ICC;** chuyển màu kiểu thô làm màu xỉn giả.
+12. **Mỗi lần ghi prod, một dòng một chunk,** VPS yếu; worker và render chỉ chạy ở máy văn phòng.
+
+---
+
+## 6. Các giai đoạn
+
+| Giai đoạn | Việc | Ước lượng |
+|---|---|---|
+| **1. Thư mục + font** | Tạo `\\TMTEAM\TEMPLATE\LIBRARY` theo mục 2. Script copy dữ liệu cũ vào đúng chỗ (trạng thái "chưa kiểm tra"), kèm báo cáo file lạc. Gom font từ PSD, Customall và máy designer vào `_fonts` (font là ưu tiên số 1). | 1–2 ngày |
+| **2. Database + nộp file có kiểm tra** | Thêm bảng ở mục 3 và migration. Luồng nộp qua tool và các bước kiểm tra ở mục 3.1. Worker quét LIBRARY rồi đẩy metadata. Trang "Thư viện": tìm theo SKU, variant, xưởng; xem template, cutlines, mockup; duyệt asset. | 3–4 ngày |
+| **3. Truy xuất** | Bộ tra 4.2 trong `process-new-orders`, kèm render BASE_PLUS_TEXT. Gợi ý lưu asset khi đơn được duyệt. Trang sẵn sàng 5 ô. Bảng chuẩn hóa variant (làm dần). | 2–3 ngày |
+| **4. Bổ sung dần** | Mockup PSD cho các blank chạy nhiều (Merchize MWHDVN/T5HAVN/11MMUS, Mango WZ/GAF/BTX, Jomall CREWNECK/V-NECK). Cho dữ liệu cũ (trạng thái "chưa kiểm tra") qua bước kiểm tra theo đơn phát sinh. Chuẩn hóa variant và đổi tên thư mục dần. | làm dần theo đơn |
+
+Mỗi giai đoạn chạy được độc lập. Giai đoạn 1 đã đỡ việc tìm file và font ngay cả khi chưa có giai đoạn 2.
+
+---
+
+### 6.1 Đẩy toàn bộ template file in lên tool (sau khi thư viện template đủ)
+
+Mục tiêu: mỗi phôi xưởng trong `templates\` có template in trên tool, gồm khổ, dpi, các vùng in và artguide (cutlines). Template được gắn đúng variant xưởng, để mọi đơn mở ra đã có khung in đúng. Hiện chỉ 116 trên 1.091 variant xưởng có template.
+
+1. **Đọc template.** Worker ở máy văn phòng đọc file template của từng phôi (PSD/TIF/PDF) và lấy ra:
+   - khổ px và dpi;
+   - các vùng in, từ tên layer hoặc nhóm (FRONT, BACK, LEFT SLEEVE… chuẩn hóa tên vùng);
+   - đường cắt và vùng an toàn, xuất thành `cutlines.png`;
+   - template theo size, nếu xưởng có file riêng cho từng size.
+
+   Kết quả ghi vào `blank.json` để anh xem lại được.
+2. **So với dữ liệu thật.** Đối chiếu với file in đã in thành công trên các đơn cũ cùng phôi (khổ, số vùng). Lệch thì đánh dấu, không đẩy.
+3. **So với prod.** Dry-run so với 52 template đang có:
+   - template mới thì tạo;
+   - template đã có và đã chỉnh tay (KNCA, MWHDVN, WZ…) thì chỉ đề xuất cập nhật, không ghi đè;
+   - in ra danh sách thay đổi.
+4. **Đẩy từng phôi một** (VPS yếu, mỗi lần một chunk), kèm sao lưu DB. Mỗi phôi tạo hoặc cập nhật:
+   - `PrintTemplate`: tên `<Product Type> — <XƯỞNG> <MÃ PHÔI> <size>`, `supplierSku`, khổ, dpi, vùng in, `guide.png` lấy từ cutlines;
+   - đường dẫn NAS của file gốc. File gốc không tải lên VPS, chỉ lưu đường dẫn.
+5. **Gắn variant xưởng.** Gắn `SupplierProduct.printTemplateId` cho các variant của phôi, theo size. Riêng Jomall dùng chung template Merchize, chỉ gắn khi đã xác nhận trên đơn (cờ `jomall.confirmed` trong `blank.json`).
+6. **Kiểm tra sau khi đẩy.** Mở 1–2 task mẫu mỗi phôi xem khung in đúng; chạy lại kiểm tra khóa duyệt cho các dòng đang mở.
+
+Thứ tự đẩy:
+1. Các phôi đang có đơn mở trước (Merchize MWHDVN, MWSSVN, KNCAVN, BAJEVN, 11MMUS; Mango WZ).
+2. Phần còn lại theo số đơn 30 ngày.
+
+Mỗi đợt ghi prod cần anh gõ lệnh cho phép.
+
+### 6.2 Sửa mapping trên tool để đồng bộ product type (làm trước khi đổi gì trên Shopify)
+
+**Hiện trạng (prod, 29/10/2026).** Mapping khóa trực tiếp bằng chuỗi `product_type` của Shopify:
+- **`ProductBase`:** 164 base, khớp theo `shopifyProductType` cộng điều kiện variant, với 159 liên kết xưởng và 525 override. Có tới 110 chuỗi product type khác nhau:
+  - "3D Clothing" (9 base) cạnh "3D Clothingg" (7), "3D Clothing Print" (3);
+  - "AOP Product" (5) cạnh "AOP Shirttt" (5);
+  - "2D Print Cothing" (4)…
+- **Resolver:** so khớp tên theo đúng chữ (chỉ bỏ qua hoa/thường và khoảng trắng). Đổi product_type trên Shopify trước là đơn mới gãy mapping ngay.
+- **Mapping tay:** 52 mapping theo variant (`VariantManualMapping`) và 18 profile sản phẩm có override/pin template.
+- **Template:** gắn từng variant xưởng (`SupplierProduct.printTemplateId`), chỉ 116 trên 1.091 có. Jomall dùng chung template Merchize nhưng phải gắn lại tay.
+- **Dòng chưa map 30 ngày:** phần lớn là dòng phụ, không phải sản phẩm: "Custom Text" 511, Kaching upsell 188, không có type 121. Sản phẩm thật chưa map chỉ khoảng 20 dòng.
+
+**Nguyên tắc:** tool chuyển sang khóa bằng **product type chuẩn có bảng tên gọi khác**. Tên cũ và tên mới trên Shopify đều map được. Chỉ đổi Shopify sau khi tool đã chạy bằng khóa mới.
+
+**Các bước:**
+1. **Bảng `ProductType`** (mới):
+   - các trường: `name` (chuẩn), `code` (3 chữ), `aliases` (mọi chuỗi product_type cũ và mới), `kind` (PRODUCT / ADDON);
+   - thêm `ProductBase.productTypeId`.
+
+   Resolver đổi thành: product_type của dòng → alias → type chuẩn → các base của type đó. Chuỗi cũ vẫn chạy. Các type phụ ("Custom Text", "Kaching Cart Upsell Toggle", "PPLR_HIDDEN_PRODUCT") gắn `kind = ADDON`, không còn tính là chưa map.
+2. **Gom 110 chuỗi về danh sách chuẩn:**
+   - mở rộng `product_types.json` cho các loại chưa có phôi Merchize: Car Seat Cover, Leather Bag, Phone Case, Tumbler, Ornament, Spare Tire Cover…;
+   - script đề xuất type chuẩn cho từng chuỗi, anh duyệt bảng;
+   - **hợp nhất** các `ProductBase` trùng (cùng type chuẩn và cùng điều kiện variant). Base nào trùng mà trỏ khác xưởng thì liệt kê để anh chọn, không tự gộp.
+3. **Phôi xưởng `SupplierBlank`:**
+   - gắn `SupplierProduct.blankId`, rồi tìm template theo **phôi + size** thay vì gắn từng variant;
+   - Jomall dùng template Merchize qua quan hệ phôi tương đương, chỉ khi đã xác nhận trên đơn;
+   - rà lại 18 profile: pin template chỉ giữ khi thật sự riêng cho sản phẩm đó.
+4. **Chuẩn hóa variant trong điều kiện và override** bằng `VariantAlias` (vd. "9 x 30 cm (For Kid)" → KID). Override không gãy khi Shopify đổi tên option.
+5. **Chạy song song để kiểm chứng (shadow):** chạy resolver cũ và mới trên mọi dòng đơn 60 ngày và mọi đơn đang mở.
+   - Kết quả phải giống nhau. Chỗ khác phải là chỗ sửa đúng, có danh sách để anh duyệt.
+   - Bật resolver mới bằng cờ, theo dõi 2–3 ngày; resolver cũ giữ để quay lại được.
+6. **Lúc đó mới đổi Shopify:**
+   - đổi `product_type` từng loại một qua Admin API (anh duyệt từng đợt), kiểm tra đơn mới vẫn map đúng;
+   - **không đổi SKU cũ**, vì `SkuSupplierDesign` và link thiết kế khóa theo SKU. Mã loại 3 chữ chỉ áp dụng cho sản phẩm mới.
+7. **Trang Mapping trên tool:**
+   - hiện type chuẩn, các tên gọi khác, phôi và template theo size;
+   - lọc "dòng đang mở chưa map" chỉ tính sản phẩm thật.
+
+**Thứ tự với 6.1:** bước 1–3 ở đây (schema và phôi) làm trước, rồi mới đẩy template theo phôi (6.1). Bước 5–6 làm sau khi template đã đủ. Mỗi bước có ghi prod đều cần sao lưu và anh gõ lệnh cho phép.
+
+## 7. Không làm
+- **Tool không lưu PSD hay mockup xưởng,** chỉ lưu đường dẫn, hash và kết quả kiểm tra. File in của đơn vẫn lên Drive như hiện tại.
+- **Không ai ghi tay vào `LIBRARY`;** chỉ worker ghi, sau khi qua kiểm tra và được duyệt.
+- **Không xóa thư mục cũ** khi chưa có xác nhận.
+- **Không tự đổi xưởng hay template trên prod** khi chưa có lệnh của anh.
+
+## 8. Đã chốt với chủ shop (29/10/2026)
+1. **Thư mục gốc** nằm trong share TEMPLATE: `\\TMTEAM\TEMPLATE\LIBRARY`.
+2. **Designer nộp qua tool có kiểm soát,** để bảo đảm đúng cấu trúc. Trước khi lưu vào thư viện phải qua bước kiểm tra, ví dụ đã làm đúng layer custom chưa (mục 3.1).
+3. **Lưu file in không custom** để xử lý nhanh khi cần. Với sản phẩm chỉ custom chữ, lưu file in không có chữ và lưu font, vì xử lý như vậy nhanh hơn mở PSD. Font là phần quan trọng nhất cần lưu.
+4. **Variant chuẩn hóa dần,** đổi tên thư mục dần; bảng alias trỏ tên cũ sang tên chuẩn trong thời gian chuyển.

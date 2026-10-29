@@ -55,6 +55,32 @@ function normalize(v: string): string {
   return v.toLowerCase().trim()
 }
 
+/**
+ * Other names of a standard product type (ProductType.aliases): normalised alias -> normalised standard name.
+ * "3D Clothing", "3D Clothingg" and "AOP Apparel" then all mean one listing type, so a base saved under an old Shopify
+ * product_type still answers lines that carry the new one, and the other way round. Without the map a type is its own string.
+ */
+export type TypeAliases = Map<string, string>
+
+export function buildTypeAliases(types: Array<{ name: string; aliases: string | string[] }>): TypeAliases {
+  const map: TypeAliases = new Map()
+  for (const t of types) {
+    const standard = typeKey(t.name)
+    let list: unknown = t.aliases
+    if (typeof list === 'string') {
+      try { list = JSON.parse(list) } catch { list = [] }
+    }
+    map.set(standard, standard)
+    for (const a of Array.isArray(list) ? list : []) if (typeof a === 'string' && a.trim()) map.set(typeKey(a), standard)
+  }
+  return map
+}
+
+export function typeKey(productType: string, aliases?: TypeAliases | null): string {
+  const n = normalize(productType).replace(/\s+/g, ' ')
+  return aliases?.get(n) ?? n
+}
+
 function normalizeComparableValue(v: string): string {
   const normalized = normalize(v)
   return normalized.endsWith('s') ? normalized.slice(0, -1) : normalized
@@ -68,8 +94,9 @@ export function matchesProductBase(
   shopifyProductType: string,
   variantOptions: Record<string, string>,
   base: ProductBaseData,
+  aliases?: TypeAliases | null,
 ): boolean {
-  if (normalize(shopifyProductType) !== normalize(base.shopifyProductType)) return false
+  if (typeKey(shopifyProductType, aliases) !== typeKey(base.shopifyProductType, aliases)) return false
   let conditions: VariantCondition[]
   try {
     conditions = JSON.parse(base.variantConditions)
@@ -97,8 +124,9 @@ export function matchesProductBaseIgnoring(
   variantOptions: Record<string, string>,
   base: ProductBaseData,
   ignoredOptionNames: Set<string>,
+  aliases?: TypeAliases | null,
 ): boolean {
-  if (normalize(shopifyProductType) !== normalize(base.shopifyProductType)) return false
+  if (typeKey(shopifyProductType, aliases) !== typeKey(base.shopifyProductType, aliases)) return false
   let conditions: VariantCondition[]
   try {
     conditions = JSON.parse(base.variantConditions)
@@ -268,6 +296,7 @@ export function resolveByProductBase(
   manualMappings: VariantManualMappingData[],
   profile?: ProductProfileResolveData | null,
   shipTo?: string | null,
+  aliases?: TypeAliases | null,
 ): ResolveResult {
   if (shopifyVariantId) {
     const manual = manualMappings.find(m => m.shopifyVariantId === shopifyVariantId)
@@ -287,10 +316,9 @@ export function resolveByProductBase(
     return { supplierProductId: null, resolvedVia: 'unresolved' }
   }
 
-  const sameType = productBases.filter(
-    b => normalize(b.shopifyProductType) === normalize(shopifyProductType),
-  )
-  const matching = sameType.filter(b => matchesProductBase(shopifyProductType, variantOptions, b))
+  const lineType = typeKey(shopifyProductType, aliases)
+  const sameType = productBases.filter(b => typeKey(b.shopifyProductType, aliases) === lineType)
+  const matching = sameType.filter(b => matchesProductBase(shopifyProductType, variantOptions, b, aliases))
   const ambiguousBaseIds = matching.length > 1 ? matching.map(b => b.id) : undefined
 
   // An override only speaks for its own base. Scanning every base of the productType (as this
@@ -306,7 +334,7 @@ export function resolveByProductBase(
       }
       if (!matchesAttributeCombo(combo, variantOptions)) continue
       const pinned = new Set(Object.keys(combo).map(normalize))
-      if (!matchesProductBaseIgnoring(shopifyProductType, variantOptions, base, pinned)) continue
+      if (!matchesProductBaseIgnoring(shopifyProductType, variantOptions, base, pinned, aliases)) continue
       return { supplierProductId: override.supplierProductId, resolvedVia: 'product_base_override', ambiguousBaseIds }
     }
   }

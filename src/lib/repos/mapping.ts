@@ -5,6 +5,8 @@ import {
   type ProductBaseData,
   type ProductProfileResolveData,
   type VariantManualMappingData,
+  type TypeAliases,
+  buildTypeAliases,
 } from '@/lib/product-mapping'
 import { isNonProductLine } from '@/lib/order-lines'
 import { designReadyHolds } from '@/lib/design-library'
@@ -110,6 +112,12 @@ export async function deleteProductBase(id: string) {
 }
 
 // ── Load all data for resolver (called during sync) ──────────────────────
+
+/** ProductType name + aliases -> the standard name, for resolveByProductBase. Empty while no ProductType exists (old behaviour). */
+export async function loadTypeAliasesForResolver(): Promise<TypeAliases> {
+  const rows = await prisma.productType.findMany({ select: { name: true, aliases: true } })
+  return buildTypeAliases(rows)
+}
 
 export async function loadProductBasesForResolver(): Promise<ProductBaseData[]> {
   const bases = await prisma.productBase.findMany({
