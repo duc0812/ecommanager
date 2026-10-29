@@ -2,38 +2,75 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Sidebar from '@/components/Sidebar'
-import type { Me, Readiness, TaskDetail, TaskRow } from './components/types'
+import type { Me, TaskDetail, TaskRow } from './components/types'
 import { emptyQueueText, isRetryable, postJson, requestJson, retryDelay, taskImages, taskUrl } from './components/model'
+import { machineQa } from './components/ai-qa'
 import { LightboxProvider } from './components/Lightbox'
-import Queue from './components/Queue'
+import Queue, { type QueueFilter } from './components/Queue'
 import TaskHeader from './components/TaskHeader'
-import ImagePanes from './components/ImagePanes'
-import LowerGrid from './components/LowerGrid'
+import CustomerInputs from './components/CustomerInputs'
+import ArtworkPanel from './components/ArtworkPanel'
+import CompareRow from './components/CompareRow'
+import AiQaPanel from './components/AiQaPanel'
+import ActivityPanel from './components/ActivityPanel'
 import ReviewGrid from './components/ReviewGrid'
 import HandoffGrid from './components/HandoffGrid'
 import SentGrid from './components/SentGrid'
 import DriveHealthBanner from './components/DriveHealthBanner'
-import { ErrorBanner, Icon, Note, READY_META, btnPrimary, card } from './components/ui'
+import { ToastProvider, useToast } from './components/overlay'
+import { useShopifyRefresh } from './components/useShopifyRefresh'
+import { ErrorBanner, Icon, READY_META, card, fmtDate, fmtDateTime } from './components/ui'
 
-type Filter = 'ALL' | Readiness
 type Mode = 'work' | 'review' | 'handoff' | 'sent'
 
 const DRIVE_BADGE_POLL_MS = [4000, 8000, 15000, 30000, 60000, 120000]
 const DRIVE_BADGE_WINDOW_MS = 15 * 60 * 1000
 
-function fmtSyncTime(iso: string) {
-  return new Date(iso).toLocaleString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric', hour: 'numeric', minute: '2-digit' })
+function Banners({ detail }: { detail: TaskDetail }) {
+  const { task } = detail
+  const last = (type: string) => [...detail.events].reverse().find(e => e.type === type)
+  if (task.status === 'REJECTED') {
+    const ev = last('REJECT')
+    return (
+      <div role="alert" className="flex items-start gap-sm rounded-xl bg-error-container/50 border border-error/30 px-md py-sm">
+        <Icon name="assignment_return" className="text-[22px] text-error" />
+        <div className="flex-1 min-w-0 flex flex-col gap-[2px] text-body-sm">
+          <span className="font-semibold text-on-error-container">Bị trả lại: {task.rejectReasons.join(', ') || '—'}</span>
+          {task.rejectNote && <span className="text-on-surface">{task.rejectNote}</span>}
+          {ev && <span className="text-label-sm text-on-surface-variant">{ev.actorName ?? 'Hệ thống'} · {fmtDate(ev.createdAt)}</span>}
+        </div>
+      </div>
+    )
+  }
+  if (task.status === 'ASK_CUSTOMER') {
+    const ev = last('ASK')
+    return (
+      <div role="status" className="flex items-start gap-sm rounded-xl bg-amber-50 border border-amber-200 px-md py-sm">
+        <Icon name="contact_support" className="text-[22px] text-amber-800" />
+        <div className="flex-1 min-w-0 flex flex-col gap-[2px] text-body-sm">
+          <span className="font-semibold text-amber-950">Đang chờ khách trả lời</span>
+          {ev && <span className="text-on-surface">{ev.message.replace(/^Hỏi khách:\s*/, '')}</span>}
+          {ev && <span className="text-label-sm text-on-surface-variant">{ev.actorName ?? 'Hệ thống'} hỏi · {fmtDateTime(ev.createdAt)}</span>}
+        </div>
+      </div>
+    )
+  }
+  return null
 }
 
-function Flags({ detail }: { detail: TaskDetail }) {
-  const { task } = detail
+function TaskWorkspace({ detail, holdCount, onChanged }: { detail: TaskDetail; holdCount: Record<string, number>; onChanged: () => void }) {
+  const { refreshing, refresh } = useShopifyRefresh(detail.task.orderId, onChanged)
+  const qa = useMemo(() => machineQa(detail), [detail])
+  const key = detail.task.taskKey
   return (
     <>
-      {task.status === 'REJECTED' && (
-        <Note tone="bad" icon="undo">
-          <b>Bị trả lại:</b> {task.rejectReasons.join(', ') || '—'}{task.rejectNote ? ` — ${task.rejectNote}` : ''}
-        </Note>
-      )}
+      <Banners detail={detail} />
+      <TaskHeader key={`h-${key}`} detail={detail} qa={qa} holdCount={holdCount} refreshing={refreshing} onRefresh={refresh} onChanged={onChanged} />
+      <CustomerInputs key={`c-${key}`} detail={detail} refreshing={refreshing} onRefresh={refresh} onChanged={onChanged} />
+      <ArtworkPanel key={`a-${key}`} detail={detail} onChanged={onChanged} />
+      <CompareRow key={`m-${key}`} detail={detail} onChanged={onChanged} />
+      <AiQaPanel qa={qa} />
+      <ActivityPanel key={`e-${key}`} detail={detail} onChanged={onChanged} />
     </>
   )
 }
@@ -42,9 +79,10 @@ function DesignTasks() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const paramTask = searchParams.get('task')
+  const toast = useToast()
 
   const [tasks, setTasks] = useState<TaskRow[]>([])
-  const [me, setMe] = useState<Me | null>(null)
+  const [, setMe] = useState<Me | null>(null)
   const [handoffCount, setHandoffCount] = useState(0)
   const [listLoading, setListLoading] = useState(false)
   const [listError, setListError] = useState('')
@@ -52,14 +90,13 @@ function DesignTasks() {
   const [mode, setMode] = useState<Mode>('work')
   const [reviewVersion, setReviewVersion] = useState(0)
   const [sel, setSel] = useState<string | null>(paramTask)
-  const [filter, setFilter] = useState<Filter>('ALL')
+  const [filter, setFilter] = useState<QueueFilter>('ALL')
   const [mine, setMine] = useState(false)
   const [q, setQ] = useState('')
   const [debouncedQ, setDebouncedQ] = useState('')
   const [detail, setDetail] = useState<TaskDetail | null>(null)
   const [detailError, setDetailError] = useState('')
   const [syncing, setSyncing] = useState(false)
-  const [syncMsg, setSyncMsg] = useState('')
   const [syncError, setSyncError] = useState('')
   const [lastSync, setLastSync] = useState<{ ranAt: string; trigger: string; error: string | null } | null>(null)
   const listReq = useRef(0)
@@ -155,13 +192,13 @@ function DesignTasks() {
   }, [])
 
   async function sync() {
-    setSyncing(true); setSyncMsg(''); setSyncError('')
+    setSyncing(true); setSyncError('')
     const r = await postJson<{ created: number; cancelled: number; completed: number; reopened: number; orders: number; refresh?: { refreshed: number; notFound: number; otherStore: number; deferred?: number; error: string | null }; errors?: string[] }>('/api/design-studio/tasks/sync', {})
     setSyncing(false)
     if (!r.ok) { setSyncError(r.error); return }
     const rf = r.data.refresh
     if (rf?.error) setSyncError(`Nạp từ Shopify lỗi: ${rf.error}`)
-    setSyncMsg(`${r.data.orders} đơn · nạp Shopify ${rf?.refreshed ?? 0}${rf?.notFound ? ` (không thấy ${rf.notFound})` : ''}${rf?.otherStore ? ` · store khác ${rf.otherStore}` : ''}${rf?.deferred ? ` · để lượt sau ${rf.deferred}` : ''} · tạo ${r.data.created} · huỷ ${r.data.cancelled} · xong ${r.data.completed} · mở lại ${r.data.reopened}${r.data.errors?.length ? ` · lỗi ${r.data.errors.length}` : ''}`)
+    toast.say(`${r.data.orders} đơn · nạp Shopify ${rf?.refreshed ?? 0}${rf?.notFound ? ` (không thấy ${rf.notFound})` : ''}${rf?.otherStore ? ` · store khác ${rf.otherStore}` : ''}${rf?.deferred ? ` · để lượt sau ${rf.deferred}` : ''} · tạo ${r.data.created} · huỷ ${r.data.cancelled} · xong ${r.data.completed} · mở lại ${r.data.reopened}${r.data.errors?.length ? ` · lỗi ${r.data.errors.length}` : ''}`)
     loadList()
     setReviewVersion(v => v + 1)
   }
@@ -173,7 +210,7 @@ function DesignTasks() {
       AUTO: open.filter(t => t.readiness === 'AUTO').length,
       LOW: open.filter(t => t.readiness === 'LOW').length,
       MANUAL: open.filter(t => t.readiness === 'MANUAL').length,
-    } as Record<Filter, number>
+    } as Record<QueueFilter, number>
   }, [tasks])
 
   const reviewCount = useMemo(() => tasks.filter(t => t.status === 'REVIEW').length, [tasks])
@@ -206,67 +243,52 @@ function DesignTasks() {
     return () => clearTimeout(t)
   }, [current, loadDetail])
   const images = useMemo(() => (current ? taskImages(current) : []), [current])
-  const chipCls = (on: boolean) => `inline-flex items-center gap-xs rounded-full border px-sm py-[2px] text-label-sm ${on ? 'bg-secondary/10 text-secondary border-transparent font-semibold' : 'bg-surface-container-lowest border-outline-variant/40 text-on-surface-variant'}`
+
+  const tabs: { mode: Mode; label: string; count?: number; hot?: boolean; tip: string }[] = [
+    { mode: 'work', label: 'Làm task', tip: 'Màn làm từng task' },
+    { mode: 'review', label: 'Duyệt mẫu', count: reviewCount, hot: reviewCount > 0, tip: 'Xem và duyệt các mẫu đang chờ duyệt' },
+    { mode: 'handoff', label: 'Duyệt sản xuất', count: handoffCount, hot: handoffCount > 0, tip: 'Các đơn đã duyệt hết design, chờ gửi xưởng (API hoặc lưu chờ xuất CSV)' },
+    { mode: 'sent', label: 'Đã chuyển xưởng', tip: 'Các đơn đã gửi xưởng: chờ xuất CSV, đã xuất, đã gửi API, đã có tracking' },
+  ]
+  const syncTip = lastSync
+    ? `${lastSync.error ? `Lượt gần nhất lỗi: ${lastSync.error}` : `Tự đồng bộ mỗi 15 phút · lượt gần nhất ${lastSync.trigger === 'schedule' ? 'tự động' : 'bấm tay'}`} · ${fmtDateTime(lastSync.ranAt)}`
+    : 'Đồng bộ task từ Shopify'
 
   return (
     <>
-      <div className="flex items-center gap-md flex-wrap mb-md">
-        <h1 className="text-headline-lg text-on-surface">Design Tasks</h1>
-        <span className="text-label-sm text-on-surface-variant">Task ID = mã đơn_dòng · mỗi task là một dòng hàng cần file in</span>
-        <div className="flex items-center gap-xs flex-wrap">
-          {(['ALL', 'AUTO', 'LOW', 'MANUAL'] as Filter[]).map(f => (
-            <button key={f} type="button" aria-pressed={filter === f} onClick={() => setFilter(f)} className={chipCls(filter === f)}>
-              {f === 'ALL' ? 'Tất cả' : READY_META[f].label}
-              <span className="text-on-surface-variant font-normal">{counts[f]}</span>
-            </button>
-          ))}
-          <button type="button" aria-pressed={mine} onClick={() => setMine(!mine)} className={chipCls(mine)}>
-            <Icon name="person" className="text-[14px]" />Của tôi
-          </button>
-          <button type="button" aria-pressed={mode === 'review'} onClick={() => setMode(mode === 'review' ? 'work' : 'review')}
-            title={mode === 'review' ? 'Quay lại màn làm task' : 'Xem và duyệt các mẫu đang chờ duyệt'}
-            className={`inline-flex items-center gap-xs rounded-full border px-sm py-[2px] text-label-sm ${mode === 'review'
-              ? 'bg-secondary text-on-secondary border-transparent font-semibold'
-              : reviewCount > 0 ? 'bg-amber-100 text-amber-900 border-amber-300 font-semibold' : 'bg-surface-container-lowest border-outline-variant/40 text-on-surface-variant'}`}>
-            <Icon name="fact_check" className="text-[14px]" />Duyệt mẫu
-            <span className={mode === 'review' ? 'font-semibold' : reviewCount > 0 ? 'font-bold' : 'font-normal'}>{reviewCount}</span>
-          </button>
-          <button type="button" aria-pressed={mode === 'handoff'} onClick={() => setMode(mode === 'handoff' ? 'work' : 'handoff')}
-            title={mode === 'handoff' ? 'Quay lại màn làm task' : 'Các đơn đã duyệt hết design, chờ gửi xưởng (API hoặc lưu chờ xuất CSV)'}
-            className={`inline-flex items-center gap-xs rounded-full border px-sm py-[2px] text-label-sm ${mode === 'handoff'
-              ? 'bg-secondary text-on-secondary border-transparent font-semibold'
-              : handoffCount > 0 ? 'bg-emerald-100 text-emerald-900 border-emerald-300 font-semibold' : 'bg-surface-container-lowest border-outline-variant/40 text-on-surface-variant'}`}>
-            <Icon name="precision_manufacturing" className="text-[14px]" />Duyệt sản xuất
-            <span className={mode === 'handoff' ? 'font-semibold' : handoffCount > 0 ? 'font-bold' : 'font-normal'}>{handoffCount}</span>
-          </button>
-          <button type="button" aria-pressed={mode === 'sent'} onClick={() => setMode(mode === 'sent' ? 'work' : 'sent')}
-            title={mode === 'sent' ? 'Quay lại màn làm task' : 'Các đơn đã gửi xưởng: chờ xuất CSV, đã xuất, đã gửi API (còn huỷ được hay chưa), đã có tracking'}
-            className={`inline-flex items-center gap-xs rounded-full border px-sm py-[2px] text-label-sm ${mode === 'sent'
-              ? 'bg-secondary text-on-secondary border-transparent font-semibold'
-              : 'bg-surface-container-lowest border-outline-variant/40 text-on-surface-variant'}`}>
-            <Icon name="local_shipping" className="text-[14px]" />Đã chuyển xưởng
-          </button>
+      <div className="flex items-center gap-lg flex-wrap mb-md">
+        <div className="flex items-center gap-xs">
+          <h1 className="text-headline-sm text-on-surface">Design Tasks</h1>
+          <span role="img" aria-label="Giải thích Task ID" title="Task ID = mã đơn_dòng hàng (vd. LIT5000_1 = đơn #LIT5000, dòng 1) · mỗi task là một dòng hàng cần file in">
+            <Icon name="info" className="text-[18px] text-on-surface-variant" />
+          </span>
         </div>
-        <div className="ml-auto flex items-center gap-sm">
-          {me && <span className="text-label-sm text-on-surface-variant">{me.name} · {me.isLeader ? 'Leader' : 'Designer'}</span>}
-          {syncMsg && <span role="status" className="text-label-sm text-on-surface-variant">{syncMsg}</span>}
-          {lastSync && (
-            <span className={`text-label-sm ${lastSync.error ? 'text-error' : 'text-on-surface-variant'}`}
-              title={lastSync.error ? `Lượt gần nhất lỗi: ${lastSync.error}` : `Task tự đồng bộ mỗi 15 phút · lượt gần nhất ${lastSync.trigger === 'schedule' ? 'tự động' : 'bấm tay'}`}>
-              Đồng bộ lần cuối: {fmtSyncTime(lastSync.ranAt)}
-            </span>
-          )}
-          <button type="button" onClick={sync} disabled={syncing} className={`${btnPrimary} px-lg py-sm text-label-md`}>
-            <Icon name="sync" className={`text-[18px] ${syncing ? 'animate-spin' : ''}`} />{syncing ? 'Đang đồng bộ…' : 'Đồng bộ task'}
-          </button>
+        <div role="tablist" aria-label="Chế độ" className="flex items-center gap-xs">
+          {tabs.map(t => {
+            const on = mode === t.mode
+            return (
+              <button key={t.mode} type="button" role="tab" aria-selected={on} title={t.tip} onClick={() => setMode(t.mode)}
+                className={`inline-flex items-center gap-xs h-9 px-md rounded-lg text-body-sm font-semibold ${on ? 'bg-on-surface text-surface' : 'text-on-surface-variant hover:bg-surface-container-low'}`}>
+                {t.label}
+                {t.count !== undefined && (
+                  <span className={`inline-flex items-center h-5 px-[7px] rounded-full text-[11px] ${on ? 'bg-surface/20' : t.hot ? 'bg-amber-100 text-amber-900' : 'bg-surface-container text-on-surface-variant'}`}>{t.count}</span>
+                )}
+              </button>
+            )
+          })}
         </div>
+        <button type="button" onClick={sync} disabled={syncing} aria-label="Đồng bộ task từ Shopify" title={syncTip}
+          className={`ml-auto inline-grid place-items-center w-10 h-10 rounded-lg border bg-surface-container-lowest hover:bg-surface-container-low disabled:opacity-60 ${lastSync?.error ? 'border-error text-error' : 'border-outline-variant text-on-surface-variant'}`}>
+          <Icon name="sync" className={`text-[20px] ${syncing ? 'animate-spin' : ''}`} />
+        </button>
       </div>
       {syncError && <div className="mb-md"><ErrorBanner msg={syncError} onClose={() => setSyncError('')} /></div>}
       <DriveHealthBanner version={driveVersion} />
 
       <div className="grid grid-cols-[290px_minmax(0,1fr)] gap-md items-start">
         <Queue tasks={visible} sel={mode === 'work' ? sel : null} onSelect={selectTask} q={q} onQ={setQ} loading={listLoading} error={listError} retrying={retrying}
-          emptyText={filtered ? emptyText : 'Không có task'} onClearFilters={filtered ? clearFilters : null} />
+          emptyText={filtered ? emptyText : 'Không có task'} onClearFilters={filtered ? clearFilters : null}
+          filter={filter} onFilter={setFilter} counts={counts} mine={mine} onMine={setMine} />
         {mode === 'review' ? (
           <ReviewGrid mine={mine} q={debouncedQ} version={reviewVersion} onOpenTask={selectTask} onChanged={reload} />
         ) : mode === 'handoff' ? (
@@ -276,7 +298,7 @@ function DesignTasks() {
         ) : (
         <div className="flex flex-col gap-md min-w-0">
           {!sel && !listLoading && !listError && (
-            <div className={`${card} p-lg text-body-sm text-on-surface-variant`}>Chưa có task nào. Bấm &quot;Đồng bộ task&quot; để tạo task từ các đơn đang chờ design.</div>
+            <div className={`${card} p-lg text-body-sm text-on-surface-variant`}>Chưa có task nào. Bấm nút đồng bộ ở góc phải để tạo task từ các đơn đang chờ design.</div>
           )}
           {sel && detailError && (
             <div className={`${card} p-md`}><ErrorBanner msg={`${sel}: ${detailError}`} onClose={() => setDetailError('')} /></div>
@@ -288,10 +310,7 @@ function DesignTasks() {
           )}
           {current && (
             <LightboxProvider images={images}>
-              <Flags detail={current} />
-              <TaskHeader key={`h-${current.task.taskKey}`} detail={current} holdCount={holdCount} onChanged={reload} />
-              <ImagePanes key={`i-${current.task.taskKey}`} detail={current} onChanged={reload} />
-              <LowerGrid key={`l-${current.task.taskKey}`} detail={current} onChanged={reload} />
+              <TaskWorkspace detail={current} holdCount={holdCount} onChanged={reload} />
             </LightboxProvider>
           )}
         </div>
@@ -306,9 +325,11 @@ export default function DesignTasksPage() {
     <div className="flex min-h-screen bg-surface">
       <Sidebar />
       <main className="ml-[280px] flex-1 p-xl min-w-0">
-        <Suspense fallback={<div className="text-body-sm text-on-surface-variant">Đang tải…</div>}>
-          <DesignTasks />
-        </Suspense>
+        <ToastProvider>
+          <Suspense fallback={<div className="text-body-sm text-on-surface-variant">Đang tải…</div>}>
+            <DesignTasks />
+          </Suspense>
+        </ToastProvider>
       </main>
     </div>
   )

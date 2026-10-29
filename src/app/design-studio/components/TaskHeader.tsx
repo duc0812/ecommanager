@@ -1,189 +1,79 @@
 'use client'
-import { useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import Link from 'next/link'
 import type { TaskDetail, TransitionBody } from './types'
-import {
-  OWNED_MOVES, allSlotsFilled, canMove, copyText, filesMissingHint, layerForField, missingAreas, patchJson, postJson, productPageUrl, sourceEngine, taskUrl, timeLeft,
-} from './model'
-import { DriveFolderLink } from './ArtworkSlots'
-import { buildChecklist, type CheckItem, type CheckState } from './checklist'
-import { ARTWORK_ACCEPT, MOCKUP_ACCEPT, useArtworkUpload } from './useArtworkUpload'
-import type { FileKind } from './types'
-import { ErrorBanner, Icon, Pill, READY_META, STATUS_META, btn, btnPrimary, btnWarn, card, input } from './ui'
+import { OWNED_MOVES, allSlotsFilled, canMove, copyText, filesMissingHint, postJson, productPageUrl, sourceEngine, taskUrl, timeLeft } from './model'
+import { buildChecklist } from './checklist'
+import type { QaResult } from './ai-qa'
 import { pushChipLabel } from '@/lib/handoff-shared'
 import HandoffButton from './HandoffButton'
+import SupplierStrip from './SupplierStrip'
+import NextStepBar from './NextStepBar'
+import { PopoverHead, useDismiss, useToast } from './overlay'
+import {
+  Avatar, Icon, Pill, READY_META, STATUS_META, btnMd, btnPrimaryMd, field, fieldLabel, fmtDate, fmtDateTime, iconBtn, menuItem, popover,
+} from './ui'
 
-function hasNonAscii(s: string) { return /[^\x00-\x7F]/.test(s) }
-
-function fmtDate(iso: string) { return new Date(iso).toLocaleDateString('en-US') }
-function fmtDateTime(iso: string) { return new Date(iso).toLocaleString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric', hour: 'numeric', minute: '2-digit' }) }
-
-function CopyBtn({ value, label, onCopied }: { value: string; label: string; onCopied: (msg: string) => void }) {
-  return (
-    <button type="button" onClick={async () => onCopied(await copyText(value) ? `Đã chép "${value}"` : 'Không chép được')}
-      aria-label={`Chép ${label}`} title="Chép" className="text-on-surface-variant hover:text-secondary leading-none">
-      <Icon name="content_copy" className="text-[15px]" />
-    </button>
-  )
-}
-
-function CustomTable({ detail, onCopied }: { detail: TaskDetail; onCopied: (msg: string) => void }) {
-  const { line } = detail
-  if (!line.attributesLoaded) {
-    return <div className="text-body-sm text-on-surface-variant">Chưa có dữ liệu custom cho dòng này — bấm &quot;Nạp lại từ Shopify&quot;.</div>
-  }
-  if (line.personalization.length === 0) {
-    if (line.customallPending) {
-      return <div className="text-body-sm text-amber-900">Chưa lấy được text khách gõ từ Customall — bấm &quot;Nạp lại từ Shopify&quot;, đừng đọc tên từ ảnh mockup.</div>
-    }
-    return <div className="text-body-sm text-on-surface-variant">{line.customized ? 'Khách không nhập gì.' : 'Non-custom: 1 design cho SKU × xưởng.'}</div>
-  }
-  return (
-    <table className="w-full border-collapse text-body-sm">
-      <thead>
-        <tr className="text-label-sm text-on-surface-variant text-left border-b border-outline-variant/20">
-          <th className="px-xs py-xs font-medium w-6">#</th>
-          <th className="px-xs py-xs font-medium">Trường</th>
-          <th className="px-xs py-xs font-medium">Giá trị khách nhập</th>
-          <th className="px-xs py-xs font-medium">Layer</th>
-        </tr>
-      </thead>
-      <tbody>
-        {line.personalization.map((f, i) => (
-          <tr key={`${f.key}-${i}`} className="border-b border-outline-variant/20 last:border-b-0 align-top">
-            <td className="px-xs py-xs text-on-surface-variant">{i + 1}</td>
-            <td className="px-xs py-xs">
-              <span className="flex items-center gap-xs flex-wrap">
-                {f.key}
-                {f.source === 'customall' && <span title="Text khách gõ, lấy từ dữ liệu Customall lưu cho đơn này"><Pill tone="brand">Customall</Pill></span>}
-              </span>
-            </td>
-            <td className="px-xs py-xs">
-              <span className="flex items-center gap-xs flex-wrap">
-                <span className="font-mono font-semibold break-all text-on-surface">{f.value}</span>
-                <CopyBtn value={f.value} label={f.key} onCopied={onCopied} />
-                {hasNonAscii(f.value) && <Pill tone="bad">ký tự đặc biệt</Pill>}
-                {f.value.length > 14 && <Pill tone="warn">{f.value.length} ký tự</Pill>}
-              </span>
-            </td>
-            <td className="px-xs py-xs font-mono text-label-sm text-secondary"><LayerCell field={f.key} detail={detail} /></td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  )
-}
-
-function LayerCell({ field, detail }: { field: string; detail: TaskDetail }) {
-  const src = layerForField(field, detail.library, detail.profile?.layerMap)
-  switch (src.source) {
-    case 'none':
-    case 'guess':
-      return <span title={src.source === 'guess' ? 'Đoán theo tên trường — sản phẩm chưa có PSD' : undefined}>{src.layer}</span>
-    case 'library':
-      return (
-        <span className="inline-flex items-center gap-xs flex-wrap" title={`Theo PSD của sản phẩm${src.optionLabel ? ` (${src.optionLabel})` : ''}`}>
-          <Icon name="photo_library" className="text-[14px]" />{src.layer}
-          <span className="text-on-surface-variant">· {src.fit}{src.maxChars ? ` · ≤${src.maxChars}` : ''}</span>
-        </span>
-      )
-    case 'library-missing':
-      return (
-        <span className="inline-flex items-center gap-xs flex-wrap text-error" title="PSD của sản phẩm không có layer cho trường này">
-          <Icon name="layers_clear" className="text-[14px]" />PSD thiếu {src.layer}
-        </span>
-      )
-    case 'profile':
-      return (
-        <span className="inline-flex items-center gap-xs flex-wrap" title="Theo bảng layer cũ của hồ sơ">
-          <Icon name="inventory_2" className="text-[14px]" />{src.layer}
-          <span className="text-on-surface-variant">· {src.fit}{src.maxChars ? ` · ≤${src.maxChars}` : ''}</span>
-        </span>
-      )
-  }
-}
-
-function Fact({ icon, label, children }: { icon: string; label: string; children: ReactNode }) {
-  return (
-    <>
-      <dt className="flex items-center gap-xs text-on-surface-variant whitespace-nowrap"><Icon name={icon} className="text-[16px]" />{label}</dt>
-      <dd className="min-w-0 flex items-center gap-xs flex-wrap text-on-surface">{children}</dd>
-    </>
-  )
-}
-
-function CsNote({ detail, lastAsk, onChanged }: { detail: TaskDetail; lastAsk: string | null; onChanged: () => void }) {
-  const { line, task, me } = detail
-  const canEdit = me.isLeader || me.canEditNote === true
-  const [editing, setEditing] = useState(false)
-  const [draft, setDraft] = useState(line.designNote ?? '')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-
-  async function save(e: FormEvent) {
-    e.preventDefault()
-    if (busy) return
-    setBusy(true); setError('')
-    const r = await patchJson(taskUrl(task.taskKey), { designNote: draft.trim() || null })
-    setBusy(false)
-    if (!r.ok) { setError(r.error); return }
-    setEditing(false)
-    onChanged()
-  }
-
-  if (editing) {
-    return (
-      <form onSubmit={save} className="flex flex-col gap-xs w-full">
-        <textarea value={draft} onChange={e => setDraft(e.target.value)} rows={3} maxLength={2000} autoFocus aria-label="Ghi chú CS"
-          placeholder="Ghi chú của CS cho designer (để trống = xoá ghi chú)" className={`${input} w-full`} />
-        <span className="flex items-center gap-xs">
-          <button type="submit" className={btnPrimary} disabled={busy}><Icon name="save" className="text-[16px]" />{busy ? 'Đang lưu…' : 'Lưu'}</button>
-          <button type="button" className={btn} disabled={busy} onClick={() => { setEditing(false); setDraft(line.designNote ?? ''); setError('') }}>Huỷ</button>
-        </span>
-        <ErrorBanner msg={error} onClose={() => setError('')} />
-      </form>
-    )
-  }
-  return (
-    <>
-      {line.designNote || lastAsk
-        ? <span className="flex flex-col">
-            {line.designNote && <span className="whitespace-pre-wrap">{line.designNote}</span>}
-            {lastAsk && <span className="text-amber-900">{lastAsk}</span>}
-          </span>
-        : <span className="text-on-surface-variant">không có</span>}
-      {canEdit && (
-        <button type="button" onClick={() => { setDraft(line.designNote ?? ''); setEditing(true) }} aria-label="Sửa ghi chú CS" title="Sửa ghi chú CS"
-          className="text-on-surface-variant hover:text-secondary leading-none">
-          <Icon name="edit" className="text-[15px]" />
-        </button>
-      )}
-    </>
-  )
-}
-
-const STATE_META: Record<CheckState, { icon: string; label: string; cls: string }> = {
-  done: { icon: 'check_circle', label: 'Xong', cls: 'text-on-tertiary-container' },
-  missing: { icon: 'error', label: 'Cần làm', cls: 'text-error' },
-  blocked: { icon: 'lock', label: 'Đang chờ bước trước', cls: 'text-amber-900' },
-  na: { icon: 'remove_circle_outline', label: 'Không áp dụng', cls: 'text-on-surface-variant' },
-}
-
-const blockHead = 'flex items-center gap-sm px-md py-sm border-b text-label-sm font-bold uppercase tracking-wider'
-
-type Panel = 'none' | 'reject' | 'ask'
+type Panel = 'none' | 'reject' | 'ask' | 'assign' | 'menu'
 
 function hoursUntil(iso: string | null, fallback: number): number {
   if (!iso) return fallback
   return Math.max(1, Math.round((new Date(iso).getTime() - Date.now()) / 3_600_000))
 }
 
-export default function TaskHeader({ detail, holdCount, onChanged }: { detail: TaskDetail; holdCount: Record<string, number>; onChanged: () => void }) {
+function ConfirmApprove({ qa, busy, onCancel, onConfirm }: { qa: QaResult; busy: boolean; onCancel: () => void; onConfirm: (note: string) => void }) {
+  const [note, setNote] = useState('')
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) { if (e.key === 'Escape' && !busy) onCancel() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [busy, onCancel])
+  const errors = qa.status === 'none'
+    ? [{ key: 'none', label: 'Chưa có file in', detail: 'Task chưa có file in nào' }]
+    : qa.items.filter(i => i.level === 'error')
+  return createPortal(
+    <div className="fixed inset-0 z-[110] bg-on-surface/45 flex justify-center items-start pt-[20vh] p-md" onClick={e => { if (e.target === e.currentTarget && !busy) onCancel() }}>
+      <div role="dialog" aria-modal="true" aria-label="Vẫn duyệt dù QA báo lỗi?" className="w-[500px] max-w-full rounded-xl bg-surface-container-lowest shadow-overlay p-lg flex flex-col gap-md">
+        <div className="flex items-center gap-sm">
+          <span className="w-10 h-10 rounded-full bg-error-container text-error grid place-items-center"><Icon name="gpp_maybe" className="text-[22px]" /></span>
+          <h3 className="text-headline-sm text-on-surface">Vẫn duyệt dù QA báo lỗi?</h3>
+        </div>
+        <p className="text-body-sm text-on-surface-variant">
+          QA phát hiện {errors.length} lỗi trên file in hiện tại. Nếu duyệt, task chuyển sang <b className="text-on-surface">Xong</b> và có thể được chuyển xưởng.
+        </p>
+        <div className="flex flex-col gap-sm rounded-lg bg-error-container/50 p-sm">
+          {errors.map(er => (
+            <div key={er.key} className="flex gap-sm">
+              <Icon name="error" className="text-[18px] text-error" />
+              <div className="flex flex-col"><span className="text-body-sm font-semibold text-on-error-container">{er.label}</span><span className="text-label-sm text-on-error-container">{er.detail}</span></div>
+            </div>
+          ))}
+        </div>
+        <label className={fieldLabel}>Lý do vẫn duyệt (lưu vào lịch sử)
+          <textarea rows={2} value={note} onChange={e => setNote(e.target.value)} autoFocus placeholder="Vd. bộ file theo mảnh, xưởng in một tờ" className={`${field} h-auto py-sm`} />
+        </label>
+        <div className="flex justify-end gap-sm">
+          <button type="button" className={btnMd} disabled={busy} onClick={onCancel}>Quay lại xem</button>
+          <button type="button" disabled={busy} onClick={() => onConfirm(note.trim())}
+            className="inline-flex items-center gap-xs h-10 px-md rounded-lg bg-error text-on-error text-body-sm font-semibold hover:opacity-90 disabled:opacity-40">
+            Vẫn duyệt
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  )
+}
+
+export default function TaskHeader({ detail, qa, holdCount, refreshing, onRefresh, onChanged }: {
+  detail: TaskDetail; qa: QaResult; holdCount: Record<string, number>; refreshing: boolean; onRefresh: () => void; onChanged: () => void
+}) {
   const { task, line, me, settings } = detail
+  const toast = useToast()
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-  const [info, setInfo] = useState('')
   const [panel, setPanel] = useState<Panel>('none')
+  const [confirm, setConfirm] = useState(false)
   const [reasons, setReasons] = useState<string[]>([])
   const [rejectNote, setRejectNote] = useState('')
   const [askNote, setAskNote] = useState('')
@@ -191,11 +81,11 @@ export default function TaskHeader({ detail, holdCount, onChanged }: { detail: T
   const [kpi, setKpi] = useState(String(task.kpi))
   const [dueHours, setDueHours] = useState(() => String(hoursUntil(task.dueAt, task.slaHours)))
   const [assignNote, setAssignNote] = useState('')
-  const [refreshing, setRefreshing] = useState(false)
-  const up = useArtworkUpload(detail.task.taskKey, onChanged)
-  const uploadInput = useRef<HTMLInputElement>(null)
-  const uploadTarget = useRef<{ area: string; kind: FileKind }>({ area: '', kind: 'PRINT' })
-  const askInput = useRef<HTMLInputElement>(null)
+  const actionsRef = useRef<HTMLDivElement>(null)
+  const assignRef = useRef<HTMLDivElement>(null)
+  const close = () => setPanel('none')
+  useDismiss(actionsRef, panel === 'reject' || panel === 'ask' || panel === 'menu', close)
+  useDismiss(assignRef, panel === 'assign', close)
 
   const owns = me.isLeader || !task.assigneeId || task.assigneeId === me.id
   const can = (to: TransitionBody['to']) => canMove(detail, to)
@@ -204,368 +94,262 @@ export default function TaskHeader({ detail, holdCount, onChanged }: { detail: T
   const status = STATUS_META[task.status]
   const left = timeLeft(task)
   const checklist = buildChecklist(detail)
-  const lastAsk = [...detail.events].reverse().find(e => e.type === 'ASK')
 
   async function go(body: TransitionBody, after?: () => void) {
     if (busy) return
-    setBusy(true); setError('')
+    setBusy(true)
     const r = await postJson(taskUrl(task.taskKey, '/transition'), body)
     setBusy(false)
-    if (!r.ok) { setError(r.error); return }
+    if (!r.ok) { toast.say(r.error, 'bad'); return }
     after?.()
     onChanged()
   }
 
-  async function refreshFromShopify() {
-    setRefreshing(true); setError('')
-    const r = await postJson(`/api/design-studio/orders/${encodeURIComponent(task.orderId)}/refresh`, {})
-    setRefreshing(false)
-    if (!r.ok) { setError(r.error); return }
-    const { updated = 0, unmatched = 0 } = r.data ?? {}
-    setInfo(`Đã nạp lại ${updated} dòng từ Shopify${unmatched ? `, ${unmatched} dòng không khớp` : ''}`)
-    onChanged()
+  function approve() {
+    if (qa.status === 'error' || qa.status === 'none') { setConfirm(true); return }
+    go({ to: 'DONE' })
   }
 
   function submitAssign(e: FormEvent) {
     e.preventDefault()
-    if (!assignee) { setError('Chọn người nhận việc'); return }
+    if (!assignee) { toast.say('Chọn người nhận việc', 'bad'); return }
     const k = Number(kpi), d = Number(dueHours)
     go({
       to: 'ASSIGNED', assigneeId: assignee,
       kpi: kpi.trim() !== '' && Number.isFinite(k) ? k : undefined,
       dueHours: Number.isFinite(d) && d > 0 ? d : undefined,
       note: assignNote.trim() || undefined,
-    }, () => setAssignNote(''))
+    }, () => { setAssignNote(''); close() })
   }
 
   function submitReject(e: FormEvent) {
     e.preventDefault()
     if (reasons.length === 0) return
-    go({ to: 'REJECTED', reasons, note: rejectNote.trim() || undefined }, () => { setPanel('none'); setReasons([]); setRejectNote('') })
+    go({ to: 'REJECTED', reasons, note: rejectNote.trim() || undefined }, () => { close(); setReasons([]); setRejectNote('') })
   }
 
   function submitAsk(e: FormEvent) {
     e.preventDefault()
     if (!askNote.trim()) return
-    go({ to: 'ASK_CUSTOMER', note: askNote.trim() }, () => { setPanel('none'); setAskNote('') })
-  }
-
-  function openAsk() {
-    setPanel('ask')
-    window.setTimeout(() => askInput.current?.focus(), 0)
+    go({ to: 'ASK_CUSTOMER', note: askNote.trim() }, () => { close(); setAskNote('') })
   }
 
   function cancelTask() {
+    close()
     if (!window.confirm(`Huỷ task ${task.taskKey}?`)) return
     go({ to: 'CANCELLED' })
   }
 
-  const submitTo: TransitionBody['to'] | null = task.status === 'REVIEW'
-    ? (can('DONE') ? 'DONE' : null)
-    : can('REVIEW') ? 'REVIEW' : can('DONE') ? 'DONE' : null
-
-  function checkAction(item: CheckItem): ReactNode {
-    const a = item.action
-    if (!a) return null
-    const cls = `${item === checklist.next ? btnPrimary : btn} whitespace-nowrap`
-    switch (a.kind) {
-      case 'link':
-        return <Link href={a.href} className={cls}><Icon name="arrow_forward" className="text-[16px]" />{a.label}</Link>
-      case 'ask':
-        return <button type="button" className={cls} disabled={!can('ASK_CUSTOMER') || busy} onClick={openAsk}><Icon name="contact_support" className="text-[16px]" />{a.label}</button>
-      case 'refresh':
-        return <button type="button" className={cls} disabled={refreshing} onClick={refreshFromShopify}><Icon name="sync" className="text-[16px]" />{refreshing ? 'Đang nạp…' : a.label}</button>
-      case 'upload': {
-        const kind = a.fileKind ?? 'PRINT'
-        const running = a.area ? up.active.find(i => i.kind === kind && i.part === a.area) : up.active.find(i => i.kind === kind)
-        return (
-          <button type="button" className={cls} disabled={!!running} onClick={() => {
-            uploadTarget.current = { area: a.area, kind }
-            const el = uploadInput.current
-            if (!el) return
-            el.accept = kind === 'MOCKUP' ? MOCKUP_ACCEPT : ARTWORK_ACCEPT
-            el.multiple = !a.area
-            el.click()
-          }}>
-            <Icon name="upload" className="text-[16px]" />{running ? up.busyLabel(running.pct) : a.label}
-          </button>
-        )
-      }
-      case 'submit':
-        return (
-          <button type="button" className={cls} disabled={!submitTo || busy || !filled}
-            title={!submitTo ? 'Không có bước này cho vai trò của bạn' : !filled ? filesMissingHint(detail) : undefined}
-            onClick={() => submitTo && go({ to: submitTo })}>
-            <Icon name={submitTo === 'DONE' ? 'verified' : 'send'} className="text-[16px]" />{a.label}
-          </button>
-        )
-    }
+  async function copy(value: string) {
+    toast.say(await copyText(value) ? `Đã chép "${value}"` : 'Không chép được')
   }
 
   const filesTitle = filled ? undefined : filesMissingHint(detail)
-  const flow: JSX.Element[] = []
-  const talk: JSX.Element[] = []
-  const manage: JSX.Element[] = []
+  let primary: ReactNode = null
   if (task.status === 'ASK_CUSTOMER' && (owns || !OWNED_MOVES.includes(detail.prevStatus ?? 'NEW'))) {
-    flow.push(<button key="continue" type="button" className={btnPrimary} disabled={busy} onClick={() => go({ to: detail.prevStatus ?? 'NEW', continue: true })}><Icon name="play_arrow" className="text-[18px]" />Tiếp tục</button>)
-  }
-  if (can('DOING') && (task.status === 'NEW' || task.status === 'ASSIGNED')) {
-    flow.push(<button key="take" type="button" className={btnPrimary} disabled={busy} onClick={() => go({ to: 'DOING' })}><Icon name="front_hand" className="text-[18px]" />Nhận việc</button>)
-  }
-  if (can('REVIEW')) {
-    flow.push(<button key="submit" type="button" className={btnPrimary} disabled={busy || !filled} title={filesTitle} onClick={() => go({ to: 'REVIEW' })}><Icon name="rate_review" className="text-[18px]" />Gửi duyệt</button>)
-  }
-  if (can('DONE')) {
-    // A leader may approve a set that does not follow the template's areas (pieces for a one-sheet template, one sleeve
-    // for both) after saying so; the review grid already lets them. Submitting for review still needs every area.
-    const approve = () => {
-      const missing = missingAreas(detail)
-      if (!filled && !window.confirm(`${missing.length ? `Chưa có file cho vùng: ${missing.join(', ')}` : 'Chưa có file in nào'}. Vẫn duyệt design?`)) return
-      go(filled ? { to: 'DONE' } : { to: 'DONE', acceptMissingAreas: true })
-    }
-    flow.push(<button key="done" type="button" className={btnPrimary} disabled={busy} title={filesTitle} onClick={approve}><Icon name="verified" className="text-[18px]" />Duyệt design</button>)
-  } else if (task.status === 'REVIEW' && !me.canApprove) {
-    flow.push(<button key="wait" type="button" className={btnPrimary} disabled><Icon name="hourglass_top" className="text-[18px]" />Chờ leader duyệt</button>)
-  }
-  if (task.status === 'DONE' && detail.handoff) {
-    flow.push(
-      <HandoffButton key="handoff" orderId={task.orderId} state={detail.handoff} canHandoff={me.canHandoff}
-        onChanged={msg => { setError(''); if (msg) setInfo(msg); onChanged() }} onError={setError} />,
+    primary = <button type="button" className={btnPrimaryMd} disabled={busy} onClick={() => go({ to: detail.prevStatus ?? 'NEW', continue: true })}>Tiếp tục<Icon name="play_arrow" className="text-[18px]" /></button>
+  } else if (can('DOING') && (task.status === 'NEW' || task.status === 'ASSIGNED')) {
+    primary = <button type="button" className={btnPrimaryMd} disabled={busy} onClick={() => go({ to: 'DOING' })}>Nhận việc<Icon name="front_hand" className="text-[18px]" /></button>
+  } else if (can('REVIEW')) {
+    primary = (
+      <button type="button" className={btnPrimaryMd} disabled={busy || !filled} title={filesTitle} onClick={() => go({ to: 'REVIEW' })}>
+        {task.status === 'REJECTED' ? 'Gửi duyệt lại' : 'Gửi duyệt'}<Icon name="send" className="text-[18px]" />
+      </button>
     )
+  } else if (can('DONE')) {
+    primary = <button type="button" className={btnPrimaryMd} disabled={busy} onClick={approve}>Duyệt design<Icon name="verified" className="text-[18px]" /></button>
+  } else if (task.status === 'REVIEW' && !me.canApprove) {
+    primary = <button type="button" className={btnPrimaryMd} disabled title="Leader duyệt design">Chờ leader duyệt<Icon name="hourglass_top" className="text-[18px]" /></button>
+  } else if (task.status === 'DONE' && detail.handoff) {
+    primary = <HandoffButton orderId={task.orderId} state={detail.handoff} canHandoff={me.canHandoff} onChanged={msg => { if (msg) toast.say(msg); onChanged() }} onError={m => toast.say(m, 'bad')} />
   }
-  if (task.status === 'DONE' && can('DOING')) {
-    flow.push(<button key="reopen" type="button" className={btn} disabled={busy} onClick={() => go({ to: 'DOING' })}><Icon name="edit" className="text-[18px]" />Sửa & gửi lại</button>)
-  }
+
+  const secondaries: ReactNode[] = []
   if (can('ASK_CUSTOMER')) {
-    talk.push(<button key="ask" type="button" className={btnWarn} disabled={busy} aria-expanded={panel === 'ask'} onClick={() => panel === 'ask' ? setPanel('none') : openAsk()}><Icon name="contact_support" className="text-[18px]" />Hỏi khách</button>)
+    secondaries.push(<button key="ask" type="button" className={btnMd} disabled={busy} aria-haspopup="dialog" aria-expanded={panel === 'ask'} onClick={() => setPanel(panel === 'ask' ? 'none' : 'ask')}><Icon name="contact_support" className="text-[18px] text-on-surface-variant" />Hỏi khách</button>)
   }
   if (can('REJECTED')) {
-    talk.push(<button key="reject" type="button" className={btnWarn} disabled={busy} aria-expanded={panel === 'reject'} onClick={() => { setPanel(panel === 'reject' ? 'none' : 'reject'); setReasons([]) }}><Icon name="undo" className="text-[18px]" />Trả lại sửa</button>)
+    secondaries.push(<button key="reject" type="button" className={btnMd} disabled={busy} aria-haspopup="dialog" aria-expanded={panel === 'reject'} onClick={() => { setPanel(panel === 'reject' ? 'none' : 'reject'); setReasons([]) }}><Icon name="assignment_return" className="text-[18px] text-on-surface-variant" />Trả lại sửa</button>)
   }
-  if (can('NEW') && (!me.isLeader || task.assigneeId === me.id)) {
-    manage.push(<button key="deny" type="button" className={btn} disabled={busy} onClick={() => go({ to: 'NEW' })}><Icon name="block" className="text-[18px]" />Từ chối</button>)
+  if (task.status === 'DONE' && can('DOING')) {
+    secondaries.push(<button key="reopen" type="button" className={btnMd} disabled={busy} onClick={() => go({ to: 'DOING' })}><Icon name="edit" className="text-[18px] text-on-surface-variant" />Sửa &amp; gửi lại</button>)
   }
-  if (can('CANCELLED')) {
-    manage.push(<button key="cancel" type="button" className={`${btn} text-error`} disabled={busy} onClick={cancelTask}><Icon name="cancel" className="text-[18px]" />Huỷ task</button>)
-  }
-  const groups = [
-    { key: 'flow', label: 'Bước tiếp theo', items: flow },
-    { key: 'talk', label: 'Trao đổi', items: talk },
-    { key: 'manage', label: 'Quản lý task', items: manage },
-  ].filter(g => g.items.length > 0)
+
+  const canDeny = can('NEW') && (!me.isLeader || task.assigneeId === me.id)
+  const canCancel = can('CANCELLED')
+  const links: { href: string; label: string; icon: string; internal?: boolean }[] = [
+    ...(detail.profileRouteKey ? [{ href: productPageUrl(detail.profileRouteKey), label: 'Mở trang sản phẩm (mapping · artwork)', icon: 'inventory_2', internal: true }] : []),
+    ...(line.libraryDesignLink ? [{ href: line.libraryDesignLink, label: 'Design Library', icon: 'photo_library' }] : []),
+    ...(line.customizedUrl ? [{ href: line.customizedUrl, label: 'Customized URL', icon: 'link' }] : []),
+    ...line.sourcePrintFiles.map(f => ({ href: f.url, label: `_print_files · ${f.printArea}`, icon: 'attach_file' })),
+    ...(detail.order.trelloCardUrl ? [{ href: detail.order.trelloCardUrl, label: 'Thẻ Trello', icon: 'view_kanban' }] : []),
+  ]
+  const shipTo = detail.order.shipTo
+  const canAssign = can('ASSIGNED')
 
   return (
-    <div className="flex flex-col gap-md">
-      <section aria-label={`Task ${task.taskKey}`} className={`${card} px-md py-sm flex flex-col gap-sm`}>
-        <div className="flex items-center gap-sm flex-wrap">
-          <h2 className="font-mono text-headline-sm text-on-surface">{task.taskKey}</h2>
-          <Pill tone={status.tone}>{status.label}</Pill>
-          <Pill tone={ready.tone} icon={ready.icon}>{ready.label}</Pill>
-          {detail.profile?.status === 'READY' && (
-            <span title="Mapping, template và artwork gốc đã đủ cho mọi biến thể của sản phẩm"><Pill tone="ok" icon="inventory_2">Hồ sơ đủ</Pill></span>
-          )}
-          <Pill tone={left.tone} icon={left.icon}>{left.label}</Pill>
-          {detail.handoff?.push && <Pill tone="warn" icon="local_shipping">{pushChipLabel(detail.handoff.push)}</Pill>}
-          {detail.handoff?.handedOff && (
-            <Pill tone="ok" icon={detail.handoff.handedOff.mode === 'API' ? 'cloud_done' : 'inventory'}>
-              {detail.handoff.handedOff.mode === 'API' ? 'Đã chuyển supplier qua API' : 'Đã lưu chờ xuất CSV'}
+    <section aria-label={`Task ${task.taskKey}`} className="sticky top-0 z-30 bg-surface-container-lowest rounded-xl shadow-card border border-outline-variant/20">
+      <div className="flex flex-wrap items-center gap-x-md gap-y-sm px-[20px] pt-md pb-sm">
+        <div className="flex-[999_1_560px] min-w-0 flex flex-col gap-sm">
+          <div className="flex flex-wrap items-center gap-sm">
+            <h2 className="font-mono text-[22px] leading-7 font-bold tracking-tight text-on-surface">{task.taskKey}</h2>
+            <button type="button" onClick={() => copy(task.taskKey)} aria-label="Copy Task ID" title="Copy Task ID" className={`${iconBtn} w-7 h-7`}><Icon name="content_copy" className="text-[16px]" /></button>
+            <Pill tone={status.tone} size="md">{status.label}</Pill>
+            <Pill tone={ready.tone} icon={ready.icon} size="md"
+              title={detail.profile?.status === 'READY' ? 'Hồ sơ đủ: mapping, template và artwork gốc đã đủ cho mọi biến thể' : 'Độ sẵn sàng của task'}>
+              {ready.label}{detail.profile?.status === 'READY' ? ' · hồ sơ đủ' : ''}
             </Pill>
-          )}
-          <span className="flex-1 min-w-[200px] text-body-sm text-on-surface-variant">{task.productTitle}</span>
-        </div>
-        {groups.length > 0 && (
-          <div className="flex items-center gap-sm flex-wrap">
-            {groups.map((g, i) => (
-              <div key={g.key} role="group" aria-label={g.label} className={`flex items-center gap-xs flex-wrap ${i > 0 ? 'pl-sm border-l border-outline-variant/40' : ''} ${g.key === 'manage' ? 'ml-auto' : ''}`}>
-                {g.items}
-              </div>
-            ))}
-          </div>
-        )}
-        {info && <span role="status" className="text-label-sm text-on-surface-variant">{info}</span>}
-        <ErrorBanner msg={error} onClose={() => setError('')} />
-        {task.status === 'DONE' && detail.handoff && !detail.handoff.handedOff && (detail.handoff.blocked || detail.handoff.apiNote) && (
-          <span className="text-label-sm text-on-surface-variant">
-            <Icon name="local_shipping" className="text-[14px]" /> Chuyển supplier: {detail.handoff.blocked ?? detail.handoff.apiNote}
-          </span>
-        )}
-
-        {panel === 'reject' && (
-          <div className="flex flex-col gap-sm p-sm rounded-lg bg-surface-container-low border border-outline-variant/20">
-            <b className="text-label-sm text-on-surface">Lý do trả lại (chọn để thống kê)</b>
-            <div className="flex flex-wrap gap-xs">
-              {settings.rejectReasons.map(r => {
-                const on = reasons.includes(r)
-                return (
-                  <button key={r} type="button" aria-pressed={on} onClick={() => setReasons(on ? reasons.filter(x => x !== r) : [...reasons, r])}
-                    className={`rounded-full px-sm py-[2px] text-label-sm border ${on ? 'bg-error-container text-on-error-container border-transparent font-semibold' : 'bg-surface-container-lowest border-outline-variant/40 text-on-surface-variant'}`}>
-                    {r}
-                  </button>
-                )
-              })}
-            </div>
-            <form onSubmit={submitReject} className="flex gap-xs">
-              <input value={rejectNote} onChange={e => setRejectNote(e.target.value)} placeholder="Ghi chú cụ thể…" aria-label="Ghi chú trả lại" className={`${input} flex-1`} />
-              <button type="submit" className={btnWarn} disabled={busy || reasons.length === 0}><Icon name="undo" className="text-[18px]" />Trả lại</button>
-            </form>
-          </div>
-        )}
-
-        {panel === 'ask' && (
-          <form onSubmit={submitAsk} className="flex gap-xs p-sm rounded-lg bg-surface-container-low border border-outline-variant/20">
-            <input ref={askInput} value={askNote} onChange={e => setAskNote(e.target.value)} placeholder="Cần hỏi khách điều gì?" aria-label="Nội dung hỏi khách" className={`${input} flex-1`} />
-            <button type="submit" className={btnWarn} disabled={busy || !askNote.trim()}><Icon name="contact_support" className="text-[18px]" />Chuyển CS hỏi khách</button>
-          </form>
-        )}
-      </section>
-
-      <div className="grid grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)] gap-md items-start">
-        <section aria-labelledby="ds-info-title" className={`${card} min-w-0`}>
-          <div className={`${blockHead} border-outline-variant/20 text-on-surface-variant`}>
-            <Icon name="info" className="text-[18px]" />
-            <span id="ds-info-title">THÔNG TIN</span>
-            <button type="button" onClick={refreshFromShopify} disabled={refreshing} className={`${btn} ml-auto normal-case tracking-normal`}>
-              <Icon name="sync" className="text-[16px]" />{refreshing ? 'Đang nạp…' : 'Nạp lại từ Shopify'}
-            </button>
-          </div>
-          <div className="px-md py-sm flex flex-col gap-md">
-            <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-md gap-y-xs text-body-sm">
-              <Fact icon="receipt_long" label="Đơn">
-                <b>{task.orderNumber}</b><CopyBtn value={task.orderNumber.replace(/^#/, '')} label="mã đơn" onCopied={setInfo} />
-                <span className="text-on-surface-variant">· dòng {task.linePosition} · SL {line.qty}</span>
-              </Fact>
-              <Fact icon="storefront" label="Store">{task.storeName}</Fact>
-              <Fact icon="sell" label="SKU">
-                <span className="font-mono">{task.sku ?? '—'}</span>{task.sku && <CopyBtn value={task.sku} label="SKU" onCopied={setInfo} />}
-                <span className="text-on-surface-variant">· biến thể</span> {line.variantTitle ?? '—'}
-              </Fact>
-              <Fact icon="factory" label="Xưởng">
-                {line.supplier
-                  ? <><b>{line.supplier.name}</b><span className="text-on-surface-variant">({line.supplier.code})</span></>
-                  : <span className="text-error">chưa map{task.supplierName ? ` (trước: ${task.supplierName})` : ''}</span>}
-                <span className="text-on-surface-variant">· SKU xưởng</span>
-                <span className="font-mono">{line.supplierSku ?? '—'}</span>{line.supplierSku && <CopyBtn value={line.supplierSku} label="SKU xưởng" onCopied={setInfo} />}
-                {line.supplierSku && <><span className="text-on-surface-variant">· sản phẩm xưởng</span>
-                  {line.supplierProduct ? <b>{line.supplierProduct}</b> : <span className="text-amber-900">không có trong bảng giá xưởng</span>}</>}
-              </Fact>
-              <Fact icon="public" label="Giao tới">
-                {detail.order.shipTo?.countryName
-                  ? <><b>{detail.order.shipTo.countryName}</b>{detail.order.shipTo.countryCode && <span className="text-on-surface-variant">({detail.order.shipTo.countryCode})</span>}
-                    {detail.order.shipTo.place && <span className="text-on-surface-variant">· {detail.order.shipTo.place}</span>}</>
-                  : <span className="text-on-surface-variant">chưa có địa chỉ giao</span>}
-              </Fact>
-              <Fact icon="folder" label="Thư mục Drive">
-                <DriveFolderLink folderUrl={detail.driveFolder?.url} driveConnected={detail.driveConnected} onCopied={setInfo} compact />
-              </Fact>
-              <Fact icon="event" label="Ngày đặt">{fmtDate(task.placedAt)}</Fact>
-              <Fact icon="schedule" label="Hạn">
-                {task.dueAt ? fmtDateTime(task.dueAt) : 'chưa đặt hạn'}
-                <Pill tone={left.tone} icon={left.icon}>{left.label}</Pill>
-                <span className="text-on-surface-variant">· SLA {task.slaHours}h</span>
-              </Fact>
-              <Fact icon="auto_awesome" label="Nguồn">{sourceEngine(line)}</Fact>
-              <Fact icon="sticky_note_2" label="Ghi chú CS">
-                <CsNote detail={detail} lastAsk={task.status === 'ASK_CUSTOMER' && lastAsk ? lastAsk.message : null} onChanged={onChanged} />
-              </Fact>
-              {(detail.order.addOns?.length ?? 0) > 0 && (
-                <Fact icon="add_circle" label="Add-on của đơn">
-                  <ul className="flex flex-col gap-[2px] min-w-0">
-                    {detail.order.addOns!.map((a, i) => (
-                      <li key={`${a.title}-${i}`} className="break-words">
-                        <b>{a.title}</b>{a.variantTitle ? ` [${a.variantTitle}]` : ''} <span className="text-on-surface-variant">x{a.qty}</span>
-                        {a.details && <span> — {a.details}</span>}
-                      </li>
-                    ))}
-                  </ul>
-                </Fact>
+            <Pill tone={left.tone} icon={left.icon} size="md"
+              title={`Hạn: ${task.dueAt ? fmtDateTime(task.dueAt) : 'chưa đặt'} · SLA ${task.slaHours}h · KPI ${task.kpi} · đặt ${fmtDate(task.placedAt)}`}>
+              {left.label}
+            </Pill>
+            {detail.handoff?.push && <Pill tone="warn" icon="local_shipping" size="md">{pushChipLabel(detail.handoff.push)}</Pill>}
+            {detail.handoff?.handedOff && (
+              <Pill tone="ok" icon={detail.handoff.handedOff.mode === 'API' ? 'cloud_done' : 'inventory'} size="md">
+                {detail.handoff.handedOff.mode === 'API' ? 'Đã chuyển supplier qua API' : 'Đã lưu chờ xuất CSV'}
+              </Pill>
+            )}
+            {task.status === 'DONE' && detail.handoff && !detail.handoff.handedOff && (
+              <Pill tone="idle" icon="local_shipping" size="md" title={detail.handoff.blocked ?? detail.handoff.apiNote ?? undefined}>Chưa chuyển xưởng</Pill>
+            )}
+            <span className="w-px h-5 bg-outline-variant mx-xs" />
+            <div ref={assignRef} className="relative">
+              <button type="button" onClick={() => canAssign && setPanel(panel === 'assign' ? 'none' : 'assign')} aria-haspopup={canAssign ? 'dialog' : undefined}
+                aria-expanded={canAssign ? panel === 'assign' : undefined} title={canAssign ? 'Giao việc' : `Người làm · KPI ${task.kpi} — leader giao việc`}
+                className={`inline-flex items-center gap-xs h-8 pl-xs pr-sm rounded-full border border-outline-variant bg-surface-container-lowest text-body-sm text-on-surface ${canAssign ? 'hover:bg-surface-container-low' : 'cursor-default'}`}>
+                {task.assigneeName ? <Avatar name={task.assigneeName} size="md" /> : <span className="w-6 h-6 rounded-full bg-surface-container grid place-items-center"><Icon name="person" className="text-[15px] text-on-surface-variant" /></span>}
+                {task.assigneeName ?? 'Chưa giao'}
+                {canAssign && <Icon name="expand_more" className="text-[16px] text-on-surface-variant" />}
+              </button>
+              {panel === 'assign' && (
+                <form role="dialog" aria-label="Giao việc" onSubmit={submitAssign} className={`${popover} top-10 left-0 w-[340px] p-md flex flex-col gap-sm`}>
+                  <PopoverHead title="Giao việc" onClose={close} />
+                  <label className={fieldLabel}>Giao cho
+                    <select value={assignee} onChange={e => setAssignee(e.target.value)} className={field}>
+                      {detail.assignable.length === 0 && <option value="">— không có người —</option>}
+                      {detail.assignable.map(u => <option key={u.id} value={u.id}>{u.name} · đang giữ {holdCount[u.id] ?? 0}</option>)}
+                    </select>
+                  </label>
+                  <div className="flex gap-sm">
+                    <label className={`${fieldLabel} flex-1`}>Điểm KPI<input type="number" step="0.05" min="0" value={kpi} onChange={e => setKpi(e.target.value)} className={field} /></label>
+                    <label className={`${fieldLabel} flex-1`}>Hạn (giờ)<input type="number" min="1" value={dueHours} onChange={e => setDueHours(e.target.value)} className={field} /></label>
+                  </div>
+                  <label className={fieldLabel}>Yêu cầu
+                    <textarea rows={2} value={assignNote} onChange={e => setAssignNote(e.target.value)} placeholder="Vd. dựng lại từ master" className={`${field} h-auto py-sm`} />
+                  </label>
+                  <div className="flex justify-end gap-sm">
+                    <button type="button" className={btnMd} onClick={close}>Huỷ</button>
+                    <button type="submit" className={btnPrimaryMd} disabled={busy || !assignee}>{task.assigneeId ? 'Giao lại' : 'Giao việc'}</button>
+                  </div>
+                </form>
               )}
-              <Fact icon="inventory_2" label="Sản phẩm">
-                {detail.profileRouteKey
-                  ? <Link href={productPageUrl(detail.profileRouteKey)} className="text-secondary hover:underline">Mở trang sản phẩm (mapping · artwork)</Link>
-                  : <span className="text-on-surface-variant">dòng không gắn sản phẩm Shopify</span>}
-                {detail.library?.optionLabel && <span className="text-on-surface-variant">· artwork {detail.library.optionLabel}</span>}
-              </Fact>
-            </dl>
-            <div className="flex flex-col gap-xs">
-              <b className="text-label-sm text-on-surface">Khách nhập</b>
-              <CustomTable detail={detail} onCopied={setInfo} />
             </div>
           </div>
-        </section>
-
-        <section aria-labelledby="ds-todo-title" className="min-w-0 rounded-xl shadow-card border border-secondary/30 bg-secondary/5">
-          <div className={`${blockHead} border-secondary/20 text-secondary`}>
-            <Icon name="checklist" className="text-[18px]" />
-            <span id="ds-todo-title">CẦN LÀM</span>
-            <span className="ml-auto normal-case tracking-normal font-semibold">{checklist.done}/{checklist.total} xong</span>
+          <div className="flex flex-wrap items-center gap-x-md gap-y-xs text-body-sm text-on-surface-variant">
+            <span className="font-semibold text-on-surface">{task.productTitle}</span>
+            {line.variantTitle && (
+              <span className="inline-flex items-center gap-xs h-7 px-[10px] rounded-lg bg-on-surface text-surface text-[13px] leading-[18px]">
+                <span className="opacity-70">Biến thể</span><span className="font-semibold">{line.variantTitle}</span>
+              </span>
+            )}
+            <span>SL <b className="text-on-surface">{line.qty}</b></span>
+            <span className="text-outline-variant">·</span>
+            <span className="inline-flex items-center gap-xs">
+              Đơn <span className="font-mono text-on-surface">{task.orderNumber}</span> · dòng {task.linePosition}
+              <button type="button" onClick={() => copy(task.orderNumber.replace(/^#/, ''))} aria-label="Copy mã đơn" title="Copy mã đơn" className={`${iconBtn} w-6 h-6`}><Icon name="content_copy" className="text-[15px]" /></button>
+            </span>
+            <span className="text-outline-variant">·</span>
+            <span>Store {task.storeName}</span>
+            {task.sku && <><span className="text-outline-variant">·</span><span className="inline-flex items-center gap-xs">SKU <span className="font-mono text-on-surface">{task.sku}</span>
+              <button type="button" onClick={() => copy(task.sku!)} aria-label="Copy SKU" title="Copy SKU" className={`${iconBtn} w-6 h-6`}><Icon name="content_copy" className="text-[15px]" /></button></span></>}
           </div>
-          <input ref={uploadInput} type="file" accept={ARTWORK_ACCEPT} hidden aria-label="Chọn file cho việc đang thiếu"
-            onChange={e => {
-              const files = Array.from(e.target.files ?? [])
-              const { area, kind } = uploadTarget.current
-              e.target.value = ''
-              if (files.length === 0) return
-              if (area) up.upload(area, files[0], kind)
-              else up.uploadFiles(files, { kind })
-            }} />
-          <ol className="px-sm py-sm flex flex-col gap-xs">
-            {checklist.items.map((item, i) => {
-              const meta = STATE_META[item.state]
-              const isNext = item === checklist.next
-              return (
-                <li key={item.key} aria-current={isNext ? 'step' : undefined}
-                  className={`flex items-start gap-sm rounded-lg px-sm py-xs ${isNext ? 'bg-surface-container-lowest ring-2 ring-secondary shadow-card' : ''} ${item.state === 'na' ? 'opacity-60' : ''}`}>
-                  <span className={`mt-[1px] ${meta.cls}`} title={meta.label}>
-                    <Icon name={meta.icon} className="text-[20px]" /><span className="sr-only">{meta.label}</span>
-                  </span>
-                  <span className="flex-1 min-w-0 flex flex-col">
-                    {isNext && (
-                      <span className="inline-flex items-center gap-xs self-start rounded-md bg-secondary text-on-secondary px-xs text-label-sm font-semibold mb-[2px]">
-                        <Icon name="arrow_forward" className="text-[13px]" />Việc cần làm tiếp
-                      </span>
-                    )}
-                    <span className={`text-body-sm ${isNext ? 'font-bold' : 'font-semibold'} text-on-surface`}>{i + 1}. {item.title}</span>
-                    <span className="text-label-sm text-on-surface-variant">{item.reason}</span>
-                  </span>
-                  {checkAction(item)}
-                </li>
-              )
-            })}
-          </ol>
-          {up.error && <div className="px-sm pb-sm"><ErrorBanner msg={up.error} onClose={() => up.setError('')} /></div>}
-        </section>
+        </div>
+
+        <div ref={actionsRef} className="relative flex-auto flex items-center justify-end gap-sm">
+          {secondaries}
+          {primary}
+          <button type="button" onClick={() => setPanel(panel === 'menu' ? 'none' : 'menu')} aria-label="Thêm thao tác" aria-haspopup="menu" aria-expanded={panel === 'menu'}
+            className="inline-grid place-items-center w-10 h-10 rounded-lg border border-outline-variant bg-surface-container-lowest text-on-surface-variant hover:bg-surface-container-low">
+            <Icon name="more_horiz" className="text-[20px]" />
+          </button>
+
+          {panel === 'reject' && (
+            <form role="dialog" aria-label="Trả lại sửa" onSubmit={submitReject} className={`${popover} top-12 right-12 w-[400px] p-md flex flex-col gap-sm`}>
+              <PopoverHead title="Trả lại sửa" onClose={close} />
+              <div className="flex flex-col gap-xs">
+                <span className="text-label-sm text-on-surface-variant">Lý do (chọn nhiều)</span>
+                <div className="flex flex-wrap gap-xs">
+                  {settings.rejectReasons.map(r => {
+                    const on = reasons.includes(r)
+                    return (
+                      <button key={r} type="button" aria-pressed={on} onClick={() => setReasons(on ? reasons.filter(x => x !== r) : [...reasons, r])}
+                        className={`inline-flex items-center gap-xs h-8 px-sm rounded-full border text-label-sm ${on ? 'bg-secondary/10 border-secondary text-secondary font-semibold' : 'bg-surface-container-lowest border-outline-variant text-on-surface'}`}>
+                        {on && <Icon name="check" className="text-[16px]" />}{r}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+              <label className={fieldLabel}>Ghi chú cho designer
+                <textarea rows={3} value={rejectNote} onChange={e => setRejectNote(e.target.value)} placeholder="Vd. tên đang là Emely, khách nhập Emily" className={`${field} h-auto py-sm`} />
+              </label>
+              <div className="flex justify-end gap-sm">
+                <button type="button" className={btnMd} onClick={close}>Huỷ</button>
+                <button type="submit" className={btnPrimaryMd} disabled={busy || reasons.length === 0}>Trả lại · {reasons.length} lý do</button>
+              </div>
+            </form>
+          )}
+
+          {panel === 'ask' && (
+            <form role="dialog" aria-label="Hỏi khách" onSubmit={submitAsk} className={`${popover} top-12 right-12 w-[380px] p-md flex flex-col gap-sm`}>
+              <PopoverHead title="Hỏi khách" onClose={close} />
+              <span className="text-[13px] leading-[18px] text-on-surface-variant">CS sẽ gửi câu hỏi cho khách. Task chuyển sang <b className="text-on-surface">Hỏi khách</b> cho tới khi bấm Tiếp tục.</span>
+              <label className={fieldLabel}>Nội dung cần hỏi
+                <textarea rows={4} autoFocus value={askNote} onChange={e => setAskNote(e.target.value)} placeholder="Vd. Bạn muốn năm 2026 in ở mặt trước hay mặt sau?" className={`${field} h-auto py-sm`} />
+              </label>
+              <div className="flex justify-end gap-sm">
+                <button type="button" className={btnMd} onClick={close}>Huỷ</button>
+                <button type="submit" className={btnPrimaryMd} disabled={busy || !askNote.trim()}>Chuyển CS hỏi khách</button>
+              </div>
+            </form>
+          )}
+
+          {panel === 'menu' && (
+            <div role="menu" aria-label="Thao tác task" className={`${popover} top-12 right-0 w-[320px] p-xs flex flex-col`}>
+              <button type="button" role="menuitem" className={menuItem} disabled={refreshing} onClick={() => { close(); onRefresh() }}>
+                <Icon name="sync" className="text-[18px] text-on-surface-variant" /><span className="flex-1">{refreshing ? 'Đang nạp…' : 'Nạp lại từ Shopify'}</span>
+              </button>
+              {links.map(l => l.internal
+                ? <Link key={l.href} href={l.href} role="menuitem" className={menuItem} onClick={close}><Icon name={l.icon} className="text-[18px] text-on-surface-variant" /><span className="flex-1">{l.label}</span></Link>
+                : <a key={l.href} href={l.href} target="_blank" rel="noreferrer" role="menuitem" className={menuItem} onClick={close}><Icon name={l.icon} className="text-[18px] text-on-surface-variant" /><span className="flex-1 truncate">{l.label}</span><Icon name="open_in_new" className="text-[15px] text-on-surface-variant" /></a>)}
+              <div className="mx-sm my-xs px-xs py-xs rounded-lg bg-surface-container-low text-label-sm text-on-surface-variant flex flex-col gap-[2px]">
+                <span><b className="text-on-surface">Giao tới:</b> {shipTo?.countryName ? `${shipTo.countryName}${shipTo.countryCode ? ` (${shipTo.countryCode})` : ''}${shipTo.place ? ` · ${shipTo.place}` : ''}` : 'chưa có địa chỉ'}</span>
+                <span><b className="text-on-surface">Ngày đặt:</b> {fmtDate(task.placedAt)}</span>
+                <span><b className="text-on-surface">Nguồn:</b> {sourceEngine(line)}</span>
+              </div>
+              {(canDeny || canCancel) && <div role="separator" className="h-px mx-sm my-xs bg-outline-variant/60" />}
+              {canDeny && (
+                <button type="button" role="menuitem" className={menuItem} disabled={busy} onClick={() => { close(); go({ to: 'NEW' }) }}>
+                  <Icon name="block" className="text-[18px] text-on-surface-variant" /><span className="flex-1">Từ chối task</span>
+                </button>
+              )}
+              {canCancel && (
+                <button type="button" role="menuitem" className={`${menuItem} text-error`} disabled={busy} onClick={cancelTask}>
+                  <Icon name="cancel" className="text-[18px]" /><span className="flex-1">Huỷ task</span>
+                </button>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
-      <section aria-labelledby="ds-assign-title" className={`${card} px-md py-sm flex flex-col gap-sm`}>
-        <div className="flex items-center gap-sm flex-wrap text-body-sm">
-          <span className="flex items-center gap-xs text-label-sm font-bold uppercase tracking-wider text-on-surface-variant">
-            <Icon name="assignment_ind" className="text-[18px]" /><span id="ds-assign-title">GIAO VIỆC</span>
-          </span>
-          <span className="inline-flex items-center gap-xs"><Icon name="person" className="text-[16px] text-on-surface-variant" />{task.assigneeName ? <b>{task.assigneeName}</b> : <span className="text-on-surface-variant">chưa giao</span>}</span>
-          <span className="inline-flex items-center gap-xs"><Icon name="military_tech" className="text-[16px] text-on-surface-variant" />KPI <b>{task.kpi}</b></span>
-          {!can('ASSIGNED') && <span className="text-label-sm text-on-surface-variant">Leader giao việc và đặt KPI / hạn</span>}
-        </div>
-        {can('ASSIGNED') && (
-          <form onSubmit={submitAssign} className="flex flex-wrap items-end gap-sm">
-            <label className="flex flex-col gap-[2px] text-label-sm text-on-surface-variant">Giao cho
-              <select value={assignee} onChange={e => setAssignee(e.target.value)} className={input}>
-                {detail.assignable.length === 0 && <option value="">— không có người —</option>}
-                {detail.assignable.map(u => <option key={u.id} value={u.id}>{u.name} · đang giữ {holdCount[u.id] ?? 0}</option>)}
-              </select>
-            </label>
-            <label className="flex flex-col gap-[2px] text-label-sm text-on-surface-variant">Điểm KPI
-              <input type="number" step="0.05" min="0" value={kpi} onChange={e => setKpi(e.target.value)} className={`${input} w-20`} />
-            </label>
-            <label className="flex flex-col gap-[2px] text-label-sm text-on-surface-variant">Hạn (giờ)
-              <input type="number" min="1" value={dueHours} onChange={e => setDueHours(e.target.value)} className={`${input} w-20`} />
-            </label>
-            <label className="flex flex-col gap-[2px] text-label-sm text-on-surface-variant flex-1 min-w-[160px]">Yêu cầu
-              <input value={assignNote} onChange={e => setAssignNote(e.target.value)} placeholder="vd: dựng lại từ master" className={`${input} w-full`} />
-            </label>
-            <button type="submit" className={btn} disabled={busy || !assignee}><Icon name="person_add" className="text-[18px]" />{task.assigneeId ? 'Giao lại' : 'Giao việc'}</button>
-          </form>
-        )}
-      </section>
-    </div>
+      <SupplierStrip detail={detail} />
+      <NextStepBar checklist={checklist} onRefresh={onRefresh} refreshing={refreshing} />
+
+      {confirm && (
+        <ConfirmApprove qa={qa} busy={busy} onCancel={() => setConfirm(false)}
+          onConfirm={note => go({ to: 'DONE', note: note || undefined, ...(filled ? {} : { acceptMissingAreas: true }) }, () => setConfirm(false))} />
+      )}
+    </section>
   )
 }

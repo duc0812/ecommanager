@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { autoRenderEligibility } from '@/lib/artwork-render-eligibility'
 import type { TaskDetail } from './types'
 import { requestJson } from './model'
-import { Icon, Note, btnPrimary } from './ui'
+import { Icon } from './ui'
 
 const POLL_MS = 5000
 
@@ -35,27 +35,22 @@ export default function AutoRenderBar({ detail, onChanged }: { detail: TaskDetai
     onChanged()
   }
 
+  const failed = job?.status === 'FAILED'
+  const status = running
+    ? (job?.status === 'RUNNING' ? 'Worker đang dựng file in…' : 'Đang chờ worker dựng file in (worker chạy trên máy designer)')
+    : check.reason
+      ?? `${slots.length > 1 ? `Dựng ${slots.length} file in` : `Dựng ${slots[0]}`} từ artwork gốc${library?.optionLabel ? ` ${library.optionLabel}` : ''} · ${check.fields.join(', ') || 'không có trường custom'}`
+  const doneAt = job?.status === 'DONE' && job.finishedAt ? ` · lần dựng gần nhất ${new Date(job.finishedAt).toLocaleString('en-US')}` : ''
+
   return (
-    <div className="flex flex-col gap-xs rounded-lg border border-outline-variant/20 bg-surface-container-low p-sm">
-      <div className="flex items-center gap-sm flex-wrap">
-        <button type="button" className={btnPrimary} disabled={!check.ok || busy} onClick={() => void start()}
-          title={check.reason ?? 'Dựng file in từ artwork gốc với thông tin khách'} aria-describedby="auto-render-reason">
-          <Icon name="auto_awesome" className="text-[16px]" />{busy ? 'Đang xếp hàng…' : 'Tạo file in tự động'}
-        </button>
-        <span id="auto-render-reason" className="text-label-sm text-on-surface-variant min-w-0">
-          {running
-            ? (job?.status === 'RUNNING' ? 'Worker đang dựng file in…' : 'Đang chờ worker dựng file in (worker chạy trên máy designer)')
-            : check.reason
-              ?? `Dựng ${slots[0]} từ artwork gốc${library?.optionLabel ? ` ${library.optionLabel}` : ''} · ${check.fields.join(', ') || 'không có trường custom'}`}
-        </span>
-      </div>
-      {job?.status === 'FAILED' && <Note tone="bad" icon="error">Lần dựng gần nhất lỗi: {job.error ?? 'không rõ'}</Note>}
-      {job?.status === 'DONE' && (
-        <span className="text-label-sm text-on-surface-variant">
-          Đã dựng lúc {job.finishedAt ? new Date(job.finishedAt).toLocaleString('en-US') : '—'} — kiểm tra file rồi gửi duyệt như file làm tay.
-        </span>
-      )}
-      {error && <span role="alert" className="text-label-sm text-error">{error}</span>}
-    </div>
+    <span className="inline-flex items-center gap-xs">
+      <button type="button" disabled={!check.ok || busy} onClick={() => void start()} title={`${status}${doneAt}`}
+        className="inline-flex items-center gap-xs h-9 px-sm rounded-lg border border-outline-variant bg-surface-container-lowest text-[13px] leading-[18px] font-semibold text-on-surface hover:bg-surface-container-low disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap">
+        <Icon name={running ? 'progress_activity' : 'auto_awesome'} className={`text-[18px] text-secondary ${running ? 'animate-spin' : ''}`} />
+        {busy ? 'Đang xếp hàng…' : running ? 'Đang dựng…' : 'Tạo file in tự động'}
+      </button>
+      {failed && <span role="alert" title={job?.error ?? undefined} className="text-label-sm text-error">lần dựng trước lỗi</span>}
+      {error && <span role="alert" title={error} className="text-label-sm text-error max-w-[200px] truncate">{error}</span>}
+    </span>
   )
 }

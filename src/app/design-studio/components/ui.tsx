@@ -11,6 +11,16 @@ export function chip(on: boolean) {
 }
 export const input = 'rounded-lg border border-outline-variant/40 bg-surface-container-lowest px-sm py-xs text-body-sm text-on-surface min-w-0'
 
+export const btnMd = 'inline-flex items-center gap-xs h-10 px-[14px] rounded-lg border border-outline-variant bg-surface-container-lowest text-body-sm font-semibold text-on-surface hover:bg-surface-container-low disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap'
+export const btnPrimaryMd = 'inline-flex items-center gap-xs h-10 px-md rounded-lg bg-secondary text-on-secondary text-body-sm font-semibold hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap'
+export const btnTonal = 'inline-flex items-center gap-xs h-9 px-[14px] rounded-lg bg-secondary/10 text-secondary text-body-sm font-semibold hover:bg-secondary/15 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap'
+export const btnText = 'inline-flex items-center gap-xs h-8 px-sm rounded-lg text-secondary text-body-sm font-semibold hover:bg-secondary/10 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap'
+export const iconBtn = 'inline-grid place-items-center w-8 h-8 rounded-lg text-on-surface-variant hover:bg-surface-container-low hover:text-on-surface disabled:opacity-40 disabled:cursor-not-allowed shrink-0'
+export const field = 'h-10 rounded-lg border border-outline-variant bg-surface-container-lowest px-sm text-body-sm text-on-surface min-w-0'
+export const fieldLabel = 'flex flex-col gap-xs text-label-sm text-on-surface-variant'
+export const popover = 'absolute z-40 rounded-xl bg-surface-container-lowest border border-outline-variant/60 shadow-overlay'
+export const menuItem = 'flex items-center gap-sm w-full min-h-9 px-sm py-xs rounded-lg text-body-sm text-on-surface text-left hover:bg-surface-container-low disabled:opacity-40 disabled:cursor-not-allowed'
+
 const TONE: Record<Tone, string> = {
   ok: 'bg-tertiary/15 text-tertiary',
   warn: 'bg-amber-100 text-amber-900',
@@ -48,14 +58,18 @@ export function Icon({ name, className = '' }: { name: string; className?: strin
   return <span className={`material-symbols-outlined align-middle ${className}`} aria-hidden="true">{name}</span>
 }
 
-export function Pill({ tone, icon, children }: { tone: Tone; icon?: string; children: ReactNode }) {
+export function Pill({ tone, icon, children, size = 'sm', title }: { tone: Tone; icon?: string; children: ReactNode; size?: 'sm' | 'md'; title?: string }) {
+  const shape = size === 'md' ? 'h-6 rounded-full px-sm font-medium' : 'rounded-md px-xs font-semibold'
   return (
-    <span className={`inline-flex items-center gap-xs rounded-md px-xs text-label-sm font-semibold whitespace-nowrap ${TONE[tone]}`}>
-      {icon && <Icon name={icon} className="text-[13px]" />}
+    <span title={title} className={`inline-flex items-center gap-xs text-label-sm whitespace-nowrap ${shape} ${TONE[tone]}`}>
+      {icon && <Icon name={icon} className={size === 'md' ? 'text-[14px]' : 'text-[13px]'} />}
       {children}
     </span>
   )
 }
+
+export function fmtDate(iso: string) { return new Date(iso).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }) }
+export function fmtDateTime(iso: string) { return new Date(iso).toLocaleString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric', hour: 'numeric', minute: '2-digit' }) }
 
 const AVATAR_BG = ['bg-secondary', 'bg-primary-container', 'bg-on-tertiary-container', 'bg-secondary-container', 'bg-outline']
 
