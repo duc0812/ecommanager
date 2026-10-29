@@ -7,7 +7,7 @@ import { RENDER_LINE, latestRenderJob, renderJobView } from '@/lib/artwork-rende
 import { parseAttributes } from '@/lib/design-studio'
 import { saveArtwork } from '@/lib/design-storage'
 import { enqueueDrivePush } from '@/lib/drive-push-queue'
-import { loadTask, submitAutoRenderForReview, type Actor } from '@/lib/design-tasks'
+import { loadTask, retireOutdatedParts, submitAutoRenderForReview, type Actor } from '@/lib/design-tasks'
 import { visibleCustomAttributes } from '@/lib/order-classify'
 import { mapTemplate } from '@/lib/print-template-resolve'
 import type { TempFile } from '@/lib/library-storage'
@@ -184,6 +184,7 @@ export async function applyRenderResult(input: { jobId: string; print: TempFile;
     await prisma.designArtwork.update({ where: { id: artwork.id }, data: { removedAt: new Date() } })
     return null
   }
+  await retireOutdatedParts(job.orderId, job.shopifyLineId, null)
   enqueueDrivePush(artwork.id)
   const notes = input.result.warnings
   await taskEvent(job.orderId, job.shopifyLineId,

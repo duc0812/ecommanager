@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   cleanPartLabel, currentFileIds, currentFiles, driveFileName, driveOldFileName, extraPrintParts, fileKindOf, folderHoldsPrintFiles, missingPrintAreas,
-  orderedPrintFiles, partForUpload, partLabelFromFileName, partTaken, printFilesReady, resolvePartLabel,
+  orderedPrintFiles, outdatedParts, partForUpload, partLabelFromFileName, partTaken, printFilesReady, resolvePartLabel,
 } from '@/lib/task-files'
 
 const file = (id: string, kind: string, printArea: string, version = 1, extra: Record<string, unknown> = {}) =>
@@ -117,5 +117,30 @@ describe('partForUpload', () => {
   })
   it('uses the newest file of the part to compare types', () => {
     expect(partForUpload('front.png', [], [{ printArea: 'front', fileName: 'front.png' }, { printArea: 'front', fileName: 'front.jpg' }])).toBe('front')
+  })
+})
+
+describe('outdatedParts', () => {
+  const at = (printArea: string, day: number) => ({ printArea, createdAt: new Date(Date.UTC(2026, 9, day)) })
+
+  it('retires a set named after its files once the template sheet arrives', () => {
+    const files = [at('LIT5217_1 - front', 24), at('LIT5217_1 - back', 24), at('FRONT', 28), at('FRONT', 29)]
+    expect(outdatedParts(files, ['FRONT'])).toEqual(['LIT5217_1 - back', 'LIT5217_1 - front'])
+  })
+  it('retires the default part next to the template area', () => {
+    expect(outdatedParts([at('Artwork', 23), at('Print', 26)], ['Print'])).toEqual(['Artwork'])
+  })
+  it('keeps a part added after the template files', () => {
+    expect(outdatedParts([at('Print', 26), at('reference', 27)], ['Print'])).toEqual([])
+  })
+  it('keeps a part re-uploaded after the template files, even if it started earlier', () => {
+    expect(outdatedParts([at('extra', 20), at('Print', 26), at('extra', 27)], ['Print'])).toEqual([])
+  })
+  it('keeps a source file named after an area', () => {
+    expect(outdatedParts([at('FRONT.psd', 20), at('front', 26)], ['FRONT'])).toEqual([])
+  })
+  it('does nothing before a template area has a file, or without a template', () => {
+    expect(outdatedParts([at('front', 20), at('back', 21)], ['FRONT SHEET'])).toEqual([])
+    expect(outdatedParts([at('front', 20), at('back', 21)], [])).toEqual([])
   })
 })

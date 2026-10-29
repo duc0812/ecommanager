@@ -74,6 +74,25 @@ export function currentFiles<T extends PartFile>(files: T[], kind: FileKind): T[
   return Array.from(newest.values()).sort((a, b) => byLabel(a.printArea, b.printArea))
 }
 
+/**
+ * Print parts left over from before the line used its template: not one of the template's areas, and last uploaded
+ * before the first file went into one of them (a 2D set named after its files next to the 3D sheet that replaced it).
+ * A part added after the template files, or a source file named after an area (`FRONT.psd` beside `FRONT`), stays.
+ * Callers pass the line's PRINT files that are not removed.
+ */
+export function outdatedParts(files: Array<{ printArea: string; createdAt: Date }>, slots: string[]): string[] {
+  const isSlot = (label: string) => slots.some(s => sameLabel(s, label) || sameLabel(s, label.replace(/\.[a-z0-9]{1,5}$/i, '')))
+  const slotTimes = files.filter(f => slots.some(s => sameLabel(s, f.printArea))).map(f => f.createdAt.getTime())
+  if (slotTimes.length === 0) return []
+  const firstSlot = Math.min(...slotTimes)
+  const lastUpload = new Map<string, number>()
+  for (const f of files) {
+    if (isSlot(f.printArea)) continue
+    lastUpload.set(f.printArea, Math.max(lastUpload.get(f.printArea) ?? 0, f.createdAt.getTime()))
+  }
+  return Array.from(lastUpload).filter(([, at]) => at < firstSlot).map(([part]) => part).sort(byLabel)
+}
+
 /** Print files in the order the factory gets them: the template's areas first, then every other part by name. */
 export function orderedPrintFiles<T extends PartFile>(files: T[], areas: string[]): T[] {
   const current = currentFiles(files, 'PRINT')

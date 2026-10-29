@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getAuthUser } from '@/lib/api-auth'
 import { loadArtworkRow, saveArtwork } from '@/lib/design-storage'
 import { pushArtworkToDrive } from '@/lib/design-drive-push'
+import { retireOutdatedParts } from '@/lib/design-tasks'
+import { prisma } from '@/lib/db'
 
 const MAX_BYTES = 200 * 1024 * 1024
 
@@ -30,6 +32,8 @@ export async function POST(req: NextRequest, { params }: { params: { lineId: str
     const status = /not found/i.test(e.message) ? 404 : 400
     return NextResponse.json({ error: e.message }, { status })
   }
+  const line = await prisma.orderLine.findUnique({ where: { id: lineId }, select: { orderId: true, shopifyLineId: true } })
+  if (line) await retireOutdatedParts(line.orderId, line.shopifyLineId, user?.id ?? null)
   const push = await pushArtworkToDrive(saved.id)
   const artwork = (await loadArtworkRow(saved.id)) ?? saved
   return NextResponse.json(push.warning ? { artwork, warning: push.warning } : { artwork })

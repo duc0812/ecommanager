@@ -385,3 +385,51 @@ describe('TIFF is served like PSD/ZIP', () => {
     expect(calls).toHaveLength(0)
   })
 })
+
+describe('files left over from before the template', () => {
+  const ORDER2 = 'gid://test/Order/dtu-2'
+  const SUP = 'sup_dtu'
+  const files2 = () => prisma.designArtwork.findMany({ where: { orderId: ORDER2 }, orderBy: { createdAt: 'asc' } })
+
+  beforeAll(async () => {
+    await prisma.supplier.upsert({ where: { code: 'DTUSUP' }, create: { id: SUP, name: 'DTU Supplier', code: 'DTUSUP' }, update: {} })
+    await prisma.printTemplate.create({
+      data: { supplierId: SUP, supplierSku: 'DTU-SHEET', name: 'Sheet', widthPx: 100, heightPx: 50, areas: JSON.stringify([{ name: 'FRONT', x: 0, y: 0, w: 100, h: 50 }]) },
+    })
+    const storeId = (await prisma.shopifyStore.findUniqueOrThrow({ where: { shop: SHOP } })).id
+    await prisma.order.create({
+      data: {
+        id: ORDER2, projectId: PROJECT, storeId, shopifyOrderNumber: '#DTU2', financialStatus: 'PAID', currency: 'USD',
+        grossAmount: 1, expectedPayout: 1, totalFees: 0, refundedAmount: 0, placedAt: new Date('2026-10-05T12:00:00Z'),
+        lines: { create: [{ shopifyLineId: 'p1', sku: 'S', productTitle: 'Hoodie', qty: 1, linePosition: 1, unitPrice: 1, resolvedSupplierId: SUP, resolvedSupplierSku: 'DTU-SHEET' }] },
+      },
+    })
+    await prisma.designTask.create({ data: { orderId: ORDER2, shopifyLineId: 'p1', taskKey: 'DTU2_1' } })
+  })
+
+  afterAll(async () => {
+    await prisma.order.deleteMany({ where: { id: ORDER2 } })
+    await prisma.printTemplate.deleteMany({ where: { supplierId: SUP } })
+    await prisma.supplier.deleteMany({ where: { id: SUP } })
+  })
+
+  it('a file in a template area retires the parts uploaded before it; a part added later stays', async () => {
+    for (const name of ['DTU2_1 - front.png', 'DTU2_1 - back.png']) {
+      expect((await upload([png(40, 30)], { key: 'DTU2_1', printArea: null, fileName: name })).status).toBe(200)
+    }
+    await prisma.designArtwork.updateMany({ where: { orderId: ORDER2 }, data: { createdAt: new Date('2026-10-24T00:00:00Z') } })
+    expect((await files2()).map(f => f.printArea).sort()).toEqual(['DTU2_1 - back', 'DTU2_1 - front'])
+
+    expect((await upload([png(100, 50)], { key: 'DTU2_1', printArea: 'FRONT', fileName: 'sheet.png' })).status).toBe(200)
+    const after = await files2()
+    expect(after.filter(f => !f.removedAt).map(f => f.printArea)).toEqual(['FRONT'])
+    expect(after.filter(f => f.removedAt).every(f => f.removedById === designerId)).toBe(true)
+    const task = await prisma.designTask.findUniqueOrThrow({ where: { taskKey: 'DTU2_1' } })
+    const events = await prisma.designTaskEvent.findMany({ where: { taskId: task.id, message: { contains: '_old' } } })
+    expect(events).toHaveLength(1)
+
+    expect((await upload([png(40, 30)], { key: 'DTU2_1', printArea: null, fileName: 'reference.png' })).status).toBe(200)
+    expect((await upload([png(100, 50)], { key: 'DTU2_1', printArea: 'FRONT', fileName: 'sheet.png' })).status).toBe(200)
+    expect((await files2()).filter(f => !f.removedAt).map(f => `${f.printArea} v${f.version}`).sort()).toEqual(['FRONT v1', 'FRONT v2', 'reference v1'])
+  })
+})

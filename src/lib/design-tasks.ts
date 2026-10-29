@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/db'
 import { isNonProductLine, lineKeysOf } from '@/lib/order-lines'
-import { parseAttributes, safeHttpUrl, sourcePrintFiles, updateLine, loadWorkspace, type WorkspaceLine, type Workspace } from '@/lib/design-studio'
+import { artworkUrl, parseAttributes, safeHttpUrl, sourcePrintFiles, updateLine, loadWorkspace, type WorkspaceLine, type Workspace } from '@/lib/design-studio'
 import { fillCustomallFields } from '@/lib/customall-fields'
 import { getDesignSettings, kpiForProductType, type DesignSettings } from '@/lib/design-settings'
 import { visibleCustomAttributes } from '@/lib/order-classify'
@@ -19,7 +19,7 @@ import type { HandoffPush } from '@/lib/handoff-shared'
 import { autoRenderEligibility } from '@/lib/artwork-render-eligibility'
 import { APP_FILE_PREFIX } from '@/lib/design-links'
 import { saveStudioDesignToLibrary } from '@/lib/studio-library'
-import { missingPrintAreas, printFilesReady } from '@/lib/task-files'
+import { missingPrintAreas, outdatedParts, printFilesReady } from '@/lib/task-files'
 
 export { loadTemplateContext, mapTemplate, pickTemplate, type TemplateRow }
 
@@ -495,6 +495,33 @@ export async function requiredSlotsForLine(orderId: string, shopifyLineId: strin
     where: { orderId, shopifyLineId }, select: { orderId: true, resolvedSupplierId: true, resolvedSupplierSku: true, shopifyProductId: true },
   })
   return line ? requiredSlotsFor(await templateForLine(line)) : []
+}
+
+/**
+ * Takes the print parts left over from before the line used its template out of the task (see `outdatedParts`), so the
+ * folder tidy moves their Drive copies to `_old`. Runs after a print file lands; a file that is the line's factory link stays.
+ */
+export async function retireOutdatedParts(orderId: string, shopifyLineId: string, actorId: string | null): Promise<string[]> {
+  const files = await prisma.designArtwork.findMany({
+    where: { orderId, shopifyLineId, kind: 'PRINT', removedAt: null }, select: { id: true, printArea: true, version: true, fileName: true, createdAt: true, driveWebViewLink: true },
+  })
+  const parts = outdatedParts(files, await requiredSlotsForLine(orderId, shopifyLineId))
+  if (parts.length === 0) return []
+  const line = await prisma.orderLine.findFirst({ where: { orderId, shopifyLineId }, select: { designDriveLink: true } })
+  const sent = line?.designDriveLink ?? null
+  const retire = files.filter(f => parts.includes(f.printArea) && (!sent || (sent !== artworkUrl(f.id) && sent !== f.driveWebViewLink)))
+  if (retire.length === 0) return []
+  const task = await prisma.designTask.findUnique({ where: { orderId_shopifyLineId: { orderId, shopifyLineId } }, select: { id: true } })
+  await prisma.$transaction([
+    prisma.designArtwork.updateMany({ where: { id: { in: retire.map(f => f.id) }, removedAt: null }, data: { removedAt: new Date(), removedById: actorId } }),
+    ...(task ? [prisma.designTaskEvent.create({
+      data: {
+        taskId: task.id, type: 'ARTWORK', actorId,
+        message: `Chuyển vào _old ${retire.length} file của vùng không còn trong template: ${retire.map(f => `${f.printArea} v${f.version}`).join(', ')}`,
+      },
+    })] : []),
+  ])
+  return retire.map(f => f.printArea)
 }
 
 type ContextLine = TemplateLookupLine & { variantOptions: string | null }

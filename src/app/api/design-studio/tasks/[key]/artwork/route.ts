@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireApiAccess } from '@/lib/api-auth'
 import { ARTWORK_TYPES_LABEL, MAX_ARTWORK_BYTES, artworkFileType, artworkTargetForTask, saveArtworkFromTemp } from '@/lib/design-storage'
-import { requiredSlotsForLine } from '@/lib/design-tasks'
+import { requiredSlotsForLine, retireOutdatedParts } from '@/lib/design-tasks'
 import { TooLargeError, discardTemp, streamToTempFile, type TempFile } from '@/lib/library-storage'
 import { enqueueDrivePush } from '@/lib/drive-push-queue'
 import { fileKindOf, isFileKind } from '@/lib/task-files'
@@ -48,6 +48,7 @@ export async function PUT(req: NextRequest, { params }: { params: { key: string 
     temp = await streamToTempFile(req.body, MAX_ARTWORK_BYTES)
     if (temp.size === 0) return NextResponse.json({ error: 'File rỗng' }, { status: 400 })
     const artwork = await saveArtworkFromTemp({ target, kind, printArea, derivePart, fileName, mimeType: contentType, temp, uploadedById: auth.user.id })
+    if (kind === 'PRINT') await retireOutdatedParts(target.orderId, target.shopifyLineId, auth.user.id)
     enqueueDrivePush(artwork.id)
     return NextResponse.json({ artwork })
   } catch (err: any) {
