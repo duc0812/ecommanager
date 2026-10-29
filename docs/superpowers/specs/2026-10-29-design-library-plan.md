@@ -261,6 +261,47 @@ Thứ tự đẩy:
 
 Mỗi đợt ghi prod cần anh gõ lệnh cho phép.
 
+### 6.2 Sửa mapping trên tool để đồng bộ product type (làm trước khi đổi gì trên Shopify)
+
+**Hiện trạng (prod, 29/10/2026).** Mapping khóa trực tiếp bằng chuỗi `product_type` của Shopify:
+- **`ProductBase`:** 164 base, khớp theo `shopifyProductType` cộng điều kiện variant, với 159 liên kết xưởng và 525 override. Có tới 110 chuỗi product type khác nhau:
+  - "3D Clothing" (9 base) cạnh "3D Clothingg" (7), "3D Clothing Print" (3);
+  - "AOP Product" (5) cạnh "AOP Shirttt" (5);
+  - "2D Print Cothing" (4)…
+- **Resolver:** so khớp tên theo đúng chữ (chỉ bỏ qua hoa/thường và khoảng trắng). Đổi product_type trên Shopify trước là đơn mới gãy mapping ngay.
+- **Mapping tay:** 52 mapping theo variant (`VariantManualMapping`) và 18 profile sản phẩm có override/pin template.
+- **Template:** gắn từng variant xưởng (`SupplierProduct.printTemplateId`), chỉ 116 trên 1.091 có. Jomall dùng chung template Merchize nhưng phải gắn lại tay.
+- **Dòng chưa map 30 ngày:** phần lớn là dòng phụ, không phải sản phẩm: "Custom Text" 511, Kaching upsell 188, không có type 121. Sản phẩm thật chưa map chỉ khoảng 20 dòng.
+
+**Nguyên tắc:** tool chuyển sang khóa bằng **product type chuẩn có bảng tên gọi khác**. Tên cũ và tên mới trên Shopify đều map được. Chỉ đổi Shopify sau khi tool đã chạy bằng khóa mới.
+
+**Các bước:**
+1. **Bảng `ProductType`** (mới):
+   - các trường: `name` (chuẩn), `code` (3 chữ), `aliases` (mọi chuỗi product_type cũ và mới), `kind` (PRODUCT / ADDON);
+   - thêm `ProductBase.productTypeId`.
+
+   Resolver đổi thành: product_type của dòng → alias → type chuẩn → các base của type đó. Chuỗi cũ vẫn chạy. Các type phụ ("Custom Text", "Kaching Cart Upsell Toggle", "PPLR_HIDDEN_PRODUCT") gắn `kind = ADDON`, không còn tính là chưa map.
+2. **Gom 110 chuỗi về danh sách chuẩn:**
+   - mở rộng `product_types.json` cho các loại chưa có phôi Merchize: Car Seat Cover, Leather Bag, Phone Case, Tumbler, Ornament, Spare Tire Cover…;
+   - script đề xuất type chuẩn cho từng chuỗi, anh duyệt bảng;
+   - **hợp nhất** các `ProductBase` trùng (cùng type chuẩn và cùng điều kiện variant). Base nào trùng mà trỏ khác xưởng thì liệt kê để anh chọn, không tự gộp.
+3. **Phôi xưởng `SupplierBlank`:**
+   - gắn `SupplierProduct.blankId`, rồi tìm template theo **phôi + size** thay vì gắn từng variant;
+   - Jomall dùng template Merchize qua quan hệ phôi tương đương, chỉ khi đã xác nhận trên đơn;
+   - rà lại 18 profile: pin template chỉ giữ khi thật sự riêng cho sản phẩm đó.
+4. **Chuẩn hóa variant trong điều kiện và override** bằng `VariantAlias` (vd. "9 x 30 cm (For Kid)" → KID). Override không gãy khi Shopify đổi tên option.
+5. **Chạy song song để kiểm chứng (shadow):** chạy resolver cũ và mới trên mọi dòng đơn 60 ngày và mọi đơn đang mở.
+   - Kết quả phải giống nhau. Chỗ khác phải là chỗ sửa đúng, có danh sách để anh duyệt.
+   - Bật resolver mới bằng cờ, theo dõi 2–3 ngày; resolver cũ giữ để quay lại được.
+6. **Lúc đó mới đổi Shopify:**
+   - đổi `product_type` từng loại một qua Admin API (anh duyệt từng đợt), kiểm tra đơn mới vẫn map đúng;
+   - **không đổi SKU cũ**, vì `SkuSupplierDesign` và link thiết kế khóa theo SKU. Mã loại 3 chữ chỉ áp dụng cho sản phẩm mới.
+7. **Trang Mapping trên tool:**
+   - hiện type chuẩn, các tên gọi khác, phôi và template theo size;
+   - lọc "dòng đang mở chưa map" chỉ tính sản phẩm thật.
+
+**Thứ tự với 6.1:** bước 1–3 ở đây (schema và phôi) làm trước, rồi mới đẩy template theo phôi (6.1). Bước 5–6 làm sau khi template đã đủ. Mỗi bước có ghi prod đều cần sao lưu và anh gõ lệnh cho phép.
+
 ## 7. Không làm
 - **Tool không lưu PSD hay mockup xưởng,** chỉ lưu đường dẫn, hash và kết quả kiểm tra. File in của đơn vẫn lên Drive như hiện tại.
 - **Không ai ghi tay vào `LIBRARY`;** chỉ worker ghi, sau khi qua kiểm tra và được duyệt.
