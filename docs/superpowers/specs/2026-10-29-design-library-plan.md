@@ -42,9 +42,11 @@ TEMPLATE\LIBRARY\
   _fonts\
     <Family>\<Family>-<Style>.otf|ttf
     fonts.json                    ← family, style, postscript, nguồn (Customall id / dafont / mua), license
-  suppliers\
-    <XƯỞNG>\<BLANK>\              ← vd. MERCHIZE\MWHDVN, MANGO\WZ, JOMALL\CREWNECK, MERCHIZE\11MMUS
-      blank.json                  ← tên, mã SKU xưởng, size, màu, phương pháp in, link nguồn xưởng, luật riêng (mục 5)
+  templates\
+    <Product Type>\               ← loại sản phẩm chuẩn (mục 2.1): Crew Socks, Hoodie (AOP), Knitted Cardigan, Color Changing Mug…
+      <XƯỞNG> - <MÃ PHÔI>\        ← vd. MERCHIZE - MWHDVN, MANGO - WZ, JOMALL - PULLOVER-HOODIE
+      blank.json                  ← productType, typeCode, tên phôi của xưởng, size, màu, phương pháp in, link nguồn xưởng,
+                                     sản phẩm Jomall dùng chung template, luật riêng (mục 5)
       template\
         <BLANK>_<SIZE|ALL>_v<YYYYMMDD>.psd|tif   ← template gốc của xưởng (1 file / size hoặc ALL)
         <BLANK>_<SIZE|ALL>_cutlines.png          ← đường cắt + vùng an toàn (làm artguide)
@@ -66,6 +68,32 @@ TEMPLATE\LIBRARY\
           asset.json              ← loại asset, font, field, template/version, đơn nguồn (LIT…), kết quả kiểm tra, người duyệt
       _old\
 ```
+
+### 2.1 Product type chuẩn (khóa chung với Shopify)
+
+Template xếp theo **loại sản phẩm** trước, xưởng sau. Lý do:
+- Một loại có thể in ở nhiều xưởng (Hoodie AOP: Merchize MWHDVN, Jomall PULLOVER-HOODIE dùng cùng template).
+- Loại sản phẩm là thứ đồng bộ với `product_type` trên Shopify.
+
+Học theo familystore.com và macorner.co (đã đọc `products.json` ngày 29/10):
+- **`product_type` rõ ràng, mỗi loại một tên:**
+  - Familystore: Ornament, Mug, Crew Socks, Ugly Sweater, Quilted Bedding Set…
+  - Macorner: Socks, Mug, Hoodie, Cardigan, Tote Bag…
+- **Mã loại nằm trong SKU:**
+  - Familystore: `CU6102943OCS-OCS01-Custom Shape Ornament-3.5 inches-1PCS`.
+  - Macorner: `PR-XMA271002LNKL-SCSOCK-KID-10Y`.
+  - Shop mình đã có vài SKU theo kiểu này (`DN3009261002-HCS01-Crew Socks-…`), nhưng chỉ 54 trên khoảng 4.000 dòng đơn.
+- **Tag** thêm loại con và nhóm lớn (Crew Socks / Footwear).
+
+Hiện trạng shop: `product_type` đang lộn xộn, có lỗi gõ và trùng nghĩa ("3D Clothing" / "3D Clothingg", "2D Cothing", "AOP Product" / "AOP Products"…).
+
+Danh sách chuẩn nằm ở `tools/library/product_types.json`. Mỗi loại có:
+- **`name`:** tên thư mục, cũng là `product_type` đích trên Shopify.
+- **`code`:** mã loại 3 chữ để đưa vào SKU. Mã đã có trong SKU thì giữ (HCS = Crew Socks).
+- **`shopify`:** các `product_type` cũ sẽ gom về loại này.
+- **`blanks`:** các phôi xưởng của loại đó.
+
+Phôi chưa có loại nằm tạm ở `templates\_unsorted\`. Việc đổi `product_type` trên Shopify là việc riêng, làm dần khi anh duyệt danh sách.
 
 ### Quy tắc đặt tên thư mục artwork
 - **Định dạng:** `SKU-Variant1-Variant2-Xưởng-NgàyThángNăm`, ví dụ `DN1907262114-HOODIE-TURQUOISE-MERCHIZE-20261029`.
@@ -204,6 +232,34 @@ Mở rộng `process-new-orders` thành chuỗi: snapshot → tra thư viện (4
 Mỗi giai đoạn chạy được độc lập. Giai đoạn 1 đã đỡ việc tìm file và font ngay cả khi chưa có giai đoạn 2.
 
 ---
+
+### 6.1 Đẩy toàn bộ template file in lên tool (sau khi thư viện template đủ)
+
+Mục tiêu: mỗi phôi xưởng trong `templates\` có template in trên tool, gồm khổ, dpi, các vùng in và artguide (cutlines). Template được gắn đúng variant xưởng, để mọi đơn mở ra đã có khung in đúng. Hiện chỉ 116 trên 1.091 variant xưởng có template.
+
+1. **Đọc template.** Worker ở máy văn phòng đọc file template của từng phôi (PSD/TIF/PDF) và lấy ra:
+   - khổ px và dpi;
+   - các vùng in, từ tên layer hoặc nhóm (FRONT, BACK, LEFT SLEEVE… chuẩn hóa tên vùng);
+   - đường cắt và vùng an toàn, xuất thành `cutlines.png`;
+   - template theo size, nếu xưởng có file riêng cho từng size.
+
+   Kết quả ghi vào `blank.json` để anh xem lại được.
+2. **So với dữ liệu thật.** Đối chiếu với file in đã in thành công trên các đơn cũ cùng phôi (khổ, số vùng). Lệch thì đánh dấu, không đẩy.
+3. **So với prod.** Dry-run so với 52 template đang có:
+   - template mới thì tạo;
+   - template đã có và đã chỉnh tay (KNCA, MWHDVN, WZ…) thì chỉ đề xuất cập nhật, không ghi đè;
+   - in ra danh sách thay đổi.
+4. **Đẩy từng phôi một** (VPS yếu, mỗi lần một chunk), kèm sao lưu DB. Mỗi phôi tạo hoặc cập nhật:
+   - `PrintTemplate`: tên `<Product Type> — <XƯỞNG> <MÃ PHÔI> <size>`, `supplierSku`, khổ, dpi, vùng in, `guide.png` lấy từ cutlines;
+   - đường dẫn NAS của file gốc. File gốc không tải lên VPS, chỉ lưu đường dẫn.
+5. **Gắn variant xưởng.** Gắn `SupplierProduct.printTemplateId` cho các variant của phôi, theo size. Riêng Jomall dùng chung template Merchize, chỉ gắn khi đã xác nhận trên đơn (cờ `jomall.confirmed` trong `blank.json`).
+6. **Kiểm tra sau khi đẩy.** Mở 1–2 task mẫu mỗi phôi xem khung in đúng; chạy lại kiểm tra khóa duyệt cho các dòng đang mở.
+
+Thứ tự đẩy:
+1. Các phôi đang có đơn mở trước (Merchize MWHDVN, MWSSVN, KNCAVN, BAJEVN, 11MMUS; Mango WZ).
+2. Phần còn lại theo số đơn 30 ngày.
+
+Mỗi đợt ghi prod cần anh gõ lệnh cho phép.
 
 ## 7. Không làm
 - **Tool không lưu PSD hay mockup xưởng,** chỉ lưu đường dẫn, hash và kết quả kiểm tra. File in của đơn vẫn lên Drive như hiện tại.

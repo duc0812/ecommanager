@@ -1,0 +1,27 @@
+{
+  "_note": "Danh sách product type chuẩn của thư viện (học theo familystore.com / macorner.co: product_type rõ ràng + mã loại 3 chữ, mã loại nằm trong SKU như DN3009261002-HCS01-Crew Socks-…). Thư mục: LIBRARY\\templates\\<name>\\<SUPPLIER> - <BLANK>\\. 'shopify' = các product_type đang có trên Shopify/đơn sẽ chuẩn hóa dần về <name>. Mã loại có sẵn trong SKU thì giữ (HCS, XYZ, OCS, BSH).",
+  "types": [
+    {"name": "Crew Socks", "code": "HCS", "shopify": ["Crew Socks"], "blanks": [["MANGO", "WZ"]]},
+    {"name": "Accent Mug", "code": "AMG", "shopify": ["Accent Mug"], "blanks": [["MERCHIZE", "11AMUS"], ["MERCHIZE", "15AMUS"]]},
+    {"name": "Color Changing Mug", "code": "MMG", "shopify": ["3D Print Tumbler&MUG"], "blanks": [["MERCHIZE", "11MMUS"]]},
+    {"name": "T-Shirt (2D)", "code": "TSD", "shopify": ["2D Tshirt", "2D T-shirt", "2D T-shirt Clothing", "T shirt", "2D Collection Shirt"], "blanks": [["MERCHIZE", "5000US"]]},
+    {"name": "T-Shirt (AOP)", "code": "TSA", "shopify": ["AOP Shirt", "3D Clothing"], "blanks": [["MERCHIZE", "T5HAVN"]]},
+    {"name": "Hoodie (AOP)", "code": "HDA", "shopify": ["Hoodie", "3D Clothing", "AOP Shirt"], "blanks": [["MERCHIZE", "MWHDVN"]]},
+    {"name": "Zip Hoodie (AOP)", "code": "ZHA", "shopify": ["3D Clothing", "AOP Shirt"], "blanks": [["MERCHIZE", "MWZHVN"]]},
+    {"name": "Sweatshirt (AOP)", "code": "SWA", "shopify": ["3D Clothing", "AOP Shirt"], "blanks": [["MERCHIZE", "MWSSVN"]]},
+    {"name": "Sweatshirt (Embroidered)", "code": "SWE", "shopify": [], "blanks": [["MERCHIZE", "EBSSVN"]]},
+    {"name": "Bomber Jacket (AOP Fleece)", "code": "BJF", "shopify": ["Varsity Jacket"], "blanks": [["MERCHIZE", "FEBOVN"]]},
+    {"name": "Knitted Cardigan", "code": "KCA", "shopify": ["Cardigan"], "blanks": [["MERCHIZE", "KNCAVN"]]},
+    {"name": "Knitted Sweater", "code": "KSW", "shopify": ["Cardigan"], "blanks": [["MERCHIZE", "KNSWVN"]]},
+    {"name": "Baseball Jersey", "code": "BBJ", "shopify": ["Baseball Jersey"], "blanks": [["MERCHIZE", "BAJEVN"]]},
+    {"name": "Kids Baseball Jersey", "code": "KBJ", "shopify": ["Baseball Jersey"], "blanks": [["MERCHIZE", "KYBJVN"]]},
+    {"name": "Pajama Set", "code": "PJS", "shopify": ["Pajama", "Pajama Set"], "blanks": [["MERCHIZE", "PASEVN"]]},
+    {"name": "Hawaiian Shirt", "code": "HWS", "shopify": [], "blanks": [["MERCHIZE", "RHWSVN"]]},
+    {"name": "Hawaiian Shorts", "code": "HWT", "shopify": [], "blanks": [["MERCHIZE", "HWS2VN"]]},
+    {"name": "Satin Robe", "code": "XYZ", "shopify": ["Satin Robe"], "blanks": [["MERCHIZE", "WSTRVN"]]},
+    {"name": "Quilted Tote Bag", "code": "QTB", "shopify": ["Quilted Tote Bag"], "blanks": [["MERCHIZE", "QTFHVN"]]},
+    {"name": "Fleece Blanket", "code": "FBL", "shopify": ["Blanket"], "blanks": [["MERCHIZE", "LFBKUS"]]},
+    {"name": "Acrylic Magnet", "code": "AMA", "shopify": ["Acrylic Magnet"], "blanks": [["MERCHIZE", "CSAMVN"]]},
+    {"name": "Wood Acrylic Ornament", "code": "WAO", "shopify": ["Custom Shape Acrylic Ornament", "3D Acrylic Ornament"], "blanks": [["MERCHIZE", "WAORVN"]]}
+  ]
+}

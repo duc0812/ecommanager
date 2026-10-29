@@ -7,7 +7,7 @@
 Steps (docs/superpowers/specs/2026-10-29-design-library-plan.md, section 6):
   skeleton   the folder tree + README
   fonts      every distinct font file (by sha256) on this PC -> _fonts\\<Family>\\<PostScript>.<ext> + fonts.json
-  suppliers  supplier templates / cutlines / mockup PSDs listed in supplier_sources.json -> suppliers\\<SUP>\\<BLANK>\\
+  suppliers  supplier templates / cutlines / mockup PSDs listed in supplier_sources.json -> templates\\<Product Type>\\<SUP> - <BLANK>\\
   psds       the design PSDs of \\\\TMTEAM\\TEMPLATE\\2026\\MERCHIZE -> products\\<CODE>\\artwork\\<CODE>-<V1>-ALL-UNKNOWN-<date>\\master.psd
   flat       the latest approved no-custom print set of every SKU x supplier (export from prod, --flat-json) downloaded
              from Drive -> products\\<CODE>\\artwork\\<CODE>-<V1>-<V2>-<SUP>-<date>\\print\\<AREA>.<ext>
@@ -29,6 +29,8 @@ from pathlib import Path
 
 ROOT_DEFAULT = r'\\TMTEAM\TEMPLATE\LIBRARY'
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+from library_paths import blank_dir  # noqa: E402
 CODE_RE = re.compile(r'(?<![A-Z0-9])([A-Z]{2}\d{7,10}[A-Z]{0,3})(?![A-Z0-9])', re.I)
 LINE_PREFIX_RE = re.compile(r'^LIT\d+(?:_\d+)*\s*(?:-\s*)?', re.I)
 SUPPLIER_NAMES = {'MANGOSHAO': 'MANGO', 'MANGO': 'MANGO', 'MERCHIZE': 'MERCHIZE', 'JOMALL': 'JOMALL', 'PGPRINTS': 'PGPRINTS',
@@ -52,7 +54,8 @@ chỉ worker ở máy văn phòng ghi vào thư mục này. Plan: docs/superpowe
 _staging\\    file nộp qua tool đang chờ kiểm tra / duyệt
 _fonts\\      font dùng trong thiết kế (fonts.json: family, style, postscript, nguồn)
 _reports\\    báo cáo của script / worker
-suppliers\\<XƯỞNG>\\<BLANK>\\template|mockup\\   template, cutlines, mockup PSD của xưởng
+templates\\<Product Type>\\<XƯỞNG> - <MÃ PHÔI>\\template|mockup\\   template, cutlines, mockup PSD của xưởng
+             (product type theo danh sách chuẩn, cũng là product_type sẽ đồng bộ lên Shopify)
 products\\<MÃ SP>\\artwork\\<SKU>-<Variant1>-<Variant2>-<XƯỞNG>-<YYYYMMDD>\\
     print\\     file in phẳng (sản phẩm không custom)
     base\\      file in không có chữ custom + text.json (sản phẩm custom chữ)
@@ -139,11 +142,11 @@ class Run:
 
 def step_skeleton(r: Run) -> None:
     r.say('## skeleton')
-    for d in ('_staging', '_fonts', '_reports', 'suppliers', 'products'):
+    for d in ('_staging', '_fonts', '_reports', 'templates', 'products'):
         r.mkdir(r.root / d)
     if r.apply:
         (r.root / 'README.md').write_text(README, encoding='utf-8')
-    r.say(f'  {r.root}: _staging, _fonts, _reports, suppliers, products, README.md')
+    r.say(f'  {r.root}: _staging, _fonts, _reports, templates, products, README.md')
 
 
 def font_names(path: Path) -> tuple[str, str, str] | None:
@@ -201,7 +204,7 @@ def step_suppliers(r: Run) -> None:
     for row in cfg['files']:
         src = base / row['src']
         sub = 'mockup' if row['kind'] == 'mockup' else 'template'
-        dest_dir = r.root / 'suppliers' / row['supplier'] / row['blank'] / sub
+        dest_dir = blank_dir(r.root, row['supplier'], row['blank']) / sub
         items = sorted(src.glob(row['glob'])) if row.get('glob') else [src]
         for s in items:
             if not s.exists():
@@ -213,7 +216,14 @@ def step_suppliers(r: Run) -> None:
             r.copy(s, dest_dir / name)
             blanks.setdefault((row['supplier'], row['blank']), []).append({'kind': row['kind'], 'file': f'{sub}/{name}', 'note': row.get('note'), 'from': str(s)})
     for (sup, blank), files in blanks.items():
-        r.write_json(r.root / 'suppliers' / sup / blank / 'blank.json', {'supplier': sup, 'blank': blank, 'files': files, 'rules': [], 'status': 'UNCHECKED'})
+        # merchize_templates.py may already have written this blank.json from the catalog: keep it, add our files
+        path = blank_dir(r.root, sup, blank) / 'blank.json'
+        try:
+            meta = json.loads(path.read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            meta = {'supplier': sup, 'blank': blank, 'rules': [], 'status': 'UNCHECKED'}
+        meta['localFiles'] = files
+        r.write_json(path, meta)
         r.say(f'  {sup}\\{blank}: {len(files)} file(s)')
 
 

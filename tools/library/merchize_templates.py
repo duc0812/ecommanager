@@ -5,7 +5,7 @@
 
 The catalog is the Merchize API dump (GET /product/catalog, every page); each blank's `mockup_and_templates_link` is a
 public Drive folder. It is walked recursively (anonymous embeddedfolderview) and copied to
-LIBRARY\\suppliers\\MERCHIZE\\<SKU>\\template\\… or …\\mockup\\… (any path with "mockup" in it). Folders named "old" are
+LIBRARY\\templates\\<Product Type>\\MERCHIZE - <BLANK>\\template\\… or …\\mockup\\… (any path with "mockup" in it). Folders named "old" are
 skipped. blank.json keeps the catalog data and, for blanks Jomall prints on the same template, a note saying so.
 Idempotent: a file already there with the same size is skipped.
 """
@@ -21,6 +21,9 @@ import sys
 import time
 import urllib.request
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from library_paths import blank_dir  # noqa: E402
 
 ROOT_DEFAULT = r'\\TMTEAM\TEMPLATE\LIBRARY'
 UA = {'User-Agent': 'Mozilla/5.0 (design-library)'}
@@ -90,7 +93,7 @@ def main(argv: list[str] | None = None) -> int:
     a = ap.parse_args(argv)
     catalog = {p['sku']: p for p in json.loads(a.catalog.read_text(encoding='utf-8'))}
     skus = [s.strip() for s in a.only.split(',') if s.strip()] or list(dict.fromkeys(OWN + list(JOMALL)))
-    root = Path(a.root) / 'suppliers' / 'MERCHIZE'
+    root = Path(a.root)
     total = fails = got = 0
     report = [f'# Merchize templates — {"APPLY" if a.apply else "DRY RUN"} — {dt.datetime.now():%Y-%m-%d %H:%M}']
     for sku in skus:
@@ -103,7 +106,7 @@ def main(argv: list[str] | None = None) -> int:
             report.append(f'- {sku}: link không phải thư mục Drive: {p["mockup_and_templates_link"]}')
             continue
         files = list(walk(m.group(1)))
-        blank = root / sku
+        blank = blank_dir(root, 'MERCHIZE', sku)
         rows = []
         for path, title, fid in files:
             sub = 'mockup' if any('mockup' in s.lower() for s in path + (title,)) else 'template'
