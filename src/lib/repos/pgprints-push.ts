@@ -522,7 +522,8 @@ async function upsertSupplierTracking(push: Pick<PushRow, 'orderId' | 'supplierI
       await prisma.shipment.update({
         where: { id: existing.id },
         data: {
-          trackingNumber: item.trackingNumber, carrier: item.carrierCode ?? existing.carrier, supplierId: existing.supplierId ?? push.supplierId,
+          // The line shipped from the pushed supplier even when the order sync first mapped it elsewhere (Mangoshao → PGprints moves).
+          trackingNumber: item.trackingNumber, carrier: item.carrierCode ?? existing.carrier, supplierId: push.supplierId,
           ...(existing.status === SHIPMENT_STATUS_PENDING ? { status: SHIPMENT_STATUS_FULFILLED } : {}),
         },
       })

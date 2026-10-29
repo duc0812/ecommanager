@@ -841,6 +841,22 @@ describe('syncPgprintsTracking (Auto Fulfill)', () => {
     expect(rows.get(shipped.number)).toEqual([{ lineKey: `${shipped.number}_1`, tracking: '9400111' }])
     expect(rows.has(printing.number)).toBe(false)
 
+    const moved = await makeOrder()
+    handler = call => call.path === '/app/v1/orders/create' ? createdReply(call) : { status: 200, json: { success: true, data: {} } }
+    const prem = await (await preview(moved.id)).json()
+    expect((await push(moved.id, prem.payloadHash)).status).toBe(200)
+    await upsertOrderShipments(moved.id, PROJECT, [{
+      lineKey: `${moved.number}_1`, shopifyLineId: moved.lineId, sku: 'TUMBLER-A', productTitle: 'Custom Tumbler', supplierId: OTHER_SUP,
+      shopifyFulfillmentId: null, trackingNumber: null, carrier: null, trackingUrl: null, status: 'PENDING',
+    }])
+    handler = call => call.path === '/api/v1/orders/search'
+      ? { status: 200, json: { success: true, data: [{ id: 'i3', pgcOrderId: `PG-${moved.number}`, orderId: moved.number, itemStatuses: ['fulfilled'],
+          childDetails: [{ sku: 'UT2-One_size', status: 'fulfilled', trackingNumber: 'GF1', carrierCode: 'gofo' }] }] } }
+      : { status: 404, json: {} }
+    await syncPgprintsTracking()
+    expect(await prisma.shipment.findFirstOrThrow({ where: { orderId: moved.id } })).toMatchObject({ trackingNumber: 'GF1', supplierId: SUP })
+    expect((await pushedShipmentRows(storeId)).get(moved.number)).toEqual([{ lineKey: `${moved.number}_1`, tracking: 'GF1' }])
+
     await prisma.shipment.updateMany({ where: { orderId: shipped.id }, data: { shopifyFulfillmentId: 'gid://shopify/Fulfillment/9' } })
     expect((await pushedShipmentRows(storeId)).has(shipped.number)).toBe(false)
   })
