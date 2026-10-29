@@ -8,12 +8,12 @@
     {"supplier": "MANGO", "blank": "WZ", "kind": "cutlines", "src": "mango-wz-sock/template/guide_WZ-L.png", "name": "WZ_L_cutlines.png"},
     {"supplier": "MANGO", "blank": "WZ", "kind": "mockup", "src": "mango-wz-sock/mockup/zip/效果图模板", "glob": "ZS1-*.psd", "note": "效果图模板: smart object 'Yandex Images search for similar images' = cả tấm in, dùng chung 2 chân"},
     {"supplier": "MERCHIZE", "blank": "11MMUS", "kind": "template", "src": "new-2910/TN0309261821/merchize/tpl.psd", "name": "11MMUS_ALL_v20240805.psd", "note": "11MMGDT Color Changing Mug 11oz, 2931x1206 @300, safe y116-1088 x261-2672"},
-    {"supplier": "MERCHIZE", "blank": "KNCA", "kind": "cutlines", "src": "DN2508261109/knca/cut-S.png", "name": "KNCA_S_cutlines.png", "note": "Knitted cardigan V-Neck (Jomall V-NECK in), 12600x6200 @150"},
-    {"supplier": "MERCHIZE", "blank": "KNCA", "kind": "cutlines", "src": "DN2508261109/knca/cut-7XL.png", "name": "KNCA_7XL_cutlines.png"},
-    {"supplier": "MERCHIZE", "blank": "KNCA", "kind": "cutlines", "src": "DN2508261109/knca/cut-safe_zone.png", "name": "KNCA_ALL_safe-zone.png"},
-    {"supplier": "MERCHIZE", "blank": "KNCA", "kind": "cutlines", "src": "new-2910/DN2508261111/knca-guide/guide.png", "name": "KNCA_ALL_guide.png"},
-    {"supplier": "MERCHIZE", "blank": "KNCA", "kind": "mockup", "src": "DN2508261107/merchize/mockup.psd", "name": "KNCA_FRONT_mockup.psd", "note": "smart object 'PLACE YOUR DESIGN HERE'"},
-    {"supplier": "MERCHIZE", "blank": "BAJE", "kind": "template", "src": "//TMTEAM/TEMPLATE/2026/MERCHIZE/BAJE AOP có size.psd", "name": "BAJE_ALL_template.psd", "note": "Baseball jersey AOP 12289x5906, có các size (Jomall cũng dùng)"},
+    {"supplier": "MERCHIZE", "blank": "KNCAVN", "kind": "cutlines", "src": "DN2508261109/knca/cut-S.png", "name": "KNCAVN_S_cutlines.png", "note": "Knitted cardigan V-Neck (Jomall V-NECK in), 12600x6200 @150"},
+    {"supplier": "MERCHIZE", "blank": "KNCAVN", "kind": "cutlines", "src": "DN2508261109/knca/cut-7XL.png", "name": "KNCAVN_7XL_cutlines.png"},
+    {"supplier": "MERCHIZE", "blank": "KNCAVN", "kind": "cutlines", "src": "DN2508261109/knca/cut-safe_zone.png", "name": "KNCAVN_ALL_safe-zone.png"},
+    {"supplier": "MERCHIZE", "blank": "KNCAVN", "kind": "cutlines", "src": "new-2910/DN2508261111/knca-guide/guide.png", "name": "KNCAVN_ALL_guide.png"},
+    {"supplier": "MERCHIZE", "blank": "KNCAVN", "kind": "mockup", "src": "DN2508261107/merchize/mockup.psd", "name": "KNCAVN_FRONT_mockup.psd", "note": "smart object 'PLACE YOUR DESIGN HERE'"},
+    {"supplier": "MERCHIZE", "blank": "BAJEVN", "kind": "template", "src": "//TMTEAM/TEMPLATE/2026/MERCHIZE/BAJE AOP có size.psd", "name": "BAJEVN_ALL_template.psd", "note": "Baseball jersey AOP 12289x5906, có các size (Jomall cũng dùng)"},
     {"supplier": "MERCHIZE", "blank": "MWSSVN", "kind": "cutlines", "src": "MWSSVN/guide_MWSSVN.png", "name": "MWSSVN_ALL_guide.png", "note": "Midweight sweatshirt T180A"}
   ]
 }

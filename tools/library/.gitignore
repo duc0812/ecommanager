@@ -1,2 +1,3 @@
 .flat_prints.local.json
 __pycache__/
+.merchize_catalog.local.json
