@@ -1,7 +1,7 @@
 import { prisma } from '@/lib/db'
 import { fetchSheetCsv, parseSheetCsv, csvExportUrl, parseSheetUrl } from './parse-sheet'
-import { type SheetConfig } from './auto-fulfill-sheets'
-import { groupByOrder, mergeSheetGroups, buildFulfillmentPlan, type OrderPlanStatus } from './build-fulfill-plan'
+import { type SheetConfig, DEFAULT_STORE_BASE } from './auto-fulfill-sheets'
+import { groupByOrder, mergeSheetGroups, buildFulfillmentPlan, type OrderPlanStatus, type OrderRow } from './build-fulfill-plan'
 import { fetchOrderFulfillmentOrdersByNames, createFulfillment } from '@/lib/shopify-orders'
 import { isNonProductLine } from '@/lib/order-lines'
 
@@ -12,7 +12,7 @@ export type AutoFulfillSummary = {
   notFound: number; needsManual: number; errored: number; rows: OrderResultRow[]
 }
 
-export type AutoFulfillStage = 'sheets' | 'shopify'
+export type AutoFulfillStage = 'sheets' | 'shopify' | 'pgprints'
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 
@@ -28,6 +28,29 @@ export function settleFromDb(
   if (ageDays < minAgeDays) return { baseOrder, status: 'too_recent', fulfillments: [], message: `Mới ${ageDays} ngày`, ageDays }
   if ((db.fulfillmentStatus ?? '').toUpperCase() === 'FULFILLED') return { baseOrder, status: 'already_fulfilled', fulfillments: [], ageDays }
   return null
+}
+
+// Orders pushed to a supplier by API (PGprints) get their tracking on Shipment rows from the
+// supplier sync rather than a sheet. Those trackings exist only once the parcel shipped, so
+// these orders skip the min-age gate that protects pre-printed sheet trackings.
+export async function pushedShipmentRows(storeId: string): Promise<Map<string, OrderRow[]>> {
+  const pushes = await prisma.supplierOrderPush.findMany({
+    where: { status: 'CREATED', order: { storeId } },
+    select: {
+      supplierId: true,
+      order: { select: { shopifyOrderNumber: true, shipments: { where: { trackingNumber: { not: null }, shopifyFulfillmentId: null }, select: { lineKey: true, trackingNumber: true, supplierId: true } } } },
+    },
+  })
+  const out = new Map<string, OrderRow[]>()
+  for (const p of pushes) {
+    const rows = p.order.shipments
+      .filter(s => s.supplierId === p.supplierId && !!s.trackingNumber?.trim())
+      .map(s => ({ lineKey: s.lineKey, tracking: (s.trackingNumber as string).trim() }))
+    if (rows.length === 0) continue
+    const base = p.order.shopifyOrderNumber.replace(/^#/, '')
+    out.set(base, [...(out.get(base) ?? []), ...rows])
+  }
+  return out
 }
 
 export async function runAutoFulfill(opts: {
@@ -65,6 +88,9 @@ export async function runAutoFulfill(opts: {
     const grouped = groupByOrder(parseSheetCsv(text))
     mergeSheetGroups(byOrder, grouped, sheet.storeBase)
   }
+  const pushed = await pushedShipmentRows(opts.storeId)
+  mergeSheetGroups(byOrder, pushed, DEFAULT_STORE_BASE)
+  const minAgeFor = (base: string) => (pushed.has(base) ? 0 : opts.minAgeDays)
 
   const names = Array.from(byOrder.keys())
   const summary: AutoFulfillSummary = {
@@ -89,7 +115,7 @@ export async function runAutoFulfill(opts: {
   // DB and only ask Shopify (needed anyway for fulfillment-order ids) about the rest.
   const settled = new Map<string, ReturnType<typeof buildFulfillmentPlan>>()
   for (const base of names) {
-    const plan = settleFromDb(base, dbByName.get(base), now, opts.minAgeDays)
+    const plan = settleFromDb(base, dbByName.get(base), now, minAgeFor(base))
     if (plan) settled.set(base, plan)
   }
   const foMap = await fetchOrderFulfillmentOrdersByNames(opts.shop, opts.accessToken, names.filter(n => !settled.has(n)), undefined,
@@ -109,7 +135,7 @@ export async function runAutoFulfill(opts: {
       displayFulfillmentStatus: fo?.displayFulfillmentStatus ?? null,
       addOnLineIds: (db?.lines ?? []).filter(l => isNonProductLine(l)).map(l => l.shopifyLineId),
       placedAt: db?.placedAt ?? (fo ? new Date(fo.createdAt) : null),
-      now, minAgeDays: opts.minAgeDays,
+      now, minAgeDays: minAgeFor(base),
     })
     const plannedLines = plan.fulfillments.reduce((sum, f) => sum + f.lineItems.length, 0)
     evaluated.push({ base, plan, storeBase, db, fulfilledLines: opts.apply ? 0 : plannedLines })

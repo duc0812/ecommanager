@@ -18,6 +18,8 @@ import { POST as postTestConnection } from '@/app/api/fulfillment/pgprints/setti
 import { GET as getCatalog } from '@/app/api/fulfillment/pgprints/catalog/route'
 import { GET as getPublicArtwork } from '@/app/api/public/artwork/[token]/[fileName]/route'
 import { POST as postTracking } from '@/app/api/public/pgprints/tracking/route'
+import { syncPgprintsTracking } from '@/lib/repos/pgprints-push'
+import { pushedShipmentRows } from '@/lib/fulfillment/auto-fulfill'
 import { PATCH as patchSupplierProduct } from '@/app/api/suppliers/products/[id]/route'
 
 const SHOP = 'pgp.myshopify.com'
@@ -805,6 +807,42 @@ describe('POST /api/public/pgprints/tracking', () => {
       shopifyFulfillmentId: 'gid://shopify/Fulfillment/1', trackingNumber: 'USPS123', carrier: 'USPS', trackingUrl: null, status: 'IN_TRANSIT',
     }])
     expect((await prisma.shipment.findFirstOrThrow({ where: { orderId: o.id } }))).toMatchObject({ trackingNumber: 'USPS123', status: 'IN_TRANSIT' })
+  })
+})
+
+describe('syncPgprintsTracking (Auto Fulfill)', () => {
+  it('pulls every live push in one paged search, writes the shipped trackings, and hands them to Auto Fulfill', async () => {
+    const shipped = await makeOrder()
+    const printing = await makeOrder()
+    for (const o of [shipped, printing]) {
+      const pre = await (await preview(o.id)).json()
+      expect((await push(o.id, pre.payloadHash)).status).toBe(200)
+    }
+    handler = call => call.path === '/api/v1/orders/search'
+      ? { status: 200, json: { success: true, data: [
+          { id: 'i1', pgcOrderId: `PG-${shipped.number}`, orderId: shipped.number, itemStatuses: ['fulfilled'],
+            childDetails: [{ sku: 'UT2-One_size', status: 'fulfilled', trackingNumber: '9400111', carrierCode: 'usps' }] },
+          { id: 'i2', pgcOrderId: `PG-${printing.number}`, orderId: printing.number, itemStatuses: ['in-production'],
+            childDetails: [{ sku: 'UT2-One_size', status: 'in-production' }] },
+        ] } }
+      : { status: 404, json: {} }
+
+    const r = await syncPgprintsTracking()
+    expect(r.found).toBeGreaterThanOrEqual(2)
+    expect(r.shipments).toBeGreaterThanOrEqual(1)
+    expect(callsTo('/orders/search')).toHaveLength(1)
+    expect(JSON.parse(callsTo('/orders/search')[0].body)).toMatchObject({ searchKey: '', page: 1, size: 50 })
+
+    expect(await prisma.shipment.findMany({ where: { orderId: shipped.id } })).toMatchObject([{ lineKey: `${shipped.number}_1`, trackingNumber: '9400111', carrier: 'usps', supplierId: SUP }])
+    expect(await prisma.shipment.count({ where: { orderId: printing.id } })).toBe(0)
+    expect((await prisma.supplierOrderPush.findFirstOrThrow({ where: { orderId: printing.id } })).remoteStatus).toBe('in-production')
+
+    const rows = await pushedShipmentRows(storeId)
+    expect(rows.get(shipped.number)).toEqual([{ lineKey: `${shipped.number}_1`, tracking: '9400111' }])
+    expect(rows.has(printing.number)).toBe(false)
+
+    await prisma.shipment.updateMany({ where: { orderId: shipped.id }, data: { shopifyFulfillmentId: 'gid://shopify/Fulfillment/9' } })
+    expect((await pushedShipmentRows(storeId)).has(shipped.number)).toBe(false)
   })
 })
 

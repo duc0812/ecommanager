@@ -565,6 +565,11 @@ export async function refreshPush(orderId: string): Promise<{ push: PushView; fo
     })
     return { push: await viewOf(push.id), found: false, shipments: 0 }
   }
+  const shipments = await applyRemoteMatch(push, match, lastSyncedAt)
+  return { push: await viewOf(push.id), found: true, shipments }
+}
+
+async function applyRemoteMatch(push: PushRow, match: PgprintsRemoteOrder, lastSyncedAt: Date): Promise<number> {
   // PGprints holds an order under our order_id, so a push we recorded as unanswered or refused did land after all.
   const landed = push.status === 'SENDING' || push.status === 'FAILED'
   try {
@@ -582,8 +587,41 @@ export async function refreshPush(orderId: string): Promise<{ push: PushView; fo
     throw e
   }
   if (landed) await markPushExported(push)
-  const shipments = push.status === 'CANCELLED' ? 0 : await upsertSupplierTracking(push, match.items)
-  return { push: await viewOf(push.id), found: true, shipments }
+  return push.status === 'CANCELLED' ? 0 : upsertSupplierTracking(push, match.items)
+}
+
+const SYNC_PAGE_SIZE = 50
+const SYNC_MAX_PAGES = 40
+
+// Pulls every live PGprints push's status + tracking in a few paged searches (one window from
+// the oldest live push), instead of one request per order. Tracking lands on Shipment rows;
+// Auto Fulfill turns those into Shopify fulfillments.
+export async function syncPgprintsTracking(): Promise<{ pushes: number; found: number; shipments: number; skipped?: string }> {
+  const supplier = await findPgprintsSupplier()
+  if (!supplier) return { pushes: 0, found: 0, shipments: 0, skipped: 'no PGprints supplier' }
+  const creds = credentialsOf(await getPgprintsSettings())
+  if (!creds) return { pushes: 0, found: 0, shipments: 0, skipped: 'no PGprints credentials' }
+  const pushes = await prisma.supplierOrderPush.findMany({ where: { supplierId: supplier.id, status: { in: ACTIVE_STATUSES } } })
+  if (pushes.length === 0) return { pushes: 0, found: 0, shipments: 0 }
+  const now = Date.now()
+  const fromTime = Math.min(...pushes.map(p => p.pushedAt.getTime())) - 24 * 3600_000
+  const remote: PgprintsRemoteOrder[] = []
+  for (let page = 1; page <= SYNC_MAX_PAGES; page++) {
+    const batch = await searchOrders(creds, { fromTime, toTime: now + 3600_000, page, size: SYNC_PAGE_SIZE })
+    remote.push(...batch)
+    if (batch.length < SYNC_PAGE_SIZE) break
+  }
+  const lastSyncedAt = new Date(now)
+  let found = 0
+  let shipments = 0
+  for (const push of pushes) {
+    const match = remote.find(o => o.orderId === push.externalOrderId || (!!push.supplierOrderCode && o.pgcOrderId === push.supplierOrderCode))
+    if (!match) continue
+    found++
+    try { shipments += await applyRemoteMatch(push, match, lastSyncedAt) }
+    catch (e: any) { console.error('[pgprints] tracking sync failed for push', push.id, e?.message ?? e) }
+  }
+  return { pushes: pushes.length, found, shipments }
 }
 
 export type TrackingWebhookInput = {

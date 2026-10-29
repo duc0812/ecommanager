@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const dbOrders: any[] = []
-vi.mock('@/lib/db', () => ({ prisma: { order: { findMany: vi.fn(async () => dbOrders) } } }))
+const pushRows: any[] = []
+vi.mock('@/lib/db', () => ({ prisma: { order: { findMany: vi.fn(async () => dbOrders) }, supplierOrderPush: { findMany: vi.fn(async () => pushRows) } } }))
 vi.mock('./parse-sheet', async (orig) => ({
   ...(await orig<typeof import('./parse-sheet')>()),
   fetchSheetCsv: vi.fn(async () => 'Order,Tracking\nLIT1001,TRK1\nLIT1002,TRK2\nLIT1003,TRK3\n'),
@@ -23,7 +24,7 @@ const SHEET = { id: '1', name: 'A', url: 'https://docs.google.com/spreadsheets/d
 const dbOrder = (name: string, placedAt: Date, fulfillmentStatus: string | null) =>
   ({ id: name, shopifyOrderNumber: `#${name}`, placedAt, pipelineStatus: null, fulfillmentStatus, shipments: [], lines: [] })
 
-beforeEach(() => { vi.clearAllMocks(); dbOrders.length = 0 })
+beforeEach(() => { vi.clearAllMocks(); dbOrders.length = 0; pushRows.length = 0 })
 
 describe('runAutoFulfill', () => {
   it('reports each sheet read and the Shopify batches before evaluating orders', async () => {
@@ -54,5 +55,20 @@ describe('settleFromDb', () => {
     expect(settleFromDb('A', { placedAt: null, fulfillmentStatus: 'FULFILLED' }, NOW, 5)).toBeNull()
     expect(settleFromDb('A', { placedAt: daysAgo(9), fulfillmentStatus: 'PARTIALLY_FULFILLED' }, NOW, 5)).toBeNull()
     expect(settleFromDb('A', { placedAt: daysAgo(9), fulfillmentStatus: 'fulfilled' }, NOW, 5)?.status).toBe('already_fulfilled')
+  })
+})
+
+describe('API-pushed tracking', () => {
+  it('adds tracked supplier shipments as rows and lets them past the min-age gate', async () => {
+    pushRows.push({ supplierId: 'pg', order: { shopifyOrderNumber: '#LIT2000', shipments: [
+      { lineKey: 'LIT2000_1', trackingNumber: ' 9400TRK ', supplierId: 'pg' },
+      { lineKey: 'LIT2000_2', trackingNumber: 'OTHER', supplierId: 'someone-else' },
+    ] } })
+    dbOrders.push(dbOrder('LIT2000', daysAgo(2), 'UNFULFILLED'))
+    const r = await runAutoFulfill({ shop: 's', accessToken: 't', storeId: 'st', minAgeDays: 7, apply: false, now: NOW, sheets: [] })
+    expect((fetchOrderFulfillmentOrdersByNames as any).mock.calls[0][2]).toEqual(['LIT2000'])
+    expect(r.ordersChecked).toBe(1)
+    expect(r.tooRecent).toBe(0)
+    expect(r.notFound).toBe(1)
   })
 })

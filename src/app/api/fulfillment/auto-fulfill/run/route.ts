@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db'
 import { getShopifyConnection } from '@/lib/token-store'
 import { getSheets, getMinAgeDays } from '@/lib/fulfillment/auto-fulfill-sheets'
 import { runAutoFulfill } from '@/lib/fulfillment/auto-fulfill'
+import { syncPgprintsTracking } from '@/lib/repos/pgprints-push'
 
 export async function POST(req: NextRequest) {
   const apply = req.nextUrl.searchParams.get('apply') === '1'
@@ -17,8 +18,10 @@ export async function POST(req: NextRequest) {
     async start(controller) {
       const send = (o: any) => controller.enqueue(encoder.encode(JSON.stringify(o) + '\n'))
       // First bytes go out before any slow work, so the proxy sees a response straight away.
-      send({ type: 'stage', stage: 'sheets', done: 0, total: sheets.filter(s => s.enabled).length })
+      send({ type: 'stage', stage: 'pgprints', done: 0, total: 1 })
       try {
+        const pg = await syncPgprintsTracking().catch((e: any) => ({ error: e?.message ?? String(e) }))
+        send({ type: 'pgprints', ...pg })
         const result = await runAutoFulfill({
           shop: conn.shop, accessToken: conn.token, storeId: store.id,
           sheets, minAgeDays, apply,

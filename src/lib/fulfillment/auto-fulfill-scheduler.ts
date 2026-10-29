@@ -4,12 +4,18 @@ import { prisma } from '@/lib/db'
 import { getShopifyConnection } from '@/lib/token-store'
 import { getSheets, getMinAgeDays } from './auto-fulfill-sheets'
 import { runAutoFulfill } from './auto-fulfill'
+import { syncPgprintsTracking } from '@/lib/repos/pgprints-push'
 
 const TZ = 'Asia/Ho_Chi_Minh'
 
 export async function runDailyAutoFulfill() {
   const sheets = (await getSheets()).filter(s => s.enabled)
-  if (sheets.length === 0) { console.log('[auto-fulfill] no enabled sheets; skipping'); return }
+  try {
+    const pg = await syncPgprintsTracking()
+    console.log(`[auto-fulfill] PGprints tracking sync: ${pg.found}/${pg.pushes} order(s) found, ${pg.shipments} shipment(s) updated${pg.skipped ? ` (${pg.skipped})` : ''}`)
+  } catch (e: any) {
+    console.error('[auto-fulfill] PGprints tracking sync failed:', e?.message ?? e)
+  }
   const conn = await getShopifyConnection()
   if (!conn) { console.log('[auto-fulfill] no Shopify connection; skipping'); return }
   const store = await prisma.shopifyStore.findUnique({ where: { shop: conn.shop } })

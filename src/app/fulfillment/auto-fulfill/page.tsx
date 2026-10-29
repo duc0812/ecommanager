@@ -67,15 +67,16 @@ export default function AutoFulfillPage() {
     try {
       const res = await fetch(`/api/fulfillment/auto-fulfill/run?apply=${apply ? 1 : 0}`, { method: 'POST' })
       if (!res.ok || !res.body) { const b = await res.json().catch(() => ({})); setMessage(`Lỗi: ${b.error ?? res.statusText}`); return }
-      const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = ''; let doneMsg: any = null; let err: string | null = null
+      const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = ''; let doneMsg: any = null; let err: string | null = null; let pgMsg = ''
       for (;;) {
         const { value, done } = await reader.read(); if (done) break
         buf += dec.decode(value, { stream: true }); const sp = splitNdjson(buf); buf = sp.rest
         for (const line of sp.lines) {
           let m: any
           try { m = JSON.parse(line) } catch { continue }
-          if (m.type === 'stage') setProgress({ done: m.done, total: m.total, label: m.stage === 'shopify' ? 'Đang đọc Shopify' : 'Đang đọc sheet' })
+          if (m.type === 'stage') setProgress({ done: m.done, total: m.total, label: m.stage === 'shopify' ? 'Đang đọc Shopify' : m.stage === 'pgprints' ? 'Đang lấy tracking PGprints' : 'Đang đọc sheet' })
           else if (m.type === 'progress') setProgress({ done: m.done, total: m.total })
+          else if (m.type === 'pgprints') pgMsg = m.error ? ` PGprints: lỗi lấy tracking (${m.error}).` : m.pushes ? ` PGprints: ${m.found}/${m.pushes} đơn, cập nhật ${m.shipments} tracking.` : ''
           else if (m.type === 'done') doneMsg = m
           else if (m.type === 'error') err = m.error
         }
@@ -83,7 +84,7 @@ export default function AutoFulfillPage() {
       if (err) { setMessage(`Lỗi: ${err}`); return }
       if (doneMsg) {
         const resultRows = doneMsg.rows ?? []
-        const summary = `${apply ? 'Apply' : 'Preview'} xong: ${doneMsg.fulfilled} fulfill, ${doneMsg.tooRecent} chưa đủ tuổi, ${doneMsg.alreadyFulfilled} đã fulfill, ${doneMsg.needsManual} cần tay, ${doneMsg.notFound} không thấy đơn, ${doneMsg.errored} lỗi / ${doneMsg.ordersChecked} đơn.`
+        const summary = `${apply ? 'Apply' : 'Preview'} xong: ${doneMsg.fulfilled} fulfill, ${doneMsg.tooRecent} chưa đủ tuổi, ${doneMsg.alreadyFulfilled} đã fulfill, ${doneMsg.needsManual} cần tay, ${doneMsg.notFound} không thấy đơn, ${doneMsg.errored} lỗi / ${doneMsg.ordersChecked} đơn.${pgMsg}`
         setRows(resultRows)
         setMessage(summary)
         try { localStorage.setItem(RESULT_STORAGE_KEY, JSON.stringify({ rows: resultRows, message: summary, at: Date.now() })) } catch { /* ignore */ }
