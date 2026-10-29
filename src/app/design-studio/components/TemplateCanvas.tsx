@@ -4,6 +4,7 @@ import type { ArtworkRow, TemplateArea, TemplateRow, WorkspaceLine } from './typ
 import { isImage, newestFor, printFiles, sharpnessRatio } from './model'
 import { ALL_GUIDES, NO_GUIDES, areaAt, clientToTemplate, type Guides, type ViewBox } from './canvas-guides'
 import { Icon, chip } from './ui'
+import { ArtImg, SvgArtImage } from './art-src'
 
 export type CanvasBg = 'checker' | 'white' | 'black'
 export type CanvasUpload = {
@@ -333,12 +334,10 @@ function NoTemplateCanvas({ line, upload, artActions, selected }: { line: Worksp
     <div {...frameProps} className={`relative min-h-[360px] rounded-lg border-[1.5px] border-dashed ${drag !== null ? 'border-secondary bg-secondary/10' : 'border-outline-variant'} p-md flex flex-col items-center justify-center gap-sm overflow-hidden`}>
       {shown && art && (artActions ? (
         <button type="button" onClick={() => artActions.onView(art)} aria-label={`Xem ${art.printArea} v${art.version} (phóng to)`} className="max-w-full grid place-items-center cursor-zoom-in">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={shown} alt={`File in ${art.printArea} v${art.version}`} className="max-w-full max-h-[60vh] object-contain" />
+          <ArtImg art={art} px={2000} full alt={`File in ${art.printArea} v${art.version}`} className="max-w-full max-h-[60vh] object-contain" />
         </button>
       ) : (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={shown} alt="File in hiện có" className="max-w-full max-h-[60vh] object-contain" />
+        <ArtImg art={art} px={2000} full alt="File in hiện có" className="max-w-full max-h-[60vh] object-contain" />
       ))}
       {art && !isImage(art) && (
         <div className="flex items-center gap-sm rounded-lg bg-surface-container-lowest border border-outline-variant/20 px-md py-sm text-body-sm">
@@ -392,7 +391,7 @@ function TaskCanvas({ template, line, slots, bg, guide, guides, upload, artActio
         const art = newestFor(line, a.name)
         return (
           <>
-            {art && isImage(art) && <image href={art.url} x={x} y={y} width={w} height={h} preserveAspectRatio="xMidYMid meet" />}
+            {art && isImage(art) && <SvgArtImage art={art} px={2000} x={x} y={y} width={w} height={h} preserveAspectRatio="xMidYMid meet" />}
             {art && !isImage(art) && <text x={x + w / 2} y={y + h / 2} textAnchor="middle" fontSize="11" className="fill-on-surface-variant font-mono">{art.fileName}</text>}
             {selected === a.name && !singleArea && <rect x={x} y={y} width={w} height={h} fill="none" strokeWidth="2.5" className="stroke-secondary" pointerEvents="none" />}
           </>

@@ -32,7 +32,7 @@ export type ArtworkRow = {
   id: string; kind: FileKind; printArea: string; version: number; fileName: string; size: number
   mimeType: string; uploadedById: string | null; createdAt: string; url: string
   widthPx: number | null; heightPx: number | null
-  storage: 'LOCAL' | 'DRIVE'; driveWebViewLink: string | null
+  storage: 'LOCAL' | 'DRIVE'; driveWebViewLink: string | null; driveFileId: string | null
   source: 'MANUAL' | 'AUTO'; previewUrl: string | null
 }
 

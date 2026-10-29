@@ -1,6 +1,7 @@
 'use client'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ArtworkRow, FileKind } from './types'
+import { makePreviewJpeg, putPreview, wantsPreview } from './make-preview'
 
 export const ARTWORK_ACCEPT = '.png,.jpg,.jpeg,.pdf,.psd,.zip,.tif,.tiff'
 export const MOCKUP_ACCEPT = '.png,.jpg,.jpeg'
@@ -98,6 +99,12 @@ export function useArtworkUpload(taskKey: string, onUploaded: () => void) {
           continue
         }
         const part = r.data.artwork?.printArea ?? item.part
+        if (r.data.artwork && wantsPreview(file)) {
+          // Google makes no resized copy of a file this big, so the browser makes one now; without it the canvas would pull the original.
+          patch(item.id, { pct: 100, part })
+          const jpeg = await makePreviewJpeg(file)
+          if (jpeg) await putPreview(r.data.artwork.id, jpeg)
+        }
         patch(item.id, { state: 'done', pct: 100, part })
         if (r.data.warning && part) setWarning(part, r.data.warning)
         uploaded.current()

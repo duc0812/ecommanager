@@ -22,7 +22,7 @@ export type ArtworkRow = {
   id: string; kind: FileKind; printArea: string; version: number; fileName: string; size: number
   mimeType: string; uploadedById: string | null; createdAt: string; url: string
   widthPx: number | null; heightPx: number | null
-  storage: ArtworkStorage; driveWebViewLink: string | null
+  storage: ArtworkStorage; driveWebViewLink: string | null; driveFileId: string | null
   source: 'MANUAL' | 'AUTO'; previewUrl: string | null
 }
 export type ArtworkStorage = 'LOCAL' | 'DRIVE'
@@ -143,14 +143,14 @@ const THUMBABLE = ['image/png', 'image/jpeg', 'image/webp', 'image/gif']
 
 export function toArtworkRow(a: {
   id: string; kind?: string | null; printArea: string; version: number; fileName: string; size: number; mimeType: string; uploadedById: string | null
-  createdAt: Date; widthPx: number | null; heightPx: number | null; storage: string; driveWebViewLink: string | null
+  createdAt: Date; widthPx: number | null; heightPx: number | null; storage: string; driveWebViewLink: string | null; driveFileId?: string | null
   source?: string | null; previewPath?: string | null
 }): ArtworkRow {
   return {
     id: a.id, kind: fileKindOf(a.kind), printArea: a.printArea, version: a.version, fileName: a.fileName, size: a.size,
     mimeType: a.mimeType, uploadedById: a.uploadedById, createdAt: a.createdAt.toISOString(), url: artworkUrl(a.id),
     widthPx: a.widthPx, heightPx: a.heightPx,
-    storage: a.storage === 'DRIVE' ? 'DRIVE' : 'LOCAL', driveWebViewLink: a.driveWebViewLink,
+    storage: a.storage === 'DRIVE' ? 'DRIVE' : 'LOCAL', driveWebViewLink: a.driveWebViewLink, driveFileId: a.driveFileId ?? null,
     source: a.source === 'AUTO' ? 'AUTO' : 'MANUAL', previewUrl: a.previewPath ? `${artworkUrl(a.id)}?preview=1` : THUMBABLE.includes(a.mimeType) ? `${artworkUrl(a.id)}?thumb=1` : null,
   }
 }

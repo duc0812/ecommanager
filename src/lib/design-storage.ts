@@ -185,6 +185,32 @@ export async function artworkTargetForTask(taskKey: string): Promise<ArtworkTarg
   return { orderId: task.orderId, shopifyLineId: task.shopifyLineId, linePosition: line.linePosition, orderNumber: line.order.shopifyOrderNumber }
 }
 
+export const MAX_PREVIEW_BYTES = 4 * 1024 * 1024
+const JPEG_MAGIC = Buffer.from([0xff, 0xd8, 0xff])
+
+export class PreviewError extends Error {
+  constructor(message: string, readonly status: number) { super(message) }
+}
+
+/**
+ * A small JPEG of an existing file, made by the browser at upload time or by a backfill. Files over ~40 MB get no
+ * resized copy from Google, so without this the only picture of them is the original.
+ */
+export async function setArtworkPreview(artworkId: string, jpeg: Buffer): Promise<{ previewUrl: string }> {
+  if (jpeg.length === 0 || jpeg.length > MAX_PREVIEW_BYTES) throw new PreviewError(`Preview phải là JPEG dưới ${MAX_PREVIEW_BYTES / 1024 / 1024} MB`, 400)
+  if (!jpeg.subarray(0, 3).equals(JPEG_MAGIC)) throw new PreviewError('Preview phải là JPEG', 400)
+  const row = await prisma.designArtwork.findUnique({ where: { id: artworkId }, select: { id: true, removedAt: true } })
+  if (!row || row.removedAt) throw new PreviewError('Không tìm thấy file', 404)
+  const rel = path.join('design', '_previews', `${safeFileName(artworkId)}.jpg`)
+  const root = path.resolve(storageRoot())
+  const abs = path.resolve(root, rel)
+  if (!abs.startsWith(root + path.sep)) throw new PreviewError('Invalid storage path', 400)
+  await fs.mkdir(path.dirname(abs), { recursive: true })
+  await fs.writeFile(abs, jpeg)
+  await prisma.designArtwork.update({ where: { id: artworkId }, data: { previewPath: rel.split(path.sep).join('/') } })
+  return { previewUrl: `${artworkUrl(artworkId)}?preview=1` }
+}
+
 export function localArtworkPath(storagePath: string | null): string | null {
   if (!storagePath) return null
   const root = path.resolve(storageRoot())

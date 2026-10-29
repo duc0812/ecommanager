@@ -3,11 +3,13 @@ import { useEffect, useRef, useState, type DragEvent, type ReactNode } from 'rea
 import { createPortal } from 'react-dom'
 import type { TaskDetail } from './types'
 import { artworkImage, isImage, mockupFiles, versionsFor, type LightboxImage } from './model'
+import type { ArtworkRow } from './types'
 import { MOCKUP_ACCEPT, uploadItemLabel, useArtworkUpload, type UploadItem } from './useArtworkUpload'
 import { useArtworkRemove } from './useArtworkRemove'
 import { useLightbox } from './Lightbox'
 import { useDismiss } from './overlay'
 import FileMenu from './FileMenu'
+import { ArtImg } from './art-src'
 import { ErrorBanner, Icon, btnTonal, btnText, card, iconBtn } from './ui'
 
 function UploadList({ items, onDismiss }: { items: UploadItem[]; onDismiss: (id: number) => void }) {
@@ -56,11 +58,13 @@ function Cell({ n, title, sub, tip, right, children, footer }: { n: number; titl
   )
 }
 
-function Shot({ img, onOpen }: { img: LightboxImage; onOpen: () => void }) {
+function Shot({ img, art, onOpen }: { img: LightboxImage; art?: ArtworkRow; onOpen: () => void }) {
   return (
     <button type="button" onClick={onOpen} aria-label={`Mở lớn: ${img.label}`} title={img.label} className="block w-full h-full cursor-zoom-in">
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={img.url} alt={img.label} className="w-full h-full object-contain p-sm" loading="lazy" />
+      {art
+        ? <ArtImg art={art} px={1000} full alt={img.label} className="w-full h-full object-contain p-sm" loading="lazy" />
+        // eslint-disable-next-line @next/next/no-img-element
+        : <img src={img.url} alt={img.label} className="w-full h-full object-contain p-sm" loading="lazy" />}
     </button>
   )
 }
@@ -74,17 +78,19 @@ function Empty({ icon, text }: { icon: string; text: string }) {
   )
 }
 
-function SideBySide({ left, leftTitle, right, onClose }: { left: LightboxImage | null; leftTitle: string; right: LightboxImage | null; onClose: () => void }) {
+function SideBySide({ left, leftTitle, right, rightArt, onClose }: { left: LightboxImage | null; leftTitle: string; right: LightboxImage | null; rightArt?: ArtworkRow; onClose: () => void }) {
   useEffect(() => {
     function onKey(e: KeyboardEvent) { if (e.key === 'Escape') onClose() }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
-  const pane = (img: LightboxImage | null, title: string) => (
+  const pane = (img: LightboxImage | null, title: string, art?: ArtworkRow) => (
     <figure className="flex-1 min-w-0 flex flex-col gap-sm">
       <figcaption className="text-body-sm font-semibold text-white">{title}{img ? <span className="font-normal text-white/70"> · {img.label}</span> : null}</figcaption>
       <div className="flex-1 min-h-0 rounded-lg bg-white/5 grid place-items-center overflow-hidden">
-        {img
+        {img && art
+          ? <ArtImg art={art} px={2400} full alt={img.label} className="max-w-full max-h-full object-contain" />
+          : img
           // eslint-disable-next-line @next/next/no-img-element
           ? <img src={img.url} alt={img.label} className="max-w-full max-h-full object-contain" />
           : <span className="text-body-sm text-white/70">Chưa có ảnh</span>}
@@ -99,7 +105,7 @@ function SideBySide({ left, leftTitle, right, onClose }: { left: LightboxImage |
       </div>
       <div className="flex-1 min-h-0 flex gap-md">
         {pane(left, leftTitle)}
-        {pane(right, 'Mockup từ file in')}
+        {pane(right, 'Mockup từ file in', rightArt)}
       </div>
     </div>,
     document.body,
@@ -206,7 +212,7 @@ export default function CompareRow({ detail, onChanged }: { detail: TaskDetail; 
             onDragOver={e => { if (!dragHasFiles(e)) return; e.preventDefault(); if (!over) setOver(true) }}
             onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOver(false) }}
             onDrop={e => { if (!dragHasFiles(e)) return; e.preventDefault(); setOver(false); addMockups(Array.from(e.dataTransfer.files ?? [])) }}>
-            {mockImg ? <Shot img={mockImg} onOpen={() => open(mockImg)} /> : (
+            {mockImg && cur ? <Shot img={mockImg} art={cur} onOpen={() => open(mockImg)} /> : (
               <div className="h-full flex flex-col items-center justify-center gap-sm rounded-lg border-[1.5px] border-dashed border-outline px-md text-center text-on-surface-variant">
                 <Icon name="add_photo_alternate" className="text-[28px]" />
                 <span className="text-body-sm">Kéo thả mockup dựng từ file in vào đây</span>
@@ -218,7 +224,7 @@ export default function CompareRow({ detail, onChanged }: { detail: TaskDetail; 
           </div>
         </Cell>
       </div>
-      {soi && <SideBySide left={preview ?? variant} leftTitle={preview ? 'Preview khách' : 'Mockup variant'} right={mockImg} onClose={() => setSoi(false)} />}
+      {soi && <SideBySide left={preview ?? variant} leftTitle={preview ? 'Preview khách' : 'Mockup variant'} right={mockImg} rightArt={cur} onClose={() => setSoi(false)} />}
     </section>
   )
 }

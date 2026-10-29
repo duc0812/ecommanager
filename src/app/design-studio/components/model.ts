@@ -207,6 +207,33 @@ export async function copyText(text: string): Promise<boolean> {
   }
 }
 
+/** Google renders a resized copy of a shared Drive image on request, but only for files up to about this size. */
+export const DRIVE_RESIZE_MAX_BYTES = 40 * 1024 * 1024
+
+/** Google's resized copy of a shared Drive image, served to the browser straight from Google. Null when Drive will not have one. */
+export function driveImageUrl(a: Pick<ArtworkRow, 'storage' | 'driveFileId' | 'size' | 'mimeType'>, px: number): string | null {
+  if (a.storage !== 'DRIVE' || !a.driveFileId || !isImage(a as ArtworkRow) || a.size > DRIVE_RESIZE_MAX_BYTES) return null
+  if (!/^[A-Za-z0-9_-]+$/.test(a.driveFileId)) return null
+  return `https://lh3.googleusercontent.com/d/${a.driveFileId}=s${Math.round(px)}`
+}
+
+/**
+ * Where to load a picture of the file from, best first: a preview made at upload or render time, Google's resized copy,
+ * the server's thumbnail, and (when `full`) the original. The office reaches Google ~100x faster than the server, and
+ * originals run to 100+ MB, so the original is only for the lightbox and downloads.
+ */
+export function artSources(a: ArtworkRow, px: number, full = false): string[] {
+  if (!isImage(a)) return []
+  const out: string[] = []
+  if (a.previewUrl?.includes('preview=1')) out.push(a.previewUrl)
+  const drive = driveImageUrl(a, px)
+  if (drive) out.push(drive)
+  // Drive has no thumbnail either for a file it will not resize, so asking the server for one only costs a round trip.
+  if (a.previewUrl && !a.previewUrl.includes('preview=1') && (a.storage !== 'DRIVE' || a.size <= DRIVE_RESIZE_MAX_BYTES)) out.push(a.previewUrl)
+  if (full) out.push(a.url)
+  return out
+}
+
 export type LightboxImage = { url: string; label: string; openUrl?: string | null; copyUrl?: string | null }
 
 export function artworkImage(a: ArtworkRow): LightboxImage {

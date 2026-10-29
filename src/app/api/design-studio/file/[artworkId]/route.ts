@@ -83,6 +83,8 @@ export async function GET(req: NextRequest, { params }: { params: { artworkId: s
       const thumb = await serveThumbnail(row)
       if (thumb) return thumb
     }
+    // Never answer a request for a small picture with the original: on a 100 MB print that is minutes through this server.
+    return NextResponse.json({ error: 'Chưa có bản xem nhỏ' }, { status: 404 })
   }
   if (row.storage === 'DRIVE') return serveDrive(row)
 

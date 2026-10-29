@@ -4,6 +4,7 @@ import type { ArtworkRow, Me, TaskStatus } from './types'
 import { artworkImage, artworkShareLink, canRemoveArtwork, copyText, isImage, patchJson, requestJson, taskUrl } from './model'
 import { ARTWORK_ACCEPT, MOCKUP_ACCEPT } from './useArtworkUpload'
 import { useLightbox } from './Lightbox'
+import { ArtImg } from './art-src'
 import { useToast } from './overlay'
 import { Icon, fmtDateTime, fmtSize, input, menuItem, popover } from './ui'
 import { PART_MAX } from '@/lib/task-files'
@@ -60,10 +61,8 @@ export default function FileMenu({ versions, taskKey, me, taskStatus, driveConne
     <div role="menu" aria-label={`Thao tác file ${v.printArea}`} className={`${popover} w-[320px] p-xs flex flex-col ${className}`}>
       <div className="flex gap-sm items-center px-sm pt-sm pb-sm">
         <span className="w-11 h-11 rounded-lg overflow-hidden bg-surface-container-low border border-outline-variant/20 grid place-items-center shrink-0">
-          {isImage(v)
-            // eslint-disable-next-line @next/next/no-img-element
-            ? <img src={v.previewUrl ?? v.url} alt="" className="w-full h-full object-contain" loading="lazy" />
-            : <Icon name="description" className="text-[20px] text-on-surface-variant" />}
+          <ArtImg art={v} px={120} alt="" className="w-full h-full object-contain" loading="lazy"
+            fallback={<Icon name={isImage(v) ? 'image' : 'description'} className="text-[20px] text-on-surface-variant" />} />
         </span>
         <span className="min-w-0 flex flex-col">
           <span className="text-body-sm font-semibold text-on-surface truncate">{isMockup ? 'Mockup · ' : ''}{v.printArea} · v{v.version}{v.source === 'AUTO' ? ' · tự động' : ''}</span>
