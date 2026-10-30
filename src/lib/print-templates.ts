@@ -18,10 +18,12 @@ const CLOSED_PIPELINE = ['EXPORTED', 'FULFILLED', 'CANCELLED', 'REFUNDED']
 export type AreaInput = { name: string; x: number; y: number; w: number; h: number }
 export type TemplateFields = {
   name: string; widthPx: number; heightPx: number; dpi: number; bleedIn: number; safeIn: number; mirror: boolean; areas: AreaInput[]
+  /** JSON of the alternative part sets (see `parseAltSets`), null when the template has none. */
+  altAreas: string | null
 }
 type TemplateRecord = {
   id: string; name: string; widthPx: number; heightPx: number; dpi: number; bleedIn: number; safeIn: number; mirror: boolean
-  areas: string; guideImagePath: string | null; templateUrl: string | null; updatedAt: Date
+  areas: string; altAreas?: string | null; guideImagePath: string | null; templateUrl: string | null; updatedAt: Date
   supplierId: string; supplierSku: string | null; sourceFileName: string | null; sourceFilePath: string | null
 }
 
@@ -80,12 +82,49 @@ export function validateTemplateFields(raw: Record<string, unknown>, existing?: 
     if ((x as number) + (w as number) > W || (y as number) + (h as number) > H) return { ok: false, error: `Vùng ${area.name} nằm ngoài khổ ${W}×${H}` }
     areas.push({ name: area.name, x: Math.round(x as number), y: Math.round(y as number), w: Math.round(w as number), h: Math.round(h as number) })
   }
-  return { ok: true, fields: { name, widthPx: W, heightPx: H, dpi: Math.round(dpi), bleedIn, safeIn, mirror, areas } }
+  const alt = validateAltSets(raw.altAreas, existing?.altAreas ?? null)
+  if (!alt.ok) return alt
+  return { ok: true, fields: { name, widthPx: W, heightPx: H, dpi: Math.round(dpi), bleedIn, safeIn, mirror, areas, altAreas: alt.json } }
+}
+
+/**
+ * Alternative part sets: a JSON array of { label, widthPx, heightPx, areas[] }; each set is laid out on its own canvas.
+ * An empty string clears them; an absent field keeps the existing ones.
+ */
+function validateAltSets(raw: unknown, existing: string | null): { ok: true; json: string | null } | { ok: false; error: string } {
+  if (raw === undefined || raw === null) return { ok: true, json: existing }
+  if (raw === '' || raw === '[]') return { ok: true, json: null }
+  let parsed: unknown = raw
+  if (typeof raw === 'string') {
+    try { parsed = JSON.parse(raw) } catch { return { ok: false, error: 'altAreas phải là JSON' } }
+  }
+  if (!Array.isArray(parsed)) return { ok: false, error: 'altAreas phải là mảng JSON các bộ vùng in' }
+  const sets: Array<{ label: string; widthPx: number; heightPx: number; areas: AreaInput[] }> = []
+  for (const s of parsed as any[]) {
+    const label = typeof s?.label === 'string' ? s.label.trim() : ''
+    const W = Math.round(toNum(s?.widthPx) ?? NaN), H = Math.round(toNum(s?.heightPx) ?? NaN)
+    if (!label) return { ok: false, error: 'Mỗi bộ vùng in thay thế cần label' }
+    if (!(W > 0 && H > 0)) return { ok: false, error: `Bộ ${label}: widthPx, heightPx phải > 0` }
+    if (!Array.isArray(s.areas) || s.areas.length === 0) return { ok: false, error: `Bộ ${label}: cần ít nhất một vùng in` }
+    const areas: AreaInput[] = []
+    const seen = new Set<string>()
+    for (const a of s.areas as any[]) {
+      const area = { name: typeof a?.name === 'string' ? a.name.trim() : '', x: toNum(a?.x) ?? NaN, y: toNum(a?.y) ?? NaN, w: toNum(a?.w) ?? NaN, h: toNum(a?.h) ?? NaN }
+      if (!area.name) return { ok: false, error: `Bộ ${label}: mỗi vùng in cần tên` }
+      if (seen.has(area.name.toLowerCase())) return { ok: false, error: `Bộ ${label}: trùng tên vùng in ${area.name}` }
+      seen.add(area.name.toLowerCase())
+      if (![area.x, area.y, area.w, area.h].every(Number.isFinite) || area.x < 0 || area.y < 0 || area.w <= 0 || area.h <= 0) return { ok: false, error: `Bộ ${label}, vùng ${area.name}: x, y ≥ 0 và w, h > 0` }
+      if (area.x + area.w > W || area.y + area.h > H) return { ok: false, error: `Bộ ${label}, vùng ${area.name} nằm ngoài khổ ${W}×${H}` }
+      areas.push({ name: area.name, x: Math.round(area.x), y: Math.round(area.y), w: Math.round(area.w), h: Math.round(area.h) })
+    }
+    sets.push({ label, widthPx: W, heightPx: H, areas })
+  }
+  return { ok: true, json: sets.length ? JSON.stringify(sets) : null }
 }
 
 export function fieldsOf(t: TemplateRecord): TemplateFields {
   const m = mapTemplate(t)
-  return { name: m.name, widthPx: m.widthPx, heightPx: m.heightPx, dpi: m.dpi, bleedIn: m.bleedIn, safeIn: m.safeIn, mirror: m.mirror, areas: m.areas }
+  return { name: m.name, widthPx: m.widthPx, heightPx: m.heightPx, dpi: m.dpi, bleedIn: m.bleedIn, safeIn: m.safeIn, mirror: m.mirror, areas: m.areas, altAreas: t.altAreas ?? null }
 }
 
 export function guideExt(bytes: Buffer): 'png' | 'jpg' | null {

@@ -1,8 +1,15 @@
 import { prisma } from '@/lib/db'
 
+export type TemplateArea = { name: string; x: number; y: number; w: number; h: number }
+/** A part set a line may deliver instead of the template's own areas (Mango WZIP: 12 piece files instead of the one sheet). */
+export type TemplateAreaSet = { label: string; widthPx: number; heightPx: number; areas: TemplateArea[] }
+
 export type TemplateRow = {
   id: string; name: string; widthPx: number; heightPx: number; dpi: number; bleedIn: number; safeIn: number; mirror: boolean
-  areas: { name: string; x: number; y: number; w: number; h: number }[]; guideImageUrl: string | null; templateUrl: string | null
+  areas: TemplateArea[]; guideImageUrl: string | null; templateUrl: string | null
+  altSets: TemplateAreaSet[]
+  /** The alternative set this view shows (`areas` are its areas), null for the template's own areas. */
+  areaSet: string | null
 }
 
 export type TemplateLookupLine = { orderId: string; resolvedSupplierId: string | null; resolvedSupplierSku: string | null; shopifyProductId?: string | null }
@@ -14,11 +21,65 @@ function parseTemplateAreas(json: string): TemplateRow['areas'] {
   } catch { return [] }
 }
 
-export function mapTemplate(t: { id: string; name: string; widthPx: number; heightPx: number; dpi: number; bleedIn: number; safeIn: number; mirror: boolean; areas: string; guideImagePath: string | null; templateUrl: string | null; updatedAt?: Date }): TemplateRow {
+export function parseAltSets(json: string | null | undefined): TemplateAreaSet[] {
+  if (!json) return []
+  try {
+    const parsed = JSON.parse(json)
+    if (!Array.isArray(parsed)) return []
+    return parsed
+      .filter((s: any) => s && typeof s === 'object' && Array.isArray(s.areas) && s.areas.length > 0)
+      .map((s: any) => ({ label: typeof s.label === 'string' && s.label.trim() ? s.label.trim() : `${s.areas.length} mảnh`, widthPx: Number(s.widthPx) || 0, heightPx: Number(s.heightPx) || 0, areas: s.areas as TemplateArea[] }))
+  } catch { return [] }
+}
+
+export function mapTemplate(t: { id: string; name: string; widthPx: number; heightPx: number; dpi: number; bleedIn: number; safeIn: number; mirror: boolean; areas: string; altAreas?: string | null; guideImagePath: string | null; templateUrl: string | null; updatedAt?: Date }): TemplateRow {
   const version = t.updatedAt ? `?v=${t.updatedAt.getTime()}` : ''
   return {
     id: t.id, name: t.name, widthPx: t.widthPx, heightPx: t.heightPx, dpi: t.dpi, bleedIn: t.bleedIn, safeIn: t.safeIn, mirror: t.mirror,
     areas: parseTemplateAreas(t.areas), guideImageUrl: t.guideImagePath ? `/api/design-studio/file/guide/${t.id}${version}` : null, templateUrl: t.templateUrl,
+    altSets: parseAltSets(t.altAreas), areaSet: null,
+  }
+}
+
+const norm = (s: string) => s.trim().toLowerCase()
+
+/**
+ * Which part set a line is filling: the template's own areas (index -1) or one of its alternative sets — the one with the
+ * most parts already uploaded. A tie keeps the earlier choice, so an empty line starts on the template's own areas.
+ */
+export function chooseAreaSet(template: Pick<TemplateRow, 'areas' | 'altSets'>, partsPresent: string[]): number {
+  const have = new Set(partsPresent.map(norm))
+  const count = (areas: TemplateArea[]) => areas.filter(a => have.has(norm(a.name))).length
+  let best = -1, bestScore = count(template.areas)
+  template.altSets.forEach((s, i) => {
+    const score = count(s.areas)
+    if (score > bestScore) { best = i; bestScore = score }
+  })
+  return best
+}
+
+/** Every part name a line of this template may upload: the template's areas and those of every alternative set. */
+export function allSlotNames(template: Pick<TemplateRow, 'areas' | 'altSets'> | null): string[] {
+  if (!template) return []
+  return Array.from(new Set([...template.areas, ...template.altSets.flatMap(s => s.areas)].map(a => a.name).filter(Boolean)))
+}
+
+type PartLike = { kind?: string | null; printArea: string; removedAt?: Date | string | null }
+
+/**
+ * The template as the line sees it: its own areas, or — once the line's print files lean towards an alternative set —
+ * that set's areas and canvas (the sheet guide does not fit a piece set, so it is dropped there).
+ */
+export function templateViewFor<T extends TemplateRow>(template: T | null, files: PartLike[]): T | null {
+  if (!template || template.altSets.length === 0) return template
+  const parts = files.filter(f => (f.kind ?? 'PRINT') === 'PRINT' && !f.removedAt).map(f => f.printArea)
+  const i = chooseAreaSet(template, parts)
+  if (i < 0) return template
+  const set = template.altSets[i]
+  return {
+    ...template, areas: set.areas, areaSet: set.label,
+    widthPx: set.widthPx > 0 ? set.widthPx : template.widthPx, heightPx: set.heightPx > 0 ? set.heightPx : template.heightPx,
+    guideImageUrl: null,
   }
 }
 

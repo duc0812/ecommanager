@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
 import type { TaskDetail } from './types'
-import { artworkImage, canRemoveArtwork, newestFor, printPartNames, versionsFor } from './model'
+import { areaSetHint, artworkImage, canRemoveArtwork, newestFor, printPartNames, versionsFor } from './model'
 import TemplateCanvas, { type CanvasArtActions, type CanvasBg, type CanvasUpload } from './TemplateCanvas'
 import { ALL_GUIDES, GUIDES_STORAGE_KEY, NO_GUIDES, parseGuides, type Guides } from './canvas-guides'
 import { ARTWORK_ACCEPT, useArtworkUpload } from './useArtworkUpload'
@@ -155,6 +155,7 @@ export default function ArtworkPanel({ detail, onChanged }: { detail: TaskDetail
         <div className="px-md pt-sm flex flex-col gap-xs">
           <ErrorBanner msg={up.error} onClose={() => up.setError('')} />
           {Object.entries(up.warnings).map(([area, msg]) => <Note key={area} tone="warn" icon="cloud_off">{area}: {msg}</Note>)}
+          {areaSetHint(template) && <Note tone="brand" icon="alt_route">{areaSetHint(template)}</Note>}
         </div>
       )}
 

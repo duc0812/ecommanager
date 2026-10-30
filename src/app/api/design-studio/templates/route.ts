@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
   if ('error' in auth) return auth.error
 
   const body = await req.json().catch(() => ({} as any))
-  const { supplierId, supplierSku, name, widthPx, heightPx, dpi, bleedIn, safeIn, mirror, areas, guideImagePath, templateUrl } = body ?? {}
+  const { supplierId, supplierSku, name, widthPx, heightPx, dpi, bleedIn, safeIn, mirror, areas, altAreas, guideImagePath, templateUrl } = body ?? {}
 
   if (typeof supplierId !== 'string' || !supplierId) return NextResponse.json({ error: 'supplierId is required' }, { status: 400 })
   if (typeof name !== 'string' || !name.trim()) return NextResponse.json({ error: 'name is required' }, { status: 400 })
@@ -44,6 +44,7 @@ export async function POST(req: NextRequest) {
     safeIn: typeof safeIn === 'number' && safeIn >= 0 ? safeIn : 0.2,
     mirror: !!mirror,
     areas: JSON.stringify(Array.isArray(areas) ? areas : []),
+    altAreas: Array.isArray(altAreas) && altAreas.length ? JSON.stringify(altAreas) : null,
     guideImagePath: typeof guideImagePath === 'string' && guideImagePath ? guideImagePath : null,
     templateUrl: typeof templateUrl === 'string' && templateUrl ? templateUrl : null,
   }

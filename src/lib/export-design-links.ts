@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/db'
 import { findProfile } from '@/lib/product-profiles'
 import { loadTemplateContext, pickTemplate, requiredSlotsFor } from '@/lib/design-tasks'
+import { templateViewFor } from '@/lib/print-template-resolve'
 import { PublicUrlError, isLineApproved } from '@/lib/public-artwork'
 import {
   appFileArtworkId, factoryLinkFor, isAppFileLink, isStudioLink, joinDesignLinks, lazyPublicBase, type LinkArtwork, type SlotLink,
@@ -136,7 +137,7 @@ export async function resolveExportDesignLinks(orders: ExportOrderInput[], needs
     // The folder link needs no per-file link; those are only resolved for a column that prints one part.
     if (handsFolder && !needs.areas) { byLineId.set(line.id, { joined: folder, byArea: {} }); continue }
     const template = pickTemplate(line, profileFor(order, line), ctx)
-    const picked = orderedPrintFiles(mine, requiredSlotsFor(template))
+    const picked = orderedPrintFiles(mine, requiredSlotsFor(templateViewFor(template, mine)))
     const links: SlotLink[] = []
     for (const p of picked) {
       const l = await link(order, line, p, p.printArea)

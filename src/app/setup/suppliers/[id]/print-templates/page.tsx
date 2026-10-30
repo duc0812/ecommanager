@@ -15,9 +15,11 @@ type AreaForm = { name: string; x: string; y: string; w: string; h: string }
 type Form = {
   name: string; widthPx: string; heightPx: string; dpi: string; bleedIn: string; safeIn: string; mirror: boolean
   areas: AreaForm[]; productIds: string[]
+  /** Alternative part sets as JSON text ([{label, widthPx, heightPx, areas:[{name,x,y,w,h}]}]); empty = none. */
+  altAreas: string
 }
 
-const EMPTY: Form = { name: '', widthPx: '', heightPx: '', dpi: '300', bleedIn: '0.125', safeIn: '0.2', mirror: false, areas: [], productIds: [] }
+const EMPTY: Form = { name: '', widthPx: '', heightPx: '', dpi: '300', bleedIn: '0.125', safeIn: '0.2', mirror: false, areas: [], productIds: [], altAreas: '' }
 const SOURCE_ACCEPT = '.png,.jpg,.jpeg,.tif,.tiff,.psd,.pdf'
 
 function num(s: string): number { return s.trim() === '' ? NaN : Number(s) }
@@ -27,6 +29,7 @@ function toForm(t: PrintTemplate): Form {
     name: t.name, widthPx: String(t.widthPx), heightPx: String(t.heightPx), dpi: String(t.dpi), bleedIn: String(t.bleedIn),
     safeIn: String(t.safeIn), mirror: t.mirror, productIds: t.supplierProductIds,
     areas: t.areas.map(a => ({ name: a.name, x: String(a.x), y: String(a.y), w: String(a.w), h: String(a.h) })),
+    altAreas: t.altSets?.length ? JSON.stringify(t.altSets, null, 1) : '',
   }
 }
 
@@ -166,6 +169,10 @@ export default function SupplierPrintTemplatesPage() {
     fd.append('safeIn', form.safeIn.trim() || '0')
     fd.append('mirror', form.mirror ? 'true' : 'false')
     fd.append('areas', JSON.stringify(areas.length > 0 ? areas : [{ name: 'Print', x: 0, y: 0, w: widthPx, h: heightPx }]))
+    if (form.altAreas.trim()) {
+      try { JSON.parse(form.altAreas) } catch { setError('Bộ vùng in thay thế phải là JSON hợp lệ.'); return }
+    }
+    fd.append('altAreas', form.altAreas.trim())
     fd.append('supplierProductIds', JSON.stringify(form.productIds))
     if (guideFile) fd.append('guide', guideFile)
     if (sourceFile) fd.append('source', sourceFile)
@@ -311,6 +318,11 @@ export default function SupplierPrintTemplatesPage() {
                     </button>
                   </div>
                 ))}
+
+                <Field label="Bộ vùng in thay thế (JSON, tuỳ chọn) — designer upload 1 trong các bộ: bộ trên hoặc một bộ ở đây; ví dụ 12 mảnh thay cho 1 tấm" className="border-t border-outline-variant/20 pt-sm">
+                  <textarea className={`${input} font-mono text-[11px] min-h-[5rem]`} value={form.altAreas} onChange={e => set('altAreas', e.target.value)}
+                    aria-label="Bộ vùng in thay thế" placeholder='[{"label":"12 mảnh","widthPx":40000,"heightPx":6000,"areas":[{"name":"FRONT","x":0,"y":0,"w":4963,"h":5493}, …]}]' />
+                </Field>
 
                 <div className="grid grid-cols-2 gap-sm border-t border-outline-variant/20 pt-sm">
                   <Field label="Artguide (PNG/JPG, vẽ đè lên khổ in)">

@@ -21,9 +21,13 @@ export type TaskRow = {
 
 export type TemplateArea = { name: string; x: number; y: number; w: number; h: number }
 
+export type TemplateAreaSet = { label: string; widthPx: number; heightPx: number; areas: TemplateArea[] }
+
 export type TemplateRow = {
   id: string; name: string; widthPx: number; heightPx: number; dpi: number; bleedIn: number; safeIn: number; mirror: boolean
   areas: TemplateArea[]; guideImageUrl: string | null; templateUrl: string | null
+  /** Part sets a line may deliver instead of `areas`; `areaSet` names the one this view shows, null = the template's own areas. */
+  altSets?: TemplateAreaSet[]; areaSet?: string | null
 }
 
 export type TemplateListRow = TemplateRow & { supplierId: string; supplierSku: string | null; supplierName: string; supplierCode: string }

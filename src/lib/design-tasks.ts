@@ -5,7 +5,7 @@ import { fillCustomallFields } from '@/lib/customall-fields'
 import { getDesignSettings, kpiForProductType, type DesignSettings } from '@/lib/design-settings'
 import { visibleCustomAttributes } from '@/lib/order-classify'
 import { findProfile, parseLayerMap, toRouteKey, type LayerMapEntry } from '@/lib/product-profiles'
-import { loadTemplateContext, mapTemplate, pickTemplate, type TemplateLookupLine, type TemplateRow } from '@/lib/print-template-resolve'
+import { allSlotNames, loadTemplateContext, mapTemplate, pickTemplate, templateViewFor, type TemplateLookupLine, type TemplateRow } from '@/lib/print-template-resolve'
 import { productArtworkStatus } from '@/lib/artwork-slots'
 import type { LibraryProductStatus } from '@/lib/artwork-fields'
 import { isDriveConnected } from '@/lib/google-drive'
@@ -313,11 +313,11 @@ export async function transitionTask(taskKey: string, actor: Actor, input: Trans
       events.splice(0, events.length, ...events.filter(e => e.type !== 'STATUS'), { type: 'SYSTEM', message: 'Design đã có từ ngoài studio — giữ link hiện tại', actorId: actor.id })
       order = current
     } else {
-      const template = await templateForLine(line)
+      const files = await prisma.designArtwork.findMany({ where: { orderId: line.orderId, shopifyLineId: line.shopifyLineId, removedAt: null }, select: { kind: true, printArea: true, version: true } })
+      const template = templateViewFor(await templateForLine(line), files)
       const slots = requiredSlotsFor(template)
       // A leader may approve a set that does not follow the template's areas (pieces for a one-sheet template, one sleeve
       // for both); such a set is not saved to the library, so a later order of the SKU does not reuse it unseen.
-      const files = await prisma.designArtwork.findMany({ where: { orderId: line.orderId, shopifyLineId: line.shopifyLineId, removedAt: null }, select: { kind: true, printArea: true, version: true } })
       const missing = missingPrintAreas(files, slots)
       const accepted = missing.length > 0 && input.acceptMissingAreas === true && canApprove
       if (missing.length > 0 && !accepted) throw new Error(`${MISSING_AREAS_PREFIX}${missing.join(', ')}`)
@@ -392,7 +392,8 @@ export async function listReviewCards(f: { assigneeId?: string; q?: string } = {
     const orderLine = orderLines.find(l => l.orderId === task.orderId && l.shopifyLineId === task.shopifyLineId)
     if (!ws || !line || !orderLine) return null
     const push = pushes.get(task.orderId)
-    const { template, profile, library } = await lineContext(orderLine, storeByOrder.get(task.orderId) ?? null)
+    const { template: base, profile, library } = await lineContext(orderLine, storeByOrder.get(task.orderId) ?? null)
+    const template = templateViewFor(base, line.artworks)
     return {
       task, line, slots: requiredSlotsFor(template), template, profile, library, shipTo: ws.order.shipTo ?? null,
       push: push ? { status: push.status, supplierOrderCode: push.supplierOrderCode, externalOrderId: push.externalOrderId } : null,
@@ -405,10 +406,10 @@ export const NO_PRINT_FILE_MESSAGE = 'Chưa có file in nào — upload ít nh�
 
 /** Why the line cannot go to review yet, or null: a template area without a file, or no print file at all. Mockups never count. */
 async function missingPrintFiles(line: TemplateLookupLine & { shopifyLineId: string }): Promise<string | null> {
-  const slots = requiredSlotsFor(await templateForLine(line))
   const files = await prisma.designArtwork.findMany({
     where: { orderId: line.orderId, shopifyLineId: line.shopifyLineId, removedAt: null }, select: { kind: true, printArea: true, version: true },
   })
+  const slots = requiredSlotsFor(templateViewFor(await templateForLine(line), files))
   if (printFilesReady(files, slots)) return null
   return slots.length > 0 ? `Chưa có artwork cho: ${missingPrintAreas(files, slots).join(', ')}` : NO_PRINT_FILE_MESSAGE
 }
@@ -500,11 +501,22 @@ export async function templateForLine(line: TemplateLookupLine, profile?: { prin
   return pickTemplate(line, p ?? null, ctx)
 }
 
+/** The part set the line is filling now (its template's areas, or the alternative set its print files lean towards). */
 export async function requiredSlotsForLine(orderId: string, shopifyLineId: string): Promise<string[]> {
   const line = await prisma.orderLine.findFirst({
     where: { orderId, shopifyLineId }, select: { orderId: true, resolvedSupplierId: true, resolvedSupplierSku: true, shopifyProductId: true },
   })
-  return line ? requiredSlotsFor(await templateForLine(line)) : []
+  if (!line) return []
+  const files = await prisma.designArtwork.findMany({ where: { orderId, shopifyLineId, kind: 'PRINT', removedAt: null }, select: { kind: true, printArea: true } })
+  return requiredSlotsFor(templateViewFor(await templateForLine(line), files))
+}
+
+/** Every part name an upload may land in: the template's areas and those of its alternative sets, so `FRONT.jpg` finds its slot on a one-sheet template. */
+export async function uploadSlotsForLine(orderId: string, shopifyLineId: string): Promise<string[]> {
+  const line = await prisma.orderLine.findFirst({
+    where: { orderId, shopifyLineId }, select: { orderId: true, resolvedSupplierId: true, resolvedSupplierSku: true, shopifyProductId: true },
+  })
+  return line ? allSlotNames(await templateForLine(line)) : []
 }
 
 /**
@@ -569,7 +581,8 @@ export async function loadTask(taskKey: string): Promise<TaskDetail | null> {
   const storeId = productId
     ? (await prisma.order.findUnique({ where: { id: task.orderId }, select: { storeId: true } }))?.storeId ?? null
     : null
-  const { template, profile, profileRouteKey, library } = await lineContext(orderLine, storeId)
+  const { template: base, profile, profileRouteKey, library } = await lineContext(orderLine, storeId)
+  const template = templateViewFor(base, line.artworks)
 
   const events = await prisma.designTaskEvent.findMany({ where: { taskId: task.id }, orderBy: { createdAt: 'asc' } })
   const actorIds = Array.from(new Set(events.map(e => e.actorId).filter((x): x is string => !!x)))

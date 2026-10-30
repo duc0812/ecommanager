@@ -587,6 +587,7 @@ model PrintTemplate {
   safeIn         Float    @default(0.2)
   mirror         Boolean  @default(false)
   areas          String
+  altAreas       String?                                      // JSON [{label, widthPx, heightPx, areas:[...]}]: alternative part sets a line may fill instead of `areas`
   guideImagePath String?
   templateUrl    String?
   sourceFileName String?

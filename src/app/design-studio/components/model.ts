@@ -68,6 +68,19 @@ export function allSlotsFilled(detail: Pick<TaskDetail, 'line' | 'slots'>): bool
   return printFilesReady(detail.line.artworks, slotNames(detail))
 }
 
+/** A template with alternative part sets: which set the task is filling and what else it would accept — upload one set, never both. */
+export function areaSetHint(template: TaskDetail['template']): string | null {
+  if (!template || !template.altSets?.length) return null
+  const names = (a: { name: string }[]) => a.map(x => x.name).join(', ')
+  const total = template.altSets.length + 1
+  if (!template.areaSet) {
+    const alts = template.altSets.map(s => `${s.label} (${names(s.areas)})`).join(' · ')
+    return `Template nhận 1 trong ${total} bộ file — đang chờ bộ mặc định (${names(template.areas)}); hoặc upload bộ ${alts}. Chỉ upload một bộ, không trộn.`
+  }
+  const others = template.altSets.filter(s => s.label !== template.areaSet).map(s => `${s.label} (${names(s.areas)})`)
+  return `Template nhận 1 trong ${total} bộ file — task đang dùng bộ ${template.areaSet} (${template.areas.length} vùng)${others.length ? `; bộ khác: ${others.join(' · ')}` : ''}; bộ mặc định của template không cần nữa. Chỉ upload một bộ, không trộn.`
+}
+
 export function filesMissingHint(detail: Pick<TaskDetail, 'slots'>): string {
   return detail.slots.length > 0 ? 'Upload đủ file cho mọi vùng in trước' : 'Upload ít nhất một file in trước'
 }
