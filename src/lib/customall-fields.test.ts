@@ -57,6 +57,12 @@ describe('customallFields', () => {
     expect(customallFields(v, POMO)).toEqual([{ key: 'Custom Number', value: '7' }])
   })
 
+  it('shows the item a picture layer picked by its title: sellers put the variant there (LIT5745, Legendary Crests house)', () => {
+    const campaign = { artworks: [{ id: 'C5og1dgne', templates: [{ layers: [{ id: '_rtc31', type: 'Picture', title: 'Choose House' }, { id: '_bidug', type: 'Option', title: 'Custom Name Yes or No', options: [{ label: 'No', value: 'W55pJDWA7' }] }] }] }] }
+    const v = { C5og1dgne: { template: 0, _rtc31: { id: '6ZLaIHO7K', key: '2026-10/x.png', categoryId: 'sGUt2T4jr', title: 'Ravenclaw' }, _bidug: 'W55pJDWA7' } }
+    expect(customallFields(v, campaign)).toEqual([{ key: 'Choose House', value: 'Ravenclaw' }, { key: 'Custom Name Yes or No', value: 'No' }])
+  })
+
   it('names the template when the artwork offers more than one', () => {
     const campaign = {
       artworks: [{

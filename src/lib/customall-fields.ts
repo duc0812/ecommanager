@@ -79,6 +79,9 @@ export function customallFields(values: CustomallValues, campaign: Campaign | nu
   const pushLayer = (layer: Layer, raw: unknown) => {
     if (layer.type === 'Text') push(layer.title?.trim() || 'Text', raw)
     else if (layer.type === 'Option') push(layer.title?.trim() || 'Option', layer.options?.find(o => o.value === raw)?.label ?? raw)
+    // A picture layer is how sellers put a variant into the personaliser (owner 10-30: "seller để variant vào trong đó"):
+    // the chosen item's title (e.g. the house crest, the colour way) is a choice the designer must see. A bare item id says nothing.
+    else if (raw && typeof raw === 'object' && typeof (raw as { title?: unknown }).title === 'string') push(layer.title?.trim() || 'Picture', (raw as { title: string }).title)
   }
   const anyLayer = new Map<string, Layer>()
   for (const a of campaign?.artworks ?? []) {
