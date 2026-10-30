@@ -22,7 +22,7 @@ const SEARCH_SECTIONS: { title: string; statuses: TaskStatus[]; tone?: string }[
   { title: 'Đã huỷ', statuses: ['CANCELLED'] },
 ]
 
-function byDue(a: TaskRow, b: TaskRow): number {
+export function byDue(a: TaskRow, b: TaskRow): number {
   if (a.dueAt === b.dueAt) return 0
   if (a.dueAt === null) return 1
   if (b.dueAt === null) return -1

@@ -43,17 +43,30 @@ function UploadList({ items, onDismiss }: { items: UploadItem[]; onDismiss: (id:
   )
 }
 
-function Cell({ n, title, sub, tip, right, children, footer }: { n: number; title: string; sub?: string; tip?: string; right?: ReactNode; children: ReactNode; footer?: ReactNode }) {
+function Cell({ n, title, sub, tip, right, children, footer, tall = false }: { n?: number; title: ReactNode; sub?: string; tip?: string; right?: ReactNode; children: ReactNode; footer?: ReactNode; tall?: boolean }) {
   return (
     <div className={`${card} min-w-0 flex flex-col`}>
       <div className="flex items-center gap-sm h-12 pl-md pr-sm">
-        <span className="w-5 h-5 rounded-full bg-surface-container text-on-surface-variant text-[11px] leading-5 font-semibold text-center shrink-0">{n}</span>
+        {n !== undefined && <span className="w-5 h-5 rounded-full bg-surface-container text-on-surface-variant text-[11px] leading-5 font-semibold text-center shrink-0">{n}</span>}
         <span title={tip} className="text-body-sm font-semibold text-on-surface whitespace-nowrap">{title}</span>
         {sub && <span className="min-w-0 truncate text-label-sm text-on-surface-variant" title={sub}>{sub}</span>}
         <span className="ml-auto flex items-center gap-xs shrink-0">{right}</span>
       </div>
-      <div className="relative h-[240px] mx-sm mb-sm rounded-lg overflow-hidden bg-surface-container-low">{children}</div>
+      <div className={`relative ${tall ? 'h-[460px]' : 'h-[240px]'} mx-sm mb-sm rounded-lg overflow-hidden bg-surface-container-low`}>{children}</div>
       {footer}
+    </div>
+  )
+}
+
+function Segmented<T extends string>({ value, onChange, options, label }: { value: T; onChange: (v: T) => void; options: { v: T; label: string }[]; label: string }) {
+  return (
+    <div role="group" aria-label={label} className="inline-flex p-[2px] rounded-lg bg-surface-container-low">
+      {options.map(o => (
+        <button key={o.v} type="button" aria-pressed={value === o.v} onClick={() => onChange(o.v)}
+          className={`h-7 px-sm rounded-md text-label-sm font-semibold ${value === o.v ? 'bg-surface-container-lowest text-on-surface shadow-card' : 'text-on-surface-variant'}`}>
+          {o.label}
+        </button>
+      ))}
     </div>
   )
 }
@@ -115,7 +128,11 @@ function SideBySide({ left, leftTitle, right, rightArt, onClose }: { left: Light
 const FRONT = /front|trước|truoc|mat-?truoc|_f\b/i
 const BACK = /back|sau|mat-?sau|_b\b/i
 
-export default function CompareRow({ detail, onChanged }: { detail: TaskDetail; onChanged: () => void }) {
+/**
+ * `three`: the task screen's row — variant photo, customer preview, mockup from the print files.
+ * `pair`: the review screen — one tall pane for the customer's picture (preview, or the listing photo) next to the mockup.
+ */
+export default function CompareRow({ detail, onChanged, layout = 'three' }: { detail: TaskDetail; onChanged: () => void; layout?: 'three' | 'pair' }) {
   const { line, task, me } = detail
   const lightbox = useLightbox()
   const up = useArtworkUpload(task.taskKey, onChanged)
@@ -127,7 +144,9 @@ export default function CompareRow({ detail, onChanged }: { detail: TaskDetail; 
   const [side, setSide] = useState<'front' | 'back'>('front')
   const [idx, setIdx] = useState(0)
   const [soi, setSoi] = useState(false)
+  const [leftPick, setLeftPick] = useState<'preview' | 'variant'>('preview')
   useDismiss(menuRef, menu, () => setMenu(false))
+  const pair = layout === 'pair'
 
   const variant: LightboxImage | null = line.imageUrl
     ? { url: line.imageUrl, label: line.imageIsVariant === false ? 'Ảnh sản phẩm Shopify (variant không có ảnh riêng)' : line.imageIsVariant ? 'Mockup variant (Shopify)' : 'Ảnh Shopify (đơn đồng bộ trước — Nạp lại để biết ảnh variant)' }
@@ -148,43 +167,21 @@ export default function CompareRow({ detail, onChanged }: { detail: TaskDetail; 
   const dragHasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes('Files')
   const open = (img: LightboxImage) => lightbox?.open(img.url, img)
 
-  return (
-    <section id="compare" aria-label="So sánh với đơn" className="flex flex-col gap-sm">
-      {remover.dialog}
-      <input ref={mockInput} type="file" accept={MOCKUP_ACCEPT} multiple hidden aria-label="Chọn ảnh mockup"
-        onChange={e => { const files = Array.from(e.target.files ?? []); e.target.value = ''; addMockups(files) }} />
-      <div className="flex items-center gap-sm">
-        <span className="text-body-sm font-semibold text-on-surface">So sánh</span>
-        <span className="text-label-sm text-on-surface-variant">bấm ảnh để mở lớn</span>
-        <button type="button" className={`${btnText} ml-auto`} disabled={!preview && !variant && !mockImg} onClick={() => setSoi(true)}>
-          <Icon name="compare" className="text-[18px]" />Soi preview khách ↔ mockup cỡ lớn
-        </button>
-      </div>
-      <div className="grid grid-cols-3 gap-md">
-        <Cell n={1} title="Mockup variant" sub={variant ? (line.imageIsVariant ? line.variantTitle ?? undefined : 'ảnh sản phẩm') : undefined} tip="Ảnh Shopify của biến thể khách mua">
-          {variant ? <Shot img={variant} onOpen={() => open(variant)} /> : <Empty icon="hide_image" text="Không có ảnh variant — Nạp lại từ Shopify" />}
-        </Cell>
-        <Cell n={2} title="Preview khách" sub={preview ? 'lúc đặt hàng' : undefined} tip="Ảnh khách tạo trong customizer lúc đặt hàng"
-          right={line.customerDesignLink && (
-            <a href={line.customerDesignLink} target="_blank" rel="noreferrer" className="inline-flex items-center gap-[2px] text-[13px] font-medium text-secondary hover:underline whitespace-nowrap">
-              Mở lại thiết kế<Icon name="open_in_new" className="text-[15px]" />
-            </a>
-          )}>
-          {preview ? <Shot img={preview} onOpen={() => open(preview)} /> : <Empty icon="hide_image" text={line.customized ? 'Không có preview custom' : 'Non-custom — không có preview'} />}
-        </Cell>
-        <Cell n={3} title="Mockup từ file in" sub={mockups.length ? `${mockups.length} ảnh${cur ? ` · ${cur.printArea}` : ''}` : undefined} tip="Mockup dựng từ file in để QA với ① và ②"
+  const designLink = line.customerDesignLink && (
+    <a href={line.customerDesignLink} target="_blank" rel="noreferrer" className="inline-flex items-center gap-[2px] text-[13px] font-medium text-secondary hover:underline whitespace-nowrap">
+      Mở lại thiết kế<Icon name="open_in_new" className="text-[15px]" />
+    </a>
+  )
+  const showPreview = pair ? (preview && (leftPick === 'preview' || !variant)) : false
+  const left: LightboxImage | null = pair ? (showPreview ? preview : variant ?? preview) : preview ?? variant
+  const leftTitle = left === preview && preview ? 'Preview khách' : 'Mockup variant'
+
+  const mockupCell = (
+    <Cell n={pair ? undefined : 3} tall={pair} title="Mockup từ file in" sub={mockups.length ? `${mockups.length} ảnh${cur ? ` · ${cur.printArea}` : ''}` : undefined}
+      tip={pair ? 'Mockup designer dựng từ file in — so với ảnh bên trái' : 'Mockup dựng từ file in để QA với ① và ②'}
           right={(
             <div ref={menuRef} className="relative flex items-center gap-xs">
-              {sided && (
-                <div role="group" aria-label="Mặt" className="inline-flex p-[2px] rounded-lg bg-surface-container-low">
-                  {(['front', 'back'] as const).map(s => (
-                    <button key={s} type="button" aria-pressed={side === s} onClick={() => { setSide(s); setIdx(0) }}
-                      className={`h-7 px-sm rounded-md text-label-sm font-semibold ${side === s ? 'bg-surface-container-lowest text-on-surface shadow-card' : 'text-on-surface-variant'}`}>
-                      {s === 'front' ? 'Trước' : 'Sau'}
-                    </button>
-                  ))}
-                </div>
-              )}
+              {sided && <Segmented label="Mặt" value={side} onChange={s => { setSide(s); setIdx(0) }} options={[{ v: 'front', label: 'Trước' }, { v: 'back', label: 'Sau' }]} />}
               {shownMocks.length > 1 && (
                 <span className="flex items-center text-label-sm text-on-surface-variant">
                   <button type="button" onClick={() => setIdx((idx - 1 + shownMocks.length) % shownMocks.length)} aria-label="Mockup trước" className={`${iconBtn} w-6 h-6`}><Icon name="chevron_left" className="text-[18px]" /></button>
@@ -223,8 +220,44 @@ export default function CompareRow({ detail, onChanged }: { detail: TaskDetail; 
             )}
           </div>
         </Cell>
+  )
+
+  return (
+    <section id="compare" aria-label="So sánh với đơn" className="flex flex-col gap-sm">
+      {remover.dialog}
+      <input ref={mockInput} type="file" accept={MOCKUP_ACCEPT} multiple hidden aria-label="Chọn ảnh mockup"
+        onChange={e => { const files = Array.from(e.target.files ?? []); e.target.value = ''; addMockups(files) }} />
+      <div className="flex items-center gap-sm">
+        <span className="text-body-sm font-semibold text-on-surface">{pair ? 'So sánh khách đặt ↔ file in' : 'So sánh'}</span>
+        <span className="text-label-sm text-on-surface-variant">bấm ảnh để mở lớn</span>
+        <button type="button" className={`${btnText} ml-auto`} disabled={!left && !mockImg} onClick={() => setSoi(true)}>
+          <Icon name="compare" className="text-[18px]" />{pair ? 'Soi cỡ lớn' : 'Soi preview khách ↔ mockup cỡ lớn'}
+        </button>
       </div>
-      {soi && <SideBySide left={preview ?? variant} leftTitle={preview ? 'Preview khách' : 'Mockup variant'} right={mockImg} rightArt={cur} onClose={() => setSoi(false)} />}
+      {pair ? (
+        <div className="grid grid-cols-2 gap-md">
+          <Cell tall title={leftTitle} tip={showPreview ? 'Ảnh khách tạo trong customizer lúc đặt hàng' : 'Ảnh Shopify của biến thể khách mua'}
+            sub={showPreview ? 'lúc đặt hàng' : variant ? (line.imageIsVariant ? line.variantTitle ?? undefined : 'ảnh sản phẩm') : undefined}
+            right={<>
+              {preview && variant && <Segmented label="Ảnh bên trái" value={leftPick} onChange={setLeftPick} options={[{ v: 'preview', label: 'Preview khách' }, { v: 'variant', label: 'Mockup variant' }]} />}
+              {designLink}
+            </>}>
+            {left ? <Shot img={left} onOpen={() => open(left)} /> : <Empty icon="hide_image" text={line.customized ? 'Không có preview lẫn ảnh variant — Nạp lại từ Shopify' : 'Không có ảnh variant — Nạp lại từ Shopify'} />}
+          </Cell>
+          {mockupCell}
+        </div>
+      ) : (
+        <div className="grid grid-cols-3 gap-md">
+          <Cell n={1} title="Mockup variant" sub={variant ? (line.imageIsVariant ? line.variantTitle ?? undefined : 'ảnh sản phẩm') : undefined} tip="Ảnh Shopify của biến thể khách mua">
+            {variant ? <Shot img={variant} onOpen={() => open(variant)} /> : <Empty icon="hide_image" text="Không có ảnh variant — Nạp lại từ Shopify" />}
+          </Cell>
+          <Cell n={2} title="Preview khách" sub={preview ? 'lúc đặt hàng' : undefined} tip="Ảnh khách tạo trong customizer lúc đặt hàng" right={designLink}>
+            {preview ? <Shot img={preview} onOpen={() => open(preview)} /> : <Empty icon="hide_image" text={line.customized ? 'Không có preview custom' : 'Non-custom — không có preview'} />}
+          </Cell>
+          {mockupCell}
+        </div>
+      )}
+      {soi && <SideBySide left={left} leftTitle={leftTitle} right={mockImg} rightArt={cur} onClose={() => setSoi(false)} />}
     </section>
   )
 }

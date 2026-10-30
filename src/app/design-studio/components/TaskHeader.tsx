@@ -22,7 +22,7 @@ function hoursUntil(iso: string | null, fallback: number): number {
   return Math.max(1, Math.round((new Date(iso).getTime() - Date.now()) / 3_600_000))
 }
 
-function ConfirmApprove({ qa, busy, onCancel, onConfirm }: { qa: QaResult; busy: boolean; onCancel: () => void; onConfirm: (note: string) => void }) {
+export function ConfirmApprove({ qa, busy, onCancel, onConfirm }: { qa: QaResult; busy: boolean; onCancel: () => void; onConfirm: (note: string) => void }) {
   const [note, setNote] = useState('')
   useEffect(() => {
     function onKey(e: KeyboardEvent) { if (e.key === 'Escape' && !busy) onCancel() }

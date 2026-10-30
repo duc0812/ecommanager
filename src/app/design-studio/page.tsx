@@ -2,18 +2,19 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Sidebar from '@/components/Sidebar'
-import type { Me, TaskDetail, TaskRow } from './components/types'
+import type { Me, TaskDetail, TaskRow, TaskStatus } from './components/types'
 import { emptyQueueText, isRetryable, postJson, requestJson, retryDelay, taskImages, taskUrl } from './components/model'
 import { machineQa } from './components/ai-qa'
 import { LightboxProvider } from './components/Lightbox'
-import Queue, { type QueueFilter } from './components/Queue'
+import Queue, { byDue, type QueueFilter } from './components/Queue'
 import TaskHeader from './components/TaskHeader'
 import CustomerInputs from './components/CustomerInputs'
 import ArtworkPanel from './components/ArtworkPanel'
 import CompareRow from './components/CompareRow'
 import AiQaPanel from './components/AiQaPanel'
 import ActivityPanel from './components/ActivityPanel'
-import ReviewGrid from './components/ReviewGrid'
+import ReviewWorkspace from './components/ReviewWorkspace'
+import ReviewToolbar from './components/ReviewToolbar'
 import HandoffGrid from './components/HandoffGrid'
 import SentGrid from './components/SentGrid'
 import DriveHealthBanner from './components/DriveHealthBanner'
@@ -90,6 +91,7 @@ function DesignTasks() {
   const [mode, setMode] = useState<Mode>('work')
   const [reviewVersion, setReviewVersion] = useState(0)
   const [sel, setSel] = useState<string | null>(paramTask)
+  const [reviewSel, setReviewSel] = useState<string | null>(null)
   const [filter, setFilter] = useState<QueueFilter>('ALL')
   const [mine, setMine] = useState(false)
   const [q, setQ] = useState('')
@@ -214,6 +216,19 @@ function DesignTasks() {
   }, [tasks])
 
   const reviewCount = useMemo(() => tasks.filter(t => t.status === 'REVIEW').length, [tasks])
+  const reviewTasks = useMemo(() => visible.filter(t => t.status === 'REVIEW').sort(byDue), [visible])
+  useEffect(() => {
+    if (mode !== 'review') return
+    if (!reviewSel || !reviewTasks.some(t => t.taskKey === reviewSel)) setReviewSel(reviewTasks[0]?.taskKey ?? null)
+  }, [mode, reviewSel, reviewTasks])
+  // A reviewed task leaves the review list at once and the next one in due order takes its place; the list reload confirms.
+  const reviewMoved = useCallback((keys: string[], to: TaskStatus) => {
+    const next = reviewTasks.find((t, i) => !keys.includes(t.taskKey) && i > reviewTasks.findIndex(x => x.taskKey === reviewSel)) ?? reviewTasks.find(t => !keys.includes(t.taskKey))
+    setTasks(ts => ts.map(t => (keys.includes(t.taskKey) ? { ...t, status: to } : t)))
+    if (reviewSel && keys.includes(reviewSel)) setReviewSel(next?.taskKey ?? null)
+    reload()
+    setReviewVersion(v => v + 1)
+  }, [reviewTasks, reviewSel, reload])
   const filtered = filter !== 'ALL' || mine || !!debouncedQ
   const emptyText = emptyQueueText({ readinessLabel: filter === 'ALL' ? null : READY_META[filter].label, mine, q: debouncedQ })
   const clearFilters = useCallback(() => { setFilter('ALL'); setMine(false); setQ('') }, [])
@@ -286,11 +301,22 @@ function DesignTasks() {
       <DriveHealthBanner version={driveVersion} />
 
       <div className="grid grid-cols-[290px_minmax(0,1fr)] gap-md items-start">
-        <Queue tasks={visible} sel={mode === 'work' ? sel : null} onSelect={selectTask} q={q} onQ={setQ} loading={listLoading} error={listError} retrying={retrying}
+        <Queue tasks={mode === 'review' ? reviewTasks : visible} sel={mode === 'work' ? sel : mode === 'review' ? reviewSel : null} onSelect={mode === 'review' ? setReviewSel : selectTask}
+          q={q} onQ={setQ} loading={listLoading} error={listError} retrying={retrying}
           emptyText={filtered ? emptyText : 'Không có task'} onClearFilters={filtered ? clearFilters : null}
           filter={filter} onFilter={setFilter} counts={counts} mine={mine} onMine={setMine} />
         {mode === 'review' ? (
-          <ReviewGrid mine={mine} q={debouncedQ} version={reviewVersion} onOpenTask={selectTask} onChanged={reload} />
+          <div className="flex flex-col gap-md min-w-0">
+            <ReviewToolbar total={reviewTasks.length} version={reviewVersion} onApproved={keys => reviewMoved(keys, 'DONE')} />
+            {reviewSel ? (
+              <ReviewWorkspace key={reviewSel} taskKey={reviewSel} position={{ index: Math.max(0, reviewTasks.findIndex(t => t.taskKey === reviewSel)), total: reviewTasks.length }}
+                onMoved={(key, to) => reviewMoved([key], to)} onOpenTask={selectTask} onChanged={reload} />
+            ) : !listLoading && (
+              <div className={`${card} p-lg text-body-sm text-on-surface-variant flex items-center gap-sm`}>
+                <Icon name="task_alt" className="text-on-tertiary-container" />Không có mẫu nào chờ duyệt.
+              </div>
+            )}
+          </div>
         ) : mode === 'handoff' ? (
           <HandoffGrid q={debouncedQ} version={reviewVersion} onOpenTask={selectTask} onChanged={reload} />
         ) : mode === 'sent' ? (
