@@ -60,6 +60,14 @@ export function merchizeSideOf(area: string): DesignField | null {
   return SIDES.find(s => s.match.test(area))?.field ?? null
 }
 
+/**
+ * The side of one part of a line. A part whose name says nothing about a side ("Print", "Sheet") is still the front when it is
+ * the line's only part: a single-area template (AOP sheet, magnet, ornament) has nothing else it could be.
+ */
+export function merchizeSideForPart(area: string, allParts: string[]): DesignField | null {
+  return merchizeSideOf(area) ?? (allParts.length === 1 ? 'design_front' : null)
+}
+
 /** Stable per store, so external_number lookups never collide across stores. */
 export function merchizeIdentifier(shop: string): string {
   return shop.replace(/\.myshopify\.com$/i, '').toLowerCase()
@@ -216,8 +224,8 @@ export async function buildMerchizePush(orderId: string): Promise<BuiltMerchizeP
       if (art.mimeType !== 'image/png' && art.mimeType !== 'image/jpeg') {
         error('FILE_TYPE', `${refId}: file "${area}" (${art.fileName}) không phải PNG/JPEG — Merchize chỉ nhận link ảnh PNG hoặc JPEG`, refId)
       }
-      const side = merchizeSideOf(area)
-      if (!side) error('UNKNOWN_SIDE', `${refId}: vùng in "${area}" không ứng với mặt nào của Merchize (front / back / sleeve / hood)`, refId)
+      const side = merchizeSideForPart(area, parts)
+      if (!side) error('UNKNOWN_SIDE', `${refId}: vùng in "${area}" không ứng với mặt nào của Merchize (front / back / sleeve / hood) — một dòng nhiều mảnh phải đặt tên mảnh theo mặt`, refId)
       else if (designs[side]) error('DUPLICATE_SIDE', `${refId}: hai file cùng in mặt ${side.replace('design_', '')}`, refId)
       const fit = slots.includes(area) ? printFileFit(template, area, art) : null
       const sizeOk = fit?.state === 'ok' ? true : fit?.state === 'bad' ? false : null
