@@ -1,5 +1,20 @@
 import { describe, expect, it } from 'vitest'
-import { merchizeSideForPart, merchizeSideOf } from './merchize-push'
+import { merchizeSideForPart, merchizeSideOf, methodFor } from './merchize-push'
+
+describe('methodFor', () => {
+  it('keeps the store default when the blank offers it or the catalog is unknown', () => {
+    expect(methodFor({ methods: ['DTF', 'DTG'] }, 'DTF')).toBe('DTF')
+    expect(methodFor(undefined, 'DTF')).toBe('DTF')
+  })
+
+  it('switches to the only method the blank offers', () => {
+    expect(methodFor({ methods: ['DTG'] }, 'DTF')).toBe('DTG')
+  })
+
+  it('sends no method for a product that lists none (AOP, acrylic)', () => {
+    expect(methodFor({ methods: [] }, 'DTF')).toBeNull()
+  })
+})
 
 describe('merchizeSideOf', () => {
   it('reads the side from the part name', () => {

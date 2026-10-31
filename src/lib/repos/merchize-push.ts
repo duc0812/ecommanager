@@ -49,8 +49,13 @@ function isUniqueViolation(e: any): boolean {
   return msg.includes('UNIQUE constraint failed') || msg.includes('Unique constraint failed')
 }
 
-/** The store default (DTF) unless the blank does not offer it: Gildan 18600US is DTG only. */
-export function methodFor(variant: { methods: string[] } | undefined, preferred: MerchizePrintingMethod): MerchizePrintingMethod {
+/**
+ * The store default (DTF) unless the blank does not offer it: Gildan 18600US is DTG only. A catalog entry that lists no
+ * printing method at all (AOP hoodie, acrylic magnet, wood) takes none: Merchize rejects "DTF is not supported" there.
+ * An unknown variant (catalog unreachable) keeps the default.
+ */
+export function methodFor(variant: { methods: string[] } | undefined, preferred: MerchizePrintingMethod): MerchizePrintingMethod | null {
+  if (variant && variant.methods.length === 0) return null
   const offered = (variant?.methods ?? []).map(m => m.toUpperCase()).filter((m): m is MerchizePrintingMethod => m === 'DTF' || m === 'DTG')
   return offered.length === 0 || offered.includes(preferred) ? preferred : offered[0]
 }
@@ -264,7 +269,7 @@ export async function buildMerchizePush(orderId: string): Promise<BuiltMerchizeP
     items.push({
       name: l.variantTitle ? `${l.productTitle} - ${l.variantTitle}` : l.productTitle,
       sku: apiSku ?? '', merchize_sku: apiSku ?? '', product_id: variant?.productId ?? '',
-      quantity: l.qty, price: l.unitPrice, currency: order.currency || 'USD', printing_method: method, image: image ?? '',
+      quantity: l.qty, price: l.unitPrice, currency: order.currency || 'USD', ...(method ? { printing_method: method } : {}), image: image ?? '',
       ...designs,
       attributes: (variant?.attributes ?? []).map(a => ({ name: a.name, option: a.value_code })),
     })

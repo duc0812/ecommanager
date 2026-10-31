@@ -44,7 +44,8 @@ export type MerchizeShippingInfo = {
 
 export type MerchizeOrderItem = {
   name: string; sku: string; merchize_sku: string; product_id: string; quantity: number; price: number; currency: string
-  printing_method: MerchizePrintingMethod; image: string
+  /** Left out for a product whose catalog entry lists no printing method (AOP, acrylic, wood): Merchize rejects DTF/DTG there. */
+  printing_method?: MerchizePrintingMethod; image: string
   design_front?: string; design_back?: string; design_sleeve?: string; design_hood?: string
   attributes: { name: string; option: string }[]
 }
