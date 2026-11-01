@@ -4,6 +4,8 @@ import { getMetaRateSchedule } from '@/lib/meta-exchange-rates'
 
 // A Vietnamese bank card charged by Meta in USD incurs a ~3% FX conversion fee.
 export const FX_FEE_RATE = 0.03
+// Every other card charged in USD still pays a 0.1% transaction fee.
+export const USD_CARD_FEE_RATE = 0.001
 
 export const PAID_META_STATUSES = ['PAID', 'SETTLED', 'COMPLETED']
 const PAID_STATUSES = PAID_META_STATUSES
@@ -26,12 +28,13 @@ export async function getVndCardLast4(): Promise<Set<string>> {
   return set
 }
 
-// The FX fee (USD) for one billing: 3% of its USD amount when it is a USD charge on a VND card.
+// The card fee (USD) for one billing: only USD charges pay one — 3% on a VND card, 0.1% on any other
+// card (a billing with no card on record counts as a non-VND card).
 export function billingFxFeeUsd(b: FeeBilling, vndCards: Set<string>, schedule: Schedule): number {
   if (normalizeMetaCurrency(b.currency) !== 'USD') return 0
-  if (!b.paymentMethodLast4 || !vndCards.has(b.paymentMethodLast4)) return 0
   const usd = convertMetaAmountToUsdDated(b.amount, b.currency, b.billingDate, schedule) ?? 0
-  return usd * FX_FEE_RATE
+  const vndCard = !!b.paymentMethodLast4 && vndCards.has(b.paymentMethodLast4)
+  return usd * (vndCard ? FX_FEE_RATE : USD_CARD_FEE_RATE)
 }
 
 export function sumBillingFxFeesUsd(bills: FeeBilling[], vndCards: Set<string>, schedule: Schedule): number {

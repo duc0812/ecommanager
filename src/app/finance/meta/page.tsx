@@ -455,7 +455,7 @@ export default function MetaBillingPage() {
                   <span className="text-label-sm text-on-surface-variant uppercase tracking-wider">Paid Amount Reality</span>
                 </div>
                 <p className="text-stats-lg font-bold text-primary">{fmtUSD(data.paidReality ?? data.totalSpent)}</p>
-                <p className="text-label-sm text-on-surface-variant mt-xs">Gồm phí đổi 3%: <span className="font-semibold text-amber-700">+{fmtUSD(data.fxFee ?? 0)}</span></p>
+                <p className="text-label-sm text-on-surface-variant mt-xs">Gồm phí thẻ (3% thẻ VND · 0.1% thẻ khác): <span className="font-semibold text-amber-700">+{fmtUSD(data.fxFee ?? 0)}</span></p>
               </div>
               {(data.pendingCount ?? 0) > 0 && (
                 <div className="bg-amber-50 rounded-xl p-lg border border-amber-200">
