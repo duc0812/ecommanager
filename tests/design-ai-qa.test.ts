@@ -52,7 +52,7 @@ describe('machineQa', () => {
   })
 
   it('LIT5105_1: files named apart from the template areas are not measured against the whole sheet', () => {
-    const r = machineQa(detail([art('front', { widthPx: 3000, heightPx: 3000 }), art('back', { widthPx: 3000, heightPx: 3000 })]))
+    const r = machineQa(detail([art('sheet a', { widthPx: 3000, heightPx: 3000 }), art('sheet b', { widthPx: 3000, heightPx: 3000 })]))
     expect(r.items.map(i => i.key).sort()).toEqual(['areas', 'format'])
     expect(r.items[0]).toMatchObject({ key: 'areas', level: 'error', detail: 'Thiếu Front, Back' })
   })

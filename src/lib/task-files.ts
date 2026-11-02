@@ -8,7 +8,7 @@ export const OLD_FOLDER_NAME = '_old'
 /** Start of the error an approval gets when a template area has no file; the leader is asked and the approval retried. */
 export const MISSING_AREAS_PREFIX = 'Chưa có file cho vùng: '
 
-type PartFile = { kind?: string | null; printArea: string; version: number }
+type PartFile = { kind?: string | null; printArea: string; version: number; createdAt?: Date | string | null }
 
 export function fileKindOf(value: unknown): FileKind {
   return value === 'MOCKUP' ? 'MOCKUP' : 'PRINT'
@@ -30,10 +30,14 @@ export function partLabelFromFileName(fileName: string): string {
   return cleanPartLabel(dot >= 0 ? base.slice(0, dot) : base) || DEFAULT_PART
 }
 
-/** What a part is matched by: `back hem` is the area `BACK HEM`, and a designer's `Hat` is the hood. */
+/** A set made by hand is often named after the line: `LIT4936_2 - front`, `LIT4936_2_1 - cuff`, `LIT5099 - back hem`. */
+const LINE_PREFIX = /^lit\d+(?:_\d+)*[\s_]*-[\s_]*/
+const PART_ALIASES: Record<string, string> = { hat: 'hood', 'outer hood': 'hood' }
+
+/** What a part is matched by: `back_hem` and `LIT4936_2 - back hem` are the area `BACK HEM`, a designer's `Hat` is the hood. */
 export function partKey(label: string): string {
-  const key = label.trim().toLowerCase()
-  return key === 'hat' ? 'hood' : key
+  const key = label.trim().toLowerCase().replace(LINE_PREFIX, '').replace(/[\s_]+/g, ' ')
+  return PART_ALIASES[key] ?? key
 }
 
 export function sameLabel(a: string, b: string): boolean {
@@ -71,34 +75,47 @@ function byLabel(a: string, b: string): number {
   return x < y ? -1 : x > y ? 1 : a < b ? -1 : a > b ? 1 : 0
 }
 
+/** Versions count within one name. Two names of one part (`LIT4936_2 - front`, `FRONT`) are told apart by upload time. */
+export function newerFile(a: PartFile, b: PartFile): boolean {
+  if (a.printArea === b.printArea) return a.version > b.version
+  const at = (f: PartFile) => (f.createdAt ? new Date(f.createdAt).getTime() : 0)
+  return at(a) === at(b) ? a.version > b.version : at(a) > at(b)
+}
+
 /** The newest version of every part of one kind. Callers pass files that are not removed. */
 export function currentFiles<T extends PartFile>(files: T[], kind: FileKind): T[] {
   const newest = new Map<string, T>()
   for (const f of files) {
     if (fileKindOf(f.kind) !== kind) continue
-    const have = newest.get(f.printArea)
-    if (!have || f.version > have.version) newest.set(f.printArea, f)
+    const key = partKey(f.printArea)
+    const have = newest.get(key)
+    if (!have || newerFile(f, have)) newest.set(key, f)
   }
   return Array.from(newest.values()).sort((a, b) => byLabel(a.printArea, b.printArea))
 }
 
+/** Files uploaded within this time of each other are one set, whatever order they landed in. */
+const SAME_SET_MS = 60 * 60 * 1000
+
 /**
  * Print parts left over from before the line used its template: not one of the template's areas, and last uploaded
- * before the first file went into one of them (a 2D set named after its files next to the 3D sheet that replaced it).
- * A part added after the template files, or a source file named after an area (`FRONT.psd` beside `FRONT`), stays.
+ * before the first file went into one of them (a 2D set named after its files next to the 3D sheet that replaced it);
+ * also an area's file under another name once a newer file fills that area (`LIT5217_1 - front` after `FRONT`).
+ * A part added after the template files or with them, or a source file named after an area (`FRONT.psd` beside `FRONT`), stays.
  * Callers pass the line's PRINT files that are not removed.
  */
 export function outdatedParts(files: Array<{ printArea: string; createdAt: Date }>, slots: string[]): string[] {
-  const isSlot = (label: string) => slots.some(s => sameLabel(s, label) || sameLabel(s, label.replace(/\.[a-z0-9]{1,5}$/i, '')))
-  const slotTimes = files.filter(f => slots.some(s => sameLabel(s, f.printArea))).map(f => f.createdAt.getTime())
+  const inArea = (label: string) => slots.some(s => sameLabel(s, label))
+  const isSlot = (label: string) => inArea(label) || inArea(label.replace(/\.[a-z0-9]{1,5}$/i, ''))
+  const lastUpload = new Map<string, number>()
+  for (const f of files) lastUpload.set(f.printArea, Math.max(lastUpload.get(f.printArea) ?? 0, f.createdAt.getTime()))
+  const labels = Array.from(lastUpload.keys())
+  const replaced = labels.filter(l => inArea(l) && labels.some(o => o !== l && sameLabel(o, l) && lastUpload.get(o)! > lastUpload.get(l)!))
+  const slotTimes = files.filter(f => inArea(f.printArea) && !replaced.includes(f.printArea)).map(f => f.createdAt.getTime())
   if (slotTimes.length === 0) return []
   const firstSlot = Math.min(...slotTimes)
-  const lastUpload = new Map<string, number>()
-  for (const f of files) {
-    if (isSlot(f.printArea)) continue
-    lastUpload.set(f.printArea, Math.max(lastUpload.get(f.printArea) ?? 0, f.createdAt.getTime()))
-  }
-  return Array.from(lastUpload).filter(([, at]) => at < firstSlot).map(([part]) => part).sort(byLabel)
+  const leftOver = labels.filter(l => !isSlot(l) && lastUpload.get(l)! < firstSlot - SAME_SET_MS)
+  return [...replaced, ...leftOver].sort(byLabel)
 }
 
 /** Print files in the order the factory gets them: the template's areas first, then every other part by name. */

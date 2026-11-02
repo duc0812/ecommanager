@@ -1,5 +1,5 @@
 import { isLayerlessField } from '@/lib/layer-fields'
-import { currentFiles, extraPrintParts, fileKindOf, missingPrintAreas, orderedPrintFiles, printFilesReady, sameLabel, type FileKind } from '@/lib/task-files'
+import { currentFiles, extraPrintParts, fileKindOf, missingPrintAreas, newerFile, orderedPrintFiles, printFilesReady, sameLabel, type FileKind } from '@/lib/task-files'
 import type { ArtworkRow, LayerMapEntry, TaskDetail, TaskRow, TaskStatus, TemplateArea, TemplateRow, WorkspaceLine } from './types'
 
 export const OPEN_STATUSES: TaskStatus[] = ['NEW', 'ASSIGNED', 'DOING', 'REVIEW', 'REJECTED']
@@ -38,7 +38,7 @@ export function slotNames(detail: Pick<TaskDetail, 'slots'>): string[] {
 type Files = Pick<WorkspaceLine, 'artworks'>
 
 export function versionsFor(line: Files, area: string, kind: FileKind = 'PRINT'): ArtworkRow[] {
-  return line.artworks.filter(a => fileKindOf(a.kind) === kind && sameLabel(a.printArea, area)).sort((a, b) => b.version - a.version)
+  return line.artworks.filter(a => fileKindOf(a.kind) === kind && sameLabel(a.printArea, area)).sort((a, b) => (newerFile(a, b) ? -1 : newerFile(b, a) ? 1 : 0))
 }
 
 export function newestFor(line: Files, area: string, kind: FileKind = 'PRINT'): ArtworkRow | undefined {

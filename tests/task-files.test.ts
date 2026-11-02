@@ -139,6 +139,15 @@ describe('outdatedParts', () => {
   it('keeps a source file named after an area', () => {
     expect(outdatedParts([at('FRONT.psd', 20), at('front', 26)], ['FRONT'])).toEqual([])
   })
+  it('a file of the set uploaded just before the first area file is not left over', () => {
+    const minute = (printArea: string, m: number) => ({ printArea, createdAt: new Date(Date.UTC(2026, 9, 24, 10, m)) })
+    expect(outdatedParts([minute('cuff copy', 1), minute('CUFF', 2)], ['CUFF'])).toEqual([])
+  })
+  it('a set named after the line stays until a newer file replaces a part, and only that part goes', () => {
+    const set = [at('LIT4936_2 - front', 24), at('LIT4936_2 - back', 24), at('LIT4936_2 - Inner Hood', 24)]
+    expect(outdatedParts(set, ['FRONT', 'BACK'])).toEqual([])
+    expect(outdatedParts([...set, at('FRONT', 30)], ['FRONT', 'BACK'])).toEqual(['LIT4936_2 - front'])
+  })
   it('does nothing before a template area has a file, or without a template', () => {
     expect(outdatedParts([at('front', 20), at('back', 21)], ['FRONT SHEET'])).toEqual([])
     expect(outdatedParts([at('front', 20), at('back', 21)], [])).toEqual([])
@@ -148,6 +157,22 @@ describe('outdatedParts', () => {
 describe('part names from designers', () => {
   const AREAS = ['HOOD', 'BACK HEM', 'PLACKET']
   const named = (...names: string[]) => names.map((n, i) => file(String(i), 'PRINT', n))
+
+  it('a set named after the line fills the template areas', () => {
+    const files = named('LIT4936_2 - Outer Hood', 'LIT5099 - back hem', 'LIT4936_2_1 -Placket', 'LIT4936_2 - Inner Hood')
+    expect(missingPrintAreas(files, AREAS)).toEqual([])
+    expect(extraPrintParts(files, AREAS)).toEqual(['LIT4936_2 - Inner Hood'])
+    expect(orderedPrintFiles(files, AREAS).map(f => f.printArea)).toEqual(['LIT4936_2 - Outer Hood', 'LIT5099 - back hem', 'LIT4936_2_1 -Placket', 'LIT4936_2 - Inner Hood'])
+  })
+  it('a file named after the line and the area joins that area on upload', () => {
+    expect(partForUpload('LIT6000_1_-_back_hem.png', AREAS, [])).toBe('BACK HEM')
+  })
+  it('of two names for one part the newest upload is the current file', () => {
+    const old = file('old', 'PRINT', 'LIT4936_2 - front', 3, { createdAt: new Date('2026-10-24') })
+    const fresh = file('new', 'PRINT', 'FRONT', 1, { createdAt: new Date('2026-11-03') })
+    expect(currentFiles([old, fresh], 'PRINT').map(f => f.id)).toEqual(['new'])
+    expect(currentFiles([fresh, old], 'PRINT').map(f => f.id)).toEqual(['new'])
+  })
 
   it('a file named in another case or with Hat fills the template area', () => {
     const files = named('Hat', 'back hem', 'Placket')
