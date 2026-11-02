@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/db'
+import { partKey } from '@/lib/task-files'
 
 export type TemplateArea = { name: string; x: number; y: number; w: number; h: number }
 /** A part set a line may deliver instead of the template's own areas (Mango WZIP: 12 piece files instead of the one sheet). */
@@ -41,15 +42,13 @@ export function mapTemplate(t: { id: string; name: string; widthPx: number; heig
   }
 }
 
-const norm = (s: string) => s.trim().toLowerCase()
-
 /**
  * Which part set a line is filling: the template's own areas (index -1) or one of its alternative sets — the one with the
  * most parts already uploaded. A tie keeps the earlier choice, so an empty line starts on the template's own areas.
  */
 export function chooseAreaSet(template: Pick<TemplateRow, 'areas' | 'altSets'>, partsPresent: string[]): number {
-  const have = new Set(partsPresent.map(norm))
-  const count = (areas: TemplateArea[]) => areas.filter(a => have.has(norm(a.name))).length
+  const have = new Set(partsPresent.map(partKey))
+  const count = (areas: TemplateArea[]) => areas.filter(a => have.has(partKey(a.name))).length
   let best = -1, bestScore = count(template.areas)
   template.altSets.forEach((s, i) => {
     const score = count(s.areas)

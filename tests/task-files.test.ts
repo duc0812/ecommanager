@@ -144,3 +144,23 @@ describe('outdatedParts', () => {
     expect(outdatedParts([at('front', 20), at('back', 21)], [])).toEqual([])
   })
 })
+
+describe('part names from designers', () => {
+  const AREAS = ['HOOD', 'BACK HEM', 'PLACKET']
+  const named = (...names: string[]) => names.map((n, i) => file(String(i), 'PRINT', n))
+
+  it('a file named in another case or with Hat fills the template area', () => {
+    const files = named('Hat', 'back hem', 'Placket')
+    expect(missingPrintAreas(files, AREAS)).toEqual([])
+    expect(extraPrintParts(files, AREAS)).toEqual([])
+    expect(printFilesReady(files, AREAS)).toBe(true)
+    expect(orderedPrintFiles(files, AREAS).map(f => f.printArea)).toEqual(['Hat', 'back hem', 'Placket'])
+  })
+  it('a second cuff stays an extra part, and a really missing area is still reported', () => {
+    expect(extraPrintParts(named('Cuff', 'Cuff copy'), ['CUFF'])).toEqual(['Cuff copy'])
+    expect(missingPrintAreas(named('Hood'), AREAS)).toEqual(['BACK HEM', 'PLACKET'])
+  })
+  it('an upload named Hat lands in the HOOD area', () => {
+    expect(resolvePartLabel('Hat', AREAS, [])).toBe('HOOD')
+  })
+})

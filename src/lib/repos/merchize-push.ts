@@ -2,7 +2,7 @@ import { prisma } from '@/lib/db'
 import { isNonProductLine, lineKeysOf } from '@/lib/order-lines'
 import { requiredSlotsFor, templateForLine } from '@/lib/design-tasks'
 import { artworkUrl } from '@/lib/design-studio'
-import { currentFiles, extraPrintParts } from '@/lib/task-files'
+import { currentFiles, extraPrintParts, sameLabel } from '@/lib/task-files'
 import { logHandoffEvent, markPushExported } from '@/lib/repos/push-export'
 import { STATUS_LABELS, type PipelineStatus } from '@/lib/pipeline-status'
 import { retryOnBusy } from '@/lib/sqlite-busy'
@@ -216,7 +216,7 @@ export async function buildMerchizePush(orderId: string): Promise<BuiltMerchizeP
     const files: PreviewFile[] = []
     const designs: Partial<Record<DesignField, string>> = {}
     for (const area of parts) {
-      const art = prints.find(a => a.printArea === area) ?? null
+      const art = prints.find(a => sameLabel(a.printArea, area)) ?? null
       const target = slots.includes(area) ? expectedSize(template, area) : null
       if (!art) {
         error('NO_ARTWORK', `${refId}: chưa có file in cho vùng "${area}"`, refId)

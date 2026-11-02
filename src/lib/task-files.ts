@@ -30,8 +30,14 @@ export function partLabelFromFileName(fileName: string): string {
   return cleanPartLabel(dot >= 0 ? base.slice(0, dot) : base) || DEFAULT_PART
 }
 
-function sameLabel(a: string, b: string): boolean {
-  return a.trim().toLowerCase() === b.trim().toLowerCase()
+/** What a part is matched by: `back hem` is the area `BACK HEM`, and a designer's `Hat` is the hood. */
+export function partKey(label: string): string {
+  const key = label.trim().toLowerCase()
+  return key === 'hat' ? 'hood' : key
+}
+
+export function sameLabel(a: string, b: string): boolean {
+  return partKey(a) === partKey(b)
 }
 
 /**
@@ -98,17 +104,17 @@ export function outdatedParts(files: Array<{ printArea: string; createdAt: Date 
 /** Print files in the order the factory gets them: the template's areas first, then every other part by name. */
 export function orderedPrintFiles<T extends PartFile>(files: T[], areas: string[]): T[] {
   const current = currentFiles(files, 'PRINT')
-  const inArea = areas.flatMap(area => current.filter(f => f.printArea === area))
-  return [...inArea, ...current.filter(f => !areas.includes(f.printArea))]
+  const inArea = areas.flatMap(area => current.filter(f => sameLabel(f.printArea, area)))
+  return [...inArea, ...current.filter(f => !areas.some(area => sameLabel(area, f.printArea)))]
 }
 
 export function extraPrintParts(files: PartFile[], areas: string[]): string[] {
-  return currentFiles(files, 'PRINT').map(f => f.printArea).filter(p => !areas.includes(p))
+  return currentFiles(files, 'PRINT').map(f => f.printArea).filter(p => !areas.some(area => sameLabel(area, p)))
 }
 
 export function missingPrintAreas(files: PartFile[], areas: string[]): string[] {
-  const have = new Set(currentFiles(files, 'PRINT').map(f => f.printArea))
-  return areas.filter(a => !have.has(a))
+  const have = new Set(currentFiles(files, 'PRINT').map(f => partKey(f.printArea)))
+  return areas.filter(a => !have.has(partKey(a)))
 }
 
 /** A template task needs a file for every area; a task without a template needs at least one print file. */

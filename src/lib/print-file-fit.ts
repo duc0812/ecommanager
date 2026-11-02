@@ -1,3 +1,5 @@
+import { sameLabel } from '@/lib/task-files'
+
 type FitTemplate = { widthPx: number; heightPx: number; areas: { name: string; w: number; h: number }[] }
 type FitFile = { widthPx: number | null; heightPx: number | null }
 
@@ -9,7 +11,7 @@ export type FileFit =
 /** The pixel size a print area must have: the area's own box when it has one, else the whole template. */
 export function expectedSize(template: FitTemplate | null, area: string): { w: number; h: number } | null {
   if (!template) return null
-  const hit = template.areas.find(a => a.name === area)
+  const hit = template.areas.find(a => sameLabel(a.name, area))
   if (!hit) return null
   return hit.w > 0 && hit.h > 0 ? { w: hit.w, h: hit.h } : { w: template.widthPx, h: template.heightPx }
 }

@@ -12,7 +12,7 @@ import { activePushByOrder, logHandoffEvent } from '@/lib/repos/push-export'
 import { COOLING_OFF_HOURS, type HandoffCard, type HandoffLine, type HandoffSent, type HandoffState, type SentStage } from '@/lib/handoff-shared'
 import { loadLineResolver, recalculateMissingOrderLineCosts } from '@/lib/repos/order-costs'
 import { printFileFit } from '@/lib/print-file-fit'
-import { currentFiles } from '@/lib/task-files'
+import { currentFiles, sameLabel } from '@/lib/task-files'
 import { exportProgress, exportProgressLabel, exportedSupplierOf } from '@/lib/line-export'
 
 export class HandoffError extends Error {
@@ -199,7 +199,7 @@ async function buildCards(where: any, orderBy: any, opts: { checks?: boolean; se
       const template = row ? templateViewFor(await templateForLine(row), line.artworks) : null
       const slots = requiredSlotsFor(template)
       const wrongSizeAreas = opts.checks
-        ? currentFiles(line.artworks, 'PRINT').filter(a => slots.includes(a.printArea) && printFileFit(template, a.printArea, a).state === 'bad').map(a => a.printArea)
+        ? currentFiles(line.artworks, 'PRINT').filter(a => slots.some(s => sameLabel(s, a.printArea)) && printFileFit(template, a.printArea, a).state === 'bad').map(a => a.printArea)
         : []
       const r = resolveNow ? resolvable.find(x => x.id === line.id) : null
       const now = r && resolveNow && !sentTo ? resolveNow({ ...r, order: { storeId: o.storeId, shippingCountry: o.shippingCountry } }) : null

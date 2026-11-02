@@ -1,5 +1,5 @@
 import { isLayerlessField } from '@/lib/layer-fields'
-import { currentFiles, extraPrintParts, fileKindOf, missingPrintAreas, orderedPrintFiles, printFilesReady, type FileKind } from '@/lib/task-files'
+import { currentFiles, extraPrintParts, fileKindOf, missingPrintAreas, orderedPrintFiles, printFilesReady, sameLabel, type FileKind } from '@/lib/task-files'
 import type { ArtworkRow, LayerMapEntry, TaskDetail, TaskRow, TaskStatus, TemplateArea, TemplateRow, WorkspaceLine } from './types'
 
 export const OPEN_STATUSES: TaskStatus[] = ['NEW', 'ASSIGNED', 'DOING', 'REVIEW', 'REJECTED']
@@ -38,7 +38,7 @@ export function slotNames(detail: Pick<TaskDetail, 'slots'>): string[] {
 type Files = Pick<WorkspaceLine, 'artworks'>
 
 export function versionsFor(line: Files, area: string, kind: FileKind = 'PRINT'): ArtworkRow[] {
-  return line.artworks.filter(a => fileKindOf(a.kind) === kind && a.printArea === area).sort((a, b) => b.version - a.version)
+  return line.artworks.filter(a => fileKindOf(a.kind) === kind && sameLabel(a.printArea, area)).sort((a, b) => b.version - a.version)
 }
 
 export function newestFor(line: Files, area: string, kind: FileKind = 'PRINT'): ArtworkRow | undefined {
@@ -91,7 +91,7 @@ export function newestArtwork(line: Files): ArtworkRow | undefined {
 }
 
 export function targetFor(template: TemplateRow, printArea: string | undefined): { w: number; h: number; area: TemplateArea | null } {
-  const area = template.areas.find(a => a.name === printArea) ?? null
+  const area = (printArea ? template.areas.find(a => sameLabel(a.name, printArea)) : null) ?? null
   return area ? { w: area.w, h: area.h, area } : { w: template.widthPx, h: template.heightPx, area: null }
 }
 
