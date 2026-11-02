@@ -398,7 +398,7 @@ function TaskCanvas({ template: stored, line, slots, bg, guide, guides, upload, 
 
   return (
     <Sheet
-      template={tpl} bg={bg} guide={guide} guides={guides} svgRef={svgRef} highlight={highlight} frameProps={frameProps} maxVh={maxVh} compact
+      template={tpl} bg={bg} guide={guide} guides={guides} svgRef={svgRef} highlight={highlight} frameProps={frameProps} maxVh={tpl.areas.some(a => a.shaped) ? undefined : maxVh} compact
       frameOverlay={upload ? <UploadOverlay busy={upload.busy} target={drag} /> : null}
       renderArea={(a, { x, y, w, h }) => {
         const art = newestFor(line, a.name)
