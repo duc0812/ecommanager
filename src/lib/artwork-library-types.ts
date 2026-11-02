@@ -68,4 +68,6 @@ export type TaskLibraryLayer = { field: string; layer: string; fit: string; maxC
 export type TaskLibraryState = {
   key: string; entryId: string | null; status: EntryStatus | 'NONE'; label: 'Sẵn sàng' | 'Thiếu' | 'Đang đọc'
   optionKey: string; optionLabel: string | null; layers: TaskLibraryLayer[]
+  /** The state comes from the local library, not from an entry on this server. */
+  source?: 'LOCAL'
 }

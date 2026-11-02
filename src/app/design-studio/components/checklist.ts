@@ -71,6 +71,8 @@ function libraryItem({ line, template, library }: ChecklistInput): CheckItem {
   if (!library) return { key: 'library', title, state: 'na', reason: 'Dòng không gắn sản phẩm Shopify — không có artwork gốc', action: null }
   const scope = library.optionLabel ? ` (${library.optionLabel})` : ''
   if (library.status === 'READY') {
+    // A local entry has nothing to show on this server's product page.
+    if (library.source === 'LOCAL') return { key: 'library', title, state: 'done', reason: `Artwork gốc sẵn sàng trong thư viện local${scope}`, action: null }
     return { key: 'library', title, state: 'done', reason: `Artwork gốc sẵn sàng${scope}`, action: { kind: 'link', label: 'Xem', href: productPageUrl(library.key) } }
   }
   return {

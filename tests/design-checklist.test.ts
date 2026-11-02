@@ -71,6 +71,10 @@ describe('buildChecklist', () => {
     const split = buildChecklist(input({ template, library: { key: 'k1', entryId: 'e', status: 'NEEDS_REVIEW', label: 'Thiếu', optionKey: '{"Size":"30oz"}', optionLabel: 'Size: 30oz', layers: [] } }))
     expect(byKey(split, 'library').reason).toBe('Đã đọc PSD — cần duyệt trường (Size: 30oz)')
     expect(byKey(buildChecklist(input({ template, library: null })), 'library').state).toBe('na')
+    const local = buildChecklist(input({ template, library: { key: 'k1', entryId: null, status: 'READY', label: 'Sẵn sàng', optionKey: '', optionLabel: null, layers: [], source: 'LOCAL' } }))
+    expect(byKey(local, 'library')).toMatchObject({ state: 'done', reason: 'Artwork gốc sẵn sàng trong thư viện local', action: null })
+    const localMissing = buildChecklist(input({ template, library: { key: 'k1', entryId: null, status: 'NONE', label: 'Thiếu', optionKey: '', optionLabel: null, layers: [], source: 'LOCAL' } }))
+    expect(byKey(localMissing, 'library').state).toBe('missing')
   })
 
   it('customer info: profile fields left empty ask the customer; non-custom is n.a.', () => {

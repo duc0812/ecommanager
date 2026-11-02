@@ -9,7 +9,7 @@ import { allSlotNames, loadTemplateContext, mapTemplate, pickTemplate, templateV
 import { productArtworkStatus } from '@/lib/artwork-slots'
 import type { LibraryProductStatus } from '@/lib/artwork-fields'
 import { isDriveConnected } from '@/lib/google-drive'
-import { libraryStateFor } from '@/lib/artwork-library-state'
+import { checklistLibraryState, libraryStateFor } from '@/lib/artwork-library-state'
 import type { TaskLibraryState } from '@/lib/artwork-library-types'
 import type { RenderJobView } from '@/lib/artwork-render-eligibility'
 import { latestRenderJob } from '@/lib/artwork-render-jobs'
@@ -568,7 +568,7 @@ async function lineContext(orderLine: ContextLine | null, storeId: string | null
   const profile: TaskProfile | null = storeId && productId && profileRouteKey
     ? { key: profileRouteKey, status: await productArtworkStatus(storeId, productId), layerMap: parseLayerMap(profileRow?.layerMap) }
     : null
-  const library = await libraryStateFor({
+  const library = await checklistLibraryState({
     storeId, shopifyProductId: productId, templateId: template?.id ?? null,
     variantOptions: orderLine?.variantOptions ?? null, artworkSplits: profileRow?.artworkSplits ?? null,
   })
