@@ -91,25 +91,20 @@ export function newestArtwork(line: Files): ArtworkRow | undefined {
 }
 
 /**
- * A piece set is stored as one row of areas, far too wide to read on screen. For viewing, its pieces are packed into
- * rows of about 3:1 so every piece shows at once. Their sizes do not change; a real sheet layout stays as it is.
+ * A piece set is stored as areas at y 0. For viewing, every piece sits in one horizontal row with a small gap, each its
+ * own upload button. Their sizes do not change; a real sheet layout stays as it is.
  */
 export function readableSheet<T extends TemplateRow>(template: T): T {
   const { areas } = template
   if (areas.length < 3 || areas.some(a => a.y !== 0 || a.w <= 0 || a.h <= 0)) return template
-  const total = areas.reduce((sum, a) => sum + a.w * a.h, 0)
-  const rowWidth = Math.max(Math.sqrt(total * 3), ...areas.map(a => a.w))
-  const gap = Math.round(rowWidth * 0.015)
-  const packed: TemplateArea[] = []
-  let x = 0, y = 0, rowHeight = 0, width = 0
-  for (const a of areas) {
-    if (x > 0 && x + a.w > rowWidth) { x = 0; y += rowHeight + gap; rowHeight = 0 }
-    packed.push({ ...a, x, y })
+  const gap = Math.round(Math.max(...areas.map(a => a.w)) * 0.04)
+  let x = 0
+  const row: TemplateArea[] = areas.map(a => {
+    const placed = { ...a, x, y: 0 }
     x += a.w + gap
-    rowHeight = Math.max(rowHeight, a.h)
-    width = Math.max(width, x - gap)
-  }
-  return { ...template, areas: packed, widthPx: width, heightPx: y + rowHeight, guideImageUrl: null }
+    return placed
+  })
+  return { ...template, areas: row, widthPx: x - gap, heightPx: Math.max(...areas.map(a => a.h)), guideImageUrl: null }
 }
 
 export function targetFor(template: TemplateRow, printArea: string | undefined): { w: number; h: number; area: TemplateArea | null } {

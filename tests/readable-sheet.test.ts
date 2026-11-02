@@ -15,10 +15,11 @@ const PIECES: Array<[string, number, number]> = [
 ]
 
 describe('readableSheet', () => {
-  it('packs a row of pieces into a screen-shaped sheet, keeping every size and name', () => {
+  it('keeps every piece in one horizontal row, with every size and name', () => {
     const view = readableSheet(row(inRow(PIECES), 37674, 5644))
     expect(view.areas.map(a => [a.name, a.w, a.h])).toEqual(PIECES)
-    expect(view.widthPx / view.heightPx).toBeLessThan(5)
+    expect(new Set(view.areas.map(a => a.y))).toEqual(new Set([0]))
+    expect(view.heightPx).toBe(5644)
     expect(view.guideImageUrl).toBeNull()
   })
   it('no two pieces overlap and all stay inside the sheet', () => {
