@@ -19,7 +19,8 @@ export type TaskRow = {
   supplierName: string | null; customized: boolean; storeName: string
 }
 
-export type TemplateArea = { name: string; x: number; y: number; w: number; h: number }
+/** `shaped`: the template's guide draws this piece's real outline, so the canvas shows no box around it and names it above. */
+export type TemplateArea = { name: string; x: number; y: number; w: number; h: number; shaped?: boolean }
 
 export type TemplateAreaSet = { label: string; widthPx: number; heightPx: number; areas: TemplateArea[] }
 

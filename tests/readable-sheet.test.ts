@@ -18,7 +18,7 @@ describe('readableSheet', () => {
   it('packs a row of pieces into a screen-shaped sheet, keeping every size and name', () => {
     const view = readableSheet(row(inRow(PIECES), 37674, 5644))
     expect(view.areas.map(a => [a.name, a.w, a.h])).toEqual(PIECES)
-    expect(view.widthPx / view.heightPx).toBeLessThan(2.5)
+    expect(view.widthPx / view.heightPx).toBeLessThan(5)
     expect(view.guideImageUrl).toBeNull()
   })
   it('no two pieces overlap and all stay inside the sheet', () => {

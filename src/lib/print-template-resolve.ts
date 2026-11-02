@@ -1,7 +1,8 @@
 import { prisma } from '@/lib/db'
 import { partKey } from '@/lib/task-files'
 
-export type TemplateArea = { name: string; x: number; y: number; w: number; h: number }
+/** `shaped`: the template's guide draws this piece's real outline, so the canvas shows no box around it and names it above. */
+export type TemplateArea = { name: string; x: number; y: number; w: number; h: number; shaped?: boolean }
 /** A part set a line may deliver instead of the template's own areas (Mango WZIP: 12 piece files instead of the one sheet). */
 export type TemplateAreaSet = { label: string; widthPx: number; heightPx: number; areas: TemplateArea[] }
 

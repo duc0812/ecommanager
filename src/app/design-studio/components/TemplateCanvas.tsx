@@ -132,6 +132,7 @@ function Sheet({ template, bg, guide, guides, renderArea, overlay, underlay, leg
   })
 
   const ratio = viewBox.w / viewBox.h
+  const shaped = template.areas.some(a => a.shaped)
   const legendText = [
     showBleed && `nét đỏ = bleed ${template.bleedIn}″`,
     guides.safe && `nét xanh = an toàn ${template.safeIn}″`,
@@ -160,18 +161,21 @@ function Sheet({ template, bg, guide, guides, renderArea, overlay, underlay, leg
             const x = a.x * k, y = a.y * k, w = a.w * k, h = a.h * k
             return (
               <g key={a.name}>
-                {guides.areas && <rect x={x} y={y} width={w} height={h} className="fill-outline/20 stroke-outline-variant" />}
+                {guides.areas && !a.shaped && <rect x={x} y={y} width={w} height={h} className="fill-outline/20 stroke-outline-variant" />}
                 {renderArea(a, { x, y, w, h })}
-                {showBleed && <rect x={x + bleed} y={y + bleed} width={Math.max(0, w - 2 * bleed)} height={Math.max(0, h - 2 * bleed)} fill="none" strokeWidth="1.2" strokeDasharray="5 4" className="stroke-error" />}
-                {guides.safe && <rect x={x + safe} y={y + safe} width={Math.max(0, w - 2 * safe)} height={Math.max(0, h - 2 * safe)} fill="none" strokeWidth="1.2" strokeDasharray="3 4" className="stroke-on-tertiary-container" />}
-                {guides.areas && <text x={x + 6} y={y + 14} fontSize="10" className="fill-on-surface-variant font-mono">{a.name} · {a.w}×{a.h}</text>}
+                {showBleed && !a.shaped && <rect x={x + bleed} y={y + bleed} width={Math.max(0, w - 2 * bleed)} height={Math.max(0, h - 2 * bleed)} fill="none" strokeWidth="1.2" strokeDasharray="5 4" className="stroke-error" />}
+                {guides.safe && !a.shaped && <rect x={x + safe} y={y + safe} width={Math.max(0, w - 2 * safe)} height={Math.max(0, h - 2 * safe)} fill="none" strokeWidth="1.2" strokeDasharray="3 4" className="stroke-on-tertiary-container" />}
+                {guides.areas && !a.shaped && <text x={x + 6} y={y + 14} fontSize="10" className="fill-on-surface-variant font-mono">{a.name} · {a.w}×{a.h}</text>}
               </g>
             )
           })}
           {overlay(k)}
           {template.guideImageUrl && guides.guide && (
-            <image href={template.guideImageUrl} x={0} y={0} width={W} height={H} preserveAspectRatio="none" opacity={guide / 100} pointerEvents="none" />
+            <image href={template.guideImageUrl} x={0} y={0} width={W} height={H} preserveAspectRatio="none" opacity={shaped ? 1 : guide / 100} pointerEvents="none" />
           )}
+          {shaped && template.areas.map(a => (
+            <text key={a.name} x={(a.x + a.w / 2) * k} y={a.y * k - 5} textAnchor="middle" fontSize="11" className="fill-on-surface font-medium" pointerEvents="none">{a.name}</text>
+          ))}
           {highlight && <rect x={highlight.x} y={highlight.y} width={highlight.w} height={highlight.h} strokeWidth="3" className="fill-secondary/20 stroke-secondary" pointerEvents="none" />}
           <rect width={W} height={H} fill="none" className="stroke-outline-variant" />
           {!compact && <g fontSize="11" className="fill-on-surface-variant font-mono">
@@ -253,7 +257,15 @@ function UploadOverlay({ busy, target }: { busy: CanvasUpload['busy']; target: s
 }
 
 /** The empty-area call to action: a dashed box that opens the picker for that area; files can also be dropped on it. */
-export function UploadCta({ area, onPick, disabled, size = 'lg' }: { area: string; onPick: (area: string) => void; disabled?: boolean; size?: 'lg' | 'sm' }) {
+export function UploadCta({ area, onPick, disabled, size = 'lg', plain }: { area: string; onPick: (area: string) => void; disabled?: boolean; size?: 'lg' | 'sm'; plain?: boolean }) {
+  if (plain) {
+    return (
+      <button type="button" disabled={disabled} onClick={e => { e.stopPropagation(); onPick(area) }} aria-label={`Upload file in cho vùng ${area}`} title={`Upload ${area}`}
+        className="pointer-events-auto absolute inset-0 grid place-items-center text-amber-700 hover:bg-amber-100/50 disabled:opacity-60 cursor-pointer">
+        <Icon name="add_photo_alternate" className="text-[20px]" />
+      </button>
+    )
+  }
   return (
     <button type="button" disabled={disabled} onClick={e => { e.stopPropagation(); onPick(area) }} aria-label={`Upload file in cho vùng ${area}`}
       className="pointer-events-auto absolute inset-[6%] flex flex-col items-center justify-center gap-[2px] rounded-lg border-[1.5px] border-dashed border-amber-500 bg-amber-50/80 text-amber-900 text-center hover:bg-amber-100/90 disabled:opacity-50 disabled:cursor-not-allowed overflow-hidden">
@@ -394,7 +406,7 @@ function TaskCanvas({ template: stored, line, slots, bg, guide, guides, upload, 
           <>
             {art && isImage(art) && <SvgArtImage art={art} px={2000} x={x} y={y} width={w} height={h} preserveAspectRatio="xMidYMid meet" />}
             {art && !isImage(art) && <text x={x + w / 2} y={y + h / 2} textAnchor="middle" fontSize="11" className="fill-on-surface-variant font-mono">{art.fileName}</text>}
-            {selected === a.name && !singleArea && <rect x={x} y={y} width={w} height={h} fill="none" strokeWidth="2.5" className="stroke-secondary" pointerEvents="none" />}
+            {selected === a.name && !singleArea && !a.shaped && <rect x={x} y={y} width={w} height={h} fill="none" strokeWidth="2.5" className="stroke-secondary" pointerEvents="none" />}
           </>
         )
       }}
@@ -403,7 +415,7 @@ function TaskCanvas({ template: stored, line, slots, bg, guide, guides, upload, 
         const art = newestFor(line, a.name)
         if (!art) {
           if (!upload || !slots.includes(a.name)) return null
-          return <UploadCta area={a.name} onPick={upload.onPick} disabled={!!upload.busy} size={tpl.areas.length > 2 || a.w * k < 240 ? 'sm' : 'lg'} />
+          return <UploadCta area={a.name} onPick={upload.onPick} disabled={!!upload.busy} size={tpl.areas.length > 2 || a.w * k < 240 ? 'sm' : 'lg'} plain={a.shaped} />
         }
         const ratio = sharpnessRatio(tpl, art)
         return (

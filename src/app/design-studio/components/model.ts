@@ -92,13 +92,13 @@ export function newestArtwork(line: Files): ArtworkRow | undefined {
 
 /**
  * A piece set is stored as one row of areas, far too wide to read on screen. For viewing, its pieces are packed into
- * rows of about 3:2 so every piece shows at once. Their sizes do not change; a real sheet layout stays as it is.
+ * rows of about 3:1 so every piece shows at once. Their sizes do not change; a real sheet layout stays as it is.
  */
 export function readableSheet<T extends TemplateRow>(template: T): T {
   const { areas } = template
   if (areas.length < 3 || areas.some(a => a.y !== 0 || a.w <= 0 || a.h <= 0)) return template
   const total = areas.reduce((sum, a) => sum + a.w * a.h, 0)
-  const rowWidth = Math.max(Math.sqrt(total * 1.5), ...areas.map(a => a.w))
+  const rowWidth = Math.max(Math.sqrt(total * 3), ...areas.map(a => a.w))
   const gap = Math.round(rowWidth * 0.015)
   const packed: TemplateArea[] = []
   let x = 0, y = 0, rowHeight = 0, width = 0
