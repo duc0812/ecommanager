@@ -255,6 +255,24 @@ describe('PUT /api/design-studio/tasks/[key]/artwork', () => {
     expect(await rows()).toHaveLength(3)
   })
 
+  it('puts each upload in the task log with who did it, a mockup named as a mockup', async () => {
+    driveMock()
+    await prisma.designTaskEvent.deleteMany({ where: { task: { taskKey: TASK } } })
+    await upload([png(1, 1)], { printArea: 'Front', fileName: 'front.png' })
+    await upload([png(3, 3)], { printArea: 'Sherpa Hoodie', fileName: 'Sherpa_Hoodie.png', kind: 'MOCKUP' })
+    const events = await prisma.designTaskEvent.findMany({ where: { task: { taskKey: TASK }, type: 'ARTWORK' }, orderBy: { createdAt: 'asc' } })
+    expect(events.map(e => e.message)).toEqual(['Tải lên file in Front v1 · front.png', 'Tải lên mockup Sherpa Hoodie v1 · Sherpa_Hoodie.png'])
+    expect(events.every(e => e.actorId === designerId)).toBe(true)
+
+    const line = await lineRow()
+    const fd = new FormData()
+    fd.append('file', new File([png(1, 1)], 'back.png', { type: 'image/png' }))
+    fd.append('printArea', 'Back')
+    await legacyUpload(new NextRequest(`http://localhost/api/design-studio/lines/${line.id}/artwork`, { method: 'POST', body: fd }), { params: { lineId: line.id } })
+    const after = await prisma.designTaskEvent.findMany({ where: { task: { taskKey: TASK }, type: 'ARTWORK' }, orderBy: { createdAt: 'asc' } })
+    expect(after.at(-1)?.message).toBe('Tải lên file in Back v1 · back.png')
+  })
+
   it('keeps the file on the server without calling Google while Drive is not connected', async () => {
     driveMock()
     const res = await upload([png(1, 1)])

@@ -170,6 +170,20 @@ export async function saveArtworkFromTemp(input: {
   return storeArtwork(input.target, input, input.temp)
 }
 
+/** A person's upload goes in the task log. The file is already stored, so a failed log line never fails the upload. */
+export async function logArtworkUpload(line: { orderId: string; shopifyLineId: string }, art: ArtworkRow, actorId: string | null): Promise<void> {
+  try {
+    const task = await prisma.designTask.findUnique({ where: { orderId_shopifyLineId: { orderId: line.orderId, shopifyLineId: line.shopifyLineId } }, select: { id: true } })
+    if (!task) return
+    const what = art.kind === 'MOCKUP' ? 'mockup' : 'file in'
+    await prisma.designTaskEvent.create({
+      data: { taskId: task.id, type: 'ARTWORK', message: `Tải lên ${what} ${art.printArea} v${art.version} · ${art.fileName}`, actorId },
+    })
+  } catch (err: any) {
+    console.error('[design artwork] upload log failed:', err?.message ?? err)
+  }
+}
+
 /**
  * A task is tied to its order line by orderId + shopifyLineId. OrderLine.id is not stable: every order sync
  * deletes and recreates the rows, so an id held by an open browser tab goes stale.
