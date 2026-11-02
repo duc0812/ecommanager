@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useId, useRef, useState, type DragEvent, type HTMLAttributes, type ReactNode, type Ref } from 'react'
 import type { ArtworkRow, TemplateArea, TemplateRow, WorkspaceLine } from './types'
-import { isImage, newestFor, printFiles, sharpnessRatio } from './model'
+import { isImage, newestFor, printFiles, readableSheet, sharpnessRatio } from './model'
 import { ALL_GUIDES, NO_GUIDES, areaAt, clientToTemplate, type Guides, type ViewBox } from './canvas-guides'
 import { Icon, chip } from './ui'
 import { ArtImg, SvgArtImage } from './art-src'
@@ -357,7 +357,8 @@ function NoTemplateCanvas({ line, upload, artActions, selected }: { line: Worksp
   )
 }
 
-function TaskCanvas({ template, line, slots, bg, guide, guides, upload, artActions, selected, maxVh }: TaskProps) {
+function TaskCanvas({ template: stored, line, slots, bg, guide, guides, upload, artActions, selected, maxVh }: TaskProps) {
+  const template = stored ? readableSheet(stored) : null
   const firstArea = template?.areas.find(a => a.name === slots[0]) ?? template?.areas[0]
   const sourceUrl = line.sourcePrintFiles[0]?.url ?? null
   const firstHasArt = !!(firstArea && newestFor(line, firstArea.name))

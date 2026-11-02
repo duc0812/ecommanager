@@ -90,6 +90,28 @@ export function newestArtwork(line: Files): ArtworkRow | undefined {
     .sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : b.version - a.version))[0]
 }
 
+/**
+ * A piece set is stored as one row of areas, far too wide to read on screen. For viewing, its pieces are packed into
+ * rows of about 3:2 so every piece shows at once. Their sizes do not change; a real sheet layout stays as it is.
+ */
+export function readableSheet<T extends TemplateRow>(template: T): T {
+  const { areas } = template
+  if (areas.length < 3 || areas.some(a => a.y !== 0 || a.w <= 0 || a.h <= 0)) return template
+  const total = areas.reduce((sum, a) => sum + a.w * a.h, 0)
+  const rowWidth = Math.max(Math.sqrt(total * 1.5), ...areas.map(a => a.w))
+  const gap = Math.round(rowWidth * 0.015)
+  const packed: TemplateArea[] = []
+  let x = 0, y = 0, rowHeight = 0, width = 0
+  for (const a of areas) {
+    if (x > 0 && x + a.w > rowWidth) { x = 0; y += rowHeight + gap; rowHeight = 0 }
+    packed.push({ ...a, x, y })
+    x += a.w + gap
+    rowHeight = Math.max(rowHeight, a.h)
+    width = Math.max(width, x - gap)
+  }
+  return { ...template, areas: packed, widthPx: width, heightPx: y + rowHeight, guideImageUrl: null }
+}
+
 export function targetFor(template: TemplateRow, printArea: string | undefined): { w: number; h: number; area: TemplateArea | null } {
   const area = (printArea ? template.areas.find(a => sameLabel(a.name, printArea)) : null) ?? null
   return area ? { w: area.w, h: area.h, area } : { w: template.widthPx, h: template.heightPx, area: null }
