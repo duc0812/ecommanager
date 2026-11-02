@@ -3,6 +3,7 @@ import { runExclusive } from '@/lib/job-lock'
 import { syncDesignTasks } from '@/lib/design-tasks'
 import { needsLineProps, refreshMissingLineProps } from '@/lib/design-studio'
 import { fillCustomallFields } from '@/lib/customall-fields'
+import { savePreviewMockups } from '@/lib/preview-mockup'
 
 export const DESIGN_TASK_SYNC_KEY = 'last_design_task_sync_result'
 export const DESIGN_TASK_SYNC_JOB = 'design-task-sync'
@@ -21,7 +22,7 @@ export type RefreshSummary = {
 export type DesignTaskSyncSummary = {
   trigger: SyncTrigger; startedAt: string; ranAt: string
   orders: number; scope: { design: number; openTasks: number; recent: number }
-  created: number; cancelled: number; completed: number; reopened: number
+  created: number; cancelled: number; completed: number; reopened: number; previewMockups: number
   refresh: RefreshSummary; customall: { filled: number; failed: number }; errors: string[]
 }
 
@@ -84,7 +85,7 @@ export async function runDesignTaskSync(opts: { trigger?: SyncTrigger; now?: num
     refresh.otherStore += r.otherStore
   }
 
-  let created = 0, cancelled = 0, completed = 0, reopened = 0
+  let created = 0, cancelled = 0, completed = 0, reopened = 0, previewMockups = 0
   const errors: string[] = []
   const customall = { filled: 0, failed: 0 }
   try {
@@ -102,6 +103,9 @@ export async function runDesignTaskSync(opts: { trigger?: SyncTrigger; now?: num
       cancelled += r.cancelled
       completed += r.completed
       reopened += r.reopened
+      const previews = await savePreviewMockups(o.id)
+      previewMockups += previews.saved
+      errors.push(...previews.errors.map(err => `${o.shopifyOrderNumber}: ${err}`))
     } catch (e: any) {
       errors.push(`${o.shopifyOrderNumber}: ${e.message}`)
     }
@@ -109,7 +113,7 @@ export async function runDesignTaskSync(opts: { trigger?: SyncTrigger; now?: num
   return {
     trigger, startedAt, ranAt: new Date().toISOString(),
     orders: orders.length, scope: { design, openTasks, recent: recent.length },
-    created, cancelled, completed, reopened, refresh, customall, errors,
+    created, cancelled, completed, reopened, previewMockups, refresh, customall, errors,
   }
 }
 

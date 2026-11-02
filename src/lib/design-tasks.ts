@@ -82,8 +82,19 @@ const STUDIO_MOVED: TaskStatus[] = ['DOING', 'REVIEW', 'REJECTED', 'DONE']
 const HUMAN_MOVE_EVENTS = ['STATUS', 'REJECT']
 
 async function linesWithArtwork(orderId: string): Promise<Set<string>> {
-  const rows = await prisma.designArtwork.findMany({ where: { orderId, removedAt: null }, select: { shopifyLineId: true }, distinct: ['shopifyLineId'] })
+  // A mockup the system filled in says nothing about who made the design.
+  const rows = await prisma.designArtwork.findMany({ where: { orderId, removedAt: null, NOT: { kind: 'MOCKUP', source: 'AUTO' } }, select: { shopifyLineId: true }, distinct: ['shopifyLineId'] })
   return new Set(rows.map(r => r.shopifyLineId))
+}
+
+/** A mockup the system added goes in the task log. The file is already stored, so a failed log line never fails it. */
+export async function logAutoMockup(orderId: string, shopifyLineId: string, message: string): Promise<void> {
+  try {
+    const task = await prisma.designTask.findUnique({ where: { orderId_shopifyLineId: { orderId, shopifyLineId } }, select: { id: true } })
+    if (task) await prisma.designTaskEvent.create({ data: { taskId: task.id, type: 'ARTWORK', message } })
+  } catch (err: any) {
+    console.error('[design tasks] mockup log failed:', err?.message ?? err)
+  }
 }
 
 /**
