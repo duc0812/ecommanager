@@ -374,6 +374,49 @@ describe('Duyệt sản xuất checks', () => {
   })
 })
 
+describe('Duyệt sản xuất on a one-sheet template with an alternative piece set', () => {
+  const SKU = 'HOF-SHEET'
+  const PARTS = ['FRONT', 'BACK']
+  afterEach(async () => {
+    await prisma.supplierProduct.deleteMany({ where: { supplierId: CSV_SUP, sku: SKU } })
+    await prisma.printTemplate.deleteMany({ where: { supplierId: CSV_SUP, supplierSku: SKU } })
+  })
+
+  async function sheetTemplate() {
+    const t = await prisma.printTemplate.create({ data: {
+      supplierId: CSV_SUP, supplierSku: SKU, name: 'One sheet', widthPx: 1000, heightPx: 1000, dpi: 200,
+      areas: JSON.stringify([{ name: 'Print', x: 0, y: 0, w: 1000, h: 1000 }]),
+      altAreas: JSON.stringify([{ label: 'Pieces', widthPx: 2000, heightPx: 1000, areas: [{ name: 'FRONT', x: 0, y: 0, w: 1000, h: 1000 }, { name: 'BACK', x: 1000, y: 0, w: 1000, h: 1000 }] }]),
+    } })
+    await prisma.supplierProduct.create({ data: { supplierId: CSV_SUP, sku: SKU, productName: 'Sheet product', baseCost: 5, printTemplateId: t.id } })
+  }
+
+  async function lineWith(parts: string[]) {
+    const o = await makeOrder({ supplierSku: SKU, approve: false })
+    const shopifyLineId = `hof-${seq}-1`
+    await prisma.designArtwork.updateMany({ where: { orderId: o.id, shopifyLineId }, data: { removedAt: new Date() } })
+    for (const printArea of parts) {
+      await prisma.designArtwork.create({ data: { orderId: o.id, shopifyLineId, printArea, version: 1, fileName: `${printArea}.png`, storagePath: `x/${seq}-${printArea}.png`, size: 10, mimeType: 'image/png', widthPx: 100, heightPx: 100 } })
+    }
+    await transitionTask(o.keys[0], DES, { to: 'DONE' })
+    return o
+  }
+
+  it('a line with the whole piece set is not asked for the sheet', async () => {
+    await sheetTemplate()
+    const o = await lineWith(PARTS)
+    const card = (await listHandoffCards()).pending.find(c => c.order.id === o.id)
+    expect(card?.lines[0].slots).toEqual(PARTS)
+  })
+
+  it('a line with the sheet still expects the sheet', async () => {
+    await sheetTemplate()
+    const o = await lineWith(['Print'])
+    const card = (await listHandoffCards()).pending.find(c => c.order.id === o.id)
+    expect(card?.lines[0].slots).toEqual(['Print'])
+  })
+})
+
 describe('handoff permission', () => {
   it('admin or a fulfillment_export holder may hand off and undo; a designer may not', async () => {
     const o = await makeOrder()

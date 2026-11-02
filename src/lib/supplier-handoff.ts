@@ -2,6 +2,7 @@ import { prisma } from '@/lib/db'
 import { isNonProductLine, lineKeysOf } from '@/lib/order-lines'
 import { loadWorkspace, type Workspace } from '@/lib/design-studio'
 import { requiredSlotsFor, templateForLine } from '@/lib/design-tasks'
+import { templateViewFor } from '@/lib/print-template-resolve'
 import { STATUS_LABELS, type PipelineStatus } from '@/lib/pipeline-status'
 import { countryCodeOf, countryNameOf } from '@/lib/shipping-address'
 import { credentialsOf, getPgprintsSettings } from '@/lib/pgprints-settings'
@@ -195,7 +196,7 @@ async function buildCards(where: any, orderBy: any, opts: { checks?: boolean; se
       if (line.isNonProduct || !line.supplier) continue
       const row = rowById.get(line.id)
       const sentTo = row ? exportedSupplierOf(exportOrder, row) : null
-      const template = row ? await templateForLine(row) : null
+      const template = row ? templateViewFor(await templateForLine(row), line.artworks) : null
       const slots = requiredSlotsFor(template)
       const wrongSizeAreas = opts.checks
         ? currentFiles(line.artworks, 'PRINT').filter(a => slots.includes(a.printArea) && printFileFit(template, a.printArea, a).state === 'bad').map(a => a.printArea)
