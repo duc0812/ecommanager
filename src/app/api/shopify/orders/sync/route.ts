@@ -265,6 +265,7 @@ export async function POST(req: NextRequest) {
           isNonProduct: isNonProductLine({ sku: r.line.sku, productTitle: r.line.title, shopifyProductType: r.line.productType }),
           requiresDesign: !!sp?.supplierId,
           resolvedSupplierId: sp?.supplierId ?? null,
+          supplierSku: sp?.sku ?? null,
           existingDesignLink: existingLineLinks.get(r.line.id) ?? null,
           customized: isLineCustomized({ customAttributes: r.line.customAttributes, previewCdnUrl: extractPreviewCdnUrl(r.line.customAttributes) }),
         }

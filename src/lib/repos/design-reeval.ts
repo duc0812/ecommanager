@@ -32,7 +32,7 @@ export async function reevaluateOrdersForDesignEntry(entry: {
       lines: {
         orderBy: { linePosition: 'asc' },
         select: {
-          id: true, sku: true, resolvedSupplierId: true, productTitle: true,
+          id: true, sku: true, resolvedSupplierId: true, resolvedSupplierSku: true, productTitle: true,
           shopifyProductType: true, previewCdnUrl: true, designDriveLink: true, customized: true,
         },
       },
@@ -50,6 +50,7 @@ export async function reevaluateOrdersForDesignEntry(entry: {
       isNonProduct: isNonProductLine({ sku: l.sku, productTitle: l.productTitle, shopifyProductType: l.shopifyProductType }),
       requiresDesign: !!l.resolvedSupplierId,
       resolvedSupplierId: l.resolvedSupplierId,
+      supplierSku: l.resolvedSupplierSku,
       existingDesignLink: l.designDriveLink,
       customized: l.customized,
     }))

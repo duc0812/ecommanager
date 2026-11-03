@@ -126,6 +126,28 @@ describe('resolveOrderDesignByParent', () => {
     const r = resolveOrderDesignByParent([pLine({ sku: 'ZZZ-1' })], parentEntry)
     expect(r.orderDesignReady).toBe(false)
   })
+  describe('a SKU with no size in it, one library row per supplier size', () => {
+    const colour = { sku: 'TN1-Blue', supplierId: 'supA', matchMode: 'VARIANT', designLink: 'COLOUR', designType: 'NON_CUSTOM' }
+    const sized = (size: string) => ({ ...colour, sku: `TN1-Blue @WZIP-${size}`, designLink: `LINK-${size}` })
+    const entries = [colour, sized('M'), sized('XL')]
+    it('takes the link of the line size, not the colour', () => {
+      const r = resolveOrderDesignByParent([pLine({ sku: 'TN1-Blue', supplierSku: 'WZIP-XL' })], entries)
+      expect(r.lineLinks).toEqual([{ index: 0, designLink: 'LINK-XL' }])
+    })
+    it('a size with no row goes to the people instead of a link that holds every size', () => {
+      const r = resolveOrderDesignByParent([pLine({ sku: 'TN1-Blue', supplierSku: 'WZIP-6XL' })], entries)
+      expect(r.lineLinks).toEqual([])
+      expect(r.missing).toEqual([{ index: 0, sku: 'TN1-Blue', supplierId: 'supA' }])
+    })
+    it('sized rows of another supplier change nothing', () => {
+      const r = resolveOrderDesignByParent([pLine({ sku: 'TN1-Blue', resolvedSupplierId: 'supB', supplierSku: 'X' })], [{ ...colour, supplierId: 'supB' }, sized('M')])
+      expect(r.lineLinks).toEqual([{ index: 0, designLink: 'COLOUR' }])
+    })
+    it('a longer SKU with the same start keeps its own row', () => {
+      const r = resolveOrderDesignByParent([pLine({ sku: 'TN1-Blue Sky', supplierSku: 'WZIP-M' })], [...entries, { ...colour, sku: 'TN1-Blue Sky', designLink: 'SKY' }])
+      expect(r.lineLinks).toEqual([{ index: 0, designLink: 'SKY' }])
+    })
+  })
   it('own existing link wins', () => {
     const r = resolveOrderDesignByParent([pLine({ existingDesignLink: 'own', customized: true })], parentEntry)
     expect(r.orderDesignReady).toBe(true)

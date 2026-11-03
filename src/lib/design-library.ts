@@ -1,4 +1,4 @@
-import { matchDesignEntry, type DesignEntry } from '@/lib/design-parent'
+import { matchSizedDesignEntry, type DesignEntry } from '@/lib/design-parent'
 import { isNonProductLine } from '@/lib/order-lines'
 
 type ReadyCheckLine = { sku: string | null; productTitle: string; shopifyProductType: string | null; resolvedSupplierId: string | null; designDriveLink: string | null }
@@ -58,7 +58,7 @@ export function resolveOrderDesign(
   return { orderDesignReady: missing.length === 0, lineLinks, missing }
 }
 
-export type DesignLineInputV2 = DesignLineInput & { customized: boolean }
+export type DesignLineInputV2 = DesignLineInput & { customized: boolean; supplierSku?: string | null }
 
 export function resolveOrderDesignByParent(
   lines: DesignLineInputV2[],
@@ -73,7 +73,7 @@ export function resolveOrderDesignByParent(
       missing.push({ index: line.index, sku: line.sku, supplierId: line.resolvedSupplierId })
       continue
     }
-    const entry = matchDesignEntry(line.sku, line.resolvedSupplierId, designEntries)
+    const entry = matchSizedDesignEntry(line.sku, line.supplierSku, line.resolvedSupplierId, designEntries)
     if (entry && entry.designLink) {
       lineLinks.push({ index: line.index, designLink: entry.designLink })
       continue

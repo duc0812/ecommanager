@@ -45,3 +45,19 @@ export function matchDesignEntry(
   }
   return best
 }
+
+// A SKU with no size in it (TN2605261712-Blue) prints different pieces per size, and the factory follows the link on the
+// order. Such a SKU keeps one extra row per supplier size, sku = "<sku> @<supplier sku>". Once it has any, a size with no
+// row matches nothing, so the line goes to the people instead of taking the row of the whole colour.
+export function matchSizedDesignEntry(
+  sku: string | null | undefined,
+  supplierSku: string | null | undefined,
+  supplierId: string | null | undefined,
+  entries: DesignEntry[],
+): DesignEntry | null {
+  const prefix = `${(sku ?? '').toLowerCase().trim()} @`
+  const sized = entries.filter(e => e.supplierId === supplierId && (e.sku ?? '').toLowerCase().trim().startsWith(prefix))
+  if (sized.length === 0) return matchDesignEntry(sku, supplierId, entries)
+  const key = prefix + (supplierSku ?? '').toLowerCase().trim()
+  return sized.find(e => (e.sku ?? '').toLowerCase().trim() === key) ?? null
+}
