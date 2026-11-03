@@ -187,13 +187,13 @@ describe('Merchize preview', () => {
     expect(body.issues.filter((i: any) => i.level === 'error')).toEqual([])
     expect(body.payload).toEqual({
       order_id: o.number,
-      identifier: 'mzstore',
+      identifier: 'MZ',
       shipping_info: {
         full_name: 'Sal Paint', address_1: '12 Main St', address_2: '', city: 'Denver', state: 'CO',
         postcode: '80202', country: 'US', email: 'sal@example.com', phone: '+1 303 555 0100',
       },
       items: [{
-        name: 'MY EX HAS 3 SPIRIT ANIMALS - Tshirt / L / Light Blue', sku: '5000US000LTBAA03', merchize_sku: '5000US000LTBAA03',
+        name: `${o.number}_1`, sku: '5000US000LTBAA03', merchize_sku: '5000US000LTBAA03',
         product_id: 'cat-5000us', quantity: 1, price: 24.95, currency: 'USD', printing_method: 'DTF',
         image: 'https://cdn.shopify.com/s/files/tee.jpg',
         design_front: `${APP_URL}/api/public/artwork/${art.publicToken}/front.png`,
@@ -247,7 +247,7 @@ describe('Merchize push', () => {
     expect(out.push).toMatchObject({ status: 'CREATED', externalOrderId: o.number, remoteStatus: 'pushed', error: null })
     expect(out.exported).toBe(true)
     expect(callsTo('/order/external/orders')[0].body).toBe(JSON.stringify(p.payload))
-    expect(JSON.parse(callsTo('/order/external/orders/push')[0].body)).toEqual({ order: { external_number: o.number, identifier: 'mzstore' } })
+    expect(JSON.parse(callsTo('/order/external/orders/push')[0].body)).toEqual({ order: { external_number: o.number, identifier: 'MZ' } })
     const order = await prisma.order.findUniqueOrThrow({ where: { id: o.id } })
     expect(order.pipelineStatus).toBe('EXPORTED')
     expect(order.supplierHandoffMode).toBe('API')
@@ -336,6 +336,18 @@ describe('Merchize push', () => {
     expect((await push(o.id, p2.payloadHash)).status).toBe(200)
   })
 
+  it('sends no product title or shop domain, and an older push is still found under what it was sent as', async () => {
+    const o = await makeOrder()
+    const p = await (await preview(o.id)).json()
+    expect(JSON.stringify(p.payload)).not.toContain('SPIRIT ANIMALS')
+    expect(JSON.stringify(p.payload)).not.toContain('mzstore')
+    await push(o.id, p.payloadHash)
+    const row = await prisma.supplierOrderPush.findFirstOrThrow({ where: { orderId: o.id } })
+    await prisma.supplierOrderPush.update({ where: { id: row.id }, data: { requestJson: JSON.stringify({ ...JSON.parse(row.requestJson!), identifier: 'mzstore' }) } })
+    expect((await cancel(o.id)).status).toBe(200)
+    expect(JSON.parse(callsTo('/order/external/orders/cancel').at(-1)!.body).order.identifier).toBe('mzstore')
+  })
+
   it('a hash from an older preview is refused', async () => {
     const o = await makeOrder()
     const res = await push(o.id, 'f'.repeat(64))
@@ -348,7 +360,7 @@ describe('printing method', () => {
   it('keeps the store default unless the blank does not offer it', () => {
     expect(methodFor({ methods: ['DTF', 'DTG'] }, 'DTF')).toBe('DTF')
     expect(methodFor({ methods: ['DTG'] }, 'DTF')).toBe('DTG')
-    expect(methodFor({ methods: [] }, 'DTF')).toBe('DTF')
+    expect(methodFor({ methods: [] }, 'DTF')).toBeNull()
     expect(methodFor(undefined, 'DTG')).toBe('DTG')
   })
 })

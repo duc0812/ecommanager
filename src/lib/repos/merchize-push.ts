@@ -73,9 +73,9 @@ export function merchizeSideForPart(area: string, allParts: string[]): DesignFie
   return merchizeSideOf(area) ?? (allParts.length === 1 ? 'design_front' : null)
 }
 
-/** Stable per store, so external_number lookups never collide across stores. */
-export function merchizeIdentifier(shop: string): string {
-  return shop.replace(/\.myshopify\.com$/i, '').toLowerCase()
+/** Stable per store, so external_number lookups never collide across stores. The supplier sees the store's short name (LZ), not the shop domain. */
+export function merchizeIdentifier(store: { shop: string; project?: { name: string } | null }): string {
+  return store.project?.name?.trim() || store.shop.replace(/\.myshopify\.com$/i, '').toLowerCase()
 }
 
 export async function findMerchizeSupplier(): Promise<{ id: string; name: string; code: string } | null> {
@@ -116,7 +116,7 @@ export async function buildMerchizePush(orderId: string): Promise<BuiltMerchizeP
   const creds = merchizeCredentials()
   const supplier = await findMerchizeSupplier()
   const printingMethod = merchizePrintingMethod()
-  const identifier = merchizeIdentifier(order.store.shop)
+  const identifier = merchizeIdentifier(order.store)
   const issues: PreviewIssue[] = []
   const error = (code: string, message: string, refId?: string) => { issues.push({ level: 'error', code, message, refId }) }
   const warning = (code: string, message: string, refId?: string) => { issues.push({ level: 'warning', code, message, refId }) }
@@ -267,7 +267,7 @@ export async function buildMerchizePush(orderId: string): Promise<BuiltMerchizeP
       templateName: template?.name ?? null, mockupUrl, designNote: note, files,
     })
     items.push({
-      name: l.variantTitle ? `${l.productTitle} - ${l.variantTitle}` : l.productTitle,
+      name: refId,
       sku: apiSku ?? '', merchize_sku: apiSku ?? '', product_id: variant?.productId ?? '',
       quantity: l.qty, price: l.unitPrice, currency: order.currency || 'USD', ...(method ? { printing_method: method } : {}), image: image ?? '',
       ...designs,
@@ -444,9 +444,14 @@ async function latestPush(orderId: string, supplierId: string, statuses: PushSta
   return prisma.supplierOrderPush.findFirst({ where: { orderId, supplierId, status: { in: statuses } }, orderBy: { createdAt: 'desc' } })
 }
 
-async function identifierFor(orderId: string): Promise<string> {
-  const order = await prisma.order.findUniqueOrThrow({ where: { id: orderId }, select: { store: { select: { shop: true } } } })
-  return merchizeIdentifier(order.store.shop)
+/** Merchize finds an order by the identifier it was sent under, and older pushes went under the shop domain. */
+async function identifierFor(orderId: string, push: { requestJson: string | null }): Promise<string> {
+  try {
+    const sent = JSON.parse(push.requestJson ?? '{}').identifier
+    if (typeof sent === 'string' && sent) return sent
+  } catch { /* an unreadable request falls back to the store's current name */ }
+  const order = await prisma.order.findUniqueOrThrow({ where: { id: orderId }, select: { store: { select: { shop: true, project: { select: { name: true } } } } } })
+  return merchizeIdentifier(order.store)
 }
 
 export async function cancelMerchizePush(orderId: string): Promise<{ push: PushView; exportReverted: boolean }> {
@@ -457,7 +462,7 @@ export async function cancelMerchizePush(orderId: string): Promise<{ push: PushV
   const creds = merchizeCredentials()
   if (!creds) throw new PushError('Server chưa có MERCHIZE_API_URL / MERCHIZE_API_TOKEN', 400, 'NO_CREDENTIALS')
   try {
-    await cancelOrder(creds, push.externalOrderId, await identifierFor(orderId))
+    await cancelOrder(creds, push.externalOrderId, await identifierFor(orderId, push))
   } catch (e: any) {
     throw new PushError(`Merchize không huỷ được đơn: ${e?.message ?? e}`, e instanceof MerchizeError && e.noResponse ? 504 : 502, 'CANCEL_FAILED')
   }
@@ -547,7 +552,7 @@ export async function refreshMerchizePush(orderId: string): Promise<{ push: Push
   const now = Date.now()
   let remote: Awaited<ReturnType<typeof getOrderDetail>>
   try {
-    remote = await getOrderDetail(creds, push.externalOrderId, await identifierFor(orderId))
+    remote = await getOrderDetail(creds, push.externalOrderId, await identifierFor(orderId, push))
   } catch (e: any) {
     throw new PushError(`Không lấy được trạng thái từ Merchize: ${e?.message ?? e}`, e instanceof MerchizeError && e.noResponse ? 504 : 502, 'REFRESH_FAILED')
   }
