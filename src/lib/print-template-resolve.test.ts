@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { allSlotNames, chooseAreaSet, mapTemplate, parseAltSets, templateViewFor, type TemplateRow } from './print-template-resolve'
+import { allSlotNames, chooseAreaSet, mapTemplate, parseAltSets, pickTemplate, templateViewFor, type TemplateContext, type TemplateLookupLine, type TemplateRow } from './print-template-resolve'
 
 const area = (name: string, w = 100, h = 100, x = 0) => ({ name, x, y: 0, w, h })
 const pieces = ['FRONT', 'BACK', 'HOOD', 'LEFT SLEEVE', 'RIGHT SLEEVE', 'CUFF']
@@ -62,5 +62,27 @@ describe('alternative part sets (owner 10-30: a WZIP line delivers the sheet OR 
     expect(plain.altSets).toEqual([])
     expect(templateViewFor(plain, files('FRONT'))).toBe(plain)
     expect(templateViewFor(null, [])).toBeNull()
+  })
+})
+
+describe('a profile pin on one size of a set (owner 11-03: TN2407261608 on C932-PGWB2-*)', () => {
+  const tpl = (id: string, supplierSku: string) => ({
+    id, supplierId: 'jomall', supplierSku, name: id, widthPx: 100, heightPx: 100, dpi: 300, bleedIn: 0, safeIn: 0, mirror: false,
+    areas: JSON.stringify([area('Print')]), altAreas: null, guideImagePath: null, templateUrl: null,
+  })
+  const [s, m, l, other] = [tpl('s', 'C932-PGWB2-S'), tpl('m', 'C932-PGWB2-M'), tpl('l', 'C932-PGWB2-L'), tpl('x', 'CREWNECK')]
+  const ctx = { byId: new Map([['m', m], ['x', other]]), productTemplate: new Map(), bySupplier: new Map([['jomall', [s, m, l, other]]]) } as unknown as TemplateContext
+  const line = (sku: string) => ({ orderId: 'o', resolvedSupplierId: 'jomall', resolvedSupplierSku: sku }) as TemplateLookupLine
+
+  it('each size takes the template of its own size, whichever strap', () => {
+    const pin = { printTemplateId: 'm' }
+    expect(pickTemplate(line('C932-B-S'), pin, ctx)?.id).toBe('s')
+    expect(pickTemplate(line('C932-W-M'), pin, ctx)?.id).toBe('m')
+    expect(pickTemplate(line('C932-B-L'), pin, ctx)?.id).toBe('l')
+  })
+
+  it('a size the set lacks, or a pin that is no set, stays on the pinned template', () => {
+    expect(pickTemplate(line('C932-B-XL'), { printTemplateId: 'm' }, ctx)?.id).toBe('m')
+    expect(pickTemplate(line('C932-B-S'), { printTemplateId: 'x' }, ctx)?.id).toBe('x')
   })
 })
