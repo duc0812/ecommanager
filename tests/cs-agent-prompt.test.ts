@@ -19,9 +19,21 @@ describe('buildSystemPrompt', () => {
     for (const needle of ['## reply structure', 'first name', 'entirely our', 'put this right', 'frustrated, angry', 'calm', 'do not apologise', 'apologi', 'tracking', 'within 24 hours', 'follow', 'warm regards', '90', 'never open with "you'])
       expect(s, needle).toContain(needle)
   })
-  it('carries the after-hours rules: options before refund, carrier contact on stalled tracking, 24-hour confirmation', () => {
+  it('carries the after-hours rules: carrier contact on stalled tracking, 24-hour confirmation', () => {
     const s = buildSystemPrompt([], settings).toLowerCase()
-    for (const needle of ['## after-hours mode', 'sent to the customer automatically', 'replacement', 'refund only if the customer asked', 'never state an amount', 'contacting the carrier', 'within 24 hours', 'noted the new address', 'needshuman', 'missing case is never a reason', 'needs no answer', 'never ask the customer to repeat'])
+    for (const needle of ['## after-hours mode', 'sent to the customer automatically', 'never state an amount', 'contacting the carrier', 'within 24 hours', 'noted the new address', 'needshuman', 'missing case is never a reason', 'needs no answer', 'never ask the customer to repeat'])
+      expect(s, needle).toContain(needle)
+  })
+  it('gives the agent no authority to offer a resend or refund without an admin decision', () => {
+    const s = buildSystemPrompt([], settings).toLowerCase()
+    for (const needle of ['## offers need approval', 'no authority', 'resend', 'refund', 'admin directive', 'library case', 'checking with my supervisor', 'within 24 hours'])
+      expect(s, needle).toContain(needle)
+    for (const gone of ['offer options', 'remake and send a replacement at no cost', 'keep the item with a partial credit', 'worth more than one reprint', 'offer them as options'])
+      expect(s, gone).not.toContain(gone)
+  })
+  it('asks for patience on a parcel in transit, naming customs only as a possibility', () => {
+    const s = buildSystemPrompt([], settings).toLowerCase()
+    for (const needle of ['## late or stalled parcels', 'customs', 'may be', 'never state it as fact', 'able to wait', 'not yet shipped', 'delivered'])
       expect(s, needle).toContain(needle)
   })
   it('cancellations: ask the reason once, keep the customer in control, never argue', () => {
