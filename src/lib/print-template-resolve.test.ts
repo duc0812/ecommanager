@@ -81,6 +81,15 @@ describe('a profile pin on one size of a set (owner 11-03: TN2407261608 on C932-
     expect(pickTemplate(line('C932-B-L'), pin, ctx)?.id).toBe('l')
   })
 
+  it('a blank SKU that opens with its size finds its template too (TN2407261539 bag + wallet)', () => {
+    const [bm, bl, bxl] = [tpl('bm', 'LBW-PG-M'), tpl('bl', 'LBW-PG-L'), tpl('bxl', 'LBW-PG-XL')]
+    const set = { byId: new Map([['bm', bm]]), productTemplate: new Map(), bySupplier: new Map([['jomall', [bm, bl, bxl]]]) } as any
+    const pin = { printTemplateId: 'bm' }
+    expect(pickTemplate(line('M--114-INCHES'), pin, set)?.id).toBe('bm')
+    expect(pickTemplate(line('L--138-INCHES'), pin, set)?.id).toBe('bl')
+    expect(pickTemplate(line('XL--161-INCHES'), pin, set)?.id).toBe('bxl')
+  })
+
   it('a size the set lacks, or a pin that is no set, stays on the pinned template', () => {
     expect(pickTemplate(line('C932-B-XL'), { printTemplateId: 'm' }, ctx)?.id).toBe('m')
     expect(pickTemplate(line('C932-B-S'), { printTemplateId: 'x' }, ctx)?.id).toBe('x')

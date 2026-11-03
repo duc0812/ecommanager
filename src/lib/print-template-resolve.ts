@@ -107,10 +107,10 @@ export async function loadTemplateContext(lines: TemplateLookupLine[], profileTe
   return { byId, productTemplate, bySupplier }
 }
 
-/** A pin ending in -S/-M/-L names one size of a set: a line of another size takes the set's template of its own size (owner 11-03: TN2407261608 on the C932-PGWB2-* templates). */
+/** A pin ending in -S/-M/-L/-XL names one size of a set: a line of another size takes the set's template of its own size (owner 11-03: TN2407261608 on C932-PGWB2-*; TN2407261539, whose blank SKUs read M--114-INCHES, on LBW-PG-*). */
 function sizedSibling(pinned: TemplateRecord, line: TemplateLookupLine, ctx: TemplateContext): TemplateRecord {
-  const pin = pinned.supplierSku?.match(/^(.+)-[SML]$/i)
-  const size = line.resolvedSupplierSku?.match(/-([SML])$/i)
+  const pin = pinned.supplierSku?.match(/^(.+)-(?:XL|[SML])$/i)
+  const size = line.resolvedSupplierSku?.match(/-([SML])$/i) ?? line.resolvedSupplierSku?.match(/^(XL|[SML])--/i)
   if (!pin || !size) return pinned
   const want = `${pin[1]}-${size[1]}`.toLowerCase()
   return ctx.bySupplier.get(pinned.supplierId)?.find(t => t.supplierSku?.toLowerCase() === want) ?? pinned
