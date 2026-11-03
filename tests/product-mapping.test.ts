@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   matchesProductBase,
   matchesAttributeCombo,
+  overrideComboFromForm,
   parseProfileOverrides,
   resolveByProductBase,
   supplierParentKey,
@@ -103,6 +104,46 @@ describe('resolveByProductBase', () => {
     ]
     const result = resolveByProductBase('var_456', '3D Clothing', { Style: 'Tshirt', Size: '6XL' }, [tshirt3d], manualMappings)
     expect(result).toEqual({ supplierProductId: 'sp_manual_override', resolvedVia: 'variant_manual' })
+  })
+})
+
+describe('resolveByProductBase with a Ship to base override', () => {
+  const zipBase: ProductBaseData = {
+    id: 'pb-zip',
+    shopifyProductType: '3D Clothing',
+    variantConditions: JSON.stringify([{ optionName: 'Type', value: 'Zip Hoodie' }]),
+    supplierMappings: [{ preferenceRank: 1, supplierProductId: 'sp-jomall' }],
+    overrides: [{ attributeCombo: JSON.stringify({ Type: 'Zip Hoodie', Size: 'M', 'Ship to': 'US' }), supplierProductId: 'sp-merchize' }],
+  }
+  const line = { Type: 'Zip Hoodie', Size: 'M' }
+
+  it('applies only to the destination it names', () => {
+    expect(resolveByProductBase(null, '3D Clothing', line, [zipBase], [], null, 'US')).toMatchObject({ supplierProductId: 'sp-merchize', resolvedVia: 'product_base_override' })
+    expect(resolveByProductBase(null, '3D Clothing', line, [zipBase], [], null, 'CA')).toMatchObject({ supplierProductId: 'sp-jomall', resolvedVia: 'product_base_rank' })
+  })
+
+  it('falls through when the order has no destination', () => {
+    expect(resolveByProductBase(null, '3D Clothing', line, [zipBase], [], null, null).supplierProductId).toBe('sp-jomall')
+  })
+
+  it('leaves the other sizes to the base', () => {
+    expect(resolveByProductBase(null, '3D Clothing', { Type: 'Zip Hoodie', Size: 'XL' }, [zipBase], [], null, 'US').supplierProductId).toBe('sp-jomall')
+  })
+})
+
+describe('overrideComboFromForm', () => {
+  it('keeps the keys the form does not show', () => {
+    const saved = JSON.stringify({ Type: 'Zip Hoodie', Size: 'M', 'Ship to': 'US' })
+    expect(JSON.parse(overrideComboFromForm(saved, 'Type', 'Zip Hoodie'))).toEqual({ Type: 'Zip Hoodie', Size: 'M', 'Ship to': 'US' })
+  })
+
+  it('applies an edit of the shown key', () => {
+    const saved = JSON.stringify({ Type: 'Zip Hoodie', Size: 'M' })
+    expect(JSON.parse(overrideComboFromForm(saved, 'Style', 'Hoodie'))).toEqual({ Style: 'Hoodie', Size: 'M' })
+  })
+
+  it('builds a new row from the form alone', () => {
+    expect(JSON.parse(overrideComboFromForm('', 'Size', '6XL'))).toEqual({ Size: '6XL' })
   })
 })
 

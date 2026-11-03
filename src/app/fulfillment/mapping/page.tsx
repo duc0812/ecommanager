@@ -2,6 +2,7 @@
 'use client'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Sidebar from '@/components/Sidebar'
+import { overrideComboFromForm } from '@/lib/product-mapping'
 import { filterBySupplierId } from '@/lib/supplier-filter'
 
 // ── Types ────────────────────────────────────────────────────
@@ -242,7 +243,7 @@ function EditModal({
         })),
         overrides: overrides.filter(o => o.supplierProductId && o.attrKey && o.attrVal).map(o => ({
           supplierProductId: o.supplierProductId,
-          attributeCombo: JSON.stringify({ [o.attrKey]: o.attrVal }),
+          attributeCombo: overrideComboFromForm(o.attributeCombo, o.attrKey, o.attrVal),
         })),
       })
     } finally {

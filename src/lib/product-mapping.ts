@@ -162,7 +162,7 @@ export function matchesAttributeCombo(
   })
 }
 
-/** Reserved key of a product-profile override combo: the destination country, not a variant option. */
+/** Reserved key of an override combo (product profile or base): the destination country, not a variant option. */
 export const SHIP_TO_KEY = 'Ship to'
 
 /**
@@ -178,7 +178,7 @@ export function matchesShipTo(rule: string, shipTo: string | null | undefined): 
   return negate ? !codes.includes(dest) : codes.includes(dest)
 }
 
-/** A profile override: every variant option in the combo matches, and `Ship to`, when present, matches the destination. */
+/** An override: every variant option in the combo matches, and `Ship to`, when present, matches the destination. */
 export function matchesProfileCombo(combo: Record<string, string>, variantOptions: Record<string, string>, shipTo?: string | null): boolean {
   const options: Record<string, string> = {}
   for (const [k, v] of Object.entries(combo)) {
@@ -189,6 +189,19 @@ export function matchesProfileCombo(combo: Record<string, string>, variantOption
     }
   }
   return matchesAttributeCombo(options, variantOptions)
+}
+
+/**
+ * The combo to save for a base override row. The form shows only the combo's first key, so the others (Size, Ship to)
+ * are carried over: rebuilding from the form alone would widen `Zip Hoodie + M + US` to every Zip Hoodie.
+ */
+export function overrideComboFromForm(savedCombo: string, attrKey: string, attrVal: string): string {
+  let saved: Record<string, string> = {}
+  try {
+    saved = JSON.parse(savedCombo) ?? {}
+  } catch {}
+  const [, ...hiddenKeys] = Object.keys(saved)
+  return JSON.stringify({ [attrKey]: attrVal, ...Object.fromEntries(hiddenKeys.map(k => [k, saved[k]])) })
 }
 
 export function profileKey(storeId: string, shopifyProductId: string): string {
@@ -336,7 +349,7 @@ export function resolveByProductBase(
       } catch {
         continue
       }
-      if (!matchesAttributeCombo(combo, variantOptions)) continue
+      if (!matchesProfileCombo(combo, variantOptions, shipTo)) continue
       const pinned = new Set(Object.keys(combo).map(normalize))
       if (!matchesProductBaseIgnoring(productType, variantOptions, base, pinned, aliases)) continue
       return { supplierProductId: override.supplierProductId, resolvedVia: 'product_base_override', ambiguousBaseIds }
