@@ -267,9 +267,10 @@ export async function buildMerchizePush(orderId: string): Promise<BuiltMerchizeP
       templateName: template?.name ?? null, mockupUrl, designNote: note, files,
     })
     items.push({
+      // Owner 11/03: the supplier sees neither the product title nor what the shopper paid.
       name: refId,
       sku: apiSku ?? '', merchize_sku: apiSku ?? '', product_id: variant?.productId ?? '',
-      quantity: l.qty, price: l.unitPrice, currency: order.currency || 'USD', ...(method ? { printing_method: method } : {}), image: image ?? '',
+      quantity: l.qty, price: 0, currency: order.currency || 'USD', ...(method ? { printing_method: method } : {}), image: image ?? '',
       ...designs,
       attributes: (variant?.attributes ?? []).map(a => ({ name: a.name, option: a.value_code })),
     })

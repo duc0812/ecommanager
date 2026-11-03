@@ -194,7 +194,7 @@ describe('Merchize preview', () => {
       },
       items: [{
         name: `${o.number}_1`, sku: '5000US000LTBAA03', merchize_sku: '5000US000LTBAA03',
-        product_id: 'cat-5000us', quantity: 1, price: 24.95, currency: 'USD', printing_method: 'DTF',
+        product_id: 'cat-5000us', quantity: 1, price: 0, currency: 'USD', printing_method: 'DTF',
         image: 'https://cdn.shopify.com/s/files/tee.jpg',
         design_front: `${APP_URL}/api/public/artwork/${art.publicToken}/front.png`,
         attributes: [{ name: 'color', option: 'lightblue' }, { name: 'size', option: 'l' }],
@@ -341,6 +341,7 @@ describe('Merchize push', () => {
     const p = await (await preview(o.id)).json()
     expect(JSON.stringify(p.payload)).not.toContain('SPIRIT ANIMALS')
     expect(JSON.stringify(p.payload)).not.toContain('mzstore')
+    expect(p.payload.items[0].price).toBe(0)
     await push(o.id, p.payloadHash)
     const row = await prisma.supplierOrderPush.findFirstOrThrow({ where: { orderId: o.id } })
     await prisma.supplierOrderPush.update({ where: { id: row.id }, data: { requestJson: JSON.stringify({ ...JSON.parse(row.requestJson!), identifier: 'mzstore' }) } })
