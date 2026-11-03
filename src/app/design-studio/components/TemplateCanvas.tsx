@@ -256,13 +256,23 @@ function UploadOverlay({ busy, target }: { busy: CanvasUpload['busy']; target: s
   )
 }
 
-/** The empty-area call to action: a dashed box that opens the picker for that area; files can also be dropped on it. */
-export function UploadCta({ area, onPick, disabled, size = 'lg', plain }: { area: string; onPick: (area: string) => void; disabled?: boolean; size?: 'lg' | 'sm'; plain?: boolean }) {
+/** The empty-area call to action: a dashed box that opens the picker for that area; files can also be dropped on it. Over an artguide it is only a small label, so the guide stays readable. */
+export function UploadCta({ area, onPick, disabled, size = 'lg', plain, overGuide }: { area: string; onPick: (area: string) => void; disabled?: boolean; size?: 'lg' | 'sm'; plain?: boolean; overGuide?: boolean }) {
   if (plain) {
     return (
       <button type="button" disabled={disabled} onClick={e => { e.stopPropagation(); onPick(area) }} aria-label={`Upload file in cho vùng ${area}`} title={`Upload ${area}`}
         className="pointer-events-auto absolute inset-0 grid place-items-center text-amber-700 hover:bg-amber-100/50 disabled:opacity-60 cursor-pointer">
         <Icon name="add_photo_alternate" className="text-[20px]" />
+      </button>
+    )
+  }
+  if (overGuide) {
+    return (
+      <button type="button" disabled={disabled} onClick={e => { e.stopPropagation(); onPick(area) }} aria-label={`Upload file in cho vùng ${area}`}
+        className="group pointer-events-auto absolute inset-0 grid place-items-center disabled:opacity-50 disabled:cursor-not-allowed">
+        <span className="inline-flex items-center gap-xs max-w-full rounded-full border border-amber-500 bg-amber-50 px-sm py-[2px] text-label-sm font-semibold text-amber-900 group-hover:bg-amber-100">
+          <Icon name="add_photo_alternate" className="text-[16px]" />{size === 'lg' ? `Kéo thả hoặc bấm để chọn file ${area}` : area}
+        </span>
       </button>
     )
   }
@@ -415,7 +425,7 @@ function TaskCanvas({ template: stored, line, slots, bg, guide, guides, upload, 
         const art = newestFor(line, a.name)
         if (!art) {
           if (!upload || !slots.includes(a.name)) return null
-          return <UploadCta area={a.name} onPick={upload.onPick} disabled={!!upload.busy} size={tpl.areas.length > 2 || a.w * k < 240 ? 'sm' : 'lg'} plain={a.shaped} />
+          return <UploadCta area={a.name} onPick={upload.onPick} disabled={!!upload.busy} size={tpl.areas.length > 2 || a.w * k < 240 ? 'sm' : 'lg'} plain={a.shaped} overGuide={!!tpl.guideImageUrl} />
         }
         const ratio = sharpnessRatio(tpl, art)
         return (
