@@ -15,16 +15,16 @@ type Payload = {
   production_note?: string
 }
 
-type SupplierCopy = { name: string; settingsHint: string; credentialsHint: string; methodLabel: string; chargeNote: string }
+type SupplierCopy = { name: string; settingsHint: string; credentialsHint: string; methodLabel: string; noMethod: string | null; chargeNote: string }
 
 const SUPPLIERS: Record<SupplierApiKind, SupplierCopy> = {
   pgprints: {
     name: 'PGprints', settingsHint: 'Chưa bật gửi đơn ở trang cài đặt xưởng Pgprints', credentialsHint: 'Chưa nhập Store ID / Secret key PGprints',
-    methodLabel: 'Ship class', chargeNote: 'PGprints sẽ trừ tiền sau thời gian chờ',
+    methodLabel: 'Ship class', noMethod: null, chargeNote: 'PGprints sẽ trừ tiền sau thời gian chờ',
   },
   merchize: {
     name: 'Merchize', settingsHint: 'Server chưa có khoá API Merchize', credentialsHint: 'Server chưa có MERCHIZE_API_URL / MERCHIZE_API_TOKEN',
-    methodLabel: 'Kiểu in', chargeNote: 'Merchize đưa đơn vào sản xuất ngay và trừ tiền',
+    methodLabel: 'Kiểu in', noMethod: 'không cần', chargeNote: 'Merchize đưa đơn vào sản xuất ngay và trừ tiền',
   },
 }
 
@@ -280,7 +280,9 @@ export default function PgprintsPushModal({ orderId, supplier = 'pgprints', onCl
                         <span className="text-on-surface-variant">· {copy.methodLabel}</span>
                         {line.shipClass
                           ? <span>{line.shipClass}{line.shipClassSource === 'default' ? <span className="text-on-surface-variant"> (mặc định)</span> : null}</span>
-                          : <Pill tone="bad" icon="error">thiếu</Pill>}
+                          : copy.noMethod
+                            ? <span className="text-on-surface-variant">{copy.noMethod}</span>
+                            : <Pill tone="bad" icon="error">thiếu</Pill>}
                         {line.shipCountries.length > 0 && <span className="text-on-surface-variant">· chỉ giao tới <b className="text-on-surface">{line.shipCountries.join(', ')}</b></span>}
                         {line.templateName && <span className="text-on-surface-variant">· template {line.templateName}</span>}
                       </div>
