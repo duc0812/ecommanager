@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildRow, collectKeys, columnLetter, enabledChannelFor, hasLine, mapColumns, parseSheetChannels, rowKeys, sameRow, sheetDate, sizeLabel, tabNameFor, type SheetChannel } from '@/lib/sheet-channel'
+import { DAY_SEPARATOR_COLOR, buildRow, collectKeys, columnLetter, enabledChannelFor, hasLine, lastDataRow, mapColumns, parseSheetChannels, planRows, rowKeys, sameRow, sheetDate, sizeLabel, tabNameFor, type SheetChannel } from '@/lib/sheet-channel'
 
 describe('sheet dates', () => {
   it('uses the Vietnam day and no leading zero', () => {
@@ -108,5 +108,31 @@ describe('channels', () => {
     expect(parseSheetChannels('not json')).toEqual([])
     expect(parseSheetChannels('[{"supplierCode":"x"}]')).toEqual([])
     expect(parseSheetChannels(null)).toEqual([])
+  })
+})
+
+describe('where a send goes', () => {
+  const WHITE = { red: 1, green: 1, blue: 1 }
+
+  it('goes past the green day row already waiting: last data 166, green 167, writes at 168', () => {
+    expect(planRows({ lastRow: 166, lastDate: '10/29/2026', today: '11/5/2026', colors: [DAY_SEPARATOR_COLOR, null, null] })).toEqual({ separatorRow: null, startRow: 168 })
+  })
+
+  it('goes straight under the last row on the same day', () => {
+    expect(planRows({ lastRow: 170, lastDate: '11/5/2026', today: '11/5/2026', colors: [null, null, null] })).toEqual({ separatorRow: null, startRow: 171 })
+    expect(planRows({ lastRow: 170, lastDate: '11/5/2026', today: '11/5/2026', colors: [WHITE, WHITE, null] })).toEqual({ separatorRow: null, startRow: 171 })
+  })
+
+  it('adds the day row on the first send of a new day', () => {
+    expect(planRows({ lastRow: 170, lastDate: '11/4/2026', today: '11/5/2026', colors: [null, null, null] })).toEqual({ separatorRow: 171, startRow: 172 })
+  })
+
+  it('adds no day row under the header of an empty tab', () => {
+    expect(planRows({ lastRow: 1, lastDate: '', today: '11/5/2026', colors: [null] })).toEqual({ separatorRow: null, startRow: 2 })
+  })
+
+  it('finds the last row with data, past empty rows between days and trailing blanks', () => {
+    expect(lastDataRow([['h'], ['a'], [], ['b'], ['  ', ''], []])).toBe(4)
+    expect(lastDataRow([])).toBe(0)
   })
 })

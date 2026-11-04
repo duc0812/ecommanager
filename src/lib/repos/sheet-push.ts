@@ -6,8 +6,8 @@ import { HUB_WARNING_LABELS, hubView } from '@/lib/handoff-hub'
 import { listOrdersWithLines, markOrdersExported } from '@/lib/repos/orders'
 import { logHandoffEvent } from '@/lib/repos/push-export'
 import { pendingCardsForSupplier } from '@/lib/supplier-handoff'
-import { SheetsError, appendRows, listTabs, readRange, readWrittenRange } from '@/lib/google-sheets'
-import { buildRow, collectKeys, columnLetter, enabledChannelFor, getSheetChannels, hasLine, mapColumns, sameRow, sheetDate, sizeLabel, tabNameFor, type SheetChannel, type SheetKeys } from '@/lib/sheet-channel'
+import { SheetsError, addGridRows, listTabs, paintRow, readRange, readWrittenRange, rowColors, tabProperties, writeRows } from '@/lib/google-sheets'
+import { DAY_SEPARATOR_COLOR, buildRow, collectKeys, enabledChannelFor, getSheetChannels, hasLine, lastDataRow, mapColumns, planRows, sameRow, sheetDate, sizeLabel, tabNameFor, type SheetChannel, type SheetKeys } from '@/lib/sheet-channel'
 
 /** Tabs read for lines already sent: rows get copied to the next month's tab, and a late order can sit in an older one. */
 const TABS_BACK = 2
@@ -175,8 +175,21 @@ async function run(supplierId: string, orderIds: string[] | undefined, userId: s
   }
 
   let range: string
+  let firstRow: number
   try {
-    range = await appendRows(channel.spreadsheetId, tabName, outgoing.map(o => o.row))
+    // Read last, so a row someone pasted a moment ago is not written over.
+    const rows = await readRange(channel.spreadsheetId, tabName, '1:100000')
+    const lastRow = lastDataRow(rows)
+    if (lastRow < 1) throw new SheetPushError(`Tab "${tabName}" không có hàng tiêu đề — không ghi`, 'COLUMNS')
+    const { sheetId, rowCount } = await tabProperties(channel.spreadsheetId, tabName)
+    const colors = lastRow < rowCount ? await rowColors(channel.spreadsheetId, tabName, lastRow + 1, Math.min(lastRow + 3, rowCount)) : []
+    const plan = planRows({ lastRow, lastDate: rows[lastRow - 1]?.[0] ?? '', today: sheetDate(at), colors })
+    firstRow = plan.startRow
+    const lastWritten = firstRow + outgoing.length - 1
+    if (lastWritten > rowCount) await addGridRows(channel.spreadsheetId, sheetId, lastWritten - rowCount)
+    if (plan.separatorRow) await paintRow(channel.spreadsheetId, sheetId, plan.separatorRow, DAY_SEPARATOR_COLOR)
+    const mapped = new Set(indexes)
+    range = await writeRows(channel.spreadsheetId, tabName, firstRow, outgoing.map(o => o.row.map((v, col) => (mapped.has(col) ? v : null))))
   } catch (e: any) {
     return failAll(e?.message ?? 'Không ghi được vào sheet')
   }
@@ -189,18 +202,17 @@ async function run(supplierId: string, orderIds: string[] | undefined, userId: s
     return failAll(`Đã gửi lệnh ghi nhưng không đọc lại được (${e?.message ?? e}) — kiểm tra sheet vùng ${range}, lần gửi sau tool sẽ tự nhận dòng đã có`)
   }
 
-  const firstRow = Number(range.match(/![A-Z]+(\d+)/)?.[1] ?? 0)
   const good = new Map<string, string[]>()
   for (let i = 0; i < outgoing.length; i++) {
     const o = outgoing[i]
     const ok = sameRow(o.row, written[i])
-    const at1 = firstRow ? firstRow + i : null
+    const rowNumber = firstRow + i
     await prisma.supplierSheetWrite.update({
       where: { id: logged[i].id },
-      data: ok ? { status: 'WRITTEN', rowRange: at1 ? `${columnLetter(0)}${at1}` : range } : { status: 'FAILED', error: `Dòng đọc lại khác dữ liệu đã gửi (${range})` },
+      data: ok ? { status: 'WRITTEN', rowRange: `A${rowNumber}` } : { status: 'FAILED', error: `Dòng đọc lại khác dữ liệu đã gửi (${range})` },
     })
     results.push(ok
-      ? { lineKey: o.lineKey, orderNumber: o.orderNumber, status: 'WRITTEN', message: at1 ? `Hàng ${at1}` : null }
+      ? { lineKey: o.lineKey, orderNumber: o.orderNumber, status: 'WRITTEN', message: `Hàng ${rowNumber}` }
       : { lineKey: o.lineKey, orderNumber: o.orderNumber, status: 'FAILED', message: `Dòng đọc lại khác dữ liệu đã gửi — kiểm tra sheet vùng ${range}` })
     if (ok) good.set(o.orderId, [...(good.get(o.orderId) ?? []), o.lineId])
   }

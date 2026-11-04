@@ -1,5 +1,6 @@
 import { deleteSettings, saveSetting } from '@/lib/token-store'
 import { GOOGLE_KEYS, GOOGLE_TOKEN_URL, getGoogleConfig } from '@/lib/google-oauth'
+import { columnLetter } from '@/lib/sheet-channel'
 import { getSettings } from '@/lib/token-store'
 
 const API = 'https://sheets.googleapis.com/v4/spreadsheets'
@@ -91,20 +92,58 @@ export async function readRange(spreadsheetId: string, tab: string, range: strin
   return (data?.values ?? []) as string[][]
 }
 
+export type RowColor = { red?: number; green?: number; blue?: number }
+
+export async function tabProperties(spreadsheetId: string, tab: string): Promise<{ sheetId: number; rowCount: number }> {
+  const data = await call(`${spreadsheetId}?fields=sheets.properties(title,sheetId,gridProperties.rowCount)`)
+  const found = (data?.sheets ?? []).find((s: any) => s?.properties?.title === tab)?.properties
+  if (!found) throw new SheetsError(`Không thấy tab "${tab}"`, 'NO_TAB', 409)
+  return { sheetId: Number(found.sheetId ?? 0), rowCount: Number(found.gridProperties?.rowCount ?? 0) }
+}
+
+/** The background of column A on these rows; null where the row has no fill or the grid ends. */
+export async function rowColors(spreadsheetId: string, tab: string, fromRow: number, toRow: number): Promise<(RowColor | null)[]> {
+  const q = new URLSearchParams({ ranges: `${quoted(tab)}!A${fromRow}:A${toRow}`, fields: 'sheets.data.rowData.values.effectiveFormat.backgroundColor' })
+  const data = await call(`${spreadsheetId}?${q}`)
+  const rows: any[] = data?.sheets?.[0]?.data?.[0]?.rowData ?? []
+  return Array.from({ length: toRow - fromRow + 1 }, (_, i) => rows[i]?.values?.[0]?.effectiveFormat?.backgroundColor ?? null)
+}
+
+async function batchUpdate(spreadsheetId: string, requests: unknown[]): Promise<void> {
+  await call(`${spreadsheetId}:batchUpdate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ requests }) })
+}
+
+/** Adds empty rows at the bottom of the tab, when the rows to write run past its grid. */
+export async function addGridRows(spreadsheetId: string, sheetId: number, count: number): Promise<void> {
+  await batchUpdate(spreadsheetId, [{ appendDimension: { sheetId, dimension: 'ROWS', length: count } }])
+}
+
+/** Fills one whole row, as the sheet marks a new day. `row` counts from 1. */
+export async function paintRow(spreadsheetId: string, sheetId: number, row: number, color: RowColor): Promise<void> {
+  await batchUpdate(spreadsheetId, [{
+    repeatCell: {
+      range: { sheetId, startRowIndex: row - 1, endRowIndex: row },
+      cell: { userEnteredFormat: { backgroundColor: color } },
+      fields: 'userEnteredFormat.backgroundColor',
+    },
+  }])
+}
+
 /**
- * Adds rows under the tab's table, as new rows, so no cell that exists is overwritten. RAW keeps a customer's text as text:
- * a name starting with "=" must not run as a formula. Returns the range Google wrote, to read back.
+ * Writes these rows at this exact place; a null cell stays as it is. Never Google's "append": it guesses where the table
+ * ends, and on Jomall's sheet that guess was row 1. RAW keeps a customer's text as text: a name starting with "=" must not
+ * run as a formula. Returns the range written, to read back.
  */
-export async function appendRows(spreadsheetId: string, tab: string, rows: string[][]): Promise<string> {
-  const q = new URLSearchParams({ valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS' })
-  const data = await call(`${spreadsheetId}/values/${rangePath(`${quoted(tab)}!A1`)}:append?${q}`, {
-    method: 'POST',
+export async function writeRows(spreadsheetId: string, tab: string, startRow: number, rows: (string | null)[][]): Promise<string> {
+  const width = Math.max(...rows.map(r => r.length))
+  const range = `${quoted(tab)}!A${startRow}:${columnLetter(width - 1)}${startRow + rows.length - 1}`
+  const data = await call(`${spreadsheetId}/values/${rangePath(range)}?valueInputOption=RAW`, {
+    method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ majorDimension: 'ROWS', values: rows }),
+    body: JSON.stringify({ range, majorDimension: 'ROWS', values: rows }),
   })
-  const range = data?.updates?.updatedRange
-  if (typeof range !== 'string') throw new SheetsError('Google Sheets không báo vùng đã ghi.', 'NO_RANGE')
-  return range
+  if (typeof data?.updatedRange !== 'string') throw new SheetsError('Google Sheets không báo vùng đã ghi.', 'NO_RANGE')
+  return data.updatedRange
 }
 
 export async function readWrittenRange(spreadsheetId: string, range: string): Promise<string[][]> {

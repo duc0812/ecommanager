@@ -127,6 +127,33 @@ export function sameRow(sent: string[], got: string[] | undefined): boolean {
   return sent.every((v, i) => v.trim() === String(got?.[i] ?? '').trim())
 }
 
+/** The sheet's own row marking a new day. */
+export const DAY_SEPARATOR_COLOR = { red: 0, green: 1, blue: 0 }
+
+export function lastDataRow(rows: string[][]): number {
+  for (let i = rows.length - 1; i >= 0; i--) {
+    if (rows[i].some(c => String(c ?? '').trim())) return i + 1
+  }
+  return 0
+}
+
+function isFilled(c: { red?: number; green?: number; blue?: number } | null): boolean {
+  if (!c) return false
+  return (c.red ?? 0) < 0.99 || (c.green ?? 0) < 0.99 || (c.blue ?? 0) < 0.99
+}
+
+/**
+ * Where a send goes: right after the last row with data, past the coloured empty rows that follow it. Those mark the days,
+ * and Jomall's sheet can hold the next one ready. The first send of a new day with no such row adds one, in `separatorRow`.
+ */
+export function planRows(a: { lastRow: number; lastDate: string; today: string; colors: ({ red?: number; green?: number; blue?: number } | null)[] }): { separatorRow: number | null; startRow: number } {
+  let startRow = a.lastRow + 1
+  let i = 0
+  while (isFilled(a.colors[i] ?? null)) { startRow++; i++ }
+  if (i > 0 || a.lastRow <= 1 || a.lastDate.trim() === a.today) return { separatorRow: null, startRow }
+  return { separatorRow: a.lastRow + 1, startRow: a.lastRow + 2 }
+}
+
 const STYLE = /hoodie|zip|shirt|jersey|jacket|sweater|cardigan|crewneck|v-neck|full set|only pants|only shirt/i
 const KEEP_STYLE = /full set|only pants|only shirt/i
 const SIZE = /^(?:[2-9]?x{0,3}[sml]|[2-9]xl|xxl|one size|adult|(?:youth|kid|toddler)\b.*|\d.*)$/i
