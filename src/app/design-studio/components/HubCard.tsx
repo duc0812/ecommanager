@@ -5,7 +5,7 @@ import { ArtImg } from './art-src'
 import HandoffButton from './HandoffButton'
 import { Icon, Pill, btnPrimary, card as cardClass } from './ui'
 import { HUB_WARNING_LABELS, fmtUsd, hubTypeLabel, hubView } from '@/lib/handoff-hub'
-import { HANDOFF_LABELS } from '@/lib/handoff-shared'
+import { HANDOFF_LABELS, UNMAPPED_TAB } from '@/lib/handoff-shared'
 
 const fmtDate = (iso: string) => new Date(iso).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit' })
 
@@ -41,6 +41,7 @@ export default function HubCard({ c, tabId, sheet, me, onOpenTask, onSheet, onCh
           <span className="flex items-center gap-xs min-w-0">
             <button type="button" onClick={e => { e.stopPropagation(); onOpenTask(first.taskKey) }} title="Mở task"
               className="font-mono font-semibold text-body-sm text-secondary hover:underline truncate">{first.taskKey}</button>
+            {tabId === UNMAPPED_TAB && <Pill tone="bad" icon="account_tree">Chưa mapping</Pill>}
             {view.mixed && <Pill tone="idle" icon="call_split">Nhiều xưởng</Pill>}
             <span className="ml-auto shrink-0 font-semibold text-on-surface" title={order.countryName ?? order.country ?? undefined}>{order.countryCode ?? order.country ?? '—'}</span>
             {view.warnings.length > 0 && <span role="img" aria-label={`Cảnh báo: ${warnText}`} title={warnText} className="shrink-0 leading-none"><Icon name="warning" className="text-[16px] text-error" /></span>}
@@ -61,7 +62,9 @@ export default function HubCard({ c, tabId, sheet, me, onOpenTask, onSheet, onCh
           {' · '}{fmtDate(order.placedAt)}{view.extra > 0 ? ` · +${view.extra} dòng` : ''}
         </span>
         <span className="ml-auto shrink-0 flex items-center gap-xs">
-          {sheet ? (
+          {tabId === UNMAPPED_TAB ? (
+            <a href="/fulfillment/mapping" className={btnPrimary} title="Dòng này chưa có xưởng"><Icon name="account_tree" className="text-[16px]" />Vào Mapping</a>
+          ) : sheet ? (
             <button type="button" className={btnPrimary} disabled={!me?.canHandoff || view.warnings.length > 0} onClick={() => onSheet(order.id)}
               title={view.warnings.length ? `Sửa cảnh báo trước: ${warnText}` : 'Ghi đơn vào sheet của xưởng'}>
               <Icon name="table_view" className="text-[16px]" />{HANDOFF_LABELS.produceSheet}

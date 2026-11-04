@@ -203,6 +203,8 @@ export default function TaskHeader({ detail, qa, holdCount, refreshing, onRefres
               title={`Hạn: ${task.dueAt ? fmtDateTime(task.dueAt) : 'chưa đặt'} · SLA ${task.slaHours}h · KPI ${task.kpi} · đặt ${fmtDate(task.placedAt)}`}>
               {left.label}
             </Pill>
+            {task.fromLibrary && <Pill tone="brand" icon="inventory_2" size="md" title="Có sẵn trong thư viện NAS: bản in được gắn khi quét và xử lý đơn">Thư viện — chờ quét</Pill>}
+            {task.unmapped && <Pill tone="bad" icon="account_tree" size="md" title="Dòng chưa có xưởng, cần map trước khi gửi">Chưa mapping</Pill>}
             {detail.handoff?.push && <Pill tone="warn" icon="local_shipping" size="md">{pushChipLabel(detail.handoff.push)}</Pill>}
             {detail.handoff?.handedOff && (
               <Pill tone="ok" icon={detail.handoff.handedOff.mode === 'API' ? 'cloud_done' : 'inventory'} size="md">

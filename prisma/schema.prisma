@@ -551,6 +551,8 @@ model DesignTask {
   rejectNote       String?
   prevStatus       String?
   supplierSnapshot String?
+  /** The line came with a library link and no file: the local scan of the NAS library attaches the print when the owner asks. */
+  fromLibrary      Boolean           @default(false)
   driveFolderId    String?
   driveFolderUrl   String?
   createdAt        DateTime          @default(now())

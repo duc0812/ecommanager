@@ -663,6 +663,16 @@ describe('hub tabs by supplier', () => {
     expect(hub.selected).toBe(CSV_SUP)
   })
 
+  it('lists an order waiting for mapping under the unmapped tab only', async () => {
+    const o = await makeOrder({ lines: 2 })
+    const [first] = await prisma.orderLine.findMany({ where: { orderId: o.id }, orderBy: { linePosition: 'asc' } })
+    await prisma.orderLine.update({ where: { id: first.id }, data: { resolvedSupplierId: null, resolvedSupplierSku: null } })
+    await prisma.order.update({ where: { id: o.id }, data: { pipelineStatus: 'PENDING_MAPPING' } })
+    const hub = await listHandoffHub({ q: o.number })
+    expect(hub.tabs.map(t => t.id)).toEqual([UNMAPPED_TAB])
+    expect(hub.pending.map(c => c.order.id)).toEqual([o.id])
+  })
+
   it('answers with no tabs when nothing matches', async () => {
     expect(await listHandoffHub({ q: 'NO-SUCH-ORDER-XYZ' })).toEqual({ tabs: [], selected: null, pending: [] })
   })

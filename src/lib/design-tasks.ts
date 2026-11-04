@@ -92,6 +92,8 @@ const READINESS_REFRESH: TaskStatus[] = ['NEW', 'ASSIGNED', 'DOING', 'REJECTED']
 /** A link from outside the studio closes a task only while nobody has started on it. */
 const AUTO_COMPLETE_FROM: TaskStatus[] = ['NEW', 'ASSIGNED']
 const STUDIO_MOVED: TaskStatus[] = ['DOING', 'REVIEW', 'REJECTED', 'DONE']
+/** Orders not sent yet. Only these get a task for a library or unmapped line, so turning that on does not add tasks to old orders. */
+const TASK_FOR_EVERY_LINE: string[] = ['PENDING_DESIGN', 'PENDING_MAPPING', 'READY_TO_PRODUCTION']
 const HUMAN_MOVE_EVENTS = ['STATUS', 'REJECT']
 
 async function linesWithArtwork(orderId: string): Promise<Set<string>> {
@@ -157,9 +159,12 @@ export async function syncDesignTasks(orderId: string): Promise<SyncResult> {
   const factoryReopen = { status: 'REJECTED', rejectReasons: JSON.stringify([FACTORY_REJECT_REASON]), rejectNote: null, prevStatus: null }
   const factoryEvent = { type: 'SYSTEM', message: 'Xưởng trả file — mở lại task' }
 
+  const everyLine = TASK_FOR_EVERY_LINE.includes(order.pipelineStatus)
+
   for (const line of order.lines) {
-    if (isNonProductLine(line) || !line.resolvedSupplierId) continue
+    if (isNonProductLine(line)) continue
     const existing = order.designTasks.find(t => t.shopifyLineId === line.shopifyLineId)
+    if (!line.resolvedSupplierId && !existing && (!everyLine || line.exportedAt)) continue
     if (orderClosed || orderShipped) {
       if (existing && existing.status !== 'CANCELLED' && existing.status !== 'DONE') {
         // A fulfilled order does not prove this line was made: one supplier's tracking can close the whole order. An export mark without a file proves nothing either (LIT4981).
@@ -185,6 +190,25 @@ export async function syncDesignTasks(orderId: string): Promise<SyncResult> {
       continue
     }
     if (line.designDriveLink) {
+      if (existing?.fromLibrary) {
+        // Someone sent the line before the scan ran: there is nothing left to attach for.
+        if (line.exportedAt && AUTO_COMPLETE_FROM.includes(existing.status as TaskStatus)) {
+          await prisma.designTask.update({ where: { id: existing.id }, data: { status: 'DONE', events: { create: { type: 'SYSTEM', message: 'Dòng đã gửi xưởng trước khi quét thư viện' } } } })
+          completed++
+        }
+        continue
+      }
+      if (!existing && !factoryRejected && everyLine && !line.exportedAt) {
+        const slaHours = settings.slaNonCustomHours
+        await prisma.designTask.create({ data: {
+          orderId, shopifyLineId: line.shopifyLineId, taskKey: keys.get(line.shopifyLineId)!, status: 'NEW', fromLibrary: true, kpi: 0, slaHours, dueAt: null,
+          readiness: await readinessForLine(line, order.storeId, order.shopifyOrderNumber),
+          supplierSnapshot: line.resolvedSupplierId ? (supplierName.get(line.resolvedSupplierId) ?? null) : null,
+          events: { create: { type: 'SYSTEM', message: 'Có sẵn trong thư viện — chờ quét để gắn bản in' } },
+        } })
+        created++
+        continue
+      }
       if (existing && AUTO_COMPLETE_FROM.includes(existing.status as TaskStatus) && !withArtwork.has(line.shopifyLineId) && !reopenedByFactory(existing)) {
         await prisma.designTask.update({ where: { id: existing.id }, data: { status: 'DONE', events: { create: { type: 'SYSTEM', message: 'Design có từ ngoài studio (Trello / Library) — task done outside' } } } })
         completed++
@@ -196,6 +220,10 @@ export async function syncDesignTasks(orderId: string): Promise<SyncResult> {
         const readiness = await readinessForLine(line, order.storeId, order.shopifyOrderNumber)
         if (readiness !== existing.readiness) await prisma.designTask.update({ where: { id: existing.id }, data: { readiness } })
       }
+      // A line mapped after its task was made.
+      if (!existing.supplierSnapshot && line.resolvedSupplierId && supplierName.get(line.resolvedSupplierId)) {
+        await prisma.designTask.update({ where: { id: existing.id }, data: { supplierSnapshot: supplierName.get(line.resolvedSupplierId) } })
+      }
       continue
     }
     const slaHours = line.customized ? settings.slaCustomHours : settings.slaNonCustomHours
@@ -203,7 +231,7 @@ export async function syncDesignTasks(orderId: string): Promise<SyncResult> {
     await prisma.designTask.create({ data: {
       orderId, shopifyLineId: line.shopifyLineId, taskKey: keys.get(line.shopifyLineId)!,
       status: 'NEW', readiness: await readinessForLine(line, order.storeId, order.shopifyOrderNumber), kpi: kpiForProductType(settings, line.shopifyProductType),
-      slaHours, dueAt: dueForNewTask(order.placedAt, slaHours), supplierSnapshot: supplierName.get(line.resolvedSupplierId) ?? null,
+      slaHours, dueAt: dueForNewTask(order.placedAt, slaHours), supplierSnapshot: line.resolvedSupplierId ? (supplierName.get(line.resolvedSupplierId) ?? null) : null,
       ...(reopenNew ? factoryReopen : {}),
       events: { create: reopenNew ? factoryEvent : { type: 'SYSTEM', message: 'Đơn vào từ Shopify — tạo task' } },
     } })
@@ -253,6 +281,10 @@ export type TaskRow = {
   orderId: string; orderNumber: string; placedAt: string; shopifyLineId: string; linePosition: number
   sku: string | null; productTitle: string; variantTitle: string | null; previewUrl: string | null; imageUrl: string | null
   supplierName: string | null; customized: boolean; storeName: string
+  /** Waiting for the local scan of the NAS library to attach its print. */
+  fromLibrary: boolean
+  /** No supplier yet: mapping comes first. */
+  unmapped: boolean
 }
 
 export type TaskProfile = { key: string; status: LibraryProductStatus; layerMap: LayerMapEntry[] }
@@ -509,6 +541,7 @@ export async function listTasks(f: { statuses?: TaskStatus[]; readiness?: Readin
       shopifyLineId: task.shopifyLineId, linePosition: line.linePosition, sku: line.sku, productTitle: line.productTitle,
       variantTitle: line.variantTitle, previewUrl: line.previewCdnUrl, imageUrl: safeHttpUrl(line.imageUrl), supplierName: task.supplierSnapshot,
       customized: line.customized, storeName: task.order.store.project?.name ?? task.order.store.shop,
+      fromLibrary: task.fromLibrary, unmapped: !line.resolvedSupplierId,
     })
   }
 

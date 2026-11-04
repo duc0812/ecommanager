@@ -27,11 +27,13 @@ afterAll(async () => {
 })
 
 describe('syncDesignTasks', () => {
-  it('creates one NEW task per mapped product line without a design link', async () => {
+  it('creates a NEW task per product line of an open order, and none for a tip', async () => {
     const r = await syncDesignTasks(ORDER_ID)
-    expect(r.created).toBe(1)
-    const tasks = await prisma.designTask.findMany({ where: { orderId: ORDER_ID } })
-    expect(tasks.map(t => t.taskKey)).toEqual(['DTS1_1'])
+    expect(r.created).toBe(3)
+    const tasks = await prisma.designTask.findMany({ where: { orderId: ORDER_ID }, orderBy: { taskKey: 'asc' } })
+    expect(tasks.map(t => [t.taskKey, t.fromLibrary, t.supplierSnapshot])).toEqual([
+      ['DTS1_1', false, 'DT Sync Supplier'], ['DTS1_2', true, 'DT Sync Supplier'], ['DTS1_3', false, null],
+    ])
     expect(tasks[0].status).toBe('NEW')
     expect(tasks[0].readiness).toBe('LOW')
     expect(tasks[0].kpi).toBe(0.3)
@@ -72,7 +74,7 @@ describe('syncDesignTasks', () => {
     await prisma.designTask.update({ where: { taskKey: 'DTS1_1' }, data: { status: 'DOING' } })
     await prisma.order.update({ where: { id: ORDER_ID }, data: { pipelineStatus: 'CANCELLED' } })
     const r = await syncDesignTasks(ORDER_ID)
-    expect(r.cancelled).toBe(1)
+    expect(r.cancelled).toBe(3)
     expect((await prisma.designTask.findUnique({ where: { taskKey: 'DTS1_1' } }))?.status).toBe('CANCELLED')
   })
 })
@@ -139,5 +141,71 @@ describe('syncDesignTasks — factory rejection and status changes', () => {
     expect(res.status).toBe(200)
     expect((await res.json()).designTaskErrors).toBeUndefined()
     expect((await prisma.designTask.findUnique({ where: { taskKey: 'DTS4_1' } }))?.status).toBe('CANCELLED')
+  })
+})
+
+describe('every line of an order not sent yet gets a task (owner 11/05/2026)', () => {
+  const ID = 'gid://test/Order/dt-sync-every'
+  const makeOrder = async (status: string, line: Record<string, unknown>) => {
+    await prisma.order.deleteMany({ where: { id: ID } })
+    const store = await prisma.shopifyStore.findUniqueOrThrow({ where: { shop: SHOP } })
+    await prisma.order.create({ data: {
+      id: ID, projectId: 'proj_dt_sync', storeId: store.id, shopifyOrderNumber: '#DTE1', financialStatus: 'PAID', currency: 'USD', grossAmount: 1, expectedPayout: 1, totalFees: 0,
+      refundedAmount: 0, placedAt: new Date('2026-10-01'), pipelineStatus: status, orderType: 'NON_CUSTOM',
+      lines: { create: [{ shopifyLineId: 'e1', sku: 'E', productTitle: 'Tee', qty: 1, linePosition: 1, unitPrice: 1, customized: false, ...line }] },
+    } })
+  }
+  const task = () => prisma.designTask.findFirst({ where: { orderId: ID } })
+  afterAll(async () => { await prisma.order.deleteMany({ where: { id: ID } }) })
+
+  it('flags a library line, and leaves it open for the scan: it does not close itself on the next sync', async () => {
+    await makeOrder('READY_TO_PRODUCTION', { resolvedSupplierId: SUP, designDriveLink: 'https://drive.google.com/drive/folders/lib' })
+    expect((await syncDesignTasks(ID)).created).toBe(1)
+    expect(await task()).toMatchObject({ status: 'NEW', fromLibrary: true, kpi: 0, dueAt: null, taskKey: 'DTE1_1' })
+    expect((await syncDesignTasks(ID)).completed).toBe(0)
+    expect((await task())?.status).toBe('NEW')
+  })
+
+  it('closes a flagged task once the line was sent another way', async () => {
+    await makeOrder('READY_TO_PRODUCTION', { resolvedSupplierId: SUP, designDriveLink: 'https://drive.google.com/drive/folders/lib' })
+    await syncDesignTasks(ID)
+    await prisma.orderLine.updateMany({ where: { orderId: ID }, data: { exportedAt: new Date(), exportedToSupplierId: SUP } })
+    expect((await syncDesignTasks(ID)).completed).toBe(1)
+    expect((await task())?.status).toBe('DONE')
+  })
+
+  it('makes a task for an unmapped line, with no supplier', async () => {
+    await makeOrder('PENDING_MAPPING', { resolvedSupplierId: null, customized: true })
+    expect((await syncDesignTasks(ID)).created).toBe(1)
+    expect(await task()).toMatchObject({ status: 'NEW', fromLibrary: false, supplierSnapshot: null })
+  })
+
+  it('names the supplier once the line is mapped', async () => {
+    await makeOrder('PENDING_MAPPING', { resolvedSupplierId: null })
+    await syncDesignTasks(ID)
+    await prisma.orderLine.updateMany({ where: { orderId: ID }, data: { resolvedSupplierId: SUP } })
+    await syncDesignTasks(ID)
+    expect((await task())?.supplierSnapshot).toBe('DT Sync Supplier')
+  })
+
+  it.each(['EXPORTED', 'FULFILLED', 'CANCELLED'])('adds nothing to an order already %s', async status => {
+    await makeOrder(status, { resolvedSupplierId: SUP, designDriveLink: 'https://drive.google.com/drive/folders/lib' })
+    expect((await syncDesignTasks(ID)).created).toBe(0)
+    await makeOrder(status, { resolvedSupplierId: null })
+    expect((await syncDesignTasks(ID)).created).toBe(0)
+    expect(await task()).toBeNull()
+  })
+
+  it('adds nothing for a line already sent', async () => {
+    await makeOrder('READY_TO_PRODUCTION', { resolvedSupplierId: SUP, designDriveLink: 'https://drive.google.com/drive/folders/lib', exportedAt: new Date() })
+    expect((await syncDesignTasks(ID)).created).toBe(0)
+  })
+
+  it('still closes a task of a line given a link by hand', async () => {
+    await makeOrder('PENDING_DESIGN', { resolvedSupplierId: SUP })
+    await syncDesignTasks(ID)
+    await prisma.orderLine.updateMany({ where: { orderId: ID }, data: { designDriveLink: 'https://drive.google.com/drive/folders/hand' } })
+    expect((await syncDesignTasks(ID)).completed).toBe(1)
+    expect((await task())?.status).toBe('DONE')
   })
 })

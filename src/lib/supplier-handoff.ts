@@ -44,6 +44,15 @@ export function pendingHandoffWhere() {
   }
 }
 
+/** An order with a line no supplier is mapped to: shown in the hub's unmapped tab, so someone goes and maps it. */
+function waitingForMappingWhere() {
+  return {
+    pipelineStatus: 'PENDING_MAPPING',
+    lines: { some: { resolvedSupplierId: null } },
+    AND: [NOT_FULFILLED, { financialStatus: { notIn: [...CLOSED_FINANCIAL, ...CLOSED_FINANCIAL.map(s => s.toLowerCase())] } }],
+  }
+}
+
 export async function countPendingHandoff(): Promise<number> {
   return prisma.order.count({ where: pendingHandoffWhere() })
 }
@@ -328,15 +337,17 @@ async function recentSupplierActivity(): Promise<{ active: Set<string>; design: 
  */
 export async function listHandoffTabs(f: { q?: string } = {}): Promise<HubTab[]> {
   const q = f.q?.trim()
-  const where = pendingHandoffWhere()
+  const where = { OR: [pendingHandoffWhere(), waitingForMappingWhere()] }
   const orders = await prisma.order.findMany({
-    where: q ? { ...where, AND: [...where.AND, hubSearchWhere(q)] } : where,
-    select: { id: true, lines: { select: { productTitle: true, shopifyProductType: true, resolvedSupplierId: true, exportedAt: true, qty: true, manualBaseCost: true, resolvedBaseCost: true } } },
+    where: q ? { AND: [where, hubSearchWhere(q)] } : where,
+    select: { id: true, pipelineStatus: true, lines: { select: { productTitle: true, shopifyProductType: true, resolvedSupplierId: true, exportedAt: true, qty: true, manualBaseCost: true, resolvedBaseCost: true } } },
   })
   const tally = new Map<string, { orders: Set<string>; cost: number }>()
   for (const o of orders) {
     for (const l of o.lines) {
       if (isNonProductLine(l) || l.exportedAt) continue
+      // An order waiting for mapping counts in the unmapped tab only: it cannot go to any supplier yet.
+      if (o.pipelineStatus === 'PENDING_MAPPING' && l.resolvedSupplierId) continue
       const id = l.resolvedSupplierId ?? UNMAPPED_TAB
       const t = tally.get(id) ?? { orders: new Set<string>(), cost: 0 }
       t.orders.add(o.id)
@@ -378,12 +389,9 @@ export async function listHandoffHub(f: { q?: string; supplier?: string | null }
   const selected = (asked && (!q || asked.orderCount > 0) ? asked.id : tabs[0]?.id) ?? null
   if (!selected) return { tabs, selected, pending: [] }
   const supplierId = selected === UNMAPPED_TAB ? null : selected
-  const base = pendingHandoffWhere()
-  const where = {
-    ...base,
-    AND: [...base.AND, ...(q ? [hubSearchWhere(q)] : [])],
-    lines: { some: { resolvedSupplierId: supplierId, exportedAt: null } },
-  }
+  const inTab = { lines: { some: { resolvedSupplierId: supplierId, exportedAt: null } } }
+  const scope = supplierId === null ? { OR: [pendingHandoffWhere(), waitingForMappingWhere()] } : pendingHandoffWhere()
+  const where = { AND: [scope, inTab, ...(q ? [hubSearchWhere(q)] : [])] }
   const cards = await buildCards(where, { placedAt: 'asc' }, { checks: true, withUnmapped: true })
   // A null supplier also matches add-on lines, which have no card line.
   const held = cards.filter(c => c.lines.some(l => (l.line.supplier?.id ?? null) === supplierId && !l.exportedTo))
