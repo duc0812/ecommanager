@@ -7,6 +7,9 @@ AppSetting row. No ArtworkEntry row is written, so prod's auto-render does not s
 
 Flat-text specs (owner 11-03) count as READY too. A spec names a design and a supplier SKU, not a product or a template, so prod's order lines and
 templates say which those are. FLAT_TEXT overrides the folder.
+
+Prod labels a new order AUTO or Lam tay from this row as soon as the order arrives (owner 11-04), so each entry carries what the label needs: a PSD its
+field names, a flat-text entry which colour, size and order each spec serves. --out FILE writes the row to a file too.
 """
 import json
 import os
@@ -59,7 +62,13 @@ def flat_text_specs():
         with open(path, encoding='utf-8') as f:
             spec = json.load(f)
         if spec.get('design'):
-            out.append({'folder': name, 'design': spec['design'], 'skuContains': spec.get('skuContains'), 'supplierSku': spec.get('supplierSku')})
+            out.append({
+                'folder': name, 'design': spec['design'], 'supplierSku': spec.get('supplierSku'),
+                **{k: spec[k] for k in ('skuIs', 'skuContains', 'skuNot', 'skuEnds', 'variantContains', 'minOrder', 'match') if spec.get(k)},
+                'fields': [t['field'] for t in spec.get('texts', [])],
+                **({'noTextOk': True} if spec.get('noTextOk') else {}),
+                **({'customall': True} if spec.get('customall') else {}),
+            })
     return out
 
 
@@ -103,29 +112,37 @@ def flat_text_entries(specs, data):
 
     def add(spec, store, product, template):
         if template:
-            entries.setdefault((store, product, template), {'id': f"flat-text:{spec['folder']}", 'storeId': store, 'shopifyProductId': product, 'printTemplateId': template, 'optionKey': '', 'status': 'READY'})
+            e = entries.setdefault((store, product, template), {'id': f"flat-text:{spec['folder']}", 'storeId': store, 'shopifyProductId': product, 'printTemplateId': template, 'optionKey': '', 'status': 'READY', 'specs': {}})
+            e['specs'][spec['folder']] = {k: v for k, v in spec.items() if k != 'folder'}
 
     by_design = {}
     for line in data['lines']:
         by_design.setdefault(line['design'], []).append(line)
     for spec in specs:
         for line in by_design.get(spec['design'], []):
-            if spec['skuContains'] and spec['skuContains'] not in line['sku']:
+            if spec.get('skuContains') and spec['skuContains'] not in line['sku']:
                 continue
             where = (line['storeId'], line['shopifyProductId'])
             if spec_covers(spec, line['resolvedSupplierSku']):
                 add(spec, *where, pick(*where, line['resolvedSupplierId'], line['resolvedSupplierSku']))
             if spec['supplierSku']:
                 add(spec, *where, pick(*where, line['resolvedSupplierId'], spec['supplierSku'], exact=True))
-    return list(entries.values())
+    return [{**e, 'specs': list(e['specs'].values())} for e in entries.values()]
 
 
 def main():
-    args = [a for a in sys.argv[1:] if a != '--dry-run']
+    argv = sys.argv[1:]
+    out_file = argv[argv.index('--out') + 1] if '--out' in argv else None
+    args = [a for i, a in enumerate(argv) if a not in ('--dry-run', '--out') and (i == 0 or argv[i - 1] != '--out')]
     db = args[0] if args else 'D:/Ecom manager/ecommanager-claude-ecommerce-cashflow-tool-XsLzh/dev.db'
     c = sqlite3.connect(f'file:{db}?mode=ro', uri=True)
     c.row_factory = sqlite3.Row
-    rows = [dict(r) for r in c.execute('SELECT id, storeId, shopifyProductId, printTemplateId, optionKey, status FROM ArtworkEntry')]
+    rows = [dict(r) for r in c.execute('SELECT id, storeId, shopifyProductId, printTemplateId, optionKey, status, fields FROM ArtworkEntry')]
+    for r in rows:
+        try:
+            r['fields'] = [f['field'] for f in json.loads(r['fields'] or '[]')]
+        except (ValueError, TypeError, KeyError):
+            del r['fields']
     specs = flat_text_specs()
     designs = json.dumps(sorted({s['design'] for s in specs})).encode('utf-8')
     flat = flat_text_entries(specs, json.loads(ssh(LOOKUP, designs, stdout=subprocess.PIPE).stdout))
@@ -137,6 +154,9 @@ def main():
     for r in rows:
         counts[r['status']] = counts.get(r['status'], 0) + 1
     print(len(rows), 'entries', counts, 'flat-text', len(flat), 'from', len(specs), 'specs', len(payload), 'bytes')
+    if out_file:
+        with open(out_file, 'w', encoding='utf-8') as f:
+            f.write(payload)
     if '--dry-run' in sys.argv:
         return
     ssh(REMOTE, payload.encode('utf-8'), KEY)

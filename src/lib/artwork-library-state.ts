@@ -4,12 +4,19 @@ import { parseFields, type EntryStatus } from '@/lib/artwork-fields'
 import { optionComboLabel, parseArtworkSplits } from '@/lib/artwork-options'
 import { resolveLineEntry } from '@/lib/artwork-slots'
 import type { TaskLibraryState } from '@/lib/artwork-library-types'
+import type { FlatTextSpec } from '@/lib/flat-text-coverage'
 
 export const LOCAL_LIBRARY_KEY = 'artwork_library_local_state'
 
-type LocalEntry = { id: string; storeId: string; shopifyProductId: string; printTemplateId: string; optionKey: string; status: string }
+export type LocalEntry = {
+  id: string; storeId: string; shopifyProductId: string; printTemplateId: string; optionKey: string; status: string
+  /** A PSD entry: the fields the customer has to fill. */
+  fields?: string[]
+  /** A flat-text entry: which lines each spec serves. */
+  specs?: FlatTextSpec[]
+}
 
-async function readLocalEntries(): Promise<LocalEntry[] | null> {
+export async function readLocalEntries(): Promise<LocalEntry[] | null> {
   const row = await prisma.appSetting.findUnique({ where: { key: LOCAL_LIBRARY_KEY }, select: { value: true } })
   if (!row) return null
   try {

@@ -9,7 +9,7 @@ import { allSlotNames, loadTemplateContext, mapTemplate, pickTemplate, templateV
 import { productArtworkStatus } from '@/lib/artwork-slots'
 import type { LibraryProductStatus } from '@/lib/artwork-fields'
 import { isDriveConnected } from '@/lib/google-drive'
-import { checklistLibraryState, libraryStateFor } from '@/lib/artwork-library-state'
+import { checklistLibraryState, libraryStateFor, readLocalEntries } from '@/lib/artwork-library-state'
 import type { TaskLibraryState } from '@/lib/artwork-library-types'
 import type { RenderJobView } from '@/lib/artwork-render-eligibility'
 import { latestRenderJob } from '@/lib/artwork-render-jobs'
@@ -17,7 +17,7 @@ import { canApproveDesign, canEditDesignNote, canHandoffToSupplier, isLeaderRole
 import { activePushByOrder } from '@/lib/repos/push-export'
 import type { HandoffPush } from '@/lib/handoff-shared'
 import { autoRenderEligibility } from '@/lib/artwork-render-eligibility'
-import { flatTextCoversLine, loadFlatTextAuto } from '@/lib/flat-text-auto'
+import { autoFromLocalLibrary } from '@/lib/flat-text-coverage'
 import { APP_FILE_PREFIX } from '@/lib/design-links'
 import { saveStudioDesignToLibrary } from '@/lib/studio-library'
 import { MISSING_AREAS_PREFIX, missingPrintAreas, outdatedParts, printFilesReady } from '@/lib/task-files'
@@ -53,29 +53,33 @@ export function canTransition(from: TaskStatus, to: TaskStatus, actor: ActorRole
   }
 }
 
-type ReadinessLine = TemplateLookupLine & { sku: string | null; customAttributesJson: string | null; variantOptions: string | null }
+type ReadinessLine = TemplateLookupLine & {
+  sku: string | null; variantTitle?: string | null; customAttributesJson: string | null; customallFieldsJson?: string | null; variantOptions: string | null
+}
 
 /**
- * True when the line resolves to a READY artwork-library entry for a single-area template and the customer filled every field it renders,
- * or when the flat-text library covers it: that one renders every piece of a many-area template on the office PC.
+ * True when the line resolves to a READY artwork-library entry for a single-area template and the customer filled every field it renders.
+ * Owner 11-04: the library on the office PC holds the state and an agent stamps it here (scripts/sync-library-state.py), so a new order is labelled
+ * as soon as it arrives, flat-text specs included. Those render on that PC when someone processes orders; prod's own job queue still needs an entry on this server.
  */
 export async function canAutoRenderLine(line: ReadinessLine, storeId: string, orderNumber: string): Promise<boolean> {
   if (!line.shopifyProductId || !line.resolvedSupplierId) return false
   const profile = await findProfile(storeId, line.shopifyProductId)
   const template = await templateForLine(line, profile)
   if (!template) return false
-  const flatText = await loadFlatTextAuto()
-  if (flatText.length > 0 && flatTextCoversLine(flatText, {
-    storeId, shopifyProductId: line.shopifyProductId, templateId: template.id, sku: line.sku, orderNumber,
-    personalization: visibleCustomAttributes(parseAttributes(line.customAttributesJson)),
-  })) return true
   const slots = requiredSlotsFor(template)
+  const personalization = visibleCustomAttributes(parseAttributes(line.customAttributesJson))
+  const local = (await readLocalEntries() ?? []).filter(e => e.storeId === storeId && e.shopifyProductId === line.shopifyProductId && e.printTemplateId === template.id)
+  if (local.length > 0 && autoFromLocalLibrary(local, {
+    sku: line.sku, supplierSku: line.resolvedSupplierSku, variantTitle: line.variantTitle ?? null, orderNumber, areaCount: slots.length,
+    variantOptions: line.variantOptions, artworkSplits: profile?.artworkSplits ?? null, templateId: template.id,
+    personalization: [...personalization, ...parseAttributes(line.customallFieldsJson ?? null)],
+  })) return true
   if (slots.length !== 1) return false
   const library = await libraryStateFor({
     storeId, shopifyProductId: line.shopifyProductId, templateId: template.id,
     variantOptions: line.variantOptions, artworkSplits: profile?.artworkSplits ?? null,
   })
-  const personalization = visibleCustomAttributes(parseAttributes(line.customAttributesJson))
   return autoRenderEligibility({ taskStatus: 'NEW', hasTemplate: true, slots, library, personalization, job: null }).ok
 }
 
