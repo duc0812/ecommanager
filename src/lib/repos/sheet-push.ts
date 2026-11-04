@@ -93,7 +93,7 @@ async function run(supplierId: string, orderIds: string[] | undefined, userId: s
       continue
     }
     orderIdsToLoad.push(c.order.id)
-    for (const l of view.lines) customNames.set(l.line.id, l.line.personalization.map(p => p.value).filter(Boolean).join(', '))
+    for (const l of view.lines) customNames.set(l.line.id, l.send.customName)
   }
 
   const orders = orderIdsToLoad.length ? await listOrdersWithLines({ ids: orderIdsToLoad, limit: orderIdsToLoad.length }) : []

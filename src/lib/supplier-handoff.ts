@@ -11,7 +11,8 @@ import { isMerchizeSupplier, merchizeCredentials } from '@/lib/merchize'
 import { activePushByOrder, logHandoffEvent } from '@/lib/repos/push-export'
 import { COOLING_OFF_HOURS, UNMAPPED_TAB, type HandoffCard, type HandoffLine, type HandoffSent, type HandoffState, type HubChannel, type HubTab, type SentStage } from '@/lib/handoff-shared'
 import { effectiveBaseCost } from '@/lib/order-profit'
-import { enabledChannelFor, getSheetChannels } from '@/lib/sheet-channel'
+import { enabledChannelFor, getSheetChannels, sizeLabel } from '@/lib/sheet-channel'
+import { customNameOf } from '@/lib/custom-name'
 import { loadLineResolver, recalculateMissingOrderLineCosts } from '@/lib/repos/order-costs'
 import { printFileFit } from '@/lib/print-file-fit'
 import { currentFiles, sameLabel } from '@/lib/task-files'
@@ -185,10 +186,11 @@ async function buildCards(where: any, orderBy: any, opts: { checks?: boolean; se
   const products = skuPairs.length
     ? await prisma.supplierProduct.findMany({
         where: { supplierId: { in: Array.from(new Set(skuPairs.map(l => l.resolvedSupplierId as string))) }, sku: { in: Array.from(new Set(skuPairs.map(l => l.resolvedSupplierSku as string))) } },
-        select: { supplierId: true, sku: true, apiSku: true },
+        select: { supplierId: true, sku: true, apiSku: true, baseSku: true, variant1Value: true, variant2Value: true },
       })
     : []
   const apiSkuByKey = new Map(products.map(p => [`${p.supplierId}::${p.sku}`, p.apiSku?.trim() || null]))
+  const productByKey = new Map(products.map(p => [`${p.supplierId}::${p.sku}`, p]))
   const resolveNow = opts.checks ? await loadLineResolver() : null
   const resolvable = opts.checks
     ? await prisma.orderLine.findMany({
@@ -220,11 +222,18 @@ async function buildCards(where: any, orderBy: any, opts: { checks?: boolean; se
         ? { supplierName: now.supplier.name, sku: now.sku }
         : null
       const unitCost = row ? effectiveBaseCost(row) : null
+      const product = line.supplier && line.supplierSku ? productByKey.get(`${line.supplier.id}::${line.supplierSku}`) : undefined
       lines.push({
         line,
         slots,
         baseCost: row && unitCost != null ? unitCost * row.qty : null,
         productType: row?.shopifyProductType ?? null,
+        send: {
+          sku: product?.baseSku ?? null,
+          size: sizeLabel(product?.variant1Value, line.variantTitle),
+          color: product?.variant2Value?.trim() ?? '',
+          customName: customNameOf(line.personalization),
+        },
         wrongSizeAreas,
         mappingNow,
         taskKey: lineKeys.get(line.shopifyLineId) ?? '',

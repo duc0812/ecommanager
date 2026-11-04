@@ -8,6 +8,7 @@ function line(over: {
 } = {}): HandoffLine {
   const supplierId = over.supplierId === undefined ? 'jm' : over.supplierId
   return {
+    send: { sku: null, size: '', color: '', customName: '' },
     taskKey: over.key ?? 'LIT1_1', baseCost: over.baseCost === undefined ? 10 : over.baseCost, productType: over.productType ?? null,
     exportedTo: over.exportedTo ?? null, wrongSizeAreas: over.wrongSizeAreas ?? [], mappingNow: over.mappingNow ?? null,
     slots: [], apiSku: null, driveFolderUrl: null,

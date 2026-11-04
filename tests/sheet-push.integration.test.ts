@@ -115,7 +115,7 @@ async function makeOrder(opts: { preview?: string | null; shop?: string; otherLi
           resolvedSupplierId: SUP, resolvedSupplierSku: 'JM-HOODIE', resolvedBaseCost: 19.5, customized: true, shopifyProductType: 'AOP Product',
           previewCdnUrl: opts.preview === undefined ? 'https://cdn.shopify.com/s/files/preview.png' : opts.preview,
           designDriveLink: 'https://drive.google.com/drive/folders/abc',
-          customAttributesJson: JSON.stringify([{ key: 'Custom Name', value: 'Allyssa' }]),
+          customAttributesJson: JSON.stringify([{ key: 'Choose Color', value: 'download - 2026-10-23T174046.722' }, { key: 'Custom Name: Yes Or No?', value: 'Yes' }, { key: 'Custom Name', value: 'Allyssa' }]),
         },
         ...(opts.otherLine ? [{
           shopifyLineId: `${lineId}-b`, productTitle: 'Mug', variantTitle: '11oz', qty: 1, linePosition: 2, unitPrice: 15, sku: 'MUG',

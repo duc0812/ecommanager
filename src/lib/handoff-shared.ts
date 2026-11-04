@@ -30,6 +30,8 @@ export type HandoffLine = {
   baseCost: number | null
   /** The Shopify product type, shown beside the supplier's product so a wrong mapping is seen at a glance. */
   productType: string | null
+  /** What a send writes to the supplier's sheet for this line, shown on the card to be checked first. */
+  send: { sku: string | null; size: string; color: string; customName: string }
   /** Supplier this line was already sent to, null while it waits. */
   exportedTo: string | null
   /** Print parts whose newest file does not match the template size. */

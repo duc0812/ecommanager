@@ -24,7 +24,8 @@ export default function HubCard({ c, tabId, sheet, me, onOpenTask, onSheet, onCh
   const mockup = mockupFiles(line)[0]
   const photo = line.previewUrl ?? line.imageUrl
   const warnText = view.warnings.map(w => `${w.taskKey}: ${HUB_WARNING_LABELS[w.code]}`).join(' · ')
-  const printed = line.personalization.map(p => p.value).filter(Boolean).join(', ')
+  const { send } = first
+  const sendLine = [send.sku && `SKU ${send.sku}`, send.size && `Size ${send.size}`, send.color && `Màu ${send.color}`, `SL ${line.qty}`].filter(Boolean).join(' · ')
   const empty = <span className="w-full h-full grid place-items-center text-on-surface-variant"><Icon name="image" className="text-[24px]" /></span>
   // eslint-disable-next-line @next/next/no-img-element
   const shown = photo ? <img src={photo} alt="" loading="lazy" className="w-full h-full object-cover" /> : empty
@@ -46,8 +47,10 @@ export default function HubCard({ c, tabId, sheet, me, onOpenTask, onSheet, onCh
           </span>
           <span className="truncate text-body-sm font-semibold text-on-surface" title={line.productTitle}>{line.productTitle}</span>
           <span className="truncate" title={hubTypeLabel(first)}>{hubTypeLabel(first) || '—'}</span>
-          <span className="truncate">{line.variantTitle ? `${line.variantTitle} · ` : ''}SL {line.qty}</span>
-          {printed && <span className="truncate" title={printed}>Custom: <b className="text-on-surface">{printed}</b></span>}
+          <span className="truncate" title={line.variantTitle ? `Biến thể khách đặt: ${line.variantTitle}` : undefined}>{sendLine}</span>
+          {send.customName
+            ? <span className="truncate" title={send.customName}>Custom Name: <b className="text-on-surface">{send.customName}</b></span>
+            : line.customized && <span className="truncate text-amber-900" title="Đơn custom nhưng không tách được tên, mở task để xem">Custom Name: trống</span>}
         </div>
       </div>
       <div className="flex items-center gap-sm text-label-sm text-on-surface-variant min-w-0" onClick={e => e.stopPropagation()}>
