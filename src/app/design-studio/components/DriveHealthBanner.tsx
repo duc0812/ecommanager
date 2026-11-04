@@ -47,7 +47,7 @@ export default function DriveHealthBanner({ version }: { version: number }) {
         <div key={item.id} className={`inline-flex items-center gap-xs rounded-lg border px-sm py-xs text-label-sm ${BOX[item.tone] ?? BOX.idle} ${item.tone === 'bad' ? 'text-on-error-container' : TEXT_TONE[item.tone]}`}>
           <Icon name={item.icon} className="text-[16px]" />
           <span>{item.text}</span>
-          {item.setupLink && <Link href="/setup" className="text-secondary font-semibold hover:underline">Mở Setup</Link>}
+          {item.setupLink && <Link href="/setup?block=design" className="text-secondary font-semibold hover:underline">Mở Setup</Link>}
           {item.pushButton && (
             <button type="button" onClick={pushNow} disabled={pushing} className="text-secondary font-semibold hover:underline disabled:opacity-40">
               {pushing ? 'Đang gửi…' : 'Đẩy ngay'}

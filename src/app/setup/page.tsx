@@ -3,10 +3,16 @@ import { useEffect, useState } from 'react'
 import Sidebar from '@/components/Sidebar'
 import GoogleDriveSetupCard from '@/components/GoogleDriveSetupCard'
 import GoogleSheetsSetupCard from '@/components/GoogleSheetsSetupCard'
+import { SetupBlockLinks, SetupBlockTabs } from '@/components/SetupBlockNav'
+import { SETUP_BLOCKS, blockFromSearch, type SetupBlock } from '@/lib/setup-blocks'
 
 type Status = { connected: boolean; shop?: string; connectedAt?: string }
 
 export default function SetupPage() {
+  const [block, setBlock] = useState<SetupBlock>('store')
+
+  useEffect(() => { setBlock(blockFromSearch(window.location.search)) }, [])
+
   const [status, setStatus] = useState<Status | null>(null)
   const [shop, setShop] = useState('')
   const [apiKey, setApiKey] = useState('')
@@ -131,6 +137,11 @@ export default function SetupPage() {
 
   const canConnect = shop.trim() && apiKey.trim() && apiSecret.trim()
 
+  function pickBlock(next: SetupBlock) {
+    setBlock(next)
+    window.history.replaceState(null, '', `/setup?block=${next}`)
+  }
+
   return (
     <div className="flex min-h-screen bg-surface">
       <Sidebar />
@@ -138,9 +149,12 @@ export default function SetupPage() {
       <main className="ml-0 lg:ml-[280px] mt-14 lg:mt-0 flex-1 p-xl">
         <header className="mb-xl">
           <h2 className="text-display-md font-bold text-primary">Setup</h2>
-          <p className="text-on-surface-variant text-body-md mt-xs">Kết nối cửa hàng Shopify của bạn</p>
+          <p className="text-on-surface-variant text-body-md mt-xs">{SETUP_BLOCKS.find(b => b.id === block)?.hint}</p>
         </header>
+        <SetupBlockTabs block={block} onPick={pickBlock} />
+        <SetupBlockLinks block={block} />
 
+        {block === 'store' && (
         <div className="grid grid-cols-12 gap-lg">
           {/* Left: connection status */}
           <div className="col-span-12 lg:col-span-4 space-y-lg">
@@ -330,9 +344,11 @@ export default function SetupPage() {
             </div>
           </div>
         </div>
-        <GoogleDriveSetupCard />
-        <GoogleSheetsSetupCard />
+        )}
+        {block === 'fulfill' && <GoogleSheetsSetupCard />}
+        {block === 'design' && <GoogleDriveSetupCard />}
         {/* Trello Config */}
+        {block === 'design' && (
         <div className="bg-surface-container-lowest rounded-xl border border-outline-variant/20 mb-lg">
           <div className="flex items-center gap-sm px-lg py-md border-b border-outline-variant/20">
             <span className="material-symbols-outlined text-on-surface-variant">view_kanban</span>
@@ -407,7 +423,9 @@ export default function SetupPage() {
             {trelloMsg && <span className="text-body-sm text-on-surface-variant">{trelloMsg}</span>}
           </div>
         </div>
+        )}
         {/* Spy Tool — Apify */}
+        {block === 'marketing' && (
         <div className="bg-surface-container-lowest rounded-xl border border-outline-variant/20 mb-lg">
           <div className="flex items-center gap-sm px-lg py-md border-b border-outline-variant/20">
             <span className="material-symbols-outlined text-on-surface-variant">travel_explore</span>
@@ -445,6 +463,7 @@ export default function SetupPage() {
             </div>
           </div>
         </div>
+        )}
       </main>
     </div>
   )

@@ -56,7 +56,7 @@ const nav: NavEntry[] = [
   { type: 'child', href: '/tools/creative', icon: 'auto_awesome', label: 'Creative' },
   { type: 'divider' },
   { type: 'group', label: 'Setup' },
-  { type: 'child', href: '/setup', icon: 'store', label: 'Store' },
+  { type: 'child', href: '/setup', icon: 'tune', label: 'Theo khối' },
   { type: 'child', href: '/setup/meta', icon: 'campaign', label: 'Meta' },
   { type: 'child', href: '/setup/meta-rates', icon: 'currency_exchange', label: 'Meta Exchange Rate' },
   { type: 'child', href: '/setup/projects', icon: 'folder', label: 'Projects' },

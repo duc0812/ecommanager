@@ -216,7 +216,7 @@ export default function HandoffGrid({ q, version, onOpenTask, onChanged }: {
           {warned > 0 && <span className="text-error font-semibold">{warned} đơn có cảnh báo</span>}
           {current.orderCount > pending.length && !loading && <span>đang hiện {pending.length} đơn cũ nhất</span>}
           {current.channel === 'CSV' && <a href="/fulfillment/export" className="ml-auto text-secondary font-semibold hover:underline">Mở CSV Export</a>}
-          {current.channel === 'SHEET' && !data?.sheetsConnected && <a href="/setup" className="ml-auto text-secondary font-semibold hover:underline">Kết nối Google Sheets ở Setup</a>}
+          {current.channel === 'SHEET' && !data?.sheetsConnected && <a href="/setup?block=fulfill" className="ml-auto text-secondary font-semibold hover:underline">Kết nối Google Sheets ở Setup</a>}
           {current.channel === 'SHEET' && data?.sheetsConnected && (
             <button type="button" className={`${btnPrimary} ml-auto`} disabled={!me?.canHandoff || pending.length === warned} onClick={() => setSheetDialog({})}>
               <Icon name="table_view" className="text-[16px]" />Sản xuất tất cả ({pending.length - warned})
