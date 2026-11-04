@@ -71,7 +71,7 @@ export default function HandoffButton({ orderId, state, canHandoff, compact = fa
   } else if (!state.pending) {
     body = (
       <button type="button" className={btnPrimary} disabled title={state.blocked ?? undefined}>
-        <Icon name="local_shipping" className="text-[16px]" />{compact ? 'Sản xuất' : HANDOFF_LABELS.generic}
+        <Icon name="local_shipping" className="text-[16px]" />{compact ? (state.mode === 'API' ? HANDOFF_LABELS.produceApi : 'Sản xuất') : HANDOFF_LABELS.generic}
       </button>
     )
   } else if (!canHandoff) {
@@ -83,7 +83,7 @@ export default function HandoffButton({ orderId, state, canHandoff, compact = fa
   } else if (state.mode === 'API') {
     body = (
       <button type="button" className={btnPrimary} onClick={() => setModal(true)} title="Xem trước rồi xác nhận gửi đơn sang xưởng qua API">
-        <Icon name="cloud_upload" className="text-[16px]" />{compact ? 'Sản xuất' : HANDOFF_LABELS.api(state.apiName)}
+        <Icon name="cloud_upload" className="text-[16px]" />{compact ? HANDOFF_LABELS.produceApi : HANDOFF_LABELS.api(state.apiName)}
       </button>
     )
   } else {

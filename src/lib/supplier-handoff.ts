@@ -288,7 +288,35 @@ function hubSearchWhere(q: string) {
   }
 }
 
-/** Every supplier with an unsent line in the queue, biggest first; the count and the cost are not limited by MAX_CARDS. */
+/** A supplier with an order this recent keeps its tab at 0 waiting; older orders still in design are not "coming next". */
+const HUB_ACTIVE_DAYS = 30
+
+/** The active suppliers of the last HUB_ACTIVE_DAYS days, and how many of their orders are still in design. */
+async function recentSupplierActivity(): Promise<{ active: Set<string>; design: Map<string, number> }> {
+  const since = new Date(Date.now() - HUB_ACTIVE_DAYS * 24 * 3600 * 1000)
+  const [used, inDesign] = await Promise.all([
+    prisma.orderLine.findMany({
+      where: { resolvedSupplierId: { not: null }, order: { placedAt: { gte: since } } },
+      distinct: ['resolvedSupplierId'],
+      select: { resolvedSupplierId: true },
+    }),
+    prisma.order.findMany({
+      where: { pipelineStatus: 'PENDING_DESIGN', placedAt: { gte: since }, AND: [NOT_FULFILLED] },
+      select: { id: true, lines: { select: { productTitle: true, shopifyProductType: true, resolvedSupplierId: true, exportedAt: true } } },
+    }),
+  ])
+  const design = new Map<string, number>()
+  for (const o of inDesign) {
+    const ids = new Set(o.lines.filter(l => !isNonProductLine(l) && !l.exportedAt && l.resolvedSupplierId).map(l => l.resolvedSupplierId as string))
+    ids.forEach(id => design.set(id, (design.get(id) ?? 0) + 1))
+  }
+  return { active: new Set(used.map(l => l.resolvedSupplierId as string)), design }
+}
+
+/**
+ * Every active supplier, biggest queue first, so an empty one is seen to be empty; a search shows only the suppliers it found.
+ * The count and the cost are not limited by MAX_CARDS.
+ */
 export async function listHandoffTabs(f: { q?: string } = {}): Promise<HubTab[]> {
   const q = f.q?.trim()
   const where = pendingHandoffWhere()
@@ -307,27 +335,38 @@ export async function listHandoffTabs(f: { q?: string } = {}): Promise<HubTab[]>
       tally.set(id, t)
     }
   }
-  if (tally.size === 0) return []
+  if (q && tally.size === 0) return []
+  const activity = q ? null : await recentSupplierActivity()
   const [suppliers, settings, channels] = await Promise.all([
-    prisma.supplier.findMany({ where: { id: { in: Array.from(tally.keys()) } }, select: { id: true, name: true, code: true, apiType: true } }),
+    prisma.supplier.findMany({
+      where: { OR: [{ id: { in: Array.from(tally.keys()) } }, { id: { in: Array.from(activity?.active ?? []) }, isActive: true }] },
+      select: { id: true, name: true, code: true, apiType: true },
+    }),
     getPgprintsSettings(),
     getSheetChannels(),
   ])
   const byId = new Map(suppliers.map(s => [s.id, s]))
   const channelOf = (s: { code: string; apiType: string | null }): HubChannel =>
     enabledChannelFor(channels, s) ? 'SHEET' : isMerchizeSupplier(s) || (isPgprintsSupplier(s) && !!credentialsOf(settings)) ? 'API' : 'CSV'
-  const tabs = Array.from(tally.entries()).map(([id, t]): HubTab => {
+  const ids = Array.from(new Set([...Array.from(tally.keys()), ...suppliers.map(s => s.id)]))
+  const tabs = ids.map((id): HubTab => {
     const s = byId.get(id)
-    return { id, name: s?.name ?? 'Chưa map xưởng', channel: s ? channelOf(s) : null, orderCount: t.orders.size, baseCostTotal: t.cost }
+    const t = tally.get(id)
+    return {
+      id, name: s?.name ?? 'Chưa map xưởng', channel: s ? channelOf(s) : null,
+      orderCount: t?.orders.size ?? 0, baseCostTotal: t?.cost ?? 0, designCount: activity?.design.get(id) ?? 0,
+    }
   })
-  return tabs.sort((a, b) => Number(a.id === UNMAPPED_TAB) - Number(b.id === UNMAPPED_TAB) || b.orderCount - a.orderCount || a.name.localeCompare(b.name))
+  return tabs.sort((a, b) => Number(a.id === UNMAPPED_TAB) - Number(b.id === UNMAPPED_TAB) || b.orderCount - a.orderCount || b.designCount - a.designCount || a.name.localeCompare(b.name))
 }
 
 /** "Duyệt sản xuất" by supplier: the tabs, and the cards of the asked tab, or of the first one when that tab holds nothing. */
 export async function listHandoffHub(f: { q?: string; supplier?: string | null } = {}): Promise<{ tabs: HubTab[]; selected: string | null; pending: HandoffCard[] }> {
   const q = f.q?.trim()
   const tabs = await listHandoffTabs({ q })
-  const selected = tabs.find(t => t.id === f.supplier)?.id ?? tabs[0]?.id ?? null
+  const asked = tabs.find(t => t.id === f.supplier)
+  // A search lands on a tab that holds a result; a tab picked by hand stays open even when it is empty.
+  const selected = (asked && (!q || asked.orderCount > 0) ? asked.id : tabs[0]?.id) ?? null
   if (!selected) return { tabs, selected, pending: [] }
   const supplierId = selected === UNMAPPED_TAB ? null : selected
   const base = pendingHandoffWhere()

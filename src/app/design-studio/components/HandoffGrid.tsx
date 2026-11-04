@@ -210,7 +210,8 @@ export default function HandoffGrid({ q, version, onOpenTask, onChanged }: {
         <div className="flex items-center gap-sm flex-wrap text-label-sm text-on-surface-variant">
           <b className="text-body-sm text-on-surface">{current.name}</b>
           {current.channel && <Pill tone={current.channel === 'API' ? 'brand' : 'idle'} icon={current.channel === 'API' ? 'cloud_upload' : 'description'}>{current.channel}</Pill>}
-          <span>{current.orderCount} đơn</span>
+          <span>{current.orderCount} đơn chờ gửi</span>
+          {current.designCount > 0 && <span title="Đơn đặt trong 30 ngày, còn đang làm design">{current.designCount} đơn đang làm design</span>}
           <span title="Tổng base cost các dòng đang chờ, chưa gồm phí ship">Base cost <b className="text-on-surface">{fmtUsd(current.baseCostTotal)}</b></span>
           {warned > 0 && <span className="text-error font-semibold">{warned} đơn có cảnh báo</span>}
           {current.orderCount > pending.length && !loading && <span>đang hiện {pending.length} đơn cũ nhất</span>}
@@ -226,9 +227,9 @@ export default function HandoffGrid({ q, version, onOpenTask, onChanged }: {
       {info && <span role="status" className="text-label-sm text-on-surface-variant">{info}</span>}
       <ErrorBanner msg={actionError} onClose={() => setActionError('')} />
       <ErrorBanner msg={error} />
-      {!loading && !error && tabs.length === 0 && (
+      {!loading && !error && pending.length === 0 && (
         <div className={`${card} p-lg text-body-sm text-on-surface-variant flex items-center gap-sm`}>
-          <Icon name="task_alt" className="text-on-tertiary-container" />{q ? 'Không tìm thấy đơn nào đang chờ gửi xưởng.' : 'Không có đơn nào chờ gửi xưởng.'}
+          <Icon name="task_alt" className="text-on-tertiary-container" />{q ? 'Không tìm thấy đơn nào đang chờ gửi xưởng.' : current ? `${current.name} không có đơn nào chờ gửi.` : 'Không có đơn nào chờ gửi xưởng.'}
         </div>
       )}
       {selected && (

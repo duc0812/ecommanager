@@ -79,10 +79,15 @@ export const UNMAPPED_TAB = 'none'
 
 export type HubChannel = 'API' | 'CSV' | 'SHEET'
 
-/** One supplier's tab: the orders with an unsent line of that supplier, and what those lines cost. */
-export type HubTab = { id: string; name: string; channel: HubChannel | null; orderCount: number; baseCostTotal: number }
+/**
+ * One supplier's tab: the orders with an unsent line of that supplier, and what those lines cost.
+ * `designCount` is the orders still in design, what is coming next.
+ */
+export type HubTab = { id: string; name: string; channel: HubChannel | null; orderCount: number; baseCostTotal: number; designCount: number }
 
 export const HANDOFF_LABELS = {
+  produceApi: 'Sản xuất - API',
+  produceSheet: 'Sản xuất - Sheet',
   api: (name: string | null) => `Chuyển supplier qua API (${name ?? 'API'})`,
   csv: 'Lưu chờ xuất CSV',
   generic: 'Chuyển supplier',

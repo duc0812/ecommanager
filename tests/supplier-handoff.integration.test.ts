@@ -622,6 +622,25 @@ describe('hub tabs by supplier', () => {
     expect(hub.pending[0].lines[0].taskKey).toBe(o.keys[0])
   })
 
+  it('keeps a tab for an active supplier with nothing waiting, and counts what is in design', async () => {
+    const o = await makeOrder({ api: true, approve: false })
+    await prisma.order.update({ where: { id: o.id }, data: { pipelineStatus: 'PENDING_DESIGN', placedAt: new Date() } })
+    const hub = await listHandoffHub({ supplier: PG_SUP })
+    const tab = hub.tabs.find(t => t.id === PG_SUP)!
+    expect(tab.designCount).toBeGreaterThanOrEqual(1)
+    expect(hub.selected).toBe(PG_SUP)
+    expect((await listHandoffHub({ q: 'NO-SUCH-ORDER-XYZ', supplier: PG_SUP })).tabs).toEqual([])
+    await prisma.order.update({ where: { id: o.id }, data: { placedAt: new Date('2026-01-01T00:00:00Z') } })
+    expect((await listHandoffHub({ supplier: PG_SUP })).tabs.find(t => t.id === PG_SUP)?.designCount ?? 0).toBe(tab.designCount - 1)
+  })
+
+  it('stays on a chosen tab that is empty', async () => {
+    const o = await makeOrder({ approve: false })
+    await prisma.order.update({ where: { id: o.id }, data: { placedAt: new Date() } })
+    const hub = await listHandoffHub({ supplier: CSV_SUP })
+    expect(hub.selected).toBe(CSV_SUP)
+  })
+
   it('answers with no tabs when nothing matches', async () => {
     expect(await listHandoffHub({ q: 'NO-SUCH-ORDER-XYZ' })).toEqual({ tabs: [], selected: null, pending: [] })
   })
