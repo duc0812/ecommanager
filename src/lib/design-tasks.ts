@@ -162,8 +162,8 @@ export async function syncDesignTasks(orderId: string): Promise<SyncResult> {
     const existing = order.designTasks.find(t => t.shopifyLineId === line.shopifyLineId)
     if (orderClosed || orderShipped) {
       if (existing && existing.status !== 'CANCELLED' && existing.status !== 'DONE') {
-        // A fulfilled order does not prove this line was made: one supplier's tracking can close the whole order.
-        const hasFile = withArtwork.has(line.shopifyLineId) || !!line.designDriveLink || !!line.exportedAt || !!order.trelloCardUrl
+        // A fulfilled order does not prove this line was made: one supplier's tracking can close the whole order. An export mark without a file proves nothing either (LIT4981).
+        const hasFile = withArtwork.has(line.shopifyLineId) || !!line.designDriveLink || !!order.trelloCardUrl
         if (!orderClosed && !hasFile) {
           if (existing.status !== 'REJECTED') {
             await prisma.designTask.update({ where: { id: existing.id }, data: { status: 'REJECTED', rejectReasons: JSON.stringify([SHIPPED_WITHOUT_FILE_REASON]), rejectNote: SHIPPED_WITHOUT_FILE_NOTE, events: { create: { type: 'SYSTEM', message: `${SHIPPED_WITHOUT_FILE_REASON} — giữ task mở` } } } })

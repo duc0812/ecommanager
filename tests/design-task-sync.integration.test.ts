@@ -119,6 +119,14 @@ describe('runDesignTaskSync scope', () => {
     expect(closed?.events.some(e => e.message.includes('task tự huỷ'))).toBe(true)
   })
 
+  it('an export mark without a file keeps the task open (LIT4981)', async () => {
+    const marked = await order({ status: 'FULFILLED', placedAt: '2025-02-05' })
+    await prisma.orderLine.updateMany({ where: { orderId: marked.id }, data: { exportedAt: new Date('2025-02-06') } })
+    await prisma.designTask.create({ data: { orderId: marked.id, shopifyLineId: 'l1', taskKey: marked.key, status: 'REJECTED' } })
+    await runDesignTaskSync()
+    expect((await taskOf(marked.id))?.status).toBe('REJECTED')
+  })
+
   it('a cancelled order still cancels a line without a file', async () => {
     const gone = await order({ status: 'CANCELLED', placedAt: '2025-02-04' })
     await prisma.designTask.create({ data: { orderId: gone.id, shopifyLineId: 'l1', taskKey: gone.key, status: 'NEW' } })

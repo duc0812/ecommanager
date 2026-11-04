@@ -142,7 +142,7 @@ export async function runAutoFulfill(opts: {
       shopifyLineId: l.shopifyLineId,
       label: `dòng ${l.linePosition} ${l.sku ?? l.productTitle}`,
       supplier: supplierName.get(l.exportedToSupplierId ?? l.resolvedSupplierId ?? '') ?? null,
-      hasFile: printedLines.has(`${db?.id} ${l.shopifyLineId}`) || !!l.designDriveLink || !!l.exportedAt || !!db?.trelloCardUrl,
+      hasFile: printedLines.has(`${db?.id} ${l.shopifyLineId}`) || !!l.designDriveLink || !!db?.trelloCardUrl,
     }))
     return { sheets: Array.from(sheets), lines }
   }
