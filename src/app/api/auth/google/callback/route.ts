@@ -9,8 +9,8 @@ import { ROOT_FOLDER_NAME, ensureFolder, primeAccessToken, refreshDriveQuota, re
 
 export const dynamic = 'force-dynamic'
 
-function back(result: 'connected' | 'error', reason?: string) {
-  const params = new URLSearchParams({ google: result })
+function back(result: 'connected' | 'error', reason?: string, target: 'google' | 'sheets' = 'google') {
+  const params = new URLSearchParams({ [target]: result })
   if (reason) params.set('reason', reason.replace(/[^a-z0-9_]/gi, '').slice(0, 40) || 'unknown')
   return NextResponse.redirect(`${googleAppUrl()}/setup?${params}`)
 }
@@ -20,12 +20,14 @@ export async function GET(req: NextRequest) {
   if (!consumeGoogleOAuthState(searchParams.get('state') ?? '')) {
     return NextResponse.json({ error: 'State không hợp lệ hoặc đã hết hạn. Hãy bấm Kết nối lại từ trang Setup.' }, { status: 400 })
   }
-  if (searchParams.get('error')) return back('error', searchParams.get('error') ?? 'denied')
+  const sheets = (searchParams.get('state') ?? '').startsWith(SHEETS_STATE_PREFIX)
+  const done = (result: 'connected' | 'error', reason?: string) => back(result, reason, sheets ? 'sheets' : 'google')
+  if (searchParams.get('error')) return done('error', searchParams.get('error') ?? 'denied')
   const code = searchParams.get('code')
-  if (!code) return back('error', 'missing_code')
+  if (!code) return done('error', 'missing_code')
 
   const cfg = await getGoogleConfig()
-  if (!cfg.clientId || !cfg.clientSecret) return back('error', 'not_configured')
+  if (!cfg.clientId || !cfg.clientSecret) return done('error', 'not_configured')
 
   let tokens
   try {
@@ -33,22 +35,22 @@ export async function GET(req: NextRequest) {
   } catch (err) {
     const reason = err instanceof GoogleOAuthError ? err.code : 'token_exchange'
     console.error('[google oauth] token exchange failed:', reason)
-    return back('error', reason)
+    return done('error', reason)
   }
 
-  if ((searchParams.get('state') ?? '').startsWith(SHEETS_STATE_PREFIX)) {
-    if (!String(tokens.scope ?? '').split(/\s+/).includes(SHEETS_SCOPE)) return back('error', 'no_sheets_scope')
-    if (!tokens.refresh_token) return back('error', 'no_refresh_token')
+  if (sheets) {
+    if (!String(tokens.scope ?? '').split(/\s+/).includes(SHEETS_SCOPE)) return done('error', 'no_sheets_scope')
+    if (!tokens.refresh_token) return done('error', 'no_refresh_token')
     await saveSheetsConnection(tokens.refresh_token, await fetchGoogleEmail(tokens.access_token))
-    return NextResponse.redirect(`${googleAppUrl()}/design-studio`)
+    return done('connected')
   }
 
   // Google's consent screen lets the user untick the Drive permission; without it nothing can be uploaded.
   const granted = String(tokens.scope ?? '').split(/\s+/)
-  if (!granted.some(s => DRIVE_SCOPES.includes(s))) return back('error', 'no_drive_scope')
+  if (!granted.some(s => DRIVE_SCOPES.includes(s))) return done('error', 'no_drive_scope')
 
   const refreshToken = tokens.refresh_token || cfg.refreshToken
-  if (!refreshToken) return back('error', 'no_refresh_token')
+  if (!refreshToken) return done('error', 'no_refresh_token')
   if (tokens.refresh_token) await saveSetting(GOOGLE_KEYS.refreshToken, tokens.refresh_token)
 
   const email = await fetchGoogleEmail(tokens.access_token)
@@ -64,9 +66,9 @@ export async function GET(req: NextRequest) {
   } catch (err: any) {
     console.error('[google oauth] root folder failed:', err?.message ?? err)
     await deleteSettings([GOOGLE_KEYS.rootFolderId, GOOGLE_KEYS.refreshToken, GOOGLE_KEYS.email])
-    return back('error', 'root_folder')
+    return done('error', 'root_folder')
   }
   await refreshDriveQuota().catch(() => {})
 
-  return back('connected')
+  return done('connected')
 }
