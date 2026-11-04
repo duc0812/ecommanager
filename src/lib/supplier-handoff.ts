@@ -9,7 +9,8 @@ import { credentialsOf, getPgprintsSettings } from '@/lib/pgprints-settings'
 import { isPgprintsSupplier } from '@/lib/pgprints-shared'
 import { isMerchizeSupplier, merchizeCredentials } from '@/lib/merchize'
 import { activePushByOrder, logHandoffEvent } from '@/lib/repos/push-export'
-import { COOLING_OFF_HOURS, type HandoffCard, type HandoffLine, type HandoffSent, type HandoffState, type SentStage } from '@/lib/handoff-shared'
+import { COOLING_OFF_HOURS, UNMAPPED_TAB, type HandoffCard, type HandoffLine, type HandoffSent, type HandoffState, type HubChannel, type HubTab, type SentStage } from '@/lib/handoff-shared'
+import { effectiveBaseCost } from '@/lib/order-profit'
 import { loadLineResolver, recalculateMissingOrderLineCosts } from '@/lib/repos/order-costs'
 import { printFileFit } from '@/lib/print-file-fit'
 import { currentFiles, sameLabel } from '@/lib/task-files'
@@ -148,7 +149,7 @@ function matches(card: HandoffCard, q: string): boolean {
   return haystacks.some(h => h.toLowerCase().includes(q))
 }
 
-async function buildCards(where: any, orderBy: any, opts: { checks?: boolean; sent?: Map<string, HandoffSent> } = {}): Promise<HandoffCard[]> {
+async function buildCards(where: any, orderBy: any, opts: { checks?: boolean; sent?: Map<string, HandoffSent>; withUnmapped?: boolean } = {}): Promise<HandoffCard[]> {
   const orders = await prisma.order.findMany({
     where, orderBy, take: MAX_CARDS,
     include: { ...STATE_INCLUDE, store: { include: { project: { select: { name: true } } } } },
@@ -164,6 +165,7 @@ async function buildCards(where: any, orderBy: any, opts: { checks?: boolean; se
     select: {
       id: true, orderId: true, shopifyLineId: true, resolvedSupplierId: true, resolvedSupplierSku: true, shopifyProductId: true, customAttributesJson: true,
       sku: true, productTitle: true, shopifyProductType: true, linePosition: true, exportedAt: true, exportedToSupplierId: true,
+      qty: true, manualBaseCost: true, resolvedBaseCost: true,
     },
   })
   const rowById = new Map(lineRows.map(l => [l.id, l]))
@@ -199,7 +201,7 @@ async function buildCards(where: any, orderBy: any, opts: { checks?: boolean; se
     const lineKeys = lineKeysOf(o.shopifyOrderNumber, exportOrder.lines)
     const lines: HandoffLine[] = []
     for (const line of ws.lines) {
-      if (line.isNonProduct || !line.supplier) continue
+      if (line.isNonProduct || (!line.supplier && !opts.withUnmapped)) continue
       const row = rowById.get(line.id)
       const sentTo = row ? exportedSupplierOf(exportOrder, row) : null
       const template = row ? templateViewFor(await templateForLine(row), line.artworks) : null
@@ -209,17 +211,20 @@ async function buildCards(where: any, orderBy: any, opts: { checks?: boolean; se
         : []
       const r = resolveNow ? resolvable.find(x => x.id === line.id) : null
       const now = r && resolveNow && !sentTo ? resolveNow({ ...r, order: { storeId: o.storeId, shippingCountry: o.shippingCountry } }) : null
-      const mappingNow = now && (now.supplierId !== line.supplier.id || now.sku !== (line.supplierSku ?? null))
+      const mappingNow = now && (now.supplierId !== line.supplier?.id || now.sku !== (line.supplierSku ?? null))
         ? { supplierName: now.supplier.name, sku: now.sku }
         : null
+      const unitCost = row ? effectiveBaseCost(row) : null
       lines.push({
         line,
         slots,
+        baseCost: row && unitCost != null ? unitCost * row.qty : null,
+        productType: row?.shopifyProductType ?? null,
         wrongSizeAreas,
         mappingNow,
         taskKey: lineKeys.get(line.shopifyLineId) ?? '',
         driveFolderUrl: folderByLine.get(`${o.id}\u0000${line.shopifyLineId}`) ?? null,
-        apiSku: line.supplierSku ? (apiSkuByKey.get(`${line.supplier.id}::${line.supplierSku}`) ?? null) : null,
+        apiSku: line.supplier && line.supplierSku ? (apiSkuByKey.get(`${line.supplier.id}::${line.supplierSku}`) ?? null) : null,
         exportedTo: sentTo ? (supplierNameById.get(sentTo) ?? 'xưởng không rõ') : null,
       })
     }
@@ -228,7 +233,7 @@ async function buildCards(where: any, orderBy: any, opts: { checks?: boolean; se
     const exportNote = progress.partial
       ? `${exportProgressLabel(progress)} — còn chờ: ${progress.groups.filter(g => !g.done).map(g => supplierNameById.get(g.supplierId) ?? 'xưởng không rõ').join(', ')}`
       : null
-    const suppliers = Array.from(new Map(lines.map(l => [l.line.supplier!.id, { id: l.line.supplier!.id, name: l.line.supplier!.name, code: l.line.supplier!.code }])).values())
+    const suppliers = Array.from(new Map(lines.flatMap(l => l.line.supplier ? [[l.line.supplier.id, { id: l.line.supplier.id, name: l.line.supplier.name, code: l.line.supplier.code }] as const] : [])).values())
     const countryCode = countryCodeOf(o.shippingCountry)
     cards.push({
       order: {
@@ -248,6 +253,70 @@ export async function listHandoffCards(f: { q?: string } = {}): Promise<{ pendin
   const pending = await buildCards(pendingHandoffWhere(), { placedAt: 'asc' }, { checks: true })
   const q = f.q?.trim().toLowerCase()
   return { pending: q ? pending.filter(c => matches(c, q)) : pending }
+}
+
+/** The hub's search: the order number of a line key ("LIT123_1"), or a name, SKU, title or custom value. */
+function hubSearchWhere(q: string) {
+  const text = q.replace(/^#/, '').replace(/_\d+$/, '')
+  return {
+    OR: [
+      { shopifyOrderNumber: { contains: text } }, { shippingName: { contains: text } }, { customerName: { contains: text } },
+      { lines: { some: { OR: [{ sku: { contains: text } }, { productTitle: { contains: text } }, { customAttributesJson: { contains: text } }] } } },
+    ],
+  }
+}
+
+/** Every supplier with an unsent line in the queue, biggest first; the count and the cost are not limited by MAX_CARDS. */
+export async function listHandoffTabs(f: { q?: string } = {}): Promise<HubTab[]> {
+  const q = f.q?.trim()
+  const where = pendingHandoffWhere()
+  const orders = await prisma.order.findMany({
+    where: q ? { ...where, AND: [...where.AND, hubSearchWhere(q)] } : where,
+    select: { id: true, lines: { select: { productTitle: true, shopifyProductType: true, resolvedSupplierId: true, exportedAt: true, qty: true, manualBaseCost: true, resolvedBaseCost: true } } },
+  })
+  const tally = new Map<string, { orders: Set<string>; cost: number }>()
+  for (const o of orders) {
+    for (const l of o.lines) {
+      if (isNonProductLine(l) || l.exportedAt) continue
+      const id = l.resolvedSupplierId ?? UNMAPPED_TAB
+      const t = tally.get(id) ?? { orders: new Set<string>(), cost: 0 }
+      t.orders.add(o.id)
+      t.cost += (effectiveBaseCost(l) ?? 0) * l.qty
+      tally.set(id, t)
+    }
+  }
+  if (tally.size === 0) return []
+  const [suppliers, settings] = await Promise.all([
+    prisma.supplier.findMany({ where: { id: { in: Array.from(tally.keys()) } }, select: { id: true, name: true, code: true, apiType: true } }),
+    getPgprintsSettings(),
+  ])
+  const byId = new Map(suppliers.map(s => [s.id, s]))
+  const channelOf = (s: { code: string; apiType: string | null }): HubChannel =>
+    isMerchizeSupplier(s) || (isPgprintsSupplier(s) && !!credentialsOf(settings)) ? 'API' : 'CSV'
+  const tabs = Array.from(tally.entries()).map(([id, t]): HubTab => {
+    const s = byId.get(id)
+    return { id, name: s?.name ?? 'Chưa map xưởng', channel: s ? channelOf(s) : null, orderCount: t.orders.size, baseCostTotal: t.cost }
+  })
+  return tabs.sort((a, b) => Number(a.id === UNMAPPED_TAB) - Number(b.id === UNMAPPED_TAB) || b.orderCount - a.orderCount || a.name.localeCompare(b.name))
+}
+
+/** "Duyệt sản xuất" by supplier: the tabs, and the cards of the asked tab, or of the first one when that tab holds nothing. */
+export async function listHandoffHub(f: { q?: string; supplier?: string | null } = {}): Promise<{ tabs: HubTab[]; selected: string | null; pending: HandoffCard[] }> {
+  const q = f.q?.trim()
+  const tabs = await listHandoffTabs({ q })
+  const selected = tabs.find(t => t.id === f.supplier)?.id ?? tabs[0]?.id ?? null
+  if (!selected) return { tabs, selected, pending: [] }
+  const supplierId = selected === UNMAPPED_TAB ? null : selected
+  const base = pendingHandoffWhere()
+  const where = {
+    ...base,
+    AND: [...base.AND, ...(q ? [hubSearchWhere(q)] : [])],
+    lines: { some: { resolvedSupplierId: supplierId, exportedAt: null } },
+  }
+  const cards = await buildCards(where, { placedAt: 'asc' }, { checks: true, withUnmapped: true })
+  // A null supplier also matches add-on lines, which have no card line.
+  const held = cards.filter(c => c.lines.some(l => (l.line.supplier?.id ?? null) === supplierId && !l.exportedTo))
+  return { tabs, selected, pending: held }
 }
 
 export const SENT_WINDOW_DAYS = 14

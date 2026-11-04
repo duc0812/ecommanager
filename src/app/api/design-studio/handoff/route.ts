@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getAuthUser, unauthorized } from '@/lib/api-auth'
 import { viewerFor } from '@/lib/design-tasks'
 import { getDesignSettings } from '@/lib/design-settings'
-import { countPendingHandoff, listHandoffCards, listSentCards } from '@/lib/supplier-handoff'
+import { countPendingHandoff, listHandoffHub, listSentCards } from '@/lib/supplier-handoff'
 import { SENT_STAGE_LABELS, type SentStage } from '@/lib/handoff-shared'
 
 export async function GET(req: NextRequest) {
@@ -16,6 +16,6 @@ export async function GET(req: NextRequest) {
     const stage = stageParam && stageParam in SENT_STAGE_LABELS ? stageParam as SentStage : null
     return NextResponse.json({ ...(await listSentCards({ q, stage, supplierId: sp.get('supplier') || null })), me: viewerFor(user, settings) })
   }
-  const [cards, pendingCount] = await Promise.all([listHandoffCards({ q }), countPendingHandoff()])
-  return NextResponse.json({ ...cards, pendingCount, me: viewerFor(user, settings) })
+  const [hub, pendingCount] = await Promise.all([listHandoffHub({ q, supplier: sp.get('supplier') }), countPendingHandoff()])
+  return NextResponse.json({ ...hub, pendingCount, me: viewerFor(user, settings) })
 }

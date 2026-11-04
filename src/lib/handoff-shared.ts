@@ -24,6 +24,10 @@ export type HandoffState = {
 
 export type HandoffLine = {
   line: WorkspaceLine; slots: string[]; taskKey: string; apiSku: string | null; driveFolderUrl: string | null
+  /** The line's base cost for its whole quantity, null while no cost is known. Shipping is not in it. */
+  baseCost: number | null
+  /** The Shopify product type, shown beside the supplier's product so a wrong mapping is seen at a glance. */
+  productType: string | null
   /** Supplier this line was already sent to, null while it waits. */
   exportedTo: string | null
   /** Print parts whose newest file does not match the template size. */
@@ -66,6 +70,14 @@ export type HandoffCard = {
   /** Set on the "Đã chuyển xưởng" list only. */
   sent: HandoffSent | null
 }
+
+/** The "Duyệt sản xuất" tab of orders with a line no supplier is mapped to. */
+export const UNMAPPED_TAB = 'none'
+
+export type HubChannel = 'API' | 'CSV'
+
+/** One supplier's tab: the orders with an unsent line of that supplier, and what those lines cost. */
+export type HubTab = { id: string; name: string; channel: HubChannel | null; orderCount: number; baseCostTotal: number }
 
 export const HANDOFF_LABELS = {
   api: (name: string | null) => `Chuyển supplier qua API (${name ?? 'API'})`,

@@ -6,7 +6,8 @@ import { canCallApi } from '@/lib/api-access'
 import { DEFAULT_ROLE_PERMISSIONS } from '@/lib/roles'
 import { PGPRINTS_KEYS } from '@/lib/pgprints-settings'
 import { syncDesignTasks, transitionTask, type Actor } from '@/lib/design-tasks'
-import { countPendingHandoff, handoffStateFor, listHandoffCards, listSentCards } from '@/lib/supplier-handoff'
+import { countPendingHandoff, handoffStateFor, listHandoffCards, listSentCards, listHandoffHub } from '@/lib/supplier-handoff'
+import { UNMAPPED_TAB } from '@/lib/handoff-shared'
 import { GET as getTasks } from '@/app/api/design-studio/tasks/route'
 import { GET as getTask } from '@/app/api/design-studio/tasks/[key]/route'
 import { GET as getHandoff } from '@/app/api/design-studio/handoff/route'
@@ -576,5 +577,52 @@ describe('API handoff — supplier linked to PGprints', () => {
     const back = await order(o.id)
     expect(back).toMatchObject({ pipelineStatus: 'READY_TO_PRODUCTION', supplierHandoffMode: 'CSV', supplierHandoffById: EXPORTER.id })
     expect(back.supplierHandoffAt?.getTime()).toBe(savedAt.getTime())
+  })
+})
+
+describe('hub tabs by supplier', () => {
+  const twoSuppliers = async () => {
+    const o = await makeOrder({ lines: 2 })
+    const [first, second] = await prisma.orderLine.findMany({ where: { orderId: o.id }, orderBy: { linePosition: 'asc' } })
+    await prisma.orderLine.update({ where: { id: first.id }, data: { resolvedBaseCost: 6, qty: 2 } })
+    await prisma.orderLine.update({ where: { id: second.id }, data: { resolvedSupplierId: PG_SUP, resolvedSupplierSku: 'UT2-20OZ', resolvedBaseCost: 8 } })
+    return { ...o, first, second }
+  }
+
+  it('lists a mixed order under each supplier, each with its own cost', async () => {
+    const o = await twoSuppliers()
+    const hub = await listHandoffHub({ q: o.number, supplier: PG_SUP })
+    expect(hub.tabs.find(t => t.id === CSV_SUP)).toMatchObject({ name: 'CSV Factory', channel: 'CSV', orderCount: 1, baseCostTotal: 12 })
+    expect(hub.tabs.find(t => t.id === PG_SUP)).toMatchObject({ orderCount: 1, baseCostTotal: 8 })
+    expect(hub.selected).toBe(PG_SUP)
+    expect(hub.pending.map(c => c.order.id)).toEqual([o.id])
+    expect(hub.pending[0].lines.find(l => l.line.supplier?.id === CSV_SUP)).toMatchObject({ baseCost: 12 })
+  })
+
+  it('drops a supplier once its lines are sent', async () => {
+    const o = await twoSuppliers()
+    await prisma.orderLine.update({ where: { id: o.first.id }, data: { exportedAt: new Date(), exportedToSupplierId: CSV_SUP } })
+    const hub = await listHandoffHub({ q: o.number })
+    expect(hub.tabs.map(t => t.id)).toEqual([PG_SUP])
+  })
+
+  it('moves to the tab that holds a searched order', async () => {
+    const o = await makeOrder({ api: true })
+    const hub = await listHandoffHub({ q: o.keys[0], supplier: CSV_SUP })
+    expect(hub.selected).toBe(PG_SUP)
+    expect(hub.pending.map(c => c.order.id)).toEqual([o.id])
+  })
+
+  it('shows a line with no supplier under the unmapped tab', async () => {
+    const o = await makeOrder()
+    await prisma.orderLine.updateMany({ where: { orderId: o.id }, data: { resolvedSupplierId: null, resolvedSupplierSku: null } })
+    const hub = await listHandoffHub({ q: o.number, supplier: UNMAPPED_TAB })
+    expect(hub.tabs).toEqual([expect.objectContaining({ id: UNMAPPED_TAB, channel: null, orderCount: 1, baseCostTotal: 0 })])
+    expect(hub.pending[0].lines[0].line.supplier).toBeNull()
+    expect(hub.pending[0].lines[0].taskKey).toBe(o.keys[0])
+  })
+
+  it('answers with no tabs when nothing matches', async () => {
+    expect(await listHandoffHub({ q: 'NO-SUCH-ORDER-XYZ' })).toEqual({ tabs: [], selected: null, pending: [] })
   })
 })
