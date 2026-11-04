@@ -17,6 +17,7 @@ import { canApproveDesign, canEditDesignNote, canHandoffToSupplier, isLeaderRole
 import { activePushByOrder } from '@/lib/repos/push-export'
 import type { HandoffPush } from '@/lib/handoff-shared'
 import { autoRenderEligibility } from '@/lib/artwork-render-eligibility'
+import { flatTextCoversLine, loadFlatTextAuto } from '@/lib/flat-text-auto'
 import { APP_FILE_PREFIX } from '@/lib/design-links'
 import { saveStudioDesignToLibrary } from '@/lib/studio-library'
 import { MISSING_AREAS_PREFIX, missingPrintAreas, outdatedParts, printFilesReady } from '@/lib/task-files'
@@ -52,14 +53,22 @@ export function canTransition(from: TaskStatus, to: TaskStatus, actor: ActorRole
   }
 }
 
-type ReadinessLine = TemplateLookupLine & { customAttributesJson: string | null; variantOptions: string | null }
+type ReadinessLine = TemplateLookupLine & { sku: string | null; customAttributesJson: string | null; variantOptions: string | null }
 
-/** True when the line resolves to a READY artwork-library entry for a single-area template and the customer filled every field it renders. */
-export async function canAutoRenderLine(line: ReadinessLine, storeId: string): Promise<boolean> {
+/**
+ * True when the line resolves to a READY artwork-library entry for a single-area template and the customer filled every field it renders,
+ * or when the flat-text library covers it: that one renders every piece of a many-area template on the office PC.
+ */
+export async function canAutoRenderLine(line: ReadinessLine, storeId: string, orderNumber: string): Promise<boolean> {
   if (!line.shopifyProductId || !line.resolvedSupplierId) return false
   const profile = await findProfile(storeId, line.shopifyProductId)
   const template = await templateForLine(line, profile)
   if (!template) return false
+  const flatText = await loadFlatTextAuto()
+  if (flatText.length > 0 && flatTextCoversLine(flatText, {
+    storeId, shopifyProductId: line.shopifyProductId, templateId: template.id, sku: line.sku, orderNumber,
+    personalization: visibleCustomAttributes(parseAttributes(line.customAttributesJson)),
+  })) return true
   const slots = requiredSlotsFor(template)
   if (slots.length !== 1) return false
   const library = await libraryStateFor({
@@ -70,9 +79,9 @@ export async function canAutoRenderLine(line: ReadinessLine, storeId: string): P
   return autoRenderEligibility({ taskStatus: 'NEW', hasTemplate: true, slots, library, personalization, job: null }).ok
 }
 
-export async function readinessForLine(line: ReadinessLine, storeId: string): Promise<Readiness> {
+export async function readinessForLine(line: ReadinessLine, storeId: string, orderNumber: string): Promise<Readiness> {
   if (sourcePrintFiles(parseAttributes(line.customAttributesJson)).length > 0) return 'LOW'
-  return (await canAutoRenderLine(line, storeId)) ? 'AUTO' : 'MANUAL'
+  return (await canAutoRenderLine(line, storeId, orderNumber)) ? 'AUTO' : 'MANUAL'
 }
 
 const READINESS_REFRESH: TaskStatus[] = ['NEW', 'ASSIGNED', 'DOING', 'REJECTED']
@@ -168,7 +177,7 @@ export async function syncDesignTasks(orderId: string): Promise<SyncResult> {
     }
     if (existing) {
       if (READINESS_REFRESH.includes(existing.status as TaskStatus) && existing.readiness !== 'LOW') {
-        const readiness = await readinessForLine(line, order.storeId)
+        const readiness = await readinessForLine(line, order.storeId, order.shopifyOrderNumber)
         if (readiness !== existing.readiness) await prisma.designTask.update({ where: { id: existing.id }, data: { readiness } })
       }
       continue
@@ -177,7 +186,7 @@ export async function syncDesignTasks(orderId: string): Promise<SyncResult> {
     const reopenNew = factoryRejected && !!line.designDriveLink
     await prisma.designTask.create({ data: {
       orderId, shopifyLineId: line.shopifyLineId, taskKey: keys.get(line.shopifyLineId)!,
-      status: 'NEW', readiness: await readinessForLine(line, order.storeId), kpi: kpiForProductType(settings, line.shopifyProductType),
+      status: 'NEW', readiness: await readinessForLine(line, order.storeId, order.shopifyOrderNumber), kpi: kpiForProductType(settings, line.shopifyProductType),
       slaHours, dueAt: dueForNewTask(order.placedAt, slaHours), supplierSnapshot: supplierName.get(line.resolvedSupplierId) ?? null,
       ...(reopenNew ? factoryReopen : {}),
       events: { create: reopenNew ? factoryEvent : { type: 'SYSTEM', message: 'Đơn vào từ Shopify — tạo task' } },
