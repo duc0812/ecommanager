@@ -51,7 +51,7 @@ function QueueRow({ t, selected, onSelect }: { t: TaskRow; selected: boolean; on
         <span className="text-label-sm text-on-surface-variant truncate">{t.productTitle}{t.variantTitle ? ` · ${t.variantTitle}` : ''}</span>
         <span className="flex items-center gap-xs">
           <Pill tone={ready.tone} icon={ready.icon}>{ready.label}</Pill>
-          {t.fromLibrary && <Pill tone="brand" icon="inventory_2">Thư viện</Pill>}
+          {t.fromLibrary && (t.status === 'NEW' || t.status === 'ASSIGNED') && <Pill tone="brand" icon="inventory_2">Thư viện</Pill>}
           {t.unmapped && <Pill tone="bad" icon="account_tree">Chưa mapping</Pill>}
           {t.assigneeName && <span className="ml-auto"><Avatar name={t.assigneeName} /></span>}
         </span>

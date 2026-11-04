@@ -105,6 +105,16 @@ export default function TaskHeader({ detail, qa, holdCount, refreshing, onRefres
     onChanged()
   }
 
+  async function release() {
+    if (busy) return
+    setBusy(true)
+    const r = await postJson(taskUrl(task.taskKey, '/release-library'), {})
+    setBusy(false)
+    if (!r.ok) { toast.say(r.error, 'bad'); return }
+    toast.say('Đã chuyển sang sản xuất')
+    onChanged()
+  }
+
   function approve() {
     if (qa.status === 'error' || qa.status === 'none') { setConfirm(true); return }
     go({ to: 'DONE' })
@@ -145,8 +155,15 @@ export default function TaskHeader({ detail, qa, holdCount, refreshing, onRefres
   }
 
   const filesTitle = filled ? undefined : filesMissingHint(detail)
+  const libraryWaiting = task.fromLibrary && (task.status === 'NEW' || task.status === 'ASSIGNED')
   let primary: ReactNode = null
-  if (task.status === 'ASK_CUSTOMER' && (owns || !OWNED_MOVES.includes(detail.prevStatus ?? 'NEW'))) {
+  if (libraryWaiting && me.canApprove && !task.unmapped) {
+    primary = (
+      <button type="button" className={btnPrimaryMd} disabled={busy} onClick={release} title="Dùng link thư viện đang có, không chờ quét. Đơn sang Duyệt sản xuất khi mọi dòng đã xong">
+        Chuyển sang sản xuất<Icon name="precision_manufacturing" className="text-[18px]" />
+      </button>
+    )
+  } else if (task.status === 'ASK_CUSTOMER' && (owns || !OWNED_MOVES.includes(detail.prevStatus ?? 'NEW'))) {
     primary = <button type="button" className={btnPrimaryMd} disabled={busy} onClick={() => go({ to: detail.prevStatus ?? 'NEW', continue: true })}>Tiếp tục<Icon name="play_arrow" className="text-[18px]" /></button>
   } else if (can('DOING') && (task.status === 'NEW' || task.status === 'ASSIGNED')) {
     primary = <button type="button" className={btnPrimaryMd} disabled={busy} onClick={() => go({ to: 'DOING' })}>Nhận việc<Icon name="front_hand" className="text-[18px]" /></button>
@@ -203,7 +220,7 @@ export default function TaskHeader({ detail, qa, holdCount, refreshing, onRefres
               title={`Hạn: ${task.dueAt ? fmtDateTime(task.dueAt) : 'chưa đặt'} · SLA ${task.slaHours}h · KPI ${task.kpi} · đặt ${fmtDate(task.placedAt)}`}>
               {left.label}
             </Pill>
-            {task.fromLibrary && <Pill tone="brand" icon="inventory_2" size="md" title="Có sẵn trong thư viện NAS: bản in được gắn khi quét và xử lý đơn">Thư viện — chờ quét</Pill>}
+            {libraryWaiting && <Pill tone="brand" icon="inventory_2" size="md" title="Có sẵn trong thư viện NAS: bản in được gắn khi quét và xử lý đơn">Thư viện — chờ quét</Pill>}
             {task.unmapped && <Pill tone="bad" icon="account_tree" size="md" title="Dòng chưa có xưởng, cần map trước khi gửi">Chưa mapping</Pill>}
             {detail.handoff?.push && <Pill tone="warn" icon="local_shipping" size="md">{pushChipLabel(detail.handoff.push)}</Pill>}
             {detail.handoff?.handedOff && (

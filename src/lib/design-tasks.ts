@@ -319,6 +319,27 @@ function parseRejectReasons(json: string | null): string[] {
   } catch { return [] }
 }
 
+/**
+ * "Chuyển sang sản xuất" on a flagged task: no scan needed, the line goes to the hub with the library link it already has.
+ * The link stays as it is, nothing is attached and nothing is saved to the library.
+ */
+export async function releaseLibraryTask(taskKey: string, actor: Actor) {
+  const task = await prisma.designTask.findUnique({ where: { taskKey } })
+  if (!task) throw new Error('Task not found')
+  if (!canApproveDesign(actor.role, actor.permissions, (await getDesignSettings()).designerCanApprove)) throw new Error('Chỉ người được duyệt design mới chuyển sang sản xuất')
+  if (!task.fromLibrary || !AUTO_COMPLETE_FROM.includes(task.status as TaskStatus)) throw new Error('Task này không ở trạng thái chờ quét thư viện')
+  const line = await prisma.orderLine.findFirst({ where: { orderId: task.orderId, shopifyLineId: task.shopifyLineId } })
+  if (!line?.designDriveLink) throw new Error('Dòng này chưa có link thư viện')
+  if (!line.resolvedSupplierId) throw new Error('Dòng này chưa mapping xưởng — map xong mới chuyển sang sản xuất')
+  const updated = await prisma.designTask.update({
+    where: { id: task.id },
+    data: { status: 'DONE', events: { create: { type: 'STATUS', message: 'Chuyển sang sản xuất bằng link thư viện, không chờ quét', actorId: actor.id } } },
+  })
+  const row = await rowFor(updated.taskKey)
+  if (!row) throw new Error('Task row not found after update')
+  return { task: row }
+}
+
 export async function transitionTask(taskKey: string, actor: Actor, input: TransitionInput) {
   const task = await prisma.designTask.findUnique({ where: { taskKey } })
   if (!task) throw new Error('Task not found')

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { prisma } from '@/lib/db'
-import { syncDesignTasks } from '@/lib/design-tasks'
+import { releaseLibraryTask, syncDesignTasks } from '@/lib/design-tasks'
+import { listHandoffHub } from '@/lib/supplier-handoff'
 
 const ORDER_ID = 'gid://test/Order/dt-sync-1'
 const SHOP = 'dt-sync.myshopify.com'
@@ -204,6 +205,45 @@ describe('every line of an order not sent yet gets a task (owner 11/05/2026)', (
   it('adds nothing for a line already sent', async () => {
     await makeOrder('READY_TO_PRODUCTION', { resolvedSupplierId: SUP, designDriveLink: 'https://drive.google.com/drive/folders/lib', exportedAt: new Date() })
     expect((await syncDesignTasks(ID)).created).toBe(0)
+  })
+
+  describe('Chuyển sang sản xuất', () => {
+    const admin = { id: 'u-admin', name: 'Admin', role: 'ADMIN', permissions: [] }
+    const LINK = 'https://drive.google.com/drive/folders/lib'
+
+    it('closes the flagged task, keeps the link, and the order reaches the hub', async () => {
+      await makeOrder('READY_TO_PRODUCTION', { resolvedSupplierId: SUP, designDriveLink: LINK })
+      await prisma.order.update({ where: { id: ID }, data: { designReady: true } })
+      await syncDesignTasks(ID)
+      expect((await listHandoffHub({ q: '#DTE1' })).pending).toEqual([])
+      const r = await releaseLibraryTask('DTE1_1', admin as any)
+      expect(r.task.status).toBe('DONE')
+      expect((await prisma.orderLine.findFirstOrThrow({ where: { orderId: ID } })).designDriveLink).toBe(LINK)
+      expect((await listHandoffHub({ q: '#DTE1' })).pending.map(c => c.order.id)).toEqual([ID])
+      expect((await syncDesignTasks(ID)).created).toBe(0)
+      expect((await task())?.status).toBe('DONE')
+    })
+
+    it('refuses without the right to approve', async () => {
+      await makeOrder('READY_TO_PRODUCTION', { resolvedSupplierId: SUP, designDriveLink: LINK })
+      await syncDesignTasks(ID)
+      await expect(releaseLibraryTask('DTE1_1', { id: 'u', name: 'U', role: 'SUPPORT', permissions: [] } as any)).rejects.toThrow('được duyệt')
+      expect((await task())?.status).toBe('NEW')
+    })
+
+    it('refuses a task with no flag, and one not waiting any more', async () => {
+      await makeOrder('PENDING_DESIGN', { resolvedSupplierId: SUP })
+      await syncDesignTasks(ID)
+      await expect(releaseLibraryTask('DTE1_1', admin as any)).rejects.toThrow('chờ quét')
+      await prisma.designTask.updateMany({ where: { orderId: ID }, data: { fromLibrary: true, status: 'REVIEW' } })
+      await expect(releaseLibraryTask('DTE1_1', admin as any)).rejects.toThrow('chờ quét')
+    })
+
+    it('refuses an unmapped line', async () => {
+      await makeOrder('PENDING_MAPPING', { resolvedSupplierId: null, designDriveLink: LINK })
+      await syncDesignTasks(ID)
+      await expect(releaseLibraryTask('DTE1_1', admin as any)).rejects.toThrow('chưa mapping')
+    })
   })
 
   it('still closes a task of a line given a link by hand', async () => {
