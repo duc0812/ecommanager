@@ -116,15 +116,30 @@ function sizedSibling(pinned: TemplateRecord, line: TemplateLookupLine, ctx: Tem
   return ctx.bySupplier.get(pinned.supplierId)?.find(t => t.supplierSku?.toLowerCase() === want) ?? pinned
 }
 
+export const GUIDE_SIZE_TOKEN = '{SIZE}'
+export const GUIDE_SIZE = /^(XS|S|M|L|XL|[2-6]XL)$/
+
+/** A guide path holding {SIZE} has one image per size on one template row (owner 11-04: TBEJ), so the library entries on that row keep working. */
 export function pickTemplate(line: TemplateLookupLine, profile: { printTemplateId: string | null } | null, ctx: TemplateContext): TemplateRow | null {
+  const picked = pickTemplateRecord(line, profile, ctx)
+  if (!picked) return null
+  const row = mapTemplate(picked)
+  const size = line.resolvedSupplierSku?.match(/-([0-9A-Z]+)$/i)?.[1].toUpperCase()
+  if (row.guideImageUrl && picked.guideImagePath?.includes(GUIDE_SIZE_TOKEN) && size && GUIDE_SIZE.test(size)) {
+    row.guideImageUrl += `${row.guideImageUrl.includes('?') ? '&' : '?'}size=${size}`
+  }
+  return row
+}
+
+function pickTemplateRecord(line: TemplateLookupLine, profile: { printTemplateId: string | null } | null, ctx: TemplateContext): TemplateRecord | null {
   if (profile?.printTemplateId) {
     const fromProfile = ctx.byId.get(profile.printTemplateId)
-    if (fromProfile && (!line.resolvedSupplierId || fromProfile.supplierId === line.resolvedSupplierId)) return mapTemplate(sizedSibling(fromProfile, line, ctx))
+    if (fromProfile && (!line.resolvedSupplierId || fromProfile.supplierId === line.resolvedSupplierId)) return sizedSibling(fromProfile, line, ctx)
   }
   if (!line.resolvedSupplierId) return null
   if (line.resolvedSupplierSku) {
     const fromProduct = ctx.productTemplate.get(pairKey(line.resolvedSupplierId, line.resolvedSupplierSku))
-    if (fromProduct && fromProduct.supplierId === line.resolvedSupplierId) return mapTemplate(fromProduct)
+    if (fromProduct && fromProduct.supplierId === line.resolvedSupplierId) return fromProduct
   }
   const templates = ctx.bySupplier.get(line.resolvedSupplierId) ?? []
   if (templates.length === 0) return null
@@ -138,5 +153,5 @@ export function pickTemplate(line: TemplateLookupLine, profile: { printTemplateI
   }
   if (!picked) picked = templates.find(t => t.supplierSku === null)
   if (!picked) return null
-  return mapTemplate(picked)
+  return picked
 }

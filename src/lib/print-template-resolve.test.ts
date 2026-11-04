@@ -95,3 +95,24 @@ describe('a profile pin on one size of a set (owner 11-03: TN2407261608 on C932-
     expect(pickTemplate(line('C932-B-S'), { printTemplateId: 'x' }, ctx)?.id).toBe('x')
   })
 })
+
+describe('one guide per size on one template row (owner 11-04: TBEJ)', () => {
+  const row = (guideImagePath: string | null) => ({
+    id: 't', supplierId: 'j', supplierSku: 'TBEJ', name: 't', widthPx: 100, heightPx: 100, dpi: 150, bleedIn: 0, safeIn: 0, mirror: false,
+    areas: JSON.stringify([area('Print')]), altAreas: null, guideImagePath, templateUrl: null,
+  })
+  const ctxOf = (t: ReturnType<typeof row>) => ({ byId: new Map(), productTemplate: new Map(), bySupplier: new Map([['j', [t]]]) }) as unknown as TemplateContext
+  const line = (sku: string) => ({ orderId: 'o', resolvedSupplierId: 'j', resolvedSupplierSku: sku }) as TemplateLookupLine
+
+  it('a sized guide opens at the size of the line, on the same template', () => {
+    const t = pickTemplate(line('TBEJ-2xl'), null, ctxOf(row('templates/t/guide-{SIZE}.png')))
+    expect(t?.id).toBe('t')
+    expect(t?.guideImageUrl).toBe('/api/design-studio/file/guide/t?size=2XL')
+  })
+  it('a line without a known size gets the plain address, and a plain guide never takes a size', () => {
+    expect(pickTemplate(line('TBEJ'), null, ctxOf(row('templates/t/guide-{SIZE}.png')))?.guideImageUrl).toBe('/api/design-studio/file/guide/t')
+    expect(pickTemplate(line('TBEJ-ABC'), null, ctxOf(row('templates/t/guide-{SIZE}.png')))?.guideImageUrl).toBe('/api/design-studio/file/guide/t')
+    expect(pickTemplate(line('TBEJ-L'), null, ctxOf(row('templates/t/guide.png')))?.guideImageUrl).toBe('/api/design-studio/file/guide/t')
+    expect(pickTemplate(line('TBEJ-L'), null, ctxOf(row(null)))?.guideImageUrl).toBeNull()
+  })
+})

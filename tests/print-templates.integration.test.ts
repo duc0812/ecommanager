@@ -186,6 +186,21 @@ describe('supplier print template routes', () => {
     expect(wrong.status).toBe(404)
   })
 
+  it('a guide with one image per size serves the asked size, and anything else gets the size-free image', async () => {
+    const row = await prisma.printTemplate.findUniqueOrThrow({ where: { id: createdId } })
+    const dir = path.join(tmp, 'templates', createdId)
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(path.join(dir, 'guide-L.png'), 'large')
+    fs.writeFileSync(path.join(dir, 'guide-ALL.png'), 'all')
+    await prisma.printTemplate.update({ where: { id: createdId }, data: { guideImagePath: `templates/${createdId}/guide-{SIZE}.png` } })
+    const get = (q: string) => guideRoute(req(`http://localhost/api/design-studio/file/guide/${createdId}${q}`, null), { params: { templateId: createdId } })
+    expect(await (await get('?size=L')).text()).toBe('large')
+    expect(await (await get('')).text()).toBe('all')
+    expect(await (await get('?size=../../secret')).text()).toBe('all')
+    expect((await get('?size=2XL')).status).toBe(404)
+    await prisma.printTemplate.update({ where: { id: createdId }, data: { guideImagePath: row.guideImagePath } })
+  })
+
   it('lists the supplier templates with linked variants', async () => {
     const res = await listRoute(req(`${base}/print-templates`, adminToken), { params: { id: SUP } })
     const body = await res.json()
