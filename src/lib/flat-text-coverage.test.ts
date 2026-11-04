@@ -7,7 +7,7 @@ const flat = (specs: FlatTextSpec[], over: Partial<LocalEntry> = {}): LocalEntry
 const psd = (over: Partial<LocalEntry> = {}): LocalEntry => ({ id: 'e', storeId: 's', shopifyProductId: 'p', printTemplateId: 't', optionKey: '', status: 'READY', fields: ['Custom Name'], ...over })
 const named = [{ key: 'Custom Name:', value: 'Yes' }, { key: 'Custom Name', value: 'Deidrea' }]
 const line = (over: Partial<LocalLibraryLine> = {}): LocalLibraryLine => ({
-  sku: 'TN1-Red', supplierSku: 'WZIP-M', variantTitle: 'Red / M', orderNumber: '#LIT6074', templateId: 't', areaCount: 12,
+  sku: 'TN1-Red', supplierSku: 'WZIP-M', variantTitle: 'Red / M', orderNumber: '#LIT6074', templateId: 't',
   variantOptions: '{"Color":"Red","Size":"M"}', artworkSplits: null, personalization: named, ...over,
 })
 
@@ -56,17 +56,18 @@ describe('a flat-text spec in the local library', () => {
 
 describe('a PSD in the local library', () => {
   it('takes a one-area line when the customer filled every field', () => {
-    expect(autoFromLocalLibrary([psd()], line({ areaCount: 1, personalization: [{ key: 'Custom Name', value: 'Jo' }] }))).toBe(true)
-    expect(autoFromLocalLibrary([psd()], line({ areaCount: 1, personalization: [] }))).toBe(false)
+    expect(autoFromLocalLibrary([psd()], line({ personalization: [{ key: 'Custom Name', value: 'Jo' }] }))).toBe(true)
+    expect(autoFromLocalLibrary([psd()], line({ personalization: [] }))).toBe(false)
   })
 
-  it('never takes a many-area line: a PSD renders one area', () => {
-    expect(autoFromLocalLibrary([psd()], line({ areaCount: 12 }))).toBe(false)
+  it('takes a lone No, and a design with no field at all (LIT6090_1)', () => {
+    expect(autoFromLocalLibrary([psd()], line({ personalization: [{ key: 'Custom Name Yes Or No', value: 'No' }] }))).toBe(true)
+    expect(autoFromLocalLibrary([psd({ fields: [] })], line({ personalization: [{ key: 'Custom Name Yes Or No', value: 'No' }] }))).toBe(true)
   })
 
   it('does not trust a row with no field list or not READY', () => {
-    expect(autoFromLocalLibrary([psd({ fields: undefined })], line({ areaCount: 1 }))).toBe(false)
-    expect(autoFromLocalLibrary([psd({ status: 'NEEDS_FONTS' })], line({ areaCount: 1, personalization: [{ key: 'Custom Name', value: 'Jo' }] }))).toBe(false)
+    expect(autoFromLocalLibrary([psd({ fields: undefined })], line())).toBe(false)
+    expect(autoFromLocalLibrary([psd({ status: 'NEEDS_FONTS' })], line({ personalization: [{ key: 'Custom Name', value: 'Jo' }] }))).toBe(false)
   })
 })
 

@@ -71,7 +71,7 @@ export async function canAutoRenderLine(line: ReadinessLine, storeId: string, or
   const personalization = visibleCustomAttributes(parseAttributes(line.customAttributesJson))
   const local = (await readLocalEntries() ?? []).filter(e => e.storeId === storeId && e.shopifyProductId === line.shopifyProductId && e.printTemplateId === template.id)
   if (local.length > 0 && autoFromLocalLibrary(local, {
-    sku: line.sku, supplierSku: line.resolvedSupplierSku, variantTitle: line.variantTitle ?? null, orderNumber, areaCount: slots.length,
+    sku: line.sku, supplierSku: line.resolvedSupplierSku, variantTitle: line.variantTitle ?? null, orderNumber,
     variantOptions: line.variantOptions, artworkSplits: profile?.artworkSplits ?? null, templateId: template.id,
     personalization: [...personalization, ...parseAttributes(line.customallFieldsJson ?? null)],
   })) return true

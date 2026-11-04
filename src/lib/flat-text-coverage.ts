@@ -13,7 +13,7 @@ export type FlatTextSpec = {
 
 export type LocalLibraryLine = {
   sku: string | null; supplierSku: string | null; variantTitle: string | null; orderNumber: string
-  templateId: string; areaCount: number; variantOptions: string | null; artworkSplits: string | null
+  templateId: string; variantOptions: string | null; artworkSplits: string | null
   personalization: { key: string; value: string }[]
 }
 
@@ -66,13 +66,13 @@ function flatTextServes(entries: LocalEntry[], line: LocalLibraryLine): boolean 
   return specs.some(s => nameIsSettled(s, line.personalization))
 }
 
-/** A PSD renders one area, and only when the customer filled every field. A flat-text spec renders every piece of a many-area template. */
+/** A READY PSD serves a line when the customer filled every field, or said no to the name. The PC renders all its areas: LIT5982_2 came out in 5 pieces. */
 export function autoFromLocalLibrary(entries: LocalEntry[], line: LocalLibraryLine): boolean {
   if (flatTextServes(entries, line)) return true
-  if (line.areaCount !== 1) return false
   const psd = entries.filter(e => !e.specs)
   const entry = resolveLineEntry(psd, line.templateId, line.variantOptions, parseArtworkSplits(line.artworkSplits))
   if (entry?.status !== 'READY' || !entry.fields) return false
+  if (saidNoAlone(line.personalization)) return true
   const values = customerValues(entry.fields, line.personalization)
   return entry.fields.every(f => values[f] !== undefined)
 }
