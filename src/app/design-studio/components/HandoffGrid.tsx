@@ -10,7 +10,7 @@ import ExternalDesignPreview from './ExternalDesignPreview'
 import HandoffButton from './HandoffButton'
 import HubCard from './HubCard'
 import { PreSendChecks } from './PreSendChecks'
-import { ErrorBanner, ExtLink, Icon, Pill, btn, card, input } from './ui'
+import { ErrorBanner, ExtLink, Icon, Pill, btn, card } from './ui'
 
 type HandoffResponse = { tabs: HubTab[]; selected: string | null; pending: HandoffCard[]; pendingCount: number; me: Me }
 
@@ -133,8 +133,8 @@ export function OrderCard({ c, me, onOpenTask, onChanged, onError, footer }: {
   )
 }
 
-export default function HandoffGrid({ q, rawQ, onQ, version, onOpenTask, onChanged }: {
-  q: string; rawQ: string; onQ: (v: string) => void; version: number; onOpenTask: (key: string) => void; onChanged: () => void
+export default function HandoffGrid({ q, version, onOpenTask, onChanged }: {
+  q: string; version: number; onOpenTask: (key: string) => void; onChanged: () => void
 }) {
   const [data, setData] = useState<HandoffResponse | null>(null)
   const [tab, setTab] = useState<string | null>(() => {
@@ -190,11 +190,9 @@ export default function HandoffGrid({ q, rawQ, onQ, version, onOpenTask, onChang
           {me && !me.canHandoff && <span className="text-label-sm text-on-surface-variant">Bạn chỉ xem — Admin hoặc người có quyền CSV Export mới chuyển xưởng</span>}
           <button type="button" className={btn} onClick={load} disabled={loading}><Icon name="refresh" className="text-[16px]" />Tải lại</button>
         </span>
-        <input type="search" value={rawQ} onChange={e => onQ(e.target.value)} placeholder="Tìm mã đơn, tên, SKU…" aria-label="Tìm đơn"
-          className={`${input} w-full lg:hidden`} />
       </div>
       {tabs.length > 0 && (
-        <div role="tablist" aria-label="Xưởng" className="sticky top-14 lg:top-0 z-20 -mx-xs px-xs py-xs bg-surface flex gap-xs overflow-x-auto [scrollbar-width:none]">
+        <div role="tablist" aria-label="Xưởng" className="sticky top-0 z-20 -mx-xs px-xs py-xs bg-surface flex gap-xs overflow-x-auto">
           {tabs.map(t => {
             const on = t.id === selected
             return (

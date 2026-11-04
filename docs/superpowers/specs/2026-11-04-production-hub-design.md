@@ -10,7 +10,7 @@ Dán tay đang gây lỗi thật: có dấu đã xuất mà xưởng không có 
 
 ## Mục tiêu
 
-1. Màn "Duyệt sản xuất" chia theo xưởng, card một kích thước cố định, dùng được trên điện thoại.
+1. Màn "Duyệt sản xuất" chia theo xưởng, card một kích thước cố định. Chỉ làm cho máy tính, chủ shop không cần tối ưu điện thoại (11/04/2026).
 2. Xem chi tiết bằng cách bấm vào card để mở task, card không chứa chi tiết.
 3. Khu Jomall có nút "Sản xuất" ghi đơn thẳng vào sheet Jomall, đúng cấu trúc, không trùng.
 4. Cấu hình sheet theo từng xưởng, để sau thêm Mango mà không phải viết lại.
@@ -33,15 +33,15 @@ Dán tay đang gây lỗi thật: có dấu đã xuất mà xưởng không có 
 
 ## Giao diện (Claude chọn, chủ shop giao quyền chọn)
 
-Chủ shop đang dùng điện thoại nên giao mình chọn một mẫu.
+Chủ shop giao mình chọn một mẫu.
 
-**Thanh xưởng.** Hàng tab ở trên cùng, dính khi cuộn, cuộn ngang được trên điện thoại. Mỗi tab có tên xưởng và số đơn chờ. Xưởng nhiều đơn đứng trước, xưởng 0 đơn ẩn. Có thêm tab "Chưa map xưởng" khi có đơn loại này. Không có tab "Tất cả". Tab đang chọn giữ theo URL hoặc lưu ở trình duyệt.
+**Thanh xưởng.** Hàng tab ở trên cùng, dính khi cuộn. Mỗi tab có tên xưởng và số đơn chờ. Xưởng nhiều đơn đứng trước, xưởng 0 đơn ẩn. Có thêm tab "Chưa map xưởng" khi có đơn loại này. Không có tab "Tất cả". Tab đang chọn giữ theo URL hoặc lưu ở trình duyệt.
 
 **Đầu mỗi tab.** Tên xưởng, nhãn kênh (API, Sheet hoặc CSV), số đơn, số đơn có cảnh báo, tổng base cost của các đơn đang chờ. Kênh Sheet có nút "Sản xuất tất cả (N)", không tính đơn có cảnh báo. Kênh CSV có link sang trang CSV Export.
 
 **Một card** là một cặp đơn và xưởng. Đơn nhiều xưởng xuất hiện ở mỗi tab, chỉ tính các dòng chưa gửi của xưởng đó.
 
-Mọi card cùng chiều cao cố định, khoảng 172px, và một cột trên điện thoại:
+Mọi card cùng chiều cao cố định, khoảng 172px:
 
 ```
 ┌───────────────────────────────────────┐
@@ -157,7 +157,7 @@ Việc ghi sheet chạy ở máy chủ, route mới phải có access rule theo 
 2. Kiểm tra `build-fulfill-plan` và `parse-sheet` đọc đúng dòng `#LIT123_1` do tool ghi.
 3. Chạy thử trên bản sao chỉ có tiêu đề, trong Drive của tài khoản vận hành, không có dữ liệu khách.
 4. Dòng thật đầu tiên trên sheet Jomall chỉ gửi khi chủ shop đồng ý, xem lại ngay trong sheet.
-5. Giao diện kiểm tra ở 375px và desktop: mọi card bằng nhau, không tràn ngang.
+5. Giao diện kiểm tra trên desktop: mọi card bằng nhau, không tràn ngang.
 
 Deploy theo quy trình VPS hiện tại. Có thay đổi schema thì sao lưu DB và dừng app trước khi migrate.
 

@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Card cao cố định khoảng 172px, một cột trên điện thoại, chữ dài cắt bằng "…".
+- Card cao cố định khoảng 172px, chữ dài cắt bằng "…". Không tối ưu điện thoại.
 - Giới hạn 60 card áp theo từng xưởng, số trên tab là số thật.
 - Không đổi luồng API, không đổi tab "Đã chuyển xưởng".
 - Ở kênh API và CSV cảnh báo chỉ để nhìn, nút giữ nguyên.
@@ -59,8 +59,7 @@
 **Files:** Create `src/app/design-studio/components/HubCard.tsx`. Modify `HandoffGrid.tsx`, `src/app/design-studio/page.tsx`.
 
 - [ ] `HubCard`: cao cố định, bấm vào mở task dòng đầu, vùng nút chặn lan sự kiện.
-- [ ] `HandoffGrid`: tab cuộn ngang, đầu tab có kênh, số đơn, tổng cost, link CSV Export khi kênh CSV, ô tìm kiếm cho điện thoại. `OrderCard` giữ nguyên cho "Đã chuyển xưởng".
-- [ ] `page.tsx`: dưới `lg` ẩn cột danh sách ở `handoff`, `sent` và khi đang mở task.
+- [ ] `HandoffGrid`: tab cuộn ngang, đầu tab có kênh, số đơn, tổng cost, link CSV Export khi kênh CSV. `OrderCard` giữ nguyên cho "Đã chuyển xưởng".
 - [ ] `npx tsc --noEmit`, eslint các file đã sửa, commit.
 
 ### Task 4: Cảnh báo trong task
@@ -74,5 +73,5 @@
 
 ### Task 5: Kiểm tra thật
 
-- [ ] Chạy local trên bản sao DB prod. Kiểm tra 375px và desktop: card bằng nhau, không tràn ngang, bấm card mở task, bấm nút không mở task.
+- [ ] Chạy local trên bản sao DB prod. Kiểm tra desktop: card bằng nhau, không tràn ngang, bấm card mở task, bấm nút không mở task.
 - [ ] Deploy chỉ khi chủ shop đồng ý.

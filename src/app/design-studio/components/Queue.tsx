@@ -58,9 +58,7 @@ function QueueRow({ t, selected, onSelect }: { t: TaskRow; selected: boolean; on
   )
 }
 
-export default function Queue({ tasks, sel, onSelect, q, onQ, loading, error, retrying, emptyText, onClearFilters, filter, onFilter, counts, mine, onMine, phoneHidden = false }: {
-  /** Under the lg breakpoint the list gives its width to the screen beside it. */
-  phoneHidden?: boolean
+export default function Queue({ tasks, sel, onSelect, q, onQ, loading, error, retrying, emptyText, onClearFilters, filter, onFilter, counts, mine, onMine }: {
   tasks: TaskRow[]; sel: string | null; onSelect: (key: string) => void
   q: string; onQ: (v: string) => void; loading: boolean; error: string; retrying: boolean
   emptyText: string; onClearFilters: (() => void) | null
@@ -71,7 +69,7 @@ export default function Queue({ tasks, sel, onSelect, q, onQ, loading, error, re
   const groups = (q.trim() ? SEARCH_SECTIONS : SECTIONS).map(s => ({ ...s, rows: tasks.filter(t => s.statuses.includes(t.status)).sort(byDue) })).filter(g => g.rows.length > 0)
   const chipCls = (on: boolean) => `inline-flex items-center gap-xs h-7 px-sm rounded-full border text-label-sm ${on ? 'bg-secondary/10 text-secondary border-transparent font-semibold' : 'bg-surface-container-lowest border-outline-variant text-on-surface-variant'}`
   return (
-    <aside aria-label="Hàng đợi task" className={`${phoneHidden ? 'hidden lg:flex' : 'flex'} ${card} sticky top-md max-h-[calc(100vh-2rem)] overflow-auto flex-col pb-md`}>
+    <aside aria-label="Hàng đợi task" className={`${card} sticky top-md max-h-[calc(100vh-2rem)] overflow-auto flex flex-col pb-md`}>
       <div className="p-sm flex flex-col gap-sm sticky top-0 bg-surface-container-lowest z-10 border-b border-outline-variant/20">
         <div className="flex items-center gap-sm">
           <label className="flex-1 min-w-0 flex items-center gap-xs h-9 px-sm rounded-lg bg-surface-container-low text-on-surface-variant">

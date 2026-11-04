@@ -280,12 +280,12 @@ function DesignTasks() {
             <Icon name="info" className="text-[18px] text-on-surface-variant" />
           </span>
         </div>
-        <div role="tablist" aria-label="Chế độ" className="flex items-center gap-xs max-w-full overflow-x-auto [scrollbar-width:none]">
+        <div role="tablist" aria-label="Chế độ" className="flex items-center gap-xs">
           {tabs.map(t => {
             const on = mode === t.mode
             return (
               <button key={t.mode} type="button" role="tab" aria-selected={on} title={t.tip} onClick={() => setMode(t.mode)}
-                className={`shrink-0 whitespace-nowrap inline-flex items-center gap-xs h-9 px-md rounded-lg text-body-sm font-semibold ${on ? 'bg-on-surface text-surface' : 'text-on-surface-variant hover:bg-surface-container-low'}`}>
+                className={`inline-flex items-center gap-xs h-9 px-md rounded-lg text-body-sm font-semibold ${on ? 'bg-on-surface text-surface' : 'text-on-surface-variant hover:bg-surface-container-low'}`}>
                 {t.label}
                 {t.count !== undefined && (
                   <span className={`inline-flex items-center h-5 px-[7px] rounded-full text-[11px] ${on ? 'bg-surface/20' : t.hot ? 'bg-amber-100 text-amber-900' : 'bg-surface-container text-on-surface-variant'}`}>{t.count}</span>
@@ -302,8 +302,8 @@ function DesignTasks() {
       {syncError && <div className="mb-md"><ErrorBanner msg={syncError} onClose={() => setSyncError('')} /></div>}
       <DriveHealthBanner version={driveVersion} />
 
-      <div className="grid grid-cols-1 lg:grid-cols-[290px_minmax(0,1fr)] gap-md items-start">
-        <Queue phoneHidden={mode === 'handoff' || mode === 'sent' || (mode === 'work' && !!sel)} tasks={mode === 'review' ? reviewTasks : visible} sel={mode === 'work' ? sel : mode === 'review' ? reviewSel : null} onSelect={mode === 'review' ? setReviewSel : selectTask}
+      <div className="grid grid-cols-[290px_minmax(0,1fr)] gap-md items-start">
+        <Queue tasks={mode === 'review' ? reviewTasks : visible} sel={mode === 'work' ? sel : mode === 'review' ? reviewSel : null} onSelect={mode === 'review' ? setReviewSel : selectTask}
           q={q} onQ={setQ} loading={listLoading} error={listError} retrying={retrying}
           emptyText={filtered ? emptyText : 'Không có task'} onClearFilters={filtered ? clearFilters : null}
           filter={filter} onFilter={setFilter} counts={counts} mine={mine} onMine={setMine} />
@@ -320,7 +320,7 @@ function DesignTasks() {
             )}
           </div>
         ) : mode === 'handoff' ? (
-          <HandoffGrid q={debouncedQ} rawQ={q} onQ={setQ} version={reviewVersion} onOpenTask={selectTask} onChanged={reload} />
+          <HandoffGrid q={debouncedQ} version={reviewVersion} onOpenTask={selectTask} onChanged={reload} />
         ) : mode === 'sent' ? (
           <SentGrid q={debouncedQ} version={reviewVersion} onOpenTask={selectTask} onChanged={reload} />
         ) : (
@@ -352,7 +352,7 @@ export default function DesignTasksPage() {
   return (
     <div className="flex min-h-screen bg-surface">
       <Sidebar />
-      <main className="lg:ml-[280px] flex-1 px-sm pb-sm pt-[64px] lg:p-xl min-w-0">
+      <main className="ml-[280px] flex-1 p-xl min-w-0">
         <ToastProvider>
           <Suspense fallback={<div className="text-body-sm text-on-surface-variant">Đang tải…</div>}>
             <DesignTasks />
