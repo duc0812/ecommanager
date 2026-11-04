@@ -206,7 +206,7 @@ export default function TaskHeader({ detail, qa, holdCount, refreshing, onRefres
             {detail.handoff?.push && <Pill tone="warn" icon="local_shipping" size="md">{pushChipLabel(detail.handoff.push)}</Pill>}
             {detail.handoff?.handedOff && (
               <Pill tone="ok" icon={detail.handoff.handedOff.mode === 'API' ? 'cloud_done' : 'inventory'} size="md">
-                {detail.handoff.handedOff.mode === 'API' ? 'Đã chuyển supplier qua API' : 'Đã lưu chờ xuất CSV'}
+                {detail.handoff.handedOff.mode === 'API' ? 'Đã chuyển supplier qua API' : detail.handoff.handedOff.mode === 'SHEET' ? 'Đã ghi vào sheet xưởng' : 'Đã lưu chờ xuất CSV'}
               </Pill>
             )}
             {task.status === 'DONE' && detail.handoff && !detail.handoff.handedOff && (

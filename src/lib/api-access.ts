@@ -45,6 +45,7 @@ export const API_ACCESS_RULES: ApiRule[] = [
   { prefix: '/api/fulfillment/merchize', methods: WRITE, access: 'ADMIN' },
   { prefix: '/api/fulfillment/design-', access: ['fulfillment_design_library', 'fulfillment_orders'] },
   { prefix: '/api/design-studio/worker/', access: 'PUBLIC' },
+  { prefix: '/api/design-studio/handoff/sheet', access: { adminOr: ['fulfillment_export'] } },
   { prefix: '/api/design-studio/orders/', suffix: '/handoff', methods: WRITE, access: { adminOr: ['fulfillment_export'] } },
   { prefix: '/api/design-studio', access: ['design_tasks', 'fulfillment_design_library', 'fulfillment_orders'] },
   { prefix: '/api/fulfillment/export', access: ['fulfillment_export'] },

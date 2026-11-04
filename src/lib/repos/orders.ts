@@ -4,6 +4,7 @@ import { WARNING_TYPES, type WarningType } from '@/lib/order-warnings'
 import { isLineExported, legacyMarks, supplierLines } from '@/lib/line-export'
 
 export type OrderFilter = {
+  ids?: string[]
   projectId?: string
   dateFrom?: Date
   dateTo?: Date
@@ -23,6 +24,7 @@ function buildWhere(f: OrderFilter) {
   if (f.projectId) where.projectId = f.projectId
   if (f.supplierId) where.defaultSupplierId = f.supplierId
   if (f.lineSupplierId) where.lines = { some: { resolvedSupplierId: f.lineSupplierId } }
+  if (f.ids) where.id = { in: f.ids }
   if (f.warningType) {
     and.push(warningTypeWhere(f.warningType))
   } else if (f.pipelineStatus) {
@@ -318,7 +320,7 @@ export type MarkExportedResult = {
  */
 export async function markOrdersExported(
   orderIds: string[], supplierId: string, exportedAt: Date = new Date(),
-  handoff?: { mode: 'API' | 'CSV'; byId: string | null },
+  handoff?: { mode: 'API' | 'CSV' | 'SHEET'; byId: string | null },
   opts: { lineIds?: string[] } = {},
 ): Promise<MarkExportedResult> {
   const result: MarkExportedResult = { count: 0, lines: 0, completed: [] }

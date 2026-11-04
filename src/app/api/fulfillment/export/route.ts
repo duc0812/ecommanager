@@ -2,17 +2,13 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { getTemplateById, parseTemplateColumns } from '@/lib/repos/templates'
 import { listOrdersWithLines, markOrdersExported } from '@/lib/repos/orders'
-import { renderCsv, type CsvTemplate as RenderTemplate, type OrderForCsv } from '@/lib/csv-template'
+import { renderCsv, type CsvTemplate as RenderTemplate } from '@/lib/csv-template'
 import { isNonProductLine, lineKeysOf } from '@/lib/order-lines'
-import { effectiveBaseCost } from '@/lib/order-profit'
-import { pickExportDesignLink } from '@/lib/export-design'
-import { DESIGN_AREA_SOURCE_PREFIX, MOCKUP_LINK_SOURCE } from '@/lib/csv-template'
-import { exportLinkErrorMessage, resolveExportDesignLinks } from '@/lib/export-design-links'
+import { buildOrdersForCsv } from '@/lib/export-orders'
+import { enabledChannelFor, getSheetChannels } from '@/lib/sheet-channel'
+import { exportLinkErrorMessage } from '@/lib/export-design-links'
 import { exportProgress, exportProgressLabel, isLineExported, mixedSupplierNote } from '@/lib/line-export'
 import { isMerchizeSupplier } from '@/lib/merchize'
-
-const LINE_DESIGN_SOURCES = ['line.designDriveLink', 'line.designLinks']
-const ORDER_DESIGN_SOURCE = 'order.designDriveLink'
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => null)
@@ -25,6 +21,10 @@ export async function POST(req: NextRequest) {
   // Owner 11/04/2026: Merchize orders are managed by API only; a CSV here would mark lines Merchize never received.
   if (isMerchizeSupplier(tmpl.supplier)) {
     return NextResponse.json({ error: 'Merchize không còn xuất CSV — gửi đơn qua API ở Duyệt sản xuất', code: 'MERCHIZE_API_ONLY' }, { status: 409 })
+  }
+  // Two routes to one supplier make duplicate orders: with its sheet channel on, the hub is the only way in.
+  if (enabledChannelFor(await getSheetChannels(), tmpl.supplier)) {
+    return NextResponse.json({ error: `${tmpl.supplier.name} đang ghi đơn thẳng vào sheet — gửi ở Duyệt sản xuất, không xuất CSV`, code: 'SHEET_ONLY' }, { status: 409 })
   }
 
   const reExport = body.reExport === true
@@ -55,126 +55,18 @@ export async function POST(req: NextRequest) {
   }
   const orders = handedOff.filter(o => o.lines.some(l => includedIds.has(l.id)))
 
-  const supplierSkus = Array.from(new Set(
-    orders.flatMap(o => o.lines.map(l => l.resolvedSupplierSku).filter((sku): sku is string => Boolean(sku))),
-  ))
-  const supplierProducts = supplierSkus.length > 0
-    ? await prisma.supplierProduct.findMany({
-      where: { supplierId: tmpl.supplierId, sku: { in: supplierSkus } },
-      select: {
-        sku: true,
-        baseSku: true,
-        productType: true,
-        productName: true,
-        variant1Name: true,
-        variant1Value: true,
-        variant2Name: true,
-        variant2Value: true,
-      },
-    })
-    : []
-  const supplierProductBySku = new Map(supplierProducts.map(p => [p.sku, p]))
-  const shopifySkus = Array.from(new Set(
-    orders.flatMap(o => o.lines.map(l => l.sku).filter((sku): sku is string => Boolean(sku))),
-  ))
-  const skuDesigns = shopifySkus.length > 0
-    ? await prisma.skuDesign.findMany({
-      where: { sku: { in: shopifySkus } },
-      select: { sku: true, driveLink: true },
-    })
-    : []
-  const skuDesignBySku = new Map(skuDesigns.map(s => [s.sku, s]))
-
   const exportableLinesOf = (o: (typeof orders)[number]) => supplierLinesOf(o).filter(l => includedIds.has(l.id))
   const templateColumns = parseTemplateColumns(tmpl.columns)
   const perOrder = tmpl.rowMode === 'PER_ORDER'
-  const wantsOrderLink = templateColumns.some(c => c.source === ORDER_DESIGN_SOURCE)
-  const wantsJoinedLinks = !perOrder && templateColumns.some(c => LINE_DESIGN_SOURCES.includes(c.source))
-  const wantsAreaLinks = !perOrder && templateColumns.some(c => c.source.startsWith(DESIGN_AREA_SOURCE_PREFIX))
-  const wantsMockupLinks = !perOrder && templateColumns.some(c => c.source === MOCKUP_LINK_SOURCE)
-  const wantsLineLinks = wantsJoinedLinks || wantsAreaLinks
-  // Links are resolved only for the columns the template prints, so a template without a design column never fails on one.
-  const designLinks = await resolveExportDesignLinks(
-    wantsOrderLink || wantsLineLinks || wantsMockupLinks
-      ? orders.flatMap(o => {
-        const lines = exportableLinesOf(o)
-        if (lines.length === 0) return []
-        // The order-level link is printed by its own column, or as the fallback of a line that has no link.
-        const orderLinkUsed = wantsOrderLink || (wantsLineLinks && lines.some(l => !l.designDriveLink))
-        return [{
-          id: o.id, storeId: o.storeId, shopifyOrderNumber: o.shopifyOrderNumber,
-          designDriveLink: orderLinkUsed ? o.designDriveLink : null, lines: wantsLineLinks || wantsMockupLinks ? lines : [],
-        }]
-      })
-      : [],
-    { design: wantsJoinedLinks, areas: wantsAreaLinks, mockup: wantsMockupLinks },
-  )
-  if (designLinks.problems.length > 0) {
+  const built = await buildOrdersForCsv({ orders, supplierId: tmpl.supplierId, columns: templateColumns, perOrder, linesOf: exportableLinesOf })
+  if (built.problems.length > 0) {
     return NextResponse.json({
-      error: exportLinkErrorMessage(designLinks.problems),
-      orders: Array.from(new Set(designLinks.problems.map(p => p.orderNumber))),
-      problems: designLinks.problems,
+      error: exportLinkErrorMessage(built.problems),
+      orders: Array.from(new Set(built.problems.map(p => p.orderNumber))),
+      problems: built.problems,
     }, { status: 400 })
   }
-
-  const ordersForCsv: OrderForCsv[] = orders
-    .map(o => {
-      const lineKeys = lineKeysOf(o.shopifyOrderNumber, o.lines)
-      const exportableLines = exportableLinesOf(o)
-      return {
-        shopifyOrderNumber: o.shopifyOrderNumber,
-        customerName: o.customerName,
-        customerEmail: o.customerEmail,
-        shippingCountry: o.shippingCountry,
-        shippingState: o.shippingState,
-        shippingName: o.shippingName,
-        shippingAddress1: o.shippingAddress1,
-        shippingAddress2: o.shippingAddress2,
-        shippingCity: o.shippingCity,
-        shippingZip: o.shippingZip,
-        shippingPhone: o.shippingPhone,
-        financialStatus: o.financialStatus,
-        fulfillmentStatus: o.fulfillmentStatus,
-        designDriveLink: designLinks.translate(o.designDriveLink),
-        trelloCardUrl: o.trelloCardUrl,
-        placedAt: o.placedAt,
-        lines: exportableLines.map(l => {
-          const supplierProduct = l.resolvedSupplierSku ? supplierProductBySku.get(l.resolvedSupplierSku) : null
-          const studio = designLinks.byLineId.get(l.id)
-          const designDriveLink = studio?.joined ?? designLinks.translate(pickExportDesignLink({
-            lineDesignLink: l.designDriveLink,
-            orderDesignLink: o.designDriveLink,
-            orderType: o.orderType,
-            sku: l.sku,
-            skuDesignLink: l.sku ? skuDesignBySku.get(l.sku)?.driveLink ?? null : null,
-          }))
-          return {
-            lineKey: lineKeys.get(l.shopifyLineId) ?? '',
-            sku: l.sku,
-            supplierSku: l.resolvedSupplierSku,
-            supplierBaseSku: supplierProduct?.baseSku ?? null,
-            qty: l.qty,
-            productTitle: l.productTitle,
-            variantTitle: l.variantTitle,
-            unitPrice: l.unitPrice,
-            supplierProductType: supplierProduct?.productType ?? null,
-            supplierProductName: supplierProduct?.productName ?? null,
-            supplierVariant1Name: supplierProduct?.variant1Name ?? null,
-            supplierVariant1Value: supplierProduct?.variant1Value ?? null,
-            supplierVariant2Name: supplierProduct?.variant2Name ?? null,
-            supplierVariant2Value: supplierProduct?.variant2Value ?? null,
-            previewCdnUrl: l.previewCdnUrl,
-            designDriveLink,
-            designLinks: designDriveLink,
-            designAreaLinks: studio?.byArea ?? null,
-            mockupLink: designLinks.mockupByLineId.get(l.id) ?? l.previewCdnUrl ?? l.imageUrl ?? null,
-            crogsPrice: effectiveBaseCost(l),
-            crogsTotal: effectiveBaseCost(l) == null ? null : effectiveBaseCost(l)! * l.qty,
-          }
-        }),
-      }
-    })
-    .filter(o => o.lines.length > 0)
+  const ordersForCsv = built.ordersForCsv
 
   const renderTmpl: RenderTemplate = {
     rowMode: perOrder ? 'PER_ORDER' : 'PER_LINE',

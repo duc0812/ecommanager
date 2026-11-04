@@ -9,10 +9,11 @@ import PrintFileThumb from './PrintFileThumb'
 import ExternalDesignPreview from './ExternalDesignPreview'
 import HandoffButton from './HandoffButton'
 import HubCard from './HubCard'
+import SheetPushDialog from './SheetPushDialog'
 import { PreSendChecks } from './PreSendChecks'
-import { ErrorBanner, ExtLink, Icon, Pill, btn, card } from './ui'
+import { ErrorBanner, ExtLink, Icon, Pill, btn, btnPrimary, card } from './ui'
 
-type HandoffResponse = { tabs: HubTab[]; selected: string | null; pending: HandoffCard[]; pendingCount: number; me: Me }
+type HandoffResponse = { tabs: HubTab[]; selected: string | null; pending: HandoffCard[]; pendingCount: number; sheetsConnected: boolean; me: Me }
 
 const TAB_KEY = 'design-studio.hub-tab'
 
@@ -144,6 +145,7 @@ export default function HandoffGrid({ q, version, onOpenTask, onChanged }: {
   const [error, setError] = useState('')
   const [actionError, setActionError] = useState('')
   const [info, setInfo] = useState('')
+  const [sheetDialog, setSheetDialog] = useState<{ orderIds?: string[] } | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -213,6 +215,12 @@ export default function HandoffGrid({ q, version, onOpenTask, onChanged }: {
           {warned > 0 && <span className="text-error font-semibold">{warned} đơn có cảnh báo</span>}
           {current.orderCount > pending.length && !loading && <span>đang hiện {pending.length} đơn cũ nhất</span>}
           {current.channel === 'CSV' && <a href="/fulfillment/export" className="ml-auto text-secondary font-semibold hover:underline">Mở CSV Export</a>}
+          {current.channel === 'SHEET' && !data?.sheetsConnected && <a href="/api/auth/google?target=sheets" className="ml-auto text-secondary font-semibold hover:underline">Kết nối Google Sheets</a>}
+          {current.channel === 'SHEET' && data?.sheetsConnected && (
+            <button type="button" className={`${btnPrimary} ml-auto`} disabled={!me?.canHandoff || pending.length === warned} onClick={() => setSheetDialog({})}>
+              <Icon name="table_view" className="text-[16px]" />Sản xuất tất cả ({pending.length - warned})
+            </button>
+          )}
         </div>
       )}
       {info && <span role="status" className="text-label-sm text-on-surface-variant">{info}</span>}
@@ -225,8 +233,12 @@ export default function HandoffGrid({ q, version, onOpenTask, onChanged }: {
       )}
       {selected && (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,340px),1fr))] gap-md">
-          {pending.map(c => <HubCard key={c.order.id} c={c} tabId={selected} me={me} onOpenTask={onOpenTask} onChanged={changed} onError={fail} />)}
+          {pending.map(c => <HubCard key={c.order.id} c={c} tabId={selected} sheet={current?.channel === 'SHEET' && !!data?.sheetsConnected} me={me} onOpenTask={onOpenTask}
+            onSheet={id => setSheetDialog({ orderIds: [id] })} onChanged={changed} onError={fail} />)}
         </div>
+      )}
+      {sheetDialog && selected && (
+        <SheetPushDialog supplierId={selected} orderIds={sheetDialog.orderIds} onClose={() => setSheetDialog(null)} onDone={() => { void load(); onChanged() }} />
       )}
     </section>
   )

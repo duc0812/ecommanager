@@ -14,13 +14,14 @@ type SentResponse = {
 }
 type Tone = 'ok' | 'warn' | 'bad' | 'idle' | 'brand'
 
-const STAGE_ORDER: SentStage[] = ['API_SENDING', 'API_COOLING', 'CSV_WAITING', 'API_SENT', 'CSV_EXPORTED', 'TRACKING', 'FULFILLED']
+const STAGE_ORDER: SentStage[] = ['API_SENDING', 'API_COOLING', 'CSV_WAITING', 'API_SENT', 'SHEET_SENT', 'CSV_EXPORTED', 'TRACKING', 'FULFILLED']
 const STAGE_LOOK: Record<SentStage, { tone: Tone; icon: string }> = {
   API_SENDING: { tone: 'bad', icon: 'sync_problem' },
   API_COOLING: { tone: 'warn', icon: 'timer' },
   CSV_WAITING: { tone: 'warn', icon: 'inventory' },
   API_SENT: { tone: 'brand', icon: 'precision_manufacturing' },
   CSV_EXPORTED: { tone: 'brand', icon: 'description' },
+  SHEET_SENT: { tone: 'brand', icon: 'table_view' },
   TRACKING: { tone: 'ok', icon: 'local_shipping' },
   FULFILLED: { tone: 'ok', icon: 'task_alt' },
 }

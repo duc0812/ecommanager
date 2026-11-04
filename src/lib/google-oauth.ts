@@ -9,6 +9,9 @@ export const GOOGLE_KEYS = {
   needsReconnect: 'google.drive.needsReconnect',
   quota: 'google.drive.quota',
   testFileId: 'google.drive.testFileId',
+  sheetsRefreshToken: 'google.sheets.refreshToken',
+  sheetsEmail: 'google.sheets.email',
+  sheetsNeedsReconnect: 'google.sheets.needsReconnect',
 } as const
 
 export const GOOGLE_CONNECTION_KEYS: string[] = [
@@ -19,6 +22,9 @@ export const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
 export const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
 export const GOOGLE_USERINFO_URL = 'https://www.googleapis.com/oauth2/v2/userinfo'
 export const GOOGLE_SCOPES = 'openid email https://www.googleapis.com/auth/drive.file'
+export const SHEETS_SCOPE = 'https://www.googleapis.com/auth/spreadsheets'
+/** A state of this prefix came from "Kết nối Google Sheets": the callback stores it apart from the Drive connection. */
+export const SHEETS_STATE_PREFIX = 'sheets.'
 export const DRIVE_SCOPES = ['https://www.googleapis.com/auth/drive.file', 'https://www.googleapis.com/auth/drive']
 
 const STATE_TTL_MS = 10 * 60 * 1000
@@ -99,14 +105,15 @@ export function consumeGoogleOAuthState(state: string): boolean {
 }
 
 export function buildGoogleConsentUrl(clientId: string, state: string): string {
+  const sheets = state.startsWith(SHEETS_STATE_PREFIX)
   const params = new URLSearchParams({
     client_id: clientId,
     redirect_uri: googleRedirectUri(),
     response_type: 'code',
-    scope: GOOGLE_SCOPES,
+    scope: sheets ? `openid email ${SHEETS_SCOPE}` : GOOGLE_SCOPES,
     access_type: 'offline',
     prompt: 'consent',
-    include_granted_scopes: 'true',
+    include_granted_scopes: sheets ? 'false' : 'true',
     state,
   })
   return `${GOOGLE_AUTH_URL}?${params}`

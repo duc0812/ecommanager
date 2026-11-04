@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { deleteSettings, saveSetting } from '@/lib/token-store'
 import {
-  DRIVE_SCOPES, GOOGLE_KEYS, GoogleOAuthError, consumeGoogleOAuthState, exchangeGoogleCode, fetchGoogleEmail,
+  DRIVE_SCOPES, GOOGLE_KEYS, GoogleOAuthError, SHEETS_SCOPE, SHEETS_STATE_PREFIX, consumeGoogleOAuthState, exchangeGoogleCode, fetchGoogleEmail,
   getGoogleConfig, googleAppUrl,
 } from '@/lib/google-oauth'
+import { saveSheetsConnection } from '@/lib/google-sheets'
 import { ROOT_FOLDER_NAME, ensureFolder, primeAccessToken, refreshDriveQuota, resetDriveCache } from '@/lib/google-drive'
 
 export const dynamic = 'force-dynamic'
@@ -33,6 +34,13 @@ export async function GET(req: NextRequest) {
     const reason = err instanceof GoogleOAuthError ? err.code : 'token_exchange'
     console.error('[google oauth] token exchange failed:', reason)
     return back('error', reason)
+  }
+
+  if ((searchParams.get('state') ?? '').startsWith(SHEETS_STATE_PREFIX)) {
+    if (!String(tokens.scope ?? '').split(/\s+/).includes(SHEETS_SCOPE)) return back('error', 'no_sheets_scope')
+    if (!tokens.refresh_token) return back('error', 'no_refresh_token')
+    await saveSheetsConnection(tokens.refresh_token, await fetchGoogleEmail(tokens.access_token))
+    return NextResponse.redirect(`${googleAppUrl()}/design-studio`)
   }
 
   // Google's consent screen lets the user untick the Drive permission; without it nothing can be uploaded.

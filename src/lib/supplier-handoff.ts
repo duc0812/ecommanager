@@ -11,6 +11,7 @@ import { isMerchizeSupplier, merchizeCredentials } from '@/lib/merchize'
 import { activePushByOrder, logHandoffEvent } from '@/lib/repos/push-export'
 import { COOLING_OFF_HOURS, UNMAPPED_TAB, type HandoffCard, type HandoffLine, type HandoffSent, type HandoffState, type HubChannel, type HubTab, type SentStage } from '@/lib/handoff-shared'
 import { effectiveBaseCost } from '@/lib/order-profit'
+import { enabledChannelFor, getSheetChannels } from '@/lib/sheet-channel'
 import { loadLineResolver, recalculateMissingOrderLineCosts } from '@/lib/repos/order-costs'
 import { printFileFit } from '@/lib/print-file-fit'
 import { currentFiles, sameLabel } from '@/lib/task-files'
@@ -70,11 +71,13 @@ const STATE_INCLUDE = {
 export async function handoffStates(orders: StateOrder[]): Promise<Map<string, HandoffState>> {
   const out = new Map<string, HandoffState>()
   if (orders.length === 0) return out
-  const [suppliers, settings, pushes] = await Promise.all([
+  const [suppliers, settings, pushes, channels] = await Promise.all([
     prisma.supplier.findMany({ select: { id: true, code: true, apiType: true, isActive: true } }),
     getPgprintsSettings(),
     activePushByOrder(orders.map(o => o.id)),
+    getSheetChannels(),
   ])
+  const sheetSupplierIds = new Set(suppliers.filter(s => enabledChannelFor(channels, s)).map(s => s.id))
   const pgHits = suppliers.filter(isPgprintsSupplier)
   const pg = pgHits.find(s => s.isActive) ?? pgHits[0] ?? null
   const mzHits = suppliers.filter(isMerchizeSupplier)
@@ -97,6 +100,7 @@ export async function handoffStates(orders: StateOrder[]): Promise<Map<string, H
     const allPg = !!pg && productLines.length > 0 && productLines.every(l => l.resolvedSupplierId === pg.id)
     const mzLines = mz ? productLines.filter(l => l.resolvedSupplierId === mz.id) : []
     const merchizeOpen = mzLines.some(l => !l.exportedAt)
+    const sheetOpen = productLines.some(l => !!l.resolvedSupplierId && sheetSupplierIds.has(l.resolvedSupplierId) && !l.exportedAt)
     // Merchize has no CSV route (owner 11/04/2026): its lines go by API, and only another supplier's lines can wait for an export.
     const csvRemainder = mzLines.length > 0 && productLines.some(l => l.resolvedSupplierId !== mz?.id && !l.exportedAt)
     const missingApiSku = allPg ? productLines.filter(l => !l.resolvedSupplierSku || !apiSkuBySku.get(l.resolvedSupplierSku)).map(l => l.resolvedSupplierSku ?? '—') : []
@@ -112,7 +116,7 @@ export async function handoffStates(orders: StateOrder[]): Promise<Map<string, H
     const closed = CLOSED_FINANCIAL.includes((o.financialStatus ?? '').toUpperCase()) || (o.fulfillmentStatus ?? '').toUpperCase() === 'FULFILLED'
     const handedOff = o.supplierHandoffAt
       ? {
-          at: o.supplierHandoffAt.toISOString(), mode: o.supplierHandoffMode === 'API' ? 'API' as const : 'CSV' as const,
+          at: o.supplierHandoffAt.toISOString(), mode: o.supplierHandoffMode === 'API' ? 'API' as const : o.supplierHandoffMode === 'SHEET' ? 'SHEET' as const : 'CSV' as const,
           byName: o.supplierHandoffById ? (nameById.get(o.supplierHandoffById) ?? null) : null,
         }
       : null
@@ -126,6 +130,7 @@ export async function handoffStates(orders: StateOrder[]): Promise<Map<string, H
       apiKind: mzLines.length > 0 ? 'merchize' : 'pgprints',
       merchizeOpen,
       csvRemainder,
+      sheetOpen,
       apiNote,
       handedOff,
       canUndo: !!handedOff && handedOff.mode === 'CSV' && !AFTER_EXPORT.includes(o.pipelineStatus),
@@ -255,6 +260,17 @@ export async function listHandoffCards(f: { q?: string } = {}): Promise<{ pendin
   return { pending: q ? pending.filter(c => matches(c, q)) : pending }
 }
 
+/** The waiting cards of one supplier for a send: oldest first, MAX_CARDS at a time. */
+export async function pendingCardsForSupplier(supplierId: string, orderIds?: string[]): Promise<HandoffCard[]> {
+  const where = {
+    ...pendingHandoffWhere(),
+    ...(orderIds ? { id: { in: orderIds } } : {}),
+    lines: { some: { resolvedSupplierId: supplierId, exportedAt: null } },
+  }
+  const cards = await buildCards(where, { placedAt: 'asc' }, { checks: true, withUnmapped: true })
+  return cards.filter(c => c.lines.some(l => l.line.supplier?.id === supplierId && !l.exportedTo))
+}
+
 /** One order's card with today's checks, also when a line has no supplier; the task screen shows its warnings. */
 export async function handoffCardFor(orderId: string): Promise<HandoffCard | null> {
   const cards = await buildCards({ id: orderId }, { placedAt: 'asc' }, { checks: true, withUnmapped: true })
@@ -292,13 +308,14 @@ export async function listHandoffTabs(f: { q?: string } = {}): Promise<HubTab[]>
     }
   }
   if (tally.size === 0) return []
-  const [suppliers, settings] = await Promise.all([
+  const [suppliers, settings, channels] = await Promise.all([
     prisma.supplier.findMany({ where: { id: { in: Array.from(tally.keys()) } }, select: { id: true, name: true, code: true, apiType: true } }),
     getPgprintsSettings(),
+    getSheetChannels(),
   ])
   const byId = new Map(suppliers.map(s => [s.id, s]))
   const channelOf = (s: { code: string; apiType: string | null }): HubChannel =>
-    isMerchizeSupplier(s) || (isPgprintsSupplier(s) && !!credentialsOf(settings)) ? 'API' : 'CSV'
+    enabledChannelFor(channels, s) ? 'SHEET' : isMerchizeSupplier(s) || (isPgprintsSupplier(s) && !!credentialsOf(settings)) ? 'API' : 'CSV'
   const tabs = Array.from(tally.entries()).map(([id, t]): HubTab => {
     const s = byId.get(id)
     return { id, name: s?.name ?? 'Chưa map xưởng', channel: s ? channelOf(s) : null, orderCount: t.orders.size, baseCostTotal: t.cost }
@@ -427,10 +444,11 @@ async function sentInfo(orders: SentOrder[], lineExports: { orderId: string; exp
     else if (tracking.length > 0) stage = 'TRACKING'
     else if (push) stage = push.status === 'SENDING' ? 'API_SENDING' : cooling ? 'API_COOLING' : 'API_SENT'
     else if (!exportedAt && o.supplierHandoffMode === 'CSV' && o.pipelineStatus === 'READY_TO_PRODUCTION') stage = 'CSV_WAITING'
+    else if (o.supplierHandoffMode === 'SHEET') stage = 'SHEET_SENT'
     else stage = 'CSV_EXPORTED'
     const byId = push?.pushedById ?? o.supplierHandoffById
     out.set(o.id, {
-      stage, via: push || o.supplierHandoffMode === 'API' ? 'API' : 'CSV',
+      stage, via: push || o.supplierHandoffMode === 'API' ? 'API' : o.supplierHandoffMode === 'SHEET' ? 'SHEET' : 'CSV',
       at: (push?.pushedAt ?? exportedAt ?? o.supplierHandoffAt)?.toISOString() ?? null,
       byName: byId ? (nameById.get(byId) ?? null) : null,
       code: push ? (push.supplierOrderCode ?? push.externalOrderId) : null,
@@ -487,6 +505,7 @@ export async function handoffOrderCsv(orderId: string, userId: string | null): P
   const state = await handoffStateFor(orderId)
   if (!state) throw new HandoffError('Không tìm thấy đơn', 404, 'NOT_FOUND')
   if (state.handedOff) throw new HandoffError(state.handedOff.mode === 'API' ? 'Đơn đã chuyển supplier qua API' : 'Đơn đã lưu chờ xuất CSV', 409, 'ALREADY_HANDED_OFF')
+  if (state.sheetOpen) throw new HandoffError('Đơn có dòng của xưởng ghi sheet — bấm Sản xuất ở tab xưởng đó trước, không lưu chờ xuất CSV', 409, 'SHEET_ONLY')
   if (state.merchizeOpen) throw new HandoffError('Dòng Merchize chỉ gửi qua API — gửi Merchize trước, không lưu chờ xuất CSV', 409, 'MERCHIZE_API_ONLY')
   if (state.push && !state.csvRemainder) {
     throw new HandoffError(`Đơn đã có lần gửi PGprints đang hiệu lực (${state.push.supplierOrderCode ?? state.push.externalOrderId}) — không lưu chờ xuất CSV`, 409, 'ACTIVE_PUSH')

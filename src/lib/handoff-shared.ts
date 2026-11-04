@@ -1,6 +1,6 @@
 import type { WorkspaceLine } from '@/lib/design-studio'
 
-export type HandoffMode = 'API' | 'CSV'
+export type HandoffMode = 'API' | 'CSV' | 'SHEET'
 export type SupplierApiKind = 'pgprints' | 'merchize'
 
 export type HandoffPush = { status: string; supplierOrderCode: string | null; externalOrderId: string }
@@ -16,6 +16,8 @@ export type HandoffState = {
   merchizeOpen?: boolean
   /** The order has Merchize lines, and another supplier's unsent lines that still wait for a CSV export. */
   csvRemainder?: boolean
+  /** A line of a supplier on the sheet channel has not been sent; it can only go through the hub. */
+  sheetOpen?: boolean
   apiNote: string | null
   handedOff: { at: string; mode: HandoffMode; byName: string | null } | null
   canUndo: boolean
@@ -39,7 +41,7 @@ export type HandoffLine = {
 /** PGprints holds a new order this long (set on the PGprints account) before it goes to production; it can be cancelled until then. */
 export const COOLING_OFF_HOURS = 2
 
-export type SentStage = 'CSV_WAITING' | 'CSV_EXPORTED' | 'API_SENDING' | 'API_COOLING' | 'API_SENT' | 'TRACKING' | 'FULFILLED'
+export type SentStage = 'CSV_WAITING' | 'CSV_EXPORTED' | 'SHEET_SENT' | 'API_SENDING' | 'API_COOLING' | 'API_SENT' | 'TRACKING' | 'FULFILLED'
 
 export type HandoffSent = {
   stage: SentStage; via: HandoffMode; at: string | null; byName: string | null
@@ -50,6 +52,7 @@ export type HandoffSent = {
 export const SENT_STAGE_LABELS: Record<SentStage, string> = {
   CSV_WAITING: 'Chờ xuất CSV',
   CSV_EXPORTED: 'Đã xuất CSV',
+  SHEET_SENT: 'Đã ghi vào sheet xưởng',
   API_SENDING: 'Đang gửi API — chưa rõ kết quả',
   API_COOLING: 'Đã gửi API — còn huỷ được',
   API_SENT: 'Đã gửi API — xưởng đang xử lý',
@@ -74,7 +77,7 @@ export type HandoffCard = {
 /** The "Duyệt sản xuất" tab of orders with a line no supplier is mapped to. */
 export const UNMAPPED_TAB = 'none'
 
-export type HubChannel = 'API' | 'CSV'
+export type HubChannel = 'API' | 'CSV' | 'SHEET'
 
 /** One supplier's tab: the orders with an unsent line of that supplier, and what those lines cost. */
 export type HubTab = { id: string; name: string; channel: HubChannel | null; orderCount: number; baseCostTotal: number }

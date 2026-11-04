@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import crypto from 'crypto'
 import { requireSuperadmin } from '@/lib/api-auth'
-import { buildGoogleConsentUrl, getGoogleConfig, googleAppUrl, saveGoogleOAuthState } from '@/lib/google-oauth'
+import { SHEETS_STATE_PREFIX, buildGoogleConsentUrl, getGoogleConfig, googleAppUrl, saveGoogleOAuthState } from '@/lib/google-oauth'
 
 export const dynamic = 'force-dynamic'
 
@@ -14,7 +14,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(`${googleAppUrl()}/setup?google=error&reason=not_configured`)
   }
 
-  const state = crypto.randomBytes(16).toString('hex')
+  const nonce = crypto.randomBytes(16).toString('hex')
+  const state = req.nextUrl.searchParams.get('target') === 'sheets' ? `${SHEETS_STATE_PREFIX}${nonce}` : nonce
   saveGoogleOAuthState(state)
   return NextResponse.redirect(buildGoogleConsentUrl(cfg.clientId, state))
 }

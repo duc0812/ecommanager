@@ -636,6 +636,28 @@ model Shipment {
   @@index([supplierId])
 }
 
+/** One line written to a supplier's sheet: the row, and the base cost at that moment for the supplier's bill. */
+model SupplierSheetWrite {
+  id            String   @id @default(cuid())
+  supplierId    String
+  orderId       String
+  orderLineId   String
+  lineKey       String
+  spreadsheetId String
+  tabName       String
+  status        String   @default("WRITING") // WRITING | WRITTEN | FAILED
+  rowRange      String?
+  baseCost      Float?
+  error         String?
+  createdById   String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([orderId])
+  @@index([orderLineId])
+  @@index([supplierId, createdAt])
+}
+
 model SupplierOrderPush {
   id                 String    @id @default(cuid())
   orderId            String

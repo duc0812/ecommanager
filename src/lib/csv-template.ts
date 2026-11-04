@@ -30,6 +30,11 @@ export type OrderLineForCsv = {
   mockupLink?: string | null
   crogsPrice?: number | null
   crogsTotal?: number | null
+  designNote?: string | null
+  /** Sheet channel: "#LIT123_1", so Auto Fulfill closes only this line. */
+  lineRef?: string | null
+  customName?: string | null
+  sizeLabel?: string | null
 }
 
 export const DESIGN_AREA_SOURCE_PREFIX = 'line.designArea:'
@@ -67,6 +72,9 @@ export type OrderForCsv = {
   trelloCardUrl?: string | null
   placedAt: Date
   lines: OrderLineForCsv[]
+  /** Sheet channel: the day the order is sent, and the order number without the #. */
+  sentDate?: string
+  orderCode?: string
 }
 
 function resolveSource(source: string, ctx: { order: OrderForCsv; line: OrderLineForCsv | null }): string {
@@ -103,6 +111,11 @@ function csvEscape(value: string): string {
     return `"${value.replace(/"/g, '""')}"`
   }
   return value
+}
+
+/** One line's values for these columns, in their order. */
+export function renderRow(columns: { source: string }[], order: OrderForCsv, line: OrderLineForCsv): string[] {
+  return columns.map(c => resolveSource(c.source, { order, line }))
 }
 
 export function renderCsv(template: CsvTemplate, orders: OrderForCsv[]): string {

@@ -1,0 +1,30 @@
+{
+  "supplierCode": "jomall",
+  "enabled": false,
+  "spreadsheetId": "1O4KzqYOdfS7CQ1v3k0oUqeGDTRJWxFBioPwO59F1ips",
+  "tabPattern": "ORDER {M}-{YYYY}",
+  "storeShop": "caramiaus-store.myshopify.com",
+  "columns": [
+    { "position": "A", "source": "order.sentDate" },
+    { "header": "Order Number", "source": "line.lineRef" },
+    { "header": "Order Vendor", "source": "order.orderCode" },
+    { "header": "Phone (Billing)", "source": "order.shippingPhone" },
+    { "header": "Name (Shipping)", "source": "order.shippingName" },
+    { "header": "Address 1&2 (Shipping)", "source": "order.shippingAddressFull" },
+    { "header": "City (Shipping)", "source": "order.shippingCity" },
+    { "header": "State Code (Shipping)", "source": "order.shippingState" },
+    { "header": "Postcode Code (Shipping)", "source": "order.shippingZip" },
+    { "header": "Country Code (Shipping)", "source": "order.shippingCountry" },
+    { "header": "SKU", "source": "line.supplierBaseSku" },
+    { "header": "SKU Custom", "source": "line.sku" },
+    { "header": "Item Name", "source": "line.itemName" },
+    { "header": "Type", "source": "line.supplierProductName" },
+    { "header": "Size", "source": "line.sizeLabel" },
+    { "header": "Color", "source": "line.supplierVariant2Value" },
+    { "header": "Custom Name", "source": "line.customName" },
+    { "header": "design note", "source": "line.designNote" },
+    { "header": "Quantity", "source": "line.qty" },
+    { "header": "mockup link", "source": "line.mockupLink" },
+    { "header": "Design link", "source": "line.designDriveLink" }
+  ]
+}
