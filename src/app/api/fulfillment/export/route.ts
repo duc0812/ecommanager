@@ -9,6 +9,7 @@ import { pickExportDesignLink } from '@/lib/export-design'
 import { DESIGN_AREA_SOURCE_PREFIX, MOCKUP_LINK_SOURCE } from '@/lib/csv-template'
 import { exportLinkErrorMessage, resolveExportDesignLinks } from '@/lib/export-design-links'
 import { exportProgress, exportProgressLabel, isLineExported, mixedSupplierNote } from '@/lib/line-export'
+import { isMerchizeSupplier } from '@/lib/merchize'
 
 const LINE_DESIGN_SOURCES = ['line.designDriveLink', 'line.designLinks']
 const ORDER_DESIGN_SOURCE = 'order.designDriveLink'
@@ -21,6 +22,10 @@ export async function POST(req: NextRequest) {
 
   const tmpl = await getTemplateById(body.templateId)
   if (!tmpl) return NextResponse.json({ error: 'Template not found' }, { status: 404 })
+  // Owner 11/04/2026: Merchize orders are managed by API only; a CSV here would mark lines Merchize never received.
+  if (isMerchizeSupplier(tmpl.supplier)) {
+    return NextResponse.json({ error: 'Merchize không còn xuất CSV — gửi đơn qua API ở Duyệt sản xuất', code: 'MERCHIZE_API_ONLY' }, { status: 409 })
+  }
 
   const reExport = body.reExport === true
   // Every order with a line of this supplier, also when another supplier holds most of it (defaultSupplierId).

@@ -44,6 +44,7 @@ export default function HandoffButton({ orderId, state, canHandoff, onChanged, o
     body = (
       <>
         <Pill tone="ok" icon="inventory">{HANDOFF_LABELS.savedCsv}</Pill>
+        {canHandoff && state.push && viewPush}
         {canHandoff && state.canUndo && (
           <button type="button" className={btn} disabled={busy} onClick={undo}>
             <Icon name="undo" className="text-[16px]" />{busy ? 'Đang hoàn tác…' : HANDOFF_LABELS.undo}
@@ -54,7 +55,16 @@ export default function HandoffButton({ orderId, state, canHandoff, onChanged, o
   } else if (state.handedOff) {
     body = <><Pill tone="ok" icon="cloud_done">Đã chuyển supplier qua API</Pill>{canHandoff && viewPush}</>
   } else if (state.push) {
-    body = canHandoff ? viewPush : <span className="text-label-sm text-on-surface-variant">Đơn đã gửi {supplierName}</span>
+    body = !canHandoff ? <span className="text-label-sm text-on-surface-variant">Đơn đã gửi {supplierName}</span> : (
+      <>
+        {viewPush}
+        {state.pending && state.csvRemainder && (
+          <button type="button" className={btnPrimary} disabled={busy} onClick={saveCsv} title="Lưu các dòng còn lại — sẵn sàng khi xuất CSV cho xưởng của chúng">
+            <Icon name="inventory" className="text-[16px]" />{busy ? 'Đang lưu…' : HANDOFF_LABELS.csv}
+          </button>
+        )}
+      </>
+    )
   } else if (!state.pending) {
     body = (
       <button type="button" className={btnPrimary} disabled title={state.blocked ?? undefined}>

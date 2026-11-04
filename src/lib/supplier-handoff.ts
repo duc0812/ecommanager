@@ -48,7 +48,7 @@ export async function countPendingHandoff(): Promise<number> {
 type StateOrder = {
   id: string; pipelineStatus: string; financialStatus: string; fulfillmentStatus: string | null; designReady: boolean
   supplierHandoffAt: Date | null; supplierHandoffMode: string | null; supplierHandoffById: string | null
-  lines: Array<{ sku: string | null; productTitle: string; shopifyProductType: string | null; resolvedSupplierId: string | null; resolvedSupplierSku: string | null }>
+  lines: Array<{ sku: string | null; productTitle: string; shopifyProductType: string | null; resolvedSupplierId: string | null; resolvedSupplierSku: string | null; exportedAt?: Date | null }>
   designTasks: Array<{ status: string }>
 }
 
@@ -62,7 +62,7 @@ function blockedReason(o: StateOrder, openTasks: number): string {
 }
 
 const STATE_INCLUDE = {
-  lines: { select: { sku: true, productTitle: true, shopifyProductType: true, resolvedSupplierId: true, resolvedSupplierSku: true } },
+  lines: { select: { sku: true, productTitle: true, shopifyProductType: true, resolvedSupplierId: true, resolvedSupplierSku: true, exportedAt: true } },
   designTasks: { select: { status: true } },
 } as const
 
@@ -94,12 +94,16 @@ export async function handoffStates(orders: StateOrder[]): Promise<Map<string, H
   for (const o of orders) {
     const productLines = o.lines.filter(l => !isNonProductLine(l))
     const allPg = !!pg && productLines.length > 0 && productLines.every(l => l.resolvedSupplierId === pg.id)
-    const allMz = !!mz && productLines.length > 0 && productLines.every(l => l.resolvedSupplierId === mz.id)
+    const mzLines = mz ? productLines.filter(l => l.resolvedSupplierId === mz.id) : []
+    const merchizeOpen = mzLines.some(l => !l.exportedAt)
+    // Merchize has no CSV route (owner 11/04/2026): its lines go by API, and only another supplier's lines can wait for an export.
+    const csvRemainder = mzLines.length > 0 && productLines.some(l => l.resolvedSupplierId !== mz?.id && !l.exportedAt)
     const missingApiSku = allPg ? productLines.filter(l => !l.resolvedSupplierSku || !apiSkuBySku.get(l.resolvedSupplierSku)).map(l => l.resolvedSupplierSku ?? '—') : []
     const pgApi = allPg && hasCredentials && missingApiSku.length === 0
-    const mzApi = allMz && hasMerchizeCredentials
+    const mzApi = mzLines.length > 0 && (merchizeOpen || !csvRemainder)
     const api = pgApi || mzApi
-    const apiNote = allMz ? (mzApi ? null : 'Server chưa có khoá API Merchize — lưu chờ xuất CSV')
+    const apiNote = mzApi ? (!hasMerchizeCredentials ? 'Server chưa có khoá API Merchize — chưa gửi được đơn này'
+        : csvRemainder ? 'Đơn nhiều xưởng — dòng Merchize gửi qua API, các dòng còn lại lưu chờ xuất CSV' : null)
       : !allPg || api ? null
       : !hasCredentials ? 'Xưởng PGprints chưa có Store ID / Secret key — lưu chờ xuất CSV'
       : `SKU xưởng ${Array.from(new Set(missingApiSku)).join(', ')} chưa có "SKU API" — lưu chờ xuất CSV`
@@ -118,7 +122,9 @@ export async function handoffStates(orders: StateOrder[]): Promise<Map<string, H
       blocked: pending || handedOff ? null : blockedReason(o, openTasks),
       mode: api ? 'API' : 'CSV',
       apiName: api ? (mzApi ? MERCHIZE_NAME : PGPRINTS_NAME) : null,
-      apiKind: allMz ? 'merchize' : 'pgprints',
+      apiKind: mzLines.length > 0 ? 'merchize' : 'pgprints',
+      merchizeOpen,
+      csvRemainder,
       apiNote,
       handedOff,
       canUndo: !!handedOff && handedOff.mode === 'CSV' && !AFTER_EXPORT.includes(o.pipelineStatus),
@@ -406,7 +412,8 @@ export async function handoffOrderCsv(orderId: string, userId: string | null): P
   const state = await handoffStateFor(orderId)
   if (!state) throw new HandoffError('Không tìm thấy đơn', 404, 'NOT_FOUND')
   if (state.handedOff) throw new HandoffError(state.handedOff.mode === 'API' ? 'Đơn đã chuyển supplier qua API' : 'Đơn đã lưu chờ xuất CSV', 409, 'ALREADY_HANDED_OFF')
-  if (state.push) {
+  if (state.merchizeOpen) throw new HandoffError('Dòng Merchize chỉ gửi qua API — gửi Merchize trước, không lưu chờ xuất CSV', 409, 'MERCHIZE_API_ONLY')
+  if (state.push && !state.csvRemainder) {
     throw new HandoffError(`Đơn đã có lần gửi PGprints đang hiệu lực (${state.push.supplierOrderCode ?? state.push.externalOrderId}) — không lưu chờ xuất CSV`, 409, 'ACTIVE_PUSH')
   }
   if (!state.pending) throw new HandoffError(state.blocked ?? 'Đơn chưa đủ điều kiện chuyển xưởng', 409, 'NOT_READY')

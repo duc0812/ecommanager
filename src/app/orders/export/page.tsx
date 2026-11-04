@@ -208,7 +208,8 @@ export default function ExportPage() {
       const list = Array.isArray(d) ? d : (d.projects ?? [])
       setProjects(list)
     })
-    fetch('/api/suppliers').then(r => r.json()).then(d => setSuppliers(d.suppliers ?? []))
+    // Merchize goes by API only (owner 11/04/2026), so it is not offered here; the export route refuses it as well.
+    fetch('/api/suppliers').then(r => r.json()).then(d => setSuppliers((d.suppliers ?? []).filter((s: Supplier) => s.code.trim().toLowerCase() !== 'merchize')))
   }, [])
 
   useEffect(() => {

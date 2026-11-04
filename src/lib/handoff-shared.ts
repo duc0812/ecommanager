@@ -10,8 +10,12 @@ export type HandoffState = {
   blocked: string | null
   mode: HandoffMode
   apiName: string | null
-  /** Which supplier's push window the order opens; every line of a Merchize order belongs to Merchize. */
+  /** Which supplier's push window the order opens; an order with a Merchize line opens Merchize's. */
   apiKind?: SupplierApiKind
+  /** A Merchize line has not been sent; it can only go by API. */
+  merchizeOpen?: boolean
+  /** The order has Merchize lines, and another supplier's unsent lines that still wait for a CSV export. */
+  csvRemainder?: boolean
   apiNote: string | null
   handedOff: { at: string; mode: HandoffMode; byName: string | null } | null
   canUndo: boolean

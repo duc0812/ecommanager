@@ -6,12 +6,13 @@ import os from 'os'
 import { prisma } from '@/lib/db'
 import { AUTH_COOKIE, signToken } from '@/lib/auth'
 import { DEFAULT_ROLE_PERMISSIONS } from '@/lib/roles'
-import { handoffStates } from '@/lib/supplier-handoff'
+import { handoffOrderCsv, handoffStateFor, handoffStates } from '@/lib/supplier-handoff'
 import { IMPORT_WAIT, methodFor } from '@/lib/repos/merchize-push'
 import { GET as getPreview } from '@/app/api/fulfillment/merchize/orders/[orderId]/preview/route'
 import { POST as postPush } from '@/app/api/fulfillment/merchize/orders/[orderId]/push/route'
 import { POST as postCancel } from '@/app/api/fulfillment/merchize/orders/[orderId]/cancel/route'
 import { POST as postRefresh } from '@/app/api/fulfillment/merchize/orders/[orderId]/refresh/route'
+import { POST as postExport } from '@/app/api/fulfillment/export/route'
 
 const SHOP = 'mzstore.myshopify.com'
 const PROJECT = 'proj_mz'
@@ -401,5 +402,66 @@ describe('handoff state', () => {
     })
     const state = (await handoffStates([order])).get(o.id)!
     expect(state).toMatchObject({ pending: true, mode: 'API', apiName: 'Merchize', apiKind: 'merchize', apiNote: null })
+  })
+
+  it('keeps the API window without credentials: Merchize has no CSV to fall back on', async () => {
+    const o = await makeOrder()
+    delete process.env.MERCHIZE_API_TOKEN
+    const state = await handoffStateFor(o.id)
+    expect(state).toMatchObject({ mode: 'API', apiKind: 'merchize', apiNote: expect.stringContaining('chưa gửi được') })
+    await expect(handoffOrderCsv(o.id, null)).rejects.toMatchObject({ code: 'MERCHIZE_API_ONLY' })
+  })
+})
+
+describe('no CSV for Merchize', () => {
+  const addOtherLine = async (orderId: string) => {
+    await prisma.supplier.upsert({ where: { code: 'mango_mz_test' }, create: { id: 'sup_mango_mz', name: 'Mangoshao', code: 'mango_mz_test' }, update: {} })
+    await prisma.orderLine.create({
+      data: {
+        orderId, shopifyLineId: `mzl-other-${seq}`, productTitle: 'Jeep Girl Hoodie', variantTitle: 'Pullover Hoodie / L', qty: 1, linePosition: 2,
+        unitPrice: 39.95, resolvedSupplierId: 'sup_mango_mz', resolvedSupplierSku: 'GAF-L', customized: false, sku: 'TN2805261455-PULLOVER-HOODIE-L',
+      },
+    })
+  }
+  const removeOtherLine = async (orderId: string) => {
+    await prisma.orderLine.deleteMany({ where: { orderId, linePosition: 2 } })
+    await prisma.supplier.deleteMany({ where: { id: 'sup_mango_mz' } })
+  }
+
+  it('the export route refuses a Merchize template, preview or not, and marks nothing', async () => {
+    const o = await makeOrder()
+    const tmpl = await prisma.csvTemplate.create({
+      data: { supplierId: SUP, name: 'Merchize CSV', rowMode: 'PER_LINE', columns: JSON.stringify([{ header: 'Order', source: 'order.shopifyOrderNumber' }]) },
+    })
+    for (const extra of [{ preview: true }, { markExported: true }]) {
+      const res = await postExport(await req('http://x/api/fulfillment/export', adminToken, post({ templateId: tmpl.id, ...extra })))
+      expect(res.status).toBe(409)
+      expect((await res.json()).code).toBe('MERCHIZE_API_ONLY')
+    }
+    const lines = await prisma.orderLine.findMany({ where: { orderId: o.id } })
+    expect(lines.every(l => l.exportedAt == null)).toBe(true)
+    await prisma.csvTemplate.delete({ where: { id: tmpl.id } })
+  })
+
+  it('a mixed order goes to the Merchize window first, then only the other line can wait for CSV', async () => {
+    const o = await makeOrder()
+    await addOtherLine(o.id)
+    expect(await handoffStateFor(o.id)).toMatchObject({ mode: 'API', apiKind: 'merchize', merchizeOpen: true, csvRemainder: true, apiNote: expect.stringContaining('Đơn nhiều xưởng') })
+    await expect(handoffOrderCsv(o.id, null)).rejects.toMatchObject({ code: 'MERCHIZE_API_ONLY' })
+
+    const p = await (await preview(o.id)).json()
+    expect((await push(o.id, p.payloadHash)).status).toBe(200)
+    expect(await handoffStateFor(o.id)).toMatchObject({ pending: true, mode: 'CSV', merchizeOpen: false, csvRemainder: true, push: { externalOrderId: expect.any(String) } })
+
+    const saved = await handoffOrderCsv(o.id, null)
+    expect(saved).toMatchObject({ handedOff: { mode: 'CSV' }, push: { externalOrderId: expect.any(String) } })
+    await removeOtherLine(o.id)
+  })
+
+  it('an all-Merchize order that was pushed cannot be saved for CSV', async () => {
+    const o = await makeOrder()
+    const p = await (await preview(o.id)).json()
+    expect((await push(o.id, p.payloadHash)).status).toBe(200)
+    await expect(handoffOrderCsv(o.id, null)).rejects.toMatchObject({ status: 409 })
   })
 })
