@@ -180,6 +180,11 @@ describe('every line of an order not sent yet gets a task (owner 11/05/2026)', (
     expect(await task()).toMatchObject({ status: 'NEW', fromLibrary: false, supplierSnapshot: null })
   })
 
+  it('makes no task for a hidden fee product', async () => {
+    await makeOrder('PENDING_MAPPING', { resolvedSupplierId: null, productTitle: 'Item Personalization', shopifyProductType: 'PPLR_HIDDEN_PRODUCT' })
+    expect((await syncDesignTasks(ID)).created).toBe(0)
+  })
+
   it('names the supplier once the line is mapped', async () => {
     await makeOrder('PENDING_MAPPING', { resolvedSupplierId: null })
     await syncDesignTasks(ID)

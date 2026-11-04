@@ -94,6 +94,8 @@ const AUTO_COMPLETE_FROM: TaskStatus[] = ['NEW', 'ASSIGNED']
 const STUDIO_MOVED: TaskStatus[] = ['DOING', 'REVIEW', 'REJECTED', 'DONE']
 /** Orders not sent yet. Only these get a task for a library or unmapped line, so turning that on does not add tasks to old orders. */
 const TASK_FOR_EVERY_LINE: string[] = ['PENDING_DESIGN', 'PENDING_MAPPING', 'READY_TO_PRODUCTION']
+/** A personalisation app's hidden fee product: never a thing to print or to map. */
+const HIDDEN_FEE_PRODUCT_TYPE = 'PPLR_HIDDEN_PRODUCT'
 const HUMAN_MOVE_EVENTS = ['STATUS', 'REJECT']
 
 async function linesWithArtwork(orderId: string): Promise<Set<string>> {
@@ -164,7 +166,7 @@ export async function syncDesignTasks(orderId: string): Promise<SyncResult> {
   for (const line of order.lines) {
     if (isNonProductLine(line)) continue
     const existing = order.designTasks.find(t => t.shopifyLineId === line.shopifyLineId)
-    if (!line.resolvedSupplierId && !existing && (!everyLine || line.exportedAt)) continue
+    if (!line.resolvedSupplierId && !existing && (!everyLine || line.exportedAt || line.shopifyProductType === HIDDEN_FEE_PRODUCT_TYPE)) continue
     if (orderClosed || orderShipped) {
       if (existing && existing.status !== 'CANCELLED' && existing.status !== 'DONE') {
         // A fulfilled order does not prove this line was made: one supplier's tracking can close the whole order. An export mark without a file proves nothing either (LIT4981).
