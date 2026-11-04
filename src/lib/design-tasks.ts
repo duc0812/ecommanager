@@ -84,8 +84,8 @@ export async function canAutoRenderLine(line: ReadinessLine, storeId: string, or
 }
 
 export async function readinessForLine(line: ReadinessLine, storeId: string, orderNumber: string): Promise<Readiness> {
-  if (sourcePrintFiles(parseAttributes(line.customAttributesJson)).length > 0) return 'LOW'
-  return (await canAutoRenderLine(line, storeId, orderNumber)) ? 'AUTO' : 'MANUAL'
+  if (await canAutoRenderLine(line, storeId, orderNumber)) return 'AUTO'
+  return sourcePrintFiles(parseAttributes(line.customAttributesJson)).length > 0 ? 'LOW' : 'MANUAL'
 }
 
 const READINESS_REFRESH: TaskStatus[] = ['NEW', 'ASSIGNED', 'DOING', 'REJECTED']
@@ -192,7 +192,7 @@ export async function syncDesignTasks(orderId: string): Promise<SyncResult> {
       if (!factoryRejected) continue
     }
     if (existing) {
-      if (READINESS_REFRESH.includes(existing.status as TaskStatus) && existing.readiness !== 'LOW') {
+      if (READINESS_REFRESH.includes(existing.status as TaskStatus)) {
         const readiness = await readinessForLine(line, order.storeId, order.shopifyOrderNumber)
         if (readiness !== existing.readiness) await prisma.designTask.update({ where: { id: existing.id }, data: { readiness } })
       }
