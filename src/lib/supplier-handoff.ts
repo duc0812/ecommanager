@@ -392,6 +392,7 @@ export async function listHandoffHub(f: { q?: string; supplier?: string | null }
 
 export const SENT_WINDOW_DAYS = 14
 const SENT_SCAN = 400
+const SENT_PAGE_MAX = 100
 
 function sentWhere(since: Date | null, q: string | null) {
   const after = since ? { gte: since } : { not: null }
@@ -414,6 +415,8 @@ function latest(dates: (Date | null | undefined)[]): Date | null {
 
 export type SentList = {
   sent: HandoffCard[]; windowDays: number; total: number
+  /** Orders matching the stage and supplier chips, across every page. */
+  matched: number
   stageCounts: Partial<Record<SentStage, number>>; suppliers: { id: string; name: string; count: number }[]
 }
 
@@ -422,7 +425,9 @@ export type SentList = {
  * by API — newest first. Without a search it covers the last SENT_WINDOW_DAYS days; a search looks at every order.
  * Stage and supplier filters run here, over every matching order, so a big CSV batch never hides the API pushes.
  */
-export async function listSentCards(f: { q?: string; stage?: SentStage | null; supplierId?: string | null } = {}): Promise<SentList> {
+export async function listSentCards(f: { q?: string; stage?: SentStage | null; supplierId?: string | null; page?: number; pageSize?: number } = {}): Promise<SentList> {
+  const pageSize = Math.min(Math.max(f.pageSize ?? MAX_CARDS, 1), SENT_PAGE_MAX)
+  const page = Math.max(f.page ?? 1, 1)
   const q = f.q?.trim().replace(/^#/, '') || null
   const since = q ? null : new Date(Date.now() - SENT_WINDOW_DAYS * 24 * 3600 * 1000)
   const rows = await prisma.order.findMany({
@@ -447,12 +452,12 @@ export async function listSentCards(f: { q?: string; stage?: SentStage | null; s
     stageCounts[stage] = (stageCounts[stage] ?? 0) + 1
   }
   const at = (id: string) => { const v = info.get(id)?.at; return v ? new Date(v).getTime() : 0 }
-  const chosen = ofSupplier.filter(r => !f.stage || info.get(r.id)!.stage === f.stage).map(r => r.id)
-    .sort((x, y) => at(y) - at(x)).slice(0, MAX_CARDS)
+  const matching = ofSupplier.filter(r => !f.stage || info.get(r.id)!.stage === f.stage).map(r => r.id).sort((x, y) => at(y) - at(x))
+  const chosen = matching.slice((page - 1) * pageSize, page * pageSize)
   const cards = await buildCards({ id: { in: chosen } }, { placedAt: 'desc' }, { sent: info })
   cards.sort((x, y) => at(y.order.id) - at(x.order.id))
   return {
-    sent: cards, windowDays: SENT_WINDOW_DAYS, total: ofSupplier.length, stageCounts,
+    sent: cards, windowDays: SENT_WINDOW_DAYS, total: ofSupplier.length, matched: matching.length, stageCounts,
     suppliers: names.map(n => ({ id: n.id, name: n.name, count: supplierCount.get(n.id) ?? 0 })).sort((x, y) => y.count - x.count),
   }
 }

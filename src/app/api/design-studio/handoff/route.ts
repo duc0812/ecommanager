@@ -15,7 +15,7 @@ export async function GET(req: NextRequest) {
   if (sp.get('view') === 'sent') {
     const stageParam = sp.get('stage')
     const stage = stageParam && stageParam in SENT_STAGE_LABELS ? stageParam as SentStage : null
-    return NextResponse.json({ ...(await listSentCards({ q, stage, supplierId: sp.get('supplier') || null })), me: viewerFor(user, settings) })
+    return NextResponse.json({ ...(await listSentCards({ q, stage, supplierId: sp.get('supplier') || null, page: Number(sp.get('page')) || 1, pageSize: Number(sp.get('pageSize')) || undefined })), me: viewerFor(user, settings) })
   }
   const [hub, pendingCount, sheets] = await Promise.all([listHandoffHub({ q, supplier: sp.get('supplier') }), countPendingHandoff(), getSheetsConnection()])
   return NextResponse.json({ ...hub, pendingCount, sheetsConnected: sheets.connected && !sheets.needsReconnect, me: viewerFor(user, settings) })

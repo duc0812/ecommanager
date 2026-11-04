@@ -302,11 +302,11 @@ function DesignTasks() {
       {syncError && <div className="mb-md"><ErrorBanner msg={syncError} onClose={() => setSyncError('')} /></div>}
       <DriveHealthBanner version={driveVersion} />
 
-      <div className="grid grid-cols-[290px_minmax(0,1fr)] gap-md items-start">
-        <Queue tasks={mode === 'review' ? reviewTasks : visible} sel={mode === 'work' ? sel : mode === 'review' ? reviewSel : null} onSelect={mode === 'review' ? setReviewSel : selectTask}
+      <div className={`grid ${mode === 'sent' ? 'grid-cols-1' : 'grid-cols-[290px_minmax(0,1fr)]'} gap-md items-start`}>
+        {mode !== 'sent' && <Queue tasks={mode === 'review' ? reviewTasks : visible} sel={mode === 'work' ? sel : mode === 'review' ? reviewSel : null} onSelect={mode === 'review' ? setReviewSel : selectTask}
           q={q} onQ={setQ} loading={listLoading} error={listError} retrying={retrying}
           emptyText={filtered ? emptyText : 'Không có task'} onClearFilters={filtered ? clearFilters : null}
-          filter={filter} onFilter={setFilter} counts={counts} mine={mine} onMine={setMine} />
+          filter={filter} onFilter={setFilter} counts={counts} mine={mine} onMine={setMine} />}
         {mode === 'review' ? (
           <div className="flex flex-col gap-md min-w-0">
             <ReviewToolbar total={reviewTasks.length} version={reviewVersion} onApproved={keys => reviewMoved(keys, 'DONE')} />
@@ -322,7 +322,7 @@ function DesignTasks() {
         ) : mode === 'handoff' ? (
           <HandoffGrid q={debouncedQ} version={reviewVersion} onOpenTask={selectTask} onChanged={reload} />
         ) : mode === 'sent' ? (
-          <SentGrid q={debouncedQ} version={reviewVersion} onOpenTask={selectTask} onChanged={reload} />
+          <SentGrid q={debouncedQ} rawQ={q} onQ={setQ} version={reviewVersion} onOpenTask={selectTask} onChanged={reload} />
         ) : (
         <div className="flex flex-col gap-md min-w-0">
           {!sel && !listLoading && !listError && (

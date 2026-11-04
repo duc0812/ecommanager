@@ -580,6 +580,28 @@ describe('API handoff — supplier linked to PGprints', () => {
   })
 })
 
+describe('sent list paging', () => {
+  it('pages the orders and counts them all', async () => {
+    const a = await makeOrder()
+    const b = await makeOrder()
+    for (const o of [a, b]) {
+      await prisma.order.update({ where: { id: o.id }, data: { supplierHandoffAt: new Date(), supplierHandoffMode: 'CSV', supplierHandoffById: null } })
+    }
+    const q = 'HOF'
+    const first = await listSentCards({ q, page: 1, pageSize: 1 })
+    const second = await listSentCards({ q, page: 2, pageSize: 1 })
+    expect(first.sent).toHaveLength(1)
+    expect(second.sent).toHaveLength(1)
+    expect(first.sent[0].order.id).not.toBe(second.sent[0].order.id)
+    expect(first.matched).toBeGreaterThanOrEqual(2)
+    expect(first.matched).toBe(second.matched)
+  })
+
+  it('caps the page size', async () => {
+    expect((await listSentCards({ q: 'HOF', pageSize: 100000 })).sent.length).toBeLessThanOrEqual(100)
+  })
+})
+
 describe('hub tabs by supplier', () => {
   const twoSuppliers = async () => {
     const o = await makeOrder({ lines: 2 })

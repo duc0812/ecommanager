@@ -55,8 +55,11 @@ export default function HandoffButton({ orderId, state, canHandoff, compact = fa
         )}
       </>
     )
+  } else if (state.handedOff?.mode === 'SHEET') {
+    // Nothing to open or cancel from here: the row is in the supplier's sheet.
+    body = compact ? <></> : <Pill tone="ok" icon="table_view">Đã ghi vào sheet xưởng</Pill>
   } else if (state.handedOff) {
-    body = <><Pill tone="ok" icon="cloud_done">Đã chuyển supplier qua API</Pill>{canHandoff && viewPush}</>
+    body = <>{!compact && <Pill tone="ok" icon="cloud_done">Đã chuyển supplier qua API</Pill>}{canHandoff && viewPush}</>
   } else if (state.push) {
     body = !canHandoff ? <span className="text-label-sm text-on-surface-variant">Đơn đã gửi {supplierName}</span> : (
       <>
