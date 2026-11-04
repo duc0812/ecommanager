@@ -111,6 +111,19 @@ describe('Setup card', () => {
     expect(await setting(GOOGLE_KEYS.refreshToken)).toBe('drive-token')
   })
 
+  it('says the API is off in Google Cloud, instead of blaming the account', async () => {
+    await set(GOOGLE_KEYS.sheetsRefreshToken, 'sheets-token')
+    vi.stubGlobal('fetch', vi.fn(async (input: any) => (String(input).includes('oauth2.googleapis.com')
+      ? new Response(JSON.stringify({ access_token: 'tok', expires_in: 3600 }), { status: 200 })
+      : new Response(JSON.stringify({ error: { code: 403, message: 'Google Sheets API has not been used in project 1 before or it is disabled.', status: 'PERMISSION_DENIED' } }), { status: 403 }))))
+    const res = await PUT(req('PUT', superToken, { supplierCode: 'jomall', enabled: true }))
+    expect(res.status).toBe(409)
+    const body = await res.json()
+    expect(body.code).toBe('API_DISABLED')
+    expect(body.error).not.toContain('không có quyền')
+    expect(await getSheetChannels()).toEqual([])
+  })
+
   it('refuses a supplier with no channel', async () => {
     expect((await PUT(req('PUT', superToken, { supplierCode: 'nope', enabled: true }))).status).toBe(404)
   })

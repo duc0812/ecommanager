@@ -68,6 +68,10 @@ async function call(path: string, init?: RequestInit): Promise<any> {
   const data: any = await res.json().catch(() => null)
   if (!res.ok) {
     const message = data?.error?.message ?? `HTTP ${res.status}`
+    // Google answers 403 for an API switched off in the Cloud project too; that is no fault of the account or the sheet.
+    if (res.status === 403 && /SERVICE_DISABLED|has not been used|is disabled/i.test(JSON.stringify(data ?? ''))) {
+      throw new SheetsError('Google Sheets API chưa bật trong Google Cloud của tool. Bật API đó, chờ vài phút rồi thử lại.', 'API_DISABLED', 409)
+    }
     if (res.status === 403) throw new SheetsError(`Tài khoản Google không có quyền ghi sheet này: ${message}`, 'FORBIDDEN', 403)
     throw new SheetsError(`Google Sheets từ chối: ${message}`, 'API')
   }
