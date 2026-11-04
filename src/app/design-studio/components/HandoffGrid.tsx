@@ -194,7 +194,7 @@ export default function HandoffGrid({ q, rawQ, onQ, version, onOpenTask, onChang
           className={`${input} w-full lg:hidden`} />
       </div>
       {tabs.length > 0 && (
-        <div role="tablist" aria-label="Xưởng" className="sticky top-0 z-20 -mx-xs px-xs py-xs bg-background flex gap-xs overflow-x-auto">
+        <div role="tablist" aria-label="Xưởng" className="sticky top-14 lg:top-0 z-20 -mx-xs px-xs py-xs bg-surface flex gap-xs overflow-x-auto [scrollbar-width:none]">
           {tabs.map(t => {
             const on = t.id === selected
             return (

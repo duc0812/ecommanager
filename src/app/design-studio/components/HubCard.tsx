@@ -22,16 +22,15 @@ export default function HubCard({ c, tabId, me, onOpenTask, onChanged, onError }
   const warnText = view.warnings.map(w => `${w.taskKey}: ${HUB_WARNING_LABELS[w.code]}`).join(' · ')
   const printed = line.personalization.map(p => p.value).filter(Boolean).join(', ')
   const empty = <span className="w-full h-full grid place-items-center text-on-surface-variant"><Icon name="image" className="text-[24px]" /></span>
+  // eslint-disable-next-line @next/next/no-img-element
+  const shown = photo ? <img src={photo} alt="" loading="lazy" className="w-full h-full object-cover" /> : empty
 
   return (
     <article aria-label={`Đơn ${order.orderNumber}`} onClick={() => onOpenTask(first.taskKey)}
       className={`${cardClass} h-[172px] p-sm flex flex-col gap-xs cursor-pointer hover:border-secondary/50 overflow-hidden ${view.warnings.length ? 'ring-1 ring-error/60' : ''}`}>
       <div className="flex gap-sm flex-1 min-h-0">
         <div className="w-[88px] h-[88px] shrink-0 rounded-lg overflow-hidden border border-outline-variant/30 bg-surface-container-low">
-          {mockup
-            ? <ArtImg art={mockup} px={240} alt="" loading="lazy" className="w-full h-full object-cover" fallback={empty} />
-            // eslint-disable-next-line @next/next/no-img-element
-            : photo ? <img src={photo} alt="" loading="lazy" className="w-full h-full object-cover" /> : empty}
+          {mockup ? <ArtImg art={mockup} px={240} alt="" loading="lazy" className="w-full h-full object-cover" fallback={shown} /> : shown}
         </div>
         <div className="flex-1 min-w-0 flex flex-col gap-[2px] text-label-sm text-on-surface-variant">
           <span className="flex items-center gap-xs min-w-0">
@@ -44,7 +43,7 @@ export default function HubCard({ c, tabId, me, onOpenTask, onChanged, onError }
           <span className="truncate text-body-sm font-semibold text-on-surface" title={line.productTitle}>{line.productTitle}</span>
           <span className="truncate" title={hubTypeLabel(first)}>{hubTypeLabel(first) || '—'}</span>
           <span className="truncate">{line.variantTitle ? `${line.variantTitle} · ` : ''}SL {line.qty}</span>
-          {printed && <span className="truncate" title={printed}>Tên in: <b className="text-on-surface">{printed}</b></span>}
+          {printed && <span className="truncate" title={printed}>Custom: <b className="text-on-surface">{printed}</b></span>}
         </div>
       </div>
       <div className="flex items-center gap-sm text-label-sm text-on-surface-variant min-w-0" onClick={e => e.stopPropagation()}>

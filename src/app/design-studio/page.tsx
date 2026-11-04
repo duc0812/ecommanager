@@ -280,12 +280,12 @@ function DesignTasks() {
             <Icon name="info" className="text-[18px] text-on-surface-variant" />
           </span>
         </div>
-        <div role="tablist" aria-label="Chế độ" className="flex items-center gap-xs">
+        <div role="tablist" aria-label="Chế độ" className="flex items-center gap-xs max-w-full overflow-x-auto [scrollbar-width:none]">
           {tabs.map(t => {
             const on = mode === t.mode
             return (
               <button key={t.mode} type="button" role="tab" aria-selected={on} title={t.tip} onClick={() => setMode(t.mode)}
-                className={`inline-flex items-center gap-xs h-9 px-md rounded-lg text-body-sm font-semibold ${on ? 'bg-on-surface text-surface' : 'text-on-surface-variant hover:bg-surface-container-low'}`}>
+                className={`shrink-0 whitespace-nowrap inline-flex items-center gap-xs h-9 px-md rounded-lg text-body-sm font-semibold ${on ? 'bg-on-surface text-surface' : 'text-on-surface-variant hover:bg-surface-container-low'}`}>
                 {t.label}
                 {t.count !== undefined && (
                   <span className={`inline-flex items-center h-5 px-[7px] rounded-full text-[11px] ${on ? 'bg-surface/20' : t.hot ? 'bg-amber-100 text-amber-900' : 'bg-surface-container text-on-surface-variant'}`}>{t.count}</span>
@@ -352,7 +352,7 @@ export default function DesignTasksPage() {
   return (
     <div className="flex min-h-screen bg-surface">
       <Sidebar />
-      <main className="ml-[280px] flex-1 p-xl min-w-0">
+      <main className="lg:ml-[280px] flex-1 px-sm pb-sm pt-[64px] lg:p-xl min-w-0">
         <ToastProvider>
           <Suspense fallback={<div className="text-body-sm text-on-surface-variant">Đang tải…</div>}>
             <DesignTasks />
