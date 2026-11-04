@@ -94,7 +94,7 @@ export default function GoogleSheetsSetupCard() {
               : status.connected ? <>Tài khoản: <b className="break-all">{status.email || 'không rõ email'}</b></>
                 : 'Chưa kết nối. Đăng nhập bằng tài khoản Google có quyền edit sheet của xưởng.'}
           </div>
-          <p className="text-label-sm text-on-surface-variant">Kết nối riêng với Google Drive. Quyền này áp dụng cho mọi sheet của tài khoản đó, nên nên dùng tài khoản vận hành.</p>
+          <p className="text-label-sm text-on-surface-variant">Kết nối riêng với Google Drive. Quyền này áp dụng cho mọi sheet của tài khoản đó, vì vậy hãy dùng tài khoản vận hành.</p>
           <div className="flex flex-wrap items-center gap-sm">
             {status?.configured === false
               ? <span className="text-body-sm text-on-surface-variant">Cần có Client ID và Client Secret ở phần Google Drive trước.</span>
