@@ -11,7 +11,8 @@ export const RECENT_ORDERS = 100
 export const REFRESH_BATCH = 25
 export const REFRESH_MAX_ORDERS = 100
 const REFRESH_RETRY_MS = 6 * 3600_000
-const DESIGN_STATUSES = ['PENDING_DESIGN', 'DESIGN_REJECTED']
+// Every order not sent yet: each of its lines needs a task, whatever its age (owner 11/05/2026).
+const DESIGN_STATUSES = ['PENDING_DESIGN', 'DESIGN_REJECTED', 'PENDING_MAPPING', 'READY_TO_PRODUCTION']
 const OPEN_TASK_STATUSES = ['NEW', 'ASSIGNED', 'DOING', 'REVIEW', 'REJECTED', 'ASK_CUSTOMER']
 
 export type SyncTrigger = 'manual' | 'schedule'
@@ -43,7 +44,7 @@ const ORDER_SELECT = {
 } as const
 
 /**
- * Every order still waiting for a design, every order with an open task, plus the newest orders.
+ * Every order not sent yet, every order with an open task, plus the newest orders.
  * Nothing is deleted: a task only changes through syncDesignTasks.
  */
 export async function runDesignTaskSync(opts: { trigger?: SyncTrigger; now?: number } = {}): Promise<DesignTaskSyncSummary> {

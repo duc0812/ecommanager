@@ -70,6 +70,17 @@ describe('runDesignTaskSync scope', () => {
     expect((await taskOf(rejected.id))?.status).toBe('NEW')
   })
 
+  it('reaches every unsent order outside the newest 100, a library line and an unmapped one too', async () => {
+    const library = await order({ status: 'READY_TO_PRODUCTION', placedAt: '2025-04-01', link: 'https://drive.example/lib' })
+    const unmapped = await order({ status: 'PENDING_MAPPING', placedAt: '2025-04-02' })
+    await prisma.orderLine.updateMany({ where: { orderId: unmapped.id }, data: { resolvedSupplierId: null } })
+    const sent = await order({ status: 'EXPORTED', placedAt: '2025-04-03', link: 'https://drive.example/lib' })
+    await runDesignTaskSync()
+    expect(await taskOf(library.id)).toMatchObject({ status: 'NEW', fromLibrary: true })
+    expect(await taskOf(unmapped.id)).toMatchObject({ status: 'NEW', fromLibrary: false })
+    expect(await taskOf(sent.id)).toBeNull()
+  })
+
   it('never deletes an untouched NEW task of an old order, and still visits an old order with an open task', async () => {
     const old = await order({ status: 'READY_TO_PRODUCTION', placedAt: '2025-01-05', link: 'https://drive.example/lib' })
     await prisma.designTask.create({ data: { orderId: old.id, shopifyLineId: 'l1', taskKey: old.key, status: 'NEW', events: { create: { type: 'SYSTEM', message: 'created' } } } })
