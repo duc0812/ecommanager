@@ -22,6 +22,7 @@ Dán tay đang gây lỗi thật: có dấu đã xuất mà xưởng không có 
 - Không đổi tab "Đã chuyển xưởng", trừ việc hiển thị kênh Sheet.
 - Không tự sửa 10 đơn Merchize mang dấu CSV và 20 dòng Jomall chưa rõ. Đó là việc riêng.
 - Không xử lý tracking mới. Auto Fulfill vẫn đọc tracking từ sheet như cũ.
+- Chưa làm trang tổng hợp bill và đối chiếu với cột `Price$` của Jomall. Bước này chỉ hiển thị base cost và lưu giá lúc gửi để sau dùng.
 
 ## Điều tuyệt đối tránh
 
@@ -36,23 +37,26 @@ Chủ shop đang dùng điện thoại nên giao mình chọn một mẫu.
 
 **Thanh xưởng.** Hàng tab ở trên cùng, dính khi cuộn, cuộn ngang được trên điện thoại. Mỗi tab có tên xưởng và số đơn chờ. Xưởng nhiều đơn đứng trước, xưởng 0 đơn ẩn. Có thêm tab "Chưa map xưởng" khi có đơn loại này. Không có tab "Tất cả". Tab đang chọn giữ theo URL hoặc lưu ở trình duyệt.
 
-**Đầu mỗi tab.** Tên xưởng, nhãn kênh (API, Sheet hoặc CSV), số đơn, số đơn có cảnh báo. Kênh Sheet có nút "Sản xuất tất cả (N)", không tính đơn có cảnh báo. Kênh CSV có link sang trang CSV Export.
+**Đầu mỗi tab.** Tên xưởng, nhãn kênh (API, Sheet hoặc CSV), số đơn, số đơn có cảnh báo, tổng base cost của các đơn đang chờ. Kênh Sheet có nút "Sản xuất tất cả (N)", không tính đơn có cảnh báo. Kênh CSV có link sang trang CSV Export.
 
 **Một card** là một cặp đơn và xưởng. Đơn nhiều xưởng xuất hiện ở mỗi tab, chỉ tính các dòng chưa gửi của xưởng đó.
 
-Mọi card cùng chiều cao cố định, khoảng 148px, và một cột trên điện thoại:
+Mọi card cùng chiều cao cố định, khoảng 172px, và một cột trên điện thoại:
 
 ```
 ┌───────────────────────────────────────┐
 │ ┌──────┐  LIT5873_1            US  ⚠  │
 │ │ ảnh  │  Tên sản phẩm một dòng…      │
-│ │mockup│  Youth L · SL 1              │
-│ └──────┘  Tên in: Allyssa             │
-│ 10/31            +1 dòng   [Sản xuất] │
+│ │mockup│  Sherpa Hoodie → WZIP · L    │
+│ └──────┘  Youth L · SL 1              │
+│           Tên in: Allyssa             │
+│ $24.50 · 10/31   +1 dòng   [Sản xuất] │
 └───────────────────────────────────────┘
 ```
 
 - Ảnh là mockup của dòng đầu, cắt vuông.
+- **Base cost:** tổng base cost nhân số lượng của các dòng thuộc xưởng đó trong đơn, theo `effectiveBaseCost` (giá nhập tay ưu tiên hơn giá tự tính), không gồm phí ship. Chưa có giá thì hiện "Chưa có giá" màu vàng, không chặn gửi.
+- **Product type:** hai vế `loại trên Shopify → sản phẩm xưởng` (`shopifyProductType` và `supplierProduct`), để người làm fulfillment nhìn ra map sai ngay. Đơn nhiều dòng hiện của dòng đầu.
 - Chữ dài cắt bằng dấu "…", không làm card cao lên.
 - Đơn nhiều dòng hiện dòng đầu kèm "+N dòng".
 - Bấm vào card mở task của dòng đầu. Bấm nút thì không mở task.
@@ -123,6 +127,8 @@ Người làm chọn quy tắc dựa trên `variantTitle` của đơn và `varia
 6. Ghi các dòng mới vào cuối bảng bằng kiểu chèn hàng mới, không đè ô có sẵn.
 7. Đọc lại đúng các hàng vừa ghi, so với dữ liệu gửi. Khớp mới gọi `markOrdersExported` với `lineIds` và ghi nhật ký. Không khớp thì không đánh dấu và báo rõ hàng nào.
 8. Kết quả báo theo từng dòng: đã ghi, đã có sẵn, lỗi. Lỗi một dòng không làm hỏng các dòng khác, trừ lỗi ở bước 3.
+
+Bản ghi của mỗi dòng lưu lại base cost tại lúc gửi, vì giá trên dòng có thể đổi khi tính lại chi phí, còn bill với xưởng cần giá lúc gửi.
 
 Khoá chống bấm hai lần: mỗi lượt theo xưởng chỉ chạy một lúc, và mỗi lần ghi có một bản ghi trạng thái (đang ghi, đã ghi, lỗi) cho từng dòng. Nếu máy chủ chết giữa chừng, lượt sau quét sheet ở bước 4 nên không ghi trùng.
 
