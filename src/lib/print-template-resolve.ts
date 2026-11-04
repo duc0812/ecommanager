@@ -4,7 +4,7 @@ import { partKey } from '@/lib/task-files'
 /** `shaped`: the template's guide draws this piece's real outline, so the canvas shows no box around it and names it above. */
 export type TemplateArea = { name: string; x: number; y: number; w: number; h: number; shaped?: boolean }
 /** A part set a line may deliver instead of the template's own areas (Mango WZIP: 12 piece files instead of the one sheet). */
-export type TemplateAreaSet = { label: string; widthPx: number; heightPx: number; areas: TemplateArea[] }
+export type TemplateAreaSet = { label: string; widthPx: number; heightPx: number; areas: TemplateArea[]; filesUntil?: string }
 
 export type TemplateRow = {
   id: string; name: string; widthPx: number; heightPx: number; dpi: number; bleedIn: number; safeIn: number; mirror: boolean
@@ -30,7 +30,7 @@ export function parseAltSets(json: string | null | undefined): TemplateAreaSet[]
     if (!Array.isArray(parsed)) return []
     return parsed
       .filter((s: any) => s && typeof s === 'object' && Array.isArray(s.areas) && s.areas.length > 0)
-      .map((s: any) => ({ label: typeof s.label === 'string' && s.label.trim() ? s.label.trim() : `${s.areas.length} mảnh`, widthPx: Number(s.widthPx) || 0, heightPx: Number(s.heightPx) || 0, areas: s.areas as TemplateArea[] }))
+      .map((s: any) => ({ label: typeof s.label === 'string' && s.label.trim() ? s.label.trim() : `${s.areas.length} mảnh`, widthPx: Number(s.widthPx) || 0, heightPx: Number(s.heightPx) || 0, areas: s.areas as TemplateArea[], ...(typeof s.filesUntil === 'string' ? { filesUntil: s.filesUntil } : {}) }))
   } catch { return [] }
 }
 

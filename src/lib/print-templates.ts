@@ -99,7 +99,7 @@ function validateAltSets(raw: unknown, existing: string | null): { ok: true; jso
     try { parsed = JSON.parse(raw) } catch { return { ok: false, error: 'altAreas phải là JSON' } }
   }
   if (!Array.isArray(parsed)) return { ok: false, error: 'altAreas phải là mảng JSON các bộ vùng in' }
-  const sets: Array<{ label: string; widthPx: number; heightPx: number; areas: AreaInput[] }> = []
+  const sets: Array<{ label: string; widthPx: number; heightPx: number; areas: AreaInput[]; filesUntil?: string }> = []
   for (const s of parsed as any[]) {
     const label = typeof s?.label === 'string' ? s.label.trim() : ''
     const W = Math.round(toNum(s?.widthPx) ?? NaN), H = Math.round(toNum(s?.heightPx) ?? NaN)
@@ -117,7 +117,7 @@ function validateAltSets(raw: unknown, existing: string | null): { ok: true; jso
       if (area.x + area.w > W || area.y + area.h > H) return { ok: false, error: `Bộ ${label}, vùng ${area.name} nằm ngoài khổ ${W}×${H}` }
       areas.push({ name: area.name, x: Math.round(area.x), y: Math.round(area.y), w: Math.round(area.w), h: Math.round(area.h) })
     }
-    sets.push({ label, widthPx: W, heightPx: H, areas })
+    sets.push({ label, widthPx: W, heightPx: H, areas, ...(typeof s.filesUntil === 'string' ? { filesUntil: s.filesUntil } : {}) })
   }
   return { ok: true, json: sets.length ? JSON.stringify(sets) : null }
 }

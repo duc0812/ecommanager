@@ -1,8 +1,8 @@
 import { sameLabel } from '@/lib/task-files'
 
 type FitArea = { name: string; w: number; h: number }
-type FitTemplate = { widthPx: number; heightPx: number; areas: FitArea[]; altSets?: { areas: FitArea[] }[] }
-type FitFile = { widthPx: number | null; heightPx: number | null }
+type FitTemplate = { widthPx: number; heightPx: number; areas: FitArea[]; altSets?: { areas: FitArea[]; filesUntil?: string | null }[] }
+type FitFile = { widthPx: number | null; heightPx: number | null; createdAt?: Date | string | null }
 
 export type FileFit =
   | { state: 'ok' | 'bad'; expected: { w: number; h: number } }
@@ -17,14 +17,18 @@ export function expectedSize(template: FitTemplate | null, area: string): { w: n
   return hit.w > 0 && hit.h > 0 ? { w: hit.w, h: hit.h } : { w: template.widthPx, h: template.heightPx }
 }
 
-/** Whether a print file matches its template: the area's size, the whole template (a full-canvas export), or the size this part has in an alternative set (a file made before the template moved on) all pass. */
+function madeBy(file: FitFile, until: string): boolean {
+  return !!file.createdAt && new Date(file.createdAt).getTime() <= new Date(until).getTime()
+}
+
+/** Whether a print file matches its template: the area's size, the whole template (a full-canvas export), or the size this part has in an alternative set all pass. A set with `filesUntil` is the template's old layout: only a file made by then keeps passing. */
 export function printFileFit(template: FitTemplate | null, area: string, file: FitFile): FileFit {
   if (!template) return { state: 'no-template', expected: null }
   const expected = expectedSize(template, area)
   if (!expected) return { state: 'extra', expected: null }
   if (!file.widthPx || !file.heightPx) return { state: 'unknown', expected }
   const ok = (file.widthPx === expected.w && file.heightPx === expected.h) || (file.widthPx === template.widthPx && file.heightPx === template.heightPx)
-    || (template.altSets ?? []).some(s => s.areas.some(a => sameLabel(a.name, area) && a.w === file.widthPx && a.h === file.heightPx))
+    || (template.altSets ?? []).some(s => (!s.filesUntil || madeBy(file, s.filesUntil)) && s.areas.some(a => sameLabel(a.name, area) && a.w === file.widthPx && a.h === file.heightPx))
   return { state: ok ? 'ok' : 'bad', expected }
 }
 
