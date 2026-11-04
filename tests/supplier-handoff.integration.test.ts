@@ -11,7 +11,7 @@ import { UNMAPPED_TAB } from '@/lib/handoff-shared'
 import { GET as getTasks } from '@/app/api/design-studio/tasks/route'
 import { GET as getTask } from '@/app/api/design-studio/tasks/[key]/route'
 import { GET as getHandoff } from '@/app/api/design-studio/handoff/route'
-import { POST as postHandoff, DELETE as deleteHandoff, PATCH as patchHandoff } from '@/app/api/design-studio/orders/[id]/handoff/route'
+import { GET as getOrderHandoff, POST as postHandoff, DELETE as deleteHandoff, PATCH as patchHandoff } from '@/app/api/design-studio/orders/[id]/handoff/route'
 import { GET as getPreview } from '@/app/api/fulfillment/pgprints/orders/[orderId]/preview/route'
 import { POST as postPush } from '@/app/api/fulfillment/pgprints/orders/[orderId]/push/route'
 import { POST as postCancel } from '@/app/api/fulfillment/pgprints/orders/[orderId]/cancel/route'
@@ -624,5 +624,16 @@ describe('hub tabs by supplier', () => {
 
   it('answers with no tabs when nothing matches', async () => {
     expect(await listHandoffHub({ q: 'NO-SUCH-ORDER-XYZ' })).toEqual({ tabs: [], selected: null, pending: [] })
+  })
+})
+
+describe('task screen checks', () => {
+  it('gives the order card to a signed-in user, and nobody else', async () => {
+    const o = await makeOrder()
+    const url = handoffUrl(o.id)
+    expect((await getOrderHandoff(req(url, null), { params: { id: o.id } })).status).toBe(401)
+    const body = await (await getOrderHandoff(req(url, desToken), { params: { id: o.id } })).json()
+    expect(body.card.order.id).toBe(o.id)
+    expect(body.card.lines[0]).toMatchObject({ taskKey: o.keys[0], wrongSizeAreas: [] })
   })
 })

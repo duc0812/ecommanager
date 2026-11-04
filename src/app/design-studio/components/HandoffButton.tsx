@@ -6,8 +6,11 @@ import { HANDOFF_LABELS } from '@/lib/handoff-shared'
 import PgprintsPushModal from '@/components/PgprintsPushModal'
 import { Icon, Pill, btn, btnPrimary } from './ui'
 
-export default function HandoffButton({ orderId, state, canHandoff, onChanged, onError }: {
-  orderId: string; state: HandoffState; canHandoff: boolean; onChanged: (info: string) => void; onError: (msg: string) => void
+export default function HandoffButton({ orderId, state, canHandoff, compact = false, onChanged, onError }: {
+  orderId: string; state: HandoffState; canHandoff: boolean
+  /** Short labels, for the fixed-size hub card. */
+  compact?: boolean
+  onChanged: (info: string) => void; onError: (msg: string) => void
 }) {
   const [busy, setBusy] = useState(false)
   const [modal, setModal] = useState(false)
@@ -36,7 +39,7 @@ export default function HandoffButton({ orderId, state, canHandoff, onChanged, o
   const supplierName = supplier === 'merchize' ? 'Merchize' : 'PGprints'
   const viewPush = (
     <button type="button" className={btn} onClick={() => setModal(true)}>
-      <Icon name="open_in_new" className="text-[16px]" />Xem đơn {supplierName}
+      <Icon name="open_in_new" className="text-[16px]" />{compact ? 'Xem đơn' : `Xem đơn ${supplierName}`}
     </button>
   )
   let body: JSX.Element
@@ -60,7 +63,7 @@ export default function HandoffButton({ orderId, state, canHandoff, onChanged, o
         {viewPush}
         {state.pending && state.csvRemainder && (
           <button type="button" className={btnPrimary} disabled={busy} onClick={saveCsv} title="Lưu các dòng còn lại — sẵn sàng khi xuất CSV cho xưởng của chúng">
-            <Icon name="inventory" className="text-[16px]" />{busy ? 'Đang lưu…' : HANDOFF_LABELS.csv}
+            <Icon name="inventory" className="text-[16px]" />{busy ? 'Đang lưu…' : compact ? 'Lưu chờ CSV' : HANDOFF_LABELS.csv}
           </button>
         )}
       </>
@@ -68,25 +71,25 @@ export default function HandoffButton({ orderId, state, canHandoff, onChanged, o
   } else if (!state.pending) {
     body = (
       <button type="button" className={btnPrimary} disabled title={state.blocked ?? undefined}>
-        <Icon name="local_shipping" className="text-[16px]" />{HANDOFF_LABELS.generic}
+        <Icon name="local_shipping" className="text-[16px]" />{compact ? 'Sản xuất' : HANDOFF_LABELS.generic}
       </button>
     )
   } else if (!canHandoff) {
     body = (
       <button type="button" className={btnPrimary} disabled title="Cần quyền Admin hoặc CSV Export để chuyển đơn sang xưởng">
-        <Icon name="hourglass_top" className="text-[16px]" />{HANDOFF_LABELS.wait}
+        <Icon name="hourglass_top" className="text-[16px]" />{compact ? 'Chờ xuất xưởng' : HANDOFF_LABELS.wait}
       </button>
     )
   } else if (state.mode === 'API') {
     body = (
       <button type="button" className={btnPrimary} onClick={() => setModal(true)} title="Xem trước rồi xác nhận gửi đơn sang xưởng qua API">
-        <Icon name="cloud_upload" className="text-[16px]" />{HANDOFF_LABELS.api(state.apiName)}
+        <Icon name="cloud_upload" className="text-[16px]" />{compact ? 'Sản xuất' : HANDOFF_LABELS.api(state.apiName)}
       </button>
     )
   } else {
     body = (
       <button type="button" className={btnPrimary} disabled={busy} onClick={saveCsv} title="Lưu vào hệ thống — đơn sẵn sàng khi xuất CSV cho xưởng">
-        <Icon name="inventory" className="text-[16px]" />{busy ? 'Đang lưu…' : HANDOFF_LABELS.csv}
+        <Icon name="inventory" className="text-[16px]" />{busy ? 'Đang lưu…' : compact ? 'Lưu chờ CSV' : HANDOFF_LABELS.csv}
       </button>
     )
   }

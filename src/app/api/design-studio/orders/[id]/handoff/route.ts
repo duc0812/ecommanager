@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { forbidden, getAuthUser, unauthorized, type AuthUser } from '@/lib/api-auth'
 import { canHandoffToSupplier } from '@/lib/roles'
-import { HandoffError, handoffOrderCsv, remapOrderSuppliers, undoCsvHandoff } from '@/lib/supplier-handoff'
+import { HandoffError, handoffCardFor, handoffOrderCsv, remapOrderSuppliers, undoCsvHandoff } from '@/lib/supplier-handoff'
 
 async function requireHandoff(req: NextRequest): Promise<{ user: AuthUser } | { error: NextResponse }> {
   const user = await getAuthUser(req)
@@ -14,6 +14,12 @@ function errorResponse(e: unknown) {
   if (e instanceof HandoffError) return NextResponse.json({ error: e.message, code: e.code }, { status: e.status })
   console.error('[handoff]', e)
   return NextResponse.json({ error: (e as any)?.message ?? 'Lỗi không xác định', code: 'INTERNAL' }, { status: 500 })
+}
+
+export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+  const user = await getAuthUser(req)
+  if (!user) return unauthorized()
+  return NextResponse.json({ card: await handoffCardFor(params.id) })
 }
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {

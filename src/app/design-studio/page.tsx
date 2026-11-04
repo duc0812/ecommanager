@@ -8,6 +8,7 @@ import { machineQa } from './components/ai-qa'
 import { LightboxProvider } from './components/Lightbox'
 import Queue, { byDue, type QueueFilter } from './components/Queue'
 import TaskHeader from './components/TaskHeader'
+import TaskHandoffChecks from './components/TaskHandoffChecks'
 import CustomerInputs from './components/CustomerInputs'
 import ArtworkPanel from './components/ArtworkPanel'
 import CompareRow from './components/CompareRow'
@@ -67,6 +68,7 @@ function TaskWorkspace({ detail, holdCount, onChanged }: { detail: TaskDetail; h
     <>
       <Banners detail={detail} />
       <TaskHeader key={`h-${key}`} detail={detail} qa={qa} holdCount={holdCount} refreshing={refreshing} onRefresh={refresh} onChanged={onChanged} />
+      {detail.handoff?.pending && <TaskHandoffChecks key={`c-${key}`} orderId={detail.task.orderId} me={detail.me} onChanged={onChanged} />}
       <CustomerInputs key={`c-${key}`} detail={detail} refreshing={refreshing} onRefresh={refresh} onChanged={onChanged} />
       <ArtworkPanel key={`a-${key}`} detail={detail} onChanged={onChanged} />
       <CompareRow key={`m-${key}`} detail={detail} onChanged={onChanged} />
@@ -300,8 +302,8 @@ function DesignTasks() {
       {syncError && <div className="mb-md"><ErrorBanner msg={syncError} onClose={() => setSyncError('')} /></div>}
       <DriveHealthBanner version={driveVersion} />
 
-      <div className="grid grid-cols-[290px_minmax(0,1fr)] gap-md items-start">
-        <Queue tasks={mode === 'review' ? reviewTasks : visible} sel={mode === 'work' ? sel : mode === 'review' ? reviewSel : null} onSelect={mode === 'review' ? setReviewSel : selectTask}
+      <div className="grid grid-cols-1 lg:grid-cols-[290px_minmax(0,1fr)] gap-md items-start">
+        <Queue phoneHidden={mode === 'handoff' || mode === 'sent' || (mode === 'work' && !!sel)} tasks={mode === 'review' ? reviewTasks : visible} sel={mode === 'work' ? sel : mode === 'review' ? reviewSel : null} onSelect={mode === 'review' ? setReviewSel : selectTask}
           q={q} onQ={setQ} loading={listLoading} error={listError} retrying={retrying}
           emptyText={filtered ? emptyText : 'Không có task'} onClearFilters={filtered ? clearFilters : null}
           filter={filter} onFilter={setFilter} counts={counts} mine={mine} onMine={setMine} />
@@ -318,7 +320,7 @@ function DesignTasks() {
             )}
           </div>
         ) : mode === 'handoff' ? (
-          <HandoffGrid q={debouncedQ} version={reviewVersion} onOpenTask={selectTask} onChanged={reload} />
+          <HandoffGrid q={debouncedQ} rawQ={q} onQ={setQ} version={reviewVersion} onOpenTask={selectTask} onChanged={reload} />
         ) : mode === 'sent' ? (
           <SentGrid q={debouncedQ} version={reviewVersion} onOpenTask={selectTask} onChanged={reload} />
         ) : (

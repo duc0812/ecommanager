@@ -255,6 +255,12 @@ export async function listHandoffCards(f: { q?: string } = {}): Promise<{ pendin
   return { pending: q ? pending.filter(c => matches(c, q)) : pending }
 }
 
+/** One order's card with today's checks, also when a line has no supplier; the task screen shows its warnings. */
+export async function handoffCardFor(orderId: string): Promise<HandoffCard | null> {
+  const cards = await buildCards({ id: orderId }, { placedAt: 'asc' }, { checks: true, withUnmapped: true })
+  return cards[0] ?? null
+}
+
 /** The hub's search: the order number of a line key ("LIT123_1"), or a name, SKU, title or custom value. */
 function hubSearchWhere(q: string) {
   const text = q.replace(/^#/, '').replace(/_\d+$/, '')

@@ -2,59 +2,22 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { HandoffCard, Me } from './types'
 import { copyText, mockupFiles, printPartNames, requestJson, taskImages, type LightboxImage } from './model'
-import { pushChipLabel } from '@/lib/handoff-shared'
+import { pushChipLabel, type HubTab } from '@/lib/handoff-shared'
+import { fmtUsd, hubView } from '@/lib/handoff-hub'
 import { LightboxProvider } from './Lightbox'
 import PrintFileThumb from './PrintFileThumb'
 import ExternalDesignPreview from './ExternalDesignPreview'
 import HandoffButton from './HandoffButton'
-import { ErrorBanner, ExtLink, Icon, Pill, btn, card } from './ui'
+import HubCard from './HubCard'
+import { PreSendChecks } from './PreSendChecks'
+import { ErrorBanner, ExtLink, Icon, Pill, btn, card, input } from './ui'
 
-type HandoffResponse = { pending: HandoffCard[]; pendingCount: number; me: Me }
+type HandoffResponse = { tabs: HubTab[]; selected: string | null; pending: HandoffCard[]; pendingCount: number; me: Me }
+
+const TAB_KEY = 'design-studio.hub-tab'
 
 const fmtDate = (iso: string) => new Date(iso).toLocaleDateString('en-US')
 export const fmtDateTime = (iso: string) => new Date(iso).toLocaleString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric', hour: 'numeric', minute: '2-digit' })
-
-/** What must be fixed before the order goes to a supplier: lines costed with an older mapping, print files off the template size. */
-function PreSendChecks({ c, canHandoff, onChanged, onError }: { c: HandoffCard; canHandoff: boolean; onChanged: (info: string) => void; onError: (msg: string) => void }) {
-  const [busy, setBusy] = useState(false)
-  const remaps = c.lines.filter(l => l.mappingNow)
-  const sizes = c.lines.filter(l => l.wrongSizeAreas.length > 0)
-  if (remaps.length === 0 && sizes.length === 0) return null
-
-  async function remap() {
-    if (busy) return
-    setBusy(true)
-    const r = await requestJson<{ changed: string[] }>(`/api/design-studio/orders/${encodeURIComponent(c.order.id)}/handoff`, {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'REMAP' }),
-    })
-    setBusy(false)
-    if (!r.ok) { onError(r.error); return }
-    onChanged(r.data.changed.length ? `${c.order.orderNumber}: đã cập nhật xưởng — ${r.data.changed.join('; ')}` : `${c.order.orderNumber}: xưởng đã đúng mapping, không đổi gì`)
-  }
-
-  return (
-    <div role="alert" className="mx-md mt-sm p-sm rounded-lg border border-error/40 bg-error-container/40 flex flex-col gap-xs text-label-sm">
-      <b className="text-on-error-container inline-flex items-center gap-xs"><Icon name="warning" className="text-[16px]" />Kiểm tra trước khi gửi xưởng</b>
-      {remaps.map(l => (
-        <span key={`m-${l.taskKey}`} className="text-on-surface">
-          <span className="font-mono font-semibold">{l.taskKey}</span>: đang ghi <b>{l.line.supplier?.name} {l.line.supplierSku ?? ''}</b>, mapping hiện tại chọn <b>{l.mappingNow!.supplierName} {l.mappingNow!.sku}</b> (đơn vào trước khi đổi mapping)
-        </span>
-      ))}
-      {sizes.map(l => (
-        <span key={`s-${l.taskKey}`} className="text-on-surface">
-          <span className="font-mono font-semibold">{l.taskKey}</span>: file {l.wrongSizeAreas.join(', ')} sai khổ template — mở task để sửa
-        </span>
-      ))}
-      {remaps.length > 0 && canHandoff && (
-        <span>
-          <button type="button" className={btn} disabled={busy} onClick={remap} title="Gán lại xưởng cho các dòng theo mapping hiện tại — chỉ được khi đơn chưa chuyển xưởng">
-            <Icon name="sync_alt" className="text-[16px]" />{busy ? 'Đang cập nhật…' : 'Cập nhật xưởng theo mapping'}
-          </button>
-        </span>
-      )}
-    </div>
-  )
-}
 
 export function OrderCard({ c, me, onOpenTask, onChanged, onError, footer }: {
   c: HandoffCard; me: Me | null; onOpenTask: (key: string) => void; onChanged: (info: string) => void; onError: (msg: string) => void
@@ -86,7 +49,7 @@ export function OrderCard({ c, me, onOpenTask, onChanged, onError, footer }: {
             {order.shipTo && <span className="text-on-surface-variant">· {order.shipTo}</span>}
           </span>
         </header>
-        <PreSendChecks c={c} canHandoff={!!me?.canHandoff} onChanged={onChanged} onError={onError} />
+        <div className="mx-md mt-sm empty:hidden"><PreSendChecks c={c} canHandoff={!!me?.canHandoff} onChanged={onChanged} onError={onError} /></div>
         <ul className="divide-y divide-outline-variant/20">
           {c.lines.map(l => {
             const parts = printPartNames(l.line, l.slots)
@@ -170,10 +133,13 @@ export function OrderCard({ c, me, onOpenTask, onChanged, onError, footer }: {
   )
 }
 
-export default function HandoffGrid({ q, version, onOpenTask, onChanged }: {
-  q: string; version: number; onOpenTask: (key: string) => void; onChanged: () => void
+export default function HandoffGrid({ q, rawQ, onQ, version, onOpenTask, onChanged }: {
+  q: string; rawQ: string; onQ: (v: string) => void; version: number; onOpenTask: (key: string) => void; onChanged: () => void
 }) {
   const [data, setData] = useState<HandoffResponse | null>(null)
+  const [tab, setTab] = useState<string | null>(() => {
+    try { return window.localStorage.getItem(TAB_KEY) } catch { return null }
+  })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [actionError, setActionError] = useState('')
@@ -181,12 +147,16 @@ export default function HandoffGrid({ q, version, onOpenTask, onChanged }: {
 
   const load = useCallback(async () => {
     setLoading(true)
-    const r = await requestJson<HandoffResponse>(`/api/design-studio/handoff${q ? `?q=${encodeURIComponent(q)}` : ''}`)
+    const qs = new URLSearchParams()
+    if (q) qs.set('q', q)
+    if (tab) qs.set('supplier', tab)
+    const query = qs.toString()
+    const r = await requestJson<HandoffResponse>(`/api/design-studio/handoff${query ? `?${query}` : ''}`)
     setLoading(false)
     if (!r.ok) { setError(r.status === 0 ? 'Mất kết nối tới máy chủ — bấm "Tải lại" để thử lại' : r.error); return }
     setError('')
     setData(r.data)
-  }, [q])
+  }, [q, tab])
 
   useEffect(() => { load() }, [load, version])
 
@@ -198,35 +168,68 @@ export default function HandoffGrid({ q, version, onOpenTask, onChanged }: {
   }, [load, onChanged])
 
   const fail = useCallback((message: string) => { setInfo(''); setActionError(message) }, [])
+  const pick = (id: string) => {
+    setTab(id)
+    try { window.localStorage.setItem(TAB_KEY, id) } catch {}
+  }
+  const tabs = data?.tabs ?? []
+  const selected = data?.selected ?? null
+  const current = tabs.find(t => t.id === selected) ?? null
   const pending = data?.pending ?? []
   const me = data?.me ?? null
-  const grid = 'grid grid-cols-[repeat(auto-fill,minmax(460px,1fr))] gap-md items-start'
+  const warned = selected ? pending.filter(c => hubView(c, selected).warnings.length > 0).length : 0
 
   return (
     <section aria-label="Duyệt sản xuất" className="flex flex-col gap-md min-w-0">
       <div className={`${card} px-md py-sm flex items-center gap-sm flex-wrap`}>
         <Icon name="precision_manufacturing" className="text-secondary text-[20px]" />
         <h2 className="text-body-md font-semibold text-on-surface">Duyệt sản xuất</h2>
-        <span className="text-label-sm text-on-surface-variant">
-          {pending.length} đơn đã duyệt hết design, chờ gửi xưởng{data && data.pendingCount > pending.length && !q ? ` (đang hiện ${pending.length}/${data.pendingCount})` : ''} · gửi xong đơn chuyển sang tab &quot;Đã chuyển xưởng&quot;
-        </span>
+        <span className="text-label-sm text-on-surface-variant">{data?.pendingCount ?? 0} đơn chờ gửi xưởng</span>
         {loading && <Icon name="progress_activity" className="text-on-surface-variant text-[16px] animate-spin" />}
         <span className="ml-auto flex items-center gap-sm flex-wrap">
           {me && !me.canHandoff && <span className="text-label-sm text-on-surface-variant">Bạn chỉ xem — Admin hoặc người có quyền CSV Export mới chuyển xưởng</span>}
           <button type="button" className={btn} onClick={load} disabled={loading}><Icon name="refresh" className="text-[16px]" />Tải lại</button>
         </span>
+        <input type="search" value={rawQ} onChange={e => onQ(e.target.value)} placeholder="Tìm mã đơn, tên, SKU…" aria-label="Tìm đơn"
+          className={`${input} w-full lg:hidden`} />
       </div>
+      {tabs.length > 0 && (
+        <div role="tablist" aria-label="Xưởng" className="sticky top-0 z-20 -mx-xs px-xs py-xs bg-background flex gap-xs overflow-x-auto">
+          {tabs.map(t => {
+            const on = t.id === selected
+            return (
+              <button key={t.id} type="button" role="tab" aria-selected={on} onClick={() => pick(t.id)}
+                className={`shrink-0 inline-flex items-center gap-xs h-9 px-md rounded-full border text-body-sm font-semibold whitespace-nowrap ${on ? 'bg-secondary text-on-secondary border-transparent' : 'bg-surface-container-lowest text-on-surface border-outline-variant/60 hover:bg-surface-container-low'}`}>
+                {t.name}<span className={on ? 'opacity-80' : 'text-on-surface-variant'}>{t.orderCount}</span>
+              </button>
+            )
+          })}
+        </div>
+      )}
+      {current && (
+        <div className="flex items-center gap-sm flex-wrap text-label-sm text-on-surface-variant">
+          <b className="text-body-sm text-on-surface">{current.name}</b>
+          {current.channel && <Pill tone={current.channel === 'API' ? 'brand' : 'idle'} icon={current.channel === 'API' ? 'cloud_upload' : 'description'}>{current.channel}</Pill>}
+          <span>{current.orderCount} đơn</span>
+          <span title="Tổng base cost các dòng đang chờ, chưa gồm phí ship">Base cost <b className="text-on-surface">{fmtUsd(current.baseCostTotal)}</b></span>
+          {warned > 0 && <span className="text-error font-semibold">{warned} đơn có cảnh báo</span>}
+          {current.orderCount > pending.length && !loading && <span>đang hiện {pending.length} đơn cũ nhất</span>}
+          {current.channel === 'CSV' && <a href="/fulfillment/export" className="ml-auto text-secondary font-semibold hover:underline">Mở CSV Export</a>}
+        </div>
+      )}
       {info && <span role="status" className="text-label-sm text-on-surface-variant">{info}</span>}
       <ErrorBanner msg={actionError} onClose={() => setActionError('')} />
       <ErrorBanner msg={error} />
-      {!loading && !error && pending.length === 0 && (
+      {!loading && !error && tabs.length === 0 && (
         <div className={`${card} p-lg text-body-sm text-on-surface-variant flex items-center gap-sm`}>
-          <Icon name="task_alt" className="text-on-tertiary-container" />Không có đơn nào chờ gửi xưởng.
+          <Icon name="task_alt" className="text-on-tertiary-container" />{q ? 'Không tìm thấy đơn nào đang chờ gửi xưởng.' : 'Không có đơn nào chờ gửi xưởng.'}
         </div>
       )}
-      <div className={grid}>
-        {pending.map(c => <OrderCard key={c.order.id} c={c} me={me} onOpenTask={onOpenTask} onChanged={changed} onError={fail} />)}
-      </div>
+      {selected && (
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,340px),1fr))] gap-md">
+          {pending.map(c => <HubCard key={c.order.id} c={c} tabId={selected} me={me} onOpenTask={onOpenTask} onChanged={changed} onError={fail} />)}
+        </div>
+      )}
     </section>
   )
 }
