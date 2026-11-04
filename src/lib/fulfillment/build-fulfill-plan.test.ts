@@ -388,3 +388,53 @@ describe('buildFulfillmentPlan — add-on lines (Shipping protection / Tip / Cus
     ])
   })
 })
+
+describe('whole-order row on a multi-item order', () => {
+  const fo = { id: 'FO1', status: 'OPEN', lineItems: [
+    { id: 'A', remainingQuantity: 1, shopifyLineId: 'L1', sku: 'X' },
+    { id: 'B', remainingQuantity: 1, shopifyLineId: 'L2', sku: 'Y' },
+    { id: 'C', remainingQuantity: 1, shopifyLineId: 'FEE', sku: null },
+  ] }
+  const plan = (wholeRowCheck: Parameters<typeof buildFulfillmentPlan>[0]['wholeRowCheck']) => buildFulfillmentPlan({
+    baseOrder: 'LIT1', rows: [{ lineKey: 'LIT1', tracking: 'T' }], shipments: [], fulfillmentOrders: [fo], displayFulfillmentStatus: 'UNFULFILLED',
+    addOnLineIds: ['FEE'], placedAt: days(10), now: NOW, minAgeDays: 7, wholeRowCheck,
+  })
+  const line = (id: string, supplier: string | null, hasFile: boolean) => ({ shopifyLineId: id, label: `dòng ${id}`, supplier, hasFile })
+
+  it('closes the order when every line is the sheet supplier with a file, ignoring case and add-ons', () => {
+    const p = plan({ sheets: ['Merchize'], lines: [line('L1', 'merchize', true), line('L2', 'Merchize', true)] })
+    expect(p.status).toBe('will_fulfill')
+  })
+  it('holds it when a line belongs to another supplier (LIT4977)', () => {
+    const p = plan({ sheets: ['Mangoshao'], lines: [line('L1', 'Mangoshao', true), line('L2', 'Pgprints', true)] })
+    expect(p.status).toBe('needs_manual')
+    expect(p.fulfillments).toEqual([])
+    expect(p.message).toContain('dòng L2: xưởng Pgprints')
+  })
+  it('holds it when a line of the same supplier has no file (LIT5121)', () => {
+    const p = plan({ sheets: ['Jomall'], lines: [line('L1', 'Jomall', false), line('L2', 'Jomall', true)] })
+    expect(p.status).toBe('needs_manual')
+    expect(p.message).toContain('dòng L1: chưa có file')
+  })
+  it('holds it when a supplier is missing or the order is not in the tool', () => {
+    expect(plan({ sheets: ['Jomall'], lines: [line('L1', null, true), line('L2', 'Jomall', true)] }).status).toBe('needs_manual')
+    expect(plan({ sheets: ['Jomall'], lines: [] }).status).toBe('needs_manual')
+  })
+  it('accepts lines split across the sheets that wrote the same whole-order row', () => {
+    expect(plan({ sheets: ['Jomall', 'Mangoshao'], lines: [line('L1', 'Jomall', true), line('L2', 'Mangoshao', true)] }).status).toBe('will_fulfill')
+  })
+  it('leaves a one-line order to its row, and the last open line of a multi-item order is still checked', () => {
+    const one = buildFulfillmentPlan({
+      baseOrder: 'LIT2', rows: [{ lineKey: 'LIT2', tracking: 'T' }], shipments: [], placedAt: days(10), now: NOW, minAgeDays: 7, displayFulfillmentStatus: 'UNFULFILLED',
+      fulfillmentOrders: [{ id: 'FO', status: 'OPEN', lineItems: [{ id: 'A', remainingQuantity: 1, shopifyLineId: 'L1', sku: 'X' }] }],
+      wholeRowCheck: { sheets: ['Jomall'], lines: [line('L1', 'Printway', false)] },
+    })
+    expect(one.status).toBe('will_fulfill')
+    const last = buildFulfillmentPlan({
+      baseOrder: 'LIT3', rows: [{ lineKey: 'LIT3', tracking: 'T' }], shipments: [], placedAt: days(10), now: NOW, minAgeDays: 7, displayFulfillmentStatus: 'PARTIALLY_FULFILLED',
+      fulfillmentOrders: [{ id: 'FO', status: 'OPEN', lineItems: [{ id: 'B', remainingQuantity: 1, shopifyLineId: 'L2', sku: 'Y' }] }],
+      wholeRowCheck: { sheets: ['Mangoshao'], lines: [line('L1', 'Mangoshao', true), line('L2', 'Jomall', true)] },
+    })
+    expect(last.status).toBe('needs_manual')
+  })
+})

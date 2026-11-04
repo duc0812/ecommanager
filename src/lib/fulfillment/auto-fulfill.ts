@@ -1,7 +1,7 @@
 import { prisma } from '@/lib/db'
 import { fetchSheetCsv, parseSheetCsv, csvExportUrl, parseSheetUrl } from './parse-sheet'
 import { type SheetConfig, DEFAULT_STORE_BASE } from './auto-fulfill-sheets'
-import { groupByOrder, mergeSheetGroups, buildFulfillmentPlan, type OrderPlanStatus, type OrderRow } from './build-fulfill-plan'
+import { groupByOrder, mergeSheetGroups, buildFulfillmentPlan, type OrderPlanStatus, type OrderRow, type WholeRowCheck } from './build-fulfill-plan'
 import { fetchOrderFulfillmentOrdersByNames, createFulfillment } from '@/lib/shopify-orders'
 import { isNonProductLine } from '@/lib/order-lines'
 
@@ -69,6 +69,7 @@ export async function runAutoFulfill(opts: {
   //    own sheet, so keeping only the first sheet's rows would silently skip the others.
   const byOrder = new Map<string, { rows: Array<{ lineKey: string; tracking: string }>; storeBase: string }>()
   const sheetErrorRows: OrderResultRow[] = []
+  const wholeRowSheets = new Map<string, Set<string>>()
   const enabledSheets = opts.sheets.filter(s => s.enabled)
   let sheetsRead = 0
   for (const sheet of enabledSheets) {
@@ -86,6 +87,9 @@ export async function runAutoFulfill(opts: {
       continue
     }
     const grouped = groupByOrder(parseSheetCsv(text))
+    for (const [base, rows] of Array.from(grouped)) {
+      if (rows.some(r => r.lineKey === base)) wholeRowSheets.set(base, (wholeRowSheets.get(base) ?? new Set<string>()).add(sheet.name))
+    }
     mergeSheetGroups(byOrder, grouped, sheet.storeBase)
   }
   const pushed = await pushedShipmentRows(opts.storeId)
@@ -102,11 +106,11 @@ export async function runAutoFulfill(opts: {
   const orders = await prisma.order.findMany({
     where: { storeId: opts.storeId, shopifyOrderNumber: { in: [...names, ...names.map(n => `#${n}`)] } },
     select: {
-      id: true, shopifyOrderNumber: true, placedAt: true, pipelineStatus: true, fulfillmentStatus: true,
+      id: true, shopifyOrderNumber: true, placedAt: true, pipelineStatus: true, fulfillmentStatus: true, trelloCardUrl: true,
       shipments: { select: { id: true, lineKey: true, shopifyLineId: true } },
       // Non-product lines (Shipping protection / Tip / Custom Text) have no Shipment row and
       // never appear in a supplier sheet, but Shopify still waits for them to be fulfilled.
-      lines: { select: { shopifyLineId: true, sku: true, productTitle: true, shopifyProductType: true } },
+      lines: { select: { shopifyLineId: true, sku: true, productTitle: true, shopifyProductType: true, linePosition: true, resolvedSupplierId: true, exportedToSupplierId: true, exportedAt: true, designDriveLink: true } },
     },
   })
   const dbByName = new Map(orders.map(o => [o.shopifyOrderNumber.replace(/^#/, ''), o]))
@@ -121,6 +125,28 @@ export async function runAutoFulfill(opts: {
   const foMap = await fetchOrderFulfillmentOrdersByNames(opts.shop, opts.accessToken, names.filter(n => !settled.has(n)), undefined,
     (done, total) => opts.onStage?.('shopify', done, total))
 
+  const wholeRowOrderIds = names.filter(n => !settled.has(n) && wholeRowSheets.has(n)).map(n => dbByName.get(n)?.id).filter((id): id is string => !!id)
+  const [suppliers, printed] = wholeRowOrderIds.length
+    ? await Promise.all([
+      prisma.supplier.findMany({ select: { id: true, name: true } }),
+      prisma.designArtwork.findMany({ where: { orderId: { in: wholeRowOrderIds }, kind: 'PRINT', removedAt: null }, select: { orderId: true, shopifyLineId: true } }),
+    ])
+    : [[], []]
+  const supplierName = new Map(suppliers.map(s => [s.id, s.name]))
+  const printedLines = new Set(printed.map(a => `${a.orderId} ${a.shopifyLineId}`))
+  const wholeRowCheckFor = (base: string): WholeRowCheck | undefined => {
+    const sheets = wholeRowSheets.get(base)
+    if (!sheets) return undefined
+    const db = dbByName.get(base)
+    const lines = (db?.lines ?? []).filter(l => !isNonProductLine(l)).map(l => ({
+      shopifyLineId: l.shopifyLineId,
+      label: `dòng ${l.linePosition} ${l.sku ?? l.productTitle}`,
+      supplier: supplierName.get(l.exportedToSupplierId ?? l.resolvedSupplierId ?? '') ?? null,
+      hasFile: printedLines.has(`${db?.id} ${l.shopifyLineId}`) || !!l.designDriveLink || !!l.exportedAt || !!db?.trelloCardUrl,
+    }))
+    return { sheets: Array.from(sheets), lines }
+  }
+
   // 3) Evaluate every sheet order in-memory (the Shopify + DB fetches above already ran).
   type Evaluated = { base: string; plan: ReturnType<typeof buildFulfillmentPlan>; storeBase: string; db: (typeof orders)[number] | undefined; fulfilledLines: number }
   const evaluated: Evaluated[] = []
@@ -134,6 +160,7 @@ export async function runAutoFulfill(opts: {
       fulfillmentOrders: fo ? fo.fulfillmentOrders : null,
       displayFulfillmentStatus: fo?.displayFulfillmentStatus ?? null,
       addOnLineIds: (db?.lines ?? []).filter(l => isNonProductLine(l)).map(l => l.shopifyLineId),
+      wholeRowCheck: wholeRowCheckFor(base),
       placedAt: db?.placedAt ?? (fo ? new Date(fo.createdAt) : null),
       now, minAgeDays: minAgeFor(base),
     })

@@ -132,6 +132,9 @@ export function dueForNewTask(placedAt: Date, slaHours: number, now = Date.now()
   return new Date(fromOrder > now ? fromOrder : now + slaHours * 3600_000)
 }
 
+export const SHIPPED_WITHOUT_FILE_REASON = 'Đơn đã fulfilled nhưng dòng chưa có file'
+export const SHIPPED_WITHOUT_FILE_NOTE = 'Shopify đã báo giao cả đơn nhưng dòng này chưa có file in. Kiểm tra với xưởng xem sản phẩm đã được làm chưa.'
+
 export type SyncResult = { created: number; cancelled: number; completed: number; reopened: number }
 
 function reopenedByFactory(task: { rejectReasons: string | null }): boolean {
@@ -159,6 +162,15 @@ export async function syncDesignTasks(orderId: string): Promise<SyncResult> {
     const existing = order.designTasks.find(t => t.shopifyLineId === line.shopifyLineId)
     if (orderClosed || orderShipped) {
       if (existing && existing.status !== 'CANCELLED' && existing.status !== 'DONE') {
+        // A fulfilled order does not prove this line was made: one supplier's tracking can close the whole order.
+        const hasFile = withArtwork.has(line.shopifyLineId) || !!line.designDriveLink || !!line.exportedAt || !!order.trelloCardUrl
+        if (!orderClosed && !hasFile) {
+          if (existing.status !== 'REJECTED') {
+            await prisma.designTask.update({ where: { id: existing.id }, data: { status: 'REJECTED', rejectReasons: JSON.stringify([SHIPPED_WITHOUT_FILE_REASON]), rejectNote: SHIPPED_WITHOUT_FILE_NOTE, events: { create: { type: 'SYSTEM', message: `${SHIPPED_WITHOUT_FILE_REASON} — giữ task mở` } } } })
+            reopened++
+          }
+          continue
+        }
         const message = orderClosed ? 'Đơn huỷ — task tự huỷ' : 'Đơn đã fulfilled — task tự huỷ'
         await prisma.designTask.update({ where: { id: existing.id }, data: { status: 'CANCELLED', events: { create: { type: 'SYSTEM', message } } } })
         cancelled++

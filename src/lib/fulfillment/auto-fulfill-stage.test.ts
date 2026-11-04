@@ -2,7 +2,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const dbOrders: any[] = []
 const pushRows: any[] = []
-vi.mock('@/lib/db', () => ({ prisma: { order: { findMany: vi.fn(async () => dbOrders) }, supplierOrderPush: { findMany: vi.fn(async () => pushRows) } } }))
+const printRows: any[] = []
+vi.mock('@/lib/db', () => ({ prisma: {
+  order: { findMany: vi.fn(async () => dbOrders), update: vi.fn() }, supplierOrderPush: { findMany: vi.fn(async () => pushRows) },
+  supplier: { findMany: vi.fn(async () => [{ id: 'sm', name: 'Mangoshao' }, { id: 'sj', name: 'Jomall' }]) }, designArtwork: { findMany: vi.fn(async () => printRows) },
+} }))
 vi.mock('./parse-sheet', async (orig) => ({
   ...(await orig<typeof import('./parse-sheet')>()),
   fetchSheetCsv: vi.fn(async () => 'Order,Tracking\nLIT1001,TRK1\nLIT1002,TRK2\nLIT1003,TRK3\n'),
@@ -16,7 +20,7 @@ vi.mock('@/lib/shopify-orders', () => ({
 }))
 
 import { runAutoFulfill, settleFromDb } from './auto-fulfill'
-import { fetchOrderFulfillmentOrdersByNames } from '@/lib/shopify-orders'
+import { createFulfillment, fetchOrderFulfillmentOrdersByNames } from '@/lib/shopify-orders'
 
 const NOW = new Date('2026-10-28T00:00:00Z')
 const daysAgo = (n: number) => new Date(NOW.getTime() - n * 86_400_000)
@@ -24,7 +28,7 @@ const SHEET = { id: '1', name: 'A', url: 'https://docs.google.com/spreadsheets/d
 const dbOrder = (name: string, placedAt: Date, fulfillmentStatus: string | null) =>
   ({ id: name, shopifyOrderNumber: `#${name}`, placedAt, pipelineStatus: null, fulfillmentStatus, shipments: [], lines: [] })
 
-beforeEach(() => { vi.clearAllMocks(); dbOrders.length = 0; pushRows.length = 0 })
+beforeEach(() => { vi.clearAllMocks(); dbOrders.length = 0; pushRows.length = 0; printRows.length = 0 })
 
 describe('runAutoFulfill', () => {
   it('reports each sheet read and the Shopify batches before evaluating orders', async () => {
@@ -46,6 +50,38 @@ describe('runAutoFulfill', () => {
     expect(r.alreadyFulfilled).toBe(1)
     expect(r.tooRecent).toBe(1)
     expect(r.notFound).toBe(1)
+  })
+})
+
+describe('whole-order row checked against the order lines', () => {
+  const twoLines = (second: Record<string, unknown>) => {
+    const line = (id: string, more: Record<string, unknown>) => ({ shopifyLineId: id, sku: `SKU-${id}`, productTitle: 'Hoodie', shopifyProductType: 'Hoodie', linePosition: Number(id.slice(1)), resolvedSupplierId: 'sm', exportedToSupplierId: null, exportedAt: null, designDriveLink: 'https://x', ...more })
+    dbOrders.push({ ...dbOrder('LIT1003', daysAgo(20), 'UNFULFILLED'), trelloCardUrl: null, lines: [line('L1', {}), line('L2', second)] })
+    ;(fetchOrderFulfillmentOrdersByNames as any).mockResolvedValueOnce(new Map([['LIT1003', { displayFulfillmentStatus: 'UNFULFILLED', createdAt: daysAgo(20).toISOString(), fulfillmentOrders: [
+      { id: 'FO', status: 'OPEN', lineItems: [{ id: 'A', remainingQuantity: 1, shopifyLineId: 'L1', sku: 'X' }, { id: 'B', remainingQuantity: 1, shopifyLineId: 'L2', sku: 'Y' }] },
+    ] }]]))
+  }
+  const run = () => runAutoFulfill({ shop: 's', accessToken: 't', storeId: 'st', minAgeDays: 5, apply: true, now: NOW, sheets: [{ ...SHEET, name: 'Mangoshao' }] })
+
+  it('does not fulfill when the row comes from another supplier than a line', async () => {
+    twoLines({ resolvedSupplierId: 'sj' })
+    const r = await run()
+    expect(createFulfillment).not.toHaveBeenCalled()
+    const row = r.rows.find(x => x.baseOrder === 'LIT1003')
+    expect(row?.status).toBe('needs_manual')
+    expect(row?.message).toContain('xưởng Jomall')
+  })
+  it('does not fulfill when a line has no file, and a print on the line counts as a file', async () => {
+    twoLines({ designDriveLink: null })
+    expect((await run()).rows.find(x => x.baseOrder === 'LIT1003')?.message).toContain('chưa có file')
+    expect(createFulfillment).not.toHaveBeenCalled()
+
+    dbOrders.length = 0
+    twoLines({ designDriveLink: null })
+    printRows.push({ orderId: 'LIT1003', shopifyLineId: 'L2' })
+    ;(createFulfillment as any).mockResolvedValue({ ok: true, fulfillmentId: 'F1' })
+    expect((await run()).rows.find(x => x.baseOrder === 'LIT1003')?.status).toBe('will_fulfill')
+    expect(createFulfillment).toHaveBeenCalledTimes(1)
   })
 })
 

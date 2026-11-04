@@ -54,6 +54,26 @@ export type PlannedFulfillment = { fulfillmentOrderId: string; lineItems: Array<
 export type OrderPlanStatus = 'will_fulfill' | 'too_recent' | 'already_fulfilled' | 'not_found' | 'needs_manual' | 'error'
 export type OrderPlan = { baseOrder: string; status: OrderPlanStatus; fulfillments: PlannedFulfillment[]; message?: string; ageDays?: number; openLineCount?: number; hasHeldLines?: boolean }
 
+// What a whole-order (unsuffixed) sheet row is checked against: the sheets that wrote it and the order's product lines.
+export type WholeRowCheck = { sheets: string[]; lines: Array<{ shopifyLineId: string; label: string; supplier: string | null; hasFile: boolean }> }
+
+// A supplier's unsuffixed row only proves its own parcel shipped. On a multi-item order every open line must belong to that
+// supplier and have a file, otherwise the row would tell the customer that items nobody made are on the way.
+export function wholeRowBlockers(check: WholeRowCheck, openLineIds: string[]): string[] {
+  if (check.lines.length < 2 && openLineIds.length < 2) return []
+  const sheets = new Set(check.sheets.map(n => n.trim().toLowerCase()))
+  const blockers: string[] = []
+  for (const id of openLineIds) {
+    const line = check.lines.find(l => l.shopifyLineId === id)
+    if (!line) { blockers.push(`line ${id} không có trong tool`); continue }
+    const issues: string[] = []
+    if (!line.supplier || !sheets.has(line.supplier.trim().toLowerCase())) issues.push(`xưởng ${line.supplier ?? 'chưa gán'}`)
+    if (!line.hasFile) issues.push('chưa có file')
+    if (issues.length) blockers.push(`${line.label}: ${issues.join(', ')}`)
+  }
+  return blockers
+}
+
 export function buildFulfillmentPlan(input: {
   baseOrder: string
   rows: Array<{ lineKey: string; tracking: string }>
@@ -64,6 +84,7 @@ export function buildFulfillmentPlan(input: {
   // ships and no sheet ever lists. Omitted when the order isn't in the DB → nothing extra
   // is ever fulfilled, so a missing/stale mapping can never over-fulfill.
   addOnLineIds?: string[]
+  wholeRowCheck?: WholeRowCheck
   placedAt: Date | null
   now: Date
   minAgeDays: number
@@ -147,6 +168,11 @@ export function buildFulfillmentPlan(input: {
     // Only unsuffixed row(s): whole order. They must agree on one tracking.
     const wholeTrackings = new Set(input.rows.map(r => r.tracking))
     if (wholeTrackings.size > 1) return done('needs_manual', 'Dòng cả đơn nhưng nhiều tracking khác nhau', ageDays)
+    if (input.wholeRowCheck) {
+      const openProductLines = Array.from(openByLineId.keys()).filter(id => !addOnLineIds.has(id))
+      const blockers = wholeRowBlockers(input.wholeRowCheck, openProductLines)
+      if (blockers.length) return done('needs_manual', `Sheet ${input.wholeRowCheck.sheets.join(', ')} ghi cả đơn nhưng ${blockers.join('; ')}`, ageDays)
+    }
     const tracking = input.rows[0].tracking
     openByLineId.forEach((open, lineId) => {
       if (addOnLineIds.has(lineId)) return // add-ons are closed below, without tracking

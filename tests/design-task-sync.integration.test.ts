@@ -95,9 +95,35 @@ describe('runDesignTaskSync scope', () => {
 
     await runDesignTaskSync()
     for (const o of [fulfilled, shipped, cancelled, refunded]) expect(await taskOf(o.id)).toBeNull()
-    const closed = await taskOf(stale.id)
+    const kept = await taskOf(stale.id)
+    expect(kept?.status).toBe('REJECTED')
+    expect(kept?.rejectNote).toBeTruthy()
+    expect(kept?.events.some(e => e.type === 'SYSTEM' && e.message.includes('chưa có file'))).toBe(true)
+  })
+
+  it('a second sync leaves a kept task and its log alone, and a line with a file is still cancelled', async () => {
+    const noFile = await order({ status: 'FULFILLED', placedAt: '2025-02-02' })
+    await prisma.designTask.create({ data: { orderId: noFile.id, shopifyLineId: 'l1', taskKey: noFile.key, status: 'NEW' } })
+    await runDesignTaskSync()
+    await runDesignTaskSync()
+    const kept = await taskOf(noFile.id)
+    expect(kept?.status).toBe('REJECTED')
+    expect(kept?.events.filter(e => e.message.includes('chưa có file'))).toHaveLength(1)
+
+    const withLink = await order({ status: 'FULFILLED', placedAt: '2025-02-03' })
+    await prisma.orderLine.updateMany({ where: { orderId: withLink.id }, data: { designDriveLink: 'https://drive.google.com/file/d/x/view' } })
+    await prisma.designTask.create({ data: { orderId: withLink.id, shopifyLineId: 'l1', taskKey: withLink.key, status: 'NEW' } })
+    await runDesignTaskSync()
+    const closed = await taskOf(withLink.id)
     expect(closed?.status).toBe('CANCELLED')
-    expect(closed?.events.some(e => e.type === 'SYSTEM' && e.message.includes('fulfilled'))).toBe(true)
+    expect(closed?.events.some(e => e.message.includes('task tự huỷ'))).toBe(true)
+  })
+
+  it('a cancelled order still cancels a line without a file', async () => {
+    const gone = await order({ status: 'CANCELLED', placedAt: '2025-02-04' })
+    await prisma.designTask.create({ data: { orderId: gone.id, shopifyLineId: 'l1', taskKey: gone.key, status: 'NEW' } })
+    await runDesignTaskSync()
+    expect((await taskOf(gone.id))?.status).toBe('CANCELLED')
   })
 })
 
