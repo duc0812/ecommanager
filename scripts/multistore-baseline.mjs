@@ -1,8 +1,9 @@
 // Read-only: per-store numbers, to prove the first store does not move when another store is added.
 //   node scripts/multistore-baseline.mjs <db>                        JSON on stdout (keep it as the baseline)
 //   node scripts/multistore-baseline.mjs <db> --compare <file.json>  plain-text differences against that baseline
-// Exit 0 = fine, 1 = a baseline store lost orders/payouts or its numbers dated at or before the baseline moved,
-// 2 = bad arguments or unreadable database/baseline. Orders are dated by placedAt, payouts by date.
+// Exit 0 = fine, 1 = a baseline store lost orders/payouts or its numbers present at the baseline moved,
+// 2 = bad arguments or unreadable database/baseline. An order existed at the baseline when it was first fetched by then
+// (Order.fetchedAt, placedAt when null), so an order placed earlier but synced later is new; payouts are cut by date.
 import { createClient } from '@libsql/client'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -35,12 +36,12 @@ async function openReadOnly(file) {
 const byStore = rows => new Map(rows.map(r => [r.storeId, r]))
 const countTotal = row => ({ count: Number(row?.n ?? 0), total: money(row?.total) })
 
-// atTakenAt holds the records dated at or before `cutoff`: this run's takenAt for a baseline, the baseline's takenAt when comparing.
+// atTakenAt holds the records that existed at `cutoff`: this run's takenAt for a baseline, the baseline's takenAt when comparing.
 async function collect(db, cutoff) {
   const [{ n: hasPrefix }] = await exec(db, `SELECT count(*) AS n FROM pragma_table_info('ShopifyStore') WHERE name = 'orderPrefix'`)
   const stores = await exec(db, `SELECT id, shop, ${Number(hasPrefix) ? 'orderPrefix' : 'NULL'} AS orderPrefix FROM ShopifyStore ORDER BY shop`)
   const orders = byStore(await exec(db, `SELECT storeId, count(*) AS n, sum(grossAmount) AS total FROM "Order" GROUP BY storeId`))
-  const ordersAt = byStore(await exec(db, `SELECT storeId, count(*) AS n, sum(grossAmount) AS total FROM "Order" WHERE ${UTC('placedAt')} <= ? GROUP BY storeId`, [cutoff]))
+  const ordersAt = byStore(await exec(db, `SELECT storeId, count(*) AS n, sum(grossAmount) AS total FROM "Order" WHERE ${UTC('coalesce(fetchedAt, placedAt)')} <= ? GROUP BY storeId`, [cutoff]))
   const payouts = byStore(await exec(db, `SELECT storeId, count(*) AS n, sum(amount) AS total FROM Payout GROUP BY storeId`))
   const payoutsAt = byStore(await exec(db, `SELECT storeId, count(*) AS n, sum(amount) AS total FROM Payout WHERE ${UTC('date')} <= ? GROUP BY storeId`, [cutoff]))
   const tasks = await exec(db, `SELECT o.storeId AS storeId, t.status AS status, count(*) AS n FROM DesignTask t JOIN "Order" o ON o.id = t.orderId GROUP BY o.storeId, t.status ORDER BY t.status`)
@@ -102,8 +103,8 @@ function compare(baseline, current, comparedAt) {
       if (b < a) fail(shop, `${what} lost: ${a - b} (baseline had ${a}, now ${b})`)
     }
     const wasAt = was.atTakenAt, nowAt = now.atTakenAt
-    verdict(shop, 'orders dated at or before the baseline', wasAt.orders.count, nowAt.orders.count, wasAt.orders.count === nowAt.orders.count)
-    verdict(shop, 'orders gross total dated at or before the baseline', wasAt.orders.grossTotal, nowAt.orders.grossTotal, cents(wasAt.orders.grossTotal) === cents(nowAt.orders.grossTotal), fmt)
+    verdict(shop, 'orders present at the baseline', wasAt.orders.count, nowAt.orders.count, wasAt.orders.count === nowAt.orders.count)
+    verdict(shop, 'orders gross total present at the baseline', wasAt.orders.grossTotal, nowAt.orders.grossTotal, cents(wasAt.orders.grossTotal) === cents(nowAt.orders.grossTotal), fmt)
     verdict(shop, 'payouts dated at or before the baseline', wasAt.payouts.count, nowAt.payouts.count, wasAt.payouts.count === nowAt.payouts.count)
     verdict(shop, 'payouts total dated at or before the baseline', wasAt.payouts.total, nowAt.payouts.total, cents(wasAt.payouts.total) === cents(nowAt.payouts.total), fmt)
 
@@ -113,7 +114,7 @@ function compare(baseline, current, comparedAt) {
     const newPayouts = after(now, 'payouts', 'count') - after(was, 'payouts', 'count')
     const newPayoutTotal = after(now, 'payouts', 'total') - after(was, 'payouts', 'total')
     if (newOrders || newPayouts) {
-      lines.push(`  new, dated after the baseline: ${newOrders} orders (gross total ${fmt(newGross)}), ${newPayouts} payouts (total ${fmt(newPayoutTotal)})`)
+      lines.push(`  new since the baseline: ${newOrders} orders (gross total ${fmt(newGross)}), ${newPayouts} payouts (total ${fmt(newPayoutTotal)})`)
     }
 
     const statuses = [...new Set([...Object.keys(was.designTasks.byStatus), ...Object.keys(now.designTasks.byStatus)])].sort()

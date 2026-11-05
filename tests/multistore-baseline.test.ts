@@ -36,13 +36,13 @@ async function seed(opts: { orderPrefixColumn?: boolean } = {}) {
   const prefixColumn = opts.orderPrefixColumn ?? true
   await withDb(async sql => {
     await sql(`CREATE TABLE ShopifyStore (id TEXT PRIMARY KEY, shop TEXT NOT NULL UNIQUE${prefixColumn ? ', orderPrefix TEXT' : ''})`)
-    await sql(`CREATE TABLE "Order" (id TEXT PRIMARY KEY, storeId TEXT NOT NULL, shopifyOrderNumber TEXT NOT NULL, grossAmount REAL NOT NULL, placedAt TEXT NOT NULL)`)
+    await sql(`CREATE TABLE "Order" (id TEXT PRIMARY KEY, storeId TEXT NOT NULL, shopifyOrderNumber TEXT NOT NULL, grossAmount REAL NOT NULL, placedAt TEXT NOT NULL, fetchedAt TEXT)`)
     await sql(`CREATE TABLE Payout (id INTEGER PRIMARY KEY, storeId TEXT NOT NULL, status TEXT NOT NULL, date TEXT NOT NULL, amount REAL NOT NULL)`)
     await sql(`CREATE TABLE DesignTask (id TEXT PRIMARY KEY, orderId TEXT NOT NULL, status TEXT NOT NULL)`)
     await sql(`CREATE TABLE Shipment (id TEXT PRIMARY KEY, orderId TEXT NOT NULL)`)
     await sql(prefixColumn ? `INSERT INTO ShopifyStore (id, shop, orderPrefix) VALUES ('s1', ?, 'LIT')` : `INSERT INTO ShopifyStore (id, shop) VALUES ('s1', ?)`, [SHOP])
-    await sql(`INSERT INTO "Order" VALUES ('o1', 's1', '#LIT1', 10.10, '2026-10-01T10:00:00.000+00:00')`)
-    await sql(`INSERT INTO "Order" VALUES ('o2', 's1', '#LIT2', 20.20, '2026-10-02T11:30:00.000+00:00')`)
+    await sql(`INSERT INTO "Order" VALUES ('o1', 's1', '#LIT1', 10.10, '2026-10-01T10:00:00.000+00:00', '2026-10-01T10:05:00.000+00:00')`)
+    await sql(`INSERT INTO "Order" VALUES ('o2', 's1', '#LIT2', 20.20, '2026-10-02T11:30:00.000+00:00', '2026-10-02T11:35:00.000+00:00')`)
     await sql(`INSERT INTO Payout VALUES (1, 's1', 'paid', '2026-10-03', 30.30)`)
     await sql(`INSERT INTO Payout VALUES (2, 's1', 'paid', '2026-10-04', 40.40)`)
     await sql(`INSERT INTO Payout VALUES (3, 's1', 'in_transit', '2099-01-01', 50.50)`)
@@ -121,12 +121,12 @@ describe('multistore-baseline', () => {
     const later = minutesAfter(baseline.takenAt, 5)
     await withDb(async sql => {
       await sql(`INSERT INTO ShopifyStore (id, shop, orderPrefix) VALUES ('s2', ?, 'SEC')`, [NEW_SHOP])
-      await sql(`INSERT INTO "Order" VALUES ('n1', 's2', '#SEC1', 99.99, '2026-09-01T00:00:00.000+00:00')`)
-      await sql(`INSERT INTO "Order" VALUES ('n2', 's2', '#SEC2', 11.11, ?)`, [later])
+      await sql(`INSERT INTO "Order" VALUES ('n1', 's2', '#SEC1', 99.99, '2026-09-01T00:00:00.000+00:00', '2026-09-01T00:05:00.000+00:00')`)
+      await sql(`INSERT INTO "Order" VALUES ('n2', 's2', '#SEC2', 11.11, ?, ?)`, [later, later])
       await sql(`INSERT INTO Payout VALUES (10, 's2', 'paid', '2026-09-02', 77.77)`)
       await sql(`INSERT INTO DesignTask VALUES ('t10', 'n1', 'NEW')`)
       await sql(`INSERT INTO Shipment VALUES ('sh10', 'n1')`)
-      await sql(`INSERT INTO "Order" VALUES ('o3', 's1', '#LIT3', 5.05, ?)`, [later])
+      await sql(`INSERT INTO "Order" VALUES ('o3', 's1', '#LIT3', 5.05, ?, ?)`, [later, later])
       await sql(`INSERT INTO Payout VALUES (4, 's1', 'paid', '2099-02-02', 6.06)`)
       await sql(`UPDATE DesignTask SET status = 'DONE' WHERE id = 't2'`)
       await sql(`INSERT INTO DesignTask VALUES ('t4', 'o3', 'NEW')`)
@@ -135,10 +135,48 @@ describe('multistore-baseline', () => {
     const r = run(dbFile, '--compare', baselineFile)
     expect(r.code).toBe(0)
     expect(r.out).toContain(`${NEW_SHOP}: not in the baseline`)
-    expect(r.out).toContain('dated after the baseline: 1 orders')
+    expect(r.out).toContain('new since the baseline: 1 orders')
     expect(r.out).toMatch(/design tasks \(information\)/)
     expect(r.out).toMatch(/shipments \(information\): 1 -> 2/)
     expect(r.out).toMatch(/RESULT: OK/)
+  })
+
+  it('reports an order placed before the baseline but synced after it as new, and exits 0', async () => {
+    await seed()
+    const baseline = takeBaseline()
+    await withDb(async sql => {
+      await sql(`INSERT INTO "Order" VALUES ('o3', 's1', '#LIT3', 7.07, ?, ?)`, [minutesAfter(baseline.takenAt, -10), minutesAfter(baseline.takenAt, 5)])
+    })
+    const r = run(dbFile, '--compare', baselineFile)
+    expect(r.code).toBe(0)
+    expect(r.out).toContain('orders present at the baseline: 2 -> 2')
+    expect(r.out).toContain('new since the baseline: 1 orders (gross total 7.07)')
+    expect(r.out).toMatch(/RESULT: OK/)
+  })
+
+  it('exits 1 when an order fetched before the baseline disappears, even if a late-synced order of the same amount took its place', async () => {
+    await seed()
+    const baseline = takeBaseline()
+    await withDb(async sql => {
+      await sql(`DELETE FROM "Order" WHERE id = 'o2'`)
+      await sql(`INSERT INTO "Order" VALUES ('o3', 's1', '#LIT3', 20.20, ?, ?)`, [minutesAfter(baseline.takenAt, -10), minutesAfter(baseline.takenAt, 5)])
+    })
+    const r = run(dbFile, '--compare', baselineFile)
+    expect(r.code).toBe(1)
+    expect(r.out).toContain(`FAIL ${SHOP}: orders present at the baseline: 2 -> 1`)
+  })
+
+  it('falls back to placedAt for an order whose fetchedAt is null', async () => {
+    await seed()
+    await withDb(async sql => { await sql(`INSERT INTO "Order" VALUES ('o0', 's1', '#LIT0', 3.03, '2026-09-30T08:00:00.000+00:00', NULL)`) })
+    const baseline = takeBaseline()
+    expect(baseline.stores[SHOP].atTakenAt.orders.count).toBe(3)
+    await withDb(async sql => { await sql(`INSERT INTO "Order" VALUES ('o4', 's1', '#LIT4', 1.01, ?, NULL)`, [minutesAfter(baseline.takenAt, 5)]) })
+    const added = run(dbFile, '--compare', baselineFile)
+    expect(added.code).toBe(0)
+    expect(added.out).toContain('new since the baseline: 1 orders')
+    await withDb(async sql => { await sql(`DELETE FROM "Order" WHERE id = 'o0'`) })
+    expect(run(dbFile, '--compare', baselineFile).code).toBe(1)
   })
 
   it('exits 1 when an old order of a baseline store disappears, even if a newer order arrived in the meantime', async () => {
@@ -146,11 +184,12 @@ describe('multistore-baseline', () => {
     const baseline = takeBaseline()
     await withDb(async sql => {
       await sql(`DELETE FROM "Order" WHERE id = 'o1'`)
-      await sql(`INSERT INTO "Order" VALUES ('o3', 's1', '#LIT3', 10.10, ?)`, [minutesAfter(baseline.takenAt, 5)])
+      const later = minutesAfter(baseline.takenAt, 5)
+      await sql(`INSERT INTO "Order" VALUES ('o3', 's1', '#LIT3', 10.10, ?, ?)`, [later, later])
     })
     const r = run(dbFile, '--compare', baselineFile)
     expect(r.code).toBe(1)
-    expect(r.out).toContain(`FAIL ${SHOP}: orders dated at or before the baseline: 2 -> 1`)
+    expect(r.out).toContain(`FAIL ${SHOP}: orders present at the baseline: 2 -> 1`)
     expect(r.out).toMatch(/RESULT: FAIL/)
   })
 
@@ -160,7 +199,7 @@ describe('multistore-baseline', () => {
     await withDb(async sql => { await sql(`UPDATE "Order" SET grossAmount = 11.10 WHERE id = 'o1'`) })
     const r = run(dbFile, '--compare', baselineFile)
     expect(r.code).toBe(1)
-    expect(r.out).toContain(`FAIL ${SHOP}: orders gross total dated at or before the baseline: 30.30 -> 31.30`)
+    expect(r.out).toContain(`FAIL ${SHOP}: orders gross total present at the baseline: 30.30 -> 31.30`)
   })
 
   it('exits 1 when a payout of a baseline store is lost', async () => {
@@ -190,12 +229,13 @@ describe('multistore-baseline', () => {
     try {
       await app.execute('PRAGMA journal_mode = WAL')
       const baseline = takeBaseline()
-      await app.execute({ sql: `INSERT INTO "Order" VALUES ('o3', 's1', '#LIT3', 5.05, ?)`, args: [minutesAfter(baseline.takenAt, 5)] })
+      const later = minutesAfter(baseline.takenAt, 5)
+      await app.execute({ sql: `INSERT INTO "Order" VALUES ('o3', 's1', '#LIT3', 5.05, ?, ?)`, args: [later, later] })
       const wal = dbFile + '-wal'
       const before = [sha(dbFile), sha(wal)]
       const r = run(dbFile, '--compare', baselineFile)
       expect(r.code).toBe(0)
-      expect(r.out).toContain('dated after the baseline: 1 orders')
+      expect(r.out).toContain('new since the baseline: 1 orders')
       expect([sha(dbFile), sha(wal)]).toEqual(before)
     } finally {
       app.close()
