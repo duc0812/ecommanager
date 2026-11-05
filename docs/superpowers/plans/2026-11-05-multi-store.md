@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Tool quản lý nhiều store Shopify mà token, lịch chạy, quyền xem và file in không lẫn nhau, rồi đưa Reminiso vào trước 05/12/2026.
+**Goal:** Tool quản lý nhiều store Shopify mà token, lịch chạy và quyền xem không lẫn nhau, rồi đưa Reminiso vào trước 05/12/2026.
 
 **Architecture:** Thông tin kết nối chuyển sang bảng riêng theo store. Mọi lệnh gọi Shopify đi qua `getStoreConnection(storeId)`, mọi lịch chạy đi qua `forEachConnectedStore`. Quyền xem đi qua một hàm `storeScopeFor`, và seller bị từ chối mặc định ở mọi route chưa được khai là đã lọc store.
 
@@ -426,37 +426,9 @@ Theo quy trình `preview_start`: đổi bộ chọn, số Overview đổi theo, 
 
 - [ ] **Step 5: Commit** `feat(store): add-store form with client credentials, OAuth and token paste`
 
-### Task 12: File in không dùng chéo giữa các store
+### Task 12: (Huỷ) File in không dùng chéo giữa các store
 
-**Files:**
-- Modify: `prisma/schema.prisma`, `src/lib/db.ts`, `src/lib/repos/design-library.ts`, `src/lib/studio-library.ts`, `src/lib/shopify-order-sync.ts`, `src/lib/design-studio.ts`, `src/lib/design-drive-push.ts`, `src/lib/task-folder.ts`, `src/lib/export-orders.ts`, `src/lib/repos/reports.ts`, `src/app/api/trello/sync/route.ts`, `src/app/api/fulfillment/design-library/route.ts`, `src/app/api/fulfillment/design-library/import/route.ts`, `src/app/fulfillment/design-library/page.tsx`
-- Create: `prisma/migrations/<stamp>_design_library_store/migration.sql`
-- Test: `tests/design-library-store.integration.test.ts`
-
-**Interfaces:**
-- Produces:
-  - `SkuSupplierDesign.storeId String` (bắt buộc), `@@unique([storeId, sku, supplierId])`.
-  - `SkuDesign.storeId String` (bắt buộc), `@@unique([storeId, sku])`.
-  - `loadReadyDesignEntries(storeId: string)`, `loadReadyDesignLookup(storeId: string)`, `loadMasterArtworkBySku(storeId: string)`.
-  - `upsertTaskEntry` và `upsertDesignEntry` nhận `storeId`. `listDesignEntries` có filter `storeId?`.
-  - Dữ liệu cũ gán cho store Litzzy trong migration.
-
-- [ ] **Step 1: Viết test**
-
-- `a Reminiso line with the same SKU does not pick up the Litzzy print`, cả khớp đúng SKU và khớp tiền tố `PARENT`.
-- `saving a Reminiso design does not overwrite the Litzzy row` (`saveStudioDesignToLibrary`).
-- `Drive link swap only touches the row of that order's store`.
-- `migration assigns every existing row to Litzzy`, số dòng không đổi.
-
-- [ ] **Step 2: Chạy test, phải FAIL**
-
-- [ ] **Step 3: Sửa schema, tạo migration, sửa mọi nơi trên, tăng `SCHEMA_VERSION`**
-
-Trang Design Library dùng `StoreFilter`; thêm dòng mới bắt buộc chọn store; import mặc định theo store đang chọn.
-
-- [ ] **Step 4: Chạy `npx tsc --noEmit && npx vitest run`, PASS**
-
-- [ ] **Step 5: Commit** `feat(store): the print library is scoped per store`
+Không làm. Owner quyết định ngày 05/11/2026: trùng SKU thì trùng file in, thư viện file in dùng chung giữa các store (spec mục 6, quyết định 11). `SkuSupplierDesign`, `SkuDesign` và các hàm trong `src/lib/repos/design-library.ts` giữ nguyên.
 
 ### Task 13: Sheet Jomall chung và tracking đọc về
 
@@ -570,4 +542,4 @@ Khoá lưu trong `AppSetting`: `store.<storeId>.<key>`. Quy tắc dự phòng:
 
 - [ ] **Step 6: Theo dõi 48 giờ:** token tự làm mới, `lastError` trống. Nghiệm thu theo mục 10 của spec.
 
-- [ ] **Step 7: Rà script chạy trên PC** ở nhánh `claude/peaceful-villani-d3d860`, không có trên `origin/main`: `scripts/process-new-orders.mjs`, `scripts/lib/print-index.mjs`, `pull-prod-orders`, `push-*`. Print index phải khớp thêm `storeId` ở nhánh dự phòng theo SKU, vì 55% dòng cũ không có product id. Sửa nhỏ trên nhánh đó, báo phiên đang giữ nhánh trước khi commit.
+- [ ] **Step 7: Rà script chạy trên PC** ở nhánh `claude/peaceful-villani-d3d860`, không có trên `origin/main`: `scripts/process-new-orders.mjs`, `scripts/lib/print-index.mjs`, `pull-prod-orders`, `push-*`. Chỉ sửa chỗ ngầm hiểu một store (tiền tố `LIT`, một token). Print index vẫn tái sử dụng file in theo SKU giữa các store, theo quyết định của owner. Sửa nhỏ trên nhánh đó, báo phiên đang giữ nhánh trước khi commit.

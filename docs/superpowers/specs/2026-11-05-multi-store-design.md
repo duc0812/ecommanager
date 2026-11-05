@@ -83,6 +83,7 @@ Store đầu tiên cần đưa vào là **Reminiso** (reminiso.com, `d1ba2a-75.m
 8. **Đơn Reminiso do cùng một người fulfill.** Tôi hiểu là người này biết đơn nào đã gửi xưởng và tự đối chiếu, nên tool không cần trạng thái "đã xử lý ở nơi khác".
 9. **Quảng cáo Reminiso chạy trên tài khoản Meta khác** với Remi03/04/05/08/10. Owner tự gắn tài khoản vào Project Reminiso. Không phải chia chi phí theo campaign.
 10. **Đơn gửi Jomall dùng chung sheet** cho mọi store.
+11. **Trùng SKU thì trùng file in** (05/11/2026). Thư viện file in dùng chung giữa các store: dòng hàng của store nào có SKU khớp cũng tự nhận file in đã có, như trong nội bộ Litzzy hiện nay.
 
 ### Tôi chọn
 
@@ -118,7 +119,7 @@ Khi nâng cấp, seller đang có mặc định chỉ có Litzzy; Support không
 
 **j. Payout Reminiso tính từ 06/10/2026**, ngày của đơn cũ nhất đọc được, và đó cũng là `startDate` của Project. Payout từ 2024 không lấy về: chúng không có đơn, chi phí quảng cáo hay giá xưởng đi kèm nên sẽ làm lợi nhuận gộp sai. Vì vậy ngày bắt đầu payout theo store phải có từ giai đoạn 4, không đợi giai đoạn 5. Nghiệm thu payout so với Shopify tính từ ngày này.
 
-**k. File in không tự dùng chéo giữa các store.** "Dùng chung đội design" là một đội, một hàng chờ, không có nghĩa dùng chung file. `SkuSupplierDesign` đang khoá theo SKU + supplier và khớp được theo tiền tố SKU, nên phải có thêm store (dữ liệu cũ là Litzzy). Dòng Reminiso không tự nhận file in Litzzy và lưu thiết kế Reminiso không ghi đè file Litzzy. Print index của `process-new-orders` cũng chỉ tái sử dụng trong cùng store. Muốn dùng lại file của store khác thì designer chọn tay. Lý do: in nhầm file tốn tiền thật, còn làm lại một lần thì không.
+**k. Thư viện file in dùng chung**, theo quyết định 11 của owner. Không thêm store vào `SkuSupplierDesign` hay `SkuDesign`, không đổi cách khớp SKU. Bản đầu của tài liệu này chọn tách theo store; owner đã bác lựa chọn đó.
 
 ## 7. Các giai đoạn
 
@@ -127,7 +128,7 @@ Mỗi giai đoạn deploy riêng được, và Litzzy phải chạy như cũ sau
 1. **Kết nối theo store.** Lưu thông tin kết nối theo `ShopifyStore`, chuyển Litzzy sang, thay `getShopifyConnection()` ở cả 19 file. Không đổi hành vi.
 2. **Lịch chạy theo store.** Các lịch trong mục 5 lặp theo từng store đang bật, cô lập lỗi.
 3. **Quyền và bộ chọn.** Danh sách store của user, lọc server cho mọi route đọc dữ liệu theo store, bộ chọn và nhãn store, bỏ `findFirst`.
-4. **Thêm store + Reminiso.** Form "Thêm store" có ngày bắt đầu payout, tạo Project "Reminiso", sync đủ 135 đơn và payout từ 06/10. Thư viện file in tách theo store. Kênh sheet Jomall và Auto Fulfilled nhận đơn nhiều store (mục 6.l). **Hạn: trước 05/12.** Mapping theo cách làm với Litzzy; các dòng không có SKU phải map được theo variant hoặc product.
+4. **Thêm store + Reminiso.** Form "Thêm store" có ngày bắt đầu payout, tạo Project "Reminiso", sync đủ 135 đơn và payout từ 06/10. Kênh sheet Jomall và Auto Fulfilled nhận đơn nhiều store (mục 6.l). **Hạn: trước 05/12.** Mapping theo cách làm với Litzzy; các dòng không có SKU phải map được theo variant hoặc product.
 5. **Cấu hình theo store.** PGprints, Merchize, ParcelPanel, sheet fulfill, bỏ các chỗ gắn cứng Litzzy không thuộc CS.
 6. **CS theo store.** `CsTicket` có `storeId`, hộp thư Freshdesk, giọng trả lời và chữ ký riêng, tìm đơn trong đúng store, Support chỉ thấy store được giao. Chỉ làm khi owner có thông tin hộp thư của Reminiso.
 
