@@ -1,6 +1,15 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 
-vi.mock('@/lib/token-store', () => ({ getShopifyConnection: vi.fn(async () => ({ shop: 'dt-rm.myshopify.com', token: 't' })) }))
+vi.mock('@/lib/store-connections', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/lib/store-connections')>()
+  return {
+    ...actual,
+    getStoreConnectionByShop: vi.fn(async (shop: string) => {
+      if (shop !== 'dt-rm.myshopify.com') throw new actual.StoreConnectionError('NOT_CONNECTED', 'x', shop, `Store ${shop} chưa kết nối`)
+      return { storeId: 'dt-rm', shop, token: 't' }
+    }),
+  }
+})
 vi.mock('@/lib/shopify-orders', () => ({
   fetchOrderLinePropsByNames: vi.fn(async (_s: string, _t: string, names: string[]) => new Map(
     names.filter(n => n === '#DRM1').map(n => [n, [{
@@ -51,10 +60,13 @@ describe('refreshMissingLineProps', () => {
     expect(JSON.parse(line!.customAttributesJson!)).toEqual([{ key: 'Name', value: 'Russell' }])
     expect(line?.shopifyProductId).toBe('gid://shopify/Product/77')
   })
-  it('skips orders of another store', async () => {
+  it('reports a store that is not connected by name and does not ask Shopify about it', async () => {
+    vi.mocked(fetchOrderLinePropsByNames).mockClear()
     const orders = (await load()).map(o => ({ ...o, store: { shop: 'other.myshopify.com' } }))
     const r = await refreshMissingLineProps(orders)
-    expect(r.otherStore).toBe(2)
+    expect(r.error).toContain('other.myshopify.com')
+    expect(r.otherStore).toBe(0)
     expect(r.refreshed).toBe(0)
+    expect(fetchOrderLinePropsByNames).not.toHaveBeenCalled()
   })
 })

@@ -1,7 +1,8 @@
 import cron from 'node-cron'
 import { initOnce, runExclusive } from '@/lib/job-lock'
 import { prisma } from '@/lib/db'
-import { getShopifyConnection } from '@/lib/token-store'
+import { getStoreConnectionByShop, tryStoreConnection } from '@/lib/store-connections'
+import { LITZZY_SHOP } from '@/lib/shopify-shop'
 import { getSheets, getMinAgeDays } from './auto-fulfill-sheets'
 import { runAutoFulfill } from './auto-fulfill'
 import { syncPgprintsTracking } from '@/lib/repos/pgprints-push'
@@ -21,13 +22,11 @@ export async function runDailyAutoFulfill() {
     if (r.error) console.error(`[auto-fulfill] ${r.name} tracking sync failed:`, r.error)
     else console.log(`[auto-fulfill] ${r.name} tracking sync: ${r.found}/${r.pushes} order(s) found, ${r.shipments} shipment(s) updated${r.skipped ? ` (${r.skipped})` : ''}`)
   }
-  const conn = await getShopifyConnection()
-  if (!conn) { console.log('[auto-fulfill] no Shopify connection; skipping'); return }
-  const store = await prisma.shopifyStore.findUnique({ where: { shop: conn.shop } })
-  if (!store) { console.log('[auto-fulfill] connected store not in DB; skipping'); return }
+  const { conn, error } = await tryStoreConnection(() => getStoreConnectionByShop(LITZZY_SHOP))
+  if (!conn) { console.error(`[auto-fulfill] ${error.message}; skipping`); return }
   try {
     const minAgeDays = await getMinAgeDays()
-    const result = await runAutoFulfill({ shop: conn.shop, accessToken: conn.token, storeId: store.id, sheets, minAgeDays, apply: true })
+    const result = await runAutoFulfill({ shop: conn.shop, accessToken: conn.token, storeId: conn.storeId, sheets, minAgeDays, apply: true })
     await prisma.appSetting.upsert({
       where: { key: 'last_auto_fulfill_result' },
       create: { key: 'last_auto_fulfill_result', value: JSON.stringify({ ...result, ranAt: new Date().toISOString() }) },

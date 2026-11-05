@@ -20,22 +20,24 @@ const REQUESTED = [
 const dbUrl = 'file:' + path.resolve(process.cwd(), 'dev.db')
 const db = createClient({ url: dbUrl })
 
-const keys = ['shopify.connection.shop', 'shopify.connection.token', 'shopify.connection.connectedAt']
+const wantedShop = (process.argv[2] || 'caramiaus-store.myshopify.com').trim().toLowerCase()
 const rs = await db.execute({
-  sql: `SELECT key, value FROM AppSetting WHERE key IN (?, ?, ?)`,
-  args: keys,
+  sql: `SELECT s.shop AS shop, c.accessToken AS token, c.connectedAt AS connectedAt
+        FROM ShopifyStoreCredential c JOIN ShopifyStore s ON s.id = c.storeId
+        WHERE s.shop = ?`,
+  args: [wantedShop],
 })
-const settings = Object.fromEntries(rs.rows.map(r => [r.key, r.value]))
-const shop = settings['shopify.connection.shop']
-const token = settings['shopify.connection.token']
+const row = rs.rows[0]
+const shop = row?.shop
+const token = row?.token
 
 if (!shop || !token) {
-  console.log('❌ Chưa có store nào được kết nối trong DB (prisma/dev.db).')
+  console.log(`❌ Store ${wantedShop} chưa được kết nối trong DB (dev.db). Cách dùng: node scripts/check-shopify-scopes.mjs [ten-shop.myshopify.com]`)
   process.exit(0)
 }
 
 console.log('Store:', shop)
-console.log('Connected at:', settings['shopify.connection.connectedAt'])
+console.log('Connected at:', row.connectedAt)
 console.log('Token prefix:', String(token).slice(0, 12) + '…')
 console.log('')
 

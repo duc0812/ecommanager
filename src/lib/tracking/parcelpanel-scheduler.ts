@@ -1,7 +1,8 @@
 import cron from 'node-cron'
 import { initOnce, runExclusive } from '@/lib/job-lock'
 import { prisma } from '@/lib/db'
-import { getShopifyConnection } from '@/lib/token-store'
+import { getStoreConnectionByShop, tryStoreConnection } from '@/lib/store-connections'
+import { LITZZY_SHOP } from '@/lib/shopify-shop'
 import { syncParcelPanelTracking } from './parcelpanel-sync'
 import { getParcelPanelApiKey } from './parcelpanel-config'
 
@@ -14,10 +15,10 @@ export async function runDailyParcelPanelSync() {
     console.log('[parcelpanel] API key not configured (DB or env); skipping')
     return
   }
-  const conn = await getShopifyConnection()
-  const store = conn ? await prisma.shopifyStore.findUnique({ where: { shop: conn.shop } }) : null
+  const { conn, error } = await tryStoreConnection(() => getStoreConnectionByShop(LITZZY_SHOP))
+  if (!conn) console.error(`[parcelpanel] ${error.message}; syncing without a store filter`)
   try {
-    const result = await syncParcelPanelTracking({ apiKey, storeId: store?.id })
+    const result = await syncParcelPanelTracking({ apiKey, storeId: conn?.storeId })
     await prisma.appSetting.upsert({
       where: { key: 'last_parcelpanel_sync_result' },
       create: { key: 'last_parcelpanel_sync_result', value: JSON.stringify({ ...result, ranAt: new Date().toISOString() }) },

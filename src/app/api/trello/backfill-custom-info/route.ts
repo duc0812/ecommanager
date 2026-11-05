@@ -1,7 +1,9 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { getTrelloConfig, getCardDesc, updateCardDesc } from '@/lib/trello'
-import { getShopifyConnection } from '@/lib/token-store'
+import { getStoreConnectionByShop, tryStoreConnection } from '@/lib/store-connections'
+import { connectionFailureResponse } from '@/lib/store-connection-response'
+import { LITZZY_SHOP } from '@/lib/shopify-shop'
 import { fetchOrderLinePropsByNames, type ShopifyOrderLineProps } from '@/lib/shopify-orders'
 import { getTrelloMode, TRELLO_OFF_MESSAGE } from '@/lib/design-settings'
 import { buildPersonalizationSections, cardHasInlinePersonalization, mergePersonalizationIntoDesc, PERSONALIZATION_MARKER } from '@/lib/order-classify'
@@ -32,14 +34,13 @@ export async function POST(req: Request) {
   if (!cfg) {
     return NextResponse.json({ error: 'Trello chưa được cấu hình. Vào Setup để nhập API key.' }, { status: 400 })
   }
-  const conn = await getShopifyConnection()
-  if (!conn) {
-    return NextResponse.json({ error: 'Chưa kết nối Shopify. Vào /setup để connect trước.' }, { status: 401 })
-  }
+  const { conn, error } = await tryStoreConnection(() => getStoreConnectionByShop(LITZZY_SHOP))
+  if (!conn) return connectionFailureResponse(error, { error: 'Chưa kết nối Shopify. Vào /setup để connect trước.', status: 401 })
 
   const since = new Date(Date.now() - sinceDays * 24 * 60 * 60 * 1000)
   const orders = await prisma.order.findMany({
     where: {
+      storeId: conn.storeId,
       trelloCardId: { not: null },
       ...(targeted
         ? { shopifyOrderNumber: { in: orderNames } }

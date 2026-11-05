@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { fetchAllPayouts, fetchBalance, fetchBankAccounts } from '@/lib/shopify'
-import { getShopifyConnection } from '@/lib/token-store'
+import { getStoreConnectionByShop, tryStoreConnection } from '@/lib/store-connections'
+import { connectionFailureResponse } from '@/lib/store-connection-response'
+import { LITZZY_SHOP } from '@/lib/shopify-shop'
 import { SHOPIFY_PAYOUT_START_DATE } from '@/lib/shopify-payout-policy'
 
 export async function GET(req: NextRequest) {
@@ -12,9 +14,9 @@ export async function GET(req: NextRequest) {
   const date_max = searchParams.get('date_max') ?? undefined
 
   try {
-    const stored = await getShopifyConnection()
-    if (!stored) return NextResponse.json({ error: 'Not connected to Shopify. Go to /setup and connect Shopify first.' }, { status: 401 })
-    const creds = { shop: stored.shop, token: stored.token }
+    const { conn, error } = await tryStoreConnection(() => getStoreConnectionByShop(LITZZY_SHOP))
+    if (!conn) return connectionFailureResponse(error, { error: 'Not connected to Shopify. Go to /setup and connect Shopify first.', status: 401 })
+    const creds = { shop: conn.shop, token: conn.token }
 
     const payouts = await fetchAllPayouts(creds, { date_min, date_max })
 

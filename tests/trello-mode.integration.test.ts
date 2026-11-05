@@ -5,8 +5,9 @@ const SHOP = 'trello-mode.myshopify.com'
 type Card = { id: string; name: string; url: string; attachments: { name: string; url: string }[] }
 const state: { cards: Card[] } = { cards: [] }
 
-vi.mock('@/lib/token-store', () => ({
-  getShopifyConnection: vi.fn(async () => ({ shop: 'trello-mode.myshopify.com', token: 'test_token', connectedAt: new Date() })),
+vi.mock('@/lib/store-connections', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/store-connections')>()),
+  getStoreConnectionByShop: vi.fn(async () => ({ storeId: 'trello-mode', shop: 'trello-mode.myshopify.com', token: 'test_token' })),
 }))
 vi.mock('@/lib/trello', () => ({
   getTrelloConfig: vi.fn(async () => ({ apiKey: 'k', token: 't', boardId: 'b', listId: 'todo', doneListId: 'done', syncFromOrderName: '' })),

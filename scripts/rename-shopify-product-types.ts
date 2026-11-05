@@ -7,7 +7,8 @@
 //   --exclude "enamel,camper"   leave products whose title contains any of these words (case-insensitive)
 // ADDON types (app products such as Kaching upsell / PPLR hidden products) are never renamed.
 import { prisma } from '@/lib/db'
-import { getShopifyConnection } from '@/lib/token-store'
+import { getStoreConnectionByShop } from '@/lib/store-connections'
+import { LITZZY_SHOP } from '@/lib/shopify-shop'
 import { typeKey } from '@/lib/product-mapping'
 
 const API = '2024-10'
@@ -37,10 +38,8 @@ async function main() {
   if (aliases.length === 0) throw new Error(`"${name}" is held back (no aliases): its mapping groups must be cleaned up first`)
   if (type.kind === 'ADDON') throw new Error(`"${name}" is an add-on type: its products belong to apps and are never renamed`)
   const exclude = (arg('exclude') ?? '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
-  const conn = await getShopifyConnection()
-  if (!conn) throw new Error('Shopify not connected')
-  const store = await prisma.shopifyStore.findUnique({ where: { shop: conn.shop }, select: { id: true } })
-  if (!store) throw new Error(`No ShopifyStore ${conn.shop}`)
+  const conn = await getStoreConnectionByShop(LITZZY_SHOP)
+  const store = { id: conn.storeId }
 
   const olds = aliases.filter(a => typeKey(a) !== typeKey(name))
   const products: Array<{ id: string; title: string; productType: string; status: string }> = []

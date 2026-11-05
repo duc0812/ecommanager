@@ -1,7 +1,8 @@
 import cron from 'node-cron'
 import { initOnce, runExclusive } from '@/lib/job-lock'
 import { prisma } from '@/lib/db'
-import { getShopifyConnection } from '@/lib/token-store'
+import { getStoreConnectionByShop, tryStoreConnection } from '@/lib/store-connections'
+import { LITZZY_SHOP } from '@/lib/shopify-shop'
 import { normalizeOpenOrderStatuses } from './order-normalize'
 
 const TZ = 'Asia/Ho_Chi_Minh'
@@ -10,18 +11,13 @@ const TZ = 'Asia/Ho_Chi_Minh'
 // write back any changes, so old orders don't sit UNFULFILLED forever after
 // Shopify has fulfilled them. Runs for the connected store (single-token app).
 export async function runDailyOrderNormalize() {
-  const conn = await getShopifyConnection()
+  const { conn, error } = await tryStoreConnection(() => getStoreConnectionByShop(LITZZY_SHOP))
   if (!conn) {
-    console.log('[order-normalize] no Shopify connection stored; skipping')
-    return
-  }
-  const store = await prisma.shopifyStore.findUnique({ where: { shop: conn.shop } })
-  if (!store) {
-    console.log(`[order-normalize] connected store ${conn.shop} not in DB; skipping`)
+    console.error(`[order-normalize] ${error.message}; skipping`)
     return
   }
   try {
-    const result = await normalizeOpenOrderStatuses({ shop: conn.shop, accessToken: conn.token, storeId: store.id })
+    const result = await normalizeOpenOrderStatuses({ shop: conn.shop, accessToken: conn.token, storeId: conn.storeId })
     await prisma.appSetting.upsert({
       where: { key: 'last_order_normalize_result' },
       create: { key: 'last_order_normalize_result', value: JSON.stringify({ ...result, shop: conn.shop, ranAt: new Date().toISOString() }) },

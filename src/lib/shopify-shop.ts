@@ -1,3 +1,5 @@
+export const LITZZY_SHOP = 'caramiaus-store.myshopify.com'
+
 const SHOP_DOMAIN_RE = /^[a-z0-9][a-z0-9-]*\.myshopify\.com$/
 
 export function isValidShopDomain(shop: string): boolean {

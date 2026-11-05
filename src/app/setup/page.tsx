@@ -16,6 +16,7 @@ export default function SetupPage() {
   useEffect(() => { setBlock(blockFromSearch(window.location.search)) }, [])
 
   const [status, setStatus] = useState<Status | null>(null)
+  const [litzzyStoreId, setLitzzyStoreId] = useState<string | null>(null)
   const [shop, setShop] = useState('')
   const [apiKey, setApiKey] = useState('')
   const [apiSecret, setApiSecret] = useState('')
@@ -41,7 +42,10 @@ export default function SetupPage() {
   useEffect(() => {
     setOrigin(window.location.origin)
     try { localStorage.removeItem('shopify_app_creds_v1') } catch {}
-    fetch('/api/auth/status').then(r => r.json()).then(d => setStatus(d.shopify)).catch(() => setStatus({ connected: false }))
+    fetch('/api/auth/status').then(r => r.json()).then(d => {
+      setStatus(d.shopify)
+      setLitzzyStoreId(d.stores?.find((s: { shop: string; id: string }) => s.shop === d.shopify?.shop)?.id ?? null)
+    }).catch(() => setStatus({ connected: false }))
     fetch('/api/trello/config').then(r => r.json()).then(d => {
       setTrelloApiKeyMasked(d.apiKeyMasked || '')
       setTrelloTokenMasked(d.tokenMasked || '')
@@ -86,7 +90,7 @@ export default function SetupPage() {
   }
 
   async function disconnect() {
-    await fetch('/api/auth/status', { method: 'DELETE' }).catch(() => {})
+    if (litzzyStoreId) await fetch(`/api/auth/status?storeId=${encodeURIComponent(litzzyStoreId)}`, { method: 'DELETE' }).catch(() => {})
     setStatus({ connected: false })
     setShop(''); setApiKey(''); setApiSecret('')
   }

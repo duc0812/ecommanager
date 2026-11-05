@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import crypto from 'crypto'
-import { saveOAuthState, getShopifyAppCredentials } from '@/lib/token-store'
+import { prisma } from '@/lib/db'
+import { saveOAuthState } from '@/lib/token-store'
 import { getShopifyRedirectUri } from '@/lib/public-url'
 import { requireSuperadmin } from '@/lib/api-auth'
 import { normalizeShopDomain } from '@/lib/shopify-shop'
@@ -40,12 +41,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Shop domain phải có dạng ten-shop.myshopify.com' }, { status: 400 })
   }
 
-  const appCreds = await getShopifyAppCredentials()
-  if (!appCreds?.apiKey) {
-    return NextResponse.json({ error: 'Chưa có API Key. Vui lòng điền trên trang Setup.' }, { status: 400 })
-  }
-  if (appCreds.shop && appCreds.shop.toLowerCase() !== shop) {
-    return NextResponse.json({ error: `Shop ${shop} không khớp với shop đã cấu hình (${appCreds.shop}).` }, { status: 400 })
+  const credential = await prisma.shopifyStoreCredential.findFirst({ where: { store: { shop } }, select: { clientId: true } })
+  if (!credential?.clientId) {
+    return NextResponse.json({ error: 'Chưa có API Key cho shop này. Vui lòng điền trên trang Setup.' }, { status: 400 })
   }
 
   const redirectUri = getShopifyRedirectUri(req)
@@ -53,7 +51,7 @@ export async function GET(req: NextRequest) {
   saveOAuthState(state, shop)
 
   const params = new URLSearchParams({
-    client_id: appCreds.apiKey,
+    client_id: credential.clientId,
     scope: SCOPES,
     redirect_uri: redirectUri,
     state,

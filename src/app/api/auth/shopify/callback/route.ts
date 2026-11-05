@@ -1,9 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import crypto from 'crypto'
-import { consumeOAuthState, setShopifyConnection, getShopifyAppCredentials } from '@/lib/token-store'
+import { prisma } from '@/lib/db'
+import { consumeOAuthState } from '@/lib/token-store'
+import { saveStoreCredential } from '@/lib/store-connections'
 import { escapeHtml, normalizeShopDomain } from '@/lib/shopify-shop'
 
 export const dynamic = 'force-dynamic'
+
+const TOKEN_EXCHANGE_TIMEOUT_MS = 15_000
 
 function html(body: string, status = 200) {
   return new NextResponse(body, { status, headers: { 'Content-Type': 'text/html; charset=utf-8' } })
@@ -28,24 +32,33 @@ export async function GET(req: NextRequest) {
     return html(errorPage('State không hợp lệ hoặc đã hết hạn.'), 400)
   }
 
-  const appCreds = await getShopifyAppCredentials()
-  if (!appCreds) {
-    return html(errorPage('Không tìm thấy API credentials. Vui lòng thử lại từ Setup.'), 400)
+  const store = await prisma.shopifyStore.findUnique({ where: { shop }, include: { credential: true } })
+  const clientId = store?.credential?.clientId
+  const clientSecret = store?.credential?.clientSecret
+  if (!store || !clientId || !clientSecret) {
+    return html(errorPage('Không tìm thấy API credentials của shop này. Vui lòng thử lại từ Setup.'), 400)
   }
 
   const params: Record<string, string> = {}
   searchParams.forEach((v, k) => { if (k !== 'hmac') params[k] = v })
   const message = Object.keys(params).sort().map(k => `${k}=${params[k]}`).join('&')
-  const digest = crypto.createHmac('sha256', appCreds.apiSecret).update(message).digest('hex')
+  const digest = crypto.createHmac('sha256', clientSecret).update(message).digest('hex')
   if (!safeEqualHex(digest, hmac)) {
     return html(errorPage('HMAC không hợp lệ.'), 400)
   }
 
-  const res = await fetch(`https://${shop}/admin/oauth/access_token`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ client_id: appCreds.apiKey, client_secret: appCreds.apiSecret, code }),
-  })
+  let res: Response
+  try {
+    res = await fetch(`https://${shop}/admin/oauth/access_token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ client_id: clientId, client_secret: clientSecret, code }),
+      redirect: 'error',
+      signal: AbortSignal.timeout(TOKEN_EXCHANGE_TIMEOUT_MS),
+    })
+  } catch {
+    return html(errorPage('Không kết nối được tới Shopify để đổi token. Thử lại sau.'), 502)
+  }
 
   if (!res.ok) {
     console.error('[shopify oauth] token exchange failed', res.status, (await res.text()).slice(0, 300))
@@ -56,7 +69,8 @@ export async function GET(req: NextRequest) {
   if (typeof access_token !== 'string' || !access_token) {
     return html(errorPage('Shopify không trả về access token.'), 502)
   }
-  await setShopifyConnection(shop, access_token)
+  await saveStoreCredential(store.id, { authMode: 'OAUTH', clientId, clientSecret, accessToken: access_token, connectedAt: new Date() })
+  await prisma.shopifyStore.update({ where: { id: store.id }, data: { lastError: null, lastErrorAt: null } })
 
   return html(successPage(shop))
 }
