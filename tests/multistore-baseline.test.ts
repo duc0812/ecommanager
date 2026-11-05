@@ -36,7 +36,7 @@ async function seed(opts: { orderPrefixColumn?: boolean } = {}) {
   const prefixColumn = opts.orderPrefixColumn ?? true
   await withDb(async sql => {
     await sql(`CREATE TABLE ShopifyStore (id TEXT PRIMARY KEY, shop TEXT NOT NULL UNIQUE${prefixColumn ? ', orderPrefix TEXT' : ''})`)
-    await sql(`CREATE TABLE "Order" (id TEXT PRIMARY KEY, storeId TEXT NOT NULL, shopifyOrderNumber TEXT NOT NULL, grossAmount REAL NOT NULL, placedAt TEXT NOT NULL, fetchedAt TEXT)`)
+    await sql(`CREATE TABLE "Order" (id TEXT PRIMARY KEY, storeId TEXT NOT NULL, shopifyOrderNumber TEXT NOT NULL, grossAmount REAL NOT NULL, placedAt DATETIME NOT NULL, fetchedAt DATETIME)`)
     await sql(`CREATE TABLE Payout (id INTEGER PRIMARY KEY, storeId TEXT NOT NULL, status TEXT NOT NULL, date TEXT NOT NULL, amount REAL NOT NULL)`)
     await sql(`CREATE TABLE DesignTask (id TEXT PRIMARY KEY, orderId TEXT NOT NULL, status TEXT NOT NULL)`)
     await sql(`CREATE TABLE Shipment (id TEXT PRIMARY KEY, orderId TEXT NOT NULL)`)
@@ -87,6 +87,7 @@ describe('multistore-baseline', () => {
       atTakenAt: { orders: { count: 2, grossTotal: 30.3 }, payouts: { count: 2, total: 70.7 } },
       designTasks: { total: 3, byStatus: { DONE: 1, NEW: 2 } },
       shipments: 1,
+      unparseableDates: { orders: 0, payouts: 0 },
     })
     expect(sha(dbFile)).toBe(before)
     expect(fs.readdirSync(dir).sort()).toEqual(['fixture.db'])
@@ -177,6 +178,45 @@ describe('multistore-baseline', () => {
     expect(added.out).toContain('new since the baseline: 1 orders')
     await withDb(async sql => { await sql(`DELETE FROM "Order" WHERE id = 'o0'`) })
     expect(run(dbFile, '--compare', baselineFile).code).toBe(1)
+  })
+
+  it('exits 1 and names the store when an order gets a date that cannot be read after the baseline', async () => {
+    await seed()
+    takeBaseline()
+    await withDb(async sql => { await sql(`UPDATE "Order" SET fetchedAt = 1760000000000 WHERE id = 'o1'`) })
+    const r = run(dbFile, '--compare', baselineFile)
+    expect(r.code).toBe(1)
+    expect(r.out).toContain(`FAIL ${SHOP}: orders with a date that cannot be read, so they are not compared: baseline 0, now 1`)
+  })
+
+  it('exits 1 when the baseline already holds an order with a date that cannot be read, even if only its amount changes', async () => {
+    await seed()
+    await withDb(async sql => { await sql(`UPDATE "Order" SET fetchedAt = 1760000000000 WHERE id = 'o1'`) })
+    const baseline = takeBaseline()
+    expect(baseline.stores[SHOP].unparseableDates).toEqual({ orders: 1, payouts: 0 })
+    await withDb(async sql => { await sql(`UPDATE "Order" SET grossAmount = 99.99 WHERE id = 'o1'`) })
+    const r = run(dbFile, '--compare', baselineFile)
+    expect(r.code).toBe(1)
+    expect(r.out).toContain(`FAIL ${SHOP}: orders with a date that cannot be read, so they are not compared: baseline 1, now 1`)
+  })
+
+  it('exits 1 for a payout whose date cannot be read', async () => {
+    await seed()
+    await withDb(async sql => { await sql(`INSERT INTO Payout VALUES (5, 's1', 'paid', 'soon', 8.08)`) })
+    const baseline = takeBaseline()
+    expect(baseline.stores[SHOP].unparseableDates).toEqual({ orders: 0, payouts: 1 })
+    const r = run(dbFile, '--compare', baselineFile)
+    expect(r.code).toBe(1)
+    expect(r.out).toContain(`FAIL ${SHOP}: payouts with a date that cannot be read, so they are not compared: baseline 1, now 1`)
+  })
+
+  it('refuses a baseline that has no stores instead of passing it', async () => {
+    await seed()
+    fs.writeFileSync(baselineFile, JSON.stringify({ takenAt: new Date().toISOString(), stores: {} }))
+    const r = run(dbFile, '--compare', baselineFile)
+    expect(r.code).toBe(2)
+    expect(r.err).toContain('has no stores')
+    expect(r.out).not.toContain('RESULT: OK')
   })
 
   it('exits 1 when an old order of a baseline store disappears, even if a newer order arrived in the meantime', async () => {

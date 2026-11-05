@@ -1,14 +1,18 @@
 // Read-only: per-store numbers, to prove the first store does not move when another store is added.
 //   node scripts/multistore-baseline.mjs <db>                        JSON on stdout (keep it as the baseline)
 //   node scripts/multistore-baseline.mjs <db> --compare <file.json>  plain-text differences against that baseline
-// Exit 0 = fine, 1 = a baseline store lost orders/payouts or its numbers present at the baseline moved,
-// 2 = bad arguments or unreadable database/baseline. An order existed at the baseline when it was first fetched by then
+// Exit 0 = fine, 1 = a baseline store lost orders/payouts, its numbers present at the baseline moved, or it has rows whose
+// date cannot be read (unparseableDates, in the baseline or now), 2 = bad arguments or unreadable database/baseline
+// (an empty baseline too). An order existed at the baseline when it was first fetched by then
 // (Order.fetchedAt, placedAt when null), so an order placed earlier but synced later is new; payouts are cut by date.
 import { createClient } from '@libsql/client'
 import fs from 'node:fs'
 import path from 'node:path'
 
 const UTC = col => `strftime('%Y-%m-%dT%H:%M:%fZ', ${col})`
+// A date strftime cannot read (an epoch number, odd text) gives NULL, so the row would silently fall out of every "<= cutoff" set.
+const UNREADABLE = col => `NOT (typeof(${col}) = 'text' AND ${col} GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' AND ${UTC(col)} IS NOT NULL)`
+const ORDER_DATE = 'coalesce(fetchedAt, placedAt)'
 const money = v => Math.round(Number(v ?? 0) * 100) / 100
 const cents = v => Math.round(v * 100)
 const fmt = v => (Math.round(v * 100) / 100 + 0).toFixed(2)
@@ -41,9 +45,11 @@ async function collect(db, cutoff) {
   const [{ n: hasPrefix }] = await exec(db, `SELECT count(*) AS n FROM pragma_table_info('ShopifyStore') WHERE name = 'orderPrefix'`)
   const stores = await exec(db, `SELECT id, shop, ${Number(hasPrefix) ? 'orderPrefix' : 'NULL'} AS orderPrefix FROM ShopifyStore ORDER BY shop`)
   const orders = byStore(await exec(db, `SELECT storeId, count(*) AS n, sum(grossAmount) AS total FROM "Order" GROUP BY storeId`))
-  const ordersAt = byStore(await exec(db, `SELECT storeId, count(*) AS n, sum(grossAmount) AS total FROM "Order" WHERE ${UTC('coalesce(fetchedAt, placedAt)')} <= ? GROUP BY storeId`, [cutoff]))
+  const ordersAt = byStore(await exec(db, `SELECT storeId, count(*) AS n, sum(grossAmount) AS total FROM "Order" WHERE ${UTC(ORDER_DATE)} <= ? GROUP BY storeId`, [cutoff]))
+  const unreadableOrders = byStore(await exec(db, `SELECT storeId, count(*) AS n FROM "Order" WHERE ${UNREADABLE(ORDER_DATE)} GROUP BY storeId`))
   const payouts = byStore(await exec(db, `SELECT storeId, count(*) AS n, sum(amount) AS total FROM Payout GROUP BY storeId`))
   const payoutsAt = byStore(await exec(db, `SELECT storeId, count(*) AS n, sum(amount) AS total FROM Payout WHERE ${UTC('date')} <= ? GROUP BY storeId`, [cutoff]))
+  const unreadablePayouts = byStore(await exec(db, `SELECT storeId, count(*) AS n FROM Payout WHERE ${UNREADABLE('date')} GROUP BY storeId`))
   const tasks = await exec(db, `SELECT o.storeId AS storeId, t.status AS status, count(*) AS n FROM DesignTask t JOIN "Order" o ON o.id = t.orderId GROUP BY o.storeId, t.status ORDER BY t.status`)
   const shipments = byStore(await exec(db, `SELECT o.storeId AS storeId, count(*) AS n FROM Shipment s JOIN "Order" o ON o.id = s.orderId GROUP BY o.storeId`))
 
@@ -64,6 +70,7 @@ async function collect(db, cutoff) {
       },
       designTasks: { total: Object.values(byStatus).reduce((a, b) => a + b, 0), byStatus },
       shipments: Number(shipments.get(s.id)?.n ?? 0),
+      unparseableDates: { orders: Number(unreadableOrders.get(s.id)?.n ?? 0), payouts: Number(unreadablePayouts.get(s.id)?.n ?? 0) },
     }
   }
   return result
@@ -72,13 +79,16 @@ async function collect(db, cutoff) {
 function readBaseline(file) {
   if (!fs.existsSync(file)) die(`baseline file not found: ${file}`)
   const buf = fs.readFileSync(file)
-  const text = (buf[0] === 0xff && buf[1] === 0xfe ? buf.toString('utf16le') : buf.toString('utf8')).replace(/^﻿/, '')
+  const raw = buf[0] === 0xff && buf[1] === 0xfe ? buf.toString('utf16le') : buf.toString('utf8')
+  const text = raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw
   let baseline
   try { baseline = JSON.parse(text) } catch { die(`${file} is not a baseline written by this script (not JSON)`) }
   const shaped = s => s?.orders && s.payouts && s.atTakenAt?.orders && s.atTakenAt?.payouts && s.designTasks?.byStatus && 'shipments' in s
+    && Number.isFinite(s.unparseableDates?.orders) && Number.isFinite(s.unparseableDates?.payouts)
   if (!Number.isFinite(Date.parse(baseline?.takenAt)) || !baseline.stores || !Object.values(baseline.stores).every(shaped)) {
     die(`${file} is not a baseline written by this script`)
   }
+  if (Object.keys(baseline.stores).length === 0) die(`${file} has no stores, so there is nothing to compare`)
   return baseline
 }
 
@@ -101,6 +111,10 @@ function compare(baseline, current, comparedAt) {
     lines.push(now.orderPrefix ? `${shop} (${now.orderPrefix})` : shop)
     for (const [what, a, b] of [['orders', was.orders.count, now.orders.count], ['payouts', was.payouts.count, now.payouts.count]]) {
       if (b < a) fail(shop, `${what} lost: ${a - b} (baseline had ${a}, now ${b})`)
+    }
+    for (const what of ['orders', 'payouts']) {
+      const a = was.unparseableDates[what], b = now.unparseableDates[what]
+      if (a || b) fail(shop, `${what} with a date that cannot be read, so they are not compared: baseline ${a}, now ${b}`)
     }
     const wasAt = was.atTakenAt, nowAt = now.atTakenAt
     verdict(shop, 'orders present at the baseline', wasAt.orders.count, nowAt.orders.count, wasAt.orders.count === nowAt.orders.count)
