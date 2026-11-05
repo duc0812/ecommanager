@@ -23,6 +23,35 @@ model ShopifyStore {
   project                Project?      @relation(fields: [projectId], references: [id])
   productProfiles        ProductProfile[]
   artworkEntries         ArtworkEntry[]
+  enabled                Boolean       @default(true)
+  orderPrefix            String?
+  trackingPageUrl        String?
+  payoutStartDate        String?
+  lastError              String?
+  lastErrorAt            DateTime?
+  credential             ShopifyStoreCredential?
+  userAccess             UserStoreAccess[]
+}
+
+model ShopifyStoreCredential {
+  storeId        String       @id
+  store          ShopifyStore @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  authMode       String
+  clientId       String?
+  clientSecret   String?
+  accessToken    String?
+  tokenExpiresAt DateTime?
+  connectedAt    DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+}
+
+model UserStoreAccess {
+  userId  String
+  user    AppUser      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  storeId String
+  store   ShopifyStore @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@id([userId, storeId])
 }
 
 model AppUser {
@@ -36,6 +65,7 @@ model AppUser {
   tokenVersion Int      @default(0)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+  storeAccess  UserStoreAccess[]
 }
 
 model AppSetting {
