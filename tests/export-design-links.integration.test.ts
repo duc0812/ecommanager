@@ -210,9 +210,11 @@ describe('supplier CSV design links', () => {
 
     await prisma.designTask.updateMany({ where: { orderId: local.id }, data: { status: 'REVIEW' } })
     expect(await findPublicArtwork(token, fileName)).toBeNull()
-    const blocked = await run({ templateId: tmpl.id })
-    expect(blocked.status).toBe(400)
-    expect(blocked.body.orders).toEqual([local.number])
+    // Back in design: the line waits, and no link to its closed file leaves. The other orders still go.
+    const waiting = await run({ templateId: tmpl.id })
+    expect(waiting.status).toBe(200)
+    expect(rowsOf(waiting.body.csv)[local.number]).toBeUndefined()
+    expect(rowsOf(waiting.body.csv)[onDrive.number].Mockup).toBe(newest)
   })
 
   it('leaves Trello, library and manual links untouched, even when the line also has Studio files', async () => {
@@ -249,8 +251,17 @@ describe('supplier CSV design links', () => {
     expect(rowsOf(body.csv)[o.number].Design).toBe(drive)
   })
 
-  it('400 for a LOCAL file whose line is not approved — the public route would refuse it', async () => {
-    const o = await makeOrder({ arts: [{ area: 'Artwork' }], task: 'REJECTED', status: 'DESIGN_REJECTED' })
+  it('a line whose task is open waits, without failing the export of the rest', async () => {
+    const open = await makeOrder({ arts: [{ area: 'Artwork' }], task: 'REJECTED', status: 'DESIGN_REJECTED' })
+    const fine = await makeOrder({ link: 'https://drive.google.com/file/d/exl-fine/view', task: null })
+    const { status, body } = await run()
+    expect(status).toBe(200)
+    expect(rowsOf(body.csv)[open.number]).toBeUndefined()
+    expect(rowsOf(body.csv)[fine.number]).toBeDefined()
+  })
+
+  it('400 for a LOCAL file of a cancelled task — the public route would refuse it', async () => {
+    const o = await makeOrder({ arts: [{ area: 'Artwork' }], task: 'CANCELLED' })
     const { status, body } = await run()
     expect(status).toBe(400)
     expect(body.orders).toEqual([o.number])

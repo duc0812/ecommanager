@@ -47,8 +47,10 @@ export default function HandoffButton({ orderId, state, canHandoff, compact = fa
       <Icon name="lock" className="text-[16px]" />CSV đang khoá
     </button>
   )
+  // A line approved after a CSV save still has to go, so the save only shows once nothing else waits.
+  const handedOff = state.pending ? null : state.handedOff
   let body: JSX.Element
-  if (state.handedOff?.mode === 'CSV') {
+  if (handedOff?.mode === 'CSV') {
     body = (
       <>
         <Pill tone="ok" icon="inventory">{HANDOFF_LABELS.savedCsv}</Pill>
@@ -60,12 +62,12 @@ export default function HandoffButton({ orderId, state, canHandoff, compact = fa
         )}
       </>
     )
-  } else if (state.handedOff?.mode === 'SHEET') {
+  } else if (handedOff?.mode === 'SHEET') {
     // Nothing to open or cancel from here: the row is in the supplier's sheet.
     body = compact ? <></> : <Pill tone="ok" icon="table_view">Đã ghi vào sheet xưởng</Pill>
-  } else if (state.handedOff) {
+  } else if (handedOff) {
     body = <>{!compact && <Pill tone="ok" icon="cloud_done">Đã chuyển supplier qua API</Pill>}{canHandoff && viewPush}</>
-  } else if (state.push) {
+  } else if (state.push && !(state.pending && state.mode === 'API' && state.pushBeside)) {
     body = !canHandoff ? <span className="text-label-sm text-on-surface-variant">Đơn đã gửi {supplierName}</span> : (
       <>
         {viewPush}

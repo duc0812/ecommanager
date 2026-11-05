@@ -315,8 +315,9 @@ export type MarkExportedResult = {
  * Marks the lines of `supplierId` in these orders as sent (only lines not sent yet; `lineIds` narrows it to the lines
  * that were actually in the file). An order moves to EXPORTED — with exportedAt / exportedToSupplierId = this supplier
  * and the optional handoff — only once every production line with a supplier has been sent; until then it keeps its
- * status (READY_TO_PRODUCTION) and the order-level export fields are left alone.
- * Only production-ready orders are touched; pending design/mapping, on-hold, fulfilled and terminal orders keep their state.
+ * status (READY_TO_PRODUCTION, or PENDING_DESIGN while another line is in design) and the order-level export fields are left alone.
+ * Only production-ready orders are touched, and an order still in design when `lineIds` names the lines that went out;
+ * pending mapping, on-hold, fulfilled and terminal orders keep their state.
  */
 export async function markOrdersExported(
   orderIds: string[], supplierId: string, exportedAt: Date = new Date(),
@@ -326,8 +327,9 @@ export async function markOrdersExported(
   const result: MarkExportedResult = { count: 0, lines: 0, completed: [] }
   if (orderIds.length === 0) return result
   const only = opts.lineIds ? new Set(opts.lineIds) : null
+  const statuses: PipelineStatus[] = only ? [...EXPORTABLE_PIPELINE_STATUSES, 'PENDING_DESIGN'] : EXPORTABLE_PIPELINE_STATUSES
   const orders = await prisma.order.findMany({
-    where: { id: { in: orderIds }, pipelineStatus: { in: EXPORTABLE_PIPELINE_STATUSES } },
+    where: { id: { in: orderIds }, pipelineStatus: { in: statuses } },
     select: { id: true, pipelineStatus: true, exportedAt: true, exportedToSupplierId: true, lines: { select: EXPORT_LINE_SELECT } },
   })
   for (const o of orders) {
@@ -356,7 +358,7 @@ export async function markOrdersExported(
     }
     if (full) {
       ops.push(prisma.order.updateMany({
-        where: { id: o.id, pipelineStatus: { in: EXPORTABLE_PIPELINE_STATUSES } },
+        where: { id: o.id, pipelineStatus: { in: statuses } },
         data: {
           exportedAt,
           exportedToSupplierId: supplierId,

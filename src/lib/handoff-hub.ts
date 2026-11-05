@@ -10,8 +10,10 @@ export const HUB_WARNING_LABELS: Record<HubWarningCode, string> = {
 }
 
 export type HubView = {
-  /** The unsent lines of this tab's supplier. */
+  /** The lines of this tab's supplier ready to go. */
   lines: HandoffLine[]
+  /** Lines of this order, at any supplier, still in design: more to come, nothing that holds this card back. */
+  inDesign: HandoffLine[]
   first: HandoffLine | null
   /** How many more lines the card stands for. */
   extra: number
@@ -30,7 +32,7 @@ function hasMockup(l: HandoffLine): boolean {
 
 export function hubView(card: HandoffCard, tabId: string): HubView {
   const supplierId = tabId === UNMAPPED_TAB ? null : tabId
-  const lines = card.lines.filter(l => (l.line.supplier?.id ?? null) === supplierId && !l.exportedTo)
+  const lines = card.lines.filter(l => (l.line.supplier?.id ?? null) === supplierId && !l.exportedTo && !l.waiting)
   const warnings = lines.flatMap(l => {
     const out: HubWarning[] = []
     if (l.wrongSizeAreas.length > 0) out.push({ code: 'WRONG_SIZE', taskKey: l.taskKey })
@@ -40,6 +42,7 @@ export function hubView(card: HandoffCard, tabId: string): HubView {
   })
   return {
     lines,
+    inDesign: card.lines.filter(l => l.waiting === 'DESIGN'),
     first: lines[0] ?? null,
     extra: Math.max(0, lines.length - 1),
     baseCost: lines.reduce((sum, l) => sum + (l.baseCost ?? 0), 0),

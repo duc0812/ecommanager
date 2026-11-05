@@ -88,6 +88,11 @@ export default function TaskHeader({ detail, qa, holdCount, refreshing, onRefres
   useDismiss(assignRef, panel === 'assign', close)
 
   const owns = me.isLeader || !task.assigneeId || task.assigneeId === me.id
+  // The handoff state is the order's; these say where this task's own line stands.
+  const lineReady = !!detail.handoff?.readyLineIds.includes(line.id)
+  const lineSent = !!detail.handoff?.sentLineIds.includes(line.id)
+  const orderHandedOff = detail.handoff?.handedOff ?? null
+  const showLineSent = lineSent && (!orderHandedOff || orderHandedOff.mode === 'CSV')
   const can = (to: TransitionBody['to']) => canMove(detail, to)
   const filled = allSlotsFilled(detail)
   const ready = READY_META[task.readiness]
@@ -177,7 +182,7 @@ export default function TaskHeader({ detail, qa, holdCount, refreshing, onRefres
     primary = <button type="button" className={btnPrimaryMd} disabled={busy} onClick={approve}>Duyệt design<Icon name="verified" className="text-[18px]" /></button>
   } else if (task.status === 'REVIEW' && !me.canApprove) {
     primary = <button type="button" className={btnPrimaryMd} disabled title="Leader duyệt design">Chờ leader duyệt<Icon name="hourglass_top" className="text-[18px]" /></button>
-  } else if (task.status === 'DONE' && detail.handoff) {
+  } else if (task.status === 'DONE' && detail.handoff && (!detail.handoff.pending || lineReady)) {
     primary = <HandoffButton orderId={task.orderId} state={detail.handoff} canHandoff={me.canHandoff} onChanged={msg => { if (msg) toast.say(msg); onChanged() }} onError={m => toast.say(m, 'bad')} />
   }
 
@@ -223,12 +228,13 @@ export default function TaskHeader({ detail, qa, holdCount, refreshing, onRefres
             {libraryWaiting && <Pill tone="brand" icon="inventory_2" size="md" title="Có sẵn trong thư viện NAS: bản in được gắn khi quét và xử lý đơn">Thư viện — chờ quét</Pill>}
             {task.unmapped && <Pill tone="bad" icon="account_tree" size="md" title="Dòng chưa có xưởng, cần map trước khi gửi">Chưa mapping</Pill>}
             {detail.handoff?.push && <Pill tone="warn" icon="local_shipping" size="md">{pushChipLabel(detail.handoff.push, detail.handoff.apiKind)}</Pill>}
-            {detail.handoff?.handedOff && (
+            {showLineSent && <Pill tone="ok" icon="local_shipping" size="md">Dòng này đã gửi xưởng</Pill>}
+            {detail.handoff?.handedOff && !lineReady && !showLineSent && (
               <Pill tone="ok" icon={detail.handoff.handedOff.mode === 'API' ? 'cloud_done' : 'inventory'} size="md">
                 {detail.handoff.handedOff.mode === 'API' ? 'Đã chuyển supplier qua API' : detail.handoff.handedOff.mode === 'SHEET' ? 'Đã ghi vào sheet xưởng' : 'Đã lưu chờ xuất CSV'}
               </Pill>
             )}
-            {task.status === 'DONE' && detail.handoff && !detail.handoff.handedOff && (
+            {task.status === 'DONE' && detail.handoff && !lineSent && (lineReady || !orderHandedOff) && (
               <Pill tone="idle" icon="local_shipping" size="md" title={detail.handoff.blocked ?? detail.handoff.apiNote ?? undefined}>Chưa chuyển xưởng</Pill>
             )}
             <span className="w-px h-5 bg-outline-variant mx-xs" />

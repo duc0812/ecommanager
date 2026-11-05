@@ -593,3 +593,44 @@ describe('a sheet of one long tab: Mango', () => {
     expect(hub.pending.find(c => c.order.id === o.id)?.lines[0].send).toMatchObject({ sku: 'GAF', size: 'XL', color: 'DEFAULT' })
   })
 })
+
+describe('a line still in design beside a finished one', () => {
+  const withOpenLine = async () => {
+    const o = await makeOrder()
+    const lineId = (await line(o.id)).shopifyLineId
+    await prisma.orderLine.create({ data: {
+      orderId: o.id, shopifyLineId: `${lineId}-open`, productTitle: 'Jeep Hoodie', variantTitle: 'Pullover Hoodie / Orange / L', qty: 1, linePosition: 2, unitPrice: 40, sku: 'TN1-HOODIE-L',
+      resolvedSupplierId: SUP, resolvedSupplierSku: 'JM-HOODIE', resolvedBaseCost: 19.5, customized: true, shopifyProductType: 'AOP Product',
+    } })
+    await prisma.designTask.create({ data: { orderId: o.id, shopifyLineId: `${lineId}-open`, taskKey: `${o.code}_2`, status: 'NEW' } })
+    await prisma.order.update({ where: { id: o.id }, data: { pipelineStatus: 'PENDING_DESIGN', designReady: false } })
+    return { ...o, openLineId: `${lineId}-open` }
+  }
+
+  it('writes the finished line only, keeps the order in design, and writes the other once approved', async () => {
+    const o = await withOpenLine()
+    expect(await previewSheetPush(SUP, [o.id])).toMatchObject({ ready: 1, blocked: 0 })
+    const first = await push([o.id])
+    expect(first.results).toEqual([expect.objectContaining({ lineKey: o.key, status: 'WRITTEN' })])
+    expect(writes[0].rows).toHaveLength(1)
+    const lines = await prisma.orderLine.findMany({ where: { orderId: o.id }, orderBy: { linePosition: 'asc' } })
+    expect(lines[0].exportedToSupplierId).toBe(SUP)
+    expect(lines[1].exportedAt).toBeNull()
+    expect(await prisma.order.findUniqueOrThrow({ where: { id: o.id } })).toMatchObject({ pipelineStatus: 'PENDING_DESIGN', exportedAt: null, supplierHandoffAt: null })
+    expect((await push([o.id])).results).toEqual([])
+
+    await prisma.orderLine.update({ where: { id: lines[1].id }, data: { designDriveLink: 'https://drive.google.com/drive/folders/later', previewCdnUrl: 'https://cdn.shopify.com/s/files/later.png' } })
+    await prisma.designTask.update({ where: { taskKey: `${o.code}_2` }, data: { status: 'DONE' } })
+    await prisma.order.update({ where: { id: o.id }, data: { pipelineStatus: 'READY_TO_PRODUCTION', designReady: true } })
+    const second = await push([o.id])
+    expect(second.results).toEqual([expect.objectContaining({ lineKey: `${o.code}_2`, status: 'WRITTEN' })])
+    expect(await prisma.order.findUniqueOrThrow({ where: { id: o.id } })).toMatchObject({ pipelineStatus: 'EXPORTED', supplierHandoffMode: 'SHEET' })
+  })
+
+  it('a warning on the open line blocks nothing', async () => {
+    const o = await withOpenLine()
+    await prisma.orderLine.updateMany({ where: { orderId: o.id, shopifyLineId: o.openLineId }, data: { previewCdnUrl: null, imageUrl: null } })
+    const r = await push([o.id])
+    expect(r.results.map(x => x.status)).toEqual(['WRITTEN'])
+  })
+})

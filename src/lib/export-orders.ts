@@ -12,6 +12,11 @@ const ORDER_DESIGN_SOURCE = 'order.designDriveLink'
 
 type ExportOrder = Awaited<ReturnType<typeof listOrdersWithLines>>[number]
 
+/** An order still in design has no order-level link yet; a line approved ahead of the others brings its own. */
+function orderLinkOf(o: ExportOrder, lines: ExportOrder['lines']): string | null {
+  return o.designDriveLink ?? lines[0]?.designDriveLink ?? null
+}
+
 /** The rows of a supplier's export: what the CSV file prints and what the sheet channel writes. Links are resolved only for the columns asked for. */
 export async function buildOrdersForCsv({ orders, supplierId, columns, perOrder, linesOf }: {
   orders: ExportOrder[]; supplierId: string; columns: { source: string }[]; perOrder: boolean; linesOf: (o: ExportOrder) => ExportOrder['lines']
@@ -61,7 +66,7 @@ export async function buildOrdersForCsv({ orders, supplierId, columns, perOrder,
         const orderLinkUsed = wantsOrderLink || (wantsLineLinks && lines.some(l => !l.designDriveLink))
         return [{
           id: o.id, storeId: o.storeId, shopifyOrderNumber: o.shopifyOrderNumber,
-          designDriveLink: orderLinkUsed ? o.designDriveLink : null, lines: wantsLineLinks || wantsMockupLinks ? lines : [],
+          designDriveLink: orderLinkUsed ? orderLinkOf(o, lines) : null, lines: wantsLineLinks || wantsMockupLinks ? lines : [],
         }]
       })
       : [],
@@ -87,7 +92,7 @@ export async function buildOrdersForCsv({ orders, supplierId, columns, perOrder,
         shippingPhone: o.shippingPhone,
         financialStatus: o.financialStatus,
         fulfillmentStatus: o.fulfillmentStatus,
-        designDriveLink: designLinks.translate(o.designDriveLink),
+        designDriveLink: designLinks.translate(orderLinkOf(o, exportableLines)),
         trelloCardUrl: o.trelloCardUrl,
         placedAt: o.placedAt,
         lines: exportableLines.map(l => {

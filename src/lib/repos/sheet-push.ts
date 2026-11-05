@@ -114,7 +114,8 @@ async function run(supplierId: string, orderIds: string[] | undefined, userId: s
     const costByKey = new Map(card.lines.map(l => [l.taskKey, l.baseCost]))
     for (const l of o.lines) {
       const key = lineKeys.get(l.shopifyLineId)
-      if (!key || l.resolvedSupplierId !== supplierId || l.exportedAt) continue
+      // Only the lines the card holds as ready; a sibling still in design stays out.
+      if (!key || !customNames.has(l.id)) continue
       lineIdByKey.set(key, { orderId: o.id, lineId: l.id, orderNumber: o.shopifyOrderNumber, baseCost: costByKey.get(key) ?? null })
       if (hasLine(keys, key)) {
         results.push({ lineKey: key, orderNumber: o.shopifyOrderNumber, status: 'ALREADY', message: 'Dòng đã có sẵn trong sheet, không ghi lại' })

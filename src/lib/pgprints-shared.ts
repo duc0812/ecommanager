@@ -70,6 +70,8 @@ export type PushPreview = {
   issues: PreviewIssue[]
   balance: { availableAmount: number; pendingAmount: number; paidAmount: number; upcomingAmount: number } | null
   activePush: PushView | null
+  /** A line approved after `activePush` went out can go now, as a new order beside it. */
+  laterSend?: boolean
   history: PushView[]
 }
 

@@ -3,12 +3,12 @@ import { isNonProductLine, lineKeysOf } from '@/lib/order-lines'
 import { requiredSlotsFor, templateForLine } from '@/lib/design-tasks'
 import { artworkUrl } from '@/lib/design-studio'
 import { currentFiles, extraPrintParts, sameLabel } from '@/lib/task-files'
-import { logHandoffEvent } from '@/lib/repos/push-export'
+import { heldLinesMessage, logHandoffEvent } from '@/lib/repos/push-export'
 import { retryOnBusy } from '@/lib/sqlite-busy'
 import { SHIPMENT_STATUS_FULFILLED, SHIPMENT_STATUS_PENDING } from '@/lib/tracking/build-shipments'
 import { PublicUrlError, ensurePublicToken, publicArtworkUrl, requirePublicBaseUrl } from '@/lib/public-artwork'
 import { STATUS_LABELS, type PipelineStatus } from '@/lib/pipeline-status'
-import { exportedSupplierOf } from '@/lib/line-export'
+import { canSendBeside, exportedSupplierOf, pushLineIds } from '@/lib/line-export'
 import { expectedSize, printFileFit } from '@/lib/print-file-fit'
 import { PushError } from '@/lib/repos/pgprints-push'
 import type { DesignArtwork } from '@/generated/prisma/client'
@@ -17,7 +17,7 @@ import type { PreviewFile, PushStatus, PushView } from '@/lib/pgprints-shared'
 export const ACTIVE_STATUSES: PushStatus[] = ['SENDING', 'CREATED']
 export const CLOSED_PIPELINE = ['CANCELLED', 'REFUNDED']
 export const CLOSED_FINANCIAL = ['REFUNDED', 'VOIDED']
-export const EXPORT_READY = ['READY_TO_PRODUCTION', 'EXPORTED']
+export const EXPORT_READY = ['READY_TO_PRODUCTION', 'PENDING_DESIGN', 'EXPORTED']
 export const UNKNOWN_RESULT_GRACE_MS = 2 * 60_000
 
 export type PushRow = Awaited<ReturnType<typeof prisma.supplierOrderPush.findUniqueOrThrow>>
@@ -53,21 +53,25 @@ export async function viewOf(pushId: string): Promise<PushView> {
   return (await toPushViews([row]))[0]
 }
 
-/** Takes the one live slot of an order × supplier before anything is sent, so two clicks can never make two orders. */
+/**
+ * Takes a live slot of an order × supplier before anything is sent, so two clicks can never make two orders.
+ * The first live push holds the slot of the pair; one sent beside it, for lines approved later, holds a slot of its own number.
+ */
 export async function reservePush(
-  input: { orderId: string; supplierId: string; externalOrderId: string; requestJson: string; userId: string | null },
+  input: { orderId: string; supplierId: string; externalOrderId: string; lineIds: string[]; requestJson: string; userId: string | null },
   duplicateMessage: string,
 ): Promise<{ id: string; pushedAt: Date }> {
-  const activeKey = activeKeyFor(input.orderId, input.supplierId)
   const pushedAt = new Date()
   try {
     return await retryOnBusy(() => prisma.$transaction(async tx => {
       const existing = await tx.supplierOrderPush.findMany({ where: { orderId: input.orderId, supplierId: input.supplierId } })
-      if (existing.some(p => isActive(p.status))) throw new PushError(duplicateMessage, 409, 'DUPLICATE')
+      const live = existing.filter(p => isActive(p.status))
+      if (!canSendBeside(live, input.lineIds)) throw new PushError(duplicateMessage, 409, 'DUPLICATE')
+      const activeKey = live.length > 0 ? `${activeKeyFor(input.orderId, input.supplierId)}::${input.externalOrderId}` : activeKeyFor(input.orderId, input.supplierId)
       const fresh = {
         status: 'SENDING', activeKey, requestJson: input.requestJson, responseJson: null, error: null,
         supplierOrderCode: null, supplierInternalId: null, remoteStatus: null, totalCost: null, shippingFee: null, handleFee: null,
-        pushedById: input.userId, pushedAt, cancelledAt: null, lastSyncedAt: null, exportMarked: false, prevExportJson: null,
+        pushedById: input.userId, pushedAt, cancelledAt: null, lastSyncedAt: null, exportMarked: false, prevExportJson: JSON.stringify({ lineIds: input.lineIds }),
       }
       const failed = existing.find(p => p.status === 'FAILED' && p.externalOrderId === input.externalOrderId)
       if (failed) {
@@ -143,10 +147,10 @@ type OrderForPush = NonNullable<Awaited<ReturnType<typeof loadOrderForPush>>>
 /** What every API supplier refuses or warns about before looking at a single line, and the lines it would send. */
 export async function checkOrderForPush(
   order: OrderForPush, supplier: { id: string } | null,
-  ctx: { name: string; active: { supplierOrderCode: string | null; externalOrderId: string } | null; externalOrderId: string },
+  ctx: { name: string; active: { supplierOrderCode: string | null; externalOrderId: string } | null; externalOrderId: string; lines: OrderForPush['lines']; held: OrderForPush['lines'] },
   report: { error: (code: string, message: string, refId?: string) => void; warning: (code: string, message: string, refId?: string) => void },
 ) {
-  const { name, active, externalOrderId } = ctx
+  const { name, active, externalOrderId, lines: pushLines, held } = ctx
   const { error, warning } = report
   if (!supplier) error('NO_SUPPLIER', `Chưa có xưởng mã "${name.toLowerCase()}" trong danh sách xưởng`)
   if (CLOSED_PIPELINE.includes(order.pipelineStatus) || CLOSED_FINANCIAL.includes((order.financialStatus ?? '').toUpperCase())) {
@@ -179,35 +183,36 @@ export async function checkOrderForPush(
     const others = await prisma.supplier.findMany({ where: { id: { in: foreign.map(l => l.resolvedSupplierId as string) } }, select: { name: true } })
     warning('MIXED_SUPPLIER', `Chỉ gửi các dòng ${name}; dòng ${foreign.map(l => keyOf(l)).join(', ')} thuộc ${others.map(s => s.name).join(', ') || 'xưởng khác'} — xuất riêng cho xưởng đó`)
   }
-  const pushLines = supplier ? productLines.filter(l => l.resolvedSupplierId === supplier.id) : []
+  if (held.length > 0) warning('DESIGN_OPEN', heldLinesMessage(held.map(l => keyOf(l))))
   // A line sent any other way is an order someone already holds; an API create would make a second one.
   const sentElsewhere = active ? [] : pushLines.filter(l => !!exportedSupplierOf({ pipelineStatus: order.pipelineStatus, exportedAt: order.exportedAt, exportedToSupplierId: order.exportedToSupplierId, lines: order.lines }, l))
   if (sentElsewhere.length > 0) {
     error('ALREADY_EXPORTED', `Dòng ${sentElsewhere.map(l => keyOf(l)).join(', ')} đã xuất cho xưởng trước đó — gửi API nữa sẽ thành đơn trùng`)
   }
-  return { baseUrl, pushLines, keyOf }
+  return { baseUrl, keyOf }
 }
 
 type TrackedLine = { shopifyLineId: string; resolvedSupplierId: string | null; resolvedSupplierSku: string | null }
 
-/** Writes a tracking number on the Shipment of each of this supplier's lines; `pick` returns null for a line with none yet. */
+/** Writes a tracking number on the Shipment of each line this push carried; `pick` returns null for a line with none yet. */
 export async function upsertLineTracking(
-  push: Pick<PushRow, 'orderId' | 'supplierId'>,
+  push: Pick<PushRow, 'orderId' | 'supplierId' | 'prevExportJson'>,
   pick: (line: TrackedLine) => { number: string; company: string | null } | null,
 ): Promise<number> {
   const order = await prisma.order.findUnique({
     where: { id: push.orderId },
     select: {
       id: true, projectId: true, shopifyOrderNumber: true,
-      lines: { orderBy: { linePosition: 'asc' }, select: { shopifyLineId: true, sku: true, productTitle: true, shopifyProductType: true, linePosition: true, resolvedSupplierId: true, resolvedSupplierSku: true } },
+      lines: { orderBy: { linePosition: 'asc' }, select: { id: true, shopifyLineId: true, sku: true, productTitle: true, shopifyProductType: true, linePosition: true, resolvedSupplierId: true, resolvedSupplierSku: true } },
     },
   })
   if (!order) return 0
   const productLines = order.lines.filter(l => !isNonProductLine(l))
   const lineKeys = lineKeysOf(order.shopifyOrderNumber, order.lines)
+  const carried = pushLineIds(push)
   let touched = 0
   for (const line of productLines) {
-    if (line.resolvedSupplierId !== push.supplierId) continue
+    if (line.resolvedSupplierId !== push.supplierId || (carried && !carried.includes(line.id))) continue
     const t = pick(line)
     if (!t) continue
     const lineKey = lineKeys.get(line.shopifyLineId)!

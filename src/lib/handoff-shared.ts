@@ -1,4 +1,5 @@
 import type { WorkspaceLine } from '@/lib/design-studio'
+import type { LineHold } from '@/lib/line-export'
 
 export type HandoffMode = 'API' | 'CSV' | 'SHEET'
 export type SupplierApiKind = 'pgprints' | 'merchize' | 'bondre' | 'printway'
@@ -8,7 +9,12 @@ export const SUPPLIER_API_NAMES: Record<SupplierApiKind, string> = { pgprints: '
 export type HandoffPush = { status: string; supplierOrderCode: string | null; externalOrderId: string }
 
 export type HandoffState = {
+  /** At least one line can go to its supplier now. */
   pending: boolean
+  readyLineIds: string[]
+  sentLineIds: string[]
+  /** A ready API line can go now, with or without a live push of its supplier beside it. */
+  pushBeside: boolean
   blocked: string | null
   mode: HandoffMode
   apiName: string | null
@@ -40,6 +46,8 @@ export type HandoffLine = {
   send: { sku: string | null; size: string; color: string; customName: string }
   /** Supplier this line was already sent to, null while it waits. */
   exportedTo: string | null
+  /** Why this line is out of every send and count for now; null when it can go. */
+  waiting?: LineHold | null
   /** Print parts whose newest file does not match the template size. */
   wrongSizeAreas: string[]
   /** What today's mapping would pick when it differs from the supplier the line was costed with (an order older than the mapping). */

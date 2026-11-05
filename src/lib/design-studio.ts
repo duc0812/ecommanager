@@ -324,8 +324,9 @@ async function recomputeOrderDesign(orderId: string, markedDone: boolean) {
     currentStatus,
   })
   // A handoff is stale once a line is reopened or the factory sent the file back: the new design has to be handed over again.
+  // Approving one line while another is still in design leaves a CSV save of the finished lines alone.
   const staleHandoff = !!order.supplierHandoffAt && !['EXPORTED', 'FULFILLED'].includes(pipelineStatus)
-    && (!designReady || (markedDone && order.pipelineStatus === 'DESIGN_REJECTED'))
+    && (markedDone ? order.pipelineStatus === 'DESIGN_REJECTED' : !designReady)
   // Re-approved after the factory sent the design back: every task was reopened, so every line goes to its supplier again.
   if (markedDone && designReady && order.pipelineStatus === 'DESIGN_REJECTED') await clearLineExports([orderId])
   const select = { id: true, designReady: true, pipelineStatus: true } as const

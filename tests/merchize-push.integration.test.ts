@@ -398,8 +398,9 @@ describe('handoff state', () => {
     const order = await prisma.order.findUniqueOrThrow({
       where: { id: o.id },
       include: {
-        lines: { select: { sku: true, productTitle: true, shopifyProductType: true, resolvedSupplierId: true, resolvedSupplierSku: true } },
-        designTasks: { select: { status: true } },
+        lines: { select: { id: true, shopifyLineId: true, sku: true, productTitle: true, shopifyProductType: true, resolvedSupplierId: true, resolvedSupplierSku: true, designDriveLink: true, exportedAt: true, exportedToSupplierId: true } },
+        designTasks: { select: { shopifyLineId: true, status: true, updatedAt: true } },
+        supplierPushes: { where: { status: { in: ['SENDING', 'CREATED'] } }, select: { supplierId: true, status: true, exportMarked: true, prevExportJson: true } },
       },
     })
     const state = (await handoffStates([order])).get(o.id)!
@@ -465,5 +466,84 @@ describe('no CSV for Merchize', () => {
     const p = await (await preview(o.id)).json()
     expect((await push(o.id, p.payloadHash)).status).toBe(200)
     await expect(handoffOrderCsv(o.id, null)).rejects.toMatchObject({ status: 409 })
+  })
+})
+
+const addOpenLine = async (o: { id: string; number: string }, firstLine: { resolvedSupplierSku: string | null; imageUrl: string | null }) => {
+  const lineId = `mzl-open-${seq}`
+  await prisma.orderLine.create({ data: {
+    orderId: o.id, shopifyLineId: lineId, productTitle: 'Second Tee', qty: 1, linePosition: 2, unitPrice: 24.95,
+    resolvedSupplierId: SUP, resolvedSupplierSku: firstLine.resolvedSupplierSku, customized: false, imageUrl: firstLine.imageUrl,
+  } })
+  await prisma.designTask.create({ data: { orderId: o.id, shopifyLineId: lineId, taskKey: `${o.number}_2`, status: 'NEW' } })
+  await prisma.order.update({ where: { id: o.id }, data: { pipelineStatus: 'PENDING_DESIGN', designReady: false } })
+  const rel = `design/mzl-open-${seq}/print.png`
+  fs.mkdirSync(path.dirname(path.join(tmp, rel)), { recursive: true })
+  fs.writeFileSync(path.join(tmp, rel), PNG)
+  await prisma.designArtwork.create({ data: {
+    orderId: o.id, shopifyLineId: lineId, printArea: 'Front', version: 1, fileName: 'print.png', storagePath: rel, size: PNG.length, mimeType: 'image/png', widthPx: 4200, heightPx: 4800,
+  } })
+  return lineId
+}
+const approveOpenLine = async (o: { id: string; number: string }, lineId: string) => {
+  await prisma.orderLine.updateMany({ where: { orderId: o.id, shopifyLineId: lineId }, data: { designDriveLink: '/api/design-studio/file/placeholder' } })
+  await prisma.designTask.update({ where: { taskKey: `${o.number}_2` }, data: { status: 'DONE' } })
+  await prisma.order.update({ where: { id: o.id }, data: { pipelineStatus: 'READY_TO_PRODUCTION', designReady: true } })
+}
+
+describe('Merchize: lines approved at different times', () => {
+  it('sends the approved line, leaves the open one in design, and sends it later under its own number', async () => {
+    const o = await makeOrder()
+    const first = await prisma.orderLine.findFirstOrThrow({ where: { orderId: o.id } })
+    const lineId = await addOpenLine(o, first)
+
+    const p = await (await preview(o.id)).json()
+    expect(p.issues.filter((i: any) => i.level === 'error')).toEqual([])
+    expect(p.issues.find((i: any) => i.code === 'DESIGN_OPEN')).toMatchObject({ level: 'warning' })
+    expect(p.lines.map((l: any) => l.refId)).toEqual([`${o.number}_1`])
+    expect(p.payload.order_id).toBe(o.number)
+    expect(p.payload.items.length).toBe(1)
+    expect((await push(o.id, p.payloadHash)).status).toBe(200)
+    expect(await prisma.order.findUniqueOrThrow({ where: { id: o.id } })).toMatchObject({ pipelineStatus: 'PENDING_DESIGN', exportedAt: null, supplierHandoffAt: null })
+    const marked = await prisma.orderLine.findMany({ where: { orderId: o.id }, orderBy: { linePosition: 'asc' } })
+    expect(marked[0].exportedToSupplierId).toBe(SUP)
+    expect(marked[1].exportedAt).toBeNull()
+    expect(await (await preview(o.id)).json()).toMatchObject({ canPush: false, laterSend: false })
+
+    await approveOpenLine(o, lineId)
+    const later = await (await preview(o.id)).json()
+    expect(later).toMatchObject({ laterSend: true, canPush: true, activePush: { externalOrderId: o.number } })
+    expect(later.lines.map((l: any) => l.refId)).toEqual([`${o.number}_2`])
+    expect(later.payload.order_id).toBe(`${o.number}-R2`)
+    expect((await push(o.id, later.payloadHash)).status).toBe(200)
+    expect(await prisma.order.findUniqueOrThrow({ where: { id: o.id } })).toMatchObject({ pipelineStatus: 'EXPORTED', supplierHandoffMode: 'API' })
+    expect((await prisma.supplierOrderPush.findMany({ where: { orderId: o.id }, orderBy: { createdAt: 'asc' } })).map(r => [r.externalOrderId, r.status]))
+      .toEqual([[o.number, 'CREATED'], [`${o.number}-R2`, 'CREATED']])
+    expect((await push(o.id, later.payloadHash)).status).toBe(409)
+  })
+
+  it('refuses a later send while the earlier result is unknown', async () => {
+    const o = await makeOrder()
+    const first = await prisma.orderLine.findFirstOrThrow({ where: { orderId: o.id } })
+    const lineId = await addOpenLine(o, first)
+    await prisma.supplierOrderPush.create({ data: { orderId: o.id, supplierId: SUP, externalOrderId: o.number, status: 'SENDING', activeKey: `${o.id}::${SUP}`, requestJson: '{}', prevExportJson: JSON.stringify({ lineIds: [first.id] }) } })
+    await approveOpenLine(o, lineId)
+    const p = await (await preview(o.id)).json()
+    expect(p).toMatchObject({ laterSend: false, canPush: false })
+    expect(p.issues.map((i: any) => i.code)).toContain('ACTIVE_PUSH')
+    expect((await push(o.id, p.payloadHash ?? 'x')).status).toBe(409)
+  })
+})
+
+describe('tracking of a send beside another', () => {
+  it('lands only on the lines that push carried', async () => {
+    const o = await makeOrder()
+    const first = await prisma.orderLine.findFirstOrThrow({ where: { orderId: o.id } })
+    await addOpenLine(o, first)
+    const p = await (await preview(o.id)).json()
+    await push(o.id, p.payloadHash)
+    const r = await (await refresh(o.id)).json()
+    expect(r.shipments).toBe(1)
+    expect(await prisma.shipment.findMany({ where: { orderId: o.id }, select: { lineKey: true } })).toEqual([{ lineKey: `${o.number}_1` }])
   })
 })

@@ -4,11 +4,12 @@ import { isNonProductLine, lineKeysOf } from '@/lib/order-lines'
 import { requiredSlotsFor, templateForLine } from '@/lib/design-tasks'
 import { artworkUrl } from '@/lib/design-studio'
 import { currentFiles, extraPrintParts, sameLabel } from '@/lib/task-files'
-import { logHandoffEvent, markPushExported } from '@/lib/repos/push-export'
+import { heldLinesMessage, logHandoffEvent, markPushExported, nextExternalOrderId, planPushLines } from '@/lib/repos/push-export'
 import { STATUS_LABELS, type PipelineStatus } from '@/lib/pipeline-status'
 import { retryOnBusy } from '@/lib/sqlite-busy'
 import { SHIPMENT_STATUS_FULFILLED, SHIPMENT_STATUS_PENDING } from '@/lib/tracking/build-shipments'
 import { PGPRINTS_ADDRESS_LINE_MAX, countryCodeOf, countryNameOf, resolveStateCode, splitAddressLine, splitPersonName } from '@/lib/shipping-address'
+import { canSendBeside } from '@/lib/line-export'
 import { PublicUrlError, ensurePublicToken, isLineApproved, publicArtworkUrl, requirePublicBaseUrl } from '@/lib/public-artwork'
 import { credentialsOf, getPgprintsSettings } from '@/lib/pgprints-settings'
 import { expectedSize, printFileFit } from '@/lib/print-file-fit'
@@ -24,7 +25,7 @@ import {
 const ACTIVE_STATUSES: PushStatus[] = ['SENDING', 'CREATED']
 const CLOSED_PIPELINE = ['CANCELLED', 'REFUNDED']
 const CLOSED_FINANCIAL = ['REFUNDED', 'VOIDED']
-const EXPORT_READY = ['READY_TO_PRODUCTION', 'EXPORTED']
+const EXPORT_READY = ['READY_TO_PRODUCTION', 'PENDING_DESIGN', 'EXPORTED']
 const UNKNOWN_RESULT_GRACE_MS = 2 * 60_000
 const DUPLICATE_MESSAGE = 'Đơn này đã có một lần gửi PGprints đang hiệu lực — không gửi trùng'
 export const TRACKING_RECEIVED = 'tracking-received'
@@ -37,7 +38,7 @@ export class PushError extends Error {
 }
 
 type PushRow = {
-  id: string; orderId: string; supplierId: string; status: string; externalOrderId: string; supplierOrderCode: string | null
+  id: string; orderId: string; supplierId: string; status: string; externalOrderId: string; activeKey: string | null; supplierOrderCode: string | null
   supplierInternalId: string | null; remoteStatus: string | null; totalCost: number | null; shippingFee: number | null
   handleFee: number | null; error: string | null; pushedAt: Date; pushedById: string | null; cancelledAt: Date | null
   lastSyncedAt: Date | null; requestJson: string; exportMarked: boolean; prevExportJson: string | null
@@ -103,10 +104,10 @@ export async function buildPush(orderId: string, opts: { withBalance?: boolean }
   const pushes: PushRow[] = supplier
     ? await prisma.supplierOrderPush.findMany({ where: { orderId, supplierId: supplier.id }, orderBy: { createdAt: 'desc' } })
     : []
-  const active = pushes.find(p => isActive(p.status)) ?? null
-  const cancelledCount = pushes.filter(p => p.status === 'CANCELLED').length
+  const plan = planPushLines(order, order.lines.filter(l => !isNonProductLine(l) && !!supplier && l.resolvedSupplierId === supplier.id), pushes)
+  const active = plan.later ? null : pushes.find(p => isActive(p.status)) ?? null
   // A cancelled PGprints order keeps its order_id on their side, so a re-send after a cancel needs a fresh one.
-  const externalOrderId = cancelledCount > 0 ? `${orderNo}-R${cancelledCount + 1}` : orderNo
+  const externalOrderId = await nextExternalOrderId(orderNo, { orderId, supplierId: supplier?.id ?? null, later: plan.later })
 
   if (!supplier) error('NO_SUPPLIER', 'Chưa có xưởng mã "pgprints" trong danh sách xưởng')
   if (CLOSED_PIPELINE.includes(order.pipelineStatus) || CLOSED_FINANCIAL.includes((order.financialStatus ?? '').toUpperCase())) {
@@ -143,7 +144,8 @@ export async function buildPush(orderId: string, opts: { withBalance?: boolean }
     const others = await prisma.supplier.findMany({ where: { id: { in: foreign.map(l => l.resolvedSupplierId as string) } }, select: { name: true } })
     warning('MIXED_SUPPLIER', `Chỉ gửi các dòng PGprints; dòng ${foreign.map(l => keyOf(l)).join(', ')} thuộc ${others.map(s => s.name).join(', ') || 'xưởng khác'} — xuất riêng cho xưởng đó`)
   }
-  const pushLines = supplier ? productLines.filter(l => l.resolvedSupplierId === supplier.id) : []
+  const pushLines = plan.lines
+  if (plan.held.length > 0) warning('DESIGN_OPEN', heldLinesMessage(plan.held.map(l => keyOf(l))))
 
   const supplierSkus = Array.from(new Set(pushLines.map(l => l.resolvedSupplierSku).filter((x): x is string => !!x)))
   const products = supplier && supplierSkus.length
@@ -323,6 +325,7 @@ export async function buildPush(orderId: string, opts: { withBalance?: boolean }
       issues,
       balance,
       activePush: views.find(v => isActive(v.status)) ?? null,
+      laterSend: plan.later,
       history: views,
     },
   }
@@ -334,17 +337,18 @@ function isUniqueViolation(e: any): boolean {
   return msg.includes('UNIQUE constraint failed') || msg.includes('Unique constraint failed')
 }
 
-async function reservePush(input: { orderId: string; supplierId: string; externalOrderId: string; requestJson: string; userId: string | null }): Promise<{ id: string; pushedAt: Date }> {
-  const activeKey = activeKeyFor(input.orderId, input.supplierId)
+async function reservePush(input: { orderId: string; supplierId: string; externalOrderId: string; lineIds: string[]; requestJson: string; userId: string | null }): Promise<{ id: string; pushedAt: Date }> {
   const pushedAt = new Date()
   try {
     return await retryOnBusy(() => prisma.$transaction(async tx => {
       const existing = await tx.supplierOrderPush.findMany({ where: { orderId: input.orderId, supplierId: input.supplierId } })
-      if (existing.some(p => isActive(p.status))) throw new PushError(DUPLICATE_MESSAGE, 409, 'DUPLICATE')
+      const live = existing.filter(p => isActive(p.status))
+      if (!canSendBeside(live, input.lineIds)) throw new PushError(DUPLICATE_MESSAGE, 409, 'DUPLICATE')
+      const activeKey = live.length > 0 ? `${activeKeyFor(input.orderId, input.supplierId)}::${input.externalOrderId}` : activeKeyFor(input.orderId, input.supplierId)
       const fresh = {
         status: 'SENDING', activeKey, requestJson: input.requestJson, responseJson: null, error: null,
         supplierOrderCode: null, supplierInternalId: null, remoteStatus: null, totalCost: null, shippingFee: null, handleFee: null,
-        pushedById: input.userId, pushedAt, cancelledAt: null, lastSyncedAt: null, exportMarked: false, prevExportJson: null,
+        pushedById: input.userId, pushedAt, cancelledAt: null, lastSyncedAt: null, exportMarked: false, prevExportJson: JSON.stringify({ lineIds: input.lineIds }),
       }
       const failed = existing.find(p => p.status === 'FAILED' && p.externalOrderId === input.externalOrderId)
       if (failed) {
@@ -378,7 +382,7 @@ export async function pushOrder(orderId: string, input: { payloadHash: string; u
 
   const built = await buildPush(orderId)
   if (!built) throw new PushError('Không tìm thấy đơn', 404, 'NOT_FOUND')
-  if (built.preview.activePush) throw new PushError(DUPLICATE_MESSAGE, 409, 'DUPLICATE')
+  if (built.preview.activePush && !built.preview.laterSend) throw new PushError(DUPLICATE_MESSAGE, 409, 'DUPLICATE')
   const errors = built.preview.issues.filter(i => i.level === 'error')
   if (errors.length > 0 || !built.rawBody || !built.preview.payloadHash || !built.supplierId) {
     throw new PushError(errors[0]?.message ?? 'Đơn chưa đủ điều kiện gửi PGprints', 422, 'NOT_ELIGIBLE', errors)
@@ -388,7 +392,7 @@ export async function pushOrder(orderId: string, input: { payloadHash: string; u
   }
 
   const reserved = await reservePush({
-    orderId, supplierId: built.supplierId, externalOrderId: built.externalOrderId, requestJson: built.rawBody, userId: input.userId,
+    orderId, supplierId: built.supplierId, externalOrderId: built.externalOrderId, lineIds: built.preview.lines.map(l => l.lineId), requestJson: built.rawBody, userId: input.userId,
   })
 
   let created: Awaited<ReturnType<typeof createOrder>>
@@ -589,7 +593,7 @@ async function applyRemoteMatch(push: PushRow, match: PgprintsRemoteOrder, lastS
         lastSyncedAt, remoteStatus: remoteStatusOf(match),
         supplierOrderCode: push.supplierOrderCode ?? match.pgcOrderId, supplierInternalId: push.supplierInternalId ?? match.id,
         totalCost: match.totalCost ?? push.totalCost, shippingFee: match.shippingFee ?? push.shippingFee, handleFee: match.handleFee ?? push.handleFee,
-        ...(landed ? { status: 'CREATED', error: null, activeKey: activeKeyFor(push.orderId, push.supplierId) } : {}),
+        ...(landed ? { status: 'CREATED', error: null, activeKey: push.activeKey ?? activeKeyFor(push.orderId, push.supplierId) } : {}),
       },
     })
   } catch (e: any) {

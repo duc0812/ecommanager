@@ -3,14 +3,14 @@ import { UNMAPPED_TAB, type HandoffCard, type HandoffLine } from '@/lib/handoff-
 import { fmtUsd, hubTypeLabel, hubView } from '@/lib/handoff-hub'
 
 function line(over: {
-  key?: string; supplierId?: string | null; baseCost?: number | null; exportedTo?: string | null; wrongSizeAreas?: string[]
+  key?: string; supplierId?: string | null; baseCost?: number | null; exportedTo?: string | null; wrongSizeAreas?: string[]; waiting?: HandoffLine['waiting']
   mappingNow?: { supplierName: string; sku: string } | null; previewUrl?: string | null; mockup?: boolean; productType?: string | null; supplierProduct?: string | null
 } = {}): HandoffLine {
   const supplierId = over.supplierId === undefined ? 'jm' : over.supplierId
   return {
     send: { sku: null, size: '', color: '', customName: '' },
     taskKey: over.key ?? 'LIT1_1', baseCost: over.baseCost === undefined ? 10 : over.baseCost, productType: over.productType ?? null,
-    exportedTo: over.exportedTo ?? null, wrongSizeAreas: over.wrongSizeAreas ?? [], mappingNow: over.mappingNow ?? null,
+    exportedTo: over.exportedTo ?? null, wrongSizeAreas: over.wrongSizeAreas ?? [], mappingNow: over.mappingNow ?? null, waiting: over.waiting ?? null,
     slots: [], apiSku: null, driveFolderUrl: null,
     line: {
       supplier: supplierId ? { id: supplierId, name: supplierId, code: supplierId } : null,
@@ -60,6 +60,19 @@ describe('hubView', () => {
     const c = card([line({ supplierId: null }), line({ key: 'LIT1_2' })])
     expect(hubView(c, UNMAPPED_TAB).lines.map(l => l.taskKey)).toEqual(['LIT1_1'])
     expect(hubView(c, 'jm').lines.map(l => l.taskKey)).toEqual(['LIT1_2'])
+  })
+
+  it('counts a line in design nowhere, warns about nothing on it, and still names it', () => {
+    const v = hubView(card([
+      line({ key: 'LIT1_1', baseCost: 5, waiting: 'DESIGN', previewUrl: null, wrongSizeAreas: ['Front'] }),
+      line({ key: 'LIT1_2', baseCost: 7 }),
+      line({ key: 'LIT1_3', supplierId: 'mz', waiting: 'DESIGN' }),
+      line({ key: 'LIT1_4', baseCost: 9, waiting: 'SAVED' }),
+    ]), 'jm')
+    expect(v.lines.map(l => l.taskKey)).toEqual(['LIT1_2'])
+    expect(v.baseCost).toBe(7)
+    expect(v.warnings).toEqual([])
+    expect(v.inDesign.map(l => l.taskKey)).toEqual(['LIT1_1', 'LIT1_3'])
   })
 
   it('has no first line when the tab has nothing left on this order', () => {
