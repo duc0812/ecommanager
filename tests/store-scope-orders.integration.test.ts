@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   syncStoreOrders: vi.fn(),
   fetchVariantSkus: vi.fn(),
   fetchOrderLinePropsByNames: vi.fn(),
+  updateVariantSku: vi.fn(),
   recalculate: vi.fn(),
 }))
 
@@ -18,6 +19,7 @@ vi.mock('@/lib/shopify-orders', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/shopify-orders')>()),
   fetchVariantSkus: mocks.fetchVariantSkus,
   fetchOrderLinePropsByNames: mocks.fetchOrderLinePropsByNames,
+  updateVariantSku: mocks.updateVariantSku,
 }))
 // The real run re-prices (and can re-status) every order it is given, so the unfiltered admin run would reach the rows of other suites.
 vi.mock('@/lib/repos/order-costs', async importOriginal => ({
@@ -100,6 +102,7 @@ beforeEach(() => {
   mocks.syncStoreOrders.mockReset().mockResolvedValue(syncResult)
   mocks.fetchVariantSkus.mockReset().mockResolvedValue(new Map())
   mocks.fetchOrderLinePropsByNames.mockReset().mockResolvedValue(new Map())
+  mocks.updateVariantSku.mockReset().mockResolvedValue(undefined)
   mocks.recalculate.mockReset().mockResolvedValue({ checked: 0 })
 })
 
@@ -220,6 +223,17 @@ describe('writes on orders and lines', () => {
     await restore(own, 'EXPORTED')
   })
 
+  it('a bulk status change needs a list of strings, for everyone, and changes nothing without one', async () => {
+    const own = fx.orderId('a', 3)
+    for (const who of ['sellerA', 'admin'] as const) {
+      for (const orderIds of [[own, 7], [own, null], [own, { id: fx.orderId('b', 3) }], own]) {
+        const res = await call(await bulkStatus(fx.request('/api/fulfillment/orders/bulk-status', who, { method: 'POST', body: { orderIds, status: 'ON_HOLD' } })))
+        expect(res).toEqual({ status: 400, body: { error: 'orderIds[] and status required' } })
+      }
+    }
+    expect(await state(own)).toBe('EXPORTED')
+  })
+
   it('admin keeps changing orders of both stores in one bulk request', async () => {
     const both = [fx.orderId('a', 3), fx.orderId('b', 3)]
     const res = await call(await bulkStatus(fx.request('/api/fulfillment/orders/bulk-status', 'admin', { method: 'POST', body: { orderIds: both, status: 'ON_HOLD' } })))
@@ -286,23 +300,74 @@ describe('need to fix', () => {
     expect(admin.body.done.map((d: any) => d.orderId)).toEqual(expect.arrayContaining([fx.orderId('a', 1), fx.orderId('b', 1)]))
   })
 
-  it('an inline fix only reaches lines of an order of the caller, and only the lines of that order', async () => {
-    const fix = (orderId: string, lineId: string, who: Who = 'sellerA') =>
-      taskFixFix(fx.request('/api/fulfillment/task-fix/fix', who, { method: 'POST', body: { orderId, taskType: 'MISSING_BASE_COST', fixes: [{ lineId, baseCost: 3 }] } }))
-    const cost = async (lineId: string) => (await prisma.orderLine.findUniqueOrThrow({ where: { id: lineId } })).manualBaseCost
+})
 
-    expect((await fix(fx.orderId('b', 2), fx.lineId('b', 2))).status).toBe(404)
-    expect(await cost(fx.lineId('b', 2))).toBeNull()
+describe('an inline fix', () => {
+  type Kind = 'MISSING_SKU' | 'MISSING_BASE_COST'
+  const variantOf = (s: 'a' | 'b', n: number) => `gid://shopify/ProductVariant/soc-${s}${n}`
+  const item = (kind: Kind, lineId: string) => (kind === 'MISSING_SKU' ? { lineId, sku: 'FIX-SKU' } : { lineId, baseCost: 3 })
+  const fix = (who: Who, kind: Kind, orderId: string, fixes: unknown[]) =>
+    taskFixFix(fx.request('/api/fulfillment/task-fix/fix', who, { method: 'POST', body: { orderId, taskType: kind, fixes } }))
+  const lineIds = [fx.lineId('a', 1), fx.lineId('a', 2), fx.lineId('a', 4), fx.lineId('b', 1), fx.lineId('b', 2)]
+  const snapshot = async () => (await prisma.orderLine.findMany({ where: { id: { in: lineIds } }, orderBy: { id: 'asc' } })).map(l => [l.id, l.sku, l.manualBaseCost])
 
-    const crossed = await call(await fix(fx.orderId('a', 2), fx.lineId('b', 2)))
-    expect(crossed.body.applied).toBe(0)
-    expect(crossed.body.errors).toHaveLength(1)
-    expect(await cost(fx.lineId('b', 2))).toBeNull()
+  beforeAll(async () => {
+    for (const [s, n] of [['a', 1], ['a', 2], ['a', 4], ['b', 1], ['b', 2]] as const) {
+      await prisma.orderLine.update({ where: { id: fx.lineId(s, n) }, data: { shopifyVariantId: variantOf(s, n) } })
+    }
+  })
+  afterAll(async () => {
+    await prisma.orderLine.updateMany({ where: { id: { in: lineIds } }, data: { shopifyVariantId: null } })
+  })
 
-    const own = await call(await fix(fx.orderId('a', 2), fx.lineId('a', 2)))
-    expect(own.body.applied).toBe(1)
-    expect(await cost(fx.lineId('a', 2))).toBe(3)
-    await prisma.orderLine.update({ where: { id: fx.lineId('a', 2) }, data: { manualBaseCost: null } })
+  // The order whose lines the fix is for, the line that is its own, and a line of another order of the same store.
+  const target: Record<Kind, { order: string; own: string; sameStore: string; otherStore: string }> = {
+    MISSING_SKU: { order: fx.orderId('a', 1), own: fx.lineId('a', 1), sameStore: fx.lineId('a', 2), otherStore: fx.lineId('b', 1) },
+    MISSING_BASE_COST: { order: fx.orderId('a', 2), own: fx.lineId('a', 2), sameStore: fx.lineId('a', 4), otherStore: fx.lineId('b', 2) },
+  }
+
+  it.each<Kind>(['MISSING_SKU', 'MISSING_BASE_COST'])('%s: an order of another store is refused', async kind => {
+    const before = await snapshot()
+    const other = kind === 'MISSING_SKU' ? fx.orderId('b', 1) : fx.orderId('b', 2)
+    const lineId = target[kind].otherStore
+    expect((await fix('sellerA', kind, other, [item(kind, lineId)])).status).toBe(404)
+    expect(mocks.updateVariantSku).not.toHaveBeenCalled()
+    expect(await snapshot()).toEqual(before)
+  })
+
+  it.each<Kind>(['MISSING_SKU', 'MISSING_BASE_COST'])('%s: one line outside the order refuses the whole request, whichever place it has', async kind => {
+    const { order, own, sameStore, otherStore } = target[kind]
+    const before = await snapshot()
+    const missingOrder = await call(await fix('sellerA', kind, 'soc-order-nope', [item(kind, own)]))
+    expect(missingOrder.status).toBe(404)
+
+    for (const fixes of [[item(kind, own), item(kind, otherStore)], [item(kind, otherStore), item(kind, own)], [item(kind, own), item(kind, sameStore)]]) {
+      const seller = await call(await fix('sellerA', kind, order, fixes))
+      expect(seller).toEqual(missingOrder)
+      const admin = await call(await fix('admin', kind, order, fixes))
+      expect(admin.status).toBe(400)
+      expect(admin.body.error).toMatch(/không thuộc đơn/)
+    }
+    expect((await call(await fix('sellerA', kind, order, [item(kind, own), { lineId: 7 }]))).status).toBe(404)
+    expect((await call(await fix('admin', kind, order, [item(kind, own), null]))).status).toBe(400)
+
+    expect(mocks.updateVariantSku).not.toHaveBeenCalled()
+    expect(await snapshot()).toEqual(before)
+  })
+
+  it.each<Kind>(['MISSING_SKU', 'MISSING_BASE_COST'])('%s: lines of the order itself are fixed, for a seller of the store and for admin', async kind => {
+    const { order, own } = target[kind]
+    const before = await snapshot()
+    for (const who of ['sellerA', 'admin'] as const) {
+      const done = await call(await fix(who, kind, order, [item(kind, own)]))
+      expect(done.body).toMatchObject({ applied: 1, errors: [] })
+      const line = await prisma.orderLine.findUniqueOrThrow({ where: { id: own } })
+      expect(kind === 'MISSING_SKU' ? line.sku : line.manualBaseCost).toBe(kind === 'MISSING_SKU' ? 'FIX-SKU' : 3)
+      await prisma.orderLine.update({ where: { id: own }, data: { sku: before.find(row => row[0] === own)![1] as string | null, manualBaseCost: null } })
+    }
+    expect(mocks.updateVariantSku).toHaveBeenCalledTimes(kind === 'MISSING_SKU' ? 2 : 0)
+    if (kind === 'MISSING_SKU') expect(mocks.updateVariantSku).toHaveBeenCalledWith(fx.shop('a'), `token-${fx.P}-a`, variantOf('a', 1), 'FIX-SKU')
+    expect(await snapshot()).toEqual(before)
   })
 })
 
@@ -350,7 +415,7 @@ describe('Shopify jobs started from the pages', () => {
     expect((await run('sellerA')).status).toBe(200)
     expect(stores()).toEqual([SA])
     mocks.normalize.mockClear()
-    expect((await run('sellerNone')).status).toBeGreaterThanOrEqual(400)
+    expect((await run('sellerNone')).status).toBe(400)
     expect(mocks.normalize).not.toHaveBeenCalled()
     expect((await run('admin')).status).toBe(200)
     expect(stores()).toEqual(expect.arrayContaining([SA, SB]))
@@ -359,10 +424,11 @@ describe('Shopify jobs started from the pages', () => {
 
   it('the design diagnosis finds an order inside the chosen store only', async () => {
     const number = fx.orderNumber('b', 1)
-    const found = await diagnose(fx.request(`/api/fulfillment/design-diagnose?order=${encodeURIComponent(number)}`, 'admin'))
-    expect(found.status).not.toBe(404)
-    const narrowed = await diagnose(fx.request(`/api/fulfillment/design-diagnose?order=${encodeURIComponent(number)}&storeId=${SA}`, 'admin'))
-    expect(narrowed.status).toBe(404)
+    // Found, the diagnosis then stops at the Trello settings, which the test database does not have.
+    const found = await call(await diagnose(fx.request(`/api/fulfillment/design-diagnose?order=${encodeURIComponent(number)}`, 'admin')))
+    expect(found).toEqual({ status: 400, body: { error: 'Trello not configured' } })
+    const narrowed = await call(await diagnose(fx.request(`/api/fulfillment/design-diagnose?order=${encodeURIComponent(number)}&storeId=${SA}`, 'admin')))
+    expect(narrowed).toEqual({ status: 404, body: { error: `order ${number} not found` } })
     expect((await diagnose(fx.request(`/api/fulfillment/design-diagnose?order=${encodeURIComponent(number)}`, 'sellerA'))).status).toBe(403)
   })
 })
@@ -527,7 +593,11 @@ describe('Design Studio, one task, line, order or file at a time', () => {
 
     expect((await dsHandoff(fx.request(`/api/design-studio/orders/${own}/handoff`, 'sellerA'), params({ id: own }))).status).toBe(200)
     expect((await dsHandoff(fx.request(`/api/design-studio/orders/${other}/handoff`, 'sellerA'), params({ id: other }))).status).toBe(404)
-    expect((await dsHandoffPost(fx.request(`/api/design-studio/orders/${other}/handoff`, 'sellerA', { method: 'POST', body: { mode: 'CSV' } }), params({ id: other }))).status).toBeGreaterThanOrEqual(403)
+    // A seller without CSV Export is refused whatever the order; one who holds it still gets nothing of another store.
+    const handOver = (who: Who) => dsHandoffPost(fx.request(`/api/design-studio/orders/${other}/handoff`, who, { method: 'POST', body: { mode: 'CSV' } }), params({ id: other }))
+    expect((await handOver('sellerA')).status).toBe(403)
+    expect((await handOver('exporterA')).status).toBe(404)
+    expect(await prisma.order.findUniqueOrThrow({ where: { id: other }, select: { supplierHandoffAt: true } })).toEqual({ supplierHandoffAt: null })
   })
 
   it('a file of a task of another store is not served, small preview or original', async () => {

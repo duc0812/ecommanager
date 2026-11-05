@@ -5,6 +5,7 @@ import { connectionFailureResponse } from '@/lib/store-connection-response'
 import { updateVariantSku } from '@/lib/shopify-orders'
 import { detectOrderTasks } from '@/lib/order-tasks'
 import { requireOrderScope } from '@/lib/order-scope'
+import { storeScopeFor } from '@/lib/store-scope'
 
 const LINE_SELECT = {
   id: true, sku: true, productTitle: true, shopifyProductType: true, shopifyVariantId: true,
@@ -33,6 +34,14 @@ export async function POST(req: NextRequest) {
   })
   if (!order) return NextResponse.json({ error: 'Order not found' }, { status: 404 })
 
+  // One id outside the order refuses the whole request, before a write or a call to Shopify. A caller who does not see
+  // every store hears what it hears for an order that does not exist, so it cannot tell which ids exist elsewhere.
+  const orderLineIds = new Set(order.lines.map(l => l.id))
+  if (!fixes.every(f => typeof f?.lineId === 'string' && orderLineIds.has(f.lineId))) {
+    if (!(await storeScopeFor(scope.user)).all) return NextResponse.json({ error: 'Không tìm thấy đơn' }, { status: 404 })
+    return NextResponse.json({ error: 'fixes có line không thuộc đơn này' }, { status: 400 })
+  }
+
   const errors: string[] = []
   let applied = 0
 
@@ -56,7 +65,6 @@ export async function POST(req: NextRequest) {
     for (const f of fixes) {
       const cost = Number(f.baseCost)
       if (!Number.isFinite(cost) || cost < 0) { errors.push(`${f.lineId}: giá không hợp lệ`); continue }
-      if (!order.lines.some(l => l.id === f.lineId)) { errors.push(`${f.lineId}: line không thuộc đơn này`); continue }
       await prisma.orderLine.update({ where: { id: f.lineId }, data: { manualBaseCost: cost } })
       applied++
     }

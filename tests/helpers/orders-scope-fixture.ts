@@ -14,7 +14,7 @@ export const SELLER_FEATURES: FeaturePermission[] = [
 ]
 
 export type Side = 'a' | 'b'
-export type Who = 'super' | 'admin' | 'support' | 'sellerA' | 'sellerB' | 'sellerAB' | 'sellerNone' | 'designerA'
+export type Who = 'super' | 'admin' | 'support' | 'sellerA' | 'sellerB' | 'sellerAB' | 'sellerNone' | 'designerA' | 'exporterA'
 
 // Two stores with the same shape of data. The order number, customer, project and shop of store B carry markers
 // that must never show up in an answer given to a seller of store A.
@@ -26,7 +26,7 @@ export function ordersScopeFixture(P: string) {
   const f = {
     P,
     root,
-    emails: ['super', 'admin', 'support', 'seller-a', 'seller-b', 'seller-ab', 'seller-none', 'designer-a'].map(k => `${P}-${k}@test.local`),
+    emails: ['super', 'admin', 'support', 'seller-a', 'seller-b', 'seller-ab', 'seller-none', 'designer-a', 'exporter-a'].map(k => `${P}-${k}@test.local`),
     shop: (s: Side) => `${P}-${s}.myshopify.com`,
     storeId: (s: Side) => `${P}-store-${s}`,
     projectId: (s: Side) => `${P}-project-${s}`,
@@ -121,6 +121,7 @@ export function ordersScopeFixture(P: string) {
     await makeUser('sellerAB', 'SELLER', SELLER_FEATURES, [f.storeId('a'), f.storeId('b')])
     await makeUser('sellerNone', 'SELLER', SELLER_FEATURES)
     await makeUser('designerA', 'SELLER', [...SELLER_FEATURES, 'design_tasks'], [f.storeId('a')])
+    await makeUser('exporterA', 'SELLER', [...SELLER_FEATURES, 'fulfillment_export'], [f.storeId('a')])
   }
 
   // `who` null = no session.
