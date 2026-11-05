@@ -1,20 +1,13 @@
 import cron from 'node-cron'
 import { initOnce, runExclusive } from '@/lib/job-lock'
 import { forEachConnectedStore, logStoreFailures, okResults, saveJobResult } from '@/lib/store-jobs'
-import { syncParcelPanelTracking } from './parcelpanel-sync'
-import { getParcelPanelApiKey } from './parcelpanel-config'
+import { syncParcelPanelForStore } from './parcelpanel-store-sync'
 
 const TZ = 'Asia/Ho_Chi_Minh'
 
-// Daily: refresh real carrier status from ParcelPanel for undelivered shipments, store by store.
+// Daily: refresh real carrier status from ParcelPanel for undelivered shipments, store by store, each under its own key.
 export async function runDailyParcelPanelSync() {
-  const apiKey = await getParcelPanelApiKey()
-  if (!apiKey) {
-    console.log('[parcelpanel] API key not configured (DB or env); skipping')
-    return
-  }
-  const results = await forEachConnectedStore('parcelpanel-sync', (conn) =>
-    syncParcelPanelTracking({ apiKey, storeId: conn.storeId }))
+  const results = await forEachConnectedStore('parcelpanel-sync', (conn) => syncParcelPanelForStore(conn))
   if (results.length === 0) console.error('[parcelpanel] no connected store; skipping')
   logStoreFailures('parcelpanel', results)
   try {

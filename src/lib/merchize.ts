@@ -1,4 +1,5 @@
 import { assertSafeExternalUrl } from '@/lib/safe-url'
+import { getStoreSettings } from '@/lib/store-settings'
 
 const DEFAULT_TIMEOUT_MS = 30_000
 const MERCHIZE_HOST = 'merchize.com'
@@ -21,11 +22,28 @@ export class MerchizeError extends Error {
   }
 }
 
-/** The store's bo-api base URL and token live in the server env, never in the DB or the browser. */
-export function merchizeCredentials(): MerchizeCredentials | null {
-  const baseUrl = process.env.MERCHIZE_API_URL?.trim().replace(/\/+$/, '')
-  const token = process.env.MERCHIZE_API_TOKEN?.trim()
-  return baseUrl && token ? { baseUrl, token } : null
+function normalizedCredentials(apiUrl: string | null | undefined, token: string | null | undefined): MerchizeCredentials | null {
+  const baseUrl = apiUrl?.trim().replace(/\/+$/, '')
+  const key = token?.trim()
+  return baseUrl && key ? { baseUrl, token: key } : null
+}
+
+/** The bo-api base URL and token of the server's own Merchize account live in the server env. */
+export function serverMerchizeCredentials(): MerchizeCredentials | null {
+  return normalizedCredentials(process.env.MERCHIZE_API_URL, process.env.MERCHIZE_API_TOKEN)
+}
+
+/**
+ * The Merchize account a store sends under: its own URL and token when it has saved either, otherwise the server's.
+ * A store with only one of the two has half an account and gets none: it never falls back to the server's account,
+ * which would be another account's money. Without a `storeId` this is the server's account.
+ */
+export async function merchizeCredentials(storeId?: string): Promise<MerchizeCredentials | null> {
+  if (storeId) {
+    const own = await getStoreSettings(storeId, ['merchize.apiUrl', 'merchize.token'])
+    if (own['merchize.apiUrl'] || own['merchize.token']) return normalizedCredentials(own['merchize.apiUrl'], own['merchize.token'])
+  }
+  return serverMerchizeCredentials()
 }
 
 export function merchizePrintingMethod(): MerchizePrintingMethod {

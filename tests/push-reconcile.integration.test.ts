@@ -3,6 +3,7 @@ import { NextRequest } from 'next/server'
 import { execFileSync } from 'child_process'
 import path from 'path'
 import { prisma } from '@/lib/db'
+import { LITZZY_SHOP } from '@/lib/shopify-shop'
 import { AUTH_COOKIE, signToken } from '@/lib/auth'
 import { DEFAULT_ROLE_PERMISSIONS } from '@/lib/roles'
 import { PGPRINTS_KEYS } from '@/lib/pgprints-settings'
@@ -14,7 +15,8 @@ import { GET as getPreview } from '@/app/api/fulfillment/pgprints/orders/[orderI
 import { POST as postPush } from '@/app/api/fulfillment/pgprints/orders/[orderId]/push/route'
 import { POST as postCancel } from '@/app/api/fulfillment/pgprints/orders/[orderId]/cancel/route'
 
-const SHOP = 'rec.myshopify.com'
+// The first store uses the global PGprints key, so these fixtures are Litzzy's.
+const SHOP = LITZZY_SHOP
 const PROJECT = 'proj_rec'
 const PG_SUP = 'sup_rec_pg'
 const SCRIPT = path.resolve(__dirname, '../scripts/reconcile-pushed-orders.mjs')
@@ -111,6 +113,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await prisma.order.deleteMany({ where: { projectId: PROJECT } })
+  await prisma.shopifyStore.deleteMany({ where: { shop: SHOP } })
   await prisma.supplierProduct.deleteMany({ where: { supplierId: PG_SUP } })
   await prisma.supplier.deleteMany({ where: { id: PG_SUP } })
   await prisma.appUser.deleteMany({ where: { email: { in: ['admin@rec.test', 'des@rec.test'] } } })

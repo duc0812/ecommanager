@@ -82,7 +82,7 @@ export async function buildMerchizePush(orderId: string): Promise<BuiltMerchizeP
   })
   if (!order) return null
 
-  const creds = merchizeCredentials()
+  const creds = await merchizeCredentials(order.storeId)
   const supplier = await findMerchizeSupplier()
   const printingMethod = merchizePrintingMethod()
   const identifier = merchizeIdentifier(order.store)
@@ -100,7 +100,7 @@ export async function buildMerchizePush(orderId: string): Promise<BuiltMerchizeP
   const externalOrderId = await nextExternalOrderId(orderNo, { orderId, supplierId: supplier?.id ?? null, later: plan.later })
 
   if (!supplier) error('NO_SUPPLIER', 'Chưa có xưởng mã "merchize" trong danh sách xưởng')
-  if (!creds) error('NO_CREDENTIALS', 'Server chưa có MERCHIZE_API_URL / MERCHIZE_API_TOKEN')
+  if (!creds) error('NO_CREDENTIALS', noCredentialsMessage(order.store))
   if (CLOSED_PIPELINE.includes(order.pipelineStatus) || CLOSED_FINANCIAL.includes((order.financialStatus ?? '').toUpperCase())) {
     error('ORDER_CLOSED', 'Đơn đã huỷ hoặc đã hoàn tiền — không gửi sản xuất')
   } else if (!EXPORT_READY.includes(order.pipelineStatus)) {
@@ -304,9 +304,21 @@ export async function buildMerchizePush(orderId: string): Promise<BuiltMerchizeP
   }
 }
 
+/** The Merchize account an order goes out under: its own store's, else the server's. */
+async function credentialsForOrder(orderId: string): Promise<MerchizeCredentials> {
+  const order = await prisma.order.findUnique({ where: { id: orderId }, select: { storeId: true, store: { select: { shop: true, project: { select: { name: true } } } } } })
+  if (!order) throw new PushError('Không tìm thấy đơn', 404, 'NOT_FOUND')
+  const creds = await merchizeCredentials(order.storeId)
+  if (!creds) throw new PushError(noCredentialsMessage(order.store), 400, 'NO_CREDENTIALS')
+  return creds
+}
+
+function noCredentialsMessage(store: { shop: string; project?: { name: string } | null }): string {
+  return `Store ${store.project?.name ?? store.shop} chưa có khoá API Merchize riêng (URL và token) và server chưa có MERCHIZE_API_URL / MERCHIZE_API_TOKEN`
+}
+
 export async function pushMerchizeOrder(orderId: string, input: { payloadHash: string; userId: string | null }): Promise<{ push: PushView; exported: boolean }> {
-  const creds = merchizeCredentials()
-  if (!creds) throw new PushError('Server chưa có MERCHIZE_API_URL / MERCHIZE_API_TOKEN', 400, 'NO_CREDENTIALS')
+  const creds = await credentialsForOrder(orderId)
   const built = await buildMerchizePush(orderId)
   if (!built) throw new PushError('Không tìm thấy đơn', 404, 'NOT_FOUND')
   if (built.preview.activePush && !built.preview.laterSend) throw new PushError(DUPLICATE_MESSAGE, 409, 'DUPLICATE')
@@ -392,8 +404,7 @@ export async function cancelMerchizePush(orderId: string): Promise<{ push: PushV
   const push = supplier ? await latestPush(orderId, supplier.id, ['SENDING', 'CREATED']) : null
   if (!push) throw new PushError('Đơn không có lần gửi Merchize nào đang hiệu lực', 404, 'NOT_FOUND')
   if (push.status === 'SENDING') throw new PushError('Chưa rõ kết quả lần gửi này — bấm "Cập nhật trạng thái" trước khi huỷ', 409, 'UNKNOWN_RESULT')
-  const creds = merchizeCredentials()
-  if (!creds) throw new PushError('Server chưa có MERCHIZE_API_URL / MERCHIZE_API_TOKEN', 400, 'NO_CREDENTIALS')
+  const creds = await credentialsForOrder(orderId)
   try {
     await cancelOrder(creds, push.externalOrderId, await identifierFor(orderId, push))
   } catch (e: any) {
@@ -415,8 +426,7 @@ export async function refreshMerchizePush(orderId: string): Promise<{ push: Push
     ? (await latestPush(orderId, supplier.id, ['SENDING', 'CREATED'])) ?? (await latestPush(orderId, supplier.id, ['CANCELLED', 'FAILED']))
     : null
   if (!push) throw new PushError('Đơn chưa từng gửi Merchize', 404, 'NOT_FOUND')
-  const creds = merchizeCredentials()
-  if (!creds) throw new PushError('Server chưa có MERCHIZE_API_URL / MERCHIZE_API_TOKEN', 400, 'NO_CREDENTIALS')
+  const creds = await credentialsForOrder(orderId)
   const now = Date.now()
   let remote: Awaited<ReturnType<typeof getOrderDetail>>
   try {

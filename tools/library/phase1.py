@@ -32,7 +32,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from library_paths import blank_dir  # noqa: E402
 CODE_RE = re.compile(r'(?<![A-Z0-9])([A-Z]{2}\d{7,10}[A-Z]{0,3})(?![A-Z0-9])', re.I)
-LINE_PREFIX_RE = re.compile(r'^LIT\d+(?:_\d+)*\s*(?:-\s*)?', re.I)
+LINE_PREFIX_RE = re.compile(r'^[A-Z]+\d+(?:_\d+)*\s*(?:-\s*)?', re.I)
 SUPPLIER_NAMES = {'MANGOSHAO': 'MANGO', 'MANGO': 'MANGO', 'MERCHIZE': 'MERCHIZE', 'JOMALL': 'JOMALL', 'PGPRINTS': 'PGPRINTS',
                   'PRINTWAY': 'PRINTWAY', 'BONDRE': 'BONDRE', 'PRINTPOSS': 'PRINTPOSS', 'LENFUL': 'LENFUL', 'SNAP_ECOM': 'SNAPECOM'}
 FONT_SOURCES = [

@@ -2,6 +2,7 @@ import { setCsvLocked } from '@/lib/csv-lock'
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest'
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/db'
+import { LITZZY_SHOP } from '@/lib/shopify-shop'
 import { AUTH_COOKIE, signToken } from '@/lib/auth'
 import { canCallApi } from '@/lib/api-access'
 import { DEFAULT_ROLE_PERMISSIONS } from '@/lib/roles'
@@ -20,7 +21,8 @@ import { POST as postPush } from '@/app/api/fulfillment/pgprints/orders/[orderId
 import { POST as postCancel } from '@/app/api/fulfillment/pgprints/orders/[orderId]/cancel/route'
 import { POST as postExport } from '@/app/api/fulfillment/export/route'
 
-const SHOP = 'hof.myshopify.com'
+// The first store uses the global PGprints key, so these fixtures are Litzzy's.
+const SHOP = LITZZY_SHOP
 const PROJECT = 'proj_hof'
 const CSV_SUP = 'sup_hof_csv'
 const PG_SUP = 'sup_hof_pg'
@@ -130,6 +132,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await prisma.order.deleteMany({ where: { projectId: PROJECT } })
+  await prisma.shopifyStore.deleteMany({ where: { shop: SHOP } })
   await prisma.csvTemplate.deleteMany({ where: { supplierId: CSV_SUP } })
   await prisma.supplierProduct.deleteMany({ where: { supplierId: { in: [CSV_SUP, PG_SUP] } } })
   await prisma.supplier.deleteMany({ where: { id: { in: [CSV_SUP, PG_SUP, MANGO_SUP] } } })

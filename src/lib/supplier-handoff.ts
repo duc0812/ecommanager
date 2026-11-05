@@ -5,7 +5,7 @@ import { requiredSlotsFor, templateForLine } from '@/lib/design-tasks'
 import { templateViewFor } from '@/lib/print-template-resolve'
 import { STATUS_LABELS, type PipelineStatus } from '@/lib/pipeline-status'
 import { countryCodeOf, countryNameOf } from '@/lib/shipping-address'
-import { credentialsOf, getPgprintsSettings } from '@/lib/pgprints-settings'
+import { credentialsOf, getPgprintsSettings, pgprintsKeyHolders } from '@/lib/pgprints-settings'
 import { isPgprintsSupplier } from '@/lib/pgprints-shared'
 import { isMerchizeSupplier, merchizeCredentials } from '@/lib/merchize'
 import { isBondreSupplier } from '@/lib/bondre'
@@ -102,7 +102,7 @@ export async function countPendingHandoff(opts: { storeIds?: string[] | null } =
 }
 
 type StateOrder = {
-  id: string; pipelineStatus: string; financialStatus: string; fulfillmentStatus: string | null; designReady: boolean
+  id: string; storeId: string; pipelineStatus: string; financialStatus: string; fulfillmentStatus: string | null; designReady: boolean
   supplierHandoffAt: Date | null; supplierHandoffMode: string | null; supplierHandoffById: string | null
   lines: Array<{ id: string; shopifyLineId: string; sku: string | null; productTitle: string; shopifyProductType: string | null; resolvedSupplierId: string | null; resolvedSupplierSku: string | null; designDriveLink: string | null; exportedAt: Date | null; exportedToSupplierId: string | null }>
   designTasks: Array<{ shopifyLineId: string; status: string; updatedAt: Date }>
@@ -124,12 +124,25 @@ const STATE_INCLUDE = {
   supplierPushes: LIVE_PUSHES,
 } as const
 
+type StoreAccount = { name: string; pgprints: boolean; merchize: boolean }
+
+/** Whether each store can send by API: its own PGprints and Merchize accounts, resolved the way the push resolves them. */
+async function storeAccountsOf(storeIds: string[]): Promise<Map<string, StoreAccount>> {
+  const stores = await prisma.shopifyStore.findMany({ where: { id: { in: storeIds } }, select: { id: true, shop: true, project: { select: { name: true } } } })
+  const out = new Map<string, StoreAccount>()
+  for (const s of stores) {
+    const [pgprints, merchize] = await Promise.all([getPgprintsSettings(s.id), merchizeCredentials(s.id)])
+    out.set(s.id, { name: s.project?.name ?? s.shop, pgprints: !!credentialsOf(pgprints), merchize: !!merchize })
+  }
+  return out
+}
+
 export async function handoffStates(orders: StateOrder[]): Promise<Map<string, HandoffState>> {
   const out = new Map<string, HandoffState>()
   if (orders.length === 0) return out
-  const [suppliers, settings, liveKeys, pushes, channels, csvLocked] = await Promise.all([
+  const [suppliers, accounts, liveKeys, pushes, channels, csvLocked] = await Promise.all([
     prisma.supplier.findMany({ select: { id: true, code: true, apiType: true, isActive: true } }),
-    getPgprintsSettings(),
+    storeAccountsOf(Array.from(new Set(orders.map(o => o.storeId)))),
     liveApiKeys(),
     activePushByOrder(orders.map(o => o.id)),
     getSheetChannels(),
@@ -140,12 +153,10 @@ export async function handoffStates(orders: StateOrder[]): Promise<Map<string, H
   const pg = pgHits.find(s => s.isActive) ?? pgHits[0] ?? null
   const mzHits = suppliers.filter(isMerchizeSupplier)
   const mz = mzHits.find(s => s.isActive) ?? mzHits[0] ?? null
-  const hasMerchizeCredentials = !!merchizeCredentials()
   const keyed = KEYED_API_SUPPLIERS.map(k => {
     const hits = suppliers.filter(k.matches)
     return { kind: k.kind, supplier: hits.find(s => s.isActive) ?? hits[0] ?? null, live: liveKeys[k.kind] }
   })
-  const hasCredentials = !!credentialsOf(settings)
   const pgSkus = pg
     ? Array.from(new Set(orders.flatMap(o => o.lines.filter(l => l.resolvedSupplierId === pg.id).map(l => l.resolvedSupplierSku).filter((x): x is string => !!x))))
     : []
@@ -173,16 +184,17 @@ export async function handoffStates(orders: StateOrder[]): Promise<Map<string, H
     // Merchize has no CSV route (owner 11/04/2026): its lines go by API, and only another supplier's lines can wait for an export.
     const isApiLine = (l: { resolvedSupplierId: string | null }) => l.resolvedSupplierId === mz?.id || keyedLines.some(k => k.live && l.resolvedSupplierId === k.supplier?.id)
     const csvRemainder = (mzLines.length > 0 || keyedLines.some(k => k.apiLines.length > 0)) && productLines.some(l => !isApiLine(l) && !l.exportedAt)
+    const account = accounts.get(o.storeId) ?? { name: '', pgprints: false, merchize: false }
     const missingApiSku = allPg ? ready.filter(l => !l.resolvedSupplierSku || !apiSkuBySku.get(l.resolvedSupplierSku)).map(l => l.resolvedSupplierSku ?? '—') : []
-    const pgApi = allPg && hasCredentials && missingApiSku.length === 0
+    const pgApi = allPg && account.pgprints && missingApiSku.length === 0
     const mzApi = mzLines.length > 0 && (merchizeOpen || !csvRemainder)
     const keyedApi = keyedLines.find(k => k.apiLines.length > 0 && (k.open || !csvRemainder))
     const api = pgApi || mzApi || !!keyedApi
-    const apiNote = mzApi ? (!hasMerchizeCredentials ? 'Server chưa có khoá API Merchize — chưa gửi được đơn này'
+    const apiNote = mzApi ? (!account.merchize ? `Store ${account.name} chưa có khoá API Merchize — chưa gửi được đơn này`
         : csvRemainder ? 'Đơn nhiều xưởng — dòng Merchize gửi qua API, các dòng còn lại lưu chờ xuất CSV' : null)
       : keyedApi ? (csvRemainder ? `Đơn nhiều xưởng — dòng ${SUPPLIER_API_NAMES[keyedApi.kind]} gửi qua API, các dòng còn lại lưu chờ xuất CSV` : null)
       : !allPg || api ? null
-      : !hasCredentials ? 'Xưởng PGprints chưa có Store ID / Secret key — lưu chờ xuất CSV'
+      : !account.pgprints ? `Store ${account.name} chưa có Store ID / Secret key PGprints — lưu chờ xuất CSV`
       : `SKU xưởng ${Array.from(new Set(missingApiSku)).join(', ')} chưa có "SKU API" — lưu chờ xuất CSV`
     const openTasks = o.designTasks.filter(t => t.status !== 'DONE' && t.status !== 'CANCELLED').length
     const handedOff = o.supplierHandoffAt
@@ -433,19 +445,21 @@ export async function listHandoffTabs(f: { q?: string } = {}): Promise<HubTab[]>
   }
   if (q && tally.size === 0) return []
   const activity = q ? null : await recentSupplierActivity()
-  const [suppliers, settings, liveKeys, channels] = await Promise.all([
+  const [suppliers, pgprintsKeys, liveKeys, channels] = await Promise.all([
     prisma.supplier.findMany({
       where: { OR: [{ id: { in: Array.from(tally.keys()) } }, { id: { in: Array.from(activity?.active ?? []) }, isActive: true }] },
       select: { id: true, name: true, code: true, apiType: true },
     }),
-    getPgprintsSettings(),
+    pgprintsKeyHolders(),
     liveApiKeys(),
     getSheetChannels(),
   ])
   const byId = new Map(suppliers.map(s => [s.id, s]))
+  // A tab holds the orders of every store: PGprints counts as an API channel when any store has its key. Each card still says whether its own store can send.
+  const pgprintsLive = pgprintsKeys.some(h => !!credentialsOf(h.settings))
   const channelOf = (s: { code: string; apiType: string | null }): HubChannel =>
     enabledChannelFor(channels, s) ? 'SHEET'
-      : isMerchizeSupplier(s) || (isPgprintsSupplier(s) && !!credentialsOf(settings)) || KEYED_API_SUPPLIERS.some(k => k.matches(s) && liveKeys[k.kind]) ? 'API' : 'CSV'
+      : isMerchizeSupplier(s) || (isPgprintsSupplier(s) && pgprintsLive) || KEYED_API_SUPPLIERS.some(k => k.matches(s) && liveKeys[k.kind]) ? 'API' : 'CSV'
   const ids = Array.from(new Set([...Array.from(tally.keys()), ...suppliers.map(s => s.id)]))
   const tabs = ids.map((id): HubTab => {
     const s = byId.get(id)

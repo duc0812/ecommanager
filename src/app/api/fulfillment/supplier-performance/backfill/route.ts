@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { syncParcelPanelTracking } from '@/lib/tracking/parcelpanel-sync'
+import { syncParcelPanelForStore } from '@/lib/tracking/parcelpanel-store-sync'
 import { getParcelPanelApiKey } from '@/lib/tracking/parcelpanel-config'
+import { listConnectedStores } from '@/lib/store-connections'
 import { failedResults, forEachConnectedStore, mergeStoreResults, storeRunSummary } from '@/lib/store-jobs'
 
 // One-time backfill: re-fetch ParcelPanel for shipments (INCLUDING delivered ones, which
@@ -10,8 +11,9 @@ export async function POST(req: NextRequest) {
   const daysRaw = Number(req.nextUrl.searchParams.get('days'))
   const days = Number.isFinite(daysRaw) && daysRaw > 0 ? Math.min(365, Math.floor(daysRaw)) : 60
 
-  const apiKey = await getParcelPanelApiKey()
-  if (!apiKey) return NextResponse.json({ error: 'Chưa cấu hình ParcelPanel API key.' }, { status: 400 })
+  const stores = await listConnectedStores()
+  const keys = await Promise.all(stores.map(s => getParcelPanelApiKey(s.id)))
+  if (stores.length > 0 && !keys.some(Boolean)) return NextResponse.json({ error: 'Chưa cấu hình ParcelPanel API key.' }, { status: 400 })
 
   const encoder = new TextEncoder()
   const stream = new ReadableStream({
@@ -21,8 +23,8 @@ export async function POST(req: NextRequest) {
         let finishedTotal = 0
         const results = await forEachConnectedStore('parcelpanel-backfill', async (conn) => {
           let storeTotal = 0
-          const result = await syncParcelPanelTracking({
-            apiKey, storeId: conn.storeId, includeDelivered: true, sinceDays: days,
+          const result = await syncParcelPanelForStore(conn, {
+            includeDelivered: true, sinceDays: days,
             onProgress: (done, total) => { storeTotal = total; send({ type: 'progress', done: finishedTotal + done, total: finishedTotal + total }) },
           })
           finishedTotal += storeTotal

@@ -4,6 +4,7 @@ import { NextRequest } from 'next/server'
 import { execFileSync } from 'child_process'
 import path from 'path'
 import { prisma } from '@/lib/db'
+import { LITZZY_SHOP } from '@/lib/shopify-shop'
 import { dropSessionUser, superRequest } from './helpers/session'
 import { PGPRINTS_KEYS } from '@/lib/pgprints-settings'
 import { bulkUpdateOrderStatus, markOrdersExported, upsertOrderWithLines } from '@/lib/repos/orders'
@@ -15,7 +16,8 @@ import { exportProgress, isLineExported } from '@/lib/line-export'
 import { POST as postExport } from '@/app/api/fulfillment/export/route'
 import { GET as getStatusCounts } from '@/app/api/fulfillment/status-counts/route'
 
-const SHOP = 'lx.myshopify.com'
+// The first store uses the global PGprints key, so these fixtures are Litzzy's.
+const SHOP = LITZZY_SHOP
 const PROJECT = 'proj_lx'
 const MANGO = 'sup_lx_mango'
 const JOMALL = 'sup_lx_jomall'
@@ -91,6 +93,7 @@ afterAll(async () => {
   await dropSessionUser()
   await prisma.supplierOrderPush.deleteMany({ where: { order: { projectId: PROJECT } } })
   await prisma.order.deleteMany({ where: { projectId: PROJECT } })
+  await prisma.shopifyStore.deleteMany({ where: { shop: SHOP } })
   await prisma.csvTemplate.deleteMany({ where: { supplierId: { in: [MANGO, JOMALL] } } })
   await prisma.supplier.deleteMany({ where: { id: { in: [MANGO, JOMALL, 'sup_lx_pg'] } } })
   await prisma.appSetting.deleteMany({ where: { key: { in: Object.values(PGPRINTS_KEYS) } } })

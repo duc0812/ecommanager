@@ -4,6 +4,7 @@ import fs from 'fs'
 import path from 'path'
 import os from 'os'
 import { prisma } from '@/lib/db'
+import { LITZZY_SHOP } from '@/lib/shopify-shop'
 import { AUTH_COOKIE, signToken } from '@/lib/auth'
 import { signBody } from '@/lib/pgprints'
 import { DEFAULT_ROLE_PERMISSIONS } from '@/lib/roles'
@@ -22,7 +23,8 @@ import { syncPgprintsTracking } from '@/lib/repos/pgprints-push'
 import { pushedShipmentRows } from '@/lib/fulfillment/auto-fulfill'
 import { PATCH as patchSupplierProduct } from '@/app/api/suppliers/products/[id]/route'
 
-const SHOP = 'pgp.myshopify.com'
+// The first store uses the global PGprints key, so these fixtures are Litzzy's.
+const SHOP = LITZZY_SHOP
 const PROJECT = 'proj_pgp'
 const SUP = 'sup_pgp'
 const OTHER_SUP = 'sup_pgp_other'
@@ -160,6 +162,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await prisma.order.deleteMany({ where: { projectId: PROJECT } })
+  await prisma.shopifyStore.deleteMany({ where: { shop: SHOP } })
   await prisma.supplierProduct.deleteMany({ where: { supplierId: { in: [SUP, OTHER_SUP] } } })
   await prisma.printTemplate.deleteMany({ where: { supplierId: SUP } })
   await prisma.supplier.deleteMany({ where: { id: { in: [SUP, OTHER_SUP] } } })

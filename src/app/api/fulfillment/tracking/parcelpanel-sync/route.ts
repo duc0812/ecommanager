@@ -1,15 +1,17 @@
 import { NextResponse } from 'next/server'
-import { syncParcelPanelTracking } from '@/lib/tracking/parcelpanel-sync'
+import { syncParcelPanelForStore } from '@/lib/tracking/parcelpanel-store-sync'
 import { getParcelPanelApiKey } from '@/lib/tracking/parcelpanel-config'
+import { listConnectedStores } from '@/lib/store-connections'
 import { failedResults, forEachConnectedStore, mergeStoreResults, storeRunSummary } from '@/lib/store-jobs'
 
-// Manual trigger for the ParcelPanel tracking status sync (same as the daily cron), store by store.
+// Manual trigger for the ParcelPanel tracking status sync (same as the daily cron), store by store, each under its own key.
 // Streams NDJSON so the tool can show live progress:
 //   {"type":"progress","done":N,"total":M}
 //   {"type":"done", ...result}   |   {"type":"error","error":"..."}
 export async function POST() {
-  const apiKey = await getParcelPanelApiKey()
-  if (!apiKey) return NextResponse.json({ error: 'Chưa cấu hình ParcelPanel API key. Nhập key ở nút cấu hình trên trang Tracking.' }, { status: 400 })
+  const stores = await listConnectedStores()
+  const keys = await Promise.all(stores.map(s => getParcelPanelApiKey(s.id)))
+  if (stores.length > 0 && !keys.some(Boolean)) return NextResponse.json({ error: 'Chưa cấu hình ParcelPanel API key. Nhập key ở nút cấu hình trên trang Tracking.' }, { status: 400 })
 
   const encoder = new TextEncoder()
   const stream = new ReadableStream({
@@ -20,9 +22,7 @@ export async function POST() {
         let finishedTotal = 0
         const results = await forEachConnectedStore('parcelpanel-sync', async (conn) => {
           let storeTotal = 0
-          const result = await syncParcelPanelTracking({
-            apiKey,
-            storeId: conn.storeId,
+          const result = await syncParcelPanelForStore(conn, {
             onProgress: (done, total) => { storeTotal = total; send({ type: 'progress', done: finishedTotal + done, total: finishedTotal + total }) },
           })
           finishedTotal += storeTotal

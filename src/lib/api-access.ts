@@ -107,6 +107,7 @@ export const API_ACCESS_RULES: ApiRule[] = [
   { prefix: '/api/spy', access: ['tools_spy_idea'] },
   { prefix: '/api/staff', methods: READ, access: ['setup_hr', 'projects'] },
   { prefix: '/api/staff', methods: WRITE, access: ['setup_hr'] },
+  { prefix: '/api/stores/', suffix: '/settings', access: 'SUPERADMIN' },
   { prefix: '/api/stores/connect', access: 'SUPERADMIN' },
   { prefix: '/api/stores/', methods: ['PATCH'], access: 'SUPERADMIN' },
   { prefix: '/api/stores', exact: true, methods: READ, access: 'ANY' },

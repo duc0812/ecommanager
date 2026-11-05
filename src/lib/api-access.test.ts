@@ -289,7 +289,10 @@ describe('seller API allow-list', () => {
   })
 
   it('connecting a store and changing one are for a Super Admin only; the store list keeps its rule', () => {
-    const calls: Array<[string, string]> = [['/api/stores/connect', 'POST'], ['/api/stores/abc', 'PATCH']]
+    const calls: Array<[string, string]> = [
+      ['/api/stores/connect', 'POST'], ['/api/stores/abc', 'PATCH'],
+      ['/api/stores/abc/settings', 'GET'], ['/api/stores/abc/settings', 'PUT'],
+    ]
     for (const [path, method] of calls) {
       expect(canCallApi('SUPERADMIN', [], path, method)).toBe('ok')
       expect(canCallApi('ADMIN', DEFAULT_ROLE_PERMISSIONS.ADMIN, path, method)).toBe('forbidden')

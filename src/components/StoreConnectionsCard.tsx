@@ -1,6 +1,7 @@
 'use client'
 import { Fragment, useCallback, useEffect, useState } from 'react'
 import { useCurrentUser } from '@/components/RoleGate'
+import { secretStatusLabel } from '@/lib/secret-view'
 
 type StoreRow = {
   id: string
@@ -35,7 +36,7 @@ const dangerButton = 'flex items-center gap-xs border border-error/30 text-error
 const usDate = (iso: string) => new Date(iso).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' })
 const usDay = (ymd: string) => { const [y, m, d] = ymd.split('-'); return `${m}/${d}/${y}` }
 
-async function send(url: string, method: 'POST' | 'PATCH' | 'DELETE', body?: unknown): Promise<{ ok: boolean; error: string; data: any }> {
+async function send(url: string, method: 'POST' | 'PATCH' | 'PUT' | 'DELETE', body?: unknown): Promise<{ ok: boolean; error: string; data: any }> {
   try {
     const res = await fetch(url, { method, ...(body !== undefined ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {}) })
     const data = await res.json().catch(() => ({}))
@@ -56,6 +57,172 @@ function ReadAllOrders({ value, canRecheck }: { value: boolean | null; canRechec
   )
 }
 
+type MerchizeSource = 'store' | 'server' | 'incomplete' | 'none'
+type KeysView = {
+  shared: boolean
+  pgprints: { hasStoreId: boolean; storeIdMasked?: string | null; hasSecretKey: boolean; secretKeyMasked?: string | null; defaultShipClass: string | null; pushEnabled: boolean }
+  merchize: { hasApiUrl: boolean; apiUrlHost: string | null; hasToken: boolean; tokenMasked?: string | null; source: MerchizeSource }
+  parcelpanel: { hasApiKey: boolean; apiKeyMasked?: string | null }
+}
+type KeysForm = { storeId: string; secretKey: string; shipClass: string; pushEnabled: boolean; mzUrl: string; mzToken: string; ppKey: string }
+
+const EMPTY_KEYS: KeysForm = { storeId: '', secretKey: '', shipClass: '', pushEnabled: false, mzUrl: '', mzToken: '', ppKey: '' }
+const MERCHIZE_SOURCE: Record<MerchizeSource, { text: string; bad: boolean }> = {
+  store: { text: 'Dùng khoá Merchize riêng của store', bad: false },
+  server: { text: 'Chưa có khoá riêng: đang dùng khoá Merchize của server', bad: false },
+  incomplete: { text: 'Mới có URL hoặc token: store này chưa gửi được Merchize', bad: true },
+  none: { text: 'Store và server đều chưa có khoá Merchize: chưa gửi được', bad: true },
+}
+
+/** The PGprints, Merchize and ParcelPanel keys of one store. Litzzy keeps the shared PGprints and ParcelPanel keys, edited where they always were. */
+function StoreKeysPanel({ store }: { store: StoreRow }) {
+  const [view, setView] = useState<KeysView | null>(null)
+  const [form, setForm] = useState<KeysForm>(EMPTY_KEYS)
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null)
+
+  const apply = useCallback((v: KeysView) => {
+    setView(v)
+    setForm({ ...EMPTY_KEYS, shipClass: v.pgprints.defaultShipClass ?? '', pushEnabled: v.pgprints.pushEnabled })
+  }, [])
+
+  useEffect(() => {
+    fetch(`/api/stores/${store.id}/settings`, { cache: 'no-store' })
+      .then(async r => (r.ok ? apply(await r.json()) : setMessage({ ok: false, text: 'Không tải được khoá của store' })))
+      .catch(() => setMessage({ ok: false, text: 'Không tải được khoá của store' }))
+  }, [store.id, apply])
+
+  async function submit(body: Record<string, unknown>, done: string) {
+    setBusy(true)
+    setMessage(null)
+    const r = await send(`/api/stores/${store.id}/settings`, 'PUT', body)
+    setBusy(false)
+    if (!r.ok) { setMessage({ ok: false, text: r.error }); return }
+    apply(r.data)
+    setMessage({ ok: true, text: done })
+  }
+
+  function save() {
+    if (!view) return
+    const pgprints: Record<string, unknown> = {}
+    if (!view.shared) {
+      if (form.storeId.trim()) pgprints.storeId = form.storeId.trim()
+      if (form.secretKey.trim()) pgprints.secretKey = form.secretKey.trim()
+      if (form.shipClass.trim() !== (view.pgprints.defaultShipClass ?? '')) pgprints.defaultShipClass = form.shipClass.trim()
+      if (form.pushEnabled !== view.pgprints.pushEnabled) pgprints.pushEnabled = form.pushEnabled
+    }
+    const merchize: Record<string, unknown> = {}
+    if (form.mzUrl.trim()) merchize.apiUrl = form.mzUrl.trim()
+    if (form.mzToken.trim()) merchize.token = form.mzToken.trim()
+    const parcelpanel: Record<string, unknown> = {}
+    if (!view.shared && form.ppKey.trim()) parcelpanel.apiKey = form.ppKey.trim()
+    const body = {
+      ...(Object.keys(pgprints).length ? { pgprints } : {}),
+      ...(Object.keys(merchize).length ? { merchize } : {}),
+      ...(Object.keys(parcelpanel).length ? { parcelpanel } : {}),
+    }
+    if (Object.keys(body).length === 0) { setMessage({ ok: false, text: 'Chưa nhập gì mới để lưu' }); return }
+    void submit(body, `Đã lưu khoá của ${store.shop}.`)
+  }
+
+  function clear(name: string, body: Record<string, unknown>) {
+    if (!window.confirm(`Xoá khoá ${name} của store ${store.shop}?`)) return
+    void submit(body, `Đã xoá khoá ${name} của ${store.shop}.`)
+  }
+
+  if (!view) return <p className="text-label-sm text-on-surface-variant">{message?.text ?? 'Đang tải khoá của store…'}</p>
+
+  const pg = view.pgprints
+  const hasPgprints = pg.hasStoreId && pg.hasSecretKey
+  const merchize = MERCHIZE_SOURCE[view.merchize.source]
+  const set = (patch: Partial<KeysForm>) => setForm(f => ({ ...f, ...patch }))
+
+  return (
+    <div className="space-y-md">
+      {message && (
+        <div role="status" className={`rounded-lg px-md py-sm text-body-sm border ${message.ok ? 'bg-secondary/5 border-secondary/30 text-secondary' : 'bg-error-container/40 border-error/30 text-error'}`}>{message.text}</div>
+      )}
+      <div className="grid gap-md md:grid-cols-3">
+        <div className="space-y-xs">
+          <h4 className="text-label-md text-primary">PGprints</h4>
+          {view.shared ? (
+            <p className="text-label-sm text-on-surface-variant">
+              Dùng khoá chung: Store ID {secretStatusLabel(pg.hasStoreId, pg.storeIdMasked)}, Secret key {secretStatusLabel(pg.hasSecretKey, pg.secretKeyMasked)}.
+              Sửa ở trang cài đặt xưởng Pgprints.
+            </p>
+          ) : (
+            <>
+              <p className={`text-label-sm ${hasPgprints ? 'text-on-surface-variant' : 'text-error'}`}>
+                {hasPgprints
+                  ? `Store ID ${secretStatusLabel(pg.hasStoreId, pg.storeIdMasked)} · Secret key ${secretStatusLabel(pg.hasSecretKey, pg.secretKeyMasked)}`
+                  : 'Chưa có khoá PGprints: đơn của store này không gửi được sang PGprints. Hệ thống không bao giờ dùng khoá của store khác thay thế.'}
+              </p>
+              <label className="block text-label-sm text-on-surface-variant">Store ID mới
+                <input type="text" autoComplete="off" value={form.storeId} onChange={e => set({ storeId: e.target.value })} className={input} />
+              </label>
+              <label className="block text-label-sm text-on-surface-variant">Secret key mới (để trống: giữ nguyên)
+                <input type="password" autoComplete="new-password" value={form.secretKey} onChange={e => set({ secretKey: e.target.value })} className={input} />
+              </label>
+              <label className="block text-label-sm text-on-surface-variant">Ship class mặc định
+                <input type="text" autoComplete="off" value={form.shipClass} onChange={e => set({ shipClass: e.target.value })} className={input} />
+              </label>
+              <label className="flex items-center gap-sm text-label-sm text-on-surface-variant">
+                <input type="checkbox" checked={form.pushEnabled} onChange={e => set({ pushEnabled: e.target.checked })} />
+                Bật gửi đơn sang PGprints
+              </label>
+              {(pg.hasStoreId || pg.hasSecretKey) && (
+                <button type="button" className={outlineButton} disabled={busy} onClick={() => clear('PGprints', { pgprints: { storeId: null, secretKey: null, pushEnabled: false } })}>Xoá khoá PGprints</button>
+              )}
+            </>
+          )}
+        </div>
+
+        <div className="space-y-xs">
+          <h4 className="text-label-md text-primary">Merchize</h4>
+          <p className={`text-label-sm ${merchize.bad ? 'text-error' : 'text-on-surface-variant'}`}>
+            {merchize.text}
+            {view.merchize.hasApiUrl && view.merchize.apiUrlHost ? ` · ${view.merchize.apiUrlHost}` : ''}
+            {view.merchize.hasToken ? ` · token ${secretStatusLabel(true, view.merchize.tokenMasked)}` : ''}
+          </p>
+          <label className="block text-label-sm text-on-surface-variant">URL API Merchize mới
+            <input type="url" autoComplete="off" value={form.mzUrl} onChange={e => set({ mzUrl: e.target.value })} placeholder="https://….merchize.com/…/bo-api" className={input} />
+          </label>
+          <label className="block text-label-sm text-on-surface-variant">Token mới (để trống: giữ nguyên)
+            <input type="password" autoComplete="new-password" value={form.mzToken} onChange={e => set({ mzToken: e.target.value })} className={input} />
+          </label>
+          {(view.merchize.hasApiUrl || view.merchize.hasToken) && (
+            <button type="button" className={outlineButton} disabled={busy} onClick={() => clear('Merchize', { merchize: { apiUrl: null, token: null } })}>Xoá khoá Merchize (dùng khoá server)</button>
+          )}
+        </div>
+
+        <div className="space-y-xs">
+          <h4 className="text-label-md text-primary">ParcelPanel</h4>
+          {view.shared ? (
+            <p className="text-label-sm text-on-surface-variant">
+              Dùng khoá chung: {secretStatusLabel(view.parcelpanel.hasApiKey, view.parcelpanel.apiKeyMasked)}. Sửa ở trang Tracking.
+            </p>
+          ) : (
+            <>
+              <p className={`text-label-sm ${view.parcelpanel.hasApiKey ? 'text-on-surface-variant' : 'text-error'}`}>
+                {view.parcelpanel.hasApiKey
+                  ? `API key ${secretStatusLabel(true, view.parcelpanel.apiKeyMasked)}`
+                  : 'Chưa có khoá ParcelPanel: sync tracking ParcelPanel bỏ qua store này.'}
+              </p>
+              <label className="block text-label-sm text-on-surface-variant">API key mới
+                <input type="password" autoComplete="new-password" value={form.ppKey} onChange={e => set({ ppKey: e.target.value })} className={input} />
+              </label>
+              {view.parcelpanel.hasApiKey && (
+                <button type="button" className={outlineButton} disabled={busy} onClick={() => clear('ParcelPanel', { parcelpanel: { apiKey: null } })}>Xoá khoá ParcelPanel</button>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+      <button type="button" className={primaryButton} disabled={busy} onClick={save}>{busy ? 'Đang lưu…' : 'Lưu khoá'}</button>
+    </div>
+  )
+}
+
 /** Every store the tool is connected to, and for a Super Admin the form that adds one and the switches that change one. */
 export default function StoreConnectionsCard() {
   const { user } = useCurrentUser()
@@ -68,6 +235,7 @@ export default function StoreConnectionsCard() {
   const [edits, setEdits] = useState<Record<string, { trackingPageUrl: string; payoutStartDate: string }>>({})
   const [busy, setBusy] = useState('')
   const [banner, setBanner] = useState<Banner | null>(null)
+  const [keysOpen, setKeysOpen] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     const res = await fetch('/api/auth/status', { cache: 'no-store' }).catch(() => null)
@@ -318,6 +486,9 @@ export default function StoreConnectionsCard() {
                             <button type="button" className={outlineButton} disabled={!!busy} onClick={() => reconnect(s)}>
                               {busy === `re:${s.id}` ? 'Đang kết nối…' : 'Kết nối lại'}
                             </button>
+                            <button type="button" className={outlineButton} aria-expanded={keysOpen === s.id} onClick={() => setKeysOpen(o => (o === s.id ? null : s.id))}>
+                              {keysOpen === s.id ? 'Đóng khoá nhà cung cấp' : 'Khoá nhà cung cấp'}
+                            </button>
                             {s.connected && (
                               <button type="button" className={dangerButton} disabled={!!busy} onClick={() => disconnect(s)}>
                                 <span className="material-symbols-outlined text-[16px]">link_off</span>
@@ -346,6 +517,7 @@ export default function StoreConnectionsCard() {
                             </label>
                             <button type="button" className={outlineButton} disabled={!!busy || !dirty} onClick={() => saveSettings(s)}>Lưu cài đặt</button>
                           </div>
+                          {keysOpen === s.id && <div className="mt-md border-t border-outline-variant/20 pt-md"><StoreKeysPanel store={s} /></div>}
                         </td>
                       </tr>
                     )}

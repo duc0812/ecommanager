@@ -11,11 +11,12 @@ import { SHIPMENT_STATUS_FULFILLED, SHIPMENT_STATUS_PENDING } from '@/lib/tracki
 import { PGPRINTS_ADDRESS_LINE_MAX, countryCodeOf, countryNameOf, resolveStateCode, splitAddressLine, splitPersonName } from '@/lib/shipping-address'
 import { canSendBeside } from '@/lib/line-export'
 import { PublicUrlError, ensurePublicToken, isLineApproved, publicArtworkUrl, requirePublicBaseUrl } from '@/lib/public-artwork'
-import { credentialsOf, getPgprintsSettings } from '@/lib/pgprints-settings'
+import { credentialsOf, getPgprintsSettings, type PgprintsSettings } from '@/lib/pgprints-settings'
+import { LITZZY_SHOP } from '@/lib/shopify-shop'
 import { expectedSize, printFileFit } from '@/lib/print-file-fit'
 import {
   PgprintsError, cancelOrder, createOrder, getBalance, searchOrders, serializeOrderPayload,
-  type PgprintsLineItem, type PgprintsOrderPayload, type PgprintsRemoteOrder,
+  type PgprintsCredentials, type PgprintsLineItem, type PgprintsOrderPayload, type PgprintsRemoteOrder,
 } from '@/lib/pgprints'
 import {
   API_FILE_MIME, apiFileFormatOf, isPgprintsSupplier, parseShipCountries,
@@ -35,6 +36,29 @@ export class PushError extends Error {
     super(message)
     this.name = 'PushError'
   }
+}
+
+type StoreAccess = { storeId: string; storeName: string; shared: boolean; settings: PgprintsSettings; creds: PgprintsCredentials | null }
+
+function accessOf(store: { id: string; shop: string; project: { name: string } | null }, settings: PgprintsSettings): StoreAccess {
+  return { storeId: store.id, storeName: store.project?.name ?? store.shop, shared: store.shop === LITZZY_SHOP, settings, creds: credentialsOf(settings) }
+}
+
+/** The PGprints account an order goes out under: its own store's, never another store's. Null when the order does not exist. */
+async function accessForOrder(orderId: string): Promise<StoreAccess | null> {
+  const order = await prisma.order.findUnique({ where: { id: orderId }, select: { storeId: true, store: { select: { id: true, shop: true, project: { select: { name: true } } } } } })
+  if (!order) return null
+  return accessOf(order.store, await getPgprintsSettings(order.storeId))
+}
+
+function noCredentialsMessage(a: Pick<StoreAccess, 'storeName' | 'shared'>): string {
+  if (a.shared) return 'Chưa cấu hình Store ID / Secret key PGprints'
+  return `Store ${a.storeName} chưa có khoá PGprints (Store ID / Secret key), nên không gửi được đơn của store này. Đơn không bao giờ đi bằng khoá của store khác. Super Admin nhập khoá ở Setup, mục "Các store đang kết nối", dòng ${a.storeName}`
+}
+
+function pushDisabledMessage(a: Pick<StoreAccess, 'storeName' | 'shared'>): string {
+  if (a.shared) return 'Chưa bật gửi đơn sang PGprints — bật ở trang cài đặt xưởng Pgprints'
+  return `Chưa bật gửi đơn PGprints cho store ${a.storeName} — Super Admin bật ở Setup, mục "Các store đang kết nối", dòng ${a.storeName}`
 }
 
 type PushRow = {
@@ -94,8 +118,9 @@ export async function buildPush(orderId: string, opts: { withBalance?: boolean }
   })
   if (!order) return null
 
-  const [settings, supplier] = await Promise.all([getPgprintsSettings(), findPgprintsSupplier()])
-  const creds = credentialsOf(settings)
+  const [settings, supplier] = await Promise.all([getPgprintsSettings(order.storeId), findPgprintsSupplier()])
+  const access = accessOf(order.store, settings)
+  const creds = access.creds
   const issues: PreviewIssue[] = []
   const error = (code: string, message: string, refId?: string) => { issues.push({ level: 'error', code, message, refId }) }
   const warning = (code: string, message: string, refId?: string) => { issues.push({ level: 'warning', code, message, refId }) }
@@ -110,6 +135,7 @@ export async function buildPush(orderId: string, opts: { withBalance?: boolean }
   const externalOrderId = await nextExternalOrderId(orderNo, { orderId, supplierId: supplier?.id ?? null, later: plan.later })
 
   if (!supplier) error('NO_SUPPLIER', 'Chưa có xưởng mã "pgprints" trong danh sách xưởng')
+  if (!creds) error('NO_CREDENTIALS', noCredentialsMessage(access))
   if (CLOSED_PIPELINE.includes(order.pipelineStatus) || CLOSED_FINANCIAL.includes((order.financialStatus ?? '').toUpperCase())) {
     error('ORDER_CLOSED', 'Đơn đã huỷ hoặc đã hoàn tiền — không gửi sản xuất')
   } else if (!EXPORT_READY.includes(order.pipelineStatus)) {
@@ -375,10 +401,11 @@ async function viewOf(pushId: string): Promise<PushView> {
 }
 
 export async function pushOrder(orderId: string, input: { payloadHash: string; userId: string | null }): Promise<{ push: PushView; exported: boolean }> {
-  const settings = await getPgprintsSettings()
-  if (!settings.pushEnabled) throw new PushError('Chưa bật gửi đơn sang PGprints — bật ở trang cài đặt xưởng Pgprints', 403, 'PUSH_DISABLED')
-  const creds = credentialsOf(settings)
-  if (!creds) throw new PushError('Chưa cấu hình Store ID / Secret key PGprints', 400, 'NO_CREDENTIALS')
+  const access = await accessForOrder(orderId)
+  if (!access) throw new PushError('Không tìm thấy đơn', 404, 'NOT_FOUND')
+  const { creds } = access
+  if (!creds) throw new PushError(noCredentialsMessage(access), 400, 'NO_CREDENTIALS')
+  if (!access.settings.pushEnabled) throw new PushError(pushDisabledMessage(access), 403, 'PUSH_DISABLED')
 
   const built = await buildPush(orderId)
   if (!built) throw new PushError('Không tìm thấy đơn', 404, 'NOT_FOUND')
@@ -440,8 +467,10 @@ export async function cancelPush(orderId: string): Promise<{ push: PushView; exp
   if (push.status === 'SENDING') {
     throw new PushError('Chưa rõ kết quả lần gửi này — bấm "Cập nhật trạng thái" trước khi huỷ', 409, 'UNKNOWN_RESULT')
   }
-  const creds = credentialsOf(await getPgprintsSettings())
-  if (!creds) throw new PushError('Chưa cấu hình Store ID / Secret key PGprints', 400, 'NO_CREDENTIALS')
+  const access = await accessForOrder(orderId)
+  if (!access) throw new PushError('Không tìm thấy đơn', 404, 'NOT_FOUND')
+  const { creds } = access
+  if (!creds) throw new PushError(noCredentialsMessage(access), 400, 'NO_CREDENTIALS')
   try {
     await cancelOrder(creds, push.supplierOrderCode ?? push.externalOrderId)
   } catch (e: any) {
@@ -555,8 +584,10 @@ function remoteStatusOf(o: PgprintsRemoteOrder): string | null {
 export async function refreshPush(orderId: string): Promise<{ push: PushView; found: boolean; shipments: number }> {
   const push = (await latestPush(orderId, ['SENDING', 'CREATED'])) ?? (await latestPush(orderId, ['CANCELLED', 'FAILED']))
   if (!push) throw new PushError('Đơn chưa từng gửi PGprints', 404, 'NOT_FOUND')
-  const creds = credentialsOf(await getPgprintsSettings())
-  if (!creds) throw new PushError('Chưa cấu hình Store ID / Secret key PGprints', 400, 'NO_CREDENTIALS')
+  const access = await accessForOrder(orderId)
+  if (!access) throw new PushError('Không tìm thấy đơn', 404, 'NOT_FOUND')
+  const { creds } = access
+  if (!creds) throw new PushError(noCredentialsMessage(access), 400, 'NO_CREDENTIALS')
   const now = Date.now()
   let remote: PgprintsRemoteOrder[]
   try {
@@ -607,16 +638,9 @@ async function applyRemoteMatch(push: PushRow, match: PgprintsRemoteOrder, lastS
 const SYNC_PAGE_SIZE = 50
 const SYNC_MAX_PAGES = 40
 
-// Pulls every live PGprints push's status + tracking in a few paged searches (one window from
-// the oldest live push), instead of one request per order. Tracking lands on Shipment rows;
-// Auto Fulfill turns those into Shopify fulfillments.
-export async function syncPgprintsTracking(): Promise<{ pushes: number; found: number; shipments: number; skipped?: string }> {
-  const supplier = await findPgprintsSupplier()
-  if (!supplier) return { pushes: 0, found: 0, shipments: 0, skipped: 'no PGprints supplier' }
-  const creds = credentialsOf(await getPgprintsSettings())
-  if (!creds) return { pushes: 0, found: 0, shipments: 0, skipped: 'no PGprints credentials' }
-  const pushes = await prisma.supplierOrderPush.findMany({ where: { supplierId: supplier.id, status: { in: ACTIVE_STATUSES } } })
-  if (pushes.length === 0) return { pushes: 0, found: 0, shipments: 0 }
+// Pulls one store's live PGprints pushes (status + tracking) in a few paged searches, one window from the oldest
+// push, instead of one request per order. The search runs under that store's own key.
+async function pullStoreTracking(creds: PgprintsCredentials, pushes: PushRow[]): Promise<{ found: number; shipments: number }> {
   const now = Date.now()
   const fromTime = Math.min(...pushes.map(p => p.pushedAt.getTime())) - 24 * 3600_000
   const remote: PgprintsRemoteOrder[] = []
@@ -635,7 +659,40 @@ export async function syncPgprintsTracking(): Promise<{ pushes: number; found: n
     try { shipments += await applyRemoteMatch(push, match, lastSyncedAt) }
     catch (e: any) { console.error('[pgprints] tracking sync failed for push', push.id, e?.message ?? e) }
   }
-  return { pushes: pushes.length, found, shipments }
+  return { found, shipments }
+}
+
+// Every live PGprints push is pulled with the key of the store its order belongs to. A store with no key is skipped
+// and logged: its pushes are never looked up under another store's account. Tracking lands on Shipment rows;
+// Auto Fulfill turns those into Shopify fulfillments.
+export async function syncPgprintsTracking(): Promise<{ pushes: number; found: number; shipments: number; skipped?: string }> {
+  const supplier = await findPgprintsSupplier()
+  if (!supplier) return { pushes: 0, found: 0, shipments: 0, skipped: 'no PGprints supplier' }
+  const live = await prisma.supplierOrderPush.findMany({
+    where: { supplierId: supplier.id, status: { in: ACTIVE_STATUSES } },
+    include: { order: { select: { store: { select: { id: true, shop: true, project: { select: { name: true } } } } } } },
+  })
+  const byStore = new Map<string, { store: Parameters<typeof accessOf>[0]; pushes: PushRow[] }>()
+  for (const push of live) {
+    const group = byStore.get(push.order.store.id) ?? { store: push.order.store, pushes: [] }
+    group.pushes.push(push)
+    byStore.set(push.order.store.id, group)
+  }
+  const total = { pushes: 0, found: 0, shipments: 0 }
+  const withoutKey: string[] = []
+  for (const { store, pushes } of Array.from(byStore.values())) {
+    const access = accessOf(store, await getPgprintsSettings(store.id))
+    if (!access.creds) {
+      console.log(`[pgprints] tracking sync: ${access.storeName} has no PGprints key, skipped its ${pushes.length} live push(es)`)
+      withoutKey.push(access.storeName)
+      continue
+    }
+    const r = await pullStoreTracking(access.creds, pushes)
+    total.pushes += pushes.length
+    total.found += r.found
+    total.shipments += r.shipments
+  }
+  return { ...total, ...(withoutKey.length > 0 ? { skipped: `no PGprints credentials for ${withoutKey.join(', ')}` } : {}) }
 }
 
 export type TrackingWebhookInput = {
@@ -646,11 +703,12 @@ function text(v: unknown): string | null {
   return typeof v === 'string' && v.trim() ? v.trim() : null
 }
 
-export async function applyTrackingWebhook(input: TrackingWebhookInput): Promise<{ ignored: boolean; reason?: string; shipments: number }> {
+// `storeIds` are the stores whose key signed the request: a push of any other store's order is not touched.
+export async function applyTrackingWebhook(input: TrackingWebhookInput, storeIds: string[]): Promise<{ ignored: boolean; reason?: string; shipments: number }> {
   const ids = Array.from(new Set([text(input.orderId), text(input.pgcOrderId)].filter((x): x is string => !!x)))
   if (ids.length === 0) return { ignored: true, reason: 'missing order id', shipments: 0 }
   const push = await prisma.supplierOrderPush.findFirst({
-    where: { status: { in: ACTIVE_STATUSES }, OR: [{ externalOrderId: { in: ids } }, { supplierOrderCode: { in: ids } }] },
+    where: { status: { in: ACTIVE_STATUSES }, order: { storeId: { in: storeIds } }, OR: [{ externalOrderId: { in: ids } }, { supplierOrderCode: { in: ids } }] },
     orderBy: { createdAt: 'desc' },
   })
   if (!push) return { ignored: true, reason: 'unknown order', shipments: 0 }
