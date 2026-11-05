@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { isNonProductLine, lineKeysOf, productLinesOnly } from '@/lib/order-lines'
+import { hasUnresolvedProductLine, isNonProductLine, lineKeysOf, productLinesOnly } from '@/lib/order-lines'
 
 describe('isNonProductLine', () => {
   it('treats sku-less Tip line as non-product', () => {
@@ -84,6 +84,34 @@ describe('lineKeysOf with Reminiso add-ons', () => {
       { shopifyLineId: 'c', linePosition: 3, sku: null, productTitle: 'Quilted Tote Bag', shopifyProductType: 'Tote Bag' },
     ]
     expect(Array.from(lineKeysOf('#REMI1147', lines))).toEqual([['c', 'REMI1147_1']])
+  })
+})
+
+describe('hasUnresolvedProductLine', () => {
+  const tote = { sku: null, productTitle: 'Quilted Tote Bag', shopifyProductType: 'Tote Bag', resolvedSupplierId: null }
+  const topper = { sku: 'RM-TOP-TRACTOR-6IN', productTitle: 'Tree Topper', shopifyProductType: 'Tree Topper', resolvedSupplierId: 'sup' }
+  const addOn = { sku: 'RM-ADDON-NAME', productTitle: 'Custom Name Add-on', shopifyProductType: 'Add-on', resolvedSupplierId: null }
+  const tip = { sku: null, productTitle: 'Tip', shopifyProductType: null, resolvedSupplierId: null }
+
+  it('counts a product line without a SKU, as the order sync does', () => {
+    expect(hasUnresolvedProductLine([topper, tote])).toBe(true)
+    expect(hasUnresolvedProductLine([{ ...tote, resolvedSupplierId: 'sup' }, topper])).toBe(false)
+  })
+
+  it('never counts an add-on, mapped or not', () => {
+    expect(hasUnresolvedProductLine([addOn, tip, topper])).toBe(false)
+    expect(hasUnresolvedProductLine([addOn, tip, tote])).toBe(true)
+  })
+
+  it('has nothing unresolved in an order without product lines', () => {
+    expect(hasUnresolvedProductLine([addOn, tip])).toBe(false)
+    expect(hasUnresolvedProductLine([])).toBe(false)
+  })
+
+  it('takes the caller\'s own test of "resolved"', () => {
+    const costed = [{ ...topper, resolvedBaseCost: null as number | null }]
+    expect(hasUnresolvedProductLine(costed)).toBe(false)
+    expect(hasUnresolvedProductLine(costed, l => !!l.resolvedSupplierId && l.resolvedBaseCost != null)).toBe(true)
   })
 })
 

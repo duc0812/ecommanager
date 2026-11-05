@@ -30,6 +30,18 @@ export function productLinesOnly<T extends LineForClassification>(lines: T[]): T
   return lines.filter(l => !isNonProductLine(l))
 }
 
+/**
+ * What keeps an order in PENDING_MAPPING: a product line (add-ons excluded, with or without a SKU) that has no supplier yet.
+ * The order sync and every re-evaluation after a mapping change decide with this one rule. `isResolved` lets a caller
+ * ask for more than a supplier (the cost refresh also wants a base cost).
+ */
+export function hasUnresolvedProductLine<T extends LineForClassification & { resolvedSupplierId: string | null }>(
+  lines: T[],
+  isResolved: (line: T) => boolean = l => !!l.resolvedSupplierId,
+): boolean {
+  return lines.some(l => !isNonProductLine(l) && !isResolved(l))
+}
+
 type KeyedLine = LineForClassification & { shopifyLineId: string; linePosition: number }
 
 /**

@@ -8,7 +8,7 @@ import {
   type TypeAliases,
   buildTypeAliases,
 } from '@/lib/product-mapping'
-import { isNonProductLine } from '@/lib/order-lines'
+import { hasUnresolvedProductLine, isNonProductLine, productLinesOnly } from '@/lib/order-lines'
 import { designReadyHolds } from '@/lib/design-library'
 import { autoDetectStatus, isValidPipelineStatus, type PipelineStatus } from '@/lib/pipeline-status'
 
@@ -268,8 +268,9 @@ export async function saveManualMapping(input: SaveManualMappingInput) {
     })
     const orderIds = Array.from(new Set(affectedLines.map(l => l.orderId)))
     if (orderIds.length > 0) {
+      // Only an order held for mapping moves, and only forward; an order in any other status is not this save's to change.
       const orders = await tx.order.findMany({
-        where: { id: { in: orderIds }, pipelineStatus: { in: ['PENDING_MAPPING', 'PENDING_DESIGN', 'AWAITING_PAYMENT', 'WARNING'] } },
+        where: { id: { in: orderIds }, pipelineStatus: 'PENDING_MAPPING' },
         select: {
           id: true,
           designReady: true,
@@ -291,17 +292,16 @@ export async function saveManualMapping(input: SaveManualMappingInput) {
         },
       })
       for (const order of orders) {
-        const skuLines = order.lines.filter(l => l.sku && !isNonProductLine(l))
-        const willBeMapped = skuLines.length > 0 && skuLines.every(l => l.resolvedSupplierId)
+        const unresolved = hasUnresolvedProductLine(order.lines)
         const currentStatus = isValidPipelineStatus(order.pipelineStatus) ? order.pipelineStatus as PipelineStatus : null
         const designReady = designReadyHolds(order)
         const pipelineStatus = autoDetectStatus({
           financialStatus: order.financialStatus,
           fulfillmentStatus: order.fulfillmentStatus,
-          hasUnmappedSku: !willBeMapped,
-          hasPendingMapping: !willBeMapped,
+          hasUnmappedSku: unresolved,
+          hasPendingMapping: unresolved,
           hasCustomDesignLine: order.orderType === 'CUSTOM',
-          hasDesignLine: skuLines.some(l => l.resolvedSupplierId),
+          hasDesignLine: productLinesOnly(order.lines).some(l => l.resolvedSupplierId),
           hasDesignReady: designReady,
           currentStatus,
         })

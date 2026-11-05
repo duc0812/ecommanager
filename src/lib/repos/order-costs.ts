@@ -2,8 +2,11 @@ import { prisma } from '@/lib/db'
 import { autoDetectStatus, isValidPipelineStatus, type PipelineStatus } from '@/lib/pipeline-status'
 import { profileKey, resolveByProductBase, supplierParentKey, swapToSizeSibling } from '@/lib/product-mapping'
 import { loadProductBasesForResolver, loadLegacyTypesForResolver, loadProductProfilesForResolver, loadTypeAliasesForResolver, loadVariantManualMappingsForResolver } from '@/lib/repos/mapping'
-import { isNonProductLine } from '@/lib/order-lines'
+import { hasUnresolvedProductLine, isNonProductLine, productLinesOnly } from '@/lib/order-lines'
 import { designReadyHolds } from '@/lib/design-library'
+
+// A line counts as mapped here once it has a supplier and the cost refresh has priced it.
+const isSupplierAndCostResolved = (l: { resolvedSupplierId: string | null; resolvedBaseCost: number | null }) => !!l.resolvedSupplierId && l.resolvedBaseCost != null
 
 function parseVariantOptions(value: string | null): Record<string, string> {
   if (!value) return {}
@@ -182,8 +185,7 @@ export async function recalculateMissingOrderLineCosts(filter: {
     },
   })
   for (const order of mappedPendingOrders) {
-    const skuLines = order.lines.filter(l => l.sku && !isNonProductLine(l))
-    if (skuLines.length > 0 && skuLines.every(l => l.resolvedSupplierId && l.resolvedBaseCost != null)) {
+    if (productLinesOnly(order.lines).length > 0 && !hasUnresolvedProductLine(order.lines, isSupplierAndCostResolved)) {
       touchedOrderIds.add(order.id)
     }
   }
@@ -221,9 +223,8 @@ export async function recalculateMissingOrderLineCosts(filter: {
       qtyBySupplier.set(line.resolvedSupplierId, (qtyBySupplier.get(line.resolvedSupplierId) ?? 0) + line.qty)
     }
     const defaultSupplierId = Array.from(qtyBySupplier.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null
-    const skuLines = order.lines.filter(l => l.sku && !isNonProductLine(l))
-    const hasDesignLine = skuLines.some(l => l.resolvedSupplierId)
-    const hasPendingMapping = skuLines.some(l => !l.resolvedSupplierId || l.resolvedBaseCost == null)
+    const hasDesignLine = productLinesOnly(order.lines).some(l => l.resolvedSupplierId)
+    const hasPendingMapping = hasUnresolvedProductLine(order.lines, isSupplierAndCostResolved)
     const currentStatus = isValidPipelineStatus(order.pipelineStatus)
       ? order.pipelineStatus as PipelineStatus
       : null

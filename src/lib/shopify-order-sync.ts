@@ -8,7 +8,7 @@ import { getStoreConnection } from '@/lib/store-connections'
 import { profileKey, resolveByProductBase, supplierParentKey, swapToSizeSibling } from '@/lib/product-mapping'
 import { loadProductBasesForResolver, loadLegacyTypesForResolver, loadProductProfilesForResolver, loadTypeAliasesForResolver, loadVariantManualMappingsForResolver } from '@/lib/repos/mapping'
 import { buildTrelloCardContent, customerDesignLink, isLineCustomized, lineFamily, reduceOrderType } from '@/lib/order-classify'
-import { isNonProductLine } from '@/lib/order-lines'
+import { hasUnresolvedProductLine, isNonProductLine } from '@/lib/order-lines'
 import { createTrelloCard, addAttachmentToCard, getTrelloConfig, shouldCreateCard } from '@/lib/trello'
 import { getTrelloMode } from '@/lib/design-settings'
 import { extractPreviewCdnUrl } from '@/lib/order-line-assets'
@@ -220,7 +220,6 @@ export async function syncStoreOrders(storeId: string, opts: { fromOrderName?: s
         productTitle: r.line.title,
         shopifyProductType: r.line.productType,
       }))
-      const hasPendingMapping = productLines.some(r => r.pbResolve.resolvedVia === 'unresolved')
       const allProductLinesMapped = productLines.length > 0 &&
         productLines.every(r => !!r.pbResolve.supplierProductId)
 
@@ -256,6 +255,9 @@ export async function syncStoreOrders(storeId: string, opts: { fromOrderName?: s
         {},
       )
       if (pl.hasUnmappedSku) withUnmappedSku++
+      const hasPendingMapping = hasUnresolvedProductLine(o.lines.map((l, idx) => ({
+        sku: l.sku, productTitle: l.title, shopifyProductType: l.productType, resolvedSupplierId: pl.perLineCost[idx]?.resolvedSupplierId ?? null,
+      })))
 
       // Read existing order to preserve manual status
       const existing = await prisma.order.findUnique({ where: { id: o.id }, select: { pipelineStatus: true, designReady: true, trelloCardId: true } })
@@ -298,7 +300,7 @@ export async function syncStoreOrders(storeId: string, opts: { fromOrderName?: s
         financialStatus: o.financialStatus,
         fulfillmentStatus: o.fulfillmentStatus,
         cancelled: !!o.cancelledAt,
-        hasUnmappedSku: pl.hasUnmappedSku,
+        hasUnmappedSku: hasPendingMapping,
         hasPendingMapping,
         hasCustomDesignLine: hasDesignLine,
         hasDesignLine,

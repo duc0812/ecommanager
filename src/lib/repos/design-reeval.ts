@@ -3,7 +3,7 @@ import { loadReadyDesignEntries } from './design-library'
 import { matchDesignEntry } from '@/lib/design-parent'
 import { resolveOrderDesignByParent, type DesignLineInputV2 } from '@/lib/design-library'
 import { lineFamily, reduceOrderType } from '@/lib/order-classify'
-import { isNonProductLine } from '@/lib/order-lines'
+import { hasUnresolvedProductLine, isNonProductLine } from '@/lib/order-lines'
 import { autoDetectStatus, isValidPipelineStatus, type PipelineStatus } from '@/lib/pipeline-status'
 
 // Re-evaluate existing orders against the CURRENT design library (no Shopify fetch).
@@ -75,8 +75,7 @@ export async function reevaluateOrdersForDesignEntry(entry: {
         })),
     )
     const hasDesignLine = designInputs.some(d => !d.isNonProduct && d.requiresDesign)
-    const hasPendingMapping = o.lines.some(l =>
-      l.sku && !isNonProductLine({ sku: l.sku, productTitle: l.productTitle, shopifyProductType: l.shopifyProductType }) && !l.resolvedSupplierId)
+    const hasPendingMapping = hasUnresolvedProductLine(o.lines)
     const currentStatus = isValidPipelineStatus(o.pipelineStatus) ? (o.pipelineStatus as PipelineStatus) : null
     const pipelineStatus = autoDetectStatus({
       financialStatus: o.financialStatus,

@@ -1,5 +1,37 @@
 import { describe, it, expect } from 'vitest'
-import { resolveOrderDesign, resolveOrderDesignByParent, parseDesignLibraryCsv, designKey, type DesignLineInput, type LibraryLookup } from './design-library'
+import { designReadyHolds, resolveOrderDesign, resolveOrderDesignByParent, parseDesignLibraryCsv, designKey, type DesignLineInput, type LibraryLookup } from './design-library'
+
+describe('designReadyHolds', () => {
+  const line = (over: Partial<Parameters<typeof designReadyHolds>[0]['lines'][number]>) => ({
+    sku: 'SKU1', productTitle: 'Tee', shopifyProductType: 'Apparel', resolvedSupplierId: 'supA', designDriveLink: 'http://d/1', ...over,
+  })
+  const order = (lines: ReturnType<typeof line>[], over: { designReady?: boolean; trelloCardId?: string | null } = {}) =>
+    ({ designReady: true, trelloCardId: null, lines, ...over })
+
+  it('holds while every product line has a supplier and a design link', () => {
+    expect(designReadyHolds(order([line({}), line({ sku: 'SKU2' })]))).toBe(true)
+  })
+
+  it('does not hold when a SKU line was mapped after the flag and has no link yet', () => {
+    expect(designReadyHolds(order([line({}), line({ sku: 'SKU2', designDriveLink: null })]))).toBe(false)
+  })
+
+  it('counts a product line without a SKU like any other', () => {
+    expect(designReadyHolds(order([line({}), line({ sku: null, designDriveLink: null })]))).toBe(false)
+    expect(designReadyHolds(order([line({}), line({ sku: null, resolvedSupplierId: null })]))).toBe(false)
+    expect(designReadyHolds(order([line({}), line({ sku: null })]))).toBe(true)
+  })
+
+  it('ignores add-on lines, which have no supplier and no design', () => {
+    const addOn = line({ sku: 'RM-ADDON-NAME', productTitle: 'Custom Name Add-on', shopifyProductType: 'Add-on', resolvedSupplierId: null, designDriveLink: null })
+    expect(designReadyHolds(order([line({}), addOn]))).toBe(true)
+  })
+
+  it('a Trello card keeps it, and a flag that is off never holds', () => {
+    expect(designReadyHolds(order([line({ designDriveLink: null })], { trelloCardId: 'card' }))).toBe(true)
+    expect(designReadyHolds(order([line({})], { designReady: false }))).toBe(false)
+  })
+})
 
 const lookupFrom = (map: Record<string, { ready: boolean; designLink: string | null }>): LibraryLookup =>
   (sku, sup) => map[designKey(sku, sup)] ?? null

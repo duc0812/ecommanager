@@ -1,11 +1,16 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll, vi } from 'vitest'
 import fs from 'fs'
 import path from 'path'
+import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/db'
 import { saveStoreCredential } from '@/lib/store-connections'
 import { syncStoreOrders } from '@/lib/shopify-order-sync'
 import { listTasks, loadTask, syncDesignTasks } from '@/lib/design-tasks'
 import { loadWorkspace } from '@/lib/design-studio'
+import { saveManualMapping } from '@/lib/repos/mapping'
+import { reevaluateOrdersForDesignEntry } from '@/lib/repos/design-reeval'
+import { hasUnresolvedProductLine } from '@/lib/order-lines'
+import { POST as manualMappingPost } from '@/app/api/fulfillment/mapping/manual/route'
 import { runAutoFulfill } from '@/lib/fulfillment/auto-fulfill'
 import { queueRenderLine, queueScheduledRenders } from '@/lib/repos/artwork-render'
 import { TEEINBLUE_REASON } from '@/lib/artwork-render-eligibility'
@@ -27,6 +32,7 @@ const TPL = 'tpl_remi14'
 const ADVENT_VARIANT = 'gid://shopify/ProductVariant/67881906831645'
 const TOPPER_VARIANT = 'gid://shopify/ProductVariant/67882273276189'
 const TOTE_VARIANT = 'gid://shopify/ProductVariant/67920004088093'
+const LEGGINGS_VARIANT = 'gid://shopify/ProductVariant/67740383478045'
 const TB_PRODUCT = 'gid://shopify/Product/remi14-tb'
 const TB_ART_ONLY_PRODUCT = 'gid://shopify/Product/remi14-tb-art-only'
 const ART_SHA = 'remi14-art-'
@@ -369,6 +375,131 @@ describe('Reminiso order lines', () => {
         { tracking: 'TRK1', lineKeys: ['REMI9002_1'], lineCount: 2 },
         { tracking: '', lineKeys: [], lineCount: 1, addOn: true },
       ])
+    })
+  })
+  describe('the Mapping page decides "every line is resolved" like the order sync', () => {
+    const supplierProduct = (sku: string, baseCost = 10) => prisma.supplierProduct.create({ data: { supplierId: SUP, sku, baseCost } })
+    const mapAsPage = async (shopifyVariantId: string, supplierProductId: string) => {
+      const res = await manualMappingPost(new NextRequest('http://test/api/fulfillment/mapping/manual', {
+        method: 'POST', body: JSON.stringify({ shopifyVariantId, shopifyProductTitle: 'Reminiso test', supplierProductId }),
+      }))
+      expect(res.status).toBe(201)
+    }
+    const saveOnly = (shopifyVariantId: string, supplierProductId: string) =>
+      saveManualMapping({ shopifyVariantId, shopifyProductTitle: 'Reminiso test', supplierProductId })
+    const rename = (node: any, name: string) => {
+      const n = structuredClone(node)
+      n.id = `gid://shopify/Order/remi14-${name}`
+      n.name = `#${name}`
+      n.lineItems.nodes.forEach((l: any, i: number) => { l.id = `gid://shopify/LineItem/remi14-${name}-${i + 1}` })
+      return n
+    }
+    const statusOf = async (name: string) => (await orderRow(name)).pipelineStatus
+
+    it('saving the mapping of the only (no-SKU) product line gives the status a re-sync gives', async () => {
+      await sync(fixtureOrder('#REMI9002'))
+      expect(await statusOf('#REMI9002')).toBe('PENDING_MAPPING')
+
+      await saveOnly(TOTE_VARIANT, (await supplierProduct('REMI14-TOTE-L', 14)).id)
+
+      const order = await orderRow('#REMI9002')
+      expect(order.lines[2]).toMatchObject({ sku: null, resolvedSupplierId: SUP })
+      expect(order.pipelineStatus).toBe('PENDING_DESIGN')
+      expect(hasUnresolvedProductLine(order.lines)).toBe(false)
+      await sync(fixtureOrder('#REMI9002'))
+      expect(await statusOf('#REMI9002')).toBe('PENDING_DESIGN')
+    })
+
+    it('the page action (save, then cost refresh) lands on PENDING_DESIGN too, with the cost filled', async () => {
+      await sync(fixtureOrder('#REMI9002'))
+
+      await mapAsPage(TOTE_VARIANT, (await supplierProduct('REMI14-TOTE-L', 14)).id)
+
+      const order = await orderRow('#REMI9002')
+      expect(order).toMatchObject({ pipelineStatus: 'PENDING_DESIGN', designReady: false, defaultSupplierId: SUP })
+      expect(order.lines[2].resolvedBaseCost).toBe(14)
+      await sync(fixtureOrder('#REMI9002'))
+      expect(await statusOf('#REMI9002')).toBe('PENDING_DESIGN')
+    })
+
+    it('mapping only the SKU line of an order with a no-SKU line does not advance it; mapping the no-SKU line does', async () => {
+      await sync(fixtureOrder('#REMI9001'))
+      expect(await statusOf('#REMI9001')).toBe('PENDING_MAPPING')
+
+      await mapAsPage(TOPPER_VARIANT, (await supplierProduct('REMI14-TOPPER-6IN', 8)).id)
+
+      expect(await statusOf('#REMI9001')).toBe('PENDING_MAPPING')
+      expect((await orderRow('#REMI9001')).lines.map(l => !!l.resolvedSupplierId)).toEqual([false, true])
+      await sync(fixtureOrder('#REMI9001'))
+      expect(await statusOf('#REMI9001')).toBe('PENDING_MAPPING')
+
+      await mapAsPage(ADVENT_VARIANT, (await supplierProduct('REMI14-ADVENT', 21)).id)
+
+      expect(await statusOf('#REMI9001')).toBe('PENDING_DESIGN')
+      await sync(fixtureOrder('#REMI9001'))
+      expect(await statusOf('#REMI9001')).toBe('PENDING_DESIGN')
+    })
+
+    it('an order whose lines all have SKUs behaves as before: it advances when its last line is mapped', async () => {
+      const node = rename(fixtureOrder('#REMI9001'), 'REMI9041')
+      node.lineItems.nodes = [node.lineItems.nodes[1], { ...fixtureOrder('#REMI9004').lineItems.nodes[0], id: 'gid://shopify/LineItem/remi14-REMI9041-2' }]
+      await sync(node)
+      expect((await orderRow('#REMI9041')).lines.map(l => l.sku)).toEqual(['RM-TOP-TRACTOR-6IN', 'RM-LEG-HEART-M'])
+      expect(await statusOf('#REMI9041')).toBe('PENDING_MAPPING')
+
+      await saveOnly(TOPPER_VARIANT, (await supplierProduct('REMI14-TOPPER-6IN', 8)).id)
+      expect(await statusOf('#REMI9041')).toBe('PENDING_MAPPING')
+
+      await saveOnly(LEGGINGS_VARIANT, (await supplierProduct('REMI14-LEGGINGS-M', 12)).id)
+      expect(await statusOf('#REMI9041')).toBe('PENDING_DESIGN')
+      await sync(node)
+      expect(await statusOf('#REMI9041')).toBe('PENDING_DESIGN')
+    })
+
+    it('never touches an order in another status, whatever its lines', async () => {
+      const held = [['PENDING_DESIGN', true], ['READY_TO_PRODUCTION', true], ['WARNING', false], ['AWAITING_PAYMENT', false], ['DESIGN_REJECTED', true]] as const
+      const names = held.map((_, i) => `REMI903${i + 1}`)
+      await sync(...names.map(name => rename(fixtureOrder('#REMI9001'), name)))
+      for (let i = 0; i < held.length; i++) {
+        await prisma.order.update({ where: { id: `gid://shopify/Order/remi14-${names[i]}` }, data: { pipelineStatus: held[i][0], designReady: held[i][1] } })
+      }
+
+      await saveOnly(TOPPER_VARIANT, (await supplierProduct('REMI14-TOPPER-6IN', 8)).id)
+
+      for (let i = 0; i < held.length; i++) {
+        const [pipelineStatus, designReady] = held[i]
+        const order = await orderRow(`#${names[i]}`)
+        expect([order.pipelineStatus, order.designReady], pipelineStatus).toEqual([pipelineStatus, designReady])
+        expect(order.lines[1].resolvedSupplierId, pipelineStatus).toBe(SUP)
+        expect(order.lines[0].resolvedSupplierId, pipelineStatus).toBeNull()
+      }
+    })
+
+    it('a design finished on the SKU line before the no-SKU line was mapped does not skip the design of the newly mapped line', async () => {
+      await mapVariant(TOPPER_VARIANT, (await supplierProduct('REMI14-TOPPER-6IN', 8)).id)
+      await sync(fixtureOrder('#REMI9001'))
+      const order = await orderRow('#REMI9001')
+      // What Design Studio leaves after the topper's design is approved while the advent calendar is still unmapped.
+      await prisma.orderLine.update({ where: { id: order.lines[1].id }, data: { designDriveLink: 'https://example.test/design.png' } })
+      await prisma.order.update({ where: { id: order.id }, data: { designReady: true } })
+      expect(await statusOf('#REMI9001')).toBe('PENDING_MAPPING')
+
+      await mapAsPage(ADVENT_VARIANT, (await supplierProduct('REMI14-ADVENT', 21)).id)
+
+      expect(await orderRow('#REMI9001')).toMatchObject({ pipelineStatus: 'PENDING_DESIGN', designReady: false })
+      await sync(fixtureOrder('#REMI9001'))
+      expect(await orderRow('#REMI9001')).toMatchObject({ pipelineStatus: 'PENDING_DESIGN', designReady: false })
+    })
+
+    it('a design-library save does not move an order out of PENDING_MAPPING while a no-SKU product line is unmapped', async () => {
+      await mapVariant(TOPPER_VARIANT, (await supplierProduct('REMI14-TOPPER-6IN', 8)).id)
+      await sync(fixtureOrder('#REMI9001'))
+      expect(await statusOf('#REMI9001')).toBe('PENDING_MAPPING')
+
+      const touched = await reevaluateOrdersForDesignEntry({ sku: 'RM-TOP-TRACTOR-6IN', supplierId: SUP, matchMode: 'VARIANT' })
+
+      expect(touched).toBe(1)
+      expect(await statusOf('#REMI9001')).toBe('PENDING_MAPPING')
     })
   })
 })
