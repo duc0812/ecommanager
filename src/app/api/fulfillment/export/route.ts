@@ -7,7 +7,7 @@ import { isNonProductLine, lineKeysOf } from '@/lib/order-lines'
 import { buildOrdersForCsv } from '@/lib/export-orders'
 import { enabledChannelFor, getSheetChannels } from '@/lib/sheet-channel'
 import { exportLinkErrorMessage } from '@/lib/export-design-links'
-import { exportProgress, exportProgressLabel, isLineExported, mixedSupplierNote } from '@/lib/line-export'
+import { exportProgress, exportProgressLabel, isLineExported, isOrderClosed, mixedSupplierNote } from '@/lib/line-export'
 import { isMerchizeSupplier } from '@/lib/merchize'
 import { CSV_LOCKED_MESSAGE, isCsvLocked } from '@/lib/csv-lock'
 
@@ -51,12 +51,21 @@ export async function POST(req: NextRequest) {
     l.resolvedSupplierId === tmpl.supplierId &&
     Boolean(l.resolvedSupplierSku)
   )
+  const openTasks = await prisma.designTask.findMany({
+    where: { status: { notIn: ['DONE', 'CANCELLED'] }, order: { lines: { some: { resolvedSupplierId: tmpl.supplierId } } } },
+    select: { orderId: true, shopifyLineId: true },
+  })
+  const inDesign = new Set(openTasks.map(t => `${t.orderId}\u0000${t.shopifyLineId}`))
+  const isInDesign = (l: { orderId: string; shopifyLineId: string }) => inDesign.has(`${l.orderId}\u0000${l.shopifyLineId}`)
   // Lines already sent to a supplier stay out of the file unless the operator asks to send them again.
+  // A line still in design, or an order already closed, never goes: its siblings do not wait for it.
   const includedIds = new Set<string>()
   let skippedExportedLines = 0
+  let skippedNotReadyLines = 0
   for (const o of handedOff) {
     for (const l of supplierLinesOf(o)) {
-      if (!reExport && isLineExported(o, l)) skippedExportedLines++
+      if (isInDesign(l) || (!reExport && isOrderClosed(o))) skippedNotReadyLines++
+      else if (!reExport && isLineExported(o, l)) skippedExportedLines++
       else includedIds.add(l.id)
     }
   }
@@ -110,6 +119,7 @@ export async function POST(req: NextRequest) {
           variantTitle: l.variantTitle,
           included: includedIds.has(l.id),
           alreadyExported: isLineExported(o, l),
+          inDesign: isInDesign(l),
         })),
         mixedNote: mixedSupplierNote(o, nameOf),
         exportProgress: progress.partial ? exportProgressLabel(progress) : null,
@@ -124,6 +134,7 @@ export async function POST(req: NextRequest) {
       handoffCount: previewOrders.filter(o => o.designHandedOff).length,
       reExport,
       skippedExportedLines,
+      skippedNotReadyLines,
     })
   }
 

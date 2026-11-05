@@ -209,6 +209,15 @@ describe('which lines count', () => {
     expect((await lines(o.id)).every(l => l.exportedAt === null)).toBe(true)
   })
 
+  it('an order in design is touched for the lines named only, and stays in design until the last one', async () => {
+    const o = await mixedOrder({ pipelineStatus: 'PENDING_DESIGN' })
+    const [, hoodie, jersey] = await lines(o.id)
+    expect(await markOrdersExported([o.id], MANGO, new Date(), { mode: 'SHEET', byId: null }, { lineIds: [hoodie.id] })).toMatchObject({ count: 1, lines: 1, completed: [] })
+    expect(await order(o.id)).toMatchObject({ pipelineStatus: 'PENDING_DESIGN', exportedAt: null, supplierHandoffAt: null })
+    expect(await markOrdersExported([o.id], JOMALL, new Date(), { mode: 'SHEET', byId: null }, { lineIds: [jersey.id] })).toMatchObject({ completed: [o.id] })
+    expect(await order(o.id)).toMatchObject({ pipelineStatus: 'EXPORTED', exportedToSupplierId: JOMALL, supplierHandoffMode: 'SHEET' })
+  })
+
   it('an order exported before line tracking counts its lines as sent, and a new mark keeps that', async () => {
     const t1 = new Date('2026-10-06T08:00:00Z')
     const o = await mixedOrder({ pipelineStatus: 'EXPORTED', exportedAt: t1, exportedToSupplierId: MANGO })

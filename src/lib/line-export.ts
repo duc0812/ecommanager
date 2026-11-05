@@ -121,6 +121,68 @@ export function exportProgress(order: ExportTrackedOrder): ExportProgress {
   }
 }
 
+/** Orders whose finished lines may go to their supplier. Design-rejected and unmapped orders wait whole. */
+const SEND_STATUSES = ['READY_TO_PRODUCTION', 'PENDING_DESIGN']
+
+type DesignGateLine = { shopifyLineId: string; designDriveLink: string | null }
+type LivePush = { supplierId: string; status: string; exportMarked: boolean; prevExportJson: string | null }
+export type SendGateOrder<L> = {
+  pipelineStatus: string; financialStatus: string | null; fulfillmentStatus: string | null; designReady: boolean; supplierHandoffAt: Date | null
+  lines: L[]
+  designTasks: { shopifyLineId: string; status: string; updatedAt: Date }[]
+  /** The order's pushes with status SENDING or CREATED. */
+  supplierPushes: LivePush[]
+}
+
+/** Why a line with a supplier does not go out now: design unfinished, saved for the CSV export, or already at the supplier by a push the app never marked. */
+export type LineHold = 'DESIGN' | 'SAVED' | 'PUSHED'
+
+/** The line's task is not DONE. A line with no task, or a cancelled one, goes by its design link or the order's approval. */
+export function isDesignOpen(order: { designReady: boolean; designTasks: { shopifyLineId: string; status: string }[] }, line: DesignGateLine): boolean {
+  const task = order.designTasks.find(t => t.shopifyLineId === line.shopifyLineId)
+  if (task && task.status !== 'CANCELLED') return task.status !== 'DONE' || !line.designDriveLink
+  return !line.designDriveLink && !order.designReady
+}
+
+export function isOrderClosed(order: { pipelineStatus: string; financialStatus: string | null; fulfillmentStatus: string | null }): boolean {
+  return ['CANCELLED', 'REFUNDED', 'FULFILLED'].includes(order.pipelineStatus)
+    || ['REFUNDED', 'VOIDED'].includes((order.financialStatus ?? '').toUpperCase())
+    || (order.fulfillmentStatus ?? '').toUpperCase() === 'FULFILLED'
+}
+
+export function lineHold(order: Omit<SendGateOrder<unknown>, 'lines' | 'pipelineStatus' | 'financialStatus' | 'fulfillmentStatus'>, line: DesignGateLine & { resolvedSupplierId: string | null }): LineHold | null {
+  if (isDesignOpen(order, line)) return 'DESIGN'
+  if (order.supplierPushes.some(p => p.supplierId === line.resolvedSupplierId && p.status === 'CREATED' && !p.exportMarked)) return 'PUSHED'
+  if (!order.supplierHandoffAt) return null
+  // A CSV save covers the lines approved by then; one approved later still has to be handed over.
+  const task = order.designTasks.find(t => t.shopifyLineId === line.shopifyLineId && t.status === 'DONE')
+  return !task || task.updatedAt <= order.supplierHandoffAt ? 'SAVED' : null
+}
+
+/** The lines that can go to their supplier now. Sibling lines do not matter. */
+export function readyLines<L extends ExportTrackedLine & DesignGateLine>(order: SendGateOrder<L>): L[] {
+  if (!SEND_STATUSES.includes(order.pipelineStatus) || isOrderClosed(order)) return []
+  return supplierLines(order.lines).filter(l => !l.exportedAt && !lineHold(order, l))
+}
+
+/** The lines a push carried. Null for a push made before sends went by line: it carried every line of its supplier. */
+export function pushLineIds(push: { prevExportJson: string | null }): string[] | null {
+  try {
+    const ids = JSON.parse(push.prevExportJson ?? '{}').lineIds
+    return Array.isArray(ids) ? ids : null
+  } catch {
+    return null
+  }
+}
+
+/** A live push blocks a new send until it landed and was marked, and it can only be sent beside when it does not hold these lines. */
+export function canSendBeside(live: Pick<LivePush, 'status' | 'exportMarked' | 'prevExportJson'>[], lineIds: string[]): boolean {
+  return live.every(p => {
+    const carried = pushLineIds(p)
+    return p.status === 'CREATED' && p.exportMarked && !!carried && !lineIds.some(id => carried.includes(id))
+  })
+}
+
 export function exportProgressLabel(p: Pick<ExportProgress, 'suppliersDone' | 'suppliersTotal'>): string {
   return `Đã xuất ${p.suppliersDone}/${p.suppliersTotal} xưởng`
 }

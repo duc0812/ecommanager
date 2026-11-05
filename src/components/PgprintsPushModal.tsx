@@ -249,6 +249,8 @@ export default function PgprintsPushModal({ orderId, supplier = 'pgprints', onCl
   const email = payload?.email ?? shipInfo?.email
   const errors = preview?.issues.filter(i => i.level === 'error') ?? []
   const active = preview?.activePush ?? null
+  // A line approved after the live push went out: the push stays shown, and the new line can still go.
+  const sendable = !active || !!preview?.laterSend
   const pastPushes = preview?.history.filter(h => h.id !== active?.id) ?? []
   const canSend = !!preview && (preview.canSend ?? preview.canAct)
   const blockedReason = !preview ? '' : !canSend ? `Chỉ Admin hoặc người có quyền CSV Export được gửi đơn sang ${name}`
@@ -274,7 +276,7 @@ export default function PgprintsPushModal({ orderId, supplier = 'pgprints', onCl
 
           {preview && active && <PushPanel push={active} canAct={preview.canAct} busy={busy} name={name} onRefresh={refreshPush} onCancel={cancelPush} />}
 
-          {preview && !active && (
+          {preview && sendable && (
             <>
               {supplier === 'pgprints' && !preview.pushEnabled && (
                 <Note tone="warn" icon="toggle_off">Gửi đơn sang PGprints đang tắt. Super Admin bật ở trang cài đặt xưởng Pgprints — bản xem trước vẫn dùng được.</Note>
@@ -408,7 +410,7 @@ export default function PgprintsPushModal({ orderId, supplier = 'pgprints', onCl
             </section>
           )}
 
-          {preview && !active && (
+          {preview && sendable && (
             <div className="flex items-center justify-end gap-sm flex-wrap border-t border-outline-variant/20 pt-md">
               {blockedReason && <span className="text-label-sm text-on-surface-variant mr-auto">{blockedReason}</span>}
               <button type="button" className={btn} disabled={loading || !!busy} onClick={() => void load()}>

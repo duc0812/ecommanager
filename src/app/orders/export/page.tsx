@@ -12,7 +12,7 @@ type Template = {
   columns?: string
 }
 type TemplateColumn = { header: string; source: string }
-type PreviewLine = { linePosition: number; lineKey: string; productTitle: string; variantTitle: string | null; included: boolean; alreadyExported: boolean }
+type PreviewLine = { linePosition: number; lineKey: string; productTitle: string; variantTitle: string | null; included: boolean; alreadyExported: boolean; inDesign?: boolean }
 type PreviewOrder = {
   shopifyOrderNumber: string; pipelineStatus: string; designHandedOff: boolean; handoffMode: string | null
   lines?: PreviewLine[]; mixedNote?: string | null; exportProgress?: string | null
@@ -164,6 +164,7 @@ export default function ExportPage() {
     orders?: PreviewOrder[]
     handoffCount?: number
     skippedExportedLines?: number
+    skippedNotReadyLines?: number
   } | null>(null)
   const [message, setMessage] = useState('')
 
@@ -503,6 +504,12 @@ export default function ExportPage() {
                 Bỏ qua {preview.skippedExportedLines} dòng đã xuất cho {preview.supplierName ?? preview.supplierCode} — bật &quot;Xuất lại cả dòng đã xuất&quot; để gửi lại.
               </p>
             )}
+            {(preview.skippedNotReadyLines ?? 0) > 0 && (
+              <p className="mb-md flex items-center gap-xs text-body-sm text-on-surface-variant">
+                <span className="material-symbols-outlined text-[18px]">filter_alt</span>
+                Bỏ qua {preview.skippedNotReadyLines} dòng chưa gửi được: còn đang làm design, hoặc đơn đã huỷ / đã giao.
+              </p>
+            )}
             {preview.orders && preview.orders.length > 0 && (
               <div className="mb-md flex flex-col gap-xs" aria-label="Đơn trong file CSV">
                 {preview.orders.map(o => (
@@ -527,7 +534,7 @@ export default function ExportPage() {
                         className={`inline-flex items-center gap-[2px] rounded px-xs ${l.included ? 'bg-secondary/10 text-secondary' : 'bg-surface-container text-on-surface-variant line-through'}`}
                       >
                         <span className="material-symbols-outlined text-[13px]">{l.included ? (l.alreadyExported ? 'replay' : 'check') : 'block'}</span>
-                        dòng {l.linePosition}{l.included ? (l.alreadyExported ? ' · xuất lại' : '') : ' · đã xuất'}
+                        dòng {l.linePosition}{l.included ? (l.alreadyExported ? ' · xuất lại' : '') : l.inDesign ? ' · đang làm design' : ' · đã xuất'}
                       </span>
                     ))}
                     {o.mixedNote && <span className="text-amber-900">{o.mixedNote}</span>}

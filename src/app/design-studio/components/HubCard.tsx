@@ -52,6 +52,7 @@ export default function HubCard({ c, tabId, sheet, me, onOpenTask, onSheet, onCh
           {send.customName
             ? <span className="truncate" title={send.customName}>Custom Name: <b className="text-on-surface">{send.customName}</b></span>
             : line.customized && <span className="truncate text-amber-900" title="Đơn custom nhưng không tách được tên, mở task để xem">Custom Name: trống</span>}
+          {view.inDesign.length > 0 && <span className="truncate text-amber-900" title="Dòng này chưa duyệt design nên chưa gửi, các dòng đã xong vẫn gửi được">Đang làm design: {view.inDesign.map(l => l.taskKey).join(', ')}</span>}
         </div>
       </div>
       <div className="flex items-center gap-sm text-label-sm text-on-surface-variant min-w-0" onClick={e => e.stopPropagation()}>

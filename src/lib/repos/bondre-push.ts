@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/db'
-import { logHandoffEvent, markPushExported } from '@/lib/repos/push-export'
+import { logHandoffEvent, markPushExported, nextExternalOrderId, planPushLines } from '@/lib/repos/push-export'
 import { countryCodeOf, resolveStateCode } from '@/lib/shipping-address'
+import { isNonProductLine } from '@/lib/order-lines'
 import { isLineApproved } from '@/lib/public-artwork'
 import { PushError, hashPayload } from '@/lib/repos/pgprints-push'
 import {
@@ -35,13 +36,10 @@ async function sessionOrThrow(): Promise<BondreSession> {
 }
 
 /**
- * A number Bondre has seen stays taken: it keeps it on a cancelled order, and on a Preview whose sync failed even after that
- * Preview is cleared. A refusal that made no Preview does not take it, so that retry reuses the number.
+ * A number Bondre has seen stays taken: it keeps it on a Preview whose sync failed even after that Preview is cleared.
+ * A refusal that made no Preview does not take it, so that retry reuses the number.
  */
-function externalOrderIdFor(orderNo: string, pushes: PushRow[]): string {
-  const taken = pushes.filter(p => p.status === 'CANCELLED' || (p.status === 'FAILED' && !!p.supplierInternalId)).length
-  return taken > 0 ? `${orderNo}-R${taken + 1}` : orderNo
-}
+const spentOnPreview = (p: { status: string; supplierInternalId: string | null }) => p.status === 'FAILED' && !!p.supplierInternalId
 
 export type BuiltBondrePush = { preview: PushPreview; rawBody: string | null; externalOrderId: string; supplierId: string | null }
 
@@ -60,11 +58,13 @@ export async function buildBondrePush(orderId: string, opts: { quote?: boolean }
   const pushes: PushRow[] = supplier
     ? await prisma.supplierOrderPush.findMany({ where: { orderId, supplierId: supplier.id }, orderBy: { createdAt: 'desc' } })
     : []
-  const active = pushes.find(p => isActive(p.status)) ?? null
-  const externalOrderId = externalOrderIdFor(orderNo, pushes)
+  const plan = planPushLines(order, order.lines.filter(l => !isNonProductLine(l) && !!supplier && l.resolvedSupplierId === supplier.id), pushes)
+  const active = plan.later ? null : pushes.find(p => isActive(p.status)) ?? null
+  const externalOrderId = await nextExternalOrderId(orderNo, { orderId, supplierId: supplier?.id ?? null, later: plan.later, spent: spentOnPreview })
+  const pushLines = plan.lines
 
   if (!hasAccount) error('NO_CREDENTIALS', NO_ACCOUNT_MESSAGE)
-  const { baseUrl, pushLines, keyOf } = await checkOrderForPush(order, supplier, { name: NAME, active, externalOrderId }, { error, warning })
+  const { baseUrl, keyOf } = await checkOrderForPush(order, supplier, { name: NAME, active, externalOrderId, lines: pushLines, held: plan.held }, { error, warning })
 
   const supplierSkus = Array.from(new Set(pushLines.map(l => l.resolvedSupplierSku).filter((x): x is string => !!x)))
   const products = supplier && supplierSkus.length
@@ -178,6 +178,7 @@ export async function buildBondrePush(orderId: string, opts: { quote?: boolean }
       issues,
       balance: null,
       activePush: views.find(v => isActive(v.status)) ?? null,
+      laterSend: plan.later,
       history: views,
     },
   }
@@ -197,7 +198,7 @@ export async function pushBondreOrder(orderId: string, input: { payloadHash: str
   const session = await sessionOrThrow()
   const built = await buildBondrePush(orderId, { quote: false })
   if (!built) throw new PushError('Không tìm thấy đơn', 404, 'NOT_FOUND')
-  if (built.preview.activePush) throw new PushError(DUPLICATE_MESSAGE, 409, 'DUPLICATE')
+  if (built.preview.activePush && !built.preview.laterSend) throw new PushError(DUPLICATE_MESSAGE, 409, 'DUPLICATE')
   const errors = built.preview.issues.filter(i => i.level === 'error')
   if (errors.length > 0 || !built.rawBody || !built.preview.payloadHash || !built.supplierId) {
     throw new PushError(errors[0]?.message ?? 'Đơn chưa đủ điều kiện gửi Bondre', 422, 'NOT_ELIGIBLE', errors)
@@ -207,7 +208,7 @@ export async function pushBondreOrder(orderId: string, input: { payloadHash: str
   }
 
   const reserved = await reservePush({
-    orderId, supplierId: built.supplierId, externalOrderId: built.externalOrderId, requestJson: built.rawBody, userId: input.userId,
+    orderId, supplierId: built.supplierId, externalOrderId: built.externalOrderId, lineIds: built.preview.lines.map(l => l.lineId), requestJson: built.rawBody, userId: input.userId,
   }, DUPLICATE_MESSAGE)
 
   const unknownResult = async (message: string, previewId: number | null): Promise<never> => {
@@ -324,7 +325,7 @@ async function refreshOne(session: BondreSession, push: PushRow): Promise<{ foun
       data: {
         lastSyncedAt, remoteStatus: remote.status ?? push.remoteStatus,
         supplierOrderCode: push.supplierOrderCode ?? remote.orderCode,
-        ...(landed ? { status: 'CREATED', error: null, activeKey: activeKeyFor(push.orderId, push.supplierId) } : {}),
+        ...(landed ? { status: 'CREATED', error: null, activeKey: push.activeKey ?? activeKeyFor(push.orderId, push.supplierId) } : {}),
       },
     })
   } catch (e: any) {

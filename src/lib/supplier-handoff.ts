@@ -12,7 +12,7 @@ import { isBondreSupplier } from '@/lib/bondre'
 import { getBondreSettings, hasBondreAccount } from '@/lib/bondre-settings'
 import { isPrintwaySupplier } from '@/lib/printway'
 import { getPrintwaySettings } from '@/lib/printway-settings'
-import { activePushByOrder, logHandoffEvent } from '@/lib/repos/push-export'
+import { ACTIVE_PUSH_STATUSES, activePushByOrder, logHandoffEvent } from '@/lib/repos/push-export'
 import { COOLING_OFF_HOURS, SUPPLIER_API_NAMES, UNMAPPED_TAB, type HandoffCard, type HandoffLine, type HandoffSent, type HandoffState, type HubChannel, type HubTab, type SentStage, type SupplierApiKind } from '@/lib/handoff-shared'
 import { effectiveBaseCost } from '@/lib/order-profit'
 import { enabledChannelFor, getSheetChannels, sheetProduct, sizeLabel, type SheetChannel } from '@/lib/sheet-channel'
@@ -21,7 +21,7 @@ import { customNameOf } from '@/lib/custom-name'
 import { loadLineResolver, recalculateMissingOrderLineCosts } from '@/lib/repos/order-costs'
 import { printFileFit } from '@/lib/print-file-fit'
 import { currentFiles, sameLabel } from '@/lib/task-files'
-import { exportProgress, exportProgressLabel, exportedSupplierOf } from '@/lib/line-export'
+import { canSendBeside, exportProgress, exportProgressLabel, exportedSupplierOf, isDesignOpen, lineHold, readyLines } from '@/lib/line-export'
 
 export class HandoffError extends Error {
   constructor(message: string, readonly status: number, readonly code: string) {
@@ -47,8 +47,20 @@ const CLOSED_FINANCIAL = ['REFUNDED', 'VOIDED']
 const AFTER_EXPORT = ['EXPORTED', 'FULFILLED']
 const MAX_CARDS = 60
 
-/** "Chờ chuyển xưởng": the order went through Design Studio, every design is approved, nothing was handed to the supplier yet, and the order is still open. */
+/**
+ * "Chờ chuyển xưởng": the order went through Design Studio, at least one design is approved, and the order is still open.
+ * A task joins its line by key, which a query cannot follow, so `readyLines` then picks the lines that really can go.
+ */
 export function pendingHandoffWhere() {
+  return {
+    pipelineStatus: { in: ['READY_TO_PRODUCTION', 'PENDING_DESIGN'] },
+    designTasks: { some: { status: 'DONE' } },
+    AND: [NOT_FULFILLED, { financialStatus: { notIn: [...CLOSED_FINANCIAL, ...CLOSED_FINANCIAL.map(s => s.toLowerCase())] } }],
+  }
+}
+
+/** An order with a line no supplier is mapped to, otherwise all approved: what the unmapped tab shows beside the orders waiting for mapping. */
+function approvedUnmappedWhere() {
   return {
     pipelineStatus: 'READY_TO_PRODUCTION',
     designReady: true,
@@ -67,15 +79,33 @@ function waitingForMappingWhere() {
   }
 }
 
+const LIVE_PUSHES = { where: { status: { in: ACTIVE_PUSH_STATUSES } }, select: { supplierId: true, status: true, exportMarked: true, prevExportJson: true } } as const
+const TASK_GATE = { select: { shopifyLineId: true, status: true, updatedAt: true } } as const
+
+/** Oldest first, the orders holding a line that can go now, of this supplier when one is named. The count and the cost are not limited by MAX_CARDS. */
+async function ordersWithReadyLines(where: object, supplierId?: string) {
+  const orders = await prisma.order.findMany({
+    where, orderBy: { placedAt: 'asc' },
+    select: {
+      id: true, pipelineStatus: true, financialStatus: true, fulfillmentStatus: true, designReady: true, supplierHandoffAt: true,
+      lines: { select: { id: true, shopifyLineId: true, sku: true, productTitle: true, shopifyProductType: true, resolvedSupplierId: true, designDriveLink: true, exportedAt: true, exportedToSupplierId: true, qty: true, manualBaseCost: true, resolvedBaseCost: true } },
+      designTasks: TASK_GATE,
+      supplierPushes: LIVE_PUSHES,
+    },
+  })
+  return orders.map(o => ({ ...o, ready: readyLines(o).filter(l => !supplierId || l.resolvedSupplierId === supplierId) })).filter(o => o.ready.length > 0)
+}
+
 export async function countPendingHandoff(): Promise<number> {
-  return prisma.order.count({ where: pendingHandoffWhere() })
+  return (await ordersWithReadyLines(pendingHandoffWhere())).length
 }
 
 type StateOrder = {
   id: string; pipelineStatus: string; financialStatus: string; fulfillmentStatus: string | null; designReady: boolean
   supplierHandoffAt: Date | null; supplierHandoffMode: string | null; supplierHandoffById: string | null
-  lines: Array<{ sku: string | null; productTitle: string; shopifyProductType: string | null; resolvedSupplierId: string | null; resolvedSupplierSku: string | null; exportedAt?: Date | null }>
-  designTasks: Array<{ status: string }>
+  lines: Array<{ id: string; shopifyLineId: string; sku: string | null; productTitle: string; shopifyProductType: string | null; resolvedSupplierId: string | null; resolvedSupplierSku: string | null; designDriveLink: string | null; exportedAt: Date | null; exportedToSupplierId: string | null }>
+  designTasks: Array<{ shopifyLineId: string; status: string; updatedAt: Date }>
+  supplierPushes: Array<{ supplierId: string; status: string; exportMarked: boolean; prevExportJson: string | null }>
 }
 
 function blockedReason(o: StateOrder, openTasks: number): string {
@@ -88,8 +118,9 @@ function blockedReason(o: StateOrder, openTasks: number): string {
 }
 
 const STATE_INCLUDE = {
-  lines: { select: { sku: true, productTitle: true, shopifyProductType: true, resolvedSupplierId: true, resolvedSupplierSku: true, exportedAt: true } },
-  designTasks: { select: { status: true } },
+  lines: { select: { id: true, shopifyLineId: true, sku: true, productTitle: true, shopifyProductType: true, resolvedSupplierId: true, resolvedSupplierSku: true, designDriveLink: true, exportedAt: true, exportedToSupplierId: true } },
+  designTasks: TASK_GATE,
+  supplierPushes: LIVE_PUSHES,
 } as const
 
 export async function handoffStates(orders: StateOrder[]): Promise<Map<string, HandoffState>> {
@@ -127,19 +158,21 @@ export async function handoffStates(orders: StateOrder[]): Promise<Map<string, H
 
   for (const o of orders) {
     const productLines = o.lines.filter(l => !isNonProductLine(l))
+    const ready = readyLines(o)
+    const isReady = (l: { id: string }) => ready.some(r => r.id === l.id)
     const allPg = !!pg && productLines.length > 0 && productLines.every(l => l.resolvedSupplierId === pg.id)
     const mzLines = mz ? productLines.filter(l => l.resolvedSupplierId === mz.id) : []
-    const merchizeOpen = mzLines.some(l => !l.exportedAt)
+    const merchizeOpen = mzLines.some(isReady)
     const keyedLines = keyed.map(k => {
       const lines = k.supplier ? productLines.filter(l => l.resolvedSupplierId === k.supplier!.id) : []
       const apiLines = k.live ? lines : []
-      return { ...k, lines, apiLines, open: apiLines.some(l => !l.exportedAt) }
+      return { ...k, lines, apiLines, open: apiLines.some(isReady) }
     })
-    const sheetOpen = productLines.some(l => !!l.resolvedSupplierId && sheetSupplierIds.has(l.resolvedSupplierId) && !l.exportedAt)
+    const sheetOpen = productLines.some(l => !!l.resolvedSupplierId && sheetSupplierIds.has(l.resolvedSupplierId) && isReady(l))
     // Merchize has no CSV route (owner 11/04/2026): its lines go by API, and only another supplier's lines can wait for an export.
     const isApiLine = (l: { resolvedSupplierId: string | null }) => l.resolvedSupplierId === mz?.id || keyedLines.some(k => k.live && l.resolvedSupplierId === k.supplier?.id)
     const csvRemainder = (mzLines.length > 0 || keyedLines.some(k => k.apiLines.length > 0)) && productLines.some(l => !isApiLine(l) && !l.exportedAt)
-    const missingApiSku = allPg ? productLines.filter(l => !l.resolvedSupplierSku || !apiSkuBySku.get(l.resolvedSupplierSku)).map(l => l.resolvedSupplierSku ?? '—') : []
+    const missingApiSku = allPg ? ready.filter(l => !l.resolvedSupplierSku || !apiSkuBySku.get(l.resolvedSupplierSku)).map(l => l.resolvedSupplierSku ?? '—') : []
     const pgApi = allPg && hasCredentials && missingApiSku.length === 0
     const mzApi = mzLines.length > 0 && (merchizeOpen || !csvRemainder)
     const keyedApi = keyedLines.find(k => k.apiLines.length > 0 && (k.open || !csvRemainder))
@@ -151,19 +184,22 @@ export async function handoffStates(orders: StateOrder[]): Promise<Map<string, H
       : !hasCredentials ? 'Xưởng PGprints chưa có Store ID / Secret key — lưu chờ xuất CSV'
       : `SKU xưởng ${Array.from(new Set(missingApiSku)).join(', ')} chưa có "SKU API" — lưu chờ xuất CSV`
     const openTasks = o.designTasks.filter(t => t.status !== 'DONE' && t.status !== 'CANCELLED').length
-    const closed = CLOSED_FINANCIAL.includes((o.financialStatus ?? '').toUpperCase()) || (o.fulfillmentStatus ?? '').toUpperCase() === 'FULFILLED'
     const handedOff = o.supplierHandoffAt
       ? {
           at: o.supplierHandoffAt.toISOString(), mode: o.supplierHandoffMode === 'API' ? 'API' as const : o.supplierHandoffMode === 'SHEET' ? 'SHEET' as const : 'CSV' as const,
           byName: o.supplierHandoffById ? (nameById.get(o.supplierHandoffById) ?? null) : null,
         }
       : null
-    const pending = !handedOff && o.pipelineStatus === 'READY_TO_PRODUCTION' && o.designReady && openTasks === 0 && !closed
+    const pending = ready.length > 0
     const push = pushes.get(o.id) ?? null
     const apiOpenKind = keyedLines.find(k => k.open)?.kind ?? null
     const apiKind: SupplierApiKind = merchizeOpen ? 'merchize' : apiOpenKind ?? (mzLines.length > 0 ? 'merchize' : keyedLines.find(k => k.lines.length > 0)?.kind ?? 'pgprints')
     out.set(o.id, {
       pending,
+      readyLineIds: ready.map(l => l.id),
+      sentLineIds: productLines.filter(l => l.exportedAt).map(l => l.id),
+      // A live push of the same supplier may hold these lines; the window then shows that push instead of a send.
+      pushBeside: ready.some(l => (isApiLine(l) || l.resolvedSupplierId === pg?.id) && canSendBeside(o.supplierPushes.filter(p => p.supplierId === l.resolvedSupplierId), [l.id])),
       blocked: pending || handedOff ? null : blockedReason(o, openTasks),
       mode: api ? 'API' : 'CSV',
       apiName: api ? SUPPLIER_API_NAMES[apiKind] : null,
@@ -283,6 +319,7 @@ async function buildCards(where: any, orderBy: any, opts: { checks?: boolean; se
         driveFolderUrl: folderByLine.get(`${o.id}\u0000${line.shopifyLineId}`) ?? null,
         apiSku: line.supplier && line.supplierSku ? (apiSkuByKey.get(`${line.supplier.id}::${line.supplierSku}`) ?? null) : null,
         exportedTo: sentTo ? (supplierNameById.get(sentTo) ?? 'xưởng không rõ') : null,
+        waiting: sentTo || !line.supplier ? null : lineHold(o, { shopifyLineId: line.shopifyLineId, designDriveLink: line.designDriveLink, resolvedSupplierId: line.supplier.id }),
       })
     }
     const progress = exportProgress(exportOrder)
@@ -305,22 +342,18 @@ async function buildCards(where: any, orderBy: any, opts: { checks?: boolean; se
   return cards
 }
 
-/** "Duyệt sản xuất": every design approved, nothing handed to the supplier yet. Each line is checked against today's mapping and its template. */
+/** "Duyệt sản xuất": orders with a line ready to go. Each line is checked against today's mapping and its template. */
 export async function listHandoffCards(f: { q?: string } = {}): Promise<{ pending: HandoffCard[] }> {
-  const pending = await buildCards(pendingHandoffWhere(), { placedAt: 'asc' }, { checks: true })
+  const ids = (await ordersWithReadyLines(pendingHandoffWhere())).slice(0, MAX_CARDS).map(o => o.id)
+  const pending = await buildCards({ id: { in: ids } }, { placedAt: 'asc' }, { checks: true })
   const q = f.q?.trim().toLowerCase()
   return { pending: q ? pending.filter(c => matches(c, q)) : pending }
 }
 
 /** The waiting cards of one supplier for a send: oldest first, MAX_CARDS at a time. */
 export async function pendingCardsForSupplier(supplierId: string, orderIds?: string[]): Promise<HandoffCard[]> {
-  const where = {
-    ...pendingHandoffWhere(),
-    ...(orderIds ? { id: { in: orderIds } } : {}),
-    lines: { some: { resolvedSupplierId: supplierId, exportedAt: null } },
-  }
-  const cards = await buildCards(where, { placedAt: 'asc' }, { checks: true, withUnmapped: true })
-  return cards.filter(c => c.lines.some(l => l.line.supplier?.id === supplierId && !l.exportedTo))
+  const ids = (await ordersWithReadyLines({ ...pendingHandoffWhere(), ...(orderIds ? { id: { in: orderIds } } : {}) }, supplierId)).slice(0, MAX_CARDS).map(o => o.id)
+  return buildCards({ id: { in: ids } }, { placedAt: 'asc' }, { checks: true, withUnmapped: true })
 }
 
 /** One order's card with today's checks, also when a line has no supplier; the task screen shows its warnings. */
@@ -354,12 +387,15 @@ async function recentSupplierActivity(): Promise<{ active: Set<string>; design: 
     }),
     prisma.order.findMany({
       where: { pipelineStatus: 'PENDING_DESIGN', placedAt: { gte: since }, AND: [NOT_FULFILLED] },
-      select: { id: true, lines: { select: { productTitle: true, shopifyProductType: true, resolvedSupplierId: true, exportedAt: true } } },
+      select: {
+        id: true, designReady: true, designTasks: { select: { shopifyLineId: true, status: true } },
+        lines: { select: { shopifyLineId: true, designDriveLink: true, productTitle: true, shopifyProductType: true, resolvedSupplierId: true, exportedAt: true } },
+      },
     }),
   ])
   const design = new Map<string, number>()
   for (const o of inDesign) {
-    const ids = new Set(o.lines.filter(l => !isNonProductLine(l) && !l.exportedAt && l.resolvedSupplierId).map(l => l.resolvedSupplierId as string))
+    const ids = new Set(o.lines.filter(l => !isNonProductLine(l) && !l.exportedAt && l.resolvedSupplierId && isDesignOpen(o, l)).map(l => l.resolvedSupplierId as string))
     ids.forEach(id => design.set(id, (design.get(id) ?? 0) + 1))
   }
   return { active: new Set(used.map(l => l.resolvedSupplierId as string)), design }
@@ -371,23 +407,25 @@ async function recentSupplierActivity(): Promise<{ active: Set<string>; design: 
  */
 export async function listHandoffTabs(f: { q?: string } = {}): Promise<HubTab[]> {
   const q = f.q?.trim()
-  const where = { OR: [pendingHandoffWhere(), waitingForMappingWhere()] }
-  const orders = await prisma.order.findMany({
-    where: q ? { AND: [where, hubSearchWhere(q)] } : where,
-    select: { id: true, pipelineStatus: true, lines: { select: { productTitle: true, shopifyProductType: true, resolvedSupplierId: true, exportedAt: true, qty: true, manualBaseCost: true, resolvedBaseCost: true } } },
-  })
+  const searched = (where: object) => (q ? { AND: [where, hubSearchWhere(q)] } : where)
+  // An order waiting for mapping counts in the unmapped tab only: it cannot go to any supplier yet.
+  const [orders, unmapped] = await Promise.all([
+    ordersWithReadyLines(searched(pendingHandoffWhere())),
+    prisma.order.findMany({
+      where: searched({ OR: [approvedUnmappedWhere(), waitingForMappingWhere()] }),
+      select: { id: true, lines: { select: { productTitle: true, shopifyProductType: true, resolvedSupplierId: true, exportedAt: true, qty: true, manualBaseCost: true, resolvedBaseCost: true } } },
+    }),
+  ])
   const tally = new Map<string, { orders: Set<string>; cost: number }>()
-  for (const o of orders) {
-    for (const l of o.lines) {
-      if (isNonProductLine(l) || l.exportedAt) continue
-      // An order waiting for mapping counts in the unmapped tab only: it cannot go to any supplier yet.
-      if (o.pipelineStatus === 'PENDING_MAPPING' && l.resolvedSupplierId) continue
-      const id = l.resolvedSupplierId ?? UNMAPPED_TAB
-      const t = tally.get(id) ?? { orders: new Set<string>(), cost: 0 }
-      t.orders.add(o.id)
-      t.cost += (effectiveBaseCost(l) ?? 0) * l.qty
-      tally.set(id, t)
-    }
+  const count = (id: string, orderId: string, l: { qty: number; manualBaseCost: number | null; resolvedBaseCost: number | null }) => {
+    const t = tally.get(id) ?? { orders: new Set<string>(), cost: 0 }
+    t.orders.add(orderId)
+    t.cost += (effectiveBaseCost(l) ?? 0) * l.qty
+    tally.set(id, t)
+  }
+  for (const o of orders) for (const l of o.ready) count(l.resolvedSupplierId as string, o.id, l)
+  for (const o of unmapped) {
+    for (const l of o.lines) if (!isNonProductLine(l) && !l.exportedAt && !l.resolvedSupplierId) count(UNMAPPED_TAB, o.id, l)
   }
   if (q && tally.size === 0) return []
   const activity = q ? null : await recentSupplierActivity()
@@ -424,13 +462,15 @@ export async function listHandoffHub(f: { q?: string; supplier?: string | null }
   // A search lands on a tab that holds a result; a tab picked by hand stays open even when it is empty.
   const selected = (asked && (!q || asked.orderCount > 0) ? asked.id : tabs[0]?.id) ?? null
   if (!selected) return { tabs, selected, pending: [] }
-  const supplierId = selected === UNMAPPED_TAB ? null : selected
-  const inTab = { lines: { some: { resolvedSupplierId: supplierId, exportedAt: null } } }
-  const scope = supplierId === null ? { OR: [pendingHandoffWhere(), waitingForMappingWhere()] } : pendingHandoffWhere()
-  const where = { AND: [scope, inTab, ...(q ? [hubSearchWhere(q)] : [])] }
+  const search = q ? [hubSearchWhere(q)] : []
+  if (selected !== UNMAPPED_TAB) {
+    const ids = (await ordersWithReadyLines({ AND: [pendingHandoffWhere(), ...search] }, selected)).slice(0, MAX_CARDS).map(o => o.id)
+    return { tabs, selected, pending: await buildCards({ id: { in: ids } }, { placedAt: 'asc' }, { checks: true, withUnmapped: true }) }
+  }
+  const where = { AND: [{ OR: [approvedUnmappedWhere(), waitingForMappingWhere()] }, { lines: { some: { resolvedSupplierId: null, exportedAt: null } } }, ...search] }
   const cards = await buildCards(where, { placedAt: 'asc' }, { checks: true, withUnmapped: true })
   // A null supplier also matches add-on lines, which have no card line.
-  const held = cards.filter(c => c.lines.some(l => (l.line.supplier?.id ?? null) === supplierId && !l.exportedTo))
+  const held = cards.filter(c => c.lines.some(l => !l.line.supplier && !l.exportedTo))
   return { tabs, selected, pending: held }
 }
 
@@ -540,7 +580,7 @@ async function sentInfo(orders: SentOrder[], lineExports: { orderId: string; exp
     if (o.pipelineStatus === 'FULFILLED' || (o.fulfillmentStatus ?? '').toUpperCase() === 'FULFILLED') stage = 'FULFILLED'
     else if (tracking.length > 0) stage = 'TRACKING'
     else if (push) stage = push.status === 'SENDING' ? 'API_SENDING' : cooling ? 'API_COOLING' : 'API_SENT'
-    else if (!exportedAt && o.supplierHandoffMode === 'CSV' && o.pipelineStatus === 'READY_TO_PRODUCTION') stage = 'CSV_WAITING'
+    else if (!exportedAt && o.supplierHandoffMode === 'CSV' && ['READY_TO_PRODUCTION', 'PENDING_DESIGN'].includes(o.pipelineStatus)) stage = 'CSV_WAITING'
     else if (o.supplierHandoffMode === 'SHEET') stage = 'SHEET_SENT'
     else stage = 'CSV_EXPORTED'
     const byId = push?.pushedById ?? o.supplierHandoffById
@@ -597,11 +637,11 @@ export async function remapOrderSuppliers(orderId: string, userId: string | null
   return { changed, state: (await handoffStateFor(orderId))! }
 }
 
-/** Saves "design handed over, waiting for the CSV export". Nothing else moves: the order stays READY_TO_PRODUCTION for the export page. */
+/** Saves "design handed over, waiting for the CSV export" for the lines ready now; a line approved later comes back to the hub. Nothing else moves: the order keeps its status for the export page. */
 export async function handoffOrderCsv(orderId: string, userId: string | null): Promise<HandoffState> {
   const state = await handoffStateFor(orderId)
   if (!state) throw new HandoffError('Không tìm thấy đơn', 404, 'NOT_FOUND')
-  if (state.handedOff) throw new HandoffError(state.handedOff.mode === 'API' ? 'Đơn đã chuyển supplier qua API' : 'Đơn đã lưu chờ xuất CSV', 409, 'ALREADY_HANDED_OFF')
+  if (state.handedOff && !state.pending) throw new HandoffError(state.handedOff.mode === 'API' ? 'Đơn đã chuyển supplier qua API' : 'Đơn đã lưu chờ xuất CSV', 409, 'ALREADY_HANDED_OFF')
   if (state.sheetOpen) throw new HandoffError('Đơn có dòng của xưởng ghi sheet — bấm Sản xuất ở tab xưởng đó trước, không lưu chờ xuất CSV', 409, 'SHEET_ONLY')
   if (state.merchizeOpen) throw new HandoffError('Dòng Merchize chỉ gửi qua API — gửi Merchize trước, không lưu chờ xuất CSV', 409, 'MERCHIZE_API_ONLY')
   if (state.apiOpenKind) {

@@ -9,6 +9,8 @@ import { PGPRINTS_KEYS } from '@/lib/pgprints-settings'
 import { syncDesignTasks, transitionTask, type Actor } from '@/lib/design-tasks'
 import { countPendingHandoff, handoffStateFor, listHandoffCards, listSentCards, listHandoffHub } from '@/lib/supplier-handoff'
 import { UNMAPPED_TAB } from '@/lib/handoff-shared'
+import { hubView } from '@/lib/handoff-hub'
+import { nextExternalOrderId } from '@/lib/repos/push-export'
 import { GET as getTasks } from '@/app/api/design-studio/tasks/route'
 import { GET as getTask } from '@/app/api/design-studio/tasks/[key]/route'
 import { GET as getHandoff } from '@/app/api/design-studio/handoff/route'
@@ -22,6 +24,7 @@ const SHOP = 'hof.myshopify.com'
 const PROJECT = 'proj_hof'
 const CSV_SUP = 'sup_hof_csv'
 const PG_SUP = 'sup_hof_pg'
+const MANGO_SUP = 'sup_hof_mango'
 const EMAILS = ['admin@hof.test', 'export@hof.test', 'des@hof.test']
 const PRINT = JSON.stringify([{ print_area: 'Main', url: 'https://cdn.example/hof.png' }])
 
@@ -106,6 +109,7 @@ beforeAll(async () => {
   await prisma.supplierProduct.create({ data: { supplierId: PG_SUP, sku: 'UT2-20OZ', baseCost: 8, apiSku: 'UT2-One_size' } })
   await prisma.supplierProduct.create({ data: { supplierId: PG_SUP, sku: 'NO-API', baseCost: 8 } })
   await prisma.supplierProduct.create({ data: { supplierId: CSV_SUP, sku: 'CSV-TUMBLER', baseCost: 6 } })
+  await prisma.supplier.upsert({ where: { code: 'hof_mango' }, create: { id: MANGO_SUP, name: 'Mango Factory', code: 'hof_mango' }, update: {} })
   templateId = (await prisma.csvTemplate.create({
     data: { supplierId: CSV_SUP, name: 'HOF template', rowMode: 'PER_ORDER', columns: JSON.stringify([{ header: 'Order', source: 'order.shopifyOrderNumber' }]) },
   })).id
@@ -128,7 +132,7 @@ afterAll(async () => {
   await prisma.order.deleteMany({ where: { projectId: PROJECT } })
   await prisma.csvTemplate.deleteMany({ where: { supplierId: CSV_SUP } })
   await prisma.supplierProduct.deleteMany({ where: { supplierId: { in: [CSV_SUP, PG_SUP] } } })
-  await prisma.supplier.deleteMany({ where: { id: { in: [CSV_SUP, PG_SUP] } } })
+  await prisma.supplier.deleteMany({ where: { id: { in: [CSV_SUP, PG_SUP, MANGO_SUP] } } })
   await prisma.appUser.deleteMany({ where: { email: { in: EMAILS } } })
   await prisma.appSetting.deleteMany({ where: { key: { in: [...Object.values(PGPRINTS_KEYS), 'design.settings'] } } })
   delete process.env.NEXT_PUBLIC_APP_URL
@@ -158,16 +162,16 @@ beforeEach(async () => {
 afterEach(() => { vi.unstubAllGlobals() })
 
 describe('"Chuyển xưởng" queue and chip counts', () => {
-  it('an order enters the queue only once every line is approved', async () => {
+  it('an order enters the queue with its first approved line, and leaves design only with the last', async () => {
     const before = await countPendingHandoff()
     const o = await makeOrder({ lines: 2, approve: false })
     expect(await countPendingHandoff()).toBe(before)
     expect(await handoffStateFor(o.id)).toMatchObject({ pending: false, blocked: 'Còn 2 dòng chưa duyệt design', handedOff: null })
 
     await transitionTask(o.keys[0], DES, { to: 'DONE' })
-    expect(await countPendingHandoff()).toBe(before)
-    expect((await handoffStateFor(o.id))!.blocked).toBe('Còn 1 dòng chưa duyệt design')
-    expect((await saveCsv(o.id, exportToken)).status).toBe(409)
+    expect(await countPendingHandoff()).toBe(before + 1)
+    expect(await handoffStateFor(o.id)).toMatchObject({ pending: true, blocked: null })
+    expect(await order(o.id)).toMatchObject({ pipelineStatus: 'PENDING_DESIGN', designReady: false })
 
     await transitionTask(o.keys[1], DES, { to: 'DONE' })
     expect(await countPendingHandoff()).toBe(before + 1)
@@ -689,4 +693,191 @@ describe('task screen checks', () => {
     expect(body.card.order.id).toBe(o.id)
     expect(body.card.lines[0]).toMatchObject({ taskKey: o.keys[0], wrongSizeAreas: [] })
   })
+})
+
+describe('lines go to their supplier one by one', () => {
+  const linesOf = (id: string) => prisma.orderLine.findMany({ where: { orderId: id }, orderBy: { linePosition: 'asc' } })
+
+  /** The #LIT6102 shape: _1 at Mango still in design, _2 at the CSV supplier approved, and a Tip line with no SKU. */
+  const lit6102 = async () => {
+    const o = await makeOrder({ lines: 2, approve: false })
+    const [first, second] = await linesOf(o.id)
+    await prisma.orderLine.update({ where: { id: first.id }, data: { resolvedSupplierId: MANGO_SUP, resolvedSupplierSku: 'BJ-M', resolvedBaseCost: 20, previewCdnUrl: null } })
+    await prisma.orderLine.update({ where: { id: second.id }, data: { resolvedBaseCost: 6 } })
+    await prisma.orderLine.create({ data: { orderId: o.id, shopifyLineId: `${second.shopifyLineId}-tip`, sku: null, productTitle: 'Tip', qty: 1, linePosition: 3, unitPrice: 2 } })
+    await prisma.designTask.update({ where: { taskKey: o.keys[0] }, data: { status: 'NEW' } })
+    await transitionTask(o.keys[1], DES, { to: 'DONE' })
+    return { ...o, first, second }
+  }
+
+  it('#LIT6102: the approved line is in its supplier\'s tab, the open one stays in design and warns nobody', async () => {
+    const o = await lit6102()
+    expect(await order(o.id)).toMatchObject({ pipelineStatus: 'PENDING_DESIGN', designReady: false })
+    const hub = await listHandoffHub({ q: o.number, supplier: CSV_SUP })
+    expect(hub.tabs.map(t => t.id)).toEqual([CSV_SUP])
+    expect(hub.tabs[0]).toMatchObject({ orderCount: 1, baseCostTotal: 6 })
+    const card = hub.pending.find(c => c.order.id === o.id)!
+    const view = hubView(card, CSV_SUP)
+    expect(view.lines.map(l => l.taskKey)).toEqual([o.keys[1]])
+    expect(view.inDesign.map(l => l.taskKey)).toEqual([o.keys[0]])
+    expect(view.warnings).toEqual([])
+    expect(view.baseCost).toBe(6)
+    expect(card.state).toMatchObject({ pending: true, blocked: null, readyLineIds: [o.second.id], sentLineIds: [], mode: 'CSV' })
+    expect((await listHandoffHub({ supplier: MANGO_SUP })).pending.some(c => c.order.id === o.id)).toBe(false)
+  })
+
+  it('a CSV save does not wait for the open line, and the line approved later comes back on its own', async () => {
+    const o = await lit6102()
+    expect((await saveCsv(o.id, exportToken)).status).toBe(200)
+    expect(await order(o.id)).toMatchObject({ pipelineStatus: 'PENDING_DESIGN', supplierHandoffMode: 'CSV' })
+    expect(await handoffStateFor(o.id)).toMatchObject({ pending: false, handedOff: { mode: 'CSV' } })
+    expect((await listHandoffHub({ q: o.number })).tabs).toEqual([])
+
+    await prisma.designTask.update({ where: { taskKey: o.keys[0] }, data: { status: 'REVIEW' } })
+    const r = await transitionTask(o.keys[0], DES, { to: 'DONE' })
+    expect(r.order).toMatchObject({ designReady: true, pipelineStatus: 'READY_TO_PRODUCTION' })
+    expect((await order(o.id)).supplierHandoffMode).toBe('CSV')
+    const hub = await listHandoffHub({ q: o.number })
+    expect(hub.tabs.map(t => t.id)).toEqual([MANGO_SUP])
+    expect(hubView(hub.pending[0], MANGO_SUP).lines.map(l => l.taskKey)).toEqual([o.keys[0]])
+    expect(await handoffStateFor(o.id)).toMatchObject({ pending: true, readyLineIds: [o.first.id], handedOff: { mode: 'CSV' } })
+
+    // The second save covers it too.
+    expect((await saveCsv(o.id, exportToken)).status).toBe(200)
+    expect((await listHandoffHub({ q: o.number })).tabs).toEqual([])
+    expect((await saveCsv(o.id, exportToken)).status).toBe(409)
+  })
+
+  it('the CSV export takes the approved line only, and the order leaves design only with the last line', async () => {
+    const o = await makeOrder({ lines: 2, approve: false })
+    await transitionTask(o.keys[1], DES, { to: 'DONE' })
+    const pre = await (await exportCsv({ preview: true })).json()
+    const row = pre.orders.find((x: any) => x.shopifyOrderNumber === o.number)
+    expect(row.lines.map((l: any) => ({ key: l.lineKey, included: l.included, inDesign: l.inDesign }))).toEqual([
+      { key: o.keys[0], included: false, inDesign: true }, { key: o.keys[1], included: true, inDesign: false },
+    ])
+    expect(pre.skippedNotReadyLines).toBeGreaterThanOrEqual(1)
+
+    await exportCsv({ markExported: true })
+    const [open, sent] = await linesOf(o.id)
+    expect(open.exportedAt).toBeNull()
+    expect(sent.exportedToSupplierId).toBe(CSV_SUP)
+    expect(await order(o.id)).toMatchObject({ pipelineStatus: 'PENDING_DESIGN', exportedAt: null, supplierHandoffAt: null })
+    expect(await handoffStateFor(o.id)).toMatchObject({ pending: false, blocked: 'Còn 1 dòng chưa duyệt design', sentLineIds: [sent.id] })
+    expect((await listHandoffHub({ q: o.number })).tabs).toEqual([])
+
+    const r = await transitionTask(o.keys[0], DES, { to: 'DONE' })
+    expect(r.order).toMatchObject({ designReady: true, pipelineStatus: 'READY_TO_PRODUCTION' })
+    expect((await listHandoffHub({ q: o.number })).tabs[0]).toMatchObject({ id: CSV_SUP, orderCount: 1 })
+    expect(hubView((await listHandoffHub({ q: o.number })).pending[0], CSV_SUP).lines.map(l => l.taskKey)).toEqual([o.keys[0]])
+
+    await exportCsv({ markExported: true })
+    expect(await order(o.id)).toMatchObject({ pipelineStatus: 'EXPORTED', exportedToSupplierId: CSV_SUP })
+  })
+
+  it('reopening a line already sent keeps its mark, and it does not go out again once re-approved', async () => {
+    const o = await makeOrder({ lines: 2 })
+    const [, sent] = await linesOf(o.id)
+    await markSent(sent.id)
+    await transitionTask(o.keys[1], DES, { to: 'DOING' })
+    expect(await order(o.id)).toMatchObject({ pipelineStatus: 'PENDING_DESIGN', designReady: false })
+    await transitionTask(o.keys[1], DES, { to: 'REVIEW' })
+    await transitionTask(o.keys[1], DES, { to: 'DONE' })
+    const [, after] = await linesOf(o.id)
+    expect(after.exportedAt).not.toBeNull()
+    expect((await handoffStateFor(o.id))!.readyLineIds).not.toContain(sent.id)
+  })
+
+  it('reopening any line throws a saved handoff away, so a saved line is handed over again', async () => {
+    const o = await makeOrder({ lines: 2 })
+    await saveCsv(o.id, exportToken)
+    await transitionTask(o.keys[0], DES, { to: 'DOING' })
+    expect((await order(o.id)).supplierHandoffAt).toBeNull()
+    const [, other] = await linesOf(o.id)
+    expect((await handoffStateFor(o.id))!.readyLineIds).toEqual([other.id])
+  })
+
+  it('keeps a rejected, a closed and an unmapped order out of the supplier tabs', async () => {
+    for (const data of [{ pipelineStatus: 'DESIGN_REJECTED' }, { pipelineStatus: 'PENDING_MAPPING' }, { financialStatus: 'REFUNDED' }, { financialStatus: 'voided' }, { fulfillmentStatus: 'FULFILLED' }, { pipelineStatus: 'CANCELLED' }]) {
+      const o = await lit6102()
+      await prisma.order.update({ where: { id: o.id }, data })
+      expect((await listHandoffHub({ q: o.number, supplier: CSV_SUP })).pending.some(c => c.order.id === o.id)).toBe(false)
+      expect((await handoffStateFor(o.id))!.pending).toBe(false)
+    }
+  })
+
+  it('a push the app never marked keeps its lines out of the hub, so nobody sends them twice', async () => {
+    const before = await countPendingHandoff()
+    const o = await makeOrder({ api: true, lines: 2, approve: false })
+    await prisma.supplierOrderPush.create({ data: {
+      orderId: o.id, supplierId: PG_SUP, externalOrderId: o.number.slice(1), activeKey: `${o.id}::${PG_SUP}`, status: 'CREATED', requestJson: '{}',
+    } })
+    await transitionTask(o.keys[0], DES, { to: 'DONE' })
+    expect(await countPendingHandoff()).toBe(before)
+    const pre = await preview(o.id, adminToken)
+    expect(pre.laterSend).toBe(false)
+    expect(pre.issues.map((i: any) => i.code)).toContain('ACTIVE_PUSH')
+    expect((await push(o.id, pre.payloadHash ?? 'x', adminToken)).status).toBe(409)
+    expect(createCalls).toBe(0)
+  })
+
+  it('PGprints: one line goes now, the later one under its own number beside the live push', async () => {
+    const o = await makeOrder({ api: true, lines: 2, approve: false })
+    await transitionTask(o.keys[0], DES, { to: 'DONE' })
+    const [first, second] = await linesOf(o.id)
+    const pre = await preview(o.id, adminToken)
+    expect(pre.lines.map((l: any) => l.refId)).toEqual([o.keys[0]])
+    expect(pre.payload.line_items).toHaveLength(1)
+    expect(pre.payload.order_id).toBe(o.number.slice(1))
+    expect(pre.issues.find((i: any) => i.code === 'DESIGN_OPEN')).toMatchObject({ level: 'warning' })
+    expect(pre.issues.some((i: any) => i.code === 'NOT_APPROVED')).toBe(false)
+    expect(pre.canPush).toBe(true)
+    expect((await push(o.id, pre.payloadHash, adminToken)).status).toBe(200)
+    expect(await order(o.id)).toMatchObject({ pipelineStatus: 'PENDING_DESIGN', exportedAt: null, supplierHandoffAt: null })
+    const marked = await linesOf(o.id)
+    expect(marked[0].exportedToSupplierId).toBe(PG_SUP)
+    expect(marked[1].exportedAt).toBeNull()
+    expect(await handoffStateFor(o.id)).toMatchObject({ pending: false, push: { status: 'CREATED' }, sentLineIds: [first.id] })
+
+    // Nothing new is approved yet: the window shows the push and offers no send.
+    const waiting = await preview(o.id, adminToken)
+    expect(waiting).toMatchObject({ canPush: false, laterSend: false, activePush: { status: 'CREATED' } })
+
+    const r = await transitionTask(o.keys[1], DES, { to: 'DONE' })
+    expect(r.order).toMatchObject({ designReady: true, pipelineStatus: 'READY_TO_PRODUCTION' })
+    expect(await handoffStateFor(o.id)).toMatchObject({ pending: true, pushBeside: true, readyLineIds: [second.id], mode: 'API' })
+    const later = await preview(o.id, adminToken)
+    expect(later).toMatchObject({ laterSend: true, canPush: true, activePush: { externalOrderId: o.number.slice(1) } })
+    expect(later.lines.map((l: any) => l.refId)).toEqual([o.keys[1]])
+    expect(later.payload.order_id).toBe(`${o.number.slice(1)}-R2`)
+    expect((await push(o.id, later.payloadHash, adminToken)).status).toBe(200)
+    expect(await order(o.id)).toMatchObject({ pipelineStatus: 'EXPORTED', supplierHandoffMode: 'API' })
+    expect(createCalls).toBe(2)
+    const pushes = await prisma.supplierOrderPush.findMany({ where: { orderId: o.id }, orderBy: { createdAt: 'asc' } })
+    expect(pushes.map(p => [p.externalOrderId, p.status, p.exportMarked])).toEqual([[o.number.slice(1), 'CREATED', true], [`${o.number.slice(1)}-R2`, 'CREATED', true]])
+
+    // Everything sent: a third send has nothing to carry.
+    const done = await preview(o.id, adminToken)
+    expect(done).toMatchObject({ canPush: false, laterSend: false })
+    expect((await push(o.id, later.payloadHash, adminToken)).status).toBe(409)
+
+    // A cancel takes the newest send back and keeps the earlier one.
+    await postCancel(req(`${pgBase(o.id)}/cancel`, adminToken, json('POST', { confirm: true })), { params: { orderId: o.id } })
+    expect((await order(o.id)).pipelineStatus).toBe('READY_TO_PRODUCTION')
+    const back = await linesOf(o.id)
+    expect(back[0].exportedAt).not.toBeNull()
+    expect(back[1].exportedAt).toBeNull()
+    expect((await preview(o.id, adminToken)).payload.order_id).toBe(`${o.number.slice(1)}-R3`)
+  })
+
+  it('an order going to two API factories gets one number each', async () => {
+    const o = await makeOrder({ api: true })
+    const no = o.number.slice(1)
+    await prisma.supplierOrderPush.create({ data: { orderId: o.id, supplierId: CSV_SUP, externalOrderId: no, status: 'CREATED', requestJson: '{}' } })
+    expect(await nextExternalOrderId(no, { orderId: o.id, supplierId: PG_SUP, later: false })).toBe(`${no}-R2`)
+    expect(await nextExternalOrderId(no, { orderId: o.id, supplierId: CSV_SUP, later: false })).toBe(no)
+    expect(await nextExternalOrderId(no, { orderId: o.id, supplierId: CSV_SUP, later: true })).toBe(`${no}-R2`)
+  })
+
+  const markSent = (id: string) => prisma.orderLine.update({ where: { id }, data: { exportedAt: new Date(), exportedToSupplierId: CSV_SUP } })
 })

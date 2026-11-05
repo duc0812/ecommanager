@@ -697,7 +697,7 @@ model SupplierOrderPush {
   supplierId         String
   supplier           Supplier  @relation(fields: [supplierId], references: [id])
   externalOrderId    String    @unique
-  activeKey          String?   @unique                 // "<orderId>::<supplierId>" while SENDING/CREATED, null once FAILED/CANCELLED — one live push per order × supplier
+  activeKey          String?   @unique                 // "<orderId>::<supplierId>" while SENDING/CREATED, null once FAILED/CANCELLED; a push sent beside a live one, for lines approved later, adds "::<externalOrderId>"
   supplierOrderCode  String?
   supplierInternalId String?
   status             String    @default("SENDING")     // SENDING | CREATED | FAILED | CANCELLED
@@ -713,7 +713,7 @@ model SupplierOrderPush {
   cancelledAt        DateTime?
   lastSyncedAt       DateTime?
   exportMarked       Boolean   @default(false)
-  prevExportJson     String?                           // order export state before this push marked it, restored on cancel
+  prevExportJson     String?                           // the lines this push carries (lineIds), and the order export state before it marked them, restored on cancel
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
   @@index([orderId, supplierId])

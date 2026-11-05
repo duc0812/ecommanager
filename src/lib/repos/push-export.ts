@@ -1,5 +1,7 @@
 import { prisma } from '@/lib/db'
 import { markOrdersExported } from '@/lib/repos/orders'
+import { canSendBeside, isLineExported, pushLineIds, type ExportTrackedLine, type ExportTrackedOrder } from '@/lib/line-export'
+import { isLineApproved } from '@/lib/public-artwork'
 
 export const ACTIVE_PUSH_STATUSES = ['SENDING', 'CREATED']
 
@@ -13,11 +15,52 @@ export async function logHandoffEvent(orderId: string, message: string, actorId:
 }
 
 /**
+ * What one send to a supplier carries: its unsent lines with an approved design. The others wait for a later send; with
+ * nothing approved the preview shows every unsent line and why it cannot go. A live push that does not hold these lines
+ * stays where it is and this send goes beside it (`later`); any other live push keeps today's refusal.
+ */
+export function planPushLines<L extends ExportTrackedLine & { id: string; shopifyLineId: string; designDriveLink: string | null }>(
+  order: ExportTrackedOrder<L> & { designTasks: { shopifyLineId: string; status: string }[] }, own: L[],
+  pushes: { status: string; exportMarked: boolean; prevExportJson: string | null }[],
+): { lines: L[]; held: L[]; later: boolean } {
+  const unsent = own.filter(l => !isLineExported(order, l))
+  const cleared = unsent.filter(l => isLineApproved(l, order.designTasks.find(t => t.shopifyLineId === l.shopifyLineId)))
+  const live = pushes.filter(p => ACTIVE_PUSH_STATUSES.includes(p.status))
+  const later = live.length > 0 && cleared.length > 0 && canSendBeside(live, cleared.map(l => l.id))
+  if (cleared.length > 0 && (live.length === 0 || later)) return { lines: cleared, held: unsent.filter(l => !cleared.includes(l)), later }
+  return { lines: live.length > 0 || unsent.length === 0 ? own : unsent, held: [], later: false }
+}
+
+/**
+ * The number a new send goes under. A number stays taken on the supplier's side once it was cancelled or is live, and the
+ * column is unique across suppliers, so an order going to two API factories gets one each. A refused number is used again.
+ */
+export async function nextExternalOrderId(
+  orderNo: string,
+  ctx: { orderId: string; supplierId: string | null; later: boolean; spent?: (p: { status: string; supplierInternalId: string | null }) => boolean },
+): Promise<string> {
+  for (let n = 1; ; n++) {
+    const id = n > 1 ? `${orderNo}-R${n}` : orderNo
+    const row = await prisma.supplierOrderPush.findUnique({ where: { externalOrderId: id }, select: { orderId: true, supplierId: true, status: true, supplierInternalId: true } })
+    if (!row || row.orderId !== ctx.orderId) return id
+    if (row.supplierId !== ctx.supplierId) continue
+    if (row.status === 'CANCELLED' || ctx.spent?.(row) || (ctx.later && ACTIVE_PUSH_STATUSES.includes(row.status))) continue
+    return id
+  }
+}
+
+export function heldLinesMessage(keys: string[]): string {
+  return `Chỉ gửi các dòng đã duyệt; dòng ${keys.join(', ')} còn đang làm design — duyệt xong gửi sau`
+}
+
+/**
  * The one place a supplier push marks its order: the pushed supplier's lines (exportedAt = pushedAt, which is how a
  * cancel finds them again), Exported + the API handoff once every line is sent, and the state a cancel restores.
+ * Only the lines the push carried are marked; a push from before sends went by line carried every line of its supplier.
  * Returns false when nothing was marked (the order is not in an exportable status, or has no line of this supplier).
  */
 export async function markPushExported(push: PushRef): Promise<boolean> {
+  const lineIds = pushLineIds(await prisma.supplierOrderPush.findUniqueOrThrow({ where: { id: push.id }, select: { prevExportJson: true } }))
   const before = await prisma.order.findUnique({
     where: { id: push.orderId },
     select: {
@@ -25,7 +68,7 @@ export async function markPushExported(push: PushRef): Promise<boolean> {
       supplierHandoffAt: true, supplierHandoffMode: true, supplierHandoffById: true,
     },
   })
-  const marked = await markOrdersExported([push.orderId], push.supplierId, push.pushedAt, { mode: 'API', byId: push.pushedById ?? null })
+  const marked = await markOrdersExported([push.orderId], push.supplierId, push.pushedAt, { mode: 'API', byId: push.pushedById ?? null }, lineIds ? { lineIds } : {})
   if (marked.count === 0 || !before) return false
   await prisma.supplierOrderPush.update({
     where: { id: push.id },
@@ -39,6 +82,7 @@ export async function markPushExported(push: PushRef): Promise<boolean> {
         supplierHandoffMode: before.supplierHandoffMode,
         supplierHandoffById: before.supplierHandoffById,
         linesMarked: marked.lines,
+        ...(lineIds ? { lineIds } : {}),
       }),
     },
   })

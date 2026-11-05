@@ -3,7 +3,7 @@ import { isNonProductLine, lineKeysOf } from '@/lib/order-lines'
 import { requiredSlotsFor, templateForLine } from '@/lib/design-tasks'
 import { artworkUrl } from '@/lib/design-studio'
 import { currentFiles, extraPrintParts, sameLabel } from '@/lib/task-files'
-import { logHandoffEvent, markPushExported } from '@/lib/repos/push-export'
+import { heldLinesMessage, logHandoffEvent, markPushExported, nextExternalOrderId, planPushLines } from '@/lib/repos/push-export'
 import { STATUS_LABELS, type PipelineStatus } from '@/lib/pipeline-status'
 import { countryCodeOf, resolveStateCode } from '@/lib/shipping-address'
 import { PublicUrlError, ensurePublicToken, isLineApproved, publicArtworkUrl, requirePublicBaseUrl } from '@/lib/public-artwork'
@@ -94,10 +94,10 @@ export async function buildMerchizePush(orderId: string): Promise<BuiltMerchizeP
   const pushes: PushRow[] = supplier
     ? await prisma.supplierOrderPush.findMany({ where: { orderId, supplierId: supplier.id }, orderBy: { createdAt: 'desc' } })
     : []
-  const active = pushes.find(p => isActive(p.status)) ?? null
-  const cancelledCount = pushes.filter(p => p.status === 'CANCELLED').length
+  const plan = planPushLines(order, order.lines.filter(l => !isNonProductLine(l) && !!supplier && l.resolvedSupplierId === supplier.id), pushes)
+  const active = plan.later ? null : pushes.find(p => isActive(p.status)) ?? null
   // A cancelled Merchize order keeps its external number, so a re-send after a cancel needs a fresh one.
-  const externalOrderId = cancelledCount > 0 ? `${orderNo}-R${cancelledCount + 1}` : orderNo
+  const externalOrderId = await nextExternalOrderId(orderNo, { orderId, supplierId: supplier?.id ?? null, later: plan.later })
 
   if (!supplier) error('NO_SUPPLIER', 'Chưa có xưởng mã "merchize" trong danh sách xưởng')
   if (!creds) error('NO_CREDENTIALS', 'Server chưa có MERCHIZE_API_URL / MERCHIZE_API_TOKEN')
@@ -133,7 +133,8 @@ export async function buildMerchizePush(orderId: string): Promise<BuiltMerchizeP
     const others = await prisma.supplier.findMany({ where: { id: { in: foreign.map(l => l.resolvedSupplierId as string) } }, select: { name: true } })
     warning('MIXED_SUPPLIER', `Chỉ gửi các dòng Merchize; dòng ${foreign.map(l => keyOf(l)).join(', ')} thuộc ${others.map(s => s.name).join(', ') || 'xưởng khác'} — xuất riêng cho xưởng đó`)
   }
-  const pushLines = supplier ? productLines.filter(l => l.resolvedSupplierId === supplier.id) : []
+  const pushLines = plan.lines
+  if (plan.held.length > 0) warning('DESIGN_OPEN', heldLinesMessage(plan.held.map(l => keyOf(l))))
   // A line already exported to Merchize another way (CSV import) is an order Merchize already holds; an API create would duplicate it.
   const exportedElsewhere = active ? [] : pushLines.filter(l => l.exportedAt && l.exportedToSupplierId === supplier?.id)
   if (exportedElsewhere.length > 0) {
@@ -297,6 +298,7 @@ export async function buildMerchizePush(orderId: string): Promise<BuiltMerchizeP
       issues,
       balance: null,
       activePush: views.find(v => isActive(v.status)) ?? null,
+      laterSend: plan.later,
       history: views,
     },
   }
@@ -307,7 +309,7 @@ export async function pushMerchizeOrder(orderId: string, input: { payloadHash: s
   if (!creds) throw new PushError('Server chưa có MERCHIZE_API_URL / MERCHIZE_API_TOKEN', 400, 'NO_CREDENTIALS')
   const built = await buildMerchizePush(orderId)
   if (!built) throw new PushError('Không tìm thấy đơn', 404, 'NOT_FOUND')
-  if (built.preview.activePush) throw new PushError(DUPLICATE_MESSAGE, 409, 'DUPLICATE')
+  if (built.preview.activePush && !built.preview.laterSend) throw new PushError(DUPLICATE_MESSAGE, 409, 'DUPLICATE')
   const errors = built.preview.issues.filter(i => i.level === 'error')
   if (errors.length > 0 || !built.rawBody || !built.preview.payloadHash || !built.supplierId) {
     throw new PushError(errors[0]?.message ?? 'Đơn chưa đủ điều kiện gửi Merchize', 422, 'NOT_ELIGIBLE', errors)
@@ -317,7 +319,7 @@ export async function pushMerchizeOrder(orderId: string, input: { payloadHash: s
   }
 
   const reserved = await reservePush({
-    orderId, supplierId: built.supplierId, externalOrderId: built.externalOrderId, requestJson: built.rawBody, userId: input.userId,
+    orderId, supplierId: built.supplierId, externalOrderId: built.externalOrderId, lineIds: built.preview.lines.map(l => l.lineId), requestJson: built.rawBody, userId: input.userId,
   }, DUPLICATE_MESSAGE)
 
   let created: Awaited<ReturnType<typeof createOrder>>
@@ -441,7 +443,7 @@ export async function refreshMerchizePush(orderId: string): Promise<{ push: Push
         lastSyncedAt, remoteStatus: remote.status ?? push.remoteStatus,
         supplierOrderCode: push.supplierOrderCode ?? remote.code, supplierInternalId: push.supplierInternalId ?? remote.id,
         totalCost: remote.fulfillmentCost ?? push.totalCost, shippingFee: remote.shippingCost ?? push.shippingFee,
-        ...(landed ? { status: 'CREATED', error: null, activeKey: activeKeyFor(push.orderId, push.supplierId) } : {}),
+        ...(landed ? { status: 'CREATED', error: null, activeKey: push.activeKey ?? activeKeyFor(push.orderId, push.supplierId) } : {}),
       },
     })
   } catch (e: any) {

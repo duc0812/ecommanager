@@ -7,8 +7,8 @@ import { Icon, btn } from './ui'
 /** What must be fixed before the order goes to a supplier: lines costed with an older mapping, print files off the template size. */
 export function PreSendChecks({ c, canHandoff, onChanged, onError }: { c: HandoffCard; canHandoff: boolean; onChanged: (info: string) => void; onError: (msg: string) => void }) {
   const [busy, setBusy] = useState(false)
-  const remaps = c.lines.filter(l => l.mappingNow)
-  const sizes = c.lines.filter(l => l.wrongSizeAreas.length > 0)
+  const remaps = c.lines.filter(l => l.mappingNow && !l.waiting)
+  const sizes = c.lines.filter(l => l.wrongSizeAreas.length > 0 && !l.waiting)
   if (remaps.length === 0 && sizes.length === 0) return null
 
   async function remap() {
