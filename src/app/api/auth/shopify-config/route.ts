@@ -23,8 +23,21 @@ export async function POST(req: NextRequest) {
     update: {},
     include: { credential: true },
   })
-  // A client-credentials token expires on its own and is not kept; a manual or OAuth token keeps working until OAuth replaces it.
-  const keptToken = store.credential && store.credential.authMode !== 'CLIENT_CREDENTIALS' ? store.credential.accessToken : null
-  await saveStoreCredential(store.id, { authMode: 'OAUTH', clientId: apiKey, clientSecret: apiSecret, accessToken: keptToken })
+  const existing = store.credential
+  if (existing?.authMode === 'CLIENT_CREDENTIALS') {
+    // The store keeps minting its own tokens; only the OAuth callback flips it to OAUTH. A token minted with
+    // other credentials is dropped so the next call mints with the new ones.
+    const same = existing.clientId === apiKey && existing.clientSecret === apiSecret
+    await saveStoreCredential(store.id, {
+      authMode: 'CLIENT_CREDENTIALS',
+      clientId: apiKey,
+      clientSecret: apiSecret,
+      accessToken: same ? existing.accessToken : null,
+      tokenExpiresAt: same ? existing.tokenExpiresAt : null,
+    })
+  } else {
+    // A manual or OAuth token keeps working until OAuth replaces it.
+    await saveStoreCredential(store.id, { authMode: 'OAUTH', clientId: apiKey, clientSecret: apiSecret, accessToken: existing?.accessToken ?? null })
+  }
   return NextResponse.json({ ok: true, storeId: store.id })
 }

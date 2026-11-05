@@ -2,7 +2,7 @@ import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 import crypto from 'crypto'
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/db'
-import { saveStoreCredential } from '@/lib/store-connections'
+import { getStoreConnection, saveStoreCredential } from '@/lib/store-connections'
 import { saveOAuthState, getShopifyConnection } from '@/lib/token-store'
 
 vi.mock('@/lib/api-auth', () => ({ requireSuperadmin: vi.fn(async () => ({ user: { id: 'admin' } })) }))
@@ -214,6 +214,69 @@ describe('Shopify OAuth and status per store', () => {
       body: JSON.stringify({ apiKey: 'client-a2', apiSecret: 'secret-a2', shop: A }),
     }))
     expect(await credentialOf(A)).toMatchObject({ authMode: 'OAUTH', clientId: 'client-a2', clientSecret: 'secret-a2', accessToken: 'tok-a' })
+  })
+
+  const configRequest = (body: object) => saveConfig(new NextRequest('http://localhost/api/auth/shopify-config', { method: 'POST', body: JSON.stringify(body) }))
+  const mintReply = (token: string) => new Response(JSON.stringify({ access_token: token, expires_in: 86399 }), { status: 200 })
+
+  async function ccStore(shop: string) {
+    const expiresAt = new Date(Date.now() + 20 * 60 * 60 * 1000)
+    await makeStore(shop, { authMode: 'CLIENT_CREDENTIALS', clientId: 'cc-id', clientSecret: 'cc-secret', accessToken: 'tok-cc', tokenExpiresAt: expiresAt })
+    return expiresAt
+  }
+
+  it('shopify-config with the same id and secret keeps a client-credentials store connected', async () => {
+    const expiresAt = await ccStore(A)
+    expect((await configRequest({ apiKey: 'cc-id', apiSecret: 'cc-secret', shop: A })).status).toBe(200)
+    expect(await credentialOf(A)).toMatchObject({ authMode: 'CLIENT_CREDENTIALS', accessToken: 'tok-cc', tokenExpiresAt: expiresAt })
+    expect(await getStoreConnection(ids[A])).toEqual({ storeId: ids[A], shop: A, token: 'tok-cc' })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('shopify-config with a new secret keeps client-credentials mode and mints with the new secret', async () => {
+    await ccStore(A)
+    expect((await configRequest({ apiKey: 'cc-id', apiSecret: 'cc-secret-2', shop: A })).status).toBe(200)
+    expect(await credentialOf(A)).toMatchObject({ authMode: 'CLIENT_CREDENTIALS', clientSecret: 'cc-secret-2', accessToken: null, tokenExpiresAt: null })
+
+    fetchMock.mockResolvedValueOnce(mintReply('tok-minted'))
+    expect((await getStoreConnection(ids[A])).token).toBe('tok-minted')
+    expect(new URLSearchParams(String(fetchMock.mock.calls[0][1].body)).get('client_secret')).toBe('cc-secret-2')
+  })
+
+  it('shopify-config with a new client id also drops the old token', async () => {
+    await ccStore(A)
+    await configRequest({ apiKey: 'cc-id-2', apiSecret: 'cc-secret', shop: A })
+    expect(await credentialOf(A)).toMatchObject({ authMode: 'CLIENT_CREDENTIALS', clientId: 'cc-id-2', accessToken: null, tokenExpiresAt: null })
+  })
+
+  it('the callback flips a client-credentials store to OAuth', async () => {
+    await ccStore(A)
+    await configRequest({ apiKey: 'cc-id', apiSecret: 'cc-secret-2', shop: A })
+    saveOAuthState('state-cc', A)
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ access_token: 'tok-oauth' }), { status: 200 }))
+    expect((await oauthCallback(callbackRequest(A, 'state-cc', 'cc-secret-2'))).status).toBe(200)
+    expect(await credentialOf(A)).toMatchObject({ authMode: 'OAUTH', clientId: 'cc-id', clientSecret: 'cc-secret-2', accessToken: 'tok-oauth', tokenExpiresAt: null })
+    expect((await getStoreConnection(ids[A])).token).toBe('tok-oauth')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('the token exchange refuses redirects and has a timeout', async () => {
+    await twoStores()
+    saveOAuthState('state-b', B)
+    expect((await oauthCallback(callbackRequest(B, 'state-b', SECRET_B))).status).toBe(200)
+    const init = fetchMock.mock.calls[0][1]
+    expect(init.redirect).toBe('error')
+    expect(init.signal).toBeInstanceOf(AbortSignal)
+  })
+
+  it('a token exchange that cannot reach Shopify returns 502 and keeps the stored token', async () => {
+    await twoStores()
+    saveOAuthState('state-b', B)
+    fetchMock.mockRejectedValueOnce(new TypeError('fetch failed: unexpected redirect'))
+    const res = await oauthCallback(callbackRequest(B, 'state-b', SECRET_B))
+    expect(res.status).toBe(502)
+    expect(await res.text()).not.toContain(SECRET_B)
+    expect((await credentialOf(B))?.accessToken).toBe('tok-b-old')
   })
 
   it('shopify-config rejects a missing field or an invalid shop', async () => {

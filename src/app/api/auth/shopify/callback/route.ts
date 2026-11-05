@@ -7,6 +7,8 @@ import { escapeHtml, normalizeShopDomain } from '@/lib/shopify-shop'
 
 export const dynamic = 'force-dynamic'
 
+const TOKEN_EXCHANGE_TIMEOUT_MS = 15_000
+
 function html(body: string, status = 200) {
   return new NextResponse(body, { status, headers: { 'Content-Type': 'text/html; charset=utf-8' } })
 }
@@ -45,11 +47,18 @@ export async function GET(req: NextRequest) {
     return html(errorPage('HMAC không hợp lệ.'), 400)
   }
 
-  const res = await fetch(`https://${shop}/admin/oauth/access_token`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ client_id: clientId, client_secret: clientSecret, code }),
-  })
+  let res: Response
+  try {
+    res = await fetch(`https://${shop}/admin/oauth/access_token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ client_id: clientId, client_secret: clientSecret, code }),
+      redirect: 'error',
+      signal: AbortSignal.timeout(TOKEN_EXCHANGE_TIMEOUT_MS),
+    })
+  } catch {
+    return html(errorPage('Không kết nối được tới Shopify để đổi token. Thử lại sau.'), 502)
+  }
 
   if (!res.ok) {
     console.error('[shopify oauth] token exchange failed', res.status, (await res.text()).slice(0, 300))
