@@ -23,7 +23,7 @@
 - UI theo mẫu trong `CLAUDE.md`. Ngày hiển thị dạng MM/DD/YYYY, chữ giao diện tiếng Việt như các trang hiện có.
 - Không comment trừ khi giải thích ràng buộc không hiển nhiên.
 - Deploy chỉ khi owner đồng ý, ghi prod từ từ vì VPS yếu, báo phiên "Đẩy prod" trước và sau. Migrate prod cần `pm2 stop podmanager`.
-- Mỗi commit kết thúc bằng dòng `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
+- Mỗi commit kết thúc bằng dòng `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`.
 
 ## Review Focus
 
