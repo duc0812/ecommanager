@@ -9,6 +9,7 @@ import {
 } from './helpers/finance-scope-fixture'
 import { apiPathsOfPages } from './helpers/page-api-calls'
 import { GET as listStores } from '@/app/api/stores/route'
+import { GET as listSuppliers } from '@/app/api/suppliers/route'
 import { GET as overview } from '@/app/api/overview/route'
 import { GET as autoSync } from '@/app/api/auto-sync/route'
 import { GET as listProjects } from '@/app/api/projects/route'
@@ -74,6 +75,7 @@ const ON_LOAD: OnLoad[] = [
   { page: '/finance/other-bills', label: 'GET /api/finance/other-bills', run: async () => otherBills(get('/api/finance/other-bills?month=2026-10')) },
   { page: '/marketing/niche-performance', label: 'GET /api/marketing/niche-performance', run: async () => nichePerformance(get(`/api/marketing/niche-performance?projectId=${PROJECT_A}`)) },
   { page: '/marketing/niche-performance', label: 'GET /api/marketing/niches', run: async () => niches() },
+  { page: '/orders', label: 'GET /api/suppliers', run: async () => listSuppliers(get('/api/suppliers')) },
   { page: '/orders', label: 'GET /api/fulfillment/orders', run: async () => listOrders(get('/api/fulfillment/orders?page=1&pageSize=50')), shows: [fx.orderNumber('a', 1)] },
   { page: '/orders', label: 'GET /api/fulfillment/pl-summary', run: async () => plSummary(get('/api/fulfillment/pl-summary')) },
   { page: '/orders', label: 'GET /api/fulfillment/status-counts', run: async () => statusCounts(get('/api/fulfillment/status-counts')) },
@@ -153,8 +155,9 @@ const CLASSIFIED: Record<string, Check[]> = {
   '/api/fulfillment/task-fix/fix': [['POST', '/api/fulfillment/task-fix/fix', 'ok']],
   '/api/shopify/orders/sync': [['POST', '/api/shopify/orders/sync', 'ok']],
   '/api/design-studio/tasks/:p': [['PUT', '/api/design-studio/tasks/K1/artwork', 'ok']],
-  // Intentionally denied. Shared factory data (the supplier rows carry apiKey) and the all-store parts are not store data a seller may read.
-  '/api/suppliers': [['GET', '/api/suppliers', 'forbidden']],
+  // The shared supplier list the order filters use: no store data and no apiKey (Prisma omits it), read-only for a seller, sub-routes closed.
+  '/api/suppliers': [['GET', '/api/suppliers', 'ok'], ['POST', '/api/suppliers', 'forbidden']],
+  // Intentionally denied. Shared factory data and the all-store parts are not store data a seller may read.
   '/api/design-studio/products/:p': [['GET', '/api/design-studio/products/k1', 'forbidden']],
   '/api/fulfillment/:p/orders/:p': [
     ['GET', '/api/fulfillment/pgprints/orders/o1/preview', 'forbidden'],

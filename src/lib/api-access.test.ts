@@ -129,6 +129,25 @@ describe('PGprints API access', () => {
     expect(canCallApi('SUPPORT', ['fulfillment_suppliers'], '/api/fulfillment/pgprints/catalog', 'GET')).toBe('ok')
     expect(canCallApi('SUPPORT', ['fulfillment_orders'], '/api/fulfillment/pgprints/catalog', 'GET')).toBe('forbidden')
   })
+  it('proxy and account writes and the password reveal are superadmin-only; the Resources list stays a feature read', () => {
+    const admin = DEFAULT_ROLE_PERMISSIONS.ADMIN
+    expect(canCallApi('ADMIN', admin, '/api/tools/resources', 'GET')).toBe('ok')
+    for (const method of ['POST', 'PATCH', 'DELETE']) expect(canCallApi('ADMIN', admin, '/api/tools/resources', method)).toBe('forbidden')
+    expect(canCallApi('ADMIN', admin, '/api/tools/resources/reveal', 'POST')).toBe('forbidden')
+    expect(canCallApi('SUPPORT', [...DEFAULT_ROLE_PERMISSIONS.SUPPORT, 'tools_resources'], '/api/tools/resources/reveal', 'POST')).toBe('forbidden')
+    expect(canCallApi('SUPERADMIN', [], '/api/tools/resources/reveal', 'POST')).toBe('ok')
+    expect(canCallApi('SUPERADMIN', [], '/api/tools/resources', 'DELETE')).toBe('ok')
+  })
+
+  it('a seller reads the shared supplier list with a fulfillment feature and cannot change or open anything under it', () => {
+    expect(canCallApi('SELLER', ['fulfillment_orders'], '/api/suppliers', 'GET')).toBe('ok')
+    expect(canCallApi('SELLER', ['projects'], '/api/suppliers', 'GET')).toBe('forbidden')
+    for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+      expect(canCallApi('SELLER', ['fulfillment_orders', 'fulfillment_suppliers'], '/api/suppliers', method)).toBe('forbidden')
+    }
+    expect(canCallApi('SELLER', ['fulfillment_orders', 'fulfillment_suppliers'], '/api/suppliers/s1', 'GET')).toBe('forbidden')
+  })
+
   it('creative tool routes follow the tools_creative permission; the token write is superadmin-only', () => {
     expect(canCallApi('ADMIN', ['tools_creative'], '/api/tools/creative/jobs', 'GET')).toBe('ok')
     expect(canCallApi('ADMIN', ['tools_creative'], '/api/tools/creative/jobs', 'POST')).toBe('ok')
@@ -143,7 +162,7 @@ describe('PGprints API access', () => {
 
 describe('seller API allow-list', () => {
   it('lists only routes that carry no store data or filter it to the stores of the seller', () => {
-    expect(SELLER_API_PATHS).toEqual(['/api/auth/me', '/api/auth/logout', '/api/stores', '/api/shopify/orders/sync', '/api/fulfillment/normalize'])
+    expect(SELLER_API_PATHS).toEqual(['/api/auth/me', '/api/auth/logout', '/api/stores', '/api/suppliers', '/api/shopify/orders/sync', '/api/fulfillment/normalize'])
     expect(SELLER_API_PREFIXES).toEqual([
       '/api/spy',
       '/api/tools/spy-idea',
@@ -208,7 +227,7 @@ describe('seller API allow-list', () => {
   it('seller stays out of the shared or all-store parts that sit beside those routes', () => {
     const all = DEFAULT_ROLE_PERMISSIONS.ADMIN
     for (const [path, method] of [
-      ['/api/suppliers', 'GET'], ['/api/suppliers/products', 'GET'], ['/api/shopify/orders', 'GET'],
+      ['/api/suppliers/products', 'GET'], ['/api/suppliers/templates', 'GET'], ['/api/suppliers/s1', 'GET'], ['/api/suppliers', 'POST'], ['/api/shopify/orders', 'GET'],
       ['/api/trello/sync', 'POST'], ['/api/trello/backfill-custom-info', 'POST'], ['/api/trello/config', 'GET'],
       ['/api/fulfillment/design-diagnose', 'GET'], ['/api/fulfillment/design-library', 'GET'], ['/api/fulfillment/export', 'POST'],
       ['/api/fulfillment/pgprints/orders/o1/preview', 'GET'], ['/api/fulfillment/pgprints/orders/o1/push', 'POST'],
@@ -275,11 +294,12 @@ describe('seller API allow-list', () => {
     expect(canCallApi('SELLER', [], '/api/storesx', 'GET')).toBe('forbidden')
   })
 
-  it('the three exact paths do not open anything below them', () => {
+  it('the exact paths do not open anything below them', () => {
     expect(sellerMayReach('/api/stores')).toBe(true)
+    expect(sellerMayReach('/api/suppliers')).toBe(true)
     expect(sellerMayReach('/api/auth/me')).toBe(true)
     expect(sellerMayReach('/api/auth/logout')).toBe(true)
-    for (const below of ['/api/stores/abc', '/api/stores/abc/settings', '/api/stores/connect', '/api/auth/me/x', '/api/auth/logout/x', '/api/stores/']) {
+    for (const below of ['/api/stores/abc', '/api/stores/abc/settings', '/api/stores/connect', '/api/auth/me/x', '/api/auth/logout/x', '/api/stores/', '/api/suppliers/s1', '/api/suppliers/templates', '/api/suppliers/products', '/api/suppliers/']) {
       expect(sellerMayReach(below)).toBe(false)
     }
     expect(sellerMayReach('/api/projects/p1/pl')).toBe(true)
@@ -351,6 +371,7 @@ describe('billing is read-only for a seller', () => {
       '/api/shopify/payouts',
       '/api/shopify/db-payouts',
       '/api/projects',
+      '/api/suppliers',
     ])
   })
 

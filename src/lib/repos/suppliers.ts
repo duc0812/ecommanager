@@ -82,7 +82,6 @@ export type CreateSupplierInput = {
   name: string
   code: string
   apiType?: string | null
-  apiKey?: string | null
   firstItemShipFee?: number
   additionalItemShipFee?: number
   currency?: string
@@ -106,7 +105,6 @@ export async function createSupplier(input: CreateSupplierInput) {
       name: input.name,
       code: input.code,
       apiType: input.apiType ?? null,
-      apiKey: input.apiKey ?? null,
       firstItemShipFee: input.firstItemShipFee ?? 0,
       additionalItemShipFee: input.additionalItemShipFee ?? 0,
       currency: input.currency ?? 'USD',

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
-import { requireSuperadmin } from '@/lib/api-auth'
+import { requireApiAccess, requireSuperadmin } from '@/lib/api-auth'
+import { maskedForSuperadminOnly } from '@/lib/secret-view'
 
 export const dynamic = 'force-dynamic'
 
@@ -14,7 +15,9 @@ function mask(value: string | undefined) {
   return value.length <= 8 ? '••••' : `${value.slice(0, 4)}…${value.slice(-4)}`
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const auth = await requireApiAccess(req)
+  if ('error' in auth) return auth.error
   const rows = await prisma.appSetting.findMany({ where: { key: { in: TRELLO_KEYS } } })
   const values = Object.fromEntries(rows.map(r => [r.key.replace('trello.', ''), r.value]))
   const config: Record<string, string | boolean> = {}
@@ -23,7 +26,7 @@ export async function GET() {
     config[`has${field[0].toUpperCase()}${field.slice(1)}`] = Boolean(values[field])
     config[`${field}Masked`] = mask(values[field])
   }
-  return NextResponse.json(config)
+  return NextResponse.json(maskedForSuperadminOnly(auth.user, config, ['apiKeyMasked', 'tokenMasked']))
 }
 
 export async function POST(req: NextRequest) {

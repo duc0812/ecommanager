@@ -3,9 +3,9 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react'
 
 type SettingsView = {
   hasStoreId: boolean
-  storeIdMasked: string | null
+  storeIdMasked?: string | null
   hasSecretKey: boolean
-  secretKeyMasked: string | null
+  secretKeyMasked?: string | null
   defaultShipClass: string | null
   pushEnabled: boolean
   webhookUrl: string | null
@@ -101,7 +101,7 @@ export default function PgprintsSettingsCard() {
           <div>
             <label className={label} htmlFor="pg-store-id">Store ID</label>
             <input id="pg-store-id" className={`${field} font-mono`} autoComplete="off" value={storeId} onChange={e => setStoreId(e.target.value)}
-              placeholder={view?.hasStoreId ? `${view.storeIdMasked} — để trống là giữ nguyên` : 'Lấy ở PGprints → Manage Keys'} />
+              placeholder={view?.hasStoreId ? `${view.storeIdMasked ?? 'Đã cấu hình'} — để trống là giữ nguyên` : 'Lấy ở PGprints → Manage Keys'} />
           </div>
           <div>
             <label className={label} htmlFor="pg-secret-key">Secret key</label>

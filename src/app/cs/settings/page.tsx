@@ -7,13 +7,14 @@ import { CATEGORY_LABELS } from '@/lib/cs/labels'
 import { CS_CATEGORIES, CS_URGENCIES } from '@/lib/cs/triage'
 import { URGENCY_LABELS } from '@/lib/cs/labels'
 import { fmtDate } from '@/components/cs/UrgencyChip'
+import { secretStatusLabel } from '@/lib/secret-view'
 
 type View = {
   freshdeskDomain: string; llmProvider: 'anthropic' | 'kie'; model: string; pollEnabled: boolean; killSwitch: boolean; autoReplyEnabled: boolean; autoReplyCategories: string[]; autoReplyDailyCap: number
   notifyLevels: string[]; productionDays: number; shippingDays: number; syncUpdatedSince: string | null
   reviewEnabled: boolean; weeklyReport: boolean; reviewModel: string | null; llmDailyCallCap: number
   afterHoursAutoReply: boolean; afterHoursCategories: string[]; businessHoursStart: number; businessHoursEnd: number; weekendIsAfterHours: boolean
-  hasFreshdeskApiKey: boolean; freshdeskApiKeyMasked: string | null; hasAnthropicApiKey: boolean; anthropicApiKeyMasked: string | null; hasKieApiKey: boolean; kieApiKeyMasked: string | null
+  hasFreshdeskApiKey: boolean; freshdeskApiKeyMasked?: string | null; hasAnthropicApiKey: boolean; anthropicApiKeyMasked?: string | null; hasKieApiKey: boolean; kieApiKeyMasked?: string | null
 }
 type LastRun = { ranAt: string; ticketsSeen: number; analysed: number; autoReplied: number; fdRequests: number; error: string | null } | null
 
@@ -135,7 +136,7 @@ export default function CsSettingsPage() {
             {card('Freshdesk', <>
               {input('Domain (phần trước .freshdesk.com)', 'freshdeskDomain')}
               <label className="block">
-                <span className="text-label-sm text-on-surface-variant">API key {view.hasFreshdeskApiKey ? `· đang dùng ${view.freshdeskApiKeyMasked}` : '· chưa có'}</span>
+                <span className="text-label-sm text-on-surface-variant">API key · {secretStatusLabel(view.hasFreshdeskApiKey, view.freshdeskApiKeyMasked)}</span>
                 <input type="password" value={secrets.freshdeskApiKey} onChange={e => setSecrets({ ...secrets, freshdeskApiKey: e.target.value })} placeholder="Dán key mới để thay" className="mt-xs w-full rounded-lg border border-outline-variant/40 bg-surface px-md py-sm text-body-sm" />
               </label>
               <p className="text-label-sm text-on-surface-variant">Mốc đồng bộ: {view.syncUpdatedSince ? fmtDate(view.syncUpdatedSince, true) : 'chưa chạy (lần đầu lấy 7 ngày)'}</p>
@@ -147,12 +148,12 @@ export default function CsSettingsPage() {
                 <label className="flex items-center gap-sm"><input type="radio" name="llmProvider" checked={form.llmProvider === 'anthropic'} onChange={() => setForm({ ...form, llmProvider: 'anthropic' })} /> Anthropic trực tiếp</label>
               </div>
               <label className="block">
-                <span className="text-label-sm text-on-surface-variant">Kie API key {view.hasKieApiKey ? `· đang dùng ${view.kieApiKeyMasked}` : '· chưa có'}</span>
+                <span className="text-label-sm text-on-surface-variant">Kie API key · {secretStatusLabel(view.hasKieApiKey, view.kieApiKeyMasked)}</span>
                 <input type="password" value={secrets.kieApiKey} onChange={e => setSecrets({ ...secrets, kieApiKey: e.target.value })} placeholder="Dán key mới để thay" className="mt-xs w-full rounded-lg border border-outline-variant/40 bg-surface px-md py-sm text-body-sm" />
                 <span className="text-label-sm text-on-surface-variant">Key phải được bật quyền model chat (Claude) tại kie.ai/api-key — bấm &quot;Test kết nối&quot; để kiểm tra.</span>
               </label>
               <label className="block">
-                <span className="text-label-sm text-on-surface-variant">Anthropic API key {view.hasAnthropicApiKey ? `· đang dùng ${view.anthropicApiKeyMasked}` : '· chưa có'}</span>
+                <span className="text-label-sm text-on-surface-variant">Anthropic API key · {secretStatusLabel(view.hasAnthropicApiKey, view.anthropicApiKeyMasked)}</span>
                 <input type="password" value={secrets.anthropicApiKey} onChange={e => setSecrets({ ...secrets, anthropicApiKey: e.target.value })} placeholder="sk-ant-…" className="mt-xs w-full rounded-lg border border-outline-variant/40 bg-surface px-md py-sm text-body-sm" />
               </label>
               {input('Model (slug trên Kie: gpt-6.1-sol, gpt-6-luna, claude-opus-5-5…; Anthropic trực tiếp chỉ nhận claude-*)', 'model')}

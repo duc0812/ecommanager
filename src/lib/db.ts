@@ -4,7 +4,7 @@ import { resolveDatabaseUrl } from '@/lib/database-url'
 import { retryOnBusy } from '@/lib/sqlite-busy'
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient; prismaVersion?: string }
-const SCHEMA_VERSION = 'v82'
+const SCHEMA_VERSION = 'v83'
 
 function applySqlitePragmas(client: PrismaClient, url: string) {
   if (!url.startsWith('file:')) return
@@ -18,7 +18,9 @@ function applySqlitePragmas(client: PrismaClient, url: string) {
 function createPrisma(): PrismaClient {
   const url = resolveDatabaseUrl()
   const adapter = new PrismaLibSql({ url })
-  const client = new PrismaClient({ adapter })
+  // No query returns the supplier API key unless it asks with `omit: { apiKey: false }`; nothing reads the column today.
+  // The exported type below still lists the field, so a reader that forgets this gets undefined, not a compile error.
+  const client = new PrismaClient({ adapter, omit: { supplier: { apiKey: true } } })
   const extended = client.$extends({
     query: {
       $allOperations: ({ args, query }) => retryOnBusy(() => query(args)),

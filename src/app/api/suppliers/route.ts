@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { requireApiAccess } from '@/lib/api-auth'
 import { createSupplier, listAllSuppliers } from '@/lib/repos/suppliers'
 
 export async function GET(req: NextRequest) {
+  const auth = await requireApiAccess(req)
+  if ('error' in auth) return auth.error
   const { searchParams } = new URL(req.url)
   const includeInactive = searchParams.get('includeInactive') === '1'
   const suppliers = await listAllSuppliers({ includeInactive })
@@ -9,6 +12,8 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const auth = await requireApiAccess(req)
+  if ('error' in auth) return auth.error
   const body = await req.json()
   if (!body.name || !body.code) {
     return NextResponse.json({ error: 'name and code are required' }, { status: 400 })

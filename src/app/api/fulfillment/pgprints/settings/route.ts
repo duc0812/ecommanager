@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireApiAccess, requireSuperadmin } from '@/lib/api-auth'
+import type { UserRole } from '@/lib/roles'
 import { getPgprintsSettings, savePgprintsSettings, toSettingsView, type PgprintsSettings, type PgprintsSettingsPatch } from '@/lib/pgprints-settings'
 import { PublicUrlError, requirePublicBaseUrl } from '@/lib/public-artwork'
+import { maskedForSuperadminOnly } from '@/lib/secret-view'
 
 const WEBHOOK_PATH = '/api/public/pgprints/tracking'
 
-function respond(settings: PgprintsSettings) {
+function respond(settings: PgprintsSettings, user: { role: UserRole }) {
   let webhookUrl: string | null = null
   let publicUrlError: string | null = null
   try {
@@ -13,13 +15,14 @@ function respond(settings: PgprintsSettings) {
   } catch (e: any) {
     publicUrlError = e instanceof PublicUrlError ? e.message : 'Không xác định được địa chỉ public của app'
   }
-  return NextResponse.json({ ...toSettingsView(settings), webhookUrl, webhookPath: WEBHOOK_PATH, publicUrlError })
+  const view = maskedForSuperadminOnly(user, toSettingsView(settings), ['storeIdMasked', 'secretKeyMasked'])
+  return NextResponse.json({ ...view, webhookUrl, webhookPath: WEBHOOK_PATH, publicUrlError })
 }
 
 export async function GET(req: NextRequest) {
   const auth = await requireApiAccess(req)
   if ('error' in auth) return auth.error
-  return respond(await getPgprintsSettings())
+  return respond(await getPgprintsSettings(), auth.user)
 }
 
 function optionalText(value: unknown, field: string, max: number): string | null | undefined {
@@ -59,5 +62,5 @@ export async function PUT(req: NextRequest) {
     if (patch.pushEnabled === true) return NextResponse.json({ error: 'Nhập Store ID và Secret key trước khi bật gửi đơn' }, { status: 400 })
     patch.pushEnabled = false
   }
-  return respond(await savePgprintsSettings(patch))
+  return respond(await savePgprintsSettings(patch), auth.user)
 }

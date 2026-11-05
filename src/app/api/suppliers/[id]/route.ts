@@ -1,15 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { requireApiAccess } from '@/lib/api-auth'
 import { deactivateSupplier, getSupplierById, updateSupplier } from '@/lib/repos/suppliers'
 
-export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+  const auth = await requireApiAccess(req)
+  if ('error' in auth) return auth.error
   const sup = await getSupplierById(params.id)
   if (!sup) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   return NextResponse.json(sup)
 }
 
-const UPDATABLE_FIELDS = ['name', 'code', 'apiType', 'apiKey', 'firstItemShipFee', 'additionalItemShipFee', 'currency', 'preferenceRank', 'note', 'isActive'] as const
+const UPDATABLE_FIELDS = ['name', 'code', 'apiType', 'firstItemShipFee', 'additionalItemShipFee', 'currency', 'preferenceRank', 'note', 'isActive'] as const
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+  const auth = await requireApiAccess(req)
+  if ('error' in auth) return auth.error
   const body = await req.json().catch(() => null)
   if (!body || typeof body !== 'object') return NextResponse.json({ error: 'Invalid body' }, { status: 400 })
   const input: Record<string, unknown> = {}
@@ -22,7 +27,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   }
 }
 
-export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+  const auth = await requireApiAccess(req)
+  if ('error' in auth) return auth.error
   await deactivateSupplier(params.id)
   return NextResponse.json({ ok: true })
 }

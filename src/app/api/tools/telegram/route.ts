@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getTelegramStatus, saveTelegramConfig, sendTelegramMessage } from '@/lib/telegram'
-import { requireSuperadmin } from '@/lib/api-auth'
+import { requireApiAccess, requireSuperadmin } from '@/lib/api-auth'
+import { maskedForSuperadminOnly } from '@/lib/secret-view'
 
 export const dynamic = 'force-dynamic'
 
-export async function GET() {
-  return NextResponse.json(await getTelegramStatus())
+export async function GET(req: NextRequest) {
+  const auth = await requireApiAccess(req)
+  if ('error' in auth) return auth.error
+  return NextResponse.json(maskedForSuperadminOnly(auth.user, await getTelegramStatus(), ['botTokenMasked']))
 }
 
 export async function POST(req: NextRequest) {

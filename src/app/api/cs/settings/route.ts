@@ -1,13 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
-import { requireSuperadmin } from '@/lib/api-auth'
+import { requireApiAccess, requireSuperadmin } from '@/lib/api-auth'
 import { getCsSecrets, getCsSettings, saveCsSecrets, saveCsSettings, toCsSettingsView, type CsSettings } from '@/lib/cs/settings'
+import { maskedForSuperadminOnly } from '@/lib/secret-view'
 
 export const dynamic = 'force-dynamic'
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const auth = await requireApiAccess(req)
+  if ('error' in auth) return auth.error
   const [settings, secrets, lastRun] = await Promise.all([getCsSettings(), getCsSecrets(), prisma.appSetting.findUnique({ where: { key: 'last_cs_run_result' } })])
-  return NextResponse.json({ settings: toCsSettingsView(settings, secrets), lastRun: lastRun ? JSON.parse(lastRun.value) : null })
+  const view = maskedForSuperadminOnly(auth.user, toCsSettingsView(settings, secrets), ['freshdeskApiKeyMasked', 'anthropicApiKeyMasked', 'kieApiKeyMasked'])
+  return NextResponse.json({ settings: view, lastRun: lastRun ? JSON.parse(lastRun.value) : null })
 }
 
 const PATCH_KEYS: (keyof CsSettings)[] = ['freshdeskDomain', 'llmProvider', 'model', 'pollEnabled', 'killSwitch', 'autoReplyEnabled', 'autoReplyCategories', 'autoReplyDailyCap', 'notifyLevels', 'productionDays', 'shippingDays', 'reviewEnabled', 'weeklyReport', 'reviewModel', 'llmDailyCallCap', 'afterHoursAutoReply', 'afterHoursCategories', 'businessHoursStart', 'businessHoursEnd', 'weekendIsAfterHours']

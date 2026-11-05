@@ -39,6 +39,8 @@ export default function SetupPage() {
   const [trelloToken, setTrelloToken] = useState('')
   const [trelloApiKeyMasked, setTrelloApiKeyMasked] = useState('')
   const [trelloTokenMasked, setTrelloTokenMasked] = useState('')
+  const [trelloHasApiKey, setTrelloHasApiKey] = useState(false)
+  const [trelloHasToken, setTrelloHasToken] = useState(false)
   const [trelloBoardId, setTrelloBoardId] = useState('')
   const [trelloListId, setTrelloListId] = useState('')
   const [trelloDoneListId, setTrelloDoneListId] = useState('')
@@ -61,6 +63,8 @@ export default function SetupPage() {
     fetch('/api/trello/config').then(r => r.json()).then(d => {
       setTrelloApiKeyMasked(d.apiKeyMasked || '')
       setTrelloTokenMasked(d.tokenMasked || '')
+      setTrelloHasApiKey(Boolean(d.hasApiKey))
+      setTrelloHasToken(Boolean(d.hasToken))
       if (d.boardId) setTrelloBoardId(d.boardId)
       if (d.listId) setTrelloListId(d.listId)
       if (d.doneListId) setTrelloDoneListId(d.doneListId)
@@ -124,7 +128,10 @@ export default function SetupPage() {
       })
       if (!res.ok) throw new Error('save failed')
       const cfg = await fetch('/api/trello/config').then(r => r.json()).catch(() => null)
-      if (cfg) { setTrelloApiKeyMasked(cfg.apiKeyMasked || ''); setTrelloTokenMasked(cfg.tokenMasked || '') }
+      if (cfg) {
+        setTrelloApiKeyMasked(cfg.apiKeyMasked || ''); setTrelloTokenMasked(cfg.tokenMasked || '')
+        setTrelloHasApiKey(Boolean(cfg.hasApiKey)); setTrelloHasToken(Boolean(cfg.hasToken))
+      }
       setTrelloApiKey(''); setTrelloToken('')
       setTrelloMsg('Đã lưu cấu hình Trello.')
     } catch {
@@ -439,7 +446,7 @@ export default function SetupPage() {
                 type="password"
                 value={trelloApiKey}
                 onChange={e => setTrelloApiKey(e.target.value)}
-                placeholder={trelloApiKeyMasked ? `Đã lưu (${trelloApiKeyMasked}) — nhập để thay` : 'Trello API Key'}
+                placeholder={trelloApiKeyMasked ? `Đã lưu (${trelloApiKeyMasked}) — nhập để thay` : trelloHasApiKey ? 'Đã cấu hình — nhập để thay' : 'Trello API Key'}
                 className="w-full border rounded-lg px-md py-sm text-body-sm"
               />
             </div>
@@ -449,7 +456,7 @@ export default function SetupPage() {
                 type="password"
                 value={trelloToken}
                 onChange={e => setTrelloToken(e.target.value)}
-                placeholder={trelloTokenMasked ? `Đã lưu (${trelloTokenMasked}) — nhập để thay` : 'Trello Token'}
+                placeholder={trelloTokenMasked ? `Đã lưu (${trelloTokenMasked}) — nhập để thay` : trelloHasToken ? 'Đã cấu hình — nhập để thay' : 'Trello Token'}
                 className="w-full border rounded-lg px-md py-sm text-body-sm"
               />
             </div>

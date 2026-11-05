@@ -133,9 +133,9 @@ export default function TrackingPage() {
 
   const loadPpConfig = useCallback(async () => {
     try {
-      const d = await fetchJson<{ configured: boolean; maskedKey: string | null }>('/api/fulfillment/tracking/parcelpanel-config')
+      const d = await fetchJson<{ configured: boolean; maskedKey?: string | null }>('/api/fulfillment/tracking/parcelpanel-config')
       setPpConfigured(d.configured)
-      setPpMasked(d.maskedKey)
+      setPpMasked(d.maskedKey ?? null)
     } catch { /* ignore */ }
   }, [])
 
@@ -207,7 +207,7 @@ export default function TrackingPage() {
       const body = await res.json()
       if (!res.ok) { setMessage(`Lỗi lưu key: ${body.error ?? res.statusText}`); return }
       setPpConfigured(body.configured)
-      setPpMasked(body.maskedKey)
+      setPpMasked(body.maskedKey ?? null)
       setPpKeyInput('')
       setMessage(body.configured ? 'Đã lưu ParcelPanel API key.' : 'Đã xóa ParcelPanel API key.')
     } catch (e: any) {
@@ -323,7 +323,7 @@ export default function TrackingPage() {
             <button
               onClick={resyncParcelPanel}
               disabled={ppSyncing}
-              title={ppConfigured ? `ParcelPanel: ${ppMasked}` : 'Chưa cấu hình ParcelPanel API key'}
+              title={ppConfigured ? `ParcelPanel: ${ppMasked ?? 'Đã cấu hình'}` : 'Chưa cấu hình ParcelPanel API key'}
               className="bg-secondary text-on-secondary px-lg py-sm rounded-lg text-label-md disabled:opacity-50 flex items-center gap-xs"
             >
               <span className={`material-symbols-outlined text-[18px] ${ppSyncing ? 'animate-spin' : ''}`}>{ppSyncing ? 'sync' : 'local_shipping'}</span>
@@ -346,7 +346,7 @@ export default function TrackingPage() {
               <span className="material-symbols-outlined text-[18px] text-on-surface-variant">key</span>
               <p className="text-label-md text-on-surface">ParcelPanel API key</p>
               <span className={`ml-auto text-label-sm ${ppConfigured ? 'text-emerald-700' : 'text-on-surface-variant'}`}>
-                {ppConfigured ? `Đã lưu · ${ppMasked}` : 'Chưa cấu hình'}
+                {ppConfigured ? (ppMasked ? `Đã lưu · ${ppMasked}` : 'Đã cấu hình') : 'Chưa cấu hình'}
               </span>
             </div>
             <div className="flex flex-col sm:flex-row gap-xs">

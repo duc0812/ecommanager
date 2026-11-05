@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { requireApiAccess, requireSuperadmin } from '@/lib/api-auth'
 import { sendTelegramMessage } from '@/lib/telegram'
 import { proxyDisplayName, proxySnapshotMessage, reconcileProxyStatuses, refreshProxyStatus, sendProxyRenewalAlerts } from '@/lib/proxy-maintenance'
 
@@ -15,6 +16,12 @@ function cleanHost(value: any) {
   return clean(value).toLowerCase()
 }
 
+// The password stays on the server: the page gets `hasPassword`, and only POST /api/tools/resources/reveal returns the value.
+function proxyView<T extends { password: string | null }>(proxy: T) {
+  const { password, ...rest } = proxy
+  return { ...rest, hasPassword: Boolean(password) }
+}
+
 async function findDuplicateProxy(host: string, port: string, excludeId?: string | null) {
   if (!host || !port) return null
   return prisma.resourceProxy.findFirst({
@@ -26,16 +33,23 @@ async function findDuplicateProxy(host: string, port: string, excludeId?: string
   })
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const auth = await requireApiAccess(req)
+  if ('error' in auth) return auth.error
   await Promise.all([reconcileProxyStatuses(), sendProxyRenewalAlerts()])
   const [proxies, accounts] = await Promise.all([
     prisma.resourceProxy.findMany({ include: { accounts: true }, orderBy: { createdAt: 'desc' } }),
     prisma.toolAccount.findMany({ include: { proxy: true }, orderBy: { createdAt: 'desc' } }),
   ])
-  return NextResponse.json({ proxies, accounts })
+  return NextResponse.json({
+    proxies: proxies.map(proxyView),
+    accounts: accounts.map(account => ({ ...account, proxy: account.proxy ? proxyView(account.proxy) : null })),
+  })
 }
 
 export async function POST(req: NextRequest) {
+  const auth = await requireSuperadmin(req)
+  if ('error' in auth) return auth.error
   const body = await req.json()
   if (body.kind === 'proxy') {
     const host = cleanHost(body.host)
@@ -61,7 +75,7 @@ export async function POST(req: NextRequest) {
       },
     })
     await refreshProxyStatus(proxy.id)
-    return NextResponse.json({ ok: true, proxy })
+    return NextResponse.json({ ok: true, proxy: proxyView(proxy) })
   }
 
   if (body.kind === 'account') {
@@ -84,6 +98,8 @@ export async function POST(req: NextRequest) {
 }
 
 export async function PATCH(req: NextRequest) {
+  const auth = await requireSuperadmin(req)
+  if ('error' in auth) return auth.error
   const body = await req.json()
   if (body.kind === 'proxy') {
     const host = cleanHost(body.host)
@@ -94,6 +110,7 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ error: `Proxy ${host}:${port} already exists` }, { status: 409 })
     }
     const old = await prisma.resourceProxy.findUnique({ where: { id: body.id }, include: { accounts: true } })
+    const password = clean(body.password)
     const proxy = await prisma.resourceProxy.update({
       where: { id: body.id },
       data: {
@@ -101,7 +118,7 @@ export async function PATCH(req: NextRequest) {
         host,
         port,
         username: clean(body.username) || null,
-        password: clean(body.password) || null,
+        ...(password ? { password } : {}),
         provider: clean(body.provider) || null,
         tags: csv(body.tags),
         status: body.status,
@@ -115,7 +132,7 @@ export async function PATCH(req: NextRequest) {
       await sendTelegramMessage(await proxySnapshotMessage({ type: 'cancel', name: proxyDisplayName(proxy) }))
     }
     await refreshProxyStatus(proxy.id)
-    return NextResponse.json({ ok: true, proxy })
+    return NextResponse.json({ ok: true, proxy: proxyView(proxy) })
   }
 
   if (body.kind === 'account') {
@@ -142,6 +159,8 @@ export async function PATCH(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
+  const auth = await requireSuperadmin(req)
+  if ('error' in auth) return auth.error
   const { kind, id } = await req.json()
   if (kind === 'account') {
     const old = await prisma.toolAccount.findUnique({ where: { id } })

@@ -110,7 +110,9 @@ export const API_ACCESS_RULES: ApiRule[] = [
   { prefix: '/api/stores', exact: true, methods: READ, access: 'ANY' },
   { prefix: '/api/suppliers', methods: READ, access: FULFILLMENT_READERS },
   { prefix: '/api/suppliers', methods: WRITE, access: ['fulfillment_suppliers'] },
-  { prefix: '/api/tools/resources', access: ['tools_resources'] },
+  { prefix: '/api/tools/resources/reveal', access: 'SUPERADMIN' },
+  { prefix: '/api/tools/resources', methods: READ, access: ['tools_resources'] },
+  { prefix: '/api/tools/resources', methods: WRITE, access: 'SUPERADMIN' },
   { prefix: '/api/cs/settings', methods: WRITE, access: 'SUPERADMIN' },
   { prefix: '/api/cs/notify', methods: WRITE, access: 'SUPERADMIN' },
   { prefix: '/api/cs/review', methods: WRITE, access: 'SUPERADMIN' },
@@ -129,10 +131,12 @@ export const API_ACCESS_RULES: ApiRule[] = [
 // A seller reaches only these routes. Each carries no store data, or filters it to the stores the seller is given.
 // /api/auth/status is left out on purpose: it names every store and its last error.
 // These open that one path and nothing below it, so a later /api/stores/<id>/settings stays closed to a seller until it is listed.
+// /api/suppliers is the shared supplier list the order pages filter by (read-only, see SELLER_READ_ONLY_PREFIXES); its sub-routes stay closed.
 export const SELLER_API_PATHS: string[] = [
   '/api/auth/me',
   '/api/auth/logout',
   '/api/stores',
+  '/api/suppliers',
   '/api/shopify/orders/sync',
   '/api/fulfillment/normalize',
 ]
@@ -176,7 +180,7 @@ export function sellerMayReach(pathname: string) {
     || SELLER_API_PREFIXES.some(prefix => underPrefix(pathname, prefix))
 }
 
-// Billing and the project figures are read-only for a seller: no sync, no import, no bill written or deleted, no month close.
+// Billing, the project figures and the supplier list are read-only for a seller: no sync, no import, no bill written or deleted, no month close, no supplier changed.
 // Under these prefixes a seller may use GET and HEAD only, whatever the rule table says (a feature it holds, or a route added below later).
 export const SELLER_READ_ONLY_PREFIXES: string[] = [
   '/api/meta/sync',
@@ -191,6 +195,7 @@ export const SELLER_READ_ONLY_PREFIXES: string[] = [
   '/api/shopify/payouts',
   '/api/shopify/db-payouts',
   '/api/projects',
+  '/api/suppliers',
 ]
 
 function sellerMayWrite(pathname: string, method: string) {

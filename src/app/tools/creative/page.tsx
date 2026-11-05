@@ -2,11 +2,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Sidebar from '@/components/Sidebar'
 import { RoleGate, useCurrentUser } from '@/components/RoleGate'
+import { secretStatusLabel } from '@/lib/secret-view'
 import { GenerateForm } from '@/components/creative/GenerateForm'
 import { JobCard } from '@/components/creative/JobCard'
 import { type Draft, type Job, type Provider, type RefImage, PROVIDER_LABEL, STATUS_LABEL } from '@/components/creative/types'
 
-type SettingsView = { hasKie: boolean; kieMasked: string | null; kieSource: 'creative' | 'cs' | 'env' | null; hasReplicate: boolean; replicateMasked: string | null }
+type SettingsView = { hasKie: boolean; kieMasked?: string | null; kieSource: 'creative' | 'cs' | 'env' | null; hasReplicate: boolean; replicateMasked?: string | null }
 const KIE_SOURCE_LABEL = { creative: 'key riêng của Creative', cs: 'key dùng chung từ Cài đặt CS', env: 'key trong .env của server' }
 
 const CHINA_MARKERS = ['qwen', 'bytedance', 'seedream', 'wan', 'hunyuan', 'tencent', 'kling', 'minimax', 'hailuo', 'vidu', 'zhipu', 'z-image', 'glm']
@@ -166,7 +167,7 @@ export default function CreativePage() {
               <div className="p-lg">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-lg">
                   <div>
-                    <p className="text-label-sm text-on-surface-variant">Kie API key {settings?.hasKie ? `· đang dùng ${settings.kieMasked}` : '· chưa có'}</p>
+                    <p className="text-label-sm text-on-surface-variant">Kie API key · {secretStatusLabel(Boolean(settings?.hasKie), settings?.kieMasked)}</p>
                     <div className="mt-xs flex gap-sm">
                       <input type="password" value={keyInputs.kieApiKey} onChange={e => setKeyInputs({ ...keyInputs, kieApiKey: e.target.value })} placeholder="Dán key từ kie.ai/api-key"
                         className="flex-1 rounded-lg border border-outline-variant/40 bg-surface px-md py-sm text-body-sm" />
@@ -179,7 +180,7 @@ export default function CreativePage() {
                     </p>
                   </div>
                   <div>
-                    <p className="text-label-sm text-on-surface-variant">Replicate token {settings?.hasReplicate ? `· đang dùng ${settings.replicateMasked}` : '· chưa có'}</p>
+                    <p className="text-label-sm text-on-surface-variant">Replicate token · {secretStatusLabel(Boolean(settings?.hasReplicate), settings?.replicateMasked)}</p>
                     <div className="mt-xs flex gap-sm">
                       <input type="password" value={keyInputs.replicateToken} onChange={e => setKeyInputs({ ...keyInputs, replicateToken: e.target.value })} placeholder="r8_… từ replicate.com/account/api-tokens"
                         className="flex-1 rounded-lg border border-outline-variant/40 bg-surface px-md py-sm text-body-sm" />

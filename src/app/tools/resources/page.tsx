@@ -1,16 +1,20 @@
 'use client'
 import { KeyboardEvent, useEffect, useState } from 'react'
 import Sidebar from '@/components/Sidebar'
-import { RoleGate } from '@/components/RoleGate'
+import { RoleGate, useCurrentUser } from '@/components/RoleGate'
 
-type Proxy = { id: string; name: string; host: string | null; port: string | null; username: string | null; password: string | null; provider: string | null; tags: string | null; purchaseDate: string | null; expireDate: string | null; status: string; note: string | null; accounts: Account[] }
+type Proxy = { id: string; name: string; host: string | null; port: string | null; username: string | null; hasPassword: boolean; provider: string | null; tags: string | null; purchaseDate: string | null; expireDate: string | null; status: string; note: string | null; accounts: Account[] }
 type Account = { id: string; email: string; accountCode: string; accountType: string; status: string; proxyId: string | null; tags: string | null; note: string | null; proxy?: Proxy | null }
-type TelegramStatus = { configured: boolean; botTokenMasked: string; chatId: string }
+type TelegramStatus = { configured: boolean; botTokenMasked?: string; chatId: string }
 
 const emptyProxyForm = { name: '', host: '', port: '', username: '', password: '', provider: '', tags: '', purchaseDate: '', status: 'CANCEL' }
 const emptyAccountForm = { email: '', accountCode: '', accountType: '', status: 'ACTIVE', proxyId: '', tags: '' }
 
 export default function ResourcesPage() {
+  const { user } = useCurrentUser()
+  const isSuper = user?.role === 'SUPERADMIN'
+  const [revealed, setRevealed] = useState<Record<string, string>>({})
+  const [copiedId, setCopiedId] = useState<string | null>(null)
   const [proxies, setProxies] = useState<Proxy[]>([])
   const [accounts, setAccounts] = useState<Account[]>([])
   const [proxyForm, setProxyForm] = useState(emptyProxyForm)
@@ -47,6 +51,7 @@ export default function ResourcesPage() {
     }
     setProxyForm(emptyProxyForm)
     setEditingProxyId(null)
+    setRevealed({})
     await load()
   }
 
@@ -89,12 +94,51 @@ export default function ResourcesPage() {
       host: proxy.host || '',
       port: proxy.port || '',
       username: proxy.username || '',
-      password: proxy.password || '',
+      password: '',
       provider: proxy.provider || '',
       tags: proxy.tags || '',
       purchaseDate: proxy.purchaseDate || '',
       status: proxy.status || 'CANCEL',
     })
+  }
+
+  async function fetchPassword(proxy: Proxy): Promise<string | null> {
+    if (!proxy.hasPassword) return ''
+    if (revealed[proxy.id] !== undefined) return revealed[proxy.id]
+    const res = await fetch('/api/tools/resources/reveal', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ proxyId: proxy.id }) })
+    const json = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      setFormMessage(json.error || 'Không lấy được mật khẩu proxy')
+      return null
+    }
+    return json.password ?? ''
+  }
+
+  async function toggleReveal(proxy: Proxy) {
+    if (revealed[proxy.id] !== undefined) {
+      setRevealed(prev => {
+        const next = { ...prev }
+        delete next[proxy.id]
+        return next
+      })
+      return
+    }
+    setFormMessage(null)
+    const password = await fetchPassword(proxy)
+    if (password !== null) setRevealed(prev => ({ ...prev, [proxy.id]: password }))
+  }
+
+  async function copyProxy(proxy: Proxy) {
+    setFormMessage(null)
+    const password = await fetchPassword(proxy)
+    if (password === null) return
+    try {
+      await navigator.clipboard.writeText(formatProxy(proxy, password))
+      setCopiedId(proxy.id)
+      setTimeout(() => setCopiedId(current => (current === proxy.id ? null : current)), 2000)
+    } catch {
+      setFormMessage('Không sao chép được, thử lại hoặc bấm Hiện mật khẩu.')
+    }
   }
 
   function editAccount(account: Account) {
@@ -163,7 +207,7 @@ export default function ResourcesPage() {
           <p className="mt-xs text-body-md text-on-surface-variant">Proxy and account registry with automatic proxy cancellation status.</p>
         </header>
 
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-xl">
+        {isSuper && <div className="grid grid-cols-1 xl:grid-cols-2 gap-xl">
           <section className="rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-lg">
             <h3 className="mb-md text-headline-sm text-primary">{editingProxyId ? 'Edit Proxy' : 'Add Proxy'}</h3>
             <div className="grid grid-cols-2 gap-md">
@@ -172,7 +216,7 @@ export default function ResourcesPage() {
               <Input label="Host" value={proxyForm.host} onChange={v => setProxyForm({ ...proxyForm, host: v })} />
               <Input label="Port" value={proxyForm.port} onChange={v => setProxyForm({ ...proxyForm, port: v })} />
               <Input label="Username" value={proxyForm.username} onChange={v => setProxyForm({ ...proxyForm, username: v })} />
-              <Input label="Password" value={proxyForm.password} onChange={v => setProxyForm({ ...proxyForm, password: v })} />
+              <Input label={editingProxyId ? 'Password (để trống là giữ nguyên)' : 'Password'} value={proxyForm.password} onChange={v => setProxyForm({ ...proxyForm, password: v })} />
               <TagInput label="Proxy tags" placeholder="Type tag, press Enter" value={proxyForm.tags} onChange={v => setProxyForm({ ...proxyForm, tags: v })} />
               <Input label="Start date" type="date" value={proxyForm.purchaseDate} onChange={v => setProxyForm({ ...proxyForm, purchaseDate: v })} />
             </div>
@@ -205,7 +249,7 @@ export default function ResourcesPage() {
               {editingAccountId && <button onClick={cancelAccountEdit} className="rounded-lg bg-surface-container px-lg py-sm text-label-md text-on-surface-variant hover:bg-surface-container-high">Cancel Edit</button>}
             </div>
           </section>
-        </div>
+        </div>}
 
         <section className="mt-xl rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-lg">
           <div className="mb-md flex items-center gap-sm">
@@ -215,12 +259,12 @@ export default function ResourcesPage() {
               {telegram?.configured ? 'Configured' : 'Not configured'}
             </span>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr_auto_auto] gap-md">
+          {isSuper && <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr_auto_auto] gap-md">
             <input
               type="password"
               value={telegramForm.botToken}
               onChange={e => setTelegramForm({ ...telegramForm, botToken: e.target.value })}
-              placeholder={telegram?.botTokenMasked || 'Bot token'}
+              placeholder={telegram?.botTokenMasked || (telegram?.configured ? 'Đã cấu hình — nhập để thay' : 'Bot token')}
               className="rounded-lg border border-outline-variant/30 bg-surface-container px-md py-sm outline-none"
             />
             <input
@@ -231,7 +275,7 @@ export default function ResourcesPage() {
             />
             <button onClick={saveTelegram} className="rounded-lg bg-secondary px-lg py-sm text-label-md text-on-secondary">Save</button>
             <button onClick={testTelegram} className="rounded-lg bg-surface-container px-lg py-sm text-label-md text-on-surface-variant hover:bg-surface-container-high">Test</button>
-          </div>
+          </div>}
           {telegramMessage && <p className="mt-sm text-body-sm text-on-surface-variant">{telegramMessage}</p>}
         </section>
 
@@ -244,21 +288,29 @@ export default function ResourcesPage() {
         <section className="mt-xl rounded-xl border border-outline-variant/20 bg-surface-container-lowest overflow-hidden">
           <div className="border-b border-outline-variant/20 px-lg py-md"><h3 className="text-headline-sm text-primary">Proxy Register</h3></div>
           <table className="w-full">
-            <thead><tr className="bg-surface-container-low/40 text-left">{['Proxy', 'Tags', 'Start Date', 'Accounts', 'Status', 'Action'].map(h => <th key={h} className="px-lg py-sm text-label-sm uppercase tracking-wider text-on-surface-variant">{h}</th>)}</tr></thead>
+            <thead><tr className="bg-surface-container-low/40 text-left">{['Proxy', 'Tags', 'Start Date', 'Accounts', 'Status', ...(isSuper ? ['Action'] : [])].map(h => <th key={h} className="px-lg py-sm text-label-sm uppercase tracking-wider text-on-surface-variant">{h}</th>)}</tr></thead>
             <tbody className="divide-y divide-outline-variant/10">
               {proxies.map(proxy => (
                 <tr key={proxy.id}>
-                  <td className="px-lg py-md"><p className="text-label-md text-primary">{proxy.name}</p><p className="text-label-sm text-on-surface-variant">{formatProxy(proxy)}</p></td>
+                  <td className="px-lg py-md"><p className="text-label-md text-primary">{proxy.name}</p><p className="text-label-sm text-on-surface-variant">{formatProxy(proxy, revealed[proxy.id])}</p></td>
                   <td className="px-lg py-md text-body-sm">{proxy.tags || '-'}</td>
                   <td className="px-lg py-md text-body-sm text-on-surface-variant">{proxy.purchaseDate || '-'}</td>
                   <td className="px-lg py-md text-body-sm">{proxy.accounts.filter(a => a.status === 'ACTIVE').length} active</td>
                   <td className="px-lg py-md"><Badge status={proxy.status} /></td>
-                  <td className="px-lg py-md">
+                  {isSuper && <td className="px-lg py-md">
                     <button onClick={() => editProxy(proxy)} className="mr-md text-secondary text-label-sm hover:underline">Edit</button>
-                    <button onClick={() => updateProxy(proxy.id, proxy.status === 'CANCEL' ? 'MAINTAIN' : 'CANCEL')} className="text-secondary text-label-sm hover:underline">
+                    <button onClick={() => updateProxy(proxy.id, proxy.status === 'CANCEL' ? 'MAINTAIN' : 'CANCEL')} className="mr-md text-secondary text-label-sm hover:underline">
                       {proxy.status === 'CANCEL' ? 'Maintain' : 'Cancel'}
                     </button>
-                  </td>
+                    {proxy.hasPassword && (
+                      <button onClick={() => toggleReveal(proxy)} className="mr-md text-secondary text-label-sm hover:underline">
+                        {revealed[proxy.id] !== undefined ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'}
+                      </button>
+                    )}
+                    <button onClick={() => copyProxy(proxy)} className="text-secondary text-label-sm hover:underline">
+                      {copiedId === proxy.id ? 'Đã sao chép' : 'Sao chép'}
+                    </button>
+                  </td>}
                 </tr>
               ))}
             </tbody>
@@ -268,7 +320,7 @@ export default function ResourcesPage() {
         <section className="mt-xl rounded-xl border border-outline-variant/20 bg-surface-container-lowest overflow-hidden">
           <div className="border-b border-outline-variant/20 px-lg py-md"><h3 className="text-headline-sm text-primary">Account Register</h3></div>
           <table className="w-full">
-            <thead><tr className="bg-surface-container-low/40 text-left">{['Email', 'Code', 'Type', 'Proxy', 'Status', 'Action'].map(h => <th key={h} className="px-lg py-sm text-label-sm uppercase tracking-wider text-on-surface-variant">{h}</th>)}</tr></thead>
+            <thead><tr className="bg-surface-container-low/40 text-left">{['Email', 'Code', 'Type', 'Proxy', 'Status', ...(isSuper ? ['Action'] : [])].map(h => <th key={h} className="px-lg py-sm text-label-sm uppercase tracking-wider text-on-surface-variant">{h}</th>)}</tr></thead>
             <tbody className="divide-y divide-outline-variant/10">
               {accounts.map(account => (
                 <tr key={account.id}>
@@ -277,12 +329,12 @@ export default function ResourcesPage() {
                   <td className="px-lg py-md text-body-sm">{account.accountType}</td>
                   <td className="px-lg py-md text-body-sm">{account.proxy?.name || '-'}</td>
                   <td className="px-lg py-md"><Badge status={account.status} /></td>
-                  <td className="px-lg py-md">
+                  {isSuper && <td className="px-lg py-md">
                     <button onClick={() => editAccount(account)} className="mr-md text-secondary text-label-sm hover:underline">Edit</button>
                     <button onClick={() => updateAccount(account.id, account.status === 'DIE' ? 'ACTIVE' : 'DIE')} className="text-secondary text-label-sm hover:underline">
                       {account.status === 'DIE' ? 'Restore' : 'Mark die'}
                     </button>
-                  </td>
+                  </td>}
                 </tr>
               ))}
             </tbody>
@@ -294,9 +346,10 @@ export default function ResourcesPage() {
   )
 }
 
-function formatProxy(proxy: Proxy) {
+function formatProxy(proxy: Proxy, password?: string) {
   const hostPort = [proxy.host, proxy.port].filter(Boolean).join(':') || '-'
-  const auth = proxy.username || proxy.password ? `${proxy.username || ''}:${proxy.password || ''}` : ''
+  const secret = password ?? (proxy.hasPassword ? '••••' : '')
+  const auth = proxy.username || secret ? `${proxy.username || ''}:${secret}` : ''
   return auth ? `${hostPort}:${auth}` : hostPort
 }
 
