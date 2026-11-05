@@ -61,13 +61,29 @@ describe('whole-order row checked against the order lines', () => {
       { id: 'FO', status: 'OPEN', lineItems: [{ id: 'A', remainingQuantity: 1, shopifyLineId: 'L1', sku: 'X' }, { id: 'B', remainingQuantity: 1, shopifyLineId: 'L2', sku: 'Y' }] },
     ] }]]))
   }
-  const run = () => runAutoFulfill({ shop: 's', accessToken: 't', storeId: 'st', minAgeDays: 5, apply: true, now: NOW, sheets: [{ ...SHEET, name: 'Mangoshao' }] })
+  const run = (name = 'Mangoshao', apply = true) => runAutoFulfill({ shop: 's', accessToken: 't', storeId: 'st', minAgeDays: 5, apply, now: NOW, sheets: [{ ...SHEET, name }] })
 
-  it('does not fulfill when the row comes from another supplier than a line', async () => {
+  it('ships only the sheet supplier\'s line, matching the sheet name to the supplier ignoring case', async () => {
     twoLines({ resolvedSupplierId: 'sj' })
-    const r = await run()
-    expect(createFulfillment).not.toHaveBeenCalled()
+    ;(createFulfillment as any).mockResolvedValue({ ok: true, fulfillmentId: 'F1' })
+    const r = await run(' MANGOSHAO ')
+    expect(createFulfillment).toHaveBeenCalledTimes(1)
+    expect((createFulfillment as any).mock.calls[0][2].lineItems).toEqual([{ id: 'A', quantity: 1 }])
     const row = r.rows.find(x => x.baseOrder === 'LIT1003')
+    expect(row?.status).toBe('will_fulfill')
+    expect(row?.skippedLines).toEqual([{ label: 'dòng 2 SKU-L2', supplier: 'Jomall', reason: 'dòng của xưởng khác, chưa có tracking' }])
+  })
+  it('lists the skipped line in Preview without sending anything', async () => {
+    twoLines({ resolvedSupplierId: 'sj' })
+    const row = (await run('Mangoshao', false)).rows.find(x => x.baseOrder === 'LIT1003')
+    expect(createFulfillment).not.toHaveBeenCalled()
+    expect(row?.fulfilledLines).toBe(1)
+    expect(row?.skippedLines?.map(l => l.reason)).toEqual(['dòng của xưởng khác, chưa có tracking'])
+  })
+  it('holds the order when the sheet name matches no supplier', async () => {
+    twoLines({ resolvedSupplierId: 'sj' })
+    const row = (await run('Kho cũ')).rows.find(x => x.baseOrder === 'LIT1003')
+    expect(createFulfillment).not.toHaveBeenCalled()
     expect(row?.status).toBe('needs_manual')
     expect(row?.message).toContain('xưởng Jomall')
   })

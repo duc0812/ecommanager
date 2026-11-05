@@ -5,7 +5,8 @@ import { splitNdjson } from '@/lib/tracking/ndjson-stream'
 
 type SheetConfig = { id: string; name: string; url: string; enabled: boolean; storeBase: string }
 type FulfillmentDetail = { tracking: string; lineKeys: string[]; lineCount: number; addOn?: boolean }
-type ResultRow = { baseOrder: string; status: string; trackings: string[]; fulfilledLines: number; message?: string; fulfillments?: FulfillmentDetail[] }
+type SkippedLine = { label: string; supplier: string; reason: string }
+type ResultRow = { baseOrder: string; status: string; trackings: string[]; fulfilledLines: number; message?: string; fulfillments?: FulfillmentDetail[]; skippedLines?: SkippedLine[] }
 
 const STATUS_LABEL: Record<string, string> = {
   will_fulfill: 'Sẽ fulfill', too_recent: 'Chưa đủ tuổi', already_fulfilled: 'Đã fulfill',
@@ -149,10 +150,20 @@ export default function AutoFulfillPage() {
             </tr></thead>
             <tbody>
               {visibleRows.flatMap((r, i) => {
+                // Lines a whole-order row left out because they belong to another supplier.
+                const skipped = (r.skippedLines ?? []).map((l, j) => (
+                  <tr key={`${r.baseOrder}-${i}-skip-${j}`} className="border-t border-outline-variant/20">
+                    <td className="px-md py-sm font-medium">#{r.baseOrder}</td>
+                    <td className="px-md py-sm font-mono text-label-sm">—</td>
+                    <td className="px-md py-sm">—</td>
+                    <td className="px-md py-sm">Bỏ qua</td>
+                    <td className="px-md py-sm text-label-sm text-on-surface-variant">{l.label} ({l.supplier}): {l.reason}</td>
+                  </tr>
+                ))
                 // Split orders create one fulfillment per distinct tracking — show each
                 // sub-order line on its own row so the line↔tracking pairing is visible.
                 if (r.fulfillments && r.fulfillments.length > 0) {
-                  return r.fulfillments.map((f, j) => (
+                  return [...r.fulfillments.map((f, j) => (
                     <tr key={`${r.baseOrder}-${i}-${j}`} className="border-t border-outline-variant/20">
                       <td className="px-md py-sm font-medium">
                         {f.lineKeys.length ? f.lineKeys.map(k => `#${k}`).join(', ') : `#${r.baseOrder}`}
@@ -165,7 +176,7 @@ export default function AutoFulfillPage() {
                       <td className="px-md py-sm">{STATUS_LABEL[r.status] ?? r.status}</td>
                       <td className="px-md py-sm text-label-sm text-on-surface-variant">{r.message ?? ''}</td>
                     </tr>
-                  ))
+                  )), ...skipped]
                 }
                 return [(
                   <tr key={`${r.baseOrder}-${i}`} className="border-t border-outline-variant/20">
@@ -175,7 +186,7 @@ export default function AutoFulfillPage() {
                     <td className="px-md py-sm">{STATUS_LABEL[r.status] ?? r.status}</td>
                     <td className="px-md py-sm text-label-sm text-on-surface-variant">{r.message ?? ''}</td>
                   </tr>
-                )]
+                ), ...skipped]
               })}
               {visibleRows.length === 0 && (
                 <tr><td colSpan={5} className="px-md py-lg text-center text-on-surface-variant">
