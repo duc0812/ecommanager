@@ -5,6 +5,7 @@ import { getShopifyConnection } from '@/lib/token-store'
 import { getSheets, getMinAgeDays } from './auto-fulfill-sheets'
 import { runAutoFulfill } from './auto-fulfill'
 import { syncPgprintsTracking } from '@/lib/repos/pgprints-push'
+import { syncBondreTracking } from '@/lib/repos/bondre-push'
 
 const TZ = 'Asia/Ho_Chi_Minh'
 
@@ -15,6 +16,12 @@ export async function runDailyAutoFulfill() {
     console.log(`[auto-fulfill] PGprints tracking sync: ${pg.found}/${pg.pushes} order(s) found, ${pg.shipments} shipment(s) updated${pg.skipped ? ` (${pg.skipped})` : ''}`)
   } catch (e: any) {
     console.error('[auto-fulfill] PGprints tracking sync failed:', e?.message ?? e)
+  }
+  try {
+    const bd = await syncBondreTracking()
+    console.log(`[auto-fulfill] Bondre tracking sync: ${bd.found}/${bd.pushes} order(s) found, ${bd.shipments} shipment(s) updated${bd.skipped ? ` (${bd.skipped})` : ''}`)
+  } catch (e: any) {
+    console.error('[auto-fulfill] Bondre tracking sync failed:', e?.message ?? e)
   }
   const conn = await getShopifyConnection()
   if (!conn) { console.log('[auto-fulfill] no Shopify connection; skipping'); return }

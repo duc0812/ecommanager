@@ -4,6 +4,7 @@ import { getShopifyConnection } from '@/lib/token-store'
 import { getSheets, getMinAgeDays } from '@/lib/fulfillment/auto-fulfill-sheets'
 import { runAutoFulfill } from '@/lib/fulfillment/auto-fulfill'
 import { syncPgprintsTracking } from '@/lib/repos/pgprints-push'
+import { syncBondreTracking } from '@/lib/repos/bondre-push'
 
 export async function POST(req: NextRequest) {
   const apply = req.nextUrl.searchParams.get('apply') === '1'
@@ -22,6 +23,8 @@ export async function POST(req: NextRequest) {
       try {
         const pg = await syncPgprintsTracking().catch((e: any) => ({ error: e?.message ?? String(e) }))
         send({ type: 'pgprints', ...pg })
+        const bd = await syncBondreTracking().catch((e: any) => ({ error: e?.message ?? String(e) }))
+        send({ type: 'bondre', ...bd })
         const result = await runAutoFulfill({
           shop: conn.shop, accessToken: conn.token, storeId: store.id,
           sheets, minAgeDays, apply,

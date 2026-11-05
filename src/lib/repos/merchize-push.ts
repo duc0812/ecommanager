@@ -5,24 +5,21 @@ import { artworkUrl } from '@/lib/design-studio'
 import { currentFiles, extraPrintParts, sameLabel } from '@/lib/task-files'
 import { logHandoffEvent, markPushExported } from '@/lib/repos/push-export'
 import { STATUS_LABELS, type PipelineStatus } from '@/lib/pipeline-status'
-import { retryOnBusy } from '@/lib/sqlite-busy'
-import { SHIPMENT_STATUS_FULFILLED, SHIPMENT_STATUS_PENDING } from '@/lib/tracking/build-shipments'
 import { countryCodeOf, resolveStateCode } from '@/lib/shipping-address'
 import { PublicUrlError, ensurePublicToken, isLineApproved, publicArtworkUrl, requirePublicBaseUrl } from '@/lib/public-artwork'
 import { expectedSize, printFileFit } from '@/lib/print-file-fit'
 import { PushError, hashPayload } from '@/lib/repos/pgprints-push'
 import {
+  CLOSED_FINANCIAL, CLOSED_PIPELINE, EXPORT_READY, UNKNOWN_RESULT_GRACE_MS, activeKeyFor, closeCancelledPush, httpsUrl, isActive, isUniqueViolation,
+  latestPush, reservePush, toPushViews, upsertLineTracking, viewOf, type PushRow,
+} from '@/lib/repos/supplier-push-core'
+import {
   MerchizeError, cancelOrder, createOrder, getOrderDetail, isMerchizeSupplier, merchizeCredentials, merchizePrintingMethod,
   pushToProduction, searchCatalog, serializeOrderPayload,
   type MerchizeCatalogVariant, type MerchizeCredentials, type MerchizePrintingMethod, type MerchizeOrderItem, type MerchizeOrderPayload,
 } from '@/lib/merchize'
-import type { PreviewFile, PreviewIssue, PreviewLine, PushPreview, PushStatus, PushView } from '@/lib/pgprints-shared'
+import type { PreviewFile, PreviewIssue, PreviewLine, PushPreview, PushView } from '@/lib/pgprints-shared'
 
-const ACTIVE_STATUSES: PushStatus[] = ['SENDING', 'CREATED']
-const CLOSED_PIPELINE = ['CANCELLED', 'REFUNDED']
-const CLOSED_FINANCIAL = ['REFUNDED', 'VOIDED']
-const EXPORT_READY = ['READY_TO_PRODUCTION', 'EXPORTED']
-const UNKNOWN_RESULT_GRACE_MS = 2 * 60_000
 const DUPLICATE_MESSAGE = 'Đơn này đã có một lần gửi Merchize đang hiệu lực — không gửi trùng'
 type DesignField = 'design_front' | 'design_back' | 'design_sleeve' | 'design_hood'
 // Specific sides first: "Artwork" alone (one-part templates) is the front, "Back Artwork" is not.
@@ -32,22 +29,6 @@ const SIDES: Array<{ field: DesignField; match: RegExp }> = [
   { field: 'design_hood', match: /hood|mũ/i },
   { field: 'design_front', match: /front|mặt trước|artwork/i },
 ]
-
-type PushRow = Awaited<ReturnType<typeof prisma.supplierOrderPush.findUniqueOrThrow>>
-
-const isActive = (status: string) => (ACTIVE_STATUSES as string[]).includes(status)
-const activeKeyFor = (orderId: string, supplierId: string) => `${orderId}::${supplierId}`
-
-function httpsUrl(v: string | null | undefined): string | null {
-  if (!v) return null
-  try { return new URL(v).protocol === 'https:' ? v : null } catch { return null }
-}
-
-function isUniqueViolation(e: any): boolean {
-  if (e?.code === 'P2002') return true
-  const msg = `${e?.message ?? ''} ${e?.cause?.message ?? ''}`
-  return msg.includes('UNIQUE constraint failed') || msg.includes('Unique constraint failed')
-}
 
 /**
  * The store default (DTF) unless the blank does not offer it: Gildan 18600US is DTG only. A catalog entry that lists no
@@ -83,18 +64,6 @@ export async function findMerchizeSupplier(): Promise<{ id: string; name: string
   const hits = all.filter(isMerchizeSupplier)
   const pick = hits.find(s => s.isActive) ?? hits[0]
   return pick ? { id: pick.id, name: pick.name, code: pick.code } : null
-}
-
-async function toPushViews(rows: PushRow[]): Promise<PushView[]> {
-  const userIds = Array.from(new Set(rows.map(r => r.pushedById).filter((x): x is string => !!x)))
-  const users = userIds.length ? await prisma.appUser.findMany({ where: { id: { in: userIds } }, select: { id: true, name: true } }) : []
-  const nameById = new Map(users.map(u => [u.id, u.name]))
-  return rows.map(r => ({
-    id: r.id, status: r.status as PushStatus, externalOrderId: r.externalOrderId, supplierOrderCode: r.supplierOrderCode,
-    remoteStatus: r.remoteStatus, totalCost: r.totalCost, shippingFee: r.shippingFee, handleFee: r.handleFee, error: r.error,
-    pushedAt: r.pushedAt.toISOString(), pushedByName: r.pushedById ? (nameById.get(r.pushedById) ?? null) : null,
-    cancelledAt: r.cancelledAt ? r.cancelledAt.toISOString() : null, lastSyncedAt: r.lastSyncedAt ? r.lastSyncedAt.toISOString() : null,
-  }))
 }
 
 export type BuiltMerchizePush = {
@@ -333,41 +302,6 @@ export async function buildMerchizePush(orderId: string): Promise<BuiltMerchizeP
   }
 }
 
-async function reservePush(input: { orderId: string; supplierId: string; externalOrderId: string; requestJson: string; userId: string | null }): Promise<{ id: string; pushedAt: Date }> {
-  const activeKey = activeKeyFor(input.orderId, input.supplierId)
-  const pushedAt = new Date()
-  try {
-    return await retryOnBusy(() => prisma.$transaction(async tx => {
-      const existing = await tx.supplierOrderPush.findMany({ where: { orderId: input.orderId, supplierId: input.supplierId } })
-      if (existing.some(p => isActive(p.status))) throw new PushError(DUPLICATE_MESSAGE, 409, 'DUPLICATE')
-      const fresh = {
-        status: 'SENDING', activeKey, requestJson: input.requestJson, responseJson: null, error: null,
-        supplierOrderCode: null, supplierInternalId: null, remoteStatus: null, totalCost: null, shippingFee: null, handleFee: null,
-        pushedById: input.userId, pushedAt, cancelledAt: null, lastSyncedAt: null, exportMarked: false, prevExportJson: null,
-      }
-      const failed = existing.find(p => p.status === 'FAILED' && p.externalOrderId === input.externalOrderId)
-      if (failed) {
-        const r = await tx.supplierOrderPush.updateMany({ where: { id: failed.id, status: 'FAILED' }, data: fresh })
-        if (r.count !== 1) throw new PushError(DUPLICATE_MESSAGE, 409, 'DUPLICATE')
-        return { id: failed.id, pushedAt }
-      }
-      const row = await tx.supplierOrderPush.create({
-        data: { orderId: input.orderId, supplierId: input.supplierId, externalOrderId: input.externalOrderId, ...fresh },
-      })
-      return { id: row.id, pushedAt }
-    }))
-  } catch (e: any) {
-    if (e instanceof PushError) throw e
-    if (isUniqueViolation(e)) throw new PushError(DUPLICATE_MESSAGE, 409, 'DUPLICATE')
-    throw e
-  }
-}
-
-async function viewOf(pushId: string): Promise<PushView> {
-  const row = await prisma.supplierOrderPush.findUniqueOrThrow({ where: { id: pushId } })
-  return (await toPushViews([row]))[0]
-}
-
 export async function pushMerchizeOrder(orderId: string, input: { payloadHash: string; userId: string | null }): Promise<{ push: PushView; exported: boolean }> {
   const creds = merchizeCredentials()
   if (!creds) throw new PushError('Server chưa có MERCHIZE_API_URL / MERCHIZE_API_TOKEN', 400, 'NO_CREDENTIALS')
@@ -384,7 +318,7 @@ export async function pushMerchizeOrder(orderId: string, input: { payloadHash: s
 
   const reserved = await reservePush({
     orderId, supplierId: built.supplierId, externalOrderId: built.externalOrderId, requestJson: built.rawBody, userId: input.userId,
-  })
+  }, DUPLICATE_MESSAGE)
 
   let created: Awaited<ReturnType<typeof createOrder>>
   try {
@@ -441,10 +375,6 @@ async function pushWhenImported(creds: MerchizeCredentials, externalNumber: stri
   }
 }
 
-async function latestPush(orderId: string, supplierId: string, statuses: PushStatus[]): Promise<PushRow | null> {
-  return prisma.supplierOrderPush.findFirst({ where: { orderId, supplierId, status: { in: statuses } }, orderBy: { createdAt: 'desc' } })
-}
-
 /** Merchize finds an order by the identifier it was sent under, and older pushes went under the shop domain. */
 async function identifierFor(orderId: string, push: { requestJson: string | null }): Promise<string> {
   try {
@@ -467,79 +397,14 @@ export async function cancelMerchizePush(orderId: string): Promise<{ push: PushV
   } catch (e: any) {
     throw new PushError(`Merchize không huỷ được đơn: ${e?.message ?? e}`, e instanceof MerchizeError && e.noResponse ? 504 : 502, 'CANCEL_FAILED')
   }
-  const r = await prisma.supplierOrderPush.updateMany({
-    where: { id: push.id, status: 'CREATED' },
-    data: { status: 'CANCELLED', activeKey: null, cancelledAt: new Date() },
-  })
-  let exportReverted = false
-  if (r.count === 1 && push.exportMarked) {
-    let prev: {
-      pipelineStatus?: string; exportedAt?: string | null; exportedToSupplierId?: string | null
-      supplierHandoffAt?: string | null; supplierHandoffMode?: string | null; supplierHandoffById?: string | null
-    } = {}
-    try { prev = JSON.parse(push.prevExportJson ?? '{}') } catch {}
-    const reverted = await prisma.order.updateMany({
-      where: { id: orderId, pipelineStatus: 'EXPORTED', exportedToSupplierId: push.supplierId, exportedAt: push.pushedAt },
-      data: {
-        pipelineStatus: prev.pipelineStatus ?? 'READY_TO_PRODUCTION',
-        exportedAt: prev.exportedAt ? new Date(prev.exportedAt) : null,
-        exportedToSupplierId: prev.exportedToSupplierId ?? null,
-        supplierHandoffAt: prev.supplierHandoffAt ? new Date(prev.supplierHandoffAt) : null,
-        supplierHandoffMode: prev.supplierHandoffAt ? (prev.supplierHandoffMode ?? null) : null,
-        supplierHandoffById: prev.supplierHandoffAt ? (prev.supplierHandoffById ?? null) : null,
-      },
-    })
-    const stillExported = reverted.count === 0 && (await prisma.order.count({ where: { id: orderId, pipelineStatus: 'EXPORTED' } })) > 0
-    const lines = stillExported ? { count: 0 } : await prisma.orderLine.updateMany({
-      where: { orderId, exportedToSupplierId: push.supplierId, exportedAt: push.pushedAt },
-      data: { exportedAt: null, exportedToSupplierId: null },
-    })
-    exportReverted = reverted.count === 1 || lines.count > 0
-    if (exportReverted) await logHandoffEvent(orderId, 'Huỷ đơn bên Merchize — đơn trở lại chờ chuyển xưởng', null)
-  }
+  const exportReverted = await closeCancelledPush(push, 'Huỷ đơn bên Merchize — đơn trở lại chờ chuyển xưởng')
   return { push: await viewOf(push.id), exportReverted }
 }
 
+/** Merchize ships the order as one package. */
 async function upsertTracking(push: PushRow, tracking: { number: string; company: string | null }[]): Promise<number> {
-  if (tracking.length === 0) return 0
-  const order = await prisma.order.findUnique({
-    where: { id: push.orderId },
-    select: {
-      id: true, projectId: true, shopifyOrderNumber: true,
-      lines: { orderBy: { linePosition: 'asc' }, select: { shopifyLineId: true, sku: true, productTitle: true, shopifyProductType: true, linePosition: true, resolvedSupplierId: true } },
-    },
-  })
-  if (!order) return 0
-  // Merchize ships the order as one package.
-  const productLines = order.lines.filter(l => !isNonProductLine(l))
-  const lineKeys = lineKeysOf(order.shopifyOrderNumber, order.lines)
   const t = tracking[0]
-  let touched = 0
-  for (const line of productLines) {
-    if (line.resolvedSupplierId !== push.supplierId) continue
-    const lineKey = lineKeys.get(line.shopifyLineId)!
-    const existing = await prisma.shipment.findUnique({ where: { orderId_lineKey: { orderId: order.id, lineKey } } })
-    if (!existing) {
-      await prisma.shipment.create({
-        data: {
-          orderId: order.id, projectId: order.projectId, lineKey, shopifyLineId: line.shopifyLineId, sku: line.sku, productTitle: line.productTitle,
-          supplierId: push.supplierId, trackingNumber: t.number, carrier: t.company, status: SHIPMENT_STATUS_FULFILLED,
-        },
-      })
-      touched++
-      continue
-    }
-    if (existing.shopifyFulfillmentId && existing.trackingNumber) continue
-    await prisma.shipment.update({
-      where: { id: existing.id },
-      data: {
-        trackingNumber: t.number, carrier: t.company ?? existing.carrier, supplierId: existing.supplierId ?? push.supplierId,
-        ...(existing.status === SHIPMENT_STATUS_PENDING ? { status: SHIPMENT_STATUS_FULFILLED } : {}),
-      },
-    })
-    touched++
-  }
-  return touched
+  return t ? upsertLineTracking(push, () => t) : 0
 }
 
 export async function refreshMerchizePush(orderId: string): Promise<{ push: PushView; found: boolean; shipments: number }> {

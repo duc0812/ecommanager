@@ -12,6 +12,7 @@ type Payload = {
   email?: string
   shipping_address?: Record<string, string>
   shipping_info?: Record<string, string>
+  packages?: Array<Record<string, any>>
   production_note?: string
 }
 
@@ -25,6 +26,10 @@ const SUPPLIERS: Record<SupplierApiKind, SupplierCopy> = {
   merchize: {
     name: 'Merchize', settingsHint: 'Server chưa có khoá API Merchize', credentialsHint: 'Server chưa có MERCHIZE_API_URL / MERCHIZE_API_TOKEN',
     methodLabel: 'Kiểu in', noMethod: 'không cần', chargeNote: 'Merchize đưa đơn vào sản xuất ngay và trừ tiền',
+  },
+  bondre: {
+    name: 'Bondre', settingsHint: 'Chưa lưu tài khoản Bondre ở Setup › Fulfill', credentialsHint: 'Chưa lưu tài khoản Bondre ở Setup › Fulfill',
+    methodLabel: 'Ship', noMethod: null, chargeNote: 'Bondre tạo đơn ngay, đơn ở trạng thái chưa thanh toán, trả tiền trên Bondre',
   },
 }
 
@@ -215,7 +220,11 @@ export default function PgprintsPushModal({ orderId, supplier = 'pgprints', onCl
 
   const payload = preview?.payload as Payload | null | undefined
   const shipInfo = payload?.shipping_info
-  const address = payload?.shipping_address ?? (shipInfo ? {
+  const pack = payload?.packages?.[0]
+  const address = payload?.shipping_address ?? (pack ? {
+    name: pack.recipientName, address1: pack.streetAddress, city: pack.city, province_code: pack.stateCode,
+    zip: pack.postcode, country: pack.countryCode, country_code: pack.countryCode, phone: pack.phoneNumber,
+  } as Record<string, string> : undefined) ?? (shipInfo ? {
     name: shipInfo.full_name, address1: shipInfo.address_1, address2: shipInfo.address_2, city: shipInfo.city, province_code: shipInfo.state,
     zip: shipInfo.postcode, country: shipInfo.country, country_code: shipInfo.country, phone: shipInfo.phone, email: shipInfo.email,
   } as Record<string, string> : undefined)
@@ -327,7 +336,7 @@ export default function PgprintsPushModal({ orderId, supplier = 'pgprints', onCl
                       <p>{[address.city, address.province_code || address.province, address.zip].filter(Boolean).join(', ')}</p>
                       <p>{address.country} ({address.country_code || '—'})</p>
                       <p className="text-on-surface-variant">{address.phone || 'không có số điện thoại'}</p>
-                      <p className="text-on-surface-variant">{email || 'không có email'}</p>
+                      {!pack && <p className="text-on-surface-variant">{email || 'không có email'}</p>}
                     </div>
                   ) : <p className="text-body-sm text-on-surface-variant">Chưa dựng được nội dung gửi — xem lỗi phía trên.</p>}
                 </section>

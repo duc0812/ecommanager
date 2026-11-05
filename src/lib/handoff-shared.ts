@@ -1,7 +1,9 @@
 import type { WorkspaceLine } from '@/lib/design-studio'
 
 export type HandoffMode = 'API' | 'CSV' | 'SHEET'
-export type SupplierApiKind = 'pgprints' | 'merchize'
+export type SupplierApiKind = 'pgprints' | 'merchize' | 'bondre'
+
+export const SUPPLIER_API_NAMES: Record<SupplierApiKind, string> = { pgprints: 'PGprints', merchize: 'Merchize', bondre: 'Bondre' }
 
 export type HandoffPush = { status: string; supplierOrderCode: string | null; externalOrderId: string }
 
@@ -10,11 +12,13 @@ export type HandoffState = {
   blocked: string | null
   mode: HandoffMode
   apiName: string | null
-  /** Which supplier's push window the order opens; an order with a Merchize line opens Merchize's. */
+  /** Which supplier's push window the order opens; an unsent Merchize line opens Merchize's, then an unsent Bondre line Bondre's. */
   apiKind?: SupplierApiKind
   /** A Merchize line has not been sent; it can only go by API. */
   merchizeOpen?: boolean
-  /** The order has Merchize lines, and another supplier's unsent lines that still wait for a CSV export. */
+  /** A Bondre line has not been sent and an account is saved; it goes by API, not CSV. */
+  bondreOpen?: boolean
+  /** The order has lines of an API supplier, and another supplier's unsent lines that still wait for a CSV export. */
   csvRemainder?: boolean
   /** A line of a supplier on the sheet channel has not been sent; it can only go through the hub. */
   sheetOpen?: boolean
@@ -100,7 +104,8 @@ export const HANDOFF_LABELS = {
   undo: 'Hoàn tác',
 } as const
 
-export function pushChipLabel(push: HandoffPush): string {
+export function pushChipLabel(push: HandoffPush, kind: SupplierApiKind = 'pgprints'): string {
   const code = push.supplierOrderCode ?? push.externalOrderId
-  return push.status === 'CREATED' ? `Đã gửi PGprints ${code}` : `Đang gửi PGprints ${code} — chưa rõ kết quả`
+  const name = SUPPLIER_API_NAMES[kind]
+  return push.status === 'CREATED' ? `Đã gửi ${name} ${code}` : `Đang gửi ${name} ${code} — chưa rõ kết quả`
 }

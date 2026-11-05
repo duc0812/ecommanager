@@ -2,7 +2,7 @@
 import { useRef, useState } from 'react'
 import type { HandoffState } from './types'
 import { postJson, requestJson } from './model'
-import { HANDOFF_LABELS } from '@/lib/handoff-shared'
+import { HANDOFF_LABELS, SUPPLIER_API_NAMES } from '@/lib/handoff-shared'
 import PgprintsPushModal from '@/components/PgprintsPushModal'
 import { Icon, Pill, btn, btnPrimary } from './ui'
 
@@ -36,7 +36,7 @@ export default function HandoffButton({ orderId, state, canHandoff, compact = fa
   }
 
   const supplier = state.apiKind ?? 'pgprints'
-  const supplierName = supplier === 'merchize' ? 'Merchize' : 'PGprints'
+  const supplierName = SUPPLIER_API_NAMES[supplier]
   const viewPush = (
     <button type="button" className={btn} onClick={() => setModal(true)}>
       <Icon name="open_in_new" className="text-[16px]" />{compact ? 'Xem đơn' : `Xem đơn ${supplierName}`}

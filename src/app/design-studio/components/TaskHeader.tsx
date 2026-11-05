@@ -222,7 +222,7 @@ export default function TaskHeader({ detail, qa, holdCount, refreshing, onRefres
             </Pill>
             {libraryWaiting && <Pill tone="brand" icon="inventory_2" size="md" title="Có sẵn trong thư viện NAS: bản in được gắn khi quét và xử lý đơn">Thư viện — chờ quét</Pill>}
             {task.unmapped && <Pill tone="bad" icon="account_tree" size="md" title="Dòng chưa có xưởng, cần map trước khi gửi">Chưa mapping</Pill>}
-            {detail.handoff?.push && <Pill tone="warn" icon="local_shipping" size="md">{pushChipLabel(detail.handoff.push)}</Pill>}
+            {detail.handoff?.push && <Pill tone="warn" icon="local_shipping" size="md">{pushChipLabel(detail.handoff.push, detail.handoff.apiKind)}</Pill>}
             {detail.handoff?.handedOff && (
               <Pill tone="ok" icon={detail.handoff.handedOff.mode === 'API' ? 'cloud_done' : 'inventory'} size="md">
                 {detail.handoff.handedOff.mode === 'API' ? 'Đã chuyển supplier qua API' : detail.handoff.handedOff.mode === 'SHEET' ? 'Đã ghi vào sheet xưởng' : 'Đã lưu chờ xuất CSV'}

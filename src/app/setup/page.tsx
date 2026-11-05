@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import Sidebar from '@/components/Sidebar'
 import GoogleDriveSetupCard from '@/components/GoogleDriveSetupCard'
 import GoogleSheetsSetupCard from '@/components/GoogleSheetsSetupCard'
+import BondreSetupCard from '@/components/BondreSetupCard'
 import { SetupBlockLinks, SetupBlockTabs } from '@/components/SetupBlockNav'
 import { SETUP_BLOCKS, blockFromSearch, type SetupBlock } from '@/lib/setup-blocks'
 
@@ -346,6 +347,7 @@ export default function SetupPage() {
         </div>
         )}
         {block === 'fulfill' && <GoogleSheetsSetupCard />}
+        {block === 'fulfill' && <BondreSetupCard />}
         {block === 'design' && <GoogleDriveSetupCard />}
         {/* Trello Config */}
         {block === 'design' && (
