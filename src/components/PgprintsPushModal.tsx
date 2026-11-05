@@ -13,6 +13,16 @@ type Payload = {
   shipping_address?: Record<string, string>
   shipping_info?: Record<string, string>
   packages?: Array<Record<string, any>>
+  firstName?: string
+  lastName?: string
+  shipping_phone?: string
+  shipping_address1?: string
+  shipping_address2?: string
+  shipping_city?: string
+  shipping_province_code?: string
+  shipping_zip?: string
+  shipping_country?: string
+  shipping_country_code?: string
   production_note?: string
 }
 
@@ -30,6 +40,10 @@ const SUPPLIERS: Record<SupplierApiKind, SupplierCopy> = {
   bondre: {
     name: 'Bondre', settingsHint: 'Chưa lưu tài khoản Bondre ở Setup › Fulfill', credentialsHint: 'Chưa lưu tài khoản Bondre ở Setup › Fulfill',
     methodLabel: 'Ship', noMethod: null, chargeNote: 'Bondre tạo đơn ngay, đơn ở trạng thái chưa thanh toán, trả tiền trên Bondre',
+  },
+  printway: {
+    name: 'Printway', settingsHint: 'Chưa lưu token Printway ở Setup › Fulfill', credentialsHint: 'Chưa lưu token Printway ở Setup › Fulfill',
+    methodLabel: 'Ship', noMethod: 'Printway tự chọn', chargeNote: 'Printway tạo đơn và trừ tiền ngay trong tài khoản Printway',
   },
 }
 
@@ -221,7 +235,11 @@ export default function PgprintsPushModal({ orderId, supplier = 'pgprints', onCl
   const payload = preview?.payload as Payload | null | undefined
   const shipInfo = payload?.shipping_info
   const pack = payload?.packages?.[0]
-  const address = payload?.shipping_address ?? (pack ? {
+  const flat = payload?.shipping_address1 ? {
+    name: `${payload.firstName ?? ''} ${payload.lastName ?? ''}`.trim(), address1: payload.shipping_address1, address2: payload.shipping_address2, city: payload.shipping_city,
+    province_code: payload.shipping_province_code, zip: payload.shipping_zip, country: payload.shipping_country, country_code: payload.shipping_country_code, phone: payload.shipping_phone,
+  } as Record<string, string> : undefined
+  const address = flat ?? payload?.shipping_address ?? (pack ? {
     name: pack.recipientName, address1: pack.streetAddress, city: pack.city, province_code: pack.stateCode,
     zip: pack.postcode, country: pack.countryCode, country_code: pack.countryCode, phone: pack.phoneNumber,
   } as Record<string, string> : undefined) ?? (shipInfo ? {
@@ -336,7 +354,7 @@ export default function PgprintsPushModal({ orderId, supplier = 'pgprints', onCl
                       <p>{[address.city, address.province_code || address.province, address.zip].filter(Boolean).join(', ')}</p>
                       <p>{address.country} ({address.country_code || '—'})</p>
                       <p className="text-on-surface-variant">{address.phone || 'không có số điện thoại'}</p>
-                      {!pack && <p className="text-on-surface-variant">{email || 'không có email'}</p>}
+                      {!pack && !flat && <p className="text-on-surface-variant">{email || 'không có email'}</p>}
                     </div>
                   ) : <p className="text-body-sm text-on-surface-variant">Chưa dựng được nội dung gửi — xem lỗi phía trên.</p>}
                 </section>

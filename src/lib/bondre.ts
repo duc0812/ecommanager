@@ -1,4 +1,5 @@
 import { assertSafeExternalUrl } from '@/lib/safe-url'
+import type { SkuOption } from '@/lib/supplier-sku-suggest'
 
 const BONDRE_BASE_URL = 'https://bondre.vip/api/open/v1'
 const BONDRE_HOST = 'bondre.vip'
@@ -50,7 +51,6 @@ export type BondreOrderPayload = {
   packages: BondreOrderPackage[]
 }
 
-export type BondreSku = { skuName: string; skuCode: string | null; productName: string | null }
 export type BondrePackage = { tracking: string | null; skuNames: string[]; status: string | null }
 
 export type BondreRemoteOrder = {
@@ -170,8 +170,8 @@ export async function getAccount(session: BondreSession): Promise<{ businessName
   }
 }
 
-export async function listAllSkus(session: BondreSession): Promise<BondreSku[]> {
-  const out: BondreSku[] = []
+export async function listAllSkus(session: BondreSession): Promise<SkuOption[]> {
+  const out: SkuOption[] = []
   for (let page = 1; page <= SKU_MAX_PAGES; page++) {
     const q = new URLSearchParams({ pageNum: String(page), pageSize: String(SKU_PAGE_SIZE) })
     const data = await call(session, 'GET', `/skus?${q}`)
@@ -263,33 +263,4 @@ export async function deletePreview(session: BondreSession, previewId: number): 
 export function packageForLine(skuName: string | null | undefined, packages: BondrePackage[]): BondrePackage | null {
   if (packages.length === 1) return packages[0]
   return (skuName ? packages.find(p => p.skuNames.includes(skuName)) : null) ?? null
-}
-
-function tokens(text: string | null | undefined): string[] {
-  return (text ?? '').toLowerCase()
-    .replace(/\binch(es)?\b/g, 'in')
-    .replace(/(\d)\s+(in|oz|cm|mm)\b/g, '$1$2')
-    .split(/[^a-z0-9.]+/)
-    .filter(Boolean)
-}
-
-const MIN_NAME_MATCH = 0.6
-
-/** A first guess for the "SKU API" of a tool SKU; null when nothing clearly wins, so a person picks instead. */
-export function suggestSku(product: { sku: string; productName: string | null; variant1Value: string | null }, skus: BondreSku[]): string | null {
-  const code = product.sku.trim().toLowerCase()
-  const exact = skus.find(s => s.skuCode?.toLowerCase() === code || s.skuName.toLowerCase() === code)
-  if (exact) return exact.skuName
-  const name = tokens(product.productName)
-  const size = tokens(product.variant1Value)
-  if (name.length === 0) return null
-  const scored = skus.flatMap(s => {
-    const have = new Set(tokens(`${s.skuName} ${s.productName ?? ''} ${s.skuCode ?? ''}`))
-    if (!size.every(t => have.has(t))) return []
-    const score = name.filter(t => have.has(t)).length / name.length
-    return score >= MIN_NAME_MATCH ? [{ skuName: s.skuName, score }] : []
-  })
-  const best = Math.max(0, ...scored.map(s => s.score))
-  const top = scored.filter(s => s.score === best)
-  return top.length === 1 ? top[0].skuName : null
 }

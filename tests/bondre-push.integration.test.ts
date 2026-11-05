@@ -626,6 +626,12 @@ describe('Bondre settings', () => {
     expect(await getBondreSettings()).toMatchObject({ password: 'pw-new', token: null })
   })
 
+  it('null removes the account, and the tab goes back to the CSV route', async () => {
+    expect((await put({ email: null, password: null })).status).toBe(200)
+    expect(await getBondreSettings()).toMatchObject({ email: null, password: null, token: null })
+    expect((await listHandoffTabs()).find(t => t.id === SUP)?.channel ?? 'CSV').toBe('CSV')
+  })
+
   it('the test call reads the Bondre account', async () => {
     const res = await postSettingsTest(await req(`${url}/test`, adminToken, post({})))
     expect(res.status).toBe(200)
@@ -643,7 +649,7 @@ describe('Bondre settings', () => {
     const res = await getSkuMap(await req('http://x/api/fulfillment/bondre/sku-map', adminToken))
     expect(res.status).toBe(200)
     const body = await res.json()
-    expect(body.bondreSkus.map((s: any) => s.skuName)).toEqual([API_SKU, 'Rug 36IN'])
+    expect(body.supplierSkus.map((s: any) => s.skuName)).toEqual([API_SKU, 'Rug 36IN'])
     expect(body.products.find((p: any) => p.sku === SKU)).toMatchObject({ apiSku: API_SKU, suggestion: API_SKU })
     expect(body.products.find((p: any) => p.sku === 'NOAPI')).toMatchObject({ apiSku: null, suggestion: null })
   })

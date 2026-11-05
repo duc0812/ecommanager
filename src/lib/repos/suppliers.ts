@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/db'
+import { suggestSku, type SkuOption } from '@/lib/supplier-sku-suggest'
 import type { SupplierInput } from '@/lib/pl-calculator'
 import type { SupplierProductCandidate } from '@/lib/auto-mapping'
 
@@ -304,4 +305,13 @@ export async function bulkUpsertProducts(
 
 export async function deleteProductMapping(id: string) {
   return prisma.supplierProduct.delete({ where: { id } })
+}
+
+/** A supplier's products for its SKU map, each with a first guess at its SKU in the supplier's own catalogue. */
+export async function productsWithSuggestions(supplierId: string, skus: SkuOption[]) {
+  const rows = await prisma.supplierProduct.findMany({
+    where: { supplierId }, orderBy: [{ productName: 'asc' }, { sku: 'asc' }],
+    select: { id: true, sku: true, productName: true, variant1Value: true, apiSku: true, apiShipClass: true },
+  })
+  return rows.map(p => ({ ...p, suggestion: suggestSku(p, skus) }))
 }

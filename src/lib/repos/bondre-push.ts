@@ -1,14 +1,11 @@
 import { prisma } from '@/lib/db'
-import { isNonProductLine, lineKeysOf } from '@/lib/order-lines'
 import { logHandoffEvent, markPushExported } from '@/lib/repos/push-export'
-import { STATUS_LABELS, type PipelineStatus } from '@/lib/pipeline-status'
 import { countryCodeOf, resolveStateCode } from '@/lib/shipping-address'
-import { PublicUrlError, isLineApproved, requirePublicBaseUrl } from '@/lib/public-artwork'
-import { exportedSupplierOf } from '@/lib/line-export'
+import { isLineApproved } from '@/lib/public-artwork'
 import { PushError, hashPayload } from '@/lib/repos/pgprints-push'
 import {
-  ACTIVE_STATUSES, CLOSED_FINANCIAL, CLOSED_PIPELINE, EXPORT_READY, UNKNOWN_RESULT_GRACE_MS, activeKeyFor, closeCancelledPush, collectLineFiles,
-  isActive, isUniqueViolation, latestPush, reservePush, toPushViews, upsertLineTracking, viewOf, type PushRow,
+  ACTIVE_STATUSES, CLOSED_PIPELINE, UNKNOWN_RESULT_GRACE_MS, activeKeyFor, checkOrderForPush, closeCancelledPush, collectLineFiles,
+  isActive, isUniqueViolation, latestPush, loadOrderForPush, reservePush, toPushViews, upsertLineTracking, viewOf, type PushRow,
 } from '@/lib/repos/supplier-push-core'
 import {
   BondreError, cancelOrder, createOrder, deletePreview, findOrder, findPendingPreview, isBondreSupplier, packageForLine, quoteOrder, shippingTypeOf,
@@ -49,15 +46,7 @@ function externalOrderIdFor(orderNo: string, pushes: PushRow[]): string {
 export type BuiltBondrePush = { preview: PushPreview; rawBody: string | null; externalOrderId: string; supplierId: string | null }
 
 export async function buildBondrePush(orderId: string, opts: { quote?: boolean } = {}): Promise<BuiltBondrePush | null> {
-  const order = await prisma.order.findUnique({
-    where: { id: orderId },
-    include: {
-      lines: { orderBy: { linePosition: 'asc' } },
-      store: { include: { project: { select: { name: true } } } },
-      designTasks: { select: { shopifyLineId: true, status: true } },
-      artworks: { where: { removedAt: null }, orderBy: { version: 'desc' } },
-    },
-  })
+  const order = await loadOrderForPush(orderId)
   if (!order) return null
 
   const settings = await getBondreSettings()
@@ -74,44 +63,8 @@ export async function buildBondrePush(orderId: string, opts: { quote?: boolean }
   const active = pushes.find(p => isActive(p.status)) ?? null
   const externalOrderId = externalOrderIdFor(orderNo, pushes)
 
-  if (!supplier) error('NO_SUPPLIER', 'Chưa có xưởng mã "bondre" trong danh sách xưởng')
   if (!hasAccount) error('NO_CREDENTIALS', NO_ACCOUNT_MESSAGE)
-  if (CLOSED_PIPELINE.includes(order.pipelineStatus) || CLOSED_FINANCIAL.includes((order.financialStatus ?? '').toUpperCase())) {
-    error('ORDER_CLOSED', 'Đơn đã huỷ hoặc đã hoàn tiền — không gửi sản xuất')
-  } else if (!EXPORT_READY.includes(order.pipelineStatus)) {
-    const label = STATUS_LABELS[order.pipelineStatus as PipelineStatus] ?? order.pipelineStatus
-    warning('PIPELINE_STATUS', `Đơn đang ở trạng thái "${label}" — gửi xong đơn sẽ không tự chuyển sang Exported`)
-  }
-  if ((order.financialStatus ?? '').toUpperCase() === 'PARTIALLY_REFUNDED') warning('PARTIAL_REFUND', 'Đơn đã hoàn tiền một phần — kiểm tra lại các dòng trước khi gửi')
-  if (active) error('ACTIVE_PUSH', `Đơn đã được gửi sang Bondre (mã ${active.supplierOrderCode ?? active.externalOrderId})`)
-  const taken = await prisma.supplierOrderPush.findUnique({ where: { externalOrderId }, select: { orderId: true, supplierId: true } })
-  if (taken && (taken.orderId !== orderId || taken.supplierId !== supplier?.id)) error('ORDER_ID_TAKEN', `Mã đơn ${externalOrderId} đã được dùng cho một lần gửi xưởng khác`)
-
-  let baseUrl: string | null = null
-  try {
-    baseUrl = requirePublicBaseUrl()
-  } catch (e: any) {
-    if (!(e instanceof PublicUrlError)) throw e
-    error('PUBLIC_URL', e.message)
-  }
-
-  const productLines = order.lines.filter(l => !isNonProductLine(l))
-  const lineKeys = lineKeysOf(order.shopifyOrderNumber, order.lines)
-  const keyOf = (l: { shopifyLineId: string }) => lineKeys.get(l.shopifyLineId) ?? l.shopifyLineId
-  if (productLines.length === 0) error('NO_LINES', 'Đơn không có dòng sản phẩm nào để gửi')
-  const unmapped = productLines.filter(l => !l.resolvedSupplierId)
-  const foreign = productLines.filter(l => l.resolvedSupplierId && l.resolvedSupplierId !== supplier?.id)
-  if (unmapped.length > 0) error('UNMAPPED_LINE', `Dòng ${unmapped.map(l => keyOf(l)).join(', ')} chưa map xưởng`)
-  if (supplier && foreign.length > 0) {
-    const others = await prisma.supplier.findMany({ where: { id: { in: foreign.map(l => l.resolvedSupplierId as string) } }, select: { name: true } })
-    warning('MIXED_SUPPLIER', `Chỉ gửi các dòng Bondre; dòng ${foreign.map(l => keyOf(l)).join(', ')} thuộc ${others.map(s => s.name).join(', ') || 'xưởng khác'} — xuất riêng cho xưởng đó`)
-  }
-  const pushLines = supplier ? productLines.filter(l => l.resolvedSupplierId === supplier.id) : []
-  // A line sent any other way is an order someone already holds; an API create would make a second one.
-  const sentElsewhere = active ? [] : pushLines.filter(l => !!exportedSupplierOf({ pipelineStatus: order.pipelineStatus, exportedAt: order.exportedAt, exportedToSupplierId: order.exportedToSupplierId, lines: order.lines }, l))
-  if (sentElsewhere.length > 0) {
-    error('ALREADY_EXPORTED', `Dòng ${sentElsewhere.map(l => keyOf(l)).join(', ')} đã xuất cho xưởng trước đó — gửi API nữa sẽ thành đơn trùng`)
-  }
+  const { baseUrl, pushLines, keyOf } = await checkOrderForPush(order, supplier, { name: NAME, active, externalOrderId }, { error, warning })
 
   const supplierSkus = Array.from(new Set(pushLines.map(l => l.resolvedSupplierSku).filter((x): x is string => !!x)))
   const products = supplier && supplierSkus.length

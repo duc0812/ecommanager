@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import {
-  BondreError, cancelOrder, createOrder, findOrder, getAccount, issueToken, isBondreSupplier, listAllSkus, packageForLine, quoteOrder, shippingTypeOf, suggestSku,
+  BondreError, cancelOrder, createOrder, findOrder, getAccount, issueToken, isBondreSupplier, listAllSkus, packageForLine, quoteOrder, shippingTypeOf,
   type BondreSession,
 } from '@/lib/bondre'
+import { suggestSku } from '@/lib/supplier-sku-suggest'
 
 const BASE = 'https://bondre.vip/api/open/v1'
 

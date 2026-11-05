@@ -1,17 +1,16 @@
 'use client'
 import { useCallback, useEffect, useState } from 'react'
 import { useCurrentUser } from '@/components/RoleGate'
+import { SupplierSkuMapTable } from '@/components/SupplierSkuMap'
 
 type View = { email: string | null; hasPassword: boolean; tokenExpiresAt: string | null }
-type BondreSku = { skuName: string; skuCode: string | null; productName: string | null }
-type Row = { id: string; sku: string; productName: string | null; variant1Value: string | null; apiSku: string | null; apiShipClass: string | null; suggestion: string | null }
 type Banner = { ok: boolean; text: string }
 
-const SHIP_OPTIONS = ['Fast', 'Express', 'USPS']
+const SHIP_OPTIONS = [{ value: '', label: 'Standard' }, ...['Fast', 'Express', 'USPS'].map(v => ({ value: v, label: v }))]
 const button = 'inline-flex items-center gap-xs rounded-lg px-md py-xs text-body-sm font-semibold disabled:opacity-40'
 const outline = `${button} border border-outline-variant/40 text-on-surface`
 
-async function send(url: string, method: 'POST' | 'PUT' | 'PATCH', body?: unknown): Promise<{ ok: boolean; error: string; data: any }> {
+async function send(url: string, method: 'POST' | 'PUT', body?: unknown): Promise<{ ok: boolean; error: string; data: any }> {
   try {
     const res = await fetch(url, {
       method, ...(body !== undefined ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {}),
@@ -34,8 +33,8 @@ export default function BondreSetupCard() {
   const [password, setPassword] = useState('')
   const [banner, setBanner] = useState<Banner | null>(null)
   const [busy, setBusy] = useState('')
-  const [rows, setRows] = useState<Row[] | null>(null)
-  const [skus, setSkus] = useState<BondreSku[]>([])
+  const [rows, setRows] = useState<any[] | null>(null)
+  const [skus, setSkus] = useState<any[]>([])
 
   const load = useCallback(async () => {
     const res = await fetch('/api/fulfillment/bondre/settings').catch(() => null)
@@ -76,26 +75,25 @@ export default function BondreSetupCard() {
     const data = await res?.json().catch(() => null)
     setBusy('')
     if (!res?.ok) { setBanner({ ok: false, text: data?.error ?? 'Không đọc được danh sách SKU của Bondre' }); return }
-    setSkus(data.bondreSkus)
+    setSkus(data.supplierSkus)
     setRows(data.products)
   }
 
-  async function patchRow(row: Row, patch: { apiSku?: string; apiShipClass?: string }) {
-    if (patch.apiSku && !skus.some(s => s.skuName === patch.apiSku)) {
-      setBanner({ ok: false, text: `Bondre không có SKU "${patch.apiSku}". Tên phải đúng từng ký tự, kể cả hoa thường.` })
-      return
-    }
-    setBusy(row.id)
+  async function remove() {
+    if (!window.confirm('Gỡ tài khoản Bondre? Đơn Bondre sẽ trở lại đường CSV.')) return
+    setBusy('remove')
     setBanner(null)
-    const r = await send(`/api/suppliers/products/${encodeURIComponent(row.id)}`, 'PATCH', patch)
+    const r = await send('/api/fulfillment/bondre/settings', 'PUT', { email: null, password: null })
     setBusy('')
     if (!r.ok) { setBanner({ ok: false, text: r.error }); return }
-    setRows(prev => prev?.map(x => x.id === row.id ? { ...x, apiSku: r.data.apiSku ?? null, apiShipClass: r.data.apiShipClass ?? null } : x) ?? null)
+    setView(r.data)
+    setEmail('')
+    setRows(null)
+    setBanner({ ok: true, text: 'Đã gỡ tài khoản Bondre.' })
   }
 
   if (loading || !isSuper) return null
   const connected = !!view?.email && !!view.hasPassword
-  const matched = rows?.filter(r => r.apiSku).length ?? 0
 
   return (
     <div className="bg-surface-container-lowest rounded-xl shadow-card border border-outline-variant/20 mb-lg">
@@ -127,49 +125,12 @@ export default function BondreSetupCard() {
           <button type="button" className={`${button} bg-secondary text-on-secondary`} disabled={!!busy || !email.trim()} onClick={save}>{busy === 'save' ? 'Đang lưu…' : 'Lưu'}</button>
           <button type="button" className={outline} disabled={!!busy || !connected} onClick={test}>{busy === 'test' ? 'Đang kiểm tra…' : 'Kiểm tra kết nối'}</button>
           <button type="button" className={outline} disabled={!!busy || !connected} onClick={loadSkus}>{busy === 'skus' ? 'Đang tải…' : 'Ghép SKU'}</button>
+          {connected && <button type="button" className={`${outline} ml-auto text-error`} disabled={!!busy} onClick={remove}>Gỡ tài khoản</button>}
         </div>
 
         {rows && (
-          <div className="border-t border-outline-variant/20 pt-md space-y-sm">
-            <p className="text-body-sm text-on-surface">Đã ghép <b>{matched}/{rows.length}</b> SKU. SKU chưa ghép thì đơn không gửi được. Ship để trống là Standard.</p>
-            <datalist id="bondre-skus">{skus.map(s => <option key={s.skuName} value={s.skuName}>{s.productName ?? ''}</option>)}</datalist>
-            <div className="overflow-x-auto">
-              <table className="w-full text-body-sm">
-                <thead>
-                  <tr className="text-left text-label-sm text-on-surface-variant">
-                    <th className="px-sm py-xs font-semibold">SKU trong tool</th>
-                    <th className="px-sm py-xs font-semibold">Sản phẩm</th>
-                    <th className="px-sm py-xs font-semibold">SKU của Bondre</th>
-                    <th className="px-sm py-xs font-semibold">Ship</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map(r => (
-                    <tr key={r.id} className="border-t border-outline-variant/20 align-top">
-                      <td className="px-sm py-xs font-mono text-xs">{r.sku}</td>
-                      <td className="px-sm py-xs">{r.productName ?? '—'}{r.variant1Value ? ` · ${r.variant1Value}` : ''}</td>
-                      <td className="px-sm py-xs">
-                        <input key={`${r.id}:${r.apiSku ?? ''}`} list="bondre-skus" defaultValue={r.apiSku ?? ''} placeholder="chưa ghép" aria-label={`SKU Bondre của ${r.sku}`}
-                          onBlur={e => { if (e.target.value.trim() !== (r.apiSku ?? '')) void patchRow(r, { apiSku: e.target.value.trim() }) }}
-                          className={`w-full min-w-[240px] border rounded px-xs py-[3px] font-mono text-xs ${r.apiSku ? '' : 'border-error/60'}`} />
-                        {!r.apiSku && r.suggestion && (
-                          <button type="button" className="mt-xs block text-label-sm text-secondary font-semibold text-left" disabled={!!busy} onClick={() => patchRow(r, { apiSku: r.suggestion! })}>
-                            Dùng gợi ý: {r.suggestion}
-                          </button>
-                        )}
-                      </td>
-                      <td className="px-sm py-xs">
-                        <select value={r.apiShipClass ?? ''} aria-label={`Ship của ${r.sku}`} disabled={!!busy} onChange={e => patchRow(r, { apiShipClass: e.target.value })} className="border rounded px-xs py-[3px] text-xs">
-                          <option value="">Standard</option>
-                          {SHIP_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
-                        </select>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
+          <SupplierSkuMapTable name="Bondre" rows={rows} skus={skus} shipOptions={SHIP_OPTIONS} shipHint="Ship để trống là Standard."
+            onRows={setRows} onError={text => setBanner({ ok: false, text })} />
         )}
       </div>
     </div>

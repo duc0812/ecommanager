@@ -6,7 +6,9 @@ import { currentFiles, extraPrintParts, sameLabel } from '@/lib/task-files'
 import { logHandoffEvent } from '@/lib/repos/push-export'
 import { retryOnBusy } from '@/lib/sqlite-busy'
 import { SHIPMENT_STATUS_FULFILLED, SHIPMENT_STATUS_PENDING } from '@/lib/tracking/build-shipments'
-import { ensurePublicToken, publicArtworkUrl } from '@/lib/public-artwork'
+import { PublicUrlError, ensurePublicToken, publicArtworkUrl, requirePublicBaseUrl } from '@/lib/public-artwork'
+import { STATUS_LABELS, type PipelineStatus } from '@/lib/pipeline-status'
+import { exportedSupplierOf } from '@/lib/line-export'
 import { expectedSize, printFileFit } from '@/lib/print-file-fit'
 import { PushError } from '@/lib/repos/pgprints-push'
 import type { DesignArtwork } from '@/generated/prisma/client'
@@ -121,6 +123,69 @@ export async function closeCancelledPush(push: PushRow, eventMessage: string): P
   const exportReverted = reverted.count === 1 || lines.count > 0
   if (exportReverted) await logHandoffEvent(orderId, eventMessage, null)
   return exportReverted
+}
+
+/** The order with everything a push reads. */
+export async function loadOrderForPush(orderId: string) {
+  return prisma.order.findUnique({
+    where: { id: orderId },
+    include: {
+      lines: { orderBy: { linePosition: 'asc' } },
+      store: { include: { project: { select: { name: true } } } },
+      designTasks: { select: { shopifyLineId: true, status: true } },
+      artworks: { where: { removedAt: null }, orderBy: { version: 'desc' } },
+    },
+  })
+}
+
+type OrderForPush = NonNullable<Awaited<ReturnType<typeof loadOrderForPush>>>
+
+/** What every API supplier refuses or warns about before looking at a single line, and the lines it would send. */
+export async function checkOrderForPush(
+  order: OrderForPush, supplier: { id: string } | null,
+  ctx: { name: string; active: { supplierOrderCode: string | null; externalOrderId: string } | null; externalOrderId: string },
+  report: { error: (code: string, message: string, refId?: string) => void; warning: (code: string, message: string, refId?: string) => void },
+) {
+  const { name, active, externalOrderId } = ctx
+  const { error, warning } = report
+  if (!supplier) error('NO_SUPPLIER', `Chưa có xưởng mã "${name.toLowerCase()}" trong danh sách xưởng`)
+  if (CLOSED_PIPELINE.includes(order.pipelineStatus) || CLOSED_FINANCIAL.includes((order.financialStatus ?? '').toUpperCase())) {
+    error('ORDER_CLOSED', 'Đơn đã huỷ hoặc đã hoàn tiền — không gửi sản xuất')
+  } else if (!EXPORT_READY.includes(order.pipelineStatus)) {
+    const label = STATUS_LABELS[order.pipelineStatus as PipelineStatus] ?? order.pipelineStatus
+    warning('PIPELINE_STATUS', `Đơn đang ở trạng thái "${label}" — gửi xong đơn sẽ không tự chuyển sang Exported`)
+  }
+  if ((order.financialStatus ?? '').toUpperCase() === 'PARTIALLY_REFUNDED') warning('PARTIAL_REFUND', 'Đơn đã hoàn tiền một phần — kiểm tra lại các dòng trước khi gửi')
+  if (active) error('ACTIVE_PUSH', `Đơn đã được gửi sang ${name} (mã ${active.supplierOrderCode ?? active.externalOrderId})`)
+  const taken = await prisma.supplierOrderPush.findUnique({ where: { externalOrderId }, select: { orderId: true, supplierId: true } })
+  if (taken && (taken.orderId !== order.id || taken.supplierId !== supplier?.id)) error('ORDER_ID_TAKEN', `Mã đơn ${externalOrderId} đã được dùng cho một lần gửi xưởng khác`)
+
+  let baseUrl: string | null = null
+  try {
+    baseUrl = requirePublicBaseUrl()
+  } catch (e: any) {
+    if (!(e instanceof PublicUrlError)) throw e
+    error('PUBLIC_URL', e.message)
+  }
+
+  const productLines = order.lines.filter(l => !isNonProductLine(l))
+  const lineKeys = lineKeysOf(order.shopifyOrderNumber, order.lines)
+  const keyOf = (l: { shopifyLineId: string }) => lineKeys.get(l.shopifyLineId) ?? l.shopifyLineId
+  if (productLines.length === 0) error('NO_LINES', 'Đơn không có dòng sản phẩm nào để gửi')
+  const unmapped = productLines.filter(l => !l.resolvedSupplierId)
+  const foreign = productLines.filter(l => l.resolvedSupplierId && l.resolvedSupplierId !== supplier?.id)
+  if (unmapped.length > 0) error('UNMAPPED_LINE', `Dòng ${unmapped.map(l => keyOf(l)).join(', ')} chưa map xưởng`)
+  if (supplier && foreign.length > 0) {
+    const others = await prisma.supplier.findMany({ where: { id: { in: foreign.map(l => l.resolvedSupplierId as string) } }, select: { name: true } })
+    warning('MIXED_SUPPLIER', `Chỉ gửi các dòng ${name}; dòng ${foreign.map(l => keyOf(l)).join(', ')} thuộc ${others.map(s => s.name).join(', ') || 'xưởng khác'} — xuất riêng cho xưởng đó`)
+  }
+  const pushLines = supplier ? productLines.filter(l => l.resolvedSupplierId === supplier.id) : []
+  // A line sent any other way is an order someone already holds; an API create would make a second one.
+  const sentElsewhere = active ? [] : pushLines.filter(l => !!exportedSupplierOf({ pipelineStatus: order.pipelineStatus, exportedAt: order.exportedAt, exportedToSupplierId: order.exportedToSupplierId, lines: order.lines }, l))
+  if (sentElsewhere.length > 0) {
+    error('ALREADY_EXPORTED', `Dòng ${sentElsewhere.map(l => keyOf(l)).join(', ')} đã xuất cho xưởng trước đó — gửi API nữa sẽ thành đơn trùng`)
+  }
+  return { baseUrl, pushLines, keyOf }
 }
 
 type TrackedLine = { shopifyLineId: string; resolvedSupplierId: string | null; resolvedSupplierSku: string | null }

@@ -1,9 +1,9 @@
 import type { WorkspaceLine } from '@/lib/design-studio'
 
 export type HandoffMode = 'API' | 'CSV' | 'SHEET'
-export type SupplierApiKind = 'pgprints' | 'merchize' | 'bondre'
+export type SupplierApiKind = 'pgprints' | 'merchize' | 'bondre' | 'printway'
 
-export const SUPPLIER_API_NAMES: Record<SupplierApiKind, string> = { pgprints: 'PGprints', merchize: 'Merchize', bondre: 'Bondre' }
+export const SUPPLIER_API_NAMES: Record<SupplierApiKind, string> = { pgprints: 'PGprints', merchize: 'Merchize', bondre: 'Bondre', printway: 'Printway' }
 
 export type HandoffPush = { status: string; supplierOrderCode: string | null; externalOrderId: string }
 
@@ -12,12 +12,12 @@ export type HandoffState = {
   blocked: string | null
   mode: HandoffMode
   apiName: string | null
-  /** Which supplier's push window the order opens; an unsent Merchize line opens Merchize's, then an unsent Bondre line Bondre's. */
+  /** Which supplier's push window the order opens; an unsent Merchize line opens Merchize's, then another API supplier's. */
   apiKind?: SupplierApiKind
   /** A Merchize line has not been sent; it can only go by API. */
   merchizeOpen?: boolean
-  /** A Bondre line has not been sent and an account is saved; it goes by API, not CSV. */
-  bondreOpen?: boolean
+  /** The API supplier with an unsent line and a saved key; those lines go by API, not CSV. */
+  apiOpenKind?: SupplierApiKind | null
   /** The order has lines of an API supplier, and another supplier's unsent lines that still wait for a CSV export. */
   csvRemainder?: boolean
   /** A line of a supplier on the sheet channel has not been sent; it can only go through the hub. */
