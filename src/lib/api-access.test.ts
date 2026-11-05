@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { canCallApi } from './api-access'
+import { SELLER_API_PREFIXES, canCallApi } from './api-access'
 import { DEFAULT_ROLE_PERMISSIONS } from './roles'
 
 describe('canCallApi', () => {
@@ -28,12 +28,8 @@ describe('canCallApi', () => {
     expect(canCallApi('SELLER', perms, '/api/fulfillment/auto-fulfill/run', 'POST')).toBe('forbidden')
   })
 
-  it('seller can use project APIs and the shared project list', () => {
-    const perms = DEFAULT_ROLE_PERMISSIONS.SELLER
-    expect(canCallApi('SELLER', perms, '/api/projects', 'GET')).toBe('ok')
-    expect(canCallApi('SELLER', perms, '/api/projects/analytics', 'GET')).toBe('ok')
-    expect(canCallApi('SELLER', perms, '/api/auto-sync', 'POST')).toBe('ok')
-    expect(canCallApi('SELLER', perms, '/api/projects', 'POST')).toBe('forbidden')
+  it('seller cannot create projects', () => {
+    expect(canCallApi('SELLER', DEFAULT_ROLE_PERMISSIONS.SELLER, '/api/projects', 'POST')).toBe('forbidden')
   })
 
   it('admin can read Meta accounts but not rewrite tokens', () => {
@@ -73,8 +69,8 @@ describe('homePathFor', () => {
   })
 
   it('supplier print templates: readers may list, only fulfillment_suppliers may write', () => {
-    expect(canCallApi('SELLER', ['design_tasks'], '/api/fulfillment/suppliers/s1/print-templates', 'GET')).toBe('ok')
-    expect(canCallApi('SELLER', ['design_tasks'], '/api/fulfillment/suppliers/s1/print-templates', 'POST')).toBe('forbidden')
+    expect(canCallApi('SUPPORT', ['design_tasks'], '/api/fulfillment/suppliers/s1/print-templates', 'GET')).toBe('ok')
+    expect(canCallApi('SUPPORT', ['design_tasks'], '/api/fulfillment/suppliers/s1/print-templates', 'POST')).toBe('forbidden')
     expect(canCallApi('ADMIN', ['fulfillment_suppliers'], '/api/fulfillment/suppliers/s1/products/print-template', 'PATCH')).toBe('ok')
     expect(canCallApi('ADMIN', [], '/api/fulfillment/suppliers/s1/print-templates', 'GET')).toBe('forbidden')
   })
@@ -110,7 +106,7 @@ describe('PGprints API access', () => {
     const path = `/api/fulfillment/${supplier}/orders/o1`
     expect(canCallApi('SUPPORT', ['fulfillment_orders'], `${path}/preview`, 'GET')).toBe('ok')
     expect(canCallApi('SUPPORT', ['fulfillment_export'], `${path}/preview`, 'GET')).toBe('ok')
-    expect(canCallApi('SELLER', ['design_tasks'], `${path}/preview`, 'GET')).toBe('forbidden')
+    expect(canCallApi('SUPPORT', ['design_tasks'], `${path}/preview`, 'GET')).toBe('forbidden')
     expect(canCallApi('SUPPORT', DEFAULT_ROLE_PERMISSIONS.SUPPORT, `${path}/push`, 'POST')).toBe('ok')
     expect(canCallApi('SUPPORT', ['fulfillment_export'], `${path}/push`, 'POST')).toBe('ok')
     expect(canCallApi('SUPPORT', ['fulfillment_orders', 'design_tasks'], `${path}/push`, 'POST')).toBe('forbidden')
@@ -129,8 +125,8 @@ describe('PGprints API access', () => {
     expect(canCallApi('ADMIN', perms, '/api/fulfillment/pgprints/settings/test', 'POST')).toBe('ok')
     expect(canCallApi('SUPPORT', DEFAULT_ROLE_PERMISSIONS.SUPPORT, '/api/fulfillment/pgprints/settings/test', 'POST')).toBe('forbidden')
     expect(canCallApi('SUPERADMIN', [], '/api/fulfillment/pgprints/settings', 'PUT')).toBe('ok')
-    expect(canCallApi('SELLER', ['fulfillment_suppliers'], '/api/fulfillment/pgprints/catalog', 'GET')).toBe('ok')
-    expect(canCallApi('SELLER', ['fulfillment_orders'], '/api/fulfillment/pgprints/catalog', 'GET')).toBe('forbidden')
+    expect(canCallApi('SUPPORT', ['fulfillment_suppliers'], '/api/fulfillment/pgprints/catalog', 'GET')).toBe('ok')
+    expect(canCallApi('SUPPORT', ['fulfillment_orders'], '/api/fulfillment/pgprints/catalog', 'GET')).toBe('forbidden')
   })
   it('creative tool routes follow the tools_creative permission; the token write is superadmin-only', () => {
     expect(canCallApi('ADMIN', ['tools_creative'], '/api/tools/creative/jobs', 'GET')).toBe('ok')
@@ -141,5 +137,79 @@ describe('PGprints API access', () => {
     expect(canCallApi('ADMIN', DEFAULT_ROLE_PERMISSIONS.ADMIN, '/api/tools/creative/jobs', 'GET')).toBe('ok')
     expect(canCallApi('SELLER', DEFAULT_ROLE_PERMISSIONS.SELLER, '/api/tools/creative/models', 'GET')).toBe('forbidden')
     expect(canCallApi('SUPERADMIN', [], '/api/tools/creative/settings', 'POST')).toBe('ok')
+  })
+})
+
+describe('seller API allow-list', () => {
+  it('lists only routes that carry no store data', () => {
+    expect(SELLER_API_PREFIXES).toEqual([
+      '/api/auth/me',
+      '/api/auth/logout',
+      '/api/spy',
+      '/api/tools/spy-idea',
+      '/api/tools/creative',
+      '/api/fulfillment/crawler',
+      '/api/stores',
+    ])
+  })
+
+  it('seller is denied a store-data route that is not in SELLER_API_PREFIXES even with the feature', () => {
+    expect(canCallApi('SELLER', ['overview'], '/api/overview', 'GET')).toBe('forbidden')
+    expect(canCallApi('SELLER', ['projects'], '/api/projects', 'GET')).toBe('forbidden')
+    expect(canCallApi('SELLER', ['projects'], '/api/projects/analytics', 'GET')).toBe('forbidden')
+    expect(canCallApi('SELLER', ['projects'], '/api/auto-sync', 'POST')).toBe('forbidden')
+    expect(canCallApi('SELLER', ['shopify'], '/api/shopify/db-payouts', 'GET')).toBe('forbidden')
+    expect(canCallApi('SELLER', ['fulfillment_orders'], '/api/fulfillment/orders', 'GET')).toBe('forbidden')
+    expect(canCallApi('SELLER', ['design_tasks'], '/api/design-studio/orders', 'GET')).toBe('forbidden')
+    expect(canCallApi('SELLER', ['fulfillment_tracking'], '/api/fulfillment/tracking', 'GET')).toBe('forbidden')
+    expect(canCallApi('SELLER', ['cs'], '/api/cs/tickets', 'GET')).toBe('forbidden')
+  })
+
+  it('seller is denied the store connection list, which names every store and its last error', () => {
+    expect(canCallApi('SELLER', ['shopify', 'setup_store'], '/api/auth/status', 'GET')).toBe('forbidden')
+  })
+
+  it('seller allowed on a listed route with the feature, and still needs the feature', () => {
+    expect(canCallApi('SELLER', ['tools_spy_idea'], '/api/spy/ads', 'GET')).toBe('ok')
+    expect(canCallApi('SELLER', ['tools_spy_idea'], '/api/tools/spy-idea', 'POST')).toBe('ok')
+    expect(canCallApi('SELLER', ['tools_creative'], '/api/tools/creative/jobs', 'POST')).toBe('ok')
+    expect(canCallApi('SELLER', ['fulfillment_crawler'], '/api/fulfillment/crawler', 'POST')).toBe('ok')
+    expect(canCallApi('SELLER', ['projects'], '/api/spy/ads', 'GET')).toBe('forbidden')
+    expect(canCallApi('SELLER', ['projects'], '/api/tools/creative/jobs', 'GET')).toBe('forbidden')
+    expect(canCallApi('SELLER', ['projects'], '/api/fulfillment/crawler', 'POST')).toBe('forbidden')
+  })
+
+  it('seller keeps its session routes and the store list, whatever its features', () => {
+    expect(canCallApi('SELLER', [], '/api/auth/me', 'GET')).toBe('ok')
+    expect(canCallApi('SELLER', [], '/api/auth/logout', 'POST')).toBe('ok')
+    expect(canCallApi('SELLER', [], '/api/stores', 'GET')).toBe('ok')
+    expect(canCallApi('SELLER', [], '/api/stores', 'POST')).toBe('forbidden')
+    expect(canCallApi('SELLER', [], '/api/stores/abc', 'GET')).toBe('forbidden')
+  })
+
+  it('a listed prefix matches whole path segments only', () => {
+    expect(canCallApi('SELLER', ['tools_spy_idea'], '/api/spying', 'GET')).toBe('forbidden')
+    expect(canCallApi('SELLER', [], '/api/auth/me-too', 'GET')).toBe('forbidden')
+    expect(canCallApi('SELLER', [], '/api/storesx', 'GET')).toBe('forbidden')
+  })
+
+  it('public routes stay reachable without a session', () => {
+    expect(canCallApi(null, [], '/api/auth/login', 'POST')).toBe('ok')
+    expect(canCallApi(null, [], '/api/auth/shopify/callback', 'GET')).toBe('ok')
+    expect(canCallApi(null, [], '/api/stores', 'GET')).toBe('unauthenticated')
+  })
+
+  it('admin, support and superadmin are unaffected', () => {
+    const admin = DEFAULT_ROLE_PERMISSIONS.ADMIN
+    expect(canCallApi('ADMIN', admin, '/api/overview', 'GET')).toBe('ok')
+    expect(canCallApi('ADMIN', admin, '/api/projects/analytics', 'GET')).toBe('ok')
+    expect(canCallApi('ADMIN', admin, '/api/design-studio/orders', 'GET')).toBe('ok')
+    expect(canCallApi('ADMIN', admin, '/api/stores', 'GET')).toBe('ok')
+    expect(canCallApi('ADMIN', ['shopify'], '/api/auth/status', 'GET')).toBe('ok')
+    const support = DEFAULT_ROLE_PERMISSIONS.SUPPORT
+    expect(canCallApi('SUPPORT', support, '/api/fulfillment/orders', 'GET')).toBe('ok')
+    expect(canCallApi('SUPPORT', support, '/api/cs/tickets', 'GET')).toBe('ok')
+    expect(canCallApi('SUPPORT', support, '/api/stores', 'GET')).toBe('ok')
+    expect(canCallApi('SUPERADMIN', [], '/api/overview', 'GET')).toBe('ok')
   })
 })

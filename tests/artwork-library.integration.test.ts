@@ -112,10 +112,10 @@ beforeAll(async () => {
   await prisma.artworkEntry.create({ data: { storeId, shopifyProductId: P1, printTemplateId: TPL_A, supplierId: SUP_A, title: 'ALIB Tumbler', status: 'READY' } })
   await prisma.artworkEntry.create({ data: { storeId, shopifyProductId: P1, printTemplateId: TPL_OLD, supplierId: SUP_A, title: 'ALIB Tumbler', status: 'NEEDS_REVIEW' } })
 
-  editorId = (await prisma.appUser.create({ data: { name: 'Lib Editor', email: 'editor@alib.test', role: 'SELLER', permissions: JSON.stringify(['design_tasks']) } })).id
-  const viewerId = (await prisma.appUser.create({ data: { name: 'Lib Viewer', email: 'viewer@alib.test', role: 'SELLER', permissions: JSON.stringify(['projects']) } })).id
-  editorToken = await signToken({ userId: editorId, email: 'editor@alib.test', name: 'Lib Editor', role: 'SELLER', permissions: ['design_tasks'], tv: 0 })
-  viewerToken = await signToken({ userId: viewerId, email: 'viewer@alib.test', name: 'Lib Viewer', role: 'SELLER', permissions: ['projects'], tv: 0 })
+  editorId = (await prisma.appUser.create({ data: { name: 'Lib Editor', email: 'editor@alib.test', role: 'SUPPORT', permissions: JSON.stringify(['design_tasks']) } })).id
+  const viewerId = (await prisma.appUser.create({ data: { name: 'Lib Viewer', email: 'viewer@alib.test', role: 'SUPPORT', permissions: JSON.stringify(['projects']) } })).id
+  editorToken = await signToken({ userId: editorId, email: 'editor@alib.test', name: 'Lib Editor', role: 'SUPPORT', permissions: ['design_tasks'], tv: 0 })
+  viewerToken = await signToken({ userId: viewerId, email: 'viewer@alib.test', name: 'Lib Viewer', role: 'SUPPORT', permissions: ['projects'], tv: 0 })
 })
 
 afterAll(async () => {

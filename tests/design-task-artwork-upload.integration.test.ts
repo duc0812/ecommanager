@@ -134,10 +134,10 @@ beforeAll(async () => {
     where: { email: 'designer@dtu.test' }, create: { name: 'Designer', email: 'designer@dtu.test', role: 'SUPPORT', permissions: '["design_tasks"]' }, update: {},
   })).id
   const outsiderId = (await prisma.appUser.upsert({
-    where: { email: 'outsider@dtu.test' }, create: { name: 'Outsider', email: 'outsider@dtu.test', role: 'SELLER', permissions: '["overview"]' }, update: {},
+    where: { email: 'outsider@dtu.test' }, create: { name: 'Outsider', email: 'outsider@dtu.test', role: 'SUPPORT', permissions: '["overview"]' }, update: {},
   })).id
   designerToken = await signToken({ userId: designerId, email: 'designer@dtu.test', name: 'Designer', role: 'SUPPORT', permissions: ['design_tasks'], tv: 0 })
-  outsiderToken = await signToken({ userId: outsiderId, email: 'outsider@dtu.test', name: 'Outsider', role: 'SELLER', permissions: ['overview'], tv: 0 })
+  outsiderToken = await signToken({ userId: outsiderId, email: 'outsider@dtu.test', name: 'Outsider', role: 'SUPPORT', permissions: ['overview'], tv: 0 })
 })
 
 beforeEach(async () => {

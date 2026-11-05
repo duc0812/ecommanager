@@ -107,6 +107,7 @@ export const API_ACCESS_RULES: ApiRule[] = [
   { prefix: '/api/spy', access: ['tools_spy_idea'] },
   { prefix: '/api/staff', methods: READ, access: ['setup_hr', 'projects'] },
   { prefix: '/api/staff', methods: WRITE, access: ['setup_hr'] },
+  { prefix: '/api/stores', exact: true, methods: READ, access: 'ANY' },
   { prefix: '/api/suppliers', methods: READ, access: FULFILLMENT_READERS },
   { prefix: '/api/suppliers', methods: WRITE, access: ['fulfillment_suppliers'] },
   { prefix: '/api/tools/resources', access: ['tools_resources'] },
@@ -124,6 +125,22 @@ export const API_ACCESS_RULES: ApiRule[] = [
   { prefix: '/api/trello', access: ['fulfillment_orders', 'overview'] },
   { prefix: '/api/users', access: 'SUPERADMIN' },
 ]
+
+// A seller reaches only these routes. Each carries no store data, or filters it to the stores the seller is given.
+// /api/auth/status is left out on purpose: it names every store and its last error.
+export const SELLER_API_PREFIXES: string[] = [
+  '/api/auth/me',
+  '/api/auth/logout',
+  '/api/spy',
+  '/api/tools/spy-idea',
+  '/api/tools/creative',
+  '/api/fulfillment/crawler',
+  '/api/stores',
+]
+
+function sellerMayReach(pathname: string) {
+  return SELLER_API_PREFIXES.some(prefix => pathname === prefix || pathname.startsWith(`${prefix}/`))
+}
 
 function matchRule(rule: ApiRule, pathname: string, method: string) {
   const pathOk = rule.exact ? pathname === rule.prefix : pathname === rule.prefix || pathname.startsWith(rule.prefix)
@@ -148,6 +165,7 @@ export function canCallApi(
   if (access === 'PUBLIC') return 'ok'
   if (!role) return 'unauthenticated'
   if (role === 'SUPERADMIN') return 'ok'
+  if (role === 'SELLER' && !sellerMayReach(pathname)) return 'forbidden'
   if (access === null || access === 'SUPERADMIN') return 'forbidden'
   if (access === 'ANY') return 'ok'
   if (access === 'ADMIN') return role === 'ADMIN' ? 'ok' : 'forbidden'
