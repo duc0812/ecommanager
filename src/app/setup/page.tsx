@@ -11,6 +11,11 @@ import { SETUP_BLOCKS, blockFromSearch, type SetupBlock } from '@/lib/setup-bloc
 type Status = { connected: boolean; shop?: string; connectedAt?: string }
 type ConnectedStore = { id: string; shop: string; projectName: string | null; enabled: boolean; connected: boolean; lastError: string | null; lastErrorAt: string | null }
 
+// Every store is listed; the ones switched off go last, each group in the order the API gave.
+function enabledFirst(list: ConnectedStore[]) {
+  return [...list].sort((a, b) => Number(b.enabled) - Number(a.enabled))
+}
+
 function fmtDate(iso: string) {
   return new Date(iso).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' })
 }
@@ -195,9 +200,14 @@ export default function SetupPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {stores.map(s => (
-                      <tr key={s.id} className="border-b border-outline-variant/10 hover:bg-surface-container-low/50 transition-colors">
-                        <td className="px-lg py-md text-label-md text-primary">{s.projectName ?? s.shop}</td>
+                    {enabledFirst(stores).map(s => (
+                      <tr key={s.id} className={`border-b border-outline-variant/10 hover:bg-surface-container-low/50 transition-colors ${s.enabled ? '' : 'opacity-60'}`}>
+                        <td className="px-lg py-md text-label-md text-primary">
+                          {s.projectName ?? s.shop}
+                          {!s.enabled && (
+                            <span className="ml-sm rounded-full bg-surface-container-high px-sm py-xs text-label-sm font-normal text-on-surface-variant">Đã tắt</span>
+                          )}
+                        </td>
                         <td className="px-lg py-md text-body-sm font-mono text-on-surface-variant">{s.shop}</td>
                         <td className="px-lg py-md">
                           <span className={`px-sm py-xs rounded-full text-label-sm ${s.connected ? 'bg-on-tertiary-container/15 text-on-tertiary-container' : 'bg-error-container text-on-error-container'}`}>

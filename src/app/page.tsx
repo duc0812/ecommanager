@@ -199,7 +199,7 @@ export default function OverviewPage() {
             <p className="text-body-sm flex-1">
               {data?.meta?.missingRateCount} Meta billing(s) missing an exchange rate — set rates in Setup → Meta Exchange Rate
             </p>
-            <a href="/setup/meta" className="text-label-sm font-semibold underline">Nhập tỷ giá</a>
+            {!readOnly && <a href="/setup/meta" className="text-label-sm font-semibold underline">Nhập tỷ giá</a>}
           </div>
         )}
 
@@ -307,13 +307,21 @@ export default function OverviewPage() {
                 <div className="flex items-center gap-sm px-lg py-md border-b border-outline-variant/20">
                   <span className="material-symbols-outlined text-secondary">storefront</span>
                   <h3 className="text-headline-sm text-primary">Theo store</h3>
-                  <span className="text-label-sm text-on-surface-variant">· {pm && !isAllTime ? pm.label : 'All time'}</span>
                 </div>
                 <table className="w-full">
                   <thead>
                     <tr className="border-b border-outline-variant/10 bg-surface-container-low">
-                      {['Store', 'Payout đã nhận', 'Số payout', 'Doanh thu đơn', 'Số đơn'].map(h => (
-                        <th key={h} className="text-left px-lg py-sm text-label-sm text-on-surface-variant">{h}</th>
+                      {[
+                        { label: 'Store', note: '' },
+                        { label: 'Payout đã nhận', note: 'tất cả thời gian' },
+                        { label: 'Số payout', note: 'tất cả thời gian' },
+                        { label: 'Doanh thu đơn', note: pm && !isAllTime ? pm.label : 'chọn một kỳ' },
+                        { label: 'Số đơn', note: pm && !isAllTime ? pm.label : 'chọn một kỳ' },
+                      ].map(h => (
+                        <th key={h.label} className="text-left px-lg py-sm text-label-sm text-on-surface-variant">
+                          {h.label}
+                          {h.note && <span className="block font-normal normal-case text-on-surface-variant/70">{h.note}</span>}
+                        </th>
                       ))}
                     </tr>
                   </thead>

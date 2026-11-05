@@ -96,6 +96,10 @@ function DesignTasks() {
   const [listError, setListError] = useState('')
   const [retrying, setRetrying] = useState(false)
   const [mode, setMode] = useState<Mode>('work')
+  // The hand-off and sent lists are not filtered by store, so the picker is drawn only on the two tabs it works on and the queue beside the
+  // hand-off list is not narrowed by a pick that cannot be seen there.
+  const storeFiltered = mode === 'work' || mode === 'review'
+  const listStoreId = storeFiltered ? storeFilter.storeId : null
   const [reviewVersion, setReviewVersion] = useState(0)
   const [sel, setSel] = useState<string | null>(paramTask)
   const [reviewSel, setReviewSel] = useState<string | null>(null)
@@ -133,7 +137,7 @@ function DesignTasks() {
     const qs = new URLSearchParams()
     if (mine) qs.set('mine', '1')
     if (debouncedQ) qs.set('q', debouncedQ)
-    if (storeFilter.storeId) qs.set('storeId', storeFilter.storeId)
+    if (listStoreId) qs.set('storeId', listStoreId)
     const query = qs.toString()
     const r = await requestJson<{ tasks: TaskRow[]; me: Me; handoffCount?: number; lastSync?: { ranAt: string; trigger: string; error: string | null } | null }>(`/api/design-studio/tasks${query ? `?${query}` : ''}`)
     if (id !== listReq.current) return
@@ -156,7 +160,7 @@ function DesignTasks() {
     setMe(r.data.me)
     setHandoffCount(r.data.handoffCount ?? 0)
     setLastSync(r.data.lastSync ?? null)
-  }, [mine, debouncedQ, storeFilter.storeId])
+  }, [mine, debouncedQ, listStoreId])
 
   const loadDetail = useCallback(async (key: string) => {
     const id = ++detailReq.current
@@ -309,7 +313,7 @@ function DesignTasks() {
             )
           })}
         </div>
-        <StoreFilter filter={storeFilter} />
+        {storeFiltered && <StoreFilter filter={storeFilter} />}
         <button type="button" onClick={sync} disabled={syncing} aria-label="Đồng bộ task từ Shopify" title={syncTip}
           className={`ml-auto inline-grid place-items-center w-10 h-10 rounded-lg border bg-surface-container-lowest hover:bg-surface-container-low disabled:opacity-60 ${lastSync?.error ? 'border-error text-error' : 'border-outline-variant text-on-surface-variant'}`}>
           <Icon name="sync" className={`text-[20px] ${syncing ? 'animate-spin' : ''}`} />

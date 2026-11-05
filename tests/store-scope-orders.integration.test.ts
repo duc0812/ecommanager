@@ -463,6 +463,18 @@ describe('Design Studio lists', () => {
     expect(none.body).toMatchObject({ tasks: [], handoffCount: 0 })
   })
 
+  it('the tab count of the hand-off lists does not follow the store picked for the task queue, because those lists are not filtered by it', async () => {
+    const all = await call(await dsTasks(fx.request('/api/design-studio/tasks', 'admin')))
+    expect(all.body.handoffCount).toBe(await countPendingHandoff({ storeIds: null }))
+    const narrowed = await call(await dsTasks(fx.request(`/api/design-studio/tasks?storeId=${SA}`, 'admin')))
+    expect(narrowed.body.handoffCount).toBe(all.body.handoffCount)
+    expect(keys(narrowed.body.tasks)).toEqual([1, 2, 4].map(n => fx.taskKey('a', n)).sort())
+    const both = await call(await dsTasks(fx.request('/api/design-studio/tasks', 'sellerAB')))
+    const picked = await call(await dsTasks(fx.request(`/api/design-studio/tasks?storeId=${SA}`, 'sellerAB')))
+    expect(picked.body.handoffCount).toBe(both.body.handoffCount)
+    expect(picked.body.handoffCount).toBe(await countPendingHandoff({ storeIds: [SA, SB] }))
+  })
+
   it('admin and support see the tasks of both stores in one queue, each with its store name', async () => {
     for (const who of ['admin', 'support'] as const) {
       const queue = await call(await dsTasks(fx.request('/api/design-studio/tasks?q=SOC', who)))

@@ -351,9 +351,12 @@ export default function MetaBillingPage() {
               <div>
                 <p className="text-label-md font-semibold">Chưa thể quy đổi đầy đủ sang USD</p>
                 <p className="mt-xs text-body-sm">
-                  Hãy nhập tỷ giá cho {data?.missingExchangeRateAccounts.map(account => account.accountName || account.accountId).join(', ')} tại phần Setup Meta. Các giao dịch này chưa được cộng vào tổng USD.
+                  {readOnly
+                    ? `Chưa có tỷ giá cho ${data?.missingExchangeRateAccounts.map(account => account.accountName || account.accountId).join(', ')}. `
+                    : `Hãy nhập tỷ giá cho ${data?.missingExchangeRateAccounts.map(account => account.accountName || account.accountId).join(', ')} tại phần Setup Meta. `}
+                  Các giao dịch này chưa được cộng vào tổng USD.
                 </p>
-                <a href="/setup/meta" className="mt-sm inline-flex text-label-sm font-semibold underline">Mở Setup Meta</a>
+                {!readOnly && <a href="/setup/meta" className="mt-sm inline-flex text-label-sm font-semibold underline">Mở Setup Meta</a>}
               </div>
             </div>
           </div>

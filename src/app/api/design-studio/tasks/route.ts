@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { requireScope } from '@/lib/order-scope'
+import { storeScopeFor } from '@/lib/store-scope'
 import { listTasks, viewerFor, TASK_STATUSES, type TaskStatus, type Readiness } from '@/lib/design-tasks'
 import { getDesignSettings } from '@/lib/design-settings'
 import { countPendingHandoff } from '@/lib/supplier-handoff'
@@ -72,6 +73,10 @@ export async function GET(req: NextRequest) {
     tasks = await listTasks({ taskKeys: matching.map(m => m.taskKey), q, storeIds })
   }
 
-  const [settings, handoffCount, lastSync] = await Promise.all([getDesignSettings(), countPendingHandoff({ storeIds }), getLastDesignTaskSync({ hideError: limited })])
+  // The hand-off lists are not filtered by ?storeId, so the count on their tab is not either: it covers every store the caller has.
+  const callerScope = await storeScopeFor(user)
+  const [settings, handoffCount, lastSync] = await Promise.all([
+    getDesignSettings(), countPendingHandoff({ storeIds: callerScope.all ? null : callerScope.storeIds }), getLastDesignTaskSync({ hideError: limited }),
+  ])
   return NextResponse.json({ tasks, me: viewerFor(user, settings), handoffCount, lastSync })
 }

@@ -137,7 +137,7 @@ export async function GET(req: NextRequest) {
     const stores = await prisma.shopifyStore.findMany({
       where: scope.storeIds ? { id: { in: scope.storeIds } } : {},
       orderBy: { connectedAt: 'asc' },
-      select: { id: true, shop: true, ianaTimezone: true, payoutStartDate: true, projectId: true, currentBalanceCurrency: true, project: { select: { name: true } } },
+      select: { id: true, shop: true, ianaTimezone: true, payoutStartDate: true, projectId: true, currentBalanceCurrency: true, enabled: true, project: { select: { name: true } } },
     })
     const groups = zoneGroups(stores, scope)
     const allProjectIds = stores.flatMap(s => (s.projectId ? [s.projectId] : []))
@@ -346,7 +346,9 @@ export async function GET(req: NextRequest) {
 
     // Payout and order amounts are in the currency of their store and are added as they are, so the totals above are
     // only one number when `currencies` has one entry; storeTotals gives each store's own figure and currency.
-    const storeTotals = stores.map(store => {
+    // A store that is switched off is listed only when it has payouts or period orders in this result; the totals above count it either way.
+    const listed = stores.filter(store => store.enabled || payouts.some(p => p.storeId === store.id) || (periodOrdersByStore?.get(store.id)?.count ?? 0) > 0)
+    const storeTotals = listed.map(store => {
       const mine = payouts.filter(p => p.storeId === store.id)
       const period = periodOrdersByStore?.get(store.id)
       const currencies = Array.from(new Set([...mine.map(p => p.currency), ...Array.from(period?.currencies ?? [])])).sort()
@@ -368,7 +370,7 @@ export async function GET(req: NextRequest) {
       netCashflow: totalRevenue - totalSpend,
       periodMetrics,
       chartData,
-      stores: stores.map(s => s.project?.name ?? s.shop),
+      stores: listed.map(s => s.project?.name ?? s.shop),
       storeTotals,
       currencies: Array.from(new Set(storeTotals.flatMap(t => t.currencies))).sort(),
     })

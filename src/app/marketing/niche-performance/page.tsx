@@ -126,11 +126,13 @@ export default function NichePerformancePage() {
                   {syncing ? 'Syncing…' : 'Sync campaign'}
                 </button>
               )}
-              <button onClick={() => setShowManager(true)}
-                className="bg-secondary text-on-secondary px-lg py-sm rounded-lg text-label-md flex items-center gap-xs">
-                <span className="material-symbols-outlined text-[18px]">tune</span>
-                Quản lý niche
-              </button>
+              {!readOnly && (
+                <button onClick={() => setShowManager(true)}
+                  className="bg-secondary text-on-secondary px-lg py-sm rounded-lg text-label-md flex items-center gap-xs">
+                  <span className="material-symbols-outlined text-[18px]">tune</span>
+                  Quản lý niche
+                </button>
+              )}
             </div>
           </div>
 
@@ -166,7 +168,7 @@ export default function NichePerformancePage() {
             <div className="mb-lg rounded-xl border border-amber-300 bg-amber-50 px-lg py-md text-body-sm text-amber-900 flex items-center gap-sm">
               <span className="material-symbols-outlined text-[18px]">warning</span>
               Thiếu tỷ giá cho {data.missingExchangeRateAccounts.map(a => `${a.accountName ?? a.accountId} (${a.currency})`).join(', ')} — spend các account này đang tính 0.
-              <a href="/setup/meta-rates" className="underline ml-auto">Cập nhật tỷ giá</a>
+              {!readOnly && <a href="/setup/meta-rates" className="underline ml-auto">Cập nhật tỷ giá</a>}
             </div>
           )}
 
@@ -224,7 +226,7 @@ export default function NichePerformancePage() {
                       )}
                       {data.niches.length === 0 && !showUnassigned && (
                         <tr><td colSpan={7} className="px-lg py-xl text-center text-on-surface-variant">
-                          {readOnly ? 'Chưa có niche. Bấm "Quản lý niche" để thêm.' : 'Chưa có niche. Bấm "Quản lý niche" để thêm, rồi "Sync campaign" để lấy dữ liệu.'}
+                          {readOnly ? 'Chưa có niche.' : 'Chưa có niche. Bấm "Quản lý niche" để thêm, rồi "Sync campaign" để lấy dữ liệu.'}
                         </td></tr>
                       )}
                     </tbody>
@@ -236,7 +238,7 @@ export default function NichePerformancePage() {
         </main>
       </div>
 
-      <NicheManagerPanel open={showManager} onClose={() => setShowManager(false)} onChanged={load} />
+      {!readOnly && <NicheManagerPanel open={showManager} onClose={() => setShowManager(false)} onChanged={load} />}
     </RoleGate>
   )
 }

@@ -231,6 +231,38 @@ describe('/api/overview', () => {
     expect(body.periodMetrics.adSpend - base.adSpend).toBeCloseTo(150, 2)
   })
 
+  it('leaves a disabled store out of stores and storeTotals unless it has data in the result, and never changes the totals', async () => {
+    const quiet = `${P}-off-quiet.myshopify.com`
+    const busy = `${P}-off-busy.myshopify.com`
+    await prisma.shopifyStore.create({ data: { id: `${P}-off-quiet`, shop: quiet, enabled: false } })
+    await prisma.shopifyStore.create({ data: { id: `${P}-off-busy`, shop: busy, enabled: false } })
+    await prisma.payout.create({ data: {
+      id: 9_500_901, storeId: `${P}-off-busy`, status: 'paid', date: '2026-10-10', currency: 'USD', amount: 7.5, chargesFeeAmount: 0, chargesGrossAmount: 7.5,
+      refundsFeeAmount: 0, refundsGrossAmount: 0, adjustmentsFeeAmount: 0, adjustmentsGrossAmount: 0, fetchedAt: new Date('2026-10-06T00:00:00Z'),
+    } })
+    try {
+      const all = await call(await overview(request('/api/overview?period=all', 'admin')))
+      expect(all.body.stores).toEqual(expect.arrayContaining([NAME_A, NAME_B, NAME_C, busy]))
+      expect(all.body.stores).not.toContain(quiet)
+      const totalIds = all.body.storeTotals.map((t: { storeId: string }) => t.storeId)
+      expect(totalIds).toContain(`${P}-off-busy`)
+      expect(totalIds).not.toContain(`${P}-off-quiet`)
+      const busyTotal = all.body.storeTotals.find((t: { storeId: string }) => t.storeId === `${P}-off-busy`)
+      expect(busyTotal).toMatchObject({ name: busy, currency: 'USD', payouts: { total: 7.5, count: 1 } })
+      expect(all.body.shopify.totalRevenue - baseline.shopify.totalRevenue).toBeCloseTo(3041.25 + 7.5, 2)
+      expect(all.body.shopify.payoutCount - baseline.shopify.payoutCount).toBe(4)
+
+      const custom = await call(await overview(request('/api/overview?period=custom&date=2026-10-05', 'admin')))
+      expect(custom.body.stores).not.toContain(quiet)
+      expect(custom.body.stores).toContain(busy)
+      expect(custom.body.storeTotals.map((t: { storeId: string }) => t.storeId)).not.toContain(`${P}-off-quiet`)
+      expect(custom.body.periodMetrics.revenue - baselineCustom.periodMetrics.revenue).toBeCloseTo(1310, 2)
+    } finally {
+      await prisma.payout.deleteMany({ where: { id: 9_500_901 } })
+      await prisma.shopifyStore.deleteMany({ where: { id: { in: [`${P}-off-quiet`, `${P}-off-busy`] } } })
+    }
+  })
+
   it('a request without a session is 401', async () => {
     expect((await overview(request('/api/overview', null))).status).toBe(401)
   })

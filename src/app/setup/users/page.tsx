@@ -24,7 +24,7 @@ type AppUser = {
   storeIds: string[]
 }
 
-type StoreOption = { id: string; name: string; shop: string }
+type StoreOption = { id: string; name: string; shop: string; enabled: boolean }
 
 export default function UsersPage() {
   const [users, setUsers] = useState<AppUser[]>([])
@@ -71,13 +71,16 @@ export default function UsersPage() {
   useEffect(() => { load() }, [])
 
   useEffect(() => {
-    fetch('/api/stores').then(r => r.json()).then(d => setStores(Array.isArray(d.stores) ? d.stores : [])).catch(() => {})
+    fetch('/api/stores?includeDisabled=1').then(r => r.json()).then(d => setStores(Array.isArray(d.stores) ? d.stores : [])).catch(() => {})
   }, [])
 
   function changeRole(next: UserRole) {
     setRole(next)
     setPermissions(DEFAULT_ROLE_PERMISSIONS[next])
   }
+
+  // Only a store that is switched on can be given; one the seller already has stays in the list, ticked, until it is unticked.
+  const pickable = stores.filter(store => store.enabled || storeIds.includes(store.id))
 
   function toggleStore(id: string) {
     setStoreIds(current => (current.includes(id) ? current.filter(item => item !== id) : [...current, id]))
@@ -86,7 +89,10 @@ export default function UsersPage() {
   function storesLabel(user: AppUser) {
     if (!isUserRole(user.role)) return 'Không có store'
     if (user.role !== 'SELLER') return 'Tất cả store'
-    const names = user.storeIds.map(id => stores.find(s => s.id === id)?.name).filter(Boolean)
+    const names = user.storeIds.flatMap(id => {
+      const store = stores.find(s => s.id === id)
+      return store ? [store.enabled ? store.name : `${store.name} (đã tắt)`] : []
+    })
     return names.length > 0 ? names.join(', ') : 'Chưa giao store'
   }
 
@@ -197,11 +203,11 @@ export default function UsersPage() {
               {role === 'SELLER' && (
                 <div className="space-y-sm rounded-lg border border-outline-variant/20 bg-surface-container-low p-md">
                   <p className="text-label-md font-semibold text-primary">Store được xem</p>
-                  {stores.length === 0 ? (
+                  {pickable.length === 0 ? (
                     <p className="text-body-sm text-on-surface-variant">Chưa có store nào.</p>
                   ) : (
                     <div className="space-y-xs">
-                      {stores.map(store => (
+                      {pickable.map(store => (
                         <label key={store.id} className="flex cursor-pointer items-center gap-sm text-body-sm">
                           <input
                             type="checkbox"
@@ -211,6 +217,7 @@ export default function UsersPage() {
                           />
                           <span>{store.name}</span>
                           <span className="text-label-sm text-on-surface-variant">{store.shop}</span>
+                          {!store.enabled && <span className="rounded-full bg-surface-container-high px-sm py-[1px] text-label-sm text-on-surface-variant">đã tắt</span>}
                         </label>
                       ))}
                     </div>

@@ -13,11 +13,12 @@ import { GET as listStores } from '@/app/api/stores/route'
 const SHOP_A = 'ss-a.myshopify.com'
 const SHOP_B = 'ss-b.myshopify.com'
 const SHOP_C = 'ss-c.myshopify.com'
+const SHOP_D = 'ss-d.myshopify.com'
 const PROJECT_A = 'ss-project-a'
 const PROJECT_B = 'ss-project-b'
 const ORDER_A = 'ss-order-a'
 const ORDER_B = 'ss-order-b'
-const EMAILS = ['ss-super@test.local', 'ss-admin@test.local', 'ss-support@test.local', 'ss-seller-a@test.local', 'ss-seller-none@test.local', 'ss-seller-ab@test.local', 'ss-lower@test.local']
+const EMAILS = ['ss-super@test.local', 'ss-admin@test.local', 'ss-support@test.local', 'ss-seller-a@test.local', 'ss-seller-none@test.local', 'ss-seller-ab@test.local', 'ss-lower@test.local', 'ss-seller-ad@test.local']
 const SECRET = 'ss-client-secret-value'
 const TOKEN = 'shpat_ss_access_token_value'
 const LAST_ERROR = 'ss-last-error-text-that-names-a-token'
@@ -25,6 +26,7 @@ const LAST_ERROR = 'ss-last-error-text-that-names-a-token'
 let storeA = ''
 let storeB = ''
 let storeC = ''
+let storeD = ''
 const users: Record<string, AuthUser> = {}
 const tokens: Record<string, string> = {}
 
@@ -45,7 +47,7 @@ async function makeUser(key: string, email: string, role: string, permissions: F
 async function cleanup() {
   await prisma.order.deleteMany({ where: { id: { in: [ORDER_A, ORDER_B] } } })
   await prisma.appUser.deleteMany({ where: { email: { in: EMAILS } } })
-  const stores = await prisma.shopifyStore.findMany({ where: { shop: { in: [SHOP_A, SHOP_B, SHOP_C] } }, select: { id: true } })
+  const stores = await prisma.shopifyStore.findMany({ where: { shop: { in: [SHOP_A, SHOP_B, SHOP_C, SHOP_D] } }, select: { id: true } })
   await prisma.shopifyStore.deleteMany({ where: { id: { in: stores.map(s => s.id) } } })
   await prisma.project.deleteMany({ where: { id: { in: [PROJECT_A, PROJECT_B] } } })
 }
@@ -63,6 +65,7 @@ beforeAll(async () => {
   storeA = (await prisma.shopifyStore.create({ data: { shop: SHOP_A, orderPrefix: 'SSA', projectId: PROJECT_A, lastError: LAST_ERROR, lastErrorAt: new Date() } })).id
   storeB = (await prisma.shopifyStore.create({ data: { shop: SHOP_B, orderPrefix: 'SSB', projectId: PROJECT_B } })).id
   storeC = (await prisma.shopifyStore.create({ data: { shop: SHOP_C } })).id
+  storeD = (await prisma.shopifyStore.create({ data: { shop: SHOP_D, enabled: false } })).id
   await saveStoreCredential(storeA, { authMode: 'CLIENT_CREDENTIALS', clientId: 'ss-client-id', clientSecret: SECRET, accessToken: TOKEN, tokenExpiresAt: new Date(Date.now() + 86_400_000) })
   await saveStoreCredential(storeB, { authMode: 'TOKEN', accessToken: TOKEN })
   await order(ORDER_A, storeA, PROJECT_A, '#SSA1')
@@ -74,6 +77,7 @@ beforeAll(async () => {
   await makeUser('sellerNone', EMAILS[4], 'SELLER', ['projects'])
   await makeUser('sellerAB', EMAILS[5], 'SELLER', ['projects'], [storeA, storeB])
   await makeUser('lowercase', EMAILS[6], 'seller', ['projects', 'overview'], [storeA])
+  await makeUser('sellerAD', EMAILS[7], 'SELLER', ['projects'], [storeA, storeD])
 })
 
 afterAll(async () => { await cleanup() })
@@ -283,5 +287,39 @@ describe('GET /api/stores', () => {
 
   it('refuses a request without a session', async () => {
     expect((await listStores(request('/api/stores', null))).status).toBe(401)
+  })
+})
+
+describe('GET /api/stores and a disabled store', () => {
+  const shops = (body: { stores: { shop: string }[] }) => body.stores.map(s => s.shop).filter(shop => [SHOP_A, SHOP_B, SHOP_C, SHOP_D].includes(shop)).sort()
+
+  it('lists enabled stores only, for an admin and for a seller who is assigned a disabled one', async () => {
+    expect(shops(await (await listStores(request('/api/stores', 'admin'))).json())).toEqual([SHOP_A, SHOP_B, SHOP_C])
+    expect(shops(await (await listStores(request('/api/stores', 'super'))).json())).toEqual([SHOP_A, SHOP_B, SHOP_C])
+    expect(shops(await (await listStores(request('/api/stores', 'sellerAD'))).json())).toEqual([SHOP_A])
+  })
+
+  it('includeDisabled=1 adds the disabled stores the caller may see and marks every row with enabled', async () => {
+    const admin = await (await listStores(request('/api/stores?includeDisabled=1', 'admin'))).json()
+    expect(shops(admin)).toEqual([SHOP_A, SHOP_B, SHOP_C, SHOP_D])
+    const byShop = Object.fromEntries(admin.stores.map((s: { shop: string }) => [s.shop, s]))
+    expect(byShop[SHOP_D]).toEqual({ id: storeD, shop: SHOP_D, name: SHOP_D, orderPrefix: null, enabled: false })
+    expect(byShop[SHOP_A].enabled).toBe(true)
+  })
+
+  it('includeDisabled=1 does not show a seller a disabled store that is not its own', async () => {
+    expect(shops(await (await listStores(request('/api/stores?includeDisabled=1', 'sellerAD'))).json())).toEqual([SHOP_A, SHOP_D])
+    expect(shops(await (await listStores(request('/api/stores?includeDisabled=1', 'sellerA'))).json())).toEqual([SHOP_A])
+    expect(shops(await (await listStores(request('/api/stores?includeDisabled=1', 'sellerAB'))).json())).toEqual([SHOP_A, SHOP_B])
+  })
+
+  it('a store that is switched on again is listed again', async () => {
+    await prisma.shopifyStore.update({ where: { id: storeD }, data: { enabled: true } })
+    try {
+      expect(shops(await (await listStores(request('/api/stores', 'admin'))).json())).toEqual([SHOP_A, SHOP_B, SHOP_C, SHOP_D])
+      expect(shops(await (await listStores(request('/api/stores', 'sellerAD'))).json())).toEqual([SHOP_A, SHOP_D])
+    } finally {
+      await prisma.shopifyStore.update({ where: { id: storeD }, data: { enabled: false } })
+    }
   })
 })
