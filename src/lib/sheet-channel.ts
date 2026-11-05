@@ -5,16 +5,25 @@ export const SHEET_CHANNELS_KEY = 'supplier.sheetChannels'
 /** `header` is matched by name; a column with no usable title (Jomall's date column) names its position, as `position: 'A'`. */
 export type SheetColumn = { header?: string; position?: string; source: string }
 
+/** A product as this supplier's sheet names it, where our catalogue says it differently. */
+export type SheetProductRule = { baseSku?: string; productName?: string; color?: string; colorFromVariant?: boolean }
+
 export type SheetChannel = {
   supplierCode: string
   /** Off keeps the supplier on CSV, so the setup can be proved before it goes live. */
   enabled: boolean
   spreadsheetId: string
-  /** "ORDER {M}-{YYYY}": the month's tab, by the day the order is sent. */
+  /** "ORDER {M}-{YYYY}": the month's tab, by the day the order is sent. A name with no {M} is one tab for good. */
   tabPattern: string
   /** Only this store's orders may enter the sheet: a row written there cannot be taken back. */
   storeShop: string
   columns: SheetColumn[]
+  /** How the sheet writes the day a line is sent; also how a new day is told apart. Without it, 11/4/2026. */
+  dateFormat?: string
+  /** The Color cell of a product the catalogue gives no colour. */
+  defaultColor?: string
+  /** By base SKU. */
+  products?: Record<string, SheetProductRule>
 }
 
 export function parseSheetChannels(json: string | null | undefined): SheetChannel[] {
@@ -49,10 +58,11 @@ function vnParts(at: Date): { y: number; m: number; d: number } {
   return { y: get('year'), m: get('month'), d: get('day') }
 }
 
-/** The day an order is sent, as the sheet writes it: 11/4/2026. */
-export function sheetDate(at: Date): string {
+/** The day an order is sent, as the sheet writes it: 11/4/2026, or as the channel's format says. */
+export function sheetDate(at: Date, format = '{M}/{D}/{YYYY}'): string {
   const { y, m, d } = vnParts(at)
-  return `${m}/${d}/${y}`
+  return format.replace('{YYYY}', String(y)).replace('{MM}', String(m).padStart(2, '0')).replace('{DD}', String(d).padStart(2, '0'))
+    .replace('{M}', String(m)).replace('{D}', String(d))
 }
 
 /** This month's tab name, or that of `back` months before. */
@@ -152,6 +162,24 @@ export function planRows(a: { lastRow: number; lastDate: string; today: string; 
   while (isFilled(a.colors[i] ?? null)) { startRow++; i++ }
   if (i > 0 || a.lastRow <= 1 || a.lastDate.trim() === a.today) return { separatorRow: null, startRow }
   return { separatorRow: a.lastRow + 1, startRow: a.lastRow + 2 }
+}
+
+const COLOR_WORD = /\b(?:black|white|brown|gr[ae]y|blue|pink|red|green|purple|orange|yellow|beige|quartz|navy|gold|silver|teal|mint|lavender|cream|ivory)\b/i
+
+/** The colour part of an order's variant: "40oz / Light Blue" gives Light Blue, "US / 40oz" gives nothing. */
+export function variantColor(variantTitle: string | null | undefined): string {
+  return (variantTitle ?? '').split('/').map(p => p.trim()).find(p => COLOR_WORD.test(p) && !/\d/.test(p)) ?? ''
+}
+
+/** SKU, Type and Color as this channel's sheet wants them. The catalogue's own colour always wins. */
+export function sheetProduct(channel: SheetChannel | null, line: { baseSku?: string | null; productName?: string | null; color?: string | null; variantTitle?: string | null }): { baseSku: string; productName: string; color: string } {
+  const baseSku = (line.baseSku ?? '').trim()
+  const rule = channel?.products?.[baseSku.toUpperCase()]
+  return {
+    baseSku: rule?.baseSku ?? baseSku,
+    productName: rule?.productName ?? line.productName ?? '',
+    color: (line.color ?? '').trim() || (rule?.colorFromVariant ? variantColor(line.variantTitle) : '') || rule?.color || channel?.defaultColor || '',
+  }
 }
 
 const STYLE = /hoodie|zip|shirt|jersey|jacket|sweater|cardigan|crewneck|v-neck|full set|only pants|only shirt/i

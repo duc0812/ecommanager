@@ -1,3 +1,4 @@
+import { setCsvLocked } from '@/lib/csv-lock'
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest'
 import { NextRequest } from 'next/server'
 import fs from 'fs'
@@ -126,6 +127,7 @@ async function makeOrder(opts: { approved?: boolean; area?: string; supplierSku?
 beforeAll(async () => {
   process.env.AUTH_SECRET = 'test-secret-that-is-long-enough-32chars'
   process.env.DESIGN_STORAGE_DIR = tmp
+  await setCsvLocked(false)
   await prisma.project.upsert({ where: { id: PROJECT }, create: { id: PROJECT, name: 'MZ', startDate: new Date('2026-06-01') }, update: {} })
   storeId = (await prisma.shopifyStore.upsert({ where: { shop: SHOP }, create: { shop: SHOP, projectId: PROJECT }, update: {} })).id
   await prisma.supplier.upsert({ where: { code: 'merchize' }, create: { id: SUP, name: 'merchize', code: 'merchize' }, update: {} })

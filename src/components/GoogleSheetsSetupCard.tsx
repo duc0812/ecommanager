@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useCurrentUser } from '@/components/RoleGate'
 
 type Channel = { supplierCode: string; enabled: boolean; spreadsheetId: string; tabPattern: string; storeShop: string; url: string }
-type Status = { configured: boolean; connected: boolean; email: string; needsReconnect: boolean; channels: Channel[] }
+type Status = { configured: boolean; connected: boolean; email: string; needsReconnect: boolean; csvLocked: boolean; channels: Channel[] }
 
 const REASON_TEXT: Record<string, string> = {
   access_denied: 'bạn đã từ chối trên màn hình Google',
@@ -61,6 +61,16 @@ export default function GoogleSheetsSetupCard() {
     void load()
   }
 
+  async function toggleCsv(locked: boolean) {
+    if (!locked && !window.confirm('Mở khoá xuất CSV? Nhân sự sẽ tải được CSV cho các xưởng chưa có API hoặc sheet. Merchize và xưởng đang bật sheet vẫn không xuất được.')) return
+    setBusy('csv')
+    setBanner(null)
+    const r = await send('PUT', { csvLocked: !locked })
+    setBusy('')
+    setBanner(r.ok ? { ok: true, text: locked ? 'Đã khoá xuất CSV.' : 'Đã mở khoá xuất CSV.' } : { ok: false, text: r.error })
+    void load()
+  }
+
   async function disconnect() {
     if (!window.confirm('Ngắt kết nối Google Sheets? Kết nối Google Drive không bị ảnh hưởng.')) return
     setBusy('disconnect')
@@ -104,6 +114,16 @@ export default function GoogleSheetsSetupCard() {
             )}
           </div>
         </div>
+        {status && (
+          <div className="flex flex-wrap items-center gap-sm text-body-sm border-t border-outline-variant/20 pt-md">
+            <b className="text-on-surface">Xuất CSV</b>
+            <span className="text-label-sm text-on-surface-variant">Áp dụng cho mọi xưởng, cả trang CSV Export và nút Lưu chờ CSV</span>
+            <span className={`px-sm py-xs rounded-full text-label-sm ${status.csvLocked ? 'bg-error-container/40 text-on-error-container' : 'bg-surface-container text-on-surface-variant'}`}>{status.csvLocked ? 'Đang khoá' : 'Đang mở'}</span>
+            <button type="button" onClick={() => toggleCsv(!status.csvLocked)} disabled={!!busy} className={`${button} ml-auto border border-outline-variant/40 text-on-surface`}>
+              {status.csvLocked ? 'Mở khoá' : 'Khoá'}
+            </button>
+          </div>
+        )}
         {status && status.channels.length > 0 && (
           <div className="space-y-sm border-t border-outline-variant/20 pt-md">
             <h3 className="text-label-sm text-on-surface-variant">Xưởng ghi đơn vào sheet</h3>
@@ -112,7 +132,7 @@ export default function GoogleSheetsSetupCard() {
                 <b className="text-on-surface">{c.supplierCode}</b>
                 <a href={c.url} target="_blank" rel="noopener noreferrer" className="text-secondary hover:underline">Mở sheet ↗</a>
                 <span className="text-label-sm text-on-surface-variant">tab {c.tabPattern} · store {c.storeShop}</span>
-                <span className={`px-sm py-xs rounded-full text-label-sm ${c.enabled ? 'bg-on-tertiary-container/15 text-on-tertiary-container' : 'bg-surface-container text-on-surface-variant'}`}>{c.enabled ? 'Đang bật' : 'Đang tắt, xuất CSV như cũ'}</span>
+                <span className={`px-sm py-xs rounded-full text-label-sm ${c.enabled ? 'bg-on-tertiary-container/15 text-on-tertiary-container' : 'bg-surface-container text-on-surface-variant'}`}>{c.enabled ? 'Đang bật' : 'Đang tắt'}</span>
                 <button type="button" onClick={() => toggle(c)} disabled={!!busy || (!c.enabled && !healthy)} title={!c.enabled && !healthy ? 'Kết nối Google Sheets trước' : undefined}
                   className={`${button} ml-auto border border-outline-variant/40 text-on-surface`}>
                   {busy === c.supplierCode ? 'Đang kiểm tra...' : c.enabled ? 'Tắt' : 'Bật'}

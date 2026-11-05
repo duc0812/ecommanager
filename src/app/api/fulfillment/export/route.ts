@@ -9,6 +9,12 @@ import { enabledChannelFor, getSheetChannels } from '@/lib/sheet-channel'
 import { exportLinkErrorMessage } from '@/lib/export-design-links'
 import { exportProgress, exportProgressLabel, isLineExported, mixedSupplierNote } from '@/lib/line-export'
 import { isMerchizeSupplier } from '@/lib/merchize'
+import { CSV_LOCKED_MESSAGE, isCsvLocked } from '@/lib/csv-lock'
+
+/** Lets the export page say so up front. */
+export async function GET() {
+  return NextResponse.json({ locked: await isCsvLocked(), message: CSV_LOCKED_MESSAGE })
+}
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => null)
@@ -26,6 +32,7 @@ export async function POST(req: NextRequest) {
   if (enabledChannelFor(await getSheetChannels(), tmpl.supplier)) {
     return NextResponse.json({ error: `${tmpl.supplier.name} đang ghi đơn thẳng vào sheet — gửi ở Duyệt sản xuất, không xuất CSV`, code: 'SHEET_ONLY' }, { status: 409 })
   }
+  if (await isCsvLocked()) return NextResponse.json({ error: CSV_LOCKED_MESSAGE, code: 'CSV_LOCKED' }, { status: 409 })
 
   const reExport = body.reExport === true
   // Every order with a line of this supplier, also when another supplier holds most of it (defaultSupplierId).

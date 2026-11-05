@@ -210,6 +210,7 @@ export default function ExportPage() {
     })
     // Merchize goes by API only (owner 11/04/2026), so it is not offered here; the export route refuses it as well.
     fetch('/api/suppliers').then(r => r.json()).then(d => setSuppliers((d.suppliers ?? []).filter((s: Supplier) => s.code.trim().toLowerCase() !== 'merchize')))
+    fetch('/api/fulfillment/export').then(r => r.json()).then(d => setLockedMessage(d.locked ? d.message : ''))
   }, [])
 
   useEffect(() => {
@@ -333,6 +334,8 @@ export default function ExportPage() {
     setMessage('Template deleted')
   }
 
+  const [lockedMessage, setLockedMessage] = useState('')
+
   const runPreview = useCallback(async () => {
     if (!templateId) { setMessage('Pick a template'); return }
     setPreviewing(true); setMessage('')
@@ -405,6 +408,11 @@ export default function ExportPage() {
       <Sidebar />
       <main className="ml-0 lg:ml-[280px] mt-14 lg:mt-0 w-[calc(100vw-280px)] min-w-0 p-xl">
         <h1 className="text-display-md mb-lg">CSV Export</h1>
+        {lockedMessage && (
+          <div role="status" className="flex items-center gap-sm rounded-lg px-md py-sm mb-lg text-body-sm border bg-error-container/40 border-error/30 text-on-error-container">
+            <span className="material-symbols-outlined text-[18px]">lock</span>{lockedMessage}
+          </div>
+        )}
 
         <div className="bg-surface-container-lowest rounded-xl p-lg shadow-card border border-outline-variant/20 mb-lg">
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-md">
@@ -463,10 +471,10 @@ export default function ExportPage() {
           </div>
 
           <div className="mt-md flex flex-wrap gap-sm items-center">
-            <button onClick={runPreview} disabled={previewing || !templateId} className="px-lg py-sm rounded-lg text-label-md border disabled:opacity-50">
+            <button onClick={runPreview} disabled={previewing || !templateId || !!lockedMessage} className="px-lg py-sm rounded-lg text-label-md border disabled:opacity-50">
               {previewing ? 'Loading...' : 'Preview'}
             </button>
-            <button onClick={download} disabled={downloading || !templateId} className="bg-secondary text-on-secondary px-lg py-sm rounded-lg text-label-md disabled:opacity-50">
+            <button onClick={download} disabled={downloading || !templateId || !!lockedMessage} className="bg-secondary text-on-secondary px-lg py-sm rounded-lg text-label-md disabled:opacity-50">
               {downloading ? 'Downloading...' : 'Download CSV (đánh dấu đã xuất)'}
             </button>
             <label className="inline-flex items-center gap-xs text-body-sm cursor-pointer" title="Chỉ lấy các đơn Design Studio đã bấm &quot;Lưu chờ xuất CSV&quot; (hoặc đã chuyển qua API)">

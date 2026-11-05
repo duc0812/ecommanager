@@ -5,11 +5,13 @@ import { deleteSettings } from '@/lib/token-store'
 import { GOOGLE_KEYS, getGoogleConfig } from '@/lib/google-oauth'
 import { SheetsError, getSheetsConnection, listTabs } from '@/lib/google-sheets'
 import { SHEET_CHANNELS_KEY, getSheetChannels, tabNameFor, type SheetChannel } from '@/lib/sheet-channel'
+import { isCsvLocked, setCsvLocked } from '@/lib/csv-lock'
 import jomallChannel from '../../../../../scripts/data/sheet-channel-jomall.json'
+import mangoChannel from '../../../../../scripts/data/sheet-channel-mango.json'
 
 export const dynamic = 'force-dynamic'
 
-const KNOWN_CHANNELS = [jomallChannel as SheetChannel]
+const KNOWN_CHANNELS = [jomallChannel, mangoChannel] as SheetChannel[]
 
 /** The saved channels, and the known ones not switched on yet. */
 async function allChannels(): Promise<SheetChannel[]> {
@@ -25,10 +27,11 @@ async function saveChannels(list: SheetChannel[]) {
 export async function GET(req: NextRequest) {
   const auth = await requireSuperadmin(req)
   if ('error' in auth) return auth.error
-  const [cfg, connection, channels] = await Promise.all([getGoogleConfig(), getSheetsConnection(), allChannels()])
+  const [cfg, connection, channels, csvLocked] = await Promise.all([getGoogleConfig(), getSheetsConnection(), allChannels(), isCsvLocked()])
   return NextResponse.json({
     configured: Boolean(cfg.clientId && cfg.clientSecret),
     ...connection,
+    csvLocked,
     channels: channels.map(c => ({
       supplierCode: c.supplierCode, enabled: c.enabled, spreadsheetId: c.spreadsheetId, tabPattern: c.tabPattern, storeShop: c.storeShop,
       url: `https://docs.google.com/spreadsheets/d/${c.spreadsheetId}/edit`,
@@ -36,11 +39,15 @@ export async function GET(req: NextRequest) {
   })
 }
 
-/** { supplierCode, enabled }. Switching on closes that supplier's CSV export, so the sheet must open with this connection first. */
+/** { supplierCode, enabled }. Switching on closes that supplier's CSV export, so the sheet must open with this connection first. Or { csvLocked }. */
 export async function PUT(req: NextRequest) {
   const auth = await requireSuperadmin(req)
   if ('error' in auth) return auth.error
   const body = await req.json().catch(() => null)
+  if (typeof body?.csvLocked === 'boolean') {
+    await setCsvLocked(body.csvLocked)
+    return NextResponse.json({ ok: true })
+  }
   if (!body || typeof body.supplierCode !== 'string' || typeof body.enabled !== 'boolean') {
     return NextResponse.json({ error: 'Cần supplierCode và enabled', code: 'BAD_BODY' }, { status: 400 })
   }

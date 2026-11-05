@@ -42,6 +42,11 @@ export default function HandoffButton({ orderId, state, canHandoff, compact = fa
       <Icon name="open_in_new" className="text-[16px]" />{compact ? 'Xem đơn' : `Xem đơn ${supplierName}`}
     </button>
   )
+  const lockedCsv = (
+    <button type="button" className={btnPrimary} disabled title="Xuất CSV đang khoá, xưởng này chưa có đường gửi qua tool. Superadmin mở khoá ở Setup › Fulfill">
+      <Icon name="lock" className="text-[16px]" />CSV đang khoá
+    </button>
+  )
   let body: JSX.Element
   if (state.handedOff?.mode === 'CSV') {
     body = (
@@ -64,11 +69,11 @@ export default function HandoffButton({ orderId, state, canHandoff, compact = fa
     body = !canHandoff ? <span className="text-label-sm text-on-surface-variant">Đơn đã gửi {supplierName}</span> : (
       <>
         {viewPush}
-        {state.pending && state.csvRemainder && (
+        {state.pending && state.csvRemainder && (state.csvLocked ? lockedCsv : (
           <button type="button" className={btnPrimary} disabled={busy} onClick={saveCsv} title="Lưu các dòng còn lại — sẵn sàng khi xuất CSV cho xưởng của chúng">
             <Icon name="inventory" className="text-[16px]" />{busy ? 'Đang lưu…' : compact ? 'Lưu chờ CSV' : HANDOFF_LABELS.csv}
           </button>
-        )}
+        ))}
       </>
     )
   } else if (!state.pending) {
@@ -89,6 +94,8 @@ export default function HandoffButton({ orderId, state, canHandoff, compact = fa
         <Icon name="cloud_upload" className="text-[16px]" />{compact ? HANDOFF_LABELS.produceApi : HANDOFF_LABELS.api(state.apiName)}
       </button>
     )
+  } else if (state.csvLocked) {
+    body = lockedCsv
   } else {
     body = (
       <button type="button" className={btnPrimary} disabled={busy} onClick={saveCsv} title="Lưu vào hệ thống — đơn sẵn sàng khi xuất CSV cho xưởng">

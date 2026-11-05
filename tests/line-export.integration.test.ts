@@ -1,3 +1,4 @@
+import { setCsvLocked } from '@/lib/csv-lock'
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest'
 import { NextRequest } from 'next/server'
 import { execFileSync } from 'child_process'
@@ -75,6 +76,7 @@ function runBackfill(...args: string[]): string {
 }
 
 beforeAll(async () => {
+  await setCsvLocked(false)
   await prisma.project.upsert({ where: { id: PROJECT }, create: { id: PROJECT, name: 'LX', startDate: new Date('2026-06-01') }, update: {} })
   storeId = (await prisma.shopifyStore.upsert({ where: { shop: SHOP }, create: { shop: SHOP, projectId: PROJECT }, update: {} })).id
   await prisma.supplier.upsert({ where: { code: 'lx_mango' }, create: { id: MANGO, name: 'Mangoshao', code: 'lx_mango' }, update: {} })

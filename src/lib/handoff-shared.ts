@@ -18,6 +18,8 @@ export type HandoffState = {
   csvRemainder?: boolean
   /** A line of a supplier on the sheet channel has not been sent; it can only go through the hub. */
   sheetOpen?: boolean
+  /** CSV is locked for every supplier: a line with no API or sheet has nowhere to go until it opens. */
+  csvLocked?: boolean
   apiNote: string | null
   handedOff: { at: string; mode: HandoffMode; byName: string | null } | null
   canUndo: boolean

@@ -7,7 +7,7 @@ import { listOrdersWithLines, markOrdersExported } from '@/lib/repos/orders'
 import { logHandoffEvent } from '@/lib/repos/push-export'
 import { pendingCardsForSupplier } from '@/lib/supplier-handoff'
 import { SheetsError, addGridRows, listTabs, paintRow, readRange, readWrittenRange, rowColors, tabProperties, writeRows } from '@/lib/google-sheets'
-import { DAY_SEPARATOR_COLOR, buildRow, collectKeys, enabledChannelFor, getSheetChannels, hasLine, lastDataRow, mapColumns, planRows, sameRow, sheetDate, sizeLabel, tabNameFor, type SheetChannel, type SheetKeys } from '@/lib/sheet-channel'
+import { DAY_SEPARATOR_COLOR, buildRow, collectKeys, enabledChannelFor, getSheetChannels, hasLine, lastDataRow, mapColumns, planRows, sameRow, sheetDate, sheetProduct, sizeLabel, tabNameFor, type SheetChannel, type SheetKeys } from '@/lib/sheet-channel'
 
 /** Tabs read for lines already sent: rows get copied to the next month's tab, and a late order can sit in an older one. */
 const TABS_BACK = 2
@@ -41,7 +41,7 @@ async function channelOf(supplierId: string): Promise<{ supplier: { id: string; 
 async function openTab(channel: SheetChannel, at: Date) {
   const tabName = tabNameFor(channel.tabPattern, at)
   const tabs = await listTabs(channel.spreadsheetId)
-  if (!tabs.includes(tabName)) throw new SheetPushError(`Sheet chưa có tab "${tabName}" — cần tạo tab tháng này trước, tool không tự tạo`, 'NO_TAB')
+  if (!tabs.includes(tabName)) throw new SheetPushError(`Sheet chưa có tab "${tabName}" — cần tạo tab đó trước, tool không tự tạo`, 'NO_TAB')
   const [headers = []] = await readRange(channel.spreadsheetId, tabName, '1:1')
   const { indexes, missing } = mapColumns(headers, channel.columns)
   if (missing.length > 0) throw new SheetPushError(`Tab "${tabName}" thiếu cột: ${missing.join(', ')} — sheet đã đổi cấu trúc, không ghi`, 'COLUMNS')
@@ -50,8 +50,9 @@ async function openTab(channel: SheetChannel, at: Date) {
 
 async function existingKeys(channel: SheetChannel, tabs: string[], at: Date): Promise<SheetKeys> {
   const keys: SheetKeys = { lines: new Set(), orders: new Set() }
-  for (let back = 0; back <= TABS_BACK; back++) {
-    const tab = tabNameFor(channel.tabPattern, at, back)
+  // A sheet with one tab for good names it every time round: read it once.
+  const names = new Set(Array.from({ length: TABS_BACK + 1 }, (_, back) => tabNameFor(channel.tabPattern, at, back)))
+  for (const tab of Array.from(names)) {
     if (!tabs.includes(tab)) continue
     const rows = await readRange(channel.spreadsheetId, tab, '1:100000')
     const heads = (rows[0] ?? []).map(h => h.trim().toLowerCase())
@@ -139,7 +140,7 @@ async function run(supplierId: string, orderIds: string[] | undefined, userId: s
     built = await buildOrdersForCsv({ orders: rest, supplierId, columns: channel.columns, perOrder: false, linesOf })
   }
 
-  const date = sheetDate(at)
+  const date = sheetDate(at, channel.dateFormat)
   const outgoing: { lineKey: string; orderNumber: string; orderId: string; lineId: string; baseCost: number | null; row: string[] }[] = []
   for (const o of built.ordersForCsv) {
     for (const line of o.lines) {
@@ -147,8 +148,10 @@ async function run(supplierId: string, orderIds: string[] | undefined, userId: s
       const ref = lineIdByKey.get(key)
       if (!ref) continue
       const order: OrderForCsv = { ...o, sentDate: date, orderCode: o.shopifyOrderNumber.replace(/^#/, '') }
+      const product = sheetProduct(channel, { baseSku: line.supplierBaseSku, productName: line.supplierProductName, color: line.supplierVariant2Value, variantTitle: line.variantTitle })
       const values = renderRow(channel.columns, order, {
         ...line, lineRef: `#${key}`, customName: customNames.get(ref.lineId) ?? '', sizeLabel: sizeLabel(line.supplierVariant1Value, line.variantTitle),
+        supplierBaseSku: product.baseSku, supplierProductName: product.productName, supplierVariant2Value: product.color,
       })
       outgoing.push({ lineKey: key, orderNumber: ref.orderNumber, orderId: ref.orderId, lineId: ref.lineId, baseCost: ref.baseCost, row: buildRow(indexes, values) })
     }
@@ -183,13 +186,15 @@ async function run(supplierId: string, orderIds: string[] | undefined, userId: s
     if (lastRow < 1) throw new SheetPushError(`Tab "${tabName}" không có hàng tiêu đề — không ghi`, 'COLUMNS')
     const { sheetId, rowCount } = await tabProperties(channel.spreadsheetId, tabName)
     const colors = lastRow < rowCount ? await rowColors(channel.spreadsheetId, tabName, lastRow + 1, Math.min(lastRow + 3, rowCount)) : []
-    const plan = planRows({ lastRow, lastDate: rows[lastRow - 1]?.[0] ?? '', today: sheetDate(at), colors })
+    const plan = planRows({ lastRow, lastDate: rows[lastRow - 1]?.[0] ?? '', today: date, colors })
     firstRow = plan.startRow
     const lastWritten = firstRow + outgoing.length - 1
     if (lastWritten > rowCount) await addGridRows(channel.spreadsheetId, sheetId, lastWritten - rowCount)
     if (plan.separatorRow) await paintRow(channel.spreadsheetId, sheetId, plan.separatorRow, DAY_SEPARATOR_COLOR)
     const mapped = new Set(indexes)
-    range = await writeRows(channel.spreadsheetId, tabName, firstRow, outgoing.map(o => o.row.map((v, col) => (mapped.has(col) ? v : null))))
+    // Quantity stays a number, or the sheet's own sums skip it. Everything else is text: a zip keeps its leading zero.
+    const numeric = new Set(indexes.filter((_, i) => channel.columns[i].source === 'line.qty'))
+    range = await writeRows(channel.spreadsheetId, tabName, firstRow, outgoing.map(o => o.row.map((v, col) => (!mapped.has(col) ? null : numeric.has(col) && /^\d+$/.test(v) ? Number(v) : v))))
   } catch (e: any) {
     return failAll(e?.message ?? 'Không ghi được vào sheet')
   }

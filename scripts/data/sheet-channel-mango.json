@@ -1,0 +1,36 @@
+{
+  "supplierCode": "MANGOSHAO",
+  "enabled": false,
+  "spreadsheetId": "1sA-nPyZPjVbDCTznPgXuRUvJwcHBp580LsRlQAr6azg",
+  "tabPattern": "ORDER FULFILL",
+  "storeShop": "caramiaus-store.myshopify.com",
+  "dateFormat": "CN_POD_MS-{YYYY}{MM}{DD}",
+  "defaultColor": "DEFAULT",
+  "products": {
+    "C450": { "baseSku": "C450-12", "color": "White", "colorFromVariant": true },
+    "TU20": { "color": "White", "colorFromVariant": true },
+    "BJ": { "productName": "Varsity Jacket" }
+  },
+  "columns": [
+    { "position": "A", "source": "order.sentDate" },
+    { "header": "Order Number", "source": "order.shopifyOrderNumber" },
+    { "header": "Order Vendor", "source": "line.lineKey" },
+    { "header": "Phone (Billing)", "source": "order.shippingPhone" },
+    { "header": "Name (Shipping)", "source": "order.shippingName" },
+    { "header": "Address 1&2 (Shipping)", "source": "order.shippingAddressFull" },
+    { "header": "City (Shipping)", "source": "order.shippingCity" },
+    { "header": "State Code (Shipping)", "source": "order.shippingState" },
+    { "header": "Postcode Code (Shipping)", "source": "order.shippingZip" },
+    { "header": "Country Code (Shipping)", "source": "order.shippingCountry" },
+    { "header": "SKU", "source": "line.supplierBaseSku" },
+    { "header": "SKU Custom", "source": "line.sku" },
+    { "header": "Item Name", "source": "line.itemName" },
+    { "header": "Type", "source": "line.supplierProductName" },
+    { "header": "Size", "source": "line.sizeLabel" },
+    { "header": "Color", "source": "line.supplierVariant2Value" },
+    { "header": "design note", "source": "line.designNote" },
+    { "header": "Quantity", "source": "line.qty" },
+    { "header": "mockup link", "source": "line.mockupLink" },
+    { "header": "design link", "source": "line.designDriveLink" }
+  ]
+}

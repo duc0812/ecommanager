@@ -134,7 +134,7 @@ export async function paintRow(spreadsheetId: string, sheetId: number, row: numb
  * ends, and on Jomall's sheet that guess was row 1. RAW keeps a customer's text as text: a name starting with "=" must not
  * run as a formula. Returns the range written, to read back.
  */
-export async function writeRows(spreadsheetId: string, tab: string, startRow: number, rows: (string | null)[][]): Promise<string> {
+export async function writeRows(spreadsheetId: string, tab: string, startRow: number, rows: (string | number | null)[][]): Promise<string> {
   const width = Math.max(...rows.map(r => r.length))
   const range = `${quoted(tab)}!A${startRow}:${columnLetter(width - 1)}${startRow + rows.length - 1}`
   const data = await call(`${spreadsheetId}/values/${rangePath(range)}?valueInputOption=RAW`, {

@@ -1,3 +1,4 @@
+import { setCsvLocked } from '@/lib/csv-lock'
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/db'
@@ -76,6 +77,7 @@ function rowsOf(csv: string): Record<string, Record<string, string>> {
 }
 
 beforeAll(async () => {
+  await setCsvLocked(false)
   await prisma.project.upsert({ where: { id: PROJECT }, create: { id: PROJECT, name: 'Export links', startDate: new Date('2026-06-01') }, update: {} })
   storeId = (await prisma.shopifyStore.upsert({ where: { shop: SHOP }, create: { shop: SHOP, projectId: PROJECT }, update: {} })).id
   await prisma.supplier.upsert({ where: { code: 'EXLSUP' }, create: { id: SUP, name: 'Export Links Supplier', code: 'EXLSUP' }, update: {} })

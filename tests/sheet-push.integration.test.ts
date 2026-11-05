@@ -5,10 +5,11 @@ import { prisma } from '@/lib/db'
 import { AUTH_COOKIE, signToken } from '@/lib/auth'
 import { DEFAULT_ROLE_PERMISSIONS } from '@/lib/roles'
 import { GOOGLE_KEYS } from '@/lib/google-oauth'
-import { SHEET_CHANNELS_KEY } from '@/lib/sheet-channel'
+import { SHEET_CHANNELS_KEY, sheetDate, sheetProduct, variantColor, type SheetChannel } from '@/lib/sheet-channel'
+import { CSV_OPEN_KEY, setCsvLocked } from '@/lib/csv-lock'
 import { handoffOrderCsv, listHandoffHub } from '@/lib/supplier-handoff'
 import { previewSheetPush, pushToSheet } from '@/lib/repos/sheet-push'
-import { POST as postExport } from '@/app/api/fulfillment/export/route'
+import { GET as getExport, POST as postExport } from '@/app/api/fulfillment/export/route'
 import { GET as getSheet, POST as postSheet } from '@/app/api/design-studio/handoff/sheet/route'
 
 const SHOP = 'sheetstore.myshopify.com'
@@ -22,6 +23,11 @@ const TAB = 'ORDER 11-2026'
 const HEADERS = ['       ', 'Order Number', 'Order Vendor ', 'Customer Note', 'Phone (Billing)', 'Name (Shipping)', 'Address 1&2 (Shipping)', 'City (Shipping)', 'State Code (Shipping)',
   'Postcode Code (Shipping)', 'Country Code (Shipping)', 'SKU', 'SKU Custom', 'Item Name', 'Type', 'Size', 'Color', 'Custom Name', 'design note', 'Quantity', 'mockup link', 'Design link', 'Design Back', 'Price$', 'Tracking']
 const channel = JSON.parse(fs.readFileSync('scripts/data/sheet-channel-jomall.json', 'utf8'))
+const mango = JSON.parse(fs.readFileSync('scripts/data/sheet-channel-mango.json', 'utf8'))
+const MANGO_TAB = 'ORDER FULFILL'
+const MANGO_HEADERS = ['a', 'Order Number', 'Order Vendor ', 'Customer Note', 'Phone (Billing)', 'Name (Shipping)', 'Address 1&2 (Shipping)', 'City (Shipping)', 'State Code (Shipping)',
+  'Postcode Code (Shipping)', 'Country Code (Shipping)', 'SKU', 'SKU Custom', 'Item Name', 'Type', 'Size', 'Color', 'SKU COLOR', 'design note', 'Quantity', 'mockup link', 'design link',
+  'Price', '订单金额/total', 'Input Fields', 'Fee Shipping', 'note track ', 'Tracking', 'New Tracking', 'NEW Tracking', '20/06']
 
 let storeId = ''
 let adminToken = ''
@@ -49,10 +55,12 @@ function fakeGoogle() {
     if (path.endsWith(':batchUpdate')) {
       for (const r of JSON.parse(String(init?.body)).requests) {
         requests.push(r)
-        if (r.appendDimension) gridRows[TAB] += r.appendDimension.length
+        const tabOf = (sheetId: number) => Object.keys(tabs)[sheetId]
+        if (r.appendDimension) gridRows[tabOf(r.appendDimension.sheetId)] += r.appendDimension.length
         if (r.repeatCell) {
-          colors[TAB] = colors[TAB] ?? {}
-          colors[TAB][r.repeatCell.range.startRowIndex + 1] = r.repeatCell.cell.userEnteredFormat.backgroundColor
+          const tab = tabOf(r.repeatCell.range.sheetId)
+          colors[tab] = colors[tab] ?? {}
+          colors[tab][r.repeatCell.range.startRowIndex + 1] = r.repeatCell.cell.userEnteredFormat.backgroundColor
         }
       }
       return json({})
@@ -149,6 +157,7 @@ beforeAll(async () => {
   await prisma.supplier.upsert({ where: { code: 'jm_sheet' }, create: { id: SUP, name: 'Jomall Test', code: 'jm_sheet' }, update: {} })
   await prisma.supplier.upsert({ where: { code: 'other_sheet' }, create: { id: OTHER_SUP, name: 'Other', code: 'other_sheet' }, update: {} })
   await prisma.supplierProduct.create({ data: { supplierId: SUP, sku: 'JM-HOODIE', baseCost: 19.5, baseSku: 'GAF', productName: '3D Hoodies', variant1Value: 'Pullover Hoodie' } })
+  await setCsvLocked(false)
   for (const [key, value] of [[GOOGLE_KEYS.clientId, 'cid'], [GOOGLE_KEYS.clientSecret, 'sec'], [GOOGLE_KEYS.sheetsRefreshToken, 'rt']]) {
     await prisma.appSetting.upsert({ where: { key }, create: { key, value }, update: { value } })
   }
@@ -180,7 +189,7 @@ afterAll(async () => {
   await prisma.shopifyStore.deleteMany({ where: { projectId: { in: [PROJECT, OTHER_PROJECT] } } })
   await prisma.project.deleteMany({ where: { id: { in: [PROJECT, OTHER_PROJECT] } } })
   await prisma.appUser.deleteMany({ where: { email: 'admin@sheet.test' } })
-  await prisma.appSetting.deleteMany({ where: { key: { in: [SHEET_CHANNELS_KEY, GOOGLE_KEYS.clientId, GOOGLE_KEYS.clientSecret, GOOGLE_KEYS.sheetsRefreshToken] } } })
+  await prisma.appSetting.deleteMany({ where: { key: { in: [SHEET_CHANNELS_KEY, CSV_OPEN_KEY, GOOGLE_KEYS.clientId, GOOGLE_KEYS.clientSecret, GOOGLE_KEYS.sheetsRefreshToken] } } })
 })
 
 describe('writing to the sheet', () => {
@@ -200,7 +209,7 @@ describe('writing to the sheet', () => {
     expect(rowOf(row, 'Type')).toBe('3D Hoodies')
     expect(rowOf(row, 'Size')).toBe('XL')
     expect(rowOf(row, 'Custom Name')).toBe('Allyssa')
-    expect(rowOf(row, 'Quantity')).toBe('2')
+    expect(writes[0].rows[0][HEADERS.indexOf('Quantity')]).toBe(2)
     expect(rowOf(row, 'mockup link')).toBe('https://cdn.shopify.com/s/files/preview.png')
     expect(rowOf(row, 'Design link')).toBe('https://drive.google.com/drive/folders/abc')
     expect(writes[0].rows[0][HEADERS.indexOf('Customer Note')]).toBeNull()
@@ -405,6 +414,37 @@ describe('the rest of the hub with the channel on', () => {
     await prisma.csvTemplate.delete({ where: { id: tmpl.id } })
   })
 
+  describe('the lock on every CSV', () => {
+    afterEach(() => setCsvLocked(false))
+
+    it('locks a supplier with no sheet and no API, with no setting saved yet', async () => {
+      await setChannel({ enabled: false })
+      await prisma.appSetting.delete({ where: { key: CSV_OPEN_KEY } })
+      const o = await makeOrder()
+      const tmpl = await prisma.csvTemplate.create({ data: { supplierId: SUP, name: 'L', rowMode: 'PER_LINE', columns: JSON.stringify([{ header: 'Order', source: 'order.shopifyOrderNumber' }]) } })
+      const res = await postExport(new NextRequest('http://x/api/fulfillment/export', { method: 'POST', body: JSON.stringify({ templateId: tmpl.id, markExported: true }) }))
+      expect(res.status).toBe(409)
+      expect((await res.json()).code).toBe('CSV_LOCKED')
+      expect((await line(o.id)).exportedAt).toBeNull()
+      await expect(handoffOrderCsv(o.id, null)).rejects.toMatchObject({ code: 'CSV_LOCKED' })
+      expect((await prisma.order.findUniqueOrThrow({ where: { id: o.id } })).supplierHandoffAt).toBeNull()
+      expect((await (await getExport()).json()).locked).toBe(true)
+
+      await setCsvLocked(false)
+      expect((await (await getExport()).json()).locked).toBe(false)
+      expect(await handoffOrderCsv(o.id, null)).toMatchObject({ handedOff: { mode: 'CSV' }, csvLocked: false })
+      await prisma.csvTemplate.delete({ where: { id: tmpl.id } })
+    })
+
+    it('tells the card, and leaves the sheet send working', async () => {
+      await setCsvLocked(true)
+      const o = await makeOrder()
+      const hub = await listHandoffHub({ q: o.number })
+      expect(hub.pending.find(c => c.order.id === o.id)?.state.csvLocked).toBe(true)
+      expect((await push([o.id])).results[0].status).toBe('WRITTEN')
+    })
+  })
+
   it('needs a confirm and a signed-in user on the route', async () => {
     const url = 'http://x/api/design-studio/handoff/sheet'
     const body = (b: unknown) => ({ method: 'POST', body: JSON.stringify(b) })
@@ -413,5 +453,126 @@ describe('the rest of the hub with the channel on', () => {
     expect((await postSheet(signedIn({ supplierId: SUP }))).status).toBe(400)
     const noSupplier = new NextRequest(url); noSupplier.cookies.set(AUTH_COOKIE, adminToken)
     expect((await getSheet(noSupplier)).status).toBe(400)
+  })
+})
+
+describe('the rules a channel brings', () => {
+  const rules = mango as SheetChannel
+
+  it('writes the day as the channel says, in Vietnam time', () => {
+    expect(sheetDate(new Date('2026-11-04T18:00:00Z'), rules.dateFormat)).toBe('CN_POD_MS-20261105')
+    expect(sheetDate(new Date('2026-03-01T05:00:00Z'), rules.dateFormat)).toBe('CN_POD_MS-20260301')
+    expect(sheetDate(new Date('2026-03-01T05:00:00Z'))).toBe('3/1/2026')
+  })
+
+  it('reads the colour out of a variant, not a size or a region', () => {
+    expect(variantColor('40oz / Light Blue')).toBe('Light Blue')
+    expect(variantColor('Black / 30 oz')).toBe('Black')
+    expect(variantColor('US / 40oz')).toBe('')
+    expect(variantColor('Tumbler Cup With Handle')).toBe('')
+    expect(variantColor(null)).toBe('')
+  })
+
+  it('names a product the way the sheet does', () => {
+    expect(sheetProduct(rules, { baseSku: 'C450', productName: '30OZ cup', variantTitle: 'US / 30oz' })).toEqual({ baseSku: 'C450-12', productName: '30OZ cup', color: 'White' })
+    expect(sheetProduct(rules, { baseSku: 'C450', variantTitle: 'Black / 30 oz' }).color).toBe('Black')
+    expect(sheetProduct(rules, { baseSku: 'TU20', variantTitle: '40oz / Brown' }).color).toBe('Brown')
+    expect(sheetProduct(rules, { baseSku: 'BJ', productName: 'Adult', variantTitle: 'Adult / L' })).toEqual({ baseSku: 'BJ', productName: 'Varsity Jacket', color: 'DEFAULT' })
+    expect(sheetProduct(rules, { baseSku: 'BTX ', productName: '3D T-shirt' }).baseSku).toBe('BTX')
+  })
+
+  it('takes the colour in the catalogue first, and reads no variant unless the product asks', () => {
+    expect(sheetProduct(rules, { baseSku: 'TU20', color: 'Pink', variantTitle: '40oz / Brown' }).color).toBe('Pink')
+    expect(sheetProduct(rules, { baseSku: 'WZIP', variantTitle: 'Fleece Zip Hoodie / Green / 2XL' }).color).toBe('DEFAULT')
+  })
+
+  it('leaves a channel with no rules as it was', () => {
+    expect(sheetProduct(channel as SheetChannel, { baseSku: 'GAF', productName: '3D Hoodies' })).toEqual({ baseSku: 'GAF', productName: '3D Hoodies', color: '' })
+    expect(sheetProduct(null, { baseSku: 'GAF' })).toEqual({ baseSku: 'GAF', productName: '', color: '' })
+  })
+})
+
+describe('a sheet of one long tab: Mango', () => {
+  const YESTERDAY = 'CN_POD_MS-20261103'
+  const TODAY = 'CN_POD_MS-20261104'
+  const cell = (row: (string | null)[], header: string) => row[MANGO_HEADERS.indexOf(header)]
+  const fill = (rows: number, batch: string) => {
+    for (let i = 0; i < rows; i++) tabs[MANGO_TAB].push([batch, `#OLD${i}`, `OLD${i}_1`])
+  }
+
+  beforeEach(async () => {
+    tabs = { [MANGO_TAB]: [MANGO_HEADERS] }
+    gridRows = { [MANGO_TAB]: 4125 }
+    await setChannel({ ...mango, supplierCode: 'jm_sheet', enabled: true, spreadsheetId: SHEET, storeShop: SHOP })
+  })
+
+  it('fills its own columns, and leaves what the supplier fills alone', async () => {
+    const o = await makeOrder()
+    const r = await push([o.id])
+    expect(r.tabName).toBe(MANGO_TAB)
+    expect(r.results[0]).toMatchObject({ status: 'WRITTEN', message: 'Hàng 2' })
+    const row = writes[0].rows[0]
+    expect(cell(row, 'a')).toBe(TODAY)
+    expect(cell(row, 'Order Number')).toBe(o.number)
+    expect(cell(row, 'Order Vendor ')).toBe(o.key)
+    expect(cell(row, 'SKU')).toBe('GAF')
+    expect(cell(row, 'SKU Custom')).toBe('TN1-HOODIE-XL')
+    expect(cell(row, 'Type')).toBe('3D Hoodies')
+    expect(cell(row, 'Size')).toBe('XL')
+    expect(cell(row, 'Color')).toBe('DEFAULT')
+    expect(cell(row, 'Quantity')).toBe(2)
+    expect(cell(row, 'design link')).toBe('https://drive.google.com/drive/folders/abc')
+    for (const h of ['Customer Note', 'SKU COLOR']) expect(cell(row, h)).toBeNull()
+    // The last column written is the design link: Price, total and Tracking belong to the supplier.
+    expect(row.length).toBe(MANGO_HEADERS.indexOf('design link') + 1)
+    expect((await line(o.id)).exportedToSupplierId).toBe(SUP)
+  })
+
+  it('goes past the green row after the last data: 4114 data, 4115 green, writes at 4116', async () => {
+    fill(4113, YESTERDAY)
+    colors[MANGO_TAB] = { 4115: { green: 1 } }
+    const o = await makeOrder()
+    expect((await push([o.id])).results[0].message).toBe('Hàng 4116')
+    expect(requests).toEqual([])
+  })
+
+  it('stays under the rows of the same batch, with no green row', async () => {
+    fill(40, TODAY)
+    const o = await makeOrder()
+    expect((await push([o.id])).results[0].message).toBe('Hàng 42')
+    expect(requests).toEqual([])
+  })
+
+  it('adds a green row when a new batch code starts and none is there', async () => {
+    fill(40, YESTERDAY)
+    const o = await makeOrder()
+    expect((await push([o.id])).results[0].message).toBe('Hàng 43')
+    expect(colors[MANGO_TAB][42]).toEqual({ red: 0, green: 1, blue: 0 })
+  })
+
+  it('finds a line pasted either way round, and reads the one tab only once for that', async () => {
+    const a = await makeOrder()
+    const b = await makeOrder()
+    tabs[MANGO_TAB].push([YESTERDAY, `#${a.key}`, a.code], [YESTERDAY, b.number, b.key])
+    const calls = vi.mocked(fetch).mock.calls.length
+    const r = await push([a.id, b.id])
+    expect(r.results.map(x => x.status)).toEqual(['ALREADY', 'ALREADY'])
+    expect(writes).toEqual([])
+    const reads = vi.mocked(fetch).mock.calls.slice(calls).filter(c => decodeURIComponent(String(c[0])).includes('!1:100000'))
+    expect(reads.length).toBe(1)
+  })
+
+  it('stops if a column of theirs is renamed', async () => {
+    tabs[MANGO_TAB][0] = MANGO_HEADERS.map(h => (h === 'SKU Custom' ? 'SKU Khac' : h))
+    const o = await makeOrder()
+    await expect(push([o.id])).rejects.toMatchObject({ code: 'COLUMNS' })
+    expect(writes).toEqual([])
+    expect((await line(o.id)).exportedAt).toBeNull()
+  })
+
+  it('shows on the card what the sheet will get', async () => {
+    const o = await makeOrder()
+    const hub = await listHandoffHub({ q: o.number })
+    expect(hub.pending.find(c => c.order.id === o.id)?.lines[0].send).toMatchObject({ sku: 'GAF', size: 'XL', color: 'DEFAULT' })
   })
 })

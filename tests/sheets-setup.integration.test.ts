@@ -5,11 +5,12 @@ import { AUTH_COOKIE, signToken } from '@/lib/auth'
 import { DEFAULT_ROLE_PERMISSIONS } from '@/lib/roles'
 import { GOOGLE_KEYS, SHEETS_SCOPE, SHEETS_STATE_PREFIX, saveGoogleOAuthState } from '@/lib/google-oauth'
 import { SHEET_CHANNELS_KEY, getSheetChannels, tabNameFor } from '@/lib/sheet-channel'
+import { CSV_OPEN_KEY, isCsvLocked } from '@/lib/csv-lock'
 import { DELETE, GET, PUT } from '@/app/api/setup/google-sheets/route'
 import { GET as callback } from '@/app/api/auth/google/callback/route'
 
 const URL_SETUP = 'http://x/api/setup/google-sheets'
-const KEYS = [GOOGLE_KEYS.clientId, GOOGLE_KEYS.clientSecret, GOOGLE_KEYS.refreshToken, GOOGLE_KEYS.sheetsRefreshToken, GOOGLE_KEYS.sheetsEmail, GOOGLE_KEYS.sheetsNeedsReconnect, SHEET_CHANNELS_KEY]
+const KEYS = [GOOGLE_KEYS.clientId, GOOGLE_KEYS.clientSecret, GOOGLE_KEYS.refreshToken, GOOGLE_KEYS.sheetsRefreshToken, GOOGLE_KEYS.sheetsEmail, GOOGLE_KEYS.sheetsNeedsReconnect, SHEET_CHANNELS_KEY, CSV_OPEN_KEY]
 
 let superToken = ''
 let adminToken = ''
@@ -80,7 +81,7 @@ describe('Setup card', () => {
     const res = await GET(req('GET', superToken))
     const text = await res.text()
     expect(text).not.toContain('sheets-token')
-    expect(JSON.parse(text)).toMatchObject({ configured: true, connected: true, channels: [{ supplierCode: 'jomall', enabled: false }] })
+    expect(JSON.parse(text)).toMatchObject({ configured: true, connected: true, channels: [{ supplierCode: 'jomall', enabled: false }, { supplierCode: 'MANGOSHAO', enabled: false }] })
   })
 
   it('will not switch on without a connection', async () => {
@@ -143,5 +144,29 @@ describe('Google callback for Sheets', () => {
     const res = await runCallback(SHEETS_STATE_PREFIX)
     expect(res.headers.get('location')).toContain('/setup?sheets=error&reason=no_sheets_scope')
     expect(await setting(GOOGLE_KEYS.sheetsRefreshToken)).toBeNull()
+  })
+})
+
+describe('the CSV lock and the Mango channel in Setup', () => {
+  it('only a superadmin moves the lock', async () => {
+    expect((await PUT(req('PUT', adminToken, { csvLocked: false }))).status).toBe(403)
+    expect(await isCsvLocked()).toBe(true)
+    expect((await PUT(req('PUT', superToken, { csvLocked: false }))).status).toBe(200)
+    expect(await isCsvLocked()).toBe(false)
+    expect((await (await GET(req('GET', superToken))).json()).csvLocked).toBe(false)
+    expect((await PUT(req('PUT', superToken, { csvLocked: true }))).status).toBe(200)
+    expect((await (await GET(req('GET', superToken))).json()).csvLocked).toBe(true)
+  })
+
+  it('offers Mango switched off, and it opens only if its tab is there', async () => {
+    const list = (await (await GET(req('GET', superToken))).json()).channels
+    expect(list.find((c: any) => c.supplierCode === 'MANGOSHAO')).toMatchObject({ enabled: false, tabPattern: 'ORDER FULFILL' })
+    await set(GOOGLE_KEYS.sheetsRefreshToken, 'rt')
+    await set(GOOGLE_KEYS.sheetsEmail, 'setads@example.com')
+    const refused = await PUT(req('PUT', superToken, { supplierCode: 'MANGOSHAO', enabled: true }))
+    expect((await refused.json()).code).toBe('NO_TAB')
+    tabs = ['ORDER FULFILL']
+    expect((await PUT(req('PUT', superToken, { supplierCode: 'MANGOSHAO', enabled: true }))).status).toBe(200)
+    expect((await getSheetChannels()).find(c => c.supplierCode === 'MANGOSHAO')?.enabled).toBe(true)
   })
 })

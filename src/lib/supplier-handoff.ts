@@ -11,7 +11,8 @@ import { isMerchizeSupplier, merchizeCredentials } from '@/lib/merchize'
 import { activePushByOrder, logHandoffEvent } from '@/lib/repos/push-export'
 import { COOLING_OFF_HOURS, UNMAPPED_TAB, type HandoffCard, type HandoffLine, type HandoffSent, type HandoffState, type HubChannel, type HubTab, type SentStage } from '@/lib/handoff-shared'
 import { effectiveBaseCost } from '@/lib/order-profit'
-import { enabledChannelFor, getSheetChannels, sizeLabel } from '@/lib/sheet-channel'
+import { enabledChannelFor, getSheetChannels, sheetProduct, sizeLabel, type SheetChannel } from '@/lib/sheet-channel'
+import { CSV_LOCKED_MESSAGE, isCsvLocked } from '@/lib/csv-lock'
 import { customNameOf } from '@/lib/custom-name'
 import { loadLineResolver, recalculateMissingOrderLineCosts } from '@/lib/repos/order-costs'
 import { printFileFit } from '@/lib/print-file-fit'
@@ -81,11 +82,12 @@ const STATE_INCLUDE = {
 export async function handoffStates(orders: StateOrder[]): Promise<Map<string, HandoffState>> {
   const out = new Map<string, HandoffState>()
   if (orders.length === 0) return out
-  const [suppliers, settings, pushes, channels] = await Promise.all([
+  const [suppliers, settings, pushes, channels, csvLocked] = await Promise.all([
     prisma.supplier.findMany({ select: { id: true, code: true, apiType: true, isActive: true } }),
     getPgprintsSettings(),
     activePushByOrder(orders.map(o => o.id)),
     getSheetChannels(),
+    isCsvLocked(),
   ])
   const sheetSupplierIds = new Set(suppliers.filter(s => enabledChannelFor(channels, s)).map(s => s.id))
   const pgHits = suppliers.filter(isPgprintsSupplier)
@@ -141,6 +143,7 @@ export async function handoffStates(orders: StateOrder[]): Promise<Map<string, H
       merchizeOpen,
       csvRemainder,
       sheetOpen,
+      csvLocked,
       apiNote,
       handedOff,
       canUndo: !!handedOff && handedOff.mode === 'CSV' && !AFTER_EXPORT.includes(o.pipelineStatus),
@@ -162,6 +165,12 @@ function matches(card: HandoffCard, q: string): boolean {
     ...card.lines.flatMap(l => [l.taskKey, l.line.sku ?? '', l.line.productTitle, ...l.line.personalization.map(p => p.value)]),
   ]
   return haystacks.some(h => h.toLowerCase().includes(q))
+}
+
+/** What the card shows is what the sheet will get: the same rules as the send. */
+function sendOf(line: { variantTitle: string | null; personalization: Parameters<typeof customNameOf>[0] }, product: { baseSku: string | null; variant1Value: string | null; variant2Value: string | null } | undefined, channel: SheetChannel | null): HandoffLine['send'] {
+  const named = sheetProduct(channel, { baseSku: product?.baseSku, color: product?.variant2Value, variantTitle: line.variantTitle })
+  return { sku: named.baseSku || null, size: sizeLabel(product?.variant1Value, line.variantTitle), color: named.color, customName: customNameOf(line.personalization) }
 }
 
 async function buildCards(where: any, orderBy: any, opts: { checks?: boolean; sent?: Map<string, HandoffSent>; withUnmapped?: boolean } = {}): Promise<HandoffCard[]> {
@@ -200,6 +209,7 @@ async function buildCards(where: any, orderBy: any, opts: { checks?: boolean; se
     : []
   const apiSkuByKey = new Map(products.map(p => [`${p.supplierId}::${p.sku}`, p.apiSku?.trim() || null]))
   const productByKey = new Map(products.map(p => [`${p.supplierId}::${p.sku}`, p]))
+  const sheetChannels = await getSheetChannels()
   const resolveNow = opts.checks ? await loadLineResolver() : null
   const resolvable = opts.checks
     ? await prisma.orderLine.findMany({
@@ -237,12 +247,7 @@ async function buildCards(where: any, orderBy: any, opts: { checks?: boolean; se
         slots,
         baseCost: row && unitCost != null ? unitCost * row.qty : null,
         productType: row?.shopifyProductType ?? null,
-        send: {
-          sku: product?.baseSku ?? null,
-          size: sizeLabel(product?.variant1Value, line.variantTitle),
-          color: product?.variant2Value?.trim() ?? '',
-          customName: customNameOf(line.personalization),
-        },
+        send: sendOf(line, product, line.supplier ? enabledChannelFor(sheetChannels, line.supplier) : null),
         wrongSizeAreas,
         mappingNow,
         taskKey: lineKeys.get(line.shopifyLineId) ?? '',
@@ -572,6 +577,7 @@ export async function handoffOrderCsv(orderId: string, userId: string | null): P
     throw new HandoffError(`Đơn đã có lần gửi PGprints đang hiệu lực (${state.push.supplierOrderCode ?? state.push.externalOrderId}) — không lưu chờ xuất CSV`, 409, 'ACTIVE_PUSH')
   }
   if (!state.pending) throw new HandoffError(state.blocked ?? 'Đơn chưa đủ điều kiện chuyển xưởng', 409, 'NOT_READY')
+  if (state.csvLocked) throw new HandoffError(CSV_LOCKED_MESSAGE, 409, 'CSV_LOCKED')
   const r = await prisma.order.updateMany({
     where: { id: orderId, ...pendingHandoffWhere() },
     data: { supplierHandoffAt: new Date(), supplierHandoffMode: 'CSV', supplierHandoffById: userId },
