@@ -15,6 +15,15 @@ export type AutoRenderInput = {
   library: Pick<TaskLibraryState, 'entryId' | 'status' | 'layers'> | null
   personalization: { key: string; value: string }[]
   job: Pick<RenderJobView, 'status'> | null
+  teeinblue?: boolean
+}
+
+/** A Teeinblue line keeps the customer's picks in `_tb_design`, a reference to a design this tool cannot render. */
+const TEEINBLUE_DESIGN_KEY = '_tb_design'
+export const TEEINBLUE_REASON = 'Thiết kế Teeinblue — không dựng tự động được, làm tay'
+
+export function hasTeeinblueDesign(attrs: { key: string }[]): boolean {
+  return attrs.some(a => a.key === TEEINBLUE_DESIGN_KEY)
 }
 
 export type AutoRenderEligibility = { ok: boolean; busy: boolean; reason: string | null; fields: string[]; missing: string[] }
@@ -52,6 +61,7 @@ export function autoRenderEligibility(input: AutoRenderInput): AutoRenderEligibi
   const missing = fields.filter(f => values[f] === undefined)
   const no = (reason: string, busy = false): AutoRenderEligibility => ({ ok: false, busy, reason, fields, missing })
   if (CLOSED.includes(input.taskStatus)) return no('Task đã đóng')
+  if (input.teeinblue) return no(TEEINBLUE_REASON)
   if (!input.hasTemplate) return no('Dòng chưa có template in')
   if (input.slots.length === 0) return no('Template không có vùng in')
   if (!input.library?.entryId) return no('Chưa có artwork gốc cho template này')

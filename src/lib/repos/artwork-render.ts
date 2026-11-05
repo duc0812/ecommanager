@@ -2,7 +2,7 @@ import { lineKeyOf } from '@/lib/order-lines'
 import fsp from 'fs/promises'
 import { prisma } from '@/lib/db'
 import { parseFields } from '@/lib/artwork-fields'
-import { autoRenderEligibility, customerValues, renderFields, type RenderJobView } from '@/lib/artwork-render-eligibility'
+import { autoRenderEligibility, customerValues, hasTeeinblueDesign, renderFields, type RenderJobView } from '@/lib/artwork-render-eligibility'
 import { RENDER_LINE, latestRenderJob, renderJobView } from '@/lib/artwork-render-jobs'
 import { parseAttributes } from '@/lib/design-studio'
 import { saveArtwork } from '@/lib/design-storage'
@@ -40,7 +40,9 @@ async function enqueueRender(detail: LoadedTask, actorId: string | null, how: st
 async function renderCheck(detail: LoadedTask) {
   const { task, line, library, template, slots } = detail
   const job = await latestRenderJob(task.orderId, task.shopifyLineId)
-  return autoRenderEligibility({ taskStatus: task.status, hasTemplate: !!template, slots, library, personalization: line.personalization, job })
+  const raw = await prisma.orderLine.findFirst({ where: { orderId: task.orderId, shopifyLineId: task.shopifyLineId }, select: { customAttributesJson: true } })
+  const teeinblue = hasTeeinblueDesign(parseAttributes(raw?.customAttributesJson ?? null))
+  return autoRenderEligibility({ taskStatus: task.status, hasTemplate: !!template, slots, library, personalization: line.personalization, job, teeinblue })
 }
 
 export async function queueRenderLine(taskKey: string, actor: Actor): Promise<RenderJobView> {

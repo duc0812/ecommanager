@@ -16,7 +16,7 @@ import { latestRenderJob } from '@/lib/artwork-render-jobs'
 import { canApproveDesign, canEditDesignNote, canHandoffToSupplier, isLeaderRole, type FeaturePermission } from '@/lib/roles'
 import { activePushByOrder } from '@/lib/repos/push-export'
 import type { HandoffPush } from '@/lib/handoff-shared'
-import { autoRenderEligibility } from '@/lib/artwork-render-eligibility'
+import { autoRenderEligibility, hasTeeinblueDesign } from '@/lib/artwork-render-eligibility'
 import { autoFromLocalLibrary } from '@/lib/flat-text-coverage'
 import { APP_FILE_PREFIX } from '@/lib/design-links'
 import { saveStudioDesignToLibrary } from '@/lib/studio-library'
@@ -64,11 +64,13 @@ type ReadinessLine = TemplateLookupLine & {
  */
 export async function canAutoRenderLine(line: ReadinessLine, storeId: string, orderNumber: string): Promise<boolean> {
   if (!line.shopifyProductId || !line.resolvedSupplierId) return false
+  const attrs = parseAttributes(line.customAttributesJson)
+  if (hasTeeinblueDesign(attrs)) return false
   const profile = await findProfile(storeId, line.shopifyProductId)
   const template = await templateForLine(line, profile)
   if (!template) return false
   const slots = requiredSlotsFor(template)
-  const personalization = visibleCustomAttributes(parseAttributes(line.customAttributesJson))
+  const personalization = visibleCustomAttributes(attrs)
   const local = (await readLocalEntries() ?? []).filter(e => e.storeId === storeId && e.shopifyProductId === line.shopifyProductId && e.printTemplateId === template.id)
   if (local.length > 0 && autoFromLocalLibrary(local, {
     sku: line.sku, supplierSku: line.resolvedSupplierSku, variantTitle: line.variantTitle ?? null, orderNumber,
