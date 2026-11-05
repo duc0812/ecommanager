@@ -39,6 +39,7 @@ describe('POST /api/trello/backfill-custom-info order targeting', () => {
     expect(where.shopifyOrderNumber).toEqual({ in: ['#LIT4024', '#LIT4031'] })
     expect(where.placedAt).toBeUndefined()
     expect(where.trelloCardId).toEqual({ not: null })
+    expect(where.storeId).toBe('x')
   })
 
   it('normalizes "#", case and duplicates', async () => {

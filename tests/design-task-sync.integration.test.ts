@@ -1,9 +1,17 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest'
 
-vi.mock('@/lib/store-connections', async importOriginal => ({
-  ...(await importOriginal<typeof import('@/lib/store-connections')>()),
-  getStoreConnectionByShop: vi.fn(async (shop: string) => ({ storeId: 'dt-job', shop, token: 't' })),
-}))
+const DOWN_SHOP = 'dt-job-down.myshopify.com'
+
+vi.mock('@/lib/store-connections', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/lib/store-connections')>()
+  return {
+    ...actual,
+    getStoreConnectionByShop: vi.fn(async (shop: string) => {
+      if (shop === 'dt-job-down.myshopify.com') throw new actual.StoreConnectionError('DISABLED', 'dt-job-down', shop, `Store ${shop} đang tắt`)
+      return { storeId: 'dt-job', shop, token: 't' }
+    }),
+  }
+})
 vi.mock('@/lib/shopify-orders', () => ({ fetchOrderLinePropsByNames: vi.fn(async () => new Map()) }))
 
 import { prisma } from '@/lib/db'
@@ -23,11 +31,11 @@ const base = () => ({
   projectId: PROJECT, storeId, financialStatus: 'PAID', currency: 'USD', grossAmount: 1, expectedPayout: 1, totalFees: 0, refundedAmount: 0,
 })
 
-async function order(opts: { status: string; placedAt: string; fulfillment?: string; link?: string | null; attrs?: string | null }) {
+async function order(opts: { status: string; placedAt: string; fulfillment?: string; link?: string | null; attrs?: string | null; storeId?: string }) {
   seq += 1
   const id = `gid://test/Order/dt-job-${seq}`
   await prisma.order.create({ data: {
-    ...base(), id, shopifyOrderNumber: `#DTJ${seq}`, placedAt: new Date(opts.placedAt), pipelineStatus: opts.status, fulfillmentStatus: opts.fulfillment ?? null,
+    ...base(), ...(opts.storeId ? { storeId: opts.storeId } : {}), id, shopifyOrderNumber: `#DTJ${seq}`, placedAt: new Date(opts.placedAt), pipelineStatus: opts.status, fulfillmentStatus: opts.fulfillment ?? null,
     lines: { create: [{
       shopifyLineId: 'l1', sku: `DTJ-${seq}`, productTitle: 'Mug', qty: 1, linePosition: 1, unitPrice: 1, resolvedSupplierId: SUP,
       designDriveLink: opts.link ?? null, customAttributesJson: opts.attrs === undefined ? '[]' : opts.attrs,
@@ -56,7 +64,8 @@ beforeEach(() => {
 })
 
 afterAll(async () => {
-  await prisma.order.deleteMany({ where: { storeId } })
+  await prisma.order.deleteMany({ where: { store: { shop: { in: [SHOP, DOWN_SHOP] } } } })
+  await prisma.shopifyStore.deleteMany({ where: { shop: DOWN_SHOP } })
   await prisma.supplier.deleteMany({ where: { id: SUP } })
   await prisma.appSetting.deleteMany({ where: { key: DESIGN_TASK_SYNC_KEY } })
 })
@@ -185,6 +194,45 @@ describe('runDesignTaskSync Shopify refresh', () => {
     expect(s.refresh.error).toContain('502')
     expect(s.refresh.attempted).toBe(0)
     expect((await taskOf(late.id))?.status).toBe('NEW')
+  })
+
+  it('a store that cannot connect does not stop the batches after it from refreshing the healthy store', async () => {
+    const down = await prisma.shopifyStore.upsert({ where: { shop: DOWN_SHOP }, create: { shop: DOWN_SHOP, projectId: null }, update: {} })
+    // Newest first: the first batch mixes 5 orders of the down store with 20 healthy ones, the rest are all healthy.
+    for (let i = 0; i < 5; i += 1) await order({ status: 'PENDING_DESIGN', placedAt: `2028-01-01T00:${String(i).padStart(2, '0')}:00Z`, attrs: null, storeId: down.id })
+    for (let i = 0; i < 60; i += 1) await order({ status: 'PENDING_DESIGN', placedAt: `2027-12-01T00:${String(i).padStart(2, '0')}:00Z`, attrs: null })
+    vi.mocked(fetchOrderLinePropsByNames).mockImplementation(async (_s, _t, names) => new Map(names.map(n => [n, [{
+      sku: 'A', title: 'Mug', variantTitle: null, quantity: 1, productType: null, customAttributes: [], productUrl: null,
+      variantId: null, imageUrl: 'https://cdn.shopify.com/v.jpg', productId: 'gid://shopify/Product/5',
+    }]])))
+    try {
+      const s = await runDesignTaskSync({ trigger: 'manual', now: 5_000_000 })
+      const calls = vi.mocked(fetchOrderLinePropsByNames).mock.calls
+      // Leftover healthy orders of earlier tests may fill the rest of the cap; either way every batch runs.
+      expect(s.refresh.attempted).toBeGreaterThanOrEqual(65)
+      expect(calls).toHaveLength(Math.ceil(s.refresh.attempted / REFRESH_BATCH))
+      expect(calls.every(c => c[0] === SHOP)).toBe(true)
+      expect(calls[0][2]).toHaveLength(REFRESH_BATCH - 5)
+      expect(s.refresh.error).toContain(DOWN_SHOP)
+      expect(s.refresh.refreshed).toBe(s.refresh.attempted - 5)
+    } finally {
+      vi.mocked(fetchOrderLinePropsByNames).mockImplementation(async () => new Map())
+    }
+  })
+
+  it('stops after a batch where every store failed, so an outage costs one batch', async () => {
+    vi.mocked(fetchOrderLinePropsByNames).mockRejectedValue(new Error('Shopify GraphQL 503'))
+    for (let i = 0; i < 60; i += 1) await order({ status: 'PENDING_DESIGN', placedAt: `2029-01-01T00:${String(i).padStart(2, '0')}:00Z`, attrs: null })
+    try {
+      const s = await runDesignTaskSync({ trigger: 'manual' })
+      expect(vi.mocked(fetchOrderLinePropsByNames)).toHaveBeenCalledTimes(1)
+      expect(s.refresh.error).toContain('503')
+      expect(s.refresh.attempted).toBe(0)
+      expect(s.refresh.deferred).toBe(s.refresh.needing)
+    } finally {
+      vi.mocked(fetchOrderLinePropsByNames).mockReset()
+      vi.mocked(fetchOrderLinePropsByNames).mockImplementation(async () => new Map())
+    }
   })
 })
 

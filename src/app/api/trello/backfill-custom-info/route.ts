@@ -40,6 +40,7 @@ export async function POST(req: Request) {
   const since = new Date(Date.now() - sinceDays * 24 * 60 * 60 * 1000)
   const orders = await prisma.order.findMany({
     where: {
+      storeId: conn.storeId,
       trelloCardId: { not: null },
       ...(targeted
         ? { shopifyOrderNumber: { in: orderNames } }
