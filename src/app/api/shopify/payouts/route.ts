@@ -1,18 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { fetchAllPayouts, fetchBalance, fetchBankAccounts } from '@/lib/shopify'
-import { defaultConnectedStoreId, getStoreConnection, tryStoreConnection } from '@/lib/store-connections'
+import { getStoreConnection, listConnectedStores, tryStoreConnection } from '@/lib/store-connections'
+import { firstStoreOf } from '@/lib/finance-scope'
+import { requireStoreFilter } from '@/lib/store-scope'
 import { connectionFailureResponse } from '@/lib/store-connection-response'
 import { prisma } from '@/lib/db'
 import { payoutDateMinFor, payoutStartFor } from '@/lib/shopify-payout-policy'
 
 export async function GET(req: NextRequest) {
+  const scope = await requireStoreFilter(req, 'shopify')
+  if ('error' in scope) return scope.error
   const { searchParams } = new URL(req.url)
   const requestedDateMin = searchParams.get('date_min') ?? undefined
   const date_max = searchParams.get('date_max') ?? undefined
 
   try {
     const notConnected = { error: 'Not connected to Shopify. Go to /setup and connect Shopify first.', status: 401 }
-    const storeId = searchParams.get('storeId') || await defaultConnectedStoreId()
+    const named = searchParams.get('storeId')
+    const storeId = (named && named !== 'all' ? named : null) ?? firstStoreOf(await listConnectedStores(), scope.storeIds)?.id
     if (!storeId) return NextResponse.json({ error: notConnected.error }, { status: notConnected.status })
     const { conn, error } = await tryStoreConnection(() => getStoreConnection(storeId))
     if (!conn) return connectionFailureResponse(error, notConnected)

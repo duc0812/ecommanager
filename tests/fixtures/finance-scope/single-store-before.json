@@ -1,0 +1,629 @@
+{
+  "overviewAll": {
+    "shopify": {
+      "totalRevenue": 1040.75,
+      "payoutCount": 2,
+      "recentPayouts": [
+        {
+          "id": 9500002,
+          "storeId": "fsf-store-a",
+          "status": "paid",
+          "date": "2026-10-11",
+          "currency": "USD",
+          "amount": 40.5,
+          "chargesFeeAmount": 0,
+          "chargesGrossAmount": 40.5,
+          "refundsFeeAmount": 0,
+          "refundsGrossAmount": 0,
+          "adjustmentsFeeAmount": 0,
+          "adjustmentsGrossAmount": 0,
+          "bankAccountShopifyId": null,
+          "fetchedAt": "2026-10-06T00:00:00.000Z"
+        },
+        {
+          "id": 9500001,
+          "storeId": "fsf-store-a",
+          "status": "paid",
+          "date": "2026-10-10",
+          "currency": "USD",
+          "amount": 1000.25,
+          "chargesFeeAmount": 0,
+          "chargesGrossAmount": 1000.25,
+          "refundsFeeAmount": 0,
+          "refundsGrossAmount": 0,
+          "adjustmentsFeeAmount": 0,
+          "adjustmentsGrossAmount": 0,
+          "bankAccountShopifyId": null,
+          "fetchedAt": "2026-10-06T00:00:00.000Z"
+        }
+      ]
+    },
+    "meta": {
+      "totalSpend": 335,
+      "billingCount": 3,
+      "recentBillings": [
+        {
+          "id": "fsf-bill-a2",
+          "adAccountId": "fsf-accdb-a",
+          "amount": 25.2,
+          "currency": "USD",
+          "billingDate": "2026-10-06",
+          "status": "PAID",
+          "chargeType": null,
+          "productType": null,
+          "paymentMethod": null,
+          "paymentMethodLast4": "1111",
+          "referenceNumber": null,
+          "receiptUrl": null,
+          "createdAt": "2026-10-06T00:00:00.000Z",
+          "amountUsd": 25.2
+        },
+        {
+          "id": "fsf-bill-a1",
+          "adAccountId": "fsf-accdb-a",
+          "amount": 300.1,
+          "currency": "USD",
+          "billingDate": "2026-10-05",
+          "status": "PAID",
+          "chargeType": null,
+          "productType": null,
+          "paymentMethod": null,
+          "paymentMethodLast4": "1111",
+          "referenceNumber": null,
+          "receiptUrl": null,
+          "createdAt": "2026-10-06T00:00:00.000Z",
+          "amountUsd": 300.1
+        },
+        {
+          "id": "fsf-bill-u1",
+          "adAccountId": "fsf-accdb-u",
+          "amount": 9.7,
+          "currency": "USD",
+          "billingDate": "2026-10-05",
+          "status": "PAID",
+          "chargeType": null,
+          "productType": null,
+          "paymentMethod": null,
+          "paymentMethodLast4": "2222",
+          "referenceNumber": null,
+          "receiptUrl": null,
+          "createdAt": "2026-10-06T00:00:00.000Z",
+          "amountUsd": 9.7
+        }
+      ],
+      "missingRateCount": 0,
+      "spendByCard": [
+        {
+          "last4": "1111",
+          "method": "",
+          "usd": 325.3
+        },
+        {
+          "last4": "2222",
+          "method": "",
+          "usd": 9.7
+        }
+      ]
+    },
+    "projects": {
+      "count": 1,
+      "list": [
+        {
+          "id": "fsf-project-a",
+          "name": "FSF Alpha",
+          "startDate": "2026-01-01T00:00:00.000Z",
+          "staffCount": 2,
+          "monthlyCost": 1000
+        }
+      ]
+    },
+    "staff": {
+      "count": 2,
+      "totalMonthlyCost": 1000
+    },
+    "netCashflow": 705.75,
+    "periodMetrics": null
+  },
+  "overviewCustom": {
+    "shopify": {
+      "totalRevenue": 1040.75,
+      "payoutCount": 2,
+      "recentPayouts": [
+        {
+          "id": 9500002,
+          "storeId": "fsf-store-a",
+          "status": "paid",
+          "date": "2026-10-11",
+          "currency": "USD",
+          "amount": 40.5,
+          "chargesFeeAmount": 0,
+          "chargesGrossAmount": 40.5,
+          "refundsFeeAmount": 0,
+          "refundsGrossAmount": 0,
+          "adjustmentsFeeAmount": 0,
+          "adjustmentsGrossAmount": 0,
+          "bankAccountShopifyId": null,
+          "fetchedAt": "2026-10-06T00:00:00.000Z"
+        },
+        {
+          "id": 9500001,
+          "storeId": "fsf-store-a",
+          "status": "paid",
+          "date": "2026-10-10",
+          "currency": "USD",
+          "amount": 1000.25,
+          "chargesFeeAmount": 0,
+          "chargesGrossAmount": 1000.25,
+          "refundsFeeAmount": 0,
+          "refundsGrossAmount": 0,
+          "adjustmentsFeeAmount": 0,
+          "adjustmentsGrossAmount": 0,
+          "bankAccountShopifyId": null,
+          "fetchedAt": "2026-10-06T00:00:00.000Z"
+        }
+      ]
+    },
+    "meta": {
+      "totalSpend": 335,
+      "billingCount": 3,
+      "recentBillings": [
+        {
+          "id": "fsf-bill-a2",
+          "adAccountId": "fsf-accdb-a",
+          "amount": 25.2,
+          "currency": "USD",
+          "billingDate": "2026-10-06",
+          "status": "PAID",
+          "chargeType": null,
+          "productType": null,
+          "paymentMethod": null,
+          "paymentMethodLast4": "1111",
+          "referenceNumber": null,
+          "receiptUrl": null,
+          "createdAt": "2026-10-06T00:00:00.000Z",
+          "amountUsd": 25.2
+        },
+        {
+          "id": "fsf-bill-a1",
+          "adAccountId": "fsf-accdb-a",
+          "amount": 300.1,
+          "currency": "USD",
+          "billingDate": "2026-10-05",
+          "status": "PAID",
+          "chargeType": null,
+          "productType": null,
+          "paymentMethod": null,
+          "paymentMethodLast4": "1111",
+          "referenceNumber": null,
+          "receiptUrl": null,
+          "createdAt": "2026-10-06T00:00:00.000Z",
+          "amountUsd": 300.1
+        },
+        {
+          "id": "fsf-bill-u1",
+          "adAccountId": "fsf-accdb-u",
+          "amount": 9.7,
+          "currency": "USD",
+          "billingDate": "2026-10-05",
+          "status": "PAID",
+          "chargeType": null,
+          "productType": null,
+          "paymentMethod": null,
+          "paymentMethodLast4": "2222",
+          "referenceNumber": null,
+          "receiptUrl": null,
+          "createdAt": "2026-10-06T00:00:00.000Z",
+          "amountUsd": 9.7
+        }
+      ],
+      "missingRateCount": 0,
+      "spendByCard": [
+        {
+          "last4": "1111",
+          "method": "",
+          "usd": 325.3
+        },
+        {
+          "last4": "2222",
+          "method": "",
+          "usd": 9.7
+        }
+      ]
+    },
+    "projects": {
+      "count": 1,
+      "list": [
+        {
+          "id": "fsf-project-a",
+          "name": "FSF Alpha",
+          "startDate": "2026-01-01T00:00:00.000Z",
+          "staffCount": 2,
+          "monthlyCost": 1000
+        }
+      ]
+    },
+    "staff": {
+      "count": 2,
+      "totalMonthlyCost": 1000
+    },
+    "netCashflow": 705.75,
+    "periodMetrics": {
+      "period": "custom",
+      "label": "Ngày 2026-10-05",
+      "from": "2026-10-05",
+      "to": "2026-10-05",
+      "orders": 1,
+      "mappedOrders": 1,
+      "unmappedOrders": 0,
+      "revenue": 100,
+      "adSpend": 57,
+      "adSpendByAccount": [
+        {
+          "accountId": "fsf-accdb-a",
+          "name": "fsf-acc-a name",
+          "spendUsd": 50
+        },
+        {
+          "accountId": "fsf-accdb-u",
+          "name": "fsf-acc-u name",
+          "spendUsd": 7
+        }
+      ],
+      "spendByCard": [
+        {
+          "last4": "1111",
+          "method": "",
+          "usd": 300.1
+        },
+        {
+          "last4": "2222",
+          "method": "",
+          "usd": 9.7
+        }
+      ],
+      "orderProfit": 0,
+      "netProfit": -57,
+      "roas": 1.75,
+      "avgMargin": 0,
+      "avgOrderValue": 100,
+      "unfulfilledOrders": 1
+    }
+  },
+  "projects": [
+    {
+      "id": "fsf-project-a",
+      "name": "FSF Alpha",
+      "startDate": "2026-01-01T00:00:00.000Z",
+      "description": null,
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "archivedAt": null,
+      "assignments": [
+        {
+          "id": "fsf-staff-a-in-fsf-project-a",
+          "staffId": "fsf-staff-a",
+          "projectId": "fsf-project-a",
+          "startDate": "2026-01-01T00:00:00.000Z",
+          "endDate": null,
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "staff": {
+            "id": "fsf-staff-a",
+            "name": "fsf-staff-a",
+            "role": null,
+            "monthlyCost": 300,
+            "note": null,
+            "createdAt": "2026-01-01T00:00:00.000Z"
+          }
+        },
+        {
+          "id": "fsf-staff-ab-in-fsf-project-a",
+          "staffId": "fsf-staff-ab",
+          "projectId": "fsf-project-a",
+          "startDate": "2026-01-01T00:00:00.000Z",
+          "endDate": null,
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "staff": {
+            "id": "fsf-staff-ab",
+            "name": "fsf-staff-ab",
+            "role": null,
+            "monthlyCost": 700,
+            "note": null,
+            "createdAt": "2026-01-01T00:00:00.000Z"
+          }
+        }
+      ],
+      "shopifyStore": {
+        "shop": "fsf-a.myshopify.com"
+      }
+    }
+  ],
+  "staff": [
+    {
+      "id": "fsf-staff-a",
+      "name": "fsf-staff-a",
+      "role": null,
+      "monthlyCost": 300,
+      "note": null,
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "assignments": [
+        {
+          "id": "fsf-staff-a-in-fsf-project-a",
+          "staffId": "fsf-staff-a",
+          "projectId": "fsf-project-a",
+          "startDate": "2026-01-01T00:00:00.000Z",
+          "endDate": null,
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "project": {
+            "id": "fsf-project-a",
+            "name": "FSF Alpha",
+            "startDate": "2026-01-01T00:00:00.000Z",
+            "description": null,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "archivedAt": null
+          }
+        }
+      ]
+    },
+    {
+      "id": "fsf-staff-ab",
+      "name": "fsf-staff-ab",
+      "role": null,
+      "monthlyCost": 700,
+      "note": null,
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "assignments": [
+        {
+          "id": "fsf-staff-ab-in-fsf-project-a",
+          "staffId": "fsf-staff-ab",
+          "projectId": "fsf-project-a",
+          "startDate": "2026-01-01T00:00:00.000Z",
+          "endDate": null,
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "project": {
+            "id": "fsf-project-a",
+            "name": "FSF Alpha",
+            "startDate": "2026-01-01T00:00:00.000Z",
+            "description": null,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "archivedAt": null
+          }
+        }
+      ]
+    }
+  ],
+  "otherBills": {
+    "bills": [
+      {
+        "id": "fsf-obill-u",
+        "vendor": "fsf-u",
+        "category": "OTHER",
+        "amount": 3.25,
+        "currency": "USD",
+        "amountUsd": 3.25,
+        "exchangeRate": null,
+        "paidAt": "2026-10-05",
+        "paymentMethod": "OTHER",
+        "transactionId": null,
+        "note": null,
+        "tags": "[]",
+        "projectId": null,
+        "createdAt": "2026-10-06T00:00:02.000Z",
+        "project": null
+      },
+      {
+        "id": "fsf-obill-a",
+        "vendor": "fsf-a",
+        "category": "OTHER",
+        "amount": 11.5,
+        "currency": "USD",
+        "amountUsd": 11.5,
+        "exchangeRate": null,
+        "paidAt": "2026-10-05",
+        "paymentMethod": "OTHER",
+        "transactionId": null,
+        "note": null,
+        "tags": "[]",
+        "projectId": "fsf-project-a",
+        "createdAt": "2026-10-06T00:00:00.000Z",
+        "project": {
+          "id": "fsf-project-a",
+          "name": "FSF Alpha"
+        }
+      }
+    ],
+    "projects": [
+      {
+        "id": "fsf-project-a",
+        "name": "FSF Alpha",
+        "startDate": "2026-01-01T00:00:00.000Z",
+        "description": null,
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "archivedAt": null
+      }
+    ],
+    "stats": {
+      "totalUsd": 14.75,
+      "count": 2,
+      "byCategory": [
+        {
+          "category": "OTHER",
+          "totalUsd": 14.75,
+          "count": 2
+        }
+      ],
+      "distinctProjects": 1
+    }
+  },
+  "dbBilling": {
+    "accounts": [
+      {
+        "id": "fsf-accdb-a",
+        "accountId": "fsf-acc-a",
+        "accountName": "fsf-acc-a name",
+        "currency": "USD",
+        "projectId": "fsf-project-a",
+        "project": {
+          "id": "fsf-project-a",
+          "name": "FSF Alpha",
+          "startDate": "2026-01-01T00:00:00.000Z",
+          "description": null,
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "archivedAt": null
+        },
+        "lastSyncAt": null,
+        "createdAt": "2026-10-01T00:00:00.000Z"
+      },
+      {
+        "id": "fsf-accdb-u",
+        "accountId": "fsf-acc-u",
+        "accountName": "fsf-acc-u name",
+        "currency": "USD",
+        "projectId": null,
+        "project": null,
+        "lastSyncAt": null,
+        "createdAt": "2026-10-01T00:00:00.000Z"
+      }
+    ],
+    "billings": [
+      {
+        "id": "fsf-bill-a2",
+        "adAccountId": "fsf-accdb-a",
+        "amount": 25.2,
+        "currency": "USD",
+        "billingDate": "2026-10-06",
+        "status": "PAID",
+        "chargeType": null,
+        "productType": null,
+        "paymentMethod": null,
+        "paymentMethodLast4": "1111",
+        "referenceNumber": null,
+        "receiptUrl": null,
+        "createdAt": "2026-10-06T00:00:00.000Z",
+        "adAccount": {
+          "accountId": "fsf-acc-a",
+          "accountName": "fsf-acc-a name",
+          "projectId": "fsf-project-a"
+        },
+        "amountUsd": 25.2,
+        "projectLabel": {
+          "id": "fsf-project-a",
+          "name": "FSF Alpha"
+        },
+        "staffLabels": [
+          {
+            "id": "fsf-staff-a",
+            "name": "fsf-staff-a",
+            "role": null
+          },
+          {
+            "id": "fsf-staff-ab",
+            "name": "fsf-staff-ab",
+            "role": null
+          }
+        ]
+      },
+      {
+        "id": "fsf-bill-a1",
+        "adAccountId": "fsf-accdb-a",
+        "amount": 300.1,
+        "currency": "USD",
+        "billingDate": "2026-10-05",
+        "status": "PAID",
+        "chargeType": null,
+        "productType": null,
+        "paymentMethod": null,
+        "paymentMethodLast4": "1111",
+        "referenceNumber": null,
+        "receiptUrl": null,
+        "createdAt": "2026-10-06T00:00:00.000Z",
+        "adAccount": {
+          "accountId": "fsf-acc-a",
+          "accountName": "fsf-acc-a name",
+          "projectId": "fsf-project-a"
+        },
+        "amountUsd": 300.1,
+        "projectLabel": {
+          "id": "fsf-project-a",
+          "name": "FSF Alpha"
+        },
+        "staffLabels": [
+          {
+            "id": "fsf-staff-a",
+            "name": "fsf-staff-a",
+            "role": null
+          },
+          {
+            "id": "fsf-staff-ab",
+            "name": "fsf-staff-ab",
+            "role": null
+          }
+        ]
+      },
+      {
+        "id": "fsf-bill-u1",
+        "adAccountId": "fsf-accdb-u",
+        "amount": 9.7,
+        "currency": "USD",
+        "billingDate": "2026-10-05",
+        "status": "PAID",
+        "chargeType": null,
+        "productType": null,
+        "paymentMethod": null,
+        "paymentMethodLast4": "2222",
+        "referenceNumber": null,
+        "receiptUrl": null,
+        "createdAt": "2026-10-06T00:00:00.000Z",
+        "adAccount": {
+          "accountId": "fsf-acc-u",
+          "accountName": "fsf-acc-u name",
+          "projectId": null
+        },
+        "amountUsd": 9.7,
+        "projectLabel": null,
+        "staffLabels": []
+      }
+    ],
+    "totalSpent": 335,
+    "totalPending": 0,
+    "fxFee": 0.335,
+    "paidReality": 335.335,
+    "vndCardLast4": [],
+    "count": 3,
+    "paidCount": 3,
+    "failedCount": 0,
+    "pendingCount": 0,
+    "avgSpend": 111.66666666666667,
+    "missingExchangeRateAccounts": [],
+    "lastSyncAt": null,
+    "period": null,
+    "periodLabel": null
+  },
+  "metaAccounts": [
+    {
+      "id": "fsf-accdb-a",
+      "accountId": "fsf-acc-a",
+      "accountName": "fsf-acc-a name",
+      "currency": "USD",
+      "projectId": "fsf-project-a",
+      "project": {
+        "id": "fsf-project-a",
+        "name": "FSF Alpha",
+        "startDate": "2026-01-01T00:00:00.000Z",
+        "description": null,
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "archivedAt": null
+      },
+      "lastSyncAt": null,
+      "createdAt": "2026-10-01T00:00:00.000Z"
+    },
+    {
+      "id": "fsf-accdb-u",
+      "accountId": "fsf-acc-u",
+      "accountName": "fsf-acc-u name",
+      "currency": "USD",
+      "projectId": null,
+      "project": null,
+      "lastSyncAt": null,
+      "createdAt": "2026-10-01T00:00:00.000Z"
+    }
+  ]
+}

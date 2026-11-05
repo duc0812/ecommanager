@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { requireSuperadmin } from '@/lib/api-auth'
+import { projectRowsWhere, requireFinanceScope } from '@/lib/finance-scope'
 
 const SUPPORTED_CURRENCIES = new Set(['USD', 'VND'])
 const SAFE_ACCOUNT_SELECT = {
@@ -19,8 +20,11 @@ function parseCurrency(value: unknown) {
   return SUPPORTED_CURRENCIES.has(currency) ? currency : null
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const scope = await requireFinanceScope(req)
+  if ('error' in scope) return scope.error
   const accounts = await prisma.metaAdAccount.findMany({
+    where: projectRowsWhere(scope),
     orderBy: { createdAt: 'asc' },
     select: SAFE_ACCOUNT_SELECT,
   })

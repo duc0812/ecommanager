@@ -5,6 +5,7 @@ import { payoutDateWhereForStores } from '@/lib/shopify-payout-policy'
 import { convertMetaAmountToUsdDated, sumMetaAmountsUsdDated } from '@/lib/meta-currency'
 import { getMetaRateSchedule } from '@/lib/meta-exchange-rates'
 import { PAID_META_STATUSES } from '@/lib/meta-fee'
+import { projectRowsWhere, projectWhere, requireFinanceScope, type FinanceScope } from '@/lib/finance-scope'
 
 function dateKeyInZone(date: Date, timeZone: string) {
   const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
@@ -99,30 +100,80 @@ function cardSummary(bills: BillingRow[], schedule: Awaited<ReturnType<typeof ge
     .sort((a, b) => b.usd - a.usd)
 }
 
+type OverviewStore = { id: string; ianaTimezone: string | null; projectId: string | null }
+
+type ZoneGroup = {
+  timeZone: string
+  storeIds: string[]
+  projectIds: string[]
+  // Ad accounts that belong to no store of the request. The first group takes them and counts them in its own zone.
+  rest: 'none' | 'unassigned' | 'everything'
+}
+
+// A day's figures follow the time zone of the store that sold it. Stores that share a zone are one group, so with
+// a single zone (every store today) the queries are the ones a single store always ran.
+function zoneGroups(stores: OverviewStore[], scope: FinanceScope): ZoneGroup[] {
+  const byZone = new Map<string, OverviewStore[]>()
+  for (const store of stores) {
+    const zone = store.ianaTimezone ?? 'UTC'
+    byZone.set(zone, [...(byZone.get(zone) ?? []), store])
+  }
+  const rest = scope.projectIds === null ? 'everything' : scope.includeUnassigned ? 'unassigned' : 'none'
+  if (byZone.size === 0) return [{ timeZone: 'UTC', storeIds: [], projectIds: [], rest }]
+  return Array.from(byZone, ([timeZone, list], index) => ({
+    timeZone,
+    storeIds: list.map(s => s.id),
+    projectIds: list.flatMap(s => (s.projectId ? [s.projectId] : [])),
+    rest: index === 0 ? rest : 'none',
+  }))
+}
+
 export async function GET(req: NextRequest) {
+  const scope = await requireFinanceScope(req, 'overview')
+  if ('error' in scope) return scope.error
   try {
     const { searchParams } = new URL(req.url)
     const period = searchParams.get('period') ?? 'all'
-    const store = await prisma.shopifyStore.findFirst({ select: { ianaTimezone: true } })
-    const storeTimeZone = store?.ianaTimezone ?? 'UTC'
-    const periodRange = getPeriodRange(period, storeTimeZone, searchParams.get('date'))
+    const stores = await prisma.shopifyStore.findMany({
+      where: scope.storeIds ? { id: { in: scope.storeIds } } : {},
+      orderBy: { connectedAt: 'asc' },
+      select: { id: true, shop: true, ianaTimezone: true, payoutStartDate: true, projectId: true, project: { select: { name: true } } },
+    })
+    const groups = zoneGroups(stores, scope)
+    const allProjectIds = stores.flatMap(s => (s.projectId ? [s.projectId] : []))
+    const everyAccount = scope.projectIds === null && groups.length === 1
+
+    // The ad accounts of one zone group, as a filter and as a test on a loaded row.
+    const accountWhere = (group: ZoneGroup) => (everyAccount ? {} : {
+      OR: [
+        { projectId: { in: group.projectIds } },
+        ...(group.rest === 'unassigned' ? [{ projectId: null }] : []),
+        ...(group.rest === 'everything' ? [{ projectId: null }, { projectId: { notIn: allProjectIds } }] : []),
+      ],
+    })
+    const groupHasAccount = (group: ZoneGroup, projectId: string | null) => everyAccount
+      || (projectId !== null && group.projectIds.includes(projectId))
+      || (group.rest === 'unassigned' && projectId === null)
+      || (group.rest === 'everything' && (projectId === null || !allProjectIds.includes(projectId)))
 
     const paidMetaStatuses = PAID_META_STATUSES
     // Each store's payouts count from its own start date.
     const payoutWhere = {
       status: 'paid',
-      ...payoutDateWhereForStores(await prisma.shopifyStore.findMany({ select: { id: true, payoutStartDate: true } })),
+      ...payoutDateWhereForStores(stores),
     }
+    const billingWhere = { status: { in: paidMetaStatuses }, ...(scope.projectIds ? { adAccount: projectRowsWhere(scope) } : {}) }
 
     const [payouts, metaBillings, metaAccounts, projects, staff] = await Promise.all([
       prisma.payout.findMany({ where: payoutWhere }),
-      prisma.metaBilling.findMany({ where: { status: { in: paidMetaStatuses } } }),
-      prisma.metaAdAccount.findMany({ select: { id: true, accountId: true, accountName: true, currency: true } }),
+      prisma.metaBilling.findMany({ where: billingWhere }),
+      prisma.metaAdAccount.findMany({ where: projectRowsWhere(scope), select: { id: true, accountId: true, accountName: true, currency: true, projectId: true } }),
       prisma.project.findMany({
+        where: projectWhere(scope),
         include: { assignments: { include: { staff: true } } },
         orderBy: { startDate: 'desc' },
       }),
-      prisma.staff.findMany(),
+      prisma.staff.findMany({ where: scope.projectIds ? { assignments: { some: { projectId: { in: scope.projectIds } } } } : {} }),
     ])
     const schedule = await getMetaRateSchedule()
 
@@ -136,7 +187,7 @@ export async function GET(req: NextRequest) {
     const totalSpend = metaBillingSummary.totalUsd
     const billingCount = metaBillings.length
     const recentBillingsRaw = await prisma.metaBilling.findMany({
-      where: { status: { in: paidMetaStatuses } }, orderBy: { billingDate: 'desc' }, take: 5,
+      where: billingWhere, orderBy: { billingDate: 'desc' }, take: 5,
     })
     const recentBillings = recentBillingsRaw.map(billing => ({
       ...billing,
@@ -157,20 +208,43 @@ export async function GET(req: NextRequest) {
       monthlyCost: p.assignments.reduce((s, a) => s + (a.staff?.monthlyCost ?? 0), 0),
     }))
 
-    // Period metrics
+    // Period metrics: each zone group works out its own day, then the groups are added together
+    const periodRanges = groups.map(group => getPeriodRange(period, group.timeZone, searchParams.get('date')))
+    const periodRange = periodRanges[0]
     let periodMetrics = null
     if (periodRange) {
-      const [periodOrders, periodAdSpends] = await Promise.all([
-        ordersWithComputedPL({ dateFrom: periodRange.from, dateTo: periodRange.to, limit: 10000 }),
-        prisma.dailyAdSpend.findMany({
-          where: {
-            date: {
-              gte: periodRange.fromKey,
-              lte: periodRange.toKey,
+      const accountProject = new Map(metaAccounts.map(a => [a.id, a.projectId]))
+      const perGroup = await Promise.all(groups.map(async (group, index) => {
+        const range = periodRanges[index]!
+        const storeFilter = everyAccount ? undefined : group.storeIds
+        const [orders, adSpends, unfulfilled] = await Promise.all([
+          ordersWithComputedPL({ dateFrom: range.from, dateTo: range.to, limit: 10000, storeIds: storeFilter }),
+          prisma.dailyAdSpend.findMany({
+            where: {
+              date: {
+                gte: range.fromKey,
+                lte: range.toKey,
+              },
+              ...(everyAccount ? {} : { adAccount: accountWhere(group) }),
             },
-          },
-        }),
-      ])
+          }),
+          prisma.order.count({
+            where: {
+              placedAt: { gte: range.from, lte: range.to },
+              ...(storeFilter ? { storeId: { in: storeFilter } } : {}),
+              OR: [
+                { fulfillmentStatus: 'unfulfilled' },
+                { fulfillmentStatus: null },
+              ],
+            },
+          }),
+        ])
+        const bills = metaBillings.filter(b => b.billingDate >= range.fromKey && b.billingDate <= range.toKey
+          && groupHasAccount(group, accountProject.get(b.adAccountId) ?? null))
+        return { orders, adSpends, unfulfilled, bills }
+      }))
+      const periodOrders = perGroup.flatMap(g => g.orders)
+      const periodAdSpends = perGroup.flatMap(g => g.adSpends)
 
       const mappedPeriodOrders = periodOrders.filter(order => !order.computed.hasUnmappedSku)
       const unmappedOrders = periodOrders.length - mappedPeriodOrders.length
@@ -201,15 +275,7 @@ export async function GET(req: NextRequest) {
       const avgMargin = totalOrderRevenue > 0 ? (totalOrderProfit / totalOrderRevenue) * 100 : 0
       const aov = periodOrders.length > 0 ? totalOrderRevenue / periodOrders.length : 0
 
-      const unfulfilledOrders = await prisma.order.count({
-        where: {
-          placedAt: { gte: periodRange.from, lte: periodRange.to },
-          OR: [
-            { fulfillmentStatus: 'unfulfilled' },
-            { fulfillmentStatus: null },
-          ],
-        },
-      })
+      const unfulfilledOrders = perGroup.reduce((total, g) => total + g.unfulfilled, 0)
 
       periodMetrics = {
         period,
@@ -222,10 +288,7 @@ export async function GET(req: NextRequest) {
         revenue: Math.round(totalOrderRevenue * 100) / 100,
         adSpend: Math.round(adSpend * 100) / 100,
         adSpendByAccount,
-        spendByCard: cardSummary(
-          metaBillings.filter(b => b.billingDate >= periodRange.fromKey && b.billingDate <= periodRange.toKey),
-          schedule,
-        ),
+        spendByCard: cardSummary(perGroup.flatMap(g => g.bills), schedule),
         orderProfit: Math.round(totalOrderProfit * 100) / 100,
         netProfit: Math.round((totalOrderProfit - adSpend) * 100) / 100,
         roas: Math.round(roas * 100) / 100,
@@ -239,11 +302,11 @@ export async function GET(req: NextRequest) {
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
     const [chartOrders, chartSpends] = await Promise.all([
       prisma.order.findMany({
-        where: { placedAt: { gte: thirtyDaysAgo } },
+        where: { placedAt: { gte: thirtyDaysAgo }, ...(scope.storeIds ? { storeId: { in: scope.storeIds } } : {}) },
         select: { placedAt: true, grossAmount: true },
       }),
       prisma.dailyAdSpend.findMany({
-        where: { date: { gte: thirtyDaysAgo.toISOString().split('T')[0] } },
+        where: { date: { gte: thirtyDaysAgo.toISOString().split('T')[0] }, ...(scope.projectIds ? { adAccount: projectRowsWhere(scope) } : {}) },
       }),
     ])
 
@@ -279,6 +342,7 @@ export async function GET(req: NextRequest) {
       netCashflow: totalRevenue - totalSpend,
       periodMetrics,
       chartData,
+      stores: stores.map(s => s.project?.name ?? s.shop),
     })
   } catch (e: unknown) {
     return NextResponse.json({ error: e instanceof Error ? e.message : 'Unknown error' }, { status: 500 })

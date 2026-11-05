@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db'
 import { dateOnly } from '@/lib/cashflow-dates'
+import type { ProjectRowsWhere } from '@/lib/finance-scope'
 import { convertMetaAmountToUsdDated, normalizeMetaCurrency } from '@/lib/meta-currency'
 import { getMetaRateSchedule } from '@/lib/meta-exchange-rates'
 import { PAID_META_STATUSES } from '@/lib/meta-fee'
@@ -37,12 +38,14 @@ function round2(value: number) {
   return Math.round(value * 100) / 100
 }
 
+// accountWhere limits the accounts (and so the cards and the total) to what the caller may see.
 export async function buildReserveOverview(
-  { now = new Date(), horizonDays = WATCH_DAYS }: { now?: Date; horizonDays?: number } = {},
+  { now = new Date(), horizonDays = WATCH_DAYS, accountWhere = {} }: { now?: Date; horizonDays?: number; accountWhere?: ProjectRowsWhere } = {},
 ): Promise<ReserveOverview> {
   const today = dateOnly(now)
   const [accounts, schedule] = await Promise.all([
     prisma.metaAdAccount.findMany({
+      where: accountWhere,
       orderBy: { createdAt: 'asc' },
       select: {
         id: true,

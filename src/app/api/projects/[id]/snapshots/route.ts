@@ -2,8 +2,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { previousMonth, monthlyProfit, effectiveExpectedCashflow } from '@/lib/cashflow-snapshot'
 import { requireSuperadmin } from '@/lib/api-auth'
+import { requireProjectInScope } from '@/lib/finance-scope'
 
-export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+  const scope = await requireProjectInScope(req, params.id, 'projects')
+  if ('error' in scope) return scope.error
   const project = await prisma.project.findUnique({ where: { id: params.id }, select: { id: true } })
   if (!project) return NextResponse.json({ error: 'Project not found' }, { status: 404 })
   const snapshots = await prisma.cashflowSnapshot.findMany({

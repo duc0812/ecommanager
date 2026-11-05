@@ -6,15 +6,20 @@ import { convertMetaAmountToUsdDated } from '@/lib/meta-currency'
 import { getMetaRateSchedule } from '@/lib/meta-exchange-rates'
 import { PROJECT_REVENUE_EXCLUDED_STATUSES } from '@/lib/project-metrics'
 import { dateKeyInZone, addDays, getPeriodRange } from '@/lib/cashflow-dates'
+import { forbidden } from '@/lib/api-auth'
+import { ownsProject, requireFinanceScope } from '@/lib/finance-scope'
 
 function roundMetric(value: number) {
   return Math.round((value + 1e-9) * 100) / 100
 }
 
 export async function GET(req: NextRequest) {
+  const scope = await requireFinanceScope(req, 'projects')
+  if ('error' in scope) return scope.error
   const { searchParams } = new URL(req.url)
   const projectId = searchParams.get('projectId')
   if (!projectId) return NextResponse.json({ error: 'projectId required' }, { status: 400 })
+  if (!ownsProject(scope, projectId)) return forbidden('Bạn không có quyền xem project này.')
 
   const period = searchParams.get('period') ?? 'this-month'
 

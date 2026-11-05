@@ -4,20 +4,25 @@ import { getPeriodRange } from '@/lib/cashflow-dates'
 import { getMetaRateSchedule } from '@/lib/meta-exchange-rates'
 import { PROJECT_REVENUE_EXCLUDED_STATUSES } from '@/lib/project-metrics'
 import { computeNichePerformance } from '@/lib/marketing/niche-performance'
+import { forbidden } from '@/lib/api-auth'
+import { ownsProject, projectWhere, requireFinanceScope } from '@/lib/finance-scope'
 
 export const dynamic = 'force-dynamic'
 
 const PERIODS = new Set(['today', 'this-week', 'this-month', 'last-7', 'last-30', 'custom'])
 
 export async function GET(req: NextRequest) {
+  const scope = await requireFinanceScope(req, 'marketing_niche')
+  if ('error' in scope) return scope.error
   const { searchParams } = new URL(req.url)
   const periodRaw = searchParams.get('period') ?? 'this-month'
   const period = PERIODS.has(periodRaw) ? periodRaw : 'this-month'
 
   try {
     let projectId = searchParams.get('projectId')
+    if (projectId && !ownsProject(scope, projectId)) return forbidden('Bạn không có quyền xem project này.')
     if (!projectId) {
-      const first = await prisma.project.findFirst({ where: { archivedAt: null }, orderBy: { startDate: 'desc' }, select: { id: true } })
+      const first = await prisma.project.findFirst({ where: { archivedAt: null, ...projectWhere(scope) }, orderBy: { startDate: 'desc' }, select: { id: true } })
       projectId = first?.id ?? null
     }
     if (!projectId) return NextResponse.json({ error: 'No project found' }, { status: 404 })

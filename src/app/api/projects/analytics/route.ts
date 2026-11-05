@@ -3,6 +3,8 @@ import { prisma } from '@/lib/db'
 import { payoutDateMinFor } from '@/lib/shopify-payout-policy'
 import { dateOnly, dateKeyInZone, zonedDayStartUtc, addDays } from '@/lib/cashflow-dates'
 import { computeProjectCashflow } from '@/lib/repos/cashflow'
+import { forbidden } from '@/lib/api-auth'
+import { ownsProject, requireFinanceScope } from '@/lib/finance-scope'
 
 function validDateKey(value: string | null) {
   return value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : null
@@ -20,11 +22,14 @@ function getMonthRange(month: string | null, timeZone: string) {
 }
 
 export async function GET(req: NextRequest) {
+  const scope = await requireFinanceScope(req, 'projects')
+  if ('error' in scope) return scope.error
   const { searchParams } = new URL(req.url)
   const projectId = searchParams.get('projectId')
   const staffId = searchParams.get('staffId')
 
   if (!projectId) return NextResponse.json({ error: 'projectId required' }, { status: 400 })
+  if (!ownsProject(scope, projectId)) return forbidden('Bạn không có quyền xem project này.')
 
   const project = await prisma.project.findUnique({
     where: { id: projectId },

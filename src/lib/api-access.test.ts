@@ -141,7 +141,7 @@ describe('PGprints API access', () => {
 })
 
 describe('seller API allow-list', () => {
-  it('lists only routes that carry no store data', () => {
+  it('lists only routes that carry no store data or filter it to the stores of the seller', () => {
     expect(SELLER_API_PREFIXES).toEqual([
       '/api/auth/me',
       '/api/auth/logout',
@@ -150,15 +150,27 @@ describe('seller API allow-list', () => {
       '/api/tools/creative',
       '/api/fulfillment/crawler',
       '/api/stores',
+      '/api/overview',
+      '/api/projects',
+      '/api/shopify/db-payouts',
+      '/api/shopify/payouts',
+      '/api/meta/db-billing',
+      '/api/meta/accounts',
+      '/api/meta/reserve',
+      '/api/meta/exchange-rates',
+      '/api/finance/other-bills',
+      '/api/marketing/niche-performance',
+      '/api/marketing/niches',
+      '/api/sync/daily',
+      '/api/staff',
+      '/api/auto-sync',
     ])
   })
 
   it('seller is denied a store-data route that is not in SELLER_API_PREFIXES even with the feature', () => {
-    expect(canCallApi('SELLER', ['overview'], '/api/overview', 'GET')).toBe('forbidden')
-    expect(canCallApi('SELLER', ['projects'], '/api/projects', 'GET')).toBe('forbidden')
-    expect(canCallApi('SELLER', ['projects'], '/api/projects/analytics', 'GET')).toBe('forbidden')
-    expect(canCallApi('SELLER', ['projects'], '/api/auto-sync', 'POST')).toBe('forbidden')
-    expect(canCallApi('SELLER', ['shopify'], '/api/shopify/db-payouts', 'GET')).toBe('forbidden')
+    expect(canCallApi('SELLER', ['meta_billing'], '/api/meta/sync', 'POST')).toBe('forbidden')
+    expect(canCallApi('SELLER', ['meta_billing'], '/api/meta/import', 'POST')).toBe('forbidden')
+    expect(canCallApi('SELLER', ['shopify'], '/api/shopify/orders', 'GET')).toBe('forbidden')
     expect(canCallApi('SELLER', ['fulfillment_orders'], '/api/fulfillment/orders', 'GET')).toBe('forbidden')
     expect(canCallApi('SELLER', ['design_tasks'], '/api/design-studio/orders', 'GET')).toBe('forbidden')
     expect(canCallApi('SELLER', ['fulfillment_tracking'], '/api/fulfillment/tracking', 'GET')).toBe('forbidden')
@@ -177,6 +189,33 @@ describe('seller API allow-list', () => {
     expect(canCallApi('SELLER', ['projects'], '/api/spy/ads', 'GET')).toBe('forbidden')
     expect(canCallApi('SELLER', ['projects'], '/api/tools/creative/jobs', 'GET')).toBe('forbidden')
     expect(canCallApi('SELLER', ['projects'], '/api/fulfillment/crawler', 'POST')).toBe('forbidden')
+  })
+
+  it('seller reaches the finance routes that filter by store, still only with the feature', () => {
+    expect(canCallApi('SELLER', ['overview'], '/api/overview', 'GET')).toBe('ok')
+    expect(canCallApi('SELLER', ['projects'], '/api/projects', 'GET')).toBe('ok')
+    expect(canCallApi('SELLER', ['projects'], '/api/projects/analytics', 'GET')).toBe('ok')
+    expect(canCallApi('SELLER', ['projects'], '/api/projects/p1/pl', 'GET')).toBe('ok')
+    expect(canCallApi('SELLER', ['projects'], '/api/auto-sync', 'POST')).toBe('ok')
+    expect(canCallApi('SELLER', ['shopify'], '/api/shopify/db-payouts', 'GET')).toBe('ok')
+    expect(canCallApi('SELLER', ['shopify'], '/api/shopify/payouts/12', 'GET')).toBe('ok')
+    expect(canCallApi('SELLER', ['meta_billing'], '/api/meta/db-billing', 'GET')).toBe('ok')
+    expect(canCallApi('SELLER', ['other_bills'], '/api/finance/other-bills/b1', 'DELETE')).toBe('ok')
+    expect(canCallApi('SELLER', ['marketing_niche'], '/api/marketing/niche-performance', 'GET')).toBe('ok')
+    expect(canCallApi('SELLER', ['projects'], '/api/staff', 'GET')).toBe('ok')
+    expect(canCallApi('SELLER', ['meta_billing'], '/api/sync/daily', 'GET')).toBe('ok')
+    expect(canCallApi('SELLER', ['projects'], '/api/overview', 'GET')).toBe('forbidden')
+    expect(canCallApi('SELLER', ['overview'], '/api/projects', 'GET')).toBe('ok')
+    expect(canCallApi('SELLER', [], '/api/staff', 'GET')).toBe('forbidden')
+  })
+
+  it('seller keeps writes that need a setup permission it was not given, and cannot touch the superadmin parts', () => {
+    expect(canCallApi('SELLER', ['projects'], '/api/projects', 'DELETE')).toBe('forbidden')
+    expect(canCallApi('SELLER', ['projects'], '/api/projects/assign', 'POST')).toBe('forbidden')
+    expect(canCallApi('SELLER', ['projects'], '/api/projects/seller-commission', 'GET')).toBe('forbidden')
+    expect(canCallApi('SELLER', ['projects'], '/api/staff', 'POST')).toBe('forbidden')
+    expect(canCallApi('SELLER', ['meta_billing'], '/api/meta/accounts', 'PATCH')).toBe('forbidden')
+    expect(canCallApi('SELLER', ['meta_billing'], '/api/meta/exchange-rates', 'POST')).toBe('forbidden')
   })
 
   it('seller keeps its session routes and the store list, whatever its features', () => {

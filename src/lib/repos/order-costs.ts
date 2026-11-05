@@ -73,6 +73,7 @@ export async function recalculateMissingOrderLineCosts(filter: {
   dateTo?: Date
   refreshExisting?: boolean
   orderIds?: string[]
+  storeIds?: string[]
   shopifyProductId?: string
   preserveUnchangedSnapshot?: boolean
 } = {}) {
@@ -85,6 +86,7 @@ export async function recalculateMissingOrderLineCosts(filter: {
   const orderScope = {
     ...(placedAt ? { placedAt } : {}),
     ...(filter.orderIds ? { id: { in: filter.orderIds } } : {}),
+    ...(filter.storeIds ? { storeId: { in: filter.storeIds } } : {}),
   }
   const [resolveLine, lines] = await Promise.all([
     loadLineResolver(),

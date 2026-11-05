@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { addMetaRate, deleteMetaRate } from '@/lib/meta-exchange-rates'
+import { requireUnrestricted } from '@/lib/finance-scope'
 
 export const dynamic = 'force-dynamic'
 
@@ -10,6 +11,8 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  const auth = await requireUnrestricted(req)
+  if ('error' in auth) return auth.error
   const b = await req.json().catch(() => ({}))
   const effectiveDate = String(b.effectiveDate ?? '').trim()
   const rate = Number(b.rate)
@@ -20,6 +23,8 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
+  const auth = await requireUnrestricted(req)
+  if ('error' in auth) return auth.error
   const b = await req.json().catch(() => ({}))
   if (!b.id) return NextResponse.json({ error: 'id required' }, { status: 400 })
   await deleteMetaRate(String(b.id))

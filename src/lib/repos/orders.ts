@@ -6,6 +6,7 @@ import { isLineExported, legacyMarks, supplierLines } from '@/lib/line-export'
 export type OrderFilter = {
   ids?: string[]
   projectId?: string
+  storeIds?: string[] | null
   dateFrom?: Date
   dateTo?: Date
   supplierId?: string
@@ -22,6 +23,7 @@ function buildWhere(f: OrderFilter) {
   const where: any = {}
   const and: any[] = []
   if (f.projectId) where.projectId = f.projectId
+  if (f.storeIds) where.storeId = { in: f.storeIds }
   if (f.supplierId) where.defaultSupplierId = f.supplierId
   if (f.lineSupplierId) where.lines = { some: { resolvedSupplierId: f.lineSupplierId } }
   if (f.ids) where.id = { in: f.ids }

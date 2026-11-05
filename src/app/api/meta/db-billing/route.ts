@@ -3,15 +3,20 @@ import { prisma } from '@/lib/db'
 import { convertMetaAmountToUsdDated } from '@/lib/meta-currency'
 import { getMetaRateSchedule } from '@/lib/meta-exchange-rates'
 import { getVndCardLast4, sumBillingFxFeesUsd, PAID_META_STATUSES } from '@/lib/meta-fee'
+import { forbidden } from '@/lib/api-auth'
+import { ownsProject, projectRowsWhere, projectWhere, requireFinanceScope } from '@/lib/finance-scope'
 
 function dateKey(date: Date) {
   return date.toISOString().split('T')[0]
 }
 
 export async function GET(req: NextRequest) {
+  const scope = await requireFinanceScope(req, 'meta_billing')
+  if ('error' in scope) return scope.error
   const { searchParams } = new URL(req.url)
   const accountId = searchParams.get('accountId')
   const projectIdParam = searchParams.get('projectId')
+  if (projectIdParam && !ownsProject(scope, projectIdParam)) return forbidden('Bạn không có quyền xem project này.')
   const staffIdParam = searchParams.get('staffId')
   const month = searchParams.get('month')
   const monthRange = month && /^\d{4}-\d{2}$/.test(month)
@@ -23,6 +28,7 @@ export async function GET(req: NextRequest) {
 
   const [accounts, projects] = await Promise.all([
     prisma.metaAdAccount.findMany({
+      where: projectRowsWhere(scope),
       select: {
         id: true,
         accountId: true,
@@ -36,6 +42,7 @@ export async function GET(req: NextRequest) {
       orderBy: { createdAt: 'asc' },
     }),
     prisma.project.findMany({
+      where: projectWhere(scope),
       include: {
         assignments: { include: { staff: true } },
       },
@@ -96,7 +103,9 @@ export async function GET(req: NextRequest) {
   const billingWhere = {
     status: { in: visibleStatuses },
     ...(accountId ? { adAccountId: accountId } : {}),
-    ...(restrictProjectId ? { adAccount: { projectId: restrictProjectId } } : {}),
+    ...(restrictProjectId
+      ? { adAccount: { projectId: restrictProjectId } }
+      : scope.projectIds ? { adAccount: projectRowsWhere(scope) } : {}),
     ...(periodRange
       ? { billingDate: { gte: periodRange.start, lte: periodRange.end } }
       : monthRange
@@ -168,7 +177,7 @@ export async function GET(req: NextRequest) {
     totalPending,
     fxFee,
     paidReality,
-    vndCardLast4: Array.from(vndCards),
+    vndCardLast4: Array.from(vndCards).filter(last4 => !scope.projectIds || billings.some(b => b.paymentMethodLast4 === last4)),
     count: billings.length,
     paidCount: paidBillings.length,
     failedCount: failedBillings.length,

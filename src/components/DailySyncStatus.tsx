@@ -6,6 +6,7 @@ type StepResult = Record<string, any> | null
 type DailySync = {
   schedule: { cron: string; timezone: string; label: string }
   running: boolean
+  canRun?: boolean
   last: {
     startedAt: string
     finishedAt: string
@@ -24,13 +25,19 @@ function stepSummary(name: string, value: StepResult): { text: string; failed: b
   if (!value) return { text: 'chưa chạy', failed: false }
   if (typeof value.error === 'string') return { text: value.error, failed: true }
   if (value.skipped) return { text: String(value.reason ?? 'bỏ qua'), failed: false }
-  if (name === 'payouts') return { text: `${value.synced_payouts ?? 0} payout`, failed: false }
+  if (name === 'payouts') {
+    if (typeof value.synced_payouts !== 'number' && Array.isArray(value.stores)) {
+      const failedStores = value.stores.filter((s: any) => s?.ok === false).length
+      return { text: failedStores > 0 ? `${failedStores} store lỗi` : 'xong', failed: failedStores > 0 }
+    }
+    return { text: `${value.synced_payouts ?? 0} payout`, failed: false }
+  }
   if (name === 'billing') {
-    const synced = value.totals?.synced ?? 0
+    const synced = value.totals?.synced
     const errors = Array.isArray(value.accountErrors) ? value.accountErrors.length : 0
     const timedOut = value.timedOut ? ', quá thời gian chờ' : ''
     return {
-      text: `${value.status}, ${synced} billing${errors > 0 ? `, ${errors} account lỗi` : ''}${timedOut}`,
+      text: `${value.status}${synced === undefined ? '' : `, ${synced} billing`}${errors > 0 ? `, ${errors} account lỗi` : ''}${timedOut}`,
       failed: value.status === 'FAILED' || errors > 0 || Boolean(value.timedOut),
     }
   }
@@ -107,14 +114,16 @@ export default function DailySyncStatus() {
               })}
             </div>
           )}
-          <button
-            onClick={runNow}
-            disabled={running || data?.running}
-            className="flex items-center gap-xs bg-secondary text-on-secondary px-lg py-sm rounded-lg text-label-md hover:opacity-90 disabled:opacity-50"
-          >
-            <span className={`material-symbols-outlined text-[18px] ${running || data?.running ? 'animate-spin' : ''}`}>sync</span>
-            {running || data?.running ? 'Đang chạy...' : 'Chạy ngay'}
-          </button>
+          {data?.canRun !== false && (
+            <button
+              onClick={runNow}
+              disabled={running || data?.running}
+              className="flex items-center gap-xs bg-secondary text-on-secondary px-lg py-sm rounded-lg text-label-md hover:opacity-90 disabled:opacity-50"
+            >
+              <span className={`material-symbols-outlined text-[18px] ${running || data?.running ? 'animate-spin' : ''}`}>sync</span>
+              {running || data?.running ? 'Đang chạy...' : 'Chạy ngay'}
+            </button>
+          )}
         </div>
       </div>
 

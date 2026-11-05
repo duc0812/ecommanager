@@ -11,6 +11,8 @@ const shopify = vi.hoisted(() => ({
 vi.mock('@/lib/shopify', () => shopify)
 
 import { prisma } from '@/lib/db'
+import { AUTH_COOKIE, signToken } from '@/lib/auth'
+import { DEFAULT_ROLE_PERMISSIONS } from '@/lib/roles'
 import { saveStoreCredential } from '@/lib/store-connections'
 import { SHOPIFY_PAYOUT_START_DATE } from '@/lib/shopify-payout-policy'
 import { GET as dbPayouts } from '@/app/api/shopify/db-payouts/route'
@@ -21,12 +23,15 @@ const SHOP_A = 'spr-a.myshopify.com'
 const SHOP_B = 'spr-b.myshopify.com'
 const BANK_A = 'gid://shopify/ShopifyPaymentsBankAccount/spr-a'
 const BANK_B = 'gid://shopify/ShopifyPaymentsBankAccount/spr-b'
+const SUPER_EMAIL = 'spr-super@test.local'
 let storeA = ''
 let storeB = ''
+let session = ''
 
-const req = (path: string) => new NextRequest(`http://test${path}`)
+const req = (path: string) => new NextRequest(`http://test${path}`, { headers: { cookie: `${AUTH_COOKIE}=${session}` } })
 
 async function cleanup() {
+  await prisma.appUser.deleteMany({ where: { email: SUPER_EMAIL } })
   const stores = await prisma.shopifyStore.findMany({ where: { shop: { in: [SHOP_A, SHOP_B] } }, select: { id: true } })
   const ids = stores.map(s => s.id)
   await prisma.payout.deleteMany({ where: { storeId: { in: ids } } })
@@ -40,7 +45,10 @@ const payout = (id: number, storeId: string, date: string, amount: number, bank:
 } })
 
 beforeAll(async () => {
+  process.env.AUTH_SECRET = 'test-secret-that-is-long-enough-32chars'
   await cleanup()
+  const user = await prisma.appUser.create({ data: { name: 'spr super', email: SUPER_EMAIL, role: 'SUPERADMIN', permissions: JSON.stringify(DEFAULT_ROLE_PERMISSIONS.SUPERADMIN) } })
+  session = await signToken({ userId: user.id, email: SUPER_EMAIL, name: user.name, role: 'SUPERADMIN', permissions: DEFAULT_ROLE_PERMISSIONS.SUPERADMIN, tv: user.tokenVersion })
   // Store B synced last, which is what made the old route pick it.
   storeA = (await prisma.shopifyStore.create({ data: {
     shop: SHOP_A, connectedAt: new Date('2000-01-01'), lastSyncAt: new Date('2026-11-01'), currentBalance: 11.11, currentBalanceCurrency: 'USD',

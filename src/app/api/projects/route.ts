@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { projectWhere, requireFinanceScope, requireUnrestricted } from '@/lib/finance-scope'
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const scope = await requireFinanceScope(req)
+  if ('error' in scope) return scope.error
   const projects = await prisma.project.findMany({
+    where: projectWhere(scope),
     orderBy: { startDate: 'desc' },
     include: {
       assignments: {
@@ -16,6 +20,8 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  const auth = await requireUnrestricted(req)
+  if ('error' in auth) return auth.error
   const body = await req.json()
   const { name, startDate, description } = body
   if (!name || !startDate) {
@@ -28,6 +34,8 @@ export async function POST(req: NextRequest) {
 }
 
 export async function PATCH(req: NextRequest) {
+  const auth = await requireUnrestricted(req)
+  if ('error' in auth) return auth.error
   const body = await req.json()
   const { id, name, startDate, description } = body
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
@@ -51,6 +59,8 @@ export async function PATCH(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
+  const auth = await requireUnrestricted(req)
+  if ('error' in auth) return auth.error
   const { id } = await req.json()
   await prisma.staffAssignment.deleteMany({ where: { projectId: id } })
   await prisma.project.delete({ where: { id } })

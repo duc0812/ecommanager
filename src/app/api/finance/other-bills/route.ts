@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { calcAmountUsd } from '@/lib/currency'
+import { forbidden } from '@/lib/api-auth'
+import { mayUseRow, ownsProject, projectRowsWhere, projectWhere, requireFinanceScope } from '@/lib/finance-scope'
 
 const CATEGORIES = ['APP_TOOL', 'SUBSCRIPTION', 'SUPPLIER', 'OFFICE', 'OTHER'] as const
 const PAYMENT_METHODS = ['CK', 'PINGPONG', 'PO', 'OTHER'] as const
@@ -14,15 +16,19 @@ function monthRange(month: string | null) {
 }
 
 export async function GET(req: NextRequest) {
+  const scope = await requireFinanceScope(req, 'other_bills')
+  if ('error' in scope) return scope.error
   const { searchParams } = new URL(req.url)
   const month = monthRange(searchParams.get('month'))
   const projectId = searchParams.get('projectId')
+  const onlyProject = projectId && projectId !== 'all' ? projectId : null
+  if (onlyProject && !ownsProject(scope, onlyProject)) return forbidden('Bạn không có quyền xem project này.')
   const category = searchParams.get('category')
   const paymentMethod = searchParams.get('paymentMethod')
 
   const where = {
     ...(month ? { paidAt: { gte: month.start, lte: month.end } } : {}),
-    ...(projectId && projectId !== 'all' ? { projectId } : {}),
+    ...(onlyProject ? { projectId: onlyProject } : projectRowsWhere(scope)),
     ...(category && category !== 'all' ? { category } : {}),
     ...(paymentMethod && paymentMethod !== 'all' ? { paymentMethod } : {}),
   }
@@ -33,7 +39,7 @@ export async function GET(req: NextRequest) {
       orderBy: [{ paidAt: 'desc' }, { createdAt: 'desc' }],
       include: { project: { select: { id: true, name: true } } },
     }),
-    prisma.project.findMany({ orderBy: { name: 'asc' } }),
+    prisma.project.findMany({ where: projectWhere(scope), orderBy: { name: 'asc' } }),
   ])
 
   const totalUsd = bills.reduce((sum, b) => sum + b.amountUsd, 0)
@@ -53,7 +59,10 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const scope = await requireFinanceScope(req, 'other_bills')
+  if ('error' in scope) return scope.error
   const body = await req.json()
+  if (!mayUseRow(scope, body.projectId || null)) return forbidden('Bạn không có quyền ghi bill cho project này.')
   const { vendor, category, amount, currency = 'USD', exchangeRate, paidAt, paymentMethod, transactionId, note, tags, projectId } = body
 
   const errors: string[] = []

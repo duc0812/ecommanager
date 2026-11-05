@@ -1,21 +1,31 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { payoutDateMinFor, payoutStartFor } from '@/lib/shopify-payout-policy'
-import { defaultConnectedStoreId } from '@/lib/store-connections'
+import { listConnectedStores } from '@/lib/store-connections'
+import { firstStoreOf } from '@/lib/finance-scope'
+import { requireStoreFilter } from '@/lib/store-scope'
 
 export const dynamic = 'force-dynamic'
 
 // One store at a time: balance, bank accounts, payouts, totals and the start date all come from the
-// store named by ?storeId, else the first connected store, never a mix of stores.
+// store named by ?storeId, else the first connected store the caller may see, never a mix of stores.
+// A store outside a seller's stores is refused.
 export async function GET(req: NextRequest) {
+  const scope = await requireStoreFilter(req, 'shopify')
+  if ('error' in scope) return scope.error
   const requestedDateMin = req.nextUrl.searchParams.get('date_min') ?? undefined
   const dateMax = req.nextUrl.searchParams.get('date_max') ?? undefined
-  const requestedStoreId = req.nextUrl.searchParams.get('storeId')
+  const rawStoreId = req.nextUrl.searchParams.get('storeId')
+  const requestedStoreId = rawStoreId && rawStoreId !== 'all' ? rawStoreId : null
 
-  const storeId = requestedStoreId || await defaultConnectedStoreId()
+  const storeId = requestedStoreId || firstStoreOf(await listConnectedStores(), scope.storeIds)?.id
   const store = storeId
     ? await prisma.shopifyStore.findUnique({ where: { id: storeId }, include: { bankAccounts: true } })
-    : await prisma.shopifyStore.findFirst({ orderBy: { connectedAt: 'asc' }, include: { bankAccounts: true } })
+    : await prisma.shopifyStore.findFirst({
+        where: scope.storeIds ? { id: { in: scope.storeIds } } : {},
+        orderBy: { connectedAt: 'asc' },
+        include: { bankAccounts: true },
+      })
   if (requestedStoreId && !store) return NextResponse.json({ error: 'Store not found' }, { status: 404 })
   const shown = store ?? { payoutStartDate: null }
   const payoutStartDate = payoutStartFor(shown)

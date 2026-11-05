@@ -1,18 +1,29 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { fetchPayoutTransactions } from '@/lib/shopify'
 import { prisma } from '@/lib/db'
-import { defaultConnectedStoreId, getStoreConnection, tryStoreConnection } from '@/lib/store-connections'
+import { getStoreConnection, listConnectedStores, tryStoreConnection } from '@/lib/store-connections'
+import { firstStoreOf } from '@/lib/finance-scope'
+import { requireStoreFilter, requireStoreInScope } from '@/lib/store-scope'
 import { connectionFailureResponse } from '@/lib/store-connection-response'
 
 // Fetch raw balance transactions của 1 payout để xem chi tiết
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+  const scope = await requireStoreFilter(req, 'shopify')
+  if ('error' in scope) return scope.error
   try {
     const payoutId = Number(params.id)
     // The payouts list is fetched live, so a payout can be opened before it was ever synced; that one
     // belongs to the store named by ?storeId, else the first connected store.
     const payout = Number.isInteger(payoutId) ? await prisma.payout.findUnique({ where: { id: payoutId }, select: { storeId: true } }) : null
     const notConnected = { error: 'Not connected to Shopify. Go to /setup and connect Shopify first.', status: 401 }
-    const storeId = payout?.storeId ?? (req.nextUrl.searchParams.get('storeId') || await defaultConnectedStoreId())
+    if (payout) {
+      const owner = await requireStoreInScope(req, payout.storeId)
+      if ('error' in owner) return owner.error
+    }
+    const named = req.nextUrl.searchParams.get('storeId')
+    const storeId = payout?.storeId
+      ?? (named && named !== 'all' ? named : null)
+      ?? firstStoreOf(await listConnectedStores(), scope.storeIds)?.id
     if (!storeId) return NextResponse.json({ error: notConnected.error }, { status: notConnected.status })
     const { conn, error } = await tryStoreConnection(() => getStoreConnection(storeId))
     if (!conn) return connectionFailureResponse(error, notConnected)

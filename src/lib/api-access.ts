@@ -136,6 +136,20 @@ export const SELLER_API_PREFIXES: string[] = [
   '/api/tools/creative',
   '/api/fulfillment/crawler',
   '/api/stores',
+  '/api/overview',
+  '/api/projects',
+  '/api/shopify/db-payouts',
+  '/api/shopify/payouts',
+  '/api/meta/db-billing',
+  '/api/meta/accounts',
+  '/api/meta/reserve',
+  '/api/meta/exchange-rates',
+  '/api/finance/other-bills',
+  '/api/marketing/niche-performance',
+  '/api/marketing/niches',
+  '/api/sync/daily',
+  '/api/staff',
+  '/api/auto-sync',
 ]
 
 function sellerMayReach(pathname: string) {

@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { combinedProjectPL } from '@/lib/repos/reports'
+import { requireProjectInScope } from '@/lib/finance-scope'
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+  const scope = await requireProjectInScope(req, params.id, 'projects')
+  if ('error' in scope) return scope.error
   const { searchParams } = new URL(req.url)
   const dateFrom = searchParams.get('dateFrom')
   const dateTo = searchParams.get('dateTo')
