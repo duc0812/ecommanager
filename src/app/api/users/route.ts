@@ -2,18 +2,20 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { DEFAULT_ROLE_PERMISSIONS, FeaturePermission, parsePermissions, UserRole } from '@/lib/roles'
 import { requireSuperadmin } from '@/lib/api-auth'
+import { ONLY_SELLER_HAS_STORES, parseStoreIds, replaceStoreAccess, storeIdsOf } from '@/lib/user-store-access'
 
 export const dynamic = 'force-dynamic'
 
 const ROLES: UserRole[] = ['ADMIN', 'SELLER', 'SUPPORT']
 const STATUSES = ['ACTIVE', 'INACTIVE']
 
-function normalizeUser<T extends { role: string; permissions: string; passwordHash?: string | null }>(user: T) {
-  const { passwordHash, ...rest } = user
+function normalizeUser<T extends { role: string; permissions: string; passwordHash?: string | null; storeAccess?: { storeId: string }[] }>(user: T, storeIds?: string[]) {
+  const { passwordHash, storeAccess, ...rest } = user
   return {
     ...rest,
     hasPassword: Boolean(passwordHash),
     permissions: parsePermissions(user.permissions),
+    storeIds: storeIds ?? (storeAccess ?? []).map(row => row.storeId).sort(),
   }
 }
 
@@ -25,8 +27,8 @@ function permissionsFor(role: UserRole, permissions: unknown) {
 export async function GET(req: NextRequest) {
   const auth = await requireSuperadmin(req)
   if ('error' in auth) return auth.error
-  const users = await prisma.appUser.findMany({ orderBy: { createdAt: 'desc' } })
-  return NextResponse.json(users.map(normalizeUser))
+  const users = await prisma.appUser.findMany({ orderBy: { createdAt: 'desc' }, include: { storeAccess: { select: { storeId: true } } } })
+  return NextResponse.json(users.map(user => normalizeUser(user)))
 }
 
 export async function POST(req: NextRequest) {
@@ -49,6 +51,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Không thể sửa tài khoản Super Admin qua API này' }, { status: 400 })
   }
 
+  let storeIds: string[] | undefined
+  if (body.storeIds !== undefined) {
+    const parsed = await parseStoreIds(body.storeIds)
+    if ('error' in parsed) return NextResponse.json({ error: parsed.error }, { status: 400 })
+    if (role !== 'SELLER' && parsed.ids.length > 0) return NextResponse.json({ error: ONLY_SELLER_HAS_STORES }, { status: 400 })
+    storeIds = parsed.ids
+  }
+
   const permissions = JSON.stringify(permissionsFor(role, body.permissions) satisfies FeaturePermission[])
   const samePermissions = !!existing && JSON.stringify([...parsePermissions(existing.permissions)].sort()) === JSON.stringify([...parsePermissions(permissions)].sort())
   const accessChanged = !!existing && (existing.role !== role || (status !== undefined && existing.status !== status) || !samePermissions)
@@ -64,7 +74,9 @@ export async function POST(req: NextRequest) {
         },
       })
     : await prisma.appUser.create({ data: { name, email, role, permissions, status: status ?? 'ACTIVE' } })
-  return NextResponse.json(normalizeUser(user))
+  if (role !== 'SELLER') await replaceStoreAccess(user.id, [])
+  else if (storeIds) await replaceStoreAccess(user.id, storeIds)
+  return NextResponse.json(normalizeUser(user, await storeIdsOf(user.id)))
 }
 
 export async function DELETE(req: NextRequest) {

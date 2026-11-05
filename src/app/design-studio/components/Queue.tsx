@@ -3,6 +3,7 @@ import { useState } from 'react'
 import type { Readiness, TaskRow, TaskStatus } from './types'
 import { readyLabel, timeLeft } from './model'
 import { Avatar, ErrorBanner, Icon, Note, Pill, READY_META, TEXT_TONE, btn, card } from './ui'
+import { StoreLabel } from '@/components/StoreFilter'
 
 export type QueueFilter = 'ALL' | Readiness | 'NEEDS_ARTWORK'
 
@@ -29,7 +30,7 @@ export function byDue(a: TaskRow, b: TaskRow): number {
   return a.dueAt < b.dueAt ? -1 : 1
 }
 
-function QueueRow({ t, selected, onSelect, waiting }: { t: TaskRow; selected: boolean; onSelect: (key: string) => void; waiting?: number }) {
+function QueueRow({ t, selected, onSelect, waiting, showStore }: { t: TaskRow; selected: boolean; onSelect: (key: string) => void; waiting?: number; showStore?: boolean }) {
   const left = timeLeft(t)
   const ready = READY_META[t.readiness]
   return (
@@ -49,6 +50,7 @@ function QueueRow({ t, selected, onSelect, waiting }: { t: TaskRow; selected: bo
           </span>
         </span>
         <span className="text-label-sm text-on-surface-variant truncate">{t.productTitle}{t.variantTitle ? ` · ${t.variantTitle}` : ''}</span>
+        {showStore && <span className="flex"><StoreLabel name={t.storeName} /></span>}
         <span className="flex items-center gap-xs flex-wrap">
           <Pill tone={ready.tone} icon={ready.icon}>{readyLabel(t, ready.label)}</Pill>
           {t.fromLibrary && (t.status === 'NEW' || t.status === 'ASSIGNED') && <Pill tone="brand" icon="inventory_2">Thư viện</Pill>}
@@ -61,7 +63,9 @@ function QueueRow({ t, selected, onSelect, waiting }: { t: TaskRow; selected: bo
   )
 }
 
-export default function Queue({ tasks, sel, onSelect, q, onQ, loading, error, retrying, emptyText, onClearFilters, filter, onFilter, counts, mine, onMine, autoLabel = READY_META.AUTO.label, artworkWaiting }: {
+export default function Queue({ tasks, sel, onSelect, q, onQ, loading, error, retrying, emptyText, onClearFilters, filter, onFilter, counts, mine, onMine, autoLabel = READY_META.AUTO.label, artworkWaiting, showStore = false }: {
+  /** Name the store on each row; only worth it when the user sees more than one store. */
+  showStore?: boolean
   /** Open lines per product that needs artwork; without it the chip is not offered (Duyệt mẫu has files already). */
   artworkWaiting?: Map<string, number>
   /** The AUTO chip's name: in Duyệt mẫu every AUTO line is already rendered. */
@@ -112,7 +116,7 @@ export default function Queue({ tasks, sel, onSelect, q, onQ, loading, error, re
                 <span className={g.tone ?? ''}>{g.title}</span>
                 <span className="font-medium">({g.rows.length})</span>
               </button>
-              {open && g.rows.map(t => <QueueRow key={t.taskKey} t={t} selected={t.taskKey === sel} onSelect={onSelect} waiting={filter === 'NEEDS_ARTWORK' ? artworkWaiting?.get(t.productKey) : undefined} />)}
+              {open && g.rows.map(t => <QueueRow key={t.taskKey} t={t} selected={t.taskKey === sel} onSelect={onSelect} waiting={filter === 'NEEDS_ARTWORK' ? artworkWaiting?.get(t.productKey) : undefined} showStore={showStore} />)}
             </div>
           )
         })}

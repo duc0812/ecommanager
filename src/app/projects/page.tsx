@@ -1,7 +1,7 @@
 ﻿'use client'
 import { useEffect, useState } from 'react'
 import Sidebar from '@/components/Sidebar'
-import { RoleGate } from '@/components/RoleGate'
+import { RoleGate, useSellerReadOnly } from '@/components/RoleGate'
 import { calcGoalMetrics } from '@/lib/goal-tracker'
 
 type Assignment = {
@@ -148,6 +148,7 @@ function monthLabel(month: string) {
 }
 
 export default function ProjectDashboard() {
+  const readOnly = useSellerReadOnly()
   const [projects, setProjects] = useState<Project[]>([])
   const [selectedProject, setSelectedProject] = useState<string | null>(null)
   const [selectedStaff, setSelectedStaff] = useState<string>('all')
@@ -447,7 +448,7 @@ export default function ProjectDashboard() {
                         <p className="px-lg py-sm text-body-sm text-error">{snapshotError}</p>
                       )}
                       {snapshotRows.length === 0 && (
-                        <div className="px-lg py-md text-body-sm text-on-surface-variant">Chưa có snapshot. Bấm Backfill để tạo.</div>
+                        <div className="px-lg py-md text-body-sm text-on-surface-variant">{readOnly ? 'Chưa có snapshot.' : 'Chưa có snapshot. Bấm Backfill để tạo.'}</div>
                       )}
                       {snapshotRows.map((r: any) => (
                         <div key={r.periodMonth} className="flex items-center justify-between gap-md px-lg py-md">
@@ -478,12 +479,12 @@ export default function ProjectDashboard() {
                           ) : (
                             <button
                               onClick={() => {
-                                if (basis !== 'projected') return
+                                if (basis !== 'projected' || readOnly) return
                                 setEditingMonth(r.periodMonth)
                                 setEditValue(r.expectedCashflowManual === null || r.expectedCashflowManual === undefined ? '' : String(r.expectedCashflowManual))
                               }}
-                              className={`text-label-md text-primary tabular-nums ${basis === 'projected' ? 'hover:underline' : 'cursor-default'}`}
-                              title={basis === 'projected' ? 'Bấm để sửa tay' : undefined}
+                              className={`text-label-md text-primary tabular-nums ${basis === 'projected' && !readOnly ? 'hover:underline' : 'cursor-default'}`}
+                              title={basis === 'projected' && !readOnly ? 'Bấm để sửa tay' : undefined}
                             >
                               {fmtStock(basis === 'actual' ? r.actualCashflow : r.expectedCashflowEffective)}
                               {basis === 'projected' && r.expectedCashflowManual !== null && r.expectedCashflowManual !== undefined && (
@@ -498,9 +499,11 @@ export default function ProjectDashboard() {
                       ))}
                     </div>
                   </div>
-                  <div className="flex gap-sm mt-md">
-                    <button onClick={async () => { await fetch(`/api/projects/snapshot/backfill`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ projectId: selectedProject }) }); setRefreshVersion(v => v + 1) }} className="bg-secondary text-on-secondary px-lg py-sm rounded-lg text-label-md">Backfill</button>
-                  </div>
+                  {!readOnly && (
+                    <div className="flex gap-sm mt-md">
+                      <button onClick={async () => { await fetch(`/api/projects/snapshot/backfill`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ projectId: selectedProject }) }); setRefreshVersion(v => v + 1) }} className="bg-secondary text-on-secondary px-lg py-sm rounded-lg text-label-md">Backfill</button>
+                    </div>
+                  )}
                 </section>
 
                 <section>

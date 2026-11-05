@@ -172,14 +172,17 @@ export function parsePermissions(value: unknown): FeaturePermission[] {
   }
 }
 
+// The feature whose configured path is the longest prefix of the page wins, so /fulfillment/orders is Orders & P/L and not the
+// Fulfillment Dashboard (/fulfillment), and /orders/export is CSV Export and not Orders & P/L (/orders).
 function featureForPath(pathname: string) {
-  const ordered = Object.entries(FEATURE_PATHS).sort((a, b) => {
-    const longestA = Math.max(...a[1].map(path => path.length))
-    const longestB = Math.max(...b[1].map(path => path.length))
-    return longestB - longestA
-  }) as [FeaturePermission, string[]][]
-
-  return ordered.find(([, paths]) => paths.some(path => pathname === path || (path !== '/' && pathname.startsWith(path))))?.[0] ?? null
+  let best: { feature: FeaturePermission; length: number } | null = null
+  for (const [feature, paths] of Object.entries(FEATURE_PATHS) as [FeaturePermission, string[]][]) {
+    for (const path of paths) {
+      const matches = pathname === path || (path !== '/' && pathname.startsWith(path))
+      if (matches && (!best || path.length > best.length)) best = { feature, length: path.length }
+    }
+  }
+  return best?.feature ?? null
 }
 
 export function canAccess(role: UserRole, pathname: string, permissions?: FeaturePermission[]) {

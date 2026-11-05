@@ -41,6 +41,13 @@ export function useCurrentUser() {
   return ctx
 }
 
+// A seller reads billing and the project figures but changes none of them, and the API refuses its writes, so the
+// controls for them are not drawn. They are not drawn before the session is known either, so none flashes up for a seller.
+export function useSellerReadOnly(): boolean {
+  const { user } = useCurrentUser()
+  return !user || user.role === 'SELLER'
+}
+
 export function RoleGate({ children }: { children: ReactNode }) {
   const pathname = usePathname()
   const { user, loading, error } = useCurrentUser()

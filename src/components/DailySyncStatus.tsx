@@ -1,5 +1,6 @@
 'use client'
 import { useCallback, useEffect, useState } from 'react'
+import { useSellerReadOnly } from '@/components/RoleGate'
 
 type StepResult = Record<string, any> | null
 
@@ -50,6 +51,7 @@ function stepSummary(name: string, value: StepResult): { text: string; failed: b
 }
 
 export default function DailySyncStatus() {
+  const readOnly = useSellerReadOnly()
   const [data, setData] = useState<DailySync | null>(null)
   const [running, setRunning] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -114,7 +116,7 @@ export default function DailySyncStatus() {
               })}
             </div>
           )}
-          {data?.canRun !== false && (
+          {!readOnly && data?.canRun !== false && (
             <button
               onClick={runNow}
               disabled={running || data?.running}

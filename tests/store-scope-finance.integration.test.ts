@@ -294,12 +294,10 @@ describe('project routes', () => {
     expect((await analytics(request('/api/projects/analytics?projectId=nope', 'seller-a'))).status).toBe(403)
   })
 
-  it('backfill by a seller reaches only its own projects', async () => {
+  it('a seller cannot run a backfill at all (projects are read-only for it); admin reaches every project', async () => {
     expect((await backfill(request('/api/projects/snapshot/backfill', 'seller-a', { method: 'POST', body: { projectId: PROJECT_B } }))).status).toBe(403)
+    expect((await backfill(request('/api/projects/snapshot/backfill', 'seller-a', { method: 'POST', body: {} }))).status).toBe(403)
     expect(mocks.backfillProjectSnapshots).not.toHaveBeenCalled()
-    const own = await call(await backfill(request('/api/projects/snapshot/backfill', 'seller-a', { method: 'POST', body: {} })))
-    expect(Object.keys(own.body.results)).toEqual([PROJECT_A])
-    expect(mocks.backfillProjectSnapshots).toHaveBeenCalledTimes(1)
     const all = await call(await backfill(request('/api/projects/snapshot/backfill', 'admin', { method: 'POST', body: {} })))
     expect(Object.keys(all.body.results)).toEqual(expect.arrayContaining([PROJECT_A, PROJECT_B, PROJECT_C]))
   })

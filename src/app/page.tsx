@@ -1,6 +1,9 @@
 'use client'
 import { useEffect, useState } from 'react'
 import Sidebar from '@/components/Sidebar'
+import StoreFilter from '@/components/StoreFilter'
+import { useSellerReadOnly } from '@/components/RoleGate'
+import { useStoreFilter, withStoreQuery } from '@/lib/use-store-filter'
 
 type CardSpend = { last4: string; method: string; usd: number }
 
@@ -30,6 +33,15 @@ type RecentPayout = { id: number; date: string; amount: number; currency: string
 type RecentBilling = { id: string; billingDate: string; amount: number; amountUsd: number | null; currency: string; chargeType: string | null }
 type ProjectSummary = { id: string; name: string; startDate: string; staffCount: number; monthlyCost: number }
 
+type StoreTotal = {
+  storeId: string
+  name: string
+  currency: string | null
+  currencies: string[]
+  payouts: { total: number; count: number }
+  orders: { revenue: number; count: number } | null
+}
+
 type OverviewData = {
   shopify: { totalRevenue: number; payoutCount: number; recentPayouts: RecentPayout[] }
   meta: {
@@ -44,6 +56,9 @@ type OverviewData = {
   netCashflow: number
   periodMetrics: PeriodMetrics | null
   chartData: ChartPoint[]
+  stores: string[]
+  storeTotals: StoreTotal[]
+  currencies: string[]
   error?: string
 }
 
@@ -60,6 +75,15 @@ function fmtUSD(n: number) {
 
 function fmtNum(n: number) {
   return new Intl.NumberFormat('en-US').format(n || 0)
+}
+
+function fmtMoney(n: number, currency: string | null) {
+  if (!currency) return fmtNum(n)
+  try {
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency, minimumFractionDigits: 2 }).format(n || 0)
+  } catch {
+    return `${fmtNum(n)} ${currency}`
+  }
 }
 
 function todayInputValue() {
@@ -79,15 +103,18 @@ export default function OverviewPage() {
   const [lastSyncTime, setLastSyncTime] = useState<string | null>(null)
   const [syncError, setSyncError] = useState<string | null>(null)
 
-  const overviewUrl = `/api/overview?period=${period}${period === 'custom' ? `&date=${selectedDate}` : ''}`
+  const storeFilter = useStoreFilter()
+  const readOnly = useSellerReadOnly()
+  const overviewUrl = withStoreQuery(`/api/overview?period=${period}${period === 'custom' ? `&date=${selectedDate}` : ''}`, storeFilter.query)
 
   useEffect(() => {
+    if (!storeFilter.ready) return
     setLoading(true)
     fetch(overviewUrl)
       .then(r => r.json())
       .then((d: OverviewData) => { setData(d); setLoading(false) })
       .catch(() => setLoading(false))
-  }, [overviewUrl])
+  }, [overviewUrl, storeFilter.ready])
 
   function refreshData() {
     setLoading(true)
@@ -102,10 +129,12 @@ export default function OverviewPage() {
     setSyncError(null)
     try {
       await fetch('/api/shopify/orders/sync', { method: 'POST' })
-      const metaRes = await fetch('/api/meta/sync-insights', { method: 'POST' })
-      const metaJson = await metaRes.json().catch(() => ({}))
-      const metaErr = metaJson.error ?? (metaJson.errors?.length ? metaJson.errors.join('; ') : null)
-      if (metaErr) setSyncError(`Meta: ${metaErr}`)
+      if (!readOnly) {
+        const metaRes = await fetch('/api/meta/sync-insights', { method: 'POST' })
+        const metaJson = await metaRes.json().catch(() => ({}))
+        const metaErr = metaJson.error ?? (metaJson.errors?.length ? metaJson.errors.join('; ') : null)
+        if (metaErr) setSyncError(`Meta: ${metaErr}`)
+      }
       setLastSyncTime(new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }))
       refreshData()
     } catch (e: any) {
@@ -140,6 +169,15 @@ export default function OverviewPage() {
           </button>
         </div>
 
+        {storeFilter.stores.length > 1 && (
+          <div className="flex items-center gap-md mb-lg flex-wrap">
+            <StoreFilter filter={storeFilter} />
+            {!storeFilter.storeId && !loading && data && !data.error && data.stores.length > 1 && (
+              <span className="text-label-sm text-on-surface-variant">Tổng của: {data.stores.join(', ')}</span>
+            )}
+          </div>
+        )}
+
         {syncError && (
           <div className="mb-lg rounded-xl px-lg py-md flex items-center gap-md bg-error-container/20 border border-error/20">
             <span className="material-symbols-outlined text-error">error</span>
@@ -162,6 +200,15 @@ export default function OverviewPage() {
               {data?.meta?.missingRateCount} Meta billing(s) missing an exchange rate — set rates in Setup → Meta Exchange Rate
             </p>
             <a href="/setup/meta" className="text-label-sm font-semibold underline">Nhập tỷ giá</a>
+          </div>
+        )}
+
+        {!loading && data && !data.error && data.currencies.length > 1 && (
+          <div className="mb-lg rounded-xl border border-amber-300 bg-amber-50 px-lg py-md flex items-center gap-md text-amber-900">
+            <span className="material-symbols-outlined">currency_exchange</span>
+            <p className="text-body-sm flex-1">
+              Các store tính bằng nhiều loại tiền ({data.currencies.join(', ')}). Số tiền gộp bên dưới cộng thẳng số của từng loại, không quy đổi — xem số riêng từng store ở mục Theo store.
+            </p>
           </div>
         )}
 
@@ -255,6 +302,39 @@ export default function OverviewPage() {
               </div>
             )}
 
+            {data.storeTotals.length > 1 && (
+              <div className="bg-surface-container-lowest rounded-xl shadow-card border border-outline-variant/20 overflow-hidden mb-xl">
+                <div className="flex items-center gap-sm px-lg py-md border-b border-outline-variant/20">
+                  <span className="material-symbols-outlined text-secondary">storefront</span>
+                  <h3 className="text-headline-sm text-primary">Theo store</h3>
+                  <span className="text-label-sm text-on-surface-variant">· {pm && !isAllTime ? pm.label : 'All time'}</span>
+                </div>
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-outline-variant/10 bg-surface-container-low">
+                      {['Store', 'Payout đã nhận', 'Số payout', 'Doanh thu đơn', 'Số đơn'].map(h => (
+                        <th key={h} className="text-left px-lg py-sm text-label-sm text-on-surface-variant">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.storeTotals.map(t => {
+                      const money = (n: number) => (t.currency || t.currencies.length === 0 ? fmtMoney(n, t.currency) : `${fmtNum(n)} ${t.currencies.join('/')}`)
+                      return (
+                        <tr key={t.storeId} className="border-b border-outline-variant/10 hover:bg-surface-container-low/50">
+                          <td className="px-lg py-sm text-label-md font-semibold text-primary">{t.name}</td>
+                          <td className="px-lg py-sm text-label-md font-bold text-on-tertiary-container tabular-nums">{money(t.payouts.total)}</td>
+                          <td className="px-lg py-sm text-body-sm text-on-surface-variant tabular-nums">{fmtNum(t.payouts.count)}</td>
+                          <td className="px-lg py-sm text-label-md font-bold text-primary tabular-nums">{t.orders ? money(t.orders.revenue) : '—'}</td>
+                          <td className="px-lg py-sm text-body-sm text-on-surface-variant tabular-nums">{t.orders ? fmtNum(t.orders.count) : '—'}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
             {/* Spend by card */}
             {(pm?.spendByCard ?? data.meta.spendByCard ?? []).length > 0 && (
               <div className="bg-surface-container-lowest rounded-xl shadow-card border border-outline-variant/20 mb-xl p-lg">
@@ -317,7 +397,7 @@ export default function OverviewPage() {
                       {data.shopify.recentPayouts.map(p => (
                         <tr key={p.id} className="border-b border-outline-variant/10 hover:bg-surface-container-low/50">
                           <td className="px-lg py-sm text-body-sm text-on-surface-variant">{p.date}</td>
-                          <td className="px-lg py-sm text-label-md font-bold text-on-tertiary-container">{fmtUSD(p.amount)}</td>
+                          <td className="px-lg py-sm text-label-md font-bold text-on-tertiary-container">{fmtMoney(p.amount, p.currency || 'USD')}</td>
                           <td className="px-lg py-sm">
                             <span className="bg-on-tertiary-container/15 text-on-tertiary-container px-sm py-xs rounded-full text-label-sm">{p.status}</span>
                           </td>

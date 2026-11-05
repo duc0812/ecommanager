@@ -4,6 +4,7 @@ import Sidebar from '@/components/Sidebar'
 import MetaBillingSyncStatus from '@/components/MetaBillingSyncStatus'
 import MetaReservePanel from '@/components/MetaReservePanel'
 import DailySyncStatus from '@/components/DailySyncStatus'
+import { useSellerReadOnly } from '@/components/RoleGate'
 import type { MetaBillingSyncJob } from '@/lib/meta-billing-sync-types'
 import { isMetaBillingSyncActive } from '@/lib/meta-billing-sync-types'
 
@@ -120,6 +121,7 @@ function monthLabel(month: string) {
 }
 
 export default function MetaBillingPage() {
+  const readOnly = useSellerReadOnly()
   const [data, setData] = useState<DBData | null>(null)
   const [selectedAccount, setSelectedAccount] = useState<string>('all')
   const [selectedMonth, setSelectedMonth] = useState<string>('')
@@ -199,6 +201,7 @@ export default function MetaBillingPage() {
   useEffect(() => { load(selectedAccount, selectedMonth, selectedProjectTime, selectedStaffTime) }, [load, selectedAccount, selectedMonth, selectedProjectTime, selectedStaffTime])
 
   useEffect(() => {
+    if (readOnly) return
     let cancelled = false
 
     async function pollSyncJob() {
@@ -223,7 +226,7 @@ export default function MetaBillingPage() {
       cancelled = true
       window.clearInterval(timer)
     }
-  }, [load, selectedAccount, selectedMonth, selectedProjectTime, selectedStaffTime])
+  }, [load, readOnly, selectedAccount, selectedMonth, selectedProjectTime, selectedStaffTime])
 
   useEffect(() => {
     if (selectedAccount !== 'all') setImportAccountId(selectedAccount)
@@ -314,16 +317,18 @@ export default function MetaBillingPage() {
               )}
             </p>
           </div>
-          <button
-            onClick={syncAll}
-            disabled={startingSync || isMetaBillingSyncActive(syncJob) || accounts.length === 0}
-            className="flex items-center gap-sm bg-secondary text-on-secondary px-lg py-sm rounded-lg text-label-md shadow-sm hover:opacity-90 transition-opacity disabled:opacity-50"
-          >
-            <span className={`material-symbols-outlined text-[18px] ${startingSync || isMetaBillingSyncActive(syncJob) ? 'animate-spin' : ''}`}>
-              {startingSync || isMetaBillingSyncActive(syncJob) ? 'sync' : 'download'}
-            </span>
-            {startingSync ? 'Đang khởi tạo...' : isMetaBillingSyncActive(syncJob) ? 'Đang sync billing...' : 'Sync Billing'}
-          </button>
+          {!readOnly && (
+            <button
+              onClick={syncAll}
+              disabled={startingSync || isMetaBillingSyncActive(syncJob) || accounts.length === 0}
+              className="flex items-center gap-sm bg-secondary text-on-secondary px-lg py-sm rounded-lg text-label-md shadow-sm hover:opacity-90 transition-opacity disabled:opacity-50"
+            >
+              <span className={`material-symbols-outlined text-[18px] ${startingSync || isMetaBillingSyncActive(syncJob) ? 'animate-spin' : ''}`}>
+                {startingSync || isMetaBillingSyncActive(syncJob) ? 'sync' : 'download'}
+              </span>
+              {startingSync ? 'Đang khởi tạo...' : isMetaBillingSyncActive(syncJob) ? 'Đang sync billing...' : 'Sync Billing'}
+            </button>
+          )}
         </header>
 
         {syncStartError && (
@@ -362,10 +367,12 @@ export default function MetaBillingPage() {
           <div className="bg-surface-container-lowest rounded-xl border border-outline-variant/20 p-xl text-center">
             <span className="material-symbols-outlined text-[48px] text-on-surface-variant/30">campaign</span>
             <p className="text-on-surface-variant mt-md text-body-md">No ad accounts connected.</p>
-            <a href="/setup/meta" className="inline-flex items-center gap-sm mt-lg bg-secondary text-on-secondary px-lg py-sm rounded-lg text-label-md hover:opacity-90">
-              <span className="material-symbols-outlined text-[16px]">add_circle</span>
-              Add Ad Account
-            </a>
+            {!readOnly && (
+              <a href="/setup/meta" className="inline-flex items-center gap-sm mt-lg bg-secondary text-on-secondary px-lg py-sm rounded-lg text-label-md hover:opacity-90">
+                <span className="material-symbols-outlined text-[16px]">add_circle</span>
+                Add Ad Account
+              </a>
+            )}
           </div>
         ) : (
           <>
@@ -532,6 +539,7 @@ export default function MetaBillingPage() {
               </div>
             )}
 
+            {!readOnly && (
             <section className="mb-xl rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-lg">
               <div className="flex flex-wrap items-center gap-md">
                 <div>
@@ -574,6 +582,7 @@ export default function MetaBillingPage() {
                 </div>
               )}
             </section>
+            )}
 
             <div className="bg-surface-container-lowest rounded-xl border border-outline-variant/20 overflow-hidden">
               <div className="flex items-center gap-sm px-lg py-md border-b border-outline-variant/20">
@@ -587,7 +596,7 @@ export default function MetaBillingPage() {
               </div>
               {data.billings.length === 0 ? (
                 <div className="px-lg py-xl text-center text-on-surface-variant text-body-sm">
-                  No transactions yet. Click <strong>Sync Billing</strong> to fetch from Meta.
+                  {readOnly ? 'No transactions yet.' : <>No transactions yet. Click <strong>Sync Billing</strong> to fetch from Meta.</>}
                 </div>
               ) : (
                 <div className="overflow-x-auto">

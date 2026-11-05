@@ -1,7 +1,7 @@
 'use client'
 import { FormEvent, useCallback, useEffect, useState } from 'react'
 import Sidebar from '@/components/Sidebar'
-import { RoleGate } from '@/components/RoleGate'
+import { RoleGate, useSellerReadOnly } from '@/components/RoleGate'
 
 type Project = { id: string; name: string }
 type OtherBill = {
@@ -96,6 +96,7 @@ function methodLabel(m: string) {
 }
 
 export default function OtherBillsPage() {
+  const readOnly = useSellerReadOnly()
   const [data, setData] = useState<Data | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -126,7 +127,7 @@ export default function OtherBillsPage() {
     setPendingRenewals((lastData.bills as OtherBill[]).filter((b: OtherBill) => !currVendors.has(b.vendor.toLowerCase())))
   }, [])
 
-  useEffect(() => { loadRenewals() }, [loadRenewals])
+  useEffect(() => { if (!readOnly) loadRenewals() }, [loadRenewals, readOnly])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -236,8 +237,9 @@ export default function OtherBillsPage() {
           <p className="text-on-surface-variant text-body-md mt-xs">Ghi nhận các chi phí đã thanh toán: app, subscription, văn phòng...</p>
         </header>
 
-        <div className="grid grid-cols-1 xl:grid-cols-[420px_1fr] gap-xl items-start">
+        <div className={`grid grid-cols-1 ${readOnly ? '' : 'xl:grid-cols-[420px_1fr]'} gap-xl items-start`}>
           {/* ── Add Form ── */}
+          {!readOnly && (
           <form onSubmit={submit} className="bg-surface-container-lowest rounded-xl border border-outline-variant/20 overflow-hidden">
             <div className="px-lg py-md border-b border-outline-variant/20 flex items-center gap-sm">
               <span className="material-symbols-outlined text-secondary">add_card</span>
@@ -352,6 +354,7 @@ export default function OtherBillsPage() {
               </button>
             </div>
           </form>
+          )}
 
           {/* ── Right column ── */}
           <section className="space-y-lg">
@@ -364,7 +367,7 @@ export default function OtherBillsPage() {
             </div>
 
             {/* Pending Renewals */}
-            {pendingRenewals.length > 0 && (
+            {!readOnly && pendingRenewals.length > 0 && (
               <div className="bg-surface-container-lowest rounded-xl border border-error/30 overflow-hidden">
                 <div className="px-lg py-md border-b border-outline-variant/20 flex items-center gap-sm">
                   <span className="material-symbols-outlined text-error text-[18px]">autorenew</span>
@@ -429,7 +432,7 @@ export default function OtherBillsPage() {
                   <table className="w-full">
                     <thead>
                       <tr className="border-b border-outline-variant/20 bg-surface-container-low/40">
-                        {['Nhà cung cấp', 'Danh mục', 'Số tiền', 'Ngày', 'Thanh toán', 'Tags', 'Dự án', ''].map(h => (
+                        {['Nhà cung cấp', 'Danh mục', 'Số tiền', 'Ngày', 'Thanh toán', 'Tags', 'Dự án', ...(readOnly ? [] : [''])].map(h => (
                           <th key={h} className="text-left px-lg py-sm text-label-sm text-on-surface-variant uppercase tracking-wider whitespace-nowrap">{h}</th>
                         ))}
                       </tr>
@@ -471,9 +474,11 @@ export default function OtherBillsPage() {
                                 ? <span className="text-label-sm text-on-surface-variant">{bill.project.name}</span>
                                 : <span className="text-on-surface-variant">-</span>}
                             </td>
-                            <td className="px-lg py-md">
-                              <button onClick={() => deleteBill(bill.id)} className="text-error text-label-sm hover:underline">Xóa</button>
-                            </td>
+                            {!readOnly && (
+                              <td className="px-lg py-md">
+                                <button onClick={() => deleteBill(bill.id)} className="text-error text-label-sm hover:underline">Xóa</button>
+                              </td>
+                            )}
                           </tr>
                         )
                       })}

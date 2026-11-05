@@ -19,9 +19,10 @@ function routeOf(file: string): string {
   return `/${rel.join('/')}`
 }
 
+// src/lib holds server code and is not followed, except the client hooks (use-*.ts), which call the API for the page.
 function resolveImport(from: string, spec: string): string | null {
   const base = spec.startsWith('@/') ? path.join(SRC, spec.slice(2)) : spec.startsWith('.') ? path.resolve(path.dirname(from), spec) : null
-  if (!base || base.startsWith(path.join(SRC, 'lib'))) return null
+  if (!base || (base.startsWith(path.join(SRC, 'lib')) && !path.basename(base).startsWith('use-'))) return null
   return EXT.map(ext => base + ext).find(candidate => fs.existsSync(candidate)) ?? null
 }
 

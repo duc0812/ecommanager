@@ -1,5 +1,6 @@
 'use client'
 import { useCallback, useEffect, useState } from 'react'
+import { useSellerReadOnly } from '@/components/RoleGate'
 
 type ReserveLevel = 'OK' | 'WATCH' | 'URGENT' | 'UNKNOWN'
 
@@ -114,6 +115,7 @@ function fmtDate(value: string | null) {
 }
 
 export default function MetaReservePanel() {
+  const readOnly = useSellerReadOnly()
   const [data, setData] = useState<ReserveOverview | null>(null)
   const [horizon, setHorizon] = useState(3)
   const [loading, setLoading] = useState(true)
@@ -232,14 +234,16 @@ export default function MetaReservePanel() {
               </button>
             ))}
           </div>
-          <button
-            onClick={refresh}
-            disabled={refreshing}
-            className="flex items-center gap-xs bg-secondary text-on-secondary px-lg py-sm rounded-lg text-label-md hover:opacity-90 disabled:opacity-50"
-          >
-            <span className={`material-symbols-outlined text-[18px] ${refreshing ? 'animate-spin' : ''}`}>sync</span>
-            {refreshing ? 'Đang lấy...' : 'Làm mới'}
-          </button>
+          {!readOnly && (
+            <button
+              onClick={refresh}
+              disabled={refreshing}
+              className="flex items-center gap-xs bg-secondary text-on-secondary px-lg py-sm rounded-lg text-label-md hover:opacity-90 disabled:opacity-50"
+            >
+              <span className={`material-symbols-outlined text-[18px] ${refreshing ? 'animate-spin' : ''}`}>sync</span>
+              {refreshing ? 'Đang lấy...' : 'Làm mới'}
+            </button>
+          )}
           <button
             onClick={() => setOpen(!open)}
             className="p-xs rounded-lg text-on-surface-variant hover:bg-surface-container"
@@ -302,7 +306,7 @@ export default function MetaReservePanel() {
                 <span className="material-symbols-outlined text-[18px]">receipt_long</span>
                 <p className="text-body-sm">
                   Ngưỡng được suy từ lịch sử billing, mà lịch sử chỉ tới <strong>{fmtDate(newestCharge)}</strong> ({chargeAgeDays} ngày trước).
-                  Bấm <strong>Sync Billing</strong> ở trên để ngưỡng cập nhật, hoặc nhập ngưỡng tay.
+                  {!readOnly && <> Bấm <strong>Sync Billing</strong> ở trên để ngưỡng cập nhật, hoặc nhập ngưỡng tay.</>}
                 </p>
               </div>
             )}
@@ -310,7 +314,7 @@ export default function MetaReservePanel() {
               <div className="ml-auto flex items-start gap-sm rounded-lg border border-amber-300 bg-amber-50 px-md py-sm text-amber-900 max-w-[320px]">
                 <span className="material-symbols-outlined text-[18px]">schedule</span>
                 <p className="text-body-sm">
-                  Balance mới nhất đã {staleDays} ngày tuổi. Bấm <strong>Làm mới</strong> để lấy balance và budget hiện tại từ Meta.
+                  Balance mới nhất đã {staleDays} ngày tuổi.{!readOnly && <> Bấm <strong>Làm mới</strong> để lấy balance và budget hiện tại từ Meta.</>}
                 </p>
               </div>
             )}
@@ -365,7 +369,18 @@ export default function MetaReservePanel() {
                         <span className="block text-label-sm text-on-surface-variant">{formulaHint(row)}</span>
                       </td>
                       <td className="px-md py-sm text-right">
-                        {editing === row.id ? (
+                        {readOnly ? (
+                          <span className="inline-flex flex-col items-end">
+                            <span className="tabular-nums">{fmtMoney(row.threshold, row.currency)}</span>
+                            <span className="text-label-sm text-on-surface-variant">
+                              {row.thresholdSource === 'MANUAL'
+                                ? 'nhập tay'
+                                : row.thresholdSource === 'INFERRED'
+                                  ? `đoán · charge lớn nhất 21 ngày · x${row.thresholdOccurrences} · ${fmtDate(row.thresholdLastSeen)}`
+                                  : '—'}
+                            </span>
+                          </span>
+                        ) : editing === row.id ? (
                           <div className="flex items-center justify-end gap-xs">
                             <input
                               value={editValue}
@@ -425,15 +440,17 @@ export default function MetaReservePanel() {
                         <span className={`inline-flex px-sm py-[2px] rounded-md text-label-sm ${row.excluded ? 'bg-surface-container text-on-surface-variant' : LEVEL_STYLE[row.level]}`}>
                           {row.excluded ? 'Bỏ qua' : LEVEL_LABEL[row.level]}
                         </span>
-                        <button
-                          onClick={() => toggleExcluded(row.id, !row.excluded)}
-                          className="ml-xs p-[2px] rounded-md text-on-surface-variant hover:bg-surface-container align-middle"
-                          title={row.excluded ? 'Tính lại account này vào dòng tiền' : 'Bỏ account này khỏi dự phòng + Pending Meta'}
-                        >
-                          <span className="material-symbols-outlined text-[16px]">
-                            {row.excluded ? 'visibility' : 'visibility_off'}
-                          </span>
-                        </button>
+                        {!readOnly && (
+                          <button
+                            onClick={() => toggleExcluded(row.id, !row.excluded)}
+                            className="ml-xs p-[2px] rounded-md text-on-surface-variant hover:bg-surface-container align-middle"
+                            title={row.excluded ? 'Tính lại account này vào dòng tiền' : 'Bỏ account này khỏi dự phòng + Pending Meta'}
+                          >
+                            <span className="material-symbols-outlined text-[16px]">
+                              {row.excluded ? 'visibility' : 'visibility_off'}
+                            </span>
+                          </button>
+                        )}
                         {row.reasons.length > 0 && (
                           <p className="mt-xs text-label-sm text-on-surface-variant">
                             {row.reasons.map(reason => REASON_LABELS[reason] ?? reason).join(' · ')}

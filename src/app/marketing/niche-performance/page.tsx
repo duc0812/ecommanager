@@ -1,7 +1,7 @@
 'use client'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Sidebar from '@/components/Sidebar'
-import { RoleGate } from '@/components/RoleGate'
+import { RoleGate, useSellerReadOnly } from '@/components/RoleGate'
 import CampaignTable from '@/components/marketing/CampaignTable'
 import NicheManagerPanel from '@/components/marketing/NicheManagerPanel'
 import { fmtUsd, fmtRoas, fmtInt, fmtDate, roasTone } from '@/components/marketing/format'
@@ -20,6 +20,7 @@ const PERIODS = [
 ]
 
 export default function NichePerformancePage() {
+  const readOnly = useSellerReadOnly()
   const [projects, setProjects] = useState<Project[]>([])
   const [projectId, setProjectId] = useState('')
   const [period, setPeriod] = useState('this-month')
@@ -118,11 +119,13 @@ export default function NichePerformancePage() {
                   {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
               )}
-              <button onClick={syncCampaigns} disabled={syncing}
-                className="bg-surface-container-lowest text-on-surface border border-outline-variant/40 px-lg py-sm rounded-lg text-label-md disabled:opacity-50 flex items-center gap-xs hover:bg-surface-container">
-                <span className={`material-symbols-outlined text-[18px] ${syncing ? 'animate-spin' : ''}`}>sync</span>
-                {syncing ? 'Syncing…' : 'Sync campaign'}
-              </button>
+              {!readOnly && (
+                <button onClick={syncCampaigns} disabled={syncing}
+                  className="bg-surface-container-lowest text-on-surface border border-outline-variant/40 px-lg py-sm rounded-lg text-label-md disabled:opacity-50 flex items-center gap-xs hover:bg-surface-container">
+                  <span className={`material-symbols-outlined text-[18px] ${syncing ? 'animate-spin' : ''}`}>sync</span>
+                  {syncing ? 'Syncing…' : 'Sync campaign'}
+                </button>
+              )}
               <button onClick={() => setShowManager(true)}
                 className="bg-secondary text-on-secondary px-lg py-sm rounded-lg text-label-md flex items-center gap-xs">
                 <span className="material-symbols-outlined text-[18px]">tune</span>
@@ -207,7 +210,7 @@ export default function NichePerformancePage() {
                         <NicheRows key={n.nicheId} open={expanded.has(n.nicheId)} onToggle={() => toggle(n.nicheId)}
                           name={n.name} spend={n.spend} revenue={n.revenue} roas={n.roas} orders={n.orders} aov={n.aov}
                           campaignsLabel={`${n.activeCampaignCount}/${n.campaignCount}`}>
-                          <CampaignTable campaigns={n.campaigns} niches={nicheOptions} currentNicheId={n.nicheId} onAssign={assign} />
+                          <CampaignTable campaigns={n.campaigns} niches={readOnly ? undefined : nicheOptions} currentNicheId={n.nicheId} onAssign={readOnly ? undefined : assign} />
                         </NicheRows>
                       ))}
                       {showUnassigned && (
@@ -216,12 +219,12 @@ export default function NichePerformancePage() {
                           roas={null} orders={null} aov={null}
                           campaignsLabel={String(data.unassigned.campaigns.length)}
                           revenueTitle="Doanh thu từ sản phẩm không match keyword niche nào">
-                          <CampaignTable campaigns={data.unassigned.campaigns} niches={nicheOptions} onAssign={assign} />
+                          <CampaignTable campaigns={data.unassigned.campaigns} niches={readOnly ? undefined : nicheOptions} onAssign={readOnly ? undefined : assign} />
                         </NicheRows>
                       )}
                       {data.niches.length === 0 && !showUnassigned && (
                         <tr><td colSpan={7} className="px-lg py-xl text-center text-on-surface-variant">
-                          Chưa có niche. Bấm &quot;Quản lý niche&quot; để thêm, rồi &quot;Sync campaign&quot; để lấy dữ liệu.
+                          {readOnly ? 'Chưa có niche. Bấm "Quản lý niche" để thêm.' : 'Chưa có niche. Bấm "Quản lý niche" để thêm, rồi "Sync campaign" để lấy dữ liệu.'}
                         </td></tr>
                       )}
                     </tbody>

@@ -1,6 +1,9 @@
 'use client'
 import { useEffect, useState } from 'react'
 import Sidebar from '@/components/Sidebar'
+import StoreFilter from '@/components/StoreFilter'
+import { useSellerReadOnly } from '@/components/RoleGate'
+import { useStoreFilter, withStoreQuery } from '@/lib/use-store-filter'
 import type { ShopifyPayout, ShopifyBankAccount } from '@/lib/shopify'
 
 type Stats = {
@@ -70,11 +73,18 @@ export default function FinancePage() {
   const [syncResult, setSyncResult] = useState<{ synced_payouts?: number; synced_bank_accounts?: number; error?: string } | null>(null)
   const [lastSyncAt, setLastSyncAt] = useState<string | null>(null)
   const [fromDB, setFromDB] = useState(false)
+  const storeFilter = useStoreFilter()
+  const readOnly = useSellerReadOnly()
+
+  // Payouts are one store at a time: with several stores the page always names one, the first until another is picked.
+  const activeStore = storeFilter.stores.length > 1 ? (storeFilter.stores.find(s => s.id === storeFilter.storeId) ?? storeFilter.stores[0]) : null
+  const storeQuery = activeStore ? `storeId=${encodeURIComponent(activeStore.id)}` : ''
 
   async function loadFromDB(filters?: { dateMin?: string; dateMax?: string }) {
     const params = new URLSearchParams()
     if (filters?.dateMin) params.set('date_min', filters.dateMin)
     if (filters?.dateMax) params.set('date_max', filters.dateMax)
+    if (storeQuery) params.set('storeId', activeStore!.id)
     const query = params.size > 0 ? `?${params}` : ''
     const res = await fetch(`/api/shopify/db-payouts${query}`, { cache: 'no-store' })
     const json = await res.json()
@@ -85,16 +95,26 @@ export default function FinancePage() {
     if (!json.empty) {
       setData(json)
       setFromDB(true)
-      if (json.lastSyncAt) setLastSyncAt(json.lastSyncAt)
     } else {
-      if (json.lastSyncAt) setLastSyncAt(json.lastSyncAt)
+      setData(null)
+      setFromDB(false)
     }
+    setLastSyncAt(json.lastSyncAt ?? null)
   }
 
   useEffect(() => {
+    if (readOnly) return
     fetch('/api/auth/status').then(r => r.json()).then(d => setOauthConnected(d.shopify)).catch(() => {})
+  }, [readOnly])
+
+  useEffect(() => {
+    if (!storeFilter.ready) return
+    setDateMin('')
+    setDateMax('')
+    setTxnData(null)
+    setSelectedPayout(null)
     loadFromDB()
-  }, [])
+  }, [storeFilter.ready, storeQuery])
 
   useEffect(() => { try { localStorage.removeItem('shopify_credentials_v1') } catch {} }, [])
 
@@ -133,7 +153,7 @@ export default function FinancePage() {
     setTxnLoading(true)
     setSelectedPayout(payoutId)
     try {
-      const res = await fetch(`/api/shopify/payouts/${payoutId}`)
+      const res = await fetch(withStoreQuery(`/api/shopify/payouts/${payoutId}`, storeQuery))
       setTxnData(await res.json())
     } catch (e: any) {
       setTxnData({ error: e?.message } as any)
@@ -154,7 +174,12 @@ export default function FinancePage() {
             <h2 className="text-display-md font-bold text-primary">Finance</h2>
             <p className="text-on-surface-variant text-body-md mt-xs">
               <span className="inline-flex items-center gap-sm flex-wrap">
-                {usingOAuth ? (
+                {activeStore ? (
+                  <span className="inline-flex items-center gap-xs">
+                    <span className="material-symbols-outlined text-[16px]">storefront</span>
+                    Store: <strong>{activeStore.name}</strong>
+                  </span>
+                ) : usingOAuth ? (
                   <span className="inline-flex items-center gap-xs">
                     <span className="w-2 h-2 rounded-full bg-on-tertiary-container animate-pulse inline-block"></span>
                     Đã kết nối: <strong>{shopName}</strong>
@@ -169,19 +194,27 @@ export default function FinancePage() {
               </span>
             </p>
           </div>
-          <div className="flex gap-sm items-center">
-            <button
-              onClick={fetchPayouts}
-              disabled={loading || !canFetch()}
-              className="flex items-center gap-sm bg-secondary text-on-secondary px-lg py-sm rounded-lg text-label-md shadow-sm hover:opacity-90 transition-opacity disabled:opacity-50"
-            >
-              <span className={`material-symbols-outlined text-[18px] ${loading ? 'animate-spin' : ''}`}>
-                {loading ? 'sync' : 'sync'}
-              </span>
-              {loading ? 'Fetching & Saving...' : 'Fetch & Save Payouts'}
-            </button>
-          </div>
+          {!readOnly && (
+            <div className="flex gap-sm items-center">
+              <button
+                onClick={fetchPayouts}
+                disabled={loading || !canFetch()}
+                className="flex items-center gap-sm bg-secondary text-on-secondary px-lg py-sm rounded-lg text-label-md shadow-sm hover:opacity-90 transition-opacity disabled:opacity-50"
+              >
+                <span className={`material-symbols-outlined text-[18px] ${loading ? 'animate-spin' : ''}`}>
+                  {loading ? 'sync' : 'sync'}
+                </span>
+                {loading ? 'Fetching & Saving...' : 'Fetch & Save Payouts'}
+              </button>
+            </div>
+          )}
         </header>
+
+        {storeFilter.stores.length > 1 && (
+          <div className="mb-xl">
+            <StoreFilter filter={storeFilter} required />
+          </div>
+        )}
 
         {/* Connection alert */}
         {oauthConnected?.connected === false && (
@@ -238,7 +271,7 @@ export default function FinancePage() {
             >
               Reset filter
             </button>
-            {!canFetch() && (
+            {!readOnly && !canFetch() && (
               <span className="text-label-sm text-amber-600 self-center flex items-center gap-xs">
                 <span className="material-symbols-outlined text-[16px]">warning</span>
                 Nhập credentials trước
@@ -477,10 +510,14 @@ export default function FinancePage() {
             </div>
             <h3 className="text-headline-sm text-primary mb-sm">No data yet</h3>
             <p className="text-body-md text-on-surface-variant max-w-sm">
-              Click <strong>Fetch Payouts</strong> to load your Shopify Payments data.
-              {!canFetch() && ' Connect OAuth on the Setup page first.'}
+              {readOnly ? 'Chưa có payout nào cho store này.' : (
+                <>
+                  Click <strong>Fetch Payouts</strong> to load your Shopify Payments data.
+                  {!canFetch() && ' Connect OAuth on the Setup page first.'}
+                </>
+              )}
             </p>
-            {!canFetch() && (
+            {!readOnly && !canFetch() && (
               <a href="/setup" className="mt-lg bg-secondary text-on-secondary px-xl py-md rounded-lg text-label-md hover:opacity-90 transition-opacity">
                 Go to Setup
               </a>

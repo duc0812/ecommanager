@@ -1,6 +1,8 @@
 'use client'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Sidebar from '@/components/Sidebar'
+import StoreFilter, { StoreLabel } from '@/components/StoreFilter'
+import { useStoreFilter } from '@/lib/use-store-filter'
 import { TASK_META, TASK_TYPES, type TaskType, type TaskDept } from '@/lib/order-tasks'
 
 type FixLine = { lineId: string; shopifyVariantId: string | null; productTitle: string; sku: string | null }
@@ -9,6 +11,7 @@ type TaskRow = {
   shopifyOrderNumber: string
   placedAt: string
   projectName: string | null
+  storeName?: string | null
   task: { type: TaskType; dept: TaskDept; label: string; detail: string }
   fixLines?: FixLine[]
 }
@@ -19,6 +22,7 @@ type DoneRow = {
   dept: TaskDept
   resolvedAt: string
   projectName: string | null
+  storeName?: string | null
 }
 type Project = { id: string; name: string }
 
@@ -33,6 +37,8 @@ const TYPE_TONE: Record<TaskType, string> = {
 }
 
 export default function TaskFixPage() {
+  const storeFilter = useStoreFilter()
+  const showStore = storeFilter.stores.length > 1
   const [projects, setProjects] = useState<Project[]>([])
   const [projectId, setProjectId] = useState('')
   const [deptFilter, setDeptFilter] = useState<'' | TaskDept>('')
@@ -57,6 +63,7 @@ export default function TaskFixPage() {
     try {
       const params = new URLSearchParams()
       if (projectId) params.set('projectId', projectId)
+      if (storeFilter.storeId) params.set('storeId', storeFilter.storeId)
       if (view === 'done') params.set('done', '1')
       const qs = params.toString() ? `?${params.toString()}` : ''
       const res = await fetch(`/api/fulfillment/task-fix${qs}`)
@@ -72,9 +79,9 @@ export default function TaskFixPage() {
     } finally {
       setLoading(false)
     }
-  }, [projectId, view])
+  }, [projectId, storeFilter.storeId, view])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => { if (storeFilter.ready) load() }, [load, storeFilter.ready])
 
   const visible = useMemo(
     () => rows.filter(r =>
@@ -145,10 +152,13 @@ export default function TaskFixPage() {
             <p className="text-label-sm text-on-surface-variant uppercase tracking-wider mb-xs">Fulfillment</p>
             <h1 className="text-display-md text-primary">Task Need Fix</h1>
           </div>
-          <select value={projectId} onChange={e => setProjectId(e.target.value)} className="border border-outline-variant/40 rounded-lg px-md py-sm text-body-sm">
-            <option value="">All projects</option>
-            {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
+          <div className="flex items-center gap-sm flex-wrap justify-end">
+            <StoreFilter filter={storeFilter} />
+            <select value={projectId} onChange={e => setProjectId(e.target.value)} className="border border-outline-variant/40 rounded-lg px-md py-sm text-body-sm">
+              <option value="">All projects</option>
+              {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </div>
         </div>
         {message && <p className="mb-md text-body-sm text-on-surface-variant">{message}</p>}
 
@@ -183,7 +193,10 @@ export default function TaskFixPage() {
               <tbody>
                 {doneRows.map(r => (
                   <tr key={`${r.orderId}:${r.taskType}`} className="border-t border-outline-variant/20 hover:bg-surface-container/40">
-                    <td className="px-md py-sm font-medium">{r.shopifyOrderNumber}</td>
+                    <td className="px-md py-sm font-medium">
+                      {r.shopifyOrderNumber}
+                      {showStore && <div className="mt-[3px] font-normal"><StoreLabel name={r.storeName} /></div>}
+                    </td>
                     <td className="px-md py-sm">{DEPT_LABEL[r.dept] ?? r.dept}</td>
                     <td className="px-md py-sm">
                       <span className={`inline-block rounded-full px-sm py-[3px] text-label-sm ${TYPE_TONE[r.taskType]}`}>{TASK_META[r.taskType]?.label ?? r.taskType}</span>
@@ -250,7 +263,10 @@ export default function TaskFixPage() {
             <tbody>
               {visible.map(r => (
                 <tr key={`${r.orderId}:${r.task.type}`} className="border-t border-outline-variant/20 hover:bg-surface-container/40">
-                  <td className="px-md py-sm font-medium">{r.shopifyOrderNumber}</td>
+                  <td className="px-md py-sm font-medium">
+                    {r.shopifyOrderNumber}
+                    {showStore && <div className="mt-[3px] font-normal"><StoreLabel name={r.storeName} /></div>}
+                  </td>
                   <td className="px-md py-sm">{DEPT_LABEL[r.task.dept]}</td>
                   <td className="px-md py-sm">
                     <span className={`inline-block rounded-full px-sm py-[3px] text-label-sm ${TYPE_TONE[r.task.type]}`}>{r.task.label}</span>

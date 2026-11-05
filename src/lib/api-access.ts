@@ -176,8 +176,8 @@ export function sellerMayReach(pathname: string) {
     || SELLER_API_PREFIXES.some(prefix => underPrefix(pathname, prefix))
 }
 
-// Billing is read-only for a seller: no sync, no import, no bill written or deleted. Under these prefixes a seller
-// may use GET and HEAD only, whatever the rule table says (a feature it holds, or a route added below later).
+// Billing and the project figures are read-only for a seller: no sync, no import, no bill written or deleted, no month close.
+// Under these prefixes a seller may use GET and HEAD only, whatever the rule table says (a feature it holds, or a route added below later).
 export const SELLER_READ_ONLY_PREFIXES: string[] = [
   '/api/meta/sync',
   '/api/meta/import',
@@ -190,6 +190,7 @@ export const SELLER_READ_ONLY_PREFIXES: string[] = [
   '/api/shopify/sync',
   '/api/shopify/payouts',
   '/api/shopify/db-payouts',
+  '/api/projects',
 ]
 
 function sellerMayWrite(pathname: string, method: string) {

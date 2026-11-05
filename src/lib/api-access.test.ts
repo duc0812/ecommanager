@@ -334,7 +334,7 @@ describe('seller API allow-list', () => {
 
 describe('billing is read-only for a seller', () => {
   const EVERY_BILLING_FEATURE: FeaturePermission[] = ['meta_billing', 'other_bills', 'shopify', 'overview', 'projects', 'setup_meta', 'setup_hr', 'setup_projects']
-  const OPEN_TO_SELLER_READS = ['/api/meta/db-billing', '/api/meta/reserve', '/api/meta/accounts', '/api/meta/exchange-rates', '/api/finance/other-bills', '/api/sync/daily', '/api/shopify/payouts', '/api/shopify/db-payouts']
+  const OPEN_TO_SELLER_READS = ['/api/meta/db-billing', '/api/meta/reserve', '/api/meta/accounts', '/api/meta/exchange-rates', '/api/finance/other-bills', '/api/sync/daily', '/api/shopify/payouts', '/api/shopify/db-payouts', '/api/projects']
   const CLOSED_TO_SELLER = ['/api/meta/sync', '/api/meta/import', '/api/shopify/sync']
 
   it('lists the billing prefixes, so a new one is a deliberate change', () => {
@@ -350,6 +350,7 @@ describe('billing is read-only for a seller', () => {
       '/api/shopify/sync',
       '/api/shopify/payouts',
       '/api/shopify/db-payouts',
+      '/api/projects',
     ])
   })
 
@@ -384,7 +385,22 @@ describe('billing is read-only for a seller', () => {
     expect(canCallApi('SELLER', ['projects'], '/api/auto-sync', 'POST')).toBe('ok')
     expect(canCallApi('SELLER', ['fulfillment_orders'], '/api/shopify/orders/sync', 'POST')).toBe('ok')
     expect(canCallApi('SELLER', ['meta_billing'], '/api/meta/syncing', 'POST')).toBe('forbidden')
-    expect(canCallApi('SELLER', ['projects'], '/api/projects/snapshot/backfill', 'POST')).toBe('ok')
+    expect(canCallApi('SELLER', ['projects'], '/api/projectsx', 'GET')).toBe('forbidden')
+  })
+
+  it('a seller reads every project route with GET but writes nothing under /api/projects: no month close, no backfill', () => {
+    for (const path of ['/api/projects', '/api/projects/analytics', '/api/projects/profit-chart', '/api/projects/p1/pl', '/api/projects/p1/snapshots']) {
+      expect([path, canCallApi('SELLER', ['projects'], path, 'GET')]).toEqual([path, 'ok'])
+    }
+    for (const [path, method] of [
+      ['/api/projects/p1/snapshot', 'POST'], ['/api/projects/p1/snapshots', 'PATCH'], ['/api/projects/snapshot/backfill', 'POST'],
+      ['/api/projects', 'POST'], ['/api/projects', 'PATCH'], ['/api/projects', 'DELETE'], ['/api/projects/assign', 'POST'],
+    ] as const) {
+      expect([path, method, canCallApi('SELLER', EVERY_BILLING_FEATURE, path, method)]).toEqual([path, method, 'forbidden'])
+    }
+    expect(canCallApi('ADMIN', DEFAULT_ROLE_PERMISSIONS.ADMIN, '/api/projects/snapshot/backfill', 'POST')).toBe('ok')
+    expect(canCallApi('ADMIN', DEFAULT_ROLE_PERMISSIONS.ADMIN, '/api/projects/p1/snapshot', 'POST')).toBe('ok')
+    expect(canCallApi('SUPERADMIN', [], '/api/projects/p1/snapshots', 'PATCH')).toBe('ok')
   })
 
   it('admin, super admin and support are unchanged', () => {

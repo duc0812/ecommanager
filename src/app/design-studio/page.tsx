@@ -2,6 +2,9 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Sidebar from '@/components/Sidebar'
+import StoreFilter from '@/components/StoreFilter'
+import { useSellerReadOnly } from '@/components/RoleGate'
+import { useStoreFilter } from '@/lib/use-store-filter'
 import type { Me, TaskDetail, TaskRow, TaskStatus } from './components/types'
 import { artworkProducts, emptyQueueText, isAutoNotRendered, isRetryable, postJson, requestJson, retryDelay, taskImages, taskUrl } from './components/model'
 import { machineQa } from './components/ai-qa'
@@ -83,6 +86,8 @@ function DesignTasks() {
   const searchParams = useSearchParams()
   const paramTask = searchParams.get('task')
   const toast = useToast()
+  const storeFilter = useStoreFilter()
+  const readOnly = useSellerReadOnly()
 
   const [tasks, setTasks] = useState<TaskRow[]>([])
   const [, setMe] = useState<Me | null>(null)
@@ -128,6 +133,7 @@ function DesignTasks() {
     const qs = new URLSearchParams()
     if (mine) qs.set('mine', '1')
     if (debouncedQ) qs.set('q', debouncedQ)
+    if (storeFilter.storeId) qs.set('storeId', storeFilter.storeId)
     const query = qs.toString()
     const r = await requestJson<{ tasks: TaskRow[]; me: Me; handoffCount?: number; lastSync?: { ranAt: string; trigger: string; error: string | null } | null }>(`/api/design-studio/tasks${query ? `?${query}` : ''}`)
     if (id !== listReq.current) return
@@ -150,7 +156,7 @@ function DesignTasks() {
     setMe(r.data.me)
     setHandoffCount(r.data.handoffCount ?? 0)
     setLastSync(r.data.lastSync ?? null)
-  }, [mine, debouncedQ])
+  }, [mine, debouncedQ, storeFilter.storeId])
 
   const loadDetail = useCallback(async (key: string) => {
     const id = ++detailReq.current
@@ -166,7 +172,7 @@ function DesignTasks() {
   useEffect(() => {
     onRecovered.current = () => { if (sel && detailError) loadDetail(sel) }
   }, [sel, detailError, loadDetail])
-  useEffect(() => { loadList() }, [loadList])
+  useEffect(() => { if (storeFilter.ready) loadList() }, [loadList, storeFilter.ready])
   useEffect(() => () => { if (retryTimer.current) clearTimeout(retryTimer.current) }, [])
 
   useEffect(() => {
@@ -274,6 +280,8 @@ function DesignTasks() {
     { mode: 'handoff', label: 'Duyệt sản xuất', count: handoffCount, hot: handoffCount > 0, tip: 'Các đơn đã duyệt hết design, chờ gửi xưởng (API hoặc lưu chờ xuất CSV)' },
     { mode: 'sent', label: 'Đã chuyển xưởng', tip: 'Các đơn đã gửi xưởng: chờ xuất CSV, đã xuất, đã gửi API, đã có tracking' },
   ]
+  // The supplier hand-off lists are closed to a seller by the API, so their tabs are not offered.
+  const shownTabs = readOnly ? tabs.filter(t => t.mode === 'work' || t.mode === 'review') : tabs
   const syncTip = lastSync
     ? `${lastSync.error ? `Lượt gần nhất lỗi: ${lastSync.error}` : `Tự đồng bộ mỗi 15 phút · lượt gần nhất ${lastSync.trigger === 'schedule' ? 'tự động' : 'bấm tay'}`} · ${fmtDateTime(lastSync.ranAt)}`
     : 'Đồng bộ task từ Shopify'
@@ -288,7 +296,7 @@ function DesignTasks() {
           </span>
         </div>
         <div role="tablist" aria-label="Chế độ" className="flex items-center gap-xs">
-          {tabs.map(t => {
+          {shownTabs.map(t => {
             const on = mode === t.mode
             return (
               <button key={t.mode} type="button" role="tab" aria-selected={on} title={t.tip} onClick={() => setMode(t.mode)}
@@ -301,6 +309,7 @@ function DesignTasks() {
             )
           })}
         </div>
+        <StoreFilter filter={storeFilter} />
         <button type="button" onClick={sync} disabled={syncing} aria-label="Đồng bộ task từ Shopify" title={syncTip}
           className={`ml-auto inline-grid place-items-center w-10 h-10 rounded-lg border bg-surface-container-lowest hover:bg-surface-container-low disabled:opacity-60 ${lastSync?.error ? 'border-error text-error' : 'border-outline-variant text-on-surface-variant'}`}>
           <Icon name="sync" className={`text-[20px] ${syncing ? 'animate-spin' : ''}`} />
@@ -311,7 +320,7 @@ function DesignTasks() {
 
       <div className={`grid ${mode === 'sent' ? 'grid-cols-1' : 'grid-cols-[290px_minmax(0,1fr)]'} gap-md items-start`}>
         {mode !== 'sent' && <Queue tasks={mode === 'review' ? reviewTasks : visible} sel={mode === 'work' ? sel : mode === 'review' ? reviewSel : null} onSelect={mode === 'review' ? setReviewSel : selectTask}
-          q={q} onQ={setQ} loading={listLoading} error={listError} retrying={retrying}
+          q={q} onQ={setQ} loading={listLoading} error={listError} retrying={retrying} showStore={storeFilter.stores.length > 1}
           emptyText={filtered ? emptyText : 'Không có task'} onClearFilters={filtered ? clearFilters : null}
           filter={filter} onFilter={setFilter} counts={counts} mine={mine} onMine={setMine} autoLabel={mode === 'review' ? 'Auto' : READY_META.AUTO.label} artworkWaiting={mode === 'review' ? undefined : artwork.waiting} />}
         {mode === 'review' ? (

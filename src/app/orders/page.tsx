@@ -5,6 +5,9 @@ import { PIPELINE_STATUSES, STATUS_LABELS, STATUS_COLORS, type PipelineStatus } 
 import { computeWarnings, WARNING_TYPES, WARNING_META, type WarningType } from '@/lib/order-warnings'
 import { DESIGN_STATUS_META, type LineDesignStatus } from '@/lib/design-status'
 import PgprintsPushModal from '@/components/PgprintsPushModal'
+import StoreFilter, { StoreLabel } from '@/components/StoreFilter'
+import { useSellerReadOnly } from '@/components/RoleGate'
+import { useStoreFilter } from '@/lib/use-store-filter'
 
 const DESIGN_STATUS_ORDER: LineDesignStatus[] = ['PENDING', 'LIBRARY', 'DONE']
 
@@ -26,6 +29,7 @@ type OrderRow = {
   fulfillmentStatus: string | null
   shopTimezone: string | null
   store: { id: string; shop: string; ianaTimezone: string | null } | null
+  storeName?: string
   pipelineStatus: PipelineStatus
   shippingZone: string | null
   shippingCountry: string | null
@@ -109,6 +113,9 @@ async function fetchJson<T>(url: string): Promise<T> {
 }
 
 export default function OrdersPage() {
+  const storeFilter = useStoreFilter()
+  const readOnly = useSellerReadOnly()
+  const showStore = storeFilter.stores.length > 1
   const [projects, setProjects] = useState<Project[]>([])
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
   const [projectId, setProjectId] = useState<string>('')
@@ -146,8 +153,13 @@ export default function OrdersPage() {
     fetch('/api/projects').then(r => r.json()).then(d => {
       setProjects(Array.isArray(d) ? d : (d.projects ?? []))
     })
-    fetch('/api/suppliers').then(r => r.json()).then(d => setSuppliers(d.suppliers ?? []))
   }, [])
+
+  // The supplier list is closed to a seller, so it is not asked for.
+  useEffect(() => {
+    if (readOnly) return
+    fetch('/api/suppliers').then(r => r.json()).then(d => setSuppliers(d.suppliers ?? []))
+  }, [readOnly])
 
   // Debounce search input
   useEffect(() => {
@@ -159,6 +171,7 @@ export default function OrdersPage() {
   const queryString = useMemo(() => {
     const q = new URLSearchParams()
     if (projectId) q.set('projectId', projectId)
+    if (storeFilter.storeId) q.set('storeId', storeFilter.storeId)
     if (warningFilter) q.set('warningType', warningFilter)
     else if (activeTab !== 'ALL') q.set('pipelineStatus', activeTab)
     if (searchDebounced) q.set('search', searchDebounced)
@@ -166,7 +179,7 @@ export default function OrdersPage() {
     if (dateFrom) q.set('dateFrom', dateFrom)
     if (dateTo) q.set('dateTo', dateTo)
     return q.toString()
-  }, [projectId, activeTab, warningFilter, searchDebounced, supplierId, dateFrom, dateTo])
+  }, [projectId, storeFilter.storeId, activeTab, warningFilter, searchDebounced, supplierId, dateFrom, dateTo])
 
   // Reset to first page whenever the server-side filters change
   useEffect(() => { setPage(1) }, [queryString, pageSize])
@@ -176,8 +189,11 @@ export default function OrdersPage() {
     const ordersParams = new URLSearchParams(queryString)
     ordersParams.set('page', String(page))
     ordersParams.set('pageSize', String(pageSize))
-    // status-counts responds only to projectId — intentional (tab counts show all statuses for the project)
-    const countsQs = projectId ? '?projectId=' + projectId : ''
+    // status-counts responds only to projectId and storeId — intentional (tab counts show all statuses for the project)
+    const countsParams = new URLSearchParams()
+    if (projectId) countsParams.set('projectId', projectId)
+    if (storeFilter.storeId) countsParams.set('storeId', storeFilter.storeId)
+    const countsQs = countsParams.size > 0 ? `?${countsParams}` : ''
     try {
       const [oRes, sRes, cRes] = await Promise.all([
         fetchJson<{ orders?: OrderRow[]; total?: number; totalPages?: number }>(`/api/fulfillment/orders?${ordersParams.toString()}`),
@@ -200,9 +216,11 @@ export default function OrdersPage() {
     } catch (e: any) {
       setSyncResult(`Load orders failed: ${e.message}`)
     }
-  }, [queryString, page, pageSize, projectId, showUnmappedOnly, typeFilter, designFilter, trelloFilter])
+  }, [queryString, page, pageSize, projectId, storeFilter.storeId, showUnmappedOnly, typeFilter, designFilter, trelloFilter])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => {
+    if (storeFilter.ready) load()
+  }, [load, storeFilter.ready])
 
   async function saveLineCost(lineId: string, value: number | null) {
     if (savingLineCost) return
@@ -311,7 +329,7 @@ export default function OrdersPage() {
 
   const pgprintsButton = (o: OrderRow) => {
     const pg = o.pgprints
-    if (!pg) return null
+    if (!pg || readOnly) return null
     const live = pg.push && (pg.push.status === 'CREATED' || pg.push.status === 'SENDING')
     if (live) {
       return (
@@ -374,7 +392,8 @@ export default function OrdersPage() {
         {/* Header */}
         <div className="flex items-center justify-between mb-lg gap-md">
           <h1 className="text-display-md">All Orders</h1>
-          <div className="flex items-center gap-sm">
+          <div className="flex items-center gap-sm flex-wrap justify-end">
+            <StoreFilter filter={storeFilter} />
             <select
               value={projectId}
               onChange={e => setProjectId(e.target.value)}
@@ -417,17 +436,19 @@ export default function OrdersPage() {
           </div>
           {showFilters && (
             <div className="border-t border-outline-variant/20 p-md grid grid-cols-2 md:grid-cols-4 gap-md">
-              <div>
-                <label className="text-label-sm block mb-xs">Supplier</label>
-                <select
-                  value={supplierId}
-                  onChange={e => setSupplierId(e.target.value)}
-                  className="w-full border rounded-lg px-sm py-xs text-body-sm"
-                >
-                  <option value="">All</option>
-                  {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                </select>
-              </div>
+              {!readOnly && (
+                <div>
+                  <label className="text-label-sm block mb-xs">Supplier</label>
+                  <select
+                    value={supplierId}
+                    onChange={e => setSupplierId(e.target.value)}
+                    className="w-full border rounded-lg px-sm py-xs text-body-sm"
+                  >
+                    <option value="">All</option>
+                    {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                </div>
+              )}
               <div>
                 <label className="text-label-sm block mb-xs">Date from</label>
                 <input
@@ -654,6 +675,7 @@ export default function OrdersPage() {
                         {o.shopifyOrderNumber}
                       </button>
                     </span>
+                    {showStore && <div className="mt-[3px]"><StoreLabel name={o.storeName} /></div>}
                     {(() => {
                       const ws = computeWarnings({ placedAt: new Date(o.placedAt), fulfillmentStatus: o.fulfillmentStatus, pipelineStatus: o.pipelineStatus })
                       return ws.length > 0 ? (
@@ -868,6 +890,7 @@ export default function OrdersPage() {
                 <div>
                   <h2 className="text-headline-sm font-semibold">{selectedOrder.shopifyOrderNumber}</h2>
                   <div className="mt-xs flex flex-wrap items-center gap-xs text-body-sm text-on-surface-variant">
+                    {showStore && <StoreLabel name={selectedOrder.storeName} />}
                     <span>{formatShopifyDate(selectedOrder.placedAt, orderTimeZone(selectedOrder))}</span>
                     <span className={`rounded px-xs py-[2px] text-label-sm ${statusTone(selectedOrder.fulfillmentStatus)}`}>
                       {titleCaseStatus(selectedOrder.fulfillmentStatus)}
@@ -1048,7 +1071,7 @@ export default function OrdersPage() {
           </div>
         )}
 
-        {pgOrderId && <PgprintsPushModal orderId={pgOrderId} onClose={() => setPgOrderId(null)} onChanged={load} />}
+        {!readOnly && pgOrderId && <PgprintsPushModal orderId={pgOrderId} onClose={() => setPgOrderId(null)} onChanged={load} />}
       </main>
     </div>
   )

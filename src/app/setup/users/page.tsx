@@ -8,6 +8,7 @@ import {
   FeaturePermission,
   FEATURE_GROUPS,
   FEATURE_LABELS,
+  isUserRole,
   ROLE_LABELS,
   UserRole,
 } from '@/lib/roles'
@@ -20,10 +21,16 @@ type AppUser = {
   permissions: FeaturePermission[]
   status: string
   createdAt: string
+  storeIds: string[]
 }
+
+type StoreOption = { id: string; name: string; shop: string }
 
 export default function UsersPage() {
   const [users, setUsers] = useState<AppUser[]>([])
+  const [stores, setStores] = useState<StoreOption[]>([])
+  const [storeIds, setStoreIds] = useState<string[]>([])
+  const [saveError, setSaveError] = useState('')
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [role, setRole] = useState<UserRole>('SELLER')
@@ -63,9 +70,24 @@ export default function UsersPage() {
 
   useEffect(() => { load() }, [])
 
+  useEffect(() => {
+    fetch('/api/stores').then(r => r.json()).then(d => setStores(Array.isArray(d.stores) ? d.stores : [])).catch(() => {})
+  }, [])
+
   function changeRole(next: UserRole) {
     setRole(next)
     setPermissions(DEFAULT_ROLE_PERMISSIONS[next])
+  }
+
+  function toggleStore(id: string) {
+    setStoreIds(current => (current.includes(id) ? current.filter(item => item !== id) : [...current, id]))
+  }
+
+  function storesLabel(user: AppUser) {
+    if (!isUserRole(user.role)) return 'Không có store'
+    if (user.role !== 'SELLER') return 'Tất cả store'
+    const names = user.storeIds.map(id => stores.find(s => s.id === id)?.name).filter(Boolean)
+    return names.length > 0 ? names.join(', ') : 'Chưa giao store'
   }
 
   function togglePermission(permission: FeaturePermission) {
@@ -81,6 +103,8 @@ export default function UsersPage() {
     setEmail(user.email)
     setRole(user.role)
     setPermissions(user.permissions)
+    setStoreIds(user.storeIds ?? [])
+    setSaveError('')
   }
 
   function resetForm() {
@@ -89,16 +113,25 @@ export default function UsersPage() {
     setEmail('')
     setRole('SELLER')
     setPermissions(DEFAULT_ROLE_PERMISSIONS.SELLER)
+    setStoreIds([])
+    setSaveError('')
   }
 
   async function saveUser() {
     if (!name || !email) return
     setSaving(true)
-    await fetch('/api/users', {
+    setSaveError('')
+    const res = await fetch('/api/users', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, email, role, permissions }),
+      body: JSON.stringify({ name, email, role, permissions, ...(role === 'SELLER' ? { storeIds } : {}) }),
     })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      setSaveError(data.error || 'Không lưu được user')
+      setSaving(false)
+      return
+    }
     resetForm()
     await load()
     setSaving(false)
@@ -161,6 +194,33 @@ export default function UsersPage() {
                   </div>
                 ))}
               </div>
+              {role === 'SELLER' && (
+                <div className="space-y-sm rounded-lg border border-outline-variant/20 bg-surface-container-low p-md">
+                  <p className="text-label-md font-semibold text-primary">Store được xem</p>
+                  {stores.length === 0 ? (
+                    <p className="text-body-sm text-on-surface-variant">Chưa có store nào.</p>
+                  ) : (
+                    <div className="space-y-xs">
+                      {stores.map(store => (
+                        <label key={store.id} className="flex cursor-pointer items-center gap-sm text-body-sm">
+                          <input
+                            type="checkbox"
+                            checked={storeIds.includes(store.id)}
+                            onChange={() => toggleStore(store.id)}
+                            className="h-4 w-4 accent-secondary"
+                          />
+                          <span>{store.name}</span>
+                          <span className="text-label-sm text-on-surface-variant">{store.shop}</span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                  {storeIds.length === 0 && (
+                    <p className="text-label-sm text-amber-700">Chưa chọn store nào: seller này sẽ không thấy dữ liệu của store nào.</p>
+                  )}
+                </div>
+              )}
+              {saveError && <p className="text-label-sm text-error">{saveError}</p>}
               <div className="flex gap-sm">
                 <button onClick={saveUser} disabled={saving || !name || !email} className="flex-1 rounded-lg bg-secondary py-md text-label-md font-semibold text-on-secondary disabled:opacity-50">
                   {saving ? 'Saving...' : editingId ? 'Update Access' : 'Save User'}
@@ -181,7 +241,7 @@ export default function UsersPage() {
             <table className="w-full">
               <thead>
                 <tr className="bg-surface-container-low/40 text-left">
-                  {['User', 'Role', 'Access', 'Status', ''].map(h => <th key={h} className="px-lg py-sm text-label-sm uppercase tracking-wider text-on-surface-variant">{h}</th>)}
+                  {['User', 'Role', 'Access', 'Store', 'Status', ''].map(h => <th key={h} className="px-lg py-sm text-label-sm uppercase tracking-wider text-on-surface-variant">{h}</th>)}
                 </tr>
               </thead>
               <tbody className="divide-y divide-outline-variant/10">
@@ -195,6 +255,7 @@ export default function UsersPage() {
                     <td className="max-w-[420px] px-lg py-md text-body-sm text-on-surface-variant">
                       {accessSummary(user.role, user.permissions)}
                     </td>
+                    <td className="max-w-[220px] px-lg py-md text-body-sm text-on-surface-variant">{storesLabel(user)}</td>
                     <td className="px-lg py-md"><span className="rounded-full bg-on-tertiary-container/15 px-sm py-xs text-label-sm text-on-tertiary-container">{user.status}</span></td>
                     <td className="px-lg py-md text-right">
                       <div className="flex justify-end gap-sm">

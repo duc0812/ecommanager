@@ -8,6 +8,7 @@ import {
   ACC_B, NAME_A, NAME_B, P as FP, PROJECT_A, PROJECT_B, SHOP_B, cleanupFinanceFixture, seedFinanceFixture, type Fixture,
 } from './helpers/finance-scope-fixture'
 import { apiPathsOfPages } from './helpers/page-api-calls'
+import { GET as listStores } from '@/app/api/stores/route'
 import { GET as overview } from '@/app/api/overview/route'
 import { GET as autoSync } from '@/app/api/auto-sync/route'
 import { GET as listProjects } from '@/app/api/projects/route'
@@ -58,6 +59,8 @@ afterAll(async () => {
 type OnLoad = { page: string; label: string; run: () => Promise<Response>; shows?: string[] }
 
 const ON_LOAD: OnLoad[] = [
+  // The store filter (use-store-filter.ts) asks for the stores when Overview, Orders and Need To Fix open.
+  ...['/', '/orders', '/task-fix'].map(page => ({ page, label: 'GET /api/stores', run: async () => listStores(get('/api/stores')), shows: [NAME_A, fx.projectName('a')] })),
   { page: '/', label: 'GET /api/overview', run: async () => overview(get('/api/overview?period=all')), shows: [NAME_A] },
   { page: '/projects', label: 'GET /api/auto-sync', run: async () => autoSync(get('/api/auto-sync')) },
   { page: '/projects', label: 'GET /api/projects', run: async () => listProjects(get('/api/projects')), shows: [NAME_A, fx.projectName('a')] },
@@ -102,6 +105,7 @@ const CLASSIFIED: Record<string, Check[]> = {
   // session and routes that carry no store data
   '/api/auth/logout': [['POST', '/api/auth/logout', 'ok']],
   '/api/auth/me': [['GET', '/api/auth/me', 'ok']],
+  '/api/stores': [['GET', '/api/stores', 'ok']],
   '/api/spy/ad-domains': [['GET', '/api/spy/ad-domains', 'ok'], ['POST', '/api/spy/ad-domains', 'ok'], ['PATCH', '/api/spy/ad-domains', 'ok'], ['DELETE', '/api/spy/ad-domains', 'ok']],
   '/api/spy/ads': [['GET', '/api/spy/ads', 'ok']],
   '/api/spy/ads/:p': [['GET', '/api/spy/ads/a1', 'ok']],
@@ -127,10 +131,10 @@ const CLASSIFIED: Record<string, Check[]> = {
   '/api/overview': [['GET', '/api/overview', 'ok']],
   '/api/auto-sync': [['GET', '/api/auto-sync', 'ok'], ['POST', '/api/auto-sync', 'ok']],
   '/api/projects': [['GET', '/api/projects', 'ok']],
-  '/api/projects/:p/snapshots': [['GET', '/api/projects/p1/snapshots', 'ok'], ['PATCH', '/api/projects/p1/snapshots', 'ok']],
+  '/api/projects/:p/snapshots': [['GET', '/api/projects/p1/snapshots', 'ok'], ['PATCH', '/api/projects/p1/snapshots', 'forbidden']],
   '/api/projects/analytics': [['GET', '/api/projects/analytics', 'ok']],
   '/api/projects/profit-chart': [['GET', '/api/projects/profit-chart', 'ok']],
-  '/api/projects/snapshot/backfill': [['POST', '/api/projects/snapshot/backfill', 'ok']],
+  '/api/projects/snapshot/backfill': [['POST', '/api/projects/snapshot/backfill', 'forbidden']],
   '/api/meta/db-billing': [['GET', '/api/meta/db-billing', 'ok']],
   '/api/meta/reserve': [['GET', '/api/meta/reserve', 'ok'], ['POST', '/api/meta/reserve', 'forbidden']],
   '/api/sync/daily': [['GET', '/api/sync/daily', 'ok']],
@@ -151,11 +155,7 @@ const CLASSIFIED: Record<string, Check[]> = {
   '/api/design-studio/tasks/:p': [['PUT', '/api/design-studio/tasks/K1/artwork', 'ok']],
   // Intentionally denied. Shared factory data (the supplier rows carry apiKey) and the all-store parts are not store data a seller may read.
   '/api/suppliers': [['GET', '/api/suppliers', 'forbidden']],
-  '/api/suppliers/templates': [['GET', '/api/suppliers/templates', 'forbidden']],
-  '/api/suppliers/templates/:p': [['GET', '/api/suppliers/templates/t1', 'forbidden']],
-  '/api/design-studio/templates': [['GET', '/api/design-studio/templates', 'forbidden']],
   '/api/design-studio/products/:p': [['GET', '/api/design-studio/products/k1', 'forbidden']],
-  '/api/fulfillment/export': [['POST', '/api/fulfillment/export', 'forbidden']],
   '/api/fulfillment/:p/orders/:p': [
     ['GET', '/api/fulfillment/pgprints/orders/o1/preview', 'forbidden'],
     ['POST', '/api/fulfillment/pgprints/orders/o1/push', 'forbidden'],
@@ -164,18 +164,19 @@ const CLASSIFIED: Record<string, Check[]> = {
   '/api/meta/sync-insights': [['POST', '/api/meta/sync-insights', 'forbidden']],
   '/api/meta/sync-campaign-insights': [['POST', '/api/meta/sync-campaign-insights', 'forbidden']],
   '/api/marketing/campaign-overrides': [['PUT', '/api/marketing/campaign-overrides', 'forbidden']],
-  // Billing is read-only for a seller (SELLER_READ_ONLY_PREFIXES): its sync and file import stay closed, so the page's buttons for
-  // them answer 403. The Meta Billing page also polls GET /api/meta/sync; that answers 403 as well and the page ignores it.
+  // Billing is read-only for a seller (SELLER_READ_ONLY_PREFIXES): its sync and file import stay closed. The pages draw no button for
+  // them for a seller (useSellerReadOnly) and the Meta Billing page does not poll GET /api/meta/sync for one; the paths stay listed
+  // here because the page code still names them, and the 403 is what a seller would get if it called them.
   '/api/meta/sync': [['GET', '/api/meta/sync', 'forbidden'], ['POST', '/api/meta/sync', 'forbidden']],
   '/api/meta/import': [['POST', '/api/meta/import', 'forbidden']],
 }
 
 describe('the /api paths of the pages a seller opens', () => {
-  const pages = apiPathsOfPages('SELLER', SELLER_FEATURES, ['/fulfillment/orders', '/fulfillment/crawler'])
+  const pages = apiPathsOfPages('SELLER', SELLER_FEATURES)
 
-  it('open the pages of the production seller (the route table refuses /fulfillment/orders and /fulfillment/crawler without Fulfillment Dashboard)', () => {
+  it('open the pages of the production seller: Orders & P/L and Product Crawler need no Fulfillment Dashboard, CSV Export is not among them', () => {
     expect(pages.map(p => p.route)).toEqual([
-      '/', '/finance/meta', '/finance/other-bills', '/fulfillment/crawler', '/fulfillment/orders', '/marketing/niche-performance', '/orders', '/orders/export',
+      '/', '/finance/meta', '/finance/other-bills', '/fulfillment/crawler', '/fulfillment/orders', '/marketing/niche-performance', '/orders',
       '/projects', '/projects/seller-profit', '/task-fix', '/tools/creative', '/tools/spy-idea', '/tools/spy-idea/ads/[id]', '/tools/spy-idea/niches',
       '/tools/spy-idea/product-types', '/tools/spy-idea/sources',
     ])
