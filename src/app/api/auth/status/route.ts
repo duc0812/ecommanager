@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { requireSuperadmin } from '@/lib/api-auth'
 import { LITZZY_SHOP } from '@/lib/shopify-shop'
+import { hasReadAllOrders, loadGrantedScopes } from '@/lib/store-connect'
 
 export const dynamic = 'force-dynamic'
 
@@ -10,8 +11,10 @@ export async function GET() {
     include: { credential: true, project: { select: { name: true } } },
     orderBy: { connectedAt: 'asc' },
   })
+  const grantedScopes = await loadGrantedScopes(rows.map(s => s.id))
   const stores = rows.map(s => {
     const c = s.credential
+    const scopes = grantedScopes.get(s.id) ?? null
     const connected = Boolean(c && (c.accessToken || (c.authMode === 'CLIENT_CREDENTIALS' && c.clientId && c.clientSecret)))
     return {
       id: s.id,
@@ -23,6 +26,13 @@ export async function GET() {
       connectedAt: c?.connectedAt ?? null,
       lastError: s.lastError,
       lastErrorAt: s.lastErrorAt,
+      lastSyncAt: s.lastSyncAt,
+      orderPrefix: s.orderPrefix,
+      ianaTimezone: s.ianaTimezone,
+      trackingPageUrl: s.trackingPageUrl,
+      payoutStartDate: s.payoutStartDate,
+      scopes,
+      readAllOrders: scopes ? hasReadAllOrders(scopes) : null,
     }
   })
   const litzzy = stores.find(s => s.shop === LITZZY_SHOP && s.enabled && s.connected)

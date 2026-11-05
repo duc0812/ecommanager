@@ -69,7 +69,22 @@ function needsMint(credential: Credential): boolean {
 
 // Messages of this class are fixed text and safe to show; any other error is reduced to a generic line
 // so a library or database message that echoes a secret or token never reaches a caller.
-class MintError extends Error {}
+// `shopifyError` is Shopify's own error code (letters and underscores only, e.g. shop_not_permitted), never its description.
+export class MintError extends Error {
+  status?: number
+  shopifyError?: string
+
+  constructor(message: string, detail: { status?: number; shopifyError?: string } = {}) {
+    super(message)
+    this.status = detail.status
+    this.shopifyError = detail.shopifyError
+  }
+}
+
+function shopifyErrorCode(body: unknown): string | undefined {
+  const code = (body as { error?: unknown } | null)?.error
+  return typeof code === 'string' && /^[a-z_]{1,64}$/.test(code) ? code : undefined
+}
 
 export async function mintClientCredentialsToken(shop: string, clientId: string, clientSecret: string): Promise<{ token: string; expiresAt: Date }> {
   let url: URL
@@ -90,8 +105,8 @@ export async function mintClientCredentialsToken(shop: string, clientId: string,
   } catch {
     throw new MintError('không kết nối được tới Shopify')
   }
-  if (!res.ok) throw new MintError(`Shopify từ chối cấp token (HTTP ${res.status})`)
   const json = await res.json().catch(() => null) as { access_token?: unknown; expires_in?: unknown } | null
+  if (!res.ok) throw new MintError(`Shopify từ chối cấp token (HTTP ${res.status})`, { status: res.status, shopifyError: shopifyErrorCode(json) })
   const token = typeof json?.access_token === 'string' ? json.access_token : ''
   const expiresIn = Number(json?.expires_in)
   if (!token || !Number.isFinite(expiresIn) || expiresIn <= 0) throw new MintError('Shopify trả về token không hợp lệ')
@@ -201,7 +216,8 @@ export async function defaultConnectedStoreId(): Promise<string | null> {
   return (await listConnectedStores())[0]?.id ?? null
 }
 
-export async function saveStoreCredential(storeId: string, input: CredentialInput): Promise<void> {
+// `db` lets a caller write the credential inside its own transaction.
+export async function saveStoreCredential(storeId: string, input: CredentialInput, db: Pick<typeof prisma, 'shopifyStoreCredential'> = prisma): Promise<void> {
   const data = {
     authMode: input.authMode,
     clientId: input.clientId ?? null,
@@ -210,11 +226,18 @@ export async function saveStoreCredential(storeId: string, input: CredentialInpu
     tokenExpiresAt: input.tokenExpiresAt ?? null,
     ...(input.connectedAt ? { connectedAt: input.connectedAt } : {}),
   }
-  await prisma.shopifyStoreCredential.upsert({
+  await db.shopifyStoreCredential.upsert({
     where: { storeId },
     create: { storeId, ...data },
     update: data,
   })
+}
+
+export const PUBLIC_STORE_SELECT = { id: true, shop: true, orderPrefix: true, enabled: true, project: { select: { name: true } } } as const
+
+// The shape the store filter reads (GET /api/stores) and PATCH /api/stores/[id] answers; `enabled` only where the list names disabled stores too.
+export function publicStoreView(s: { id: string; shop: string; orderPrefix: string | null; enabled: boolean; project: { name: string } | null }, withEnabled: boolean) {
+  return { id: s.id, shop: s.shop, name: s.project?.name ?? s.shop, orderPrefix: s.orderPrefix, ...(withEnabled ? { enabled: s.enabled } : {}) }
 }
 
 export function maskCredential(value: string | null): string | null {

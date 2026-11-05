@@ -5,20 +5,11 @@ import GoogleDriveSetupCard from '@/components/GoogleDriveSetupCard'
 import GoogleSheetsSetupCard from '@/components/GoogleSheetsSetupCard'
 import BondreSetupCard from '@/components/BondreSetupCard'
 import PrintwaySetupCard from '@/components/PrintwaySetupCard'
+import StoreConnectionsCard from '@/components/StoreConnectionsCard'
 import { SetupBlockLinks, SetupBlockTabs } from '@/components/SetupBlockNav'
 import { SETUP_BLOCKS, blockFromSearch, type SetupBlock } from '@/lib/setup-blocks'
 
 type Status = { connected: boolean; shop?: string; connectedAt?: string }
-type ConnectedStore = { id: string; shop: string; projectName: string | null; enabled: boolean; connected: boolean; lastError: string | null; lastErrorAt: string | null }
-
-// Every store is listed; the ones switched off go last, each group in the order the API gave.
-function enabledFirst(list: ConnectedStore[]) {
-  return [...list].sort((a, b) => Number(b.enabled) - Number(a.enabled))
-}
-
-function fmtDate(iso: string) {
-  return new Date(iso).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' })
-}
 
 export default function SetupPage() {
   const [block, setBlock] = useState<SetupBlock>('store')
@@ -26,7 +17,6 @@ export default function SetupPage() {
   useEffect(() => { setBlock(blockFromSearch(window.location.search)) }, [])
 
   const [status, setStatus] = useState<Status | null>(null)
-  const [stores, setStores] = useState<ConnectedStore[] | null>(null)
   const [litzzyStoreId, setLitzzyStoreId] = useState<string | null>(null)
   const [shop, setShop] = useState('')
   const [apiKey, setApiKey] = useState('')
@@ -57,9 +47,8 @@ export default function SetupPage() {
     try { localStorage.removeItem('shopify_app_creds_v1') } catch {}
     fetch('/api/auth/status').then(r => r.json()).then(d => {
       setStatus(d.shopify)
-      setStores(Array.isArray(d.stores) ? d.stores : [])
       setLitzzyStoreId(d.stores?.find((s: { shop: string; id: string }) => s.shop === d.shopify?.shop)?.id ?? null)
-    }).catch(() => { setStatus({ connected: false }); setStores([]) })
+    }).catch(() => { setStatus({ connected: false }) })
     fetch('/api/trello/config').then(r => r.json()).then(d => {
       setTrelloApiKeyMasked(d.apiKeyMasked || '')
       setTrelloTokenMasked(d.tokenMasked || '')
@@ -181,63 +170,7 @@ export default function SetupPage() {
 
         {block === 'store' && (
         <div className="grid grid-cols-12 gap-lg">
-          <div className="col-span-12 bg-surface-container-lowest rounded-xl shadow-card border border-outline-variant/20 overflow-hidden">
-            <div className="flex items-center gap-sm px-lg py-md border-b border-outline-variant/20">
-              <span className="material-symbols-outlined text-secondary">storefront</span>
-              <h3 className="text-headline-sm text-primary">Các store đang kết nối</h3>
-              {stores && (
-                <span className="ml-auto bg-surface-container-high px-sm py-xs rounded text-label-sm text-on-surface-variant">{stores.length} store</span>
-              )}
-            </div>
-            {stores === null ? (
-              <div className="flex items-center gap-sm px-lg py-lg text-on-surface-variant text-body-sm">
-                <span className="material-symbols-outlined text-[16px] animate-spin">sync</span>
-                Đang kiểm tra...
-              </div>
-            ) : stores.length === 0 ? (
-              <div className="px-lg py-xl text-center text-on-surface-variant text-body-sm">Chưa có store nào.</div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b border-outline-variant/20 bg-surface-container-low">
-                      {['Store', 'Shop domain', 'Kết nối', 'Lỗi sync gần nhất'].map(h => (
-                        <th key={h} className="text-left px-lg py-md text-label-md text-on-surface-variant">{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {enabledFirst(stores).map(s => (
-                      <tr key={s.id} className={`border-b border-outline-variant/10 hover:bg-surface-container-low/50 transition-colors ${s.enabled ? '' : 'opacity-60'}`}>
-                        <td className="px-lg py-md text-label-md text-primary">
-                          {s.projectName ?? s.shop}
-                          {!s.enabled && (
-                            <span className="ml-sm rounded-full bg-surface-container-high px-sm py-xs text-label-sm font-normal text-on-surface-variant">Đã tắt</span>
-                          )}
-                        </td>
-                        <td className="px-lg py-md text-body-sm font-mono text-on-surface-variant">{s.shop}</td>
-                        <td className="px-lg py-md">
-                          <span className={`px-sm py-xs rounded-full text-label-sm ${s.connected ? 'bg-on-tertiary-container/15 text-on-tertiary-container' : 'bg-error-container text-on-error-container'}`}>
-                            {s.connected ? 'Có' : 'Không'}
-                          </span>
-                        </td>
-                        <td className="px-lg py-md text-body-sm">
-                          {s.lastError ? (
-                            <span className="text-error">
-                              {s.lastError}
-                              {s.lastErrorAt && <span className="ml-xs text-label-sm text-on-surface-variant">({fmtDate(s.lastErrorAt)})</span>}
-                            </span>
-                          ) : (
-                            <span className="text-on-surface-variant">—</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
+          <StoreConnectionsCard />
 
           {/* Left: connection status */}
           <div className="col-span-12 lg:col-span-4 space-y-lg">

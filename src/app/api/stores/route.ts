@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { requireApiAccess } from '@/lib/api-auth'
 import { storeScopeFor } from '@/lib/store-scope'
+import { PUBLIC_STORE_SELECT, publicStoreView } from '@/lib/store-connections'
 
 export const dynamic = 'force-dynamic'
 
@@ -14,12 +15,9 @@ export async function GET(req: NextRequest) {
   const includeDisabled = req.nextUrl.searchParams.get('includeDisabled') === '1'
   const rows = await prisma.shopifyStore.findMany({
     where: { ...(scope.all ? {} : { id: { in: scope.storeIds } }), ...(includeDisabled ? {} : { enabled: true }) },
-    select: { id: true, shop: true, orderPrefix: true, enabled: true, project: { select: { name: true } } },
+    select: PUBLIC_STORE_SELECT,
     orderBy: { connectedAt: 'asc' },
   })
-  const stores = rows.map(s => ({
-    id: s.id, shop: s.shop, name: s.project?.name ?? s.shop, orderPrefix: s.orderPrefix,
-    ...(includeDisabled ? { enabled: s.enabled } : {}),
-  }))
+  const stores = rows.map(s => publicStoreView(s, includeDisabled))
   return NextResponse.json({ stores })
 }

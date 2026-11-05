@@ -81,6 +81,9 @@ export async function syncStoreOrders(storeId: string, opts: { fromOrderName?: s
     throw new StoreOrderSyncError('Store not linked to a project. Go to /setup/projects and assign this store to a project.', 400)
   }
   if (store.project.archivedAt) throw new StoreOrderSyncError('Project is archived; un-archive before syncing.', 400)
+  if (!store.orderPrefix) {
+    throw new StoreOrderSyncError('Store chưa có tiền tố mã đơn (ví dụ REMI) nên chưa sync đơn được. Đặt prefix trong Shopify Admin → Settings → General → Order ID, tạo một đơn, rồi bấm "Kết nối lại" ở Setup để đọc tiền tố.', 400)
+  }
 
   // Always re-scan a short rolling window. Shopify order updates can arrive
   // after the first import, and using only the last sync timestamp can miss

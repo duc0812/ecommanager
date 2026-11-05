@@ -153,7 +153,7 @@ describe('Shopify OAuth and status per store', () => {
 
     const mine = body.stores.filter((s: any) => MINE.includes(s.shop))
     expect(mine.map((s: any) => s.shop).sort()).toEqual([A, B, LITZZY, NEW].sort())
-    expect(Object.keys(mine[0]).sort()).toEqual(['authMode', 'connected', 'connectedAt', 'enabled', 'id', 'lastError', 'lastErrorAt', 'projectName', 'shop'])
+    expect(Object.keys(mine[0]).sort()).toEqual(['authMode', 'connected', 'connectedAt', 'enabled', 'ianaTimezone', 'id', 'lastError', 'lastErrorAt', 'lastSyncAt', 'orderPrefix', 'payoutStartDate', 'projectName', 'readAllOrders', 'scopes', 'shop', 'trackingPageUrl'])
     const byShop = Object.fromEntries(mine.map((s: any) => [s.shop, s]))
     expect(byShop[A]).toMatchObject({ id: ids[A], connected: true, authMode: 'OAUTH', enabled: true, projectName: null })
     expect(byShop[NEW]).toMatchObject({ connected: false, authMode: null, connectedAt: null })

@@ -17,8 +17,8 @@ beforeAll(async () => {
   })
   const store = await prisma.shopifyStore.upsert({
     where: { shop: SHOP },
-    create: { shop: SHOP, syncSinceDate: new Date('2026-05-01'), projectId: 'proj_test' },
-    update: { syncSinceDate: new Date('2026-05-01'), projectId: 'proj_test' },
+    create: { shop: SHOP, syncSinceDate: new Date('2026-05-01'), projectId: 'proj_test', orderPrefix: 'TST' },
+    update: { syncSinceDate: new Date('2026-05-01'), projectId: 'proj_test', orderPrefix: 'TST' },
   })
   await saveStoreCredential(store.id, { authMode: 'TOKEN', accessToken: 'test_token' })
   await prisma.supplier.upsert({

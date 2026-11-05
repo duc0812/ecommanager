@@ -288,6 +288,22 @@ describe('seller API allow-list', () => {
     expect(canCallApi('SELLER', [], '/api/stores/abc', 'GET')).toBe('forbidden')
   })
 
+  it('connecting a store and changing one are for a Super Admin only; the store list keeps its rule', () => {
+    const calls: Array<[string, string]> = [['/api/stores/connect', 'POST'], ['/api/stores/abc', 'PATCH']]
+    for (const [path, method] of calls) {
+      expect(canCallApi('SUPERADMIN', [], path, method)).toBe('ok')
+      expect(canCallApi('ADMIN', DEFAULT_ROLE_PERMISSIONS.ADMIN, path, method)).toBe('forbidden')
+      expect(canCallApi('SUPPORT', DEFAULT_ROLE_PERMISSIONS.SUPPORT, path, method)).toBe('forbidden')
+      expect(canCallApi('SELLER', DEFAULT_ROLE_PERMISSIONS.SELLER, path, method)).toBe('forbidden')
+      expect(canCallApi(null, [], path, method)).toBe('unauthenticated')
+    }
+    expect(canCallApi('ADMIN', DEFAULT_ROLE_PERMISSIONS.ADMIN, '/api/stores/connect', 'GET')).toBe('forbidden')
+    expect(canCallApi('ADMIN', DEFAULT_ROLE_PERMISSIONS.ADMIN, '/api/stores/abc', 'GET')).toBe('forbidden')
+    expect(canCallApi('ADMIN', DEFAULT_ROLE_PERMISSIONS.ADMIN, '/api/stores', 'GET')).toBe('ok')
+    expect(canCallApi('SELLER', [], '/api/stores', 'GET')).toBe('ok')
+    expect(sellerMayReach('/api/stores/connect')).toBe(false)
+  })
+
   it('a listed prefix matches whole path segments only', () => {
     expect(canCallApi('SELLER', ['tools_spy_idea'], '/api/spying', 'GET')).toBe('forbidden')
     expect(canCallApi('SELLER', [], '/api/auth/me-too', 'GET')).toBe('forbidden')
