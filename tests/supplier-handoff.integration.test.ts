@@ -105,6 +105,8 @@ beforeAll(async () => {
   process.env.AUTH_SECRET = 'test-secret-that-is-long-enough-32chars'
   await setCsvLocked(false)
   await prisma.project.upsert({ where: { id: PROJECT }, create: { id: PROJECT, name: 'HOF', startDate: new Date('2026-06-01') }, update: {} })
+  // A previous run that was interrupted may have left orders on this shared store row; they would block the upsert or the cleanup.
+  await prisma.order.deleteMany({ where: { store: { shop: LITZZY_SHOP } } })
   storeId = (await prisma.shopifyStore.upsert({ where: { shop: SHOP }, create: { shop: SHOP, projectId: PROJECT }, update: {} })).id
   await prisma.supplier.upsert({ where: { code: 'hof_csv' }, create: { id: CSV_SUP, name: 'CSV Factory', code: 'hof_csv' }, update: {} })
   await prisma.supplier.upsert({ where: { code: 'pgprints' }, create: { id: PG_SUP, name: 'Pgprints', code: 'pgprints' }, update: {} })

@@ -42,6 +42,9 @@ async function recordStoreError(storeId: string, job: string, error: string | nu
   }
 }
 
+/** Thrown by a job for a store it deliberately does not run (it has nothing to run with). The store is reported as skipped and its last error is left alone. */
+export class StoreJobSkipped extends Error {}
+
 async function runForStore<T>(
   job: string,
   store: ConnectedStore,
@@ -60,6 +63,7 @@ async function runForStore<T>(
     await recordStoreError(store.id, job, null)
     return { storeId: store.id, shop: store.shop, ok: true, result: outcome.result }
   } catch (e) {
+    if (e instanceof StoreJobSkipped) return { storeId: store.id, shop: store.shop, ok: false, skipped: true, error: e.message }
     const error = safeErrorText(e, secrets)
     await recordStoreError(store.id, job, error)
     return { storeId: store.id, shop: store.shop, ok: false, error }

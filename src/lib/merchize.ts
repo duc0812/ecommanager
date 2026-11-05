@@ -33,17 +33,37 @@ export function serverMerchizeCredentials(): MerchizeCredentials | null {
   return normalizedCredentials(process.env.MERCHIZE_API_URL, process.env.MERCHIZE_API_TOKEN)
 }
 
+export type MerchizeResolution =
+  | { creds: MerchizeCredentials; source: 'store' | 'server' }
+  | { creds: null; missing: 'url' | 'token' | 'both' }
+
 /**
  * The Merchize account a store sends under: its own URL and token when it has saved either, otherwise the server's.
- * A store with only one of the two has half an account and gets none: it never falls back to the server's account,
- * which would be another account's money. Without a `storeId` this is the server's account.
+ * A store with only one of the two has half an account and gets none (`missing` says which half): it never falls
+ * back to the server's account, which would be another account's money. Without a `storeId` this is the server's account.
  */
-export async function merchizeCredentials(storeId?: string): Promise<MerchizeCredentials | null> {
+export async function resolveMerchize(storeId?: string): Promise<MerchizeResolution> {
   if (storeId) {
     const own = await getStoreSettings(storeId, ['merchize.apiUrl', 'merchize.token'])
-    if (own['merchize.apiUrl'] || own['merchize.token']) return normalizedCredentials(own['merchize.apiUrl'], own['merchize.token'])
+    if (own['merchize.apiUrl'] || own['merchize.token']) {
+      const creds = normalizedCredentials(own['merchize.apiUrl'], own['merchize.token'])
+      return creds ? { creds, source: 'store' } : { creds: null, missing: own['merchize.apiUrl'] ? 'token' : 'url' }
+    }
   }
-  return serverMerchizeCredentials()
+  const creds = serverMerchizeCredentials()
+  return creds ? { creds, source: 'server' } : { creds: null, missing: 'both' }
+}
+
+export async function merchizeCredentials(storeId?: string): Promise<MerchizeCredentials | null> {
+  return (await resolveMerchize(storeId)).creds
+}
+
+/** Why a store cannot send to Merchize: half an account of its own, or no account at all (its own or the server's). */
+export function merchizeMissingMessage(storeName: string, missing: 'url' | 'token' | 'both'): string {
+  const where = `Super Admin sửa ở Setup, mục "Các store đang kết nối", dòng ${storeName}`
+  if (missing === 'token') return `Store ${storeName} mới có URL API Merchize, chưa có token. Nhập thêm token, hoặc xoá URL để dùng khoá của server. ${where}`
+  if (missing === 'url') return `Store ${storeName} mới có token Merchize, chưa có URL API. Nhập thêm URL, hoặc xoá token để dùng khoá của server. ${where}`
+  return `Store ${storeName} chưa có khoá API Merchize riêng và server chưa có MERCHIZE_API_URL / MERCHIZE_API_TOKEN. ${where}`
 }
 
 export function merchizePrintingMethod(): MerchizePrintingMethod {

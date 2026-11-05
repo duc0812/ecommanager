@@ -12,7 +12,8 @@ import { PGPRINTS_ADDRESS_LINE_MAX, countryCodeOf, countryNameOf, resolveStateCo
 import { canSendBeside } from '@/lib/line-export'
 import { PublicUrlError, ensurePublicToken, isLineApproved, publicArtworkUrl, requirePublicBaseUrl } from '@/lib/public-artwork'
 import { credentialsOf, getPgprintsSettings, type PgprintsSettings } from '@/lib/pgprints-settings'
-import { LITZZY_SHOP } from '@/lib/shopify-shop'
+import { isLitzzyStore } from '@/lib/shopify-shop'
+import { safeErrorText } from '@/lib/store-jobs'
 import { expectedSize, printFileFit } from '@/lib/print-file-fit'
 import {
   PgprintsError, cancelOrder, createOrder, getBalance, searchOrders, serializeOrderPayload,
@@ -41,7 +42,13 @@ export class PushError extends Error {
 type StoreAccess = { storeId: string; storeName: string; shared: boolean; settings: PgprintsSettings; creds: PgprintsCredentials | null }
 
 function accessOf(store: { id: string; shop: string; project: { name: string } | null }, settings: PgprintsSettings): StoreAccess {
-  return { storeId: store.id, storeName: store.project?.name ?? store.shop, shared: store.shop === LITZZY_SHOP, settings, creds: credentialsOf(settings) }
+  return { storeId: store.id, storeName: store.project?.name ?? store.shop, shared: isLitzzyStore(store), settings, creds: credentialsOf(settings) }
+}
+
+/** What a store other than Litzzy is told when it cannot send: its own account is missing or its switch is off. Null for Litzzy, whose texts are the old ones. */
+function storeNoteOf(a: StoreAccess): string | null {
+  if (a.shared) return null
+  return !a.creds ? noCredentialsMessage(a) : !a.settings.pushEnabled ? pushDisabledMessage(a) : null
 }
 
 /** The PGprints account an order goes out under: its own store's, never another store's. Null when the order does not exist. */
@@ -135,7 +142,7 @@ export async function buildPush(orderId: string, opts: { withBalance?: boolean }
   const externalOrderId = await nextExternalOrderId(orderNo, { orderId, supplierId: supplier?.id ?? null, later: plan.later })
 
   if (!supplier) error('NO_SUPPLIER', 'Chưa có xưởng mã "pgprints" trong danh sách xưởng')
-  if (!creds) error('NO_CREDENTIALS', noCredentialsMessage(access))
+  if (!creds && !access.shared) error('NO_CREDENTIALS', noCredentialsMessage(access))
   if (CLOSED_PIPELINE.includes(order.pipelineStatus) || CLOSED_FINANCIAL.includes((order.financialStatus ?? '').toUpperCase())) {
     error('ORDER_CLOSED', 'Đơn đã huỷ hoặc đã hoàn tiền — không gửi sản xuất')
   } else if (!EXPORT_READY.includes(order.pipelineStatus)) {
@@ -344,6 +351,7 @@ export async function buildPush(orderId: string, opts: { withBalance?: boolean }
       supplier,
       pushEnabled: settings.pushEnabled,
       hasCredentials: !!creds,
+      storeNote: storeNoteOf(access),
       canPush: !!payload && !hasErrors && settings.pushEnabled && !!creds,
       payload,
       payloadHash: rawBody ? hashPayload(rawBody) : null,
@@ -404,8 +412,11 @@ export async function pushOrder(orderId: string, input: { payloadHash: string; u
   const access = await accessForOrder(orderId)
   if (!access) throw new PushError('Không tìm thấy đơn', 404, 'NOT_FOUND')
   const { creds } = access
+  const disabled = () => new PushError(pushDisabledMessage(access), 403, 'PUSH_DISABLED')
+  // Litzzy is refused in the order it always was (switch, then key); another store hears about its missing key first, since the switch is no use without one.
+  if (access.shared && !access.settings.pushEnabled) throw disabled()
   if (!creds) throw new PushError(noCredentialsMessage(access), 400, 'NO_CREDENTIALS')
-  if (!access.settings.pushEnabled) throw new PushError(pushDisabledMessage(access), 403, 'PUSH_DISABLED')
+  if (!access.settings.pushEnabled) throw disabled()
 
   const built = await buildPush(orderId)
   if (!built) throw new PushError('Không tìm thấy đơn', 404, 'NOT_FOUND')
@@ -662,12 +673,29 @@ async function pullStoreTracking(creds: PgprintsCredentials, pushes: PushRow[]):
   return { found, shipments }
 }
 
+export type PgprintsStoreOutcome = {
+  store: string
+  outcome: 'pulled' | 'no-key' | 'failed'
+  pushes: number
+  found: number
+  shipments: number
+  /** Only for `failed`: the reason, with the store's key material taken out. */
+  error?: string
+}
+
+/** One line per store for the log of a run. */
+export function describePgprintsOutcome(o: PgprintsStoreOutcome): string {
+  if (o.outcome === 'no-key') return `${o.store}: no PGprints key, ${o.pushes} live push(es) skipped`
+  if (o.outcome === 'failed') return `${o.store}: pull failed (${o.error}), ${o.pushes} live push(es) not updated`
+  return `${o.store}: ${o.found}/${o.pushes} order(s) found, ${o.shipments} shipment(s) updated`
+}
+
 // Every live PGprints push is pulled with the key of the store its order belongs to. A store with no key is skipped
-// and logged: its pushes are never looked up under another store's account. Tracking lands on Shipment rows;
-// Auto Fulfill turns those into Shopify fulfillments.
-export async function syncPgprintsTracking(): Promise<{ pushes: number; found: number; shipments: number; skipped?: string }> {
+// and logged, a store whose pull fails is logged and the next store still runs: its pushes are never looked up under
+// another store's account. Tracking lands on Shipment rows; Auto Fulfill turns those into Shopify fulfillments.
+export async function syncPgprintsTracking(): Promise<{ pushes: number; found: number; shipments: number; skipped?: string; stores: PgprintsStoreOutcome[] }> {
   const supplier = await findPgprintsSupplier()
-  if (!supplier) return { pushes: 0, found: 0, shipments: 0, skipped: 'no PGprints supplier' }
+  if (!supplier) return { pushes: 0, found: 0, shipments: 0, skipped: 'no PGprints supplier', stores: [] }
   const live = await prisma.supplierOrderPush.findMany({
     where: { supplierId: supplier.id, status: { in: ACTIVE_STATUSES } },
     include: { order: { select: { store: { select: { id: true, shop: true, project: { select: { name: true } } } } } } },
@@ -679,20 +707,32 @@ export async function syncPgprintsTracking(): Promise<{ pushes: number; found: n
     byStore.set(push.order.store.id, group)
   }
   const total = { pushes: 0, found: 0, shipments: 0 }
-  const withoutKey: string[] = []
+  const stores: PgprintsStoreOutcome[] = []
   for (const { store, pushes } of Array.from(byStore.values())) {
-    const access = accessOf(store, await getPgprintsSettings(store.id))
-    if (!access.creds) {
-      console.log(`[pgprints] tracking sync: ${access.storeName} has no PGprints key, skipped its ${pushes.length} live push(es)`)
-      withoutKey.push(access.storeName)
-      continue
+    const name = store.project?.name ?? store.shop
+    const secrets: string[] = []
+    try {
+      const access = accessOf(store, await getPgprintsSettings(store.id))
+      if (!access.creds) {
+        console.log(`[pgprints] tracking sync: ${name} has no PGprints key, skipped its ${pushes.length} live push(es)`)
+        stores.push({ store: name, outcome: 'no-key', pushes: pushes.length, found: 0, shipments: 0 })
+        continue
+      }
+      secrets.push(access.creds.secretKey, access.creds.storeId)
+      const r = await pullStoreTracking(access.creds, pushes)
+      total.pushes += pushes.length
+      total.found += r.found
+      total.shipments += r.shipments
+      stores.push({ store: name, outcome: 'pulled', pushes: pushes.length, found: r.found, shipments: r.shipments })
+    } catch (e) {
+      // One store whose key PGprints refuses (or whose request fails) must not stop the stores after it.
+      const error = safeErrorText(e, secrets)
+      console.error(`[pgprints] tracking sync failed for ${name}: ${error}`)
+      stores.push({ store: name, outcome: 'failed', pushes: pushes.length, found: 0, shipments: 0, error })
     }
-    const r = await pullStoreTracking(access.creds, pushes)
-    total.pushes += pushes.length
-    total.found += r.found
-    total.shipments += r.shipments
   }
-  return { ...total, ...(withoutKey.length > 0 ? { skipped: `no PGprints credentials for ${withoutKey.join(', ')}` } : {}) }
+  const withoutKey = stores.filter(s => s.outcome === 'no-key').map(s => s.store)
+  return { ...total, ...(withoutKey.length > 0 ? { skipped: `no PGprints credentials for ${withoutKey.join(', ')}` } : {}), stores }
 }
 
 export type TrackingWebhookInput = {

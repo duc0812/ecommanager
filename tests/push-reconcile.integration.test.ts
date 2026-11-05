@@ -100,6 +100,8 @@ async function setSetting(key: string, value: string) {
 beforeAll(async () => {
   process.env.AUTH_SECRET = 'test-secret-that-is-long-enough-32chars'
   await prisma.project.upsert({ where: { id: PROJECT }, create: { id: PROJECT, name: 'REC', startDate: new Date('2026-06-01') }, update: {} })
+  // A previous run that was interrupted may have left orders on this shared store row; they would block the upsert or the cleanup.
+  await prisma.order.deleteMany({ where: { store: { shop: LITZZY_SHOP } } })
   storeId = (await prisma.shopifyStore.upsert({ where: { shop: SHOP }, create: { shop: SHOP, projectId: PROJECT }, update: {} })).id
   await prisma.supplier.upsert({ where: { code: 'pgprints' }, create: { id: PG_SUP, name: 'Pgprints', code: 'pgprints' }, update: {} })
   await prisma.supplierProduct.create({ data: { supplierId: PG_SUP, sku: 'UT2-20OZ', baseCost: 8, apiSku: 'UT2-One_size' } })

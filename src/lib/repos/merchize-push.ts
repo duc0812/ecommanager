@@ -14,7 +14,7 @@ import {
   latestPush, reservePush, toPushViews, upsertLineTracking, viewOf, type PushRow,
 } from '@/lib/repos/supplier-push-core'
 import {
-  MerchizeError, cancelOrder, createOrder, getOrderDetail, isMerchizeSupplier, merchizeCredentials, merchizePrintingMethod,
+  MerchizeError, cancelOrder, createOrder, getOrderDetail, isMerchizeSupplier, merchizeMissingMessage, merchizePrintingMethod, resolveMerchize,
   pushToProduction, searchCatalog, serializeOrderPayload,
   type MerchizeCatalogVariant, type MerchizeCredentials, type MerchizePrintingMethod, type MerchizeOrderItem, type MerchizeOrderPayload,
 } from '@/lib/merchize'
@@ -82,7 +82,9 @@ export async function buildMerchizePush(orderId: string): Promise<BuiltMerchizeP
   })
   if (!order) return null
 
-  const creds = await merchizeCredentials(order.storeId)
+  const resolved = await resolveMerchize(order.storeId)
+  const creds = resolved.creds
+  const credentialsNote = resolved.creds ? null : merchizeMissingMessage(order.store.project?.name ?? order.store.shop, resolved.missing)
   const supplier = await findMerchizeSupplier()
   const printingMethod = merchizePrintingMethod()
   const identifier = merchizeIdentifier(order.store)
@@ -100,7 +102,7 @@ export async function buildMerchizePush(orderId: string): Promise<BuiltMerchizeP
   const externalOrderId = await nextExternalOrderId(orderNo, { orderId, supplierId: supplier?.id ?? null, later: plan.later })
 
   if (!supplier) error('NO_SUPPLIER', 'Chưa có xưởng mã "merchize" trong danh sách xưởng')
-  if (!creds) error('NO_CREDENTIALS', noCredentialsMessage(order.store))
+  if (credentialsNote) error('NO_CREDENTIALS', credentialsNote)
   if (CLOSED_PIPELINE.includes(order.pipelineStatus) || CLOSED_FINANCIAL.includes((order.financialStatus ?? '').toUpperCase())) {
     error('ORDER_CLOSED', 'Đơn đã huỷ hoặc đã hoàn tiền — không gửi sản xuất')
   } else if (!EXPORT_READY.includes(order.pipelineStatus)) {
@@ -291,6 +293,7 @@ export async function buildMerchizePush(orderId: string): Promise<BuiltMerchizeP
       supplier,
       pushEnabled: !!creds,
       hasCredentials: !!creds,
+      storeNote: credentialsNote,
       canPush: !!payload && !hasErrors && !!creds,
       payload,
       payloadHash: rawBody ? hashPayload(rawBody) : null,
@@ -308,13 +311,9 @@ export async function buildMerchizePush(orderId: string): Promise<BuiltMerchizeP
 async function credentialsForOrder(orderId: string): Promise<MerchizeCredentials> {
   const order = await prisma.order.findUnique({ where: { id: orderId }, select: { storeId: true, store: { select: { shop: true, project: { select: { name: true } } } } } })
   if (!order) throw new PushError('Không tìm thấy đơn', 404, 'NOT_FOUND')
-  const creds = await merchizeCredentials(order.storeId)
-  if (!creds) throw new PushError(noCredentialsMessage(order.store), 400, 'NO_CREDENTIALS')
-  return creds
-}
-
-function noCredentialsMessage(store: { shop: string; project?: { name: string } | null }): string {
-  return `Store ${store.project?.name ?? store.shop} chưa có khoá API Merchize riêng (URL và token) và server chưa có MERCHIZE_API_URL / MERCHIZE_API_TOKEN`
+  const resolved = await resolveMerchize(order.storeId)
+  if (!resolved.creds) throw new PushError(merchizeMissingMessage(order.store.project?.name ?? order.store.shop, resolved.missing), 400, 'NO_CREDENTIALS')
+  return resolved.creds
 }
 
 export async function pushMerchizeOrder(orderId: string, input: { payloadHash: string; userId: string | null }): Promise<{ push: PushView; exported: boolean }> {

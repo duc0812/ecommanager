@@ -254,6 +254,7 @@ export default function PgprintsPushModal({ orderId, supplier = 'pgprints', onCl
   const pastPushes = preview?.history.filter(h => h.id !== active?.id) ?? []
   const canSend = !!preview && (preview.canSend ?? preview.canAct)
   const blockedReason = !preview ? '' : !canSend ? `Chỉ Admin hoặc người có quyền CSV Export được gửi đơn sang ${name}`
+    : preview.storeNote ? preview.storeNote
     : !preview.pushEnabled ? copy.settingsHint
     : !preview.hasCredentials ? copy.credentialsHint
     : errors.length > 0 ? 'Sửa hết lỗi chặn gửi trước' : ''
@@ -278,10 +279,14 @@ export default function PgprintsPushModal({ orderId, supplier = 'pgprints', onCl
 
           {preview && sendable && (
             <>
-              {supplier === 'pgprints' && !preview.pushEnabled && (
-                <Note tone="warn" icon="toggle_off">Gửi đơn sang PGprints đang tắt. Super Admin bật ở trang cài đặt xưởng Pgprints — bản xem trước vẫn dùng được.</Note>
+              {preview.storeNote ? <Note tone="warn" icon="key_off">{preview.storeNote}</Note> : (
+                <>
+                  {supplier === 'pgprints' && !preview.pushEnabled && (
+                    <Note tone="warn" icon="toggle_off">Gửi đơn sang PGprints đang tắt. Super Admin bật ở trang cài đặt xưởng Pgprints — bản xem trước vẫn dùng được.</Note>
+                  )}
+                  {!preview.hasCredentials && <Note tone="warn" icon="key_off">{copy.credentialsHint}.</Note>}
+                </>
               )}
-              {!preview.hasCredentials && <Note tone="warn" icon="key_off">{copy.credentialsHint}.</Note>}
               <IssueList issues={preview.issues} />
             </>
           )}

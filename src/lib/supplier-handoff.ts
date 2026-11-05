@@ -7,7 +7,7 @@ import { STATUS_LABELS, type PipelineStatus } from '@/lib/pipeline-status'
 import { countryCodeOf, countryNameOf } from '@/lib/shipping-address'
 import { credentialsOf, getPgprintsSettings, pgprintsKeyHolders } from '@/lib/pgprints-settings'
 import { isPgprintsSupplier } from '@/lib/pgprints-shared'
-import { isMerchizeSupplier, merchizeCredentials } from '@/lib/merchize'
+import { isMerchizeSupplier, merchizeMissingMessage, resolveMerchize } from '@/lib/merchize'
 import { isBondreSupplier } from '@/lib/bondre'
 import { getBondreSettings, hasBondreAccount } from '@/lib/bondre-settings'
 import { isPrintwaySupplier } from '@/lib/printway'
@@ -124,15 +124,16 @@ const STATE_INCLUDE = {
   supplierPushes: LIVE_PUSHES,
 } as const
 
-type StoreAccount = { name: string; pgprints: boolean; merchize: boolean }
+type StoreAccount = { name: string; pgprints: boolean; merchizeNote: string | null }
 
 /** Whether each store can send by API: its own PGprints and Merchize accounts, resolved the way the push resolves them. */
 async function storeAccountsOf(storeIds: string[]): Promise<Map<string, StoreAccount>> {
   const stores = await prisma.shopifyStore.findMany({ where: { id: { in: storeIds } }, select: { id: true, shop: true, project: { select: { name: true } } } })
   const out = new Map<string, StoreAccount>()
   for (const s of stores) {
-    const [pgprints, merchize] = await Promise.all([getPgprintsSettings(s.id), merchizeCredentials(s.id)])
-    out.set(s.id, { name: s.project?.name ?? s.shop, pgprints: !!credentialsOf(pgprints), merchize: !!merchize })
+    const name = s.project?.name ?? s.shop
+    const [pgprints, merchize] = await Promise.all([getPgprintsSettings(s.id), resolveMerchize(s.id)])
+    out.set(s.id, { name, pgprints: !!credentialsOf(pgprints), merchizeNote: merchize.creds ? null : merchizeMissingMessage(name, merchize.missing) })
   }
   return out
 }
@@ -184,13 +185,13 @@ export async function handoffStates(orders: StateOrder[]): Promise<Map<string, H
     // Merchize has no CSV route (owner 11/04/2026): its lines go by API, and only another supplier's lines can wait for an export.
     const isApiLine = (l: { resolvedSupplierId: string | null }) => l.resolvedSupplierId === mz?.id || keyedLines.some(k => k.live && l.resolvedSupplierId === k.supplier?.id)
     const csvRemainder = (mzLines.length > 0 || keyedLines.some(k => k.apiLines.length > 0)) && productLines.some(l => !isApiLine(l) && !l.exportedAt)
-    const account = accounts.get(o.storeId) ?? { name: '', pgprints: false, merchize: false }
+    const account = accounts.get(o.storeId) ?? { name: '', pgprints: false, merchizeNote: 'Không tìm thấy store của đơn' }
     const missingApiSku = allPg ? ready.filter(l => !l.resolvedSupplierSku || !apiSkuBySku.get(l.resolvedSupplierSku)).map(l => l.resolvedSupplierSku ?? '—') : []
     const pgApi = allPg && account.pgprints && missingApiSku.length === 0
     const mzApi = mzLines.length > 0 && (merchizeOpen || !csvRemainder)
     const keyedApi = keyedLines.find(k => k.apiLines.length > 0 && (k.open || !csvRemainder))
     const api = pgApi || mzApi || !!keyedApi
-    const apiNote = mzApi ? (!account.merchize ? `Store ${account.name} chưa có khoá API Merchize — chưa gửi được đơn này`
+    const apiNote = mzApi ? (account.merchizeNote ? `${account.merchizeNote} — chưa gửi được đơn này`
         : csvRemainder ? 'Đơn nhiều xưởng — dòng Merchize gửi qua API, các dòng còn lại lưu chờ xuất CSV' : null)
       : keyedApi ? (csvRemainder ? `Đơn nhiều xưởng — dòng ${SUPPLIER_API_NAMES[keyedApi.kind]} gửi qua API, các dòng còn lại lưu chờ xuất CSV` : null)
       : !allPg || api ? null

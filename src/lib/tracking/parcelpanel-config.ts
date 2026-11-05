@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/db'
-import { getStoreSetting, isLitzzyStore } from '@/lib/store-settings'
+import { getStoreSetting, isLitzzyStoreId } from '@/lib/store-settings'
 
 // ParcelPanel API key is stored in the DB (AppSetting) so it can be entered from
 // the tool UI — the .env var is unreliable and easy to mis-edit. DB wins, env is fallback.
@@ -17,7 +17,7 @@ export function maskApiKey(key: string | null | undefined): string | null {
 // settings screen edits. Another store has only a key of its own: with none it gets null, never Litzzy's key
 // (ParcelPanel looks an order up by number inside one account, so the wrong account finds nothing or a wrong order).
 export async function getParcelPanelApiKey(storeId?: string): Promise<string | null> {
-  if (storeId !== undefined && !(await isLitzzyStore(storeId))) return getStoreSetting(storeId, 'parcelpanel.apiKey')
+  if (storeId !== undefined && !(await isLitzzyStoreId(storeId))) return getStoreSetting(storeId, 'parcelpanel.apiKey')
   const row = await prisma.appSetting.findUnique({ where: { key: PARCELPANEL_KEY_SETTING } })
   const fromDb = row?.value?.trim()
   if (fromDb) return fromDb

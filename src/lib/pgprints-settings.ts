@@ -1,8 +1,8 @@
 import { prisma } from '@/lib/db'
 import { deleteSettings, getSettings, saveSetting } from '@/lib/token-store'
 import { maskApiKey } from '@/lib/tracking/parcelpanel-config'
-import { LITZZY_SHOP } from '@/lib/shopify-shop'
-import { isLitzzyStore, storeSettingRowKey } from '@/lib/store-settings'
+import { isLitzzyStore } from '@/lib/shopify-shop'
+import { isLitzzyStoreId, storeSettingRowKey } from '@/lib/store-settings'
 import type { PgprintsCredentials } from '@/lib/pgprints'
 
 export const PGPRINTS_KEYS = {
@@ -57,7 +57,7 @@ function ownKeys(storeId: string): FieldKeys {
  * must pass the order's store.
  */
 export async function getPgprintsSettings(storeId?: string): Promise<PgprintsSettings> {
-  if (storeId === undefined || await isLitzzyStore(storeId)) {
+  if (storeId === undefined || await isLitzzyStoreId(storeId)) {
     return settingsOf(await getSettings(Object.values(PGPRINTS_KEYS)), PGPRINTS_KEYS)
   }
   const keys = ownKeys(storeId)
@@ -69,7 +69,7 @@ export type PgprintsKeyHolder = { storeId: string; settings: PgprintsSettings }
 /** Every store that has a PGprints secret key, read in one query: who may sign the tracking webhook. */
 export async function pgprintsKeyHolders(): Promise<PgprintsKeyHolder[]> {
   const stores = await prisma.shopifyStore.findMany({ select: { id: true, shop: true } })
-  const keysOf = (store: { id: string; shop: string }): FieldKeys => (store.shop === LITZZY_SHOP ? PGPRINTS_KEYS : ownKeys(store.id))
+  const keysOf = (store: { id: string; shop: string }): FieldKeys => (isLitzzyStore(store) ? PGPRINTS_KEYS : ownKeys(store.id))
   const raw = await getSettings(stores.flatMap(store => Object.values(keysOf(store))))
   const holders: PgprintsKeyHolder[] = []
   for (const store of stores) {
@@ -99,6 +99,25 @@ export type PgprintsSettingsPatch = {
   secretKey?: string | null
   defaultShipClass?: string | null
   pushEnabled?: boolean
+}
+
+const PUSH_NEEDS_KEY = 'Nhập Store ID và Secret key trước khi bật gửi đơn'
+
+/**
+ * The one rule for the push switch, shared by the global screen and a store's own settings: turning it on needs a Store ID
+ * and a secret key (otherwise it is refused), and a key taken away while it is on switches it off. `current` is what is
+ * stored, `patch` what is being saved. Returns the switch to write (undefined: leave it) or the refusal.
+ */
+export function pushSwitchAfter(
+  current: Pick<PgprintsSettings, 'storeId' | 'secretKey' | 'pushEnabled'>,
+  patch: Pick<PgprintsSettingsPatch, 'storeId' | 'secretKey' | 'pushEnabled'>,
+): { pushEnabled: boolean | undefined } | { error: string } {
+  const storeId = patch.storeId !== undefined ? patch.storeId : current.storeId
+  const secretKey = patch.secretKey !== undefined ? patch.secretKey : current.secretKey
+  const pushEnabled = patch.pushEnabled !== undefined ? patch.pushEnabled : current.pushEnabled
+  if (!pushEnabled || (storeId && secretKey)) return { pushEnabled: patch.pushEnabled }
+  if (patch.pushEnabled === true) return { error: PUSH_NEEDS_KEY }
+  return { pushEnabled: false }
 }
 
 async function setOrClear(key: string, value: string | null) {

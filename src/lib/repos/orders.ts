@@ -85,7 +85,7 @@ export async function listOrdersWithLines(filter: OrderFilter) {
     skip,
     include: {
       lines: { orderBy: { linePosition: 'asc' } },
-      store: { select: { id: true, shop: true, ianaTimezone: true, project: { select: { name: true } } } },
+      store: { select: { id: true, shop: true, orderPrefix: true, ianaTimezone: true, project: { select: { name: true } } } },
       defaultSupplier: { select: { id: true, name: true, code: true, firstItemShipFee: true, additionalItemShipFee: true } },
     },
   })

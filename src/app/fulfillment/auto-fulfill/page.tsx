@@ -79,7 +79,8 @@ export default function AutoFulfillPage() {
           try { m = JSON.parse(line) } catch { continue }
           if (m.type === 'stage') setProgress({ done: m.done, total: m.total, label: m.stage === 'shopify' ? 'Đang đọc Shopify' : m.stage === 'pgprints' ? 'Đang lấy tracking PGprints' : 'Đang đọc sheet' })
           else if (m.type === 'progress') setProgress({ done: m.done, total: m.total })
-          else if (m.type === 'pgprints') pgMsg = m.error ? ` PGprints: lỗi lấy tracking (${m.error}).` : m.pushes ? ` PGprints: ${m.found}/${m.pushes} đơn, cập nhật ${m.shipments} tracking.` : ''
+          else if (m.type === 'pgprints') pgMsg = (m.error ? ` PGprints: lỗi lấy tracking (${m.error}).` : m.pushes ? ` PGprints: ${m.found}/${m.pushes} đơn, cập nhật ${m.shipments} tracking.` : '')
+            + (m.stores ?? []).filter((s: any) => s.outcome !== 'pulled').map((s: any) => (s.outcome === 'failed' ? ` PGprints ${s.store}: lỗi lấy tracking (${s.error}).` : ` PGprints ${s.store}: chưa có khoá, bỏ qua.`)).join('')
           else if (m.type === 'supplier-tracking') trackMsg += m.error ? ` ${m.name}: lỗi lấy tracking (${m.error}).` : m.pushes ? ` ${m.name}: ${m.found}/${m.pushes} đơn, cập nhật ${m.shipments} tracking.` : ''
           else if (m.type === 'done') doneMsg = m
           else if (m.type === 'error') err = m.error

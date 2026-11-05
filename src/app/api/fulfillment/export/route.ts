@@ -9,6 +9,7 @@ import { enabledChannelFor, getSheetChannels } from '@/lib/sheet-channel'
 import { exportLinkErrorMessage } from '@/lib/export-design-links'
 import { exportProgress, exportProgressLabel, isLineExported, isOrderClosed, mixedSupplierNote } from '@/lib/line-export'
 import { isMerchizeSupplier } from '@/lib/merchize'
+import { isPgprintsSupplier } from '@/lib/pgprints-shared'
 import { CSV_LOCKED_MESSAGE, isCsvLocked } from '@/lib/csv-lock'
 
 /** Lets the export page say so up front. */
@@ -38,6 +39,7 @@ export async function POST(req: NextRequest) {
   // Every order with a line of this supplier, also when another supplier holds most of it (defaultSupplierId).
   const matched = await listOrdersWithLines({
     projectId: body.projectId || undefined,
+    storeIds: typeof body.storeId === 'string' && body.storeId ? [body.storeId] : undefined,
     lineSupplierId: tmpl.supplierId,
     pipelineStatus: body.pipelineStatus || undefined,
     dateFrom: body.dateFrom ? new Date(body.dateFrom + 'T00:00:00Z') : undefined,
@@ -70,6 +72,18 @@ export async function POST(req: NextRequest) {
     }
   }
   const orders = handedOff.filter(o => o.lines.some(l => includedIds.has(l.id)))
+
+  // Each store has its own PGprints account, and the file is uploaded into one of them: it never holds two stores' orders.
+  const pgprints = isPgprintsSupplier(tmpl.supplier)
+  const stores = new Map(orders.map(o => [o.store.id, o.store]))
+  if (pgprints && stores.size > 1) {
+    const names = Array.from(stores.values()).map(s => s.project?.name ?? s.shop)
+    return NextResponse.json({
+      error: `CSV PGprints không trộn đơn của nhiều store: các đơn sẽ xuất thuộc ${names.join(', ')}. Mỗi store có tài khoản PGprints riêng, nên mỗi file chỉ chứa đơn của một store. Chọn một store ở bộ lọc store (hoặc Project) rồi xuất lại.`,
+      code: 'MIXED_STORES',
+      stores: names,
+    }, { status: 400 })
+  }
 
   const exportableLinesOf = (o: (typeof orders)[number]) => supplierLinesOf(o).filter(l => includedIds.has(l.id))
   const templateColumns = parseTemplateColumns(tmpl.columns)
@@ -139,7 +153,9 @@ export async function POST(req: NextRequest) {
   }
 
   const dateRange = `${body.dateFrom ?? 'all'}_to_${body.dateTo ?? 'all'}`
-  const filename = `${tmpl.supplier.code}_${dateRange}.csv`
+  const [only] = Array.from(stores.values())
+  const storeTag = pgprints && only ? (only.orderPrefix ?? only.shop.replace(/\.myshopify\.com$/i, '')).replace(/[^A-Za-z0-9_-]/g, '') : ''
+  const filename = `${tmpl.supplier.code}_${storeTag ? `${storeTag}_` : ''}${dateRange}.csv`
   return new NextResponse(csv, {
     status: 200,
     headers: {

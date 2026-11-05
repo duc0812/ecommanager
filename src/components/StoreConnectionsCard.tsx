@@ -66,6 +66,7 @@ type KeysView = {
 }
 type KeysForm = { storeId: string; secretKey: string; shipClass: string; pushEnabled: boolean; mzUrl: string; mzToken: string; ppKey: string }
 
+const TRACKING_WEBHOOK_PATH = '/api/public/pgprints/tracking'
 const EMPTY_KEYS: KeysForm = { storeId: '', secretKey: '', shipClass: '', pushEnabled: false, mzUrl: '', mzToken: '', ppKey: '' }
 const MERCHIZE_SOURCE: Record<MerchizeSource, { text: string; bad: boolean }> = {
   store: { text: 'Dùng khoá Merchize riêng của store', bad: false },
@@ -80,6 +81,7 @@ function StoreKeysPanel({ store }: { store: StoreRow }) {
   const [form, setForm] = useState<KeysForm>(EMPTY_KEYS)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null)
+  const [copied, setCopied] = useState(false)
 
   const apply = useCallback((v: KeysView) => {
     setView(v)
@@ -132,6 +134,17 @@ function StoreKeysPanel({ store }: { store: StoreRow }) {
 
   if (!view) return <p className="text-label-sm text-on-surface-variant">{message?.text ?? 'Đang tải khoá của store…'}</p>
 
+  const webhookUrl = `${window.location.origin}${TRACKING_WEBHOOK_PATH}`
+  async function copyWebhook() {
+    try {
+      await navigator.clipboard.writeText(webhookUrl)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 2000)
+    } catch {
+      setMessage({ ok: false, text: 'Không chép được, hãy bôi đen và chép tay' })
+    }
+  }
+
   const pg = view.pgprints
   const hasPgprints = pg.hasStoreId && pg.hasSecretKey
   const merchize = MERCHIZE_SOURCE[view.merchize.source]
@@ -145,6 +158,13 @@ function StoreKeysPanel({ store }: { store: StoreRow }) {
       <div className="grid gap-md md:grid-cols-3">
         <div className="space-y-xs">
           <h4 className="text-label-md text-primary">PGprints</h4>
+          <div>
+            <p className="text-label-sm text-on-surface-variant">Webhook tracking: đăng ký địa chỉ này trong tài khoản PGprints của store</p>
+            <div className="flex items-center gap-xs">
+              <input type="text" readOnly value={webhookUrl} onFocus={e => e.currentTarget.select()} aria-label="Địa chỉ webhook tracking PGprints" className={`${input} font-mono`} />
+              <button type="button" className={`${outlineButton} mt-xs shrink-0`} onClick={copyWebhook}>{copied ? 'Đã chép' : 'Chép'}</button>
+            </div>
+          </div>
           {view.shared ? (
             <p className="text-label-sm text-on-surface-variant">
               Dùng khoá chung: Store ID {secretStatusLabel(pg.hasStoreId, pg.storeIdMasked)}, Secret key {secretStatusLabel(pg.hasSecretKey, pg.secretKeyMasked)}.

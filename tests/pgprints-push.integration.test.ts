@@ -140,6 +140,8 @@ beforeAll(async () => {
   process.env.DESIGN_STORAGE_DIR = tmp
 
   await prisma.project.upsert({ where: { id: PROJECT }, create: { id: PROJECT, name: 'PGP', startDate: new Date('2026-06-01') }, update: {} })
+  // A previous run that was interrupted may have left orders on this shared store row; they would block the upsert or the cleanup.
+  await prisma.order.deleteMany({ where: { store: { shop: LITZZY_SHOP } } })
   storeId = (await prisma.shopifyStore.upsert({ where: { shop: SHOP }, create: { shop: SHOP, projectId: PROJECT }, update: {} })).id
   await prisma.supplier.upsert({ where: { code: 'pgprints' }, create: { id: SUP, name: 'Pgprints', code: 'pgprints' }, update: {} })
   await prisma.supplier.upsert({ where: { code: 'pgp_other' }, create: { id: OTHER_SUP, name: 'Other Factory', code: 'pgp_other' }, update: {} })

@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/db'
-import { LITZZY_SHOP } from '@/lib/shopify-shop'
+import { isLitzzyStore } from '@/lib/shopify-shop'
 
 // Credentials and switches that belong to one store, kept in AppSetting as `store.<storeId>.<key>`.
 export const STORE_SETTING_KEYS = [
@@ -30,19 +30,19 @@ export async function getStoreSettings(storeId: string, keys: readonly StoreSett
   return out
 }
 
-/** A blank value or null removes the row. */
-export async function setStoreSetting(storeId: string, key: StoreSettingKey, value: string | null): Promise<void> {
+/** A blank value or null removes the row. `db` lets a caller write several settings inside its own transaction. */
+export async function setStoreSetting(storeId: string, key: StoreSettingKey, value: string | null, db: Pick<typeof prisma, 'appSetting'> = prisma): Promise<void> {
   const rowKey = storeSettingRowKey(storeId, key)
   const text = value?.trim()
-  if (text) await prisma.appSetting.upsert({ where: { key: rowKey }, create: { key: rowKey, value: text }, update: { value: text } })
-  else await prisma.appSetting.deleteMany({ where: { key: rowKey } })
+  if (text) await db.appSetting.upsert({ where: { key: rowKey }, create: { key: rowKey, value: text }, update: { value: text } })
+  else await db.appSetting.deleteMany({ where: { key: rowKey } })
 }
 
 /**
  * Litzzy is the first store and keeps using the keys that existed before there were stores (the `pgprints.*` and
- * `parcelpanel_api_key` rows). Every other store has only its own. Decided by the shop, never by a missing store id.
+ * `parcelpanel_api_key` rows). Every other store has only its own. An unknown store id is not Litzzy.
  */
-export async function isLitzzyStore(storeId: string): Promise<boolean> {
+export async function isLitzzyStoreId(storeId: string): Promise<boolean> {
   const store = await prisma.shopifyStore.findUnique({ where: { id: storeId }, select: { shop: true } })
-  return store?.shop === LITZZY_SHOP
+  return !!store && isLitzzyStore(store)
 }

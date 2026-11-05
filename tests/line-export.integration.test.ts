@@ -81,6 +81,8 @@ function runBackfill(...args: string[]): string {
 beforeAll(async () => {
   await setCsvLocked(false)
   await prisma.project.upsert({ where: { id: PROJECT }, create: { id: PROJECT, name: 'LX', startDate: new Date('2026-06-01') }, update: {} })
+  // A previous run that was interrupted may have left orders on this shared store row; they would block the upsert or the cleanup.
+  await prisma.order.deleteMany({ where: { store: { shop: LITZZY_SHOP } } })
   storeId = (await prisma.shopifyStore.upsert({ where: { shop: SHOP }, create: { shop: SHOP, projectId: PROJECT }, update: {} })).id
   await prisma.supplier.upsert({ where: { code: 'lx_mango' }, create: { id: MANGO, name: 'Mangoshao', code: 'lx_mango' }, update: {} })
   await prisma.supplier.upsert({ where: { code: 'lx_jomall' }, create: { id: JOMALL, name: 'Jomall', code: 'lx_jomall' }, update: {} })

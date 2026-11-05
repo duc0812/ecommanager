@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { requireApiAccess, requireSuperadmin, type AuthUser } from '@/lib/api-auth'
-import { getPgprintsSettings, toSettingsView } from '@/lib/pgprints-settings'
-import { merchizeCredentials } from '@/lib/merchize'
+import { getPgprintsSettings, pushSwitchAfter, toSettingsView } from '@/lib/pgprints-settings'
+import { resolveMerchize } from '@/lib/merchize'
 import { getParcelPanelApiKey, maskApiKey } from '@/lib/tracking/parcelpanel-config'
 import { maskedForSuperadminOnly } from '@/lib/secret-view'
-import { LITZZY_SHOP } from '@/lib/shopify-shop'
+import { isLitzzyStore } from '@/lib/shopify-shop'
 import { assertSafeExternalUrl } from '@/lib/safe-url'
 import { getStoreSettings, setStoreSetting, type StoreSettingKey } from '@/lib/store-settings'
 
@@ -15,35 +15,39 @@ type StoreRow = { id: string; shop: string; project: { name: string } | null }
 type Write = { key: StoreSettingKey; value: string | null }
 
 const SHARED_MESSAGE = 'Litzzy dùng khoá chung: sửa khoá PGprints ở trang cài đặt xưởng Pgprints và khoá ParcelPanel ở trang Tracking'
-const SECTIONS = ['pgprints', 'merchize', 'parcelpanel']
+const FIELDS = {
+  pgprints: ['storeId', 'secretKey', 'defaultShipClass', 'pushEnabled'],
+  merchize: ['apiUrl', 'token'],
+  parcelpanel: ['apiKey'],
+} as const
+type Section = keyof typeof FIELDS
 
 function findStore(id: string): Promise<StoreRow | null> {
   return prisma.shopifyStore.findUnique({ where: { id }, select: { id: true, shop: true, project: { select: { name: true } } } })
 }
 
 async function viewOf(store: StoreRow, user: AuthUser) {
-  const shared = store.shop === LITZZY_SHOP
   const [pgprints, parcelKey, mzOwn, mzResolved] = await Promise.all([
     getPgprintsSettings(store.id),
     getParcelPanelApiKey(store.id),
     getStoreSettings(store.id, ['merchize.apiUrl', 'merchize.token']),
-    merchizeCredentials(store.id),
+    resolveMerchize(store.id),
   ])
-  const ownMerchize = !!(mzOwn['merchize.apiUrl'] || mzOwn['merchize.token'])
   let apiUrlHost: string | null = null
   try { apiUrlHost = mzOwn['merchize.apiUrl'] ? new URL(mzOwn['merchize.apiUrl']).host : null } catch { /* a stored URL that no longer parses shows no host */ }
+  const source = mzResolved.creds ? mzResolved.source : (mzOwn['merchize.apiUrl'] || mzOwn['merchize.token']) ? 'incomplete' : 'none'
   return {
     storeId: store.id,
     shop: store.shop,
     name: store.project?.name ?? store.shop,
-    shared,
+    shared: isLitzzyStore(store),
     pgprints: maskedForSuperadminOnly(user, toSettingsView(pgprints), ['storeIdMasked', 'secretKeyMasked']),
     merchize: maskedForSuperadminOnly(user, {
       hasApiUrl: !!mzOwn['merchize.apiUrl'],
       apiUrlHost,
       hasToken: !!mzOwn['merchize.token'],
       tokenMasked: maskApiKey(mzOwn['merchize.token']),
-      source: ownMerchize ? (mzResolved ? 'store' : 'incomplete') : (mzResolved ? 'server' : 'none'),
+      source,
     }, ['tokenMasked']),
     parcelpanel: maskedForSuperadminOnly(user, { hasApiKey: !!parcelKey, apiKeyMasked: maskApiKey(parcelKey) }, ['apiKeyMasked']),
   }
@@ -59,10 +63,12 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
 class BadSettings extends Error {}
 
-function section(body: Record<string, unknown>, name: string): Record<string, unknown> | undefined {
+function section(body: Record<string, unknown>, name: Section): Record<string, unknown> | undefined {
   const value = body[name]
   if (value === undefined) return undefined
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new BadSettings(`${name} không hợp lệ`)
+  const stray = Object.keys(value).find(field => !(FIELDS[name] as readonly string[]).includes(field))
+  if (stray) throw new BadSettings(`Không có trường "${name}.${stray}". Các trường của ${name}: ${FIELDS[name].join(', ')}`)
   return value as Record<string, unknown>
 }
 
@@ -86,11 +92,11 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   if (!body || typeof body !== 'object' || Array.isArray(body)) return NextResponse.json({ error: 'Body không hợp lệ' }, { status: 400 })
   const store = await findStore(params.id)
   if (!store) return NextResponse.json({ error: 'Không tìm thấy store' }, { status: 404 })
-  const shared = store.shop === LITZZY_SHOP
+  const shared = isLitzzyStore(store)
 
   const writes: Write[] = []
   try {
-    const unknown = Object.keys(body).find(key => !SECTIONS.includes(key))
+    const unknown = Object.keys(body).find(key => !Object.keys(FIELDS).includes(key))
     if (unknown) throw new BadSettings(`Không có mục cài đặt "${unknown}"`)
     const pg = section(body, 'pgprints')
     const mz = section(body, 'merchize')
@@ -113,29 +119,33 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
       try { assertSafeExternalUrl(url, { allowedHosts: ['merchize.com'] }) } catch (e: any) { throw new BadSettings(`URL API Merchize: ${e.message}`) }
     }
 
-    const next = (key: StoreSettingKey, current: string | null | undefined) => {
-      const write = writes.find(w => w.key === key)
-      return write ? write.value : current ?? null
-    }
+    const written = (key: StoreSettingKey) => writes.find(w => w.key === key)
     if (!shared) {
-      const own = await getStoreSettings(store.id, ['pgprints.storeId', 'pgprints.secretKey', 'pgprints.pushEnabled', 'merchize.apiUrl', 'merchize.token'])
-      const pgReady = !!next('pgprints.storeId', own['pgprints.storeId']) && !!next('pgprints.secretKey', own['pgprints.secretKey'])
-      const enabling = writes.find(w => w.key === 'pgprints.pushEnabled')?.value === 'true'
-      const enabled = enabling || (!writes.some(w => w.key === 'pgprints.pushEnabled') && own['pgprints.pushEnabled'] === 'true')
-      if (enabled && !pgReady) {
-        if (enabling) throw new BadSettings('Nhập Store ID và Secret key trước khi bật gửi đơn')
-        writes.push({ key: 'pgprints.pushEnabled', value: 'false' })
+      const rule = pushSwitchAfter(await getPgprintsSettings(store.id), {
+        storeId: written('pgprints.storeId')?.value,
+        secretKey: written('pgprints.secretKey')?.value,
+        pushEnabled: written('pgprints.pushEnabled') ? written('pgprints.pushEnabled')!.value === 'true' : undefined,
+      })
+      if ('error' in rule) throw new BadSettings(rule.error)
+      if (rule.pushEnabled !== undefined) {
+        const at = writes.findIndex(w => w.key === 'pgprints.pushEnabled')
+        if (at >= 0) writes.splice(at, 1)
+        writes.push({ key: 'pgprints.pushEnabled', value: rule.pushEnabled ? 'true' : 'false' })
       }
     }
     const own = await getStoreSettings(store.id, ['merchize.apiUrl', 'merchize.token'])
-    const hasUrl = !!next('merchize.apiUrl', own['merchize.apiUrl'])
-    const hasToken = !!next('merchize.token', own['merchize.token'])
-    if (hasUrl !== hasToken) throw new BadSettings('Nhập cả URL API và token Merchize của store, hoặc xoá cả hai để dùng khoá của server')
+    const after = (key: StoreSettingKey) => (written(key) ? written(key)!.value : own[key as 'merchize.apiUrl' | 'merchize.token'] ?? null)
+    if (!!after('merchize.apiUrl') !== !!after('merchize.token')) {
+      throw new BadSettings('Nhập cả URL API và token Merchize của store, hoặc xoá cả hai để dùng khoá của server')
+    }
   } catch (e) {
     if (e instanceof BadSettings) return NextResponse.json({ error: e.message }, { status: 400 })
     throw e
   }
 
-  for (const write of writes) await setStoreSetting(store.id, write.key, write.value)
+  // One transaction: a failure part way must not leave half a Merchize pair or a switch on without its key.
+  await prisma.$transaction(async tx => {
+    for (const write of writes) await setStoreSetting(store.id, write.key, write.value, tx)
+  })
   return NextResponse.json(await viewOf(store, auth.user))
 }

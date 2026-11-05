@@ -3,7 +3,7 @@ import { initOnce, runExclusive } from '@/lib/job-lock'
 import { logStoreFailures, okResults, saveMergedJobResult } from '@/lib/store-jobs'
 import { getSheets, getMinAgeDays } from './auto-fulfill-sheets'
 import { runAutoFulfillAllStores } from './auto-fulfill-stores'
-import { syncPgprintsTracking } from '@/lib/repos/pgprints-push'
+import { describePgprintsOutcome, syncPgprintsTracking } from '@/lib/repos/pgprints-push'
 import { syncApiSupplierTracking } from '@/lib/repos/supplier-tracking-sync'
 
 const TZ = 'Asia/Ho_Chi_Minh'
@@ -13,6 +13,7 @@ export async function runDailyAutoFulfill() {
   try {
     const pg = await syncPgprintsTracking()
     console.log(`[auto-fulfill] PGprints tracking sync: ${pg.found}/${pg.pushes} order(s) found, ${pg.shipments} shipment(s) updated${pg.skipped ? ` (${pg.skipped})` : ''}`)
+    for (const s of pg.stores) console.log(`[auto-fulfill] PGprints ${describePgprintsOutcome(s)}`)
   } catch (e: any) {
     console.error('[auto-fulfill] PGprints tracking sync failed:', e?.message ?? e)
   }

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireApiAccess, requireSuperadmin } from '@/lib/api-auth'
 import type { UserRole } from '@/lib/roles'
-import { getPgprintsSettings, savePgprintsSettings, toSettingsView, type PgprintsSettings, type PgprintsSettingsPatch } from '@/lib/pgprints-settings'
+import { getPgprintsSettings, pushSwitchAfter, savePgprintsSettings, toSettingsView, type PgprintsSettings, type PgprintsSettingsPatch } from '@/lib/pgprints-settings'
 import { PublicUrlError, requirePublicBaseUrl } from '@/lib/public-artwork'
 import { maskedForSuperadminOnly } from '@/lib/secret-view'
 
@@ -54,13 +54,8 @@ export async function PUT(req: NextRequest) {
     patch.pushEnabled = body.pushEnabled
   }
 
-  const current = await getPgprintsSettings()
-  const storeId = patch.storeId !== undefined ? patch.storeId : current.storeId
-  const secretKey = patch.secretKey !== undefined ? patch.secretKey : current.secretKey
-  const pushEnabled = patch.pushEnabled !== undefined ? patch.pushEnabled : current.pushEnabled
-  if (pushEnabled && (!storeId || !secretKey)) {
-    if (patch.pushEnabled === true) return NextResponse.json({ error: 'Nhập Store ID và Secret key trước khi bật gửi đơn' }, { status: 400 })
-    patch.pushEnabled = false
-  }
+  const rule = pushSwitchAfter(await getPgprintsSettings(), patch)
+  if ('error' in rule) return NextResponse.json({ error: rule.error }, { status: 400 })
+  patch.pushEnabled = rule.pushEnabled
   return respond(await savePgprintsSettings(patch), auth.user)
 }

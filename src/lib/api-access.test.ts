@@ -239,6 +239,11 @@ describe('seller API allow-list', () => {
     }
   })
 
+  it('seller cannot reach the CSV export, so a store pick in its body cannot widen what it sees', () => {
+    expect(sellerMayReach('/api/fulfillment/export')).toBe(false)
+    expect(canCallApi('SELLER', DEFAULT_ROLE_PERMISSIONS.ADMIN, '/api/fulfillment/export', 'POST')).toBe('forbidden')
+  })
+
   it('seller is denied the store connection list, which names every store and its last error', () => {
     expect(canCallApi('SELLER', ['shopify', 'setup_store'], '/api/auth/status', 'GET')).toBe('forbidden')
   })

@@ -63,6 +63,8 @@ export type PushPreview = {
   supplier: { id: string; name: string; code: string } | null
   pushEnabled: boolean
   hasCredentials: boolean
+  /** Set for a store that has its own account to set up (not Litzzy's shared one): why it cannot send, and where to fix it. Replaces the generic hints. */
+  storeNote?: string | null
   canPush: boolean
   payload: unknown | null
   payloadHash: string | null

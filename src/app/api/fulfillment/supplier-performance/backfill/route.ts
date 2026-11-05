@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { syncParcelPanelForStore } from '@/lib/tracking/parcelpanel-store-sync'
-import { getParcelPanelApiKey } from '@/lib/tracking/parcelpanel-config'
-import { listConnectedStores } from '@/lib/store-connections'
-import { failedResults, forEachConnectedStore, mergeStoreResults, storeRunSummary } from '@/lib/store-jobs'
+import { forEachParcelPanelStore, partitionByParcelPanelKey, syncParcelPanelForStore } from '@/lib/tracking/parcelpanel-store-sync'
+import { failedResults, mergeStoreResults, storeRunSummary } from '@/lib/store-jobs'
 
 // One-time backfill: re-fetch ParcelPanel for shipments (INCLUDING delivered ones, which
 // the normal sync skips) placed within `days`, so ppTimingJson is populated for the
@@ -11,9 +9,8 @@ export async function POST(req: NextRequest) {
   const daysRaw = Number(req.nextUrl.searchParams.get('days'))
   const days = Number.isFinite(daysRaw) && daysRaw > 0 ? Math.min(365, Math.floor(daysRaw)) : 60
 
-  const stores = await listConnectedStores()
-  const keys = await Promise.all(stores.map(s => getParcelPanelApiKey(s.id)))
-  if (stores.length > 0 && !keys.some(Boolean)) return NextResponse.json({ error: 'Chưa cấu hình ParcelPanel API key.' }, { status: 400 })
+  const { keyed, keyless } = await partitionByParcelPanelKey()
+  if (keyed.length === 0 && keyless.length > 0) return NextResponse.json({ error: 'Chưa cấu hình ParcelPanel API key.' }, { status: 400 })
 
   const encoder = new TextEncoder()
   const stream = new ReadableStream({
@@ -21,7 +18,7 @@ export async function POST(req: NextRequest) {
       const send = (o: any) => controller.enqueue(encoder.encode(JSON.stringify(o) + '\n'))
       try {
         let finishedTotal = 0
-        const results = await forEachConnectedStore('parcelpanel-backfill', async (conn) => {
+        const results = await forEachParcelPanelStore('parcelpanel-backfill', async (conn) => {
           let storeTotal = 0
           const result = await syncParcelPanelForStore(conn, {
             includeDelivered: true, sinceDays: days,

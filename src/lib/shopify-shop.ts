@@ -1,5 +1,10 @@
 export const LITZZY_SHOP = 'caramiaus-store.myshopify.com'
 
+/** Litzzy is the first store, the one whose keys predate stores. Always decided by the shop, never by a missing store id. */
+export function isLitzzyStore(store: { shop: string }): boolean {
+  return store.shop === LITZZY_SHOP
+}
+
 const SHOP_DOMAIN_RE = /^[a-z0-9][a-z0-9-]*\.myshopify\.com$/
 
 export function isValidShopDomain(shop: string): boolean {

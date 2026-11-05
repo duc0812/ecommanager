@@ -78,7 +78,7 @@ export async function ensureStandardSupplierTemplate(supplierId: string) {
 export async function getTemplateById(id: string) {
   return prisma.csvTemplate.findUnique({
     where: { id },
-    include: { supplier: { select: { id: true, name: true, code: true } } },
+    include: { supplier: { select: { id: true, name: true, code: true, apiType: true } } },
   })
 }
 

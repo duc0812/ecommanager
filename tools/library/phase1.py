@@ -13,6 +13,11 @@ Steps (docs/superpowers/specs/2026-10-29-design-library-plan.md, section 6):
              from Drive -> products\\<CODE>\\artwork\\<CODE>-<V1>-<V2>-<SUP>-<date>\\print\\<AREA>.<ext>
 Everything copied in lands with asset.json status UNCHECKED: it still has to pass the tool's checks before reuse.
 A report goes to LIBRARY\\_reports\\phase1-<stamp>.md (and is printed).
+
+Order prefixes: an area on an order file can start with the order line key ("LIT4057_1 Front", "REMI1010_2 Back"); the key is
+stripped to leave the area name. Only the prefixes of known stores are stripped (default LIT and REMI), so an area such as
+"P1", "A4 Print" or "TN2209261808 front" is left alone. When a store is added, list its prefixes in the environment variable
+LIBRARY_ORDER_PREFIXES (comma separated, e.g. "LIT,REMI,ABC"); it replaces the default list.
 """
 from __future__ import annotations
 
@@ -32,7 +37,9 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from library_paths import blank_dir  # noqa: E402
 CODE_RE = re.compile(r'(?<![A-Z0-9])([A-Z]{2}\d{7,10}[A-Z]{0,3})(?![A-Z0-9])', re.I)
-LINE_PREFIX_RE = re.compile(r'^[A-Z]+\d+(?:_\d+)*\s*(?:-\s*)?', re.I)
+DEFAULT_ORDER_PREFIXES = ('LIT', 'REMI')
+ORDER_PREFIXES = tuple(p.strip().upper() for p in os.environ.get('LIBRARY_ORDER_PREFIXES', '').split(',') if p.strip()) or DEFAULT_ORDER_PREFIXES
+LINE_PREFIX_RE = re.compile(r'^(?:' + '|'.join(re.escape(p) for p in ORDER_PREFIXES) + r')\d+(?:_\d+)*\s*(?:-\s*)?', re.I)
 SUPPLIER_NAMES = {'MANGOSHAO': 'MANGO', 'MANGO': 'MANGO', 'MERCHIZE': 'MERCHIZE', 'JOMALL': 'JOMALL', 'PGPRINTS': 'PGPRINTS',
                   'PRINTWAY': 'PRINTWAY', 'BONDRE': 'BONDRE', 'PRINTPOSS': 'PRINTPOSS', 'LENFUL': 'LENFUL', 'SNAP_ECOM': 'SNAPECOM'}
 FONT_SOURCES = [
