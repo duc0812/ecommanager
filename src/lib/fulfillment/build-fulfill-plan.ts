@@ -52,26 +52,33 @@ export type FulfillmentOrderRef = { id: string; status: string; lineItems: FOLin
 // addOn: non-product lines (Shipping protection / Tip / Custom Text) closed with no tracking.
 export type PlannedFulfillment = { fulfillmentOrderId: string; lineItems: Array<{ id: string; quantity: number }>; tracking: string; shipmentIds: string[]; addOn?: boolean }
 export type OrderPlanStatus = 'will_fulfill' | 'too_recent' | 'already_fulfilled' | 'not_found' | 'needs_manual' | 'error'
-export type OrderPlan = { baseOrder: string; status: OrderPlanStatus; fulfillments: PlannedFulfillment[]; message?: string; ageDays?: number; openLineCount?: number; hasHeldLines?: boolean }
+export type SkippedLine = { label: string; supplier: string; reason: string }
+export const OTHER_SUPPLIER_REASON = 'dòng của xưởng khác, chưa có tracking'
+export type OrderPlan = { baseOrder: string; status: OrderPlanStatus; fulfillments: PlannedFulfillment[]; message?: string; ageDays?: number; openLineCount?: number; hasHeldLines?: boolean; skippedLines?: SkippedLine[] }
 
 // What a whole-order (unsuffixed) sheet row is checked against: the sheets that wrote it and the order's product lines.
-export type WholeRowCheck = { sheets: string[]; lines: Array<{ shopifyLineId: string; label: string; supplier: string | null; hasFile: boolean }> }
+// sheetsAreSuppliers: every one of those sheets is named after a Supplier, so a line of another supplier can be told apart.
+export type WholeRowLine = { shopifyLineId: string; label: string; supplier: string | null; hasFile: boolean }
+export type WholeRowCheck = { sheets: string[]; sheetsAreSuppliers: boolean; lines: WholeRowLine[] }
 
-// A supplier's unsuffixed row only proves its own parcel shipped. On a multi-item order every open line must belong to that
-// supplier and have a file, otherwise the row would tell the customer that items nobody made are on the way.
-export function wholeRowBlockers(check: WholeRowCheck, openLineIds: string[]): string[] {
-  if (check.lines.length < 2 && openLineIds.length < 2) return []
-  const sheets = new Set(check.sheets.map(n => n.trim().toLowerCase()))
+// A supplier's unsuffixed row only proves its own parcel shipped. On a multi-item order a line of another supplier is left
+// out for that supplier's tracking. Every other open line must belong to the sheet's supplier and have a file, otherwise the
+// row would tell the customer that items nobody made are on the way. A sheet with no supplier cannot split the order.
+export function splitWholeRow(check: WholeRowCheck, openLineIds: string[]): { blockers: string[]; otherSupplierLines: WholeRowLine[] } {
   const blockers: string[] = []
+  const otherSupplierLines: WholeRowLine[] = []
+  if (check.lines.length < 2 && openLineIds.length < 2) return { blockers, otherSupplierLines }
+  const sheets = new Set(check.sheets.map(n => n.trim().toLowerCase()))
   for (const id of openLineIds) {
     const line = check.lines.find(l => l.shopifyLineId === id)
     if (!line) { blockers.push(`line ${id} không có trong tool`); continue }
+    if (check.sheetsAreSuppliers && line.supplier && !sheets.has(line.supplier.trim().toLowerCase())) { otherSupplierLines.push(line); continue }
     const issues: string[] = []
     if (!line.supplier || !sheets.has(line.supplier.trim().toLowerCase())) issues.push(`xưởng ${line.supplier ?? 'chưa gán'}`)
     if (!line.hasFile) issues.push('chưa có file')
     if (issues.length) blockers.push(`${line.label}: ${issues.join(', ')}`)
   }
-  return blockers
+  return { blockers, otherSupplierLines }
 }
 
 export function buildFulfillmentPlan(input: {
@@ -156,6 +163,8 @@ export function buildFulfillmentPlan(input: {
   //  - only some items listed (the rest not shipped yet) → fulfill the listed lines and
   //    leave the others untouched (partial). A line NOT listed is never fulfilled.
   // Anything ambiguous → needs_manual (never guess — this feature emails customers).
+  const skippedLineIds = new Set<string>()
+  const skippedLines: SkippedLine[] = []
   const hasWhole = input.rows.some(r => isWholeOrderRow(r.lineKey))
   const hasSuffixed = input.rows.some(r => !isWholeOrderRow(r.lineKey))
 
@@ -170,12 +179,20 @@ export function buildFulfillmentPlan(input: {
     if (wholeTrackings.size > 1) return done('needs_manual', 'Dòng cả đơn nhưng nhiều tracking khác nhau', ageDays)
     if (input.wholeRowCheck) {
       const openProductLines = Array.from(openByLineId.keys()).filter(id => !addOnLineIds.has(id))
-      const blockers = wholeRowBlockers(input.wholeRowCheck, openProductLines)
+      const { blockers, otherSupplierLines } = splitWholeRow(input.wholeRowCheck, openProductLines)
       if (blockers.length) return done('needs_manual', `Sheet ${input.wholeRowCheck.sheets.join(', ')} ghi cả đơn nhưng ${blockers.join('; ')}`, ageDays)
+      otherSupplierLines.forEach(l => {
+        skippedLineIds.add(l.shopifyLineId)
+        skippedLines.push({ label: l.label, supplier: l.supplier as string, reason: OTHER_SUPPLIER_REASON })
+      })
+      if (skippedLines.length > 0 && skippedLines.length === openProductLines.length) {
+        return { ...done('needs_manual', `Sheet ${input.wholeRowCheck.sheets.join(', ')} ghi cả đơn nhưng các dòng còn mở đều của xưởng khác`, ageDays), skippedLines }
+      }
     }
     const tracking = input.rows[0].tracking
     openByLineId.forEach((open, lineId) => {
       if (addOnLineIds.has(lineId)) return // add-ons are closed below, without tracking
+      if (skippedLineIds.has(lineId)) return
       addLine(tracking, open.foId, open.foLineItemId, open.quantity, shipmentIdByLineId.get(lineId))
     })
   } else {
@@ -212,7 +229,13 @@ export function buildFulfillmentPlan(input: {
   // A product line parked on a non-open FO (on hold/scheduled) also means the order is not
   // done shipping, so the add-ons keep waiting too.
   const hasHeldProductLine = Array.from(heldLineIds).some(id => !addOnLineIds.has(id))
-  if (openAddOns.length > 0 && uncoveredProductLines === 0 && !hasHeldProductLine) {
+  if (skippedLines.length > 0) {
+    // Another supplier's line is still to come: only an add-on on the fulfillment order going out now rides along.
+    for (const a of openAddOns) {
+      const sameFo = Array.from(groups.values()).find(g => g.fulfillmentOrderId === a.foId)
+      if (sameFo) addLine(sameFo.tracking, a.foId, a.foLineItemId, a.quantity)
+    }
+  } else if (openAddOns.length > 0 && uncoveredProductLines === 0 && !hasHeldProductLine) {
     for (const a of openAddOns) {
       // Same fulfillment order as goods going out now → ride along on that fulfillment (one
       // shipping email, one tracking). Its own fulfillment order → close it with NO tracking
@@ -230,5 +253,5 @@ export function buildFulfillmentPlan(input: {
   // hasHeldLines: the order also has lines on non-open (on-hold/scheduled) FOs, so even
   // fulfilling every OPEN line does not complete the order — the caller must not mark it
   // fully FULFILLED in that case.
-  return { baseOrder, status: 'will_fulfill', fulfillments, ageDays, openLineCount: openByLineId.size, hasHeldLines: heldLineIds.size > 0 }
+  return { baseOrder, status: 'will_fulfill', fulfillments, ageDays, openLineCount: openByLineId.size, hasHeldLines: heldLineIds.size > 0, ...(skippedLines.length ? { skippedLines } : {}) }
 }

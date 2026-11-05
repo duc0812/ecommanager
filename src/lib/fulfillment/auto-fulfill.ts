@@ -1,12 +1,12 @@
 import { prisma } from '@/lib/db'
 import { fetchSheetCsv, parseSheetCsv, csvExportUrl, parseSheetUrl } from './parse-sheet'
 import { type SheetConfig, DEFAULT_STORE_BASE } from './auto-fulfill-sheets'
-import { groupByOrder, mergeSheetGroups, buildFulfillmentPlan, type OrderPlanStatus, type OrderRow, type WholeRowCheck } from './build-fulfill-plan'
+import { groupByOrder, mergeSheetGroups, buildFulfillmentPlan, type OrderPlanStatus, type OrderRow, type SkippedLine, type WholeRowCheck } from './build-fulfill-plan'
 import { fetchOrderFulfillmentOrdersByNames, createFulfillment } from '@/lib/shopify-orders'
 import { isNonProductLine } from '@/lib/order-lines'
 
 export type FulfillmentDetail = { tracking: string; lineKeys: string[]; lineCount: number; addOn?: boolean }
-export type OrderResultRow = { baseOrder: string; status: OrderPlanStatus; trackings: string[]; fulfilledLines: number; message?: string; fulfillments?: FulfillmentDetail[] }
+export type OrderResultRow = { baseOrder: string; status: OrderPlanStatus; trackings: string[]; fulfilledLines: number; message?: string; fulfillments?: FulfillmentDetail[]; skippedLines?: SkippedLine[] }
 export type AutoFulfillSummary = {
   ordersChecked: number; fulfilled: number; tooRecent: number; alreadyFulfilled: number
   notFound: number; needsManual: number; errored: number; rows: OrderResultRow[]
@@ -133,6 +133,7 @@ export async function runAutoFulfill(opts: {
     ])
     : [[], []]
   const supplierName = new Map(suppliers.map(s => [s.id, s.name]))
+  const supplierNames = new Set(suppliers.map(s => s.name.trim().toLowerCase()))
   const printedLines = new Set(printed.map(a => `${a.orderId} ${a.shopifyLineId}`))
   const wholeRowCheckFor = (base: string): WholeRowCheck | undefined => {
     const sheets = wholeRowSheets.get(base)
@@ -144,7 +145,8 @@ export async function runAutoFulfill(opts: {
       supplier: supplierName.get(l.exportedToSupplierId ?? l.resolvedSupplierId ?? '') ?? null,
       hasFile: printedLines.has(`${db?.id} ${l.shopifyLineId}`) || !!l.designDriveLink || !!db?.trelloCardUrl,
     }))
-    return { sheets: Array.from(sheets), lines }
+    const names = Array.from(sheets)
+    return { sheets: names, sheetsAreSuppliers: names.every(n => supplierNames.has(n.trim().toLowerCase())), lines }
   }
 
   // 3) Evaluate every sheet order in-memory (the Shopify + DB fetches above already ran).
@@ -233,7 +235,7 @@ export async function runAutoFulfill(opts: {
       lineCount: f.lineItems.length,
       ...(f.addOn ? { addOn: true } : {}),
     }))
-    summary.rows.push({ baseOrder: base, status: plan.status, trackings, fulfilledLines, message: plan.message, fulfillments })
+    summary.rows.push({ baseOrder: base, status: plan.status, trackings, fulfilledLines, message: plan.message, fulfillments, skippedLines: plan.skippedLines })
     switch (plan.status) {
       case 'will_fulfill': summary.fulfilled++; break
       case 'too_recent': summary.tooRecent++; break
