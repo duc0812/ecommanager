@@ -28,14 +28,40 @@ async function runBackfill() {
   for (const statement of backfillStatements()) await prisma.$executeRawUnsafe(statement)
 }
 
+const MINE = [CONNECTED, BARE, LITZZY]
+
+type Snapshot = {
+  stores: { id: string; enabled: boolean; orderPrefix: string | null; trackingPageUrl: string | null }[]
+  settings: { key: string; value: string }[]
+}
+let before: Snapshot
+
+// The backfill statements are global (disable every credential-less store, grant every seller),
+// so what they change on rows this file does not own is put back after each test.
+async function snapshot(): Promise<Snapshot> {
+  const stores = await prisma.shopifyStore.findMany({
+    where: { shop: { notIn: MINE } },
+    select: { id: true, enabled: true, orderPrefix: true, trackingPageUrl: true },
+  })
+  const settings = await prisma.appSetting.findMany({ where: { key: { in: Object.keys(SETTINGS) } }, select: { key: true, value: true } })
+  return { stores, settings }
+}
+
 async function cleanup() {
   await prisma.appUser.deleteMany({ where: { email: { in: [SELLER, ADMIN] } } })
-  await prisma.shopifyStore.deleteMany({ where: { shop: { in: [CONNECTED, BARE, LITZZY] } } })
+  await prisma.shopifyStore.deleteMany({ where: { shop: { in: MINE } } })
   await prisma.appSetting.deleteMany({ where: { key: { in: Object.keys(SETTINGS) } } })
+}
+
+async function restore() {
+  await cleanup()
+  for (const { id, ...fields } of before.stores) await prisma.shopifyStore.update({ where: { id }, data: fields })
+  for (const setting of before.settings) await prisma.appSetting.create({ data: setting })
 }
 
 describe('multi-store migration backfill', () => {
   beforeEach(async () => {
+    before = await snapshot()
     await cleanup()
     for (const [key, value] of Object.entries(SETTINGS)) await prisma.appSetting.create({ data: { key, value } })
     await prisma.shopifyStore.create({ data: { shop: CONNECTED } })
@@ -44,7 +70,21 @@ describe('multi-store migration backfill', () => {
     await prisma.appUser.create({ data: { name: 'Seller', email: SELLER, role: 'SELLER' } })
     await prisma.appUser.create({ data: { name: 'Admin', email: ADMIN, role: 'SUPERADMIN' } })
   })
-  afterEach(cleanup)
+  afterEach(restore)
+
+  it('leaves stores it does not own as it found them', async () => {
+    const other = await prisma.shopifyStore.create({ data: { shop: 'ms-other.myshopify.com' } })
+    before = await snapshot()
+    try {
+      await runBackfill()
+      expect((await prisma.shopifyStore.findUnique({ where: { id: other.id } }))!.enabled).toBe(false)
+      await restore()
+      expect((await prisma.shopifyStore.findUnique({ where: { id: other.id } }))!.enabled).toBe(true)
+    } finally {
+      await prisma.shopifyStore.deleteMany({ where: { id: other.id } })
+      before = await snapshot()
+    }
+  })
 
   it('copies the connection into the credential table', async () => {
     await runBackfill()
