@@ -196,6 +196,11 @@ export async function listConnectedStores(): Promise<ConnectedStore[]> {
   }))
 }
 
+// The store a read shows when it was not told which one: the first connected store (the oldest connection).
+export async function defaultConnectedStoreId(): Promise<string | null> {
+  return (await listConnectedStores())[0]?.id ?? null
+}
+
 export async function saveStoreCredential(storeId: string, input: CredentialInput): Promise<void> {
   const data = {
     authMode: input.authMode,

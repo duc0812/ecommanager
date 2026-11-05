@@ -23,12 +23,20 @@ export function safeErrorText(error: unknown, secrets: string[] = []): string {
   return text.length > MAX_ERROR_LENGTH ? `${text.slice(0, MAX_ERROR_LENGTH)}…` : text
 }
 
-async function recordStoreError(storeId: string, error: string | null) {
+// lastError is one field shared by every job of the store, so it says which job failed ("[order-sync] ...")
+// and only that job succeeding clears it; another job's success must not hide a failure it did not fix.
+const errorTag = (job: string) => `[${job}] `
+
+async function recordStoreError(storeId: string, job: string, error: string | null) {
   try {
-    await prisma.shopifyStore.update({
-      where: { id: storeId },
-      data: error === null ? { lastError: null, lastErrorAt: null } : { lastError: error, lastErrorAt: new Date() },
-    })
+    if (error === null) {
+      await prisma.shopifyStore.updateMany({
+        where: { id: storeId, lastError: { startsWith: errorTag(job) } },
+        data: { lastError: null, lastErrorAt: null },
+      })
+    } else {
+      await prisma.shopifyStore.update({ where: { id: storeId }, data: { lastError: `${errorTag(job)}${error}`, lastErrorAt: new Date() } })
+    }
   } catch (e) {
     console.error(`[store-jobs] could not record the result for store ${storeId}:`, e instanceof Error ? e.message : e)
   }
@@ -49,11 +57,11 @@ async function runForStore<T>(
     if (outcome.skipped) {
       return { storeId: store.id, shop: store.shop, ok: false, skipped: true, error: `${job} đang chạy cho ${store.shop}, bỏ qua lần này` }
     }
-    await recordStoreError(store.id, null)
+    await recordStoreError(store.id, job, null)
     return { storeId: store.id, shop: store.shop, ok: true, result: outcome.result }
   } catch (e) {
     const error = safeErrorText(e, secrets)
-    await recordStoreError(store.id, error)
+    await recordStoreError(store.id, job, error)
     return { storeId: store.id, shop: store.shop, ok: false, error }
   }
 }
@@ -100,7 +108,11 @@ export function storeRunSummary<T>(results: StoreRunResult<T>[]) {
 // the totals over the stores that succeeded; `stores` says how each store went. Nothing is saved when
 // no store succeeded, which is what a failed run always did.
 export async function saveJobResult<T extends object>(key: string, results: StoreRunResult<T>[], keys: MergeKeys<T>): Promise<T | null> {
-  const merged = mergeStoreResults(results, keys)
+  return saveMergedJobResult(key, mergeStoreResults(results, keys), results)
+}
+
+// Same, for a caller that adjusted the merged totals itself.
+export async function saveMergedJobResult<T extends object>(key: string, merged: T | null, results: StoreRunResult<T>[]): Promise<T | null> {
   if (!merged) return null
   const value = JSON.stringify({ ...merged, shop: okResults(results)[0].shop, stores: storeRunSummary(results), ranAt: new Date().toISOString() })
   await prisma.appSetting.upsert({ where: { key }, create: { key, value }, update: { value } })

@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { fetchAllPayouts, fetchBalance, fetchBankAccounts } from '@/lib/shopify'
-import { getStoreConnectionByShop, tryStoreConnection } from '@/lib/store-connections'
+import { defaultConnectedStoreId, getStoreConnection, tryStoreConnection } from '@/lib/store-connections'
 import { connectionFailureResponse } from '@/lib/store-connection-response'
-import { LITZZY_SHOP } from '@/lib/shopify-shop'
 import { prisma } from '@/lib/db'
 import { payoutDateMinFor, payoutStartFor } from '@/lib/shopify-payout-policy'
 
@@ -12,8 +11,11 @@ export async function GET(req: NextRequest) {
   const date_max = searchParams.get('date_max') ?? undefined
 
   try {
-    const { conn, error } = await tryStoreConnection(() => getStoreConnectionByShop(LITZZY_SHOP))
-    if (!conn) return connectionFailureResponse(error, { error: 'Not connected to Shopify. Go to /setup and connect Shopify first.', status: 401 })
+    const notConnected = { error: 'Not connected to Shopify. Go to /setup and connect Shopify first.', status: 401 }
+    const storeId = searchParams.get('storeId') || await defaultConnectedStoreId()
+    if (!storeId) return NextResponse.json({ error: notConnected.error }, { status: notConnected.status })
+    const { conn, error } = await tryStoreConnection(() => getStoreConnection(storeId))
+    if (!conn) return connectionFailureResponse(error, notConnected)
     const creds = { shop: conn.shop, token: conn.token }
     const store = (await prisma.shopifyStore.findUnique({ where: { id: conn.storeId }, select: { payoutStartDate: true } })) ?? { payoutStartDate: null }
     const date_min = payoutDateMinFor(store, requestedDateMin)

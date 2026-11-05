@@ -1,8 +1,8 @@
 import cron from 'node-cron'
 import { initOnce, runExclusive } from '@/lib/job-lock'
-import { forEachConnectedStore, logStoreFailures, okResults, saveJobResult } from '@/lib/store-jobs'
+import { logStoreFailures, okResults, saveMergedJobResult } from '@/lib/store-jobs'
 import { getSheets, getMinAgeDays } from './auto-fulfill-sheets'
-import { runAutoFulfill } from './auto-fulfill'
+import { runAutoFulfillForStores } from './auto-fulfill-stores'
 import { syncPgprintsTracking } from '@/lib/repos/pgprints-push'
 import { syncApiSupplierTracking } from '@/lib/repos/supplier-tracking-sync'
 
@@ -21,15 +21,11 @@ export async function runDailyAutoFulfill() {
     else console.log(`[auto-fulfill] ${r.name} tracking sync: ${r.found}/${r.pushes} order(s) found, ${r.shipments} shipment(s) updated${r.skipped ? ` (${r.skipped})` : ''}`)
   }
   const minAgeDays = await getMinAgeDays()
-  const results = await forEachConnectedStore('auto-fulfill', (conn) =>
-    runAutoFulfill({ shop: conn.shop, accessToken: conn.token, storeId: conn.storeId, sheets, minAgeDays, apply: true }))
+  const { results, summary } = await runAutoFulfillForStores({ sheets, minAgeDays, apply: true })
   if (results.length === 0) console.error('[auto-fulfill] no connected store; skipping')
   logStoreFailures('auto-fulfill', results)
   try {
-    await saveJobResult('last_auto_fulfill_result', results, {
-      sum: ['ordersChecked', 'fulfilled', 'tooRecent', 'alreadyFulfilled', 'notFound', 'needsManual', 'errored'],
-      concat: ['rows'],
-    })
+    await saveMergedJobResult('last_auto_fulfill_result', summary, results)
   } catch (e: any) {
     console.error('[auto-fulfill] could not save the result:', e?.message ?? e)
   }

@@ -6,7 +6,7 @@ import { fetchOrderFulfillmentOrdersByNames, createFulfillment } from '@/lib/sho
 import { isNonProductLine } from '@/lib/order-lines'
 
 export type FulfillmentDetail = { tracking: string; lineKeys: string[]; lineCount: number; addOn?: boolean }
-export type OrderResultRow = { baseOrder: string; status: OrderPlanStatus; trackings: string[]; fulfilledLines: number; message?: string; fulfillments?: FulfillmentDetail[] }
+export type OrderResultRow = { baseOrder: string; status: OrderPlanStatus; trackings: string[]; fulfilledLines: number; message?: string; fulfillments?: FulfillmentDetail[]; shop?: string }
 export type AutoFulfillSummary = {
   ordersChecked: number; fulfilled: number; tooRecent: number; alreadyFulfilled: number
   notFound: number; needsManual: number; errored: number; rows: OrderResultRow[]
@@ -53,9 +53,57 @@ export async function pushedShipmentRows(storeId: string): Promise<Map<string, O
   return out
 }
 
+export type SheetData = { name: string; storeBase: string; groups: Map<string, OrderRow[]> }
+
+// Each enabled sheet is downloaded once, however many stores then take their own rows from it.
+export async function readAutoFulfillSheets(
+  sheets: SheetConfig[],
+  onStage?: (stage: AutoFulfillStage, done: number, total: number) => void,
+): Promise<{ sheets: SheetData[]; errorRows: OrderResultRow[] }> {
+  const data: SheetData[] = []
+  const errorRows: OrderResultRow[] = []
+  const enabledSheets = sheets.filter(s => s.enabled)
+  let sheetsRead = 0
+  for (const sheet of enabledSheets) {
+    onStage?.('sheets', sheetsRead++, enabledSheets.length)
+    const ref = parseSheetUrl(sheet.url)
+    if (!ref) continue
+    let text: string
+    try {
+      text = await fetchSheetCsv(csvExportUrl(ref))
+    } catch (e: any) {
+      errorRows.push({
+        baseOrder: `(sheet: ${sheet.name || sheet.url})`, status: 'error', trackings: [], fulfilledLines: 0,
+        message: `Không tải được sheet: ${e?.message ?? 'lỗi'}`,
+      })
+      continue
+    }
+    data.push({ name: sheet.name, storeBase: sheet.storeBase, groups: groupByOrder(parseSheetCsv(text)) })
+  }
+  return { sheets: data, errorRows }
+}
+
+// "LIT4665" and "LIT2362R1" belong to the store whose order prefix is LIT; the digit after the
+// prefix keeps a prefix like LIT from claiming LITE123. A store without a prefix owns no sheet row.
+export function orderNameHasPrefix(base: string, prefix: string | null | undefined): boolean {
+  const p = prefix?.trim().toUpperCase()
+  if (!p) return false
+  const name = base.trim().replace(/^#/, '').toUpperCase()
+  return name.startsWith(p) && /\d/.test(name.charAt(p.length))
+}
+
+export function sheetsForStore(sheets: SheetData[], prefix: string | null | undefined): SheetData[] {
+  return sheets.map(sheet => ({
+    ...sheet,
+    groups: new Map(Array.from(sheet.groups).filter(([base]) => orderNameHasPrefix(base, prefix))),
+  }))
+}
+
 export async function runAutoFulfill(opts: {
   shop: string; accessToken: string; storeId: string
+  // Either the sheets to download, or sheets already downloaded (and narrowed to this store's rows).
   sheets: SheetConfig[]
+  sheetData?: SheetData[]
   minAgeDays: number; apply: boolean; now?: Date
   onProgress?: (done: number, total: number) => void
   // Fires during the slow read phase (sheets, then ~1 Shopify request per 25 orders) so a
@@ -64,33 +112,18 @@ export async function runAutoFulfill(opts: {
 }): Promise<AutoFulfillSummary> {
   const now = opts.now ?? new Date()
 
-  // 1) Read all enabled sheets and group rows by base order. Rows for the same order are
+  // 1) Group rows of the sheets by base order. Rows for the same order are
   //    MERGED across sheets — a multi-supplier order lists its sub-orders in each supplier's
   //    own sheet, so keeping only the first sheet's rows would silently skip the others.
   const byOrder = new Map<string, { rows: Array<{ lineKey: string; tracking: string }>; storeBase: string }>()
-  const sheetErrorRows: OrderResultRow[] = []
   const wholeRowSheets = new Map<string, Set<string>>()
-  const enabledSheets = opts.sheets.filter(s => s.enabled)
-  let sheetsRead = 0
-  for (const sheet of enabledSheets) {
-    opts.onStage?.('sheets', sheetsRead++, enabledSheets.length)
-    const ref = parseSheetUrl(sheet.url)
-    if (!ref) continue
-    let text: string
-    try {
-      text = await fetchSheetCsv(csvExportUrl(ref))
-    } catch (e: any) {
-      sheetErrorRows.push({
-        baseOrder: `(sheet: ${sheet.name || sheet.url})`, status: 'error', trackings: [], fulfilledLines: 0,
-        message: `Không tải được sheet: ${e?.message ?? 'lỗi'}`,
-      })
-      continue
-    }
-    const grouped = groupByOrder(parseSheetCsv(text))
-    for (const [base, rows] of Array.from(grouped)) {
+  const read = opts.sheetData ? { sheets: opts.sheetData, errorRows: [] as OrderResultRow[] } : await readAutoFulfillSheets(opts.sheets, opts.onStage)
+  const sheetErrorRows = read.errorRows
+  for (const sheet of read.sheets) {
+    for (const [base, rows] of Array.from(sheet.groups)) {
       if (rows.some(r => r.lineKey === base)) wholeRowSheets.set(base, (wholeRowSheets.get(base) ?? new Set<string>()).add(sheet.name))
     }
-    mergeSheetGroups(byOrder, grouped, sheet.storeBase)
+    mergeSheetGroups(byOrder, sheet.groups, sheet.storeBase)
   }
   const pushed = await pushedShipmentRows(opts.storeId)
   mergeSheetGroups(byOrder, pushed, DEFAULT_STORE_BASE)
@@ -233,7 +266,7 @@ export async function runAutoFulfill(opts: {
       lineCount: f.lineItems.length,
       ...(f.addOn ? { addOn: true } : {}),
     }))
-    summary.rows.push({ baseOrder: base, status: plan.status, trackings, fulfilledLines, message: plan.message, fulfillments })
+    summary.rows.push({ baseOrder: base, status: plan.status, trackings, fulfilledLines, message: plan.message, fulfillments, shop: opts.shop })
     switch (plan.status) {
       case 'will_fulfill': summary.fulfilled++; break
       case 'too_recent': summary.tooRecent++; break

@@ -70,7 +70,7 @@ describe('forEachConnectedStore', () => {
     }, onlyMine())
     expect(results[0]).toMatchObject({ shop: A, ok: false, error: 'Shopify answered 500' })
     expect(results[1]).toMatchObject({ shop: B, ok: true, result: 'fine' })
-    expect(await lastError(A)).toBe('Shopify answered 500')
+    expect(await lastError(A)).toBe('[sj-err] Shopify answered 500')
     expect((await prisma.shopifyStore.findUnique({ where: { id: ids[A] } }))!.lastErrorAt).not.toBeNull()
     expect(await lastError(B)).toBeNull()
   })
@@ -91,11 +91,34 @@ describe('forEachConnectedStore', () => {
   })
 
   it('success clears lastError', async () => {
-    await prisma.shopifyStore.update({ where: { id: ids[A] }, data: { lastError: 'old failure', lastErrorAt: new Date() } })
+    await prisma.shopifyStore.update({ where: { id: ids[A] }, data: { lastError: '[sj-clear] old failure', lastErrorAt: new Date() } })
     await forEachConnectedStore('sj-clear', async () => 'ok', onlyMine())
     const store = await prisma.shopifyStore.findUnique({ where: { id: ids[A] } })
     expect(store!.lastError).toBeNull()
     expect(store!.lastErrorAt).toBeNull()
+  })
+
+  it("one job succeeding does not clear another job's error; the same job succeeding does", async () => {
+    await forEachConnectedStore('sj-job-a', async () => { throw new Error('token revoked') }, { storeIds: [ids[A]] })
+    expect(await lastError(A)).toBe('[sj-job-a] token revoked')
+
+    await forEachConnectedStore('sj-job-b', async () => 'fine', { storeIds: [ids[A]] })
+    expect(await lastError(A)).toBe('[sj-job-a] token revoked')
+    expect((await prisma.shopifyStore.findUnique({ where: { id: ids[A] } }))!.lastErrorAt).not.toBeNull()
+
+    await forEachConnectedStore('sj-job', async () => 'fine', { storeIds: [ids[A]] })
+    expect(await lastError(A)).toBe('[sj-job-a] token revoked')
+
+    await forEachConnectedStore('sj-job-a', async () => 'fine', { storeIds: [ids[A]] })
+    const store = await prisma.shopifyStore.findUnique({ where: { id: ids[A] } })
+    expect(store!.lastError).toBeNull()
+    expect(store!.lastErrorAt).toBeNull()
+  })
+
+  it("the result still carries the bare message; only the stored text names the job", async () => {
+    const results = await forEachConnectedStore('sj-bare', async () => { throw new Error('boom') }, { storeIds: [ids[A]] })
+    expect(results[0]).toMatchObject({ ok: false, error: 'boom' })
+    expect(await lastError(A)).toBe('[sj-bare] boom')
   })
 
   it('same job on the same store is skipped while running, without touching lastError', async () => {

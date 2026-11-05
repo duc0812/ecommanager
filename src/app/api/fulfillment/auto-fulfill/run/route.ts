@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { listConnectedStores } from '@/lib/store-connections'
-import { failedResults, forEachConnectedStore, mergeStoreResults, storeRunSummary } from '@/lib/store-jobs'
+import { failedResults, storeRunSummary } from '@/lib/store-jobs'
 import { getSheets, getMinAgeDays } from '@/lib/fulfillment/auto-fulfill-sheets'
-import { runAutoFulfill } from '@/lib/fulfillment/auto-fulfill'
+import { runAutoFulfillForStores } from '@/lib/fulfillment/auto-fulfill-stores'
 import { syncPgprintsTracking } from '@/lib/repos/pgprints-push'
 import { syncApiSupplierTracking } from '@/lib/repos/supplier-tracking-sync'
 
@@ -23,18 +23,13 @@ export async function POST(req: NextRequest) {
         const pg = await syncPgprintsTracking().catch((e: any) => ({ error: e?.message ?? String(e) }))
         send({ type: 'pgprints', ...pg })
         for (const r of await syncApiSupplierTracking()) send({ type: 'supplier-tracking', ...r })
-        const results = await forEachConnectedStore('auto-fulfill', (conn) => runAutoFulfill({
-          shop: conn.shop, accessToken: conn.token, storeId: conn.storeId,
+        const { results, summary } = await runAutoFulfillForStores({
           sheets, minAgeDays, apply,
-          onProgress: (done, total) => send({ type: 'progress', shop: conn.shop, done, total }),
-          onStage: (stage, done, total) => send({ type: 'stage', shop: conn.shop, stage, done, total }),
-        }))
-        const merged = mergeStoreResults(results, {
-          sum: ['ordersChecked', 'fulfilled', 'tooRecent', 'alreadyFulfilled', 'notFound', 'needsManual', 'errored'],
-          concat: ['rows'],
+          onProgress: (shop, done, total) => send({ type: 'progress', shop, done, total }),
+          onStage: (shop, stage, done, total) => send({ type: 'stage', ...(shop ? { shop } : {}), stage, done, total }),
         })
-        if (!merged) send({ type: 'error', error: failedResults(results)[0]?.error ?? 'failed' })
-        else send({ type: 'done', apply, ...merged, stores: storeRunSummary(results) })
+        if (!summary) send({ type: 'error', error: failedResults(results)[0]?.error ?? 'failed' })
+        else send({ type: 'done', apply, ...summary, stores: storeRunSummary(results) })
       } catch (e: any) {
         send({ type: 'error', error: e?.message ?? 'failed' })
       } finally { controller.close() }

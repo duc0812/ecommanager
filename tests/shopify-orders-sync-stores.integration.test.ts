@@ -186,6 +186,31 @@ describe('POST /api/shopify/orders/sync across stores', () => {
     expect((await first).status).toBe(200)
   })
 
+  it('a connected store with no project fails alone: 200, the healthy store synced, the failure named in stores and errors and on that store', async () => {
+    await prisma.shopifyStore.update({ where: { id: storeB }, data: { projectId: null } })
+    behaviour[SHOP_A] = { orders: ['#AAA1', '#AAA2'] }
+    behaviour[SHOP_B] = { orders: ['#BBB1'] }
+    try {
+      const res = await call()
+      const body = await res.json()
+      expect(res.status).toBe(200)
+      expect(body).toMatchObject({ totalSynced: 2, withUnmappedSku: 2, projectName: 'OSS Alpha', projectId: PROJECT_A })
+      expect(body.stores).toHaveLength(2)
+      expect(body.stores[0]).toMatchObject({ shop: SHOP_A, ok: true })
+      expect(body.stores[1]).toMatchObject({ shop: SHOP_B, ok: false })
+      expect(body.stores[1].error).toContain('not linked to a project')
+      expect(body.errors).toHaveLength(1)
+      expect(body.errors[0]).toMatch(new RegExp(`^${SHOP_B.replace(/\./g, '\\.')}: .*not linked to a project`))
+      expect(asked.some(a => a.host === SHOP_B)).toBe(false)
+      expect(await prisma.order.count({ where: { storeId: storeB } })).toBe(0)
+      expect(await prisma.order.count({ where: { storeId: storeA } })).toBe(2)
+      expect((await prisma.shopifyStore.findUnique({ where: { id: storeB } }))!.lastError).toMatch(/^\[order-sync\] .*not linked to a project/)
+      expect((await prisma.shopifyStore.findUnique({ where: { id: storeA } }))!.lastError).toBeNull()
+    } finally {
+      await prisma.shopifyStore.update({ where: { id: storeB }, data: { projectId: PROJECT_B } })
+    }
+  })
+
   it("keeps a single store's own failure status for its settings", async () => {
     await prisma.shopifyStore.update({ where: { id: storeB }, data: { projectId: null } })
     try {

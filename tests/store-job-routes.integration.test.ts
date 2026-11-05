@@ -132,7 +132,7 @@ describe('schedulers run every connected store', () => {
     const saved = JSON.parse((await prisma.appSetting.findUnique({ where: { key: 'last_tracking_sync_result' } }))!.value)
     expect(saved).toMatchObject({ shipmentCount: 4, shop: SHOP_B })
     expect(saved.stores).toEqual([{ storeId: storeA, shop: SHOP_A, ok: false, error: 'token revoked' }, { storeId: storeB, shop: SHOP_B, ok: true }])
-    expect((await prisma.shopifyStore.findUnique({ where: { id: storeA } }))!.lastError).toBe('token revoked')
+    expect((await prisma.shopifyStore.findUnique({ where: { id: storeA } }))!.lastError).toBe('[tracking-sync] token revoked')
     expect((await prisma.shopifyStore.findUnique({ where: { id: storeB } }))!.lastError).toBeNull()
   })
 
@@ -140,12 +140,12 @@ describe('schedulers run every connected store', () => {
     mocks.normalize.mockRejectedValue(new Error('down'))
     await runDailyOrderNormalize()
     expect(await prisma.appSetting.findUnique({ where: { key: 'last_order_normalize_result' } })).toBeNull()
-    expect((await prisma.shopifyStore.findUnique({ where: { id: storeA } }))!.lastError).toBe('down')
-    expect((await prisma.shopifyStore.findUnique({ where: { id: storeB } }))!.lastError).toBe('down')
+    expect((await prisma.shopifyStore.findUnique({ where: { id: storeA } }))!.lastError).toBe('[order-normalize] down')
+    expect((await prisma.shopifyStore.findUnique({ where: { id: storeB } }))!.lastError).toBe('[order-normalize] down')
   })
 
   it('normalize: a run that works clears the earlier error', async () => {
-    await prisma.shopifyStore.update({ where: { id: storeA }, data: { lastError: 'down' } })
+    await prisma.shopifyStore.update({ where: { id: storeA }, data: { lastError: '[order-normalize] down' } })
     mocks.normalize.mockResolvedValue(normalized(1))
     await runDailyOrderNormalize()
     expect((await prisma.shopifyStore.findUnique({ where: { id: storeA } }))!.lastError).toBeNull()

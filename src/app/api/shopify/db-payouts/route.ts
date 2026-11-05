@@ -1,18 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
-import { payoutDateMinFor, payoutDateWhereForStores, payoutStartFor } from '@/lib/shopify-payout-policy'
+import { payoutDateMinFor, payoutStartFor } from '@/lib/shopify-payout-policy'
+import { defaultConnectedStoreId } from '@/lib/store-connections'
 
 export const dynamic = 'force-dynamic'
 
+// One store at a time: balance, bank accounts, payouts, totals and the start date all come from the
+// store named by ?storeId, else the first connected store, never a mix of stores.
 export async function GET(req: NextRequest) {
   const requestedDateMin = req.nextUrl.searchParams.get('date_min') ?? undefined
   const dateMax = req.nextUrl.searchParams.get('date_max') ?? undefined
+  const requestedStoreId = req.nextUrl.searchParams.get('storeId')
 
-  const store = await prisma.shopifyStore.findFirst({
-    orderBy: { lastSyncAt: 'desc' },
-    include: { bankAccounts: true },
-  })
-  const stores = await prisma.shopifyStore.findMany({ select: { id: true, payoutStartDate: true } })
+  const storeId = requestedStoreId || await defaultConnectedStoreId()
+  const store = storeId
+    ? await prisma.shopifyStore.findUnique({ where: { id: storeId }, include: { bankAccounts: true } })
+    : await prisma.shopifyStore.findFirst({ orderBy: { connectedAt: 'asc' }, include: { bankAccounts: true } })
+  if (requestedStoreId && !store) return NextResponse.json({ error: 'Store not found' }, { status: 404 })
   const shown = store ?? { payoutStartDate: null }
   const payoutStartDate = payoutStartFor(shown)
   const dateMin = payoutDateMinFor(shown, requestedDateMin)
@@ -20,10 +24,12 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'date_max must be on or after date_min' }, { status: 400 })
   }
 
-  const payouts = await prisma.payout.findMany({
-    where: payoutDateWhereForStores(stores, { dateMin: requestedDateMin, dateMax }),
-    orderBy: { date: 'desc' },
-  })
+  const payouts = store
+    ? await prisma.payout.findMany({
+        where: { storeId: store.id, date: { gte: dateMin, ...(dateMax ? { lte: dateMax } : {}) } },
+        orderBy: { date: 'desc' },
+      })
+    : []
 
   if (payouts.length === 0) {
     return NextResponse.json(

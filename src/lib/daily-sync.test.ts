@@ -126,7 +126,7 @@ describe('payout sync across stores', () => {
     expect(merged).toMatchObject({ synced_payouts: 2, payout_start_date: '2026-07-01' })
     expect((await prisma.payout.findUnique({ where: { id: 9_200_001 } }))!.storeId).toBe(ids.a)
     expect((await prisma.payout.findUnique({ where: { id: 9_200_002 } }))!.storeId).toBe(ids.c)
-    expect((await prisma.shopifyStore.findUnique({ where: { id: ids.b } }))!.lastError).toBe('Shopify answered 401')
+    expect((await prisma.shopifyStore.findUnique({ where: { id: ids.b } }))!.lastError).toBe('[payout-sync] Shopify answered 401')
     expect((await prisma.shopifyStore.findUnique({ where: { id: ids.a } }))!.lastError).toBeNull()
   })
 
