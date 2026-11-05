@@ -1,15 +1,11 @@
 import { prisma } from '@/lib/db'
+import { LITZZY_SHOP } from '@/lib/shopify-shop'
+import { getStoreConnectionByShop, StoreConnectionError } from '@/lib/store-connections'
 
 type ShopifyConnection = {
   shop: string
   token: string
   connectedAt: Date
-}
-
-type ShopifyAppCredentials = {
-  apiKey: string
-  apiSecret: string
-  shop: string
 }
 
 type OAuthState = { shop: string; createdAt: number }
@@ -18,28 +14,10 @@ const OAUTH_STATE_TTL_MS = 10 * 60 * 1000
 
 declare global {
   // eslint-disable-next-line no-var
-  var __shopifyConnection: ShopifyConnection | null
-  // eslint-disable-next-line no-var
-  var __shopifyAppCreds: ShopifyAppCredentials | null
-  // eslint-disable-next-line no-var
   var __oauthStates: Map<string, OAuthState>
 }
 
-if (!global.__shopifyConnection) global.__shopifyConnection = null
-if (!global.__shopifyAppCreds) global.__shopifyAppCreds = null
 if (!global.__oauthStates) global.__oauthStates = new Map()
-
-const CONNECTION_KEYS = [
-  'shopify.connection.shop',
-  'shopify.connection.token',
-  'shopify.connection.connectedAt',
-]
-
-const APP_CRED_KEYS = [
-  'shopify.app.apiKey',
-  'shopify.app.apiSecret',
-  'shopify.app.shop',
-]
 
 export async function getSettings(keys: string[]): Promise<Record<string, string>> {
   const settings = await prisma.appSetting.findMany({ where: { key: { in: keys } } })
@@ -58,61 +36,16 @@ export async function deleteSettings(keys: string[]) {
   await prisma.appSetting.deleteMany({ where: { key: { in: keys } } })
 }
 
+// Single-store shim for callers not yet moved to getStoreConnection: always the Litzzy store.
 export async function getShopifyConnection(): Promise<ShopifyConnection | null> {
-  if (global.__shopifyConnection) return global.__shopifyConnection
-
-  const fromDb = await getSettings(CONNECTION_KEYS)
-  const dbShop = fromDb['shopify.connection.shop']
-  const dbToken = fromDb['shopify.connection.token']
-  if (dbShop && dbToken) {
-    global.__shopifyConnection = {
-      shop: dbShop,
-      token: dbToken,
-      connectedAt: fromDb['shopify.connection.connectedAt']
-        ? new Date(fromDb['shopify.connection.connectedAt'])
-        : new Date(),
-    }
-    return global.__shopifyConnection
+  try {
+    const { shop, token } = await getStoreConnectionByShop(LITZZY_SHOP)
+    const credential = await prisma.shopifyStoreCredential.findFirst({ where: { store: { shop } }, select: { connectedAt: true } })
+    return { shop, token, connectedAt: credential?.connectedAt ?? new Date() }
+  } catch (e) {
+    if (e instanceof StoreConnectionError) return null
+    throw e
   }
-
-  return null
-}
-
-export async function setShopifyConnection(shop: string, token: string) {
-  const connectedAt = new Date()
-  global.__shopifyConnection = { shop, token, connectedAt }
-  await Promise.all([
-    saveSetting('shopify.connection.shop', shop),
-    saveSetting('shopify.connection.token', token),
-    saveSetting('shopify.connection.connectedAt', connectedAt.toISOString()),
-  ])
-}
-
-export async function clearShopifyConnection() {
-  global.__shopifyConnection = null
-  await deleteSettings(CONNECTION_KEYS)
-}
-
-export async function setShopifyAppCredentials(apiKey: string, apiSecret: string, shop: string) {
-  global.__shopifyAppCreds = { apiKey, apiSecret, shop }
-  await Promise.all([
-    saveSetting('shopify.app.apiKey', apiKey),
-    saveSetting('shopify.app.apiSecret', apiSecret),
-    saveSetting('shopify.app.shop', shop),
-  ])
-}
-
-export async function getShopifyAppCredentials(): Promise<ShopifyAppCredentials | null> {
-  if (global.__shopifyAppCreds) return global.__shopifyAppCreds
-
-  const fromDb = await getSettings(APP_CRED_KEYS)
-  const apiKey = fromDb['shopify.app.apiKey']
-  const apiSecret = fromDb['shopify.app.apiSecret']
-  const shop = fromDb['shopify.app.shop']
-  if (!apiKey || !apiSecret || !shop) return null
-
-  global.__shopifyAppCreds = { apiKey, apiSecret, shop }
-  return global.__shopifyAppCreds
 }
 
 function pruneOAuthStates(now: number) {

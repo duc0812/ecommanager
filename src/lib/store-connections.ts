@@ -37,6 +37,7 @@ export type CredentialInput = {
   clientSecret?: string | null
   accessToken?: string | null
   tokenExpiresAt?: Date | null
+  connectedAt?: Date
 }
 
 const REFRESH_WINDOW_MS = 60 * 60 * 1000
@@ -104,6 +105,10 @@ async function mintAndSave(store: StoreWithCredential): Promise<string> {
   for (let attempt = 0; attempt < MINT_ATTEMPTS; attempt++) {
     const fresh = await prisma.shopifyStoreCredential.findUnique({ where: { storeId: store.id } })
     if (!fresh) throw new StoreConnectionError('NOT_CONNECTED', store.id, store.shop, `Store ${store.shop} chưa có thông tin kết nối`)
+    if (fresh.authMode !== 'CLIENT_CREDENTIALS') {
+      if (fresh.accessToken) return fresh.accessToken
+      throw new StoreConnectionError('NOT_CONNECTED', store.id, store.shop, `Store ${store.shop} chưa có token`)
+    }
     if (!needsMint(fresh) && fresh.accessToken) return fresh.accessToken
     if (!fresh.clientId || !fresh.clientSecret) {
       throw new StoreConnectionError('NOT_CONNECTED', store.id, store.shop, `Store ${store.shop} thiếu Client ID hoặc Client Secret`)
@@ -184,6 +189,7 @@ export async function saveStoreCredential(storeId: string, input: CredentialInpu
     clientSecret: input.clientSecret ?? null,
     accessToken: input.accessToken ?? null,
     tokenExpiresAt: input.tokenExpiresAt ?? null,
+    ...(input.connectedAt ? { connectedAt: input.connectedAt } : {}),
   }
   await prisma.shopifyStoreCredential.upsert({
     where: { storeId },

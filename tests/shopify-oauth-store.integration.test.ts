@@ -1,0 +1,258 @@
+import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
+import crypto from 'crypto'
+import { NextRequest } from 'next/server'
+import { prisma } from '@/lib/db'
+import { saveStoreCredential } from '@/lib/store-connections'
+import { saveOAuthState, getShopifyConnection } from '@/lib/token-store'
+
+vi.mock('@/lib/api-auth', () => ({ requireSuperadmin: vi.fn(async () => ({ user: { id: 'admin' } })) }))
+
+import { GET as startOAuth } from '@/app/api/auth/shopify/route'
+import { GET as oauthCallback } from '@/app/api/auth/shopify/callback/route'
+import { POST as saveConfig } from '@/app/api/auth/shopify-config/route'
+import { GET as getStatus, DELETE as deleteStatus } from '@/app/api/auth/status/route'
+
+const LITZZY = 'caramiaus-store.myshopify.com'
+const A = 'oa-a.myshopify.com'
+const B = 'oa-b.myshopify.com'
+const NEW = 'oa-new.myshopify.com'
+const MINE = [LITZZY, A, B, NEW]
+const SECRET_A = 'secret-of-store-a'
+const SECRET_B = 'secret-of-store-b'
+
+let ids: Record<string, string> = {}
+let fetchMock: ReturnType<typeof vi.fn>
+const realFetch = global.fetch
+
+async function cleanup() {
+  await prisma.shopifyStore.deleteMany({ where: { shop: { in: MINE } } })
+}
+
+async function makeStore(shop: string, credential?: Parameters<typeof saveStoreCredential>[1]) {
+  const store = await prisma.shopifyStore.create({ data: { shop } })
+  ids[shop] = store.id
+  if (credential) await saveStoreCredential(store.id, credential)
+}
+
+async function twoStores() {
+  await makeStore(A, { authMode: 'OAUTH', clientId: 'client-a', clientSecret: SECRET_A, accessToken: 'tok-a' })
+  await makeStore(B, { authMode: 'OAUTH', clientId: 'client-b', clientSecret: SECRET_B, accessToken: 'tok-b-old' })
+}
+
+function callbackRequest(shop: string, state: string, secret: string, code = 'code-1') {
+  const params: Record<string, string> = { code, shop, state, timestamp: '1700000000' }
+  const message = Object.keys(params).sort().map(k => `${k}=${params[k]}`).join('&')
+  const hmac = crypto.createHmac('sha256', secret).update(message).digest('hex')
+  return new NextRequest(`http://localhost/api/auth/shopify/callback?${new URLSearchParams({ ...params, hmac })}`)
+}
+
+async function credentialOf(shop: string) {
+  return prisma.shopifyStoreCredential.findUnique({ where: { storeId: ids[shop] } })
+}
+
+describe('Shopify OAuth and status per store', () => {
+  beforeEach(async () => {
+    ids = {}
+    await cleanup()
+    fetchMock = vi.fn(async () => new Response(JSON.stringify({ access_token: 'tok-new', scope: 'read_orders' }), { status: 200 }))
+    global.fetch = fetchMock as unknown as typeof fetch
+  })
+  afterEach(async () => {
+    global.fetch = realFetch
+    await cleanup()
+  })
+
+  it('callback saves the token only on the store in the state', async () => {
+    await twoStores()
+    saveOAuthState('state-b', B)
+    const res = await oauthCallback(callbackRequest(B, 'state-b', SECRET_B))
+    expect(res.status).toBe(200)
+
+    expect((await credentialOf(B))?.accessToken).toBe('tok-new')
+    expect(await credentialOf(A)).toMatchObject({ accessToken: 'tok-a', clientId: 'client-a', clientSecret: SECRET_A })
+    expect(await credentialOf(B)).toMatchObject({ authMode: 'OAUTH', clientId: 'client-b', clientSecret: SECRET_B })
+
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(String(url)).toBe(`https://${B}/admin/oauth/access_token`)
+    expect(JSON.parse(init.body)).toEqual({ client_id: 'client-b', client_secret: SECRET_B, code: 'code-1' })
+  })
+
+  it('callback with a shop that differs from the state returns 400 and changes nothing', async () => {
+    await twoStores()
+    saveOAuthState('state-a', A)
+    const res = await oauthCallback(callbackRequest(B, 'state-a', SECRET_B))
+    expect(res.status).toBe(400)
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect((await credentialOf(A))?.accessToken).toBe('tok-a')
+    expect((await credentialOf(B))?.accessToken).toBe('tok-b-old')
+  })
+
+  it("callback verifies HMAC with that store's secret", async () => {
+    await twoStores()
+    saveOAuthState('state-b', B)
+    const res = await oauthCallback(callbackRequest(B, 'state-b', SECRET_A))
+    expect(res.status).toBe(400)
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect((await credentialOf(A))?.accessToken).toBe('tok-a')
+    expect((await credentialOf(B))?.accessToken).toBe('tok-b-old')
+  })
+
+  it('callback for a shop with no stored app credentials returns 400', async () => {
+    await makeStore(NEW)
+    saveOAuthState('state-new', NEW)
+    const res = await oauthCallback(callbackRequest(NEW, 'state-new', 'whatever'))
+    expect(res.status).toBe(400)
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(await credentialOf(NEW)).toBeNull()
+  })
+
+  it("reinstall replaces only that store's token", async () => {
+    await twoStores()
+    const old = new Date('2026-01-01T00:00:00Z')
+    await prisma.shopifyStoreCredential.update({ where: { storeId: ids[B] }, data: { connectedAt: old } })
+    await prisma.shopifyStore.update({ where: { id: ids[B] }, data: { lastError: 'invalid token', lastErrorAt: new Date() } })
+
+    saveOAuthState('state-1', B)
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ access_token: 'tok-b-reinstalled' }), { status: 200 }))
+    expect((await oauthCallback(callbackRequest(B, 'state-1', SECRET_B))).status).toBe(200)
+
+    const b = await credentialOf(B)
+    expect(b?.accessToken).toBe('tok-b-reinstalled')
+    expect(b!.connectedAt.getTime()).toBeGreaterThan(old.getTime())
+    expect((await credentialOf(A))?.accessToken).toBe('tok-a')
+    const store = await prisma.shopifyStore.findUnique({ where: { id: ids[B] } })
+    expect(store).toMatchObject({ lastError: null, lastErrorAt: null })
+  })
+
+  it('a failed token exchange leaves the stored token alone', async () => {
+    await twoStores()
+    saveOAuthState('state-b', B)
+    fetchMock.mockResolvedValueOnce(new Response('denied', { status: 400 }))
+    const res = await oauthCallback(callbackRequest(B, 'state-b', SECRET_B))
+    expect(res.status).toBe(502)
+    expect((await credentialOf(B))?.accessToken).toBe('tok-b-old')
+  })
+
+  it('the state is single use', async () => {
+    await twoStores()
+    saveOAuthState('state-b', B)
+    expect((await oauthCallback(callbackRequest(B, 'state-b', SECRET_B))).status).toBe(200)
+    expect((await oauthCallback(callbackRequest(B, 'state-b', SECRET_B))).status).toBe(400)
+  })
+
+  it('status never returns secrets', async () => {
+    await twoStores()
+    await makeStore(NEW)
+    await makeStore(LITZZY, { authMode: 'CLIENT_CREDENTIALS', clientId: 'client-l', clientSecret: 'secret-l', accessToken: 'tok-l', tokenExpiresAt: new Date(Date.now() + 86_400_000) })
+
+    const body = await (await getStatus()).json()
+    const text = JSON.stringify(body)
+    for (const secret of [SECRET_A, SECRET_B, 'secret-l', 'tok-a', 'tok-b-old', 'tok-l', 'client-a', 'client-l']) {
+      expect(text).not.toContain(secret)
+    }
+
+    const mine = body.stores.filter((s: any) => MINE.includes(s.shop))
+    expect(mine.map((s: any) => s.shop).sort()).toEqual([A, B, LITZZY, NEW].sort())
+    expect(Object.keys(mine[0]).sort()).toEqual(['authMode', 'connected', 'connectedAt', 'enabled', 'id', 'lastError', 'lastErrorAt', 'projectName', 'shop'])
+    const byShop = Object.fromEntries(mine.map((s: any) => [s.shop, s]))
+    expect(byShop[A]).toMatchObject({ id: ids[A], connected: true, authMode: 'OAUTH', enabled: true, projectName: null })
+    expect(byShop[NEW]).toMatchObject({ connected: false, authMode: null, connectedAt: null })
+  })
+
+  it('status keeps the legacy shopify shape for the Litzzy store', async () => {
+    expect((await (await getStatus()).json()).shopify).toEqual({ connected: false })
+
+    await makeStore(LITZZY, { authMode: 'OAUTH', clientId: 'client-l', clientSecret: 'secret-l', accessToken: 'tok-l' })
+    const body = await (await getStatus()).json()
+    expect(body.shopify).toEqual({ connected: true, shop: LITZZY, connectedAt: expect.any(String) })
+    expect(Object.keys(body.shopify)).toEqual(['connected', 'shop', 'connectedAt'])
+
+    await prisma.shopifyStoreCredential.update({ where: { storeId: ids[LITZZY] }, data: { accessToken: null } })
+    expect((await (await getStatus()).json()).shopify).toEqual({ connected: false })
+  })
+
+  it('a store saved before OAuth finishes is listed as not connected', async () => {
+    await makeStore(NEW, { authMode: 'OAUTH', clientId: 'client-n', clientSecret: 'secret-n' })
+    const body = await (await getStatus()).json()
+    expect(body.stores.find((s: any) => s.shop === NEW)).toMatchObject({ connected: false, authMode: 'OAUTH' })
+  })
+
+  it('DELETE status needs a storeId and removes only that store credential', async () => {
+    await twoStores()
+    const noId = await deleteStatus(new NextRequest('http://localhost/api/auth/status', { method: 'DELETE' }))
+    expect(noId.status).toBe(400)
+    expect(await credentialOf(B)).not.toBeNull()
+
+    const unknown = await deleteStatus(new NextRequest('http://localhost/api/auth/status?storeId=oa-missing', { method: 'DELETE' }))
+    expect(unknown.status).toBe(404)
+
+    const res = await deleteStatus(new NextRequest(`http://localhost/api/auth/status?storeId=${ids[B]}`, { method: 'DELETE' }))
+    expect(res.status).toBe(200)
+    expect(await credentialOf(B)).toBeNull()
+    expect(await prisma.shopifyStore.findUnique({ where: { id: ids[B] } })).not.toBeNull()
+    expect((await credentialOf(A))?.accessToken).toBe('tok-a')
+  })
+
+  it('shopify-config saves into the credential of that shop and creates the store when missing', async () => {
+    await twoStores()
+    const res = await saveConfig(new NextRequest('http://localhost/api/auth/shopify-config', {
+      method: 'POST',
+      body: JSON.stringify({ apiKey: 'client-n', apiSecret: 'secret-n', shop: ` ${NEW.toUpperCase()} ` }),
+    }))
+    expect(res.status).toBe(200)
+    const store = await prisma.shopifyStore.findUnique({ where: { shop: NEW }, include: { credential: true } })
+    expect(store?.credential).toMatchObject({ authMode: 'OAUTH', clientId: 'client-n', clientSecret: 'secret-n', accessToken: null })
+    expect((await res.json())).toEqual({ ok: true, storeId: store!.id })
+    expect(await credentialOf(A)).toMatchObject({ clientId: 'client-a', clientSecret: SECRET_A, accessToken: 'tok-a' })
+    expect(await credentialOf(B)).toMatchObject({ clientId: 'client-b', clientSecret: SECRET_B, accessToken: 'tok-b-old' })
+  })
+
+  it('shopify-config on a connected store keeps its working token until OAuth replaces it', async () => {
+    await twoStores()
+    await saveConfig(new NextRequest('http://localhost/api/auth/shopify-config', {
+      method: 'POST',
+      body: JSON.stringify({ apiKey: 'client-a2', apiSecret: 'secret-a2', shop: A }),
+    }))
+    expect(await credentialOf(A)).toMatchObject({ authMode: 'OAUTH', clientId: 'client-a2', clientSecret: 'secret-a2', accessToken: 'tok-a' })
+  })
+
+  it('shopify-config rejects a missing field or an invalid shop', async () => {
+    const post = (body: object) => saveConfig(new NextRequest('http://localhost/api/auth/shopify-config', { method: 'POST', body: JSON.stringify(body) }))
+    expect((await post({ apiKey: 'k', shop: NEW })).status).toBe(400)
+    expect((await post({ apiKey: 'k', apiSecret: 's', shop: 'not-a-shop.example.com' })).status).toBe(400)
+    expect(await prisma.shopifyStore.findUnique({ where: { shop: NEW } })).toBeNull()
+  })
+
+  it('the OAuth start uses the Client ID of the shop asked for, whatever other shops are configured', async () => {
+    await twoStores()
+    const res = await startOAuth(new NextRequest(`http://localhost/api/auth/shopify?shop=${B}`))
+    expect(res.status).toBe(307)
+    const location = new URL(res.headers.get('location')!)
+    expect(location.origin).toBe(`https://${B}`)
+    expect(location.searchParams.get('client_id')).toBe('client-b')
+    expect(new URL(location.searchParams.get('redirect_uri')!).pathname).toBe('/api/auth/shopify/callback')
+    const state = location.searchParams.get('state')!
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ access_token: 'tok-via-start' }), { status: 200 }))
+    expect((await oauthCallback(callbackRequest(B, state, SECRET_B))).status).toBe(200)
+    expect((await credentialOf(B))?.accessToken).toBe('tok-via-start')
+  })
+
+  it('the OAuth start refuses a shop with no Client ID', async () => {
+    await makeStore(NEW)
+    const res = await startOAuth(new NextRequest(`http://localhost/api/auth/shopify?shop=${NEW}`))
+    expect(res.status).toBe(400)
+    const unknown = await startOAuth(new NextRequest('http://localhost/api/auth/shopify?shop=oa-nobody.myshopify.com'))
+    expect(unknown.status).toBe(400)
+  })
+
+  it('getShopifyConnection reads the Litzzy credential', async () => {
+    expect(await getShopifyConnection()).toBeNull()
+    await makeStore(LITZZY, { authMode: 'TOKEN', accessToken: 'tok-l' })
+    expect(await getShopifyConnection()).toMatchObject({ shop: LITZZY, token: 'tok-l', connectedAt: expect.any(Date) })
+    await prisma.shopifyStore.update({ where: { id: ids[LITZZY] }, data: { enabled: false } })
+    expect(await getShopifyConnection()).toBeNull()
+    await prisma.shopifyStore.update({ where: { id: ids[LITZZY] }, data: { enabled: true } })
+    await prisma.shopifyStoreCredential.delete({ where: { storeId: ids[LITZZY] } })
+    expect(await getShopifyConnection()).toBeNull()
+  })
+})

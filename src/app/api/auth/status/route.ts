@@ -1,22 +1,45 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { clearShopifyConnection, getShopifyConnection } from '@/lib/token-store'
+import { prisma } from '@/lib/db'
 import { requireSuperadmin } from '@/lib/api-auth'
+import { LITZZY_SHOP } from '@/lib/shopify-shop'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
-  const conn = await getShopifyConnection()
+  const rows = await prisma.shopifyStore.findMany({
+    include: { credential: true, project: { select: { name: true } } },
+    orderBy: { connectedAt: 'asc' },
+  })
+  const stores = rows.map(s => {
+    const c = s.credential
+    const connected = Boolean(c && (c.accessToken || (c.authMode === 'CLIENT_CREDENTIALS' && c.clientId && c.clientSecret)))
+    return {
+      id: s.id,
+      shop: s.shop,
+      projectName: s.project?.name ?? null,
+      enabled: s.enabled,
+      connected,
+      authMode: c?.authMode ?? null,
+      connectedAt: c?.connectedAt ?? null,
+      lastError: s.lastError,
+      lastErrorAt: s.lastErrorAt,
+    }
+  })
+  const litzzy = stores.find(s => s.shop === LITZZY_SHOP && s.enabled && s.connected)
   return NextResponse.json({
-    shopify: conn
-      ? { connected: true, shop: conn.shop, connectedAt: conn.connectedAt }
-      : { connected: false },
+    shopify: litzzy ? { connected: true, shop: litzzy.shop, connectedAt: litzzy.connectedAt } : { connected: false },
+    stores,
   })
 }
 
 export async function DELETE(req: NextRequest) {
   const auth = await requireSuperadmin(req)
   if ('error' in auth) return auth.error
-  await clearShopifyConnection()
+  const storeId = new URL(req.url).searchParams.get('storeId')
+  if (!storeId) return NextResponse.json({ error: 'Thiếu storeId' }, { status: 400 })
+  const store = await prisma.shopifyStore.findUnique({ where: { id: storeId }, select: { id: true } })
+  if (!store) return NextResponse.json({ error: 'Không tìm thấy store' }, { status: 404 })
+  await prisma.shopifyStoreCredential.deleteMany({ where: { storeId } })
   const response = NextResponse.json({ ok: true })
   response.cookies.set('shopify_shop', '', { httpOnly: true, path: '/', maxAge: 0 })
   response.cookies.set('shopify_token', '', { httpOnly: true, path: '/', maxAge: 0 })

@@ -183,6 +183,32 @@ describe('store connections', () => {
     expect(stored).toMatchObject({ authMode: 'TOKEN', accessToken: 'tok-manual', clientSecret: null })
   })
 
+  it('an OAuth row with a client id and secret but no token is NOT_CONNECTED and never mints', async () => {
+    await makeStore(A)
+    await saveStoreCredential(ids[A], { authMode: 'OAUTH', clientId: 'cid', clientSecret: 'secret', accessToken: null })
+    await expect(getStoreConnection(ids[A])).rejects.toMatchObject({ code: 'NOT_CONNECTED', shop: A })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('a row switched to OAuth with no token while a mint is in flight is NOT_CONNECTED, with no second mint', async () => {
+    await makeCcStore(null, null)
+    let release!: () => void
+    const gate = new Promise<void>(r => { release = r })
+    fetchMock.mockImplementation(async () => {
+      await gate
+      return mintReply('shpat_from_old_secret')
+    })
+    const pending = getStoreConnection(ids[CC])
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+    await saveStoreCredential(ids[CC], { authMode: 'OAUTH', clientId: 'cid', clientSecret: 'secret', accessToken: null })
+    release()
+
+    await expect(pending).rejects.toMatchObject({ code: 'NOT_CONNECTED', shop: CC })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const stored = await prisma.shopifyStoreCredential.findUnique({ where: { storeId: ids[CC] } })
+    expect(stored).toMatchObject({ authMode: 'OAUTH', accessToken: null })
+  })
+
   it('a secret rotated while a mint is in flight is minted again with the new secret', async () => {
     await makeCcStore(null, null)
     let release!: () => void

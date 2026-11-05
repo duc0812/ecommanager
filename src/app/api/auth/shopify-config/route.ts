@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { setShopifyAppCredentials } from '@/lib/token-store'
+import { prisma } from '@/lib/db'
+import { saveStoreCredential } from '@/lib/store-connections'
 import { requireSuperadmin } from '@/lib/api-auth'
 import { isValidShopDomain } from '@/lib/shopify-shop'
 
@@ -16,6 +17,14 @@ export async function POST(req: NextRequest) {
   if (!isValidShopDomain(shop)) {
     return NextResponse.json({ error: 'Shop domain phải có dạng ten-shop.myshopify.com' }, { status: 400 })
   }
-  await setShopifyAppCredentials(apiKey, apiSecret, shop)
-  return NextResponse.json({ ok: true })
+  const store = await prisma.shopifyStore.upsert({
+    where: { shop },
+    create: { shop },
+    update: {},
+    include: { credential: true },
+  })
+  // A client-credentials token expires on its own and is not kept; a manual or OAuth token keeps working until OAuth replaces it.
+  const keptToken = store.credential && store.credential.authMode !== 'CLIENT_CREDENTIALS' ? store.credential.accessToken : null
+  await saveStoreCredential(store.id, { authMode: 'OAUTH', clientId: apiKey, clientSecret: apiSecret, accessToken: keptToken })
+  return NextResponse.json({ ok: true, storeId: store.id })
 }
