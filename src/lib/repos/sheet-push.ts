@@ -89,8 +89,8 @@ async function run(supplierId: string, orderIds: string[] | undefined, userId: s
   for (const c of cards) {
     const view = hubView(c, supplierId)
     if (view.warnings.length > 0) {
-      const message = view.warnings.map(w => `${w.taskKey}: ${HUB_WARNING_LABELS[w.code]}`).join('; ')
-      for (const l of view.lines) results.push({ lineKey: l.taskKey, orderNumber: c.order.orderNumber, status: 'BLOCKED', message })
+      const message = view.warnings.map(w => `${w.lineKey}: ${HUB_WARNING_LABELS[w.code]}`).join('; ')
+      for (const l of view.lines) results.push({ lineKey: l.lineKey, orderNumber: c.order.orderNumber, status: 'BLOCKED', message })
       continue
     }
     orderIdsToLoad.push(c.order.id)
@@ -113,7 +113,7 @@ async function run(supplierId: string, orderIds: string[] | undefined, userId: s
   for (const o of allowed) {
     const lineKeys = lineKeysOf(o.shopifyOrderNumber, o.lines)
     const card = cards.find(c => c.order.id === o.id)!
-    const costByKey = new Map(card.lines.map(l => [l.taskKey, l.baseCost]))
+    const costByKey = new Map(card.lines.map(l => [l.lineKey, l.baseCost]))
     for (const l of o.lines) {
       const key = lineKeys.get(l.shopifyLineId)
       // Only the lines the card holds as ready; a sibling still in design stays out.

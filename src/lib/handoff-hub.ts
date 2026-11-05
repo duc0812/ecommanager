@@ -1,7 +1,7 @@
 import { UNMAPPED_TAB, type HandoffCard, type HandoffLine } from '@/lib/handoff-shared'
 
 export type HubWarningCode = 'WRONG_SIZE' | 'MAPPING' | 'NO_MOCKUP'
-export type HubWarning = { code: HubWarningCode; taskKey: string }
+export type HubWarning = { code: HubWarningCode; lineKey: string }
 
 export const HUB_WARNING_LABELS: Record<HubWarningCode, string> = {
   WRONG_SIZE: 'sai khổ file',
@@ -35,9 +35,9 @@ export function hubView(card: HandoffCard, tabId: string): HubView {
   const lines = card.lines.filter(l => (l.line.supplier?.id ?? null) === supplierId && !l.exportedTo && !l.waiting)
   const warnings = lines.flatMap(l => {
     const out: HubWarning[] = []
-    if (l.wrongSizeAreas.length > 0) out.push({ code: 'WRONG_SIZE', taskKey: l.taskKey })
-    if (l.mappingNow) out.push({ code: 'MAPPING', taskKey: l.taskKey })
-    if (l.line.supplier && !hasMockup(l)) out.push({ code: 'NO_MOCKUP', taskKey: l.taskKey })
+    if (l.wrongSizeAreas.length > 0) out.push({ code: 'WRONG_SIZE', lineKey: l.lineKey })
+    if (l.mappingNow) out.push({ code: 'MAPPING', lineKey: l.lineKey })
+    if (l.line.supplier && !hasMockup(l)) out.push({ code: 'NO_MOCKUP', lineKey: l.lineKey })
     return out
   })
   return {

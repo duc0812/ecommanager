@@ -45,7 +45,7 @@ const ORDER_SELECT = {
 
 /**
  * Every order not sent yet, every order with an open task, plus the newest orders.
- * Nothing is deleted: a task only changes through syncDesignTasks.
+ * A task only changes through syncDesignTasks, which removes nothing but an untouched task on a line that is not a product.
  */
 export async function runDesignTaskSync(opts: { trigger?: SyncTrigger; now?: number } = {}): Promise<DesignTaskSyncSummary> {
   const trigger = opts.trigger ?? 'manual'

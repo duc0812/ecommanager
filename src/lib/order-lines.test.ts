@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { hasUnresolvedProductLine, isNonProductLine, lineKeysOf, productLinesOnly } from '@/lib/order-lines'
+import { hasUnresolvedProductLine, isNonProductLine, lineKeysOf, planTaskKeys, productLinesOnly } from '@/lib/order-lines'
 
 describe('isNonProductLine', () => {
   it('treats sku-less Tip line as non-product', () => {
@@ -135,5 +135,29 @@ describe('productLinesOnly', () => {
       { sku: null, productTitle: 'Tip' },
     ]
     expect(productLinesOnly(lines)).toEqual([{ sku: 'LIT2570', productTitle: 'Custom Name Necklace' }])
+  })
+})
+
+describe('planTaskKeys', () => {
+  it('re-keys product-line tasks, removes untouched others, and moves a kept one out of a needed key to a key nobody holds', () => {
+    const keys = new Map([['p1', 'O1_1'], ['p2', 'O1_2']])
+    const plan = planTaskKeys(keys, [
+      { id: 'kept', shopifyLineId: 'addon-1', taskKey: 'O1_1', untouched: false },
+      { id: 'parked', shopifyLineId: 'addon-2', taskKey: 'O1_1-addon', untouched: false },
+      { id: 'idle', shopifyLineId: 'addon-3', taskKey: 'O1_2', untouched: true },
+      { id: 'a', shopifyLineId: 'p1', taskKey: 'O1_3', untouched: true },
+      { id: 'b', shopifyLineId: 'p2', taskKey: 'O1_2', untouched: false },
+    ])
+    expect(plan).toEqual({
+      remove: ['idle'],
+      moves: [
+        { id: 'a', from: 'O1_3', to: 'O1_1', productLine: true },
+        { id: 'kept', from: 'O1_1', to: 'O1_1-addon-2', productLine: false },
+      ],
+    })
+  })
+
+  it('has nothing to do when every task already carries its line key', () => {
+    expect(planTaskKeys(new Map([['p1', 'O1_1']]), [{ id: 'a', shopifyLineId: 'p1', taskKey: 'O1_1', untouched: true }])).toEqual({ remove: [], moves: [] })
   })
 })

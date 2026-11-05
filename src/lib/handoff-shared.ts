@@ -37,7 +37,11 @@ export type HandoffState = {
 }
 
 export type HandoffLine = {
-  line: WorkspaceLine; slots: string[]; taskKey: string; apiSku: string | null; driveFolderUrl: string | null
+  line: WorkspaceLine; slots: string[]; apiSku: string | null; driveFolderUrl: string | null
+  /** The order's line key ("LIT123_1"): what the card shows and what the sheet, CSV and supplier refs carry. */
+  lineKey: string
+  /** The key of this line's own design task, which the card opens; null when the line has no task. */
+  taskKey: string | null
   /** The line's base cost for its whole quantity, null while no cost is known. Shipping is not in it. */
   baseCost: number | null
   /** The Shopify product type, shown beside the supplier's product so a wrong mapping is seen at a glance. */

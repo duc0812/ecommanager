@@ -9,7 +9,7 @@ function line(over: {
   const supplierId = over.supplierId === undefined ? 'jm' : over.supplierId
   return {
     send: { sku: null, size: '', color: '', customName: '' },
-    taskKey: over.key ?? 'LIT1_1', baseCost: over.baseCost === undefined ? 10 : over.baseCost, productType: over.productType ?? null,
+    lineKey: over.key ?? 'LIT1_1', taskKey: over.key ?? 'LIT1_1', baseCost: over.baseCost === undefined ? 10 : over.baseCost, productType: over.productType ?? null,
     exportedTo: over.exportedTo ?? null, wrongSizeAreas: over.wrongSizeAreas ?? [], mappingNow: over.mappingNow ?? null, waiting: over.waiting ?? null,
     slots: [], apiSku: null, driveFolderUrl: null,
     line: {
@@ -48,11 +48,11 @@ describe('hubView', () => {
 
   it('finds a warning on a line the card does not show', () => {
     const v = hubView(card([line(), line({ key: 'LIT1_2', wrongSizeAreas: ['Front'] }), line({ key: 'LIT1_3', mappingNow: { supplierName: 'Mango', sku: 'X' } })]), 'jm')
-    expect(v.warnings).toEqual([{ code: 'WRONG_SIZE', taskKey: 'LIT1_2' }, { code: 'MAPPING', taskKey: 'LIT1_3' }])
+    expect(v.warnings).toEqual([{ code: 'WRONG_SIZE', lineKey: 'LIT1_2' }, { code: 'MAPPING', lineKey: 'LIT1_3' }])
   })
 
   it('needs an uploaded mockup or the preview, not only the product photo', () => {
-    expect(hubView(card([line({ previewUrl: null })]), 'jm').warnings).toEqual([{ code: 'NO_MOCKUP', taskKey: 'LIT1_1' }])
+    expect(hubView(card([line({ previewUrl: null })]), 'jm').warnings).toEqual([{ code: 'NO_MOCKUP', lineKey: 'LIT1_1' }])
     expect(hubView(card([line({ previewUrl: null, mockup: true })]), 'jm').warnings).toEqual([])
   })
 

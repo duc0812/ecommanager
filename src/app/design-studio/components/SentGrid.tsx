@@ -50,9 +50,12 @@ function SentRow({ c, sent, me, now, onOpenTask, onChanged, onError }: {
       </td>
       <td className="px-sm py-sm">
         <div className="flex flex-col gap-[2px]">
-          {c.lines.map(l => (
-            <button key={l.line.id} type="button" onClick={() => onOpenTask(l.taskKey)} title={l.line.productTitle} className="text-left font-mono text-label-sm text-secondary hover:underline truncate">{l.taskKey}</button>
-          ))}
+          {c.lines.map(l => {
+            const taskKey = l.taskKey
+            return taskKey
+              ? <button key={l.line.id} type="button" onClick={() => onOpenTask(taskKey)} title={l.line.productTitle} className="text-left font-mono text-label-sm text-secondary hover:underline truncate">{l.lineKey}</button>
+              : <span key={l.line.id} title={`${l.line.productTitle} — dòng chưa có task`} className="font-mono text-label-sm text-on-surface-variant truncate">{l.lineKey}</span>
+          })}
         </div>
       </td>
       <td className="px-sm py-sm">

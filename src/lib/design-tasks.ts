@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/db'
-import { isNonProductLine, lineKeysOf } from '@/lib/order-lines'
+import { isNonProductLine, lineKeysOf, planTaskKeys, type KeyedTask, type TaskKeyMove } from '@/lib/order-lines'
 import { artworkUrl, parseAttributes, safeHttpUrl, sourcePrintFiles, updateLine, loadWorkspace, type WorkspaceLine, type Workspace } from '@/lib/design-studio'
 import { fillCustomallFields } from '@/lib/customall-fields'
 import { getDesignSettings, kpiForProductType, type DesignSettings } from '@/lib/design-settings'
@@ -145,6 +145,47 @@ function reopenedByFactory(task: { rejectReasons: string | null }): boolean {
   return parseRejectReasons(task.rejectReasons).includes(FACTORY_REJECT_REASON)
 }
 
+/** Nobody ever touched the task: NEW, unassigned, no Drive folder, system events only. Files are checked apart: they belong to the line. */
+const UNTOUCHED = { status: 'NEW', assigneeId: null, driveFolderId: null, driveFolderUrl: null, events: { every: { type: 'SYSTEM' } } }
+
+async function untouchedTasks(orderId: string, taskIds: string[]): Promise<Set<string>> {
+  if (taskIds.length === 0) return new Set()
+  const [tasks, files] = await Promise.all([
+    prisma.designTask.findMany({ where: { id: { in: taskIds }, ...UNTOUCHED }, select: { id: true, shopifyLineId: true } }),
+    prisma.designArtwork.findMany({ where: { orderId }, select: { shopifyLineId: true }, distinct: ['shopifyLineId'] }),
+  ])
+  const withFile = new Set(files.map(f => f.shopifyLineId))
+  return new Set(tasks.filter(t => !withFile.has(t.shopifyLineId)).map(t => t.id))
+}
+
+/**
+ * The owner's rule since 2026-10-29: a task's key is its line key. Applied in one transaction through temporary keys, since an
+ * order's old and new keys overlap (`_2,_3 → _1,_2`). The Drive folder keeps its old name until scripts/rename-task-folders.mjs
+ * runs. `updatedAt` stays: a CSV save compares it with the approval time.
+ */
+async function followLineKeys(orderId: string, keys: Map<string, string>, tasks: Array<KeyedTask & { updatedAt: Date }>): Promise<void> {
+  if (tasks.every(t => keys.get(t.shopifyLineId) === t.taskKey)) return
+  const untouched = await untouchedTasks(orderId, tasks.filter(t => !keys.has(t.shopifyLineId)).map(t => t.id))
+  const plan = planTaskKeys(keys, tasks.map(t => ({ ...t, untouched: untouched.has(t.id) })))
+  if (plan.remove.length === 0 && plan.moves.length === 0) return
+  const updatedAt = new Map(tasks.map(t => [t.id, t.updatedAt]))
+  await prisma.$transaction(async tx => {
+    if (plan.remove.length) await tx.designTask.deleteMany({ where: { id: { in: plan.remove }, ...UNTOUCHED } })
+    const moving: TaskKeyMove[] = []
+    for (const m of plan.moves) {
+      const parked = await tx.designTask.updateMany({ where: { id: m.id, taskKey: m.from }, data: { taskKey: `~${m.id}`, updatedAt: updatedAt.get(m.id) } })
+      if (parked.count === 1) moving.push(m)
+    }
+    for (const m of moving) {
+      const why = m.productLine ? 'theo mã line của đơn' : 'dòng không phải sản phẩm, nhường mã cho dòng sản phẩm'
+      await tx.designTask.update({ where: { id: m.id }, data: {
+        taskKey: m.to, updatedAt: updatedAt.get(m.id),
+        events: { create: { type: 'SYSTEM', message: `Đổi mã task ${m.from} → ${m.to} (${why})` } },
+      } })
+    }
+  })
+}
+
 export async function syncDesignTasks(orderId: string): Promise<SyncResult> {
   const order = await prisma.order.findUnique({ where: { id: orderId }, include: { lines: true, designTasks: true } })
   if (!order) return { created: 0, cancelled: 0, completed: 0, reopened: 0 }
@@ -158,21 +199,14 @@ export async function syncDesignTasks(orderId: string): Promise<SyncResult> {
   let created = 0, cancelled = 0, completed = 0, reopened = 0
   const withArtwork = await linesWithArtwork(orderId)
   const keys = lineKeysOf(order.shopifyOrderNumber, order.lines)
+  await followLineKeys(orderId, keys, order.designTasks)
   const factoryReopen = { status: 'REJECTED', rejectReasons: JSON.stringify([FACTORY_REJECT_REASON]), rejectNote: null, prevStatus: null }
   const factoryEvent = { type: 'SYSTEM', message: 'Xưởng trả file — mở lại task' }
 
   const everyLine = TASK_FOR_EVERY_LINE.includes(order.pipelineStatus)
 
   for (const line of order.lines) {
-    if (isNonProductLine(line)) {
-      // A line classified as an add-on after its task was made: close the task nobody has started.
-      const stale = order.designTasks.find(t => t.shopifyLineId === line.shopifyLineId && t.status === 'NEW')
-      if (stale) {
-        await prisma.designTask.update({ where: { id: stale.id }, data: { status: 'CANCELLED', events: { create: { type: 'SYSTEM', message: 'Dòng là add-on, không phải sản phẩm — task tự huỷ' } } } })
-        cancelled++
-      }
-      continue
-    }
+    if (isNonProductLine(line)) continue
     const existing = order.designTasks.find(t => t.shopifyLineId === line.shopifyLineId)
     if (!line.resolvedSupplierId && !existing && (!everyLine || line.exportedAt)) continue
     if (orderClosed || orderShipped) {

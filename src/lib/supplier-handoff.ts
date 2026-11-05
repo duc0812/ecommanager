@@ -228,7 +228,7 @@ export async function handoffStateFor(orderId: string): Promise<HandoffState | n
 function matches(card: HandoffCard, q: string): boolean {
   const haystacks = [
     card.order.orderNumber, card.order.customerName ?? '', ...card.suppliers.map(s => s.name),
-    ...card.lines.flatMap(l => [l.taskKey, l.line.sku ?? '', l.line.productTitle, ...l.line.personalization.map(p => p.value)]),
+    ...card.lines.flatMap(l => [l.lineKey, l.line.sku ?? '', l.line.productTitle, ...l.line.personalization.map(p => p.value)]),
   ]
   return haystacks.some(h => h.toLowerCase().includes(q))
 }
@@ -262,10 +262,10 @@ async function buildCards(where: any, orderBy: any, opts: { checks?: boolean; se
   const exportSupplierIds = Array.from(new Set(lineRows.flatMap(l => [l.resolvedSupplierId, l.exportedToSupplierId]).filter((x): x is string => !!x)))
   const exportSuppliers = exportSupplierIds.length ? await prisma.supplier.findMany({ where: { id: { in: exportSupplierIds } }, select: { id: true, name: true } }) : []
   const supplierNameById = new Map(exportSuppliers.map(s => [s.id, s.name]))
-  const folders = await prisma.designTask.findMany({
-    where: { orderId: { in: orders.map(o => o.id) }, driveFolderUrl: { not: null } }, select: { orderId: true, shopifyLineId: true, driveFolderUrl: true },
+  const tasks = await prisma.designTask.findMany({
+    where: { orderId: { in: orders.map(o => o.id) } }, select: { orderId: true, shopifyLineId: true, taskKey: true, driveFolderUrl: true },
   })
-  const folderByLine = new Map(folders.map(t => [`${t.orderId}\u0000${t.shopifyLineId}`, t.driveFolderUrl]))
+  const taskByLine = new Map(tasks.map(t => [`${t.orderId}\u0000${t.shopifyLineId}`, t]))
   const skuPairs = lineRows.filter(l => l.resolvedSupplierId && l.resolvedSupplierSku)
   const products = skuPairs.length
     ? await prisma.supplierProduct.findMany({
@@ -308,6 +308,8 @@ async function buildCards(where: any, orderBy: any, opts: { checks?: boolean; se
         : null
       const unitCost = row ? effectiveBaseCost(row) : null
       const product = line.supplier && line.supplierSku ? productByKey.get(`${line.supplier.id}::${line.supplierSku}`) : undefined
+      // The line's own task, by line: before a re-sync re-keys it, its key may still be another line's key.
+      const task = taskByLine.get(`${o.id}\u0000${line.shopifyLineId}`)
       lines.push({
         line,
         slots,
@@ -316,8 +318,9 @@ async function buildCards(where: any, orderBy: any, opts: { checks?: boolean; se
         send: sendOf(line, product, line.supplier ? enabledChannelFor(sheetChannels, line.supplier) : null),
         wrongSizeAreas,
         mappingNow,
-        taskKey: lineKeys.get(line.shopifyLineId) ?? '',
-        driveFolderUrl: folderByLine.get(`${o.id}\u0000${line.shopifyLineId}`) ?? null,
+        lineKey: lineKeys.get(line.shopifyLineId) ?? '',
+        taskKey: task?.taskKey ?? null,
+        driveFolderUrl: task?.driveFolderUrl ?? null,
         apiSku: line.supplier && line.supplierSku ? (apiSkuByKey.get(`${line.supplier.id}::${line.supplierSku}`) ?? null) : null,
         exportedTo: sentTo ? (supplierNameById.get(sentTo) ?? 'xưởng không rõ') : null,
         waiting: sentTo || !line.supplier ? null : lineHold(o, { shopifyLineId: line.shopifyLineId, designDriveLink: line.designDriveLink, resolvedSupplierId: line.supplier.id }),

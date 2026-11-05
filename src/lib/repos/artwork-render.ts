@@ -2,7 +2,7 @@ import { lineKeyOf } from '@/lib/order-lines'
 import fsp from 'fs/promises'
 import { prisma } from '@/lib/db'
 import { parseFields } from '@/lib/artwork-fields'
-import { autoRenderEligibility, customerValues, renderFields, type RenderJobView } from '@/lib/artwork-render-eligibility'
+import { TEEINBLUE_REASON, autoRenderEligibility, customerValues, hasTeeinblueDesign, renderFields, type RenderJobView } from '@/lib/artwork-render-eligibility'
 import { RENDER_LINE, latestRenderJob, renderJobView } from '@/lib/artwork-render-jobs'
 import { parseAttributes } from '@/lib/design-studio'
 import { saveArtwork } from '@/lib/design-storage'
@@ -125,9 +125,12 @@ export async function renderClaimFor(job: { id: string; kind: string; attempts: 
   if (entry.status !== 'READY') return { error: `Artwork gốc không còn sẵn sàng (${entry.status})` }
   if (!entry.artworkFile) return { error: 'Artwork gốc chưa có artwork.png' }
   if (!line) return { error: 'Không tìm thấy dòng đơn' }
+  const attrs = parseAttributes(line.customAttributesJson)
+  // The queue refuses these lines; a job queued before that rule existed must not render either.
+  if (hasTeeinblueDesign(attrs)) return { error: TEEINBLUE_REASON }
   const fields = parseFields(entry.fields)
   const names = renderFields({ layers: fields.map(f => ({ field: f.field, layer: f.layer, fit: f.fit })) })
-  const values = customerValues(names, visibleCustomAttributes(parseAttributes(line.customAttributesJson)))
+  const values = customerValues(names, visibleCustomAttributes(attrs))
   const missing = names.filter(n => values[n] === undefined)
   if (missing.length) return { error: `Khách chưa điền: ${missing.join(', ')}` }
   const wanted = Array.from(new Set(fields.map(f => f.font.toLowerCase()).filter(Boolean)))

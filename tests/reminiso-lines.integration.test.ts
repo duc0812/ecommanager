@@ -9,16 +9,18 @@ import { listTasks, loadTask, syncDesignTasks } from '@/lib/design-tasks'
 import { loadWorkspace } from '@/lib/design-studio'
 import { saveManualMapping } from '@/lib/repos/mapping'
 import { reevaluateOrdersForDesignEntry } from '@/lib/repos/design-reeval'
-import { hasUnresolvedProductLine } from '@/lib/order-lines'
+import { hasUnresolvedProductLine, isNonProductLine } from '@/lib/order-lines'
 import { PIPELINE_STATUSES } from '@/lib/pipeline-status'
 import { POST as manualMappingPost } from '@/app/api/fulfillment/mapping/manual/route'
 import { runAutoFulfill } from '@/lib/fulfillment/auto-fulfill'
-import { queueRenderLine, queueScheduledRenders } from '@/lib/repos/artwork-render'
+import { RENDER_LINE, queueRenderLine, queueScheduledRenders, renderClaimFor } from '@/lib/repos/artwork-render'
+import { handoffCardFor, listHandoffHub } from '@/lib/supplier-handoff'
+import { UNMAPPED_TAB } from '@/lib/handoff-shared'
 import { TEEINBLUE_REASON } from '@/lib/artwork-render-eligibility'
 import { isAutoNotRendered, needsArtwork } from '@/app/design-studio/components/model'
 
-// tests/fixtures/reminiso-order.json is four real Reminiso orders (#REMI1110, 1147, 1142, 1089) in the shape Shopify's GraphQL
-// returns to the sync, renumbered #REMI9001-9004. Customer, address and every typed personalisation value are placeholders;
+// tests/fixtures/reminiso-order.json is four real Reminiso orders in the shape Shopify's GraphQL returns to the sync,
+// renumbered #REMI9001-9004. Customer, address and every typed personalisation value are placeholders;
 // attribute keys, titles, variant titles, SKUs (null = none), quantities and prices are the real ones.
 const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'reminiso-order.json'), 'utf8'))
 const fixtureNodes: any[] = fixture.data.orders.nodes
@@ -314,7 +316,7 @@ describe('Reminiso order lines', () => {
       expect(await state('#REMI9021')).toEqual({ pipelineStatus: 'READY_TO_PRODUCTION', designReady: true, orderType: 'UNKNOWN', defaultSupplierId: null, tasks: 0 })
     })
 
-    it('synced before the rule are put right by the normal sync: NEW tasks on them close, started ones stay, PENDING_MAPPING clears', async () => {
+    it('synced before the rule are put right by the normal sync: untouched tasks on them go, started ones stay, PENDING_MAPPING clears', async () => {
       await mapTote()
       await sync(fixtureOrder('#REMI9002'))
       const order = await orderRow('#REMI9002')
@@ -332,10 +334,11 @@ describe('Reminiso order lines', () => {
 
       const sweep = await syncDesignTasks(order.id)
 
-      expect(sweep).toMatchObject({ created: 0, cancelled: 1 })
-      expect(await taskState()).toEqual({ REMI9002_1: ['CANCELLED', 2], REMI9002_2: ['DOING', 1], REMI9002_3: ['NEW', 1] })
-      const closing = await prisma.designTaskEvent.findFirstOrThrow({ where: { task: { taskKey: 'REMI9002_1' }, type: 'SYSTEM' }, orderBy: { createdAt: 'desc' } })
-      expect(closing.message).toContain('add-on')
+      expect(sweep).toMatchObject({ created: 0, cancelled: 0 })
+      expect(await taskState()).toEqual({ REMI9002_1: ['NEW', 2], REMI9002_2: ['DOING', 1] })
+      expect(await taskFor(order.id, protect.shopifyLineId)).toBeNull()
+      const rekey = await prisma.designTaskEvent.findFirstOrThrow({ where: { task: { taskKey: 'REMI9002_1' }, type: 'SYSTEM' }, orderBy: { createdAt: 'desc' } })
+      expect(rekey.message).toContain('REMI9002_3 → REMI9002_1')
       expect((await orderRow('#REMI9002')).pipelineStatus).toBe('PENDING_MAPPING')
 
       const result = await sync(fixtureOrder('#REMI9002'))
@@ -344,9 +347,9 @@ describe('Reminiso order lines', () => {
       const after = await orderRow('#REMI9002')
       expect(after.pipelineStatus).toBe('PENDING_DESIGN')
       expect(after.lines.map(l => l.resolvedBaseCost)).toEqual([0, 0, 14])
-      expect(await taskState()).toEqual({ REMI9002_1: ['CANCELLED', 2], REMI9002_2: ['DOING', 1], REMI9002_3: ['NEW', 1] })
+      expect(await taskState()).toEqual({ REMI9002_1: ['NEW', 2], REMI9002_2: ['DOING', 1] })
       expect(await syncDesignTasks(order.id)).toMatchObject({ created: 0, cancelled: 0 })
-      expect((await prisma.designTask.findUniqueOrThrow({ where: { taskKey: 'REMI9002_3' } })).shopifyLineId).toBe(tote.shopifyLineId)
+      expect((await prisma.designTask.findUniqueOrThrow({ where: { taskKey: 'REMI9002_1' } })).shopifyLineId).toBe(tote.shopifyLineId)
     })
 
     it('are fulfilled with the product when it ships, or closed without tracking on their own fulfillment order', async () => {
@@ -608,6 +611,215 @@ describe('Reminiso order lines', () => {
       expect((await orderRow('#REMI9051')).pipelineStatus).toBe('PENDING_DESIGN')
       await sync(feeOrder())
       expect((await orderRow('#REMI9051')).pipelineStatus).toBe('PENDING_DESIGN')
+    })
+  })
+  describe("a design task's key follows its line key", () => {
+    const fixtureLines = (name: string) => fixtureOrder(name).lineItems.nodes
+    const PROTECT = () => fixtureLines('#REMI9002')[0]
+    const ADVENT = () => fixtureLines('#REMI9001')[0]
+    const TOPPER = () => fixtureLines('#REMI9001')[1]
+    const LEGGINGS = () => fixtureLines('#REMI9004')[0]
+    const FEE = () => ({
+      sku: null, title: 'Item Personalization', variantTitle: null, quantity: 1, originalUnitPriceSet: { shopMoney: { amount: '0.50' } }, customAttributes: [], image: null,
+      product: { id: 'gid://shopify/Product/remi14-fee', tags: [], productType: 'PPLR_HIDDEN_PRODUCT', onlineStoreUrl: null, featuredImage: null },
+      variant: { id: 'gid://shopify/ProductVariant/remi14-fee', image: null, selectedOptions: [] },
+    })
+    const TIP = () => ({
+      ...PROTECT(), sku: null, title: 'Tip', variantTitle: null, customAttributes: [],
+      product: { id: 'gid://shopify/Product/remi14-tip', tags: [], productType: null, onlineStoreUrl: null, featuredImage: null },
+      variant: { id: 'gid://shopify/ProductVariant/remi14-tip', image: null, selectedOptions: [] },
+    })
+    const orderOf = (name: string, lines: any[]) => {
+      const node = fixtureOrder('#REMI9001')
+      node.id = `gid://shopify/Order/remi14-${name}`
+      node.name = `#${name}`
+      node.lineItems.nodes = lines.map((l, i) => ({ ...structuredClone(l), id: `gid://shopify/LineItem/remi14-${name}-${i + 1}` }))
+      return node
+    }
+    const CREATED = { type: 'SYSTEM', message: 'Đơn vào từ Shopify — tạo task' }
+
+    // What a sync before Task 14 left: each task keyed by its line's position (add-ons and the fee line counted), and a task
+    // with its one creation event on every line in `addOns`. `status` sets a task's status by line position.
+    async function legacyKeys(name: string, opts: { addOns?: number[]; status?: Record<number, string> } = {}) {
+      const order = await orderRow(name)
+      const tasks = await prisma.designTask.findMany({ where: { orderId: order.id } })
+      for (const t of tasks) await prisma.designTask.update({ where: { id: t.id }, data: { taskKey: `~${t.id}` } })
+      const ids: Record<number, string> = {}
+      for (const l of order.lines) {
+        const taskKey = `${name.slice(1)}_${l.linePosition}`
+        const status = opts.status?.[l.linePosition]
+        const t = tasks.find(x => x.shopifyLineId === l.shopifyLineId)
+        if (t) ids[l.linePosition] = (await prisma.designTask.update({ where: { id: t.id }, data: { taskKey, ...(status ? { status } : {}) } })).id
+        else if (opts.addOns?.includes(l.linePosition)) {
+          ids[l.linePosition] = (await prisma.designTask.create({ data: { orderId: order.id, shopifyLineId: l.shopifyLineId, taskKey, status: status ?? 'NEW', events: { create: CREATED } } })).id
+        }
+      }
+      return { order, ids }
+    }
+    const snapshot = async (orderId: string) => (await prisma.designTask.findMany({ where: { orderId }, include: { events: true }, orderBy: { taskKey: 'asc' } }))
+      .map(t => ({ id: t.id, taskKey: t.taskKey, status: t.status, updatedAt: t.updatedAt.toISOString(), events: t.events.length }))
+    const keyEvents = async (taskId: string) => (await prisma.designTaskEvent.findMany({ where: { taskId, message: { startsWith: 'Đổi mã task' } } })).map(e => [e.type, e.message])
+    const artworkOn = (orderId: string, shopifyLineId: string) => prisma.designArtwork.create({
+      data: { orderId, shopifyLineId, kind: 'PRINT', printArea: 'Print', version: 1, fileName: 'print.png', size: 1, mimeType: 'image/png' },
+    })
+
+    it('an order synced while its add-ons were numbered: one sync removes the untouched add-on tasks and gives the tote task _1; a second changes nothing', async () => {
+      await sync(fixtureOrder('#REMI9002'))
+      const { order, ids } = await legacyKeys('#REMI9002', { addOns: [1, 2] })
+      expect((await snapshot(order.id)).map(t => [t.taskKey, t.status])).toEqual([['REMI9002_1', 'NEW'], ['REMI9002_2', 'NEW'], ['REMI9002_3', 'NEW']])
+
+      expect((await sync(fixtureOrder('#REMI9002'))).errors).toEqual([])
+
+      const after = await snapshot(order.id)
+      expect(after.map(t => [t.id, t.taskKey, t.status])).toEqual([[ids[3], 'REMI9002_1', 'NEW']])
+      expect(await keyEvents(ids[3])).toEqual([['SYSTEM', expect.stringContaining('REMI9002_3 → REMI9002_1')]])
+      expect(await prisma.designTaskEvent.count({ where: { taskId: { in: [ids[1], ids[2]] } } })).toBe(0)
+
+      expect((await sync(fixtureOrder('#REMI9002'))).errors).toEqual([])
+      expect(await snapshot(order.id)).toEqual(after)
+    })
+
+    it("an add-on ahead of two products: A takes _1 and B _2 (B's new key is A's old one), the same tasks, no unique-key error", async () => {
+      const node = orderOf('REMI9062', [PROTECT(), ADVENT(), TOPPER()])
+      await sync(node)
+      const { order, ids } = await legacyKeys('#REMI9062', { addOns: [1] })
+
+      expect((await sync(node)).errors).toEqual([])
+
+      expect((await snapshot(order.id)).map(t => [t.id, t.taskKey])).toEqual([[ids[2], 'REMI9062_1'], [ids[3], 'REMI9062_2']])
+      expect((await taskFor(order.id, order.lines[1].shopifyLineId))!.taskKey).toBe('REMI9062_1')
+      expect((await taskFor(order.id, order.lines[2].shopifyLineId))!.taskKey).toBe('REMI9062_2')
+      expect(await keyEvents(ids[2])).toEqual([['SYSTEM', expect.stringContaining('REMI9062_2 → REMI9062_1')]])
+      expect(await keyEvents(ids[3])).toEqual([['SYSTEM', expect.stringContaining('REMI9062_3 → REMI9062_2')]])
+    })
+
+    it('the hidden fee line ahead of a finished product: the DONE task takes _1 and keeps its status, Drive folder, files and time', async () => {
+      await mapVariant(LEGGINGS_VARIANT, (await prisma.supplierProduct.create({ data: { supplierId: SUP, sku: 'REMI14-LEGGINGS-M', baseCost: 12 } })).id)
+      const node = orderOf('REMI9063', [FEE(), LEGGINGS()])
+      await sync(node)
+      const { order, ids } = await legacyKeys('#REMI9063')
+      await prisma.designTask.update({ where: { id: ids[2] }, data: {
+        status: 'DONE', assigneeId: 'remi14-designer', driveFolderId: 'remi14-folder', driveFolderUrl: 'https://drive.google.com/drive/folders/remi14-folder',
+      } })
+      const art = await artworkOn(order.id, order.lines[1].shopifyLineId)
+      const before = await prisma.designTask.findUniqueOrThrow({ where: { id: ids[2] } })
+      expect(before.taskKey).toBe('REMI9063_2')
+
+      expect((await sync(node)).errors).toEqual([])
+
+      expect(await prisma.designTask.findUniqueOrThrow({ where: { id: ids[2] } })).toEqual({ ...before, taskKey: 'REMI9063_1' })
+      expect(await prisma.designTask.count({ where: { orderId: order.id } })).toBe(1)
+      expect(await prisma.designArtwork.findMany({ where: { orderId: order.id } })).toEqual([art])
+      expect(await keyEvents(ids[2])).toEqual([['SYSTEM', expect.stringContaining('REMI9063_2 → REMI9063_1')]])
+      expect((await loadTask('REMI9063_1'))?.task).toMatchObject({ id: ids[2], status: 'DONE', shopifyLineId: order.lines[1].shopifyLineId })
+      expect(await loadTask('REMI9063_2')).toBeNull()
+    })
+
+    it('an add-on task with work, in a key a product needs, is kept with its work and status under another key; the tote takes _1', async () => {
+      await sync(fixtureOrder('#REMI9002'))
+      const { order, ids } = await legacyKeys('#REMI9002', { addOns: [1, 2], status: { 2: 'DOING' } })
+      const art = await artworkOn(order.id, order.lines[0].shopifyLineId)
+      const row = (id: string) => prisma.designTask.findUniqueOrThrow({ where: { id } })
+      const [withFile, started] = [await row(ids[1]), await row(ids[2])]
+
+      expect((await sync(fixtureOrder('#REMI9002'))).errors).toEqual([])
+
+      expect(await row(ids[1])).toEqual({ ...withFile, taskKey: 'REMI9002_1-addon' })
+      expect(await keyEvents(ids[1])).toEqual([['SYSTEM', expect.stringContaining('REMI9002_1 → REMI9002_1-addon')]])
+      expect(await prisma.designArtwork.findUniqueOrThrow({ where: { id: art.id } })).toEqual(art)
+      expect(await row(ids[2])).toEqual(started)
+      expect(await prisma.designTaskEvent.count({ where: { taskId: ids[2] } })).toBe(1)
+      expect((await row(ids[3])).taskKey).toBe('REMI9002_1')
+    })
+
+    it('an add-on task the earlier sweep cancelled, in a key a product needs, moves out of the way still CANCELLED; the tote takes _1', async () => {
+      await sync(fixtureOrder('#REMI9002'))
+      const { order, ids } = await legacyKeys('#REMI9002', { addOns: [1, 2], status: { 1: 'CANCELLED' } })
+      await prisma.designTaskEvent.create({ data: { taskId: ids[1], type: 'SYSTEM', message: 'Dòng là add-on, không phải sản phẩm — task tự huỷ' } })
+      const cancelled = await prisma.designTask.findUniqueOrThrow({ where: { id: ids[1] } })
+
+      expect((await sync(fixtureOrder('#REMI9002'))).errors).toEqual([])
+
+      expect(await prisma.designTask.findUniqueOrThrow({ where: { id: ids[1] } })).toEqual({ ...cancelled, taskKey: 'REMI9002_1-addon' })
+      expect(await prisma.designTask.findUnique({ where: { id: ids[2] } })).toBeNull()
+      expect((await snapshot(order.id)).map(t => [t.id, t.taskKey, t.status])).toEqual([[ids[3], 'REMI9002_1', 'NEW'], [ids[1], 'REMI9002_1-addon', 'CANCELLED']])
+    })
+
+    it("the hand-off card opens each product line's own task while the tasks still carry their old keys, the swap case too", async () => {
+      await sync(fixtureOrder('#REMI9002'), orderOf('REMI9062', [PROTECT(), ADVENT(), TOPPER()]))
+      await legacyKeys('#REMI9002', { addOns: [1, 2] })
+      const swap = await legacyKeys('#REMI9062', { addOns: [1] })
+      const expected = {
+        '#REMI9002': { lineKeys: ['REMI9002_1'], taskKeys: ['REMI9002_3'] },
+        '#REMI9062': { lineKeys: ['REMI9062_1', 'REMI9062_2'], taskKeys: ['REMI9062_2', 'REMI9062_3'] },
+      }
+
+      for (const [name, want] of Object.entries(expected)) {
+        const order = await orderRow(name)
+        const hub = await listHandoffHub({ q: name, supplier: UNMAPPED_TAB })
+        const cards = [hub.pending.find(c => c.order.id === order.id)!, (await handoffCardFor(order.id))!]
+        for (const card of cards) {
+          expect(card.lines.map(l => l.line.shopifyLineId), name).toEqual(order.lines.filter(l => !isNonProductLine(l)).map(l => l.shopifyLineId))
+          expect(card.lines.map(l => [l.lineKey, l.taskKey]), name).toEqual(want.lineKeys.map((k, i) => [k, want.taskKeys[i]]))
+          for (const l of card.lines) expect((await loadTask(l.taskKey!))?.task.shopifyLineId, `${name} ${l.lineKey}`).toBe(l.line.shopifyLineId)
+        }
+      }
+
+      await prisma.designTask.delete({ where: { id: swap.ids[3] } })
+      expect((await handoffCardFor(swap.order.id))!.lines.map(l => [l.lineKey, l.taskKey])).toEqual([['REMI9062_1', 'REMI9062_2'], ['REMI9062_2', null]])
+    })
+
+    it('an order with nothing to put right (a Tip ahead of two mapped products): no key event, and a re-sync changes no task', async () => {
+      await mapVariant(ADVENT_VARIANT, (await prisma.supplierProduct.create({ data: { supplierId: SUP, sku: 'REMI14-ADVENT', baseCost: 21 } })).id)
+      await mapVariant(TOPPER_VARIANT, (await prisma.supplierProduct.create({ data: { supplierId: SUP, sku: 'REMI14-TOPPER-6IN', baseCost: 8 } })).id)
+      const node = orderOf('REMI9065', [TIP(), ADVENT(), TOPPER()])
+
+      expect((await sync(node)).errors).toEqual([])
+
+      const order = await orderRow('#REMI9065')
+      const first = await snapshot(order.id)
+      expect(first.map(t => [t.taskKey, t.events])).toEqual([['REMI9065_1', 1], ['REMI9065_2', 1]])
+      expect(await prisma.designTaskEvent.count({ where: { task: { orderId: order.id }, message: { startsWith: 'Đổi mã task' } } })).toBe(0)
+
+      expect((await sync(node)).errors).toEqual([])
+      expect(await syncDesignTasks(order.id)).toEqual({ created: 0, cancelled: 0, completed: 0, reopened: 0 })
+      expect(await snapshot(order.id)).toEqual(first)
+    })
+
+    it('an order edit adds a product line whose key a cancelled add-on task held: the sync creates its task without an error', async () => {
+      await sync(fixtureOrder('#REMI9002'))
+      const { order } = await legacyKeys('#REMI9002', { addOns: [1, 2], status: { 1: 'CANCELLED', 2: 'CANCELLED' } })
+      const edited = fixtureOrder('#REMI9002')
+      edited.lineItems.nodes.push({ ...ADVENT(), id: lineId(9002, 4) })
+
+      const result = await sync(edited)
+
+      expect(result.errors).toEqual([])
+      const tasks = await prisma.designTask.findMany({ where: { orderId: order.id } })
+      expect(Object.fromEntries(tasks.map(t => [t.shopifyLineId, [t.taskKey, t.status]]))).toEqual({
+        [lineId(9002, 1)]: ['REMI9002_1-addon', 'CANCELLED'],
+        [lineId(9002, 2)]: ['REMI9002_2-addon', 'CANCELLED'],
+        [lineId(9002, 3)]: ['REMI9002_1', 'NEW'],
+        [lineId(9002, 4)]: ['REMI9002_2', 'NEW'],
+      })
+    })
+
+    it('the worker claim refuses a render job queued for a _tb_design line, and still claims the control line', async () => {
+      const tbDesign = fixtureLine(lineId(9004, 1)).customAttributes.find((a: any) => a.key === '_tb_design')
+      await leggingsProduct(TB_PRODUCT, ['gid://shopify/ProductVariant/remi14-tb-with-name', 'gid://shopify/ProductVariant/remi14-tb-control'], [NAME_FIELD])
+      await sync(
+        leggingsOrder('REMI9014', TB_PRODUCT, 'gid://shopify/ProductVariant/remi14-tb-with-name', [{ key: 'Enter Name', value: 'Name One' }, tbDesign]),
+        leggingsOrder('REMI9012', TB_PRODUCT, 'gid://shopify/ProductVariant/remi14-tb-control', [{ key: 'Enter Name', value: 'Name One' }]),
+      )
+      const entry = await prisma.artworkEntry.findFirstOrThrow({ where: { storeId, shopifyProductId: TB_PRODUCT } })
+      // A job queued before the Teeinblue rule reached the render button.
+      const queued = async (name: string) => {
+        const order = await orderRow(name)
+        return prisma.artworkJob.create({ data: { kind: RENDER_LINE, entryId: entry.id, orderId: order.id, shopifyLineId: order.lines[0].shopifyLineId, printArea: 'Print' } })
+      }
+
+      expect(await renderClaimFor(await queued('#REMI9014'))).toEqual({ error: TEEINBLUE_REASON })
+      expect(await renderClaimFor(await queued('#REMI9012'))).toMatchObject({ target: { orderNumber: '#REMI9012', taskKey: 'REMI9012_1', printArea: 'Print' } })
     })
   })
 })

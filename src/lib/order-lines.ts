@@ -62,3 +62,38 @@ export function lineKeysOf(orderNumber: string, lines: KeyedLine[]): Map<string,
 export function lineKeyOf(orderNumber: string, lines: KeyedLine[], line: Pick<KeyedLine, 'shopifyLineId'>): string | null {
   return lineKeysOf(orderNumber, lines).get(line.shopifyLineId) ?? null
 }
+
+/** Kept tasks off the product lines move here when a product line needs their key: a line key ends in `_<n>`, this never does. */
+const OUT_OF_THE_WAY = '-addon'
+
+export type KeyedTask = { id: string; taskKey: string; shopifyLineId: string }
+export type TaskKeyMove = { id: string; from: string; to: string; productLine: boolean }
+
+/**
+ * What puts an order's design tasks back on its line keys (`keys` = lineKeysOf) once a line is reclassified after the order
+ * synced (2026-11: Reminiso add-ons and the hidden fee product became non-product lines, which shifts the numbering).
+ * A task on a product line takes that line's key, whatever its status. A task on any other line never holds one: it is
+ * removed when `untouched`, otherwise kept, and moved to "<key>-addon" (made unique) only when a product line needs its key.
+ */
+export function planTaskKeys(keys: Map<string, string>, tasks: Array<KeyedTask & { untouched: boolean }>): { remove: string[]; moves: TaskKeyMove[] } {
+  const needed = new Set(keys.values())
+  const taken = new Set(needed)
+  const remove: string[] = []
+  const moves: TaskKeyMove[] = []
+  const inTheWay: KeyedTask[] = []
+  for (const t of tasks) {
+    const key = keys.get(t.shopifyLineId)
+    if (key) {
+      if (t.taskKey !== key) moves.push({ id: t.id, from: t.taskKey, to: key, productLine: true })
+    } else if (t.untouched) remove.push(t.id)
+    else if (needed.has(t.taskKey)) inTheWay.push(t)
+    else taken.add(t.taskKey)
+  }
+  for (const t of inTheWay) {
+    let to = `${t.taskKey}${OUT_OF_THE_WAY}`
+    for (let n = 2; taken.has(to); n++) to = `${t.taskKey}${OUT_OF_THE_WAY}-${n}`
+    taken.add(to)
+    moves.push({ id: t.id, from: t.taskKey, to, productLine: false })
+  }
+  return { remove, moves }
+}

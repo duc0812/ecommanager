@@ -26,13 +26,13 @@ export function PreSendChecks({ c, canHandoff, onChanged, onError }: { c: Handof
     <div role="alert" className="p-sm rounded-lg border border-error/40 bg-error-container/40 flex flex-col gap-xs text-label-sm">
       <b className="text-on-error-container inline-flex items-center gap-xs"><Icon name="warning" className="text-[16px]" />Kiểm tra trước khi gửi xưởng</b>
       {remaps.map(l => (
-        <span key={`m-${l.taskKey}`} className="text-on-surface">
-          <span className="font-mono font-semibold">{l.taskKey}</span>: đang ghi <b>{l.line.supplier?.name} {l.line.supplierSku ?? ''}</b>, mapping hiện tại chọn <b>{l.mappingNow!.supplierName} {l.mappingNow!.sku}</b> (đơn vào trước khi đổi mapping)
+        <span key={`m-${l.lineKey}`} className="text-on-surface">
+          <span className="font-mono font-semibold">{l.lineKey}</span>: đang ghi <b>{l.line.supplier?.name} {l.line.supplierSku ?? ''}</b>, mapping hiện tại chọn <b>{l.mappingNow!.supplierName} {l.mappingNow!.sku}</b> (đơn vào trước khi đổi mapping)
         </span>
       ))}
       {sizes.map(l => (
-        <span key={`s-${l.taskKey}`} className="text-on-surface">
-          <span className="font-mono font-semibold">{l.taskKey}</span>: file {l.wrongSizeAreas.join(', ')} sai khổ template — mở task để sửa
+        <span key={`s-${l.lineKey}`} className="text-on-surface">
+          <span className="font-mono font-semibold">{l.lineKey}</span>: file {l.wrongSizeAreas.join(', ')} sai khổ template — mở task để sửa
         </span>
       ))}
       {remaps.length > 0 && canHandoff && (

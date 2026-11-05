@@ -23,7 +23,9 @@ export default function HubCard({ c, tabId, sheet, me, onOpenTask, onSheet, onCh
   const line = first.line
   const mockup = mockupFiles(line)[0]
   const photo = line.previewUrl ?? line.imageUrl
-  const warnText = view.warnings.map(w => `${w.taskKey}: ${HUB_WARNING_LABELS[w.code]}`).join(' · ')
+  const warnText = view.warnings.map(w => `${w.lineKey}: ${HUB_WARNING_LABELS[w.code]}`).join(' · ')
+  const taskKey = first.taskKey
+  const openTask = () => { if (taskKey) onOpenTask(taskKey) }
   const { send } = first
   const sendLine = [send.sku && `SKU ${send.sku}`, send.size && `Size ${send.size}`, send.color && `Màu ${send.color}`, `SL ${line.qty}`].filter(Boolean).join(' · ')
   const empty = <span className="w-full h-full grid place-items-center text-on-surface-variant"><Icon name="image" className="text-[24px]" /></span>
@@ -31,16 +33,18 @@ export default function HubCard({ c, tabId, sheet, me, onOpenTask, onSheet, onCh
   const shown = photo ? <img src={photo} alt="" loading="lazy" className="w-full h-full object-cover" /> : empty
 
   return (
-    <article aria-label={`Đơn ${order.orderNumber}`} onClick={() => onOpenTask(first.taskKey)}
-      className={`${cardClass} h-[172px] p-sm flex flex-col gap-xs cursor-pointer hover:border-secondary/50 overflow-hidden ${view.warnings.length ? 'ring-1 ring-error/60' : ''}`}>
+    <article aria-label={`Đơn ${order.orderNumber}`} onClick={openTask}
+      className={`${cardClass} h-[172px] p-sm flex flex-col gap-xs ${taskKey ? 'cursor-pointer' : ''} hover:border-secondary/50 overflow-hidden ${view.warnings.length ? 'ring-1 ring-error/60' : ''}`}>
       <div className="flex gap-sm flex-1 min-h-0">
         <div className="w-[88px] h-[88px] shrink-0 rounded-lg overflow-hidden border border-outline-variant/30 bg-surface-container-low">
           {mockup ? <ArtImg art={mockup} px={240} alt="" loading="lazy" className="w-full h-full object-cover" fallback={shown} /> : shown}
         </div>
         <div className="flex-1 min-w-0 flex flex-col gap-[2px] text-label-sm text-on-surface-variant">
           <span className="flex items-center gap-xs min-w-0">
-            <button type="button" onClick={e => { e.stopPropagation(); onOpenTask(first.taskKey) }} title="Mở task"
-              className="font-mono font-semibold text-body-sm text-secondary hover:underline truncate">{first.taskKey}</button>
+            {taskKey
+              ? <button type="button" onClick={e => { e.stopPropagation(); openTask() }} title="Mở task"
+                  className="font-mono font-semibold text-body-sm text-secondary hover:underline truncate">{first.lineKey}</button>
+              : <span title="Dòng chưa có task" className="font-mono font-semibold text-body-sm text-on-surface truncate">{first.lineKey}</span>}
             {tabId === UNMAPPED_TAB && <Pill tone="bad" icon="account_tree">Chưa mapping</Pill>}
             {view.mixed && <Pill tone="idle" icon="call_split">Nhiều xưởng</Pill>}
             <span className="ml-auto shrink-0 font-semibold text-on-surface" title={order.countryName ?? order.country ?? undefined}>{order.countryCode ?? order.country ?? '—'}</span>
@@ -52,7 +56,7 @@ export default function HubCard({ c, tabId, sheet, me, onOpenTask, onSheet, onCh
           {send.customName
             ? <span className="truncate" title={send.customName}>Custom Name: <b className="text-on-surface">{send.customName}</b></span>
             : line.customized && <span className="truncate text-amber-900" title="Đơn custom nhưng không tách được tên, mở task để xem">Custom Name: trống</span>}
-          {view.inDesign.length > 0 && <span className="truncate text-amber-900" title="Dòng này chưa duyệt design nên chưa gửi, các dòng đã xong vẫn gửi được">Đang làm design: {view.inDesign.map(l => l.taskKey).join(', ')}</span>}
+          {view.inDesign.length > 0 && <span className="truncate text-amber-900" title="Dòng này chưa duyệt design nên chưa gửi, các dòng đã xong vẫn gửi được">Đang làm design: {view.inDesign.map(l => l.lineKey).join(', ')}</span>}
         </div>
       </div>
       <div className="flex items-center gap-sm text-label-sm text-on-surface-variant min-w-0" onClick={e => e.stopPropagation()}>
