@@ -6,11 +6,13 @@ export type LineForClassification = {
 
 // Digital add-on products: no physical fulfillment, no supplier mapping, no design file.
 // Matched by Shopify product type when available, falling back to product title.
-const DIGITAL_PRODUCT_TYPES = ['custom text']
+// Reminiso sells its add-ons (Worry-Free Protection, Custom Name Add-on) as product type "Add-on";
+// their two titles stand in when the type is missing. Never matched by SKU prefix.
+const DIGITAL_PRODUCT_TYPES = ['custom text', 'add-on']
 const DIGITAL_PRODUCT_TITLES = ['custom text']
 // Checkout add-ons. Matched by title alone: a store can sell them as ordinary products, so they
 // may carry a SKU and inherit an unrelated product type (Package Protection ships as 'Jewelry').
-const ADD_ON_TITLES = ['tip', 'shipping protection', 'package protection']
+const ADD_ON_TITLES = ['tip', 'shipping protection', 'package protection', 'worry-free protection', 'custom name add-on']
 
 function normalize(value: string | null | undefined): string {
   return (value ?? '').toLowerCase().trim()

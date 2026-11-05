@@ -166,7 +166,15 @@ export async function syncDesignTasks(orderId: string): Promise<SyncResult> {
   const everyLine = TASK_FOR_EVERY_LINE.includes(order.pipelineStatus)
 
   for (const line of order.lines) {
-    if (isNonProductLine(line)) continue
+    if (isNonProductLine(line)) {
+      // A line classified as an add-on after its task was made: close the task nobody has started.
+      const stale = order.designTasks.find(t => t.shopifyLineId === line.shopifyLineId && t.status === 'NEW')
+      if (stale) {
+        await prisma.designTask.update({ where: { id: stale.id }, data: { status: 'CANCELLED', events: { create: { type: 'SYSTEM', message: 'Dòng là add-on, không phải sản phẩm — task tự huỷ' } } } })
+        cancelled++
+      }
+      continue
+    }
     const existing = order.designTasks.find(t => t.shopifyLineId === line.shopifyLineId)
     if (!line.resolvedSupplierId && !existing && (!everyLine || line.exportedAt || line.shopifyProductType === HIDDEN_FEE_PRODUCT_TYPE)) continue
     if (orderClosed || orderShipped) {
@@ -303,6 +311,8 @@ export type TaskDetail = {
   assignable: { id: string; name: string }[]; settings: DesignSettings; prevStatus: TaskStatus | null
   slots: string[]; driveConnected: boolean; library: TaskLibraryState | null; autoRender: RenderJobView | null
   driveFolder: { url: string } | null
+  /** The line carries a Teeinblue design reference (`_tb_design`), which auto-render cannot draw. */
+  teeinblue: boolean
 }
 
 /**
@@ -717,5 +727,6 @@ export async function loadTask(taskKey: string): Promise<TaskDetail | null> {
     driveFolder: task.driveFolderUrl ? { url: task.driveFolderUrl } : null,
     library,
     autoRender: await latestRenderJob(task.orderId, task.shopifyLineId),
+    teeinblue: hasTeeinblueDesign(parseAttributes(orderLine?.customAttributesJson ?? null)),
   }
 }

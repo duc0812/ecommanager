@@ -12,7 +12,7 @@ export default function AutoRenderBar({ detail, onChanged }: { detail: TaskDetai
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const check = autoRenderEligibility({
-    taskStatus: task.status, hasTemplate: !!template, slots, library, personalization: line.personalization, job,
+    taskStatus: task.status, hasTemplate: !!template, slots, library, personalization: line.personalization, job, teeinblue: detail.teeinblue,
   })
   const running = job?.status === 'QUEUED' || job?.status === 'RUNNING'
   const refresh = useRef(onChanged)

@@ -95,6 +95,7 @@ export type TaskDetail = {
   driveFolder?: { url: string } | null
   library: TaskLibraryState | null
   autoRender: RenderJobView | null
+  teeinblue?: boolean
   handoff?: HandoffState | null
 }
 

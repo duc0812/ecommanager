@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { isNonProductLine, productLinesOnly } from '@/lib/order-lines'
+import { isNonProductLine, lineKeysOf, productLinesOnly } from '@/lib/order-lines'
 
 describe('isNonProductLine', () => {
   it('treats sku-less Tip line as non-product', () => {
@@ -50,6 +50,40 @@ describe('isNonProductLine', () => {
 
   it('keeps sku-less lines with other titles as product lines', () => {
     expect(isNonProductLine({ sku: null, productTitle: 'Mystery Gift' })).toBe(false)
+  })
+})
+
+describe('isNonProductLine: Reminiso add-ons (product type "Add-on")', () => {
+  it('treats the product type Add-on as non-product, SKU and title aside', () => {
+    expect(isNonProductLine({ sku: 'RM-ADDON-PROTECT', productTitle: 'Worry-Free Protection', shopifyProductType: 'Add-on' })).toBe(true)
+    expect(isNonProductLine({ sku: 'RM-ADDON-NAME', productTitle: 'Custom Name Add-on', shopifyProductType: 'Add-on' })).toBe(true)
+    expect(isNonProductLine({ sku: null, productTitle: 'Gift wrap', shopifyProductType: 'Add-on' })).toBe(true)
+  })
+
+  it('matches the type ignoring case and spaces', () => {
+    expect(isNonProductLine({ sku: 'X', productTitle: 'Anything', shopifyProductType: '  ADD-ON ' })).toBe(true)
+  })
+
+  it('falls back to the two Reminiso titles when the product type is missing', () => {
+    expect(isNonProductLine({ sku: 'RM-ADDON-PROTECT', productTitle: ' worry-free PROTECTION ', shopifyProductType: null })).toBe(true)
+    expect(isNonProductLine({ sku: 'RM-ADDON-NAME', productTitle: 'Custom Name Add-on' })).toBe(true)
+  })
+
+  it('does not classify by SKU prefix or by a title that merely contains add-on', () => {
+    expect(isNonProductLine({ sku: 'RM-ADDON-NAME', productTitle: 'Quilted Tote Bag', shopifyProductType: 'Tote Bag' })).toBe(false)
+    expect(isNonProductLine({ sku: 'RM-X', productTitle: 'Custom Name Add-on Mug', shopifyProductType: 'Mug' })).toBe(false)
+    expect(isNonProductLine({ sku: null, productTitle: 'Add-on Collection Tee', shopifyProductType: 'Apparel' })).toBe(false)
+  })
+})
+
+describe('lineKeysOf with Reminiso add-ons', () => {
+  it('numbers the product lines only, so a tote after two add-ons is _1', () => {
+    const lines = [
+      { shopifyLineId: 'a', linePosition: 1, sku: 'RM-ADDON-PROTECT', productTitle: 'Worry-Free Protection', shopifyProductType: 'Add-on' },
+      { shopifyLineId: 'b', linePosition: 2, sku: 'RM-ADDON-NAME', productTitle: 'Custom Name Add-on', shopifyProductType: 'Add-on' },
+      { shopifyLineId: 'c', linePosition: 3, sku: null, productTitle: 'Quilted Tote Bag', shopifyProductType: 'Tote Bag' },
+    ]
+    expect(Array.from(lineKeysOf('#REMI1147', lines))).toEqual([['c', 'REMI1147_1']])
   })
 })
 

@@ -4,7 +4,9 @@ import path from 'path'
 import { prisma } from '@/lib/db'
 import { saveStoreCredential } from '@/lib/store-connections'
 import { syncStoreOrders } from '@/lib/shopify-order-sync'
-import { listTasks } from '@/lib/design-tasks'
+import { listTasks, loadTask, syncDesignTasks } from '@/lib/design-tasks'
+import { loadWorkspace } from '@/lib/design-studio'
+import { runAutoFulfill } from '@/lib/fulfillment/auto-fulfill'
 import { queueRenderLine, queueScheduledRenders } from '@/lib/repos/artwork-render'
 import { TEEINBLUE_REASON } from '@/lib/artwork-render-eligibility'
 import { isAutoNotRendered, needsArtwork } from '@/app/design-studio/components/model'
@@ -24,6 +26,7 @@ const SUP = 'sup_remi14'
 const TPL = 'tpl_remi14'
 const ADVENT_VARIANT = 'gid://shopify/ProductVariant/67881906831645'
 const TOPPER_VARIANT = 'gid://shopify/ProductVariant/67882273276189'
+const TOTE_VARIANT = 'gid://shopify/ProductVariant/67920004088093'
 const TB_PRODUCT = 'gid://shopify/Product/remi14-tb'
 const TB_ART_ONLY_PRODUCT = 'gid://shopify/Product/remi14-tb-art-only'
 const ART_SHA = 'remi14-art-'
@@ -34,13 +37,16 @@ const NAME_FIELD = { field: 'Enter Name', layer: '@Enter Name', sample: 'Sample'
 let storeId = ''
 const realFetch = global.fetch
 let served: any[] = []
+let servedFulfillmentOrders: any[] = []
 
 function installFetch() {
   global.fetch = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
     const query = String(JSON.parse(String(init?.body ?? '{}')).query ?? '')
     const data = query.includes('ShopInfo')
       ? { shop: { ianaTimezone: 'America/Chicago', timezoneAbbreviation: 'CST' } }
-      : { orders: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: served } }
+      : query.includes('fulfillmentOrders')
+        ? { orders: { nodes: servedFulfillmentOrders } }
+        : { orders: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: served } }
     return new Response(JSON.stringify({ data }), { status: 200, headers: { 'content-type': 'application/json' } })
   }) as unknown as typeof fetch
 }
@@ -53,6 +59,11 @@ const ours = <T extends { orderNumber: string }>(rows: T[]) => rows.filter(r => 
 
 async function mapVariant(shopifyVariantId: string, supplierProductId: string) {
   await prisma.variantManualMapping.create({ data: { shopifyVariantId, shopifyProductTitle: 'Reminiso test', supplierProductId } })
+}
+
+async function mapTote() {
+  const tote = await prisma.supplierProduct.create({ data: { supplierId: SUP, sku: 'REMI14-TOTE-L', baseCost: 14 } })
+  await mapVariant(TOTE_VARIANT, tote.id)
 }
 
 async function wipe() {
@@ -154,7 +165,7 @@ describe('Reminiso order lines', () => {
 
     const task = await taskFor(order.id, tote.shopifyLineId)
     expect(task).toMatchObject({ status: 'NEW', readiness: 'MANUAL', supplierSnapshot: null })
-    expect(task!.taskKey.startsWith('REMI9002_')).toBe(true)
+    expect(task!.taskKey).toBe('REMI9002_1')
     const row = (await listTasks({ taskKeys: [task!.taskKey] }))[0]
     expect(row).toMatchObject({ sku: null, unmapped: true, orderNumber: '#REMI9002' })
   })
@@ -230,8 +241,134 @@ describe('Reminiso order lines', () => {
       await expect(queueRenderLine(k, ACTOR), label).rejects.toMatchObject({ status: 409, message: TEEINBLUE_REASON })
     }
 
+    expect((await loadTask(control))!.teeinblue).toBe(false)
+    for (const [label, k] of teeinblue) expect((await loadTask(k))!.teeinblue, label).toBe(true)
+
     const queued = (await queueScheduledRenders()).queued.map(q => q.taskKey)
     expect(queued).toContain(control)
     for (const [label, k] of teeinblue) expect(queued, label).not.toContain(k)
+  })
+  describe('add-on lines (product type "Add-on")', () => {
+    const forTitle = () => fixtureLine(lineId(9002, 2)).customAttributes.find((a: any) => a.key === 'For').value
+
+    it('are not product lines: the unmapped tote alone gets a task and holds the order in PENDING_MAPPING', async () => {
+      const result = await sync(fixtureOrder('#REMI9002'))
+
+      expect(result).toMatchObject({ totalSynced: 1, withUnmappedSku: 1, errors: [] })
+      const order = await orderRow('#REMI9002')
+      const [protect, nameAddOn, tote] = order.lines
+      expect(order.pipelineStatus).toBe('PENDING_MAPPING')
+      const tasks = await prisma.designTask.findMany({ where: { orderId: order.id } })
+      expect(tasks.map(t => [t.shopifyLineId, t.taskKey])).toEqual([[tote.shopifyLineId, 'REMI9002_1']])
+      for (const l of [protect, nameAddOn]) expect(l).toMatchObject({ resolvedSupplierId: null, resolvedBaseCost: 0 })
+      expect(tote).toMatchObject({ resolvedSupplierId: null, resolvedBaseCost: null })
+      expect(await prisma.orderLine.count({ where: { orderId: order.id } })).toBe(3)
+      expect(attrsOf(protect).map((a: any) => a.key)).toEqual(['_product_url'])
+      expect(attrsOf(nameAddOn).map((a: any) => a.key)).toEqual(['For', 'Custom Name', '_product_url'])
+      expect(attrsOf(nameAddOn).find((a: any) => a.key === 'Custom Name').value).toBe('Name One')
+    })
+
+    it('leave the order to the mapped tote: PENDING_DESIGN, one task, and the add-on summary Design Studio shows', async () => {
+      await mapTote()
+      const result = await sync(fixtureOrder('#REMI9002'))
+
+      expect(result).toMatchObject({ totalSynced: 1, withUnmappedSku: 0, errors: [] })
+      const order = await orderRow('#REMI9002')
+      expect(order).toMatchObject({ pipelineStatus: 'PENDING_DESIGN', defaultSupplierId: SUP })
+      const tasks = await prisma.designTask.findMany({ where: { orderId: order.id } })
+      expect(tasks).toHaveLength(1)
+      expect(tasks[0]).toMatchObject({ shopifyLineId: order.lines[2].shopifyLineId, supplierSnapshot: 'Remi14 Sup' })
+
+      const workspace = (await loadWorkspace(order.id))!
+      expect(workspace.lines.map(l => l.isNonProduct)).toEqual([true, true, false])
+      expect(workspace.order.addOns).toEqual([
+        { title: 'Worry-Free Protection', variantTitle: null, qty: 1, details: '' },
+        { title: 'Custom Name Add-on', variantTitle: null, qty: 1, details: `For: ${forTitle()}, Custom Name: Name One` },
+      ])
+    })
+
+    it("alone in an order behave like the first store's Tip: no error, no task, the same state", async () => {
+      const base = fixtureOrder('#REMI9002')
+      const addOnOnly = { ...base, id: 'gid://shopify/Order/remi14-REMI9021', name: '#REMI9021',
+        lineItems: { nodes: base.lineItems.nodes.slice(0, 2).map((l: any, i: number) => ({ ...l, id: `gid://shopify/LineItem/remi14-REMI9021-${i + 1}` })) } }
+      const tipOnly = { ...structuredClone(base), id: 'gid://shopify/Order/remi14-REMI9022', name: '#REMI9022',
+        lineItems: { nodes: [{ ...structuredClone(base.lineItems.nodes[0]), id: 'gid://shopify/LineItem/remi14-REMI9022-1', sku: null, title: 'Tip', variantTitle: null,
+          customAttributes: [], product: { id: 'gid://shopify/Product/remi14-tip', tags: [], productType: null, onlineStoreUrl: null, featuredImage: null },
+          variant: { id: 'gid://shopify/ProductVariant/remi14-tip', image: null, selectedOptions: [] } }] } }
+
+      const result = await sync(addOnOnly, tipOnly)
+
+      expect(result).toMatchObject({ totalSynced: 2, withUnmappedSku: 0, errors: [] })
+      const state = async (name: string) => {
+        const o = await orderRow(name)
+        return { pipelineStatus: o.pipelineStatus, designReady: o.designReady, orderType: o.orderType, defaultSupplierId: o.defaultSupplierId, tasks: await prisma.designTask.count({ where: { orderId: o.id } }) }
+      }
+      expect(await state('#REMI9021')).toEqual(await state('#REMI9022'))
+      expect(await state('#REMI9021')).toEqual({ pipelineStatus: 'READY_TO_PRODUCTION', designReady: true, orderType: 'UNKNOWN', defaultSupplierId: null, tasks: 0 })
+    })
+
+    it('synced before the rule are put right by the normal sync: NEW tasks on them close, started ones stay, PENDING_MAPPING clears', async () => {
+      await mapTote()
+      await sync(fixtureOrder('#REMI9002'))
+      const order = await orderRow('#REMI9002')
+      const [protect, nameAddOn, tote] = order.lines
+      // The order as it was while add-ons still counted as product lines: three tasks numbered 1-3, held in PENDING_MAPPING by the add-ons.
+      await prisma.order.update({ where: { id: order.id }, data: { pipelineStatus: 'PENDING_MAPPING' } })
+      await prisma.orderLine.updateMany({ where: { id: { in: [protect.id, nameAddOn.id] } }, data: { resolvedBaseCost: null } })
+      await prisma.designTask.update({ where: { taskKey: 'REMI9002_1' }, data: { taskKey: 'REMI9002_3' } })
+      const legacy = (shopifyLineId: string, taskKey: string, status: string) => prisma.designTask.create({
+        data: { orderId: order.id, shopifyLineId, taskKey, status, events: { create: { type: 'SYSTEM', message: 'Đơn vào từ Shopify — tạo task' } } },
+      })
+      await legacy(protect.shopifyLineId, 'REMI9002_1', 'NEW')
+      await legacy(nameAddOn.shopifyLineId, 'REMI9002_2', 'DOING')
+      const taskState = async () => Object.fromEntries((await prisma.designTask.findMany({ where: { orderId: order.id }, include: { events: true } })).map(t => [t.taskKey, [t.status, t.events.length]]))
+
+      const sweep = await syncDesignTasks(order.id)
+
+      expect(sweep).toMatchObject({ created: 0, cancelled: 1 })
+      expect(await taskState()).toEqual({ REMI9002_1: ['CANCELLED', 2], REMI9002_2: ['DOING', 1], REMI9002_3: ['NEW', 1] })
+      const closing = await prisma.designTaskEvent.findFirstOrThrow({ where: { task: { taskKey: 'REMI9002_1' }, type: 'SYSTEM' }, orderBy: { createdAt: 'desc' } })
+      expect(closing.message).toContain('add-on')
+      expect((await orderRow('#REMI9002')).pipelineStatus).toBe('PENDING_MAPPING')
+
+      const result = await sync(fixtureOrder('#REMI9002'))
+
+      expect(result).toMatchObject({ totalSynced: 1, errors: [] })
+      const after = await orderRow('#REMI9002')
+      expect(after.pipelineStatus).toBe('PENDING_DESIGN')
+      expect(after.lines.map(l => l.resolvedBaseCost)).toEqual([0, 0, 14])
+      expect(await taskState()).toEqual({ REMI9002_1: ['CANCELLED', 2], REMI9002_2: ['DOING', 1], REMI9002_3: ['NEW', 1] })
+      expect(await syncDesignTasks(order.id)).toMatchObject({ created: 0, cancelled: 0 })
+      expect((await prisma.designTask.findUniqueOrThrow({ where: { taskKey: 'REMI9002_3' } })).shopifyLineId).toBe(tote.shopifyLineId)
+    })
+
+    it('are fulfilled with the product when it ships, or closed without tracking on their own fulfillment order', async () => {
+      await mapTote()
+      await sync(fixtureOrder('#REMI9002'))
+      const order = await orderRow('#REMI9002')
+      const [protect, nameAddOn, tote] = order.lines
+      await prisma.shipment.create({ data: { orderId: order.id, projectId: PROJECT, lineKey: 'REMI9002_1', shopifyLineId: tote.shopifyLineId } })
+      const foLine = (id: string, line: { shopifyLineId: string; sku: string | null }) => ({ id, remainingQuantity: 1, lineItem: { id: line.shopifyLineId, sku: line.sku } })
+      servedFulfillmentOrders = [{
+        id: order.id, name: '#REMI9002', createdAt: '2026-11-02T12:00:00Z', displayFulfillmentStatus: 'UNFULFILLED',
+        fulfillmentOrders: { nodes: [
+          { id: 'gid://shopify/FulfillmentOrder/remi14-1', status: 'OPEN', lineItems: { nodes: [foLine('fo-tote', tote), foLine('fo-name', nameAddOn)] } },
+          { id: 'gid://shopify/FulfillmentOrder/remi14-2', status: 'OPEN', lineItems: { nodes: [foLine('fo-protect', protect)] } },
+        ] },
+      }]
+
+      const summary = await runAutoFulfill({
+        shop: SHOP, accessToken: 'token-remi14', storeId, sheets: [],
+        sheetData: [{ name: 'Sheet', groups: new Map([['REMI9002', [{ lineKey: 'REMI9002_1', tracking: 'TRK1' }]]]) }],
+        minAgeDays: 0, apply: false, now: new Date('2026-11-06T00:00:00Z'),
+      })
+
+      expect(summary.rows).toHaveLength(1)
+      expect(summary.rows[0]).toMatchObject({ baseOrder: 'REMI9002', status: 'will_fulfill', fulfilledLines: 3 })
+      expect(summary.rows[0].fulfillments).toEqual([
+        { tracking: 'TRK1', lineKeys: ['REMI9002_1'], lineCount: 2 },
+        { tracking: '', lineKeys: [], lineCount: 1, addOn: true },
+      ])
+    })
   })
 })

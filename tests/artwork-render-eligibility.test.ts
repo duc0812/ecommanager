@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { autoRenderEligibility, customerValues, renderFields, type AutoRenderInput } from '@/lib/artwork-render-eligibility'
+import { autoRenderEligibility, customerValues, hasTeeinblueDesign, renderFields, TEEINBLUE_REASON, type AutoRenderInput } from '@/lib/artwork-render-eligibility'
 
 const layer = (field: string) => ({ field, layer: `@${field}`, fit: 'shrink' })
 const base: AutoRenderInput = {
@@ -28,6 +28,14 @@ describe('auto render eligibility', () => {
     expect(autoRenderEligibility({ ...base, hasTemplate: false }).reason).toBe('Dòng chưa có template in')
     expect(autoRenderEligibility({ ...base, slots: [] }).reason).toBe('Template không có vùng in')
     expect(autoRenderEligibility({ ...base, taskStatus: 'DONE' }).reason).toBe('Task đã đóng')
+  })
+
+  it('refuses a Teeinblue line with the reason the button shows, whatever the library holds', () => {
+    expect(autoRenderEligibility({ ...base, teeinblue: true })).toMatchObject({ ok: false, busy: false, reason: TEEINBLUE_REASON })
+    expect(autoRenderEligibility({ ...base, library: { ...base.library!, layers: [] }, personalization: [], teeinblue: true }).ok).toBe(false)
+    expect(autoRenderEligibility({ ...base, teeinblue: false }).ok).toBe(true)
+    expect(hasTeeinblueDesign([{ key: 'Enter Name' }, { key: '_tb_design' }])).toBe(true)
+    expect(hasTeeinblueDesign([{ key: 'Enter Name' }, { key: '_design' }])).toBe(false)
   })
 
   it('is busy while a job is queued or running, and can retry after DONE or FAILED', () => {
