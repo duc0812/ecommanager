@@ -38,7 +38,7 @@ export const TEXT_TONE: Record<Tone, string> = {
 }
 
 export const READY_META: Record<Readiness, { label: string; tone: Tone; icon: string }> = {
-  AUTO: { label: 'Tự động đạt', tone: 'ok', icon: 'bolt' },
+  AUTO: { label: 'Auto - Not Render', tone: 'ok', icon: 'bolt' },
   LOW: { label: 'Cần chỉnh', tone: 'warn', icon: 'tune' },
   MANUAL: { label: 'Làm tay', tone: 'idle', icon: 'draw' },
 }

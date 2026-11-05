@@ -287,6 +287,8 @@ export type TaskRow = {
   fromLibrary: boolean
   /** No supplier yet: mapping comes first. */
   unmapped: boolean
+  /** A print file is on the task: an AUTO line has been rendered, or someone uploaded one. */
+  hasPrint: boolean
 }
 
 export type TaskProfile = { key: string; status: LibraryProductStatus; layerMap: LayerMapEntry[] }
@@ -545,6 +547,12 @@ export async function listTasks(f: { statuses?: TaskStatus[]; readiness?: Readin
   const users = assigneeIds.length ? await prisma.appUser.findMany({ where: { id: { in: assigneeIds } }, select: { id: true, name: true } }) : []
   const nameById = new Map(users.map(u => [u.id, u.name]))
 
+  const printed = await prisma.designArtwork.findMany({
+    where: { orderId: { in: Array.from(new Set(tasks.map(t => t.orderId))) }, kind: 'PRINT', removedAt: null },
+    select: { orderId: true, shopifyLineId: true },
+  })
+  const printedLines = new Set(printed.map(a => `${a.orderId}\u0000${a.shopifyLineId}`))
+
   const q = f.q?.trim().toLowerCase()
   const rows: TaskRow[] = []
   for (const task of tasks) {
@@ -565,6 +573,7 @@ export async function listTasks(f: { statuses?: TaskStatus[]; readiness?: Readin
       variantTitle: line.variantTitle, previewUrl: line.previewCdnUrl, imageUrl: safeHttpUrl(line.imageUrl), supplierName: task.supplierSnapshot,
       customized: line.customized, storeName: task.order.store.project?.name ?? task.order.store.shop,
       fromLibrary: task.fromLibrary, unmapped: !line.resolvedSupplierId,
+      hasPrint: printedLines.has(`${task.orderId}\u0000${task.shopifyLineId}`),
     })
   }
 

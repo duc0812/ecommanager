@@ -1,7 +1,7 @@
 'use client'
 import { useState } from 'react'
 import type { Readiness, TaskRow, TaskStatus } from './types'
-import { timeLeft } from './model'
+import { readyLabel, timeLeft } from './model'
 import { Avatar, ErrorBanner, Icon, Note, Pill, READY_META, TEXT_TONE, btn, card } from './ui'
 
 export type QueueFilter = 'ALL' | Readiness
@@ -49,8 +49,8 @@ function QueueRow({ t, selected, onSelect }: { t: TaskRow; selected: boolean; on
           </span>
         </span>
         <span className="text-label-sm text-on-surface-variant truncate">{t.productTitle}{t.variantTitle ? ` · ${t.variantTitle}` : ''}</span>
-        <span className="flex items-center gap-xs">
-          <Pill tone={ready.tone} icon={ready.icon}>{ready.label}</Pill>
+        <span className="flex items-center gap-xs flex-wrap">
+          <Pill tone={ready.tone} icon={ready.icon}>{readyLabel(t, ready.label)}</Pill>
           {t.fromLibrary && (t.status === 'NEW' || t.status === 'ASSIGNED') && <Pill tone="brand" icon="inventory_2">Thư viện</Pill>}
           {t.unmapped && <Pill tone="bad" icon="account_tree">Chưa mapping</Pill>}
           {t.assigneeName && <span className="ml-auto"><Avatar name={t.assigneeName} /></span>}
@@ -60,7 +60,9 @@ function QueueRow({ t, selected, onSelect }: { t: TaskRow; selected: boolean; on
   )
 }
 
-export default function Queue({ tasks, sel, onSelect, q, onQ, loading, error, retrying, emptyText, onClearFilters, filter, onFilter, counts, mine, onMine }: {
+export default function Queue({ tasks, sel, onSelect, q, onQ, loading, error, retrying, emptyText, onClearFilters, filter, onFilter, counts, mine, onMine, autoLabel = READY_META.AUTO.label }: {
+  /** The AUTO chip's name: in Duyệt mẫu every AUTO line is already rendered. */
+  autoLabel?: string
   tasks: TaskRow[]; sel: string | null; onSelect: (key: string) => void
   q: string; onQ: (v: string) => void; loading: boolean; error: string; retrying: boolean
   emptyText: string; onClearFilters: (() => void) | null
@@ -88,7 +90,7 @@ export default function Queue({ tasks, sel, onSelect, q, onQ, loading, error, re
         <div className="flex flex-wrap gap-xs">
           {(['ALL', 'AUTO', 'LOW', 'MANUAL'] as QueueFilter[]).map(f => (
             <button key={f} type="button" aria-pressed={filter === f} onClick={() => onFilter(f)} className={chipCls(filter === f)}>
-              {f === 'ALL' ? 'Tất cả' : READY_META[f].label}<span className="opacity-75 font-normal">{counts[f]}</span>
+              {f === 'ALL' ? 'Tất cả' : f === 'AUTO' ? autoLabel : READY_META[f].label}<span className="opacity-75 font-normal">{counts[f]}</span>
             </button>
           ))}
         </div>

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { prisma } from '@/lib/db'
-import { releaseLibraryTask, syncDesignTasks } from '@/lib/design-tasks'
+import { listTasks, releaseLibraryTask, syncDesignTasks } from '@/lib/design-tasks'
 import { listHandoffHub } from '@/lib/supplier-handoff'
 
 const ORDER_ID = 'gid://test/Order/dt-sync-1'
@@ -244,6 +244,17 @@ describe('every line of an order not sent yet gets a task (owner 11/05/2026)', (
       await syncDesignTasks(ID)
       await expect(releaseLibraryTask('DTE1_1', admin as any)).rejects.toThrow('chưa mapping')
     })
+  })
+
+  it('a task row says whether a print file is on it', async () => {
+    await makeOrder('PENDING_DESIGN', { resolvedSupplierId: SUP })
+    await syncDesignTasks(ID)
+    const row = async () => (await listTasks({ taskKeys: ['DTE1_1'] }))[0]
+    expect((await row()).hasPrint).toBe(false)
+    const a = await prisma.designArtwork.create({ data: { orderId: ID, shopifyLineId: 'e1', kind: 'PRINT', printArea: 'Print', version: 1, fileName: 'p.png', size: 1, mimeType: 'image/png' } })
+    expect((await row()).hasPrint).toBe(true)
+    await prisma.designArtwork.update({ where: { id: a.id }, data: { removedAt: new Date() } })
+    expect((await row()).hasPrint).toBe(false)
   })
 
   it('still closes a task of a line given a link by hand', async () => {

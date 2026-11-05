@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  previewImages, timeLeft, allSlotsFilled, taskImages, canRemoveArtwork, canMove, retryDelay, isRetryable, emptyQueueText, mockupFiles, newestFor, printFiles, printPartNames, versionsFor,
-} from '@/app/design-studio/components/model'
+  previewImages, timeLeft, allSlotsFilled, taskImages, canRemoveArtwork, canMove, retryDelay, isRetryable, emptyQueueText, mockupFiles, newestFor, printFiles, printPartNames, versionsFor, isAutoNotRendered, readyLabel } from '@/app/design-studio/components/model'
 
 const NOW = Date.parse('2026-10-10T12:00:00Z')
 
@@ -125,5 +124,29 @@ describe('previewImages', () => {
     expect(previewImages(line({ imageUrl: 'https://cdn/product.png', imageIsVariant: false }))).toEqual([{ url: 'https://cdn/product.png', label: 'Ảnh sản phẩm Shopify (variant không có ảnh riêng)' }])
     expect(previewImages(line({ imageUrl: 'https://cdn/old.png' }))[0].label).toContain('Nạp lại từ Shopify')
     expect(previewImages(line({}))).toEqual([])
+  })
+})
+
+describe('Auto - Not Render', () => {
+  const t = (over: { readiness?: string; status?: string; hasPrint?: boolean }) => ({ readiness: 'AUTO', status: 'NEW', hasPrint: false, ...over }) as any
+
+  it('counts only auto work with nothing rendered', () => {
+    expect(isAutoNotRendered(t({}))).toBe(true)
+    expect(isAutoNotRendered(t({ status: 'ASSIGNED' }))).toBe(true)
+    expect(isAutoNotRendered(t({ status: 'DOING' }))).toBe(true)
+  })
+
+  it('leaves out what is rendered, in review or back from it, and other readiness', () => {
+    expect(isAutoNotRendered(t({ hasPrint: true }))).toBe(false)
+    expect(isAutoNotRendered(t({ status: 'REVIEW' }))).toBe(false)
+    expect(isAutoNotRendered(t({ status: 'REJECTED', hasPrint: true }))).toBe(false)
+    expect(isAutoNotRendered(t({ status: 'DONE' }))).toBe(false)
+    expect(isAutoNotRendered(t({ readiness: 'MANUAL' }))).toBe(false)
+  })
+
+  it('names a rendered line for what it is', () => {
+    expect(readyLabel(t({ hasPrint: true }), 'Auto - Not Render')).toBe('Auto - Đã render')
+    expect(readyLabel(t({}), 'Auto - Not Render')).toBe('Auto - Not Render')
+    expect(readyLabel(t({ readiness: 'MANUAL', hasPrint: true }), 'Làm tay')).toBe('Làm tay')
   })
 })

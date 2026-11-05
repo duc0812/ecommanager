@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'rea
 import { createPortal } from 'react-dom'
 import Link from 'next/link'
 import type { TaskDetail, TransitionBody } from './types'
-import { OWNED_MOVES, allSlotsFilled, canMove, copyText, filesMissingHint, postJson, productPageUrl, sourceEngine, taskUrl, timeLeft } from './model'
+import { OWNED_MOVES, allSlotsFilled, canMove, copyText, filesMissingHint, postJson, productPageUrl, readyLabel, sourceEngine, taskUrl, timeLeft } from './model'
 import { buildChecklist } from './checklist'
 import type { QaResult } from './ai-qa'
 import { pushChipLabel } from '@/lib/handoff-shared'
@@ -214,7 +214,7 @@ export default function TaskHeader({ detail, qa, holdCount, refreshing, onRefres
             <Pill tone={status.tone} size="md">{status.label}</Pill>
             <Pill tone={ready.tone} icon={ready.icon} size="md"
               title={detail.profile?.status === 'READY' ? 'Hồ sơ đủ: mapping, template và artwork gốc đã đủ cho mọi biến thể' : 'Độ sẵn sàng của task'}>
-              {ready.label}{detail.profile?.status === 'READY' ? ' · hồ sơ đủ' : ''}
+              {readyLabel({ readiness: task.readiness, hasPrint: task.hasPrint }, ready.label)}{detail.profile?.status === 'READY' ? ' · hồ sơ đủ' : ''}
             </Pill>
             <Pill tone={left.tone} icon={left.icon} size="md"
               title={`Hạn: ${task.dueAt ? fmtDateTime(task.dueAt) : 'chưa đặt'} · SLA ${task.slaHours}h · KPI ${task.kpi} · đặt ${fmtDate(task.placedAt)}`}>

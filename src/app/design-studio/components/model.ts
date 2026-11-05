@@ -20,6 +20,17 @@ export function canTransition(from: TaskStatus, to: TaskStatus, isLeader: boolea
   }
 }
 
+/** Auto work still to do: nothing rendered yet. A rendered line is in Duyệt mẫu, or back from it, so it is not counted here. */
+export function isAutoNotRendered(t: Pick<TaskRow, 'readiness' | 'status' | 'hasPrint'>): boolean {
+  return t.readiness === 'AUTO' && !t.hasPrint && (t.status === 'NEW' || t.status === 'ASSIGNED' || t.status === 'DOING')
+}
+
+/** The readiness label of one task: an AUTO line says whether it was rendered. */
+export function readyLabel(t: Pick<TaskRow, 'readiness' | 'hasPrint'>, base: string): string {
+  if (t.readiness !== 'AUTO') return base
+  return t.hasPrint ? 'Auto - Đã render' : base
+}
+
 export function canMove(detail: Pick<TaskDetail, 'task' | 'me'>, to: TaskStatus): boolean {
   const { task, me } = detail
   if (!canTransition(task.status, to, me.isLeader, me.canApprove)) return false
