@@ -163,7 +163,7 @@ async function connectStore(body: unknown, secrets: string[]): Promise<NextRespo
         if (e.shopifyError === 'shop_not_permitted') {
           // A store that can already connect keeps what it has until the new app is proven: nothing is written for a pair that cannot mint.
           if (hasUsableCredential(stored)) {
-            return fail(409, `App của Client ID vừa nhập chưa được cài trên store ${input.shop} (Shopify trả về shop_not_permitted), nên chưa đổi được. Kết nối hiện tại vẫn được giữ nguyên. Muốn chuyển sang app khác, hãy ngắt kết nối store này trước rồi kết nối lại.`)
+            return fail(409, `App của Client ID vừa nhập chưa được cài trên store ${input.shop} (Shopify trả về shop_not_permitted), nên chưa đổi được. Kết nối hiện tại vẫn được giữ nguyên. Muốn chuyển sang app khác, hãy bấm "Ngắt kết nối" trên thẻ store này rồi kết nối lại với app mới.`)
           }
           const pending = await saveStore({
             existing, input, snapshot: null, orderPrefix: null, linkProjectId,

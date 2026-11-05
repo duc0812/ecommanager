@@ -30,13 +30,14 @@ const AUTH_LABELS: Record<string, string> = { CLIENT_CREDENTIALS: 'Client creden
 const input = 'mt-xs w-full border border-outline-variant/40 bg-surface-container-lowest rounded-lg px-sm py-xs text-body-sm text-on-surface'
 const primaryButton = 'bg-secondary text-on-secondary px-lg py-sm rounded-lg text-label-md disabled:opacity-40'
 const outlineButton = 'border border-outline-variant/40 text-on-surface px-md py-xs rounded-lg text-label-sm disabled:opacity-40'
+const dangerButton = 'flex items-center gap-xs border border-error/30 text-error px-md py-xs rounded-lg text-label-sm hover:bg-error-container/30 disabled:opacity-40'
 
 const usDate = (iso: string) => new Date(iso).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' })
 const usDay = (ymd: string) => { const [y, m, d] = ymd.split('-'); return `${m}/${d}/${y}` }
 
-async function send(url: string, method: 'POST' | 'PATCH', body: unknown): Promise<{ ok: boolean; error: string; data: any }> {
+async function send(url: string, method: 'POST' | 'PATCH' | 'DELETE', body?: unknown): Promise<{ ok: boolean; error: string; data: any }> {
   try {
-    const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    const res = await fetch(url, { method, ...(body !== undefined ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {}) })
     const data = await res.json().catch(() => ({}))
     return { ok: res.ok, error: data.error ?? `Lỗi HTTP ${res.status}`, data }
   } catch {
@@ -120,6 +121,12 @@ export default function StoreConnectionsCard() {
   }
 
   async function reconnect(s: StoreRow) {
+    if (!s.connected) {
+      setBanner(null)
+      setForm({ ...EMPTY_FORM, shop: s.shop })
+      setOpen(true)
+      return
+    }
     setBusy(`re:${s.id}`)
     setBanner(null)
     const r = await send('/api/stores/connect', 'POST', { shop: s.shop })
@@ -141,6 +148,18 @@ export default function StoreConnectionsCard() {
     if (!r.ok) { setBanner({ ok: false, text: r.error }); return }
     setBanner({ ok: true, text: done })
     if (savedSettings) setEdits(prev => Object.fromEntries(Object.entries(prev).filter(([id]) => id !== s.id)))
+    void load()
+  }
+
+  async function disconnect(s: StoreRow) {
+    const name = s.projectName && s.projectName !== s.shop ? `${s.projectName} (${s.shop})` : s.shop
+    if (!window.confirm(`Ngắt kết nối store ${name}? Mọi lần sync của store này sẽ dừng cho tới khi kết nối lại. Store, tiền tố, project và cài đặt vẫn được giữ.`)) return
+    setBusy(`off:${s.id}`)
+    setBanner(null)
+    const r = await send(`/api/auth/status?storeId=${encodeURIComponent(s.id)}`, 'DELETE')
+    setBusy('')
+    if (!r.ok) { setBanner({ ok: false, text: r.error }); return }
+    setBanner({ ok: true, text: `Đã ngắt kết nối ${s.shop}. Bấm Kết nối lại để nhập thông tin kết nối mới.` })
     void load()
   }
 
@@ -299,6 +318,12 @@ export default function StoreConnectionsCard() {
                             <button type="button" className={outlineButton} disabled={!!busy} onClick={() => reconnect(s)}>
                               {busy === `re:${s.id}` ? 'Đang kết nối…' : 'Kết nối lại'}
                             </button>
+                            {s.connected && (
+                              <button type="button" className={dangerButton} disabled={!!busy} onClick={() => disconnect(s)}>
+                                <span className="material-symbols-outlined text-[16px]">link_off</span>
+                                {busy === `off:${s.id}` ? 'Đang ngắt…' : 'Ngắt kết nối'}
+                              </button>
+                            )}
                           </div>
                         </td>
                       )}

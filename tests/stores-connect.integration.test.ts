@@ -229,7 +229,7 @@ describe('POST /api/stores/connect: client credentials', () => {
     const res = await connect(ccBody('oa', { projectName: 'SCT Not Made', payoutStartDate: '2026-10-06' }))
     expect(res.status).toBe(409)
     expect(res.body.error).toContain('chưa được cài')
-    expect(res.body.error).toContain('ngắt kết nối')
+    expect(res.body.error).toContain('"Ngắt kết nối" trên thẻ store này')
     expect(await prisma.shopifyStoreCredential.findUnique({ where: { storeId: store.id } })).toEqual(credentialBefore)
     expect(await prisma.shopifyStore.findUnique({ where: { id: store.id } })).toEqual(storeBefore)
     expect(await scopesOf(store.id)).toBeNull()
@@ -705,8 +705,8 @@ describe('POST /api/stores/connect: re-check with the stored credential', () => 
 })
 
 describe('granted scopes', () => {
-  it('the OAuth callback records the scopes Shopify granted, and disconnecting the store removes them', async () => {
-    const store = await prisma.shopifyStore.create({ data: { shop: shopOf('oa') } })
+  it('the OAuth callback records the scopes Shopify granted, and disconnecting the store removes them and keeps the store', async () => {
+    const store = await prisma.shopifyStore.create({ data: { shop: shopOf('oa'), orderPrefix: 'SCTOA', payoutStartDate: '2026-10-06', trackingPageUrl: 'https://oa.example.com/t' } })
     await saveStoreCredential(store.id, { authMode: 'OAUTH', clientId: CLIENT_ID, clientSecret: SECRET })
     saveOAuthState('sct-state', shopOf('oa'))
     mintReply = () => json(200, { access_token: 'shpat_test_oauth_token', scope: 'read_orders, read_products,read_all_orders' })
@@ -716,7 +716,12 @@ describe('granted scopes', () => {
     const entry = async () => (await (await getStatus()).json()).stores.find((s: any) => s.id === store.id)
     expect(await entry()).toMatchObject({ connected: true, scopes: ['read_orders', 'read_products', 'read_all_orders'], readAllOrders: true })
 
+    const other = await prisma.shopifyStore.create({ data: { shop: shopOf('other') } })
+    await saveStoreCredential(other.id, { authMode: 'TOKEN', accessToken: OTHER_TOKEN })
     await disconnect(store.id)
+    expect(await prisma.shopifyStoreCredential.findUnique({ where: { storeId: store.id } })).toBeNull()
+    expect((await prisma.shopifyStoreCredential.findUnique({ where: { storeId: other.id } }))?.accessToken).toBe(OTHER_TOKEN)
+    expect(await storeOf('oa')).toMatchObject({ id: store.id, orderPrefix: 'SCTOA', payoutStartDate: '2026-10-06', trackingPageUrl: 'https://oa.example.com/t' })
     expect(await scopesOf(store.id)).toBeNull()
     expect(await entry()).toMatchObject({ connected: false, scopes: null, readAllOrders: null })
   })
