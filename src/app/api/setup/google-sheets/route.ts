@@ -33,7 +33,7 @@ export async function GET(req: NextRequest) {
     ...connection,
     csvLocked,
     channels: channels.map(c => ({
-      supplierCode: c.supplierCode, enabled: c.enabled, spreadsheetId: c.spreadsheetId, tabPattern: c.tabPattern, storeShop: c.storeShop,
+      supplierCode: c.supplierCode, enabled: c.enabled, spreadsheetId: c.spreadsheetId, tabPattern: c.tabPattern,
       url: `https://docs.google.com/spreadsheets/d/${c.spreadsheetId}/edit`,
     })),
   })

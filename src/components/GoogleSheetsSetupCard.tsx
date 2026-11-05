@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useCurrentUser } from '@/components/RoleGate'
 
-type Channel = { supplierCode: string; enabled: boolean; spreadsheetId: string; tabPattern: string; storeShop: string; url: string }
+type Channel = { supplierCode: string; enabled: boolean; spreadsheetId: string; tabPattern: string; url: string }
 type Status = { configured: boolean; connected: boolean; email: string; needsReconnect: boolean; csvLocked: boolean; channels: Channel[] }
 
 const REASON_TEXT: Record<string, string> = {
@@ -131,7 +131,7 @@ export default function GoogleSheetsSetupCard() {
               <div key={c.supplierCode} className="flex flex-wrap items-center gap-sm text-body-sm">
                 <b className="text-on-surface">{c.supplierCode}</b>
                 <a href={c.url} target="_blank" rel="noopener noreferrer" className="text-secondary hover:underline">Mở sheet ↗</a>
-                <span className="text-label-sm text-on-surface-variant">tab {c.tabPattern} · store {c.storeShop}</span>
+                <span className="text-label-sm text-on-surface-variant">tab {c.tabPattern} · mọi store đang bật</span>
                 <span className={`px-sm py-xs rounded-full text-label-sm ${c.enabled ? 'bg-on-tertiary-container/15 text-on-tertiary-container' : 'bg-surface-container text-on-surface-variant'}`}>{c.enabled ? 'Đang bật' : 'Đang tắt'}</span>
                 <button type="button" onClick={() => toggle(c)} disabled={!!busy || (!c.enabled && !healthy)} title={!c.enabled && !healthy ? 'Kết nối Google Sheets trước' : undefined}
                   className={`${button} ml-auto border border-outline-variant/40 text-on-surface`}>

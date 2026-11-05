@@ -24,7 +24,7 @@ import { createFulfillment, fetchOrderFulfillmentOrdersByNames } from '@/lib/sho
 
 const NOW = new Date('2026-10-28T00:00:00Z')
 const daysAgo = (n: number) => new Date(NOW.getTime() - n * 86_400_000)
-const SHEET = { id: '1', name: 'A', url: 'https://docs.google.com/spreadsheets/d/abc123/edit', enabled: true, storeBase: 'https://litzzy.com' }
+const SHEET = { id: '1', name: 'A', url: 'https://docs.google.com/spreadsheets/d/abc123/edit', enabled: true }
 const dbOrder = (name: string, placedAt: Date, fulfillmentStatus: string | null) =>
   ({ id: name, shopifyOrderNumber: `#${name}`, placedAt, pipelineStatus: null, fulfillmentStatus, shipments: [], lines: [] })
 

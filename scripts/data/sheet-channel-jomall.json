@@ -3,7 +3,6 @@
   "enabled": false,
   "spreadsheetId": "1O4KzqYOdfS7CQ1v3k0oUqeGDTRJWxFBioPwO59F1ips",
   "tabPattern": "ORDER {M}-{YYYY}",
-  "storeShop": "caramiaus-store.myshopify.com",
   "columns": [
     { "position": "A", "source": "order.sentDate" },
     { "header": "Order Number", "source": "line.lineRef" },

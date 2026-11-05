@@ -98,10 +98,12 @@ async function run(supplierId: string, orderIds: string[] | undefined, userId: s
   }
 
   const orders = orderIdsToLoad.length ? await listOrdersWithLines({ ids: orderIdsToLoad, limit: orderIdsToLoad.length }) : []
+  // The channel is shared by every store that is on; a store that is switched off keeps its orders out of the sheet.
+  const switchedOff = new Set((await prisma.shopifyStore.findMany({ where: { enabled: false, id: { in: orders.map(o => o.storeId) } }, select: { id: true } })).map(s => s.id))
   const allowed = orders.filter(o => {
-    if (o.store.shop === channel.storeShop) return true
+    if (!switchedOff.has(o.storeId)) return true
     for (const k of Array.from(lineKeysOf(o.shopifyOrderNumber, o.lines).values())) {
-      results.push({ lineKey: k, orderNumber: o.shopifyOrderNumber, status: 'BLOCKED', message: `Đơn của store ${o.store.shop}, kênh này chỉ nhận ${channel.storeShop}` })
+      results.push({ lineKey: k, orderNumber: o.shopifyOrderNumber, status: 'BLOCKED', message: `Store ${o.store.shop} đang tắt, đơn của store này không được ghi vào sheet` })
     }
     return false
   })

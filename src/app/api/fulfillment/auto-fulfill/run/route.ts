@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { listConnectedStores } from '@/lib/store-connections'
 import { failedResults, storeRunSummary } from '@/lib/store-jobs'
 import { getSheets, getMinAgeDays } from '@/lib/fulfillment/auto-fulfill-sheets'
-import { runAutoFulfillForStores } from '@/lib/fulfillment/auto-fulfill-stores'
+import { runAutoFulfillAllStores } from '@/lib/fulfillment/auto-fulfill-stores'
 import { syncPgprintsTracking } from '@/lib/repos/pgprints-push'
 import { syncApiSupplierTracking } from '@/lib/repos/supplier-tracking-sync'
 
@@ -23,7 +23,7 @@ export async function POST(req: NextRequest) {
         const pg = await syncPgprintsTracking().catch((e: any) => ({ error: e?.message ?? String(e) }))
         send({ type: 'pgprints', ...pg })
         for (const r of await syncApiSupplierTracking()) send({ type: 'supplier-tracking', ...r })
-        const { results, summary } = await runAutoFulfillForStores({
+        const { results, summary } = await runAutoFulfillAllStores({
           sheets, minAgeDays, apply,
           onProgress: (shop, done, total) => send({ type: 'progress', shop, done, total }),
           onStage: (shop, stage, done, total) => send({ type: 'stage', ...(shop ? { shop } : {}), stage, done, total }),

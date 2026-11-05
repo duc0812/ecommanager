@@ -3,7 +3,6 @@
   "enabled": false,
   "spreadsheetId": "1sA-nPyZPjVbDCTznPgXuRUvJwcHBp580LsRlQAr6azg",
   "tabPattern": "ORDER FULFILL",
-  "storeShop": "caramiaus-store.myshopify.com",
   "dateFormat": "CN_POD_MS-{YYYY}{MM}{DD}",
   "defaultColor": "DEFAULT",
   "products": {

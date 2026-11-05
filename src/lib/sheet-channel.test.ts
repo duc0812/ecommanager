@@ -96,7 +96,7 @@ describe('size', () => {
 })
 
 describe('channels', () => {
-  const channel: SheetChannel = { supplierCode: 'jomall', enabled: true, spreadsheetId: 's', tabPattern: 'T', storeShop: 'a', columns: [] }
+  const channel: SheetChannel = { supplierCode: 'jomall', enabled: true, spreadsheetId: 's', tabPattern: 'T', columns: [] }
 
   it('finds only an enabled channel, by code', () => {
     expect(enabledChannelFor([channel], { code: ' JOMALL ' })).toBe(channel)
@@ -108,6 +108,18 @@ describe('channels', () => {
     expect(parseSheetChannels('not json')).toEqual([])
     expect(parseSheetChannels('[{"supplierCode":"x"}]')).toEqual([])
     expect(parseSheetChannels(null)).toEqual([])
+  })
+
+  it('takes a channel that names no store', () => {
+    expect(parseSheetChannels(JSON.stringify([{ supplierCode: 'jomall', enabled: true, spreadsheetId: 's', tabPattern: 'T', columns: [] }]))).toEqual([channel])
+  })
+
+  it('reads a stored channel that still has storeShop, drops the field and does not hand it back', () => {
+    const stored = JSON.stringify([{ supplierCode: 'jomall', enabled: true, spreadsheetId: 's', tabPattern: 'T', storeShop: 'caramiaus-store.myshopify.com', columns: [{ header: 'SKU', source: 'line.sku' }] }])
+    const [parsed] = parseSheetChannels(stored)
+    expect(parsed).toEqual({ supplierCode: 'jomall', enabled: true, spreadsheetId: 's', tabPattern: 'T', columns: [{ header: 'SKU', source: 'line.sku' }] })
+    expect('storeShop' in parsed).toBe(false)
+    expect(JSON.stringify(parseSheetChannels(JSON.stringify(parsed)))).not.toContain('storeShop')
   })
 })
 

@@ -22,8 +22,6 @@ export type SheetChannel = {
   spreadsheetId: string
   /** "ORDER {M}-{YYYY}": the month's tab, by the day the order is sent. A name with no {M} is one tab for good. */
   tabPattern: string
-  /** Only this store's orders may enter the sheet: a row written there cannot be taken back. */
-  storeShop: string
   columns: SheetColumn[]
   /** How the sheet writes the day a line is sent; also how a new day is told apart. Without it, 11/4/2026. */
   dateFormat?: string
@@ -38,9 +36,10 @@ export function parseSheetChannels(json: string | null | undefined): SheetChanne
   try {
     const list = JSON.parse(json)
     if (!Array.isArray(list)) return []
+    // A channel saved before the sheet was shared still carries storeShop: it is dropped here so no save writes it back.
     return list.filter(c => c && typeof c.supplierCode === 'string' && typeof c.spreadsheetId === 'string' && typeof c.tabPattern === 'string'
-      && typeof c.storeShop === 'string' && Array.isArray(c.columns))
-      .map(c => ({ ...c, enabled: c.enabled === true }))
+      && Array.isArray(c.columns))
+      .map(({ storeShop: _legacy, ...c }) => ({ ...c, enabled: c.enabled === true }))
   } catch {
     return []
   }

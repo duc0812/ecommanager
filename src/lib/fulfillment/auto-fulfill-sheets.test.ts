@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseSheetsJson, DEFAULT_STORE_BASE, coerceMinAgeDays, DEFAULT_MIN_AGE_DAYS } from './auto-fulfill-sheets'
+import { parseSheetsJson, coerceMinAgeDays, DEFAULT_MIN_AGE_DAYS } from './auto-fulfill-sheets'
 
 describe('parseSheetsJson', () => {
   it('returns [] for null / invalid JSON', () => {
@@ -8,7 +8,13 @@ describe('parseSheetsJson', () => {
   })
   it('fills defaults for missing fields', () => {
     const out = parseSheetsJson(JSON.stringify([{ id: '1', name: 'Sup A', url: 'u' }]))
-    expect(out).toEqual([{ id: '1', name: 'Sup A', url: 'u', enabled: true, storeBase: DEFAULT_STORE_BASE }])
+    expect(out).toEqual([{ id: '1', name: 'Sup A', url: 'u', enabled: true }])
+  })
+  it('reads a stored sheet that still has storeBase and does not hand the field back', () => {
+    const stored = JSON.stringify([{ id: '1', name: 'Sup A', url: 'u', enabled: false, storeBase: 'https://litzzy.com' }])
+    const [sheet] = parseSheetsJson(stored)
+    expect(sheet).toEqual({ id: '1', name: 'Sup A', url: 'u', enabled: false })
+    expect('storeBase' in sheet).toBe(false)
   })
   it('drops entries without a url', () => {
     expect(parseSheetsJson(JSON.stringify([{ id: '1', name: 'x' }]))).toEqual([])

@@ -2,7 +2,7 @@ import cron from 'node-cron'
 import { initOnce, runExclusive } from '@/lib/job-lock'
 import { logStoreFailures, okResults, saveMergedJobResult } from '@/lib/store-jobs'
 import { getSheets, getMinAgeDays } from './auto-fulfill-sheets'
-import { runAutoFulfillForStores } from './auto-fulfill-stores'
+import { runAutoFulfillAllStores } from './auto-fulfill-stores'
 import { syncPgprintsTracking } from '@/lib/repos/pgprints-push'
 import { syncApiSupplierTracking } from '@/lib/repos/supplier-tracking-sync'
 
@@ -21,7 +21,7 @@ export async function runDailyAutoFulfill() {
     else console.log(`[auto-fulfill] ${r.name} tracking sync: ${r.found}/${r.pushes} order(s) found, ${r.shipments} shipment(s) updated${r.skipped ? ` (${r.skipped})` : ''}`)
   }
   const minAgeDays = await getMinAgeDays()
-  const { results, summary } = await runAutoFulfillForStores({ sheets, minAgeDays, apply: true })
+  const { results, summary } = await runAutoFulfillAllStores({ sheets, minAgeDays, apply: true })
   if (results.length === 0) console.error('[auto-fulfill] no connected store; skipping')
   logStoreFailures('auto-fulfill', results)
   try {

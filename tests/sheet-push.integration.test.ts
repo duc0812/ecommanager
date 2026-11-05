@@ -14,7 +14,6 @@ import { GET as getSheet, POST as postSheet } from '@/app/api/design-studio/hand
 
 const SHOP = 'sheetstore.myshopify.com'
 const PROJECT = 'proj_sheet'
-const OTHER_PROJECT = 'proj_sheet_other'
 const SUP = 'sup_sheet'
 const OTHER_SUP = 'sup_sheet_other'
 const SHEET = 'sheet-id-1'
@@ -24,6 +23,11 @@ const HEADERS = ['       ', 'Order Number', 'Order Vendor ', 'Customer Note', 'P
   'Postcode Code (Shipping)', 'Country Code (Shipping)', 'SKU', 'SKU Custom', 'Item Name', 'Type', 'Size', 'Color', 'Custom Name', 'design note', 'Quantity', 'mockup link', 'Design link', 'Design Back', 'Price$', 'Tracking']
 const channel = JSON.parse(fs.readFileSync('scripts/data/sheet-channel-jomall.json', 'utf8'))
 const mango = JSON.parse(fs.readFileSync('scripts/data/sheet-channel-mango.json', 'utf8'))
+const REMINISO_SHOP = 'reminiso-sheet.myshopify.com'
+const OFF_SHOP = 'switched-off-sheet.myshopify.com'
+// Design Studio skips an order whose store has no project, so every other store gets its own.
+const PROJECT_OF_SHOP: Record<string, string> = { [REMINISO_SHOP]: 'proj_sheet_remi', [OFF_SHOP]: 'proj_sheet_off' }
+const ALL_PROJECTS = [PROJECT, ...Object.values(PROJECT_OF_SHOP)]
 const MANGO_TAB = 'ORDER FULFILL'
 const MANGO_HEADERS = ['a', 'Order Number', 'Order Vendor ', 'Customer Note', 'Phone (Billing)', 'Name (Shipping)', 'Address 1&2 (Shipping)', 'City (Shipping)', 'State Code (Shipping)',
   'Postcode Code (Shipping)', 'Country Code (Shipping)', 'SKU', 'SKU Custom', 'Item Name', 'Type', 'Size', 'Color', 'SKU COLOR', 'design note', 'Quantity', 'mockup link', 'design link',
@@ -104,15 +108,16 @@ function fakeGoogle() {
   }))
 }
 
-async function makeOrder(opts: { preview?: string | null; shop?: string; otherLine?: boolean; name?: string } = {}) {
+async function makeOrder(opts: { preview?: string | null; shop?: string; disabled?: boolean; otherLine?: boolean; name?: string } = {}) {
   seq++
   const id = `gid://test/Order/sheet-${seq}`
   const number = `#SH${1000 + seq}`
   const lineId = `shl-${seq}`
-  const store = opts.shop ? (await prisma.shopifyStore.upsert({ where: { shop: opts.shop }, create: { shop: opts.shop, projectId: OTHER_PROJECT }, update: {} })).id : storeId
+  const projectId = opts.shop ? PROJECT_OF_SHOP[opts.shop] : PROJECT
+  const store = opts.shop ? (await prisma.shopifyStore.upsert({ where: { shop: opts.shop }, create: { shop: opts.shop, projectId, enabled: opts.disabled !== true }, update: {} })).id : storeId
   await prisma.order.create({
     data: {
-      id, projectId: opts.shop ? OTHER_PROJECT : PROJECT, storeId: store, shopifyOrderNumber: number, financialStatus: 'PAID', currency: 'USD',
+      id, projectId, storeId: store, shopifyOrderNumber: number, financialStatus: 'PAID', currency: 'USD',
       grossAmount: 30, expectedPayout: 28, totalFees: 2, refundedAmount: 0, placedAt: new Date('2026-10-30T19:00:00Z'),
       pipelineStatus: 'READY_TO_PRODUCTION', orderType: 'CUSTOM', designReady: true,
       customerEmail: 'sal@example.com', customerName: 'Sal Paint', shippingName: opts.name ?? 'Sal Paint', shippingAddress1: '12 Main St', shippingAddress2: 'Apt 2',
@@ -142,8 +147,8 @@ async function makeOrder(opts: { preview?: string | null; shop?: string; otherLi
 
 const setChannel = (over: Record<string, unknown> = {}) => prisma.appSetting.upsert({
   where: { key: SHEET_CHANNELS_KEY },
-  create: { key: SHEET_CHANNELS_KEY, value: JSON.stringify([{ ...channel, supplierCode: 'jm_sheet', enabled: true, spreadsheetId: SHEET, storeShop: SHOP, ...over }]) },
-  update: { value: JSON.stringify([{ ...channel, supplierCode: 'jm_sheet', enabled: true, spreadsheetId: SHEET, storeShop: SHOP, ...over }]) },
+  create: { key: SHEET_CHANNELS_KEY, value: JSON.stringify([{ ...channel, supplierCode: 'jm_sheet', enabled: true, spreadsheetId: SHEET, ...over }]) },
+  update: { value: JSON.stringify([{ ...channel, supplierCode: 'jm_sheet', enabled: true, spreadsheetId: SHEET, ...over }]) },
 })
 const push = (orderIds: string[]) => pushToSheet(SUP, { orderIds, userId: null, at: AT })
 const rowOf = (row: string[], header: string) => row[HEADERS.indexOf(header)]
@@ -152,7 +157,9 @@ const line = (orderId: string) => prisma.orderLine.findFirstOrThrow({ where: { o
 beforeAll(async () => {
   process.env.AUTH_SECRET = 'test-secret-that-is-long-enough-32chars'
   await prisma.project.upsert({ where: { id: PROJECT }, create: { id: PROJECT, name: 'SH', startDate: new Date('2026-06-01') }, update: {} })
-  await prisma.project.upsert({ where: { id: OTHER_PROJECT }, create: { id: OTHER_PROJECT, name: 'SH2', startDate: new Date('2026-06-01') }, update: {} })
+  for (const id of Object.values(PROJECT_OF_SHOP)) {
+    await prisma.project.upsert({ where: { id }, create: { id, name: id, startDate: new Date('2026-06-01') }, update: {} })
+  }
   storeId = (await prisma.shopifyStore.upsert({ where: { shop: SHOP }, create: { shop: SHOP, projectId: PROJECT }, update: {} })).id
   await prisma.supplier.upsert({ where: { code: 'jm_sheet' }, create: { id: SUP, name: 'Jomall Test', code: 'jm_sheet' }, update: {} })
   await prisma.supplier.upsert({ where: { code: 'other_sheet' }, create: { id: OTHER_SUP, name: 'Other', code: 'other_sheet' }, update: {} })
@@ -182,12 +189,12 @@ afterEach(() => vi.unstubAllGlobals())
 
 afterAll(async () => {
   await prisma.supplierSheetWrite.deleteMany({ where: { supplierId: SUP } })
-  await prisma.order.deleteMany({ where: { projectId: { in: [PROJECT, OTHER_PROJECT] } } })
+  await prisma.order.deleteMany({ where: { projectId: { in: ALL_PROJECTS } } })
   await prisma.csvTemplate.deleteMany({ where: { supplierId: SUP } })
   await prisma.supplierProduct.deleteMany({ where: { supplierId: SUP } })
   await prisma.supplier.deleteMany({ where: { id: { in: [SUP, OTHER_SUP] } } })
-  await prisma.shopifyStore.deleteMany({ where: { projectId: { in: [PROJECT, OTHER_PROJECT] } } })
-  await prisma.project.deleteMany({ where: { id: { in: [PROJECT, OTHER_PROJECT] } } })
+  await prisma.shopifyStore.deleteMany({ where: { projectId: { in: ALL_PROJECTS } } })
+  await prisma.project.deleteMany({ where: { id: { in: ALL_PROJECTS } } })
   await prisma.appUser.deleteMany({ where: { email: 'admin@sheet.test' } })
   await prisma.appSetting.deleteMany({ where: { key: { in: [SHEET_CHANNELS_KEY, CSV_OPEN_KEY, GOOGLE_KEYS.clientId, GOOGLE_KEYS.clientSecret, GOOGLE_KEYS.sheetsRefreshToken] } } })
 })
@@ -355,11 +362,42 @@ describe('what stops a send', () => {
     expect(writes[0].rows).toHaveLength(1)
   })
 
-  it('never writes another store’s customers into this sheet', async () => {
-    const o = await makeOrder({ shop: 'another-store.myshopify.com' })
-    const r = await push([o.id])
-    expect(r.results[0]).toMatchObject({ status: 'BLOCKED' })
+  it('a Reminiso order enters the shared Jomall channel next to a Litzzy one', async () => {
+    const lit = await makeOrder()
+    const remi = await makeOrder({ shop: REMINISO_SHOP, name: 'Remi Buyer' })
+    const r = await push([lit.id, remi.id])
+    expect(r.results.map(x => [x.lineKey, x.status]).sort()).toEqual([[lit.key, 'WRITTEN'], [remi.key, 'WRITTEN']].sort())
+    expect(writes).toHaveLength(1)
+    const rows = writes[0].rows.map(row => row.map(c => c ?? ''))
+    expect(rows.map(row => rowOf(row, 'Order Number')).sort()).toEqual([`#${lit.key}`, `#${remi.key}`].sort())
+    expect(rowOf(rows.find(row => rowOf(row, 'Order Number') === `#${remi.key}`)!, 'Name (Shipping)')).toBe('Remi Buyer')
+    expect((await line(remi.id)).exportedAt).not.toBeNull()
+    expect(await prisma.supplierSheetWrite.findFirst({ where: { orderId: remi.id } })).toMatchObject({ status: 'WRITTEN' })
+  })
+
+  it('an order of a disabled store is BLOCKED, writes nothing and is not marked sent', async () => {
+    const off = await makeOrder({ shop: OFF_SHOP, disabled: true })
+    const r = await push([off.id])
+    expect(r.results).toEqual([expect.objectContaining({ lineKey: off.key, status: 'BLOCKED', message: expect.stringContaining(OFF_SHOP) })])
+    expect(r.results[0].message).toContain('đang tắt')
     expect(writes).toHaveLength(0)
+    expect((await line(off.id)).exportedAt).toBeNull()
+    expect(await prisma.supplierSheetWrite.count({ where: { orderId: off.id } })).toBe(0)
+  })
+
+  it('a disabled store blocks only its own orders; the others still go', async () => {
+    const off = await makeOrder({ shop: OFF_SHOP, disabled: true })
+    const lit = await makeOrder()
+    const r = await push([off.id, lit.id])
+    expect(r.results.find(x => x.lineKey === off.key)).toMatchObject({ status: 'BLOCKED' })
+    expect(r.results.find(x => x.lineKey === lit.key)).toMatchObject({ status: 'WRITTEN' })
+    expect(writes[0].rows).toHaveLength(1)
+  })
+
+  it('still reads a channel saved before storeShop was dropped, and sends as usual', async () => {
+    await setChannel({ storeShop: 'caramiaus-store.myshopify.com' })
+    const remi = await makeOrder({ shop: REMINISO_SHOP })
+    expect((await push([remi.id])).results[0]).toMatchObject({ status: 'WRITTEN' })
   })
 
   it('does not mark a line when the row reads back different, and the next send finds it in the sheet', async () => {
@@ -505,7 +543,7 @@ describe('a sheet of one long tab: Mango', () => {
   beforeEach(async () => {
     tabs = { [MANGO_TAB]: [MANGO_HEADERS] }
     gridRows = { [MANGO_TAB]: 4125 }
-    await setChannel({ ...mango, supplierCode: 'jm_sheet', enabled: true, spreadsheetId: SHEET, storeShop: SHOP })
+    await setChannel({ ...mango, supplierCode: 'jm_sheet', enabled: true, spreadsheetId: SHEET })
   })
 
   it('fills its own columns, and leaves what the supplier fills alone', async () => {
@@ -573,7 +611,7 @@ describe('a sheet of one long tab: Mango', () => {
   })
 
   it('holds a line whose colour has no code, and sends it once the code is known', async () => {
-    const coded = (codes: Record<string, string>) => setChannel({ ...mango, supplierCode: 'jm_sheet', enabled: true, spreadsheetId: SHEET, storeShop: SHOP, products: { GAF: { colorFromVariant: true, skuByColor: codes } } })
+    const coded = (codes: Record<string, string>) => setChannel({ ...mango, supplierCode: 'jm_sheet', enabled: true, spreadsheetId: SHEET, products: { GAF: { colorFromVariant: true, skuByColor: codes } } })
     await coded({ black: 'GAF-6' })
     const o = await makeOrder()
     const r = await push([o.id])

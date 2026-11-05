@@ -31,14 +31,13 @@ export type OrderRow = { lineKey: string; tracking: string }
 // never get fulfilled). Identical (lineKey, tracking) pairs dedupe; a real conflict (same
 // line, two trackings) is kept so buildFulfillmentPlan can flag it as needs_manual.
 export function mergeSheetGroups(
-  target: Map<string, { rows: OrderRow[]; storeBase: string }>,
+  target: Map<string, { rows: OrderRow[] }>,
   grouped: Map<string, OrderRow[]>,
-  storeBase: string,
 ): void {
   for (const [base, rows] of Array.from(grouped)) {
     const existing = target.get(base)
     if (!existing) {
-      target.set(base, { rows: [...rows], storeBase })
+      target.set(base, { rows: [...rows] })
       continue
     }
     for (const r of rows) {

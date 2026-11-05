@@ -21,7 +21,7 @@ const row = (await db.execute({ sql: 'SELECT value FROM "AppSetting" WHERE key =
 const list = row ? JSON.parse(String(row.value)) : []
 const next = [...list.filter(c => c.supplierCode !== channel.supplierCode), channel]
 
-console.log(`${channel.supplierCode}: enabled=${channel.enabled} sheet=${channel.spreadsheetId} tabs=${channel.tabPattern} store=${channel.storeShop} columns=${channel.columns.length}`)
+console.log(`${channel.supplierCode}: enabled=${channel.enabled} sheet=${channel.spreadsheetId} tabs=${channel.tabPattern} columns=${channel.columns.length}`)
 if (!args.includes('--apply')) {
   console.log('DRY RUN, nothing written. Add --apply.')
   process.exit(0)

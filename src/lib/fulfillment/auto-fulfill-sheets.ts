@@ -1,12 +1,12 @@
 import { prisma } from '@/lib/db'
 
-export const DEFAULT_STORE_BASE = 'https://litzzy.com'
 export const DEFAULT_MIN_AGE_DAYS = 5
 const SHEETS_KEY = 'auto_fulfill_sheets'
 const MIN_AGE_KEY = 'auto_fulfill_min_age_days'
 
-export type SheetConfig = { id: string; name: string; url: string; enabled: boolean; storeBase: string }
+export type SheetConfig = { id: string; name: string; url: string; enabled: boolean }
 
+// A sheet saved before it was shared by every store still carries storeBase; it is not read and not handed back.
 export function parseSheetsJson(value: string | null | undefined): SheetConfig[] {
   if (!value) return []
   let arr: any
@@ -19,7 +19,6 @@ export function parseSheetsJson(value: string | null | undefined): SheetConfig[]
       name: String(x.name ?? '').trim(),
       url: String(x.url).trim(),
       enabled: x.enabled !== false,
-      storeBase: (typeof x.storeBase === 'string' && x.storeBase.trim()) ? x.storeBase.trim() : DEFAULT_STORE_BASE,
     }))
 }
 

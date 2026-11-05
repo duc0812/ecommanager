@@ -17,20 +17,24 @@ vi.mock('@/lib/shopify-orders', () => ({
 
 import { prisma } from '@/lib/db'
 import { saveStoreCredential } from '@/lib/store-connections'
-import { runAutoFulfillForStores, trackingUrlFor } from '@/lib/fulfillment/auto-fulfill-stores'
-import { orderNameHasPrefix } from '@/lib/fulfillment/auto-fulfill'
+import { runAutoFulfillAllStores, trackingUrlFor } from '@/lib/fulfillment/auto-fulfill-stores'
+import { getSheets } from '@/lib/fulfillment/auto-fulfill-sheets'
 
 const SHOP_A = 'aff-a.myshopify.com'
 const SHOP_B = 'aff-b.myshopify.com'
 const SHOP_C = 'aff-c.myshopify.com'
+const SHOP_OFF = 'aff-off.myshopify.com'
+const SHOP_NOCRED = 'aff-nocred.myshopify.com'
 const PROJECT = 'proj_aff'
 const SUPPLIER = 'sup_aff'
-const MINE = [SHOP_A, SHOP_B, SHOP_C]
+const MINE = [SHOP_A, SHOP_B, SHOP_C, SHOP_OFF, SHOP_NOCRED]
+const SHEETS_KEY = 'auto_fulfill_sheets'
 let storeA = ''
 let storeB = ''
 let storeC = ''
+let storeOff = ''
 
-const sheet = (id: string, name: string) => ({ id, name, url: `https://docs.google.com/spreadsheets/d/${id}/edit`, enabled: true, storeBase: 'https://litzzy.com' })
+const sheet = (id: string, name: string) => ({ id, name, url: `https://docs.google.com/spreadsheets/d/${id}/edit`, enabled: true })
 const SHEETS = [sheet('aff1', 'Mangoshao'), sheet('aff2', 'Jomall')]
 
 async function cleanup() {
@@ -39,6 +43,7 @@ async function cleanup() {
   await prisma.supplier.deleteMany({ where: { id: SUPPLIER } })
   await prisma.shopifyStore.deleteMany({ where: { shop: { in: MINE } } })
   await prisma.project.deleteMany({ where: { id: PROJECT } })
+  await prisma.appSetting.deleteMany({ where: { key: SHEETS_KEY } })
 }
 
 const dbOrder = (id: string, storeId: string, name: string) => prisma.order.create({ data: {
@@ -54,6 +59,11 @@ beforeAll(async () => {
   for (const [id, token] of [[storeA, 'token-aff-a'], [storeB, 'token-aff-b']]) await saveStoreCredential(id, { authMode: 'TOKEN', accessToken: token })
   await dbOrder('gid://test/Order/aff-lit1', storeA, 'LIT1001')
   await dbOrder('gid://test/Order/aff-remi1', storeB, 'REMI1001')
+  // A store that is switched off keeps its credential and its orders; one that is on but disconnected has neither a token nor a way to ask Shopify.
+  storeOff = (await prisma.shopifyStore.create({ data: { shop: SHOP_OFF, orderPrefix: 'OFF', enabled: false, connectedAt: new Date('2026-09-04') } })).id
+  await saveStoreCredential(storeOff, { authMode: 'TOKEN', accessToken: 'token-aff-off' })
+  await prisma.shopifyStore.create({ data: { shop: SHOP_NOCRED, orderPrefix: 'NOC', connectedAt: new Date('2026-09-05') } })
+  await dbOrder('gid://test/Order/aff-off1', storeOff, 'OFF1001')
 })
 
 beforeEach(async () => {
@@ -70,9 +80,9 @@ afterAll(async () => { await cleanup() })
 
 const askedFor = () => Object.fromEntries(mocks.fetchFulfillmentOrders.mock.calls.map(c => [c[0], [...c[2]].sort()]))
 
-describe('runAutoFulfillForStores', () => {
+describe('runAutoFulfillAllStores', () => {
   it('reads each sheet once and asks each store only about the orders carrying its prefix', async () => {
-    const { results, summary } = await runAutoFulfillForStores({ sheets: SHEETS, minAgeDays: 5, apply: true })
+    const { results, summary } = await runAutoFulfillAllStores({ sheets: SHEETS, minAgeDays: 5, apply: true })
     expect(mocks.fetchSheetCsv).toHaveBeenCalledTimes(SHEETS.length)
     expect(askedFor()).toEqual({ [SHOP_A]: ['LIT1001', 'LIT1002'], [SHOP_B]: ['REMI1001', 'REMI1002'] })
     expect(results.map(r => [r.shop, r.ok])).toEqual([[SHOP_A, true], [SHOP_B, true]])
@@ -85,8 +95,8 @@ describe('runAutoFulfillForStores', () => {
     expect(summary).toMatchObject({ ordersChecked: 5, notFound: 4, errored: 1, fulfilled: 0 })
   })
 
-  it('reports a row no store owns once, as an error with no shop, and fulfils nothing', async () => {
-    const { summary } = await runAutoFulfillForStores({ sheets: SHEETS, minAgeDays: 5, apply: true })
+  it('a row whose prefix matches no store is reported as an error and fulfills nothing', async () => {
+    const { summary } = await runAutoFulfillAllStores({ sheets: SHEETS, minAgeDays: 5, apply: true })
     const unowned = summary!.rows.filter(r => r.baseOrder === 'ZZZ9')
     expect(unowned).toHaveLength(1)
     expect(unowned[0]).toMatchObject({ status: 'error', fulfilledLines: 0 })
@@ -100,7 +110,7 @@ describe('runAutoFulfillForStores', () => {
       if (url.includes('aff2')) throw new Error('HTTP 403')
       return 'Order,Tracking\nLIT1001,TRK1\nREMI1001,TRK3\n'
     })
-    const { summary } = await runAutoFulfillForStores({ sheets: SHEETS, minAgeDays: 5, apply: false })
+    const { summary } = await runAutoFulfillAllStores({ sheets: SHEETS, minAgeDays: 5, apply: false })
     const sheetErrors = summary!.rows.filter(r => r.baseOrder.startsWith('(sheet:'))
     expect(sheetErrors).toHaveLength(1)
     expect(sheetErrors[0].message).toContain('HTTP 403')
@@ -110,7 +120,7 @@ describe('runAutoFulfillForStores', () => {
   it('a store without an order prefix takes no sheet rows, and a row that matches no prefix is still reported', async () => {
     storeC = (await prisma.shopifyStore.create({ data: { shop: SHOP_C, connectedAt: new Date('2026-09-03') } })).id
     await saveStoreCredential(storeC, { authMode: 'TOKEN', accessToken: 'token-aff-c' })
-    const { results } = await runAutoFulfillForStores({ sheets: SHEETS, minAgeDays: 5, apply: false })
+    const { results } = await runAutoFulfillAllStores({ sheets: SHEETS, minAgeDays: 5, apply: false })
     expect(results.map(r => r.shop)).toEqual([SHOP_A, SHOP_B, SHOP_C])
     expect(Object.keys(askedFor()).sort()).toEqual([SHOP_A, SHOP_B])
   })
@@ -118,19 +128,78 @@ describe('runAutoFulfillForStores', () => {
   it('one store failing leaves the other store its own rows', async () => {
     await prisma.shopifyStoreCredential.update({ where: { storeId: storeB }, data: { accessToken: null } })
     try {
-      const { results, summary } = await runAutoFulfillForStores({ sheets: SHEETS, minAgeDays: 5, apply: false })
+      const { results, summary } = await runAutoFulfillAllStores({ sheets: SHEETS, minAgeDays: 5, apply: false })
       expect(results.map(r => [r.shop, r.ok])).toEqual([[SHOP_A, true], [SHOP_B, false]])
       expect(summary!.rows.filter(r => r.shop === SHOP_A).map(r => r.baseOrder).sort()).toEqual(['LIT1001', 'LIT1002'])
     } finally {
       await prisma.shopifyStoreCredential.update({ where: { storeId: storeB }, data: { accessToken: 'token-aff-b' } })
     }
   })
+
+  it('a row of a disabled store is reported and fulfills nothing, though the store keeps its token and the order is open', async () => {
+    mocks.fetchSheetCsv.mockImplementation(async () => 'Order,Tracking\nOFF1001_1,TRKOFF\nLIT1001,TRK1\n')
+    const { results, summary } = await runAutoFulfillAllStores({ sheets: SHEETS.slice(0, 1), minAgeDays: 5, apply: true })
+    expect(results.map(r => r.shop)).toEqual([SHOP_A, SHOP_B])
+    const row = summary!.rows.find(r => r.baseOrder === 'OFF1001')
+    expect(row).toMatchObject({ status: 'error', fulfilledLines: 0, trackings: [] })
+    expect(row!.shop).toBeUndefined()
+    expect(row!.message).toContain(SHOP_OFF)
+    expect(row!.message).toContain('đang tắt')
+    expect(Object.keys(askedFor())).not.toContain(SHOP_OFF)
+    expect(mocks.createFulfillment.mock.calls.filter(c => c[0] === SHOP_OFF || c[1] === 'token-aff-off')).toHaveLength(0)
+    expect(summary).toMatchObject({ ordersChecked: 2, errored: 1 })
+  })
+
+  it('a row of a store that is on but has no connection is reported as not connected and fulfills nothing', async () => {
+    mocks.fetchSheetCsv.mockImplementation(async () => 'Order,Tracking\nNOC1001,TRK1\n')
+    const { summary } = await runAutoFulfillAllStores({ sheets: SHEETS.slice(0, 1), minAgeDays: 5, apply: true })
+    expect(summary!.rows.find(r => r.baseOrder === 'NOC1001')).toMatchObject({ status: 'error', fulfilledLines: 0 })
+    expect(summary!.rows.find(r => r.baseOrder === 'NOC1001')!.message).toContain('chưa kết nối')
+    expect(mocks.createFulfillment).not.toHaveBeenCalled()
+    expect(askedFor()).toEqual({})
+  })
+
+  it('a prefix two connected stores both claim is reported and fulfills nothing, rather than guessed', async () => {
+    storeC = (await prisma.shopifyStore.create({ data: { shop: SHOP_C, orderPrefix: 'LIT', connectedAt: new Date('2026-09-03') } })).id
+    await saveStoreCredential(storeC, { authMode: 'TOKEN', accessToken: 'token-aff-c' })
+    mocks.fetchSheetCsv.mockImplementation(async () => 'Order,Tracking\nLIT1001,TRK1\nREMI1001,TRK3\n')
+    const { summary } = await runAutoFulfillAllStores({ sheets: SHEETS.slice(0, 1), minAgeDays: 5, apply: true })
+    const row = summary!.rows.find(r => r.baseOrder === 'LIT1001')
+    expect(row).toMatchObject({ status: 'error', fulfilledLines: 0 })
+    expect(row!.message).toContain('nhiều store')
+    expect(askedFor()).toEqual({ [SHOP_B]: ['REMI1001'] })
+  })
 })
 
-describe("the fulfilment link comes from the order's store", () => {
+describe('stored sheet settings from before the sheet was shared', () => {
+  const legacy = JSON.stringify([
+    { id: '1', name: 'Mangoshao', url: 'https://docs.google.com/spreadsheets/d/aff1/edit', enabled: true, storeBase: 'https://litzzy.com' },
+    { id: '2', name: 'Jomall', url: 'https://docs.google.com/spreadsheets/d/aff2/edit', enabled: false, storeBase: 'https://other.example' },
+  ])
+
+  it('getSheets reads them without storeBase and leaves the stored value alone', async () => {
+    await prisma.appSetting.upsert({ where: { key: SHEETS_KEY }, create: { key: SHEETS_KEY, value: legacy }, update: { value: legacy } })
+    expect(await getSheets()).toEqual([
+      { id: '1', name: 'Mangoshao', url: 'https://docs.google.com/spreadsheets/d/aff1/edit', enabled: true },
+      { id: '2', name: 'Jomall', url: 'https://docs.google.com/spreadsheets/d/aff2/edit', enabled: false },
+    ])
+    expect((await prisma.appSetting.findUniqueOrThrow({ where: { key: SHEETS_KEY } })).value).toBe(legacy)
+  })
+
+  it('runs with them: the sheet is read once and each prefix goes to its own store', async () => {
+    const sheets = await getSheets()
+    mocks.fetchSheetCsv.mockImplementation(async () => 'Order,Tracking\nLIT1001,TRK1\nREMI1001,TRK3\n')
+    await runAutoFulfillAllStores({ sheets, minAgeDays: 5, apply: false })
+    expect(mocks.fetchSheetCsv).toHaveBeenCalledTimes(1)
+    expect(askedFor()).toEqual({ [SHOP_A]: ['LIT1001'], [SHOP_B]: ['REMI1001'] })
+  })
+})
+
+describe("the fulfilment goes through the order's own store: its token and its tracking link", () => {
   const LITZZY_PAGE = 'https://litzzy.com/apps/trackingorder?nums='
   const TRACKING = 'YT 12/34é#5&x'
-  // What the sheet's storeBase produced before this change: the link Litzzy customers have been getting.
+  const NOW = new Date('2026-11-06T00:00:00Z')
+  // What the sheet's storeBase produced before the sheet was shared: the link Litzzy customers have been getting.
   const oldLink = (tracking: string) => `${'https://litzzy.com'.replace(/\/$/, '')}/apps/trackingorder?nums=${encodeURIComponent(tracking)}`
 
   const openFulfillmentOrders = async (_shop: string, _token: string, names: string[]) => new Map(names.map(name => [name, {
@@ -166,8 +235,80 @@ describe("the fulfilment link comes from the order's store", () => {
     expect(trackingUrlFor({ trackingPageUrl: '   ' }, TRACKING)).toBeUndefined()
   })
 
+  it("one sheet with LIT and REMI rows fulfills each order with its own store's token", async () => {
+    mocks.fetchSheetCsv.mockImplementation(async () => 'Order,Tracking\nLIT1001_1,TRK-LIT\nREMI1001_1,TRK-REMI\n')
+    const { results, summary } = await runAutoFulfillAllStores({ sheets: SHEETS.slice(0, 1), minAgeDays: 5, apply: true, now: NOW })
+    expect(mocks.fetchSheetCsv).toHaveBeenCalledTimes(1)
+    expect(mocks.fetchFulfillmentOrders.mock.calls.map(c => [c[0], c[1], [...c[2]]])).toEqual([
+      [SHOP_A, 'token-aff-a', ['LIT1001']],
+      [SHOP_B, 'token-aff-b', ['REMI1001']],
+    ])
+    expect(mocks.createFulfillment.mock.calls.map(c => [c[0], c[1], c[2].fulfillmentOrderId, c[2].trackingInfo.number])).toEqual([
+      [SHOP_A, 'token-aff-a', 'FO-LIT1001', 'TRK-LIT'],
+      [SHOP_B, 'token-aff-b', 'FO-REMI1001', 'TRK-REMI'],
+    ])
+    expect(results.map(r => [r.shop, r.ok])).toEqual([[SHOP_A, true], [SHOP_B, true]])
+    expect(summary).toMatchObject({ ordersChecked: 2, fulfilled: 2, errored: 0 })
+    expect(summary!.rows.map(r => [r.baseOrder, r.shop, r.storeName])).toEqual([['LIT1001', SHOP_A, SHOP_A], ['REMI1001', SHOP_B, SHOP_B]])
+    expect((await shipmentOf('gid://test/Order/aff-lit1')).trackingNumber).toBe('TRK-LIT')
+    expect((await shipmentOf('gid://test/Order/aff-remi1')).trackingNumber).toBe('TRK-REMI')
+  })
+
+  it("a row's store label is the project name when the store has one", async () => {
+    await prisma.project.update({ where: { id: PROJECT }, data: { name: 'AFF Litzzy' } })
+    await prisma.shopifyStore.update({ where: { id: storeA }, data: { projectId: PROJECT } })
+    try {
+      const { summary } = await runAutoFulfillAllStores({ sheets: SHEETS.slice(0, 1), minAgeDays: 5, apply: false, now: NOW })
+      expect(summary!.rows.find(r => r.baseOrder === 'LIT1001')).toMatchObject({ shop: SHOP_A, storeName: 'AFF Litzzy' })
+      expect(summary!.rows.find(r => r.baseOrder === 'REMI1001')).toMatchObject({ shop: SHOP_B, storeName: SHOP_B })
+    } finally {
+      await prisma.shopifyStore.update({ where: { id: storeA }, data: { projectId: null } })
+      await prisma.project.update({ where: { id: PROJECT }, data: { name: 'AFF' } })
+    }
+  })
+
+  it("tracking url comes from the order's store; a store with no trackingPageUrl sends no url", async () => {
+    mocks.fetchSheetCsv.mockImplementation(async () => 'Order,Tracking\nLIT1001_1,TRK-LIT\nREMI1001_1,TRK-REMI\n')
+    await runAutoFulfillAllStores({ sheets: SHEETS.slice(0, 1), minAgeDays: 5, apply: true, now: NOW })
+    expect(callFor(SHOP_A).trackingInfo).toStrictEqual({ company: 'Other', number: 'TRK-LIT', url: `${LITZZY_PAGE}TRK-LIT` })
+    expect(callFor(SHOP_B).trackingInfo).toStrictEqual({ company: 'Other', number: 'TRK-REMI' })
+    expect((await shipmentOf('gid://test/Order/aff-lit1')).trackingUrl).toBe(`${LITZZY_PAGE}TRK-LIT`)
+    expect((await shipmentOf('gid://test/Order/aff-remi1')).trackingUrl).toBeNull()
+  })
+
+  it("one store's token failing does not stop the other store's rows", async () => {
+    await prisma.shopifyStoreCredential.update({ where: { storeId: storeB }, data: { accessToken: null } })
+    try {
+      mocks.fetchSheetCsv.mockImplementation(async () => 'Order,Tracking\nLIT1001_1,TRK-LIT\nREMI1001_1,TRK-REMI\n')
+      const { results, summary } = await runAutoFulfillAllStores({ sheets: SHEETS.slice(0, 1), minAgeDays: 5, apply: true, now: NOW })
+      expect(results.map(r => [r.shop, r.ok])).toEqual([[SHOP_A, true], [SHOP_B, false]])
+      expect(mocks.createFulfillment.mock.calls.map(c => [c[0], c[1]])).toEqual([[SHOP_A, 'token-aff-a']])
+      expect(summary).toMatchObject({ fulfilled: 1 })
+      expect((await shipmentOf('gid://test/Order/aff-lit1')).status).toBe('FULFILLED')
+      expect((await shipmentOf('gid://test/Order/aff-remi1')).trackingNumber).toBeNull()
+      expect((await prisma.shopifyStore.findUniqueOrThrow({ where: { id: storeB } })).lastError).toMatch(/^\[auto-fulfill\] /)
+    } finally {
+      await prisma.shopifyStoreCredential.update({ where: { storeId: storeB }, data: { accessToken: 'token-aff-b' } })
+      await prisma.shopifyStore.update({ where: { id: storeB }, data: { lastError: null, lastErrorAt: null } })
+    }
+  })
+
+  it('a sheet that holds only LIT rows gives Litzzy the same rows, link and numbers as before, and the other store is not asked', async () => {
+    mocks.fetchSheetCsv.mockImplementation(async () => `Order,Tracking\nLIT1001_1,${TRACKING}\nLIT9999,TRK-NONE\n`)
+    mocks.fetchFulfillmentOrders.mockImplementation(async (shop: string, token: string, names: string[]) => openFulfillmentOrders(shop, token, names.filter(n => n === 'LIT1001')))
+    const { results, summary } = await runAutoFulfillAllStores({ sheets: SHEETS.slice(0, 1), minAgeDays: 5, apply: true, now: NOW })
+    expect(mocks.fetchFulfillmentOrders.mock.calls.map(c => [c[0], c[1], [...c[2]].sort()])).toEqual([[SHOP_A, 'token-aff-a', ['LIT1001', 'LIT9999']]])
+    expect(mocks.createFulfillment.mock.calls).toEqual([[SHOP_A, 'token-aff-a', {
+      fulfillmentOrderId: 'FO-LIT1001', lineItems: [{ id: 'FOL-LIT1001', quantity: 1 }],
+      trackingInfo: { company: 'Other', number: TRACKING, url: oldLink(TRACKING) }, notifyCustomer: true,
+    }]])
+    expect(summary).toMatchObject({ ordersChecked: 2, fulfilled: 1, tooRecent: 0, alreadyFulfilled: 0, notFound: 1, needsManual: 0, errored: 0 })
+    expect(summary!.rows.map(r => [r.baseOrder, r.status, r.fulfilledLines]).sort()).toEqual([['LIT1001', 'will_fulfill', 1], ['LIT9999', 'not_found', 0]])
+    expect(results.map(r => [r.shop, r.ok])).toEqual([[SHOP_A, true], [SHOP_B, true]])
+  })
+
   it("Litzzy's link is byte-identical to the one the sheet's storeBase built, for a number that needs encoding", async () => {
-    await runAutoFulfillForStores({ sheets: SHEETS, minAgeDays: 5, apply: true })
+    await runAutoFulfillAllStores({ sheets: SHEETS, minAgeDays: 5, apply: true })
     const input = callFor(SHOP_A)
     expect(input.trackingInfo).toStrictEqual({ company: 'Other', number: TRACKING, url: oldLink(TRACKING) })
     expect(input.notifyCustomer).toBe(true)
@@ -175,7 +316,7 @@ describe("the fulfilment link comes from the order's store", () => {
   })
 
   it('a store without a tracking page fulfils with company and number but no link, and stores null', async () => {
-    await runAutoFulfillForStores({ sheets: SHEETS, minAgeDays: 5, apply: true })
+    await runAutoFulfillAllStores({ sheets: SHEETS, minAgeDays: 5, apply: true })
     const input = callFor(SHOP_B)
     expect(input.trackingInfo).toStrictEqual({ company: 'Other', number: TRACKING })
     expect(input.notifyCustomer).toBe(true)
@@ -184,9 +325,9 @@ describe("the fulfilment link comes from the order's store", () => {
     expect(shipment).toMatchObject({ trackingNumber: TRACKING, status: 'FULFILLED', carrier: 'Other' })
   })
 
-  it("a store with its own page gets that page, even though every sheet's storeBase is litzzy.com", async () => {
+  it("a store with its own page gets that page, never Litzzy's", async () => {
     await prisma.shopifyStore.update({ where: { id: storeB }, data: { trackingPageUrl: 'https://reminiso.example/apps/track?nums=' } })
-    await runAutoFulfillForStores({ sheets: SHEETS, minAgeDays: 5, apply: true })
+    await runAutoFulfillAllStores({ sheets: SHEETS, minAgeDays: 5, apply: true })
     expect(callFor(SHOP_B).trackingInfo.url).toBe(`https://reminiso.example/apps/track?nums=${encodeURIComponent(TRACKING)}`)
     expect((await shipmentOf('gid://test/Order/aff-remi1')).trackingUrl).toBe(`https://reminiso.example/apps/track?nums=${encodeURIComponent(TRACKING)}`)
     expect(JSON.stringify(mocks.createFulfillment.mock.calls.filter(c => c[0] === SHOP_B))).not.toContain('litzzy.com')
@@ -202,7 +343,7 @@ describe("the fulfilment link comes from the order's store", () => {
     } })
     mocks.fetchSheetCsv.mockImplementation(async () => 'Order,Tracking\n')
 
-    await runAutoFulfillForStores({ sheets: SHEETS, minAgeDays: 5, apply: true })
+    await runAutoFulfillAllStores({ sheets: SHEETS, minAgeDays: 5, apply: true })
     expect(callFor(SHOP_B).trackingInfo).toStrictEqual({ company: 'Other', number: TRACKING })
     expect((await shipmentOf('gid://test/Order/aff-remi1')).trackingUrl).toBeNull()
 
@@ -210,24 +351,13 @@ describe("the fulfilment link comes from the order's store", () => {
     await prisma.order.update({ where: { id: 'gid://test/Order/aff-remi1' }, data: { fulfillmentStatus: 'UNFULFILLED' } })
     await prisma.shipment.updateMany({ where: { orderId: 'gid://test/Order/aff-remi1' }, data: { shopifyFulfillmentId: null } })
     await prisma.shopifyStore.update({ where: { id: storeB }, data: { trackingPageUrl: 'https://reminiso.example/apps/track?nums=' } })
-    await runAutoFulfillForStores({ sheets: SHEETS, minAgeDays: 5, apply: true })
+    await runAutoFulfillAllStores({ sheets: SHEETS, minAgeDays: 5, apply: true })
     expect(callFor(SHOP_B).trackingInfo.url).toBe(`https://reminiso.example/apps/track?nums=${encodeURIComponent(TRACKING)}`)
   })
 
   it('Preview (apply false) creates nothing and writes no link', async () => {
-    await runAutoFulfillForStores({ sheets: SHEETS, minAgeDays: 5, apply: false })
+    await runAutoFulfillAllStores({ sheets: SHEETS, minAgeDays: 5, apply: false })
     expect(mocks.createFulfillment).not.toHaveBeenCalled()
     expect((await shipmentOf('gid://test/Order/aff-lit1')).trackingUrl).toBeNull()
-  })
-})
-
-describe('orderNameHasPrefix', () => {
-  it('needs the prefix followed by a digit, ignores case and the leading #', () => {
-    expect(orderNameHasPrefix('LIT4665', 'LIT')).toBe(true)
-    expect(orderNameHasPrefix('#lit2362R1', 'LIT')).toBe(true)
-    expect(orderNameHasPrefix('LITE123', 'LIT')).toBe(false)
-    expect(orderNameHasPrefix('REMI1', 'LIT')).toBe(false)
-    expect(orderNameHasPrefix('LIT1', null)).toBe(false)
-    expect(orderNameHasPrefix('LIT1', '')).toBe(false)
   })
 })

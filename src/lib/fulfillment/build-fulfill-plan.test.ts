@@ -35,12 +35,12 @@ describe('groupByOrder', () => {
 describe('mergeSheetGroups', () => {
   it('merges the same order across supplier sheets (multi-supplier order must not lose lines)', () => {
     // Real case #LIT3498: _1 lives in the Mangoshao sheet, _2/_3 in the Jomall sheet.
-    const target = new Map<string, { rows: Array<{ lineKey: string; tracking: string }>; storeBase: string }>()
-    mergeSheetGroups(target, groupByOrder([{ orderToken: '#LIT3498_1', tracking: 'UL481452389YP' }]), 'https://a.com')
+    const target = new Map<string, { rows: Array<{ lineKey: string; tracking: string }> }>()
+    mergeSheetGroups(target, groupByOrder([{ orderToken: '#LIT3498_1', tracking: 'UL481452389YP' }]))
     mergeSheetGroups(target, groupByOrder([
       { orderToken: '#LIT3498_2', tracking: 'SWX859060000168964562' },
       { orderToken: '#LIT3498_3', tracking: 'SWX859060000168964562' },
-    ]), 'https://b.com')
+    ]))
 
     const entry = target.get('LIT3498')!
     expect(entry.rows).toEqual([
@@ -48,16 +48,15 @@ describe('mergeSheetGroups', () => {
       { lineKey: 'LIT3498_2', tracking: 'SWX859060000168964562' },
       { lineKey: 'LIT3498_3', tracking: 'SWX859060000168964562' },
     ])
-    expect(entry.storeBase).toBe('https://a.com') // first sheet's storeBase is kept
   })
 
   it('dedupes identical rows but keeps a conflicting tracking for the same line', () => {
-    const target = new Map<string, { rows: Array<{ lineKey: string; tracking: string }>; storeBase: string }>()
-    mergeSheetGroups(target, groupByOrder([{ orderToken: '#LIT1_1', tracking: 'AA' }]), 'https://a.com')
+    const target = new Map<string, { rows: Array<{ lineKey: string; tracking: string }> }>()
+    mergeSheetGroups(target, groupByOrder([{ orderToken: '#LIT1_1', tracking: 'AA' }]))
     mergeSheetGroups(target, groupByOrder([
       { orderToken: '#LIT1_1', tracking: 'AA' },  // exact duplicate → dropped
       { orderToken: '#LIT1_1', tracking: 'BB' },  // conflict → kept so the plan flags needs_manual
-    ]), 'https://b.com')
+    ]))
     expect(target.get('LIT1')!.rows).toEqual([
       { lineKey: 'LIT1_1', tracking: 'AA' },
       { lineKey: 'LIT1_1', tracking: 'BB' },
