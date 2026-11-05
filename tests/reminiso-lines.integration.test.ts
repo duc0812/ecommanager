@@ -10,6 +10,7 @@ import { loadWorkspace } from '@/lib/design-studio'
 import { saveManualMapping } from '@/lib/repos/mapping'
 import { reevaluateOrdersForDesignEntry } from '@/lib/repos/design-reeval'
 import { hasUnresolvedProductLine } from '@/lib/order-lines'
+import { PIPELINE_STATUSES } from '@/lib/pipeline-status'
 import { POST as manualMappingPost } from '@/app/api/fulfillment/mapping/manual/route'
 import { runAutoFulfill } from '@/lib/fulfillment/auto-fulfill'
 import { queueRenderLine, queueScheduledRenders } from '@/lib/repos/artwork-render'
@@ -456,22 +457,86 @@ describe('Reminiso order lines', () => {
       expect(await statusOf('#REMI9041')).toBe('PENDING_DESIGN')
     })
 
-    it('never touches an order in another status, whatever its lines', async () => {
-      const held = [['PENDING_DESIGN', true], ['READY_TO_PRODUCTION', true], ['WARNING', false], ['AWAITING_PAYMENT', false], ['DESIGN_REJECTED', true]] as const
-      const names = held.map((_, i) => `REMI903${i + 1}`)
+    // The statuses saveManualMapping recomputed before Task 14 (git show 8cdf782:src/lib/repos/mapping.ts).
+    const RECOMPUTED = ['PENDING_MAPPING', 'PENDING_DESIGN', 'AWAITING_PAYMENT', 'WARNING']
+    const outcome = (o: { pipelineStatus: string; designReady: boolean }) => ({ pipelineStatus: o.pipelineStatus, designReady: o.designReady })
+
+    // mixed: a SKU line (mapped) and a no-SKU line (the one being mapped); skus: two SKU lines, the second being mapped.
+    const shapes = {
+      mixed: { name: '#REMI9001', mapped: TOPPER_VARIANT, mapping: ADVENT_VARIANT, node: () => fixtureOrder('#REMI9001') },
+      skus: { name: '#REMI9041', mapped: TOPPER_VARIANT, mapping: LEGGINGS_VARIANT, node: () => {
+        const n = rename(fixtureOrder('#REMI9001'), 'REMI9041')
+        n.lineItems.nodes = [n.lineItems.nodes[1], { ...fixtureOrder('#REMI9004').lineItems.nodes[0], id: 'gid://shopify/LineItem/remi14-REMI9041-2' }]
+        return n
+      } },
+    } as const
+
+    for (const status of RECOMPUTED) {
+      for (const [shape, def] of Object.entries(shapes)) {
+        it(`an order in ${status} (${shape} lines): a mapping save gives the status and designReady a re-sync gives`, async () => {
+          const node = def.node()
+          if (status === 'AWAITING_PAYMENT') node.displayFinancialStatus = 'PENDING'
+          await mapVariant(def.mapped, (await supplierProduct('REMI14-FIRST', 8)).id)
+          await sync(node)
+          const before = await orderRow(def.name)
+          await prisma.order.update({ where: { id: before.id }, data: { pipelineStatus: status, designReady: false } })
+
+          await saveOnly(def.mapping, (await supplierProduct('REMI14-SECOND', 21)).id)
+          const afterSave = outcome(await orderRow(def.name))
+          await sync(node)
+          const afterSync = outcome(await orderRow(def.name))
+
+          expect(afterSave).toEqual(afterSync)
+          expect(afterSave).toEqual({ pipelineStatus: status === 'AWAITING_PAYMENT' ? 'AWAITING_PAYMENT' : 'PENDING_DESIGN', designReady: false })
+        })
+      }
+    }
+
+    it('an order in PENDING_DESIGN whose design flag stands (Trello card) becomes ready on the save, as before and as a re-sync', async () => {
+      const node = shapes.skus.node()
+      await mapVariant(TOPPER_VARIANT, (await supplierProduct('REMI14-FIRST', 8)).id)
+      await sync(node)
+      const before = await orderRow('#REMI9041')
+      await prisma.order.update({ where: { id: before.id }, data: { pipelineStatus: 'PENDING_DESIGN', designReady: true, trelloCardId: 'card-remi14' } })
+
+      await saveOnly(LEGGINGS_VARIANT, (await supplierProduct('REMI14-SECOND', 12)).id)
+
+      expect(outcome(await orderRow('#REMI9041'))).toEqual({ pipelineStatus: 'READY_TO_PRODUCTION', designReady: true })
+      await sync(node)
+      expect(outcome(await orderRow('#REMI9041'))).toEqual({ pipelineStatus: 'READY_TO_PRODUCTION', designReady: true })
+    })
+
+    it('an order in PENDING_DESIGN whose lines already carry their library design becomes ready on the save, as before and as a re-sync', async () => {
+      const node = shapes.skus.node()
+      await mapVariant(TOPPER_VARIANT, (await supplierProduct('REMI14-FIRST', 8)).id)
+      await sync(node)
+      const before = await orderRow('#REMI9041')
+      await prisma.orderLine.updateMany({ where: { orderId: before.id }, data: { designDriveLink: 'https://example.test/library-design.png' } })
+      await prisma.order.update({ where: { id: before.id }, data: { pipelineStatus: 'PENDING_DESIGN', designReady: true } })
+
+      await saveOnly(LEGGINGS_VARIANT, (await supplierProduct('REMI14-SECOND', 12)).id)
+
+      expect(outcome(await orderRow('#REMI9041'))).toEqual({ pipelineStatus: 'READY_TO_PRODUCTION', designReady: true })
+      await sync(node)
+      expect(outcome(await orderRow('#REMI9041'))).toEqual({ pipelineStatus: 'READY_TO_PRODUCTION', designReady: true })
+    })
+
+    it('never touches an order in a status it did not recompute before, whatever its lines', async () => {
+      const held = PIPELINE_STATUSES.filter(status => !RECOMPUTED.includes(status))
+      expect(held).toEqual(['READY_TO_PRODUCTION', 'EXPORTED', 'ON_HOLD', 'FULFILLED', 'DESIGN_REJECTED', 'ERROR', 'CANCELLED', 'REFUNDED'])
+      const names = held.map((_, i) => `REMI904${i + 1}`)
       await sync(...names.map(name => rename(fixtureOrder('#REMI9001'), name)))
       for (let i = 0; i < held.length; i++) {
-        await prisma.order.update({ where: { id: `gid://shopify/Order/remi14-${names[i]}` }, data: { pipelineStatus: held[i][0], designReady: held[i][1] } })
+        await prisma.order.update({ where: { id: `gid://shopify/Order/remi14-${names[i]}` }, data: { pipelineStatus: held[i], designReady: i % 2 === 0 } })
       }
 
       await saveOnly(TOPPER_VARIANT, (await supplierProduct('REMI14-TOPPER-6IN', 8)).id)
 
       for (let i = 0; i < held.length; i++) {
-        const [pipelineStatus, designReady] = held[i]
         const order = await orderRow(`#${names[i]}`)
-        expect([order.pipelineStatus, order.designReady], pipelineStatus).toEqual([pipelineStatus, designReady])
-        expect(order.lines[1].resolvedSupplierId, pipelineStatus).toBe(SUP)
-        expect(order.lines[0].resolvedSupplierId, pipelineStatus).toBeNull()
+        expect([order.pipelineStatus, order.designReady], held[i]).toEqual([held[i], i % 2 === 0])
+        expect(order.lines[1].resolvedSupplierId, held[i]).toBe(SUP)
+        expect(order.lines[0].resolvedSupplierId, held[i]).toBeNull()
       }
     })
 
@@ -500,6 +565,49 @@ describe('Reminiso order lines', () => {
 
       expect(touched).toBe(1)
       expect(await statusOf('#REMI9001')).toBe('PENDING_MAPPING')
+    })
+  })
+  describe('the hidden fee product (type PPLR_HIDDEN_PRODUCT)', () => {
+    // Shaped like #LIT5566: a normal product line and the personalisation app's fee line, which has no SKU and no supplier.
+    const feeOrder = () => {
+      const node = fixtureOrder('#REMI9004')
+      node.id = 'gid://shopify/Order/remi14-REMI9051'
+      node.name = '#REMI9051'
+      node.lineItems.nodes[0].id = 'gid://shopify/LineItem/remi14-REMI9051-1'
+      node.lineItems.nodes.push({
+        id: 'gid://shopify/LineItem/remi14-REMI9051-2', sku: null, title: 'Item Personalization', variantTitle: null, quantity: 1,
+        originalUnitPriceSet: { shopMoney: { amount: '0.50' } }, customAttributes: [], image: null,
+        product: { id: 'gid://shopify/Product/remi14-fee', tags: [], productType: 'PPLR_HIDDEN_PRODUCT', onlineStoreUrl: null, featuredImage: null },
+        variant: { id: 'gid://shopify/ProductVariant/remi14-fee', image: null, selectedOptions: [] },
+      })
+      return node
+    }
+
+    it('gets no design task and does not hold a mapped order in PENDING_MAPPING', async () => {
+      await mapVariant(LEGGINGS_VARIANT, (await prisma.supplierProduct.create({ data: { supplierId: SUP, sku: 'REMI14-LEGGINGS-M', baseCost: 12 } })).id)
+
+      const result = await sync(feeOrder())
+
+      expect(result).toMatchObject({ totalSynced: 1, withUnmappedSku: 0, errors: [] })
+      const order = await orderRow('#REMI9051')
+      expect(order.pipelineStatus).toBe('PENDING_DESIGN')
+      expect(order.lines[1]).toMatchObject({ sku: null, resolvedSupplierId: null, resolvedBaseCost: 0 })
+      const tasks = await prisma.designTask.findMany({ where: { orderId: order.id } })
+      expect(tasks.map(t => [t.shopifyLineId, t.taskKey])).toEqual([[order.lines[0].shopifyLineId, 'REMI9051_1']])
+    })
+
+    it('does not hold an order in PENDING_MAPPING through a mapping save either', async () => {
+      await sync(feeOrder())
+      expect((await orderRow('#REMI9051')).pipelineStatus).toBe('PENDING_MAPPING')
+
+      await saveManualMapping({
+        shopifyVariantId: LEGGINGS_VARIANT, shopifyProductTitle: 'Leggings',
+        supplierProductId: (await prisma.supplierProduct.create({ data: { supplierId: SUP, sku: 'REMI14-LEGGINGS-M', baseCost: 12 } })).id,
+      })
+
+      expect((await orderRow('#REMI9051')).pipelineStatus).toBe('PENDING_DESIGN')
+      await sync(feeOrder())
+      expect((await orderRow('#REMI9051')).pipelineStatus).toBe('PENDING_DESIGN')
     })
   })
 })

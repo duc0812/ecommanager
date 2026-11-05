@@ -76,6 +76,18 @@ describe('isNonProductLine: Reminiso add-ons (product type "Add-on")', () => {
   })
 })
 
+describe('isNonProductLine: the personalisation app\'s hidden fee product', () => {
+  it('treats product type PPLR_HIDDEN_PRODUCT as non-product, SKU and title aside, ignoring case and spaces', () => {
+    expect(isNonProductLine({ sku: null, productTitle: 'Item Personalization', shopifyProductType: 'PPLR_HIDDEN_PRODUCT' })).toBe(true)
+    expect(isNonProductLine({ sku: 'FEE-1', productTitle: 'Anything', shopifyProductType: ' pplr_hidden_product ' })).toBe(true)
+  })
+
+  it('does not catch a product by its title alone, or another product type', () => {
+    expect(isNonProductLine({ sku: null, productTitle: 'Item Personalization', shopifyProductType: null })).toBe(false)
+    expect(isNonProductLine({ sku: 'X', productTitle: 'Item Personalization', shopifyProductType: 'Baseball Jersey' })).toBe(false)
+  })
+})
+
 describe('lineKeysOf with Reminiso add-ons', () => {
   it('numbers the product lines only, so a tote after two add-ons is _1', () => {
     const lines = [

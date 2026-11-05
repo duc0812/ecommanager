@@ -8,7 +8,8 @@ export type LineForClassification = {
 // Matched by Shopify product type when available, falling back to product title.
 // Reminiso sells its add-ons (Worry-Free Protection, Custom Name Add-on) as product type "Add-on";
 // their two titles stand in when the type is missing. Never matched by SKU prefix.
-const DIGITAL_PRODUCT_TYPES = ['custom text', 'add-on']
+// PPLR_HIDDEN_PRODUCT is the personalisation app's hidden fee product: never a thing to print or to map.
+const DIGITAL_PRODUCT_TYPES = ['custom text', 'add-on', 'pplr_hidden_product']
 const DIGITAL_PRODUCT_TITLES = ['custom text']
 // Checkout add-ons. Matched by title alone: a store can sell them as ordinary products, so they
 // may carry a SKU and inherit an unrelated product type (Package Protection ships as 'Jewelry').

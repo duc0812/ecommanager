@@ -268,9 +268,9 @@ export async function saveManualMapping(input: SaveManualMappingInput) {
     })
     const orderIds = Array.from(new Set(affectedLines.map(l => l.orderId)))
     if (orderIds.length > 0) {
-      // Only an order held for mapping moves, and only forward; an order in any other status is not this save's to change.
+      // The statuses the order sync recomputes from the lines; an order in any other status is not this save's to change.
       const orders = await tx.order.findMany({
-        where: { id: { in: orderIds }, pipelineStatus: 'PENDING_MAPPING' },
+        where: { id: { in: orderIds }, pipelineStatus: { in: ['PENDING_MAPPING', 'PENDING_DESIGN', 'AWAITING_PAYMENT', 'WARNING'] } },
         select: {
           id: true,
           designReady: true,
