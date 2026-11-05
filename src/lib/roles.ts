@@ -33,6 +33,11 @@ export const ROLE_LABELS: Record<UserRole, string> = {
   SUPPORT: 'Support',
 }
 
+// AppUser.role is a free string in the database; anything that gates on a role asks this first.
+export function isUserRole(value: unknown): value is UserRole {
+  return typeof value === 'string' && Object.prototype.hasOwnProperty.call(ROLE_LABELS, value)
+}
+
 export const FEATURE_LABELS: Record<FeaturePermission, string> = {
   overview: 'Overview',
   shopify: 'Shopify',

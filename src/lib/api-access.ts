@@ -1,4 +1,4 @@
-import { DEFAULT_ROLE_PERMISSIONS, FeaturePermission, UserRole } from '@/lib/roles'
+import { DEFAULT_ROLE_PERMISSIONS, FeaturePermission, UserRole, isUserRole } from '@/lib/roles'
 
 type ApiMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 type ApiAccess = 'PUBLIC' | 'ANY' | 'SUPERADMIN' | 'ADMIN' | FeaturePermission[] | { adminOr: FeaturePermission[] }
@@ -128,14 +128,18 @@ export const API_ACCESS_RULES: ApiRule[] = [
 
 // A seller reaches only these routes. Each carries no store data, or filters it to the stores the seller is given.
 // /api/auth/status is left out on purpose: it names every store and its last error.
-export const SELLER_API_PREFIXES: string[] = [
+// These three open that one path and nothing below it, so a later /api/stores/<id>/settings stays closed to a seller until it is listed.
+export const SELLER_API_PATHS: string[] = [
   '/api/auth/me',
   '/api/auth/logout',
+  '/api/stores',
+]
+
+export const SELLER_API_PREFIXES: string[] = [
   '/api/spy',
   '/api/tools/spy-idea',
   '/api/tools/creative',
   '/api/fulfillment/crawler',
-  '/api/stores',
   '/api/overview',
   '/api/projects',
   '/api/shopify/db-payouts',
@@ -152,8 +156,9 @@ export const SELLER_API_PREFIXES: string[] = [
   '/api/auto-sync',
 ]
 
-function sellerMayReach(pathname: string) {
-  return SELLER_API_PREFIXES.some(prefix => pathname === prefix || pathname.startsWith(`${prefix}/`))
+export function sellerMayReach(pathname: string) {
+  return SELLER_API_PATHS.some(path => pathname === path)
+    || SELLER_API_PREFIXES.some(prefix => pathname === prefix || pathname.startsWith(`${prefix}/`))
 }
 
 function matchRule(rule: ApiRule, pathname: string, method: string) {
@@ -178,6 +183,7 @@ export function canCallApi(
   const access = apiAccessFor(pathname, method)
   if (access === 'PUBLIC') return 'ok'
   if (!role) return 'unauthenticated'
+  if (!isUserRole(role)) return 'forbidden'
   if (role === 'SUPERADMIN') return 'ok'
   if (role === 'SELLER' && !sellerMayReach(pathname)) return 'forbidden'
   if (access === null || access === 'SUPERADMIN') return 'forbidden'

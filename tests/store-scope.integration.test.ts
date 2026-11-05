@@ -17,7 +17,7 @@ const PROJECT_A = 'ss-project-a'
 const PROJECT_B = 'ss-project-b'
 const ORDER_A = 'ss-order-a'
 const ORDER_B = 'ss-order-b'
-const EMAILS = ['ss-super@test.local', 'ss-admin@test.local', 'ss-support@test.local', 'ss-seller-a@test.local', 'ss-seller-none@test.local', 'ss-seller-ab@test.local']
+const EMAILS = ['ss-super@test.local', 'ss-admin@test.local', 'ss-support@test.local', 'ss-seller-a@test.local', 'ss-seller-none@test.local', 'ss-seller-ab@test.local', 'ss-lower@test.local']
 const SECRET = 'ss-client-secret-value'
 const TOKEN = 'shpat_ss_access_token_value'
 const LAST_ERROR = 'ss-last-error-text-that-names-a-token'
@@ -34,12 +34,12 @@ function request(path: string, who: string | null) {
   })
 }
 
-async function makeUser(key: string, email: string, role: UserRole, permissions: FeaturePermission[], stores: string[] = []) {
+async function makeUser(key: string, email: string, role: string, permissions: FeaturePermission[], stores: string[] = []) {
   const row = await prisma.appUser.create({
     data: { name: key, email, role, permissions: JSON.stringify(permissions), storeAccess: { create: stores.map(storeId => ({ storeId })) } },
   })
-  users[key] = { id: row.id, email, name: key, role, permissions, tokenVersion: row.tokenVersion }
-  tokens[key] = await signToken({ userId: row.id, email, name: key, role, permissions, tv: row.tokenVersion })
+  users[key] = { id: row.id, email, name: key, role: role as UserRole, permissions, tokenVersion: row.tokenVersion }
+  tokens[key] = await signToken({ userId: row.id, email, name: key, role: role as UserRole, permissions, tv: row.tokenVersion })
 }
 
 async function cleanup() {
@@ -73,6 +73,7 @@ beforeAll(async () => {
   await makeUser('sellerA', EMAILS[3], 'SELLER', ['projects'], [storeA])
   await makeUser('sellerNone', EMAILS[4], 'SELLER', ['projects'])
   await makeUser('sellerAB', EMAILS[5], 'SELLER', ['projects'], [storeA, storeB])
+  await makeUser('lowercase', EMAILS[6], 'seller', ['projects', 'overview'], [storeA])
 })
 
 afterAll(async () => { await cleanup() })
@@ -102,6 +103,22 @@ describe('storeScopeFor', () => {
     expect(await storeScopeFor(users.support, 'cs')).toEqual({ all: true })
   })
 
+  it('a role that is not one of the four known roles gets an empty scope, whatever rows it has', async () => {
+    expect(await storeScopeFor(users.lowercase)).toEqual({ all: false, storeIds: [] })
+    for (const role of ['Seller', '', 'owner', 'constructor']) {
+      expect(await storeScopeFor({ ...users.sellerAB, role: role as UserRole })).toEqual({ all: false, storeIds: [] })
+    }
+  })
+
+  it('a lowercase seller role is refused on an ANY route and on a store-data route', async () => {
+    const list = await listStores(request('/api/stores', 'lowercase'))
+    expect(list.status).toBe(403)
+    const filter = await requireStoreFilter(request(`/api/overview?storeId=${storeA}`, 'lowercase'))
+    expect('error' in filter && filter.error.status).toBe(403)
+    const order = await requireOrderInScope(request('/api/stores', 'lowercase'), ORDER_A)
+    expect('error' in order && order.error.status).toBe(403)
+  })
+
   it('seller with no store gets an empty list', async () => {
     const scope = await storeScopeFor(users.sellerNone)
     expect(scope).toEqual({ all: false, storeIds: [] })
@@ -116,6 +133,12 @@ describe('storeWhere and projectIdsOf', () => {
     expect(storeWhere([storeA])).toEqual({ storeId: { in: [storeA] } })
     const rows = await prisma.order.findMany({ where: { ...storeWhere([storeA]), id: { in: [ORDER_A, ORDER_B] } } })
     expect(rows.map(r => r.id)).toEqual([ORDER_A])
+  })
+
+  it('only null means no filter: undefined behaves like an empty list', async () => {
+    const undefinedList = undefined as unknown as string[]
+    expect(storeWhere(undefinedList)).toEqual({ storeId: { in: [] } })
+    expect(await prisma.order.findMany({ where: { ...storeWhere(undefinedList), id: { in: [ORDER_A, ORDER_B] } } })).toEqual([])
   })
 
   it('projectIdsOf gives the project of each store that has one', async () => {
@@ -177,11 +200,18 @@ describe('requireStoreFilter', () => {
 })
 
 describe('requireOrderInScope', () => {
-  it('rejects another store\'s order with 403 and a missing order with 404', async () => {
+  it('answers a seller 404 for another store\'s order and for a missing order, with the same body', async () => {
     const other = await requireOrderInScope(request('/api/stores', 'sellerA'), ORDER_B)
-    expect('error' in other && other.error.status).toBe(403)
     const missing = await requireOrderInScope(request('/api/stores', 'sellerA'), 'ss-no-such-order')
-    expect('error' in missing && missing.error.status).toBe(404)
+    if (!('error' in other) || !('error' in missing)) throw new Error('a seller must not pass')
+    expect(other.error.status).toBe(404)
+    expect(missing.error.status).toBe(404)
+    expect(await other.error.json()).toEqual(await missing.error.json())
+    const none = await requireOrderInScope(request('/api/stores', 'sellerNone'), ORDER_A)
+    expect('error' in none && none.error.status).toBe(404)
+  })
+
+  it('answers a missing order 404 for admin, which sees every store', async () => {
     const adminMissing = await requireOrderInScope(request('/api/stores', 'admin'), 'ss-no-such-order')
     expect('error' in adminMissing && adminMissing.error.status).toBe(404)
   })

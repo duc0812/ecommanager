@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { SELLER_API_PREFIXES, canCallApi } from './api-access'
+import { API_ACCESS_RULES, SELLER_API_PATHS, SELLER_API_PREFIXES, canCallApi, sellerMayReach } from './api-access'
+import type { UserRole } from './roles'
 import { DEFAULT_ROLE_PERMISSIONS } from './roles'
 
 describe('canCallApi', () => {
@@ -142,14 +143,12 @@ describe('PGprints API access', () => {
 
 describe('seller API allow-list', () => {
   it('lists only routes that carry no store data or filter it to the stores of the seller', () => {
+    expect(SELLER_API_PATHS).toEqual(['/api/auth/me', '/api/auth/logout', '/api/stores'])
     expect(SELLER_API_PREFIXES).toEqual([
-      '/api/auth/me',
-      '/api/auth/logout',
       '/api/spy',
       '/api/tools/spy-idea',
       '/api/tools/creative',
       '/api/fulfillment/crawler',
-      '/api/stores',
       '/api/overview',
       '/api/projects',
       '/api/shopify/db-payouts',
@@ -232,10 +231,46 @@ describe('seller API allow-list', () => {
     expect(canCallApi('SELLER', [], '/api/storesx', 'GET')).toBe('forbidden')
   })
 
+  it('the three exact paths do not open anything below them', () => {
+    expect(sellerMayReach('/api/stores')).toBe(true)
+    expect(sellerMayReach('/api/auth/me')).toBe(true)
+    expect(sellerMayReach('/api/auth/logout')).toBe(true)
+    for (const below of ['/api/stores/abc', '/api/stores/abc/settings', '/api/stores/connect', '/api/auth/me/x', '/api/auth/logout/x', '/api/stores/']) {
+      expect(sellerMayReach(below)).toBe(false)
+    }
+    expect(sellerMayReach('/api/projects/p1/pl')).toBe(true)
+    expect(sellerMayReach('/api/spy/ads')).toBe(true)
+  })
+
+  it('seller is forbidden on /api/stores/abc/settings even if a permissive rule existed', () => {
+    const permissive = { prefix: '/api/stores/', access: 'ANY' as const }
+    API_ACCESS_RULES.unshift(permissive)
+    try {
+      expect(canCallApi('ADMIN', DEFAULT_ROLE_PERMISSIONS.ADMIN, '/api/stores/abc/settings', 'GET')).toBe('ok')
+      expect(canCallApi('SELLER', ['projects'], '/api/stores/abc/settings', 'GET')).toBe('forbidden')
+      expect(canCallApi('SELLER', ['projects'], '/api/stores/connect', 'POST')).toBe('forbidden')
+    } finally {
+      API_ACCESS_RULES.splice(API_ACCESS_RULES.indexOf(permissive), 1)
+    }
+  })
+
   it('public routes stay reachable without a session', () => {
     expect(canCallApi(null, [], '/api/auth/login', 'POST')).toBe('ok')
     expect(canCallApi(null, [], '/api/auth/shopify/callback', 'GET')).toBe('ok')
     expect(canCallApi(null, [], '/api/stores', 'GET')).toBe('unauthenticated')
+  })
+
+  it('a role that is not one of the four known roles is forbidden everywhere except public routes', () => {
+    for (const role of ['seller', 'Seller', 'ADMINISTRATOR', 'constructor', ' SELLER'] as unknown as UserRole[]) {
+      expect(canCallApi(role, ['overview', 'projects'], '/api/overview', 'GET')).toBe('forbidden')
+      expect(canCallApi(role, ['projects'], '/api/projects', 'GET')).toBe('forbidden')
+      expect(canCallApi(role, [], '/api/stores', 'GET')).toBe('forbidden')
+      expect(canCallApi(role, [], '/api/auth/me', 'GET')).toBe('forbidden')
+      expect(canCallApi(role, [], '/api/auth/logout', 'POST')).toBe('forbidden')
+      expect(canCallApi(role, [], '/api/does-not-exist', 'GET')).toBe('forbidden')
+      expect(canCallApi(role, [], '/api/auth/login', 'POST')).toBe('ok')
+    }
+    expect(canCallApi('' as unknown as UserRole, [], '/api/stores', 'GET')).toBe('unauthenticated')
   })
 
   it('admin, support and superadmin are unaffected', () => {
