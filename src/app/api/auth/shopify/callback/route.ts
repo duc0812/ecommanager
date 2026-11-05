@@ -3,6 +3,7 @@ import crypto from 'crypto'
 import { prisma } from '@/lib/db'
 import { consumeOAuthState } from '@/lib/token-store'
 import { saveStoreCredential } from '@/lib/store-connections'
+import { parseScopeList, saveGrantedScopes } from '@/lib/store-connect'
 import { escapeHtml, normalizeShopDomain } from '@/lib/shopify-shop'
 
 export const dynamic = 'force-dynamic'
@@ -65,11 +66,13 @@ export async function GET(req: NextRequest) {
     return html(errorPage(`Token exchange thất bại (HTTP ${res.status}). Kiểm tra API Key/Secret và thử lại.`), 502)
   }
 
-  const { access_token } = await res.json()
+  const { access_token, scope } = await res.json()
   if (typeof access_token !== 'string' || !access_token) {
     return html(errorPage('Shopify không trả về access token.'), 502)
   }
   await saveStoreCredential(store.id, { authMode: 'OAUTH', clientId, clientSecret, accessToken: access_token, connectedAt: new Date() })
+  const granted = parseScopeList(scope)
+  if (granted) await saveGrantedScopes(store.id, granted)
   await prisma.shopifyStore.update({ where: { id: store.id }, data: { lastError: null, lastErrorAt: null } })
 
   return html(successPage(shop))

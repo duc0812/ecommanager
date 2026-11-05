@@ -76,12 +76,6 @@ export async function readShopSnapshot(shop: string, token: string): Promise<Sho
   }
 }
 
-// "#LIT9" and "#LIT-9" are LIT; "#1001" has no prefix.
-export function orderPrefixFromName(name: string | null | undefined): string | null {
-  const letters = name?.trim().match(/^#?([A-Za-z]+)/)?.[1]
-  return letters ? letters.toUpperCase() : null
-}
-
 export const hasReadAllOrders = (scopes: string[]) => scopes.includes('read_all_orders')
 
 // The dates a store keeps are plain YYYY-MM-DD strings (ShopifyStore.payoutStartDate); a date that rolls over, like 2026-02-30, is not one.
@@ -111,6 +105,16 @@ const scopesKey = (storeId: string) => `store.scopes.${storeId}`
 export async function saveGrantedScopes(storeId: string, scopes: string[], db: Pick<typeof prisma, 'appSetting'> = prisma): Promise<void> {
   const value = JSON.stringify({ scopes, checkedAt: new Date().toISOString() })
   await db.appSetting.upsert({ where: { key: scopesKey(storeId) }, create: { key: scopesKey(storeId), value }, update: { value } })
+}
+
+// Shopify's token answer lists the scopes as one comma-separated string.
+export function parseScopeList(value: unknown): string[] | null {
+  if (typeof value !== 'string') return null
+  return value.split(',').map(scope => scope.trim()).filter(Boolean)
+}
+
+export async function deleteGrantedScopes(storeId: string): Promise<void> {
+  await prisma.appSetting.deleteMany({ where: { key: scopesKey(storeId) } })
 }
 
 export async function loadGrantedScopes(storeIds: string[]): Promise<Map<string, string[]>> {

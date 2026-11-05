@@ -19,7 +19,7 @@ type StoreRow = {
   readAllOrders: boolean | null
 }
 type FreeProject = { id: string; name: string }
-type Banner = { ok: boolean; text: string; lines?: string[] }
+type Banner = { ok: boolean; text: string; lines?: string[]; warning?: string }
 type Form = {
   shop: string; clientId: string; clientSecret: string; accessToken: string
   projectId: string; projectName: string; startDate: string; payoutStartDate: string; trackingPageUrl: string
@@ -44,8 +44,8 @@ async function send(url: string, method: 'POST' | 'PATCH', body: unknown): Promi
   }
 }
 
-function ReadAllOrders({ value }: { value: boolean | null }) {
-  if (value === null) return <p className="text-label-sm text-on-surface-variant">Quyền của app chưa kiểm tra: bấm Kết nối lại.</p>
+function ReadAllOrders({ value, canRecheck }: { value: boolean | null; canRecheck: boolean }) {
+  if (value === null) return <p className="text-label-sm text-on-surface-variant">Quyền của app chưa kiểm tra{canRecheck ? ': bấm Kết nối lại.' : '.'}</p>
   if (value) return <p className="text-label-sm text-on-surface-variant">read_all_orders: có</p>
   return (
     <p className="text-label-sm text-error">
@@ -74,7 +74,6 @@ export default function StoreConnectionsCard() {
     const data = await res.json().catch(() => ({}))
     setLoadFailed(false)
     setStores(Array.isArray(data.stores) ? data.stores : [])
-    setEdits({})
   }, [])
 
   useEffect(() => { void load() }, [load])
@@ -103,6 +102,7 @@ export default function StoreConnectionsCard() {
         data.orderPrefix ? `Tiền tố đơn: ${data.orderPrefix}` : 'Tiền tố đơn: chưa có. Store chưa có đơn nào nên sync đơn bị từ chối cho tới khi có tiền tố: sau khi có đơn đầu tiên, bấm Kết nối lại.',
         data.readAllOrders ? 'read_all_orders: có' : 'read_all_orders: chưa có, đơn cũ hơn 60 ngày không đọc được',
       ],
+      warning: typeof data.warning === 'string' ? data.warning : undefined,
     })
     void load()
   }
@@ -133,13 +133,14 @@ export default function StoreConnectionsCard() {
     showConnected(r.data)
   }
 
-  async function patchStore(s: StoreRow, body: Record<string, unknown>, done: string) {
+  async function patchStore(s: StoreRow, body: Record<string, unknown>, done: string, savedSettings = false) {
     setBusy(`set:${s.id}`)
     setBanner(null)
     const r = await send(`/api/stores/${s.id}`, 'PATCH', body)
     setBusy('')
     if (!r.ok) { setBanner({ ok: false, text: r.error }); return }
     setBanner({ ok: true, text: done })
+    if (savedSettings) setEdits(prev => Object.fromEntries(Object.entries(prev).filter(([id]) => id !== s.id)))
     void load()
   }
 
@@ -150,7 +151,7 @@ export default function StoreConnectionsCard() {
 
   function saveSettings(s: StoreRow) {
     const edit = editOf(s)
-    void patchStore(s, { trackingPageUrl: edit.trackingPageUrl.trim() || null, payoutStartDate: edit.payoutStartDate || null }, `Đã lưu cài đặt của ${s.shop}.`)
+    void patchStore(s, { trackingPageUrl: edit.trackingPageUrl.trim() || null, payoutStartDate: edit.payoutStartDate || null }, `Đã lưu cài đặt của ${s.shop}.`, true)
   }
 
   const ordered = [...(stores ?? [])].sort((a, b) => Number(b.enabled) - Number(a.enabled))
@@ -166,7 +167,7 @@ export default function StoreConnectionsCard() {
           <span className="bg-surface-container-high px-sm py-xs rounded text-label-sm text-on-surface-variant">{stores.length} store</span>
         )}
         {isSuper && (
-          <button type="button" className={`${primaryButton} ml-auto flex items-center gap-xs`} onClick={() => { setOpen(o => !o); setBanner(null) }}>
+          <button type="button" className={`${primaryButton} ml-auto flex items-center gap-xs`} onClick={() => { if (open) setForm(EMPTY_FORM); setOpen(o => !o); setBanner(null) }}>
             <span className="material-symbols-outlined text-[18px]">{open ? 'close' : 'add'}</span>
             {open ? 'Đóng form' : 'Thêm store'}
           </button>
@@ -177,6 +178,7 @@ export default function StoreConnectionsCard() {
         <div role="status" className={`mx-lg mt-md rounded-lg px-md py-sm text-body-sm border ${banner.ok ? 'bg-secondary/5 border-secondary/30 text-secondary' : 'bg-error-container/40 border-error/30 text-error'}`}>
           {banner.text}
           {banner.lines && <ul className="mt-xs list-disc pl-lg text-on-surface-variant">{banner.lines.map(line => <li key={line}>{line}</li>)}</ul>}
+          {banner.warning && <p className="mt-xs text-error">{banner.warning}</p>}
         </div>
       )}
 
@@ -271,7 +273,7 @@ export default function StoreConnectionsCard() {
                           {s.connected ? 'Có' : 'Không'}
                         </span>
                         {s.authMode && <span className="ml-sm text-label-sm text-on-surface-variant">{AUTH_LABELS[s.authMode] ?? s.authMode}</span>}
-                        {s.connected && <ReadAllOrders value={s.readAllOrders} />}
+                        {s.connected && <ReadAllOrders value={s.readAllOrders} canRecheck={isSuper} />}
                       </td>
                       <td className="px-lg py-md text-body-sm text-on-surface-variant">{s.lastSyncAt ? usDate(s.lastSyncAt) : '—'}</td>
                       <td className="px-lg py-md text-body-sm">

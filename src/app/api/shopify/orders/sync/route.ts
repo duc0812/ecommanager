@@ -5,6 +5,7 @@ import { forEachConnectedStore, okResults, type StoreRunResult } from '@/lib/sto
 import { StoreOrderSyncError, syncStoreOrders, type StoreOrderSyncResult } from '@/lib/shopify-order-sync'
 import { forbidden } from '@/lib/api-auth'
 import { requireScope } from '@/lib/order-scope'
+import { orderPrefixOf } from '@/lib/order-prefix'
 
 const NOT_CONNECTED = { error: 'Not connected to Shopify. Go to /setup and connect Shopify first.', status: 401 }
 
@@ -12,7 +13,7 @@ const NOT_CONNECTED = { error: 'Not connected to Shopify. Go to /setup and conne
 // there is nothing to choose, so a name without letters (or with another prefix) still goes to it.
 function storeForOrderName(stores: ConnectedStore[], orderName: string): ConnectedStore | null {
   if (stores.length === 1) return stores[0]
-  const prefix = orderName.match(/^#?([A-Za-z]+)/)?.[1]?.toUpperCase()
+  const prefix = orderPrefixOf(orderName)
   if (!prefix) return null
   const matches = stores.filter(s => s.orderPrefix?.toUpperCase() === prefix)
   return matches.length === 1 ? matches[0] : null

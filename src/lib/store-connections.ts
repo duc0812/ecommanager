@@ -21,6 +21,7 @@ export class StoreConnectionError extends Error {
   storeId: string
   shop: string
   code: StoreConnectionErrorCode
+  shopifyError?: string
 
   constructor(code: StoreConnectionErrorCode, storeId: string, shop: string, message: string) {
     super(message)
@@ -29,6 +30,12 @@ export class StoreConnectionError extends Error {
     this.storeId = storeId
     this.shop = shop
   }
+}
+
+// Whether getStoreConnection can work from this row without asking Shopify first: an access token, or a complete client-credentials pair to mint one with.
+export function hasUsableCredential(credential: { authMode: string; clientId: string | null; clientSecret: string | null; accessToken: string | null } | null | undefined): boolean {
+  if (!credential) return false
+  return Boolean(credential.accessToken || (credential.authMode === 'CLIENT_CREDENTIALS' && credential.clientId && credential.clientSecret))
 }
 
 export type CredentialInput = {
@@ -116,7 +123,11 @@ export async function mintClientCredentialsToken(shop: string, clientId: string,
 const MINT_ATTEMPTS = 3
 
 async function mintAndSave(store: StoreWithCredential): Promise<string> {
-  const fail = (reason: string) => new StoreConnectionError('MINT_FAILED', store.id, store.shop, `Không lấy được token mới cho ${store.shop}: ${reason}`)
+  const fail = (reason: string, shopifyError?: string) => {
+    const error = new StoreConnectionError('MINT_FAILED', store.id, store.shop, `Không lấy được token mới cho ${store.shop}: ${reason}`)
+    error.shopifyError = shopifyError
+    return error
+  }
   for (let attempt = 0; attempt < MINT_ATTEMPTS; attempt++) {
     const fresh = await prisma.shopifyStoreCredential.findUnique({ where: { storeId: store.id } })
     if (!fresh) throw new StoreConnectionError('NOT_CONNECTED', store.id, store.shop, `Store ${store.shop} chưa có thông tin kết nối`)
@@ -132,7 +143,7 @@ async function mintAndSave(store: StoreWithCredential): Promise<string> {
     try {
       minted = await mintClientCredentialsToken(store.shop, fresh.clientId, fresh.clientSecret)
     } catch (e) {
-      throw fail(e instanceof MintError ? e.message : 'lỗi không rõ')
+      throw fail(e instanceof MintError ? e.message : 'lỗi không rõ', e instanceof MintError ? e.shopifyError : undefined)
     }
     let saved: { count: number }
     try {
@@ -160,9 +171,9 @@ function mintOnce(store: StoreWithCredential): Promise<string> {
   return promise
 }
 
-async function connectionFor(store: StoreWithCredential | null, fallbackId: string, fallbackShop: string): Promise<StoreConnection> {
+async function connectionFor(store: StoreWithCredential | null, fallbackId: string, fallbackShop: string, opts: ConnectionOptions = {}): Promise<StoreConnection> {
   if (!store) throw new StoreConnectionError('NOT_CONNECTED', fallbackId, fallbackShop, 'Store không tồn tại')
-  if (!store.enabled) throw new StoreConnectionError('DISABLED', store.id, store.shop, `Store ${store.shop} đang tắt`)
+  if (!store.enabled && !opts.allowDisabled) throw new StoreConnectionError('DISABLED', store.id, store.shop, `Store ${store.shop} đang tắt`)
   const credential = store.credential
   if (!credential) throw new StoreConnectionError('NOT_CONNECTED', store.id, store.shop, `Store ${store.shop} chưa kết nối`)
   const token = needsMint(credential) ? await mintOnce(store) : credential.accessToken
@@ -170,8 +181,11 @@ async function connectionFor(store: StoreWithCredential | null, fallbackId: stri
   return { storeId: store.id, shop: store.shop, token }
 }
 
-export async function getStoreConnection(storeId: string): Promise<StoreConnection> {
-  return connectionFor(await loadStore({ id: storeId }), storeId, '')
+// `allowDisabled` is for the Setup page, which re-checks a store that is switched off.
+export type ConnectionOptions = { allowDisabled?: boolean }
+
+export async function getStoreConnection(storeId: string, opts: ConnectionOptions = {}): Promise<StoreConnection> {
+  return connectionFor(await loadStore({ id: storeId }), storeId, '', opts)
 }
 
 export async function getStoreConnectionByShop(shop: string): Promise<StoreConnection> {
@@ -214,6 +228,15 @@ export async function listConnectedStores(): Promise<ConnectedStore[]> {
 // The store a read shows when it was not told which one: the first connected store (the oldest connection).
 export async function defaultConnectedStoreId(): Promise<string | null> {
   return (await listConnectedStores())[0]?.id ?? null
+}
+
+// A minted token that Shopify refused is forgotten, so the next getStoreConnection mints a new one. It only touches
+// the credential while it still holds that token: a credential replaced meanwhile is left as it is.
+export async function discardRejectedToken(storeId: string, token: string): Promise<void> {
+  await prisma.shopifyStoreCredential.updateMany({
+    where: { storeId, authMode: 'CLIENT_CREDENTIALS', accessToken: token },
+    data: { accessToken: null, tokenExpiresAt: null },
+  })
 }
 
 // `db` lets a caller write the credential inside its own transaction.

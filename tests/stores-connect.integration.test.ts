@@ -1,13 +1,16 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import crypto from 'crypto'
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/db'
 import { AUTH_COOKIE, signToken } from '@/lib/auth'
-import { saveStoreCredential } from '@/lib/store-connections'
+import { getStoreConnection, saveStoreCredential } from '@/lib/store-connections'
+import { saveOAuthState } from '@/lib/token-store'
 import { DEFAULT_ROLE_PERMISSIONS, type FeaturePermission, type UserRole } from '@/lib/roles'
 import { POST as connectRoute } from '@/app/api/stores/connect/route'
 import { PATCH as patchStore } from '@/app/api/stores/[id]/route'
 import { GET as listStores } from '@/app/api/stores/route'
-import { GET as getStatus } from '@/app/api/auth/status/route'
+import { GET as getStatus, DELETE as deleteStatus } from '@/app/api/auth/status/route'
+import { GET as oauthCallback } from '@/app/api/auth/shopify/callback/route'
 import { GET as startOAuth } from '@/app/api/auth/shopify/route'
 import { POST as syncOrders } from '@/app/api/shopify/orders/sync/route'
 
@@ -17,15 +20,19 @@ const PASTED = 'test-pasted-token-777'
 const MINTED = 'shpat_test_minted_001'
 const OTHER_SECRET = 'test-other-store-secret-555'
 const OTHER_TOKEN = 'test-other-store-token-555'
-const ALL_SECRETS = [CLIENT_ID, SECRET, PASTED, MINTED, OTHER_SECRET, OTHER_TOKEN, 'test-other-client-555']
+const OLD_TOKEN = 'test-old-token-888'
+const STALE = 'shpat_test_stale_001'
+const REPLACED_ID = 'test-replaced-id-444'
+const REPLACED_SECRET = 'test-replaced-secret-444'
+const ALL_SECRETS = [CLIENT_ID, SECRET, PASTED, MINTED, OTHER_SECRET, OTHER_TOKEN, 'test-other-client-555', OLD_TOKEN, STALE, REPLACED_ID, REPLACED_SECRET]
 
 const shopOf = (key: string) => `sct-${key}.myshopify.com`
 const EMAILS = ['super', 'admin', 'support', 'seller'].map(k => `sct-${k}@test.local`)
 const tokens: Record<string, string> = {}
 const realFetch = global.fetch
 let calls: Array<{ url: string; init: RequestInit }> = []
-let mintReply: () => Response
-let graphReply: () => Response
+let mintReply: () => Response | Promise<Response>
+let graphReply: () => Response | Promise<Response>
 let errorSpy: ReturnType<typeof vi.spyOn>
 
 const json = (status: number, body: unknown) => new Response(typeof body === 'string' ? body : JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
@@ -64,17 +71,34 @@ function request(url: string, who: string | null, init: { method?: string; body?
   })
 }
 
+// Every answer of these helpers, 4xx and 5xx included, is checked for the fake secrets.
 async function connect(body: unknown, who: string | null = 'super') {
   const res = await connectRoute(request('/api/stores/connect', who, { method: 'POST', body }))
   const text = await res.text()
+  expectNoSecrets(text)
   return { status: res.status, text, body: JSON.parse(text || 'null') as any }
 }
 
 async function patch(id: string, body: unknown, who: string | null = 'super') {
   const res = await patchStore(request(`/api/stores/${id}`, who, { method: 'PATCH', body }), { params: { id } })
   const text = await res.text()
+  expectNoSecrets(text)
   return { status: res.status, text, body: JSON.parse(text || 'null') as any }
 }
+
+async function disconnect(storeId: string) {
+  const res = await deleteStatus(request(`/api/auth/status?storeId=${storeId}`, 'super', { method: 'DELETE' }))
+  expect(res.status).toBe(200)
+}
+
+function callbackRequest(shop: string, state: string, secret: string) {
+  const params: Record<string, string> = { code: 'code-1', shop, state, timestamp: '1700000000' }
+  const message = Object.keys(params).sort().map(k => `${k}=${params[k]}`).join('&')
+  const hmac = crypto.createHmac('sha256', secret).update(message).digest('hex')
+  return new NextRequest(`http://localhost/api/auth/shopify/callback?${new URLSearchParams({ ...params, hmac })}`)
+}
+
+const scopesOf = async (storeId: string) => (await prisma.appSetting.findUnique({ where: { key: `store.scopes.${storeId}` } }))?.value ?? null
 
 const ccBody = (key: string, extra: Record<string, unknown> = {}) => ({ shop: shopOf(key), clientId: CLIENT_ID, clientSecret: SECRET, ...extra })
 const storeOf = (key: string) => prisma.shopifyStore.findUnique({ where: { shop: shopOf(key) }, include: { credential: true, project: true } })
@@ -119,8 +143,11 @@ afterEach(async () => {
   const logged = JSON.stringify(errorSpy.mock.calls.map((args: unknown[]) => args.map((a: unknown) => (a instanceof Error ? a.message : String(a)))))
   errorSpy.mockRestore()
   global.fetch = realFetch
-  for (const secret of ALL_SECRETS) expect(logged).not.toContain(secret)
-  await cleanup()
+  try {
+    for (const secret of ALL_SECRETS) expect(logged).not.toContain(secret)
+  } finally {
+    await cleanup()
+  }
 })
 
 afterAll(async () => {
@@ -193,13 +220,60 @@ describe('POST /api/stores/connect: client credentials', () => {
     expect(location.searchParams.get('client_id')).toBe(CLIENT_ID)
   })
 
-  it('shop_not_permitted on a store that already works keeps its token until OAuth replaces it', async () => {
+  it('shop_not_permitted on an OAuth store that already works is a 409 and writes nothing', async () => {
     const store = await prisma.shopifyStore.create({ data: { shop: shopOf('oa'), orderPrefix: 'SCTOA' } })
-    await saveStoreCredential(store.id, { authMode: 'OAUTH', clientId: 'old-id', clientSecret: 'old-secret', accessToken: 'old-token' })
+    await saveStoreCredential(store.id, { authMode: 'OAUTH', clientId: 'old-id', clientSecret: 'old-secret', accessToken: OLD_TOKEN })
+    const credentialBefore = await prisma.shopifyStoreCredential.findUnique({ where: { storeId: store.id } })
+    const storeBefore = await prisma.shopifyStore.findUnique({ where: { id: store.id } })
+    mintReply = () => json(400, { error: 'shop_not_permitted' })
+    const res = await connect(ccBody('oa', { projectName: 'SCT Not Made', payoutStartDate: '2026-10-06' }))
+    expect(res.status).toBe(409)
+    expect(res.body.error).toContain('chưa được cài')
+    expect(res.body.error).toContain('ngắt kết nối')
+    expect(await prisma.shopifyStoreCredential.findUnique({ where: { storeId: store.id } })).toEqual(credentialBefore)
+    expect(await prisma.shopifyStore.findUnique({ where: { id: store.id } })).toEqual(storeBefore)
+    expect(await scopesOf(store.id)).toBeNull()
+    expect(await projectsMade()).toBe(0)
+    expect(graphCalls()).toHaveLength(0)
+    expect((await getStoreConnection(store.id)).token).toBe(OLD_TOKEN)
+  })
+
+  it('shop_not_permitted on a client-credentials store that already works is a 409: its row and token stay as they were', async () => {
+    const store = await prisma.shopifyStore.create({ data: { shop: shopOf('oa'), orderPrefix: 'SCTOA' } })
+    await saveStoreCredential(store.id, { authMode: 'CLIENT_CREDENTIALS', clientId: 'test-other-client-555', clientSecret: OTHER_SECRET, accessToken: OLD_TOKEN, tokenExpiresAt: new Date(Date.now() + 20 * 3600_000) })
+    const credentialBefore = await prisma.shopifyStoreCredential.findUnique({ where: { storeId: store.id } })
+    mintReply = () => json(400, { error: 'shop_not_permitted' })
+    const res = await connect(ccBody('oa', { projectName: 'SCT Not Made' }))
+    expect(res.status).toBe(409)
+    expect(await prisma.shopifyStoreCredential.findUnique({ where: { storeId: store.id } })).toEqual(credentialBefore)
+    expect((await getStoreConnection(store.id)).token).toBe(OLD_TOKEN)
+    expect(mintCalls()).toHaveLength(1)
+    expect(await projectsMade()).toBe(0)
+  })
+
+  it('any credential the store can already connect with is kept: a pasted token, or a complete pair without a token yet', async () => {
+    const shapes: Array<Parameters<typeof saveStoreCredential>[1]> = [
+      { authMode: 'TOKEN', accessToken: OLD_TOKEN },
+      { authMode: 'CLIENT_CREDENTIALS', clientId: 'test-other-client-555', clientSecret: OTHER_SECRET },
+    ]
+    for (let index = 0; index < shapes.length; index++) {
+      const credential = shapes[index]
+      const store = await prisma.shopifyStore.create({ data: { shop: shopOf(`oa${index}`) } })
+      await saveStoreCredential(store.id, credential)
+      const before = await prisma.shopifyStoreCredential.findUnique({ where: { storeId: store.id } })
+      mintReply = () => json(400, { error: 'shop_not_permitted' })
+      expect((await connect(ccBody(`oa${index}`))).status).toBe(409)
+      expect(await prisma.shopifyStoreCredential.findUnique({ where: { storeId: store.id } })).toEqual(before)
+    }
+  })
+
+  it('shop_not_permitted on a store with no usable credential still goes through OAuth', async () => {
+    const store = await prisma.shopifyStore.create({ data: { shop: shopOf('oa') } })
+    await saveStoreCredential(store.id, { authMode: 'OAUTH', clientId: 'old-id', clientSecret: 'old-secret' })
     mintReply = () => json(400, { error: 'shop_not_permitted' })
     const res = await connect(ccBody('oa'))
-    expect(res.body).toMatchObject({ status: 'NEEDS_OAUTH', storeId: store.id })
-    expect((await storeOf('oa'))!.credential).toMatchObject({ authMode: 'OAUTH', clientId: CLIENT_ID, clientSecret: SECRET, accessToken: 'old-token' })
+    expect(res.body).toEqual({ status: 'NEEDS_OAUTH', storeId: store.id, oauthUrl: `/api/auth/shopify?shop=${shopOf('oa')}` })
+    expect((await storeOf('oa'))!.credential).toMatchObject({ authMode: 'OAUTH', clientId: CLIENT_ID, clientSecret: SECRET, accessToken: null })
   })
 
   it('Shopify rejecting the Client ID or Secret is a 400 and saves nothing', async () => {
@@ -274,6 +348,32 @@ describe('POST /api/stores/connect: order prefix', () => {
     expect((await connect(ccBody('dup'))).status).toBe(409)
   })
 
+  it('a disabled store still reserves its prefix', async () => {
+    await prisma.shopifyStore.create({ data: { shop: shopOf('owner'), orderPrefix: 'SCTOFF', enabled: false } })
+    graphReply = () => snapshot({ orders: ['#SCTOFF9'] })
+    const res = await connect(ccBody('dup', { projectName: 'SCT Dup' }))
+    expect(res.status).toBe(409)
+    expect(res.body.error).toContain(shopOf('owner'))
+    expect(await storeOf('dup')).toBeNull()
+  })
+
+  it('reads the prefix as the letters right before the number, in either case', async () => {
+    graphReply = () => snapshot({ orders: ['#sctlow9'] })
+    const res = await connect(ccBody('pfx'))
+    expect(res.body).toMatchObject({ status: 'CONNECTED', orderPrefix: 'SCTLOW' })
+  })
+
+  it('refuses a newest order named like #REMI-1010: the tool routes orders by <PREFIX><number>', async () => {
+    graphReply = () => snapshot({ orders: ['#REMI-1010'] })
+    const res = await connect(ccBody('pfx', { projectName: 'SCT Pfx' }))
+    expect(res.status).toBe(409)
+    expect(res.body.error).toContain('#REMI-1010')
+    expect(res.body.error).toContain('REMI1010')
+    expect(res.body.error).toContain('Order ID')
+    expect(await storeOf('pfx')).toBeNull()
+    expect(await projectsMade()).toBe(0)
+  })
+
   it('refuses a store with no prefix (#1001) and says where to set it in Shopify', async () => {
     graphReply = () => snapshot({ orders: ['#1001'] })
     const res = await connect(ccBody('pfx', { projectName: 'SCT Pfx' }))
@@ -305,12 +405,13 @@ describe('POST /api/stores/connect: order prefix', () => {
     expect(again.body).toMatchObject({ status: 'CONNECTED', storeId: store.id, orderPrefix: 'SCTNOP' })
     const after = (await storeOf('nopfx'))!
     expect(after.orderPrefix).toBe('SCTNOP')
-    expect(after.lastError).toBeNull()
+    expect(after.lastError).toMatch(/^\[order-sync\] /)
 
     graphReply = () => json(200, { data: { shop: { ianaTimezone: 'America/New_York' }, orders: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } } } })
     const synced = await syncOrders(request('/api/shopify/orders/sync', 'super', { method: 'POST', body: { storeId: store.id } }))
     expect(synced.status).toBe(200)
     expect(await synced.json()).toMatchObject({ totalSynced: 0, projectName: 'SCT NoPfx' })
+    expect((await storeOf('nopfx'))!.lastError).toBeNull()
   })
 
   it('a store with the prefix LIT syncs as before', async () => {
@@ -401,8 +502,9 @@ describe('POST /api/stores/connect: other stores and re-connecting', () => {
     const after = (await storeOf('re'))!
     expect(after).toMatchObject({
       id: store.id, projectId: project.id, orderPrefix: 'SCTKEEP', enabled: false, trackingPageUrl: 'https://kept.example.com/t', payoutStartDate: '2026-01-01',
-      ianaTimezone: 'Asia/Tokyo', lastError: null, lastErrorAt: null,
+      ianaTimezone: 'Asia/Tokyo', lastError: '[order-sync] token revoked',
     })
+    expect(after.lastErrorAt).not.toBeNull()
     expect(after.connectedAt.toISOString()).toBe('2026-09-01T00:00:00.000Z')
     expect(after.credential).toMatchObject({ authMode: 'TOKEN', accessToken: PASTED })
   })
@@ -419,6 +521,26 @@ describe('POST /api/stores/connect: other stores and re-connecting', () => {
     expect(await prisma.shopifyStore.count({ where: { shop: shopOf('legacy') } })).toBe(1)
   })
 
+  it('a re-connect whose newest order shows another prefix keeps the stored one and warns with both', async () => {
+    const store = await prisma.shopifyStore.create({ data: { shop: shopOf('re'), orderPrefix: 'SCTKEEP' } })
+    await saveStoreCredential(store.id, { authMode: 'TOKEN', accessToken: OLD_TOKEN })
+    graphReply = () => snapshot({ orders: ['#SCTOTHER5'] })
+    const res = await connect({ shop: shopOf('re'), accessToken: PASTED })
+    expect(res.body).toMatchObject({ status: 'CONNECTED', storeId: store.id, orderPrefix: 'SCTKEEP' })
+    expect(res.body.warning).toContain('SCTOTHER')
+    expect(res.body.warning).toContain('SCTKEEP')
+    expect((await storeOf('re'))!.orderPrefix).toBe('SCTKEEP')
+  })
+
+  it('no warning when the newest order shows the stored prefix in any case, or no prefix at all', async () => {
+    await prisma.shopifyStore.create({ data: { shop: shopOf('re'), orderPrefix: 'SCTKEEP' } })
+    for (const name of ['#sctkeep5', '#SCTKEEP5', '#1001']) {
+      graphReply = () => snapshot({ orders: [name] })
+      const res = await connect({ shop: shopOf('re'), accessToken: PASTED })
+      expect([name, res.status, res.body.warning]).toEqual([name, 200, undefined])
+    }
+  })
+
   it('a re-connect is not blocked by the prefix check when the store already has a prefix', async () => {
     await prisma.shopifyStore.create({ data: { shop: shopOf('re'), orderPrefix: 'SCTKEEP' } })
     graphReply = () => snapshot({ orders: ['#1001'] })
@@ -429,24 +551,119 @@ describe('POST /api/stores/connect: other stores and re-connecting', () => {
 })
 
 describe('POST /api/stores/connect: re-check with the stored credential', () => {
-  it('a body with no secrets mints again with the stored client credentials', async () => {
-    const store = await prisma.shopifyStore.create({ data: { shop: shopOf('chk'), orderPrefix: 'SCTCHK' } })
-    await saveStoreCredential(store.id, { authMode: 'CLIENT_CREDENTIALS', clientId: CLIENT_ID, clientSecret: SECRET, accessToken: 'test-old-token', tokenExpiresAt: new Date(Date.now() + 5 * 3600_000) })
+  const ccStore = async (tokenLife: number | null, extra: Record<string, unknown> = {}) => {
+    const store = await prisma.shopifyStore.create({ data: { shop: shopOf('chk'), orderPrefix: 'SCTCHK', ...extra } })
+    await saveStoreCredential(store.id, {
+      authMode: 'CLIENT_CREDENTIALS', clientId: CLIENT_ID, clientSecret: SECRET,
+      ...(tokenLife === null ? {} : { accessToken: OLD_TOKEN, tokenExpiresAt: new Date(Date.now() + tokenLife) }),
+    })
+    return store
+  }
+
+  it('a still-fresh stored client-credentials token is reused: nothing is minted and the credential is not written', async () => {
+    const store = await ccStore(5 * 3600_000)
+    const before = await prisma.shopifyStoreCredential.findUnique({ where: { storeId: store.id } })
     const res = await connect({ shop: shopOf('chk') })
     expect(res.body).toMatchObject({ status: 'CONNECTED', storeId: store.id, orderPrefix: 'SCTCHK' })
+    expect(mintCalls()).toHaveLength(0)
+    expect((graphCalls()[0].init.headers as Record<string, string>)['X-Shopify-Access-Token']).toBe(OLD_TOKEN)
+    expect(await prisma.shopifyStoreCredential.findUnique({ where: { storeId: store.id } })).toEqual(before)
+  })
+
+  it('a stored token that is about to expire is minted once through the shared path, and the pair stays', async () => {
+    const store = await ccStore(30 * 60_000)
+    const res = await connect({ shop: shopOf('chk') })
+    expect(res.body).toMatchObject({ status: 'CONNECTED', storeId: store.id })
+    expect(mintCalls()).toHaveLength(1)
     expect(new URLSearchParams(String(mintCalls()[0].init.body)).get('client_id')).toBe(CLIENT_ID)
     expect((await storeOf('chk'))!.credential).toMatchObject({ authMode: 'CLIENT_CREDENTIALS', clientId: CLIENT_ID, clientSecret: SECRET, accessToken: MINTED })
-    expectNoSecrets(res.text)
+  })
+
+  it('a credential replaced while the new token is being minted is not overwritten with the stale pair', async () => {
+    const store = await ccStore(30 * 60_000)
+    let first = true
+    mintReply = async () => {
+      if (!first) return mintOk(MINTED)
+      first = false
+      await prisma.shopifyStoreCredential.update({ where: { storeId: store.id }, data: { clientId: REPLACED_ID, clientSecret: REPLACED_SECRET } })
+      return mintOk(STALE)
+    }
+    const res = await connect({ shop: shopOf('chk') })
+    expect(res.body).toMatchObject({ status: 'CONNECTED', storeId: store.id })
+    expect(mintCalls()).toHaveLength(2)
+    expect(new URLSearchParams(String(mintCalls()[1].init.body)).get('client_id')).toBe(REPLACED_ID)
+    expect((await storeOf('chk'))!.credential).toMatchObject({ clientId: REPLACED_ID, clientSecret: REPLACED_SECRET, accessToken: MINTED })
+    expect((graphCalls()[0].init.headers as Record<string, string>)['X-Shopify-Access-Token']).toBe(MINTED)
+  })
+
+  it('a fresh stored token that Shopify refuses is forgotten and replaced by one new mint', async () => {
+    const store = await ccStore(5 * 3600_000)
+    let refused = false
+    graphReply = () => {
+      if (refused) return snapshot()
+      refused = true
+      return json(401, { errors: 'Invalid access token' })
+    }
+    const res = await connect({ shop: shopOf('chk') })
+    expect(res.body).toMatchObject({ status: 'CONNECTED', storeId: store.id })
+    expect(mintCalls()).toHaveLength(1)
+    expect(graphCalls()).toHaveLength(2)
+    expect((graphCalls()[1].init.headers as Record<string, string>)['X-Shopify-Access-Token']).toBe(MINTED)
+    expect((await storeOf('chk'))!.credential).toMatchObject({ clientId: CLIENT_ID, clientSecret: SECRET, accessToken: MINTED })
+  })
+
+  it('a new token that Shopify also refuses is a 400', async () => {
+    await ccStore(5 * 3600_000)
+    graphReply = () => json(401, { errors: 'Invalid access token' })
+    const res = await connect({ shop: shopOf('chk') })
+    expect(res.status).toBe(400)
+    expect(mintCalls()).toHaveLength(1)
   })
 
   it('stored client credentials that Shopify answers shop_not_permitted to go through OAuth, writing nothing', async () => {
-    const store = await prisma.shopifyStore.create({ data: { shop: shopOf('chk') } })
-    await saveStoreCredential(store.id, { authMode: 'CLIENT_CREDENTIALS', clientId: CLIENT_ID, clientSecret: SECRET, accessToken: 'test-old-token', tokenExpiresAt: new Date(Date.now() + 5 * 3600_000) })
+    const store = await ccStore(30 * 60_000)
     const before = await prisma.shopifyStoreCredential.findUnique({ where: { storeId: store.id } })
     mintReply = () => json(400, { error: 'shop_not_permitted' })
     const res = await connect({ shop: shopOf('chk') })
     expect(res.body).toEqual({ status: 'NEEDS_OAUTH', storeId: store.id, oauthUrl: `/api/auth/shopify?shop=${shopOf('chk')}` })
+    expect(mintCalls()).toHaveLength(1)
     expect(await prisma.shopifyStoreCredential.findUnique({ where: { storeId: store.id } })).toEqual(before)
+  })
+
+  it('stored client credentials that Shopify rejects are a 400 and write nothing', async () => {
+    const store = await ccStore(30 * 60_000)
+    const before = await prisma.shopifyStoreCredential.findUnique({ where: { storeId: store.id } })
+    mintReply = () => json(400, { error: 'invalid_client' })
+    const res = await connect({ shop: shopOf('chk') })
+    expect(res.status).toBe(400)
+    expect(await prisma.shopifyStoreCredential.findUnique({ where: { storeId: store.id } })).toEqual(before)
+  })
+
+  it('a disabled store can be re-checked and stays disabled', async () => {
+    const store = await ccStore(5 * 3600_000, { enabled: false })
+    const res = await connect({ shop: shopOf('chk') })
+    expect(res.body).toMatchObject({ status: 'CONNECTED', storeId: store.id })
+    expect((await storeOf('chk'))!.enabled).toBe(false)
+  })
+
+  it('a stored credential with no token yet (OAuth not finished) is a 400 and writes nothing', async () => {
+    const store = await prisma.shopifyStore.create({ data: { shop: shopOf('chk') } })
+    await saveStoreCredential(store.id, { authMode: 'OAUTH', clientId: CLIENT_ID, clientSecret: SECRET })
+    const before = await prisma.shopifyStoreCredential.findUnique({ where: { storeId: store.id } })
+    const res = await connect({ shop: shopOf('chk') })
+    expect(res.status).toBe(400)
+    expect(calls).toHaveLength(0)
+    expect(await prisma.shopifyStoreCredential.findUnique({ where: { storeId: store.id } })).toEqual(before)
+  })
+
+  it('an unexpected failure on the stored path logs without the stored values or the minted token', async () => {
+    await ccStore(30 * 60_000)
+    const failing = vi.spyOn(prisma, '$transaction').mockRejectedValueOnce(new Error(`write failed: ${CLIENT_ID} ${SECRET} ${OLD_TOKEN} ${MINTED}`))
+    const res = await connect({ shop: shopOf('chk') })
+    failing.mockRestore()
+    expect(res.status).toBe(500)
+    expect(errorSpy).toHaveBeenCalled()
+    expect(JSON.stringify(errorSpy.mock.calls)).toContain('stores/connect')
   })
 
   it('a stored OAuth token is verified as it is, and the credential is left alone', async () => {
@@ -487,9 +704,36 @@ describe('POST /api/stores/connect: re-check with the stored credential', () => 
   })
 })
 
+describe('granted scopes', () => {
+  it('the OAuth callback records the scopes Shopify granted, and disconnecting the store removes them', async () => {
+    const store = await prisma.shopifyStore.create({ data: { shop: shopOf('oa') } })
+    await saveStoreCredential(store.id, { authMode: 'OAUTH', clientId: CLIENT_ID, clientSecret: SECRET })
+    saveOAuthState('sct-state', shopOf('oa'))
+    mintReply = () => json(200, { access_token: 'shpat_test_oauth_token', scope: 'read_orders, read_products,read_all_orders' })
+    const callback = await oauthCallback(callbackRequest(shopOf('oa'), 'sct-state', SECRET))
+    expect(callback.status).toBe(200)
+
+    const entry = async () => (await (await getStatus()).json()).stores.find((s: any) => s.id === store.id)
+    expect(await entry()).toMatchObject({ connected: true, scopes: ['read_orders', 'read_products', 'read_all_orders'], readAllOrders: true })
+
+    await disconnect(store.id)
+    expect(await scopesOf(store.id)).toBeNull()
+    expect(await entry()).toMatchObject({ connected: false, scopes: null, readAllOrders: null })
+  })
+
+  it('a connect records them and a later callback replaces them', async () => {
+    const res = await connect(ccBody('oa', { projectName: 'SCT Scopes' }))
+    expect(JSON.parse((await scopesOf(res.body.storeId))!).scopes).toEqual(['read_orders', 'read_products'])
+    saveOAuthState('sct-state-2', shopOf('oa'))
+    mintReply = () => json(200, { access_token: 'shpat_test_oauth_token', scope: 'read_orders' })
+    expect((await oauthCallback(callbackRequest(shopOf('oa'), 'sct-state-2', SECRET))).status).toBe(200)
+    expect(JSON.parse((await scopesOf(res.body.storeId))!).scopes).toEqual(['read_orders'])
+  })
+})
+
 describe('POST /api/stores/connect: validation and access', () => {
   it('rejects an invalid shop domain with 400 and calls nobody', async () => {
-    for (const shop of ['', 'example.com', 'x.myshopify.com.evil.com', 'localhost', 'a b.myshopify.com', 'https://evil.com/x.myshopify.com', 'ok.myshopify.com:8080', undefined, 12, ['a.myshopify.com']]) {
+    for (const shop of ['', 'example.com', 'x.myshopify.com.evil.com', 'localhost', 'a b.myshopify.com', 'https://evil.com/x.myshopify.com', 'ok.myshopify.com:8080', 'a.myshopify.com@evil.com', 'a.myshopify.com.', undefined, 12, ['a.myshopify.com']]) {
       const res = await connect({ shop, clientId: CLIENT_ID, clientSecret: SECRET })
       expect([shop, res.status]).toEqual([shop, 400])
       expect(res.body.error).toContain('myshopify.com')

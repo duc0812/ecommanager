@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { requireSuperadmin } from '@/lib/api-auth'
 import { LITZZY_SHOP } from '@/lib/shopify-shop'
-import { hasReadAllOrders, loadGrantedScopes } from '@/lib/store-connect'
+import { hasReadAllOrders, deleteGrantedScopes, loadGrantedScopes } from '@/lib/store-connect'
+import { hasUsableCredential } from '@/lib/store-connections'
 
 export const dynamic = 'force-dynamic'
 
@@ -15,7 +16,7 @@ export async function GET() {
   const stores = rows.map(s => {
     const c = s.credential
     const scopes = grantedScopes.get(s.id) ?? null
-    const connected = Boolean(c && (c.accessToken || (c.authMode === 'CLIENT_CREDENTIALS' && c.clientId && c.clientSecret)))
+    const connected = hasUsableCredential(c)
     return {
       id: s.id,
       shop: s.shop,
@@ -50,6 +51,7 @@ export async function DELETE(req: NextRequest) {
   const store = await prisma.shopifyStore.findUnique({ where: { id: storeId }, select: { id: true } })
   if (!store) return NextResponse.json({ error: 'Không tìm thấy store' }, { status: 404 })
   await prisma.shopifyStoreCredential.deleteMany({ where: { storeId } })
+  await deleteGrantedScopes(storeId)
   const response = NextResponse.json({ ok: true })
   response.cookies.set('shopify_shop', '', { httpOnly: true, path: '/', maxAge: 0 })
   response.cookies.set('shopify_token', '', { httpOnly: true, path: '/', maxAge: 0 })
