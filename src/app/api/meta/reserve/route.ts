@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
-import { forbidden, requireSuperadmin } from '@/lib/api-auth'
+import { requireSuperadmin } from '@/lib/api-auth'
 import { normalizeMetaCurrency } from '@/lib/meta-currency'
 import { WATCH_DAYS } from '@/lib/meta-reserve'
 import { buildReserveOverview } from '@/lib/meta-reserve-service'
-import { refreshReserveData, type ReserveRefreshResult } from '@/lib/meta-reserve-sync'
-import { projectRowsWhere, requireFinanceScope } from '@/lib/finance-scope'
+import { refreshReserveData } from '@/lib/meta-reserve-sync'
+import { projectRowsWhere, requireFinanceScope, requireUnrestricted } from '@/lib/finance-scope'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -28,28 +28,16 @@ export async function GET(request: NextRequest) {
   }
 }
 
+// A seller reads the reserve and refreshes nothing (see SELLER_READ_ONLY_PREFIXES); the check here keeps that true if the table changes.
 export async function POST(request: NextRequest) {
-  const scope = await requireFinanceScope(request, 'meta_billing')
-  if ('error' in scope) return scope.error
+  const auth = await requireUnrestricted(request)
+  if ('error' in auth) return auth.error
   try {
     const body = await request.json().catch(() => ({}))
     const accountId = typeof body.accountId === 'string' && body.accountId.trim() ? body.accountId.trim() : null
     const horizonDays = parseHorizon(request.nextUrl.searchParams.get('horizon'))
-    let refresh: ReserveRefreshResult
-    if (!scope.projectIds) {
-      refresh = await refreshReserveData(accountId)
-    } else {
-      // A seller refreshes the accounts it may see, one at a time (the Meta API is rate limited).
-      const visible = await prisma.metaAdAccount.findMany({ where: projectRowsWhere(scope), select: { id: true }, orderBy: { createdAt: 'asc' } })
-      if (accountId && !visible.some(a => a.id === accountId)) return forbidden('Bạn không có quyền với ad account này.')
-      refresh = { refreshed: [], errors: [] }
-      for (const account of visible.filter(a => !accountId || a.id === accountId)) {
-        const part = await refreshReserveData(account.id)
-        refresh.refreshed.push(...part.refreshed)
-        refresh.errors.push(...part.errors)
-      }
-    }
-    const overview = await buildReserveOverview({ horizonDays, accountWhere: projectRowsWhere(scope) })
+    const refresh = await refreshReserveData(accountId)
+    const overview = await buildReserveOverview({ horizonDays })
     return NextResponse.json({ ...overview, refresh })
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Không thể làm mới dữ liệu dự phòng.'

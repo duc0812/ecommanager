@@ -69,16 +69,18 @@ async function snapshotStep(now: Date) {
   if (!periodMonth) return { skipped: true, reason: 'chỉ chốt tháng vào ngày 1' }
   const projects = await prisma.project.findMany({ where: { archivedAt: null }, select: { id: true, name: true } })
   const closed: string[] = []
-  const errors: { project: string; error: string }[] = []
+  const closedIds: string[] = []
+  const errors: { project: string; projectId: string; error: string }[] = []
   for (const project of projects) {
     try {
       await snapshotProjectMonth(project.id, periodMonth)
       closed.push(project.name)
+      closedIds.push(project.id)
     } catch (error) {
-      errors.push({ project: project.name, error: error instanceof Error ? error.message : 'Unknown error' })
+      errors.push({ project: project.name, projectId: project.id, error: error instanceof Error ? error.message : 'Unknown error' })
     }
   }
-  return { periodMonth, closed, errors }
+  return { periodMonth, closed, closedIds, errors }
 }
 
 async function billingStep() {
@@ -90,9 +92,13 @@ async function billingStep() {
     status: waited.status,
     ...(waited.timedOut ? { timedOut: true } : {}),
     totals: job?.totals ?? null,
+    // Per account, with the ids a reader limited to some stores needs to pick its own accounts out (names are not unique).
+    accounts: (job?.accounts ?? []).map(account => ({
+      id: account.id, accountId: account.accountId, accountName: account.accountName, status: account.status, error: account.error,
+    })),
     accountErrors: (job?.accounts ?? [])
       .filter(account => account.error)
-      .map(account => ({ account: account.accountName, error: account.error })),
+      .map(account => ({ account: account.accountName, accountId: account.accountId, error: account.error })),
   }
 }
 

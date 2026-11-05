@@ -58,6 +58,7 @@ import { GET as dailySyncStatus, POST as runDailySync } from '@/app/api/sync/dai
 import { GET as listStaff, POST as createStaff, DELETE as deleteStaff } from '@/app/api/staff/route'
 import { GET as autoSyncStatus, POST as runAutoSync } from '@/app/api/auto-sync/route'
 import { SELLER_API_PREFIXES, canCallApi } from '@/lib/api-access'
+import { firstStoreOf } from '@/lib/finance-scope'
 
 const before = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures/finance-scope/single-store-before.json'), 'utf8'))
 const DAILY_KEY = 'last_daily_sync_result'
@@ -135,8 +136,38 @@ describe('/api/overview', () => {
   it('with one store the figures are exactly what the single-store implementation returned', async () => {
     for (const [key, query] of [['overviewAll', 'period=all'], ['overviewCustom', 'period=custom&date=2026-10-05']] as const) {
       const { body } = await call(await overview(request(`/api/overview?${query}`, 'seller-a')))
-      expect(without(body, 'chartData', 'stores')).toEqual(before[key])
+      expect(without(body, 'chartData', 'stores', 'storeTotals', 'currencies')).toEqual(before[key])
     }
+  })
+
+  it('names the currency of each store and lists the currencies the combined totals add up, because the amounts are not converted', async () => {
+    const all = await call(await overview(request('/api/overview?period=all', 'seller-ab')))
+    expect(all.body.currencies).toEqual(['EUR', 'USD'])
+    const [a, b] = all.body.storeTotals
+    expect(a).toMatchObject({ storeId: fx.storeA, name: NAME_A, currency: 'USD', currencies: ['USD'], orders: null })
+    expect(a.payouts.total).toBeCloseTo(1040.75, 2)
+    expect(a.payouts.count).toBe(2)
+    expect(b).toMatchObject({ storeId: fx.storeB, name: NAME_B, currency: 'EUR', currencies: ['EUR'], orders: null })
+    expect(b.payouts.total).toBeCloseTo(2000.5, 2)
+    expect(b.payouts.count).toBe(1)
+    expect(all.body.shopify.totalRevenue).toBeCloseTo(a.payouts.total + b.payouts.total, 2)
+
+    const one = await call(await overview(request('/api/overview?period=all', 'seller-a')))
+    expect(one.body.currencies).toEqual(['USD'])
+    expect(one.body.storeTotals).toHaveLength(1)
+    const none = await call(await overview(request('/api/overview?period=all', 'seller-none')))
+    expect(none.body).toMatchObject({ currencies: [], storeTotals: [] })
+  })
+
+  it('splits the order revenue of a period by store and currency too', async () => {
+    const { body } = await call(await overview(request('/api/overview?period=custom&date=2026-10-05', 'seller-bc')))
+    expect(body.currencies).toEqual(['EUR', 'VND'])
+    const [b, c] = body.storeTotals
+    expect(b).toMatchObject({ storeId: fx.storeB, currency: 'EUR', currencies: ['EUR'], orders: { count: 2 } })
+    expect(b.orders.revenue).toBeCloseTo(210, 2)
+    expect(c).toMatchObject({ storeId: fx.storeC, name: NAME_C, currency: 'VND', currencies: ['VND'], payouts: { total: 0, count: 0 }, orders: { count: 1 } })
+    expect(c.orders.revenue).toBeCloseTo(1000, 2)
+    expect(body.periodMetrics.revenue).toBeCloseTo(b.orders.revenue + c.orders.revenue, 2)
   })
 
   it('a seller with a project-less ad account also sees it, and a seller with no store sees nothing', async () => {
@@ -305,13 +336,27 @@ describe('Shopify payout routes', () => {
     expect(mocks.fetchAllPayouts).toHaveBeenLastCalledWith({ shop: SHOP_A, token: 'token-fsf-a' }, expect.anything())
   })
 
-  it('a payout detail of another store is 403 and never reaches Shopify', async () => {
+  it('a payout of another store answers a seller exactly like an unknown payout id, and never reaches Shopify for it', async () => {
     const open = (who: string, id: number) => payoutDetail(request(`/api/shopify/payouts/${id}`, who), { params: { id: String(id) } })
-    expect((await open('seller-a', 9_500_011)).status).toBe(403)
+    const other = await call(await open('seller-a', 9_500_011))
+    expect(other.status).toBe(404)
     expect(mocks.fetchPayoutTransactions).not.toHaveBeenCalled()
+    const unknown = await call(await open('seller-a', 9_599_999))
+    expect(unknown).toEqual(other)
+    expect(await call(await open('seller-b', 9_500_001))).toEqual(other)
+    expect(await call(await open('seller-none', 9_500_011))).toEqual(other)
+  })
+
+  it('a seller still opens its own payout, synced or not, and admin opens any with the answers it always had', async () => {
+    const open = (who: string, id: number) => payoutDetail(request(`/api/shopify/payouts/${id}`, who), { params: { id: String(id) } })
     expect((await open('seller-a', 9_500_001)).status).toBe(200)
     expect(mocks.fetchPayoutTransactions).toHaveBeenCalledTimes(1)
+    mocks.fetchPayoutTransactions.mockResolvedValueOnce([{ type: 'charge', source_type: 'order' }])
+    const live = await call(await open('seller-a', 9_599_998))
+    expect(live.status).toBe(200)
+    expect(live.body.total).toBe(1)
     expect((await open('admin', 9_500_011)).status).toBe(200)
+    expect((await open('admin', 9_599_999)).status).toBe(200)
   })
 })
 
@@ -345,17 +390,13 @@ describe('Meta routes', () => {
     expect(text).not.toContain('accessToken')
   })
 
-  it('reserve overview lists a seller\'s accounts only, and a refresh touches only those', async () => {
+  it('reserve overview lists a seller\'s accounts only; a seller refreshes nothing, an admin refreshes all', async () => {
     const overviewBody = await call(await reserveOverview(request('/api/meta/reserve', 'seller-a')))
     expect(overviewBody.body.accounts.map((a: { id: string }) => a.id).sort()).toEqual([`${P}-accdb-a`, `${P}-accdb-u`])
-    const refused = await refreshReserve(request('/api/meta/reserve', 'seller-a', { method: 'POST', body: { accountId: `${P}-accdb-b` } }))
-    expect(refused.status).toBe(403)
+    for (const accountId of [`${P}-accdb-b`, `${P}-accdb-a`, undefined]) {
+      expect((await refreshReserve(request('/api/meta/reserve', 'seller-a', { method: 'POST', body: { accountId } }))).status).toBe(403)
+    }
     expect(mocks.refreshReserveData).not.toHaveBeenCalled()
-    mocks.refreshReserveData.mockImplementation(async (id: string) => ({ refreshed: [id], errors: [] }))
-    const own = await call(await refreshReserve(request('/api/meta/reserve', 'seller-a', { method: 'POST', body: {} })))
-    expect(own.status).toBe(200)
-    expect(mocks.refreshReserveData.mock.calls.map(c => c[0]).sort()).toEqual([`${P}-accdb-a`, `${P}-accdb-u`])
-    mocks.refreshReserveData.mockClear()
     await refreshReserve(request('/api/meta/reserve', 'admin', { method: 'POST', body: {} }))
     expect(mocks.refreshReserveData).toHaveBeenCalledTimes(1)
     expect(mocks.refreshReserveData.mock.calls[0][0]).toBeNull()
@@ -381,21 +422,25 @@ describe('/api/finance/other-bills', () => {
     expect((await call(await listBills(request('/api/finance/other-bills', 'seller-none')))).body.bills).toEqual([])
   })
 
-  it('403 on another store\'s project filter, creating a bill for it, and deleting its bill', async () => {
+  it('a seller is refused another store\'s project filter, and cannot create or delete a bill at all', async () => {
     expect((await listBills(request(`/api/finance/other-bills?projectId=${PROJECT_B}`, 'seller-a'))).status).toBe(403)
     const input = { vendor: `${P}-new`, category: 'OTHER', amount: 5, currency: 'USD', paidAt: '2026-10-05', paymentMethod: 'OTHER' }
-    expect((await createBill(request('/api/finance/other-bills', 'seller-a', { method: 'POST', body: { ...input, projectId: PROJECT_B } }))).status).toBe(403)
+    for (const projectId of [PROJECT_B, PROJECT_A, null]) {
+      expect((await createBill(request('/api/finance/other-bills', 'seller-a', { method: 'POST', body: { ...input, projectId } }))).status).toBe(403)
+    }
     expect(await prisma.otherBill.count({ where: { vendor: `${P}-new` } })).toBe(0)
-    expect((await deleteBill(request(`/api/finance/other-bills/${P}-obill-b`, 'seller-a', { method: 'DELETE' }), { params: { id: `${P}-obill-b` } })).status).toBe(403)
-    expect(await prisma.otherBill.count({ where: { id: `${P}-obill-b` } })).toBe(1)
+    for (const id of ['b', 'a', 'u']) {
+      expect((await deleteBill(request(`/api/finance/other-bills/${P}-obill-${id}`, 'seller-a', { method: 'DELETE' }), { params: { id: `${P}-obill-${id}` } })).status).toBe(403)
+    }
+    expect(await prisma.otherBill.count({ where: { id: { in: [`${P}-obill-a`, `${P}-obill-b`, `${P}-obill-u`] } } })).toBe(3)
   })
 
-  it('a seller creates and deletes a bill of its own project; admin sees every bill', async () => {
+  it('admin creates and deletes a bill and sees every bill', async () => {
     const input = { vendor: `${P}-new`, category: 'OTHER', amount: 5, currency: 'USD', paidAt: '2026-10-05', paymentMethod: 'OTHER', projectId: PROJECT_A }
-    const created = await call(await createBill(request('/api/finance/other-bills', 'seller-a', { method: 'POST', body: input })))
+    const created = await call(await createBill(request('/api/finance/other-bills', 'admin', { method: 'POST', body: input })))
     expect(created.status).toBe(200)
     const billId = created.body.bill.id
-    expect((await deleteBill(request(`/api/finance/other-bills/${billId}`, 'seller-a', { method: 'DELETE' }), { params: { id: billId } })).status).toBe(200)
+    expect((await deleteBill(request(`/api/finance/other-bills/${billId}`, 'admin', { method: 'DELETE' }), { params: { id: billId } })).status).toBe(200)
     const all = await call(await listBills(request('/api/finance/other-bills', 'admin')))
     expect(ids(all.body.bills)).toEqual([`${P}-obill-a`, `${P}-obill-b`, `${P}-obill-u`])
     const narrowed = await call(await listBills(request(`/api/finance/other-bills?projectId=${PROJECT_B}`, 'admin')))
@@ -415,6 +460,7 @@ describe('/api/marketing/niche-performance', () => {
 })
 
 describe('/api/sync/daily', () => {
+  const account = (key: string, accountId: string, name: string, status: string, error: string | null = null) => ({ id: `${P}-accdb-${key}`, accountId, accountName: name, status, error })
   const lastRun = {
     startedAt: '2026-11-05T08:00:00.000Z',
     finishedAt: '2026-11-05T08:05:00.000Z',
@@ -431,32 +477,97 @@ describe('/api/sync/daily', () => {
       billing: {
         status: 'COMPLETED_WITH_ERRORS',
         totals: { synced: 12 },
-        accountErrors: [{ account: `${ACC_B} name`, error: 'beta rate limit' }, { account: `${ACC_A} name`, error: 'alpha rate limit' }],
+        accounts: [
+          account('a', ACC_A, 'Same name', 'COMPLETED'),
+          account('b', ACC_B, 'Same name', 'FAILED', 'beta rate limit'),
+          account('u', ACC_U, 'No project', 'COMPLETED'),
+        ],
+        accountErrors: [{ account: 'Same name', accountId: ACC_B, error: 'beta rate limit' }],
       },
       reserve: {
         refreshed: [ACC_A, ACC_B],
         errors: [{ accountId: ACC_B, message: 'beta reserve failed' }],
       },
-      snapshot: { periodMonth: '2026-10', closed: [NAME_A, NAME_B], errors: [{ project: NAME_B, error: 'beta snapshot failed' }] },
+      snapshot: {
+        periodMonth: '2026-10',
+        closed: ['Same project', 'Same project'],
+        closedIds: [PROJECT_A, PROJECT_B],
+        errors: [{ project: 'Same project', projectId: PROJECT_B, error: 'beta snapshot failed' }],
+      },
     },
   }
+  const save = (run: unknown) => prisma.appSetting.upsert({ where: { key: DAILY_KEY }, create: { key: DAILY_KEY, value: JSON.stringify(run) }, update: { value: JSON.stringify(run) } })
+  const withBilling = (billing: Record<string, unknown>) => ({ ...lastRun, steps: { ...lastRun.steps, billing } })
+  const view = async (who: string) => (await call(await dailySyncStatus(request('/api/sync/daily', who)))).body
 
-  beforeEach(async () => {
-    await prisma.appSetting.upsert({ where: { key: DAILY_KEY }, create: { key: DAILY_KEY, value: JSON.stringify(lastRun) }, update: { value: JSON.stringify(lastRun) } })
-  })
+  beforeEach(async () => { await save(lastRun) })
 
   it('shows a seller the run for its own stores and accounts, with nothing about the others', async () => {
     const { status, body } = await call(await dailySyncStatus(request('/api/sync/daily', 'seller-a')))
     expect(status).toBe(200)
     const text = JSON.stringify(body)
-    for (const leak of [SHOP_B, ACC_B, NAME_B, 'beta']) expect(text).not.toContain(leak)
+    for (const leak of [SHOP_B, ACC_B, NAME_B, 'beta', 'COMPLETED_WITH_ERRORS', 'totals']) expect(text).not.toContain(leak)
     expect(body.last.steps.payouts.stores).toEqual([{ storeId: 'fsf-store-a', shop: SHOP_A, ok: true }])
-    expect(body.last.steps.billing.accountErrors).toEqual([{ account: `${ACC_A} name`, error: 'alpha rate limit' }])
+    expect(body.last.steps.billing).toEqual({ status: 'COMPLETED', accountErrors: [] })
     expect(body.last.steps.reserve).toEqual({ refreshed: [ACC_A], errors: [] })
-    expect(body.last.steps.snapshot).toEqual({ periodMonth: '2026-10', closed: [NAME_A], errors: [] })
+    expect(body.last.steps.snapshot).toEqual({ periodMonth: '2026-10', closed: ['Same project'], errors: [] })
     expect(body.last.ok).toBe(true)
     expect(body.canRun).toBe(false)
     expect(body.schedule).toBeTruthy()
+  })
+
+  it('derives the billing status from the accounts in scope only, matched by account id although two accounts share a name', async () => {
+    await save(withBilling({
+      status: 'COMPLETED_WITH_ERRORS',
+      accounts: [account('a', ACC_A, 'Same name', 'FAILED', 'alpha rate limit'), account('b', ACC_B, 'Same name', 'COMPLETED'), account('u', ACC_U, 'No project', 'COMPLETED')],
+      accountErrors: [{ account: 'Same name', accountId: ACC_A, error: 'alpha rate limit' }],
+    }))
+    const a = await view('seller-a')
+    expect(a.last.steps.billing).toEqual({ status: 'COMPLETED_WITH_ERRORS', accountErrors: [{ account: 'Same name', error: 'alpha rate limit' }] })
+    const b = await view('seller-b')
+    expect(b.last.steps.billing).toEqual({ status: 'COMPLETED', accountErrors: [] })
+    expect(JSON.stringify(b)).not.toContain('alpha')
+    expect((await view('admin')).last.steps.billing.status).toBe('COMPLETED_WITH_ERRORS')
+  })
+
+  it('a seller whose accounts all failed sees FAILED; a failure of another store only reaches a seller through the account with no project that they share', async () => {
+    await save(withBilling({
+      status: 'FAILED',
+      accounts: [account('a', ACC_A, 'A', 'FAILED', 'alpha down'), account('b', ACC_B, 'B', 'COMPLETED'), account('u', ACC_U, 'U', 'FAILED', 'u down')],
+      accountErrors: [],
+    }))
+    expect((await view('seller-a')).last.steps.billing.status).toBe('FAILED')
+    const b = await view('seller-b')
+    expect(b.last.steps.billing).toEqual({ status: 'COMPLETED_WITH_ERRORS', accountErrors: [{ account: 'U', error: 'u down' }] })
+    expect(JSON.stringify(b)).not.toContain('alpha')
+  })
+
+  it('a billing wait that timed out is shown as timed out only to the sellers whose accounts were still running', async () => {
+    await save(withBilling({
+      status: 'RUNNING',
+      timedOut: true,
+      accounts: [account('a', ACC_A, 'A', 'COMPLETED'), account('b', ACC_B, 'B', 'RUNNING'), account('u', ACC_U, 'U', 'COMPLETED')],
+      accountErrors: [],
+    }))
+    expect((await view('seller-a')).last.steps.billing).toEqual({ status: 'COMPLETED', accountErrors: [] })
+    expect((await view('seller-b')).last.steps.billing).toEqual({ status: 'RUNNING', timedOut: true, accountErrors: [] })
+    expect((await view('admin')).last.steps.billing.timedOut).toBe(true)
+  })
+
+  it('a run saved before accounts were recorded, or with no account of the seller, shows no billing status instead of the global one', async () => {
+    await save(withBilling({ status: 'FAILED', totals: { synced: 1 }, accountErrors: [{ account: 'A name', error: 'x' }] }))
+    expect((await view('seller-a')).last.steps.billing).toMatchObject({ skipped: true })
+    await save(withBilling({ status: 'FAILED', accounts: [account('b', ACC_B, 'B', 'FAILED', 'beta down')], accountErrors: [] }))
+    const a = await view('seller-a')
+    expect(a.last.steps.billing).toMatchObject({ skipped: true })
+    expect(JSON.stringify(a)).not.toContain('beta')
+  })
+
+  it('matches the month close by project id too, and shows nothing for a run saved without ids', async () => {
+    const { body } = await call(await dailySyncStatus(request('/api/sync/daily', 'seller-b')))
+    expect(body.last.steps.snapshot).toEqual({ periodMonth: '2026-10', closed: ['Same project'], errors: [{ project: 'Same project', projectId: PROJECT_B, error: 'beta snapshot failed' }] })
+    await save({ ...lastRun, steps: { ...lastRun.steps, snapshot: { periodMonth: '2026-10', closed: ['Same project'], errors: [{ project: 'Same project', error: 'x' }] } } })
+    expect((await view('seller-a')).last.steps.snapshot).toEqual({ periodMonth: '2026-10', closed: [], errors: [] })
   })
 
   it('shows admin the whole run and lets it start one', async () => {
@@ -540,6 +651,19 @@ describe('/api/auto-sync', () => {
     expect(saved.body.lastResult.orders.totalSynced).toBe(9)
     const seller = await call(await autoSyncStatus(request('/api/auto-sync', 'seller-a')))
     expect(seller.body.lastResult.orders.totalSynced).toBe(3)
+  })
+})
+
+describe('firstStoreOf', () => {
+  const stores = [{ id: 's1' }, { id: 's2' }]
+
+  it('only null means every store; a list picks from it; an empty or missing list picks nothing', () => {
+    expect(firstStoreOf(stores, null)).toEqual({ id: 's1' })
+    expect(firstStoreOf(stores, ['s2'])).toEqual({ id: 's2' })
+    expect(firstStoreOf(stores, ['s9'])).toBeNull()
+    expect(firstStoreOf(stores, [])).toBeNull()
+    expect(firstStoreOf(stores, undefined as unknown as string[])).toBeNull()
+    expect(firstStoreOf([], null)).toBeNull()
   })
 })
 

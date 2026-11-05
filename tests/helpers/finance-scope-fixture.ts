@@ -71,13 +71,13 @@ export async function cleanupFinanceFixture() {
   await prisma.project.deleteMany({ where: { id: { in: [PROJECT_A, PROJECT_B, PROJECT_C] } } })
 }
 
-const order = (n: string, storeId: string, projectId: string, placedAt: string, gross: number, payout: number) => prisma.order.create({ data: {
-  id: `${P}-order-${n}`, storeId, projectId, shopifyOrderNumber: `#FSF${n}`, financialStatus: 'PAID', currency: 'USD',
+const order = (n: string, storeId: string, projectId: string, placedAt: string, gross: number, payout: number, currency = 'USD') => prisma.order.create({ data: {
+  id: `${P}-order-${n}`, storeId, projectId, shopifyOrderNumber: `#FSF${n}`, financialStatus: 'PAID', currency,
   grossAmount: gross, expectedPayout: payout, totalFees: 0, refundedAmount: 0, placedAt: new Date(placedAt), fetchedAt: new Date('2026-10-06T00:00:00Z'),
 } })
 
-const payout = (id: number, storeId: string, date: string, amount: number) => prisma.payout.create({ data: {
-  id, storeId, status: 'paid', date, currency: 'USD', amount, chargesFeeAmount: 0, chargesGrossAmount: amount, refundsFeeAmount: 0,
+const payout = (id: number, storeId: string, date: string, amount: number, currency = 'USD') => prisma.payout.create({ data: {
+  id, storeId, status: 'paid', date, currency, amount, chargesFeeAmount: 0, chargesGrossAmount: amount, refundsFeeAmount: 0,
   refundsGrossAmount: 0, adjustmentsFeeAmount: 0, adjustmentsGrossAmount: 0, fetchedAt: new Date('2026-10-06T00:00:00Z'),
 } })
 
@@ -138,13 +138,13 @@ export async function seedFinanceFixture(opts: { second?: boolean; third?: boole
       id: `${P}-store-b`, shop: SHOP_B, orderPrefix: 'FSB', projectId: PROJECT_B, ianaTimezone: 'America/Denver', connectedAt: new Date('2001-01-02'), payoutStartDate: '2026-10-06',
     } })).id
     await saveStoreCredential(storeB, { authMode: 'TOKEN', accessToken: 'token-fsf-b' })
-    await payout(9_500_011, storeB, '2026-10-12', 2000.5)
-    await payout(9_500_012, storeB, '2026-09-01', 999)
+    await payout(9_500_011, storeB, '2026-10-12', 2000.5, 'EUR')
+    await payout(9_500_012, storeB, '2026-09-01', 999, 'EUR')
     const accB = await account('b', ACC_B, PROJECT_B)
     await billing(`${P}-bill-b1`, accB.id, 410.3, '2026-10-05', '3333')
     await spend(accB.id, '2026-10-05', 80)
     await bill('b', PROJECT_B, 22.5, 1)
-    await order('b1', storeB, PROJECT_B, '2026-10-05T18:00:00Z', 200, 190)
+    await order('b1', storeB, PROJECT_B, '2026-10-05T18:00:00Z', 200, 190, 'EUR')
     const staffB = await staff('b', 500)
     await assign(staffB.id, PROJECT_B)
     await assign(staffAB.id, PROJECT_B)
@@ -158,9 +158,9 @@ export async function seedFinanceFixture(opts: { second?: boolean; third?: boole
     } })).id
     const accC = await account('c', ACC_C, PROJECT_C)
     await spend(accC.id, '2026-10-05', 13)
-    await order('b2', storeB, PROJECT_B, '2026-10-05T20:00:00Z', 10, 9)
-    await order('c1', storeC, PROJECT_C, '2026-10-04T20:00:00Z', 1000, 900)
-    await order('c2', storeC, PROJECT_C, '2026-10-05T20:00:00Z', 5000, 4500)
+    await order('b2', storeB, PROJECT_B, '2026-10-05T20:00:00Z', 10, 9, 'EUR')
+    await order('c1', storeC, PROJECT_C, '2026-10-04T20:00:00Z', 1000, 900, 'VND')
+    await order('c2', storeC, PROJECT_C, '2026-10-05T20:00:00Z', 5000, 4500, 'VND')
   }
 
   await makeUser('super', 'SUPERADMIN', DEFAULT_ROLE_PERMISSIONS.SUPERADMIN)

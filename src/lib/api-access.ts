@@ -167,9 +167,34 @@ export const SELLER_API_PREFIXES: string[] = [
   '/api/design-studio/artwork',
 ]
 
+function underPrefix(pathname: string, prefix: string) {
+  return pathname === prefix || pathname.startsWith(`${prefix}/`)
+}
+
 export function sellerMayReach(pathname: string) {
   return SELLER_API_PATHS.some(path => pathname === path)
-    || SELLER_API_PREFIXES.some(prefix => pathname === prefix || pathname.startsWith(`${prefix}/`))
+    || SELLER_API_PREFIXES.some(prefix => underPrefix(pathname, prefix))
+}
+
+// Billing is read-only for a seller: no sync, no import, no bill written or deleted. Under these prefixes a seller
+// may use GET and HEAD only, whatever the rule table says (a feature it holds, or a route added below later).
+export const SELLER_READ_ONLY_PREFIXES: string[] = [
+  '/api/meta/sync',
+  '/api/meta/import',
+  '/api/meta/db-billing',
+  '/api/meta/reserve',
+  '/api/meta/accounts',
+  '/api/meta/exchange-rates',
+  '/api/finance/other-bills',
+  '/api/sync/daily',
+  '/api/shopify/sync',
+  '/api/shopify/payouts',
+  '/api/shopify/db-payouts',
+]
+
+function sellerMayWrite(pathname: string, method: string) {
+  const verb = method.toUpperCase()
+  return verb === 'GET' || verb === 'HEAD' || !SELLER_READ_ONLY_PREFIXES.some(prefix => underPrefix(pathname, prefix))
 }
 
 function matchRule(rule: ApiRule, pathname: string, method: string) {
@@ -196,7 +221,7 @@ export function canCallApi(
   if (!role) return 'unauthenticated'
   if (!isUserRole(role)) return 'forbidden'
   if (role === 'SUPERADMIN') return 'ok'
-  if (role === 'SELLER' && !sellerMayReach(pathname)) return 'forbidden'
+  if (role === 'SELLER' && (!sellerMayReach(pathname) || !sellerMayWrite(pathname, method))) return 'forbidden'
   if (access === null || access === 'SUPERADMIN') return 'forbidden'
   if (access === 'ANY') return 'ok'
   if (access === 'ADMIN') return role === 'ADMIN' ? 'ok' : 'forbidden'

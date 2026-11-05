@@ -132,10 +132,10 @@ const CLASSIFIED: Record<string, Check[]> = {
   '/api/projects/profit-chart': [['GET', '/api/projects/profit-chart', 'ok']],
   '/api/projects/snapshot/backfill': [['POST', '/api/projects/snapshot/backfill', 'ok']],
   '/api/meta/db-billing': [['GET', '/api/meta/db-billing', 'ok']],
-  '/api/meta/reserve': [['GET', '/api/meta/reserve', 'ok'], ['POST', '/api/meta/reserve', 'ok']],
+  '/api/meta/reserve': [['GET', '/api/meta/reserve', 'ok'], ['POST', '/api/meta/reserve', 'forbidden']],
   '/api/sync/daily': [['GET', '/api/sync/daily', 'ok']],
-  '/api/finance/other-bills': [['GET', '/api/finance/other-bills', 'ok'], ['POST', '/api/finance/other-bills', 'ok']],
-  '/api/finance/other-bills/:p': [['DELETE', '/api/finance/other-bills/b1', 'ok']],
+  '/api/finance/other-bills': [['GET', '/api/finance/other-bills', 'ok'], ['POST', '/api/finance/other-bills', 'forbidden']],
+  '/api/finance/other-bills/:p': [['DELETE', '/api/finance/other-bills/b1', 'forbidden']],
   '/api/marketing/niche-performance': [['GET', '/api/marketing/niche-performance', 'ok']],
   '/api/marketing/niches': [['GET', '/api/marketing/niches', 'ok'], ['POST', '/api/marketing/niches', 'ok']],
   '/api/fulfillment/orders': [['GET', '/api/fulfillment/orders', 'ok']],
@@ -164,10 +164,10 @@ const CLASSIFIED: Record<string, Check[]> = {
   '/api/meta/sync-insights': [['POST', '/api/meta/sync-insights', 'forbidden']],
   '/api/meta/sync-campaign-insights': [['POST', '/api/meta/sync-campaign-insights', 'forbidden']],
   '/api/marketing/campaign-overrides': [['PUT', '/api/marketing/campaign-overrides', 'forbidden']],
-  // Denied today and still open in Task 8 (the Meta Billing page polls /api/meta/sync every 2 s and a seller is meant to get both back
-  // limited to its accounts); no assertion, so that change does not turn this test red.
-  '/api/meta/sync': [],
-  '/api/meta/import': [],
+  // Billing is read-only for a seller (SELLER_READ_ONLY_PREFIXES): its sync and file import stay closed, so the page's buttons for
+  // them answer 403. The Meta Billing page also polls GET /api/meta/sync; that answers 403 as well and the page ignores it.
+  '/api/meta/sync': [['GET', '/api/meta/sync', 'forbidden'], ['POST', '/api/meta/sync', 'forbidden']],
+  '/api/meta/import': [['POST', '/api/meta/import', 'forbidden']],
 }
 
 describe('the /api paths of the pages a seller opens', () => {

@@ -137,7 +137,7 @@ export async function GET(req: NextRequest) {
     const stores = await prisma.shopifyStore.findMany({
       where: scope.storeIds ? { id: { in: scope.storeIds } } : {},
       orderBy: { connectedAt: 'asc' },
-      select: { id: true, shop: true, ianaTimezone: true, payoutStartDate: true, projectId: true, project: { select: { name: true } } },
+      select: { id: true, shop: true, ianaTimezone: true, payoutStartDate: true, projectId: true, currentBalanceCurrency: true, project: { select: { name: true } } },
     })
     const groups = zoneGroups(stores, scope)
     const allProjectIds = stores.flatMap(s => (s.projectId ? [s.projectId] : []))
@@ -212,11 +212,12 @@ export async function GET(req: NextRequest) {
     const periodRanges = groups.map(group => getPeriodRange(period, group.timeZone, searchParams.get('date')))
     const periodRange = periodRanges[0]
     let periodMetrics = null
+    let periodOrdersByStore: Map<string, { revenue: number; count: number; currencies: Set<string> }> | null = null
     if (periodRange) {
       const accountProject = new Map(metaAccounts.map(a => [a.id, a.projectId]))
       const perGroup = await Promise.all(groups.map(async (group, index) => {
         const range = periodRanges[index]!
-        const storeFilter = everyAccount ? undefined : group.storeIds
+        const storeFilter = everyAccount ? null : group.storeIds
         const [orders, adSpends, unfulfilled] = await Promise.all([
           ordersWithComputedPL({ dateFrom: range.from, dateTo: range.to, limit: 10000, storeIds: storeFilter }),
           prisma.dailyAdSpend.findMany({
@@ -277,6 +278,15 @@ export async function GET(req: NextRequest) {
 
       const unfulfilledOrders = perGroup.reduce((total, g) => total + g.unfulfilled, 0)
 
+      periodOrdersByStore = new Map()
+      for (const order of periodOrders) {
+        const entry = periodOrdersByStore.get(order.storeId) ?? { revenue: 0, count: 0, currencies: new Set<string>() }
+        entry.revenue += order.grossAmount - tipAmount(order)
+        entry.count += 1
+        entry.currencies.add(order.currency)
+        periodOrdersByStore.set(order.storeId, entry)
+      }
+
       periodMetrics = {
         period,
         label: periodRange.label,
@@ -334,6 +344,22 @@ export async function GET(req: NextRequest) {
       cursor.setUTCDate(cursor.getUTCDate() + 1)
     }
 
+    // Payout and order amounts are in the currency of their store and are added as they are, so the totals above are
+    // only one number when `currencies` has one entry; storeTotals gives each store's own figure and currency.
+    const storeTotals = stores.map(store => {
+      const mine = payouts.filter(p => p.storeId === store.id)
+      const period = periodOrdersByStore?.get(store.id)
+      const currencies = Array.from(new Set([...mine.map(p => p.currency), ...Array.from(period?.currencies ?? [])])).sort()
+      return {
+        storeId: store.id,
+        name: store.project?.name ?? store.shop,
+        currency: currencies.length === 1 ? currencies[0] : currencies.length === 0 ? store.currentBalanceCurrency : null,
+        currencies,
+        payouts: { total: mine.reduce((sum, p) => sum + p.amount, 0), count: mine.length },
+        orders: periodOrdersByStore ? { revenue: Math.round((period?.revenue ?? 0) * 100) / 100, count: period?.count ?? 0 } : null,
+      }
+    })
+
     return NextResponse.json({
       shopify: { totalRevenue, payoutCount, recentPayouts },
       meta: { totalSpend, billingCount, recentBillings, missingRateCount, spendByCard: cardSummary(metaBillings, schedule) },
@@ -343,6 +369,8 @@ export async function GET(req: NextRequest) {
       periodMetrics,
       chartData,
       stores: stores.map(s => s.project?.name ?? s.shop),
+      storeTotals,
+      currencies: Array.from(new Set(storeTotals.flatMap(t => t.currencies))).sort(),
     })
   } catch (e: unknown) {
     return NextResponse.json({ error: e instanceof Error ? e.message : 'Unknown error' }, { status: 500 })

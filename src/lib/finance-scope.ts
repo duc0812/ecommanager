@@ -42,11 +42,6 @@ export function ownsProject(scope: FinanceScope, projectId: string): boolean {
   return !scope.projectIds || scope.projectIds.includes(projectId)
 }
 
-export function mayUseRow(scope: FinanceScope, projectId: string | null | undefined): boolean {
-  if (!scope.projectIds) return true
-  return projectId ? scope.projectIds.includes(projectId) : scope.includeUnassigned
-}
-
 export async function requireProjectInScope(req: NextRequest, projectId: string, feature?: FeaturePermission): Promise<FinanceScope | { error: NextResponse }> {
   const scope = await requireFinanceScope(req, feature)
   if ('error' in scope) return scope
@@ -63,6 +58,8 @@ export async function requireUnrestricted(req: NextRequest): Promise<{ user: Aut
 }
 
 // One shop a payout view shows: the one named, else the first of the stores the caller may see.
+// Only null means every store; a missing list is an empty one, as in storeWhere.
 export function firstStoreOf<T extends { id: string }>(stores: T[], storeIds: string[] | null): T | null {
-  return (storeIds ? stores.filter(s => storeIds.includes(s.id)) : stores)[0] ?? null
+  if (storeIds === null) return stores[0] ?? null
+  return stores.find(s => (storeIds ?? []).includes(s.id)) ?? null
 }

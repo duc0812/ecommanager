@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { calcAmountUsd } from '@/lib/currency'
 import { forbidden } from '@/lib/api-auth'
-import { mayUseRow, ownsProject, projectRowsWhere, projectWhere, requireFinanceScope } from '@/lib/finance-scope'
+import { ownsProject, projectRowsWhere, projectWhere, requireFinanceScope, requireUnrestricted } from '@/lib/finance-scope'
 
 const CATEGORIES = ['APP_TOOL', 'SUBSCRIPTION', 'SUPPLIER', 'OFFICE', 'OTHER'] as const
 const PAYMENT_METHODS = ['CK', 'PINGPONG', 'PO', 'OTHER'] as const
@@ -58,11 +58,11 @@ export async function GET(req: NextRequest) {
   })
 }
 
+// A seller reads Other Bills and writes nothing (see SELLER_READ_ONLY_PREFIXES); the check here keeps that true if the table changes.
 export async function POST(req: NextRequest) {
-  const scope = await requireFinanceScope(req, 'other_bills')
-  if ('error' in scope) return scope.error
+  const auth = await requireUnrestricted(req)
+  if ('error' in auth) return auth.error
   const body = await req.json()
-  if (!mayUseRow(scope, body.projectId || null)) return forbidden('Bạn không có quyền ghi bill cho project này.')
   const { vendor, category, amount, currency = 'USD', exchangeRate, paidAt, paymentMethod, transactionId, note, tags, projectId } = body
 
   const errors: string[] = []

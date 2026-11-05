@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { API_ACCESS_RULES, SELLER_API_PATHS, SELLER_API_PREFIXES, canCallApi, sellerMayReach } from './api-access'
+import { API_ACCESS_RULES, SELLER_API_PATHS, SELLER_API_PREFIXES, SELLER_READ_ONLY_PREFIXES, canCallApi, sellerMayReach } from './api-access'
 import type { FeaturePermission, UserRole } from './roles'
 import { DEFAULT_ROLE_PERMISSIONS } from './roles'
 
@@ -243,7 +243,7 @@ describe('seller API allow-list', () => {
     expect(canCallApi('SELLER', ['shopify'], '/api/shopify/db-payouts', 'GET')).toBe('ok')
     expect(canCallApi('SELLER', ['shopify'], '/api/shopify/payouts/12', 'GET')).toBe('ok')
     expect(canCallApi('SELLER', ['meta_billing'], '/api/meta/db-billing', 'GET')).toBe('ok')
-    expect(canCallApi('SELLER', ['other_bills'], '/api/finance/other-bills/b1', 'DELETE')).toBe('ok')
+    expect(canCallApi('SELLER', ['other_bills'], '/api/finance/other-bills', 'GET')).toBe('ok')
     expect(canCallApi('SELLER', ['marketing_niche'], '/api/marketing/niche-performance', 'GET')).toBe('ok')
     expect(canCallApi('SELLER', ['projects'], '/api/staff', 'GET')).toBe('ok')
     expect(canCallApi('SELLER', ['meta_billing'], '/api/sync/daily', 'GET')).toBe('ok')
@@ -329,5 +329,74 @@ describe('seller API allow-list', () => {
     expect(canCallApi('SUPPORT', support, '/api/cs/tickets', 'GET')).toBe('ok')
     expect(canCallApi('SUPPORT', support, '/api/stores', 'GET')).toBe('ok')
     expect(canCallApi('SUPERADMIN', [], '/api/overview', 'GET')).toBe('ok')
+  })
+})
+
+describe('billing is read-only for a seller', () => {
+  const EVERY_BILLING_FEATURE: FeaturePermission[] = ['meta_billing', 'other_bills', 'shopify', 'overview', 'projects', 'setup_meta', 'setup_hr', 'setup_projects']
+  const OPEN_TO_SELLER_READS = ['/api/meta/db-billing', '/api/meta/reserve', '/api/meta/accounts', '/api/meta/exchange-rates', '/api/finance/other-bills', '/api/sync/daily', '/api/shopify/payouts', '/api/shopify/db-payouts']
+  const CLOSED_TO_SELLER = ['/api/meta/sync', '/api/meta/import', '/api/shopify/sync']
+
+  it('lists the billing prefixes, so a new one is a deliberate change', () => {
+    expect(SELLER_READ_ONLY_PREFIXES).toEqual([
+      '/api/meta/sync',
+      '/api/meta/import',
+      '/api/meta/db-billing',
+      '/api/meta/reserve',
+      '/api/meta/accounts',
+      '/api/meta/exchange-rates',
+      '/api/finance/other-bills',
+      '/api/sync/daily',
+      '/api/shopify/sync',
+      '/api/shopify/payouts',
+      '/api/shopify/db-payouts',
+    ])
+  })
+
+  it.each(SELLER_READ_ONLY_PREFIXES)('%s: a seller holding every billing feature gets forbidden on POST, PUT, PATCH and DELETE, on the path and below it', prefix => {
+    for (const method of ['POST', 'PUT', 'PATCH', 'DELETE', 'post']) {
+      expect(canCallApi('SELLER', EVERY_BILLING_FEATURE, prefix, method)).toBe('forbidden')
+      expect(canCallApi('SELLER', EVERY_BILLING_FEATURE, `${prefix}/x1`, method)).toBe('forbidden')
+    }
+  })
+
+  it.each(OPEN_TO_SELLER_READS)('%s: the same seller still reads with GET', prefix => {
+    expect(canCallApi('SELLER', EVERY_BILLING_FEATURE, prefix, 'GET')).toBe('ok')
+  })
+
+  it('the three billing routes that are not opened to a seller stay closed to reads as well', () => {
+    for (const prefix of CLOSED_TO_SELLER) expect(canCallApi('SELLER', EVERY_BILLING_FEATURE, prefix, 'GET')).toBe('forbidden')
+  })
+
+  it('HEAD counts as a read where the route table has a rule for it', () => {
+    expect(canCallApi('SELLER', EVERY_BILLING_FEATURE, '/api/finance/other-bills', 'HEAD')).toBe('ok')
+    expect(canCallApi('SELLER', EVERY_BILLING_FEATURE, '/api/meta/db-billing', 'head')).toBe('ok')
+  })
+
+  it('is decided by the path, not by the feature: it holds even for a route the table would let through', () => {
+    expect(canCallApi('SELLER', ['other_bills'], '/api/finance/other-bills/b1', 'DELETE')).toBe('forbidden')
+    expect(canCallApi('SELLER', ['meta_billing'], '/api/meta/reserve', 'POST')).toBe('forbidden')
+    expect(canCallApi('SELLER', ['meta_billing'], '/api/sync/daily', 'POST')).toBe('forbidden')
+    expect(canCallApi('SELLER', ['shopify'], '/api/shopify/sync', 'POST')).toBe('forbidden')
+  })
+
+  it('does not touch the order sync or the routes that merely share a word with a billing prefix', () => {
+    expect(canCallApi('SELLER', ['projects'], '/api/auto-sync', 'POST')).toBe('ok')
+    expect(canCallApi('SELLER', ['fulfillment_orders'], '/api/shopify/orders/sync', 'POST')).toBe('ok')
+    expect(canCallApi('SELLER', ['meta_billing'], '/api/meta/syncing', 'POST')).toBe('forbidden')
+    expect(canCallApi('SELLER', ['projects'], '/api/projects/snapshot/backfill', 'POST')).toBe('ok')
+  })
+
+  it('admin, super admin and support are unchanged', () => {
+    const features: FeaturePermission[] = ['meta_billing', 'other_bills', 'shopify', 'overview']
+    for (const method of ['POST', 'DELETE']) {
+      expect(canCallApi('ADMIN', DEFAULT_ROLE_PERMISSIONS.ADMIN, '/api/finance/other-bills', method)).toBe('ok')
+      expect(canCallApi('SUPPORT', features, '/api/finance/other-bills', method)).toBe('ok')
+      expect(canCallApi('SUPERADMIN', [], '/api/meta/import', method)).toBe('ok')
+    }
+    expect(canCallApi('ADMIN', DEFAULT_ROLE_PERMISSIONS.ADMIN, '/api/meta/sync', 'POST')).toBe('ok')
+    expect(canCallApi('SUPPORT', features, '/api/meta/reserve', 'POST')).toBe('ok')
+    expect(canCallApi('SUPPORT', features, '/api/sync/daily', 'POST')).toBe('ok')
+    expect(canCallApi('SUPPORT', features, '/api/meta/sync', 'GET')).toBe('ok')
   })
 })
