@@ -574,3 +574,84 @@ describe('"Sắp xếp lại thư mục" for files pushed before task folders', 
     expect((await row(v1.id)).drivePlace).toBe('OLD')
   })
 })
+
+describe('a task folder found by name', () => {
+  // The folders `TF Store/2026-10/<Order>` as Drive already holds them, made before this run (no cache entry).
+  const orderFolder = (t: Task) => {
+    const chain = [['hand-store', 'TF Store', 'root-1'], ['hand-month', '2026-10', 'hand-store'], ['hand-order', t.number, 'hand-month']]
+    for (const [id, name, parent] of chain) drive.set(id, { id, name, parents: [parent], folder: true })
+    return 'hand-order'
+  }
+  const searches = () => calls.filter(c => c.url.startsWith(`${FILES}?q=`))
+
+  it('is not adopted by a task that took over the key while another task is bound to it: that task gets its own folder', async () => {
+    const a = await makeTask()
+    await upload(a, 'front.png')
+    const aFolder = folderNamed(a.key)!
+    // Line l1 became an add-on: its task moved out of the way, and the product line l2 now has the key.
+    await prisma.designTask.update({ where: { taskKey: a.key }, data: { taskKey: `${a.key}-addon` } })
+    const aTask = await taskRow(`${a.key}-addon`)
+    const l2 = await prisma.orderLine.create({ data: {
+      orderId: a.orderId, shopifyLineId: 'l2', sku: 'TF-B', productTitle: 'Hoodie', qty: 1, linePosition: 2, unitPrice: 1, resolvedSupplierId: SUP, customized: false, customAttributesJson: '[]',
+    } })
+    await prisma.designTask.create({ data: { orderId: a.orderId, shopifyLineId: 'l2', taskKey: a.key, status: 'DOING' } })
+
+    const front = await upload({ ...a, lineId: l2.id, sku: 'TF-B' }, 'front.png')
+
+    const b = await taskRow(a.key)
+    expect(b.driveFolderId).toBeTruthy()
+    expect(b.driveFolderId).not.toBe(aFolder.id)
+    expect(drive.get(b.driveFolderId!)).toMatchObject({ name: `${a.key} (2)`, parents: aFolder.parents, folder: true })
+    expect(b.driveFolderUrl).toBe(folderLink(b.driveFolderId!))
+    expect(drive.get(front.driveFileId!)!.parents).toEqual([b.driveFolderId])
+    expect(inFolder(aFolder.id)).toEqual(['front.png'])
+    expect(await taskRow(`${a.key}-addon`)).toEqual(aTask)
+    expect(shares().map(c => c.url)).toEqual([`${FILES}/${aFolder.id}/permissions?fields=id`, `${FILES}/${b.driveFolderId}/permissions?fields=id`])
+  })
+
+  it('is not used either by a line without a task when another task is bound to it', async () => {
+    const a = await makeTask()
+    await upload(a, 'front.png')
+    const aFolder = folderNamed(a.key)!
+    // l1 became a non-product line and its task moved out of the way; the product line l2, now keyed like it, has no task.
+    await prisma.orderLine.update({ where: { id: a.lineId }, data: { productTitle: 'Custom Text' } })
+    await prisma.designTask.update({ where: { taskKey: a.key }, data: { taskKey: `${a.key}-addon` } })
+    const l2 = await prisma.orderLine.create({ data: {
+      orderId: a.orderId, shopifyLineId: 'l2', sku: 'TF-B', productTitle: 'Hoodie', qty: 1, linePosition: 2, unitPrice: 1, resolvedSupplierId: SUP, customized: false, customAttributesJson: '[]',
+    } })
+
+    const saved = await add({ ...a, lineId: l2.id, sku: 'TF-B' }, 'front.png')
+    expect((await pushArtworkToDrive(saved.id)).pushed).toBe(true)
+
+    const parent = drive.get((await row(saved.id)).driveFileId!)!.parents[0]
+    expect(parent).not.toBe(aFolder.id)
+    expect(drive.get(parent)).toMatchObject({ name: `${a.key} (2)`, parents: aFolder.parents })
+    expect(inFolder(aFolder.id)).toEqual(['front.png'])
+  })
+
+  it('is adopted, as before, when no task is bound to it', async () => {
+    const t = await makeTask()
+    drive.set('by-hand', { id: 'by-hand', name: t.key, parents: [orderFolder(t)], folder: true })
+
+    const front = await upload(t, 'front.png')
+
+    expect(await taskRow(t.key)).toMatchObject({ driveFolderId: 'by-hand', driveFolderUrl: folderLink('by-hand') })
+    expect(drive.get(front.driveFileId!)!.parents).toEqual(['by-hand'])
+    expect(Array.from(drive.values()).filter(f => f.folder && f.name.startsWith(t.key))).toHaveLength(1)
+    expect(shares().map(c => c.url)).toEqual([`${FILES}/by-hand/permissions?fields=id`])
+  })
+
+  it('is never looked up by a task that is already bound to its folder', async () => {
+    const t = await makeTask()
+    drive.set('by-hand', { id: 'by-hand', name: t.key, parents: [orderFolder(t)], folder: true })
+    drive.set('bound', { id: 'bound', name: 'renamed by hand', parents: ['root-1'], folder: true })
+    await prisma.designTask.update({ where: { taskKey: t.key }, data: { driveFolderId: 'bound', driveFolderUrl: folderLink('bound') } })
+
+    const front = await upload(t, 'front.png')
+
+    expect(drive.get(front.driveFileId!)!.parents).toEqual(['bound'])
+    expect(searches()).toEqual([])
+    expect(shares()).toEqual([])
+    expect(await taskRow(t.key)).toMatchObject({ driveFolderId: 'bound' })
+  })
+})

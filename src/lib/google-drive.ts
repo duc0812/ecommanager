@@ -131,20 +131,29 @@ export function escapeDriveQuery(value: string): string {
   return value.replace(/\\/g, '\\\\').replace(/'/g, "\\'")
 }
 
-export async function findOrCreateFolder(parentId: string, name: string, accessToken?: string): Promise<{ id: string; created: boolean }> {
+/** A folder of that name directly under the parent, asked of Drive itself (no cache). */
+export async function findFolder(parentId: string, name: string, accessToken?: string): Promise<string | null> {
   const q = `mimeType='${FOLDER_MIME}' and name='${escapeDriveQuery(name)}' and '${escapeDriveQuery(parentId)}' in parents and trashed=false`
   const search = new URLSearchParams({ q, fields: 'files(id,name)', pageSize: '1', spaces: 'drive' })
   const found: any = await (await driveFetch(`${FILES_URL}?${search}`, {}, accessToken)).json()
   const existing = found?.files?.[0]?.id
-  if (typeof existing === 'string' && existing) return { id: existing, created: false }
+  return typeof existing === 'string' && existing ? existing : null
+}
 
+export async function createFolder(parentId: string, name: string, accessToken?: string): Promise<string> {
   const created: any = await (await driveFetch(`${FILES_URL}?fields=id`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json; charset=UTF-8' },
     body: JSON.stringify({ name, mimeType: FOLDER_MIME, parents: [parentId] }),
   }, accessToken)).json()
   if (typeof created?.id !== 'string') throw new DriveError('Google Drive không trả về id thư mục.')
-  return { id: created.id, created: true }
+  return created.id
+}
+
+export async function findOrCreateFolder(parentId: string, name: string, accessToken?: string): Promise<{ id: string; created: boolean }> {
+  const existing = await findFolder(parentId, name, accessToken)
+  if (existing) return { id: existing, created: false }
+  return { id: await createFolder(parentId, name, accessToken), created: true }
 }
 
 export async function ensureFolder(parentId: string, name: string): Promise<string> {

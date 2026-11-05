@@ -16,6 +16,8 @@ import { runAutoFulfill } from '@/lib/fulfillment/auto-fulfill'
 import { RENDER_LINE, queueRenderLine, queueScheduledRenders, renderClaimFor } from '@/lib/repos/artwork-render'
 import { handoffCardFor, listHandoffHub } from '@/lib/supplier-handoff'
 import { UNMAPPED_TAB } from '@/lib/handoff-shared'
+import { AUTH_COOKIE, signToken } from '@/lib/auth'
+import { POST as syncTasksRoute } from '@/app/api/design-studio/tasks/sync/route'
 import { TEEINBLUE_REASON } from '@/lib/artwork-render-eligibility'
 import { isAutoNotRendered, needsArtwork } from '@/app/design-studio/components/model'
 
@@ -820,6 +822,192 @@ describe('Reminiso order lines', () => {
 
       expect(await renderClaimFor(await queued('#REMI9014'))).toEqual({ error: TEEINBLUE_REASON })
       expect(await renderClaimFor(await queued('#REMI9012'))).toMatchObject({ target: { orderNumber: '#REMI9012', taskKey: 'REMI9012_1', printArea: 'Print' } })
+    })
+
+    // A write that lands between the sync reading the order and the sweep's transaction.
+    const meanwhile = (write: () => Promise<unknown>) => {
+      const real = prisma.$transaction.bind(prisma)
+      return vi.spyOn(prisma, '$transaction').mockImplementationOnce((async (...args: any[]) => { await write(); return (real as any)(...args) }) as any)
+    }
+    const row = (id: string) => prisma.designTask.findUniqueOrThrow({ where: { id } })
+
+    it('a task changed between the read and the re-key is left for the next sync; the other tasks of the order still move', async () => {
+      const node = orderOf('REMI9062', [PROTECT(), ADVENT(), TOPPER()])
+      await sync(node)
+      const { order, ids } = await legacyKeys('#REMI9062', { addOns: [1] })
+      const spy = meanwhile(() => prisma.designTask.update({ where: { id: ids[3] }, data: { assigneeId: 'remi14-designer' } }))
+
+      expect(await syncDesignTasks(order.id)).toEqual({ created: 0, cancelled: 0, completed: 0, reopened: 0 })
+      spy.mockRestore()
+
+      const changed = await row(ids[3])
+      expect(changed).toMatchObject({ taskKey: 'REMI9062_3', assigneeId: 'remi14-designer' })
+      expect(await keyEvents(ids[3])).toEqual([])
+      expect((await row(ids[2])).taskKey).toBe('REMI9062_1')
+      expect(await prisma.designTask.findUnique({ where: { id: ids[1] } })).toBeNull()
+
+      await syncDesignTasks(order.id)
+      expect(await row(ids[3])).toEqual({ ...changed, taskKey: 'REMI9062_2' })
+    })
+
+    it('a task changed meanwhile keeps the key another move wanted: that move waits too, and nothing fails', async () => {
+      const node = orderOf('REMI9062', [PROTECT(), ADVENT(), TOPPER()])
+      await sync(node)
+      const { order, ids } = await legacyKeys('#REMI9062', { addOns: [1] })
+      const spy = meanwhile(() => prisma.designTask.update({ where: { id: ids[2] }, data: { assigneeId: 'remi14-designer' } }))
+
+      await syncDesignTasks(order.id)
+      spy.mockRestore()
+
+      expect((await snapshot(order.id)).map(t => [t.id, t.taskKey])).toEqual([[ids[2], 'REMI9062_2'], [ids[3], 'REMI9062_3']])
+      expect((await row(ids[2])).assigneeId).toBe('remi14-designer')
+      expect(await keyEvents(ids[3])).toEqual([])
+
+      await syncDesignTasks(order.id)
+      expect((await snapshot(order.id)).map(t => [t.id, t.taskKey])).toEqual([[ids[2], 'REMI9062_1'], [ids[3], 'REMI9062_2']])
+    })
+
+    const clauses: Array<[string, (orderId: string, shopifyLineId: string, taskId: string) => Promise<unknown>]> = [
+      ['an assignee', (_o, _l, taskId) => prisma.designTask.update({ where: { id: taskId }, data: { assigneeId: 'remi14-designer' } })],
+      ['a note someone wrote', (_o, _l, taskId) => prisma.designTaskEvent.create({ data: { taskId, type: 'NOTE', message: 'Khách hỏi lại', actorId: 'remi14-designer' } })],
+      ['a Drive folder id', (_o, _l, taskId) => prisma.designTask.update({ where: { id: taskId }, data: { driveFolderId: `remi14-folder-${taskId}` } })],
+      ['a file on its line', (orderId, shopifyLineId) => artworkOn(orderId, shopifyLineId)],
+    ]
+    for (const [clause, mark] of clauses) {
+      it(`a NEW add-on task with only ${clause} is kept: moved out of a needed key, untouched in a key no product needs`, async () => {
+        await sync(fixtureOrder('#REMI9002'))
+        const { order, ids } = await legacyKeys('#REMI9002', { addOns: [1, 2] })
+        for (const p of [1, 2]) await mark(order.id, order.lines[p - 1].shopifyLineId, ids[p])
+        const [protect, nameAddOn] = [await row(ids[1]), await row(ids[2])]
+
+        expect((await sync(fixtureOrder('#REMI9002'))).errors).toEqual([])
+
+        expect(await row(ids[1])).toEqual({ ...protect, taskKey: 'REMI9002_1-addon' })
+        expect(await row(ids[2])).toEqual(nameAddOn)
+        expect((await row(ids[3])).taskKey).toBe('REMI9002_1')
+      })
+    }
+
+    const GONE_LINE = 'gid://shopify/LineItem/remi14-gone'
+    const goneTask = async (orderId: string, taskKey: string) =>
+      prisma.designTask.create({ data: { orderId, shopifyLineId: GONE_LINE, taskKey, status: 'NEW', events: { create: CREATED } } })
+
+    it('an untouched NEW task on a line no longer in the order is not removed: a sync leaves it as it is', async () => {
+      await sync(fixtureOrder('#REMI9002'))
+      const gone = await goneTask((await orderRow('#REMI9002')).id, 'REMI9002_2')
+
+      expect((await sync(fixtureOrder('#REMI9002'))).errors).toEqual([])
+
+      expect(await row(gone.id)).toEqual(gone)
+      expect(await keyEvents(gone.id)).toEqual([])
+    })
+
+    it('a task on a line no longer in the order moves out of the way only when a product line needs its key, saying why', async () => {
+      await sync(fixtureOrder('#REMI9002'))
+      const order = await orderRow('#REMI9002')
+      const gone = await goneTask(order.id, 'REMI9002_2')
+      const edited = fixtureOrder('#REMI9002')
+      edited.lineItems.nodes.push({ ...ADVENT(), id: lineId(9002, 4) })
+
+      expect((await sync(edited)).errors).toEqual([])
+
+      expect(await row(gone.id)).toEqual({ ...gone, taskKey: 'REMI9002_2-removed' })
+      expect(await keyEvents(gone.id)).toEqual([['SYSTEM', 'Đổi mã task REMI9002_2 → REMI9002_2-removed (dòng không còn trong đơn, nhường mã cho dòng sản phẩm)']])
+      expect((await taskFor(order.id, lineId(9002, 4)))!.taskKey).toBe('REMI9002_2')
+    })
+
+    it("a key held by another order's task leaves this order's tasks as they are, warns once naming both orders, and the sync goes on", async () => {
+      await sync(fixtureOrder('#REMI9002'), orderOf('REMI9066', [ADVENT()]))
+      const { order, ids } = await legacyKeys('#REMI9002')
+      await prisma.designTask.update({ where: { taskKey: 'REMI9066_1' }, data: { taskKey: 'REMI9002_1' } })
+      await prisma.orderLine.update({ where: { id: order.lines[2].id }, data: { resolvedSupplierId: SUP } })
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      try {
+        expect(await syncDesignTasks(order.id)).toEqual({ created: 0, cancelled: 0, completed: 0, reopened: 0 })
+        expect(warn).toHaveBeenCalledTimes(1)
+        expect(warn.mock.calls[0].join(' ')).toMatch(/#REMI9002\b.*#REMI9066\b/)
+      } finally {
+        warn.mockRestore()
+      }
+      expect(await row(ids[3])).toMatchObject({ taskKey: 'REMI9002_3', supplierSnapshot: 'Remi14 Sup' })
+      expect(await keyEvents(ids[3])).toEqual([])
+    })
+
+    it('the one-order task sync answers a clear error instead of crashing when the sync fails', async () => {
+      process.env.AUTH_SECRET = 'test-secret-that-is-long-enough-32chars'
+      const admin = await prisma.appUser.upsert({ where: { email: 'admin@remi14.test' }, create: { name: 'Admin', email: 'admin@remi14.test', role: 'ADMIN' }, update: {} })
+      const token = await signToken({ userId: admin.id, email: admin.email, name: admin.name, role: 'ADMIN', permissions: [], tv: 0 })
+      await sync(fixtureOrder('#REMI9002'), orderOf('REMI9066', [ADVENT()]))
+      const order = await orderRow('#REMI9002')
+      // The tote's task must be made again, and another order's task holds the key it needs.
+      await prisma.designTask.deleteMany({ where: { orderId: order.id } })
+      await prisma.designTask.update({ where: { taskKey: 'REMI9066_1' }, data: { taskKey: 'REMI9002_1' } })
+      const post = () => {
+        const req = new NextRequest('http://x/api/design-studio/tasks/sync', { method: 'POST', body: JSON.stringify({ orderId: order.id }) })
+        req.cookies.set(AUTH_COOKIE, token)
+        return syncTasksRoute(req)
+      }
+
+      try {
+        const held = await post()
+        expect(held.status).toBe(409)
+        expect((await held.json()).error).toMatch(/mã task/i)
+
+        const spy = vi.spyOn(prisma.order, 'findUnique').mockRejectedValueOnce(new Error('disk I/O error'))
+        const failed = await post()
+        spy.mockRestore()
+        expect(failed.status).toBe(500)
+        expect((await failed.json()).error).toMatch(/Không đồng bộ được task.*disk I\/O error/)
+      } finally {
+        await prisma.appUser.deleteMany({ where: { email: 'admin@remi14.test' } })
+      }
+    })
+  })
+  describe('the product type last seen on a line', () => {
+    const fee = (product: any) => ({
+      sku: null, title: 'Item Personalization', variantTitle: null, quantity: 1, originalUnitPriceSet: { shopMoney: { amount: '0.50' } }, customAttributes: [], image: null,
+      variant: { id: 'gid://shopify/ProductVariant/remi14-fee', image: null, selectedOptions: [] }, product,
+    })
+    const FEE_PRODUCT = { id: 'gid://shopify/Product/remi14-fee', tags: [], productType: 'PPLR_HIDDEN_PRODUCT', onlineStoreUrl: null, featuredImage: null }
+    const order = (feeProduct: any, extra: any[] = []) => {
+      const node = fixtureOrder('#REMI9004')
+      node.id = 'gid://shopify/Order/remi14-REMI9067'
+      node.name = '#REMI9067'
+      node.lineItems.nodes = [{ ...fee(feeProduct), id: 'gid://shopify/LineItem/remi14-REMI9067-1' }, { ...node.lineItems.nodes[0], id: 'gid://shopify/LineItem/remi14-REMI9067-2' }, ...extra]
+      return node
+    }
+    const tasksOf = async (orderId: string) => (await prisma.designTask.findMany({ where: { orderId }, include: { events: true } }))
+      .map(t => ({ id: t.id, taskKey: t.taskKey, status: t.status, updatedAt: t.updatedAt.toISOString(), events: t.events.length }))
+
+    beforeEach(async () => {
+      await mapVariant(LEGGINGS_VARIANT, (await prisma.supplierProduct.create({ data: { supplierId: SUP, sku: 'REMI14-LEGGINGS-M', baseCost: 12 } })).id)
+      expect((await sync(order(FEE_PRODUCT))).errors).toEqual([])
+    })
+
+    it('a re-sync that brings no product type (the product was deleted) keeps the stored one: still a fee line, no task, no re-key', async () => {
+      const before = await orderRow('#REMI9067')
+      const tasks = await tasksOf(before.id)
+      expect(tasks.map(t => t.taskKey)).toEqual(['REMI9067_1'])
+
+      expect(await sync(order(null))).toMatchObject({ errors: [], withUnmappedSku: 0 })
+
+      const after = await orderRow('#REMI9067')
+      expect(after.lines[0].shopifyProductType).toBe('PPLR_HIDDEN_PRODUCT')
+      expect(isNonProductLine(after.lines[0])).toBe(true)
+      expect(after.pipelineStatus).toBe('PENDING_DESIGN')
+      expect(await tasksOf(after.id)).toEqual(tasks)
+    })
+
+    it('a re-sync with another product type stores the new one', async () => {
+      await sync(order({ ...FEE_PRODUCT, productType: 'Custom Text' }))
+      expect((await orderRow('#REMI9067')).lines[0].shopifyProductType).toBe('Custom Text')
+    })
+
+    it('a new line with no product type stores none, as before', async () => {
+      const tip = { ...fee(null), title: 'Tip', id: 'gid://shopify/LineItem/remi14-REMI9067-3', variant: { id: 'gid://shopify/ProductVariant/remi14-tip', image: null, selectedOptions: [] } }
+      await sync(order(FEE_PRODUCT, [tip]))
+      expect((await orderRow('#REMI9067')).lines.map(l => l.shopifyProductType)).toEqual(['PPLR_HIDDEN_PRODUCT', expect.any(String), null])
     })
   })
 })

@@ -158,29 +158,62 @@ async function untouchedTasks(orderId: string, taskIds: string[]): Promise<Set<s
   return new Set(tasks.filter(t => !withFile.has(t.shopifyLineId)).map(t => t.id))
 }
 
+const KEY_MOVE_REASON: Record<TaskKeyMove['why'], string> = {
+  LINE_KEY: 'theo mã line của đơn',
+  NOT_A_PRODUCT: 'dòng không phải sản phẩm, nhường mã cho dòng sản phẩm',
+  LINE_GONE: 'dòng không còn trong đơn, nhường mã cho dòng sản phẩm',
+}
+
 /**
- * The owner's rule since 2026-10-29: a task's key is its line key. Applied in one transaction through temporary keys, since an
- * order's old and new keys overlap (`_2,_3 → _1,_2`). The Drive folder keeps its old name until scripts/rename-task-folders.mjs
- * runs. `updatedAt` stays: a CSV save compares it with the approval time.
+ * The owner's rule since 2026-10-29: a task's key is its line key (planTaskKeys says what moves). One transaction, through
+ * temporary keys since an order's old and new keys overlap (`_2,_3 → _1,_2`). Every write is a compare-and-set on the
+ * `updatedAt` the sync read: a task changed since then keeps its key until the next sync, and so does any move that needed
+ * that key. `updatedAt` is written back: a CSV save compares it with the approval time. A key held in another order leaves
+ * this order as it is, with a warning. The Drive folder keeps its old name until scripts/rename-task-folders.mjs runs.
  */
-async function followLineKeys(orderId: string, keys: Map<string, string>, tasks: Array<KeyedTask & { updatedAt: Date }>): Promise<void> {
+async function followLineKeys(
+  order: { id: string; shopifyOrderNumber: string; lines: Array<{ shopifyLineId: string }> },
+  keys: Map<string, string>,
+  tasks: Array<KeyedTask & { updatedAt: Date }>,
+): Promise<void> {
   if (tasks.every(t => keys.get(t.shopifyLineId) === t.taskKey)) return
-  const untouched = await untouchedTasks(orderId, tasks.filter(t => !keys.has(t.shopifyLineId)).map(t => t.id))
-  const plan = planTaskKeys(keys, tasks.map(t => ({ ...t, untouched: untouched.has(t.id) })))
+  const lineIds = new Set(order.lines.map(l => l.shopifyLineId))
+  const untouched = await untouchedTasks(order.id, tasks.filter(t => !keys.has(t.shopifyLineId) && lineIds.has(t.shopifyLineId)).map(t => t.id))
+  const plan = planTaskKeys(keys, lineIds, tasks.map(t => ({ ...t, untouched: untouched.has(t.id) })))
   if (plan.remove.length === 0 && plan.moves.length === 0) return
-  const updatedAt = new Map(tasks.map(t => [t.id, t.updatedAt]))
+  const elsewhere = await prisma.designTask.findMany({
+    where: { taskKey: { in: plan.moves.map(m => m.to) }, orderId: { not: order.id } },
+    select: { taskKey: true, order: { select: { shopifyOrderNumber: true } } },
+  })
+  if (elsewhere.length > 0) {
+    const others = Array.from(new Set(elsewhere.map(t => t.order.shopifyOrderNumber))).join(', ')
+    console.warn(`[design tasks] ${order.shopifyOrderNumber}: mã ${elsewhere.map(t => t.taskKey).join(', ')} đang thuộc task của đơn ${others} — giữ nguyên mã task của đơn này`)
+    return
+  }
+  const readAt = new Map(tasks.map(t => [t.id, t.updatedAt]))
+  const asRead = (id: string) => ({ id, updatedAt: readAt.get(id) })
   await prisma.$transaction(async tx => {
-    if (plan.remove.length) await tx.designTask.deleteMany({ where: { id: { in: plan.remove }, ...UNTOUCHED } })
-    const moving: TaskKeyMove[] = []
+    if (plan.remove.length) await tx.designTask.deleteMany({ where: { OR: plan.remove.map(asRead), ...UNTOUCHED } })
+    let parked: TaskKeyMove[] = []
+    const stayed = [...plan.remove]
     for (const m of plan.moves) {
-      const parked = await tx.designTask.updateMany({ where: { id: m.id, taskKey: m.from }, data: { taskKey: `~${m.id}`, updatedAt: updatedAt.get(m.id) } })
-      if (parked.count === 1) moving.push(m)
+      const r = await tx.designTask.updateMany({ where: { ...asRead(m.id), taskKey: m.from }, data: { taskKey: `~${m.id}`, updatedAt: readAt.get(m.id) } })
+      if (r.count === 1) parked.push(m)
+      else stayed.push(m.id)
     }
-    for (const m of moving) {
-      const why = m.productLine ? 'theo mã line của đơn' : 'dòng không phải sản phẩm, nhường mã cho dòng sản phẩm'
+    // Keys still held this run: by a task the delete left, or one changed since it was read. A move into one waits, and gives its own key back.
+    const held = new Set((await tx.designTask.findMany({ where: { id: { in: stayed } }, select: { taskKey: true } })).map(t => t.taskKey))
+    for (let blocked = parked.filter(m => held.has(m.to)); blocked.length > 0; blocked = parked.filter(m => held.has(m.to))) {
+      for (const m of blocked) {
+        await tx.designTask.update({ where: { id: m.id }, data: { taskKey: m.from, updatedAt: readAt.get(m.id) } })
+        held.add(m.from)
+      }
+      parked = parked.filter(m => !blocked.includes(m))
+    }
+    for (const m of parked) {
       await tx.designTask.update({ where: { id: m.id }, data: {
-        taskKey: m.to, updatedAt: updatedAt.get(m.id),
-        events: { create: { type: 'SYSTEM', message: `Đổi mã task ${m.from} → ${m.to} (${why})` } },
+        taskKey: m.to, updatedAt: readAt.get(m.id),
+        events: { create: { type: 'SYSTEM', message: `Đổi mã task ${m.from} → ${m.to} (${KEY_MOVE_REASON[m.why]})` } },
       } })
     }
   })
@@ -199,7 +232,9 @@ export async function syncDesignTasks(orderId: string): Promise<SyncResult> {
   let created = 0, cancelled = 0, completed = 0, reopened = 0
   const withArtwork = await linesWithArtwork(orderId)
   const keys = lineKeysOf(order.shopifyOrderNumber, order.lines)
-  await followLineKeys(orderId, keys, order.designTasks)
+  // The key sweep never fails the rest of the sync: whatever it could not do waits for the next one.
+  await followLineKeys(order, keys, order.designTasks)
+    .catch((err: any) => console.warn(`[design tasks] ${order.shopifyOrderNumber}: chưa đổi được mã task — ${err?.message ?? err}`))
   const factoryReopen = { status: 'REJECTED', rejectReasons: JSON.stringify([FACTORY_REJECT_REASON]), rejectNote: null, prevStatus: null }
   const factoryEvent = { type: 'SYSTEM', message: 'Xưởng trả file — mở lại task' }
 

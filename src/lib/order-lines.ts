@@ -63,37 +63,41 @@ export function lineKeyOf(orderNumber: string, lines: KeyedLine[], line: Pick<Ke
   return lineKeysOf(orderNumber, lines).get(line.shopifyLineId) ?? null
 }
 
-/** Kept tasks off the product lines move here when a product line needs their key: a line key ends in `_<n>`, this never does. */
-const OUT_OF_THE_WAY = '-addon'
-
 export type KeyedTask = { id: string; taskKey: string; shopifyLineId: string }
-export type TaskKeyMove = { id: string; from: string; to: string; productLine: boolean }
+/** LINE_KEY: a product line's task takes its key. The other two move a task out of a key a product line needs. */
+export type TaskKeyMove = { id: string; from: string; to: string; why: 'LINE_KEY' | 'NOT_A_PRODUCT' | 'LINE_GONE' }
+
+/** Where a task moves when a product line needs its key. A line key ends in `_<n>`; these never do. */
+const OUT_OF_THE_WAY = { NOT_A_PRODUCT: '-addon', LINE_GONE: '-removed' } as const
 
 /**
- * What puts an order's design tasks back on its line keys (`keys` = lineKeysOf) once a line is reclassified after the order
- * synced (2026-11: Reminiso add-ons and the hidden fee product became non-product lines, which shifts the numbering).
- * A task on a product line takes that line's key, whatever its status. A task on any other line never holds one: it is
- * removed when `untouched`, otherwise kept, and moved to "<key>-addon" (made unique) only when a product line needs its key.
+ * What puts an order's design tasks back on its line keys (`keys` = lineKeysOf, `lineIds` = every line of the order) once a
+ * line is reclassified after the order synced (2026-11: Reminiso add-ons and the hidden fee product became non-product lines,
+ * which shifts the numbering). A task on a product line takes that line's key, whatever its status. A task on a line that is
+ * not a product is removed when `untouched`, otherwise kept. A task whose line is not in the order (removed in Shopify, or
+ * past the lines the sync fetches) is never removed. A kept task moves to "<key>-addon" / "<key>-removed" (made unique)
+ * only when a product line needs its key.
  */
-export function planTaskKeys(keys: Map<string, string>, tasks: Array<KeyedTask & { untouched: boolean }>): { remove: string[]; moves: TaskKeyMove[] } {
+export function planTaskKeys(keys: Map<string, string>, lineIds: Set<string>, tasks: Array<KeyedTask & { untouched: boolean }>): { remove: string[]; moves: TaskKeyMove[] } {
   const needed = new Set(keys.values())
   const taken = new Set(needed)
   const remove: string[] = []
   const moves: TaskKeyMove[] = []
-  const inTheWay: KeyedTask[] = []
+  const inTheWay: Array<{ task: KeyedTask; why: keyof typeof OUT_OF_THE_WAY }> = []
   for (const t of tasks) {
     const key = keys.get(t.shopifyLineId)
+    const gone = !lineIds.has(t.shopifyLineId)
     if (key) {
-      if (t.taskKey !== key) moves.push({ id: t.id, from: t.taskKey, to: key, productLine: true })
-    } else if (t.untouched) remove.push(t.id)
-    else if (needed.has(t.taskKey)) inTheWay.push(t)
+      if (t.taskKey !== key) moves.push({ id: t.id, from: t.taskKey, to: key, why: 'LINE_KEY' })
+    } else if (t.untouched && !gone) remove.push(t.id)
+    else if (needed.has(t.taskKey)) inTheWay.push({ task: t, why: gone ? 'LINE_GONE' : 'NOT_A_PRODUCT' })
     else taken.add(t.taskKey)
   }
-  for (const t of inTheWay) {
-    let to = `${t.taskKey}${OUT_OF_THE_WAY}`
-    for (let n = 2; taken.has(to); n++) to = `${t.taskKey}${OUT_OF_THE_WAY}-${n}`
+  for (const { task: t, why } of inTheWay) {
+    let to = `${t.taskKey}${OUT_OF_THE_WAY[why]}`
+    for (let n = 2; taken.has(to); n++) to = `${t.taskKey}${OUT_OF_THE_WAY[why]}-${n}`
     taken.add(to)
-    moves.push({ id: t.id, from: t.taskKey, to, productLine: false })
+    moves.push({ id: t.id, from: t.taskKey, to, why })
   }
   return { remove, moves }
 }

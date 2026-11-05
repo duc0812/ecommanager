@@ -3,7 +3,7 @@ import { artworkUrl } from '@/lib/design-studio'
 import { lineKeyOf } from '@/lib/order-lines'
 import { DESIGN_LINK_SEPARATOR, joinDesignLinks } from '@/lib/design-links'
 import { getGoogleConfig, isDriveConfigured } from '@/lib/google-oauth'
-import { DriveAuthError, DriveError, driveFolderUrl, folderForPath, placeFile, removeEmptyChildFolder, shareAnyoneReader } from '@/lib/google-drive'
+import { DriveAuthError, DriveError, createFolder, driveFolderUrl, findFolder, folderForPath, placeFile, removeEmptyChildFolder, shareAnyoneReader } from '@/lib/google-drive'
 import { OLD_FOLDER_NAME, currentFileIds, driveFileName, driveOldFileName, folderHoldsPrintFiles, type DrivePlace } from '@/lib/task-files'
 
 export type TaskFolder = { id: string; url: string; taskId: string | null }
@@ -54,12 +54,34 @@ async function taskFolderPath(orderId: string, shopifyLineId: string, taskKey?: 
   ]
 }
 
+async function boundToAnotherTask(folderId: string, taskId: string | null): Promise<boolean> {
+  return !!(await prisma.designTask.findFirst({ where: { driveFolderId: folderId, ...(taskId ? { NOT: { id: taskId } } : {}) }, select: { id: true } }))
+}
+
+/**
+ * The folder named after the task's key can belong to another task: the one that had the key before a re-key or a move out of
+ * the way (its folder keeps the name until scripts/rename-task-folders.mjs runs). This task then gets its own folder beside it,
+ * "<TaskKey> (2)", "(3)", …: the first of those names no other task is bound to, asked of Drive itself, not of the folder cache.
+ */
+async function ownFolderBeside(path: string[], taskId: string | null): Promise<string> {
+  const parentId = await folderForPath(path.slice(0, -1))
+  const name = path[path.length - 1]
+  for (let n = 2; ; n++) {
+    const found = await findFolder(parentId, `${name} (${n})`)
+    if (!found) return createFolder(parentId, `${name} (${n})`)
+    if (!(await boundToAnotherTask(found, taskId))) return found
+  }
+}
+
 async function resolveTaskFolder(orderId: string, shopifyLineId: string): Promise<TaskFolder> {
   const task = await prisma.designTask.findUnique({
     where: { orderId_shopifyLineId: { orderId, shopifyLineId } }, select: { id: true, taskKey: true, driveFolderId: true, driveFolderUrl: true },
   })
   if (task?.driveFolderId) return { id: task.driveFolderId, url: task.driveFolderUrl ?? driveFolderUrl(task.driveFolderId), taskId: task.id }
-  const id = await folderForPath(await taskFolderPath(orderId, shopifyLineId, task?.taskKey))
+  const path = await taskFolderPath(orderId, shopifyLineId, task?.taskKey)
+  let id = await folderForPath(path)
+  // A folder found by name is this line's only when no other task is bound to it: two lines' files must never share a folder.
+  if (await boundToAnotherTask(id, task?.id ?? null)) id = await ownFolderBeside(path, task?.id ?? null)
   const url = driveFolderUrl(id)
   if (!task) return { id, url, taskId: null }
   // The folder is shared before it is remembered: a failed share is retried by the next push instead of leaving a private folder behind.

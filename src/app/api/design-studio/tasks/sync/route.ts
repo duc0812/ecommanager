@@ -18,8 +18,15 @@ export async function POST(req: NextRequest) {
   if ('error' in allowed) return allowed.error
 
   if (orderId) {
-    const r = await syncDesignTasks(orderId)
-    return NextResponse.json({ ...r, orders: 1 })
+    try {
+      const r = await syncDesignTasks(orderId)
+      return NextResponse.json({ ...r, orders: 1 })
+    } catch (e: any) {
+      if (e?.code === 'P2002') {
+        return NextResponse.json({ error: 'Mã task của một dòng đang bị task khác giữ — chưa đồng bộ được task của đơn này, báo kỹ thuật kiểm tra' }, { status: 409 })
+      }
+      return NextResponse.json({ error: `Không đồng bộ được task của đơn này: ${e?.message ?? String(e)}` }, { status: 500 })
+    }
   }
 
   const outcome = await runDesignTaskSyncJob('manual')

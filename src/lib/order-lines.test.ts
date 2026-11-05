@@ -141,7 +141,8 @@ describe('productLinesOnly', () => {
 describe('planTaskKeys', () => {
   it('re-keys product-line tasks, removes untouched others, and moves a kept one out of a needed key to a key nobody holds', () => {
     const keys = new Map([['p1', 'O1_1'], ['p2', 'O1_2']])
-    const plan = planTaskKeys(keys, [
+    const lineIds = new Set(['p1', 'p2', 'addon-1', 'addon-2', 'addon-3'])
+    const plan = planTaskKeys(keys, lineIds, [
       { id: 'kept', shopifyLineId: 'addon-1', taskKey: 'O1_1', untouched: false },
       { id: 'parked', shopifyLineId: 'addon-2', taskKey: 'O1_1-addon', untouched: false },
       { id: 'idle', shopifyLineId: 'addon-3', taskKey: 'O1_2', untouched: true },
@@ -151,13 +152,29 @@ describe('planTaskKeys', () => {
     expect(plan).toEqual({
       remove: ['idle'],
       moves: [
-        { id: 'a', from: 'O1_3', to: 'O1_1', productLine: true },
-        { id: 'kept', from: 'O1_1', to: 'O1_1-addon-2', productLine: false },
+        { id: 'a', from: 'O1_3', to: 'O1_1', why: 'LINE_KEY' },
+        { id: 'kept', from: 'O1_1', to: 'O1_1-addon-2', why: 'NOT_A_PRODUCT' },
+      ],
+    })
+  })
+
+  it('never removes a task whose line is not in the order, and moves it only out of a needed key', () => {
+    const keys = new Map([['p1', 'O1_1']])
+    const plan = planTaskKeys(keys, new Set(['p1']), [
+      { id: 'in-the-way', shopifyLineId: 'gone-1', taskKey: 'O1_1', untouched: true },
+      { id: 'aside', shopifyLineId: 'gone-2', taskKey: 'O1_2', untouched: true },
+      { id: 'a', shopifyLineId: 'p1', taskKey: 'O1_3', untouched: true },
+    ])
+    expect(plan).toEqual({
+      remove: [],
+      moves: [
+        { id: 'a', from: 'O1_3', to: 'O1_1', why: 'LINE_KEY' },
+        { id: 'in-the-way', from: 'O1_1', to: 'O1_1-removed', why: 'LINE_GONE' },
       ],
     })
   })
 
   it('has nothing to do when every task already carries its line key', () => {
-    expect(planTaskKeys(new Map([['p1', 'O1_1']]), [{ id: 'a', shopifyLineId: 'p1', taskKey: 'O1_1', untouched: true }])).toEqual({ remove: [], moves: [] })
+    expect(planTaskKeys(new Map([['p1', 'O1_1']]), new Set(['p1']), [{ id: 'a', shopifyLineId: 'p1', taskKey: 'O1_1', untouched: true }])).toEqual({ remove: [], moves: [] })
   })
 })

@@ -187,6 +187,14 @@ export async function syncStoreOrders(storeId: string, opts: { fromOrderName?: s
         .filter(t => t.kind !== 'REFUND' && t.status === 'SUCCESS')
         .reduce((sum, t) => sum + t.fees, 0)
       const grossExcludingMarketplaceTax = o.grossAmount - o.taxMarketplaceCollected
+      const storedLines = await prisma.orderLine.findMany({
+        where: { orderId: o.id },
+        select: { shopifyLineId: true, designDriveLink: true, shopifyProductType: true },
+      })
+      // A line whose product was deleted in Shopify comes back with no product type. The type last stored still says what the
+      // line is, so a fee line stays a fee line (and the tasks keep their keys); a new non-null type still replaces it.
+      const storedType = new Map(storedLines.map(l => [l.shopifyLineId, l.shopifyProductType]))
+      for (const l of o.lines) if (l.productType == null) l.productType = storedType.get(l.id) ?? null
       const resolvedLines = o.lines.map(l => ({
         line: l,
         pbResolve: (() => {
@@ -261,12 +269,7 @@ export async function syncStoreOrders(storeId: string, opts: { fromOrderName?: s
 
       // Read existing order to preserve manual status
       const existing = await prisma.order.findUnique({ where: { id: o.id }, select: { pipelineStatus: true, designReady: true, trelloCardId: true } })
-      const existingLineLinks = new Map(
-        (await prisma.orderLine.findMany({
-          where: { orderId: o.id },
-          select: { shopifyLineId: true, designDriveLink: true },
-        })).map(l => [l.shopifyLineId, l.designDriveLink]),
-      )
+      const existingLineLinks = new Map(storedLines.map(l => [l.shopifyLineId, l.designDriveLink]))
       const currentStatus = existing && isValidPipelineStatus(existing.pipelineStatus)
         ? existing.pipelineStatus as PipelineStatus
         : null
