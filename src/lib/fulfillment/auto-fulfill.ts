@@ -14,6 +14,13 @@ export type AutoFulfillSummary = {
 
 export type AutoFulfillStage = 'sheets' | 'shopify' | 'pgprints'
 
+// The link the customer gets for a parcel comes from the order's own store (the page + "nums=" it was
+// set up with), never from the sheet the row was read from. No page set up, no link.
+export function trackingUrlFor(store: { trackingPageUrl: string | null }, tracking: string): string | undefined {
+  const page = store.trackingPageUrl?.trim()
+  return page ? `${page}${encodeURIComponent(tracking)}` : undefined
+}
+
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 
 // Same verdicts buildFulfillmentPlan reaches first (too_recent, then already_fulfilled), taken
@@ -101,6 +108,8 @@ export function sheetsForStore(sheets: SheetData[], prefix: string | null | unde
 
 export async function runAutoFulfill(opts: {
   shop: string; accessToken: string; storeId: string
+  // The store's tracking page ("https://litzzy.com/apps/trackingorder?nums="); null or missing = fulfil without a link.
+  trackingPageUrl?: string | null
   // Either the sheets to download, or sheets already downloaded (and narrowed to this store's rows).
   sheets: SheetConfig[]
   sheetData?: SheetData[]
@@ -181,10 +190,10 @@ export async function runAutoFulfill(opts: {
   }
 
   // 3) Evaluate every sheet order in-memory (the Shopify + DB fetches above already ran).
-  type Evaluated = { base: string; plan: ReturnType<typeof buildFulfillmentPlan>; storeBase: string; db: (typeof orders)[number] | undefined; fulfilledLines: number }
+  type Evaluated = { base: string; plan: ReturnType<typeof buildFulfillmentPlan>; db: (typeof orders)[number] | undefined; fulfilledLines: number }
   const evaluated: Evaluated[] = []
   let checked = 0
-  for (const [base, { rows, storeBase }] of Array.from(byOrder)) {
+  for (const [base, { rows }] of Array.from(byOrder)) {
     const db = dbByName.get(base)
     const fo = foMap.get(base)
     const plan = settled.get(base) ?? buildFulfillmentPlan({
@@ -198,7 +207,7 @@ export async function runAutoFulfill(opts: {
       now, minAgeDays: minAgeFor(base),
     })
     const plannedLines = plan.fulfillments.reduce((sum, f) => sum + f.lineItems.length, 0)
-    evaluated.push({ base, plan, storeBase, db, fulfilledLines: opts.apply ? 0 : plannedLines })
+    evaluated.push({ base, plan, db, fulfilledLines: opts.apply ? 0 : plannedLines })
     checked++
     if (!opts.apply) opts.onProgress?.(checked, names.length) // Preview: progress over all orders checked
   }
@@ -214,10 +223,10 @@ export async function runAutoFulfill(opts: {
           // Add-on fulfillment (Shipping protection & co on their own fulfillment order):
           // no tracking and no email — nothing ships, and the customer already got the
           // shipping notice for the real parcel.
-          const url = `${e.storeBase.replace(/\/$/, '')}/apps/trackingorder?nums=${encodeURIComponent(f.tracking)}`
+          const url = trackingUrlFor({ trackingPageUrl: opts.trackingPageUrl ?? null }, f.tracking)
           const r = await createFulfillment(opts.shop, opts.accessToken, {
             fulfillmentOrderId: f.fulfillmentOrderId, lineItems: f.lineItems,
-            trackingInfo: f.addOn ? undefined : { company: 'Other', number: f.tracking, url },
+            trackingInfo: f.addOn ? undefined : { company: 'Other', number: f.tracking, ...(url ? { url } : {}) },
             notifyCustomer: !f.addOn,
           })
           if (r.ok) {
@@ -225,7 +234,7 @@ export async function runAutoFulfill(opts: {
             if (f.shipmentIds.length > 0) {
               await prisma.shipment.updateMany({
                 where: { id: { in: f.shipmentIds } },
-                data: { trackingNumber: f.tracking, trackingUrl: url, carrier: 'Other', shopifyFulfillmentId: r.fulfillmentId ?? undefined, status: 'FULFILLED' },
+                data: { trackingNumber: f.tracking, trackingUrl: url ?? null, carrier: 'Other', shopifyFulfillmentId: r.fulfillmentId ?? undefined, status: 'FULFILLED' },
               })
             }
           } else {

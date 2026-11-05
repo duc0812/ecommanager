@@ -2,9 +2,11 @@ import { listConnectedStores } from '@/lib/store-connections'
 import { forEachConnectedStore, mergeStoreResults, type StoreRunResult } from '@/lib/store-jobs'
 import { type SheetConfig } from './auto-fulfill-sheets'
 import {
-  orderNameHasPrefix, readAutoFulfillSheets, runAutoFulfill, sheetsForStore,
+  orderNameHasPrefix, readAutoFulfillSheets, runAutoFulfill, sheetsForStore, trackingUrlFor,
   type AutoFulfillStage, type AutoFulfillSummary, type OrderResultRow,
 } from './auto-fulfill'
+
+export { trackingUrlFor }
 
 export const AUTO_FULFILL_SUM_KEYS = ['ordersChecked', 'fulfilled', 'tooRecent', 'alreadyFulfilled', 'notFound', 'needsManual', 'errored'] as const
 
@@ -24,7 +26,7 @@ export async function runAutoFulfillForStores(opts: {
   const read = await readAutoFulfillSheets(opts.sheets, (stage, done, total) => opts.onStage?.(null, stage, done, total))
 
   const results = await forEachConnectedStore('auto-fulfill', (conn, store) => runAutoFulfill({
-    shop: conn.shop, accessToken: conn.token, storeId: conn.storeId,
+    shop: conn.shop, accessToken: conn.token, storeId: conn.storeId, trackingPageUrl: store.trackingPageUrl,
     sheets: [], sheetData: sheetsForStore(read.sheets, store.orderPrefix),
     minAgeDays: opts.minAgeDays, apply: opts.apply,
     onProgress: (done, total) => opts.onProgress?.(conn.shop, done, total),

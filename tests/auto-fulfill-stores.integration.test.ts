@@ -17,13 +17,14 @@ vi.mock('@/lib/shopify-orders', () => ({
 
 import { prisma } from '@/lib/db'
 import { saveStoreCredential } from '@/lib/store-connections'
-import { runAutoFulfillForStores } from '@/lib/fulfillment/auto-fulfill-stores'
+import { runAutoFulfillForStores, trackingUrlFor } from '@/lib/fulfillment/auto-fulfill-stores'
 import { orderNameHasPrefix } from '@/lib/fulfillment/auto-fulfill'
 
 const SHOP_A = 'aff-a.myshopify.com'
 const SHOP_B = 'aff-b.myshopify.com'
 const SHOP_C = 'aff-c.myshopify.com'
 const PROJECT = 'proj_aff'
+const SUPPLIER = 'sup_aff'
 const MINE = [SHOP_A, SHOP_B, SHOP_C]
 let storeA = ''
 let storeB = ''
@@ -35,6 +36,7 @@ const SHEETS = [sheet('aff1', 'Mangoshao'), sheet('aff2', 'Jomall')]
 async function cleanup() {
   const stores = await prisma.shopifyStore.findMany({ where: { shop: { in: MINE } }, select: { id: true } })
   await prisma.order.deleteMany({ where: { storeId: { in: stores.map(s => s.id) } } })
+  await prisma.supplier.deleteMany({ where: { id: SUPPLIER } })
   await prisma.shopifyStore.deleteMany({ where: { shop: { in: MINE } } })
   await prisma.project.deleteMany({ where: { id: PROJECT } })
 }
@@ -122,6 +124,100 @@ describe('runAutoFulfillForStores', () => {
     } finally {
       await prisma.shopifyStoreCredential.update({ where: { storeId: storeB }, data: { accessToken: 'token-aff-b' } })
     }
+  })
+})
+
+describe("the fulfilment link comes from the order's store", () => {
+  const LITZZY_PAGE = 'https://litzzy.com/apps/trackingorder?nums='
+  const TRACKING = 'YT 12/34é#5&x'
+  // What the sheet's storeBase produced before this change: the link Litzzy customers have been getting.
+  const oldLink = (tracking: string) => `${'https://litzzy.com'.replace(/\/$/, '')}/apps/trackingorder?nums=${encodeURIComponent(tracking)}`
+
+  const openFulfillmentOrders = async (_shop: string, _token: string, names: string[]) => new Map(names.map(name => [name, {
+    displayFulfillmentStatus: 'UNFULFILLED', createdAt: '2026-10-01T00:00:00Z',
+    fulfillmentOrders: [{ id: `FO-${name}`, status: 'OPEN', lineItems: [{ id: `FOL-${name}`, remainingQuantity: 1, shopifyLineId: 'L1', sku: null }] }],
+  }]))
+
+  const shipmentOf = (orderId: string) => prisma.shipment.findFirstOrThrow({ where: { orderId } })
+  const callFor = (shop: string) => mocks.createFulfillment.mock.calls.find(c => c[0] === shop)?.[2]
+
+  beforeAll(async () => {
+    await prisma.supplier.create({ data: { id: SUPPLIER, name: 'AFF supplier', code: 'AFFSUP' } })
+  })
+
+  beforeEach(async () => {
+    mocks.fetchFulfillmentOrders.mockImplementation(openFulfillmentOrders)
+    mocks.createFulfillment.mockResolvedValue({ ok: true, fulfillmentId: 'gid://shopify/Fulfillment/1' })
+    mocks.fetchSheetCsv.mockImplementation(async () => `Order,Tracking\nLIT1001_1,${TRACKING}\nREMI1001_1,${TRACKING}\n`)
+    await prisma.shipment.deleteMany({ where: { orderId: { in: ['gid://test/Order/aff-lit1', 'gid://test/Order/aff-remi1'] } } })
+    await prisma.order.updateMany({ where: { id: { in: ['gid://test/Order/aff-lit1', 'gid://test/Order/aff-remi1'] } }, data: { fulfillmentStatus: 'UNFULFILLED', pipelineStatus: 'PENDING_DESIGN' } })
+    for (const [orderId, lineKey] of [['gid://test/Order/aff-lit1', 'LIT1001_1'], ['gid://test/Order/aff-remi1', 'REMI1001_1']]) {
+      await prisma.shipment.create({ data: { orderId, projectId: PROJECT, lineKey, shopifyLineId: 'L1' } })
+    }
+    await prisma.shopifyStore.update({ where: { id: storeA }, data: { trackingPageUrl: LITZZY_PAGE } })
+    await prisma.shopifyStore.update({ where: { id: storeB }, data: { trackingPageUrl: null } })
+  })
+
+  it('trackingUrlFor is the store page plus the encoded number, and nothing when the store has no page', () => {
+    expect(trackingUrlFor({ trackingPageUrl: LITZZY_PAGE }, TRACKING)).toBe(oldLink(TRACKING))
+    expect(trackingUrlFor({ trackingPageUrl: 'https://remi.example/track?id=1&nums=' }, 'A B')).toBe('https://remi.example/track?id=1&nums=A%20B')
+    expect(trackingUrlFor({ trackingPageUrl: null }, TRACKING)).toBeUndefined()
+    expect(trackingUrlFor({ trackingPageUrl: '' }, TRACKING)).toBeUndefined()
+    expect(trackingUrlFor({ trackingPageUrl: '   ' }, TRACKING)).toBeUndefined()
+  })
+
+  it("Litzzy's link is byte-identical to the one the sheet's storeBase built, for a number that needs encoding", async () => {
+    await runAutoFulfillForStores({ sheets: SHEETS, minAgeDays: 5, apply: true })
+    const input = callFor(SHOP_A)
+    expect(input.trackingInfo).toStrictEqual({ company: 'Other', number: TRACKING, url: oldLink(TRACKING) })
+    expect(input.notifyCustomer).toBe(true)
+    expect((await shipmentOf('gid://test/Order/aff-lit1')).trackingUrl).toBe(oldLink(TRACKING))
+  })
+
+  it('a store without a tracking page fulfils with company and number but no link, and stores null', async () => {
+    await runAutoFulfillForStores({ sheets: SHEETS, minAgeDays: 5, apply: true })
+    const input = callFor(SHOP_B)
+    expect(input.trackingInfo).toStrictEqual({ company: 'Other', number: TRACKING })
+    expect(input.notifyCustomer).toBe(true)
+    const shipment = await shipmentOf('gid://test/Order/aff-remi1')
+    expect(shipment.trackingUrl).toBeNull()
+    expect(shipment).toMatchObject({ trackingNumber: TRACKING, status: 'FULFILLED', carrier: 'Other' })
+  })
+
+  it("a store with its own page gets that page, even though every sheet's storeBase is litzzy.com", async () => {
+    await prisma.shopifyStore.update({ where: { id: storeB }, data: { trackingPageUrl: 'https://reminiso.example/apps/track?nums=' } })
+    await runAutoFulfillForStores({ sheets: SHEETS, minAgeDays: 5, apply: true })
+    expect(callFor(SHOP_B).trackingInfo.url).toBe(`https://reminiso.example/apps/track?nums=${encodeURIComponent(TRACKING)}`)
+    expect((await shipmentOf('gid://test/Order/aff-remi1')).trackingUrl).toBe(`https://reminiso.example/apps/track?nums=${encodeURIComponent(TRACKING)}`)
+    expect(JSON.stringify(mocks.createFulfillment.mock.calls.filter(c => c[0] === SHOP_B))).not.toContain('litzzy.com')
+  })
+
+  it('a shipment pushed to a supplier gets the same store link, or none', async () => {
+    await prisma.shipment.deleteMany({ where: { orderId: 'gid://test/Order/aff-remi1' } })
+    await prisma.shipment.create({ data: {
+      orderId: 'gid://test/Order/aff-remi1', projectId: PROJECT, lineKey: 'REMI1001_1', shopifyLineId: 'L1', supplierId: SUPPLIER, trackingNumber: TRACKING,
+    } })
+    await prisma.supplierOrderPush.create({ data: {
+      orderId: 'gid://test/Order/aff-remi1', supplierId: SUPPLIER, externalOrderId: 'aff-ext-1', status: 'CREATED', requestJson: '{}',
+    } })
+    mocks.fetchSheetCsv.mockImplementation(async () => 'Order,Tracking\n')
+
+    await runAutoFulfillForStores({ sheets: SHEETS, minAgeDays: 5, apply: true })
+    expect(callFor(SHOP_B).trackingInfo).toStrictEqual({ company: 'Other', number: TRACKING })
+    expect((await shipmentOf('gid://test/Order/aff-remi1')).trackingUrl).toBeNull()
+
+    mocks.createFulfillment.mockClear()
+    await prisma.order.update({ where: { id: 'gid://test/Order/aff-remi1' }, data: { fulfillmentStatus: 'UNFULFILLED' } })
+    await prisma.shipment.updateMany({ where: { orderId: 'gid://test/Order/aff-remi1' }, data: { shopifyFulfillmentId: null } })
+    await prisma.shopifyStore.update({ where: { id: storeB }, data: { trackingPageUrl: 'https://reminiso.example/apps/track?nums=' } })
+    await runAutoFulfillForStores({ sheets: SHEETS, minAgeDays: 5, apply: true })
+    expect(callFor(SHOP_B).trackingInfo.url).toBe(`https://reminiso.example/apps/track?nums=${encodeURIComponent(TRACKING)}`)
+  })
+
+  it('Preview (apply false) creates nothing and writes no link', async () => {
+    await runAutoFulfillForStores({ sheets: SHEETS, minAgeDays: 5, apply: false })
+    expect(mocks.createFulfillment).not.toHaveBeenCalled()
+    expect((await shipmentOf('gid://test/Order/aff-lit1')).trackingUrl).toBeNull()
   })
 })
 
