@@ -204,7 +204,7 @@ describe('RENDER_LINE', () => {
     expect(art.previewPath).toMatch(/preview\.jpg$/)
     expect((await postRender(c.job.id)).status).toBe(409)
 
-    const preview = await fileRoute(new NextRequest(`http://localhost/api/design-studio/file/${art.id}?preview=1`), { params: { artworkId: art.id } })
+    const preview = await fileRoute(cookie(`http://localhost/api/design-studio/file/${art.id}?preview=1`), { params: { artworkId: art.id } })
     expect(preview.headers.get('content-type')).toBe('image/jpeg')
 
     const detail = (await loadTask(taskKey))!

@@ -466,8 +466,8 @@ export type ReviewCard = {
   template: TemplateRow | null; profile: TaskProfile | null; library: TaskLibraryState | null; shipTo: Workspace['order']['shipTo'] | null
 }
 
-export async function listReviewCards(f: { assigneeId?: string; q?: string } = {}): Promise<ReviewCard[]> {
-  const rows = await listTasks({ statuses: ['REVIEW'], assigneeId: f.assigneeId, q: f.q, limit: 200 })
+export async function listReviewCards(f: { assigneeId?: string; q?: string; storeIds?: string[] | null } = {}): Promise<ReviewCard[]> {
+  const rows = await listTasks({ statuses: ['REVIEW'], assigneeId: f.assigneeId, q: f.q, limit: 200, storeIds: f.storeIds })
   if (rows.length === 0) return []
   const orderIds = Array.from(new Set(rows.map(r => r.orderId)))
   const [orderLines, orders, workspaces, pushes] = await Promise.all([
@@ -533,8 +533,9 @@ export async function setTaskCsNote(taskKey: string, actor: Actor, note: string 
   return { designNote: next, changed: true }
 }
 
-export async function listTasks(f: { statuses?: TaskStatus[]; readiness?: Readiness; assigneeId?: string; q?: string; limit?: number; taskKeys?: string[] }): Promise<TaskRow[]> {
+export async function listTasks(f: { statuses?: TaskStatus[]; readiness?: Readiness; assigneeId?: string; q?: string; limit?: number; taskKeys?: string[]; storeIds?: string[] | null }): Promise<TaskRow[]> {
   const where: any = {}
+  if (f.storeIds) where.order = { storeId: { in: f.storeIds } }
   if (f.statuses) where.status = { in: f.statuses }
   if (f.readiness) where.readiness = f.readiness
   if (f.assigneeId) where.assigneeId = f.assigneeId

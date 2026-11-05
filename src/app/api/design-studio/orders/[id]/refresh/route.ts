@@ -5,8 +5,11 @@ import { connectionFailureResponse } from '@/lib/store-connection-response'
 import { fetchOrderLinePropsByNames } from '@/lib/shopify-orders'
 import { applyLineProps } from '@/lib/design-studio'
 import { fillCustomallFields } from '@/lib/customall-fields'
+import { requireOrderScope } from '@/lib/order-scope'
 
-export async function POST(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+  const scope = await requireOrderScope(req, params.id)
+  if ('error' in scope) return scope.error
   const order = await prisma.order.findUnique({
     where: { id: params.id },
     select: { shopifyOrderNumber: true, storeId: true },

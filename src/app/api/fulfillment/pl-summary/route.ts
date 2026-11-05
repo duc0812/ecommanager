@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { plSummary } from '@/lib/repos/reports'
+import { requireScope } from '@/lib/order-scope'
 
 export async function GET(req: NextRequest) {
+  const scope = await requireScope(req, 'fulfillment_orders')
+  if ('error' in scope) return scope.error
   const { searchParams } = new URL(req.url)
   const dateFrom = searchParams.get('dateFrom')
   const dateTo = searchParams.get('dateTo')
@@ -12,6 +15,7 @@ export async function GET(req: NextRequest) {
 
   const summary = await plSummary({
     projectId,
+    storeIds: scope.storeIds,
     supplierId,
     pipelineStatus,
     search,

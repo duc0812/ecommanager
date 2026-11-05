@@ -4,6 +4,7 @@ import { getStoreConnection, tryStoreConnection } from '@/lib/store-connections'
 import { connectionFailureResponse } from '@/lib/store-connection-response'
 import { updateVariantSku } from '@/lib/shopify-orders'
 import { detectOrderTasks } from '@/lib/order-tasks'
+import { requireOrderScope } from '@/lib/order-scope'
 
 const LINE_SELECT = {
   id: true, sku: true, productTitle: true, shopifyProductType: true, shopifyVariantId: true,
@@ -23,6 +24,8 @@ export async function POST(req: NextRequest) {
   if (!orderId || !taskType || fixes.length === 0) {
     return NextResponse.json({ error: 'orderId, taskType, fixes required' }, { status: 400 })
   }
+  const scope = await requireOrderScope(req, orderId)
+  if ('error' in scope) return scope.error
 
   const order = await prisma.order.findUnique({
     where: { id: orderId },
@@ -53,6 +56,7 @@ export async function POST(req: NextRequest) {
     for (const f of fixes) {
       const cost = Number(f.baseCost)
       if (!Number.isFinite(cost) || cost < 0) { errors.push(`${f.lineId}: giá không hợp lệ`); continue }
+      if (!order.lines.some(l => l.id === f.lineId)) { errors.push(`${f.lineId}: line không thuộc đơn này`); continue }
       await prisma.orderLine.update({ where: { id: f.lineId }, data: { manualBaseCost: cost } })
       applied++
     }

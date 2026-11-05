@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest'
+import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/db'
+import { dropSessionUser, superCookie } from './helpers/session'
 import { saveStoreCredential } from '@/lib/store-connections'
 import { POST } from '@/app/api/shopify/orders/sync/route'
 
@@ -51,8 +53,9 @@ function installFetch() {
   }) as unknown as typeof fetch
 }
 
+let cookie = ''
 const call = (body: Record<string, unknown> = {}) =>
-  POST(new Request('http://test/api/shopify/orders/sync', { method: 'POST', body: JSON.stringify(body) }) as any)
+  POST(new NextRequest('http://test/api/shopify/orders/sync', { method: 'POST', headers: { cookie }, body: JSON.stringify(body) }))
 
 async function cleanup() {
   const stores = await prisma.shopifyStore.findMany({ where: { shop: { in: MINE } }, select: { id: true } })
@@ -62,6 +65,7 @@ async function cleanup() {
 }
 
 beforeAll(async () => {
+  cookie = await superCookie()
   await cleanup()
   await prisma.project.create({ data: { id: PROJECT_A, name: 'OSS Alpha', startDate: new Date('2026-05-01') } })
   await prisma.project.create({ data: { id: PROJECT_B, name: 'OSS Beta', startDate: new Date('2026-05-01') } })
@@ -80,7 +84,7 @@ beforeEach(async () => {
 })
 
 afterEach(() => { global.fetch = realFetch })
-afterAll(async () => { await cleanup() })
+afterAll(async () => { await cleanup(); await dropSessionUser() })
 
 describe('POST /api/shopify/orders/sync across stores', () => {
   it('syncs every connected store with its own token and answers one summed body that keeps the old fields', async () => {

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getAuthUser } from '@/lib/api-auth'
+import { requireLineScope } from '@/lib/order-scope'
 import { loadArtworkRow, logArtworkUpload, saveArtwork } from '@/lib/design-storage'
 import { pushArtworkToDrive } from '@/lib/design-drive-push'
 import { retireOutdatedParts } from '@/lib/design-tasks'
@@ -13,7 +13,9 @@ export async function POST(req: NextRequest, { params }: { params: { lineId: str
   if (Number.isFinite(declared) && declared > MAX_BYTES) {
     return NextResponse.json({ error: 'File lớn hơn 200 MB' }, { status: 413 })
   }
-  const user = await getAuthUser(req)
+  const scope = await requireLineScope(req, lineId)
+  if ('error' in scope) return scope.error
+  const user = scope.user
   const form = await req.formData().catch(() => null)
   const file = form?.get('file')
   const printArea = String(form?.get('printArea') ?? '')

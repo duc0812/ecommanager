@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/db'
+import { dropSessionUser, superCookie } from './helpers/session'
 import { upsertOrderWithLines } from '@/lib/repos/orders'
 import { PATCH } from '@/app/api/fulfillment/orders/line-cost/route'
 
@@ -81,10 +83,14 @@ describe('upsertOrderWithLines manualBaseCost carry-over', () => {
   })
 })
 
+let cookie = ''
+beforeAll(async () => { cookie = await superCookie() })
+afterAll(dropSessionUser)
+
 function patchReq(body: unknown) {
-  return new Request('http://test/api/fulfillment/orders/line-cost', {
+  return new NextRequest('http://test/api/fulfillment/orders/line-cost', {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', cookie },
     body: JSON.stringify(body),
   })
 }

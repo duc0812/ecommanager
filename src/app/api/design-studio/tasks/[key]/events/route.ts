@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getAuthUser, unauthorized } from '@/lib/api-auth'
+import { requireTaskScope } from '@/lib/order-scope'
 import { addTaskNote } from '@/lib/design-tasks'
 
 export async function POST(req: NextRequest, { params }: { params: { key: string } }) {
-  const user = await getAuthUser(req)
-  if (!user) return unauthorized()
+  const scope = await requireTaskScope(req, params.key)
+  if ('error' in scope) return scope.error
+  const { user } = scope
   const body = await req.json().catch(() => ({} as any))
   const message = typeof body?.message === 'string' ? body.message.trim() : ''
   if (!message) return NextResponse.json({ error: 'message is required' }, { status: 400 })

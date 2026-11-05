@@ -268,7 +268,7 @@ describe('PUT /api/design-studio/tasks/[key]/artwork', () => {
     const fd = new FormData()
     fd.append('file', new File([png(1, 1)], 'back.png', { type: 'image/png' }))
     fd.append('printArea', 'Back')
-    await legacyUpload(new NextRequest(`http://localhost/api/design-studio/lines/${line.id}/artwork`, { method: 'POST', body: fd }), { params: { lineId: line.id } })
+    await legacyUpload(new NextRequest(`http://localhost/api/design-studio/lines/${line.id}/artwork`, { method: 'POST', body: fd, headers: { cookie: `${AUTH_COOKIE}=${designerToken}` } }), { params: { lineId: line.id } })
     const after = await prisma.designTaskEvent.findMany({ where: { task: { taskKey: TASK }, type: 'ARTWORK' }, orderBy: { createdAt: 'asc' } })
     expect(after.at(-1)?.message).toBe('Tải lên file in Back v1 · back.png')
   })
@@ -349,7 +349,7 @@ describe('PUT /api/design-studio/tasks/[key]/artwork', () => {
     const fd = new FormData()
     fd.set('printArea', 'Front')
     fd.set('file', new Blob([new Uint8Array(png(1, 1))], { type: 'image/png' }), 'old.png')
-    const legacy = await legacyUpload(new NextRequest(`http://localhost/api/design-studio/lines/${before.id}/artwork`, { method: 'POST', body: fd }), { params: { lineId: before.id } })
+    const legacy = await legacyUpload(new NextRequest(`http://localhost/api/design-studio/lines/${before.id}/artwork`, { method: 'POST', body: fd, headers: { cookie: `${AUTH_COOKIE}=${designerToken}` } }), { params: { lineId: before.id } })
     expect(legacy.status).toBe(404)
 
     const res = await upload([png(2, 3)], { fileName: 'new.png' })
@@ -397,7 +397,7 @@ describe('TIFF is served like PSD/ZIP', () => {
       },
     })
     driveMock()
-    const res = await serveRoute(new NextRequest('http://localhost/x'), { params: { artworkId: art.id } })
+    const res = await serveRoute(new NextRequest('http://localhost/x', { headers: { cookie: `${AUTH_COOKIE}=${designerToken}` } }), { params: { artworkId: art.id } })
     expect(res.status).toBe(302)
     expect(res.headers.get('location')).toBe(driveLink(9))
     expect(calls).toHaveLength(0)

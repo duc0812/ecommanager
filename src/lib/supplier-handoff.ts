@@ -96,8 +96,9 @@ async function ordersWithReadyLines(where: object, supplierId?: string) {
   return orders.map(o => ({ ...o, ready: readyLines(o).filter(l => !supplierId || l.resolvedSupplierId === supplierId) })).filter(o => o.ready.length > 0)
 }
 
-export async function countPendingHandoff(): Promise<number> {
-  return (await ordersWithReadyLines(pendingHandoffWhere())).length
+export async function countPendingHandoff(opts: { storeIds?: string[] | null } = {}): Promise<number> {
+  const where = opts.storeIds ? { AND: [pendingHandoffWhere(), { storeId: { in: opts.storeIds } }] } : pendingHandoffWhere()
+  return (await ordersWithReadyLines(where)).length
 }
 
 type StateOrder = {

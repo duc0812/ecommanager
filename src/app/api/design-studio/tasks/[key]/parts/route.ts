@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getAuthUser } from '@/lib/api-auth'
+import { requireTaskScope } from '@/lib/order-scope'
 import { ArtworkRemoveError, renameArtworkPart } from '@/lib/design-storage'
 import { enqueueFolderTidy } from '@/lib/drive-push-queue'
 import { fileKindOf, isFileKind } from '@/lib/task-files'
 
 /** Renames one part of a task: body `{ kind?, from, to }`. Every version of the part takes the new label. */
 export async function PATCH(req: NextRequest, { params }: { params: { key: string } }) {
-  const user = await getAuthUser(req)
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const scope = await requireTaskScope(req, params.key)
+  if ('error' in scope) return scope.error
+  const { user } = scope
   const body = await req.json().catch(() => null)
   if (!body || typeof body.from !== 'string' || typeof body.to !== 'string') {
     return NextResponse.json({ error: 'Cần from và to' }, { status: 400 })

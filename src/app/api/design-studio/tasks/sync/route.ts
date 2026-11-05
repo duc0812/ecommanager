@@ -1,19 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getAuthUser, unauthorized } from '@/lib/api-auth'
+import { requireEveryStore, requireOrderScope, requireScope } from '@/lib/order-scope'
 import { syncDesignTasks } from '@/lib/design-tasks'
 import { getLastDesignTaskSync, runDesignTaskSyncJob } from '@/lib/design-task-sync'
 
 export async function GET(req: NextRequest) {
-  const user = await getAuthUser(req)
-  if (!user) return unauthorized()
-  return NextResponse.json({ lastSync: await getLastDesignTaskSync() })
+  const scope = await requireScope(req, 'design_tasks')
+  if ('error' in scope) return scope.error
+  return NextResponse.json({ lastSync: await getLastDesignTaskSync({ hideError: scope.limited }) })
 }
 
+// One order is checked against the stores of the caller; the run over every order is for those who see every store.
 export async function POST(req: NextRequest) {
-  const user = await getAuthUser(req)
-  if (!user) return unauthorized()
   const body = await req.json().catch(() => ({} as any))
   const orderId = typeof body?.orderId === 'string' && body.orderId ? body.orderId : undefined
+
+  const allowed = orderId ? await requireOrderScope(req, orderId) : await requireEveryStore(req)
+  if ('error' in allowed) return allowed.error
 
   if (orderId) {
     const r = await syncDesignTasks(orderId)

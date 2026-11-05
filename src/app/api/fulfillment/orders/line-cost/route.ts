@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { requireLineScope } from '@/lib/order-scope'
 
 export async function PATCH(req: NextRequest) {
   const body = await req.json().catch(() => null)
   if (!body || typeof body.lineId !== 'string') {
     return NextResponse.json({ error: 'lineId required' }, { status: 400 })
   }
+  const scope = await requireLineScope(req, body.lineId)
+  if ('error' in scope) return scope.error
   const value = body.manualBaseCost
   if (value !== null && (typeof value !== 'number' || !Number.isFinite(value) || value < 0)) {
     return NextResponse.json({ error: 'manualBaseCost must be a number >= 0 or null' }, { status: 400 })

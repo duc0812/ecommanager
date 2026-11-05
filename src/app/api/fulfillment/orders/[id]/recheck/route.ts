@@ -4,8 +4,11 @@ import { getStoreConnection, tryStoreConnection } from '@/lib/store-connections'
 import { connectionFailureResponse } from '@/lib/store-connection-response'
 import { fetchVariantSkus } from '@/lib/shopify-orders'
 import { recheckOrderTasks } from '@/lib/repos/order-tasks'
+import { requireOrderScope } from '@/lib/order-scope'
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+  const scope = await requireOrderScope(req, params.id)
+  if ('error' in scope) return scope.error
   const order = await prisma.order.findUnique({ where: { id: params.id }, select: { storeId: true } })
   if (!order) return NextResponse.json({ error: 'Order not found' }, { status: 404 })
   const { conn, error } = await tryStoreConnection(() => getStoreConnection(order.storeId))

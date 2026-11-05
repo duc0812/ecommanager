@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getAuthUser, unauthorized } from '@/lib/api-auth'
+import { requireTaskScope } from '@/lib/order-scope'
 import { transitionTask, type TransitionInput } from '@/lib/design-tasks'
 
 export async function POST(req: NextRequest, { params }: { params: { key: string } }) {
-  const user = await getAuthUser(req)
-  if (!user) return unauthorized()
+  const scope = await requireTaskScope(req, params.key)
+  if ('error' in scope) return scope.error
+  const { user } = scope
   const body = await req.json().catch(() => ({} as any))
   if (!body || typeof body.to !== 'string') return NextResponse.json({ error: 'to is required' }, { status: 400 })
 

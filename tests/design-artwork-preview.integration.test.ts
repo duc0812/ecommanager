@@ -27,6 +27,7 @@ async function put(artworkId: string, body: Buffer, auth = true) {
 
 async function get(artworkId: string, query = '') {
   const req = new NextRequest(`http://x/api/design-studio/file/${artworkId}${query}`)
+  req.cookies.set(AUTH_COOKIE, token)
   return getFile(req, { params: { artworkId } })
 }
 

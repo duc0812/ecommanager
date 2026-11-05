@@ -128,11 +128,13 @@ export const API_ACCESS_RULES: ApiRule[] = [
 
 // A seller reaches only these routes. Each carries no store data, or filters it to the stores the seller is given.
 // /api/auth/status is left out on purpose: it names every store and its last error.
-// These three open that one path and nothing below it, so a later /api/stores/<id>/settings stays closed to a seller until it is listed.
+// These open that one path and nothing below it, so a later /api/stores/<id>/settings stays closed to a seller until it is listed.
 export const SELLER_API_PATHS: string[] = [
   '/api/auth/me',
   '/api/auth/logout',
   '/api/stores',
+  '/api/shopify/orders/sync',
+  '/api/fulfillment/normalize',
 ]
 
 export const SELLER_API_PREFIXES: string[] = [
@@ -154,6 +156,15 @@ export const SELLER_API_PREFIXES: string[] = [
   '/api/sync/daily',
   '/api/staff',
   '/api/auto-sync',
+  '/api/fulfillment/orders',
+  '/api/fulfillment/pl-summary',
+  '/api/fulfillment/status-counts',
+  '/api/fulfillment/task-fix',
+  '/api/design-studio/tasks',
+  '/api/design-studio/lines',
+  '/api/design-studio/orders',
+  '/api/design-studio/file',
+  '/api/design-studio/artwork',
 ]
 
 export function sellerMayReach(pathname: string) {

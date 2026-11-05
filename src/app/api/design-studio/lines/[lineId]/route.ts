@@ -1,13 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
-import { forbidden, getAuthUser, unauthorized } from '@/lib/api-auth'
+import { forbidden } from '@/lib/api-auth'
+import { requireLineScope } from '@/lib/order-scope'
 import { canEditDesignNote } from '@/lib/roles'
 import { updateLine } from '@/lib/design-studio'
 import { setTaskCsNote } from '@/lib/design-tasks'
 
 export async function PATCH(req: NextRequest, { params }: { params: { lineId: string } }) {
-  const user = await getAuthUser(req)
-  if (!user) return unauthorized()
+  const scope = await requireLineScope(req, params.lineId)
+  if ('error' in scope) return scope.error
+  const { user } = scope
   const body = await req.json().catch(() => ({} as any))
   // Marking a line done here skipped the review step; a design is approved or reopened only through its task.
   if (body?.done !== undefined) {

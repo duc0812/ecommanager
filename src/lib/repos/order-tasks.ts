@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/db'
 import { detectOrderTasks, detectStuckTrackingTask, STUCK_TRACKING_PREFIXES, type OrderTask, type TaskType } from '@/lib/order-tasks'
 import { isNonProductLine } from '@/lib/order-lines'
+import { storeNameOf } from '@/lib/store-name'
 
 const DONE_PIPELINE = ['FULFILLED', 'CANCELLED', 'REFUNDED']
 const ACTIVE_WHERE = { pipelineStatus: { notIn: DONE_PIPELINE } }
@@ -21,6 +22,8 @@ export type TaskRow = {
   placedAt: Date
   projectId: string | null
   projectName: string | null
+  storeId: string
+  storeName: string
   task: OrderTask
   fixLines?: FixLine[]   // lines the "Suggest" column can fix inline (MISSING_SKU / MISSING_BASE_COST)
 }
@@ -33,6 +36,8 @@ export type DoneTaskRow = {
   resolvedAt: Date
   projectId: string | null
   projectName: string | null
+  storeId: string | null
+  storeName: string | null
 }
 
 export async function listOrderTasks(filter: { projectId?: string } = {}): Promise<{
@@ -47,6 +52,8 @@ export async function listOrderTasks(filter: { projectId?: string } = {}): Promi
       fulfillmentStatus: true, pipelineStatus: true,
       projectId: true,
       project: { select: { name: true } },
+      storeId: true,
+      store: { select: { shop: true, project: { select: { name: true } } } },
       shipments: { select: { lineKey: true, trackingNumber: true, status: true } },
       lines: {
         select: {
@@ -86,6 +93,8 @@ export async function listOrderTasks(filter: { projectId?: string } = {}): Promi
         placedAt: o.placedAt,
         projectId: o.projectId ?? null,
         projectName: o.project?.name ?? null,
+        storeId: o.storeId,
+        storeName: storeNameOf(o.store),
         task,
         fixLines,
       })
@@ -132,34 +141,46 @@ export async function reconcileTaskStates(openRows: TaskRow[]): Promise<void> {
   }
 }
 
-export async function listDoneTasks(filter: { projectId?: string } = {}): Promise<DoneTaskRow[]> {
-  const states = await prisma.orderTaskState.findMany({
-    where: { resolvedAt: { not: null } },
-    orderBy: { resolvedAt: 'desc' },
-    take: 500,
-  })
-  if (states.length === 0) return []
+const DONE_PAGE = 500
 
-  const orders = await prisma.order.findMany({
-    where: { id: { in: Array.from(new Set(states.map(s => s.orderId))) } },
-    select: { id: true, projectId: true, project: { select: { name: true } } },
-  })
-  const projById = new Map(orders.map(o => [o.id, { projectId: o.projectId ?? null, projectName: o.project?.name ?? null }]))
+export async function listDoneTasks(filter: { projectId?: string; storeIds?: string[] | null } = {}): Promise<DoneTaskRow[]> {
+  const storeIds = filter.storeIds
+  const rows: DoneTaskRow[] = []
+  // A caller limited to some stores keeps reading further back until it has a page of its own tasks, so the tasks of other stores do not crowd it out.
+  for (let skip = 0; ; skip += DONE_PAGE) {
+    const states = await prisma.orderTaskState.findMany({
+      where: { resolvedAt: { not: null } },
+      orderBy: { resolvedAt: 'desc' },
+      take: DONE_PAGE,
+      skip,
+    })
+    if (states.length === 0) break
 
-  return states
-    .map(s => {
-      const p = projById.get(s.orderId)
-      return {
+    const orders = await prisma.order.findMany({
+      where: { id: { in: Array.from(new Set(states.map(s => s.orderId))) } },
+      select: { id: true, projectId: true, project: { select: { name: true } }, storeId: true, store: { select: { shop: true, project: { select: { name: true } } } } },
+    })
+    const orderById = new Map(orders.map(o => [o.id, o]))
+
+    for (const s of states) {
+      const o = orderById.get(s.orderId)
+      if (storeIds && !(o && storeIds.includes(o.storeId))) continue
+      if (filter.projectId && (o?.projectId ?? null) !== filter.projectId) continue
+      rows.push({
         orderId: s.orderId,
         shopifyOrderNumber: s.shopifyOrderNumber,
         taskType: s.taskType as TaskType,
         dept: s.dept,
         resolvedAt: s.resolvedAt as Date,
-        projectId: p?.projectId ?? null,
-        projectName: p?.projectName ?? null,
-      }
-    })
-    .filter(r => !filter.projectId || r.projectId === filter.projectId)
+        projectId: o?.projectId ?? null,
+        projectName: o?.project?.name ?? null,
+        storeId: o?.storeId ?? null,
+        storeName: o ? storeNameOf(o.store) : null,
+      })
+    }
+    if (!storeIds || rows.length >= DONE_PAGE || states.length < DONE_PAGE) break
+  }
+  return rows.slice(0, DONE_PAGE)
 }
 
 // Backfill missing SKUs on one order from the current variant sku on Shopify,

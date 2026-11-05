@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import fs from 'fs'
 import { Readable } from 'stream'
 import { prisma } from '@/lib/db'
+import { requireArtworkScope } from '@/lib/order-scope'
 import { localArtworkPath } from '@/lib/design-storage'
 import { DriveAuthError, DriveError, streamFile, streamThumbnail } from '@/lib/google-drive'
 
@@ -73,6 +74,8 @@ async function servePreview(row: { previewPath: string | null; fileName: string 
 
 export async function GET(req: NextRequest, { params }: { params: { artworkId: string } }) {
   const { artworkId } = params
+  const scope = await requireArtworkScope(req, artworkId)
+  if ('error' in scope) return scope.error
   const row = await prisma.designArtwork.findUnique({ where: { id: artworkId } })
   if (!row) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   const wantsSmall = req.nextUrl.searchParams.get('preview') === '1' || req.nextUrl.searchParams.get('thumb') === '1'

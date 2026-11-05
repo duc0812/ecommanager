@@ -4,6 +4,7 @@ import { NextRequest } from 'next/server'
 import { execFileSync } from 'child_process'
 import path from 'path'
 import { prisma } from '@/lib/db'
+import { dropSessionUser, superRequest } from './helpers/session'
 import { PGPRINTS_KEYS } from '@/lib/pgprints-settings'
 import { bulkUpdateOrderStatus, markOrdersExported, upsertOrderWithLines } from '@/lib/repos/orders'
 import { ordersWithComputedPL } from '@/lib/repos/reports'
@@ -68,7 +69,7 @@ const exportCsv = (templateId: string, body: Record<string, unknown>) =>
 const previewOf = async (templateId: string, body: Record<string, unknown> = {}) => (await exportCsv(templateId, { preview: true, ...body })).json()
 const lines = (orderId: string) => prisma.orderLine.findMany({ where: { orderId }, orderBy: { linePosition: 'asc' } })
 const order = (id: string) => prisma.order.findUniqueOrThrow({ where: { id } })
-const counts = async () => (await getStatusCounts(new NextRequest(`http://x/api/fulfillment/status-counts?projectId=${PROJECT}`))).json()
+const counts = async () => (await getStatusCounts(await superRequest(`http://x/api/fulfillment/status-counts?projectId=${PROJECT}`))).json()
 
 function runBackfill(...args: string[]): string {
   if (!/test\.db/.test(process.env.DATABASE_URL ?? '')) throw new Error('refusing to run the backfill outside test.db')
@@ -87,6 +88,7 @@ beforeAll(async () => {
 })
 
 afterAll(async () => {
+  await dropSessionUser()
   await prisma.supplierOrderPush.deleteMany({ where: { order: { projectId: PROJECT } } })
   await prisma.order.deleteMany({ where: { projectId: PROJECT } })
   await prisma.csvTemplate.deleteMany({ where: { supplierId: { in: [MANGO, JOMALL] } } })

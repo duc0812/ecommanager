@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireApiAccess } from '@/lib/api-auth'
+import { requireTaskScope } from '@/lib/order-scope'
 import { ARTWORK_TYPES_LABEL, MAX_ARTWORK_BYTES, artworkFileType, artworkTargetForTask, logArtworkUpload, saveArtworkFromTemp } from '@/lib/design-storage'
 import { retireOutdatedParts, uploadSlotsForLine } from '@/lib/design-tasks'
 import { TooLargeError, discardTemp, streamToTempFile, type TempFile } from '@/lib/library-storage'
@@ -18,6 +19,8 @@ const MAX_PART_PARAM = 200
 export async function PUT(req: NextRequest, { params }: { params: { key: string } }) {
   const auth = await requireApiAccess(req)
   if ('error' in auth) return auth.error
+  const scope = await requireTaskScope(req, params.key)
+  if ('error' in scope) return scope.error
 
   const sp = req.nextUrl.searchParams
   const printArea = sp.get('printArea')?.trim() ?? ''

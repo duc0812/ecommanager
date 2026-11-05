@@ -134,14 +134,15 @@ describe('syncDesignTasks — factory rejection and status changes', () => {
 
   it('the order status PATCH cancels open tasks of an order set to CANCELLED', async () => {
     const { PATCH } = await import('@/app/api/fulfillment/orders/[id]/status/route')
-    const { NextRequest } = await import('next/server')
+    const { dropSessionUser, superRequest } = await import('./helpers/session')
     await syncDesignTasks(STATUS_ORDER_ID)
     expect((await prisma.designTask.findUnique({ where: { taskKey: 'DTS4_1' } }))?.status).toBe('NEW')
-    const req = new NextRequest('http://x/api/fulfillment/orders/x/status', { method: 'PATCH', body: JSON.stringify({ status: 'CANCELLED' }) })
+    const req = await superRequest('http://x/api/fulfillment/orders/x/status', { method: 'PATCH', body: JSON.stringify({ status: 'CANCELLED' }) })
     const res = await PATCH(req, { params: { id: STATUS_ORDER_ID } })
     expect(res.status).toBe(200)
     expect((await res.json()).designTaskErrors).toBeUndefined()
     expect((await prisma.designTask.findUnique({ where: { taskKey: 'DTS4_1' } }))?.status).toBe('CANCELLED')
+    await dropSessionUser()
   })
 })
 

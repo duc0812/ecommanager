@@ -4,6 +4,7 @@ import path from 'path'
 import os from 'os'
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/db'
+import { dropSessionUser, superCookie } from './helpers/session'
 import { GOOGLE_KEYS } from '@/lib/google-oauth'
 import { primeAccessToken, resetDriveCache } from '@/lib/google-drive'
 import { saveArtwork, storageRoot } from '@/lib/design-storage'
@@ -30,6 +31,11 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ddp-storage-'))
 let lineId = ''
 let calls: Call[] = []
 let folderSeq = 0
+let cookie = ''
+
+// The routes read the caller's stores, so every request carries a Super Admin session.
+const signed = (url: string, init: ConstructorParameters<typeof NextRequest>[1] = {}) =>
+  new NextRequest(url, { ...init, headers: { ...(init.headers as Record<string, string> | undefined), cookie } })
 
 function json(body: unknown, status = 200, headers: Record<string, string> = {}) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json', ...headers } })
@@ -79,7 +85,7 @@ function uploadReq(printArea: string, bytes: Buffer, name: string, type: string)
   const fd = new FormData()
   fd.set('printArea', printArea)
   fd.set('file', new Blob([new Uint8Array(bytes)], { type }), name)
-  return new NextRequest(`http://localhost/api/design-studio/lines/${lineId}/artwork`, { method: 'POST', body: fd })
+  return signed(`http://localhost/api/design-studio/lines/${lineId}/artwork`, { method: 'POST', body: fd })
 }
 
 function localFile(storagePath: string) {
@@ -97,6 +103,7 @@ async function driveArtwork(printArea: string, fileName: string, mimeType: strin
 
 beforeAll(async () => {
   process.env.DESIGN_STORAGE_DIR = tmp
+  cookie = await superCookie()
   await prisma.project.upsert({ where: { id: PROJECT }, create: { id: PROJECT, name: 'DDP Store', startDate: new Date('2026-06-01') }, update: {} })
   const storeId = (await prisma.shopifyStore.upsert({ where: { shop: SHOP }, create: { shop: SHOP, projectId: PROJECT }, update: {} })).id
   const o = await prisma.order.create({
@@ -128,6 +135,7 @@ afterEach(() => {
 afterAll(async () => {
   await prisma.appSetting.deleteMany({ where: { key: { in: KEYS } } })
   await prisma.order.deleteMany({ where: { id: ORDER_ID } })
+  await dropSessionUser()
   fs.rmSync(tmp, { recursive: true, force: true })
   delete process.env.DESIGN_STORAGE_DIR
 })
@@ -228,13 +236,13 @@ describe('POST /api/design-studio/artwork/[artworkId]/push', () => {
     await connect()
     driveMock()
 
-    const res = await pushRoute(new NextRequest(`http://localhost/api/design-studio/artwork/${saved.id}/push`, { method: 'POST' }), { params: { artworkId: saved.id } })
+    const res = await pushRoute(signed(`http://localhost/api/design-studio/artwork/${saved.id}/push`, { method: 'POST' }), { params: { artworkId: saved.id } })
     expect(res.status).toBe(200)
     const body = await res.json()
     expect(body.artwork).toMatchObject({ id: saved.id, version: before.version, storage: 'DRIVE', driveWebViewLink: WEB_LINK })
     expect(fs.existsSync(localFile(before.storagePath!))).toBe(false)
 
-    const again = await pushRoute(new NextRequest('http://localhost/x', { method: 'POST' }), { params: { artworkId: saved.id } })
+    const again = await pushRoute(signed('http://localhost/x', { method: 'POST' }), { params: { artworkId: saved.id } })
     expect(again.status).toBe(400)
   })
 
@@ -244,7 +252,7 @@ describe('POST /api/design-studio/artwork/[artworkId]/push', () => {
     fs.rmSync(localFile(row.storagePath!))
     await connect()
     driveMock()
-    const res = await pushRoute(new NextRequest('http://localhost/x', { method: 'POST' }), { params: { artworkId: saved.id } })
+    const res = await pushRoute(signed('http://localhost/x', { method: 'POST' }), { params: { artworkId: saved.id } })
     expect(res.status).toBe(400)
     expect(calls).toHaveLength(0)
   })
@@ -254,7 +262,7 @@ describe('POST /api/design-studio/artwork/[artworkId]/push', () => {
     const row = await prisma.designArtwork.findUniqueOrThrow({ where: { id: saved.id } })
     await connect()
     driveMock({ put: () => json({ error: { message: 'Quota' } }, 403) })
-    const res = await pushRoute(new NextRequest('http://localhost/x', { method: 'POST' }), { params: { artworkId: saved.id } })
+    const res = await pushRoute(signed('http://localhost/x', { method: 'POST' }), { params: { artworkId: saved.id } })
     expect(res.status).toBe(502)
     expect((await res.json()).error).toMatch(/Chưa đẩy được lên Drive: .*Quota/)
     expect(fs.existsSync(localFile(row.storagePath!))).toBe(true)
@@ -266,7 +274,7 @@ describe('GET /api/design-studio/file/[artworkId] for DRIVE', () => {
     const art = await driveArtwork('Front', 'a.png', 'image/png')
     await connect()
     driveMock({ media: () => new Response(Buffer.from('png-bytes'), { status: 200, headers: { 'Content-Type': 'application/octet-stream' } }) })
-    const res = await serveRoute(new NextRequest(`http://localhost/api/design-studio/file/${art.id}`), { params: { artworkId: art.id } })
+    const res = await serveRoute(signed(`http://localhost/api/design-studio/file/${art.id}`), { params: { artworkId: art.id } })
     expect(res.status).toBe(200)
     expect(res.headers.get('content-type')).toBe('image/png')
     expect(res.headers.get('content-disposition')).toBe('inline; filename="a.png"')
@@ -281,7 +289,7 @@ describe('GET /api/design-studio/file/[artworkId] for DRIVE', () => {
     const art = await driveArtwork('Front', 'a.psd', 'image/vnd.adobe.photoshop')
     await connect()
     driveMock()
-    const res = await serveRoute(new NextRequest('http://localhost/x'), { params: { artworkId: art.id } })
+    const res = await serveRoute(signed('http://localhost/x'), { params: { artworkId: art.id } })
     expect(res.status).toBe(302)
     expect(res.headers.get('location')).toBe(WEB_LINK)
     expect(calls).toHaveLength(0)
@@ -290,14 +298,14 @@ describe('GET /api/design-studio/file/[artworkId] for DRIVE', () => {
   it('refuses to redirect to a link outside drive.google.com', async () => {
     const art = await driveArtwork('Front', 'a.zip', 'application/zip')
     await prisma.designArtwork.update({ where: { id: art.id }, data: { driveWebViewLink: 'https://evil.example/x' } })
-    const res = await serveRoute(new NextRequest('http://localhost/x'), { params: { artworkId: art.id } })
+    const res = await serveRoute(signed('http://localhost/x'), { params: { artworkId: art.id } })
     expect(res.status).toBe(404)
     expect(res.headers.get('location')).toBeNull()
   })
 
   it('sends nosniff on LOCAL files too', async () => {
     const saved = await saveArtwork({ lineId, printArea: 'Front', fileName: 'l.png', mimeType: 'image/png', bytes: Buffer.from('l'), uploadedById: null })
-    const res = await serveRoute(new NextRequest('http://localhost/x'), { params: { artworkId: saved.id } })
+    const res = await serveRoute(signed('http://localhost/x'), { params: { artworkId: saved.id } })
     expect(res.status).toBe(200)
     expect(res.headers.get('x-content-type-options')).toBe('nosniff')
   })
@@ -307,7 +315,7 @@ describe('GET /api/design-studio/file/[artworkId] for DRIVE', () => {
     await connect()
     resetDriveCache()
     driveMock({ token: () => json({ error: 'invalid_grant' }, 400) })
-    const res = await serveRoute(new NextRequest('http://localhost/x'), { params: { artworkId: art.id } })
+    const res = await serveRoute(signed('http://localhost/x'), { params: { artworkId: art.id } })
     expect(res.status).toBe(502)
     expect((await res.json()).error).toBeTruthy()
   })
@@ -349,7 +357,7 @@ describe('D2 review fixes', () => {
     await connect()
     driveMock()
 
-    const res = await pushRoute(new NextRequest('http://localhost/x', { method: 'POST' }), { params: { artworkId: saved.id } })
+    const res = await pushRoute(signed('http://localhost/x', { method: 'POST' }), { params: { artworkId: saved.id } })
     expect(res.status).toBe(200)
     expect((await prisma.orderLine.findUniqueOrThrow({ where: { id: lineId } })).designDriveLink).toBe(FOLDER_LINK)
     expect((await prisma.order.findUniqueOrThrow({ where: { id: ORDER_ID } })).designDriveLink).toBe(FOLDER_LINK)
@@ -401,7 +409,7 @@ describe('D2 review fixes', () => {
     const other = await saveArtwork({ lineId, printArea: 'Twice', fileName: 't2.png', mimeType: 'image/png', bytes: Buffer.from('t'), uploadedById: null })
     global.__drivePushInflight!.add(other.id)
     try {
-      const res = await pushRoute(new NextRequest('http://localhost/x', { method: 'POST' }), { params: { artworkId: other.id } })
+      const res = await pushRoute(signed('http://localhost/x', { method: 'POST' }), { params: { artworkId: other.id } })
       expect(res.status).toBe(409)
     } finally {
       global.__drivePushInflight!.delete(other.id)

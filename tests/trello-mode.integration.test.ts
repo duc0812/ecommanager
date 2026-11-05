@@ -62,7 +62,7 @@ async function syncShopifyOrder(n: number) {
     json: async () => ({ data: { orders: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [shopifyOrder(n)] } } }),
   } as Response)
   try {
-    const res = await ordersSync(new Request('http://test/api/shopify/orders/sync', { method: 'POST' }) as any)
+    const res = await ordersSync(new NextRequest('http://test/api/shopify/orders/sync', { method: 'POST', headers: { cookie: `${AUTH_COOKIE}=${superToken}` } }))
     return { body: await res.json(), order: await prisma.order.findUnique({ where: { id: `gid://shopify/Order/trello-mode-${n}` } }) }
   } finally { fetchSpy.mockRestore() }
 }
@@ -181,7 +181,7 @@ describe('Trello readers', () => {
     const b = await backfill(new Request('http://x/api/trello/backfill-custom-info', { method: 'POST', body: JSON.stringify({ dryRun: true }) }))
     expect(b.status).toBe(400)
     expect((await b.json()).error).toContain('Trello đang tắt')
-    const d = await diagnose(new NextRequest('http://x/api/fulfillment/design-diagnose?order=TMS1'))
+    const d = await diagnose(new NextRequest('http://x/api/fulfillment/design-diagnose?order=TMS1', { headers: { cookie: `${AUTH_COOKIE}=${superToken}` } }))
     expect(d.status).toBe(400)
     expect(getCardsByList).not.toHaveBeenCalled()
     expect(getCardDesc).not.toHaveBeenCalled()

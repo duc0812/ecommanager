@@ -17,6 +17,7 @@ vi.mock('@/lib/tracking/parcelpanel-config', () => ({ getParcelPanelApiKey: vi.f
 
 import { prisma } from '@/lib/db'
 import { saveStoreCredential } from '@/lib/store-connections'
+import { dropSessionUser, superRequest } from './helpers/session'
 import { POST as normalizeRoute } from '@/app/api/fulfillment/normalize/route'
 import { POST as trackingRoute } from '@/app/api/fulfillment/tracking/sync/route'
 import { POST as parcelpanelRoute } from '@/app/api/fulfillment/tracking/parcelpanel-sync/route'
@@ -55,9 +56,10 @@ beforeEach(async () => {
   await prisma.appSetting.deleteMany({ where: { key: { in: ['last_tracking_sync_result', 'last_order_normalize_result'] } } })
 })
 
-afterAll(async () => { await cleanup() })
+afterAll(async () => { await cleanup(); await dropSessionUser() })
 
 const post = (path: string) => new NextRequest(`http://test${path}`, { method: 'POST' })
+const runNormalize = async () => normalizeRoute(await superRequest('http://test/api/fulfillment/normalize', { method: 'POST' }))
 
 describe('manual triggers run every connected store', () => {
   it('normalize: totals over the stores that worked, the failing one named, the other still run', async () => {
@@ -65,7 +67,7 @@ describe('manual triggers run every connected store', () => {
       if (p.storeId === storeB) throw new Error('Shopify GraphQL 500')
       return normalized(3)
     })
-    const res = await normalizeRoute()
+    const res = await runNormalize()
     const body = await res.json()
     expect(res.status).toBe(200)
     expect(body).toMatchObject({ ordersOpen: 3, fulfillmentUpdated: 6, pipelineFulfilled: 3, errors: [] })
@@ -77,15 +79,15 @@ describe('manual triggers run every connected store', () => {
   it('normalize with one connected store answers what it always did, plus stores', async () => {
     await prisma.shopifyStore.update({ where: { id: storeB }, data: { enabled: false } })
     mocks.normalize.mockResolvedValue(normalized(4))
-    const body = await (await normalizeRoute()).json()
+    const body = await (await runNormalize()).json()
     expect(body).toEqual({ ...normalized(4), stores: [{ storeId: storeA, shop: SHOP_A, ok: true }] })
   })
 
   it('normalize answers 502 when every store failed, and 400 when none is connected', async () => {
     mocks.normalize.mockRejectedValue(new Error('down'))
-    expect((await normalizeRoute()).status).toBe(502)
+    expect((await runNormalize()).status).toBe(502)
     await prisma.shopifyStore.updateMany({ where: { id: { in: [storeA, storeB] } }, data: { enabled: false } })
-    const none = await normalizeRoute()
+    const none = await runNormalize()
     expect(none.status).toBe(400)
     expect((await none.json()).error).toBe('Not connected to Shopify.')
   })

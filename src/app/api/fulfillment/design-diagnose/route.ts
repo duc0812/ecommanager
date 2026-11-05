@@ -4,10 +4,14 @@ import { getTrelloConfig, getCardsByList } from '@/lib/trello'
 import { findDriveAttachmentForLine } from '@/lib/order-line-assets'
 import { isNonProductLine } from '@/lib/order-lines'
 import { getTrelloMode, TRELLO_OFF_MESSAGE } from '@/lib/design-settings'
+import { requireScope } from '@/lib/order-scope'
+import { storeWhere } from '@/lib/store-scope'
 
 // DIAGNOSTIC ONLY — read-only. Explains why an order's design files are (not) matched.
 // GET /api/fulfillment/design-diagnose?order=1234
 export async function GET(req: NextRequest) {
+  const scope = await requireScope(req, 'fulfillment_orders')
+  if ('error' in scope) return scope.error
   const orderParam = req.nextUrl.searchParams.get('order')?.trim()
   if (!orderParam) {
     return NextResponse.json({ error: 'pass ?order=<orderNumber>' }, { status: 400 })
@@ -15,7 +19,7 @@ export async function GET(req: NextRequest) {
 
   const wanted = orderParam.replace(/^#/, '')
   const order = await prisma.order.findFirst({
-    where: { shopifyOrderNumber: { in: [wanted, `#${wanted}`] } },
+    where: { shopifyOrderNumber: { in: [wanted, `#${wanted}`] }, ...storeWhere(scope.storeIds) },
     select: {
       id: true,
       shopifyOrderNumber: true,

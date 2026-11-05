@@ -168,7 +168,9 @@ describe('DELETE /api/design-studio/artwork/[artworkId]', () => {
   it('the Drive push route refuses a removed artwork', async () => {
     const art = await save(lineId, 'Artwork', designerId)
     expect((await del(art.id, designerToken)).status).toBe(200)
-    const res = await pushArtwork(new NextRequest(`http://x/api/design-studio/artwork/${art.id}/push`, { method: 'POST' }), { params: { artworkId: art.id } })
+    const pushReq = new NextRequest(`http://x/api/design-studio/artwork/${art.id}/push`, { method: 'POST' })
+    pushReq.cookies.set(AUTH_COOKIE, designerToken)
+    const res = await pushArtwork(pushReq, { params: { artworkId: art.id } })
     expect(res.status).toBe(404)
   })
 })

@@ -1,12 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import fs from 'fs/promises'
 import { prisma } from '@/lib/db'
+import { requireArtworkScope } from '@/lib/order-scope'
 import { loadArtworkRow, localArtworkPath } from '@/lib/design-storage'
 import { pushArtworkToDrive } from '@/lib/design-drive-push'
 import { isDriveConnected } from '@/lib/google-drive'
 
-export async function POST(_req: NextRequest, { params }: { params: { artworkId: string } }) {
+export async function POST(req: NextRequest, { params }: { params: { artworkId: string } }) {
   const { artworkId } = params
+  const scope = await requireArtworkScope(req, artworkId)
+  if ('error' in scope) return scope.error
   const row = await prisma.designArtwork.findUnique({ where: { id: artworkId }, select: { storage: true, storagePath: true, removedAt: true } })
   if (!row || row.removedAt) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   if (row.storage === 'DRIVE') return NextResponse.json({ error: 'File đã ở trên Drive' }, { status: 400 })

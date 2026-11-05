@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { API_ACCESS_RULES, SELLER_API_PATHS, SELLER_API_PREFIXES, canCallApi, sellerMayReach } from './api-access'
-import type { UserRole } from './roles'
+import type { FeaturePermission, UserRole } from './roles'
 import { DEFAULT_ROLE_PERMISSIONS } from './roles'
 
 describe('canCallApi', () => {
@@ -143,7 +143,7 @@ describe('PGprints API access', () => {
 
 describe('seller API allow-list', () => {
   it('lists only routes that carry no store data or filter it to the stores of the seller', () => {
-    expect(SELLER_API_PATHS).toEqual(['/api/auth/me', '/api/auth/logout', '/api/stores'])
+    expect(SELLER_API_PATHS).toEqual(['/api/auth/me', '/api/auth/logout', '/api/stores', '/api/shopify/orders/sync', '/api/fulfillment/normalize'])
     expect(SELLER_API_PREFIXES).toEqual([
       '/api/spy',
       '/api/tools/spy-idea',
@@ -163,6 +163,15 @@ describe('seller API allow-list', () => {
       '/api/sync/daily',
       '/api/staff',
       '/api/auto-sync',
+      '/api/fulfillment/orders',
+      '/api/fulfillment/pl-summary',
+      '/api/fulfillment/status-counts',
+      '/api/fulfillment/task-fix',
+      '/api/design-studio/tasks',
+      '/api/design-studio/lines',
+      '/api/design-studio/orders',
+      '/api/design-studio/file',
+      '/api/design-studio/artwork',
     ])
   })
 
@@ -170,10 +179,45 @@ describe('seller API allow-list', () => {
     expect(canCallApi('SELLER', ['meta_billing'], '/api/meta/sync', 'POST')).toBe('forbidden')
     expect(canCallApi('SELLER', ['meta_billing'], '/api/meta/import', 'POST')).toBe('forbidden')
     expect(canCallApi('SELLER', ['shopify'], '/api/shopify/orders', 'GET')).toBe('forbidden')
-    expect(canCallApi('SELLER', ['fulfillment_orders'], '/api/fulfillment/orders', 'GET')).toBe('forbidden')
-    expect(canCallApi('SELLER', ['design_tasks'], '/api/design-studio/orders', 'GET')).toBe('forbidden')
     expect(canCallApi('SELLER', ['fulfillment_tracking'], '/api/fulfillment/tracking', 'GET')).toBe('forbidden')
     expect(canCallApi('SELLER', ['cs'], '/api/cs/tickets', 'GET')).toBe('forbidden')
+  })
+
+  it('seller reaches the order and Design Studio routes that filter by store, still only with the feature', () => {
+    const orders: FeaturePermission[] = ['fulfillment_orders']
+    expect(canCallApi('SELLER', orders, '/api/fulfillment/orders', 'GET')).toBe('ok')
+    expect(canCallApi('SELLER', orders, '/api/fulfillment/orders/o1/status', 'PATCH')).toBe('ok')
+    expect(canCallApi('SELLER', orders, '/api/fulfillment/orders/bulk-status', 'POST')).toBe('ok')
+    expect(canCallApi('SELLER', orders, '/api/fulfillment/pl-summary', 'GET')).toBe('ok')
+    expect(canCallApi('SELLER', orders, '/api/fulfillment/status-counts', 'GET')).toBe('ok')
+    expect(canCallApi('SELLER', orders, '/api/fulfillment/normalize', 'POST')).toBe('ok')
+    expect(canCallApi('SELLER', orders, '/api/shopify/orders/sync', 'POST')).toBe('ok')
+    expect(canCallApi('SELLER', ['need_to_fix'], '/api/fulfillment/task-fix', 'GET')).toBe('ok')
+    expect(canCallApi('SELLER', ['need_to_fix'], '/api/fulfillment/task-fix/fix', 'POST')).toBe('ok')
+    expect(canCallApi('SELLER', ['design_tasks'], '/api/design-studio/tasks', 'GET')).toBe('ok')
+    expect(canCallApi('SELLER', ['design_tasks'], '/api/design-studio/tasks/K1/transition', 'POST')).toBe('ok')
+    expect(canCallApi('SELLER', ['design_tasks'], '/api/design-studio/tasks/K1/artwork', 'PUT')).toBe('ok')
+    expect(canCallApi('SELLER', ['design_tasks'], '/api/design-studio/orders', 'GET')).toBe('ok')
+    expect(canCallApi('SELLER', ['design_tasks'], '/api/design-studio/file/a1', 'GET')).toBe('ok')
+    expect(canCallApi('SELLER', ['design_tasks'], '/api/design-studio/artwork/a1', 'DELETE')).toBe('ok')
+    expect(canCallApi('SELLER', ['design_tasks'], '/api/design-studio/lines/l1/artwork', 'POST')).toBe('ok')
+    expect(canCallApi('SELLER', ['projects'], '/api/fulfillment/orders', 'GET')).toBe('forbidden')
+    expect(canCallApi('SELLER', ['projects'], '/api/design-studio/tasks', 'GET')).toBe('forbidden')
+  })
+
+  it('seller stays out of the shared or all-store parts that sit beside those routes', () => {
+    const all = DEFAULT_ROLE_PERMISSIONS.ADMIN
+    for (const [path, method] of [
+      ['/api/suppliers', 'GET'], ['/api/suppliers/products', 'GET'], ['/api/shopify/orders', 'GET'],
+      ['/api/trello/sync', 'POST'], ['/api/trello/backfill-custom-info', 'POST'], ['/api/trello/config', 'GET'],
+      ['/api/fulfillment/design-diagnose', 'GET'], ['/api/fulfillment/design-library', 'GET'], ['/api/fulfillment/export', 'POST'],
+      ['/api/fulfillment/pgprints/orders/o1/preview', 'GET'], ['/api/fulfillment/pgprints/orders/o1/push', 'POST'],
+      ['/api/design-studio/settings', 'GET'], ['/api/design-studio/templates', 'GET'], ['/api/design-studio/handoff', 'GET'],
+      ['/api/design-studio/handoff/sheet', 'POST'], ['/api/design-studio/drive-health', 'GET'], ['/api/design-studio/products', 'GET'],
+      ['/api/design-studio/library/products', 'GET'], ['/api/design-studio/external-preview', 'GET'],
+    ] as const) {
+      expect([path, method, canCallApi('SELLER', all, path, method)]).toEqual([path, method, 'forbidden'])
+    }
   })
 
   it('seller is denied the store connection list, which names every store and its last error', () => {

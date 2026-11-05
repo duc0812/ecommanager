@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
-import { getAuthUser, unauthorized } from '@/lib/api-auth'
+import { requireScope } from '@/lib/order-scope'
 import { listTasks, viewerFor, TASK_STATUSES, type TaskStatus, type Readiness } from '@/lib/design-tasks'
 import { getDesignSettings } from '@/lib/design-settings'
 import { countPendingHandoff } from '@/lib/supplier-handoff'
@@ -17,8 +17,10 @@ function startOfTodayUtc(): Date {
 const SEARCH_LIMIT = 200
 
 export async function GET(req: NextRequest) {
-  const user = await getAuthUser(req)
-  if (!user) return unauthorized()
+  const scope = await requireScope(req, 'design_tasks')
+  if ('error' in scope) return scope.error
+  const { user, storeIds, limited } = scope
+  const inScope = storeIds ? { order: { storeId: { in: storeIds } } } : {}
 
   const sp = req.nextUrl.searchParams
   const statusesParam = sp.get('statuses')
@@ -36,7 +38,7 @@ export async function GET(req: NextRequest) {
 
   let tasks
   if (statuses) {
-    tasks = await listTasks({ statuses, readiness, assigneeId, q })
+    tasks = await listTasks({ statuses, readiness, assigneeId, q, storeIds })
   } else if (q) {
     // A search looks through every task, finished or cancelled too: the default queue hides DONE tasks
     // after the day they were approved, so an order already sent to the factory could not be found.
@@ -49,10 +51,11 @@ export async function GET(req: NextRequest) {
         ],
         ...(readiness ? { readiness } : {}),
         ...(assigneeId ? { assigneeId } : {}),
+        ...inScope,
       },
       select: { taskKey: true }, orderBy: { createdAt: 'desc' }, take: SEARCH_LIMIT,
     })
-    tasks = await listTasks({ taskKeys: matching.map(m => m.taskKey), q })
+    tasks = await listTasks({ taskKeys: matching.map(m => m.taskKey), q, storeIds })
   } else {
     const matching = await prisma.designTask.findMany({
       where: {
@@ -62,12 +65,13 @@ export async function GET(req: NextRequest) {
         ],
         ...(readiness ? { readiness } : {}),
         ...(assigneeId ? { assigneeId } : {}),
+        ...inScope,
       },
       select: { taskKey: true },
     })
-    tasks = await listTasks({ taskKeys: matching.map(m => m.taskKey), q })
+    tasks = await listTasks({ taskKeys: matching.map(m => m.taskKey), q, storeIds })
   }
 
-  const [settings, handoffCount, lastSync] = await Promise.all([getDesignSettings(), countPendingHandoff(), getLastDesignTaskSync()])
+  const [settings, handoffCount, lastSync] = await Promise.all([getDesignSettings(), countPendingHandoff({ storeIds }), getLastDesignTaskSync({ hideError: limited })])
   return NextResponse.json({ tasks, me: viewerFor(user, settings), handoffCount, lastSync })
 }

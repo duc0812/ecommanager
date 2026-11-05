@@ -85,7 +85,7 @@ export async function listOrdersWithLines(filter: OrderFilter) {
     skip,
     include: {
       lines: { orderBy: { linePosition: 'asc' } },
-      store: { select: { id: true, shop: true, ianaTimezone: true } },
+      store: { select: { id: true, shop: true, ianaTimezone: true, project: { select: { name: true } } } },
       defaultSupplier: { select: { id: true, name: true, code: true, firstItemShipFee: true, additionalItemShipFee: true } },
     },
   })
@@ -443,13 +443,21 @@ export function partiallyExportedWhere() {
   return { pipelineStatus: 'READY_TO_PRODUCTION', lines: { some: { exportedAt: { not: null } } } }
 }
 
-export async function countPartiallyExported(filter: { projectId?: string } = {}): Promise<number> {
-  const baseWhere: any = filter.projectId ? { projectId: filter.projectId } : {}
+type CountFilter = { projectId?: string; storeIds?: string[] | null }
+
+function countBase(filter: CountFilter) {
+  const where: any = filter.projectId ? { projectId: filter.projectId } : {}
+  if (filter.storeIds) where.storeId = { in: filter.storeIds }
+  return where
+}
+
+export async function countPartiallyExported(filter: CountFilter = {}): Promise<number> {
+  const baseWhere = countBase(filter)
   return prisma.order.count({ where: { AND: [baseWhere, partiallyExportedWhere(), unfulfilledWhere()] } })
 }
 
-export async function countByStatus(filter: { projectId?: string } = {}): Promise<Record<PipelineStatus, number>> {
-  const baseWhere: any = filter.projectId ? { projectId: filter.projectId } : {}
+export async function countByStatus(filter: CountFilter = {}): Promise<Record<PipelineStatus, number>> {
+  const baseWhere = countBase(filter)
   const result = Object.fromEntries(PIPELINE_STATUSES.map(s => [s, 0])) as Record<PipelineStatus, number>
   for (const status of PIPELINE_STATUSES) {
     result[status] = await prisma.order.count({
@@ -465,8 +473,8 @@ export async function countByStatus(filter: { projectId?: string } = {}): Promis
   return result
 }
 
-export async function countWarnings(filter: { projectId?: string } = {}): Promise<Record<WarningType, number>> {
-  const baseWhere: any = filter.projectId ? { projectId: filter.projectId } : {}
+export async function countWarnings(filter: CountFilter = {}): Promise<Record<WarningType, number>> {
+  const baseWhere = countBase(filter)
   const result = {} as Record<WarningType, number>
   for (const type of WARNING_TYPES) {
     result[type] = await prisma.order.count({ where: { AND: [baseWhere, warningTypeWhere(type)] } })

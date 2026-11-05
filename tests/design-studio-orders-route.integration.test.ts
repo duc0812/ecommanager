@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/db'
+import { dropSessionUser, superCookie } from './helpers/session'
 import { GET } from '@/app/api/design-studio/orders/route'
 
 const PENDING_ID = 'gid://test/Order/ds-list-pending'
@@ -8,11 +9,14 @@ const FULFILLED_ID = 'gid://test/Order/ds-list-fulfilled'
 const SHOP = 'ds-list.myshopify.com'
 const PROJECT = 'proj_ds_list'
 
+let cookie = ''
+
 function req(qs: string) {
-  return new NextRequest(`http://localhost/api/design-studio/orders?${qs}`)
+  return new NextRequest(`http://localhost/api/design-studio/orders?${qs}`, { headers: { cookie } })
 }
 
 beforeAll(async () => {
+  cookie = await superCookie()
   await prisma.project.upsert({ where: { id: PROJECT }, create: { id: PROJECT, name: 'DS list', startDate: new Date('2026-06-01') }, update: {} })
   const storeId = (await prisma.shopifyStore.upsert({ where: { shop: SHOP }, create: { shop: SHOP, projectId: PROJECT }, update: {} })).id
   const base = {
@@ -34,6 +38,7 @@ beforeAll(async () => {
 })
 afterAll(async () => {
   await prisma.order.deleteMany({ where: { id: { in: [PENDING_ID, FULFILLED_ID] } } })
+  await dropSessionUser()
 })
 
 describe('GET /api/design-studio/orders', () => {
@@ -45,7 +50,7 @@ describe('GET /api/design-studio/orders', () => {
     expect(ids).toContain(PENDING_ID)
     expect(ids).not.toContain(FULFILLED_ID)
     const o = orders.find((x: any) => x.id === PENDING_ID)
-    expect(Object.keys(o).sort()).toEqual(['designReady', 'id', 'lines', 'orderType', 'pipelineStatus', 'placedAt', 'projectId', 'shopifyOrderNumber'])
+    expect(Object.keys(o).sort()).toEqual(['designReady', 'id', 'lines', 'orderType', 'pipelineStatus', 'placedAt', 'projectId', 'shopifyOrderNumber', 'storeName'])
     expect(Object.keys(o.lines[0]).sort()).toEqual(['customized', 'designDriveLink', 'id', 'previewCdnUrl', 'productTitle', 'resolvedSupplierId', 'shopifyLineId', 'sku'])
   })
   it('merges several statuses', async () => {

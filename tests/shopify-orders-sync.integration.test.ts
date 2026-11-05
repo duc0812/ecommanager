@@ -1,9 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import { prisma } from '@/lib/db'
 import { saveStoreCredential } from '@/lib/store-connections'
+import { dropSessionUser, superRequest } from './helpers/session'
 
 const SHOP = 'test-store.myshopify.com'
 const VARIANT_ID = 'gid://shopify/ProductVariant/test-1'
+
+afterAll(dropSessionUser)
 
 beforeAll(async () => {
   // Multi-tenant setup: project must exist + linked to store
@@ -112,8 +115,8 @@ describe('POST /api/shopify/orders/sync', () => {
     } as Response)
 
     const { POST } = await import('@/app/api/shopify/orders/sync/route')
-    const req = new Request('http://test/api/shopify/orders/sync', { method: 'POST' })
-    const res = await POST(req as any)
+    const req = await superRequest('http://test/api/shopify/orders/sync', { method: 'POST' })
+    const res = await POST(req)
     const body = await res.json()
 
     expect(body.totalSynced).toBe(1)
@@ -198,8 +201,8 @@ describe('POST /api/shopify/orders/sync', () => {
     } as Response)
 
     const { POST } = await import('@/app/api/shopify/orders/sync/route')
-    const req = new Request('http://test/api/shopify/orders/sync', { method: 'POST' })
-    const res = await POST(req as any)
+    const req = await superRequest('http://test/api/shopify/orders/sync', { method: 'POST' })
+    const res = await POST(req)
     const body = await res.json()
 
     expect(body.withUnmappedSku).toBe(0)

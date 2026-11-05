@@ -3,6 +3,8 @@ import { getStoreConnection, listConnectedStores, tryStoreConnection, type Conne
 import { connectionFailureResponse } from '@/lib/store-connection-response'
 import { forEachConnectedStore, okResults, type StoreRunResult } from '@/lib/store-jobs'
 import { StoreOrderSyncError, syncStoreOrders, type StoreOrderSyncResult } from '@/lib/shopify-order-sync'
+import { forbidden } from '@/lib/api-auth'
+import { requireScope } from '@/lib/order-scope'
 
 const NOT_CONNECTED = { error: 'Not connected to Shopify. Go to /setup and connect Shopify first.', status: 401 }
 
@@ -17,13 +19,19 @@ function storeForOrderName(stores: ConnectedStore[], orderName: string): Connect
 }
 
 export async function POST(req: NextRequest) {
+  const scope = await requireScope(req, 'fulfillment_orders')
+  if ('error' in scope) return scope.error
   const body = await req.json().catch(() => ({}))
   const fromOrderName = typeof body.fromOrderName === 'string' && body.fromOrderName.trim()
     ? body.fromOrderName.trim()
     : null
   const storeId = typeof body.storeId === 'string' && body.storeId.trim() ? body.storeId.trim() : null
 
-  const stores = await listConnectedStores()
+  // A caller limited to some stores syncs those stores only: naming another one is refused, naming none means all of its own.
+  const own = scope.storeIds
+  if (own && storeId && !own.includes(storeId)) return forbidden('Bạn không có quyền xem store này.')
+  if (own && own.length === 0) return forbidden('Bạn chưa được giao store nào.')
+  const stores = (await listConnectedStores()).filter(s => !own || own.includes(s.id))
   let targets = stores
   if (storeId) {
     targets = stores.filter(s => s.id === storeId)

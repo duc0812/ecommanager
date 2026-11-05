@@ -3,11 +3,15 @@ import { ordersWithComputedPL } from '@/lib/repos/reports'
 import { countOrders, type OrderFilter } from '@/lib/repos/orders'
 import { WARNING_TYPES, type WarningType } from '@/lib/order-warnings'
 import { pgprintsFlagsForOrders } from '@/lib/repos/pgprints-push'
+import { requireScope } from '@/lib/order-scope'
+import { storeNameOf } from '@/lib/store-name'
 
 const DEFAULT_PAGE_SIZE = 50
 const MAX_PAGE_SIZE = 200
 
 export async function GET(req: NextRequest) {
+  const scope = await requireScope(req, 'fulfillment_orders')
+  if ('error' in scope) return scope.error
   const { searchParams } = new URL(req.url)
   const dateFrom = searchParams.get('dateFrom')
   const dateTo = searchParams.get('dateTo')
@@ -26,6 +30,7 @@ export async function GET(req: NextRequest) {
 
   const baseFilter: OrderFilter = {
     projectId,
+    storeIds: scope.storeIds,
     supplierId,
     pipelineStatus,
     warningType,
@@ -41,7 +46,7 @@ export async function GET(req: NextRequest) {
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
   const flags = await pgprintsFlagsForOrders(orders)
-  const rows = orders.map(o => ({ ...o, pgprints: flags.get(o.id) ?? null }))
+  const rows = orders.map(o => ({ ...o, storeName: storeNameOf(o.store), pgprints: flags.get(o.id) ?? null }))
 
   return NextResponse.json({ orders: rows, count: rows.length, total, page, pageSize, totalPages })
 }

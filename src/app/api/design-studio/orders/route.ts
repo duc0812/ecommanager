@@ -1,11 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { listOrdersWithLines, type OrderFilter } from '@/lib/repos/orders'
 import { isValidPipelineStatus } from '@/lib/pipeline-status'
+import { requireScope } from '@/lib/order-scope'
+import { storeNameOf } from '@/lib/store-name'
 
 const DEFAULT_LIMIT = 200
 const MAX_LIMIT = 500
 
 export async function GET(req: NextRequest) {
+  const scope = await requireScope(req, 'design_tasks')
+  if ('error' in scope) return scope.error
   const sp = req.nextUrl.searchParams
   const statuses = Array.from(new Set((sp.get('statuses') ?? '').split(',').map(s => s.trim()).filter(Boolean)))
   const invalid = statuses.filter(s => !isValidPipelineStatus(s))
@@ -16,6 +20,7 @@ export async function GET(req: NextRequest) {
 
   const base: OrderFilter = {
     projectId: sp.get('projectId') || undefined,
+    storeIds: scope.storeIds,
     supplierId: sp.get('supplierId') || undefined,
     search: sp.get('search')?.trim() || undefined,
     dateFrom: dateFrom ? new Date(dateFrom + 'T00:00:00Z') : undefined,
@@ -35,6 +40,7 @@ export async function GET(req: NextRequest) {
       orderType: o.orderType,
       designReady: o.designReady,
       projectId: o.projectId,
+      storeName: storeNameOf(o.store),
       lines: o.lines.map(l => ({
         id: l.id,
         shopifyLineId: l.shopifyLineId,

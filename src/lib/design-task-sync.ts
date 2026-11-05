@@ -152,12 +152,14 @@ export async function runDesignTaskSyncJob(trigger: SyncTrigger) {
 
 export type LastDesignTaskSync = { ranAt: string; trigger: SyncTrigger; error: string | null }
 
-export async function getLastDesignTaskSync(): Promise<LastDesignTaskSync | null> {
+// The run covers every store, so its error text can name one a caller limited to some stores must not hear about.
+export async function getLastDesignTaskSync(opts: { hideError?: boolean } = {}): Promise<LastDesignTaskSync | null> {
   const row = await prisma.appSetting.findUnique({ where: { key: DESIGN_TASK_SYNC_KEY } })
   if (!row) return null
   try {
     const v = JSON.parse(row.value)
     if (typeof v?.ranAt !== 'string') return null
-    return { ranAt: v.ranAt, trigger: v.trigger === 'schedule' ? 'schedule' : 'manual', error: typeof v.error === 'string' ? v.error : null }
+    const error = typeof v.error === 'string' ? (opts.hideError ? 'Lỗi đồng bộ task — báo Admin' : v.error) : null
+    return { ranAt: v.ranAt, trigger: v.trigger === 'schedule' ? 'schedule' : 'manual', error }
   } catch { return null }
 }

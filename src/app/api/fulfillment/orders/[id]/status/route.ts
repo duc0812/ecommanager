@@ -2,8 +2,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { updateOrderStatus } from '@/lib/repos/orders'
 import { isValidPipelineStatus } from '@/lib/pipeline-status'
 import { syncDesignTasksForOrders } from '@/lib/design-tasks'
+import { requireOrderScope } from '@/lib/order-scope'
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+  const scope = await requireOrderScope(req, params.id)
+  if ('error' in scope) return scope.error
   const body = await req.json().catch(() => null)
   if (!body || typeof body.status !== 'string' || !isValidPipelineStatus(body.status)) {
     return NextResponse.json({ error: 'Invalid status' }, { status: 400 })
