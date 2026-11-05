@@ -5,7 +5,7 @@ const mocks = vi.hoisted(() => ({
   getTrelloConfig: vi.fn(async () => ({
     apiKey: 'k', token: 't', boardId: 'b', listId: 'l', doneListId: 'd', syncFromOrderName: '',
   })),
-  getShopifyConnection: vi.fn(async () => ({ shop: 'x.myshopify.com', token: 'tok' })),
+  getStoreConnectionByShop: vi.fn(async () => ({ storeId: 'x', shop: 'x.myshopify.com', token: 'tok' })),
   fetchOrderLinePropsByNames: vi.fn(async () => new Map()),
   getCardDesc: vi.fn(async () => ''),
   updateCardDesc: vi.fn(async () => {}),
@@ -17,7 +17,10 @@ vi.mock('@/lib/trello', () => ({
   getCardDesc: mocks.getCardDesc,
   updateCardDesc: mocks.updateCardDesc,
 }))
-vi.mock('@/lib/token-store', () => ({ getShopifyConnection: mocks.getShopifyConnection }))
+vi.mock('@/lib/store-connections', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/store-connections')>()),
+  getStoreConnectionByShop: mocks.getStoreConnectionByShop,
+}))
 vi.mock('@/lib/shopify-orders', () => ({ fetchOrderLinePropsByNames: mocks.fetchOrderLinePropsByNames }))
 
 import { POST } from '@/app/api/trello/backfill-custom-info/route'

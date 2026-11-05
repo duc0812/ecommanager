@@ -2,8 +2,8 @@ import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 import crypto from 'crypto'
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/db'
-import { getStoreConnection, saveStoreCredential } from '@/lib/store-connections'
-import { saveOAuthState, getShopifyConnection } from '@/lib/token-store'
+import { getStoreConnection, getStoreConnectionByShop, saveStoreCredential, tryStoreConnection } from '@/lib/store-connections'
+import { saveOAuthState } from '@/lib/token-store'
 
 vi.mock('@/lib/api-auth', () => ({ requireSuperadmin: vi.fn(async () => ({ user: { id: 'admin' } })) }))
 
@@ -308,14 +308,13 @@ describe('Shopify OAuth and status per store', () => {
     expect(unknown.status).toBe(400)
   })
 
-  it('getShopifyConnection reads the Litzzy credential', async () => {
-    expect(await getShopifyConnection()).toBeNull()
+  it('tryStoreConnection turns a refused store into a value and rethrows anything else', async () => {
+    const byShop = () => tryStoreConnection(() => getStoreConnectionByShop(LITZZY))
+    expect(await byShop()).toMatchObject({ conn: null, error: { code: 'NOT_CONNECTED', shop: LITZZY } })
     await makeStore(LITZZY, { authMode: 'TOKEN', accessToken: 'tok-l' })
-    expect(await getShopifyConnection()).toMatchObject({ shop: LITZZY, token: 'tok-l', connectedAt: expect.any(Date) })
+    expect(await byShop()).toMatchObject({ conn: { shop: LITZZY, token: 'tok-l' } })
     await prisma.shopifyStore.update({ where: { id: ids[LITZZY] }, data: { enabled: false } })
-    expect(await getShopifyConnection()).toBeNull()
-    await prisma.shopifyStore.update({ where: { id: ids[LITZZY] }, data: { enabled: true } })
-    await prisma.shopifyStoreCredential.delete({ where: { storeId: ids[LITZZY] } })
-    expect(await getShopifyConnection()).toBeNull()
+    expect(await byShop()).toMatchObject({ conn: null, error: { code: 'DISABLED', shop: LITZZY } })
+    await expect(tryStoreConnection(async () => { throw new Error('db down') })).rejects.toThrow('db down')
   })
 })

@@ -1,12 +1,4 @@
 import { prisma } from '@/lib/db'
-import { LITZZY_SHOP } from '@/lib/shopify-shop'
-import { getStoreConnectionByShop, StoreConnectionError } from '@/lib/store-connections'
-
-type ShopifyConnection = {
-  shop: string
-  token: string
-  connectedAt: Date
-}
 
 type OAuthState = { shop: string; createdAt: number }
 
@@ -34,18 +26,6 @@ export async function saveSetting(key: string, value: string) {
 
 export async function deleteSettings(keys: string[]) {
   await prisma.appSetting.deleteMany({ where: { key: { in: keys } } })
-}
-
-// Single-store shim for callers not yet moved to getStoreConnection: always the Litzzy store.
-export async function getShopifyConnection(): Promise<ShopifyConnection | null> {
-  try {
-    const { shop, token } = await getStoreConnectionByShop(LITZZY_SHOP)
-    const credential = await prisma.shopifyStoreCredential.findFirst({ where: { store: { shop } }, select: { connectedAt: true } })
-    return { shop, token, connectedAt: credential?.connectedAt ?? new Date() }
-  } catch (e) {
-    if (e instanceof StoreConnectionError) return null
-    throw e
-  }
 }
 
 function pruneOAuthStates(now: number) {

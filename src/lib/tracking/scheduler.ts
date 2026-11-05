@@ -1,7 +1,8 @@
 import cron from 'node-cron'
 import { initOnce, runExclusive } from '@/lib/job-lock'
 import { prisma } from '@/lib/db'
-import { getShopifyConnection } from '@/lib/token-store'
+import { getStoreConnectionByShop, tryStoreConnection } from '@/lib/store-connections'
+import { LITZZY_SHOP } from '@/lib/shopify-shop'
 import { syncStoreTracking } from './tracking-sync'
 
 const TZ = 'Asia/Ho_Chi_Minh'
@@ -11,18 +12,13 @@ const TZ = 'Asia/Ho_Chi_Minh'
 // single-connection), so "all stores" today means the connected store. When
 // per-store tokens exist, iterate stores here.
 export async function runDailyTrackingSync() {
-  const conn = await getShopifyConnection()
+  const { conn, error } = await tryStoreConnection(() => getStoreConnectionByShop(LITZZY_SHOP))
   if (!conn) {
-    console.log('[tracking-scheduler] no Shopify connection stored; skipping')
-    return
-  }
-  const store = await prisma.shopifyStore.findUnique({ where: { shop: conn.shop } })
-  if (!store) {
-    console.log(`[tracking-scheduler] connected store ${conn.shop} not in DB; skipping`)
+    console.error(`[tracking-scheduler] ${error.message}; skipping`)
     return
   }
   try {
-    const result = await syncStoreTracking({ shop: conn.shop, accessToken: conn.token, storeId: store.id, days: 30 })
+    const result = await syncStoreTracking({ shop: conn.shop, accessToken: conn.token, storeId: conn.storeId, days: 30 })
     await prisma.appSetting.upsert({
       where: { key: 'last_tracking_sync_result' },
       create: { key: 'last_tracking_sync_result', value: JSON.stringify({ ...result, shop: conn.shop, ranAt: new Date().toISOString() }) },

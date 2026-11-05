@@ -3,8 +3,9 @@ import { prisma } from '@/lib/db'
 
 const SHOP = 'test-store.myshopify.com'
 
-vi.mock('@/lib/token-store', () => ({
-  getShopifyConnection: vi.fn(async () => ({ shop: 'test-store.myshopify.com', token: 'test_token', connectedAt: new Date() })),
+vi.mock('@/lib/store-connections', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/store-connections')>()),
+  getStoreConnectionByShop: vi.fn(async () => ({ storeId: 'test-store', shop: 'test-store.myshopify.com', token: 'test_token' })),
 }))
 const VARIANT_ID = 'gid://shopify/ProductVariant/test-1'
 

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
-import { prisma } from '@/lib/db'
-import { getShopifyConnection } from '@/lib/token-store'
+import { getStoreConnectionByShop, tryStoreConnection } from '@/lib/store-connections'
+import { LITZZY_SHOP } from '@/lib/shopify-shop'
 import { syncParcelPanelTracking } from '@/lib/tracking/parcelpanel-sync'
 import { getParcelPanelApiKey } from '@/lib/tracking/parcelpanel-config'
 
@@ -12,8 +12,8 @@ export async function POST() {
   const apiKey = await getParcelPanelApiKey()
   if (!apiKey) return NextResponse.json({ error: 'Chưa cấu hình ParcelPanel API key. Nhập key ở nút cấu hình trên trang Tracking.' }, { status: 400 })
 
-  const conn = await getShopifyConnection()
-  const store = conn ? await prisma.shopifyStore.findUnique({ where: { shop: conn.shop } }) : null
+  const { conn, error } = await tryStoreConnection(() => getStoreConnectionByShop(LITZZY_SHOP))
+  if (!conn) console.error(`[parcelpanel] ${error.message}; syncing without a store filter`)
 
   const encoder = new TextEncoder()
   const stream = new ReadableStream({
@@ -22,7 +22,7 @@ export async function POST() {
       try {
         const result = await syncParcelPanelTracking({
           apiKey,
-          storeId: store?.id,
+          storeId: conn?.storeId,
           onProgress: (done, total) => send({ type: 'progress', done, total }),
         })
         send({ type: 'done', ...result })

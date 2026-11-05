@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
-import { getShopifyConnection } from '@/lib/token-store'
+import { getStoreConnection, tryStoreConnection } from '@/lib/store-connections'
+import { connectionFailureResponse } from '@/lib/store-connection-response'
 import { fetchOrderLinePropsByNames } from '@/lib/shopify-orders'
 import { applyLineProps } from '@/lib/design-studio'
 import { fillCustomallFields } from '@/lib/customall-fields'
@@ -8,14 +9,11 @@ import { fillCustomallFields } from '@/lib/customall-fields'
 export async function POST(_req: NextRequest, { params }: { params: { id: string } }) {
   const order = await prisma.order.findUnique({
     where: { id: params.id },
-    select: { shopifyOrderNumber: true, store: { select: { shop: true } } },
+    select: { shopifyOrderNumber: true, storeId: true },
   })
   if (!order) return NextResponse.json({ error: 'Order not found' }, { status: 404 })
-  const conn = await getShopifyConnection()
-  if (!conn) return NextResponse.json({ error: 'Chưa kết nối Shopify. Vào /setup để connect trước.' }, { status: 401 })
-  if (conn.shop !== order.store.shop) {
-    return NextResponse.json({ error: `Token Shopify đang nối ${conn.shop}, đơn này thuộc ${order.store.shop}` }, { status: 400 })
-  }
+  const { conn, error } = await tryStoreConnection(() => getStoreConnection(order.storeId))
+  if (!conn) return connectionFailureResponse(error, { error: 'Chưa kết nối Shopify. Vào /setup để connect trước.', status: 401 })
   let props
   try {
     props = (await fetchOrderLinePropsByNames(conn.shop, conn.token, [order.shopifyOrderNumber])).get(order.shopifyOrderNumber)

@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest'
 
-vi.mock('@/lib/token-store', () => ({ getShopifyConnection: vi.fn(async () => ({ shop: 'dt-job.myshopify.com', token: 't' })) }))
+vi.mock('@/lib/store-connections', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/store-connections')>()),
+  getStoreConnectionByShop: vi.fn(async (shop: string) => ({ storeId: 'dt-job', shop, token: 't' })),
+}))
 vi.mock('@/lib/shopify-orders', () => ({ fetchOrderLinePropsByNames: vi.fn(async () => new Map()) }))
 
 import { prisma } from '@/lib/db'

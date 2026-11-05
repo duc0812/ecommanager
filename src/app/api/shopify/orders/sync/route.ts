@@ -5,7 +5,9 @@ import { computeOrderPL, type SupplierInput } from '@/lib/pl-calculator'
 import { upsertOrderWithLines } from '@/lib/repos/orders'
 import { autoDetectStatus, isValidPipelineStatus, type PipelineStatus } from '@/lib/pipeline-status'
 import { resolveZone, type SupplierZoneOverrides } from '@/lib/regions'
-import { getShopifyConnection } from '@/lib/token-store'
+import { getStoreConnectionByShop, tryStoreConnection } from '@/lib/store-connections'
+import { connectionFailureResponse } from '@/lib/store-connection-response'
+import { LITZZY_SHOP } from '@/lib/shopify-shop'
 import { profileKey, resolveByProductBase, supplierParentKey, swapToSizeSibling } from '@/lib/product-mapping'
 import { loadProductBasesForResolver, loadLegacyTypesForResolver, loadProductProfilesForResolver, loadTypeAliasesForResolver, loadVariantManualMappingsForResolver } from '@/lib/repos/mapping'
 import { buildTrelloCardContent, customerDesignLink, isLineCustomized, lineFamily, reduceOrderType } from '@/lib/order-classify'
@@ -51,12 +53,9 @@ export async function POST(req: NextRequest) {
     : null
   const fromOrderNumber = orderNumberValue(fromOrderName)
 
-  const stored = await getShopifyConnection()
-  const shop = stored?.shop
-  const accessToken = stored?.token
-  if (!shop || !accessToken) {
-    return NextResponse.json({ error: 'Not connected to Shopify. Go to /setup and connect Shopify first.' }, { status: 401 })
-  }
+  const { conn, error: connError } = await tryStoreConnection(() => getStoreConnectionByShop(LITZZY_SHOP))
+  if (!conn) return connectionFailureResponse(connError, { error: 'Not connected to Shopify. Go to /setup and connect Shopify first.', status: 401 })
+  const { shop, token: accessToken } = conn
 
   const store = await prisma.shopifyStore.findUnique({
     where: { shop },

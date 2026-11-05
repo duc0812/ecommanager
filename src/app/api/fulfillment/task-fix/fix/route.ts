@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
-import { getShopifyConnection } from '@/lib/token-store'
+import { getStoreConnection, tryStoreConnection } from '@/lib/store-connections'
+import { connectionFailureResponse } from '@/lib/store-connection-response'
 import { updateVariantSku } from '@/lib/shopify-orders'
 import { detectOrderTasks } from '@/lib/order-tasks'
 
@@ -25,7 +26,7 @@ export async function POST(req: NextRequest) {
 
   const order = await prisma.order.findUnique({
     where: { id: orderId },
-    select: { orderType: true, designReady: true, placedAt: true, fulfillmentStatus: true, pipelineStatus: true, lines: { select: LINE_SELECT } },
+    select: { storeId: true, orderType: true, designReady: true, placedAt: true, fulfillmentStatus: true, pipelineStatus: true, lines: { select: LINE_SELECT } },
   })
   if (!order) return NextResponse.json({ error: 'Order not found' }, { status: 404 })
 
@@ -33,8 +34,8 @@ export async function POST(req: NextRequest) {
   let applied = 0
 
   if (taskType === 'MISSING_SKU') {
-    const conn = await getShopifyConnection()
-    if (!conn) return NextResponse.json({ error: 'Chưa kết nối Shopify.' }, { status: 400 })
+    const { conn, error } = await tryStoreConnection(() => getStoreConnection(order.storeId))
+    if (!conn) return connectionFailureResponse(error, { error: 'Chưa kết nối Shopify.', status: 400 })
     for (const f of fixes) {
       const sku = (f.sku ?? '').trim()
       if (!sku) continue

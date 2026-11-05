@@ -8,7 +8,7 @@ import { loadReadyDesignEntries } from '@/lib/repos/design-library'
 import { matchDesignEntry } from '@/lib/design-parent'
 import { autoDetectStatus, type PipelineStatus } from '@/lib/pipeline-status'
 import { fetchOrderLinePropsByNames, type ShopifyOrderLineProps } from '@/lib/shopify-orders'
-import { getShopifyConnection } from '@/lib/token-store'
+import { getStoreConnectionByShop, tryStoreConnection } from '@/lib/store-connections'
 import { reconcilePushedOrder } from '@/lib/repos/push-export'
 import { clearLineExports } from '@/lib/repos/orders'
 import { fileKindOf, folderHoldsPrintFiles, missingPrintAreas, orderedPrintFiles, type FileKind } from '@/lib/task-files'
@@ -373,22 +373,26 @@ export async function refreshMissingLineProps(orders: Array<{
   const result = { refreshed: 0, notFound: 0, otherStore: 0, error: null as string | null }
   const needing = orders.filter(needsLineProps)
   if (needing.length === 0) return result
-  const conn = await getShopifyConnection()
-  if (!conn) return { ...result, error: 'Chưa kết nối Shopify' }
-  const mine = needing.filter(o => o.store.shop === conn.shop)
-  result.otherStore = needing.length - mine.length
-  if (mine.length === 0) return result
-  let props: Map<string, ShopifyOrderLineProps[]>
-  try {
-    props = await fetchOrderLinePropsByNames(conn.shop, conn.token, mine.map(o => o.shopifyOrderNumber))
-  } catch (e: any) {
-    return { ...result, error: e.message }
+  const byShop = new Map<string, typeof needing>()
+  for (const o of needing) byShop.set(o.store.shop, [...(byShop.get(o.store.shop) ?? []), o])
+  const errors: string[] = []
+  for (const [shop, shopOrders] of Array.from(byShop)) {
+    const { conn, error } = await tryStoreConnection(() => getStoreConnectionByShop(shop))
+    if (!conn) { errors.push(error.message); continue }
+    let props: Map<string, ShopifyOrderLineProps[]>
+    try {
+      props = await fetchOrderLinePropsByNames(conn.shop, conn.token, shopOrders.map(o => o.shopifyOrderNumber))
+    } catch (e: any) {
+      errors.push(`${shop}: ${e.message}`)
+      continue
+    }
+    for (const o of shopOrders) {
+      const p = props.get(o.shopifyOrderNumber)
+      if (!p) { result.notFound++; continue }
+      await applyLineProps(o.id, p)
+      result.refreshed++
+    }
   }
-  for (const o of mine) {
-    const p = props.get(o.shopifyOrderNumber)
-    if (!p) { result.notFound++; continue }
-    await applyLineProps(o.id, p)
-    result.refreshed++
-  }
+  if (errors.length > 0) result.error = errors.join('; ')
   return result
 }

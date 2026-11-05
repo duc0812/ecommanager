@@ -164,6 +164,20 @@ export async function getStoreConnectionByShop(shop: string): Promise<StoreConne
   return connectionFor(store, store?.id ?? '', shop)
 }
 
+export type StoreConnectionResult =
+  | { conn: StoreConnection; error?: undefined }
+  | { conn: null; error: StoreConnectionError }
+
+// Turns a StoreConnectionError into a value so a caller can answer its own way; any other error still throws.
+export async function tryStoreConnection(get: () => Promise<StoreConnection>): Promise<StoreConnectionResult> {
+  try {
+    return { conn: await get() }
+  } catch (e) {
+    if (e instanceof StoreConnectionError) return { conn: null, error: e }
+    throw e
+  }
+}
+
 export async function listConnectedStores(): Promise<ConnectedStore[]> {
   const stores = await prisma.shopifyStore.findMany({
     where: { enabled: true, credential: { isNot: null } },

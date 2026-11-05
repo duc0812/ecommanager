@@ -1,5 +1,6 @@
 import { fetchAllPayouts, fetchBalance, fetchBankAccounts } from '@/lib/shopify'
-import { getShopifyConnection } from '@/lib/token-store'
+import { getStoreConnectionByShop, tryStoreConnection } from '@/lib/store-connections'
+import { LITZZY_SHOP } from '@/lib/shopify-shop'
 import { prisma } from '@/lib/db'
 import { SHOPIFY_PAYOUT_START_DATE } from '@/lib/shopify-payout-policy'
 
@@ -19,9 +20,13 @@ export async function syncShopifyPayouts(
   : SHOPIFY_PAYOUT_START_DATE
   if (dateMax && dateMax < dateMin) throw new PayoutSyncError('date_max must be on or after date_min', 400)
 
-  const stored = await getShopifyConnection()
-  if (!stored) throw new PayoutSyncError('Not connected to Shopify. Go to /setup and connect Shopify first.', 401)
-  const creds = { shop: stored.shop, token: stored.token }
+  const { conn, error } = await tryStoreConnection(() => getStoreConnectionByShop(LITZZY_SHOP))
+  if (!conn) {
+    throw error.code === 'MINT_FAILED'
+      ? new PayoutSyncError(error.message, 502)
+      : new PayoutSyncError('Not connected to Shopify. Go to /setup and connect Shopify first.', 401)
+  }
+  const creds = { shop: conn.shop, token: conn.token }
 
 
   // Upsert the store record
