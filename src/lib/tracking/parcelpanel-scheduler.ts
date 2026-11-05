@@ -1,33 +1,33 @@
 import cron from 'node-cron'
 import { initOnce, runExclusive } from '@/lib/job-lock'
-import { prisma } from '@/lib/db'
-import { getStoreConnectionByShop, tryStoreConnection } from '@/lib/store-connections'
-import { LITZZY_SHOP } from '@/lib/shopify-shop'
+import { forEachConnectedStore, logStoreFailures, okResults, saveJobResult } from '@/lib/store-jobs'
 import { syncParcelPanelTracking } from './parcelpanel-sync'
 import { getParcelPanelApiKey } from './parcelpanel-config'
 
 const TZ = 'Asia/Ho_Chi_Minh'
 
-// Daily: refresh real carrier status from ParcelPanel for undelivered shipments.
+// Daily: refresh real carrier status from ParcelPanel for undelivered shipments, store by store.
 export async function runDailyParcelPanelSync() {
   const apiKey = await getParcelPanelApiKey()
   if (!apiKey) {
     console.log('[parcelpanel] API key not configured (DB or env); skipping')
     return
   }
-  const { conn, error } = await tryStoreConnection(() => getStoreConnectionByShop(LITZZY_SHOP))
-  if (!conn) console.error(`[parcelpanel] ${error.message}; syncing without a store filter`)
+  const results = await forEachConnectedStore('parcelpanel-sync', (conn) =>
+    syncParcelPanelTracking({ apiKey, storeId: conn.storeId }))
+  if (results.length === 0) console.error('[parcelpanel] no connected store; skipping')
+  logStoreFailures('parcelpanel', results)
   try {
-    const result = await syncParcelPanelTracking({ apiKey, storeId: conn?.storeId })
-    await prisma.appSetting.upsert({
-      where: { key: 'last_parcelpanel_sync_result' },
-      create: { key: 'last_parcelpanel_sync_result', value: JSON.stringify({ ...result, ranAt: new Date().toISOString() }) },
-      update: { value: JSON.stringify({ ...result, ranAt: new Date().toISOString() }) },
+    await saveJobResult('last_parcelpanel_sync_result', results, {
+      sum: ['ordersChecked', 'shipmentsUpdated', 'delivered'],
+      concat: ['errors'],
     })
-    console.log(`[parcelpanel] ${result.shipmentsUpdated} shipments updated (${result.delivered} delivered) of ${result.ordersChecked} orders`)
-    if (result.errors.length) console.error('[parcelpanel] errors:', result.errors.slice(0, 5))
   } catch (e: any) {
-    console.error('[parcelpanel] failed:', e?.message ?? e)
+    console.error('[parcelpanel] could not save the result:', e?.message ?? e)
+  }
+  for (const r of okResults(results)) {
+    console.log(`[parcelpanel] ${r.shop}: ${r.result.shipmentsUpdated} shipments updated (${r.result.delivered} delivered) of ${r.result.ordersChecked} orders`)
+    if (r.result.errors.length) console.error(`[parcelpanel] ${r.shop} errors:`, r.result.errors.slice(0, 5))
   }
 }
 

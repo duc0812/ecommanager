@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { prisma } from '@/lib/db'
-import { getStoreConnectionByShop, tryStoreConnection } from '@/lib/store-connections'
-import { connectionFailureResponse } from '@/lib/store-connection-response'
-import { LITZZY_SHOP } from '@/lib/shopify-shop'
+import { listConnectedStores } from '@/lib/store-connections'
+import { failedResults, forEachConnectedStore, mergeStoreResults, storeRunSummary } from '@/lib/store-jobs'
 import { getSheets, getMinAgeDays } from '@/lib/fulfillment/auto-fulfill-sheets'
 import { runAutoFulfill } from '@/lib/fulfillment/auto-fulfill'
 import { syncPgprintsTracking } from '@/lib/repos/pgprints-push'
@@ -10,10 +8,9 @@ import { syncApiSupplierTracking } from '@/lib/repos/supplier-tracking-sync'
 
 export async function POST(req: NextRequest) {
   const apply = req.nextUrl.searchParams.get('apply') === '1'
-  const { conn, error } = await tryStoreConnection(() => getStoreConnectionByShop(LITZZY_SHOP))
-  if (!conn) return connectionFailureResponse(error, { error: 'Chưa kết nối Shopify. Vào /setup để kết nối.', status: 401 })
-  const store = await prisma.shopifyStore.findUnique({ where: { shop: conn.shop } })
-  if (!store) return NextResponse.json({ error: 'Store chưa có trong DB.' }, { status: 404 })
+  if ((await listConnectedStores()).length === 0) {
+    return NextResponse.json({ error: 'Chưa kết nối Shopify. Vào /setup để kết nối.' }, { status: 401 })
+  }
   const [sheets, minAgeDays] = await Promise.all([getSheets(), getMinAgeDays()])
 
   const encoder = new TextEncoder()
@@ -26,13 +23,18 @@ export async function POST(req: NextRequest) {
         const pg = await syncPgprintsTracking().catch((e: any) => ({ error: e?.message ?? String(e) }))
         send({ type: 'pgprints', ...pg })
         for (const r of await syncApiSupplierTracking()) send({ type: 'supplier-tracking', ...r })
-        const result = await runAutoFulfill({
-          shop: conn.shop, accessToken: conn.token, storeId: store.id,
+        const results = await forEachConnectedStore('auto-fulfill', (conn) => runAutoFulfill({
+          shop: conn.shop, accessToken: conn.token, storeId: conn.storeId,
           sheets, minAgeDays, apply,
-          onProgress: (done, total) => send({ type: 'progress', done, total }),
-          onStage: (stage, done, total) => send({ type: 'stage', stage, done, total }),
+          onProgress: (done, total) => send({ type: 'progress', shop: conn.shop, done, total }),
+          onStage: (stage, done, total) => send({ type: 'stage', shop: conn.shop, stage, done, total }),
+        }))
+        const merged = mergeStoreResults(results, {
+          sum: ['ordersChecked', 'fulfilled', 'tooRecent', 'alreadyFulfilled', 'notFound', 'needsManual', 'errored'],
+          concat: ['rows'],
         })
-        send({ type: 'done', apply, ...result })
+        if (!merged) send({ type: 'error', error: failedResults(results)[0]?.error ?? 'failed' })
+        else send({ type: 'done', apply, ...merged, stores: storeRunSummary(results) })
       } catch (e: any) {
         send({ type: 'error', error: e?.message ?? 'failed' })
       } finally { controller.close() }

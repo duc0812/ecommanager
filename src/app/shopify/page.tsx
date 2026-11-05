@@ -2,7 +2,6 @@
 import { useEffect, useState } from 'react'
 import Sidebar from '@/components/Sidebar'
 import type { ShopifyPayout, ShopifyBankAccount } from '@/lib/shopify'
-import { SHOPIFY_PAYOUT_START_DATE } from '@/lib/shopify-payout-policy'
 
 type Stats = {
   total_payouts: number
@@ -60,7 +59,8 @@ function StatCard({ label, value, icon, accent }: { label: string; value: string
 
 export default function FinancePage() {
   const [oauthConnected, setOauthConnected] = useState<{ connected: boolean; shop?: string } | null>(null)
-  const [dateMin, setDateMin] = useState(SHOPIFY_PAYOUT_START_DATE)
+  const [payoutStartDate, setPayoutStartDate] = useState('')
+  const [dateMin, setDateMin] = useState('')
   const [dateMax, setDateMax] = useState('')
   const [data, setData] = useState<ApiResponse | null>(null)
   const [txnData, setTxnData] = useState<TxnResponse | null>(null)
@@ -78,6 +78,10 @@ export default function FinancePage() {
     const query = params.size > 0 ? `?${params}` : ''
     const res = await fetch(`/api/shopify/db-payouts${query}`, { cache: 'no-store' })
     const json = await res.json()
+    if (typeof json.payout_start_date === 'string') {
+      setPayoutStartDate(json.payout_start_date)
+      setDateMin(current => current || json.payout_start_date)
+    }
     if (!json.empty) {
       setData(json)
       setFromDB(true)
@@ -229,7 +233,7 @@ export default function FinancePage() {
               />
             </div>
             <button
-              onClick={() => { setDateMin(SHOPIFY_PAYOUT_START_DATE); setDateMax('') }}
+              onClick={() => { setDateMin(payoutStartDate); setDateMax('') }}
               className="border border-outline-variant text-on-surface-variant px-lg py-sm rounded-lg text-label-md hover:bg-surface-container transition-colors"
             >
               Reset filter

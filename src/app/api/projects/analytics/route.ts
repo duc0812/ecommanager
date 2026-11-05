@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
-import { SHOPIFY_PAYOUT_START_DATE } from '@/lib/shopify-payout-policy'
+import { payoutDateMinFor } from '@/lib/shopify-payout-policy'
 import { dateOnly, dateKeyInZone, zonedDayStartUtc, addDays } from '@/lib/cashflow-dates'
 import { computeProjectCashflow } from '@/lib/repos/cashflow'
 
@@ -30,7 +30,7 @@ export async function GET(req: NextRequest) {
     where: { id: projectId },
     include: {
       assignments: { include: { staff: true } },
-      shopifyStore: { select: { id: true, ianaTimezone: true, currentBalance: true, currentBalanceCurrency: true } },
+      shopifyStore: { select: { id: true, ianaTimezone: true, currentBalance: true, currentBalanceCurrency: true, payoutStartDate: true } },
     },
   })
 
@@ -70,7 +70,7 @@ export async function GET(req: NextRequest) {
   // For an explicit range, use the picked day key directly so the string-based
   // queries (ad spend / billing / payout) match the selected boundary exactly.
   const startStr = dateFromKey ?? dateOnly(startDate)
-  const payoutStartStr = startStr > SHOPIFY_PAYOUT_START_DATE ? startStr : SHOPIFY_PAYOUT_START_DATE
+  const payoutStartStr = payoutDateMinFor(project.shopifyStore ?? { payoutStartDate: null }, startStr)
   const endStr = dateKeyInZone(endDate, timeZone)
   const orderRangeStart = zonedDayStartUtc(startStr, timeZone)
   const orderRangeEnd = new Date(zonedDayStartUtc(addDays(endStr, 1), timeZone).getTime() - 1)

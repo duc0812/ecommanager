@@ -1,8 +1,6 @@
 import cron from 'node-cron'
 import { initOnce, runExclusive } from '@/lib/job-lock'
-import { prisma } from '@/lib/db'
-import { getStoreConnectionByShop, tryStoreConnection } from '@/lib/store-connections'
-import { LITZZY_SHOP } from '@/lib/shopify-shop'
+import { forEachConnectedStore, logStoreFailures, okResults, saveJobResult } from '@/lib/store-jobs'
 import { getSheets, getMinAgeDays } from './auto-fulfill-sheets'
 import { runAutoFulfill } from './auto-fulfill'
 import { syncPgprintsTracking } from '@/lib/repos/pgprints-push'
@@ -22,19 +20,21 @@ export async function runDailyAutoFulfill() {
     if (r.error) console.error(`[auto-fulfill] ${r.name} tracking sync failed:`, r.error)
     else console.log(`[auto-fulfill] ${r.name} tracking sync: ${r.found}/${r.pushes} order(s) found, ${r.shipments} shipment(s) updated${r.skipped ? ` (${r.skipped})` : ''}`)
   }
-  const { conn, error } = await tryStoreConnection(() => getStoreConnectionByShop(LITZZY_SHOP))
-  if (!conn) { console.error(`[auto-fulfill] ${error.message}; skipping`); return }
+  const minAgeDays = await getMinAgeDays()
+  const results = await forEachConnectedStore('auto-fulfill', (conn) =>
+    runAutoFulfill({ shop: conn.shop, accessToken: conn.token, storeId: conn.storeId, sheets, minAgeDays, apply: true }))
+  if (results.length === 0) console.error('[auto-fulfill] no connected store; skipping')
+  logStoreFailures('auto-fulfill', results)
   try {
-    const minAgeDays = await getMinAgeDays()
-    const result = await runAutoFulfill({ shop: conn.shop, accessToken: conn.token, storeId: conn.storeId, sheets, minAgeDays, apply: true })
-    await prisma.appSetting.upsert({
-      where: { key: 'last_auto_fulfill_result' },
-      create: { key: 'last_auto_fulfill_result', value: JSON.stringify({ ...result, ranAt: new Date().toISOString() }) },
-      update: { value: JSON.stringify({ ...result, ranAt: new Date().toISOString() }) },
+    await saveJobResult('last_auto_fulfill_result', results, {
+      sum: ['ordersChecked', 'fulfilled', 'tooRecent', 'alreadyFulfilled', 'notFound', 'needsManual', 'errored'],
+      concat: ['rows'],
     })
-    console.log(`[auto-fulfill] fulfilled ${result.fulfilled}, tooRecent ${result.tooRecent}, needsManual ${result.needsManual}, errored ${result.errored} of ${result.ordersChecked}`)
   } catch (e: any) {
-    console.error('[auto-fulfill] failed:', e?.message ?? e)
+    console.error('[auto-fulfill] could not save the result:', e?.message ?? e)
+  }
+  for (const r of okResults(results)) {
+    console.log(`[auto-fulfill] ${r.shop}: fulfilled ${r.result.fulfilled}, tooRecent ${r.result.tooRecent}, needsManual ${r.result.needsManual}, errored ${r.result.errored} of ${r.result.ordersChecked}`)
   }
 }
 

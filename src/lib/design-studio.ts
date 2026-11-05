@@ -369,8 +369,8 @@ export function needsLineProps(order: { lines: Array<{ customAttributesJson: str
 export async function refreshMissingLineProps(orders: Array<{
   id: string; shopifyOrderNumber: string; store: { shop: string }
   lines: Array<{ customAttributesJson: string | null; imageUrl: string | null; shopifyProductId: string | null }>
-}>): Promise<{ refreshed: number; notFound: number; otherStore: number; error: string | null }> {
-  const result = { refreshed: 0, notFound: 0, otherStore: 0, error: null as string | null }
+}>): Promise<{ refreshed: number; notFound: number; otherStore: number; error: string | null; failedShops: string[] }> {
+  const result = { refreshed: 0, notFound: 0, otherStore: 0, error: null as string | null, failedShops: [] as string[] }
   const needing = orders.filter(needsLineProps)
   if (needing.length === 0) return result
   const byShop = new Map<string, typeof needing>()
@@ -378,12 +378,13 @@ export async function refreshMissingLineProps(orders: Array<{
   const errors: string[] = []
   for (const [shop, shopOrders] of Array.from(byShop)) {
     const { conn, error } = await tryStoreConnection(() => getStoreConnectionByShop(shop))
-    if (!conn) { errors.push(error.message); continue }
+    if (!conn) { errors.push(error.message); result.failedShops.push(shop); continue }
     let props: Map<string, ShopifyOrderLineProps[]>
     try {
       props = await fetchOrderLinePropsByNames(conn.shop, conn.token, shopOrders.map(o => o.shopifyOrderNumber))
     } catch (e: any) {
       errors.push(`${shop}: ${e.message}`)
+      result.failedShops.push(shop)
       continue
     }
     for (const o of shopOrders) {

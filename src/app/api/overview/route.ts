@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { ordersWithComputedPL } from '@/lib/repos/reports'
-import { SHOPIFY_PAYOUT_DATE_WHERE } from '@/lib/shopify-payout-policy'
+import { payoutDateWhereForStores } from '@/lib/shopify-payout-policy'
 import { convertMetaAmountToUsdDated, sumMetaAmountsUsdDated } from '@/lib/meta-currency'
 import { getMetaRateSchedule } from '@/lib/meta-exchange-rates'
 import { PAID_META_STATUSES } from '@/lib/meta-fee'
@@ -108,9 +108,14 @@ export async function GET(req: NextRequest) {
     const periodRange = getPeriodRange(period, storeTimeZone, searchParams.get('date'))
 
     const paidMetaStatuses = PAID_META_STATUSES
+    // Each store's payouts count from its own start date.
+    const payoutWhere = {
+      status: 'paid',
+      ...payoutDateWhereForStores(await prisma.shopifyStore.findMany({ select: { id: true, payoutStartDate: true } })),
+    }
 
     const [payouts, metaBillings, metaAccounts, projects, staff] = await Promise.all([
-      prisma.payout.findMany({ where: { status: 'paid', date: SHOPIFY_PAYOUT_DATE_WHERE } }),
+      prisma.payout.findMany({ where: payoutWhere }),
       prisma.metaBilling.findMany({ where: { status: { in: paidMetaStatuses } } }),
       prisma.metaAdAccount.findMany({ select: { id: true, accountId: true, accountName: true, currency: true } }),
       prisma.project.findMany({
@@ -124,7 +129,7 @@ export async function GET(req: NextRequest) {
     const totalRevenue = payouts.reduce((s, p) => s + p.amount, 0)
     const payoutCount = payouts.length
     const recentPayouts = await prisma.payout.findMany({
-      where: { status: 'paid', date: SHOPIFY_PAYOUT_DATE_WHERE }, orderBy: { date: 'desc' }, take: 5,
+      where: payoutWhere, orderBy: { date: 'desc' }, take: 5,
     })
 
     const metaBillingSummary = sumMetaAmountsUsdDated(metaBillings, schedule)

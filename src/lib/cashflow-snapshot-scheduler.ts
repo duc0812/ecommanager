@@ -3,14 +3,14 @@ import { prisma } from '@/lib/db'
 import { computeProjectCashflow } from '@/lib/repos/cashflow'
 import { listPeriodMonths, snapshotCloseDateKey } from '@/lib/cashflow-snapshot'
 import { zonedDayStartUtc, dateOnly, addDays } from '@/lib/cashflow-dates'
-import { SHOPIFY_PAYOUT_START_DATE } from '@/lib/shopify-payout-policy'
+import { payoutDateMinFor } from '@/lib/shopify-payout-policy'
 
 export async function snapshotProjectMonth(projectId: string, periodMonth: string) {
   const project = await prisma.project.findUnique({
     where: { id: projectId },
     include: {
       assignments: { include: { staff: true } },
-      shopifyStore: { select: { id: true, ianaTimezone: true, currentBalance: true, currentBalanceCurrency: true } },
+      shopifyStore: { select: { id: true, ianaTimezone: true, currentBalance: true, currentBalanceCurrency: true, payoutStartDate: true } },
     },
   })
   if (!project) throw new Error(`Project ${projectId} not found`)
@@ -23,7 +23,7 @@ export async function snapshotProjectMonth(projectId: string, periodMonth: strin
   const endDate = new Date(zonedDayStartUtc(addDays(asOfDate, 1), timeZone).getTime() - 1)
   const startDate = project.startDate
   const startStr = dateOnly(startDate)
-  const payoutStartStr = startStr > SHOPIFY_PAYOUT_START_DATE ? startStr : SHOPIFY_PAYOUT_START_DATE
+  const payoutStartStr = payoutDateMinFor(project.shopifyStore ?? { payoutStartDate: null }, startStr)
 
   const c = await computeProjectCashflow({
     project, timeZone, startStr, endStr: asOfDate, payoutStartStr,

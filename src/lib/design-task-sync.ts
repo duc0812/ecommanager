@@ -76,14 +76,21 @@ export async function runDesignTaskSync(opts: { trigger?: SyncTrigger; now?: num
   const picked = due.slice(0, REFRESH_MAX_ORDERS)
   refresh.deferred = needing.length - picked.length
   const refreshErrors = new Set<string>()
+  const failedShops = new Set<string>()
   for (let i = 0; i < picked.length; i += REFRESH_BATCH) {
     const batch = picked.slice(i, i + REFRESH_BATCH)
-    const r = await refreshMissingLineProps(batch)
+    // A store that failed earlier in this run is not asked again; its orders wait for the retry window like any other tried order.
+    const live = batch.filter(o => !failedShops.has(o.store.shop))
+    const r = live.length > 0
+      ? await refreshMissingLineProps(live)
+      : { refreshed: 0, notFound: 0, otherStore: 0, error: null as string | null, failedShops: [] as string[] }
+    for (const shop of r.failedShops) failedShops.add(shop)
     if (r.error) {
       refreshErrors.add(r.error)
       refresh.error = Array.from(refreshErrors).join('; ')
-      // One store that cannot connect must not stall the others; stop only when nothing in the batch got through.
-      if (r.refreshed === 0 && r.notFound === 0) { refresh.deferred += picked.length - i; break }
+      // Stop only when nothing in the batch got through and no store is left that has not failed.
+      const healthyLeft = picked.slice(i + REFRESH_BATCH).some(o => !failedShops.has(o.store.shop))
+      if (r.refreshed === 0 && r.notFound === 0 && !healthyLeft) { refresh.deferred += picked.length - i; break }
     }
     for (const o of batch) attempts.set(o.id, now)
     refresh.attempted += batch.length

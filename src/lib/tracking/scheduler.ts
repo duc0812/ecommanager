@@ -1,32 +1,27 @@
 import cron from 'node-cron'
 import { initOnce, runExclusive } from '@/lib/job-lock'
-import { prisma } from '@/lib/db'
-import { getStoreConnectionByShop, tryStoreConnection } from '@/lib/store-connections'
-import { LITZZY_SHOP } from '@/lib/shopify-shop'
+import { forEachConnectedStore, logStoreFailures, okResults, saveJobResult } from '@/lib/store-jobs'
 import { syncStoreTracking } from './tracking-sync'
 
 const TZ = 'Asia/Ho_Chi_Minh'
 
-// Runs the tracking sync for the currently-connected Shopify store.
-// NOTE: the app stores a single Shopify connection token (token-store is
-// single-connection), so "all stores" today means the connected store. When
-// per-store tokens exist, iterate stores here.
+// Runs the tracking sync for every connected store, one after the other; a store that fails is
+// recorded on that store and does not stop the next one.
 export async function runDailyTrackingSync() {
-  const { conn, error } = await tryStoreConnection(() => getStoreConnectionByShop(LITZZY_SHOP))
-  if (!conn) {
-    console.error(`[tracking-scheduler] ${error.message}; skipping`)
-    return
-  }
+  const results = await forEachConnectedStore('tracking-sync', (conn) =>
+    syncStoreTracking({ shop: conn.shop, accessToken: conn.token, storeId: conn.storeId, days: 30 }))
+  if (results.length === 0) console.error('[tracking-scheduler] no connected store; skipping')
+  logStoreFailures('tracking-scheduler', results)
   try {
-    const result = await syncStoreTracking({ shop: conn.shop, accessToken: conn.token, storeId: conn.storeId, days: 30 })
-    await prisma.appSetting.upsert({
-      where: { key: 'last_tracking_sync_result' },
-      create: { key: 'last_tracking_sync_result', value: JSON.stringify({ ...result, shop: conn.shop, ranAt: new Date().toISOString() }) },
-      update: { value: JSON.stringify({ ...result, shop: conn.shop, ranAt: new Date().toISOString() }) },
+    await saveJobResult('last_tracking_sync_result', results, {
+      sum: ['ordersProcessed', 'shipmentCount', 'withTracking', 'withoutTracking', 'fulfillmentStatusUpdated'],
+      concat: ['errors'],
     })
-    console.log(`[tracking-scheduler] ${conn.shop}: ${result.shipmentCount} shipments, ${result.fulfillmentStatusUpdated} status updates`)
   } catch (e: any) {
-    console.error('[tracking-scheduler] failed:', e?.message ?? e)
+    console.error('[tracking-scheduler] could not save the result:', e?.message ?? e)
+  }
+  for (const r of okResults(results)) {
+    console.log(`[tracking-scheduler] ${r.shop}: ${r.result.shipmentCount} shipments, ${r.result.fulfillmentStatusUpdated} status updates`)
   }
   // Delivery-status crawling removed — ParcelPanel on the store handles customer-facing status.
 }

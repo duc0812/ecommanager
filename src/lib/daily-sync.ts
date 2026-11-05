@@ -2,7 +2,8 @@ import { prisma } from '@/lib/db'
 import type { MetaBillingSyncJob } from '@/lib/meta-billing-sync-types'
 import { getMetaBillingSyncJob, startMetaBillingSync } from '@/lib/meta-billing-sync'
 import { refreshReserveData } from '@/lib/meta-reserve-sync'
-import { syncShopifyPayouts } from '@/lib/shopify-payouts-sync'
+import { PayoutSyncError, syncPayoutsForConnectedStores } from '@/lib/shopify-payouts-sync'
+import { failedResults, storeRunSummary } from '@/lib/store-jobs'
 import { snapshotProjectMonth } from '@/lib/cashflow-snapshot-scheduler'
 import { dateKeyInZone } from '@/lib/cashflow-dates'
 
@@ -95,8 +96,17 @@ async function billingStep() {
   }
 }
 
+// One step for all stores: it throws only when no store got through, so the step is not lost to one
+// broken store; the stores that failed are listed under `stores` and still mark the whole run not ok.
+export async function payoutsStep() {
+  const { results, merged } = await syncPayoutsForConnectedStores()
+  if (results.length === 0) throw new PayoutSyncError('Not connected to Shopify. Go to /setup and connect Shopify first.', 401)
+  if (!merged) throw new Error(failedResults(results).map(r => `${r.shop}: ${r.error}`).join('; '))
+  return { ...merged, stores: storeRunSummary(results) }
+}
+
 const DEFAULT_STEPS: DailySyncSteps = {
-  payouts: () => syncShopifyPayouts(),
+  payouts: payoutsStep,
   billing: billingStep,
   // Billing runs first: the reserve reads thresholds off billing history, and both call the
   // rate-limited Meta API, so they must not overlap.
@@ -113,6 +123,7 @@ export async function runDailySync(overrides: Partial<DailySyncSteps> = {}): Pro
   for (const name of STEP_ORDER) {
     try {
       results[name] = await steps[name]()
+      if (Array.isArray(results[name]?.stores) && results[name].stores.some((s: any) => s?.ok === false)) ok = false
     } catch (error) {
       ok = false
       results[name] = { error: error instanceof Error ? error.message : 'Unknown error' }

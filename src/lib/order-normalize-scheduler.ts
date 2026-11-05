@@ -1,32 +1,29 @@
 import cron from 'node-cron'
 import { initOnce, runExclusive } from '@/lib/job-lock'
-import { prisma } from '@/lib/db'
-import { getStoreConnectionByShop, tryStoreConnection } from '@/lib/store-connections'
-import { LITZZY_SHOP } from '@/lib/shopify-shop'
+import { forEachConnectedStore, logStoreFailures, okResults, saveJobResult } from '@/lib/store-jobs'
 import { normalizeOpenOrderStatuses } from './order-normalize'
 
 const TZ = 'Asia/Ho_Chi_Minh'
 
 // Daily: pull the real fulfillment status for every OPEN order from Shopify and
 // write back any changes, so old orders don't sit UNFULFILLED forever after
-// Shopify has fulfilled them. Runs for the connected store (single-token app).
+// Shopify has fulfilled them. Runs for every connected store, one after the other.
 export async function runDailyOrderNormalize() {
-  const { conn, error } = await tryStoreConnection(() => getStoreConnectionByShop(LITZZY_SHOP))
-  if (!conn) {
-    console.error(`[order-normalize] ${error.message}; skipping`)
-    return
-  }
+  const results = await forEachConnectedStore('order-normalize', (conn) =>
+    normalizeOpenOrderStatuses({ shop: conn.shop, accessToken: conn.token, storeId: conn.storeId }))
+  if (results.length === 0) console.error('[order-normalize] no connected store; skipping')
+  logStoreFailures('order-normalize', results)
   try {
-    const result = await normalizeOpenOrderStatuses({ shop: conn.shop, accessToken: conn.token, storeId: conn.storeId })
-    await prisma.appSetting.upsert({
-      where: { key: 'last_order_normalize_result' },
-      create: { key: 'last_order_normalize_result', value: JSON.stringify({ ...result, shop: conn.shop, ranAt: new Date().toISOString() }) },
-      update: { value: JSON.stringify({ ...result, shop: conn.shop, ranAt: new Date().toISOString() }) },
+    await saveJobResult('last_order_normalize_result', results, {
+      sum: ['ordersOpen', 'fulfillmentUpdated', 'pipelineFulfilled'],
+      concat: ['errors'],
     })
-    console.log(`[order-normalize] ${conn.shop}: ${result.fulfillmentUpdated} fulfillment, ${result.pipelineFulfilled} pipeline→FULFILLED (of ${result.ordersOpen} open)`)
-    if (result.errors.length) console.error('[order-normalize] errors:', result.errors.slice(0, 5))
   } catch (e: any) {
-    console.error('[order-normalize] failed:', e?.message ?? e)
+    console.error('[order-normalize] could not save the result:', e?.message ?? e)
+  }
+  for (const r of okResults(results)) {
+    console.log(`[order-normalize] ${r.shop}: ${r.result.fulfillmentUpdated} fulfillment, ${r.result.pipelineFulfilled} pipeline→FULFILLED (of ${r.result.ordersOpen} open)`)
+    if (r.result.errors.length) console.error(`[order-normalize] ${r.shop} errors:`, r.result.errors.slice(0, 5))
   }
 }
 

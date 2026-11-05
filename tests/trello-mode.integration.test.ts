@@ -5,10 +5,6 @@ const SHOP = 'trello-mode.myshopify.com'
 type Card = { id: string; name: string; url: string; attachments: { name: string; url: string }[] }
 const state: { cards: Card[] } = { cards: [] }
 
-vi.mock('@/lib/store-connections', async importOriginal => ({
-  ...(await importOriginal<typeof import('@/lib/store-connections')>()),
-  getStoreConnectionByShop: vi.fn(async () => ({ storeId: 'trello-mode', shop: 'trello-mode.myshopify.com', token: 'test_token' })),
-}))
 vi.mock('@/lib/trello', () => ({
   getTrelloConfig: vi.fn(async () => ({ apiKey: 'k', token: 't', boardId: 'b', listId: 'todo', doneListId: 'done', syncFromOrderName: '' })),
   createTrelloCard: vi.fn(async (_cfg: unknown, name: string) => ({ id: `card-${name}`, name, url: `https://trello.com/c/${encodeURIComponent(name)}` })),
@@ -20,6 +16,7 @@ vi.mock('@/lib/trello', () => ({
 }))
 
 import { prisma } from '@/lib/db'
+import { saveStoreCredential } from '@/lib/store-connections'
 import { AUTH_COOKIE, signToken } from '@/lib/auth'
 import { DEFAULT_DESIGN_SETTINGS, getDesignSettings, saveDesignSettings, type TrelloMode } from '@/lib/design-settings'
 import { createTrelloCard, getCardsByList, getCardDesc } from '@/lib/trello'
@@ -74,8 +71,9 @@ beforeAll(async () => {
   process.env.AUTH_SECRET = 'test-secret-that-is-long-enough-32chars'
   await prisma.project.upsert({ where: { id: PROJECT }, create: { id: PROJECT, name: 'Trello mode', startDate: new Date('2026-05-01') }, update: {} })
   storeId = (await prisma.shopifyStore.upsert({
-    where: { shop: SHOP }, create: { shop: SHOP, syncSinceDate: new Date('2026-05-01'), projectId: PROJECT }, update: { projectId: PROJECT },
+    where: { shop: SHOP }, create: { shop: SHOP, syncSinceDate: new Date('2026-05-01'), projectId: PROJECT, orderPrefix: 'LIT' }, update: { projectId: PROJECT, orderPrefix: 'LIT' },
   })).id
+  await saveStoreCredential(storeId, { authMode: 'TOKEN', accessToken: 'test_token' })
   await prisma.supplier.upsert({ where: { code: 'TRELLOMODE' }, create: { id: SUP, name: 'Trello Mode Supplier', code: 'TRELLOMODE' }, update: { isActive: true } })
   const sp = await prisma.supplierProduct.upsert({
     where: { supplierId_sku: { supplierId: SUP, sku: 'TM-TEE-M' } }, create: { supplierId: SUP, sku: 'TM-TEE-M', baseCost: 5 }, update: {},
@@ -100,6 +98,7 @@ beforeEach(async () => {
 
 afterAll(async () => {
   await prisma.order.deleteMany({ where: { storeId } })
+  await prisma.shopifyStore.deleteMany({ where: { id: storeId } })
   await prisma.variantManualMapping.deleteMany({ where: { shopifyVariantId: VARIANT_ID } })
   await prisma.skuSupplierDesign.deleteMany({ where: { supplierId: SUP } })
   await prisma.supplier.deleteMany({ where: { id: SUP } })
@@ -152,6 +151,19 @@ describe('Trello card creation at order sync', () => {
     expect(order?.trelloCardId).toBeNull()
     expect(order?.pipelineStatus).toBe('PENDING_DESIGN')
     expect(await prisma.designTask.count({ where: { orderId: order!.id } })).toBe(1)
+  })
+
+  it('BOTH still creates no card for a store that is not Litzzy', async () => {
+    await prisma.shopifyStore.update({ where: { id: storeId }, data: { orderPrefix: 'REM' } })
+    try {
+      const { body, order } = await syncShopifyOrder(4)
+      expect(body.totalSynced).toBe(1)
+      expect(createTrelloCard).not.toHaveBeenCalled()
+      expect(order?.trelloCardId).toBeNull()
+      expect(await prisma.designTask.count({ where: { orderId: order!.id } })).toBe(1)
+    } finally {
+      await prisma.shopifyStore.update({ where: { id: storeId }, data: { orderPrefix: 'LIT' } })
+    }
   })
 })
 

@@ -16,6 +16,7 @@ vi.mock('@/lib/shopify-orders', () => ({ fetchOrderLinePropsByNames: vi.fn(async
 
 import { prisma } from '@/lib/db'
 import { fetchOrderLinePropsByNames } from '@/lib/shopify-orders'
+import { getStoreConnectionByShop } from '@/lib/store-connections'
 import {
   DESIGN_TASK_SYNC_KEY, REFRESH_BATCH, REFRESH_MAX_ORDERS, getLastDesignTaskSync, runDesignTaskSync, runDesignTaskSyncJob,
 } from '@/lib/design-task-sync'
@@ -217,6 +218,32 @@ describe('runDesignTaskSync Shopify refresh', () => {
       expect(s.refresh.refreshed).toBe(s.refresh.attempted - 5)
     } finally {
       vi.mocked(fetchOrderLinePropsByNames).mockImplementation(async () => new Map())
+      await prisma.order.deleteMany({ where: { store: { shop: DOWN_SHOP } } })
+    }
+  })
+
+  it("a broken store that owns a whole first batch does not stop a healthy store's later orders from refreshing", async () => {
+    const down = await prisma.shopifyStore.upsert({ where: { shop: DOWN_SHOP }, create: { shop: DOWN_SHOP, projectId: null }, update: {} })
+    for (let i = 0; i < REFRESH_BATCH; i += 1) await order({ status: 'PENDING_DESIGN', placedAt: `2031-01-01T00:${String(i).padStart(2, '0')}:00Z`, attrs: null, storeId: down.id })
+    for (let i = 0; i < 40; i += 1) await order({ status: 'PENDING_DESIGN', placedAt: `2030-01-01T00:${String(i).padStart(2, '0')}:00Z`, attrs: null })
+    for (let i = 0; i < 5; i += 1) await order({ status: 'PENDING_DESIGN', placedAt: `2029-06-01T00:${String(i).padStart(2, '0')}:00Z`, attrs: null, storeId: down.id })
+    const downNames = (await prisma.order.findMany({ where: { storeId: down.id }, select: { shopifyOrderNumber: true } })).map(o => o.shopifyOrderNumber)
+    vi.mocked(getStoreConnectionByShop).mockClear()
+    vi.mocked(fetchOrderLinePropsByNames).mockImplementation(async (_s, _t, names) => new Map(names.map(n => [n, [{
+      sku: 'A', title: 'Mug', variantTitle: null, quantity: 1, productType: null, customAttributes: [], productUrl: null,
+      variantId: null, imageUrl: 'https://cdn.shopify.com/v.jpg', productId: 'gid://shopify/Product/5',
+    }]])))
+    try {
+      const s = await runDesignTaskSync({ trigger: 'manual', now: 6_000_000 })
+      const asked = vi.mocked(fetchOrderLinePropsByNames).mock.calls.flatMap(c => c[2])
+      expect(s.refresh.refreshed).toBeGreaterThanOrEqual(40)
+      expect(asked.length).toBeGreaterThanOrEqual(40)
+      expect(asked.some(n => downNames.includes(n))).toBe(false)
+      expect(s.refresh.error).toContain(DOWN_SHOP)
+      expect(vi.mocked(getStoreConnectionByShop).mock.calls.filter(c => c[0] === DOWN_SHOP)).toHaveLength(1)
+    } finally {
+      vi.mocked(fetchOrderLinePropsByNames).mockImplementation(async () => new Map())
+      await prisma.order.deleteMany({ where: { store: { shop: DOWN_SHOP } } })
     }
   })
 

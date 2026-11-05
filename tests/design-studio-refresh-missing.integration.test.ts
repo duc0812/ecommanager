@@ -52,7 +52,7 @@ async function load() {
 describe('refreshMissingLineProps', () => {
   it('fetches only orders with missing data, applies what Shopify returns, counts the rest', async () => {
     const r = await refreshMissingLineProps(await load())
-    expect(r).toEqual({ refreshed: 1, notFound: 2, otherStore: 0, error: null })
+    expect(r).toEqual({ refreshed: 1, notFound: 2, otherStore: 0, error: null, failedShops: [] })
     const asked = vi.mocked(fetchOrderLinePropsByNames).mock.calls[0][2]
     expect(asked.sort()).toEqual(['#DRM1', '#DRM2', '#DRM4'])
     const line = await prisma.orderLine.findFirst({ where: { orderId: IDS[0] } })
@@ -65,6 +65,7 @@ describe('refreshMissingLineProps', () => {
     const orders = (await load()).map(o => ({ ...o, store: { shop: 'other.myshopify.com' } }))
     const r = await refreshMissingLineProps(orders)
     expect(r.error).toContain('other.myshopify.com')
+    expect(r.failedShops).toEqual(['other.myshopify.com'])
     expect(r.otherStore).toBe(0)
     expect(r.refreshed).toBe(0)
     expect(fetchOrderLinePropsByNames).not.toHaveBeenCalled()

@@ -1,12 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import { prisma } from '@/lib/db'
+import { saveStoreCredential } from '@/lib/store-connections'
 
 const SHOP = 'test-store.myshopify.com'
-
-vi.mock('@/lib/store-connections', async importOriginal => ({
-  ...(await importOriginal<typeof import('@/lib/store-connections')>()),
-  getStoreConnectionByShop: vi.fn(async () => ({ storeId: 'test-store', shop: 'test-store.myshopify.com', token: 'test_token' })),
-}))
 const VARIANT_ID = 'gid://shopify/ProductVariant/test-1'
 
 beforeAll(async () => {
@@ -16,11 +12,12 @@ beforeAll(async () => {
     create: { id: 'proj_test', name: 'Test Project', startDate: new Date('2026-05-01') },
     update: { archivedAt: null },
   })
-  await prisma.shopifyStore.upsert({
+  const store = await prisma.shopifyStore.upsert({
     where: { shop: SHOP },
     create: { shop: SHOP, syncSinceDate: new Date('2026-05-01'), projectId: 'proj_test' },
     update: { syncSinceDate: new Date('2026-05-01'), projectId: 'proj_test' },
   })
+  await saveStoreCredential(store.id, { authMode: 'TOKEN', accessToken: 'test_token' })
   await prisma.supplier.upsert({
     where: { code: 'test_sup' },
     create: {
@@ -61,6 +58,7 @@ afterAll(async () => {
   await prisma.orderLine.deleteMany({ where: { orderId: { in: orderIds } } })
   await prisma.order.deleteMany({ where: { storeId: { in: storeIds } } })
   await prisma.variantManualMapping.deleteMany({ where: { shopifyVariantId: VARIANT_ID } })
+  await prisma.shopifyStore.deleteMany({ where: { shop: SHOP } })
 })
 
 describe('POST /api/shopify/orders/sync', () => {

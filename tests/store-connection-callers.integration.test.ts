@@ -65,7 +65,7 @@ afterAll(async () => {
 describe('refreshMissingLineProps across stores', () => {
   it("calls Shopify once per store with that store's token", async () => {
     const r = await refreshMissingLineProps(await load())
-    expect(r).toEqual({ refreshed: 3, notFound: 0, otherStore: 0, error: null })
+    expect(r).toEqual({ refreshed: 3, notFound: 0, otherStore: 0, error: null, failedShops: [] })
     const calls = vi.mocked(fetchOrderLinePropsByNames).mock.calls.map(c => ({ shop: c[0], token: c[1], names: [...c[2]].sort() }))
     expect(calls).toHaveLength(2)
     expect(calls).toContainEqual({ shop: SHOP_A, token: 'token-a', names: ['#SCCA1', '#SCCA2'] })
@@ -78,6 +78,7 @@ describe('refreshMissingLineProps across stores', () => {
     expect(r.refreshed).toBe(2)
     expect(r.error).toContain(SHOP_B)
     expect(r.error).not.toContain(SHOP_A)
+    expect(r.failedShops).toEqual([SHOP_B])
     expect(vi.mocked(fetchOrderLinePropsByNames)).toHaveBeenCalledTimes(1)
     expect(vi.mocked(fetchOrderLinePropsByNames).mock.calls[0][0]).toBe(SHOP_A)
     const lineB = await prisma.orderLine.findFirst({ where: { orderId: ORDER_IDS[2] } })
@@ -88,6 +89,8 @@ describe('refreshMissingLineProps across stores', () => {
     vi.mocked(fetchOrderLinePropsByNames).mockImplementationOnce(async () => { throw new Error('boom') })
     const r = await refreshMissingLineProps(await load())
     expect(r.error).toMatch(/scc-[ab]\.myshopify\.com: .*boom/)
+    expect(r.failedShops).toHaveLength(1)
+    expect([SHOP_A, SHOP_B]).toContain(r.failedShops[0])
     expect(vi.mocked(fetchOrderLinePropsByNames)).toHaveBeenCalledTimes(2)
     expect(r.refreshed).toBe(await prisma.orderLine.count({ where: { orderId: { in: ORDER_IDS }, customAttributesJson: { not: null } } }))
   })

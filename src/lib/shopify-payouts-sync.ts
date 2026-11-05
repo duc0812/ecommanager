@@ -1,8 +1,8 @@
 import { fetchAllPayouts, fetchBalance, fetchBankAccounts } from '@/lib/shopify'
-import { getStoreConnectionByShop, tryStoreConnection } from '@/lib/store-connections'
-import { LITZZY_SHOP } from '@/lib/shopify-shop'
+import { getStoreConnection, listConnectedStores, tryStoreConnection } from '@/lib/store-connections'
 import { prisma } from '@/lib/db'
-import { SHOPIFY_PAYOUT_START_DATE } from '@/lib/shopify-payout-policy'
+import { payoutDateMinFor, payoutStartFor } from '@/lib/shopify-payout-policy'
+import { forEachConnectedStore, mergeStoreResults, type StoreRunResult } from '@/lib/store-jobs'
 
 export class PayoutSyncError extends Error {
   constructor(message: string, readonly status: number) {
@@ -13,14 +13,15 @@ export class PayoutSyncError extends Error {
 // Moved out of the route so the daily scheduler can run it in-process: a cron carries no
 // session cookie, and every other scheduler in this app calls its lib directly.
 export async function syncShopifyPayouts(
-  { requestedDateMin, dateMax }: { requestedDateMin?: string; dateMax?: string } = {},
+  { storeId, requestedDateMin, dateMax }: { storeId: string; requestedDateMin?: string; dateMax?: string },
 ) {
-  const dateMin = requestedDateMin && requestedDateMin > SHOPIFY_PAYOUT_START_DATE
-  ? requestedDateMin
-  : SHOPIFY_PAYOUT_START_DATE
+  const row = await prisma.shopifyStore.findUnique({ where: { id: storeId }, select: { payoutStartDate: true } })
+  if (!row) throw new PayoutSyncError('Store not found in DB. Connect via /setup first.', 404)
+  const payoutStart = payoutStartFor(row)
+  const dateMin = payoutDateMinFor(row, requestedDateMin)
   if (dateMax && dateMax < dateMin) throw new PayoutSyncError('date_max must be on or after date_min', 400)
 
-  const { conn, error } = await tryStoreConnection(() => getStoreConnectionByShop(LITZZY_SHOP))
+  const { conn, error } = await tryStoreConnection(() => getStoreConnection(storeId))
   if (!conn) {
     throw error.code === 'MINT_FAILED'
       ? new PayoutSyncError(error.message, 502)
@@ -28,12 +29,9 @@ export async function syncShopifyPayouts(
   }
   const creds = { shop: conn.shop, token: conn.token }
 
-
-  // Upsert the store record
-  const store = await prisma.shopifyStore.upsert({
-    where: { shop: creds.shop },
-    create: { shop: creds.shop },
-    update: { lastSyncAt: new Date() },
+  const store = await prisma.shopifyStore.update({
+    where: { id: storeId },
+    data: { lastSyncAt: new Date() },
   })
 
   // Fetch all payouts + balance + bank accounts in parallel
@@ -124,11 +122,30 @@ export async function syncShopifyPayouts(
   })
 
   return {
-  success: true,
+    success: true,
     synced_payouts: synced,
     synced_bank_accounts: bankAccounts.length,
-    payout_start_date: SHOPIFY_PAYOUT_START_DATE,
+    payout_start_date: payoutStart,
     date_range: { from: dateMin, to: dateMax ?? null },
-  store: { id: store.id, shop: store.shop },
+    store: { id: store.id, shop: store.shop },
   }
+}
+
+export type PayoutSyncResult = Awaited<ReturnType<typeof syncShopifyPayouts>>
+
+// Every connected store, each from its own payout start date. The merged result keeps the single-store
+// fields as totals; `results` says how each store went.
+export async function syncPayoutsForConnectedStores(
+  { requestedDateMin, dateMax, storeIds }: { requestedDateMin?: string; dateMax?: string; storeIds?: string[] } = {},
+): Promise<{ results: StoreRunResult<PayoutSyncResult>[]; merged: PayoutSyncResult | null }> {
+  // A bad date range is the caller's mistake, so it is refused before any store runs and never lands on a store's lastError.
+  if (dateMax) {
+    for (const store of await listConnectedStores()) {
+      if (storeIds && !storeIds.includes(store.id)) continue
+      if (dateMax < payoutDateMinFor(store, requestedDateMin)) throw new PayoutSyncError('date_max must be on or after date_min', 400)
+    }
+  }
+  const results = await forEachConnectedStore('payout-sync', conn =>
+    syncShopifyPayouts({ storeId: conn.storeId, requestedDateMin, dateMax }), { storeIds })
+  return { results, merged: mergeStoreResults(results, { sum: ['synced_payouts', 'synced_bank_accounts'] }) }
 }

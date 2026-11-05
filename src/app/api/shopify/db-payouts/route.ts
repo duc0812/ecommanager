@@ -1,32 +1,33 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
-import { SHOPIFY_PAYOUT_START_DATE } from '@/lib/shopify-payout-policy'
+import { payoutDateMinFor, payoutDateWhereForStores, payoutStartFor } from '@/lib/shopify-payout-policy'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
   const requestedDateMin = req.nextUrl.searchParams.get('date_min') ?? undefined
-  const dateMin = requestedDateMin && requestedDateMin > SHOPIFY_PAYOUT_START_DATE
-    ? requestedDateMin
-    : SHOPIFY_PAYOUT_START_DATE
   const dateMax = req.nextUrl.searchParams.get('date_max') ?? undefined
-  if (dateMax && dateMax < dateMin) {
-    return NextResponse.json({ error: 'date_max must be on or after date_min' }, { status: 400 })
-  }
 
   const store = await prisma.shopifyStore.findFirst({
     orderBy: { lastSyncAt: 'desc' },
     include: { bankAccounts: true },
   })
+  const stores = await prisma.shopifyStore.findMany({ select: { id: true, payoutStartDate: true } })
+  const shown = store ?? { payoutStartDate: null }
+  const payoutStartDate = payoutStartFor(shown)
+  const dateMin = payoutDateMinFor(shown, requestedDateMin)
+  if (dateMax && dateMax < dateMin) {
+    return NextResponse.json({ error: 'date_max must be on or after date_min' }, { status: 400 })
+  }
 
   const payouts = await prisma.payout.findMany({
-    where: { date: { gte: dateMin, ...(dateMax ? { lte: dateMax } : {}) } },
+    where: payoutDateWhereForStores(stores, { dateMin: requestedDateMin, dateMax }),
     orderBy: { date: 'desc' },
   })
 
   if (payouts.length === 0) {
     return NextResponse.json(
-      { empty: true, payout_start_date: SHOPIFY_PAYOUT_START_DATE, lastSyncAt: store?.lastSyncAt ?? null },
+      { empty: true, payout_start_date: payoutStartDate, lastSyncAt: store?.lastSyncAt ?? null },
       { headers: { 'Cache-Control': 'no-store' } },
     )
   }
@@ -80,7 +81,7 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({
     fromDB: true,
-    payout_start_date: SHOPIFY_PAYOUT_START_DATE,
+    payout_start_date: payoutStartDate,
     lastSyncAt: store?.lastSyncAt ?? null,
     stats: {
       total_payouts: payouts.length,
