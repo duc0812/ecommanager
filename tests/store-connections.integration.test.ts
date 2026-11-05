@@ -153,6 +153,78 @@ describe('store connections', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
+  it('does not follow redirects with the client secret in the body', async () => {
+    await makeCcStore(null, null)
+    fetchMock.mockResolvedValue(mintReply())
+    await getStoreConnection(ids[CC])
+    expect(fetchMock.mock.calls[0][1].redirect).toBe('error')
+
+    await prisma.shopifyStoreCredential.update({ where: { storeId: ids[CC] }, data: { accessToken: null } })
+    fetchMock.mockRejectedValue(new TypeError('fetch failed: unexpected redirect'))
+    await expect(getStoreConnection(ids[CC])).rejects.toMatchObject({ code: 'MINT_FAILED', shop: CC })
+  })
+
+  it('a credential saved while a mint is in flight is not overwritten by the late token', async () => {
+    await makeCcStore(null, null)
+    let release!: () => void
+    const gate = new Promise<void>(r => { release = r })
+    fetchMock.mockImplementation(async () => {
+      await gate
+      return mintReply('shpat_from_old_secret')
+    })
+    const pending = getStoreConnection(ids[CC])
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+    await saveStoreCredential(ids[CC], { authMode: 'TOKEN', accessToken: 'tok-manual' })
+    release()
+
+    expect((await pending).token).toBe('tok-manual')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const stored = await prisma.shopifyStoreCredential.findUnique({ where: { storeId: ids[CC] } })
+    expect(stored).toMatchObject({ authMode: 'TOKEN', accessToken: 'tok-manual', clientSecret: null })
+  })
+
+  it('a secret rotated while a mint is in flight is minted again with the new secret', async () => {
+    await makeCcStore(null, null)
+    let release!: () => void
+    const gate = new Promise<void>(r => { release = r })
+    fetchMock.mockImplementationOnce(async () => {
+      await gate
+      return mintReply('shpat_from_old_secret')
+    })
+    fetchMock.mockResolvedValueOnce(mintReply('shpat_from_new_secret'))
+    const pending = getStoreConnection(ids[CC])
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+    await saveStoreCredential(ids[CC], { authMode: 'CLIENT_CREDENTIALS', clientId: 'cid', clientSecret: 'rotated', accessToken: null, tokenExpiresAt: null })
+    release()
+
+    expect((await pending).token).toBe('shpat_from_new_secret')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(new URLSearchParams(String(fetchMock.mock.calls[1][1].body)).get('client_secret')).toBe('rotated')
+    const stored = await prisma.shopifyStoreCredential.findUnique({ where: { storeId: ids[CC] } })
+    expect(stored).toMatchObject({ clientSecret: 'rotated', accessToken: 'shpat_from_new_secret' })
+  })
+
+  it('a mint error message never contains the secret or a token', async () => {
+    await makeCcStore(null, null)
+    fetchMock.mockRejectedValue(new Error('request to secret failed, body client_secret=secret'))
+    const networkError = await getStoreConnection(ids[CC]).then(() => null, e => e)
+    expect(networkError).toMatchObject({ code: 'MINT_FAILED' })
+    expect(networkError.message).not.toContain('secret')
+
+    fetchMock.mockReset()
+    fetchMock.mockResolvedValue(mintReply('shpat_leaky_token'))
+    const spy = vi.spyOn(prisma.shopifyStoreCredential, 'updateMany').mockRejectedValue(new Error('Invalid update with accessToken: shpat_leaky_token'))
+    try {
+      const saveError = await getStoreConnection(ids[CC]).then(() => null, e => e)
+      expect(saveError).toBeInstanceOf(StoreConnectionError)
+      expect(saveError).toMatchObject({ code: 'MINT_FAILED', shop: CC })
+      expect(saveError.message).not.toContain('shpat_leaky_token')
+      expect(saveError.message).not.toContain('secret')
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
   it('a mint reply without a token is a failed mint', async () => {
     await makeCcStore(null, null)
     fetchMock.mockResolvedValue(new Response('{}', { status: 200 }))

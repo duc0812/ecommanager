@@ -66,36 +66,67 @@ function needsMint(credential: Credential): boolean {
   return credential.tokenExpiresAt.getTime() - Date.now() < REFRESH_WINDOW_MS
 }
 
+// Messages of this class are fixed text and safe to show; any other error is reduced to a generic line
+// so a library or database message that echoes a secret or token never reaches a caller.
+class MintError extends Error {}
+
 export async function mintClientCredentialsToken(shop: string, clientId: string, clientSecret: string): Promise<{ token: string; expiresAt: Date }> {
-  const url = assertSafeExternalUrl(`https://${shop}/admin/oauth/access_token`)
-  const res = await fetch(url.toString(), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
-    body: new URLSearchParams({ grant_type: 'client_credentials', client_id: clientId, client_secret: clientSecret }).toString(),
-    signal: AbortSignal.timeout(MINT_TIMEOUT_MS),
-  })
-  if (!res.ok) throw new Error(`Shopify từ chối cấp token (HTTP ${res.status})`)
+  let url: URL
+  try {
+    url = assertSafeExternalUrl(`https://${shop}/admin/oauth/access_token`)
+  } catch (e) {
+    throw new MintError(e instanceof Error ? e.message : 'Địa chỉ shop không hợp lệ')
+  }
+  let res: Response
+  try {
+    res = await fetch(url.toString(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+      body: new URLSearchParams({ grant_type: 'client_credentials', client_id: clientId, client_secret: clientSecret }).toString(),
+      redirect: 'error',
+      signal: AbortSignal.timeout(MINT_TIMEOUT_MS),
+    })
+  } catch {
+    throw new MintError('không kết nối được tới Shopify')
+  }
+  if (!res.ok) throw new MintError(`Shopify từ chối cấp token (HTTP ${res.status})`)
   const json = await res.json().catch(() => null) as { access_token?: unknown; expires_in?: unknown } | null
   const token = typeof json?.access_token === 'string' ? json.access_token : ''
   const expiresIn = Number(json?.expires_in)
-  if (!token || !Number.isFinite(expiresIn) || expiresIn <= 0) throw new Error('Shopify trả về token không hợp lệ')
+  if (!token || !Number.isFinite(expiresIn) || expiresIn <= 0) throw new MintError('Shopify trả về token không hợp lệ')
   return { token, expiresAt: new Date(Date.now() + expiresIn * 1000) }
 }
 
+const MINT_ATTEMPTS = 3
+
 async function mintAndSave(store: StoreWithCredential): Promise<string> {
-  const fresh = await prisma.shopifyStoreCredential.findUnique({ where: { storeId: store.id } })
-  if (!fresh) throw new StoreConnectionError('NOT_CONNECTED', store.id, store.shop, `Store ${store.shop} chưa có thông tin kết nối`)
-  if (!needsMint(fresh) && fresh.accessToken) return fresh.accessToken
-  if (!fresh.clientId || !fresh.clientSecret) {
-    throw new StoreConnectionError('NOT_CONNECTED', store.id, store.shop, `Store ${store.shop} thiếu Client ID hoặc Client Secret`)
+  const fail = (reason: string) => new StoreConnectionError('MINT_FAILED', store.id, store.shop, `Không lấy được token mới cho ${store.shop}: ${reason}`)
+  for (let attempt = 0; attempt < MINT_ATTEMPTS; attempt++) {
+    const fresh = await prisma.shopifyStoreCredential.findUnique({ where: { storeId: store.id } })
+    if (!fresh) throw new StoreConnectionError('NOT_CONNECTED', store.id, store.shop, `Store ${store.shop} chưa có thông tin kết nối`)
+    if (!needsMint(fresh) && fresh.accessToken) return fresh.accessToken
+    if (!fresh.clientId || !fresh.clientSecret) {
+      throw new StoreConnectionError('NOT_CONNECTED', store.id, store.shop, `Store ${store.shop} thiếu Client ID hoặc Client Secret`)
+    }
+    let minted: { token: string; expiresAt: Date }
+    try {
+      minted = await mintClientCredentialsToken(store.shop, fresh.clientId, fresh.clientSecret)
+    } catch (e) {
+      throw fail(e instanceof MintError ? e.message : 'lỗi không rõ')
+    }
+    let saved: { count: number }
+    try {
+      // Compare-and-set: the credential may have been replaced while the request was in flight.
+      saved = await prisma.shopifyStoreCredential.updateMany({
+        where: { storeId: store.id, authMode: 'CLIENT_CREDENTIALS', clientId: fresh.clientId, clientSecret: fresh.clientSecret, updatedAt: fresh.updatedAt },
+        data: { accessToken: minted.token, tokenExpiresAt: minted.expiresAt },
+      })
+    } catch {
+      throw fail('không lưu được token')
+    }
+    if (saved.count > 0) return minted.token
   }
-  try {
-    const { token, expiresAt } = await mintClientCredentialsToken(store.shop, fresh.clientId, fresh.clientSecret)
-    await prisma.shopifyStoreCredential.update({ where: { storeId: store.id }, data: { accessToken: token, tokenExpiresAt: expiresAt } })
-    return token
-  } catch (e) {
-    throw new StoreConnectionError('MINT_FAILED', store.id, store.shop, `Không lấy được token mới cho ${store.shop}: ${e instanceof Error ? e.message : 'lỗi không rõ'}`)
-  }
+  throw fail('thông tin kết nối liên tục bị thay đổi')
 }
 
 // Concurrent callers for one store share a single in-flight mint; the credential is re-read inside it
