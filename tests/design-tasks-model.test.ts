@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  previewImages, timeLeft, allSlotsFilled, taskImages, canRemoveArtwork, canMove, retryDelay, isRetryable, emptyQueueText, mockupFiles, newestFor, printFiles, printPartNames, versionsFor, isAutoNotRendered, readyLabel } from '@/app/design-studio/components/model'
+  previewImages, timeLeft, allSlotsFilled, taskImages, canRemoveArtwork, canMove, retryDelay, isRetryable, emptyQueueText, mockupFiles, newestFor, printFiles, printPartNames, versionsFor, isAutoNotRendered, readyLabel, artworkProducts, needsArtwork } from '@/app/design-studio/components/model'
 
 const NOW = Date.parse('2026-10-10T12:00:00Z')
 
@@ -148,5 +148,31 @@ describe('Auto - Not Render', () => {
     expect(readyLabel(t({ hasPrint: true }), 'Auto - Not Render')).toBe('Auto - Đã render')
     expect(readyLabel(t({}), 'Auto - Not Render')).toBe('Auto - Not Render')
     expect(readyLabel(t({ readiness: 'MANUAL', hasPrint: true }), 'Làm tay')).toBe('Làm tay')
+  })
+})
+
+describe('Cần làm artwork', () => {
+  const t = (over: Record<string, unknown>) => ({ taskKey: 'A_1', readiness: 'MANUAL', status: 'NEW', hasPrint: false, fromLibrary: false, unmapped: false, productKey: 'p1', dueAt: '2026-11-06', ...over }) as any
+
+  it('takes a manual line with nothing to print, mapped and not waiting on the library', () => {
+    expect(needsArtwork(t({}))).toBe(true)
+    expect(needsArtwork(t({ status: 'DOING' }))).toBe(true)
+  })
+
+  it('leaves out auto, files in hand, library lines, unmapped lines and finished work', () => {
+    for (const over of [{ readiness: 'AUTO' }, { readiness: 'LOW' }, { hasPrint: true }, { fromLibrary: true }, { unmapped: true }, { status: 'REVIEW' }, { status: 'DONE' }, { status: 'CANCELLED' }]) {
+      expect(needsArtwork(t(over))).toBe(false)
+    }
+  })
+
+  it('shows one row per product, the soonest due, and counts the lines waiting', () => {
+    const { rows, waiting } = artworkProducts([
+      t({ taskKey: 'A_1', dueAt: '2026-11-08' }), t({ taskKey: 'B_1', dueAt: '2026-11-06' }), t({ taskKey: 'C_1', dueAt: null }),
+      t({ taskKey: 'D_1', productKey: 'p2' }), t({ taskKey: 'E_1', productKey: 'p3', hasPrint: true }),
+    ])
+    expect(rows.map(r => r.taskKey).sort()).toEqual(['B_1', 'D_1'])
+    expect(waiting.get('p1')).toBe(3)
+    expect(waiting.get('p2')).toBe(1)
+    expect(waiting.has('p3')).toBe(false)
   })
 })

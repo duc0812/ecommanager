@@ -289,6 +289,8 @@ export type TaskRow = {
   unmapped: boolean
   /** A print file is on the task: an AUTO line has been rendered, or someone uploaded one. */
   hasPrint: boolean
+  /** Lines of one product share this: its artwork, once made, serves them all. */
+  productKey: string
 }
 
 export type TaskProfile = { key: string; status: LibraryProductStatus; layerMap: LayerMapEntry[] }
@@ -574,6 +576,7 @@ export async function listTasks(f: { statuses?: TaskStatus[]; readiness?: Readin
       customized: line.customized, storeName: task.order.store.project?.name ?? task.order.store.shop,
       fromLibrary: task.fromLibrary, unmapped: !line.resolvedSupplierId,
       hasPrint: printedLines.has(`${task.orderId}\u0000${task.shopifyLineId}`),
+      productKey: line.shopifyProductId ?? line.productTitle,
     })
   }
 

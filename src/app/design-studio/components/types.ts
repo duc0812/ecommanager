@@ -17,7 +17,7 @@ export type TaskRow = {
   orderId: string; orderNumber: string; placedAt: string; shopifyLineId: string; linePosition: number
   sku: string | null; productTitle: string; variantTitle: string | null; previewUrl: string | null; imageUrl: string | null
   supplierName: string | null; customized: boolean; storeName: string
-  fromLibrary: boolean; unmapped: boolean; hasPrint: boolean
+  fromLibrary: boolean; unmapped: boolean; hasPrint: boolean; productKey: string
 }
 
 /** `shaped`: the template's guide draws this piece's real outline, so the canvas shows no box around it and names it above. */

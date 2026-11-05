@@ -4,7 +4,7 @@ import type { Readiness, TaskRow, TaskStatus } from './types'
 import { readyLabel, timeLeft } from './model'
 import { Avatar, ErrorBanner, Icon, Note, Pill, READY_META, TEXT_TONE, btn, card } from './ui'
 
-export type QueueFilter = 'ALL' | Readiness
+export type QueueFilter = 'ALL' | Readiness | 'NEEDS_ARTWORK'
 
 const SECTIONS: { title: string; statuses: TaskStatus[]; tone?: string }[] = [
   { title: 'Bị trả lại — sửa trước', statuses: ['REJECTED'], tone: 'text-error' },
@@ -29,7 +29,7 @@ export function byDue(a: TaskRow, b: TaskRow): number {
   return a.dueAt < b.dueAt ? -1 : 1
 }
 
-function QueueRow({ t, selected, onSelect }: { t: TaskRow; selected: boolean; onSelect: (key: string) => void }) {
+function QueueRow({ t, selected, onSelect, waiting }: { t: TaskRow; selected: boolean; onSelect: (key: string) => void; waiting?: number }) {
   const left = timeLeft(t)
   const ready = READY_META[t.readiness]
   return (
@@ -53,6 +53,7 @@ function QueueRow({ t, selected, onSelect }: { t: TaskRow; selected: boolean; on
           <Pill tone={ready.tone} icon={ready.icon}>{readyLabel(t, ready.label)}</Pill>
           {t.fromLibrary && (t.status === 'NEW' || t.status === 'ASSIGNED') && <Pill tone="brand" icon="inventory_2">Thư viện</Pill>}
           {t.unmapped && <Pill tone="bad" icon="account_tree">Chưa mapping</Pill>}
+          {waiting !== undefined && <Pill tone="brand" icon="layers">{waiting} đơn chờ</Pill>}
           {t.assigneeName && <span className="ml-auto"><Avatar name={t.assigneeName} /></span>}
         </span>
       </span>
@@ -60,7 +61,9 @@ function QueueRow({ t, selected, onSelect }: { t: TaskRow; selected: boolean; on
   )
 }
 
-export default function Queue({ tasks, sel, onSelect, q, onQ, loading, error, retrying, emptyText, onClearFilters, filter, onFilter, counts, mine, onMine, autoLabel = READY_META.AUTO.label }: {
+export default function Queue({ tasks, sel, onSelect, q, onQ, loading, error, retrying, emptyText, onClearFilters, filter, onFilter, counts, mine, onMine, autoLabel = READY_META.AUTO.label, artworkWaiting }: {
+  /** Open lines per product that needs artwork; without it the chip is not offered (Duyệt mẫu has files already). */
+  artworkWaiting?: Map<string, number>
   /** The AUTO chip's name: in Duyệt mẫu every AUTO line is already rendered. */
   autoLabel?: string
   tasks: TaskRow[]; sel: string | null; onSelect: (key: string) => void
@@ -88,9 +91,9 @@ export default function Queue({ tasks, sel, onSelect, q, onQ, loading, error, re
           </button>
         </div>
         <div className="flex flex-wrap gap-xs">
-          {(['ALL', 'AUTO', 'LOW', 'MANUAL'] as QueueFilter[]).map(f => (
+          {(['ALL', 'AUTO', 'LOW', 'MANUAL', ...(artworkWaiting ? ['NEEDS_ARTWORK'] : [])] as QueueFilter[]).map(f => (
             <button key={f} type="button" aria-pressed={filter === f} onClick={() => onFilter(f)} className={chipCls(filter === f)}>
-              {f === 'ALL' ? 'Tất cả' : f === 'AUTO' ? autoLabel : READY_META[f].label}<span className="opacity-75 font-normal">{counts[f]}</span>
+              {f === 'ALL' ? 'Tất cả' : f === 'AUTO' ? autoLabel : f === 'NEEDS_ARTWORK' ? 'Cần làm artwork' : READY_META[f].label}<span className="opacity-75 font-normal">{counts[f]}</span>
             </button>
           ))}
         </div>
@@ -109,7 +112,7 @@ export default function Queue({ tasks, sel, onSelect, q, onQ, loading, error, re
                 <span className={g.tone ?? ''}>{g.title}</span>
                 <span className="font-medium">({g.rows.length})</span>
               </button>
-              {open && g.rows.map(t => <QueueRow key={t.taskKey} t={t} selected={t.taskKey === sel} onSelect={onSelect} />)}
+              {open && g.rows.map(t => <QueueRow key={t.taskKey} t={t} selected={t.taskKey === sel} onSelect={onSelect} waiting={filter === 'NEEDS_ARTWORK' ? artworkWaiting?.get(t.productKey) : undefined} />)}
             </div>
           )
         })}

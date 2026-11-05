@@ -25,6 +25,26 @@ export function isAutoNotRendered(t: Pick<TaskRow, 'readiness' | 'status' | 'has
   return t.readiness === 'AUTO' && !t.hasPrint && (t.status === 'NEW' || t.status === 'ASSIGNED' || t.status === 'DOING')
 }
 
+/**
+ * A line whose product has nothing to print from: not in the library, no file yet, already mapped so its template is known.
+ * Making this artwork is what feeds the library for later orders.
+ */
+export function needsArtwork(t: Pick<TaskRow, 'readiness' | 'status' | 'hasPrint' | 'fromLibrary' | 'unmapped'>): boolean {
+  return t.readiness === 'MANUAL' && !t.hasPrint && !t.fromLibrary && !t.unmapped && (t.status === 'NEW' || t.status === 'ASSIGNED' || t.status === 'DOING')
+}
+
+/** One task per product that needs artwork, the first by due date, and how many open lines wait on each product. */
+export function artworkProducts(tasks: TaskRow[]): { rows: TaskRow[]; waiting: Map<string, number> } {
+  const waiting = new Map<string, number>()
+  const first = new Map<string, TaskRow>()
+  for (const t of tasks.filter(needsArtwork)) {
+    waiting.set(t.productKey, (waiting.get(t.productKey) ?? 0) + 1)
+    const held = first.get(t.productKey)
+    if (!held || (t.dueAt !== null && (held.dueAt === null || t.dueAt < held.dueAt))) first.set(t.productKey, t)
+  }
+  return { rows: Array.from(first.values()), waiting }
+}
+
 /** The readiness label of one task: an AUTO line says whether it was rendered. */
 export function readyLabel(t: Pick<TaskRow, 'readiness' | 'hasPrint'>, base: string): string {
   if (t.readiness !== 'AUTO') return base

@@ -3,7 +3,7 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import { useRouter, useSearchParams } from 'next/navigation'
 import Sidebar from '@/components/Sidebar'
 import type { Me, TaskDetail, TaskRow, TaskStatus } from './components/types'
-import { emptyQueueText, isAutoNotRendered, isRetryable, postJson, requestJson, retryDelay, taskImages, taskUrl } from './components/model'
+import { artworkProducts, emptyQueueText, isAutoNotRendered, isRetryable, postJson, requestJson, retryDelay, taskImages, taskUrl } from './components/model'
 import { machineQa } from './components/ai-qa'
 import { LightboxProvider } from './components/Lightbox'
 import Queue, { byDue, type QueueFilter } from './components/Queue'
@@ -173,12 +173,13 @@ function DesignTasks() {
     if (sel) loadDetail(sel)
   }, [sel, loadDetail])
 
-  const visible = useMemo(() => tasks.filter(t => {
-    if (filter === 'ALL') return true
+  const artwork = useMemo(() => artworkProducts(tasks), [tasks])
+  const visible = useMemo(() => filter === 'NEEDS_ARTWORK' && mode !== 'review' ? artwork.rows : tasks.filter(t => {
+    if (filter === 'ALL' || filter === 'NEEDS_ARTWORK') return true
     // In Duyệt mẫu an AUTO line is already rendered; elsewhere the chip means the auto work still to do.
     if (filter === 'AUTO' && mode !== 'review') return isAutoNotRendered(t)
     return t.readiness === filter
-  }), [tasks, filter, mode])
+  }), [tasks, filter, mode, artwork])
 
   useEffect(() => {
     if (!sel && visible.length > 0) setSel(visible[0].taskKey)
@@ -219,8 +220,9 @@ function DesignTasks() {
       AUTO: mode === 'review' ? open.filter(t => t.readiness === 'AUTO' && t.status === 'REVIEW').length : open.filter(isAutoNotRendered).length,
       LOW: open.filter(t => t.readiness === 'LOW').length,
       MANUAL: open.filter(t => t.readiness === 'MANUAL').length,
+      NEEDS_ARTWORK: artwork.rows.length,
     } as Record<QueueFilter, number>
-  }, [tasks, mode])
+  }, [tasks, mode, artwork])
 
   const reviewCount = useMemo(() => tasks.filter(t => t.status === 'REVIEW').length, [tasks])
   const reviewTasks = useMemo(() => visible.filter(t => t.status === 'REVIEW').sort(byDue), [visible])
@@ -237,7 +239,7 @@ function DesignTasks() {
     setReviewVersion(v => v + 1)
   }, [reviewTasks, reviewSel, reload])
   const filtered = filter !== 'ALL' || mine || !!debouncedQ
-  const emptyText = emptyQueueText({ readinessLabel: filter === 'ALL' ? null : READY_META[filter].label, mine, q: debouncedQ })
+  const emptyText = emptyQueueText({ readinessLabel: filter === 'ALL' ? null : filter === 'NEEDS_ARTWORK' ? 'Cần làm artwork' : READY_META[filter].label, mine, q: debouncedQ })
   const clearFilters = useCallback(() => { setFilter('ALL'); setMine(false); setQ('') }, [])
 
   const holdCount = useMemo(() => {
@@ -311,7 +313,7 @@ function DesignTasks() {
         {mode !== 'sent' && <Queue tasks={mode === 'review' ? reviewTasks : visible} sel={mode === 'work' ? sel : mode === 'review' ? reviewSel : null} onSelect={mode === 'review' ? setReviewSel : selectTask}
           q={q} onQ={setQ} loading={listLoading} error={listError} retrying={retrying}
           emptyText={filtered ? emptyText : 'Không có task'} onClearFilters={filtered ? clearFilters : null}
-          filter={filter} onFilter={setFilter} counts={counts} mine={mine} onMine={setMine} autoLabel={mode === 'review' ? 'Auto' : READY_META.AUTO.label} />}
+          filter={filter} onFilter={setFilter} counts={counts} mine={mine} onMine={setMine} autoLabel={mode === 'review' ? 'Auto' : READY_META.AUTO.label} artworkWaiting={mode === 'review' ? undefined : artwork.waiting} />}
         {mode === 'review' ? (
           <div className="flex flex-col gap-md min-w-0">
             <ReviewToolbar total={reviewTasks.length} version={reviewVersion} onApproved={keys => reviewMoved(keys, 'DONE')} />
