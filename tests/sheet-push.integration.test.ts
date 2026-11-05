@@ -475,7 +475,9 @@ describe('the rules a channel brings', () => {
 
   it('names a product the way the sheet does', () => {
     expect(sheetProduct(rules, { baseSku: 'C450', productName: '30OZ cup', variantTitle: 'US / 30oz' })).toEqual({ baseSku: 'C450-12', productName: '30OZ cup', color: 'White' })
-    expect(sheetProduct(rules, { baseSku: 'C450', variantTitle: 'Black / 30 oz' }).color).toBe('Black')
+    expect(sheetProduct(rules, { baseSku: 'C450', variantTitle: 'Black / 30 oz' })).toMatchObject({ baseSku: 'C450-6', color: 'Black' })
+    expect(sheetProduct(rules, { baseSku: 'C450', variantTitle: 'Eraser Pink / 30oz' })).toMatchObject({ baseSku: 'C450-8', color: 'Eraser Pink' })
+    expect(sheetProduct(rules, { baseSku: 'C450', variantTitle: 'Blue / 30oz' })).toMatchObject({ baseSku: 'C450', noCodeForColor: true })
     expect(sheetProduct(rules, { baseSku: 'TU20', variantTitle: '40oz / Brown' }).color).toBe('Brown')
     expect(sheetProduct(rules, { baseSku: 'BJ', productName: 'Adult', variantTitle: 'Adult / L' })).toEqual({ baseSku: 'BJ', productName: 'Varsity Jacket', color: 'DEFAULT' })
     expect(sheetProduct(rules, { baseSku: 'BTX ', productName: '3D T-shirt' }).baseSku).toBe('BTX')
@@ -568,6 +570,21 @@ describe('a sheet of one long tab: Mango', () => {
     await expect(push([o.id])).rejects.toMatchObject({ code: 'COLUMNS' })
     expect(writes).toEqual([])
     expect((await line(o.id)).exportedAt).toBeNull()
+  })
+
+  it('holds a line whose colour has no code, and sends it once the code is known', async () => {
+    const coded = (codes: Record<string, string>) => setChannel({ ...mango, supplierCode: 'jm_sheet', enabled: true, spreadsheetId: SHEET, storeShop: SHOP, products: { GAF: { colorFromVariant: true, skuByColor: codes } } })
+    await coded({ black: 'GAF-6' })
+    const o = await makeOrder()
+    const r = await push([o.id])
+    expect(r.results).toEqual([expect.objectContaining({ lineKey: o.key, status: 'BLOCKED', message: expect.stringContaining('Orange') })])
+    expect(writes).toEqual([])
+    expect((await line(o.id)).exportedAt).toBeNull()
+
+    await coded({ black: 'GAF-6', orange: 'GAF-9' })
+    expect((await push([o.id])).results[0].status).toBe('WRITTEN')
+    expect(cell(writes[0].rows[0], 'SKU')).toBe('GAF-9')
+    expect(cell(writes[0].rows[0], 'Color')).toBe('Orange')
   })
 
   it('shows on the card what the sheet will get', async () => {

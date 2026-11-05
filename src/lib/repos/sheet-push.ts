@@ -149,6 +149,11 @@ async function run(supplierId: string, orderIds: string[] | undefined, userId: s
       if (!ref) continue
       const order: OrderForCsv = { ...o, sentDate: date, orderCode: o.shopifyOrderNumber.replace(/^#/, '') }
       const product = sheetProduct(channel, { baseSku: line.supplierBaseSku, productName: line.supplierProductName, color: line.supplierVariant2Value, variantTitle: line.variantTitle })
+      // The wrong code is the wrong product, so a colour with no known code waits.
+      if (product.noCodeForColor) {
+        results.push({ lineKey: key, orderNumber: ref.orderNumber, status: 'BLOCKED', message: `${product.baseSku} màu "${product.color}" chưa có mã trong kênh sheet — không ghi` })
+        continue
+      }
       const values = renderRow(channel.columns, order, {
         ...line, lineRef: `#${key}`, customName: customNames.get(ref.lineId) ?? '', sizeLabel: sizeLabel(line.supplierVariant1Value, line.variantTitle),
         supplierBaseSku: product.baseSku, supplierProductName: product.productName, supplierVariant2Value: product.color,

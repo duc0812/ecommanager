@@ -7,7 +7,7 @@
   "dateFormat": "CN_POD_MS-{YYYY}{MM}{DD}",
   "defaultColor": "DEFAULT",
   "products": {
-    "C450": { "baseSku": "C450-12", "color": "White", "colorFromVariant": true },
+    "C450": { "color": "White", "colorFromVariant": true, "skuByColor": { "white": "C450-12", "black": "C450-6", "eraser pink": "C450-8" } },
     "TU20": { "color": "White", "colorFromVariant": true },
     "BJ": { "productName": "Varsity Jacket" }
   },

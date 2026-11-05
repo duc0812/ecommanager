@@ -6,7 +6,14 @@ export const SHEET_CHANNELS_KEY = 'supplier.sheetChannels'
 export type SheetColumn = { header?: string; position?: string; source: string }
 
 /** A product as this supplier's sheet names it, where our catalogue says it differently. */
-export type SheetProductRule = { baseSku?: string; productName?: string; color?: string; colorFromVariant?: boolean }
+export type SheetProductRule = {
+  baseSku?: string
+  productName?: string
+  color?: string
+  colorFromVariant?: boolean
+  /** One code per colour, lowercase ("black": "C450-6"): Mango's 30oz cup has a code for each handle colour. */
+  skuByColor?: Record<string, string>
+}
 
 export type SheetChannel = {
   supplierCode: string
@@ -172,14 +179,13 @@ export function variantColor(variantTitle: string | null | undefined): string {
 }
 
 /** SKU, Type and Color as this channel's sheet wants them. The catalogue's own colour always wins. */
-export function sheetProduct(channel: SheetChannel | null, line: { baseSku?: string | null; productName?: string | null; color?: string | null; variantTitle?: string | null }): { baseSku: string; productName: string; color: string } {
+export function sheetProduct(channel: SheetChannel | null, line: { baseSku?: string | null; productName?: string | null; color?: string | null; variantTitle?: string | null }): { baseSku: string; productName: string; color: string; noCodeForColor?: boolean } {
   const baseSku = (line.baseSku ?? '').trim()
   const rule = channel?.products?.[baseSku.toUpperCase()]
-  return {
-    baseSku: rule?.baseSku ?? baseSku,
-    productName: rule?.productName ?? line.productName ?? '',
-    color: (line.color ?? '').trim() || (rule?.colorFromVariant ? variantColor(line.variantTitle) : '') || rule?.color || channel?.defaultColor || '',
-  }
+  const color = (line.color ?? '').trim() || (rule?.colorFromVariant ? variantColor(line.variantTitle) : '') || rule?.color || channel?.defaultColor || ''
+  const coded = rule?.skuByColor?.[color.toLowerCase()]
+  const named = { baseSku: coded ?? rule?.baseSku ?? baseSku, productName: rule?.productName ?? line.productName ?? '', color }
+  return rule?.skuByColor && !coded ? { ...named, noCodeForColor: true } : named
 }
 
 const STYLE = /hoodie|zip|shirt|jersey|jacket|sweater|cardigan|crewneck|v-neck|full set|only pants|only shirt/i
