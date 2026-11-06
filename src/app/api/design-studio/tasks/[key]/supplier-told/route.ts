@@ -9,7 +9,8 @@ export async function POST(req: NextRequest, { params }: { params: { key: string
   try {
     return NextResponse.json(await markSupplierTold(params.key, { id: user.id, name: user.name, role: user.role, permissions: user.permissions }))
   } catch (e: any) {
-    const status = /not found/i.test(e.message) ? 404 : 400
-    return NextResponse.json({ error: e.message }, { status })
+    if (e?.message === 'Task not found') return NextResponse.json({ error: 'Không tìm thấy task' }, { status: 404 })
+    console.error(`[design studio] supplier told ${params.key} failed:`, e)
+    return NextResponse.json({ error: 'Không ghi được "Đã báo xưởng" — thử lại sau' }, { status: 500 })
   }
 }

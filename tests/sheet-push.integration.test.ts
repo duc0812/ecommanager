@@ -280,7 +280,8 @@ describe('writing to the sheet', () => {
     }
     const open = async () => (await listSupplierFixes()).waiting.filter(r => r.orderId === o.id).map(r => r.taskKey)
 
-    expect((await fix(1)).notice).toBe('Design đã sửa sau khi gửi xưởng — báo Jomall Test kiểm tra lại folder design (không ghi lại sheet)')
+    // The sheet row carried a folder that is not the task's: the fix is in files the supplier never got.
+    expect((await fix(1)).notice).toBe('Gửi Jomall Test LINK MỚI — link cũ không có file đã sửa')
     expect(await prisma.order.findUniqueOrThrow({ where: { id: o.id } })).toMatchObject({ pipelineStatus: 'EXPORTED', supplierHandoffMode: 'SHEET' })
     expect((await line(o.id)).exportedToSupplierId).toBe(SUP)
     expect((await line(o.id)).exportedAt).toEqual(sent.exportedAt)

@@ -42,11 +42,11 @@ export default function ReviewToolbar({ total, version, onApproved }: { total: n
     for (const key of clean) {
       const r = await postJson<{ notice?: string }>(taskUrl(key, '/transition'), { to: 'DONE' })
       if (r.ok) ok.push(key); else failed.push(`${key}: ${r.error}`)
-      if (r.ok && r.data.notice) recheck.push(key)
+      if (r.ok && r.data.notice) recheck.push(`${key}: ${r.data.notice}`)
       setBatch({ done: ok.length + failed.length, total: clean.length })
     }
     setBatch(null)
-    if (ok.length) toast.say(`Đã duyệt ${ok.length} mẫu${recheck.length ? ` · ${recheck.join(', ')} đã gửi xưởng: báo xưởng kiểm tra lại folder design (tab Đã chuyển xưởng)` : ''}`)
+    if (ok.length) toast.say(`Đã duyệt ${ok.length} mẫu${recheck.length ? ` · ${recheck.join(' · ')} (tab Đã chuyển xưởng)` : ''}`)
     if (failed.length) toast.say(`Không duyệt được ${failed.length}: ${failed.join(' · ')}`, 'bad')
     onApproved(ok)
     load()

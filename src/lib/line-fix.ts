@@ -36,3 +36,31 @@ export function readLineFixMessage(message: string): LineFix | null {
   const reason = LINE_FIX_REASONS.find(r => rest.startsWith(`${r}: `))
   return reason ? { reason, note: rest.slice(reason.length + 2) } : null
 }
+
+/** A second event written with the reopen: the link the line carried, the one its supplier holds. */
+export const HELD_LINK_PREFIX = 'Link xưởng đang giữ khi mở lại: '
+const NO_HELD_LINK = '(không có)'
+
+export function heldLinkMessage(link: string | null): string {
+  return `${HELD_LINK_PREFIX}${link?.trim() || NO_HELD_LINK}`
+}
+
+export function readHeldLinkMessage(message: string): { link: string | null } | null {
+  if (!message.startsWith(HELD_LINK_PREFIX)) return null
+  const link = message.slice(HELD_LINK_PREFIX.length).trim()
+  return { link: link && link !== NO_HELD_LINK ? link : null }
+}
+
+/** What staff do once a fix of a line delivered by a link is approved: nothing new to send, or a link the supplier never got. */
+export type SupplierLinkKind = 'SAME_FOLDER' | 'NEW_LINK'
+export const SUPPLIER_LINK_KINDS: SupplierLinkKind[] = ['SAME_FOLDER', 'NEW_LINK']
+export const SUPPLIER_LINK_LABELS: Record<SupplierLinkKind, string> = { SAME_FOLDER: 'Link cũ vẫn đúng', NEW_LINK: 'Cần gửi link mới' }
+const SAME_FOLDER_TAIL = ' xem lại folder design — link cũ vẫn đúng'
+
+export function supplierLinkMessage(kind: SupplierLinkKind, supplierName: string): string {
+  return kind === 'SAME_FOLDER' ? `Báo ${supplierName}${SAME_FOLDER_TAIL}` : `Gửi ${supplierName} LINK MỚI — link cũ không có file đã sửa`
+}
+
+export function readSupplierLinkKind(message: string): SupplierLinkKind {
+  return message.startsWith('Báo ') && message.endsWith(SAME_FOLDER_TAIL) ? 'SAME_FOLDER' : 'NEW_LINK'
+}

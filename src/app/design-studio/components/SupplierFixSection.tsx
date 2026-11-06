@@ -1,7 +1,7 @@
 'use client'
 import { useCallback, useEffect, useState } from 'react'
 import type { SupplierFixList, SupplierFixRow } from './types'
-import { LINE_FIX_REASONS } from '@/lib/line-fix'
+import { LINE_FIX_REASONS, SUPPLIER_LINK_KINDS, SUPPLIER_LINK_LABELS, supplierLinkMessage } from '@/lib/line-fix'
 import { StoreLabel } from '@/components/StoreFilter'
 import { copyText, postJson, requestJson, taskUrl } from './model'
 import { ErrorBanner, ExtLink, Icon, Pill, STATUS_META, btn, card, chip, fmtDate, fmtDateTime, iconBtn } from './ui'
@@ -9,6 +9,44 @@ import { ErrorBanner, ExtLink, Icon, Pill, STATUS_META, btn, card, chip, fmtDate
 const ALL = 'ALL'
 const NO_REASON = 'none'
 type Kind = 'waiting' | 'told' | 'fixing'
+/** A file still on this server has an app-only link: the supplier cannot open it until it reaches Drive. */
+const SERVER_ONLY = /^\/api\//
+
+function LinkWithCopy({ href, label, strong, taskKey, onCopy }: { href: string; label: string; strong?: boolean; taskKey: string; onCopy: (link: string) => void }) {
+  if (SERVER_ONLY.test(href)) return <span className="text-on-surface-variant">File chưa lên Drive — tải lại sau để lấy link gửi xưởng</span>
+  return (
+    <span className="flex items-center gap-xs min-w-0 max-w-full">
+      <span className={`truncate ${strong ? 'font-semibold' : ''}`}><ExtLink href={href}>{label}</ExtLink></span>
+      <button type="button" className={iconBtn} aria-label={`Chép ${label.toLowerCase()} ${taskKey}`} title="Chép link" onClick={() => onCopy(href)}>
+        <Icon name="content_copy" className="text-[16px]" />
+      </button>
+    </span>
+  )
+}
+
+/** What staff do for a row: tell the supplier its link still holds the fix, or send the new link (the old one shown struck through). */
+function SupplierAction({ r, onCopy }: { r: SupplierFixRow; onCopy: (link: string) => void }) {
+  if (!r.linkKind) {
+    return r.supplierLink
+      ? <span className="text-on-surface-variant break-all">Xưởng đang giữ: {r.supplierLink}</span>
+      : <span className="text-on-surface-variant">—</span>
+  }
+  const isNew = r.linkKind === 'NEW_LINK'
+  return (
+    <div className="flex flex-col items-start gap-xs min-w-0 max-w-full">
+      <Pill tone={isNew ? 'warn' : 'ok'} icon={isNew ? 'link' : 'folder_open'}>{SUPPLIER_LINK_LABELS[r.linkKind]}</Pill>
+      <span className={isNew ? 'font-semibold text-on-surface' : 'text-on-surface'}>{supplierLinkMessage(r.linkKind, r.supplierName ?? 'xưởng')}</span>
+      {r.designLink
+        ? <LinkWithCopy href={r.designLink} label={isNew ? 'Link mới' : 'Folder design'} strong={isNew} taskKey={r.taskKey} onCopy={onCopy} />
+        : <span className="text-on-surface-variant">Chưa có link</span>}
+      {isNew && r.supplierLink && r.supplierLink !== r.designLink && (
+        <span className="text-on-surface-variant break-all" title="Link xưởng đang giữ — báo xưởng bỏ link này">
+          Link cũ (bỏ): <span className="line-through">{r.supplierLink}</span>
+        </span>
+      )}
+    </div>
+  )
+}
 
 function Rows({ kind, rows, showStore, busyKey, onOpenTask, onTold, onCopy }: {
   kind: Kind; rows: SupplierFixRow[]; showStore: boolean; busyKey: string | null
@@ -16,16 +54,16 @@ function Rows({ kind, rows, showStore, busyKey, onOpenTask, onTold, onCopy }: {
 }) {
   return (
     <div className="rounded-lg border border-outline-variant/20 overflow-x-auto">
-      <table className="w-full table-fixed text-body-sm min-w-[980px]">
+      <table className="w-full table-fixed text-body-sm min-w-[1040px]">
         <thead className="bg-surface-container">
           <tr className="text-left">
-            <th className="w-[14%] px-sm py-sm">Dòng</th>
-            <th className="w-[11%] px-sm py-sm">Xưởng</th>
-            <th className="w-[13%] px-sm py-sm">Lý do</th>
-            <th className="w-[20%] px-sm py-sm">Cần sửa ở đâu</th>
-            <th className="w-[12%] px-sm py-sm">Mở lại</th>
-            <th className="w-[12%] px-sm py-sm">{kind === 'fixing' ? 'Trạng thái task' : 'Duyệt bản sửa'}</th>
-            <th className="w-[18%] px-sm py-sm">{kind === 'told' ? 'Đã báo' : 'Folder design'}</th>
+            <th className="w-[13%] px-sm py-sm">Dòng</th>
+            <th className="w-[10%] px-sm py-sm">Xưởng</th>
+            <th className="w-[12%] px-sm py-sm">Lý do</th>
+            <th className="w-[17%] px-sm py-sm">Cần sửa ở đâu</th>
+            <th className="w-[11%] px-sm py-sm">Mở lại</th>
+            <th className="w-[11%] px-sm py-sm">{kind === 'fixing' ? 'Trạng thái task' : 'Duyệt bản sửa'}</th>
+            <th className="w-[26%] px-sm py-sm">{kind === 'fixing' ? 'Link xưởng đang giữ' : 'Báo xưởng'}</th>
           </tr>
         </thead>
         <tbody>
@@ -46,25 +84,15 @@ function Rows({ kind, rows, showStore, busyKey, onOpenTask, onTold, onCopy }: {
                   : r.approvedAt ? fmtDateTime(r.approvedAt) : '—'}
               </td>
               <td className="px-sm py-sm text-label-sm">
-                {kind === 'told' ? (
-                  <span>{r.toldBy ?? '—'}<div className="text-on-surface-variant">{r.toldAt ? fmtDateTime(r.toldAt) : ''}</div></span>
-                ) : (
-                  <div className="flex flex-col items-start gap-xs min-w-0">
-                    {r.designLink ? (
-                      <span className="flex items-center gap-xs min-w-0 max-w-full">
-                        <span className="truncate"><ExtLink href={r.designLink}>Mở folder design</ExtLink></span>
-                        <button type="button" className={iconBtn} aria-label={`Chép link folder design ${r.taskKey}`} title="Chép link" onClick={() => onCopy(r.designLink!)}>
-                          <Icon name="content_copy" className="text-[16px]" />
-                        </button>
-                      </span>
-                    ) : <span className="text-on-surface-variant">Chưa có link</span>}
-                    {kind === 'waiting' && (
-                      <button type="button" className={btn} disabled={busyKey === r.taskKey} onClick={() => onTold(r.taskKey)}>
-                        <Icon name="done" className="text-[16px]" />Đã báo xưởng
-                      </button>
-                    )}
-                  </div>
-                )}
+                <div className="flex flex-col items-start gap-xs min-w-0">
+                  <SupplierAction r={r} onCopy={onCopy} />
+                  {kind === 'waiting' && (
+                    <button type="button" className={btn} disabled={busyKey === r.taskKey} onClick={() => onTold(r.taskKey)}>
+                      <Icon name="done" className="text-[16px]" />Đã báo xưởng
+                    </button>
+                  )}
+                  {kind === 'told' && <span className="text-on-surface-variant">Đã báo: {r.toldBy ?? '—'}{r.toldAt ? ` · ${fmtDateTime(r.toldAt)}` : ''}</span>}
+                </div>
               </td>
             </tr>
           ))}
@@ -76,12 +104,13 @@ function Rows({ kind, rows, showStore, busyKey, onOpenTask, onTold, onCopy }: {
 
 /**
  * "Đã update design / Cần báo xưởng": a design fixed after its line went to the supplier by a link (sheet, CSV) is not sent
- * again, so staff tell the supplier to open the folder again and mark it here. Hidden while there is nothing to show.
+ * again, so staff tell the supplier to look again, or send it the new link, and mark it here. Hidden while there is nothing to show.
  */
 export default function SupplierFixSection({ version, showStore, onOpenTask }: { version: number; showStore: boolean; onOpenTask: (key: string) => void }) {
   const [data, setData] = useState<SupplierFixList | null>(null)
   const [reason, setReason] = useState(ALL)
   const [supplier, setSupplier] = useState(ALL)
+  const [linkKind, setLinkKind] = useState(ALL)
   const [showTold, setShowTold] = useState(false)
   const [busyKey, setBusyKey] = useState<string | null>(null)
   const [info, setInfo] = useState('')
@@ -91,12 +120,13 @@ export default function SupplierFixSection({ version, showStore, onOpenTask }: {
     const qs = new URLSearchParams()
     if (reason !== ALL) qs.set('reason', reason)
     if (supplier !== ALL) qs.set('supplier', supplier)
+    if (linkKind !== ALL) qs.set('kind', linkKind)
     const query = qs.toString()
     const r = await requestJson<SupplierFixList>(`/api/design-studio/tasks/supplier-recheck${query ? `?${query}` : ''}`)
     if (!r.ok) { setError(r.error); return }
     setError('')
     setData(r.data)
-  }, [reason, supplier])
+  }, [reason, supplier, linkKind])
 
   useEffect(() => { load() }, [load, version])
 
@@ -106,16 +136,15 @@ export default function SupplierFixSection({ version, showStore, onOpenTask }: {
     setBusyKey(null)
     if (!r.ok) { setInfo(''); setError(r.error); return }
     setError('')
-    setInfo(r.data.changed ? `Đã ghi: đã báo xưởng xem lại folder design của ${key}` : `${key} đã được báo trước đó`)
+    setInfo(r.data.changed ? `Đã ghi: đã báo xưởng cho ${key}` : `${key} đã được báo trước đó`)
     void load()
   }
 
   async function copyLink(link: string) {
-    const absolute = link.startsWith('/') ? `${window.location.origin}${link}` : link
-    setInfo(await copyText(absolute) ? 'Đã chép link folder design' : 'Không chép được')
+    setInfo(await copyText(link) ? 'Đã chép link' : 'Không chép được')
   }
 
-  const filtered = reason !== ALL || supplier !== ALL
+  const filtered = reason !== ALL || supplier !== ALL || linkKind !== ALL
   if (!data || (!filtered && data.waitingTotal === 0 && data.told.length === 0 && data.fixing.length === 0)) {
     return error ? <ErrorBanner msg={error} onClose={() => setError('')} /> : null
   }
@@ -129,7 +158,7 @@ export default function SupplierFixSection({ version, showStore, onOpenTask }: {
           className={`inline-flex items-center h-5 px-[7px] rounded-full text-[11px] font-semibold ${data.waitingTotal ? 'bg-amber-100 text-amber-900' : 'bg-surface-container text-on-surface-variant'}`}>
           {data.waitingTotal}
         </span>
-        <span className="text-label-sm text-on-surface-variant">Dòng gửi bằng link (sheet, CSV) đã sửa design: báo xưởng mở lại folder design, tool không ghi lại sheet.</span>
+        <span className="text-label-sm text-on-surface-variant">Dòng gửi bằng link (sheet, CSV) đã sửa design: báo xưởng xem lại folder nếu link cũ vẫn đúng, gửi link mới nếu không. Tool không ghi lại sheet.</span>
         <button type="button" className={`${btn} ml-auto`} onClick={load}><Icon name="refresh" className="text-[16px]" />Tải lại</button>
       </div>
       <div className="px-md py-sm flex flex-col gap-sm">
@@ -138,6 +167,14 @@ export default function SupplierFixSection({ version, showStore, onOpenTask }: {
           {[ALL, ...LINE_FIX_REASONS, NO_REASON].map(k => (
             <button key={k} type="button" aria-pressed={reason === k} className={chip(reason === k)} onClick={() => setReason(k)}>
               {k === ALL ? 'Tất cả' : k === NO_REASON ? '—' : k}
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-xs flex-wrap" role="group" aria-label="Lọc theo việc cần báo">
+          <span className="text-label-sm text-on-surface-variant">Báo xưởng:</span>
+          {[ALL, ...SUPPLIER_LINK_KINDS].map(k => (
+            <button key={k} type="button" aria-pressed={linkKind === k} className={chip(linkKind === k)} onClick={() => setLinkKind(k)}>
+              {k === ALL ? 'Tất cả' : SUPPLIER_LINK_LABELS[k as keyof typeof SUPPLIER_LINK_LABELS]}
             </button>
           ))}
         </div>

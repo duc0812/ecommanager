@@ -790,7 +790,8 @@ describe('lines go to their supplier one by one', () => {
     expect(r.task).toMatchObject({ status: 'REJECTED', rejectReasons: ['Khách yêu cầu sửa'], rejectNote: 'đổi tên Emily' })
     expect(await order(o.id)).toMatchObject({ pipelineStatus: before.pipelineStatus, designReady: before.designReady })
     await transitionTask(o.keys[1], DES, { to: 'REVIEW' })
-    expect((await transitionTask(o.keys[1], DES, { to: 'DONE' })).notice).toMatch(/kiểm tra lại folder design/)
+    // Approved again with the same print file: the link the supplier got still leads to it.
+    expect((await transitionTask(o.keys[1], DES, { to: 'DONE' })).notice).toMatch(/^Báo .+ xem lại folder design — link cũ vẫn đúng$/)
     const [, after] = await linesOf(o.id)
     expect(after.exportedAt).not.toBeNull()
     expect((await handoffStateFor(o.id))!.readyLineIds).not.toContain(sent.id)

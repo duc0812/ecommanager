@@ -12,6 +12,7 @@ export async function POST(req: NextRequest, { params }: { params: { lineId: str
     return NextResponse.json(result)
   } catch (e: any) {
     if (e instanceof LineReopenError) return NextResponse.json({ error: e.message }, { status: e.status })
-    return NextResponse.json({ error: e?.message ?? 'Không mở lại được dòng' }, { status: 500 })
+    console.error(`[design studio] reopen line ${params.lineId} failed:`, e)
+    return NextResponse.json({ error: 'Không mở lại được dòng — thử lại sau' }, { status: 500 })
   }
 }

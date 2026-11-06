@@ -9,6 +9,7 @@ import { markOrdersExported, updateOrderStatus } from '@/lib/repos/orders'
 import { markPushExported } from '@/lib/repos/push-export'
 import { closeCancelledPush, reservePush } from '@/lib/repos/supplier-push-core'
 import { buildPrintwayPush } from '@/lib/repos/printway-push'
+import { buildBondrePush } from '@/lib/repos/bondre-push'
 import { handoffStateFor, listHandoffCards, pendingCardsForSupplier } from '@/lib/supplier-handoff'
 import { POST as postReopen } from '@/app/api/design-studio/lines/[lineId]/reopen/route'
 import { POST as postTransition } from '@/app/api/design-studio/tasks/[key]/transition/route'
@@ -23,19 +24,28 @@ const SENT_AT = new Date('2026-11-02T08:00:00Z')
 const LINK = 'https://drive.google.com/drive/folders/t22r-sent'
 const [FACTORY_ASKS, CUSTOMER_ASKS, WE_FOUND] = LINE_FIX_REASONS
 const NOTE = 'chỗ cái dao bị lệch'
-const RECHECK = 'Design đã sửa sau khi gửi xưởng — báo T22R Factory kiểm tra lại folder design (không ghi lại sheet)'
+// The fixtures' lines carry a folder that is not their task's (a library / outside link), so their fix needs a new link.
+const RECHECK = 'Gửi T22R Factory LINK MỚI — link cũ không có file đã sửa'
+const SAME_FOLDER = 'Báo T22R Factory xem lại folder design — link cũ vẫn đúng'
+const ONE_FILE = 'https://drive.google.com/file/d/t22r-v1/view'
+const folderOf = (key: string) => `https://drive.google.com/drive/folders/${key}-task`
 const fix = (reason: string = FACTORY_ASKS, note = NOTE) => ({ reason, note })
 
 type Who = 'lead' | 'des' | 'sellerA' | 'sellerOrders' | 'sellerPlain'
 const users: Record<Who, { id: string; token: string; actor: Actor }> = {} as any
 let printwayId = ''
 let createdPrintway = false
+let bondreId = ''
+let createdBondre = false
 let seq = 0
 
 type OrderOpts = {
   status?: string; fulfillmentStatus?: string | null; store?: string; line2Supplier?: string; task2?: 'DONE' | 'CANCELLED' | 'REVIEW'
   exported?: boolean; addOn?: boolean; sheet?: boolean; fromLibrary?: boolean
+  /** A fourth line at this supplier, sent by a push of its own (see pushBeside). */
+  beside?: string
 }
+const BESIDE_AT = new Date('2026-11-03T08:00:00Z')
 
 async function sentOrder(opts: OrderOpts = {}) {
   seq++
@@ -50,7 +60,7 @@ async function sentOrder(opts: OrderOpts = {}) {
   await prisma.order.create({ data: {
     id, storeId: opts.store ?? STORE_A, projectId: opts.store === STORE_B ? `${P}-proj-b` : `${P}-proj-a`, shopifyOrderNumber: `#${code}`,
     financialStatus: 'PAID', currency: 'USD', grossAmount: 20, expectedPayout: 20, totalFees: 0, refundedAmount: 0,
-    placedAt: new Date(`2020-01-01T00:00:${String(seq).padStart(2, '0')}Z`), pipelineStatus: opts.status ?? 'EXPORTED', orderType: 'CUSTOM',
+    placedAt: new Date(Date.UTC(2020, 0, 1) + seq * 1000), pipelineStatus: opts.status ?? 'EXPORTED', orderType: 'CUSTOM',
     fulfillmentStatus: opts.fulfillmentStatus ?? null, designReady: true, designDriveLink: LINK,
     exportedAt: exported ? SENT_AT : null, exportedToSupplierId: exported ? SUP : null,
     ...(opts.sheet && exported ? { supplierHandoffAt: SENT_AT, supplierHandoffMode: 'SHEET' } : {}),
@@ -58,8 +68,10 @@ async function sentOrder(opts: OrderOpts = {}) {
       line(1, 'Reopen Mug', SUP),
       ...(opts.addOn ? [line(2, 'Shipping Protection', null)] : []),
       line(3, 'Reopen Tee', opts.line2Supplier ?? SUP),
+      ...(opts.beside ? [line(4, 'Reopen Hoodie', opts.beside, { exportedAt: BESIDE_AT })] : []),
     ] },
   } })
+  if (opts.beside) await prisma.designTask.create({ data: { orderId: id, shopifyLineId: `${id}-sl4`, taskKey: `${code}_3`, status: 'DONE' } })
   await prisma.designArtwork.create({ data: { orderId: id, shopifyLineId: `${id}-sl1`, printArea: 'PRINT', version: 1, fileName: 'a.png', storagePath: 'x/a.png', size: 1, mimeType: 'image/png' } })
   await prisma.designTask.create({ data: { orderId: id, shopifyLineId: `${id}-sl1`, taskKey: `${code}_1`, status: 'DONE' } })
   if (opts.task2) await prisma.designTask.create({ data: { orderId: id, shopifyLineId: `${id}-sl3`, taskKey: `${code}_2`, status: opts.task2, fromLibrary: opts.fromLibrary ?? false } })
@@ -70,7 +82,10 @@ async function sentOrder(opts: OrderOpts = {}) {
       } })
     }
   }
-  return { id, code, line1: `${id}-l1`, line2: `${id}-l3`, addOn: `${id}-l2`, sl1: `${id}-sl1`, sl2: `${id}-sl3`, key1: `${code}_1`, key2: `${code}_2` }
+  return {
+    id, code, line1: `${id}-l1`, line2: `${id}-l3`, line4: `${id}-l4`, addOn: `${id}-l2`, sl1: `${id}-sl1`, sl2: `${id}-sl3`, sl4: `${id}-sl4`,
+    key1: `${code}_1`, key2: `${code}_2`,
+  }
 }
 type Sent = Awaited<ReturnType<typeof sentOrder>>
 
@@ -113,9 +128,19 @@ async function sheetRows(orderId: string) {
   return (await prisma.supplierSheetWrite.findMany({ where: { orderId }, orderBy: { lineKey: 'asc' } })).map(w => ({ id: w.id, lineKey: w.lineKey, status: w.status, updatedAt: w.updatedAt.toISOString() }))
 }
 
-/** The designer uploads the corrected file and sends it for review; the leader approves. */
-async function fixAndApprove(orderId: string, shopifyLineId: string, key: string, version = 2) {
-  await prisma.designArtwork.create({ data: { orderId, shopifyLineId, printArea: 'PRINT', version, fileName: `fix${version}.png`, storagePath: `x/fix${version}.png`, size: 1, mimeType: 'image/png' } })
+/**
+ * The designer uploads the corrected file and sends it for review; the leader approves. `onDrive`: the file already sits in the
+ * task's Drive folder (the folder is made on the first push), so the approval hands the supplier that folder.
+ */
+async function fixAndApprove(orderId: string, shopifyLineId: string, key: string, version = 2, opts: { onDrive?: boolean } = {}) {
+  if (opts.onDrive) {
+    await prisma.designTask.updateMany({ where: { taskKey: key, driveFolderUrl: null }, data: { driveFolderId: `${key}-task`, driveFolderUrl: folderOf(key) } })
+    await prisma.designArtwork.updateMany({ where: { orderId, shopifyLineId, storage: 'DRIVE', drivePlace: 'TASK' }, data: { drivePlace: 'OLD' } })
+  }
+  await prisma.designArtwork.create({ data: {
+    orderId, shopifyLineId, printArea: 'PRINT', version, fileName: `fix${version}.png`, storagePath: opts.onDrive ? null : `x/fix${version}.png`, size: 1, mimeType: 'image/png',
+    ...(opts.onDrive ? { storage: 'DRIVE', drivePlace: 'TASK', driveFileId: `${key}-v${version}`, driveWebViewLink: `https://drive.google.com/file/d/${key}-v${version}/view` } : {}),
+  } })
   const task = await prisma.designTask.findUniqueOrThrow({ where: { taskKey: key } })
   if (task.status === 'ASSIGNED') await transitionTask(key, users.des.actor, { to: 'DOING' })
   if (task.status !== 'REVIEW') await transitionTask(key, users.des.actor, { to: 'REVIEW' })
@@ -136,11 +161,19 @@ async function recheckEvents(orderId: string, shopifyLineId: string) {
     .map(e => ({ type: e.type, actorId: e.actorId }))
 }
 
-/** A live push of the Printway supplier that carried line 2, as a push made by the app leaves it. */
-async function livePush(o: Sent) {
+/** A live push of the Printway supplier (or the one named) that carried line 2, as a push made by the app leaves it. */
+async function livePush(o: Sent, supplierId = printwayId) {
   return prisma.supplierOrderPush.create({ data: {
-    orderId: o.id, supplierId: printwayId, externalOrderId: o.code, activeKey: `${o.id}::${printwayId}`, status: 'CREATED', exportMarked: true,
+    orderId: o.id, supplierId, externalOrderId: o.code, activeKey: `${o.id}::${supplierId}`, status: 'CREATED', exportMarked: true,
     requestJson: '{}', pushedAt: SENT_AT, prevExportJson: JSON.stringify({ lineIds: [o.line2], shopifyLineIds: [o.sl2], pipelineStatus: 'READY_TO_PRODUCTION' }),
+  } })
+}
+
+/** A second live push of the same supplier that carried line 4 alone, sent beside the first. */
+async function pushBeside(o: Sent, supplierId = printwayId) {
+  return prisma.supplierOrderPush.create({ data: {
+    orderId: o.id, supplierId, externalOrderId: `${o.code}-B`, activeKey: `${o.id}::${supplierId}::${o.code}-B`, status: 'CREATED', exportMarked: true,
+    requestJson: '{}', pushedAt: BESIDE_AT, prevExportJson: JSON.stringify({ lineIds: [o.line4], shopifyLineIds: [o.sl4], pipelineStatus: 'READY_TO_PRODUCTION' }),
   } })
 }
 
@@ -161,6 +194,9 @@ beforeAll(async () => {
   const pw = await prisma.supplier.findUnique({ where: { code: 'printway' } })
   createdPrintway = !pw
   printwayId = (pw ?? await prisma.supplier.create({ data: { name: 'Printway', code: 'printway' } })).id
+  const bd = await prisma.supplier.findUnique({ where: { code: 'bondre' } })
+  createdBondre = !bd
+  bondreId = (bd ?? await prisma.supplier.create({ data: { name: 'Bondre', code: 'bondre' } })).id
   for (const s of ['a', 'b'] as const) {
     await prisma.project.create({ data: { id: `${P}-proj-${s}`, name: `T22R ${s}`, startDate: new Date('2026-01-01') } })
     await prisma.shopifyStore.create({ data: { id: s === 'a' ? STORE_A : STORE_B, shop: `${P}-${s}.myshopify.com`, projectId: `${P}-proj-${s}` } })
@@ -183,6 +219,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await cleanup()
   if (createdPrintway) await prisma.supplier.deleteMany({ where: { id: printwayId } })
+  if (createdBondre) await prisma.supplier.deleteMany({ where: { id: bondreId } })
 })
 
 describe('the reason and the "Cần sửa ở đâu" note are required', () => {
@@ -226,6 +263,7 @@ describe('"Mở lại để sửa" at press time', () => {
     const task = await lineTask(o.id, o.sl2)
     expect(task!.events.map(e => ({ type: e.type, message: e.message, actorId: e.actorId }))).toEqual([
       { type: 'REJECT', message: `Mở lại để sửa (đã gửi xưởng) — ${reason}: ${NOTE}`, actorId: users.des.id },
+      { type: 'SYSTEM', message: `Link xưởng đang giữ khi mở lại: ${LINK}`, actorId: null },
     ])
     expect(await lineTask(o.id, o.sl1)).toMatchObject({ status: 'DONE', rejectReasons: null })
     expect((await lineTask(o.id, o.sl1))!.events).toEqual([])
@@ -240,7 +278,7 @@ describe('"Mở lại để sửa" at press time', () => {
     expect(again.status).toBe(200)
     expect(await again.json()).toMatchObject({ changed: false, task: { taskKey: o.key2, status: 'REJECTED', rejectReasons: [reason], rejectNote: NOTE } })
     expect(await prisma.designTask.count({ where: { orderId: o.id } })).toBe(2)
-    expect((await lineTask(o.id, o.sl2))!.events).toHaveLength(1)
+    expect((await lineTask(o.id, o.sl2))!.events).toHaveLength(2)
 
     await syncDesignTasks(o.id)
     expect(await lineTask(o.id, o.sl2)).toMatchObject({ status: 'REJECTED', rejectReasons: JSON.stringify([reason]) })
@@ -257,7 +295,7 @@ describe('"Mở lại để sửa" at press time', () => {
     expect([a.status, b.status]).toEqual([200, 200])
     expect([(await a.json()).changed, (await b.json()).changed].sort()).toEqual([false, true])
     expect(await prisma.designTask.count({ where: { orderId: o.id, shopifyLineId: o.sl2 } })).toBe(1)
-    expect((await lineTask(o.id, o.sl2))!.events).toHaveLength(1)
+    expect((await lineTask(o.id, o.sl2))!.events.map(e => e.type)).toEqual(['REJECT', 'SYSTEM'])
   })
 
   it('a DONE task of the line is reopened the same way, through the route or through its own "Sửa & gửi lại" control', async () => {
@@ -265,7 +303,9 @@ describe('"Mở lại để sửa" at press time', () => {
     const res = await press(viaRoute.line2, 'sellerA', fix(CUSTOMER_ASKS))
     expect(res.status).toBe(200)
     expect(await res.json()).toMatchObject({ changed: true, task: { taskKey: viaRoute.key2, status: 'REJECTED', rejectReasons: [CUSTOMER_ASKS], rejectNote: NOTE } })
-    expect((await lineTask(viaRoute.id, viaRoute.sl2))!.events).toEqual([expect.objectContaining({ type: 'REJECT', actorId: users.sellerA.id })])
+    expect((await lineTask(viaRoute.id, viaRoute.sl2))!.events).toEqual([
+      expect.objectContaining({ type: 'REJECT', actorId: users.sellerA.id }), expect.objectContaining({ type: 'SYSTEM', message: `Link xưởng đang giữ khi mở lại: ${LINK}` }),
+    ])
 
     const viaControl = await sentOrder({ task2: 'DONE' })
     expect((await loadTask(viaControl.key2))!.reopensSentLine).toBe(true)
@@ -274,6 +314,7 @@ describe('"Mở lại để sửa" at press time', () => {
     expect((await r.json()).task).toMatchObject({ taskKey: viaControl.key2, status: 'REJECTED', rejectReasons: [WE_FOUND], rejectNote: NOTE })
     expect((await lineTask(viaControl.id, viaControl.sl2))!.events.map(e => [e.type, e.message, e.actorId])).toEqual([
       ['REJECT', `Mở lại để sửa (đã gửi xưởng) — ${WE_FOUND}: ${NOTE}`, users.des.id],
+      ['SYSTEM', `Link xưởng đang giữ khi mở lại: ${LINK}`, null],
     ])
     for (const o of [viaRoute, viaControl]) {
       expect(await state(o.id)).toEqual({ status: 'EXPORTED', exported: [o.line1, o.line2] })
@@ -337,7 +378,7 @@ describe('approval of the fix: a line the supplier got by a link (sheet, CSV, a 
     expect(list.waiting.find(w => w.taskKey === o.key2)).toEqual(expect.objectContaining({
       taskKey: o.key2, orderNumber: `#${o.code}`, storeName: 'T22R a', supplierId: SUP, supplierName: 'T22R Factory', reason: CUSTOMER_ASKS, note: NOTE,
       reopenedBy: 'des', reopenedAt: reopenEvent.createdAt.toISOString(), approvedAt: approval.createdAt.toISOString(), designLink: newLink,
-      toldBy: null, toldAt: null, taskStatus: 'DONE',
+      toldBy: null, toldAt: null, taskStatus: 'DONE', linkKind: 'NEW_LINK', supplierLink: LINK,
     }))
     expect(list.waitingTotal).toBeGreaterThanOrEqual(list.waiting.length)
 
@@ -346,7 +387,7 @@ describe('approval of the fix: a line the supplier got by a link (sheet, CSV, a 
     expect(await res.json()).toEqual({ changed: true })
     expect(await recheckEvents(o.id, o.sl2)).toEqual([{ type: SUPPLIER_RECHECK, actorId: null }, { type: SUPPLIER_TOLD, actorId: users.des.id }])
     const toldEvent = (await lineTask(o.id, o.sl2))!.events.find(e => e.type === SUPPLIER_TOLD)!
-    expect(toldEvent.message).toBe('Đã báo T22R Factory kiểm tra lại folder design')
+    expect(toldEvent.message).toBe(`Đã gửi T22R Factory link mới: ${newLink}`)
     const after = await fixes('lead')
     expect(keysOf(after.waiting)).not.toContain(o.key2)
     expect(after.told.find(t => t.taskKey === o.key2)).toEqual(expect.objectContaining({ toldBy: 'des', toldAt: toldEvent.createdAt.toISOString(), reason: CUSTOMER_ASKS }))
@@ -413,8 +454,10 @@ describe('approval of the fix: a line the supplier got by a link (sheet, CSV, a 
     expect(await sheetRows(o.id)).toEqual(sheet)
     expect(await prisma.order.findUniqueOrThrow({ where: { id: o.id } })).toMatchObject({ pipelineStatus: 'EXPORTED', designReady: true })
     expect(await offered(o.id)).toEqual({ hub: false, sheetSend: false })
+    // No record of the link the supplier got exists for a reopen made before this change, so it is sent the new one.
     expect((await fixes('lead')).waiting.find(w => w.taskKey === o.key2)).toMatchObject({
       reason: null, note: 'design khác mockup · chỗ cái dao', reopenedBy: 'des', reopenedAt: new Date(t0).toISOString(), supplierName: 'T22R Factory',
+      linkKind: 'NEW_LINK', supplierLink: null,
     })
   })
 
@@ -487,11 +530,15 @@ describe('the section "Đã update design / Cần báo xưởng"', () => {
       await press(o.line2, 'lead')
       await fixAndApprove(o.id, o.sl2, o.key2)
     }
-    expect(keysOf((await fixes('lead')).waiting)).toEqual(expect.arrayContaining([own.key2, other.key2]))
+    const lead = await fixes('lead')
+    expect(keysOf(lead.waiting)).toEqual(expect.arrayContaining([own.key2, other.key2]))
     const seller = await fixes('sellerA')
     expect(keysOf(seller.waiting)).toContain(own.key2)
     expect(keysOf(seller.waiting)).not.toContain(other.key2)
     expect(JSON.stringify(seller)).not.toContain('T22R b')
+    // Store A holds only this file's orders, so the seller's count is exactly its rows; the lead's also counts store B's.
+    expect(seller.waitingTotal).toBe(seller.waiting.length)
+    expect(lead.waitingTotal).toBeGreaterThan(seller.waitingTotal)
     expect((await told(other.key2, 'sellerA')).status).toBe(404)
     expect((await told(own.key2, 'sellerA')).status).toBe(200)
   })
@@ -660,5 +707,181 @@ describe('refusals', () => {
     expect((await press(asOrders.line2, 'sellerOrders')).status).toBe(200)
     expect((await getFixes(authed('/api/design-studio/tasks/supplier-recheck', 'sellerPlain'))).status).toBe(403)
     expect((await told(asOrders.key1, 'sellerPlain')).status).toBe(403)
+  })
+})
+
+describe('the supplier notice: the old link still holds the fix, or a new link must be sent', () => {
+  const recheckMessage = async (o: Sent, sl: string) => (await lineTask(o.id, sl))!.events.filter(e => e.type === SUPPLIER_RECHECK).map(e => e.message)
+  const row = async (key: string) => (await fixes('lead')).waiting.find(w => w.taskKey === key)
+
+  it('a line without a task whose supplier holds a library link: the fix lands in a new task folder ⇒ NEW_LINK; once the supplier has it, the next fix ⇒ SAME_FOLDER', async () => {
+    const o = await sentOrder({ sheet: true })
+    await press(o.line2, 'des')
+    const first = await fixAndApprove(o.id, o.sl2, o.key2, 2, { onDrive: true })
+    expect(first.notice).toBe(RECHECK)
+    expect(await recheckMessage(o, o.sl2)).toEqual([RECHECK])
+    expect((await prisma.orderLine.findUniqueOrThrow({ where: { id: o.line2 } })).designDriveLink).toBe(folderOf(o.key2))
+    expect(await row(o.key2)).toMatchObject({ linkKind: 'NEW_LINK', supplierLink: LINK, designLink: folderOf(o.key2) })
+    expect(await (await told(o.key2, 'des')).json()).toEqual({ changed: true })
+    expect((await lineTask(o.id, o.sl2))!.events.find(e => e.type === SUPPLIER_TOLD)!.message).toBe(`Đã gửi T22R Factory link mới: ${folderOf(o.key2)}`)
+
+    await press(o.line2, 'des', fix(CUSTOMER_ASKS, 'lần hai'))
+    expect((await lineTask(o.id, o.sl2))!.events.filter(e => e.type === 'SYSTEM').map(e => e.message).pop()).toBe(`Link xưởng đang giữ khi mở lại: ${folderOf(o.key2)}`)
+    expect((await fixAndApprove(o.id, o.sl2, o.key2, 3, { onDrive: true })).notice).toBe(SAME_FOLDER)
+    expect(await row(o.key2)).toMatchObject({ linkKind: 'SAME_FOLDER', supplierLink: folderOf(o.key2), designLink: folderOf(o.key2), reason: CUSTOMER_ASKS })
+    expect(await (await told(o.key2, 'lead')).json()).toEqual({ changed: true })
+    expect((await lineTask(o.id, o.sl2))!.events.filter(e => e.type === SUPPLIER_TOLD).pop()!.message).toBe('Đã báo T22R Factory xem lại folder design')
+  })
+
+  it.each([
+    ['in the folder', { onDrive: true }],
+    ['still on the server (the line link is the file until the folder holds it)', { onDrive: false }],
+  ])('a line whose supplier holds its own task folder ⇒ SAME_FOLDER, with the new file %s', async (_name, how) => {
+    const o = await sentOrder({ task2: 'DONE' })
+    await prisma.designTask.update({ where: { taskKey: o.key2 }, data: { driveFolderId: `${o.key2}-task`, driveFolderUrl: folderOf(o.key2) } })
+    await prisma.orderLine.update({ where: { id: o.line2 }, data: { designDriveLink: folderOf(o.key2) } })
+    await press(o.line2, 'des')
+    expect((await fixAndApprove(o.id, o.sl2, o.key2, 2, how)).notice).toBe(SAME_FOLDER)
+    expect(await recheckMessage(o, o.sl2)).toEqual([SAME_FOLDER])
+    expect(await row(o.key2)).toMatchObject({ linkKind: 'SAME_FOLDER', supplierLink: folderOf(o.key2) })
+  })
+
+  it('a line whose supplier holds one file that the fix replaces ⇒ NEW_LINK, and the old file link is kept for staff', async () => {
+    const o = await sentOrder({ task2: 'DONE' })
+    await prisma.designTask.update({ where: { taskKey: o.key2 }, data: { driveFolderId: `${o.key2}-task`, driveFolderUrl: folderOf(o.key2) } })
+    await prisma.orderLine.update({ where: { id: o.line2 }, data: { designDriveLink: ONE_FILE } })
+    await press(o.line2, 'des')
+    expect((await fixAndApprove(o.id, o.sl2, o.key2, 2, { onDrive: true })).notice).toBe(RECHECK)
+    expect(await row(o.key2)).toMatchObject({ linkKind: 'NEW_LINK', supplierLink: ONE_FILE, designLink: folderOf(o.key2) })
+  })
+
+  it('the kind chips keep one kind; rows still being fixed have no kind yet', async () => {
+    const same = await sentOrder({ task2: 'DONE' })
+    await prisma.designTask.update({ where: { taskKey: same.key2 }, data: { driveFolderId: `${same.key2}-task`, driveFolderUrl: folderOf(same.key2) } })
+    await prisma.orderLine.update({ where: { id: same.line2 }, data: { designDriveLink: folderOf(same.key2) } })
+    await press(same.line2, 'des')
+    await fixAndApprove(same.id, same.sl2, same.key2, 2, { onDrive: true })
+    const fresh = await sentOrder()
+    await press(fresh.line2, 'des')
+    await fixAndApprove(fresh.id, fresh.sl2, fresh.key2, 2, { onDrive: true })
+    const open = await sentOrder()
+    await press(open.line2, 'des')
+
+    const sameOnly = await fixes('lead', '?kind=SAME_FOLDER')
+    expect(keysOf(sameOnly.waiting)).toContain(same.key2)
+    expect(keysOf(sameOnly.waiting)).not.toContain(fresh.key2)
+    expect(sameOnly.waiting.every(r => r.linkKind === 'SAME_FOLDER')).toBe(true)
+    const newOnly = await fixes('lead', '?kind=NEW_LINK')
+    expect(keysOf(newOnly.waiting)).toContain(fresh.key2)
+    expect(keysOf(newOnly.waiting)).not.toContain(same.key2)
+    expect(keysOf(newOnly.fixing)).not.toContain(open.key2)
+    expect((await fixes('lead')).fixing.find(f => f.taskKey === open.key2)).toMatchObject({ linkKind: null, supplierLink: LINK })
+  })
+})
+
+describe('what the section shows and how fast it reads', () => {
+  const approved = async () => {
+    const o = await sentOrder()
+    await press(o.line2, 'des')
+    await fixAndApprove(o.id, o.sl2, o.key2)
+    return o
+  }
+
+  it.each([
+    ['fulfilled', { pipelineStatus: 'FULFILLED' }],
+    ['reported fulfilled by Shopify', { fulfillmentStatus: 'fulfilled' }],
+    ['cancelled', { pipelineStatus: 'CANCELLED' }],
+    ['refunded', { pipelineStatus: 'REFUNDED' }],
+  ])('a row leaves the section once its order is %s', async (_name, data) => {
+    const waiting = await approved()
+    const toldOne = await approved()
+    await told(toldOne.key2, 'des')
+    const before = await fixes('lead')
+    expect(keysOf(before.waiting)).toContain(waiting.key2)
+    expect(keysOf(before.told)).toContain(toldOne.key2)
+    for (const o of [waiting, toldOne]) await prisma.order.update({ where: { id: o.id }, data })
+    const now = await fixes('lead')
+    const after = keysOf([...now.waiting, ...now.told, ...now.fixing])
+    expect(after).not.toContain(waiting.key2)
+    expect(after).not.toContain(toldOne.key2)
+  })
+
+  it('"Đang sửa" lists only lines at a supplier: a reopened line of a Ready order with no mark is not one', async () => {
+    const o = await sentOrder({ status: 'READY_TO_PRODUCTION', exported: false })
+    expect((await press(o.line2, 'des')).status).toBe(200)
+    expect(keysOf((await fixes('lead')).fixing)).not.toContain(o.key2)
+    expect((await fixAndApprove(o.id, o.sl2, o.key2)).notice).toBeUndefined()
+    expect(keysOf((await fixes('lead')).waiting)).not.toContain(o.key2)
+  })
+
+  it('an open to-do of any age stays; "Đã báo" is newest told first and "Đang sửa" oldest reopen first', async () => {
+    const old = await approved()
+    const recheck = (await lineTask(old.id, old.sl2))!.events.find(e => e.type === SUPPLIER_RECHECK)!
+    const longAgo = new Date(Date.now() - 400 * 86400_000)
+    await prisma.designTaskEvent.updateMany({ where: { taskId: recheck.taskId }, data: { createdAt: longAgo } })
+    await prisma.designTaskEvent.update({ where: { id: recheck.id }, data: { createdAt: new Date(longAgo.getTime() + 1000) } })
+    const waiting = (await fixes('lead')).waiting
+    expect(waiting.find(w => w.taskKey === old.key2)!.approvedAt).toBe(new Date(longAgo.getTime() + 1000).toISOString())
+    expect(keysOf(waiting)[0]).toBe(old.key2)
+
+    const a = await approved()
+    const b = await approved()
+    await told(a.key2, 'des')
+    await told(b.key2, 'des')
+    // The whole cycle moves back a day, then the "told" moves to the given time (still after the approval).
+    const toldAt = async (o: Sent, at: number) => {
+      const events = (await lineTask(o.id, o.sl2))!.events
+      for (const e of events) await prisma.designTaskEvent.update({ where: { id: e.id }, data: { createdAt: new Date(e.createdAt.getTime() - 86400_000) } })
+      await prisma.designTaskEvent.update({ where: { id: events.find(x => x.type === SUPPLIER_TOLD)!.id }, data: { createdAt: new Date(at) } })
+    }
+    await toldAt(a, Date.now() - 2 * 3600_000)
+    await toldAt(b, Date.now() - 5 * 3600_000)
+    const toldKeys = keysOf((await fixes('lead')).told).filter(k => [a.key2, b.key2].includes(k))
+    expect(toldKeys).toEqual([a.key2, b.key2])
+
+    const c = await sentOrder()
+    const d = await sentOrder()
+    await press(c.line2, 'des')
+    await press(d.line2, 'des')
+    const reopenAt = async (o: Sent, at: number) => {
+      for (const e of (await lineTask(o.id, o.sl2))!.events) await prisma.designTaskEvent.update({ where: { id: e.id }, data: { createdAt: new Date(at) } })
+    }
+    await reopenAt(c, Date.now() - 1 * 3600_000)
+    await reopenAt(d, Date.now() - 9 * 3600_000)
+    expect(keysOf((await fixes('lead')).fixing).filter(k => [c.key2, d.key2].includes(k))).toEqual([d.key2, c.key2])
+  })
+})
+
+describe('re-sending a line pushed by API', () => {
+  it('the -R2 build carries the fixed line only, beside a live push of another line of the same supplier', async () => {
+    const o = await sentOrder({ line2Supplier: printwayId, beside: printwayId })
+    const old = await livePush(o)
+    await pushBeside(o)
+    await press(o.line2, 'des')
+    await fixAndApprove(o.id, o.sl2, o.key2)
+    expect(await state(o.id)).toEqual({ status: 'READY_TO_PRODUCTION', exported: [o.line1, o.line4] })
+    expect((await buildPrintwayPush(o.id, { quote: false }))!.preview.issues.map(i => i.code)).toContain('ACTIVE_PUSH')
+    await closeCancelledPush(old, 'cancelled')
+    expect(await state(o.id)).toEqual({ status: 'READY_TO_PRODUCTION', exported: [o.line1, o.line4] })
+    const fresh = (await buildPrintwayPush(o.id, { quote: false }))!
+    expect(fresh.preview.issues.map(i => i.code)).not.toContain('ACTIVE_PUSH')
+    expect(fresh.externalOrderId).toBe(`${o.code}-R2`)
+    expect(fresh.preview.lines.map(l => l.lineId)).toEqual([o.line2])
+  })
+
+  it('Bondre: refused while the old push is live, then -R2 with the fixed line', async () => {
+    const o = await sentOrder({ line2Supplier: bondreId })
+    const old = await livePush(o, bondreId)
+    await press(o.line2, 'des')
+    expect((await fixAndApprove(o.id, o.sl2, o.key2)).notice).toBeUndefined()
+    expect(await state(o.id)).toEqual({ status: 'READY_TO_PRODUCTION', exported: [o.line1] })
+    expect(await readyLines(o.id)).toEqual([o.line2])
+    const live = (await buildBondrePush(o.id, { quote: false }))!
+    expect(live.preview.issues.map(i => i.code)).toContain('ACTIVE_PUSH')
+    await closeCancelledPush(old, 'cancelled')
+    const fresh = (await buildBondrePush(o.id, { quote: false }))!
+    expect(fresh.preview.issues.map(i => i.code)).not.toContain('ACTIVE_PUSH')
+    expect(fresh.externalOrderId).toBe(`${o.code}-R2`)
+    expect(fresh.preview.lines.map(l => l.lineId)).toEqual([o.line2])
   })
 })

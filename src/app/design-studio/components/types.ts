@@ -119,6 +119,8 @@ export type SupplierFixRow = {
   reopenedBy: string | null; reopenedAt: string
   approvedAt: string | null
   toldBy: string | null; toldAt: string | null
+  linkKind: 'SAME_FOLDER' | 'NEW_LINK' | null
+  supplierLink: string | null
   designLink: string | null
 }
 
