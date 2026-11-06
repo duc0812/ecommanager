@@ -2,8 +2,9 @@
 
     python detect.py --url <link>
 
-prints one word (customily, customall, teeinblue, customix, unknown or unsupported:<name>) and exits 0, so a session
-learns the platform without reading the page itself. A page that does not load is `unknown`.
+prints one word and exits 0, so a session learns the platform without reading the page itself: customily, customall,
+teeinblue, customix or unsupported:<name> from a marker; unknown when the page loaded and no marker matched; unloaded
+when the page could not be fetched (a store that refuses scripted requests may still let the clone tool's crawler in).
 """
 from __future__ import annotations
 
@@ -99,7 +100,7 @@ def main(argv: list[str] | None = None, opener=None) -> int:
     ap.add_argument('--url', required=True, help='the source product link (https only)')
     args = ap.parse_args(argv)
     html = fetch_html(args.url, opener=opener)
-    print(detect_platform(html) if html else 'unknown', flush=True)
+    print(detect_platform(html) if html else 'unloaded', flush=True)
     return 0
 
 

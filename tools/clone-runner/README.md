@@ -9,7 +9,7 @@ Claude Code session, and reports the outcome. One job at a time. Spec:
 |---|---|
 | `runner.py` | claim loop, job checks, heartbeat, result and failure reports, one-runner lock, `runner.log` |
 | `api.py` | client for `/api/clone-worker/*` (token only in the `Authorization` header) |
-| `detect.py` | platform from markers in the source page HTML; `python detect.py --url <link>` prints it as one word for a session |
+| `detect.py` | platform from markers in the source page HTML; `python detect.py --url <link>` prints it as one word for a session (`unloaded` when the page could not be fetched) |
 | `registers.py` | the link in `D:\Ecom manager\clipart-clones\*\clone.json` and `customall-clones\*\clone.json` (Litzzy only) |
 | `session.py` | starts `claude -p` for a job and reads back `result.json` |
 | `proc.py` | the session's process tree: Job Object on Windows, tree kill on timeout or stop |
@@ -59,7 +59,8 @@ token, 4 (`--once`) the Claude CLI could not run.
 | `CLONE_CLI_BACKOFF_S` | `1800` | seconds the claim loop waits after a session found the Claude CLI unable to run |
 | `CLONE_SKILLS_ROOT` | `C:\Users\TM PC\.claude\skills` | where the clone skills live |
 
-Every session also gets `DISABLE_AUTOUPDATER=1`, so the CLI version that was checked is the one that runs.
+Every session also gets `DISABLE_AUTOUPDATER=1`: the session itself never updates the CLI. The owner's own interactive
+sessions can still update the shared `claude` executable, so the version can change between two jobs.
 
 ## A job on disk
 
@@ -77,8 +78,9 @@ appended in UTF-8; past 5 MB it becomes `runner.log.1`, replacing the older one)
 - `result.json`: written by the session; the only thing the runner trusts. Deleted before each attempt. A `reused`
   in it is ignored: only the runner's own register lookup marks a job reused, since the server then skips its SKU
   check. Its `platform` is sent in one last heartbeat when the runner could not tell the platform itself.
-- `<slug>\tool-state.json`: the Litzzy tool's own state. When a session times out, is stopped or ends without
-  `result.json`, the runner reports the product named in its `done.product.id` as this job's leftover.
+- `<slug>\tool-state.json`: the Litzzy tool's own state. When a session times out or ends without `result.json`, the
+  runner reports the product named in its `done.product.id` as this job's leftover. When a session is stopped (the
+  job was cancelled or its lease lost) nothing is sent: the lease lapses and the server requeues or fails the job.
 
 Before each attempt the runner also deletes `.claude\`, `CLAUDE.md`, `CLAUDE.local.md` and `.mcp.json` from the job
 folder (a link or junction is removed itself, never its target): Claude Code loads them at start-up, and a retry must

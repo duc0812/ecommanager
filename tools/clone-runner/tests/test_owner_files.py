@@ -51,6 +51,9 @@ def test_readme_says_what_the_runner_does_now():
     for phrase in ('--output-format stream-json --verbose', '--safe-mode', 'runner.log', 'runner.log.1',
                    'unverified', 'does not stop a running job', 'revoking the worker token', 'code 3', 'code 4',
                    'its own checkout of a reviewed commit', 're-reads `job_prompt.md`', 'inside a Claude Code session',
-                   'QuickEdit', '2 GB', 'CLAUDE.md', 'tool-state.json', 'detect.py --url'):
+                   'QuickEdit', '2 GB', 'CLAUDE.md', 'tool-state.json', 'detect.py --url',
+                   'When a session is stopped (the job was cancelled or its lease lost) nothing is sent',
+                   'the session itself never updates the CLI'):
         assert phrase in text, phrase
     assert '--output-format json ' not in text and "final JSON line" not in text
+    assert 'is stopped or ends without' not in text and 'the CLI version that was checked is the one' not in text

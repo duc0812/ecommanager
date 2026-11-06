@@ -253,7 +253,7 @@ def bash_timeout_ms(base) -> str:
 
 def child_env(store: str | None, base=None) -> dict:
     """The runner's environment without any worker token or store variable, plus the store's own variables, the Bash
-    tool's timeouts and a switched-off auto-updater (the CLI version that was probed is the one that runs)."""
+    tool's timeouts and a switched-off auto-updater (the session itself never updates the CLI)."""
     base = os.environ if base is None else base
     env = {k: v for k, v in base.items() if not k.upper().endswith('_WORKER_TOKEN') and k.upper() not in STORE_ENV_KEYS}
     path = STORE_ENV_FILES.get(store)
@@ -272,6 +272,10 @@ def child_env(store: str | None, base=None) -> dict:
 
 def _fail(kind: str, error: str) -> dict:
     return {'verdict': 'FAIL', 'failKind': kind, 'error': error}
+
+
+def _cli_down_outcome() -> dict:
+    return {**_fail('TOOL', CLI_DOWN_ERROR), 'cliDown': True}
 
 
 def read_result(job_dir: str) -> dict:
@@ -435,7 +439,7 @@ def run_session(job: dict, platform: str, job_dir: str, should_stop, timeout_s: 
             child = proc.spawn(argv, cwd=job_dir, env=env, out=out, secrets=secrets)
         except OSError as e:
             _say(out, f'Không chạy được claude ({type(e).__name__}).')
-            return _fail('TOOL', f'Không chạy được claude CLI ({type(e).__name__}).')
+            return _cli_down_outcome()
         try:
             if os.name == 'nt' and not child.contained:
                 _say(out, proc.CONTAIN_FAILED)
@@ -452,7 +456,7 @@ def run_session(job: dict, platform: str, job_dir: str, should_stop, timeout_s: 
     code = child.popen.returncode
     written = os.path.exists(os.path.join(job_dir, RESULT_FILE))
     if state == 'exited' and not written and _cli_down(cli, elapsed):
-        return {**_fail('TOOL', CLI_DOWN_ERROR), 'cliDown': True}
+        return _cli_down_outcome()
     if state == 'timeout':
         outcome = _fail('TIMEOUT', f'Phiên chạy quá {timeout_s / 60:g} phút, đã dừng.')
     elif state == 'stopped':

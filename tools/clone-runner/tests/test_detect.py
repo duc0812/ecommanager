@@ -191,16 +191,26 @@ def test_command_line_prints_one_word_for_the_page(capsys, page, word):
 
 
 @pytest.mark.parametrize('outcome', [urllib.error.URLError('down'), FakeResponse(b'<html></html>', status=203),
-                                     TimeoutError('slow')])
-def test_command_line_says_unknown_when_the_page_does_not_load(capsys, outcome):
+                                     TimeoutError('slow'), urllib.error.HTTPError(LINK, 429, 'Too Many Requests', {},
+                                                                                  io.BytesIO(b''))])
+def test_command_line_says_unloaded_when_the_page_does_not_load(capsys, outcome):
     assert detect.main(['--url', LINK], opener=FakeOpener(outcome)) == 0
+    assert capsys.readouterr().out == 'unloaded\n'
+
+
+def test_command_line_tells_unloaded_from_loaded_without_a_marker(capsys, monkeypatch):
+    monkeypatch.setattr(detect, 'fetch_html', lambda url, opener=None: None)
+    assert detect.main(['--url', LINK]) == 0
+    assert capsys.readouterr().out == 'unloaded\n'
+    monkeypatch.setattr(detect, 'fetch_html', lambda url, opener=None: '<html><body>no personaliser</body></html>')
+    assert detect.main(['--url', LINK]) == 0
     assert capsys.readouterr().out == 'unknown\n'
 
 
 def test_command_line_never_fetches_a_non_https_link(capsys):
     opener = FakeOpener(FakeResponse(fixture('customily.html').encode('utf-8')))
     assert detect.main(['--url', 'http://shop.example.com/products/a'], opener=opener) == 0
-    assert capsys.readouterr().out == 'unknown\n' and opener.requests == []
+    assert capsys.readouterr().out == 'unloaded\n' and opener.requests == []
 
 
 def test_command_line_help_exits_0():

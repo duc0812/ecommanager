@@ -196,11 +196,10 @@ def test_job_prompt_carries_the_spec_rules():
                    'lower case', 'shopify_ops.py', 'environment variable', 'adopt_theme.py" --adopt',
                    'before anything is pushed', 'the message the tool',
                    'is the only change to a skill folder you may make', 'The one write into a skill folder allowed',
-                   'is the one exception', 'Customall jobs included', 'Customily and Customall jobs alike',
-                   'state --product <productGid> --code <skuCode>', '"skusOk": true', '"status": "ACTIVE"',
-                   'non-null `onlineStoreUrl`'):
+                   'is the one exception', 'state --product <productGid> --code <skuCode>', '"skusOk": true',
+                   '"status": "ACTIVE"', 'non-null `onlineStoreUrl`'):
         assert phrase in text, phrase
-    assert 'reused' not in text
+    assert 'reused' not in text and 'Customall jobs included' not in text
     assert text.rstrip().endswith('## This job')
 
 
@@ -212,21 +211,27 @@ def test_job_prompt_says_what_the_final_review_asked_for():
             'For the Litzzy tools the WORK folder is `.\\<slug>` inside the job folder and `<work root>\\<slug>` is '
             'the REGISTER entry; the skill says never to point `--work` at the register.',
             'exits 1 whenever files differ', 'that is the normal case and not an error',
-            'for a Litzzy job the steps are the queue section of the skill\'s SKILL.md '
+            'The steps of every job are the queue section of its skill\'s SKILL.md '
             '(`## Chạy theo hàng chờ (clone queue)`); run its commands exactly, in its order',
-            '`NOT_ENABLED`', 'a long timeout (up to the hour the environment allows)',
+            'this pair is not prepared for the queue yet', '`NOT_ENABLED`',
+            'a long timeout (up to the hour the environment allows)',
             'never run a command in the background', 'never `cd`', 'always absolute paths',
-            'python "<runnerDir>\\detect.py" --url "<sourceUrl>"', 'không nhận ra nền tảng',
-            '`_runtime\\backup-*`', 'expected'):
+            'python "<runnerDir>\\detect.py" --url "<sourceUrl>"', 'không nhận ra nền tảng', '`unloaded`',
+            'in the order customily, customall, teeinblue, customix', 'is `FAIL`, `SOURCE`',
+            '`skills.<platform>` in `job.json`', '`_runtime\\backup-*`', 'expected'):
         assert phrase in flat, phrase
     assert '--stop-after' not in text and '--only publish' not in text, 'the steps come from the skill, not a paraphrase'
     assert 'cdn.customily.com' not in text, 'step 1 runs detect.py instead of reading the HTML'
+    assert 'for a Litzzy job' not in flat and 'docstring of `tool\\clone.py`' not in flat
+    step3 = flat[flat.index('3. That section starts'):flat.index('4. Write PASS')]
+    assert step3.index('theme_upsert.py" --runtime-only --dry-run') < step3.index('adopt_theme.py" --adopt')
     table = [line for line in text.splitlines() if line.startswith('| `')]
     kinds = [line.split('`')[1] for line in table]
     assert kinds == ['UNSUPPORTED', 'NOT_ENABLED', 'SOURCE', 'TOOL_GAP', 'QA', 'TOOL']
     for kind, words in (('UNSUPPORTED', 'none of the four personalisers'), ('NOT_ENABLED', 'targets'),
-                        ('SOURCE', 'refuses scripts'), ('TOOL_GAP', 'step-0 guards'),
-                        ('QA', 'does not match the source'), ('TOOL', 'anything else')):
+                        ('SOURCE', 'the SOURCE store refuses or throttles the tool\'s requests'),
+                        ('TOOL_GAP', 'step-0 guards'), ('QA', 'does not match the source'),
+                        ('TOOL', 'our own store\'s Admin API throttles (after the tool\'s retries)')):
         assert words in table[kinds.index(kind)], kind
 
 
@@ -324,6 +329,13 @@ def test_a_cli_that_cannot_run_is_cli_down(skills, job_dir, monkeypatch):
     assert run(job_dir, monkeypatch, mode='cli-down') == CLI_DOWN
     assert run(job_dir, monkeypatch, mode='crash') == CLI_DOWN
     assert session.CLI_DOWN_WINDOW_S == 90
+
+
+def test_a_claude_that_cannot_be_started_is_cli_down(skills, job_dir, tmp_path):
+    missing = [str(tmp_path / 'no-such-folder' / 'claude.exe')]
+    out = session.run_session(make_job(), 'customily', str(job_dir), lambda: False, timeout_s=60, claude_cmd=missing)
+    assert out == CLI_DOWN
+    assert 'Không chạy được claude (FileNotFoundError).' in (job_dir / 'session.log').read_text(encoding='utf-8')
 
 
 def test_a_failure_late_in_a_session_is_not_cli_down(skills, job_dir, monkeypatch):
