@@ -8,10 +8,10 @@ import { issueSkuCode, parseSkuPrefix, type SkuCodeDeps } from '@/lib/clone/sku-
 
 export type CloneJobRow = CloneJob
 
-type SuperadminOnly = 'costUsd' | 'durationMs' | 'lockedAt'
-type DateColumn = 'createdAt' | 'updatedAt' | 'startedAt' | 'finishedAt' | SuperadminOnly
+type SuperadminOnly = 'costUsd' | 'durationMs' | 'lockedAt' | 'qaNote' | 'productType'
+type DateColumn = 'createdAt' | 'updatedAt' | 'startedAt' | 'finishedAt'
 
-export type CloneJobView = Omit<CloneJobRow, DateColumn> & {
+export type CloneJobView = Omit<CloneJobRow, DateColumn | SuperadminOnly> & {
   createdAt: string
   updatedAt: string
   startedAt: string | null
@@ -19,6 +19,8 @@ export type CloneJobView = Omit<CloneJobRow, DateColumn> & {
   costUsd?: number | null
   durationMs?: number | null
   lockedAt?: string | null
+  qaNote?: string | null
+  productType?: string | null
 }
 
 export class CloneInputError extends Error {
@@ -40,7 +42,13 @@ const JOB_NOT_FOUND = 'Không tìm thấy job.'
 const NOT_WAITING = 'Chỉ huỷ được job đang chờ.'
 const NOT_FAILED = 'Chỉ thử lại được job lỗi.'
 const LIST_LIMIT = 200
+const LINK_TAKEN = 'Link này đã có job khác.'
+const NO_SKU_CODE = 'Không cấp được mã SKU, thử lại sau.'
+const MAX_URL_LENGTH = 2048
+const LIVE_STATUSES = ['QUEUED', 'RUNNING', 'DONE']
 const ADMIN_ONLY_FAIL_KINDS = ['TOOL_GAP', 'UNSUPPORTED', 'NOT_ENABLED']
+// The only failure texts the server itself writes; every other error comes from the runner or a Claude session on the owner's PC.
+const SERVER_ERROR_KINDS = ['VERIFY', 'WORKER_LOST']
 
 export function sourceKeyOf(url: string): string {
   const u = new URL(url.trim())
@@ -50,7 +58,9 @@ export function sourceKeyOf(url: string): string {
 const iso = (d: Date | null) => (d ? d.toISOString() : null)
 
 // Lists the columns on purpose: a column added to CloneJob later stays out of every response until it is added here.
+// Only a SUPERADMIN gets the cost, the lease, the QA note and the product type, and `error` text that did not come from the server.
 export function cloneJobView(job: CloneJobRow, viewer: AuthUser): CloneJobView {
+  const superadmin = viewer.role === 'SUPERADMIN'
   const view: CloneJobView = {
     id: job.id,
     storeId: job.storeId,
@@ -69,18 +79,18 @@ export function cloneJobView(job: CloneJobRow, viewer: AuthUser): CloneJobView {
     productGid: job.productGid,
     handle: job.handle,
     productUrl: job.productUrl,
-    productType: job.productType,
     reused: job.reused,
     qaVerdict: job.qaVerdict,
-    qaNote: job.qaNote,
-    error: job.error,
+    error: superadmin || (job.failKind !== null && SERVER_ERROR_KINDS.includes(job.failKind)) ? job.error : null,
     createdAt: job.createdAt.toISOString(),
     updatedAt: job.updatedAt.toISOString(),
   }
-  if (viewer.role === 'SUPERADMIN') {
+  if (superadmin) {
     view.costUsd = job.costUsd
     view.durationMs = job.durationMs
     view.lockedAt = iso(job.lockedAt)
+    view.qaNote = job.qaNote
+    view.productType = job.productType
   }
   return view
 }
@@ -138,6 +148,47 @@ export async function getCloneJob(user: AuthUser, id: string): Promise<CloneJobV
 
 export type CreateCloneJobDeps = { sku?: Partial<SkuCodeDeps>; now?: Date }
 
+// The stored link is the parsed one (`href`): the URL parser drops tabs and newlines and percent-encodes spaces and quotes, so what travels to the runner is what was checked.
+function safeLink(raw: unknown): string {
+  const typed = typeof raw === 'string' ? raw.trim() : ''
+  if (typed.length > MAX_URL_LENGTH) throw new CloneInputError(400, BAD_LINK)
+  let href: string
+  try {
+    href = assertSafeExternalUrl(typed).href
+  } catch {
+    throw new CloneInputError(400, BAD_LINK)
+  }
+  if (href.length > MAX_URL_LENGTH) throw new CloneInputError(400, BAD_LINK)
+  return href
+}
+
+declare global {
+  // eslint-disable-next-line no-var
+  var __cloneLinkLocks: Map<string, Promise<void>> | undefined
+}
+
+// One create or retry per link at a time, so the next one sees the first one's job in its duplicate lookup. Memory is enough:
+// production is a single process. State lives on globalThis for the same reason as the queue waiters.
+async function withLinkLock<T>(storeId: string, sourceKey: string, run: () => Promise<T>): Promise<T> {
+  if (!globalThis.__cloneLinkLocks) globalThis.__cloneLinkLocks = new Map()
+  const locks = globalThis.__cloneLinkLocks
+  const key = `${storeId}|${sourceKey}`
+  const before = locks.get(key) ?? Promise.resolve()
+  let release!: () => void
+  const mine = new Promise<void>(resolve => {
+    release = resolve
+  })
+  const tail = before.then(() => mine)
+  locks.set(key, tail)
+  await before
+  try {
+    return await run()
+  } finally {
+    release()
+    if (locks.get(key) === tail) locks.delete(key)
+  }
+}
+
 export async function createCloneJob(
   user: AuthUser,
   input: { url: unknown; storeId: unknown; force?: unknown },
@@ -152,33 +203,38 @@ export async function createCloneJob(
   const prefix = parseSkuPrefix(owner?.skuPrefix)
   if (!prefix) throw new CloneInputError(400, NO_SKU_PREFIX)
 
-  const sourceUrl = typeof input.url === 'string' ? input.url.trim() : ''
-  try {
-    assertSafeExternalUrl(sourceUrl)
-  } catch {
-    throw new CloneInputError(400, BAD_LINK)
-  }
+  const sourceUrl = safeLink(input.url)
   const sourceKey = sourceKeyOf(sourceUrl)
 
-  if (!(input.force === true && user.role === 'SUPERADMIN')) {
-    const same = await prisma.cloneJob.findMany({
-      where: { storeId, sourceKey, status: { in: ['QUEUED', 'RUNNING', 'DONE'] } },
-      orderBy: { createdAt: 'desc' },
-      select: { id: true, requestedById: true, status: true, productUrl: true },
-    })
-    const own = same.find(j => j.requestedById === user.id)
-    if (own) throw new CloneInputError(409, 'Bạn đã dán link này rồi.', { jobId: own.id })
-    const done = same.find(j => j.status === 'DONE')
-    if (done) throw new CloneInputError(409, 'Link này đã có sản phẩm trên store.', { productUrl: done.productUrl })
-    if (same.length > 0) throw new CloneInputError(409, 'Link này đang được clone.')
-  }
+  return withLinkLock(storeId, sourceKey, async () => {
+    if (!(input.force === true && user.role === 'SUPERADMIN')) {
+      const same = await prisma.cloneJob.findMany({
+        where: { storeId, sourceKey, status: { in: LIVE_STATUSES } },
+        orderBy: { createdAt: 'desc' },
+        select: { id: true, requestedById: true, status: true, productUrl: true },
+      })
+      const own = same.find(j => j.requestedById === user.id)
+      if (own) throw new CloneInputError(409, 'Bạn đã dán link này rồi.', { jobId: own.id })
+      const done = same.find(j => j.status === 'DONE')
+      if (done) throw new CloneInputError(409, 'Link này đã có sản phẩm trên store.', { productUrl: done.productUrl })
+      if (same.length > 0) throw new CloneInputError(409, 'Link này đang được clone.')
+    }
 
-  const skuCode = await issueSkuCode(prefix, deps.now ?? new Date(), deps.sku)
-  const job = await prisma.cloneJob.create({
-    data: { storeId, sourceUrl, sourceKey, skuCode, requestedById: user.id, requestedByName: user.name },
+    // The code is checked for being free before it is used, so a unique-index hit here means someone took it in between: one more code, then give up.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const skuCode = await issueSkuCode(prefix, deps.now ?? new Date(), deps.sku)
+      try {
+        const job = await prisma.cloneJob.create({
+          data: { storeId, sourceUrl, sourceKey, skuCode, requestedById: user.id, requestedByName: user.name },
+        })
+        notifyCloneQueue()
+        return job
+      } catch (e) {
+        if ((e as { code?: unknown }).code !== 'P2002') throw e
+      }
+    }
+    throw new Error(NO_SKU_CODE)
   })
-  notifyCloneQueue()
-  return job
 }
 
 // A job the caller cannot see answers like a missing one; one it sees but did not create is only for a SUPERADMIN to act on.
@@ -203,11 +259,18 @@ export async function retryCloneJob(user: AuthUser, id: string): Promise<CloneJo
   if (job.failKind && ADMIN_ONLY_FAIL_KINDS.includes(job.failKind) && user.role !== 'SUPERADMIN') {
     throw new CloneInputError(403, 'Job này cần quản trị xử lý trước khi thử lại.')
   }
-  const { count } = await prisma.cloneJob.updateMany({
-    where: { id, status: 'FAILED' },
-    data: { status: 'QUEUED', attempts: 0, error: null, failKind: null, stage: null, lockedAt: null, finishedAt: null },
+  await withLinkLock(job.storeId, job.sourceKey, async () => {
+    const other = await prisma.cloneJob.findFirst({
+      where: { id: { not: id }, storeId: job.storeId, sourceKey: job.sourceKey, status: { in: LIVE_STATUSES } },
+      select: { id: true },
+    })
+    if (other) throw new CloneInputError(409, LINK_TAKEN)
+    const { count } = await prisma.cloneJob.updateMany({
+      where: { id, status: 'FAILED' },
+      data: { status: 'QUEUED', attempts: 0, error: null, failKind: null, stage: null, lockedAt: null, finishedAt: null },
+    })
+    if (count === 0) throw new CloneInputError(409, NOT_FAILED)
   })
-  if (count === 0) throw new CloneInputError(409, NOT_FAILED)
   notifyCloneQueue()
   return cloneJobView(await prisma.cloneJob.findUniqueOrThrow({ where: { id } }), user)
 }

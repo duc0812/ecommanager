@@ -47,7 +47,7 @@ let jobN = 0
 async function seedJob(over: Partial<{
   storeId: string; sourceUrl: string; sourceKey: string; status: string; failKind: string | null; requestedById: string; requestedByName: string
   productUrl: string | null; attempts: number; stage: string | null; error: string | null; costUsd: number | null; durationMs: number | null
-  lockedAt: Date | null; finishedAt: Date | null; createdAt: Date
+  lockedAt: Date | null; finishedAt: Date | null; createdAt: Date; qaNote: string | null; qaVerdict: string | null; productType: string | null
 }> = {}) {
   jobN++
   return prisma.cloneJob.create({
@@ -220,6 +220,44 @@ describe('createCloneJob', () => {
     expect(await prisma.cloneJob.count({ where: { storeId: STORE_A } })).toBe(0)
   })
 
+  it('3. link dài quá 2048 ký tự: 400, đúng 2048 thì nhận', async () => {
+    const head = 'https://shop.example.com/'
+    const longest = head + 'a'.repeat(2048 - head.length)
+    const e = await codeOf(() => createCloneJob(users.sellera, { url: `${longest}a`, storeId: STORE_A }, deps()))
+    expect(e.status).toBe(400)
+    expect(e.message).toBe('Link không hợp lệ.')
+    const huge = await codeOf(() => createCloneJob(users.sellera, { url: head + 'a'.repeat(100_000), storeId: STORE_A }, deps()))
+    expect(huge.status).toBe(400)
+    expect(await prisma.cloneJob.count({ where: { storeId: STORE_A } })).toBe(0)
+    const job = await createCloneJob(users.sellera, { url: longest, storeId: STORE_A }, deps())
+    expect(job.sourceUrl).toHaveLength(2048)
+  })
+
+  it('3. link ngắn lúc dán nhưng dài quá 2048 sau khi mã hoá phần trăm: 400', async () => {
+    const e = await codeOf(() => createCloneJob(users.sellera, { url: `https://shop.example.com/${'"'.repeat(1000)}`, storeId: STORE_A }, deps()))
+    expect(e.status).toBe(400)
+    expect(e.message).toBe('Link không hợp lệ.')
+  })
+
+  it('3. xuống dòng, tab và ký tự lạ trong link không vào được kho: lưu đúng chuỗi đã được kiểm', async () => {
+    const dirty = 'https://Shop.Example.com/prod\nucts/a\tb `c` "d" $(id) e'
+    const job = await createCloneJob(users.sellera, { url: dirty, storeId: STORE_A }, deps())
+    const parsed = new URL(dirty.trim())
+    expect(job.sourceUrl).toBe(parsed.href)
+    expect(job.sourceUrl).toBe('https://shop.example.com/products/ab%20%60c%60%20%22d%22%20$(id)%20e')
+    expect(job.sourceUrl).not.toMatch(/[\s\n\t\r"`]/)
+    expect(job.sourceKey).toBe(sourceKeyOf(job.sourceUrl))
+    expect(job.sourceKey).toBe('shop.example.com/products/ab%20%60c%60%20%22d%22%20$(id)%20e')
+    expect((await prisma.cloneJob.findUnique({ where: { id: job.id } }))?.sourceUrl).toBe(job.sourceUrl)
+  })
+
+  it('3. hai dạng của cùng một link (có và không có xuống dòng) là một khoá', async () => {
+    await createCloneJob(users.sellera, { url: 'https://shop.example.com/pro\nducts/abc', storeId: STORE_A }, deps())
+    const e = await codeOf(() => createCloneJob(users.sellera, { url: 'https://shop.example.com/products/abc\t', storeId: STORE_A }, deps()))
+    expect(e.status).toBe(409)
+    expect(e.message).toBe('Bạn đã dán link này rồi.')
+  })
+
   it('4. link của chính người gọi đang chờ, đang chạy hoặc xong: 409 kèm jobId', async () => {
     for (const status of ['QUEUED', 'RUNNING', 'DONE']) {
       await wipe()
@@ -293,7 +331,7 @@ describe('createCloneJob', () => {
     await waiting
     expect(woke).toHaveBeenCalledTimes(1)
     expect(job).toMatchObject({
-      status: 'QUEUED', storeId: STORE_A, sourceUrl: `${LINK}/?variant=1`, sourceKey: LINK_KEY, requestedById: users.sellera.id,
+      status: 'QUEUED', storeId: STORE_A, sourceUrl: 'https://shop.example.com/products/abc/?variant=1', sourceKey: LINK_KEY, requestedById: users.sellera.id,
       requestedByName: users.sellera.name, attempts: 0, failKind: null,
     })
     expect(job.skuCode).toMatch(SKU_CODE_RE)
@@ -305,6 +343,94 @@ describe('createCloneJob', () => {
   it('5. một lỗi từ lớp cấp mã không để lại job', async () => {
     const failing = { ...sku(), random: () => 1, shopifySkuExists: async () => true, storeIds: async () => [STORE_A] }
     await expect(createCloneJob(users.sellera, { url: LINK, storeId: STORE_A }, { sku: failing, now: NOW })).rejects.toThrow('Không cấp được mã SKU')
+    expect(await prisma.cloneJob.count({ where: { storeId: STORE_A } })).toBe(0)
+  })
+
+  it('hai lần dán cùng lúc một link của một người: một job, lần kia 409 "Bạn đã dán link này rồi."', async () => {
+    const results = await Promise.allSettled([
+      createCloneJob(users.sellera, { url: LINK, storeId: STORE_A }, deps()),
+      createCloneJob(users.sellera, { url: `${LINK}/?utm=1`, storeId: STORE_A }, deps()),
+    ])
+    const made = results.filter((r): r is PromiseFulfilledResult<Awaited<ReturnType<typeof createCloneJob>>> => r.status === 'fulfilled')
+    const refused = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected')
+    expect(made).toHaveLength(1)
+    expect(refused).toHaveLength(1)
+    expect(refused[0].reason).toBeInstanceOf(CloneInputError)
+    expect(refused[0].reason).toMatchObject({ status: 409, message: 'Bạn đã dán link này rồi.', extra: { jobId: made[0].value.id } })
+    expect(await prisma.cloneJob.count({ where: { storeId: STORE_A, sourceKey: LINK_KEY } })).toBe(1)
+  })
+
+  it('hai người dán cùng lúc một link: một job, người kia 409 "Link này đang được clone."', async () => {
+    const results = await Promise.allSettled([
+      createCloneJob(users.sellera, { url: LINK, storeId: STORE_A }, deps()),
+      createCloneJob(users.sellera2, { url: LINK, storeId: STORE_A }, deps()),
+    ])
+    expect(results.filter(r => r.status === 'fulfilled')).toHaveLength(1)
+    const refused = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected')
+    expect(refused).toHaveLength(1)
+    expect(refused[0].reason).toMatchObject({ status: 409, message: 'Link này đang được clone.' })
+    expect(refused[0].reason.extra).toBeUndefined()
+    expect(await prisma.cloneJob.count({ where: { storeId: STORE_A, sourceKey: LINK_KEY } })).toBe(1)
+  })
+
+  it('nhiều lần dán cùng lúc: đúng một job, và khoá dọn sạch sau khi xong', async () => {
+    const results = await Promise.allSettled(
+      Array.from({ length: 5 }, () => createCloneJob(users.sellera, { url: LINK, storeId: STORE_A }, deps())),
+    )
+    expect(results.filter(r => r.status === 'fulfilled')).toHaveLength(1)
+    expect(await prisma.cloneJob.count({ where: { storeId: STORE_A, sourceKey: LINK_KEY } })).toBe(1)
+    expect((globalThis as any).__cloneLinkLocks?.size ?? 0).toBe(0)
+  })
+
+  it('hai link khác nhau dán cùng lúc không chờ nhau và đều tạo được', async () => {
+    const results = await Promise.all([
+      createCloneJob(users.sellera, { url: 'https://shop.example.com/p/one', storeId: STORE_A }, deps()),
+      createCloneJob(users.sellera, { url: 'https://shop.example.com/p/two', storeId: STORE_A }, deps()),
+    ])
+    expect(results.map(j => j.sourceKey).sort()).toEqual(['shop.example.com/p/one', 'shop.example.com/p/two'])
+  })
+
+  it('một lần lỗi ở lớp cấp mã không giữ khoá: lần dán sau vẫn chạy', async () => {
+    const failing = { ...sku(), random: () => 1, shopifySkuExists: async () => true, storeIds: async () => [STORE_A] }
+    await expect(createCloneJob(users.sellera, { url: LINK, storeId: STORE_A }, { sku: failing, now: NOW })).rejects.toThrow()
+    expect((await createCloneJob(users.sellera, { url: LINK, storeId: STORE_A }, deps())).status).toBe('QUEUED')
+  })
+
+  // Another writer takes the code after the free-check and before our insert: the hook plants a job holding the code that was just issued.
+  function interloper(times: number) {
+    const base = sku()
+    let planted = 0
+    return {
+      ...base,
+      storeIds: async () => [STORE_A],
+      shopifySkuExists: async (_storeId: string, code: string) => {
+        if (planted < times) {
+          planted++
+          await prisma.cloneJob.create({
+            data: { storeId: STORE_B, sourceUrl: `https://other.example.com/${planted}`, sourceKey: `other.example.com/${planted}`, skuCode: code, requestedById: users.sellerb.id, requestedByName: 'B' },
+          })
+        }
+        return false
+      },
+    }
+  }
+
+  it('mã vừa cấp bị người khác chiếm trước lúc ghi (P2002): thử một mã nữa rồi tạo được job', async () => {
+    const job = await createCloneJob(users.sellera, { url: LINK, storeId: STORE_A }, { sku: interloper(1), now: NOW })
+    expect(job.status).toBe('QUEUED')
+    expect(job.skuCode).toMatch(SKU_CODE_RE)
+    const taken = await prisma.cloneJob.findMany({ where: { storeId: STORE_B } })
+    expect(taken).toHaveLength(1)
+    expect(taken[0].skuCode).not.toBe(job.skuCode)
+    expect(await prisma.cloneJob.count({ where: { storeId: STORE_A } })).toBe(1)
+  })
+
+  it('mã bị chiếm hai lần liền: lỗi thường "Không cấp được mã SKU", không phải lỗi cơ sở dữ liệu, không để lại job', async () => {
+    const e = await createCloneJob(users.sellera, { url: LINK, storeId: STORE_A }, { sku: interloper(2), now: NOW }).catch(x => x)
+    expect(e).toBeInstanceOf(Error)
+    expect(e).not.toBeInstanceOf(CloneInputError)
+    expect(e.message).toBe('Không cấp được mã SKU, thử lại sau.')
+    expect(e.code).toBeUndefined()
     expect(await prisma.cloneJob.count({ where: { storeId: STORE_A } })).toBe(0)
   })
 
@@ -375,16 +501,63 @@ describe('cloneJobView', () => {
     expect(full).toMatchObject({ costUsd: 1.25, durationMs: 90_000, lockedAt: '2026-11-06T01:00:00.000Z' })
   })
 
+  const OWNER_ONLY = ['costUsd', 'durationMs', 'lockedAt', 'qaNote', 'productType']
+  const WINDOWS_PATH = 'FileNotFoundError: D:\\Ecom manager\\clone-queue\\cm123\\result.json (C:\\Users\\TM PC\\.claude\\skills\\x\\tool\\clone.py line 88)'
+
   it('mọi cột còn lại có mặt, ngày là chuỗi ISO', async () => {
-    const row = await seedJob({ status: 'FAILED', failKind: 'QA', error: 'boom', finishedAt: new Date('2026-11-06T02:00:00Z'), stage: 'QA' })
+    const row = await seedJob({
+      status: 'FAILED', failKind: 'VERIFY', error: 'Sản phẩm chưa ACTIVE.', finishedAt: new Date('2026-11-06T02:00:00Z'), stage: 'QA', productType: 'Mug', qaNote: 'compared',
+    })
     const view = cloneJobView(row, users.sellera) as Record<string, unknown>
-    const expected = Object.keys(row).filter(k => !['costUsd', 'durationMs', 'lockedAt'].includes(k)).sort()
+    const expected = Object.keys(row).filter(k => !OWNER_ONLY.includes(k)).sort()
     expect(Object.keys(view).sort()).toEqual(expected)
     expect(view.createdAt).toBe(row.createdAt.toISOString())
     expect(view.updatedAt).toBe(row.updatedAt.toISOString())
     expect(view.finishedAt).toBe('2026-11-06T02:00:00.000Z')
     expect(view.startedAt).toBeNull()
-    expect(view).toMatchObject({ skuCode: row.skuCode, failKind: 'QA', error: 'boom', stage: 'QA', reused: false })
+    expect(view).toMatchObject({ skuCode: row.skuCode, failKind: 'VERIFY', error: 'Sản phẩm chưa ACTIVE.', stage: 'QA', reused: false })
+  })
+
+  it('người không phải SUPERADMIN không có qaNote và productType; SUPERADMIN có', async () => {
+    const row = await seedJob({ status: 'DONE', productType: 'Ceramic Mug', qaNote: 'Compared compare.png at D:\\Ecom manager\\clone-queue\\x', qaVerdict: 'PASS' })
+    for (const who of [users.sellera, users.admin, users.support]) {
+      const view = cloneJobView(row, who)
+      expect('qaNote' in view).toBe(false)
+      expect('productType' in view).toBe(false)
+      expect(JSON.stringify(view)).not.toContain('Ceramic Mug')
+      expect(JSON.stringify(view)).not.toContain('clone-queue')
+      expect(view.qaVerdict).toBe('PASS')
+    }
+    expect(cloneJobView(row, users.super)).toMatchObject({ productType: 'Ceramic Mug', qaNote: row.qaNote })
+  })
+
+  it('error của runner (có đường dẫn Windows) chỉ SUPERADMIN thấy; người khác thấy null', async () => {
+    for (const failKind of ['TOOL', 'SOURCE', 'QA', 'TIMEOUT', 'TOOL_GAP', 'UNSUPPORTED', 'NOT_ENABLED', null]) {
+      const row = await seedJob({ status: 'FAILED', failKind, error: WINDOWS_PATH })
+      for (const who of [users.sellera, users.admin, users.support]) {
+        const view = cloneJobView(row, who)
+        expect(view.error).toBeNull()
+        expect(JSON.stringify(view)).not.toContain('clone-queue')
+        expect(JSON.stringify(view)).not.toContain('C:\\\\Users')
+      }
+      expect(cloneJobView(row, users.super).error).toBe(WINDOWS_PATH)
+    }
+  })
+
+  it('error do chính server viết (VERIFY, WORKER_LOST) thì người xem nào cũng thấy', async () => {
+    for (const [failKind, error] of [['VERIFY', 'Sản phẩm chưa lên Online Store.'], ['WORKER_LOST', 'Máy xử lý không trả kết quả.']]) {
+      const row = await seedJob({ status: 'FAILED', failKind, error })
+      for (const who of [users.sellera, users.admin, users.support, users.super]) expect(cloneJobView(row, who).error).toBe(error)
+    }
+  })
+
+  it('job FAILED/TOOL qua danh sách và xem một job: seller không thấy đường dẫn, SUPERADMIN thấy', async () => {
+    const row = await seedJob({ status: 'FAILED', failKind: 'TOOL', error: WINDOWS_PATH, qaNote: 'note', productType: 'Mug' })
+    const mine = (await listCloneJobs(users.sellera))[0]
+    expect(mine.error).toBeNull()
+    expect('qaNote' in mine || 'productType' in mine).toBe(false)
+    expect((await getCloneJob(users.sellera, row.id))?.error).toBeNull()
+    expect((await getCloneJob(users.super, row.id))?.error).toBe(WINDOWS_PATH)
   })
 
   it('danh sách, xem một job, huỷ và thử lại đều qua cloneJobView', async () => {
@@ -501,6 +674,55 @@ describe('retryCloneJob', () => {
       const row = await failed({ failKind })
       expect((await retryCloneJob(users.sellera, row.id)).status).toBe('QUEUED')
     }
+  })
+
+  it('đã có job khác QUEUED, RUNNING hoặc DONE cùng store và link: 409 "Link này đã có job khác.", không kèm gì, job lỗi nguyên', async () => {
+    for (const status of ['QUEUED', 'RUNNING', 'DONE']) {
+      await wipe()
+      const row = await failed()
+      await seedJob({ status, requestedById: users.sellera2.id, requestedByName: 'Someone', productUrl: 'https://store-a.example.com/p' })
+      for (const who of [users.sellera, users.super]) {
+        const e = await codeOf(() => retryCloneJob(who, row.id))
+        expect(e.status).toBe(409)
+        expect(e.message).toBe('Link này đã có job khác.')
+        expect(e.extra).toBeUndefined()
+      }
+      expect(await prisma.cloneJob.findUnique({ where: { id: row.id } })).toMatchObject({ status: 'FAILED', failKind: 'TOOL', attempts: 2 })
+    }
+  })
+
+  it('job khác cùng link đã FAILED hoặc CANCELLED, hoặc ở store khác, hoặc link khác: không chặn thử lại', async () => {
+    const row = await failed()
+    await seedJob({ status: 'FAILED', failKind: 'SOURCE' })
+    await seedJob({ status: 'CANCELLED' })
+    await seedJob({ status: 'DONE', storeId: STORE_B, productUrl: 'https://b.example.com/p' })
+    await seedJob({ status: 'QUEUED', sourceUrl: 'https://shop.example.com/products/other', sourceKey: 'shop.example.com/products/other' })
+    expect((await retryCloneJob(users.sellera, row.id)).status).toBe('QUEUED')
+  })
+
+  it('chính job đang thử lại không tính là "job khác"', async () => {
+    const row = await failed()
+    expect((await retryCloneJob(users.sellera, row.id)).id).toBe(row.id)
+  })
+
+  it('hai job lỗi của cùng một link thử lại cùng lúc: chỉ một cái chạy lại', async () => {
+    const first = await failed()
+    const second = await failed()
+    const results = await Promise.allSettled([retryCloneJob(users.sellera, first.id), retryCloneJob(users.sellera, second.id)])
+    expect(results.filter(r => r.status === 'fulfilled')).toHaveLength(1)
+    const refused = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected')
+    expect(refused[0].reason).toMatchObject({ status: 409, message: 'Link này đã có job khác.' })
+    expect(await prisma.cloneJob.count({ where: { storeId: STORE_A, sourceKey: LINK_KEY, status: 'QUEUED' } })).toBe(1)
+  })
+
+  it('dán link mới cùng lúc với thử lại job lỗi của link đó: chỉ một job sống', async () => {
+    const row = await failed()
+    const results = await Promise.allSettled([
+      retryCloneJob(users.sellera, row.id),
+      createCloneJob(users.sellera2, { url: LINK, storeId: STORE_A }, deps()),
+    ])
+    expect(results.filter(r => r.status === 'fulfilled')).toHaveLength(1)
+    expect(await prisma.cloneJob.count({ where: { storeId: STORE_A, sourceKey: LINK_KEY, status: { in: ['QUEUED', 'RUNNING', 'DONE'] } } })).toBe(1)
   })
 
   it('SUPERADMIN thử lại được job của người khác; ADMIN không phải người tạo thì 403', async () => {
