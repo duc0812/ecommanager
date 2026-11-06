@@ -292,7 +292,7 @@ describe('writing to the sheet', () => {
     expect(await rows()).toEqual(written)
 
     // The fix is still a file of this server: nothing can be sent yet. Once the task folder holds it, the folder is the link.
-    await expect(markSupplierTold(o.key, actor)).rejects.toMatchObject({ status: 409, message: 'File chưa lên Drive — chưa có link để gửi xưởng' })
+    await expect(markSupplierTold(o.key, actor)).rejects.toMatchObject({ status: 409, message: 'File đã sửa chưa nằm đủ trong folder Drive của task — chưa báo xưởng được. Tải lại sau khi file lên Drive.' })
     const folder = 'https://drive.google.com/drive/folders/sheet-fix'
     await prisma.designTask.update({ where: { taskKey: o.key }, data: { driveFolderId: 'sheet-fix', driveFolderUrl: folder } })
     await prisma.orderLine.updateMany({ where: { orderId: o.id, shopifyLineId: sent.shopifyLineId }, data: { designDriveLink: folder } })

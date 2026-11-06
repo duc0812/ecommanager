@@ -1,7 +1,7 @@
 'use client'
 import { useCallback, useEffect, useState } from 'react'
 import type { SupplierFixList, SupplierFixRow } from './types'
-import { LINE_FIX_REASONS, NOT_ON_DRIVE_MESSAGE, SUPPLIER_LINK_KINDS, SUPPLIER_LINK_LABELS, supplierLinkMessage } from '@/lib/line-fix'
+import { LINE_FIX_REASONS, FIX_NOT_IN_FOLDER_MESSAGE, SUPPLIER_LINK_KINDS, SUPPLIER_LINK_LABELS, supplierLinkMessage } from '@/lib/line-fix'
 import { StoreLabel } from '@/components/StoreFilter'
 import { copyText, postJson, requestJson, taskUrl } from './model'
 import { ErrorBanner, ExtLink, Icon, Pill, STATUS_META, btn, card, chip, fmtDate, fmtDateTime, iconBtn } from './ui'
@@ -23,32 +23,26 @@ function LinkWithCopy({ href, label, strong, taskKey, onCopy }: { href: string; 
 }
 
 /**
- * What staff do for a row. SAME_FOLDER: the folder the supplier holds, to point it at. NEW_LINK: the task folder to send, once
- * the line carries it, and the link the supplier holds struck through so it can be told which one to drop.
+ * What staff do for a row. SAME_FOLDER: the folder the supplier holds, to point it at. NEW_LINK: the task folder to send, and
+ * the link the supplier holds struck through so it can be told which one to drop. Neither is offered until the folder holds
+ * the fix; a row already told shows the link that was told.
  */
-function SupplierAction({ r, onCopy }: { r: SupplierFixRow; onCopy: (link: string) => void }) {
+function SupplierAction({ r, told, onCopy }: { r: SupplierFixRow; told: boolean; onCopy: (link: string) => void }) {
   if (!r.linkKind) {
     return <span className="text-on-surface-variant break-all">Xưởng đang giữ: {r.supplierLink ?? NO_HELD_LINK}</span>
   }
-  if (r.linkKind === 'SAME_FOLDER') {
-    return (
-      <div className="flex flex-col items-start gap-xs min-w-0 max-w-full">
-        <Pill tone="ok" icon="folder_open">{SUPPLIER_LINK_LABELS.SAME_FOLDER}</Pill>
-        <span className="text-on-surface">{supplierLinkMessage('SAME_FOLDER', r.supplierName ?? 'xưởng')}</span>
-        {r.supplierLink && <LinkWithCopy href={r.supplierLink} label="Folder xưởng đang giữ" taskKey={r.taskKey} onCopy={onCopy} />}
-      </div>
-    )
-  }
+  const isNew = r.linkKind === 'NEW_LINK'
+  const link = told ? r.toldLink : r.readyLink
   return (
     <div className="flex flex-col items-start gap-xs min-w-0 max-w-full">
-      <Pill tone="warn" icon="link">{SUPPLIER_LINK_LABELS.NEW_LINK}</Pill>
-      <span className="font-semibold text-on-surface">{supplierLinkMessage('NEW_LINK', r.supplierName ?? 'xưởng')}</span>
-      {r.newLink
-        ? <LinkWithCopy href={r.newLink} label="Link mới" strong taskKey={r.taskKey} onCopy={onCopy} />
-        : <span className="text-on-surface-variant">{NOT_ON_DRIVE_MESSAGE}</span>}
-      {r.supplierLink
+      <Pill tone={isNew ? 'warn' : 'ok'} icon={isNew ? 'link' : 'folder_open'}>{SUPPLIER_LINK_LABELS[r.linkKind]}</Pill>
+      <span className={isNew ? 'font-semibold text-on-surface' : 'text-on-surface'}>{supplierLinkMessage(r.linkKind, r.supplierName ?? 'xưởng')}</span>
+      {link
+        ? <LinkWithCopy href={link} label={isNew ? 'Link mới' : 'Folder xưởng đang giữ'} strong={isNew} taskKey={r.taskKey} onCopy={onCopy} />
+        : <span className="text-on-surface-variant">{told ? '—' : FIX_NOT_IN_FOLDER_MESSAGE}</span>}
+      {isNew && (r.supplierLink
         ? <span className="text-on-surface-variant break-all" title="Link xưởng đang giữ — báo xưởng bỏ link này">Link cũ (bỏ): <span className="line-through">{r.supplierLink}</span></span>
-        : <span className="text-on-surface-variant">{NO_HELD_LINK}</span>}
+        : <span className="text-on-surface-variant">{NO_HELD_LINK}</span>)}
     </div>
   )
 }
@@ -90,10 +84,10 @@ function Rows({ kind, rows, showStore, busyKey, onOpenTask, onTold, onCopy }: {
               </td>
               <td className="px-sm py-sm text-label-sm">
                 <div className="flex flex-col items-start gap-xs min-w-0">
-                  <SupplierAction r={r} onCopy={onCopy} />
+                  <SupplierAction r={r} told={kind === 'told'} onCopy={onCopy} />
                   {kind === 'waiting' && (
-                    <button type="button" className={btn} disabled={busyKey === r.taskKey || (r.linkKind === 'NEW_LINK' && !r.newLink)}
-                      title={r.linkKind === 'NEW_LINK' && !r.newLink ? NOT_ON_DRIVE_MESSAGE : undefined} onClick={() => onTold(r.taskKey)}>
+                    <button type="button" className={btn} disabled={busyKey === r.taskKey || !r.readyLink}
+                      title={r.readyLink ? undefined : FIX_NOT_IN_FOLDER_MESSAGE} onClick={() => onTold(r.taskKey)}>
                       <Icon name="done" className="text-[16px]" />Đã báo xưởng
                     </button>
                   )}

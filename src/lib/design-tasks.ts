@@ -28,7 +28,7 @@ import { MISSING_AREAS_PREFIX, missingPrintAreas, outdatedParts, printFilesReady
 import { exportedSupplierOf, isLineExported } from '@/lib/line-export'
 import { isUniqueViolation, retryOnBusy } from '@/lib/sqlite-busy'
 import {
-  LINE_FIX_EVENT_PREFIX, LINE_FIX_REASONS, NOT_ON_DRIVE_MESSAGE, heldLinkMessage, lineFixMessage, parseLineFix, readHeldLinkMessage, readLineFixMessage, readSupplierLinkKind,
+  LINE_FIX_EVENT_PREFIX, LINE_FIX_REASONS, FIX_NOT_IN_FOLDER_MESSAGE, heldLinkMessage, lineFixMessage, parseLineFix, readHeldLinkMessage, readLineFixMessage, readSupplierLinkKind,
   supplierLinkMessage, type LineFix, type LineFixReason, type SupplierLinkKind,
 } from '@/lib/line-fix'
 
@@ -499,13 +499,15 @@ function lineFixEvents(fix: LineFix, actor: Actor, heldLink: string | null) {
 }
 
 /**
- * The link the supplier holds when the line is reopened: the line's link, unless the last fix's re-check was never marked
- * told. The supplier then never got that cycle's new link and still holds what that cycle recorded (none for a reopen made
- * before links were recorded, #LIT5105).
+ * The link the supplier holds when the line is reopened. The line's link only when nothing since the export says otherwise:
+ * no earlier fix of the line (what it got at export is the line's link), or the earlier fix was marked told. Any other earlier
+ * fix — never told, or approved before the notice existed (#LIT5105: no re-check at all) — left the supplier with what that
+ * fix recorded, which is nothing for a reopen made before links were recorded.
  */
 async function heldLinkAtReopen(taskId: string, lineLink: string | null): Promise<string | null> {
   const cycle = lastFixCycle(await prisma.designTaskEvent.findMany({ where: { taskId }, select: TASK_EVENT_SELECT }))
-  return cycle?.recheck && !cycle.told ? cycle.held?.link ?? null : lineLink
+  if (!cycle || cycle.told) return lineLink
+  return cycle.held?.link ?? null
 }
 
 async function reopenTaskOfLine(task: { id: string; taskKey: string; status: string }, actor: Actor, fix: LineFix, heldLink: string | null): Promise<{ task: TaskRow; changed: boolean }> {
@@ -853,8 +855,13 @@ export type SupplierFixRow = {
   supplierLink: string | null
   /** The line's design link now. */
   designLink: string | null
-  /** The link to send for NEW_LINK: the task's Drive folder once the line carries it (it then holds every part); null before. */
-  newLink: string | null
+  /**
+   * The task's Drive folder once the line carries it (it then holds every current part): the link to send for NEW_LINK, and
+   * what makes SAME_FOLDER true. Null before: neither can be announced yet.
+   */
+  readyLink: string | null
+  /** For a row under "Đã báo": the link that was told, as the told event wrote it. */
+  toldLink: string | null
 }
 
 export type SupplierFixList = {
@@ -938,7 +945,8 @@ export async function listSupplierFixes(f: SupplierFixFilter = {}): Promise<Supp
         reason: cycle.reason, note: cycle.note, reopenedBy: null, reopenedAt: cycle.reopen.createdAt.toISOString(),
         approvedAt: cycle.recheck?.createdAt.toISOString() ?? null, toldBy: null, toldAt: cycle.told?.createdAt.toISOString() ?? null,
         linkKind: cycle.recheck ? readSupplierLinkKind(cycle.recheck.message) : null, supplierLink: cycle.held?.link ?? null,
-        designLink: line.designDriveLink, newLink: sendableLink(line.designDriveLink, t.driveFolderUrl),
+        designLink: line.designDriveLink, readyLink: folderWithFix(line.designDriveLink, t.driveFolderUrl),
+        toldLink: cycle.told ? toldLinkOf(cycle.told.message) : null,
       },
     })
   }
@@ -969,17 +977,23 @@ export async function listSupplierFixes(f: SupplierFixFilter = {}): Promise<Supp
 }
 
 /**
- * The link staff can send for a NEW_LINK fix: the task's Drive folder, once the line carries it (approval and the folder tidy
- * put it there when the folder holds every current print). A single file of this server or of Drive is never it: in a design of
- * several parts the fixed part may be another one.
+ * The task's Drive folder once it holds the fix: the line carries it when the folder holds every current print (approval, or
+ * the folder tidy later). It is the link to send for NEW_LINK and what makes SAME_FOLDER true. A single file, of this server or
+ * of Drive, never is: in a design of several parts the fixed part may be another one.
  */
-function sendableLink(lineLink: string | null, taskFolder: string | null): string | null {
+function folderWithFix(lineLink: string | null, taskFolder: string | null): string | null {
   return !!lineLink && !!taskFolder && lineLink === taskFolder ? taskFolder : null
 }
 
+/** The link a "told" event wrote ("…: <link>"). */
+function toldLinkOf(message: string): string | null {
+  return message.match(/: (\S+)$/)?.[1] ?? null
+}
+
 /**
- * "Đã báo xưởng": records who told the supplier (or sent it which new link), and when. Nothing changes when nothing is waiting.
- * A new link can only have been sent once there is one (409 before).
+ * "Đã báo xưởng": records who told the supplier (or sent it which new link), with the link, and when. Nothing changes when
+ * nothing is waiting. Either kind waits (409) until the task's Drive folder holds the fix: before that the supplier's folder
+ * does not show it, and there is no link to send.
  */
 export async function markSupplierTold(taskKey: string, actor: Actor): Promise<{ changed: boolean }> {
   const task = await prisma.designTask.findUnique({
@@ -993,13 +1007,14 @@ export async function markSupplierTold(taskKey: string, actor: Actor): Promise<{
   const line = task.order.lines.find(l => l.shopifyLineId === task.shopifyLineId)
   const supplierId = line ? (exportedSupplierOf(task.order, line) ?? line.resolvedSupplierId) : null
   const name = (supplierId ? await prisma.supplier.findUnique({ where: { id: supplierId }, select: { name: true } }) : null)?.name ?? 'xưởng'
-  const newLink = sendableLink(line?.designDriveLink ?? null, task.driveFolderUrl)
+  const readyLink = folderWithFix(line?.designDriveLink ?? null, task.driveFolderUrl)
   return retryOnBusy(() => prisma.$transaction(async tx => {
     const cycle = task.status === 'DONE' ? lastFixCycle(await tx.designTaskEvent.findMany({ where: { taskId: task.id }, select: TASK_EVENT_SELECT })) : null
     if (!cycle?.recheck || cycle.told) return { changed: false }
-    const kind = readSupplierLinkKind(cycle.recheck.message)
-    if (kind === 'NEW_LINK' && !newLink) throw new LineFixError(NOT_ON_DRIVE_MESSAGE, 409)
-    const message = kind === 'SAME_FOLDER' ? `Đã báo ${name} xem lại folder design` : `Đã gửi ${name} link mới: ${newLink}`
+    if (!readyLink) throw new LineFixError(FIX_NOT_IN_FOLDER_MESSAGE, 409)
+    const message = readSupplierLinkKind(cycle.recheck.message) === 'SAME_FOLDER'
+      ? `Đã báo ${name} xem lại folder design: ${readyLink}`
+      : `Đã gửi ${name} link mới: ${readyLink}`
     await tx.designTaskEvent.create({ data: { taskId: task.id, type: SUPPLIER_TOLD, message, actorId: actor.id } })
     return { changed: true }
   }))

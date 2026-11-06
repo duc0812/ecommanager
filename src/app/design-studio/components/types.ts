@@ -122,8 +122,10 @@ export type SupplierFixRow = {
   linkKind: 'SAME_FOLDER' | 'NEW_LINK' | null
   supplierLink: string | null
   designLink: string | null
-  /** NEW_LINK: the task folder once the line carries it; null while there is nothing to send. */
-  newLink: string | null
+  /** The task folder once it holds the fix: the link to send (NEW_LINK) or the proof the old one is right (SAME_FOLDER). */
+  readyLink: string | null
+  /** A told row: the link the told event wrote. */
+  toldLink: string | null
 }
 
 export type SupplierFixList = {

@@ -61,8 +61,8 @@ export function supplierLinkMessage(kind: SupplierLinkKind, supplierName: string
   return kind === 'SAME_FOLDER' ? `Báo ${supplierName}${SAME_FOLDER_TAIL}` : `Gửi ${supplierName} LINK MỚI — link cũ không có file đã sửa`
 }
 
-/** A NEW_LINK fix whose line does not carry its task folder yet: there is no link to send, so "Đã báo xưởng" waits. */
-export const NOT_ON_DRIVE_MESSAGE = 'File chưa lên Drive — chưa có link để gửi xưởng'
+/** The fix is not all in the task's Drive folder yet (still on this server, or the folder lacks a part): "Đã báo xưởng" waits. */
+export const FIX_NOT_IN_FOLDER_MESSAGE = 'File đã sửa chưa nằm đủ trong folder Drive của task — chưa báo xưởng được. Tải lại sau khi file lên Drive.'
 
 export function readSupplierLinkKind(message: string): SupplierLinkKind {
   return message.startsWith('Báo ') && message.endsWith(SAME_FOLDER_TAIL) ? 'SAME_FOLDER' : 'NEW_LINK'

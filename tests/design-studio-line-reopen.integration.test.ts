@@ -29,6 +29,7 @@ const NOTE = 'chỗ cái dao bị lệch'
 const RECHECK = 'Gửi T22R Factory LINK MỚI — link cũ không có file đã sửa'
 const SAME_FOLDER = 'Báo T22R Factory xem lại folder design — link cũ vẫn đúng'
 const ONE_FILE = 'https://drive.google.com/file/d/t22r-v1/view'
+const NOT_READY = 'File đã sửa chưa nằm đủ trong folder Drive của task — chưa báo xưởng được. Tải lại sau khi file lên Drive.'
 const folderOf = (key: string) => `https://drive.google.com/drive/folders/${key}-task`
 const fix = (reason: string = FACTORY_ASKS, note = NOTE) => ({ reason, note })
 
@@ -386,16 +387,16 @@ describe('approval of the fix: a line the supplier got by a link (sheet, CSV, a 
     expect(list.waiting.find(w => w.taskKey === o.key2)).toEqual(expect.objectContaining({
       taskKey: o.key2, orderNumber: `#${o.code}`, storeName: 'T22R a', supplierId: SUP, supplierName: 'T22R Factory', reason: CUSTOMER_ASKS, note: NOTE,
       reopenedBy: 'des', reopenedAt: reopenEvent.createdAt.toISOString(), approvedAt: approval.createdAt.toISOString(), designLink: fileLink,
-      toldBy: null, toldAt: null, taskStatus: 'DONE', linkKind: 'NEW_LINK', supplierLink: LINK, newLink: null,
+      toldBy: null, toldAt: null, taskStatus: 'DONE', linkKind: 'NEW_LINK', supplierLink: LINK, readyLink: null,
     }))
     expect(list.waitingTotal).toBeGreaterThanOrEqual(list.waiting.length)
 
     // The fix is still on this server: there is no link anyone could send yet.
     const early = await told(o.key2, 'des')
-    expect([early.status, (await early.json()).error]).toEqual([409, 'File chưa lên Drive — chưa có link để gửi xưởng'])
+    expect([early.status, (await early.json()).error]).toEqual([409, 'File đã sửa chưa nằm đủ trong folder Drive của task — chưa báo xưởng được. Tải lại sau khi file lên Drive.'])
     expect(await recheckEvents(o.id, o.sl2)).toEqual([{ type: SUPPLIER_RECHECK, actorId: null }])
     await folderHoldsTheFix(o.sl2, o.key2)
-    expect((await fixes('lead')).waiting.find(w => w.taskKey === o.key2)).toMatchObject({ newLink: folderOf(o.key2) })
+    expect((await fixes('lead')).waiting.find(w => w.taskKey === o.key2)).toMatchObject({ readyLink: folderOf(o.key2) })
 
     const res = await told(o.key2, 'des')
     expect(res.status).toBe(200)
@@ -737,7 +738,7 @@ describe('the supplier notice: the old link still holds the fix, or a new link m
     expect(first.notice).toBe(RECHECK)
     expect(await recheckMessage(o, o.sl2)).toEqual([RECHECK])
     expect((await prisma.orderLine.findUniqueOrThrow({ where: { id: o.line2 } })).designDriveLink).toBe(folderOf(o.key2))
-    expect(await row(o.key2)).toMatchObject({ linkKind: 'NEW_LINK', supplierLink: LINK, designLink: folderOf(o.key2), newLink: folderOf(o.key2) })
+    expect(await row(o.key2)).toMatchObject({ linkKind: 'NEW_LINK', supplierLink: LINK, designLink: folderOf(o.key2), readyLink: folderOf(o.key2) })
     expect(await (await told(o.key2, 'des')).json()).toEqual({ changed: true })
     expect((await lineTask(o.id, o.sl2))!.events.find(e => e.type === SUPPLIER_TOLD)!.message).toBe(`Đã gửi T22R Factory link mới: ${folderOf(o.key2)}`)
 
@@ -746,7 +747,7 @@ describe('the supplier notice: the old link still holds the fix, or a new link m
     expect((await fixAndApprove(o.id, o.sl2, o.key2, 3, { onDrive: true })).notice).toBe(SAME_FOLDER)
     expect(await row(o.key2)).toMatchObject({ linkKind: 'SAME_FOLDER', supplierLink: folderOf(o.key2), designLink: folderOf(o.key2), reason: CUSTOMER_ASKS })
     expect(await (await told(o.key2, 'lead')).json()).toEqual({ changed: true })
-    expect((await lineTask(o.id, o.sl2))!.events.filter(e => e.type === SUPPLIER_TOLD).pop()!.message).toBe('Đã báo T22R Factory xem lại folder design')
+    expect((await lineTask(o.id, o.sl2))!.events.filter(e => e.type === SUPPLIER_TOLD).pop()!.message).toBe(`Đã báo T22R Factory xem lại folder design: ${folderOf(o.key2)}`)
   })
 
   it.each([
@@ -759,10 +760,67 @@ describe('the supplier notice: the old link still holds the fix, or a new link m
     await press(o.line2, 'des')
     expect((await fixAndApprove(o.id, o.sl2, o.key2, 2, how)).notice).toBe(SAME_FOLDER)
     expect(await recheckMessage(o, o.sl2)).toEqual([SAME_FOLDER])
-    expect(await row(o.key2)).toMatchObject({ linkKind: 'SAME_FOLDER', supplierLink: folderOf(o.key2) })
-    // Nothing is sent for this kind, so "Đã báo xưởng" does not wait for the file to reach Drive.
+    // "Link cũ vẫn đúng" is only true once the fixed file is in that folder: until then the row and the route wait.
+    if (!how.onDrive) {
+      expect(await row(o.key2)).toMatchObject({ linkKind: 'SAME_FOLDER', supplierLink: folderOf(o.key2), readyLink: null })
+      const early = await told(o.key2, 'des')
+      expect([early.status, (await early.json()).error]).toEqual([409, NOT_READY])
+      expect(await recheckEvents(o.id, o.sl2)).toEqual([{ type: SUPPLIER_RECHECK, actorId: null }])
+      await folderHoldsTheFix(o.sl2, o.key2)
+    }
+    expect(await row(o.key2)).toMatchObject({ linkKind: 'SAME_FOLDER', supplierLink: folderOf(o.key2), readyLink: folderOf(o.key2) })
     expect(await (await told(o.key2, 'des')).json()).toEqual({ changed: true })
-    expect((await lineTask(o.id, o.sl2))!.events.find(e => e.type === SUPPLIER_TOLD)!.message).toBe('Đã báo T22R Factory xem lại folder design')
+    expect((await lineTask(o.id, o.sl2))!.events.find(e => e.type === SUPPLIER_TOLD)!.message).toBe(`Đã báo T22R Factory xem lại folder design: ${folderOf(o.key2)}`)
+  })
+
+  it('a fix approved before the supplier notice existed (old control, no re-check) is not taken as told ⇒ the next fix is NEW_LINK', async () => {
+    const o = await sentOrder({ task2: 'DONE', sheet: true })
+    const task = await prisma.designTask.update({ where: { taskKey: o.key2 }, data: { driveFolderId: `${o.key2}-task`, driveFolderUrl: folderOf(o.key2) } })
+    const t0 = Date.now() - 3 * 86400_000
+    await prisma.designTaskEvent.createMany({ data: [
+      { taskId: task.id, type: 'STATUS', message: 'Mở lại để sửa', actorId: users.des.id, createdAt: new Date(t0) },
+      { taskId: task.id, type: 'STATUS', message: 'Duyệt design', actorId: users.lead.id, createdAt: new Date(t0 + 3600_000) },
+    ] })
+    await prisma.orderLine.update({ where: { id: o.line2 }, data: { designDriveLink: folderOf(o.key2) } })
+
+    expect((await transitionReq(o.key2, 'des', { to: 'DOING', reasons: [CUSTOMER_ASKS], note: NOTE })).status).toBe(200)
+    expect((await lineTask(o.id, o.sl2))!.events.filter(e => e.type === 'SYSTEM').map(e => e.message).pop()).toBe('Link xưởng đang giữ khi mở lại: (không có)')
+    expect((await fixAndApprove(o.id, o.sl2, o.key2, 2, { onDrive: true })).notice).toBe(RECHECK)
+    expect(await row(o.key2)).toMatchObject({ linkKind: 'NEW_LINK', supplierLink: null, readyLink: folderOf(o.key2) })
+  })
+
+  it('three fixes with no "told" in between keep the link the supplier held before the first', async () => {
+    const o = await sentOrder({ sheet: true })
+    for (const [n, version] of [[1, 2], [2, 3], [3, 4]] as const) {
+      await press(o.line2, 'des', fix(WE_FOUND, `lần ${n}`))
+      expect((await fixAndApprove(o.id, o.sl2, o.key2, version, { onDrive: true })).notice).toBe(RECHECK)
+    }
+    const held = (await lineTask(o.id, o.sl2))!.events.filter(e => e.type === 'SYSTEM' && e.message.startsWith('Link xưởng đang giữ')).map(e => e.message)
+    expect(held).toEqual(Array(3).fill(`Link xưởng đang giữ khi mở lại: ${LINK}`))
+    expect((await fixes('lead')).waiting.filter(w => w.taskKey === o.key2)).toEqual([expect.objectContaining({ supplierLink: LINK, note: 'lần 3' })])
+  })
+
+  it('"told" on the first fix but not on the second: the third records what the second recorded', async () => {
+    const o = await sentOrder({ sheet: true })
+    await press(o.line2, 'des', fix(WE_FOUND, 'lần 1'))
+    expect((await fixAndApprove(o.id, o.sl2, o.key2, 2, { onDrive: true })).notice).toBe(RECHECK)
+    expect(await (await told(o.key2, 'des')).json()).toEqual({ changed: true })
+    await press(o.line2, 'des', fix(WE_FOUND, 'lần 2'))
+    expect((await fixAndApprove(o.id, o.sl2, o.key2, 3, { onDrive: true })).notice).toBe(SAME_FOLDER)
+    // The second fix is approved but nobody marks it told; the supplier holds what the second reopen recorded.
+    await prisma.orderLine.update({ where: { id: o.line2 }, data: { designDriveLink: ONE_FILE } })
+    await press(o.line2, 'des', fix(WE_FOUND, 'lần 3'))
+    const held = (await lineTask(o.id, o.sl2))!.events.filter(e => e.type === 'SYSTEM' && e.message.startsWith('Link xưởng đang giữ')).map(e => e.message)
+    expect(held).toEqual([`Link xưởng đang giữ khi mở lại: ${LINK}`, `Link xưởng đang giữ khi mở lại: ${folderOf(o.key2)}`, `Link xưởng đang giữ khi mở lại: ${folderOf(o.key2)}`])
+  })
+
+  it('a row under "Đã báo" keeps the link that was told, whatever the line carries later', async () => {
+    const o = await sentOrder({ sheet: true })
+    await press(o.line2, 'des')
+    await fixAndApprove(o.id, o.sl2, o.key2, 2, { onDrive: true })
+    await told(o.key2, 'des')
+    await prisma.orderLine.update({ where: { id: o.line2 }, data: { designDriveLink: ONE_FILE } })
+    expect((await fixes('lead')).told.find(t => t.taskKey === o.key2)).toMatchObject({ linkKind: 'NEW_LINK', toldLink: folderOf(o.key2) })
   })
 
   it('a line whose supplier holds one part\'s file, fixed in another part, is NEW_LINK although the line still links that same file', async () => {
@@ -782,7 +840,7 @@ describe('the supplier notice: the old link still holds the fix, or a new link m
     const r = await transitionTask(o.key2, users.lead.actor, { to: 'DONE' })
     expect((await prisma.orderLine.findUniqueOrThrow({ where: { id: o.line2 } })).designDriveLink).toBe(held)
     expect(r.notice).toBe(RECHECK)
-    expect(await row(o.key2)).toMatchObject({ linkKind: 'NEW_LINK', supplierLink: held, newLink: null })
+    expect(await row(o.key2)).toMatchObject({ linkKind: 'NEW_LINK', supplierLink: held, readyLink: null })
   })
 
   it('a second reopen before anyone told the supplier keeps the link it still holds ⇒ NEW_LINK again, in one row', async () => {
@@ -797,7 +855,7 @@ describe('the supplier notice: the old link still holds the fix, or a new link m
     expect(during.fixing.find(f => f.taskKey === o.key2)).toMatchObject({ supplierLink: LINK })
     expect((await fixAndApprove(o.id, o.sl2, o.key2, 3, { onDrive: true })).notice).toBe(RECHECK)
     const rows = (await fixes('lead')).waiting.filter(w => w.taskKey === o.key2)
-    expect(rows).toEqual([expect.objectContaining({ linkKind: 'NEW_LINK', supplierLink: LINK, reason: WE_FOUND, newLink: folderOf(o.key2) })])
+    expect(rows).toEqual([expect.objectContaining({ linkKind: 'NEW_LINK', supplierLink: LINK, reason: WE_FOUND, readyLink: folderOf(o.key2) })])
   })
 
   it('a reopen after an old-control fix approved as NEW_LINK and never told records no link ⇒ NEW_LINK', async () => {
