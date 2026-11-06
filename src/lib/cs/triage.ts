@@ -42,8 +42,14 @@ export function categoryTag(category: CsCategory): string {
   return `em-${category.toLowerCase().replace(/_/g, '-')}`
 }
 
+const AGENT_STATE_TAGS = ['em-auto-replied', 'em-after-hours', 'em-human-only']
+
+export function ticketTags(fdTags: string | null | undefined): string[] {
+  try { const v = JSON.parse(fdTags || '[]'); return Array.isArray(v) ? v : [] } catch { return [] }
+}
+
 export function tagsFor(category: CsCategory, urgency: CsUrgency, existing: string[]): string[] {
-  const kept = existing.filter(t => !t.startsWith('em-') || t === 'em-auto-replied')
+  const kept = existing.filter(t => !t.startsWith('em-') || AGENT_STATE_TAGS.includes(t))
   const out = [...kept, categoryTag(category)]
   if (urgency === 'URGENT') out.push('em-urgent')
   if (urgency === 'HIGH') out.push('em-high')

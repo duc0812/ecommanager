@@ -3,8 +3,9 @@ import { prisma } from '@/lib/db'
 import type { CsAnalysis, CsMessage, CsTicket } from '@/generated/prisma/client'
 import type { FreshdeskClient } from '@/lib/cs/freshdesk'
 import type { CsSettings } from '@/lib/cs/settings'
-import { tagsFor, urgencyToPriority, type CsCategory, type CsUrgency } from '@/lib/cs/triage'
+import { tagsFor, ticketTags, urgencyToPriority, type CsCategory, type CsUrgency } from '@/lib/cs/triage'
 import { CATEGORY_LABELS, URGENCY_LABELS } from '@/lib/cs/labels'
+import { HUMAN_ONLY_TAG } from '@/lib/cs/policy'
 
 export type Notifier = (text: string) => Promise<unknown>
 export type MessageSource = 'FRESHDESK' | 'OWN' | 'DRAFT_EDITED' | 'DRAFT_UNCHANGED' | 'AGENT'
@@ -55,11 +56,17 @@ export async function notify(notifier: Notifier, ticket: CsTicket, a: CsAnalysis
   return true
 }
 
+export function humanRequestedOf(a: Pick<CsAnalysis, 'outputJson'>): boolean {
+  try { return JSON.parse(a.outputJson || '{}').humanRequested === true } catch { return false }
+}
+
+const withHumanOnly = (tags: string[], a: Pick<CsAnalysis, 'outputJson'>) =>
+  humanRequestedOf(a) && !tags.includes(HUMAN_ONLY_TAG) ? [...tags, HUMAN_ONLY_TAG] : tags
+
 export async function writeBack(fd: Pick<FreshdeskClient, 'update' | 'note'>, ticket: CsTicket, a: CsAnalysis, settings: CsSettings, appUrl: string): Promise<{ noted: boolean }> {
-  const existingTags: string[] = (() => { try { return JSON.parse(ticket.fdTags) } catch { return [] } })()
   const patch: Parameters<FreshdeskClient['update']>[1] = {
     priority: urgencyToPriority(a.urgency as CsUrgency),
-    tags: tagsFor(a.category as CsCategory, a.urgency as CsUrgency, existingTags),
+    tags: withHumanOnly(tagsFor(a.category as CsCategory, a.urgency as CsUrgency, ticketTags(ticket.fdTags)), a),
   }
   if (ticket.orderNumber && (ticket.orderMatch === 'EXACT' || ticket.orderMatch === 'BY_EMAIL')) patch.custom_fields = { cf_order_id: ticket.orderNumber }
   await fd.update(ticket.fdTicketId, patch)
@@ -84,9 +91,9 @@ export async function autoReply(fd: Pick<FreshdeskClient, 'reply' | 'update'>, t
   if (!a.draftReply) throw new Error('autoReply called without a draft')
   const followUp = !!opts.afterHours && a.needsHuman
   const sent = await fd.reply(ticket.fdTicketId, textToHtml(a.draftReply))
-  const existingTags: string[] = (() => { try { return JSON.parse(ticket.fdTags) } catch { return [] } })()
+  const existingTags = ticketTags(ticket.fdTags)
   const wanted = opts.afterHours ? ['em-auto-replied', 'em-after-hours'] : ['em-auto-replied']
-  const tags = [...existingTags, ...wanted.filter(t => !existingTags.includes(t))]
+  const tags = withHumanOnly([...existingTags, ...wanted.filter(t => !existingTags.includes(t))], a)
   const status = followUp ? 3 : 6
   await fd.update(ticket.fdTicketId, { status, tags })
   const msg = await storeOutgoing(ticket, sent.id, 'AGENT', a.draftReply, false, now, 'AGENT')
@@ -100,6 +107,16 @@ export function afterHoursText(a: CsAnalysis, ticket: CsTicket, appUrl: string):
     `<b>🌙 Agent đã trả lời ngoài giờ</b> · ${esc(cat)}${ticket.orderNumber ? ` · <b>${esc(ticket.orderNumber)}</b>` : ''}`,
     `#${ticket.fdTicketId} ${esc(ticket.subject)}`,
     `Sáng mai nhân sự cần: ${esc(a.proposal)}`,
+    `<a href="${ticketUrl(appUrl, ticket)}">Mở trong tool</a>`,
+  ].join('\n')
+}
+
+export function humanHandoffText(a: CsAnalysis, ticket: CsTicket, appUrl: string): string {
+  return [
+    `<b>👤 Khách cần người thật trả lời</b>${ticket.orderNumber ? ` · <b>${esc(ticket.orderNumber)}</b>` : ''}`,
+    `#${ticket.fdTicketId} ${esc(ticket.subject)}`,
+    'Agent đã dừng trả lời ticket này. Nhân viên trả lời khách trong 24h, ký tên người thật.',
+    esc(a.summary),
     `<a href="${ticketUrl(appUrl, ticket)}">Mở trong tool</a>`,
   ].join('\n')
 }

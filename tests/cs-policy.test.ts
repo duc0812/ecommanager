@@ -16,7 +16,8 @@ const passing: GateInput = {
   now,
   textMentionsRefundAddressOrCancel: false,
   autoRepliesToday: 0,
-  autoRepliesOnTicket24h: 0,
+  agentRepliesOnTicket: 0,
+  humanOnly: false,
   openDirectives: 0,
   hasActiveCaseForCategory: false,
 }
@@ -36,6 +37,8 @@ describe('autoReplyGate', () => {
   it('blocked when the category is not allowed', () => blocked({ category: 'WRONG_ITEM' }, 'category'))
   it('blocked on the second customer message', () => blocked({ customerMessageCount: 2 }, 'first message'))
   it('blocked when any reply exists', () => blocked({ hasAnyReply: true }, 'already replied'))
+  it('blocked once the agent has replied twice on the ticket', () => blocked({ agentRepliesOnTicket: 2 }, 'twice'))
+  it('blocked when the customer has asked for a person', () => blocked({ humanOnly: true }, 'person'))
   it('blocked on an ambiguous order match', () => blocked({ orderMatch: 'AMBIGUOUS' }, 'order'))
   it('blocked on NONE order match', () => blocked({ orderMatch: 'NONE' }, 'order'))
   it('allowed on BY_EMAIL match', () => expect(autoReplyGate({ ...passing, orderMatch: 'BY_EMAIL' }).allowed).toBe(true))

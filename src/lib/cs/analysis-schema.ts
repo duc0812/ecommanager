@@ -15,6 +15,7 @@ export const AnalysisSchema = z.object({
   needsHumanReason: z.string(),
   autoReplyEligible: z.boolean(),
   autoReplyReason: z.string(),
+  humanRequested: z.boolean(),
 })
 
 export type Analysis = z.infer<typeof AnalysisSchema>

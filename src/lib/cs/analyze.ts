@@ -5,8 +5,8 @@ import type { Llm } from '@/lib/llm/anthropic'
 import { buildOrderContext, type OrderContext } from '@/lib/cs/order-context'
 import { buildSystemPrompt, buildUserPrompt } from '@/lib/cs/agent-prompt'
 import { getCsSettings } from '@/lib/cs/settings'
-import { finalUrgency, ruleUrgency } from '@/lib/cs/triage'
-import { autoReplyGate, mentionsRefundAddressOrCancel } from '@/lib/cs/policy'
+import { finalUrgency, ruleUrgency, ticketTags } from '@/lib/cs/triage'
+import { autoReplyGate, HUMAN_ONLY_TAG, mentionsRefundAddressOrCancel } from '@/lib/cs/policy'
 import { withCap } from '@/lib/llm/cap'
 import { effectiveMode, type CsMode } from '@/lib/cs/hours'
 
@@ -57,9 +57,9 @@ export async function analyzeTicket(ticketId: string, deps: { llm: Llm; now?: Da
 
   const urgency = finalUrgency(output.urgency, ruleUrgency({ category: output.category, factoryState: order.order?.factoryState ?? null, sentiment: output.sentiment, hoursUnanswered }))
 
-  const [autoRepliesToday, autoRepliesOnTicket24h, activeCases] = await Promise.all([
+  const [autoRepliesToday, agentRepliesOnTicket, activeCases] = await Promise.all([
     prisma.csMessage.count({ where: { author: 'AGENT', createdAt: { gte: startOfToday(now) } } }),
-    prisma.csMessage.count({ where: { ticketId, author: 'AGENT', private: false, createdAt: { gte: new Date(now.getTime() - 86400_000) } } }),
+    prisma.csMessage.count({ where: { ticketId, author: 'AGENT', private: false } }),
     prisma.csCase.count({ where: { active: true, category: output.category } }),
   ])
   const gate = autoReplyGate({
@@ -76,7 +76,8 @@ export async function analyzeTicket(ticketId: string, deps: { llm: Llm; now?: Da
     now,
     textMentionsRefundAddressOrCancel: mentionsRefundAddressOrCancel([ticket.subject, ...customerTexts].join('\n')),
     autoRepliesToday,
-    autoRepliesOnTicket24h,
+    agentRepliesOnTicket,
+    humanOnly: ticketTags(ticket.fdTags).includes(HUMAN_ONLY_TAG),
     openDirectives: ticket.directives.length,
     hasActiveCaseForCategory: activeCases > 0,
   })

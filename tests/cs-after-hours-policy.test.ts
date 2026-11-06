@@ -16,7 +16,8 @@ const night: GateInput = {
   now,
   textMentionsRefundAddressOrCancel: true,
   autoRepliesToday: 0,
-  autoRepliesOnTicket24h: 0,
+  agentRepliesOnTicket: 0,
+  humanOnly: false,
   openDirectives: 0,
   hasActiveCaseForCategory: false,
 }
@@ -39,7 +40,9 @@ describe('autoReplyGate after hours', () => {
   it('blocked when the order is not found', () => blocked({ orderMatch: 'NONE' }, 'order'))
   it('allows a pre-sale question without an order', () => expect(autoReplyGate({ ...night, category: 'PRODUCT_QUESTION', orderMatch: 'NONE' }).allowed).toBe(true))
   it('blocked while an admin directive is open', () => blocked({ openDirectives: 1 }, 'directive'))
-  it('blocked after two auto-replies on the ticket in 24h', () => blocked({ autoRepliesOnTicket24h: 2 }, 'twice'))
+  it('blocked once the agent has replied twice on the ticket, however long ago', () => blocked({ agentRepliesOnTicket: 2 }, 'twice'))
+  it('allows the second agent reply', () => expect(autoReplyGate({ ...night, agentRepliesOnTicket: 1 }).allowed).toBe(true))
+  it('blocked when the customer has asked for a person', () => blocked({ humanOnly: true }, 'person'))
   it('blocked at the daily cap', () => blocked({ autoRepliesToday: 30 }, 'daily cap'))
   it('in BUSINESS mode the old strict gate still applies', () => {
     const r = autoReplyGate({ ...night, mode: 'BUSINESS' })
