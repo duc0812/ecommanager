@@ -39,7 +39,7 @@ export function renderPrintMapping(d: Design): string {
 export function buildScalePrompt(target: PromptTarget, d: Design): string {
   const lines = [
     `IMAGE 2 is a blank ${oneLine(target.name)} mockup on a white background: ${sentence(target.blankDescription)}`,
-    `Keep IMAGE 2 EXACTLY: same composition, same garment shapes, folds, construction details, camera angle and pure white background. Only replace the plain grey outer fabric with the all-over printed design from IMAGE 1 (a ${oneLine(d.sourceGarment)} mockup).`,
+    `Keep IMAGE 2 EXACTLY: same composition, same garment shapes, folds, construction details, camera angle and pure white background. Only replace the unprinted outer fabric of the garment (its placeholder colour or colour blocks are not a design and must disappear completely) with the all-over printed design from IMAGE 1 (a ${oneLine(d.sourceGarment)} mockup). Everything else in IMAGE 2 stays untouched: a person wearing it, their face, hair, hands and other clothing, and every trim.`,
     'IMAGE 1 is the source of the artwork ONLY; ignore its garment shape, collar, trims, closures and background scene.',
     `Print mapping: ${renderPrintMapping(d)}`,
   ]
@@ -73,9 +73,9 @@ export function designUserText(target: { name: string; blankDescription: string 
 
 export function blankDescriptionSystemPrompt(): string {
   return [
-    'You are shown a blank (unprinted, plain grey) garment mockup that will be used as the shape reference for an image model.',
+    'You are shown a blank (unprinted) garment mockup that will be used as the shape reference for an image model. It may be a flat product shot or worn by a model. The outer fabric is shown plain white or grey, in one placeholder colour (often green), or in placeholder colour blocks (e.g. black and white halves, or a dark body with light sleeves). Those colours are NOT a design: say which placeholder colours are shown and that the whole outer fabric of body, sleeves and hood is printable.',
     'Return two fields in English, no line breaks:',
-    '- blankDescription: one to three sentences describing the layout and construction: which views are shown and where (e.g. "front view on the left with the zipper open showing the lining, back view on the right behind it"), closures, lining, hood, pockets, waistband, cuffs, and their colours.',
+    '- blankDescription: one to three sentences describing the layout and construction: whether a model is wearing it, which views are shown and where (e.g. "front view on the left with the zipper open showing the lining, back view on the right behind it"), closures, lining, hood, pockets, waistband, cuffs, and their colours.',
     '- unprintedParts: the parts that must stay unprinted because they are not sublimation fabric (ribbing, zipper, lining, drawstrings, buttons), written as a noun phrase starting with "The", e.g. "The ribbing, zipper and sherpa lining". Empty string when everything is printable.',
   ].join('\n')
 }

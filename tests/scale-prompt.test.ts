@@ -25,6 +25,14 @@ describe('scale prompt', () => {
     expect(p).toContain('Do not invent new graphics or text.')
   })
 
+  it('works with Merchize blanks (white, one placeholder colour or colour blocks, often on a model): no colour is assumed and everything that is not printable fabric stays', () => {
+    const p = buildScalePrompt(target, design)
+    expect(p).not.toContain('grey')
+    expect(p).toContain('Only replace the unprinted outer fabric of the garment')
+    expect(p).toContain('placeholder colour or colour blocks are not a design and must disappear completely')
+    expect(p).toContain('a person wearing it')
+  })
+
   it('does not invent a back graphic when the source shows no back', () => {
     const p = buildScalePrompt(target, { ...design, back: null, texts: [] })
     expect(p).toContain('Back view: continues the same base pattern with no additional graphic.')
