@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import shutil
 import sys
 import threading
 import time
@@ -32,33 +33,147 @@ SOURCE_URL_RE = re.compile(
     r"(/[A-Za-z0-9._-]*)*(\?view=[A-Za-z0-9_-]+)?$")
 SKU_CODE_RE = re.compile(r'^[A-Z]{2}\d{10}$', re.ASCII)
 JOB_ID_RE = re.compile(r'^[a-z0-9]{10,40}$')
+# The platform words the server's heartbeat stores (`unknown` is already there when the runner could not tell).
+PLATFORM_RE = re.compile(r'(?:customily|customall|teeinblue|customix|unsupported:[a-z0-9-]{1,20})', re.ASCII)
+DIGITS_RE = re.compile(r'[0-9]+', re.ASCII)
 
 DEFAULT_JOB_ROOT = r'D:\Ecom manager\clone-queue'
 LOCK_NAME = 'runner.lock'
+LOG_NAME = 'runner.log'
+LOG_MAX_BYTES = 5 * 1024 * 1024
 CLAIM_WAIT_S = 25
 MAX_BACKOFF_S = 60
 HEARTBEAT_S = 60
 SESSION_TIMEOUT_S = 7200
+# A runner stuck after its session must lose the lease, or the server hands out no other job.
+HEARTBEAT_CAP_S = SESSION_TIMEOUT_S + 30 * 60
 RESULT_RETRIES = 5
 RESULT_RETRY_S = 30
 FAIL_RETRIES = 3
 FAIL_RETRY_S = 10
+CLI_BACKOFF_S = 1800
+MIN_FREE_BYTES = 2 * 1024 ** 3
+LOW_DISK_WAIT_S = 300
 DETECT_STAGE = 'nhận diện'
 SESSION_STAGES = ('clone', 'qa', 'public')
 REUSED_NOTE = 'Đã có sẵn trong sổ đăng ký'
 SETUP_ERROR = 'Runner không chuẩn bị được job.'
 RESULT_SEND_ERROR = 'Runner không gửi được kết quả.'
 AUTH_MESSAGE = 'Máy chủ từ chối token (401). Kiểm lại CLONE_WORKER_TOKEN rồi chạy lại runner.'
+HEARTBEAT_CAPPED = ('heartbeat tự dừng sau giờ tối đa của phiên cộng 30 phút: runner có thể đang treo; '
+                    'máy chủ sẽ trả job về hàng chờ khi hết lease.')
+CLI_DOWN_MESSAGE = ('!!! CLAUDE CLI KHÔNG CHẠY ĐƯỢC (chưa đăng nhập, hết hạn mức hoặc lỗi khởi động): runner tạm '
+                    'ngừng nhận job. Mở một terminal, chạy claude một lần để kiểm tra. !!!')
+LOW_DISK_MESSAGE = 'Ổ chứa thư mục job còn dưới 2 GB trống: chưa nhận job, 5 phút nữa kiểm lại.'
+PARENT_MEMORY_ERROR = 'Có file CLAUDE.md ở thư mục cha của hàng chờ — gỡ ra rồi thử lại.'
+QUICK_EDIT_FAILED = ('Không tắt được QuickEdit của cửa sổ console: đừng bấm chuột vào cửa sổ runner, một cú bấm '
+                     'làm nó đứng.')
+# Claude Code loads these from its working folder and every folder above it.
+MEMORY_FILES = ('CLAUDE.md', 'CLAUDE.local.md', os.path.join('.claude', 'CLAUDE.md'))
+SETTINGS_FILES = (os.path.join('.claude', 'settings.json'), os.path.join('.claude', 'settings.local.json'))
+STD_INPUT_HANDLE = -10
+ENABLE_QUICK_EDIT_MODE = 0x0040
+ENABLE_EXTENDED_FLAGS = 0x0080
 # The byte locked sits past the pid text so other programs can still read the pid while the runner holds the lock.
 LOCK_OFFSET = 1 << 20
 
+_log_lock = threading.Lock()
+_log_path: str | None = None
+
+
+def set_log_file(path: str | None) -> None:
+    global _log_path
+    with _log_lock:
+        _log_path = path
+
+
+def _record(line: str) -> None:
+    with _log_lock:
+        if not _log_path:
+            return
+        try:
+            if os.path.getsize(_log_path) > LOG_MAX_BYTES:
+                os.replace(_log_path, _log_path + '.1')
+        except OSError:
+            pass
+        try:
+            with open(_log_path, 'a', encoding='utf-8', errors='backslashreplace') as fh:
+                fh.write(line + '\n')
+        except OSError:
+            pass
+
 
 def log(msg: str) -> None:
+    """One line in runner.log, the record, then on the console. A console write that fails (a closed window, a broken
+    pipe) is dropped so it never stops the runner."""
     line = f'[{time.strftime("%m/%d/%Y %H:%M:%S")}] {msg}'
+    _record(line)
     try:
         print(line, flush=True)
     except UnicodeEncodeError:
-        print(line.encode('ascii', 'backslashreplace').decode('ascii'), flush=True)
+        try:
+            print(line.encode('ascii', 'backslashreplace').decode('ascii'), flush=True)
+        except (OSError, ValueError):
+            pass
+    except (OSError, ValueError):
+        pass
+
+
+def _console_api():
+    import ctypes
+    from ctypes import wintypes
+    k32 = ctypes.WinDLL('kernel32', use_last_error=True)
+    k32.GetStdHandle.argtypes = (wintypes.DWORD,)
+    k32.GetStdHandle.restype = wintypes.HANDLE
+    k32.GetConsoleMode.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD))
+    k32.GetConsoleMode.restype = wintypes.BOOL
+    k32.SetConsoleMode.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+    k32.SetConsoleMode.restype = wintypes.BOOL
+    return k32
+
+
+def disable_quick_edit(stdin=None, kernel32=None) -> None:
+    """Switches QuickEdit off in the runner's console window: with it on, a click into the window freezes the next
+    console write, and the runner with it. Nothing happens when stdin is not a console (tests, a redirected run)."""
+    if os.name != 'nt':
+        return
+    stdin = sys.stdin if stdin is None else stdin
+    try:
+        if stdin is None or not stdin.isatty():
+            return
+    except (OSError, ValueError):
+        return
+    try:
+        import ctypes
+        k32 = kernel32 or _console_api()
+        handle = k32.GetStdHandle(STD_INPUT_HANDLE)
+        mode = ctypes.c_ulong()
+        if not k32.GetConsoleMode(handle, ctypes.pointer(mode)):
+            return
+        if not k32.SetConsoleMode(handle, (mode.value & ~ENABLE_QUICK_EDIT_MODE) | ENABLE_EXTENDED_FLAGS):
+            log(QUICK_EDIT_FAILED)
+    except Exception:
+        log(QUICK_EDIT_FAILED)
+
+
+def parent_instruction_files(start: str, top: str | None = None) -> tuple[list[str], list[str]]:
+    """(CLAUDE.md files, settings files) in `start` and each folder above it, up to `top` or the drive root."""
+    memory, settings = [], []
+    folder = os.path.abspath(start)
+    last = os.path.normcase(os.path.abspath(top)) if top else None
+    while True:
+        memory += [p for p in (os.path.join(folder, n) for n in MEMORY_FILES) if os.path.lexists(p)]
+        settings += [p for p in (os.path.join(folder, n) for n in SETTINGS_FILES) if os.path.lexists(p)]
+        parent = os.path.dirname(folder)
+        if parent == folder or os.path.normcase(folder) == last:
+            return memory, settings
+        folder = parent
+
+
+def cli_backoff_s(env=None) -> int:
+    raw = ((os.environ if env is None else env).get('CLONE_CLI_BACKOFF_S') or '').strip()
+    value = int(raw) if DIGITS_RE.fullmatch(raw) else 0
+    return value if value > 0 else CLI_BACKOFF_S
 
 
 @dataclass
@@ -69,13 +184,16 @@ class Deps:
     run_session: Callable[..., dict]
     job_root: str
     clock: Any = time
+    disk_usage: Callable[[str], Any] = shutil.disk_usage
+    cli_backoff_s: float = CLI_BACKOFF_S
+    scan_parents: Callable[[str], tuple[list[str], list[str]]] = parent_instruction_files
 
 
 def default_deps(client: Client, job_root: str) -> Deps:
     import registers
     import session
     return Deps(client=client, fetch_html=detect.fetch_html, find_existing=registers.find_existing,
-                run_session=session.run_session, job_root=job_root, clock=time)
+                run_session=session.run_session, job_root=job_root, clock=time, cli_backoff_s=cli_backoff_s())
 
 
 def validate_job(job: dict) -> str | None:
@@ -119,8 +237,8 @@ def beat(client, job: dict, stage: str, platform: str | None = None) -> bool:
 
 
 class Heartbeat:
-    def __init__(self, client, job: dict, job_dir: str):
-        self._client, self._job, self._job_dir = client, job, job_dir
+    def __init__(self, client, job: dict, job_dir: str, clock=time):
+        self._client, self._job, self._job_dir, self._clock = client, job, job_dir, clock
         self._done = threading.Event()
         self._stopped = threading.Event()
         self._thread = threading.Thread(target=self._run, name=f'heartbeat-{job["id"]}', daemon=True)
@@ -136,7 +254,12 @@ class Heartbeat:
         return self._stopped.is_set()
 
     def _run(self) -> None:
+        started = self._clock.monotonic()
         while not self._done.is_set():
+            if self._clock.monotonic() - started >= HEARTBEAT_CAP_S:
+                self._stopped.set()
+                log(f'Job {self._job["id"]}: {HEARTBEAT_CAPPED}')
+                return
             try:
                 alive = beat(self._client, self._job, read_stage(self._job_dir))
             except AuthError:
@@ -227,12 +350,13 @@ def _report(job: dict, deps, outcome) -> None:
         _fail(job, deps, 'TOOL', f'Phiên clone trả kết quả lạ: {verdict!r}.')
 
 
-def run_job(job: dict, deps) -> None:
+def run_job(job: dict, deps) -> bool:
+    """Takes one job to its report. True when the session found the Claude CLI unable to run (the caller backs off)."""
     reason = validate_job(job)
     if reason:
         job = job if isinstance(job, dict) else {}
         _fail(job, deps, 'TOOL', reason)
-        return
+        return False
     job_id = job['id']
     prefix = job['store']['orderPrefix']
     log(f'Job {job_id}: {job["skuCode"]} {job["sourceUrl"]} -> {prefix}')
@@ -243,34 +367,40 @@ def run_job(job: dict, deps) -> None:
     except Exception as e:
         log(f'Job {job_id}: đọc sổ đăng ký lỗi ({type(e).__name__}: {e}).')
         _fail(job, deps, 'TOOL', SETUP_ERROR)
-        return
+        return False
     if existing is not None:
         gid = existing.get('productGid') if isinstance(existing, dict) else None
         handle = existing.get('handle') if isinstance(existing, dict) else None
         if not isinstance(gid, str) or not gid or not isinstance(handle, (str, type(None))):
             log(f'Job {job_id}: sổ đăng ký trả giá trị lạ ({type(existing).__name__}).')
             _fail(job, deps, 'TOOL', SETUP_ERROR)
-            return
+            return False
         _report_pass(job, deps, {'productGid': gid, 'handle': handle, 'qaVerdict': 'PASS', 'qaNote': REUSED_NOTE,
                                  'reused': True})
-        return
+        return False
 
     if not beat(deps.client, job, DETECT_STAGE):
         log(f'Job {job_id}: đã huỷ hoặc không còn thuộc máy này.')
-        return
+        return False
     html = deps.fetch_html(job['sourceUrl'])
     platform = detect.detect_platform(html) if html else 'unknown'
     log(f'Job {job_id}: nền tảng {platform}{"" if html else " (không tải được trang)"}.')
     if not beat(deps.client, job, DETECT_STAGE, platform):
         log(f'Job {job_id}: đã huỷ hoặc không còn thuộc máy này.')
-        return
+        return False
     if platform.startswith('unsupported:'):
         _fail(job, deps, 'UNSUPPORTED', f'Nền tảng này chưa hỗ trợ ({platform.split(":", 1)[1]}).')
-        return
+        return False
     targets = job.get('targets') if isinstance(job.get('targets'), list) else []
     if platform in detect.PLATFORMS and f'{platform}:{prefix}' not in targets:
         _fail(job, deps, 'NOT_ENABLED', f'Chưa bật clone {platform} cho store {prefix}.')
-        return
+        return False
+    memory, _ = deps.scan_parents(deps.job_root)
+    if memory:
+        for path in memory:
+            log(f'Job {job_id}: thấy {path}.')
+        _fail(job, deps, 'TOOL', PARENT_MEMORY_ERROR)
+        return False
 
     job_dir = os.path.join(deps.job_root, job_id)
     try:
@@ -282,8 +412,8 @@ def run_job(job: dict, deps) -> None:
     except OSError as e:
         log(f'Job {job_id}: không dựng được thư mục job ({type(e).__name__}: {e}).')
         _fail(job, deps, 'TOOL', SETUP_ERROR)
-        return
-    hb = Heartbeat(deps.client, job, job_dir)
+        return False
+    hb = Heartbeat(deps.client, job, job_dir, clock=deps.clock)
     hb.start()
     # The heartbeat runs until the report is sent: resending a result can take minutes, and the lease must not run out meanwhile.
     try:
@@ -293,16 +423,40 @@ def run_job(job: dict, deps) -> None:
             outcome = {'verdict': 'FAIL', 'failKind': 'TOOL', 'error': f'Phiên clone lỗi: {type(e).__name__}: {e}'}
         if hb.should_stop():
             log(f'Job {job_id}: đã dừng phiên vì job bị huỷ hoặc không còn thuộc máy này; không báo kết quả.')
-            return
+            return False
         log(f'Job {job_id}: phiên trả {outcome.get("verdict") if isinstance(outcome, dict) else outcome!r}.')
+        got = outcome if isinstance(outcome, dict) else {}
+        if got.get('cliDown') is True:
+            log(CLI_DOWN_MESSAGE)
+            _fail(job, deps, 'TOOL', got.get('error') or 'Phiên clone báo lỗi.', retryable=True)
+            return True
+        said = got.get('platform')
+        if platform == 'unknown' and isinstance(said, str) and PLATFORM_RE.fullmatch(said):
+            if not beat(deps.client, job, read_stage(job_dir), said):
+                log(f'Job {job_id}: đã huỷ hoặc không còn thuộc máy này; không báo kết quả.')
+                return False
         _report(job, deps, outcome)
+        return False
     finally:
         hb.close()
+
+
+def _disk_low(deps) -> bool:
+    try:
+        return deps.disk_usage(deps.job_root).free < MIN_FREE_BYTES
+    except OSError:
+        return False
 
 
 def serve(deps, once: bool = False) -> int:
     delay = 0
     while True:
+        if _disk_low(deps):
+            log(LOW_DISK_MESSAGE)
+            if once:
+                return 1
+            deps.clock.sleep(LOW_DISK_WAIT_S)
+            continue
         try:
             got = deps.client.claim(wait_seconds=CLAIM_WAIT_S)
         except AuthError:
@@ -317,16 +471,19 @@ def serve(deps, once: bool = False) -> int:
             continue
         delay = 0
         job = got.get('job')
+        cli_down = False
         if job:
             try:
-                run_job(job, deps)
+                cli_down = run_job(job, deps) is True
             except AuthError:
                 log(AUTH_MESSAGE)
                 return 3
             except Exception as e:
                 log(f'Lỗi khi xử lý job: {type(e).__name__}: {e}')
         if once:
-            return 0
+            return 4 if cli_down else 0
+        if cli_down:
+            deps.clock.sleep(deps.cli_backoff_s)
 
 
 def acquire_lock(path: str) -> int | None:
@@ -368,6 +525,15 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument('--once', action='store_true', help='one claim (and its job, if any), then exit')
     ap.add_argument('--job-root', default=DEFAULT_JOB_ROOT, help='folder holding one sub-folder per job')
     args = ap.parse_args(argv)
+    os.makedirs(args.job_root, exist_ok=True)
+    set_log_file(os.path.join(args.job_root, LOG_NAME))
+    try:
+        return _run(args)
+    finally:
+        set_log_file(None)
+
+
+def _run(args) -> int:
     base = os.environ.get('ECOM_URL', '').strip()
     token = os.environ.get('CLONE_WORKER_TOKEN', '').strip()
     if not base or not token:
@@ -378,7 +544,6 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as e:
         log(str(e))
         return 2
-    os.makedirs(args.job_root, exist_ok=True)
     lock = os.path.join(args.job_root, LOCK_NAME)
     lock_fd = acquire_lock(lock)
     if lock_fd is None:
@@ -387,6 +552,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         deps = default_deps(client, args.job_root)
         log(f'Runner đang chạy, thư mục job {args.job_root}.')
+        for path in deps.scan_parents(args.job_root)[1]:
+            log(f'Có {path} ở thư mục cha của hàng chờ; phiên chạy với --restricted nên không đọc file cài đặt này.')
+        disable_quick_edit()
         return serve(deps, once=args.once)
     finally:
         release_lock(lock_fd)

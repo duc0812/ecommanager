@@ -3,7 +3,8 @@
 `run_session` writes `job.json` in the job folder, starts `claude -p` there with the fixed prompt in `job_prompt.md`
 plus the job's values as a JSON block, a narrow tool list and the store's environment, enforces the time limit, and
 reads back `result.json`. The runner trusts `result.json` only: a missing or malformed file, or a failed exit, is a
-failed job. stdout and stderr go to `session.log`; the store's variables never reach the log, `job.json` or the prompt.
+failed job. stdout and stderr (the CLI's `stream-json` lines) go to `session.log`; the store's variables never reach
+the log, `job.json` or the prompt.
 """
 from __future__ import annotations
 
@@ -92,10 +93,18 @@ RULE_UNSAFE_RE = re.compile(r'[*?\[\]!#\\()]')
 
 DEFAULT_BUDGET_USD = '8'
 SESSION_TIMEOUT_S = 7200
+# Claude Code's Bash tool stops a command after 2 minutes unless told otherwise, and settings files are ignored under
+# --restricted, so the environment carries the clone tool's long main step.
+BASH_TIMEOUT_MS = 3_600_000
+BASH_TIMEOUT_RANGE_MS = (60_000, 7_200_000)
+DIGITS_RE = re.compile(r'^[0-9]+$', re.ASCII)
+CLI_DOWN_WINDOW_S = 90
+CLI_DOWN_ERROR = 'Claude CLI không chạy được (chưa đăng nhập, hết hạn mức hoặc lỗi khởi động).'
 RESULT_FILE = 'result.json'
 STAGE_FILE = 'stage.txt'
 JOB_FILE = 'job.json'
 LOG_FILE = 'session.log'
+TOOL_STATE_FILE = 'tool-state.json'
 VERDICTS = ('PASS', 'FAIL', 'UNSUPPORTED')
 RESULT_TEXT_FIELDS = ('platform', 'productGid', 'handle', 'productType', 'note', 'failKind', 'error')
 GID_RE = re.compile(r'^gid://shopify/Product/\d+$', re.ASCII)
@@ -112,13 +121,20 @@ class StoreEnvError(Exception):
 
 
 def _say(out, text: str) -> None:
+    """A line in session.log, and on the console when it can take it: a console write that fails (a frozen or closed
+    window) never stops the session."""
     line = f'[{time.strftime("%m/%d/%Y %H:%M:%S")}] {text}'
     out.write((line + '\n').encode('utf-8', 'backslashreplace'))
     out.flush()
     try:
         print(line, flush=True)
     except UnicodeEncodeError:
-        print(line.encode('ascii', 'backslashreplace').decode('ascii'), flush=True)
+        try:
+            print(line.encode('ascii', 'backslashreplace').decode('ascii'), flush=True)
+        except (OSError, ValueError):
+            pass
+    except (OSError, ValueError):
+        pass
 
 
 def _session_view(job: dict, platform: str) -> dict:
@@ -196,11 +212,12 @@ def build_argv(job_dir: str, prompt: str, env: dict, dirs=(), claude_cmd=None, s
     """The claude command line as a list. `--restricted` confines the file tools to the job folder and the
     `--add-dir` folders and leaves settings files out; `--setting-sources project` and `--strict-mcp-config` keep
     the owner's user settings and MCP servers out as well, so only the rules here decide and `dontAsk` refuses
-    everything else."""
+    everything else. `--safe-mode` leaves out CLAUDE.md, hooks and the other customisations while permissions work
+    normally (per `claude --help`). `stream-json` with `--verbose` puts every step of the session in session.log."""
     cmd = list(claude_cmd) if claude_cmd else [env.get('CLONE_CLAUDE_BIN') or 'claude']
     allowed = [*ALLOWED_TOOLS, *work_folder_rules(slug, work_roots)]
-    argv = [*cmd, '-p', prompt, '--output-format', 'json', '--permission-mode', 'dontAsk',
-            '--restricted', '--tools', ','.join(SESSION_TOOLS),
+    argv = [*cmd, '-p', prompt, '--output-format', 'stream-json', '--verbose', '--permission-mode', 'dontAsk',
+            '--restricted', '--safe-mode', '--tools', ','.join(SESSION_TOOLS),
             '--setting-sources', 'project', '--strict-mcp-config',
             '--allowedTools', *allowed, '--disallowedTools', *DISALLOWED_TOOLS,
             '--add-dir', job_dir, *dirs, '--max-budget-usd', _budget(env)]
@@ -225,8 +242,18 @@ def read_env_file(path: str) -> dict:
     return values
 
 
+def bash_timeout_ms(base) -> str:
+    """CLONE_BASH_TIMEOUT_MS (digits only, clamped to BASH_TIMEOUT_RANGE_MS), else BASH_TIMEOUT_MS."""
+    raw = (base.get('CLONE_BASH_TIMEOUT_MS') or '').strip()
+    if not DIGITS_RE.fullmatch(raw):
+        return str(BASH_TIMEOUT_MS)
+    low, high = BASH_TIMEOUT_RANGE_MS
+    return str(min(max(int(raw), low), high))
+
+
 def child_env(store: str | None, base=None) -> dict:
-    """The runner's environment without any worker token or store variable, plus the store's own variables."""
+    """The runner's environment without any worker token or store variable, plus the store's own variables, the Bash
+    tool's timeouts and a switched-off auto-updater (the CLI version that was probed is the one that runs)."""
     base = os.environ if base is None else base
     env = {k: v for k, v in base.items() if not k.upper().endswith('_WORKER_TOKEN') and k.upper() not in STORE_ENV_KEYS}
     path = STORE_ENV_FILES.get(store)
@@ -238,6 +265,8 @@ def child_env(store: str | None, base=None) -> dict:
         if not all(values.get(k) for k in REQUIRED_STORE_ENV):
             raise StoreEnvError(STORE_ENV_ERROR)
         env.update(values)
+    timeout = bash_timeout_ms(base)
+    env.update(BASH_DEFAULT_TIMEOUT_MS=timeout, BASH_MAX_TIMEOUT_MS=timeout, DISABLE_AUTOUPDATER='1')
     return env
 
 
@@ -275,24 +304,49 @@ def read_result(job_dir: str) -> dict:
 
 
 def _cli_result(path: str, start: int) -> dict:
-    """The `--output-format json` object the CLI printed in this run, or {} when there is none."""
+    """The last `stream-json` line of type "result" the CLI printed in this run, or {} when there is none."""
     try:
         with open(path, 'rb') as fh:
             fh.seek(start)
             text = fh.read().decode('utf-8', 'replace')
     except OSError:
         return {}
-    for chunk in [text.strip(), *reversed(text.splitlines())]:
-        chunk = chunk.strip()
-        if not chunk.startswith('{'):
+    for line in reversed(text.splitlines()):
+        line = line.strip()
+        if not line.startswith('{'):
             continue
         try:
-            data = json.loads(chunk)
+            data = json.loads(line)
         except ValueError:
             continue
         if isinstance(data, dict) and data.get('type') == 'result':
             return data
     return {}
+
+
+def _cli_down(cli: dict, elapsed_s: float) -> bool:
+    """The CLI never really ran: its result says it failed within one turn, or it printed no result at all and
+    ended within CLI_DOWN_WINDOW_S (a logged-out CLI, a spent usage limit, a start-up error)."""
+    if cli:
+        turns = cli.get('num_turns')
+        return cli.get('is_error') is True and isinstance(turns, int) and not isinstance(turns, bool) and turns <= 1
+    return elapsed_s <= CLI_DOWN_WINDOW_S
+
+
+def made_product(job_dir: str, slug) -> str | None:
+    """`done.product.id` from the Litzzy tools' state file in this job's own work folder (`<job_dir>\\<slug>`), when
+    it is a product gid: the product this job made before its session died."""
+    if not isinstance(slug, str) or not SLUG_RE.fullmatch(slug):
+        return None
+    try:
+        with open(os.path.join(job_dir, slug, TOOL_STATE_FILE), encoding='utf-8-sig') as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    done = data.get('done') if isinstance(data, dict) else None
+    product = done.get('product') if isinstance(done, dict) else None
+    gid = product.get('id') if isinstance(product, dict) else None
+    return gid if isinstance(gid, str) and GID_RE.fullmatch(gid) else None
 
 
 def _usage(cli: dict) -> dict:
@@ -376,6 +430,7 @@ def run_session(job: dict, platform: str, job_dir: str, should_stop, timeout_s: 
     with open(log_path, 'ab') as out:
         _say(out, f'Phiên bắt đầu, lần {view["attempt"]}, nền tảng {view["platform"]}.')
         start = out.tell()
+        started = time.monotonic()
         try:
             child = proc.spawn(argv, cwd=job_dir, env=env, out=out, secrets=secrets)
         except OSError as e:
@@ -389,18 +444,21 @@ def run_session(job: dict, platform: str, job_dir: str, should_stop, timeout_s: 
             if child.popen.poll() is None:
                 proc.kill_tree(child)
             proc.close(child)
+        elapsed = time.monotonic() - started
         out.flush()
         cli = _cli_result(log_path, start)
         _say(out, f'Phiên kết thúc: {state}, mã thoát {child.popen.returncode}.')
 
     code = child.popen.returncode
+    written = os.path.exists(os.path.join(job_dir, RESULT_FILE))
+    if state == 'exited' and not written and _cli_down(cli, elapsed):
+        return {**_fail('TOOL', CLI_DOWN_ERROR), 'cliDown': True}
     if state == 'timeout':
         outcome = _fail('TIMEOUT', f'Phiên chạy quá {timeout_s / 60:g} phút, đã dừng.')
     elif state == 'stopped':
         outcome = _fail('TOOL', 'Phiên bị dừng vì job bị huỷ hoặc không còn thuộc máy này.')
     else:
         outcome = read_result(job_dir)
-        written = os.path.exists(os.path.join(job_dir, RESULT_FILE))
         if code != 0 and not (written and outcome['verdict'] in ('FAIL', 'UNSUPPORTED')):
             subtype = cli.get('subtype')
             detail = f' ({subtype})' if isinstance(subtype, str) and SUBTYPE_RE.fullmatch(subtype) else ''
@@ -408,6 +466,10 @@ def run_session(job: dict, platform: str, job_dir: str, should_stop, timeout_s: 
             outcome = _fail('TOOL', f'claude thoát với mã {code}{detail}.')
             if gid:
                 outcome['productGid'] = gid
+    if state != 'exited' or not written:
+        gid = made_product(job_dir, view['slug'])
+        if gid:
+            outcome['productGid'] = gid
     # The text fields go to the server: a token the session copied into them is masked like the log.
     outcome = {k: proc.mask_text(v, secrets) if isinstance(v, str) else v for k, v in outcome.items()}
     return {**outcome, **_usage(cli)}

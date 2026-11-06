@@ -67,11 +67,22 @@ class FakeClient:
 
 
 class FakeClock:
-    def __init__(self):
+    def __init__(self, calls=None):
         self.sleeps = []
+        self.now = 0.0
+        self.calls = calls
 
     def sleep(self, seconds):
         self.sleeps.append(seconds)
+        self.now += seconds
+        if self.calls is not None:
+            self.calls.append(('sleep', seconds))
+
+    def monotonic(self):
+        return self.now
+
+
+GB = 1024 ** 3
 
 
 def make_deps(tmp_path, client=None, html=None, existing=None, session_result=None, session=None):
@@ -89,7 +100,9 @@ def make_deps(tmp_path, client=None, html=None, existing=None, session_result=No
         return html
 
     deps = SimpleNamespace(client=client or FakeClient(), fetch_html=fetch_html, find_existing=lambda job: existing,
-                           run_session=run_session, job_root=str(tmp_path), clock=FakeClock())
+                           run_session=run_session, job_root=str(tmp_path), clock=FakeClock(),
+                           disk_usage=lambda path: SimpleNamespace(free=100 * GB), cli_backoff_s=1800,
+                           scan_parents=lambda root: ([], []))
     deps.sessions, deps.fetched = sessions, fetched
     return deps
 
@@ -641,6 +654,8 @@ def test_main_refuses_malformed_token_without_printing_it(tmp_path, monkeypatch,
     out = capsys.readouterr()
     assert api.BAD_TOKEN_MESSAGE in out.out
     assert token.strip() not in out.out and token.strip() not in out.err
+    recorded = (tmp_path / 'runner.log').read_text(encoding='utf-8')
+    assert api.BAD_TOKEN_MESSAGE in recorded and token.strip() not in recorded
     assert not (tmp_path / 'runner.lock').exists()
 
 
@@ -653,3 +668,349 @@ def test_main_refuses_cleartext_ecom_url(tmp_path, monkeypatch, capsys, base):
     out = capsys.readouterr().out
     assert api.BAD_URL_MESSAGE in out and LOCK_TOKEN not in out
     assert not (tmp_path / 'runner.lock').exists()
+
+
+def wait_until(check, seconds=5.0):
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if check():
+            return True
+        time.sleep(0.01)
+    return check()
+
+
+def test_heartbeat_stops_by_itself_at_its_cap(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(runner, 'HEARTBEAT_S', 0.01)
+    clock, client = FakeClock(), FakeClient()
+    hb = runner.Heartbeat(client, make_job(), str(tmp_path), clock=clock)
+    hb.start()
+    try:
+        assert wait_until(lambda: len(client.named('heartbeat')) >= 3)
+        clock.now = runner.HEARTBEAT_CAP_S - 1
+        assert wait_until(lambda: len(client.named('heartbeat')) >= 6)
+        assert not hb.should_stop()
+        clock.now = runner.HEARTBEAT_CAP_S
+        assert wait_until(hb.should_stop)
+        assert wait_until(lambda: not hb._thread.is_alive())
+        beats = len(client.named('heartbeat'))
+        time.sleep(0.05)
+        assert len(client.named('heartbeat')) == beats
+    finally:
+        hb.close()
+    assert runner.HEARTBEAT_CAPPED in capsys.readouterr().out
+    assert runner.HEARTBEAT_CAP_S == runner.SESSION_TIMEOUT_S + 30 * 60
+
+
+def test_a_runner_stuck_past_the_cap_loses_the_job(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, 'HEARTBEAT_S', 0.01)
+    box = {}
+
+    def session(should_stop):
+        box['deps'].clock.now = runner.HEARTBEAT_CAP_S + 1
+        assert wait_until(should_stop)
+        return {'verdict': 'PASS', 'productGid': GID}
+
+    deps = make_deps(tmp_path, html=fixture('customily.html'), session=session)
+    box['deps'] = deps
+    runner.run_job(make_job(), deps)
+    assert deps.client.named('result') == [] and deps.client.named('fail') == []
+
+
+class BrokenConsole:
+    encoding = 'utf-8'
+
+    def write(self, text):
+        raise OSError(22, 'console write failed')
+
+    def flush(self):
+        raise OSError(22, 'console flush failed')
+
+
+@pytest.fixture
+def log_file(tmp_path):
+    path = tmp_path / 'runner.log'
+    runner.set_log_file(str(path))
+    yield path
+    runner.set_log_file(None)
+
+
+def test_log_lines_reach_the_runner_log(log_file, capsys):
+    runner.log('một dòng log')
+    runner.log('lone \ud83d surrogate')
+    text = log_file.read_text(encoding='utf-8')
+    assert 'một dòng log' in text and 'lone \\ud83d surrogate' in text and text.count('\n') == 2
+    assert 'một dòng log' in capsys.readouterr().out
+    runner.set_log_file(None)
+    runner.log('not recorded')
+    assert 'not recorded' not in log_file.read_text(encoding='utf-8')
+
+
+def test_a_console_that_raises_does_not_break_log(log_file, monkeypatch):
+    monkeypatch.setattr(sys, 'stdout', BrokenConsole())
+    runner.log('still recorded')
+    runner.log('still recorded \ud83d')
+    assert log_file.read_text(encoding='utf-8').count('still recorded') == 2
+
+
+def test_runner_log_rotates_once_it_passes_its_size(log_file, monkeypatch):
+    assert runner.LOG_MAX_BYTES == 5 * 1024 * 1024
+    monkeypatch.setattr(runner, 'LOG_MAX_BYTES', 100)
+    older = log_file.parent / 'runner.log.1'
+    log_file.write_text('y' * 100, encoding='utf-8')
+    older.write_text('older', encoding='utf-8')
+    runner.log('not yet')
+    assert older.read_text(encoding='utf-8') == 'older' and log_file.read_text(encoding='utf-8').startswith('y' * 100)
+    runner.log('after the rotation')
+    assert older.read_text(encoding='utf-8').startswith('y' * 100) and 'not yet' in older.read_text(encoding='utf-8')
+    lines = log_file.read_text(encoding='utf-8').splitlines()
+    assert len(lines) == 1 and lines[0].endswith('after the rotation')
+
+
+def test_main_records_even_its_first_lines_in_the_job_roots_log(tmp_path, monkeypatch):
+    monkeypatch.delenv('ECOM_URL', raising=False)
+    monkeypatch.delenv('CLONE_WORKER_TOKEN', raising=False)
+    root = tmp_path / 'new-root'
+    assert runner.main(['--once', '--job-root', str(root)]) == 2
+    assert 'Thiếu ECOM_URL' in (root / 'runner.log').read_text(encoding='utf-8')
+    runner.log('after main')
+    assert 'after main' not in (root / 'runner.log').read_text(encoding='utf-8')
+
+
+def test_start_up_logs_parent_settings_and_switches_quick_edit_off(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv('ECOM_URL', 'https://ecom.example.test')
+    monkeypatch.setenv('CLONE_WORKER_TOKEN', LOCK_TOKEN)
+    asked = []
+    monkeypatch.setattr(runner, 'disable_quick_edit', lambda: asked.append(True))
+    settings = r'D:\Ecom manager\.claude\settings.local.json'
+    scanned = []
+
+    def deps_for(client, job_root):
+        deps = make_deps(tmp_path, client=FakeClient(claims=[{'job': None, 'paused': False}]))
+        deps.scan_parents = lambda root: scanned.append(root) or ([], [settings])
+        return deps
+
+    monkeypatch.setattr(runner, 'default_deps', deps_for)
+    assert runner.main(['--once', '--job-root', str(tmp_path)]) == 0
+    assert asked == [True] and scanned == [str(tmp_path)]
+    assert settings in capsys.readouterr().out
+    recorded = (tmp_path / 'runner.log').read_text(encoding='utf-8')
+    assert settings in recorded and LOCK_TOKEN not in recorded
+
+
+class Tty:
+    def __init__(self, tty):
+        self.tty = tty
+
+    def isatty(self):
+        return self.tty
+
+
+class FakeKernel32:
+    def __init__(self, mode=0x0047, get_ok=True, set_ok=True):
+        self.mode, self.get_ok, self.set_ok = mode, get_ok, set_ok
+        self.calls = []
+
+    def GetStdHandle(self, which):
+        self.calls.append(('GetStdHandle', which))
+        return 7
+
+    def GetConsoleMode(self, handle, ptr):
+        self.calls.append(('GetConsoleMode', handle))
+        if self.get_ok:
+            ptr.contents.value = self.mode
+        return int(self.get_ok)
+
+    def SetConsoleMode(self, handle, mode):
+        self.calls.append(('SetConsoleMode', handle, mode))
+        return int(self.set_ok)
+
+
+windows_only = pytest.mark.skipif(os.name != 'nt', reason='the console API is Windows only')
+
+
+@windows_only
+def test_quick_edit_is_switched_off_on_a_console(capsys):
+    k32 = FakeKernel32(mode=0x0047)
+    runner.disable_quick_edit(stdin=Tty(True), kernel32=k32)
+    assert k32.calls == [('GetStdHandle', -10), ('GetConsoleMode', 7), ('SetConsoleMode', 7, 0x0087)]
+    assert capsys.readouterr().out == ''
+
+
+@windows_only
+def test_quick_edit_is_left_alone_without_a_console(capsys):
+    k32 = FakeKernel32()
+    runner.disable_quick_edit(stdin=Tty(False), kernel32=k32)
+    runner.disable_quick_edit(kernel32=k32)
+    assert k32.calls == []
+    k32 = FakeKernel32(get_ok=False)
+    runner.disable_quick_edit(stdin=Tty(True), kernel32=k32)
+    assert [c[0] for c in k32.calls] == ['GetStdHandle', 'GetConsoleMode']
+    assert capsys.readouterr().out == ''
+
+
+@windows_only
+def test_quick_edit_failure_is_logged_and_not_fatal(capsys):
+    runner.disable_quick_edit(stdin=Tty(True), kernel32=FakeKernel32(set_ok=False))
+
+    class Broken(FakeKernel32):
+        def GetStdHandle(self, which):
+            raise OSError('no console')
+
+    runner.disable_quick_edit(stdin=Tty(True), kernel32=Broken())
+    assert capsys.readouterr().out.count(runner.QUICK_EDIT_FAILED) == 2
+
+
+CLI_DOWN = {'verdict': 'FAIL', 'failKind': 'TOOL', 'cliDown': True,
+            'error': 'Claude CLI không chạy được (chưa đăng nhập, hết hạn mức hoặc lỗi khởi động).'}
+
+
+def test_a_cli_down_job_fails_retryable_without_a_product(tmp_path, capsys):
+    deps = make_deps(tmp_path, html=fixture('customily.html'), session_result={**CLI_DOWN, 'productGid': GID})
+    assert runner.run_job(make_job(), deps) is True
+    assert deps.client.named('fail') == [('fail', 'cmh1a2b3c4d5e6f7', 1, 'TOOL', CLI_DOWN['error'], True, None)]
+    assert deps.client.named('result') == []
+    assert runner.CLI_DOWN_MESSAGE in capsys.readouterr().out
+    deps = make_deps(tmp_path, html=fixture('customily.html'),
+                     session_result={'verdict': 'FAIL', 'failKind': 'TOOL', 'error': 'x', 'cliDown': 'yes'})
+    assert runner.run_job(make_job(), deps) is False
+    assert [f[5] for f in deps.client.named('fail')] == [False]
+    assert runner.run_job(make_job(), make_deps(tmp_path, html=fixture('customily.html'))) is False
+
+
+def test_cli_down_never_reaches_the_server(tmp_path):
+    opener = RoutingOpener()
+    client = api.Client('https://ecom.example.test', 'cqw_' + 'a' * 24, opener=opener)
+    deps = make_deps(tmp_path, client=client, html=fixture('customily.html'), session_result=CLI_DOWN)
+    assert runner.run_job(make_job(), deps) is True
+    [raw] = [data for a, data in opener.sent if a == 'fail']
+    assert json.loads(raw) == {'attempts': 1, 'failKind': 'TOOL', 'error': CLI_DOWN['error'], 'retryable': True}
+
+
+def test_serve_backs_off_after_a_cli_down_job_and_claims_nothing_meanwhile(tmp_path):
+    calls = []
+    client = FakeClient(claims=[{'job': make_job(), 'paused': False}, {'job': None, 'paused': False},
+                                api.AuthError('401')])
+    client.calls = calls
+    deps = make_deps(tmp_path, client=client, html=fixture('customily.html'), session_result=CLI_DOWN)
+    deps.clock = FakeClock(calls)
+    deps.cli_backoff_s = 1234
+    assert runner.serve(deps) == 3
+    assert [c for c in calls if c[0] in ('claim', 'fail', 'sleep')] == [
+        ('claim', 25), ('fail', 'cmh1a2b3c4d5e6f7', 1, 'TOOL', CLI_DOWN['error'], True, None), ('sleep', 1234),
+        ('claim', 25), ('claim', 25)]
+
+
+def test_once_exits_4_after_a_cli_down_job(tmp_path):
+    client = FakeClient(claims=[{'job': make_job(), 'paused': False}])
+    deps = make_deps(tmp_path, client=client, html=fixture('customily.html'), session_result=CLI_DOWN)
+    assert runner.serve(deps, once=True) == 4
+    assert deps.clock.sleeps == [] and len(client.named('claim')) == 1
+
+
+def test_cli_backoff_comes_from_the_environment(tmp_path, monkeypatch):
+    assert runner.cli_backoff_s({}) == 1800
+    for raw, want in (('600', 600), (' 60 ', 60), ('0', 1800), ('abc', 1800), ('-5', 1800), ('1.5', 1800),
+                      ('٦٠', 1800), ('', 1800)):
+        assert runner.cli_backoff_s({'CLONE_CLI_BACKOFF_S': raw}) == want, raw
+    monkeypatch.setenv('CLONE_CLI_BACKOFF_S', '900')
+    assert runner.default_deps(FakeClient(), str(tmp_path)).cli_backoff_s == 900
+
+
+def test_the_sessions_platform_goes_out_in_a_last_heartbeat_when_the_runner_could_not_tell(tmp_path):
+    deps = make_deps(tmp_path, html=None, session_result={'verdict': 'PASS', 'productGid': GID,
+                                                          'platform': 'customily'})
+    runner.run_job(make_job(), deps)
+    calls = deps.client.calls
+    before = calls[:calls.index(deps.client.named('result')[0])]
+    assert [c for c in before if c[0] == 'heartbeat' and c[4] == 'customily'] == [
+        ('heartbeat', 'cmh1a2b3c4d5e6f7', 1, 'clone', 'customily')]
+    assert len(deps.client.named('result')) == 1
+
+
+@pytest.mark.parametrize('html, said', [
+    (None, 'Customily'), (None, 'unknown'), (None, 'unsupported:Evil!'), (None, 'unsupported:' + 'a' * 21),
+    (None, 'customily\n'), (None, 7), (None, None), ('customily.html', 'customall'),
+])
+def test_no_last_heartbeat_for_a_known_platform_or_an_odd_word(tmp_path, html, said):
+    outcome = {'verdict': 'PASS', 'productGid': GID}
+    if said is not None:
+        outcome['platform'] = said
+    deps = make_deps(tmp_path, html=fixture(html) if html else None, session_result=outcome)
+    runner.run_job(make_job(), deps)
+    beats = deps.client.named('heartbeat')
+    assert [c for c in beats if c[3] != 'nhận diện' and c[4] is not None] == []
+    assert len(deps.client.named('result')) == 1
+
+
+def test_a_last_heartbeat_that_says_cancelled_stops_the_report(tmp_path):
+    client = FakeClient(beat=lambda stage, platform: {'ok': platform != 'customall', 'cancelled': False})
+    deps = make_deps(tmp_path, client=client, html=None, session_result={
+        'verdict': 'UNSUPPORTED', 'platform': 'customall', 'error': 'x'})
+    runner.run_job(make_job(), deps)
+    assert client.named('result') == [] and client.named('fail') == []
+    assert ('heartbeat', 'cmh1a2b3c4d5e6f7', 1, 'clone', 'customall') in client.calls
+
+
+def test_a_claude_md_above_the_job_root_fails_the_job(tmp_path, capsys):
+    found = r'D:\Ecom manager\CLAUDE.md'
+    settings = r'D:\Ecom manager\.claude\settings.local.json'
+    deps = make_deps(tmp_path, html=fixture('customily.html'))
+    deps.scan_parents = lambda root: ([found], [settings])
+    runner.run_job(make_job(), deps)
+    assert deps.sessions == []
+    assert [f[3:] for f in deps.client.named('fail')] == [
+        ('TOOL', 'Có file CLAUDE.md ở thư mục cha của hàng chờ — gỡ ra rồi thử lại.', False, None)]
+    assert found in capsys.readouterr().out
+    deps = make_deps(tmp_path, html=fixture('customily.html'))
+    deps.scan_parents = lambda root: ([], [settings])
+    runner.run_job(make_job(), deps)
+    assert len(deps.sessions) == 1 and deps.client.named('fail') == []
+
+
+def test_parent_instruction_files_walk_up_from_the_job_root(tmp_path):
+    top = tmp_path / 'a'
+    root = top / 'b' / 'clone-queue'
+    root.mkdir(parents=True)
+    (root / 'CLAUDE.local.md').write_text('x', encoding='utf-8')
+    (top / 'b' / '.claude').mkdir()
+    for name in ('settings.local.json', 'CLAUDE.md', 'other.json'):
+        (top / 'b' / '.claude' / name).write_text('{}', encoding='utf-8')
+    (top / 'CLAUDE.md').write_text('x', encoding='utf-8')
+    (top / '.claude').write_text('a file, not a folder', encoding='utf-8')
+    (tmp_path / '.claude').mkdir()
+    (tmp_path / '.claude' / 'settings.json').write_text('{}', encoding='utf-8')
+    (tmp_path / 'CLAUDE.md').write_text('above the top', encoding='utf-8')
+    memory, settings = runner.parent_instruction_files(str(root), top=str(top))
+    assert memory == [str(root / 'CLAUDE.local.md'), str(top / 'b' / '.claude' / 'CLAUDE.md'), str(top / 'CLAUDE.md')]
+    assert settings == [str(top / 'b' / '.claude' / 'settings.local.json')]
+    memory, settings = runner.parent_instruction_files(str(root))
+    assert str(tmp_path / 'CLAUDE.md') in memory and str(tmp_path / '.claude' / 'settings.json') in settings
+    clean = tmp_path / 'clean' / 'queue'
+    clean.mkdir(parents=True)
+    assert runner.parent_instruction_files(str(clean), top=str(tmp_path / 'clean')) == ([], [])
+
+
+def test_serve_waits_instead_of_claiming_on_a_full_disk(tmp_path, capsys):
+    calls = []
+    client = FakeClient(claims=[api.AuthError('401')])
+    client.calls = calls
+    deps = make_deps(tmp_path, client=client)
+    deps.clock = FakeClock(calls)
+    free, asked = [1 * GB, 2 * GB - 1, 2 * GB], []
+    deps.disk_usage = lambda path: asked.append(path) or SimpleNamespace(free=free.pop(0))
+    assert runner.serve(deps) == 3
+    assert calls == [('sleep', 300), ('sleep', 300), ('claim', 25)]
+    assert asked == [str(tmp_path)] * 3
+    assert capsys.readouterr().out.count(runner.LOW_DISK_MESSAGE) == 2
+
+
+def test_once_with_a_full_disk_claims_nothing(tmp_path):
+    deps = make_deps(tmp_path, client=FakeClient(claims=[]))
+    deps.disk_usage = lambda path: SimpleNamespace(free=0)
+    assert runner.serve(deps, once=True) == 1
+    assert deps.client.named('claim') == [] and deps.clock.sleeps == []
+
+
+def test_runner_help_exits_0():
+    done = subprocess.run([sys.executable, runner.__file__, '--help'], capture_output=True, text=True, timeout=60)
+    assert done.returncode == 0 and '--once' in done.stdout

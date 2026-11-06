@@ -1,6 +1,13 @@
-"""Which personaliser a source product page uses, read from markers in its HTML."""
+"""Which personaliser a source product page uses, read from markers in its HTML.
+
+    python detect.py --url <link>
+
+prints one word (customily, customall, teeinblue, customix, unknown or unsupported:<name>) and exits 0, so a session
+learns the platform without reading the page itself. A page that does not load is `unknown`.
+"""
 from __future__ import annotations
 
+import argparse
 import threading
 import time
 import urllib.parse
@@ -85,3 +92,16 @@ def fetch_html(url: str, opener=None, timeout: int = 30, budget_s: float = FETCH
     if worker.is_alive():
         return None
     return box.get('html')
+
+
+def main(argv: list[str] | None = None, opener=None) -> int:
+    ap = argparse.ArgumentParser(description='Prints the personaliser the page at --url uses, as one word.')
+    ap.add_argument('--url', required=True, help='the source product link (https only)')
+    args = ap.parse_args(argv)
+    html = fetch_html(args.url, opener=opener)
+    print(detect_platform(html) if html else 'unknown', flush=True)
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

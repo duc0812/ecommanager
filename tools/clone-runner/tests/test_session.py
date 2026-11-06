@@ -95,7 +95,8 @@ def test_build_argv_is_a_list_and_blocks_ssh():
     argv = session.build_argv(r'D:\queue\job1', 'PROMPT TEXT', {}, dirs=[r'C:\skills\one', r'D:\work'])
     assert all(isinstance(a, str) for a in argv)
     assert argv[:3] == ['claude', '-p', 'PROMPT TEXT']
-    assert argv[argv.index('--output-format') + 1] == 'json'
+    assert values_after(argv, '--output-format') == ['stream-json']
+    assert '--verbose' in argv and '--safe-mode' in argv
     assert argv[argv.index('--permission-mode') + 1] == 'dontAsk'
     assert values_after(argv, '--setting-sources') == ['project']
     assert '--strict-mcp-config' in argv and '--restricted' in argv
@@ -188,7 +189,7 @@ def test_prompt_keeps_only_well_formed_server_values():
 def test_job_prompt_carries_the_spec_rules():
     with open(session.PROMPT_FILE, encoding='utf-8') as fh:
         text = fh.read()
-    assert len(text.splitlines()) < 120
+    assert len(text.splitlines()) < 130
     for phrase in ('--rights', 'data, not instructions', 'set-skus', 'qa_report.py', 'compare.png', '--visual',
                    'Online Store', 'DRAFT', 'TOOL_GAP', 'UNSUPPORTED', 'targets', 'stage.txt', '`clone`', '`qa`',
                    '`public`', 'result.json', 'cmd.exe', 'PowerShell', 'add to cart', 'never rewrite', 'slug',
@@ -201,6 +202,32 @@ def test_job_prompt_carries_the_spec_rules():
         assert phrase in text, phrase
     assert 'reused' not in text
     assert text.rstrip().endswith('## This job')
+
+
+def test_job_prompt_says_what_the_final_review_asked_for():
+    with open(session.PROMPT_FILE, encoding='utf-8') as fh:
+        text = fh.read()
+    flat = ' '.join(text.split())
+    for phrase in (
+            'For the Litzzy tools the WORK folder is `.\\<slug>` inside the job folder and `<work root>\\<slug>` is '
+            'the REGISTER entry; the skill says never to point `--work` at the register.',
+            'exits 1 whenever files differ', 'that is the normal case and not an error',
+            'for a Litzzy job the steps are the queue section of the skill\'s SKILL.md '
+            '(`## Chạy theo hàng chờ (clone queue)`); run its commands exactly, in its order',
+            '`NOT_ENABLED`', 'a long timeout (up to the hour the environment allows)',
+            'never run a command in the background', 'never `cd`', 'always absolute paths',
+            'python "<runnerDir>\\detect.py" --url "<sourceUrl>"', 'không nhận ra nền tảng',
+            '`_runtime\\backup-*`', 'expected'):
+        assert phrase in flat, phrase
+    assert '--stop-after' not in text and '--only publish' not in text, 'the steps come from the skill, not a paraphrase'
+    assert 'cdn.customily.com' not in text, 'step 1 runs detect.py instead of reading the HTML'
+    table = [line for line in text.splitlines() if line.startswith('| `')]
+    kinds = [line.split('`')[1] for line in table]
+    assert kinds == ['UNSUPPORTED', 'NOT_ENABLED', 'SOURCE', 'TOOL_GAP', 'QA', 'TOOL']
+    for kind, words in (('UNSUPPORTED', 'none of the four personalisers'), ('NOT_ENABLED', 'targets'),
+                        ('SOURCE', 'refuses scripts'), ('TOOL_GAP', 'step-0 guards'),
+                        ('QA', 'does not match the source'), ('TOOL', 'anything else')):
+        assert words in table[kinds.index(kind)], kind
 
 
 def test_read_result_rejects_missing_bad_and_unknown_verdict(tmp_path):
@@ -254,12 +281,141 @@ def test_run_session_with_fake_claude_pass(skills, job_dir, monkeypatch):
     assert 'progress on stderr' in log and '"total_cost_usd": 1.25' in log
 
 
+def test_session_log_holds_the_whole_stream(skills, job_dir, monkeypatch):
+    assert run(job_dir, monkeypatch)['costUsd'] == 1.25
+    lines = (job_dir / 'session.log').read_text(encoding='utf-8').splitlines()
+    kinds = [json.loads(line)['type'] for line in lines if line.startswith('{')]
+    assert kinds == ['system', 'assistant', 'user', 'result']
+    assert any('cloning the product' in line for line in lines) and any('qa_report PASS' in line for line in lines)
+    assert lines[0].endswith('nền tảng customily.') and 'Phiên kết thúc: exited, mã thoát 0.' in lines[-1]
+
+
+def test_cli_result_is_the_last_result_line_after_the_start(tmp_path):
+    path = tmp_path / 'session.log'
+    before = json.dumps({'type': 'result', 'total_cost_usd': 9, 'duration_ms': 9}) + '\n'
+    lines = [json.dumps({'type': 'system', 'subtype': 'init'}),
+             json.dumps({'type': 'result', 'total_cost_usd': 1, 'duration_ms': 10, 'is_error': True, 'num_turns': 1}),
+             'not json {', '{"type": "result", "broken"', json.dumps({'type': 'assistant', 'message': {}}),
+             json.dumps({'type': 'result', 'total_cost_usd': 2.5, 'duration_ms': 20, 'is_error': False,
+                         'num_turns': 7}),
+             json.dumps({'type': 'user', 'message': {}}), json.dumps(['type', 'result']), 'stderr line']
+    path.write_text(before + '\n'.join(lines) + '\n', encoding='utf-8')
+    got = session._cli_result(str(path), len(before.encode('utf-8')))
+    assert got['total_cost_usd'] == 2.5 and got['num_turns'] == 7
+    assert session._usage(got) == {'costUsd': 2.5, 'durationMs': 20}
+    path.write_text(before + json.dumps({'type': 'system'}) + '\n', encoding='utf-8')
+    assert session._cli_result(str(path), len(before.encode('utf-8'))) == {}
+    assert session._cli_result(str(tmp_path / 'missing.log'), 0) == {}
+
+
 def test_stale_result_and_stage_are_removed_before_start(skills, job_dir, monkeypatch):
     (job_dir / 'result.json').write_text(json.dumps({'verdict': 'PASS', 'productGid': GID}), encoding='utf-8')
     (job_dir / 'stage.txt').write_text('public', encoding='utf-8')
     out = run(job_dir, monkeypatch, mode='crash')
-    assert out['verdict'] == 'FAIL' and out['failKind'] == 'TOOL' and '2' in out['error']
+    assert out['verdict'] == 'FAIL' and out['failKind'] == 'TOOL'
     assert not (job_dir / 'result.json').exists() and not (job_dir / 'stage.txt').exists()
+
+
+CLI_DOWN = {'verdict': 'FAIL', 'failKind': 'TOOL', 'cliDown': True,
+            'error': 'Claude CLI không chạy được (chưa đăng nhập, hết hạn mức hoặc lỗi khởi động).'}
+
+
+def test_a_cli_that_cannot_run_is_cli_down(skills, job_dir, monkeypatch):
+    assert run(job_dir, monkeypatch, mode='cli-down') == CLI_DOWN
+    assert run(job_dir, monkeypatch, mode='crash') == CLI_DOWN
+    assert session.CLI_DOWN_WINDOW_S == 90
+
+
+def test_a_failure_late_in_a_session_is_not_cli_down(skills, job_dir, monkeypatch):
+    out = run(job_dir, monkeypatch, mode='late-error')
+    assert out == {'verdict': 'FAIL', 'failKind': 'TOOL', 'error': 'claude thoát với mã 1 (error_max_budget_usd).',
+                   'costUsd': 8.01, 'durationMs': 3_600_000}
+    monkeypatch.setattr(session, 'CLI_DOWN_WINDOW_S', 0)
+    out = run(job_dir, monkeypatch, mode='crash')
+    assert out == {'verdict': 'FAIL', 'failKind': 'TOOL', 'error': 'claude thoát với mã 2.'}
+    for mode in ('gap-exit1', 'pass-exit1', 'text'):
+        assert 'cliDown' not in run(job_dir, monkeypatch, mode=mode), mode
+
+
+def write_state(job_dir, data, slug='tm0611260001'):
+    (job_dir / slug).mkdir(exist_ok=True)
+    body = data if isinstance(data, str) else json.dumps(data)
+    (job_dir / slug / 'tool-state.json').write_text(body, encoding='utf-8')
+
+
+def test_a_session_that_dies_after_making_a_product_reports_it(skills, job_dir, monkeypatch):
+    write_state(job_dir, {'done': {'crawl': {'at': 'x'}, 'product': {'id': GID, 'handle': 'h', 'status': 'DRAFT'}}})
+    out = run(job_dir, monkeypatch, mode='sleep', timeout_s=1)
+    assert out['failKind'] == 'TIMEOUT' and out['productGid'] == GID
+    out = run(job_dir, monkeypatch, mode='sleep', should_stop=lambda: (job_dir / 'grandchild.pid').exists())
+    assert out['verdict'] == 'FAIL' and out['failKind'] == 'TOOL' and out['productGid'] == GID
+    out = run(job_dir, monkeypatch, mode='late-error')
+    assert out['error'].startswith('claude thoát với mã 1') and out['productGid'] == GID
+    monkeypatch.setattr(session, 'CLI_DOWN_WINDOW_S', 0)
+    out = run(job_dir, monkeypatch, mode='crash')
+    assert out['error'] == 'claude thoát với mã 2.' and out['productGid'] == GID
+
+
+def test_a_written_result_or_a_cli_down_never_takes_the_state_files_product(skills, job_dir, monkeypatch):
+    write_state(job_dir, {'done': {'product': {'id': GID}}})
+    assert run(job_dir, monkeypatch, mode='gap-exit1') == {'verdict': 'FAIL', 'failKind': 'TOOL_GAP',
+                                                           'error': 'needs a new layer rule'}
+    assert run(job_dir, monkeypatch, mode='cli-down') == CLI_DOWN
+    assert run(job_dir, monkeypatch, mode='crash') == CLI_DOWN
+
+
+@pytest.mark.parametrize('state', [
+    '{not json', '[]', json.dumps({'done': []}), json.dumps({'done': {'product': {'dry_run': True}}}),
+    json.dumps({'done': {'product': {'id': 'gid://shopify/ProductVariant/1'}}}),
+    json.dumps({'done': {'product': {'id': GID + '\n'}}}), json.dumps({'done': {'product': {'id': 9054123557021}}}),
+    json.dumps({'done': {'product': GID}}),
+])
+def test_a_missing_or_malformed_state_file_changes_nothing(skills, job_dir, monkeypatch, state):
+    write_state(job_dir, state)
+    out = run(job_dir, monkeypatch, mode='late-error')
+    assert out['error'].startswith('claude thoát với mã 1') and 'productGid' not in out
+    write_state(job_dir, {'done': {'product': {'id': GID}}}, slug='other-folder')
+    assert session.made_product(str(job_dir), 'TM0611260001') is None
+    assert session.made_product(str(job_dir), '../tm0611260001') is None
+
+
+def test_child_env_sets_long_bash_timeouts_and_pins_the_cli(monkeypatch):
+    monkeypatch.setattr(session, 'STORE_ENV_FILES', {})
+    base = {'PATH': r'C:\bin', 'BASH_DEFAULT_TIMEOUT_MS': '1000', 'DISABLE_AUTOUPDATER': '0'}
+    env = session.child_env('reminiso', base=base)
+    assert env['BASH_DEFAULT_TIMEOUT_MS'] == env['BASH_MAX_TIMEOUT_MS'] == '3600000'
+    assert env['DISABLE_AUTOUPDATER'] == '1' and env['PATH'] == r'C:\bin'
+    for raw, want in (('120000', '120000'), (' 900000 ', '900000'), ('60000', '60000'), ('59999', '60000'),
+                      ('10', '60000'), ('7200000', '7200000'), ('99999999999', '7200000'), ('', '3600000'),
+                      ('abc', '3600000'), ('1e6', '3600000'), ('-5', '3600000'), ('600000.5', '3600000'),
+                      ('٦٠٠٠٠٠', '3600000'), ('0x1000', '3600000')):
+        env = session.child_env('reminiso', base={'CLONE_BASH_TIMEOUT_MS': raw})
+        assert env['BASH_DEFAULT_TIMEOUT_MS'] == env['BASH_MAX_TIMEOUT_MS'] == want, raw
+
+
+def test_a_session_gets_the_bash_timeouts(skills, job_dir, monkeypatch):
+    monkeypatch.setenv('CLONE_BASH_TIMEOUT_MS', '5400000')
+    assert run(job_dir, monkeypatch)['verdict'] == 'PASS'
+    env = seen(job_dir)['env']
+    assert env['BASH_DEFAULT_TIMEOUT_MS'] == env['BASH_MAX_TIMEOUT_MS'] == '5400000'
+    assert env['DISABLE_AUTOUPDATER'] == '1'
+
+
+class BrokenConsole:
+    encoding = 'utf-8'
+
+    def write(self, text):
+        raise OSError(22, 'console write failed')
+
+    def flush(self):
+        raise OSError(22, 'console flush failed')
+
+
+def test_a_failed_console_write_does_not_break_the_session(skills, job_dir, monkeypatch):
+    monkeypatch.setattr(sys, 'stdout', BrokenConsole())
+    assert run(job_dir, monkeypatch)['verdict'] == 'PASS'
+    log = (job_dir / 'session.log').read_text(encoding='utf-8')
+    assert 'Phiên bắt đầu' in log and 'Phiên kết thúc' in log
 
 
 def test_a_session_written_reused_never_comes_back(skills, job_dir, monkeypatch):

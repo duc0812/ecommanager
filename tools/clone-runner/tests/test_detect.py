@@ -1,6 +1,8 @@
 import http.client
 import io
 import socket
+import subprocess
+import sys
 import threading
 import time
 import urllib.error
@@ -173,6 +175,37 @@ def test_fetch_html_refuses_non_https():
     opener = FakeOpener(FakeResponse(b'<html></html>'))
     assert detect.fetch_html('http://shop.example.com/p', opener=opener) is None
     assert opener.requests == []
+
+
+LINK = 'https://shop.example.com/products/family-ornament'
+
+
+@pytest.mark.parametrize('page, word', [('customily.html', 'customily'), ('customall.html', 'customall'),
+                                        ('teeinblue.html', 'teeinblue'), ('customix.html', 'customix'),
+                                        ('globo.html', 'unsupported:globo'), ('plain.html', 'unknown')])
+def test_command_line_prints_one_word_for_the_page(capsys, page, word):
+    opener = FakeOpener(FakeResponse(fixture(page).encode('utf-8')))
+    assert detect.main(['--url', LINK], opener=opener) == 0
+    assert capsys.readouterr().out == word + '\n'
+    assert [req.full_url for req, _ in opener.requests] == [LINK]
+
+
+@pytest.mark.parametrize('outcome', [urllib.error.URLError('down'), FakeResponse(b'<html></html>', status=203),
+                                     TimeoutError('slow')])
+def test_command_line_says_unknown_when_the_page_does_not_load(capsys, outcome):
+    assert detect.main(['--url', LINK], opener=FakeOpener(outcome)) == 0
+    assert capsys.readouterr().out == 'unknown\n'
+
+
+def test_command_line_never_fetches_a_non_https_link(capsys):
+    opener = FakeOpener(FakeResponse(fixture('customily.html').encode('utf-8')))
+    assert detect.main(['--url', 'http://shop.example.com/products/a'], opener=opener) == 0
+    assert capsys.readouterr().out == 'unknown\n' and opener.requests == []
+
+
+def test_command_line_help_exits_0():
+    done = subprocess.run([sys.executable, detect.__file__, '--help'], capture_output=True, text=True, timeout=60)
+    assert done.returncode == 0 and '--url' in done.stdout
 
 
 def test_redirects_only_to_https():
