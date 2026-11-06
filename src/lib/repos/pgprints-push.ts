@@ -578,6 +578,8 @@ async function upsertSupplierTracking(push: Pick<PushRow, 'orderId' | 'supplierI
           // The line shipped from the pushed supplier even when the order sync first mapped it elsewhere (Mangoshao → PGprints moves).
           trackingNumber: item.trackingNumber, carrier: item.carrierCode ?? existing.carrier, supplierId: push.supplierId,
           ...(existing.status === SHIPMENT_STATUS_PENDING ? { status: SHIPMENT_STATUS_FULFILLED } : {}),
+          // A row made when add-ons counted can still point at an add-on under this key; the tracking is the product's.
+          ...(existing.shopifyLineId !== line.shopifyLineId ? { shopifyLineId: line.shopifyLineId, sku: line.sku, productTitle: line.productTitle } : {}),
         },
       })
       touched++

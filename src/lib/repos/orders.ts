@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/db'
+import type { OrderLine } from '@/generated/prisma/client'
 import { PIPELINE_STATUSES, TERMINAL_PIPELINE_STATUSES, type PipelineStatus } from '@/lib/pipeline-status'
 import { WARNING_TYPES, type WarningType } from '@/lib/order-warnings'
 import { isLineExported, legacyMarks, supplierLines } from '@/lib/line-export'
@@ -73,22 +74,36 @@ function warningTypeWhere(type: WarningType): any {
   return { placedAt: { lte: cut1 }, pipelineStatus: 'READY_TO_PRODUCTION' } // NOT_EXPORTED
 }
 
+// Lines ordered inside the order query (`include: { lines: { orderBy } }`) are loaded by a second query binding one
+// parameter per parent order, which Prisma cannot split: past SQLite's 999 bind values it throws (measured: 997 parents
+// work, 998 throw; see SHIPMENT_SYNC_PAGE_SIZE in shipments.ts). The lines are read for chunks of orders well under that.
+const ORDER_LINES_CHUNK = 500
+
 export async function listOrdersWithLines(filter: OrderFilter) {
   const usePaging = filter.pageSize != null && filter.pageSize > 0
   const take = usePaging ? filter.pageSize : (filter.limit ?? 500)
   const skip = usePaging ? Math.max(0, (Math.max(1, filter.page ?? 1) - 1) * (filter.pageSize as number)) : 0
 
-  return prisma.order.findMany({
+  const orders = await prisma.order.findMany({
     where: buildWhere(filter),
     orderBy: { placedAt: 'desc' },
     take,
     skip,
     include: {
-      lines: { orderBy: { linePosition: 'asc' } },
       store: { select: { id: true, shop: true, orderPrefix: true, ianaTimezone: true, project: { select: { name: true } } } },
       defaultSupplier: { select: { id: true, name: true, code: true, firstItemShipFee: true, additionalItemShipFee: true } },
     },
   })
+  const linesOf = new Map<string, OrderLine[]>()
+  for (let i = 0; i < orders.length; i += ORDER_LINES_CHUNK) {
+    const ids = orders.slice(i, i + ORDER_LINES_CHUNK).map(o => o.id)
+    for (const line of await prisma.orderLine.findMany({ where: { orderId: { in: ids } }, orderBy: { linePosition: 'asc' } })) {
+      const list = linesOf.get(line.orderId)
+      if (list) list.push(line)
+      else linesOf.set(line.orderId, [line])
+    }
+  }
+  return orders.map(({ store, defaultSupplier, ...order }) => ({ ...order, lines: linesOf.get(order.id) ?? [], store, defaultSupplier }))
 }
 
 export async function countOrders(filter: OrderFilter) {

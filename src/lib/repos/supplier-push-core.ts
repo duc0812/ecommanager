@@ -228,12 +228,15 @@ export async function upsertLineTracking(
       continue
     }
     if (existing.shopifyFulfillmentId && existing.trackingNumber) continue
-    if (existing.trackingNumber === t.number && existing.status !== SHIPMENT_STATUS_PENDING) continue
+    // A row made when add-ons counted can still point at an add-on under this key; the tracking is the product's.
+    const onLine = existing.shopifyLineId === line.shopifyLineId
+    if (onLine && existing.trackingNumber === t.number && existing.status !== SHIPMENT_STATUS_PENDING) continue
     await prisma.shipment.update({
       where: { id: existing.id },
       data: {
         trackingNumber: t.number, carrier: t.company ?? existing.carrier, supplierId: existing.supplierId ?? push.supplierId,
         ...(existing.status === SHIPMENT_STATUS_PENDING ? { status: SHIPMENT_STATUS_FULFILLED } : {}),
+        ...(onLine ? {} : { shopifyLineId: line.shopifyLineId, sku: line.sku, productTitle: line.productTitle }),
       },
     })
     touched++

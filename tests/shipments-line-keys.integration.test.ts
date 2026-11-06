@@ -7,6 +7,7 @@ import { buildFulfillmentPlan } from '@/lib/fulfillment/build-fulfill-plan'
 
 const SHOP = 'shk-store.myshopify.com'
 const PROJECT = 'proj_shk'
+const SUPPLIER = 'sup_shk'
 let storeId = ''
 
 const lineId = (order: number, n: number) => `gid://shopify/LineItem/shk-${order}-${n}`
@@ -30,12 +31,22 @@ async function makeOrder(number: number, specs: LineSpec[]) {
 type Order = Awaited<ReturnType<typeof makeOrder>>
 
 // Rows as the tool wrote them when every line counted, add-ons too.
-async function oldRows(order: Order, extra: Record<number, { trackingNumber?: string; shopifyFulfillmentId?: string }> = {}) {
+async function oldRows(order: Order, extra: Record<number, { trackingNumber?: string; shopifyFulfillmentId?: string; carrier?: string; trackingUrl?: string; supplierId?: string; status?: string }> = {}) {
   const no = order.shopifyOrderNumber.replace('#', '')
   const lines = [...order.lines].sort((a, b) => a.linePosition - b.linePosition)
   for (let i = 0; i < lines.length; i++) {
     const l = lines[i]
     await prisma.shipment.create({ data: { orderId: order.id, projectId: PROJECT, lineKey: `${no}_${i + 1}`, shopifyLineId: l.shopifyLineId, sku: l.sku, productTitle: l.productTitle, ...extra[i + 1] } })
+  }
+}
+
+async function warningsOf(run: () => Promise<unknown>): Promise<string[]> {
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+  try {
+    await run()
+    return warn.mock.calls.map(c => c.join(' '))
+  } finally {
+    warn.mockRestore()
   }
 }
 
@@ -114,6 +125,66 @@ describe('upsertOrderShipments follows the line keys', () => {
     const withoutUpdatedAt = (rows: typeof before) => rows.map(({ updatedAt, ...rest }) => rest)
     expect(withoutUpdatedAt(after)).toEqual(withoutUpdatedAt(before))
     expect(after).toHaveLength(2)
+  })
+
+  describe('a row with supplier tracking (no Shopify fulfilment)', () => {
+    const MOVED = 'tracking belongs to a line that no longer has this key — check by hand'
+
+    beforeAll(async () => {
+      await prisma.supplier.deleteMany({ where: { id: SUPPLIER } })
+      await prisma.supplier.create({ data: { id: SUPPLIER, name: 'SHK Supplier', code: 'SHK' } })
+    })
+
+    afterAll(async () => {
+      await prisma.order.deleteMany({ where: { storeId } })
+      await prisma.supplier.deleteMany({ where: { id: SUPPLIER } })
+    })
+
+    const supplierTracking = (trackingNumber: string) => ({ trackingNumber, carrier: 'YunExpress', trackingUrl: `https://t.example/${trackingNumber}`, supplierId: SUPPLIER, status: 'IN_TRANSIT' })
+
+    it('whose key now belongs to another line is left exactly as it is, said once, and no other row gains its tracking', async () => {
+      const order = await makeOrder(8805, [ADD_ON, TOTE])
+      await oldRows(order, { 1: supplierTracking('TRK-8805') })
+      const before = await prisma.shipment.findUnique({ where: { orderId_lineKey: { orderId: order.id, lineKey: 'REMI8805_1' } } })
+
+      const warnings = await warningsOf(() => upsertOrderShipments(order.id, PROJECT, built(order)))
+
+      const rows = await rowsOf(order.id)
+      expect(rows).toEqual([before])
+      expect(rows.filter(r => r.shopifyLineId === lineId(8805, 2))).toEqual([])
+      expect(warnings).toHaveLength(1)
+      expect(warnings[0]).toContain('#REMI8805')
+      expect(warnings[0]).toContain('REMI8805_1')
+      expect(warnings[0]).toContain(MOVED)
+    })
+
+    it('two moved keys in one order give one warning that names both', async () => {
+      const order = await makeOrder(8806, [ADD_ON, TOTE, MUG])
+      await oldRows(order, { 1: supplierTracking('TRK-8806-A'), 2: supplierTracking('TRK-8806-B') })
+      const before = await rowsOf(order.id)
+
+      const warnings = await warningsOf(() => upsertOrderShipments(order.id, PROJECT, built(order)))
+
+      expect(await rowsOf(order.id)).toEqual(before.filter(r => r.lineKey !== 'REMI8806_3'))
+      expect(warnings).toHaveLength(1)
+      expect(warnings[0]).toContain('REMI8806_1')
+      expect(warnings[0]).toContain('REMI8806_2')
+      expect(warnings[0]).toContain(MOVED)
+    })
+
+    it('whose key still belongs to its line keeps its tracking and takes the line\'s sku and title, as before', async () => {
+      const order = await makeOrder(8807, [TOTE, MUG])
+      await prisma.shipment.create({ data: { orderId: order.id, projectId: PROJECT, lineKey: 'REMI8807_1', shopifyLineId: lineId(8807, 1), sku: 'OLD-SKU', productTitle: 'Old title', ...supplierTracking('TRK-8807') } })
+
+      const warnings = await warningsOf(() => upsertOrderShipments(order.id, PROJECT, built(order)))
+
+      expect(warnings).toEqual([])
+      const rows = await rowsOf(order.id)
+      expect(rows.map(r => [r.lineKey, r.shopifyLineId, r.sku, r.productTitle, r.trackingNumber, r.carrier, r.trackingUrl, r.supplierId, r.status, r.shopifyFulfillmentId])).toEqual([
+        ['REMI8807_1', lineId(8807, 1), 'TOTE-1', 'Custom Tote Bag', 'TRK-8807', 'YunExpress', 'https://t.example/TRK-8807', SUPPLIER, 'IN_TRANSIT', null],
+        ['REMI8807_2', lineId(8807, 2), 'MUG-1', 'Custom Mug', null, null, null, null, 'PENDING', null],
+      ])
+    })
   })
 
   it('the per-line fulfilment plan of a renumbered order fulfils the product line, never an add-on', async () => {

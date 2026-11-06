@@ -85,5 +85,5 @@ Vào Setup › Users, mở user có vai trò Seller, tick store ở phần "Stor
 
 ## 9. Tắt store hoặc ngắt kết nối
 
-- **Tắt store** (công tắc ở cột Thao tác): sync, đơn và báo cáo bỏ qua store này cho tới khi bật lại. Đơn của store không được ghi vào sheet xưởng, và không giao store này cho seller mới được. Token, tiền tố, project và cài đặt vẫn giữ nguyên; bật lại là chạy tiếp.
+- **Tắt store** (công tắc ở cột Thao tác): mọi việc chạy với Shopify (đồng bộ tự động, nút Sync Now, Auto Fulfilled) bỏ qua store này cho tới khi bật lại, nhưng đơn đã có của store vẫn hiện trong danh sách đơn và báo cáo. Đơn của store không được ghi vào sheet xưởng, và Setup › Users không cho giao store này cho seller mới. Token, tiền tố, project và cài đặt vẫn giữ nguyên; bật lại là chạy tiếp.
 - **Ngắt kết nối**: tool xoá thông tin kết nối Shopify của store, mọi lượt sync của store dừng. Store, tiền tố, project và cài đặt vẫn giữ. Muốn dùng lại, bấm "Kết nối lại" và nhập thông tin kết nối mới.

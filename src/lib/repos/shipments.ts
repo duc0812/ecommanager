@@ -46,22 +46,28 @@ export async function loadOrdersForShipmentSync(storeId: string, since: Date) {
 export async function upsertOrderShipments(orderId: string, projectId: string, rows: BuiltShipment[]) {
   const existing = await prisma.shipment.findMany({
     where: { orderId },
-    select: { id: true, lineKey: true, shopifyFulfillmentId: true, trackingNumber: true },
+    select: { id: true, lineKey: true, shopifyLineId: true, shopifyFulfillmentId: true, trackingNumber: true },
   })
+  const nameOfOrder = async () => (await prisma.order.findUnique({ where: { id: orderId }, select: { shopifyOrderNumber: true } }))?.shopifyOrderNumber ?? orderId
   const keys = new Set(rows.map(r => r.lineKey))
   const stale = existing.filter(e => !keys.has(e.lineKey))
   const staleUntracked = stale.filter(e => !e.trackingNumber && !e.shopifyFulfillmentId)
   if (staleUntracked.length > 0) await prisma.shipment.deleteMany({ where: { id: { in: staleUntracked.map(e => e.id) } } })
   const staleTracked = stale.filter(e => e.trackingNumber || e.shopifyFulfillmentId)
   if (staleTracked.length > 0) {
-    const order = await prisma.order.findUnique({ where: { id: orderId }, select: { shopifyOrderNumber: true } })
-    console.warn(`[shipments] ${order?.shopifyOrderNumber ?? orderId}: kept shipment rows whose key is no longer a line key of the order, they carry tracking or a fulfilment: ${staleTracked.map(e => e.lineKey).join(', ')}`)
+    console.warn(`[shipments] ${await nameOfOrder()}: kept shipment rows whose key is no longer a line key of the order, they carry tracking or a fulfilment: ${staleTracked.map(e => e.lineKey).join(', ')}`)
   }
-  const supplierTracked = new Set(existing.filter(e => !e.shopifyFulfillmentId && e.trackingNumber).map(e => e.lineKey))
+  const supplierTracked = new Map(existing.filter(e => !e.shopifyFulfillmentId && e.trackingNumber).map(e => [e.lineKey, e.shopifyLineId]))
+  const movedTracked: string[] = []
   for (const r of rows) {
     // A tracking number the supplier pushed (PGprints webhook) has no Shopify fulfillment behind it yet;
     // it must survive re-syncs until Shopify reports its own fulfillment for the line.
     if (!r.shopifyFulfillmentId && supplierTracked.has(r.lineKey)) {
+      // The tracking is the stored line's: Auto Fulfilled would send it for the line that owns the key now. Left for a person.
+      if (supplierTracked.get(r.lineKey) !== r.shopifyLineId) {
+        movedTracked.push(r.lineKey)
+        continue
+      }
       await prisma.shipment.update({
         where: { orderId_lineKey: { orderId, lineKey: r.lineKey } },
         data: { shopifyLineId: r.shopifyLineId, sku: r.sku, productTitle: r.productTitle },
@@ -93,6 +99,9 @@ export async function upsertOrderShipments(orderId: string, projectId: string, r
       },
       data: { status: r.status },
     })
+  }
+  if (movedTracked.length > 0) {
+    console.warn(`[shipments] ${await nameOfOrder()}: ${movedTracked.join(', ')}: tracking belongs to a line that no longer has this key — check by hand`)
   }
 }
 
