@@ -211,6 +211,12 @@ describe('scale jobs', () => {
     expect(await refreshScaleJob(job.id, deps)).toMatchObject({ status: 'done', cost: '20 credits' })
   })
 
+  it('explains the other wording Kie uses when its filter rejects the generated image', async () => {
+    const { deps } = fakeDeps({ polls: { 'task-1': [{ state: 'failed', error: 'The generated images appear to be unsafe. Try modifying the prompts.' }], 'task-2': [done(2)] } })
+    const job = await run((await start(deps)).id, deps)
+    expect((await refreshScaleJob(job.id, deps)).error).toBe('Front: Kie từ chối nội dung của góc này (bộ lọc kiểm duyệt của model): The generated images appear to be unsafe. Try modifying the prompts.')
+  })
+
   it('keeps a job running through a poll error and retries a failed download', async () => {
     const { deps } = fakeDeps({ polls: { 'task-1': [done(1)], 'task-2': [done(2)] } })
     const job = await run((await start(deps)).id, deps)

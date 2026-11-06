@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { DesignSchema, buildMatchPrompt, buildViewPrompt, designSystemPrompt, renderPrintMapping, type Design } from '@/lib/scale/prompt'
+import { DesignSchema, blankDescriptionSystemPrompt, buildMatchPrompt, buildViewPrompt, designSystemPrompt, renderPrintMapping, type Design } from '@/lib/scale/prompt'
 
 const front = { side: 'front' as const, blankDescription: 'unworn zip hoodie, front view, zipper open showing the white sherpa lining.', unprintedParts: 'The ribbing, zipper and sherpa lining' }
 const back = { side: 'back' as const, blankDescription: 'unworn zip hoodie, back view, hood down.', unprintedParts: '' }
@@ -80,6 +80,16 @@ describe('scale prompt', () => {
     expect(p).toContain('by what it looks like')
     expect(p).toContain('never by the name of a character, a franchise, a brand or a real person')
     expect(p).toContain('Printed words are different')
+  })
+
+  it('prints ribbing, cuffs, hem bands and the button placket too, because the products are all-over print', () => {
+    for (const p of [buildViewPrompt(name, back, design), buildMatchPrompt(name, back)]) {
+      expect(p).toContain('Ribbed cuffs, hem or waistband, collar or neckband and the button placket are outer fabric too')
+      expect(p).toContain('the design continues onto them')
+    }
+    const rule = blankDescriptionSystemPrompt()
+    expect(rule).toContain('same placeholder colour as the rest of the outer fabric is printable and must NOT be listed')
+    expect(rule).toContain('clearly a different fixed colour')
   })
 
   it('rejects a design without sourceGarment or a text without a side', () => {

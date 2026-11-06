@@ -51,7 +51,7 @@ export function scaleJobView(j: ScaleJob) {
 
 function viewError(state: Pick<ViewState, 'label' | 'error'>): string {
   const raw = state.error ?? 'lỗi không rõ'
-  const refused = /sensitive|flagged|moderation|safety|policy/i.test(raw)
+  const refused = /sensitive|flagged|moderation|unsafe|safety|policy/i.test(raw)
   return `${state.label}: ${refused ? `Kie từ chối nội dung của góc này (bộ lọc kiểm duyệt của model): ${raw}` : raw}`
 }
 

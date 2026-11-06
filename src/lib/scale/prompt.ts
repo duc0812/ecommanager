@@ -39,7 +39,7 @@ export function renderPrintMapping(d: Design, side: ViewSide): string {
 }
 
 const KEEP = 'Keep IMAGE 2 EXACTLY: same composition, same garment shapes, folds, construction details, camera angle and pure white background.'
-const FULL_PRINT = 'Every part of the outer fabric visible in IMAGE 2 is printed edge to edge, up to every seam and hem: its placeholder colour or colour blocks are not a design and must disappear completely, and no bare, white or single-coloured patch of outer fabric may remain.'
+const FULL_PRINT = 'Every part of the outer fabric visible in IMAGE 2 is printed edge to edge, up to every seam and hem: its placeholder colour or colour blocks are not a design and must disappear completely, and no bare, white or single-coloured patch of outer fabric may remain. Ribbed cuffs, hem or waistband, collar or neckband and the button placket are outer fabric too: unless they are listed below as unprinted, the design continues onto them, with no plain band left.'
 const UNTOUCHED = 'Everything else in IMAGE 2 stays untouched: a person wearing it, their face, hair, hands and other clothing, and every trim.'
 const FINISH = 'Do not invent new graphics or text. Realistic printed fabric with natural folds and soft studio shadow, sharp high-resolution product photography.'
 
@@ -101,6 +101,6 @@ export function blankDescriptionSystemPrompt(): string {
     'You are shown a blank (unprinted) garment mockup that will be used as the shape reference for an image model. It shows ONE view of the garment (you are told whether it is the front or the back). It may be a flat product shot or worn by a model. The outer fabric is shown plain white or grey, in one placeholder colour, or in placeholder colour blocks. Those colours are NOT a design.',
     'Return two fields in English, no line breaks:',
     '- blankDescription: one to three sentences describing the view and the construction: whether a model is wearing it, the angle and pose, closures, lining, hood, pockets, waistband, cuffs, and which parts of the outer fabric are visible. Do not name the placeholder colour of the outer fabric.',
-    '- unprintedParts: the parts that must stay unprinted because they are not sublimation fabric (ribbing, zipper, lining, drawstrings, buttons), written as a noun phrase starting with "The", e.g. "The ribbing, zipper and sherpa lining". Empty string when everything is printable.',
+    '- unprintedParts: the parts that must stay unprinted, written as a noun phrase starting with "The", e.g. "The zipper, drawstrings and sherpa lining". These garments are all-over print: ribbing (cuffs, hem band, waistband, collar, neckband, button placket) shown in the same placeholder colour as the rest of the outer fabric is printable and must NOT be listed. List ribbing only when it is clearly a different fixed colour from the outer fabric (for example black ribbing on a light garment). Always list hardware and lining: zipper, buttons or snaps, toggles, drawstring cords, eyelets, lining, neck label. Empty string when everything is printable.',
   ].join('\n')
 }
