@@ -1,28 +1,42 @@
 import { prisma } from '@/lib/db'
 import type { BuiltShipment } from '@/lib/tracking/build-shipments'
 
-// Orders (with the line fields buildOrderShipments needs) for one store since a date.
+// A nested `lines` select with its own orderBy is loaded by a second query that binds one parameter per parent order and
+// that Prisma cannot split, so it throws past SQLite's 999 bind values (measured: 997 parents work, 998 throw).
+// A page well under that keeps every query legal.
+export const SHIPMENT_SYNC_PAGE_SIZE = 500
+
+// Orders (with the line fields buildOrderShipments needs) for one store since a date, by id.
 export async function loadOrdersForShipmentSync(storeId: string, since: Date) {
-  return prisma.order.findMany({
-    where: { storeId, placedAt: { gte: since } },
-    select: {
-      id: true,
-      projectId: true,
-      shopifyOrderNumber: true,
-      fulfillmentStatus: true,
-      lines: {
-        orderBy: { linePosition: 'asc' },
-        select: {
-          shopifyLineId: true,
-          sku: true,
-          productTitle: true,
-          shopifyProductType: true,
-          linePosition: true,
-          resolvedSupplierId: true,
+  const orders = []
+  let afterId: string | undefined
+  for (;;) {
+    const page = await prisma.order.findMany({
+      where: { storeId, placedAt: { gte: since }, ...(afterId ? { id: { gt: afterId } } : {}) },
+      orderBy: { id: 'asc' },
+      take: SHIPMENT_SYNC_PAGE_SIZE,
+      select: {
+        id: true,
+        projectId: true,
+        shopifyOrderNumber: true,
+        fulfillmentStatus: true,
+        lines: {
+          orderBy: { linePosition: 'asc' },
+          select: {
+            shopifyLineId: true,
+            sku: true,
+            productTitle: true,
+            shopifyProductType: true,
+            linePosition: true,
+            resolvedSupplierId: true,
+          },
         },
       },
-    },
-  })
+    })
+    orders.push(...page)
+    if (page.length < SHIPMENT_SYNC_PAGE_SIZE) return orders
+    afterId = page[page.length - 1].id
+  }
 }
 
 // Idempotent upsert by (orderId, lineKey) so re-syncs refresh tracking without duplicating rows.
