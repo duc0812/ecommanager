@@ -40,6 +40,7 @@ const clean = async () => {
   await prisma.scaleJob.deleteMany({})
   await prisma.scaleTarget.deleteMany({ where: { sku: { startsWith: 'JOBT' } } })
 }
+const run = async (id: string, deps: ScaleDeps) => (await runPipeline(id, deps))!
 const start = (deps: ScaleDeps, userId = 'user-a') => createScaleJob({ targetId, image: { dataUrl: PNG, name: 'jacket.png' }, userId }, deps, { run: false })
 
 beforeAll(async () => {
@@ -62,7 +63,7 @@ describe('scale jobs', () => {
     const { deps, log } = fakeDeps({ polls: [{ state: 'running' }, { state: 'done', urls: ['https://tempfile.redpandaai.co/out.png'], credits: 12, costTime: null }] })
     const job = await start(deps)
     expect(job).toMatchObject({ status: 'describing', targetName: 'Test Fleece Zip Hoodie', model: 'gpt-image-2-5-flare-image-to-image', sourceFile: 'src.png', createdBy: 'user-a' })
-    const running = await runPipeline(job.id, deps)
+    const running = await run(job.id, deps)
     expect(running).toMatchObject({ status: 'running', providerTaskId: 'task-1' })
     expect(log.filter(l => l[0] === 'upload').map(l => l[1])).toEqual([`scale-${job.id}-src.png`, `scale-${job.id}-blank.png`])
     const vision = log.find(l => l[0] === 'vision')[1]
@@ -98,7 +99,7 @@ describe('scale jobs', () => {
     const { deps, count } = fakeDeps()
     const job = await start(deps)
     await updateTarget(targetId, { active: false })
-    const failed = await runPipeline(job.id, deps)
+    const failed = await run(job.id, deps)
     await updateTarget(targetId, { active: true })
     expect(failed).toMatchObject({ status: 'failed', error: 'Sản phẩm đích chưa sẵn sàng' })
     expect(count('create')).toBe(0)
@@ -107,7 +108,7 @@ describe('scale jobs', () => {
   it('names the CS key when the vision model is refused', async () => {
     const { deps, count } = fakeDeps()
     deps.vision!.describe = async () => { throw new Error('kie error 401: The API key is not authorized to use this model.') }
-    const failed = await runPipeline((await start(deps)).id, deps)
+    const failed = await run((await start(deps)).id, deps)
     expect(failed).toMatchObject({ status: 'failed', error: 'Key Kie (CS) chưa được cấp quyền model gpt-6.1-sol', designJson: null })
     expect(count('create')).toBe(0)
   })
@@ -115,7 +116,7 @@ describe('scale jobs', () => {
   it('names the Creative key when the image model is refused and keeps the design for a later fallback', async () => {
     const { deps } = fakeDeps()
     deps.image!.createTask = async () => { throw new Error('kie createTask 401: The API key is not authorized to use this model.') }
-    const failed = await runPipeline((await start(deps)).id, deps)
+    const failed = await run((await start(deps)).id, deps)
     expect(failed.status).toBe('failed')
     expect(failed.error).toBe('Key Kie (Creative) chưa được cấp quyền model gpt-image-2-5-flare-image-to-image')
     expect(JSON.parse(failed.designJson!)).toEqual(design)
@@ -123,19 +124,19 @@ describe('scale jobs', () => {
 
   it('says which step has no key', async () => {
     const { deps } = fakeDeps()
-    expect((await runPipeline((await start(deps)).id, { ...deps, vision: null })).error).toBe('Chưa có API key Kie cho bước đọc ảnh')
-    expect((await runPipeline((await start(deps)).id, { ...deps, image: null })).error).toBe('Chưa có API key Kie cho bước tạo ảnh')
+    expect((await run((await start(deps)).id, { ...deps, vision: null })).error).toBe('Chưa có API key Kie cho bước đọc ảnh')
+    expect((await run((await start(deps)).id, { ...deps, image: null })).error).toBe('Chưa có API key Kie cho bước tạo ảnh')
   })
 
   it('shows the provider message when the image step fails', async () => {
     const { deps } = fakeDeps({ polls: [{ state: 'failed', error: 'Your request was rejected by the safety system' }] })
-    const job = await runPipeline((await start(deps)).id, deps)
+    const job = await run((await start(deps)).id, deps)
     expect(await refreshScaleJob(job.id, deps)).toMatchObject({ status: 'failed', error: 'Your request was rejected by the safety system' })
   })
 
   it('keeps a job running through a poll error and retries a failed download', async () => {
     const { deps } = fakeDeps({ polls: [{ state: 'done', urls: ['https://tempfile.redpandaai.co/out.png'], credits: 3, costTime: null }] })
-    const job = await runPipeline((await start(deps)).id, deps)
+    const job = await run((await start(deps)).id, deps)
     const flaky = { ...deps, image: { ...deps.image!, poll: async () => { throw new Error('timeout') } } }
     expect(await refreshScaleJob(job.id, flaky)).toMatchObject({ status: 'running', error: 'Poll lỗi: timeout' })
     const pending = await refreshScaleJob(job.id, { ...deps, fetchImpl: brokenFetch })
@@ -151,9 +152,40 @@ describe('scale jobs', () => {
     expect(await refreshScaleJob(job.id, deps)).toMatchObject({ status: 'failed', error: 'Bị gián đoạn, bấm Tạo lại' })
   })
 
+  it('does not start a paid task when the job was closed while the design was being read', async () => {
+    const { deps, count } = fakeDeps()
+    const job = await start(deps)
+    deps.vision!.describe = async () => {
+      await prisma.scaleJob.update({ where: { id: job.id }, data: { status: 'failed', error: 'Bị gián đoạn, bấm Tạo lại' } })
+      return design as any
+    }
+    const after = await run(job.id, deps)
+    expect(after).toMatchObject({ status: 'failed', error: 'Bị gián đoạn, bấm Tạo lại' })
+    expect(count('create')).toBe(0)
+    expect(count('upload')).toBe(0)
+  })
+
+  it('stops quietly when the job was deleted while the design was being read', async () => {
+    const { deps, count } = fakeDeps()
+    const job = await start(deps)
+    deps.vision!.describe = async () => { await prisma.scaleJob.delete({ where: { id: job.id } }); return design as any }
+    await expect(runPipeline(job.id, deps)).resolves.toBeNull()
+    expect(count('create')).toBe(0)
+  })
+
+  it('gives up on a finished job whose result can no longer be downloaded', async () => {
+    const { deps } = fakeDeps({ polls: [{ state: 'done', urls: ['https://tempfile.redpandaai.co/out.png'], credits: 3, costTime: null }] })
+    const job = await run((await start(deps)).id, deps)
+    await refreshScaleJob(job.id, { ...deps, fetchImpl: brokenFetch })
+    await prisma.scaleJob.update({ where: { id: job.id }, data: { createdAt: new Date(Date.now() - 31 * 60 * 1000) } })
+    const gone = await refreshScaleJob(job.id, { ...deps, fetchImpl: brokenFetch })
+    expect(gone.status).toBe('failed')
+    expect(gone.error).toContain('Quá 30 phút')
+  })
+
   it('never uses the fallback model unless the owner switched it on', async () => {
     const off = fakeDeps({ polls: [{ state: 'failed', error: 'rejected' }] })
-    const job = await runPipeline((await start(off.deps)).id, off.deps)
+    const job = await run((await start(off.deps)).id, off.deps)
     await refreshScaleJob(job.id, off.deps)
     await expect(fallbackScaleJob(job.id, 'user-b', off.deps, { run: false })).rejects.toThrow('Chưa bật model dự phòng')
     expect(await prisma.scaleJob.count()).toBe(1)
@@ -161,7 +193,7 @@ describe('scale jobs', () => {
     const on = fakeDeps({ allowFallback: true })
     const next = await fallbackScaleJob(job.id, 'user-b', on.deps, { run: false })
     expect(next).toMatchObject({ model: 'seedream/4.5-edit', parentJobId: job.id, status: 'describing', createdBy: 'user-b', sourceFile: 'src.png' })
-    const running = await runPipeline(next.id, on.deps)
+    const running = await run(next.id, on.deps)
     expect(running.status).toBe('running')
     expect(on.count('vision')).toBe(0)
     expect(on.log.find(l => l[0] === 'create')[1]).toBe('seedream/4.5-edit')
@@ -170,16 +202,16 @@ describe('scale jobs', () => {
 
   it('only offers the fallback for a failed job that already has a design', async () => {
     const { deps } = fakeDeps({ allowFallback: true })
-    const job = await runPipeline((await start(deps)).id, deps)
+    const job = await run((await start(deps)).id, deps)
     await expect(fallbackScaleJob(job.id, 'user-a', deps, { run: false })).rejects.toBeInstanceOf(ScaleInputError)
   })
 
   it('re-runs with the same source and a fresh reading of the design', async () => {
     const { deps, count } = fakeDeps()
-    const job = await runPipeline((await start(deps)).id, deps)
+    const job = await run((await start(deps)).id, deps)
     const again = await rerunScaleJob(job.id, 'user-b', deps, { run: false })
     expect(again).toMatchObject({ parentJobId: job.id, designJson: null, sourceFile: 'src.png', model: 'gpt-image-2-5-flare-image-to-image' })
-    await runPipeline(again.id, deps)
+    await run(again.id, deps)
     expect(count('vision')).toBe(2)
     expect((await listScaleJobs()).map(j => j.id)).toEqual([again.id, job.id])
   })
@@ -198,7 +230,7 @@ describe('scale jobs', () => {
 
   it('hides the prompt and the design from staff', async () => {
     const { deps } = fakeDeps()
-    const job = await runPipeline((await start(deps)).id, deps)
+    const job = await run((await start(deps)).id, deps)
     const staff: any = scaleJobView(job, { debug: false })
     expect(staff.prompt).toBeUndefined()
     expect(staff.designJson).toBeUndefined()

@@ -71,7 +71,10 @@ function fail(id: string, error: string): Promise<ScaleJob> {
   return prisma.scaleJob.update({ where: { id }, data: { status: 'failed', error, completedAt: new Date() } })
 }
 
-export async function runPipeline(jobId: string, deps: ScaleDeps): Promise<ScaleJob> {
+const current = (id: string) => prisma.scaleJob.findUnique({ where: { id } }).catch(() => null)
+
+// A refresh, a delete or a re-run can close the job while this is still talking to Kie; every write is conditional on the job still being open.
+export async function runPipeline(jobId: string, deps: ScaleDeps): Promise<ScaleJob | null> {
   try {
     const job = await getJob(jobId)
     if (job.status !== 'describing') return job
@@ -92,7 +95,8 @@ export async function runPipeline(jobId: string, deps: ScaleDeps): Promise<Scale
       } catch (err) {
         throw new Error(explainKieError(err, 'CS', deps.visionModel))
       }
-      await prisma.scaleJob.update({ where: { id: job.id }, data: { designJson: JSON.stringify(design) } })
+      const saved = await prisma.scaleJob.updateMany({ where: { id: job.id, status: 'describing' }, data: { designJson: JSON.stringify(design) } })
+      if (!saved.count) return current(jobId)
     }
 
     const prompt = buildScalePrompt(target, design)
@@ -101,13 +105,16 @@ export async function runPipeline(jobId: string, deps: ScaleDeps): Promise<Scale
       const form = await imageForm(deps.image, job.model)
       const srcUrl = await deps.image.uploadBase64(srcDataUrl, `scale-${job.id}-src.${job.sourceFile!.split('.').pop()}`)
       const blankUrl = await deps.image.uploadBase64(toDataUrl(blank.bytes, blank.mime), `scale-${job.id}-blank.${target.blankFile!.split('.').pop()}`)
+      if ((await current(jobId))?.status !== 'describing') return current(jobId)
       taskId = await deps.image.createTask(job.model, imageInput(form, prompt, [srcUrl, blankUrl], deps.settings.resolution))
     } catch (err) {
       throw new Error(explainKieError(err, 'Creative', job.model))
     }
-    return await prisma.scaleJob.update({ where: { id: job.id }, data: { status: 'running', providerTaskId: taskId, prompt } })
+    await prisma.scaleJob.updateMany({ where: { id: job.id, status: 'describing' }, data: { status: 'running', providerTaskId: taskId, prompt } })
+    return current(jobId)
   } catch (err: any) {
-    return fail(jobId, String(err?.message ?? err)).catch(() => getJob(jobId))
+    await prisma.scaleJob.updateMany({ where: { id: jobId, status: 'describing' }, data: { status: 'failed', error: String(err?.message ?? err), completedAt: new Date() } }).catch(() => null)
+    return current(jobId)
   }
 }
 
@@ -128,8 +135,8 @@ export async function refreshScaleJob(id: string, deps: ScaleDeps): Promise<Scal
   const age = Date.now() - job.createdAt.getTime()
   if (job.status === 'describing') return age > DESCRIBE_GIVE_UP_MS ? fail(id, 'Bị gián đoạn, bấm Tạo lại') : job
   if (job.status !== 'running') return job
-  if (job.resultUrl) return finish(job, job.resultUrl, job.cost, deps.fetchImpl)
   if (age > RUN_GIVE_UP_MS) return fail(id, `Quá 30 phút chưa có kết quả, dừng theo dõi${job.error ? ` (lỗi cuối: ${job.error})` : ''}`)
+  if (job.resultUrl) return finish(job, job.resultUrl, job.cost, deps.fetchImpl)
   if (!job.providerTaskId || !deps.image) return job
 
   let result: PollResult

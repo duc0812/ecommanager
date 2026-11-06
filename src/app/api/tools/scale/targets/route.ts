@@ -1,14 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { jsonBody, scaleError, staff, superadmin } from '@/lib/scale/http'
-import { createTarget, listTargets, targetView } from '@/lib/scale/targets'
+import { createTarget, listTargets, staffTargetView, targetView } from '@/lib/scale/targets'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
   const auth = await staff(req)
   if ('error' in auth) return auth.error
-  const targets = await listTargets({ readyOnly: auth.user.role !== 'SUPERADMIN' })
-  return NextResponse.json({ targets: targets.map(targetView) })
+  const full = auth.user.role === 'SUPERADMIN'
+  const targets = await listTargets({ readyOnly: !full })
+  return NextResponse.json({ targets: full ? targets.map(targetView) : targets.map(staffTargetView) })
 }
 
 export async function POST(req: NextRequest) {

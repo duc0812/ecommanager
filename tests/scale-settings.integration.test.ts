@@ -53,7 +53,8 @@ describe('scale settings', () => {
 
   it('names the key and the model when Kie refuses a model', () => {
     expect(explainKieError(new Error('kie createTask 401: The API key is not authorized to use this model.'), 'Creative', 'gpt-x')).toBe('Key Kie (Creative) chưa được cấp quyền model gpt-x')
-    expect(explainKieError(new Error('kie error 401: nope'), 'CS', 'gpt-6.1-sol')).toBe('Key Kie (CS) chưa được cấp quyền model gpt-6.1-sol')
+    expect(explainKieError(new Error('kie error 401: Invalid API key'), 'CS', 'gpt-6.1-sol')).toBe('Key Kie (CS) bị từ chối (401): kie error 401: Invalid API key')
+    expect(explainKieError(new Error('kie createTask 422: width 1401 is too large'), 'Creative', 'gpt-x')).toBe('kie createTask 422: width 1401 is too large')
     expect(explainKieError(new Error('kie createTask 500: boom'), 'Creative', 'gpt-x')).toBe('kie createTask 500: boom')
   })
 })

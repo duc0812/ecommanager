@@ -82,6 +82,7 @@ export async function loadScaleDeps(): Promise<ScaleDeps> {
 
 export function explainKieError(err: unknown, key: 'Creative' | 'CS', slug: string): string {
   const message = String((err as any)?.message ?? err)
-  if (/not authorized/i.test(message) || /\b401\b/.test(message)) return `Key Kie (${key}) chưa được cấp quyền model ${slug}`
+  if (/not authorized to use this model/i.test(message)) return `Key Kie (${key}) chưa được cấp quyền model ${slug}`
+  if (/\b401\b/.test(message)) return `Key Kie (${key}) bị từ chối (401): ${message}`
   return message
 }

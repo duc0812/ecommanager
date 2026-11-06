@@ -6,7 +6,7 @@ import { prisma } from '@/lib/db'
 import type { PollResult } from '@/lib/creative/kie'
 import { DEFAULT_SCALE_SETTINGS, ScaleInputError, type ScaleDeps } from '@/lib/scale/settings'
 import { readScaleFile, resolveScaleFile, scaleRoot } from '@/lib/scale/storage'
-import { acceptCandidate, createTarget, deleteTarget, discardCandidate, listTargets, refreshCandidate, setBlank, startCandidate, suggestDescription, targetView, updateTarget } from '@/lib/scale/targets'
+import { acceptCandidate, createTarget, deleteTarget, discardCandidate, listTargets, refreshCandidate, setBlank, staffTargetView, startCandidate, suggestDescription, targetView, updateTarget } from '@/lib/scale/targets'
 
 const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
 const JPG = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQH/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACv/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AVN//2Q=='
@@ -118,6 +118,13 @@ describe('scale targets', () => {
     expect(call.model).toBe('gpt-6.1-sol')
     expect(call.images[0].startsWith('data:image/jpeg;base64,')).toBe(true)
     expect((await prisma.scaleTarget.findUniqueOrThrow({ where: { id: t.id } })).blankDescription).toBe('front left, back right.')
+  })
+
+  it('gives staff only what the picker needs, never the blank description', async () => {
+    const t = await prisma.scaleTarget.findUniqueOrThrow({ where: { sku: 'TEST1' } })
+    const view = staffTargetView(t)
+    expect(Object.keys(view).sort()).toEqual(['blankFile', 'id', 'name', 'ready', 'sku', 'updatedAt'])
+    expect(view.ready).toBe(true)
   })
 
   it('only serves whitelisted file names from inside the scale folder', () => {

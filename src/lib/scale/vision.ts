@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { parseResponsesBody } from '@/lib/llm/kie-responses'
 
 const KIE_RESPONSES_URL = 'https://api.kie.ai/openai/v1/responses'
+const TIMEOUT_MS = 4 * 60 * 1000
 
 export type VisionInput<T> = { model: string; system: string; text: string; images: string[]; schema: z.ZodType<T>; schemaName: string }
 export type Vision = { describe<T>(p: VisionInput<T>): Promise<T> }
@@ -12,6 +13,7 @@ export function kieVision(apiKey: string, fetchImpl: typeof fetch = fetch): Visi
       const res = await fetchImpl(KIE_RESPONSES_URL, {
         method: 'POST',
         headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(TIMEOUT_MS),
         body: JSON.stringify({
           model,
           stream: false,

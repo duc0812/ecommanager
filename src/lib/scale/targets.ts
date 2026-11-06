@@ -16,6 +16,10 @@ export function targetView(t: ScaleTarget) {
   return { ...t, ready: isReady(t) }
 }
 
+export function staffTargetView(t: ScaleTarget) {
+  return { id: t.id, name: t.name, sku: t.sku, blankFile: t.blankFile, updatedAt: t.updatedAt, ready: isReady(t) }
+}
+
 export function parseImage(dataUrl: string): { mime: string; bytes: Buffer; ext: string } {
   const parsed = parseDataUrl(dataUrl)
   const ext = parsed ? extForMime(parsed.mime) : null

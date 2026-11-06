@@ -29,6 +29,12 @@ describe('kie vision', () => {
     expect(body.text.format).toMatchObject({ type: 'json_schema', name: 'scale_design', strict: true })
   })
 
+  it('puts a time limit on the call so a hung request cannot outlive the job', async () => {
+    const f = fakeFetch(okBody('{"garment":"x"}'))
+    await kieVision('k', f.impl).describe({ model: 'm', system: 's', text: 't', images: [], schema: Schema, schemaName: 'x' })
+    expect(f.calls[0].init.signal).toBeInstanceOf(AbortSignal)
+  })
+
   it('surfaces a Kie authorisation envelope with its code and message', async () => {
     const f = fakeFetch(JSON.stringify({ code: 401, msg: 'The API key is not authorized to use this model.' }))
     await expect(kieVision('k', f.impl).describe({ model: 'm', system: 's', text: 't', images: [], schema: Schema, schemaName: 'x' })).rejects.toThrow(/401.*not authorized/)
