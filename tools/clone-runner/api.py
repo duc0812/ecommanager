@@ -77,7 +77,7 @@ class Client:
     def _post(self, what: str, path: str, body: dict, timeout: int) -> tuple[int, dict]:
         req = urllib.request.Request(
             self._base + path,
-            data=json.dumps(body, ensure_ascii=False).encode('utf-8'),
+            data=json.dumps(body, ensure_ascii=True).encode('ascii'),
             method='POST',
             headers={
                 'Authorization': f'Bearer {self._token}',

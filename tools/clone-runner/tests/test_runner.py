@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 import sys
@@ -306,6 +307,66 @@ def test_fail_that_raises_is_retried_three_times_then_given_up(tmp_path, capsys)
 
 def test_fail_retry_stops_once_it_gets_through(tmp_path):
     client = FakeClient(fails=[api.NetworkError('fail: URLError'), {'status': 'FAILED'}])
+    deps = make_deps(tmp_path, client=client, html=fixture('globo.html'))
+    runner.run_job(make_job(), deps)
+    assert len(client.named('fail')) == 2
+    assert deps.clock.sleeps == [10]
+
+
+class JsonResponse:
+    def __init__(self, body: dict):
+        self.status = 200
+        self._raw = json.dumps(body).encode('ascii')
+
+    def read(self, size=-1):
+        return self._raw
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+class RoutingOpener:
+    REPLIES = {'heartbeat': OK_BEAT, 'result': {'status': 'DONE'}, 'fail': {'status': 'FAILED'}}
+
+    def __init__(self):
+        self.sent = []
+
+    def open(self, req, timeout=None):
+        action = req.full_url.rsplit('/', 1)[-1]
+        self.sent.append((action, req.data))
+        return JsonResponse(self.REPLIES[action])
+
+
+@pytest.mark.parametrize('outcome, action, field, text', [
+    ({'verdict': 'PASS', 'productGid': GID, 'note': 'QA ok \ud83d'}, 'result', 'qaNote', 'QA ok \ud83d'),
+    ({'verdict': 'FAIL', 'failKind': 'QA', 'error': 'QA lỗi \ud83d'}, 'fail', 'error', 'QA lỗi \ud83d'),
+])
+def test_lone_surrogate_in_session_text_still_reaches_the_server(tmp_path, outcome, action, field, text):
+    opener = RoutingOpener()
+    client = api.Client('https://ecom.example.test', 'cqw_' + 'a' * 24, opener=opener)
+    deps = make_deps(tmp_path, client=client, html=fixture('customily.html'), session_result=outcome)
+    runner.run_job(make_job(), deps)
+    [raw] = [data for a, data in opener.sent if a == action]
+    raw.decode('ascii')
+    assert json.loads(raw)[field] == text
+    other = 'fail' if action == 'result' else 'result'
+    assert [a for a, _ in opener.sent if a == other] == []
+
+
+@pytest.mark.parametrize('error', [RuntimeError('boom'), UnicodeEncodeError('utf-8', '\ud83d', 0, 1, 'surrogates')])
+def test_unexpected_result_error_fails_the_job(tmp_path, error):
+    client = FakeClient(results=[error])
+    deps = make_deps(tmp_path, client=client, html=fixture('customily.html'))
+    runner.run_job(make_job(), deps)
+    assert len(client.named('result')) == 1
+    assert [f[3:] for f in client.named('fail')] == [('TOOL', runner.RESULT_SEND_ERROR, False, GID)]
+
+
+def test_fail_is_retried_on_any_error(tmp_path):
+    client = FakeClient(fails=[RuntimeError('boom'), {'status': 'FAILED'}])
     deps = make_deps(tmp_path, client=client, html=fixture('globo.html'))
     runner.run_job(make_job(), deps)
     assert len(client.named('fail')) == 2

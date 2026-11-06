@@ -1,9 +1,11 @@
+import http.client
 import io
+import socket
 import threading
 import time
 import urllib.error
-from email.message import Message
 import urllib.request
+from email.message import Message
 
 import pytest
 
@@ -46,7 +48,7 @@ class FakeResponse:
         self.headers['Content-Type'] = f'text/html; charset={charset}'
         self.read_sizes = []
 
-    def read(self, size=-1):
+    def read1(self, size=-1):
         self.read_sizes.append(size)
         return self._body.read(size)
 
@@ -80,7 +82,14 @@ def test_fetch_html_returns_text_and_sends_browser_user_agent():
     req, timeout = opener.requests[0]
     assert timeout == 7
     assert 'Mozilla/5.0' in req.get_header('User-agent')
-    assert resp.read_sizes == [3 * 1024 * 1024]
+    assert resp.read_sizes and all(0 < s <= 65536 for s in resp.read_sizes)
+
+
+def test_fetch_html_reads_at_most_three_megabytes():
+    resp = FakeResponse(b'a' * (detect.MAX_BYTES + 100000))
+    html = detect.fetch_html('https://shop.example.com/p', opener=FakeOpener(resp))
+    assert len(html) == detect.MAX_BYTES
+    assert all(0 < s <= 65536 for s in resp.read_sizes)
 
 
 @pytest.mark.parametrize('outcome', [
@@ -93,29 +102,70 @@ def test_fetch_html_returns_none_on_error_or_non_200(outcome):
     assert detect.fetch_html('https://shop.example.com/p', opener=FakeOpener(outcome)) is None
 
 
-class StallingResponse(FakeResponse):
-    """A server that sends headers and then drips the body slower than any total budget."""
+class SocketOpener:
+    """Builds a real http.client.HTTPResponse over one end of a local socket pair (no network)."""
 
-    def __init__(self):
-        super().__init__(b'<html>cdn.customily.com</html>')
-        self.released = threading.Event()
-        self.closed = False
+    def __init__(self, sock):
+        self.sock = sock
 
-    def read(self, size=-1):
-        self.released.wait(10)
-        return super().read(size)
-
-    def close(self):
-        self.closed = True
-        self.released.set()
+    def open(self, req, timeout=None):
+        self.sock.settimeout(timeout)
+        resp = http.client.HTTPResponse(self.sock, method='GET')
+        resp.begin()
+        return resp
 
 
-def test_fetch_html_gives_up_after_its_total_budget():
-    resp = StallingResponse()
-    started = time.monotonic()
-    assert detect.fetch_html('https://shop.example.com/p', opener=FakeOpener(resp), budget_s=0.3) is None
-    assert time.monotonic() - started < 3
-    assert resp.closed is True
+def drip(sock, head: bytes, stop: threading.Event, every: float, max_s: float = 8) -> None:
+    until = time.monotonic() + max_s
+    try:
+        sock.sendall(head)
+        while not stop.wait(every) and time.monotonic() < until:
+            sock.sendall(b'x')
+    except OSError:
+        pass
+
+
+def fetch_threads_alive() -> bool:
+    return any(t.name == 'fetch-html' and t.is_alive() for t in threading.enumerate())
+
+
+def wait_until(check, seconds: float) -> bool:
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if check():
+            return True
+        time.sleep(0.05)
+    return check()
+
+
+BODY_DRIP = b'HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 1000000\r\n\r\n<html>'
+HEADER_DRIP = b'HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nX-Slow: '
+
+
+@pytest.mark.parametrize('head', [BODY_DRIP, HEADER_DRIP], ids=['body-drip', 'header-drip'])
+def test_fetch_html_gives_up_after_its_total_budget(head):
+    assert wait_until(lambda: not fetch_threads_alive(), 5)
+    reader, writer = socket.socketpair()
+    stop = threading.Event()
+    dripper = threading.Thread(target=drip, args=(writer, head, stop, 0.2), daemon=True)
+    dripper.start()
+    try:
+        budget = 0.5
+        started = time.monotonic()
+        html = detect.fetch_html('https://shop.example.com/p', opener=SocketOpener(reader), timeout=2,
+                                 budget_s=budget)
+        elapsed = time.monotonic() - started
+        assert html is None
+        assert elapsed < budget + 1
+        if head is BODY_DRIP:
+            assert wait_until(lambda: not fetch_threads_alive(), 2), 'the reader must stop at its own deadline'
+            assert dripper.is_alive()
+    finally:
+        stop.set()
+        dripper.join(5)
+        writer.close()
+        assert wait_until(lambda: not fetch_threads_alive(), 5)
+        reader.close()
     assert detect.FETCH_BUDGET_S == 45
 
 

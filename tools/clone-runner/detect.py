@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import threading
+import time
 import urllib.parse
 import urllib.request
 
@@ -24,6 +25,7 @@ MARKERS = (
 )
 
 MAX_BYTES = 3 * 1024 * 1024
+READ_CHUNK = 65536
 FETCH_BUDGET_S = 45
 USER_AGENT = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) '
               'Chrome/130.0.0.0 Safari/537.36')
@@ -54,29 +56,32 @@ def fetch_html(url: str, opener=None, timeout: int = 30, budget_s: float = FETCH
         'Accept-Language': 'en-US,en;q=0.9',
     })
     box: dict = {}
+    deadline = time.monotonic() + budget_s
 
     def work() -> None:
         try:
             with opener.open(req, timeout=timeout) as resp:
-                box['resp'] = resp
                 if resp.status != 200:
                     return
-                raw = resp.read(MAX_BYTES)
+                chunks, size = [], 0
+                while size < MAX_BYTES:
+                    if time.monotonic() >= deadline:
+                        return
+                    chunk = resp.read1(min(READ_CHUNK, MAX_BYTES - size))
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    size += len(chunk)
                 charset = resp.headers.get_content_charset() or 'utf-8'
-            box['html'] = raw.decode(charset, errors='replace')
+            box['html'] = b''.join(chunks).decode(charset, errors='replace')
         except Exception:
             pass
 
-    # `timeout` bounds each socket read only; a server dripping bytes would otherwise hold the runner for ever.
+    # `timeout` bounds each socket read only, so a server dripping bytes is cut off by the deadline instead. The
+    # caller never touches the response: closing it here would wait on the lock of the read in progress.
     worker = threading.Thread(target=work, name='fetch-html', daemon=True)
     worker.start()
     worker.join(budget_s)
     if worker.is_alive():
-        resp = box.get('resp')
-        if resp is not None:
-            try:
-                resp.close()
-            except Exception:
-                pass
         return None
     return box.get('html')

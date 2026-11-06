@@ -42,6 +42,7 @@ DETECT_STAGE = 'nhận diện'
 SESSION_STAGES = ('clone', 'qa', 'public')
 REUSED_NOTE = 'Đã có sẵn trong sổ đăng ký'
 SETUP_ERROR = 'Runner không chuẩn bị được job.'
+RESULT_SEND_ERROR = 'Runner không gửi được kết quả.'
 AUTH_MESSAGE = 'Máy chủ từ chối token (401). Kiểm lại CLONE_WORKER_TOKEN rồi chạy lại runner.'
 # The byte locked sits past the pid text so other programs can still read the pid while the runner holds the lock.
 LOCK_OFFSET = 1 << 20
@@ -158,8 +159,8 @@ def _fail(job: dict, deps, kind: str, error, retryable: bool = False, product_gi
             return
         except AuthError:
             raise
-        except ApiError as e:
-            log(f'Job {job.get("id")}: gửi báo lỗi không được ({e}).')
+        except Exception as e:
+            log(f'Job {job.get("id")}: gửi báo lỗi không được ({type(e).__name__}: {e}).')
     log(f'Job {job.get("id")}: bỏ cuộc sau {FAIL_RETRIES + 1} lần gửi báo lỗi; job nằm chờ tới khi hết lease.')
 
 
@@ -180,6 +181,10 @@ def _report_pass(job: dict, deps, payload: dict) -> None:
         except ApiError as e:
             log(f'Job {job["id"]}: gửi kết quả lỗi ({e}).')
             continue
+        except Exception as e:
+            log(f'Job {job["id"]}: gửi kết quả lỗi ({type(e).__name__}: {e}).')
+            _fail(job, deps, 'TOOL', RESULT_SEND_ERROR, product_gid=gid)
+            return
         if status < 500:
             break
         log(f'Job {job["id"]}: máy chủ trả HTTP {status} khi nhận kết quả.')
