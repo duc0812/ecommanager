@@ -348,7 +348,24 @@ describe('tạo job', () => {
     const forced = await createJob({ who: 'super', json: { ...link, force: true } })
     expect(forced.status).toBe(201)
     expect(forced.body.job).toHaveProperty('costUsd', null)
+    expect(forced.body.job).toHaveProperty('force', true)
     expect(forced.body.job.skuCode).toMatch(/^ZA\d{10}$/)
+    expect(mine.body.job).not.toHaveProperty('force')
+    expect((await rowOf(mine.body.job.id)).force).toBe(false)
+  })
+
+  it('job SUPERADMIN ép clone lại: claim mang force: true; seller gửi force: true thì job ghi false', async () => {
+    const token = await generateCloneWorkerToken()
+    const forced = await createJob({ who: 'super', json: { url: 'https://shop.example.com/products/forced', storeId: STORE_A, force: true } })
+    const plain = await createJob({ who: 'sellerA', json: { url: 'https://shop.example.com/products/plain', storeId: STORE_A, force: true } })
+    expect(plain.status).toBe(201)
+    expect((await rowOf(plain.body.job.id)).force).toBe(false)
+
+    const first = await claim({ bearer: bearer(token), json: { waitSeconds: 0 } })
+    expect(first.body.job).toMatchObject({ id: forced.body.job.id, force: true })
+    await fail(forced.body.job.id, { bearer: bearer(token), json: { attempts: 1, failKind: 'TOOL', error: 'x' } })
+    const second = await claim({ bearer: bearer(token), json: { waitSeconds: 0 } })
+    expect(second.body.job).toMatchObject({ id: plain.body.job.id, force: false })
   })
 
   it('lỗi của lib đi qua nguyên văn: link sai 400, trùng link đã xong 409 kèm productUrl, thiếu mã SKU 2 chữ cái 400', async () => {
@@ -600,6 +617,19 @@ describe('route runner: thân yêu cầu', () => {
 })
 
 describe('luồng của runner', () => {
+  it('claim giữ kết nối: job dán qua POST jobs sau ~150 ms được trả ngay trong lần claim đó, dưới 2 giây', async () => {
+    const token = await generateCloneWorkerToken()
+    const started = Date.now()
+    const pending = claim({ bearer: bearer(token), json: { waitSeconds: 2 } })
+    await new Promise(r => setTimeout(r, 150))
+    const created = await createJob({ who: 'sellerA', json: { url: 'https://shop.example.com/products/held', storeId: STORE_A } })
+    expect(created.status).toBe(201)
+    const held = await pending
+    expect(Date.now() - started).toBeLessThan(2000)
+    expect(held.status).toBe(200)
+    expect(held.body).toMatchObject({ job: { id: created.body.job.id, attempts: 1 }, paused: false })
+  })
+
   it('claim → heartbeat → result với Shopify giả: job DONE và GET jobs của người dán thấy productUrl', async () => {
     const created = await createJob({ who: 'sellerA', json: { url: 'https://shop.example.com/products/flow', storeId: STORE_A } })
     expect(created.status).toBe(201)
@@ -616,7 +646,7 @@ describe('luồng của runner', () => {
     expect(claimed.body).toEqual({
       job: {
         id, sourceUrl: 'https://shop.example.com/products/flow', skuCode, attempts: 1, requestedByName: NAMES.sellerA,
-        store: { id: STORE_A, orderPrefix: 'A', shop: `${STORE_A}.myshopify.com` }, targets: ['customily:REMI'],
+        store: { id: STORE_A, orderPrefix: 'A', shop: `${STORE_A}.myshopify.com` }, targets: ['customily:REMI'], force: false,
       },
       paused: false,
     })

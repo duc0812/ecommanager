@@ -1627,6 +1627,7 @@ model CloneJob {
   productUrl      String?
   productType     String?
   reused          Boolean   @default(false)
+  force           Boolean   @default(false)
   qaVerdict       String?
   qaNote          String?
   error           String?

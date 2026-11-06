@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest'
 import crypto from 'crypto'
+import { getEventListeners } from 'events'
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/db'
 import { saveStoreCredential } from '@/lib/store-connections'
@@ -35,7 +36,7 @@ async function makeStore(id: string, opts: { enabled?: boolean; orderPrefix?: st
 
 let n = 0
 async function seedJob(over: Partial<{
-  storeId: string; status: string; attempts: number; lockedAt: Date | null; startedAt: Date | null; createdAt: Date
+  storeId: string; status: string; attempts: number; lockedAt: Date | null; startedAt: Date | null; createdAt: Date; force: boolean
 }> = {}) {
   n++
   return prisma.cloneJob.create({
@@ -74,10 +75,12 @@ beforeAll(async () => {
 
 beforeEach(wipe)
 
-// A claimWithWait that found a job on its second look leaves its wait registered until it times out; wake it so no timer outlives a test.
+const waiterCount = () => globalThis.__cloneQueueWaiters?.size ?? 0
+
+// Every way out of claimWithWait takes its wait out of the waiter set, so none may be left after a test.
 afterEach(() => {
   vi.restoreAllMocks()
-  notifyCloneQueue()
+  expect(waiterCount()).toBe(0)
 })
 
 afterAll(async () => {
@@ -174,7 +177,7 @@ describe('claimCloneJob', () => {
       paused: false,
       job: {
         id: older.id, sourceUrl: older.sourceUrl, skuCode: older.skuCode, attempts: 1, requestedByName: 'Seller A',
-        store: { id: STORE, orderPrefix: 'CWA', shop: `${STORE}.myshopify.com` }, targets: ['customily:CWA', 'teeinblue:REMI'],
+        store: { id: STORE, orderPrefix: 'CWA', shop: `${STORE}.myshopify.com` }, targets: ['customily:CWA', 'teeinblue:REMI'], force: false,
       },
     })
     expect(JSON.stringify(first)).not.toContain(TOKEN)
@@ -185,6 +188,14 @@ describe('claimCloneJob', () => {
     expect(row.startedAt).not.toBeNull()
     expect(row.lockedAt).not.toBeNull()
     expect((await rowOf(newer.id)).status).toBe('QUEUED')
+  })
+
+  it('claim: job bị ép clone lại mang force: true xuống runner', async () => {
+    const forced = await seedJob({ force: true, createdAt: new Date(Date.now() - 2000) })
+    expect((await claimCloneJob()).job).toMatchObject({ id: forced.id, force: true })
+    await failCloneJob(forced.id, 1, { failKind: 'TOOL', error: 'x' })
+    const plain = await seedJob()
+    expect((await claimCloneJob()).job).toMatchObject({ id: plain.id, force: false })
   })
 
   it('claim: nhiều lần gọi cùng lúc chỉ một lần nhận được, chỉ một job RUNNING', async () => {
@@ -624,6 +635,59 @@ describe('claimWithWait', () => {
     }, 50)
     expect(await claimWithWait(1)).toEqual({ job: null, paused: true })
     expect(Date.now() - started).toBeGreaterThanOrEqual(950)
+  })
+
+  it('runner ngắt kết nối trong lúc chờ: không nhận job vừa tạo, job vẫn QUEUED, không còn waiter hay listener', async () => {
+    const client = new AbortController()
+    const started = Date.now()
+    let created = ''
+    setTimeout(() => {
+      void seedJob().then(job => {
+        created = job.id
+        client.abort()
+        notifyCloneQueue()
+      })
+    }, 200)
+    expect(await claimWithWait(5, client.signal)).toEqual({ job: null, paused: false })
+    expect(Date.now() - started).toBeLessThan(1500)
+    expect(created).not.toBe('')
+    expect(await rowOf(created)).toMatchObject({ status: 'QUEUED', attempts: 0, lockedAt: null })
+    expect(getEventListeners(client.signal, 'abort')).toHaveLength(0)
+  })
+
+  it('ngắt kết nối mà không có job mới: dừng chờ ngay, không đợi hết thời gian', async () => {
+    const client = new AbortController()
+    const started = Date.now()
+    setTimeout(() => client.abort(), 50)
+    expect(await claimWithWait(5, client.signal)).toEqual({ job: null, paused: false })
+    expect(Date.now() - started).toBeLessThan(1500)
+    expect(getEventListeners(client.signal, 'abort')).toHaveLength(0)
+  })
+
+  it('signal đã bị huỷ từ trước: không nhận job dù có sẵn', async () => {
+    const job = await seedJob()
+    const client = new AbortController()
+    client.abort()
+    expect(await claimWithWait(5, client.signal)).toEqual({ job: null, paused: false })
+    expect((await rowOf(job.id)).status).toBe('QUEUED')
+  })
+
+  it('signal còn sống: mọi đường ra đều gỡ listener (có job ngay, có job lúc chờ, hết giờ)', async () => {
+    const client = new AbortController()
+    const job = await seedJob()
+    expect((await claimWithWait(5, client.signal)).job?.id).toBe(job.id)
+    await failCloneJob(job.id, 1, { failKind: 'TOOL', error: 'x' })
+
+    setTimeout(() => {
+      void seedJob().then(() => notifyCloneQueue())
+    }, 50)
+    expect((await claimWithWait(5, client.signal)).job).not.toBeNull()
+    expect(getEventListeners(client.signal, 'abort')).toHaveLength(0)
+    expect(waiterCount()).toBe(0)
+    await prisma.cloneJob.updateMany({ where: { status: 'RUNNING' }, data: { status: 'FAILED' } })
+
+    expect(await claimWithWait(0.3, client.signal)).toEqual({ job: null, paused: false })
+    expect(getEventListeners(client.signal, 'abort')).toHaveLength(0)
   })
 })
 

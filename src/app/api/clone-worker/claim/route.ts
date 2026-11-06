@@ -9,5 +9,5 @@ export async function POST(req: NextRequest) {
   if (!(await verifyCloneWorkerRequest(req))) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const body = await readJson(req)
   if (!isJsonObject(body)) return badRequest()
-  return NextResponse.json(await claimWithWait(typeof body.waitSeconds === 'number' ? body.waitSeconds : 0))
+  return NextResponse.json(await claimWithWait(typeof body.waitSeconds === 'number' ? body.waitSeconds : 0, req.signal))
 }

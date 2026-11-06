@@ -78,6 +78,7 @@ export type CloneClaim = {
   requestedByName: string
   store: { id: string; orderPrefix: string; shop: string }
   targets: string[]
+  force: boolean
 }
 
 type ClaimResult = { job: CloneClaim | null; paused: boolean }
@@ -109,7 +110,7 @@ export async function claimCloneJob(now: Date = new Date()): Promise<ClaimResult
     const rows = await prisma.cloneJob.findMany({
       where: { status: { in: ['QUEUED', 'RUNNING'] } },
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-      select: { id: true, storeId: true, status: true, attempts: true, startedAt: true, sourceUrl: true, skuCode: true, requestedByName: true },
+      select: { id: true, storeId: true, status: true, attempts: true, startedAt: true, sourceUrl: true, skuCode: true, requestedByName: true, force: true },
     })
     if (rows.some(r => r.status === 'RUNNING')) return idle
     const next = rows[0]
@@ -135,6 +136,7 @@ export async function claimCloneJob(now: Date = new Date()): Promise<ClaimResult
         requestedByName: next.requestedByName,
         store: { id: store.id, orderPrefix: store.orderPrefix, shop: store.shop },
         targets: settings.targets,
+        force: next.force,
       },
       paused: false,
     }
@@ -144,23 +146,37 @@ export async function claimCloneJob(now: Date = new Date()): Promise<ClaimResult
 
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, Math.max(0, ms)))
 
-export async function claimWithWait(waitSeconds: number): Promise<ClaimResult> {
+// `signal` is the runner's request: once it is aborted nothing more is claimed, because a claimed job whose answer reaches nobody
+// would sit RUNNING for a whole lease and lose one of its two attempts.
+export async function claimWithWait(waitSeconds: number, signal?: AbortSignal): Promise<ClaimResult> {
   const seconds = Number.isFinite(waitSeconds) ? Math.min(Math.max(waitSeconds, 0), CLONE_MAX_WAIT_S) : 0
   const deadline = Date.now() + seconds * 1000
+  const gone = () => signal?.aborted === true
   // A paused answer waits out the window, so a runner that asks again at once does not spin.
   const settle = async (result: ClaimResult) => {
     if (result.paused) await sleep(deadline - Date.now())
     return result
   }
+  if (gone()) return { job: null, paused: false }
   const first = await claimCloneJob()
   if (first.job || first.paused || seconds === 0) return settle(first)
-  // A wake-up with nobody waiting is not remembered, so the wait is registered before the second look:
-  // a job created before that look is found by it, and one created after it wakes the wait.
-  const woken = waitForCloneQueue(Math.max(0, deadline - Date.now()))
-  const second = await claimCloneJob()
-  if (second.job || second.paused) return settle(second)
-  await woken
-  return settle(await claimCloneJob())
+  const stop = new AbortController()
+  const onAbort = () => stop.abort()
+  signal?.addEventListener('abort', onAbort)
+  try {
+    // A wake-up with nobody waiting is not remembered, so the wait is registered before the second look:
+    // a job created before that look is found by it, and one created after it wakes the wait.
+    const woken = waitForCloneQueue(Math.max(0, deadline - Date.now()), stop.signal)
+    if (gone()) return { job: null, paused: false }
+    const second = await claimCloneJob()
+    if (second.job || second.paused) return settle(second)
+    await woken
+    if (gone()) return { job: null, paused: false }
+    return settle(await claimCloneJob())
+  } finally {
+    signal?.removeEventListener('abort', onAbort)
+    stop.abort()
+  }
 }
 
 const isAttempts = (v: unknown): v is number => Number.isInteger(v)

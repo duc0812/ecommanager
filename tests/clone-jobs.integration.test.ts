@@ -468,6 +468,19 @@ describe('createCloneJob', () => {
     }
   })
 
+  it('4b. job ghi force: true đúng khi việc dò bị bỏ qua (SUPERADMIN gửi force: true), còn lại false', async () => {
+    const forced = await createCloneJob(users.super, { url: LINK, storeId: STORE_A, force: true }, deps())
+    expect(forced.force).toBe(true)
+    expect((await prisma.cloneJob.findUniqueOrThrow({ where: { id: forced.id } })).force).toBe(true)
+
+    const cases: [AuthUser, unknown][] = [[users.sellera, true], [users.admin, true], [users.super, 'true'], [users.super, 1], [users.super, undefined]]
+    for (let i = 0; i < cases.length; i++) {
+      const [who, force] = cases[i]
+      const job = await createCloneJob(who, { url: `https://shop.example.com/products/own-${i}`, storeId: STORE_A, force }, deps())
+      expect(job.force).toBe(false)
+    }
+  })
+
   it('5. cấp mã, tạo job QUEUED và đánh thức hàng chờ', async () => {
     const woke = vi.fn()
     const waiting = waitForCloneQueue(60_000).then(woke)
@@ -645,7 +658,13 @@ describe('cloneJobView', () => {
     expect(full).toMatchObject({ costUsd: 1.25, durationMs: 90_000, lockedAt: '2026-11-06T01:00:00.000Z' })
   })
 
-  const OWNER_ONLY = ['costUsd', 'durationMs', 'lockedAt', 'qaNote', 'productType']
+  const OWNER_ONLY = ['costUsd', 'durationMs', 'lockedAt', 'qaNote', 'productType', 'force']
+
+  it('force chỉ SUPERADMIN thấy', async () => {
+    const row = await prisma.cloneJob.update({ where: { id: (await seedJob()).id }, data: { force: true } })
+    for (const who of [users.sellera, users.admin, users.support]) expect('force' in cloneJobView(row, who)).toBe(false)
+    expect(cloneJobView(row, users.super).force).toBe(true)
+  })
   const WINDOWS_PATH = 'FileNotFoundError: D:\\Ecom manager\\clone-queue\\cm123\\result.json (C:\\Users\\TM PC\\.claude\\skills\\x\\tool\\clone.py line 88)'
 
   it('mọi cột còn lại có mặt, ngày là chuỗi ISO', async () => {

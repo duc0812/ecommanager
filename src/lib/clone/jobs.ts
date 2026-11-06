@@ -8,7 +8,7 @@ import { issueSkuCode, parseSkuPrefix, type SkuCodeDeps } from '@/lib/clone/sku-
 
 export type CloneJobRow = CloneJob
 
-type SuperadminOnly = 'costUsd' | 'durationMs' | 'lockedAt' | 'qaNote' | 'productType'
+type SuperadminOnly = 'costUsd' | 'durationMs' | 'lockedAt' | 'qaNote' | 'productType' | 'force'
 type DateColumn = 'createdAt' | 'updatedAt' | 'startedAt' | 'finishedAt'
 
 export type CloneJobView = Omit<CloneJobRow, DateColumn | SuperadminOnly | 'skuCode'> & {
@@ -22,6 +22,7 @@ export type CloneJobView = Omit<CloneJobRow, DateColumn | SuperadminOnly | 'skuC
   lockedAt?: string | null
   qaNote?: string | null
   productType?: string | null
+  force?: boolean
 }
 
 export class CloneInputError extends Error {
@@ -59,7 +60,7 @@ export function sourceKeyOf(url: string): string {
 const iso = (d: Date | null) => (d ? d.toISOString() : null)
 
 // Lists the columns on purpose: a column added to CloneJob later stays out of every response until it is added here.
-// Only a SUPERADMIN gets the cost, the lease, the QA note and the product type, and `error` text that did not come from the server.
+// Only a SUPERADMIN gets the cost, the lease, the QA note, the product type, the force flag, and `error` text that did not come from the server.
 // A reused product keeps its old SKUs, so the code issued to the job is never shown for it, to anyone.
 export function cloneJobView(job: CloneJobRow, viewer: AuthUser): CloneJobView {
   const superadmin = viewer.role === 'SUPERADMIN'
@@ -93,6 +94,7 @@ export function cloneJobView(job: CloneJobRow, viewer: AuthUser): CloneJobView {
     view.lockedAt = iso(job.lockedAt)
     view.qaNote = job.qaNote
     view.productType = job.productType
+    view.force = job.force
   }
   return view
 }
@@ -115,16 +117,20 @@ export function notifyCloneQueue(): void {
   for (const wake of pending) wake()
 }
 
-export function waitForCloneQueue(ms: number): Promise<void> {
+// Aborting `signal` ends the wait at once and takes it out of the waiter set, so a caller that stopped caring leaves nothing behind.
+export function waitForCloneQueue(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise(resolve => {
     const set = waiters()
     const wake = () => {
       clearTimeout(timer)
       set.delete(wake)
+      signal?.removeEventListener('abort', wake)
       resolve()
     }
     const timer = setTimeout(wake, ms)
     set.add(wake)
+    if (signal?.aborted) wake()
+    else signal?.addEventListener('abort', wake)
   })
 }
 
@@ -223,8 +229,11 @@ export async function createCloneJob(
   const sourceUrl = normalizeSourceUrl(input.url)
   const sourceKey = sourceKeyOf(sourceUrl)
 
+  // Stored on the job so the runner skips its own register too (owner decision 16: a forced job always makes a new product).
+  const force = input.force === true && user.role === 'SUPERADMIN'
+
   return withLinkLock(storeId, sourceKey, async () => {
-    if (!(input.force === true && user.role === 'SUPERADMIN')) {
+    if (!force) {
       const same = await prisma.cloneJob.findMany({
         where: { storeId, sourceKey, status: { in: LIVE_STATUSES } },
         orderBy: { createdAt: 'desc' },
@@ -242,7 +251,7 @@ export async function createCloneJob(
       const skuCode = await issueSkuCode(prefix, deps.now ?? new Date(), deps.sku)
       try {
         const job = await prisma.cloneJob.create({
-          data: { storeId, sourceUrl, sourceKey, skuCode, requestedById: user.id, requestedByName: user.name },
+          data: { storeId, sourceUrl, sourceKey, skuCode, requestedById: user.id, requestedByName: user.name, force },
         })
         notifyCloneQueue()
         return job

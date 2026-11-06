@@ -23,6 +23,7 @@ CREATE TABLE "CloneJob" (
     "productUrl" TEXT,
     "productType" TEXT,
     "reused" BOOLEAN NOT NULL DEFAULT false,
+    "force" BOOLEAN NOT NULL DEFAULT false,
     "qaVerdict" TEXT,
     "qaNote" TEXT,
     "error" TEXT,
