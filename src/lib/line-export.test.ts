@@ -36,27 +36,29 @@ describe('pushedShopifyLineIds', () => {
 })
 
 describe('canSendBeside', () => {
+  // The lines about to be sent, as the build read them.
+  const sending = (lines: typeof before, n: number) => [lines[n - 1]]
+
   it('gives the same answer before and after a re-sync', () => {
     const live = [push({ lineIds: ['ol-1'], shopifyLineIds: ['gid/1'] })]
-    expect(canSendBeside(live, ['ol-2'], before)).toBe(true)
-    expect(canSendBeside(live, ['ol-new-2'], after)).toBe(true)
-    expect(canSendBeside(live, ['ol-1'], before)).toBe(false)
-    expect(canSendBeside(live, ['ol-new-1'], after)).toBe(false)
+    expect(canSendBeside(live, sending(before, 2))).toBe(true)
+    expect(canSendBeside(live, sending(after, 2))).toBe(true)
+    expect(canSendBeside(live, sending(before, 1))).toBe(false)
+    expect(canSendBeside(live, sending(after, 1))).toBe(false)
   })
 
   it('an older push whose ids are gone still holds the line it marked exported', () => {
     const live = [push({ lineIds: ['ol-1'] })]
-    expect(canSendBeside(live, ['ol-1'], before)).toBe(false)
-    expect(canSendBeside(live, ['ol-new-1'], after)).toBe(false)
-    expect(canSendBeside(live, ['ol-new-2'], after)).toBe(true)
+    expect(canSendBeside(live, sending(before, 1))).toBe(false)
+    expect(canSendBeside(live, sending(after, 1))).toBe(false)
+    expect(canSendBeside(live, sending(after, 2))).toBe(true)
   })
 
-  it('still refuses a push not landed or not marked, or one that carried every line, and a line it cannot place', () => {
-    expect(canSendBeside([push({ lineIds: ['ol-1'], shopifyLineIds: ['gid/1'] }, { status: 'SENDING' })], ['ol-2'], before)).toBe(false)
-    expect(canSendBeside([push({ lineIds: ['ol-1'], shopifyLineIds: ['gid/1'] }, { exportMarked: false })], ['ol-2'], before)).toBe(false)
-    expect(canSendBeside([push(null)], ['ol-2'], before)).toBe(false)
-    expect(canSendBeside([push({ lineIds: ['ol-1'], shopifyLineIds: ['gid/1'] })], ['ol-gone'], before)).toBe(false)
-    expect(canSendBeside([], ['ol-gone'], before)).toBe(true)
+  it('still refuses a push not landed or not marked, or one that carried every line', () => {
+    expect(canSendBeside([push({ lineIds: ['ol-1'], shopifyLineIds: ['gid/1'] }, { status: 'SENDING' })], sending(before, 2))).toBe(false)
+    expect(canSendBeside([push({ lineIds: ['ol-1'], shopifyLineIds: ['gid/1'] }, { exportMarked: false })], sending(before, 2))).toBe(false)
+    expect(canSendBeside([push(null)], sending(before, 2))).toBe(false)
+    expect(canSendBeside([], sending(before, 1))).toBe(true)
   })
 })
 

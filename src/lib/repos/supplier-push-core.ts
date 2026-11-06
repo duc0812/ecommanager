@@ -3,7 +3,7 @@ import { isNonProductLine, lineKeysOf } from '@/lib/order-lines'
 import { requiredSlotsFor, templateForLine } from '@/lib/design-tasks'
 import { artworkUrl } from '@/lib/design-studio'
 import { currentFiles, extraPrintParts, sameLabel } from '@/lib/task-files'
-import { ORDER_CHANGED_MESSAGE, carriedShopifyLineIds, heldLinesMessage, logHandoffEvent } from '@/lib/repos/push-export'
+import { carriedShopifyLineIds, heldLinesMessage, logHandoffEvent, pushLinesJson, type PushLineRef } from '@/lib/repos/push-export'
 import { retryOnBusy } from '@/lib/sqlite-busy'
 import { SHIPMENT_STATUS_FULFILLED, SHIPMENT_STATUS_PENDING } from '@/lib/tracking/build-shipments'
 import { PublicUrlError, ensurePublicToken, publicArtworkUrl, requirePublicBaseUrl } from '@/lib/public-artwork'
@@ -58,7 +58,7 @@ export async function viewOf(pushId: string): Promise<PushView> {
  * The first live push holds the slot of the pair; one sent beside it, for lines approved later, holds a slot of its own number.
  */
 export async function reservePush(
-  input: { orderId: string; supplierId: string; externalOrderId: string; lineIds: string[]; requestJson: string; userId: string | null },
+  input: { orderId: string; supplierId: string; externalOrderId: string; lines: PushLineRef[]; requestJson: string; userId: string | null },
   duplicateMessage: string,
 ): Promise<{ id: string; pushedAt: Date }> {
   const pushedAt = new Date()
@@ -66,16 +66,12 @@ export async function reservePush(
     return await retryOnBusy(() => prisma.$transaction(async tx => {
       const existing = await tx.supplierOrderPush.findMany({ where: { orderId: input.orderId, supplierId: input.supplierId } })
       const live = existing.filter(p => isActive(p.status))
-      const lines = await tx.orderLine.findMany({ where: { orderId: input.orderId }, select: { id: true, shopifyLineId: true, exportedToSupplierId: true } })
-      const shopifyLineIds = input.lineIds.map(id => lines.find(l => l.id === id)?.shopifyLineId)
-      if (shopifyLineIds.some(id => !id)) throw new PushError(ORDER_CHANGED_MESSAGE, 409, 'PAYLOAD_CHANGED')
-      if (!canSendBeside(live, input.lineIds, lines)) throw new PushError(duplicateMessage, 409, 'DUPLICATE')
+      if (!canSendBeside(live, input.lines)) throw new PushError(duplicateMessage, 409, 'DUPLICATE')
       const activeKey = live.length > 0 ? `${activeKeyFor(input.orderId, input.supplierId)}::${input.externalOrderId}` : activeKeyFor(input.orderId, input.supplierId)
       const fresh = {
         status: 'SENDING', activeKey, requestJson: input.requestJson, responseJson: null, error: null,
         supplierOrderCode: null, supplierInternalId: null, remoteStatus: null, totalCost: null, shippingFee: null, handleFee: null,
-        pushedById: input.userId, pushedAt, cancelledAt: null, lastSyncedAt: null, exportMarked: false,
-        prevExportJson: JSON.stringify({ lineIds: input.lineIds, shopifyLineIds }),
+        pushedById: input.userId, pushedAt, cancelledAt: null, lastSyncedAt: null, exportMarked: false, prevExportJson: pushLinesJson(input.lines),
       }
       const failed = existing.find(p => p.status === 'FAILED' && p.externalOrderId === input.externalOrderId)
       if (failed) {
@@ -198,14 +194,10 @@ export async function checkOrderForPush(
 
 type TrackedLine = { shopifyLineId: string; resolvedSupplierId: string | null; resolvedSupplierSku: string | null }
 
-/**
- * Writes a tracking number on the Shipment of each line this push carried; `pick` returns null for a line with none yet.
- * The row then carries the push's supplier: Auto Fulfilled takes a pushed tracking only from a row of that supplier.
- */
-export async function upsertLineTracking(
-  push: Pick<PushRow, 'orderId' | 'supplierId' | 'prevExportJson'> & Partial<Pick<PushRow, 'requestJson'>>,
-  pick: (line: TrackedLine) => { number: string; company: string | null } | null,
-): Promise<number> {
+type TrackedPush = Pick<PushRow, 'orderId' | 'supplierId' | 'prevExportJson'> & Partial<Pick<PushRow, 'requestJson'>>
+
+/** The push's order and the product lines of its supplier that it carried, as the order has them now. */
+export async function pushCarriedLines(push: TrackedPush) {
   const order = await prisma.order.findUnique({
     where: { id: push.orderId },
     select: {
@@ -216,13 +208,26 @@ export async function upsertLineTracking(
       },
     },
   })
-  if (!order) return 0
-  const productLines = order.lines.filter(l => !isNonProductLine(l))
-  const lineKeys = lineKeysOf(order.shopifyOrderNumber, order.lines)
+  if (!order) return null
   const carried = await carriedShopifyLineIds(push, order.lines)
+  const lines = order.lines.filter(l => !isNonProductLine(l) && l.resolvedSupplierId === push.supplierId && (!carried || carried.includes(l.shopifyLineId)))
+  return { order, lines }
+}
+
+/**
+ * Writes a tracking number on the Shipment of each line this push carried; `pick` returns null for a line with none yet.
+ * The row then carries the push's supplier: Auto Fulfilled takes a pushed tracking only from a row of that supplier.
+ */
+export async function upsertLineTracking(
+  push: TrackedPush,
+  pick: (line: TrackedLine) => { number: string; company: string | null } | null,
+): Promise<number> {
+  const found = await pushCarriedLines(push)
+  if (!found) return 0
+  const { order } = found
+  const lineKeys = lineKeysOf(order.shopifyOrderNumber, order.lines)
   let touched = 0
-  for (const line of productLines) {
-    if (line.resolvedSupplierId !== push.supplierId || (carried && !carried.includes(line.shopifyLineId))) continue
+  for (const line of found.lines) {
     const t = pick(line)
     if (!t) continue
     const lineKey = lineKeys.get(line.shopifyLineId)!

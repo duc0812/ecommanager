@@ -29,7 +29,7 @@ export function planPushLines<L extends ExportTrackedLine & { id: string; shopif
   const unsent = own.filter(l => !isLineExported(order, l))
   const cleared = unsent.filter(l => isLineApproved(l, order.designTasks.find(t => t.shopifyLineId === l.shopifyLineId)))
   const live = pushes.filter(p => ACTIVE_PUSH_STATUSES.includes(p.status))
-  const later = live.length > 0 && cleared.length > 0 && canSendBeside(live, cleared.map(l => l.id), order.lines)
+  const later = live.length > 0 && cleared.length > 0 && canSendBeside(live, cleared)
   if (cleared.length > 0 && (live.length === 0 || later)) return { lines: cleared, held: unsent.filter(l => !cleared.includes(l)), later }
   return { lines: live.length > 0 || unsent.length === 0 ? own : unsent, held: [], later: false }
 }
@@ -52,8 +52,13 @@ export async function nextExternalOrderId(
   }
 }
 
-/** A send whose lines the order sync replaced between the preview and the confirm. */
-export const ORDER_CHANGED_MESSAGE = 'Đơn vừa được đồng bộ lại sau khi xem trước — mở lại bản xem trước rồi xác nhận'
+/** A line a send carries, with the ids the build read it under. */
+export type PushLineRef = { id: string; shopifyLineId: string }
+
+/** What a new push stores about its lines: the OrderLine ids, and the Shopify line ids that outlive the order sync. */
+export function pushLinesJson(lines: PushLineRef[]): string {
+  return JSON.stringify({ lineIds: lines.map(l => l.id), shopifyLineIds: lines.map(l => l.shopifyLineId) })
+}
 
 export function heldLinesMessage(keys: string[]): string {
   return `Chỉ gửi các dòng đã duyệt; dòng ${keys.join(', ')} còn đang làm design — duyệt xong gửi sau`

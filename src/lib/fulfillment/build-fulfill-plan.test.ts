@@ -539,6 +539,22 @@ describe('a fulfilment covers exactly the line a row names, from the supplier th
     expect(target.get('LIT1')!.rows).toEqual([{ lineKey: 'LIT1_2', tracking: 'T', byOrderNumber: true, sheets: ['Mangoshao', 'Mangoshao 2'] }])
   })
 
+  // The key was read with today's numbering; a Shipment row under it records the line it named when it was written.
+  it('a row written by the bare order number is held when the Shipment row of its key names another line', () => {
+    const p = plan([mango('LIT1_2')], lines('Mangoshao', 'Mangoshao', 'Mangoshao'), { shipments: [{ id: 's9', lineKey: 'LIT1_2', shopifyLineId: 'L3' }] })
+    expect(p).toMatchObject({ status: 'needs_manual', fulfillments: [] })
+    expect(p.message).toContain('LIT1_2')
+    expect(p.message).toContain('kiểm tra tay')
+    const bare = plan([{ lineKey: 'LIT1', tracking: 'T' }], lines('Mangoshao'), { shipments: [{ id: 's8', lineKey: 'LIT1_1', shopifyLineId: 'FEE' }] })
+    expect(bare).toMatchObject({ status: 'needs_manual', fulfillments: [] })
+  })
+
+  it('a row written by the bare order number is planned as before when the Shipment row of its key names the same line', () => {
+    const p = plan([mango('LIT1_2')], lines('Mangoshao', 'Mangoshao', 'Mangoshao'), { shipments: [{ id: 's2', lineKey: 'LIT1_2', shopifyLineId: 'L2' }] })
+    expect(p.status).toBe('will_fulfill')
+    expect(p.fulfillments).toEqual([{ fulfillmentOrderId: 'FO1', lineItems: [{ id: 'fol-L2', quantity: 1 }], tracking: 'T', shipmentIds: ['s2'] }])
+  })
+
   it('a Mango row for a line sent to another supplier is held', () => {
     const p = plan([mango('LIT1_2')], lines('Mangoshao', 'Jomall'))
     expect(p).toMatchObject({ status: 'needs_manual', fulfillments: [] })

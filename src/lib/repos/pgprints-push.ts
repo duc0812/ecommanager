@@ -4,7 +4,7 @@ import { isNonProductLine, lineKeysOf } from '@/lib/order-lines'
 import { requiredSlotsFor, templateForLine } from '@/lib/design-tasks'
 import { artworkUrl } from '@/lib/design-studio'
 import { currentFiles, extraPrintParts, sameLabel } from '@/lib/task-files'
-import { ORDER_CHANGED_MESSAGE, heldLinesMessage, logHandoffEvent, markPushExported, nextExternalOrderId, planPushLines } from '@/lib/repos/push-export'
+import { heldLinesMessage, logHandoffEvent, markPushExported, nextExternalOrderId, planPushLines, pushLinesJson, type PushLineRef } from '@/lib/repos/push-export'
 import { STATUS_LABELS, type PipelineStatus } from '@/lib/pipeline-status'
 import { retryOnBusy } from '@/lib/sqlite-busy'
 import { SHIPMENT_STATUS_FULFILLED, SHIPMENT_STATUS_PENDING } from '@/lib/tracking/build-shipments'
@@ -274,7 +274,7 @@ export async function buildPush(orderId: string, opts: { withBalance?: boolean }
     const note = l.designNote?.trim() || null
 
     lines.push({
-      refId, lineId: l.id, linePosition: l.linePosition, productTitle: l.productTitle, variantTitle: l.variantTitle, quantity: l.qty,
+      refId, lineId: l.id, shopifyLineId: l.shopifyLineId, linePosition: l.linePosition, productTitle: l.productTitle, variantTitle: l.variantTitle, quantity: l.qty,
       supplierSku: l.resolvedSupplierSku, apiSku, shipClass: shipClass ?? null,
       shipClassSource: productShipClass ? 'product' : shipClass ? 'default' : null, shipCountries,
       templateName: template?.name ?? null, mockupUrl, designNote: note, files,
@@ -371,22 +371,18 @@ function isUniqueViolation(e: any): boolean {
   return msg.includes('UNIQUE constraint failed') || msg.includes('Unique constraint failed')
 }
 
-async function reservePush(input: { orderId: string; supplierId: string; externalOrderId: string; lineIds: string[]; requestJson: string; userId: string | null }): Promise<{ id: string; pushedAt: Date }> {
+async function reservePush(input: { orderId: string; supplierId: string; externalOrderId: string; lines: PushLineRef[]; requestJson: string; userId: string | null }): Promise<{ id: string; pushedAt: Date }> {
   const pushedAt = new Date()
   try {
     return await retryOnBusy(() => prisma.$transaction(async tx => {
       const existing = await tx.supplierOrderPush.findMany({ where: { orderId: input.orderId, supplierId: input.supplierId } })
       const live = existing.filter(p => isActive(p.status))
-      const lines = await tx.orderLine.findMany({ where: { orderId: input.orderId }, select: { id: true, shopifyLineId: true, exportedToSupplierId: true } })
-      const shopifyLineIds = input.lineIds.map(id => lines.find(l => l.id === id)?.shopifyLineId)
-      if (shopifyLineIds.some(id => !id)) throw new PushError(ORDER_CHANGED_MESSAGE, 409, 'PAYLOAD_CHANGED')
-      if (!canSendBeside(live, input.lineIds, lines)) throw new PushError(DUPLICATE_MESSAGE, 409, 'DUPLICATE')
+      if (!canSendBeside(live, input.lines)) throw new PushError(DUPLICATE_MESSAGE, 409, 'DUPLICATE')
       const activeKey = live.length > 0 ? `${activeKeyFor(input.orderId, input.supplierId)}::${input.externalOrderId}` : activeKeyFor(input.orderId, input.supplierId)
       const fresh = {
         status: 'SENDING', activeKey, requestJson: input.requestJson, responseJson: null, error: null,
         supplierOrderCode: null, supplierInternalId: null, remoteStatus: null, totalCost: null, shippingFee: null, handleFee: null,
-        pushedById: input.userId, pushedAt, cancelledAt: null, lastSyncedAt: null, exportMarked: false,
-        prevExportJson: JSON.stringify({ lineIds: input.lineIds, shopifyLineIds }),
+        pushedById: input.userId, pushedAt, cancelledAt: null, lastSyncedAt: null, exportMarked: false, prevExportJson: pushLinesJson(input.lines),
       }
       const failed = existing.find(p => p.status === 'FAILED' && p.externalOrderId === input.externalOrderId)
       if (failed) {
@@ -434,7 +430,7 @@ export async function pushOrder(orderId: string, input: { payloadHash: string; u
   }
 
   const reserved = await reservePush({
-    orderId, supplierId: built.supplierId, externalOrderId: built.externalOrderId, lineIds: built.preview.lines.map(l => l.lineId), requestJson: built.rawBody, userId: input.userId,
+    orderId, supplierId: built.supplierId, externalOrderId: built.externalOrderId, lines: built.preview.lines.map(l => ({ id: l.lineId, shopifyLineId: l.shopifyLineId })), requestJson: built.rawBody, userId: input.userId,
   })
 
   let created: Awaited<ReturnType<typeof createOrder>>

@@ -240,7 +240,7 @@ describe('Auto Fulfilled fulfils a product line only after it went to a supplier
     await makeOrder('SNT13', [{ exported: false }])
     const rows = {
       SNT11: [{ lineKey: 'SNT11_1', tracking: 'TRK11' }],
-      SNT12: [{ lineKey: 'SNT12', tracking: 'TRK12' }],
+      SNT12: [{ lineKey: 'SNT12_2', tracking: 'TRK12' }],
       SNT13: [{ lineKey: 'SNT13_1', tracking: 'TRK13' }],
     }
     const names = Object.keys(rows)
@@ -253,7 +253,7 @@ describe('Auto Fulfilled fulfils a product line only after it went to a supplier
     const statuses = (s: AutoFulfillSummary) => names.map(n => [n, rowOf(s, n).status, rowOf(s, n).message ?? null])
     expect(statuses(preview)).toEqual([
       ['SNT11', 'will_fulfill', null],
-      ['SNT12', 'needs_manual', expect.stringContaining('SNT12_2')],
+      ['SNT12', 'needs_manual', expect.stringContaining('SNT12_2 chưa export sang xưởng')],
       ['SNT13', 'needs_manual', expect.stringContaining('SNT13_1')],
     ])
 

@@ -27,12 +27,15 @@ function splitCsvLine(line: string): string[] {
 // The Mangoshao channel writes Order Number = the bare order number and Order Vendor = the line key; Jomall writes the
 // line key in Order Number. The vendor's key is taken only when it is a line key of that same order.
 const VENDOR_HEADER = 'order vendor'
-const LINE_SUFFIX = /(_[A-Za-z0-9]+)+$/
+// Any sub-order suffix, as normalizeBaseOrder strips it: an order cell carrying one is not the bare order number.
+const ANY_SUFFIX = /(_[A-Za-z0-9]+)+$/
+// A line key numbers product lines ("_2", "_2_1"); a letter suffix ("_US", "_R2") names no line.
+const LINE_SUFFIX = /(_\d+)+$/
 
 function lineKeyFromVendor(orderCell: string, vendorCell: string): string | null {
   const order = orderCell.trim().replace(/^#/, '')
   const vendor = vendorCell.trim().replace(/^#/, '')
-  if (!order || LINE_SUFFIX.test(order)) return null
+  if (!order || ANY_SUFFIX.test(order)) return null
   const suffix = vendor.match(LINE_SUFFIX)?.[0]
   if (!suffix || vendor.slice(0, -suffix.length).toUpperCase() !== order.toUpperCase()) return null
   return `${order}${suffix}`

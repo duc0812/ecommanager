@@ -304,6 +304,15 @@ describe('preview payload', () => {
     expect((await prisma.order.findUniqueOrThrow({ where: { id: o.id } })).pipelineStatus).toBe('READY_TO_PRODUCTION')
   })
 
+  it('the push stores the OrderLine and Shopify line ids of exactly the lines it carried', async () => {
+    const o = await makeOrder({ extraLine: { supplierId: OTHER_SUP } })
+    const body = await (await preview(o.id)).json()
+    expect((await push(o.id, body.payloadHash)).status).toBe(200)
+    const [carried] = await prisma.orderLine.findMany({ where: { orderId: o.id }, orderBy: { linePosition: 'asc' } })
+    const row = await prisma.supplierOrderPush.findFirstOrThrow({ where: { orderId: o.id } })
+    expect(JSON.parse(row.prevExportJson!)).toMatchObject({ lineIds: [carried.id], shopifyLineIds: [o.lineId] })
+  })
+
   it('blocks unapproved lines and lines without artwork, and issues no public token for them', async () => {
     const unapproved = await makeOrder({ approved: false })
     const a = await (await preview(unapproved.id)).json()

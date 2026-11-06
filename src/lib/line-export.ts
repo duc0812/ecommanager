@@ -217,16 +217,25 @@ export function pushedShopifyLineIds(push: { supplierId: string; prevExportJson:
   return lines.filter(l => l.exportedToSupplierId === push.supplierId).map(l => l.shopifyLineId)
 }
 
+type SendingLine = Pick<PushedLine, 'id' | 'shopifyLineId'> & { exportedToSupplierId?: string | null }
+
 /**
- * A live push blocks a new send until it landed and was marked, and it can only be sent beside when it does not hold these
- * lines (`lineIds` among the order's `lines`). The lines are compared by Shopify line id, so the answer outlives the order sync.
+ * Whether a live push holds one of these lines: by Shopify line id, or for an older push by OrderLine id or, once the order
+ * sync replaced those, by the export mark it left on the line. A push from before sends went by line holds them all.
  */
-export function canSendBeside(live: Pick<LivePush, 'supplierId' | 'status' | 'exportMarked' | 'prevExportJson'>[], lineIds: string[], lines: PushedLine[]): boolean {
-  const sending = lineIds.map(id => lines.find(l => l.id === id)?.shopifyLineId)
-  return live.every(p => {
-    const carried = pushedShopifyLineIds(p, lines)
-    return p.status === 'CREATED' && p.exportMarked && !!carried && sending.every(id => !!id && !carried.includes(id))
-  })
+function holdsAny(push: Pick<LivePush, 'supplierId' | 'prevExportJson'>, sending: SendingLine[]): boolean {
+  const recorded = pushShopifyLineIds(push)
+  if (recorded) return sending.some(l => recorded.includes(l.shopifyLineId))
+  const ids = pushLineIds(push)
+  return !ids || sending.some(l => ids.includes(l.id) || (!!l.exportedToSupplierId && l.exportedToSupplierId === push.supplierId))
+}
+
+/**
+ * A live push blocks a new send until it landed and was marked, and it can only be sent beside when it does not hold the
+ * lines being sent (as the build read them). Compared by Shopify line id, the answer outlives the order sync.
+ */
+export function canSendBeside(live: Pick<LivePush, 'supplierId' | 'status' | 'exportMarked' | 'prevExportJson'>[], sending: SendingLine[]): boolean {
+  return live.every(p => p.status === 'CREATED' && p.exportMarked && !holdsAny(p, sending))
 }
 
 export function exportProgressLabel(p: Pick<ExportProgress, 'suppliersDone' | 'suppliersTotal'>): string {

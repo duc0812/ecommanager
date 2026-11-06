@@ -11,7 +11,7 @@ import { expectedSize, printFileFit } from '@/lib/print-file-fit'
 import { PushError, hashPayload } from '@/lib/repos/pgprints-push'
 import {
   ACTIVE_STATUSES, CLOSED_FINANCIAL, CLOSED_PIPELINE, EXPORT_READY, UNKNOWN_RESULT_GRACE_MS, activeKeyFor, closeCancelledPush, httpsUrl, isActive,
-  isUniqueViolation, latestPush, reservePush, toPushViews, upsertLineTracking, viewOf, type PushRow,
+  isUniqueViolation, latestPush, pushCarriedLines, reservePush, toPushViews, upsertLineTracking, viewOf, type PushRow,
 } from '@/lib/repos/supplier-push-core'
 import { safeErrorText } from '@/lib/store-jobs'
 import {
@@ -237,7 +237,7 @@ export async function buildMerchizePush(orderId: string): Promise<BuiltMerchizeP
     if (note) warning('DESIGN_NOTE', `${refId}: có ghi chú sản xuất — Merchize API không nhận ghi chú, báo xưởng riêng nếu cần`, refId)
 
     lines.push({
-      refId, lineId: l.id, linePosition: l.linePosition, productTitle: l.productTitle, variantTitle: l.variantTitle, quantity: l.qty,
+      refId, lineId: l.id, shopifyLineId: l.shopifyLineId, linePosition: l.linePosition, productTitle: l.productTitle, variantTitle: l.variantTitle, quantity: l.qty,
       supplierSku: l.resolvedSupplierSku, apiSku, shipClass: method, shipClassSource: method === printingMethod ? 'default' : 'product', shipCountries: [],
       templateName: template?.name ?? null, mockupUrl, designNote: note, files,
     })
@@ -333,7 +333,7 @@ export async function pushMerchizeOrder(orderId: string, input: { payloadHash: s
   }
 
   const reserved = await reservePush({
-    orderId, supplierId: built.supplierId, externalOrderId: built.externalOrderId, lineIds: built.preview.lines.map(l => l.lineId), requestJson: built.rawBody, userId: input.userId,
+    orderId, supplierId: built.supplierId, externalOrderId: built.externalOrderId, lines: built.preview.lines.map(l => ({ id: l.lineId, shopifyLineId: l.shopifyLineId })), requestJson: built.rawBody, userId: input.userId,
   }, DUPLICATE_MESSAGE)
 
   let created: Awaited<ReturnType<typeof createOrder>>
@@ -416,10 +416,22 @@ export async function cancelMerchizePush(orderId: string): Promise<{ push: PushV
   return { push: await viewOf(push.id), exportReverted }
 }
 
-/** Merchize ships the order as one package. */
+/**
+ * Merchize lists an order's fulfilments with a tracking number and carrier only, nothing that names an item. One tracking, or
+ * one line, is written as it comes; several trackings over several lines cannot be split by line, so none is written.
+ */
 async function upsertTracking(push: PushRow, tracking: { number: string; company: string | null }[]): Promise<number> {
   const t = tracking[0]
-  return t ? upsertLineTracking(push, () => t) : 0
+  if (!t) return 0
+  const numbers = new Set(tracking.map(x => x.number)).size
+  if (numbers > 1) {
+    const found = await pushCarriedLines(push)
+    if (found && found.lines.length > 1) {
+      console.warn(`[merchize] ${found.order.shopifyOrderNumber}: ${numbers} tracking khác nhau cho ${found.lines.length} dòng, Merchize không ghi kiện nào của dòng nào — không ghi tracking, cần đối chiếu tay`)
+      return 0
+    }
+  }
+  return upsertLineTracking(push, () => t)
 }
 
 export async function refreshMerchizePush(orderId: string): Promise<{ push: PushView; found: boolean; shipments: number }> {

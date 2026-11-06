@@ -107,7 +107,7 @@ export async function buildPrintwayPush(orderId: string, opts: { quote?: boolean
     }
     items.push(item)
     lines.push({
-      refId, lineId: l.id, linePosition: l.linePosition, productTitle: l.productTitle, variantTitle: l.variantTitle, quantity: l.qty,
+      refId, lineId: l.id, shopifyLineId: l.shopifyLineId, linePosition: l.linePosition, productTitle: l.productTitle, variantTitle: l.variantTitle, quantity: l.qty,
       supplierSku: l.resolvedSupplierSku, apiSku, shipClass: service, shipClassSource: service ? 'product' : null, shipCountries,
       templateName: found.templateName, mockupUrl: found.mockupUrl, designNote: note, files: found.files,
     })
@@ -226,7 +226,7 @@ export async function pushPrintwayOrder(orderId: string, input: { payloadHash: s
   }
 
   const reserved = await reservePush({
-    orderId, supplierId: built.supplierId, externalOrderId: built.externalOrderId, lineIds: built.preview.lines.map(l => l.lineId), requestJson: built.rawBody, userId: input.userId,
+    orderId, supplierId: built.supplierId, externalOrderId: built.externalOrderId, lines: built.preview.lines.map(l => ({ id: l.lineId, shopifyLineId: l.shopifyLineId })), requestJson: built.rawBody, userId: input.userId,
   }, DUPLICATE_MESSAGE)
 
   let created: Awaited<ReturnType<typeof createOrder>>

@@ -105,7 +105,7 @@ export async function buildBondrePush(orderId: string, opts: { quote?: boolean }
     if (note) warning('DESIGN_NOTE', `${refId}: có ghi chú sản xuất — ghi chú nội bộ không gửi sang Bondre, báo xưởng riêng nếu cần`, refId)
 
     lines.push({
-      refId, lineId: l.id, linePosition: l.linePosition, productTitle: l.productTitle, variantTitle: l.variantTitle, quantity: l.qty,
+      refId, lineId: l.id, shopifyLineId: l.shopifyLineId, linePosition: l.linePosition, productTitle: l.productTitle, variantTitle: l.variantTitle, quantity: l.qty,
       supplierSku: l.resolvedSupplierSku, apiSku, shipClass: shipping?.name ?? null, shipClassSource: product?.apiShipClass?.trim() ? 'product' : 'default', shipCountries,
       templateName: found.templateName, mockupUrl: found.mockupUrl, designNote: note, files: found.files,
     })
@@ -208,7 +208,7 @@ export async function pushBondreOrder(orderId: string, input: { payloadHash: str
   }
 
   const reserved = await reservePush({
-    orderId, supplierId: built.supplierId, externalOrderId: built.externalOrderId, lineIds: built.preview.lines.map(l => l.lineId), requestJson: built.rawBody, userId: input.userId,
+    orderId, supplierId: built.supplierId, externalOrderId: built.externalOrderId, lines: built.preview.lines.map(l => ({ id: l.lineId, shopifyLineId: l.shopifyLineId })), requestJson: built.rawBody, userId: input.userId,
   }, DUPLICATE_MESSAGE)
 
   const unknownResult = async (message: string, previewId: number | null): Promise<never> => {

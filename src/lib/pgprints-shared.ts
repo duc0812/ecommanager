@@ -43,6 +43,8 @@ export type PreviewFile = {
 export type PreviewLine = {
   refId: string
   lineId: string
+  /** The line's Shopify id, read with it: what a push stores, since the order sync gives the OrderLine a new id. */
+  shopifyLineId: string
   linePosition: number
   productTitle: string
   variantTitle: string | null

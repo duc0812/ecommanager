@@ -581,6 +581,99 @@ describe('Merchize tracking after the order sync made the lines anew', () => {
   })
 })
 
+// Merchize's order detail lists its fulfilments with a tracking number and carrier only, nothing that names an item.
+describe('a Merchize order shipped in several parcels', () => {
+  let parcels = new Map<string, Array<{ tracking_number: string; tracking_company: string }>>()
+  beforeEach(() => {
+    parcels = new Map()
+    handler = call => {
+      const n = call.query.get('external_number') ?? ''
+      if (call.path.endsWith('/order/external/orders/order-detail') && parcels.has(n) && remoteOrders.has(n)) {
+        return { status: 200, json: { success: true, data: { _id: `mz-${n}`, code: `RX-${n}`, order_status: 'in_production', fulfillments: parcels.get(n) } } }
+      }
+      return defaultHandler(call)
+    }
+  })
+  afterEach(() => { vi.restoreAllMocks() })
+
+  const twoLineOrder = async () => {
+    const o = await makeOrder()
+    const first = await prisma.orderLine.findFirstOrThrow({ where: { orderId: o.id } })
+    await approveOpenLine(o, await addOpenLine(o, first))
+    const p = await (await preview(o.id)).json()
+    expect(p.lines.map((l: any) => l.refId)).toEqual([`${o.number}_1`, `${o.number}_2`])
+    expect((await push(o.id, p.payloadHash)).status).toBe(200)
+    return o
+  }
+  const parcel = (n: string) => ({ tracking_number: n, tracking_company: 'USPS' })
+  const tracked = (orderId: string) => prisma.shipment.findMany({
+    where: { orderId, trackingNumber: { not: null } }, orderBy: { lineKey: 'asc' }, select: { lineKey: true, trackingNumber: true },
+  })
+  const warningsFor = (spy: { mock: { calls: unknown[][] } }, number: string) => spy.mock.calls.map(c => c.join(' ')).filter(m => m.includes(number))
+
+  it('two lines back as two parcels with different trackings: no tracking is written, the order is flagged once, the pull is recorded', async () => {
+    const o = await twoLineOrder()
+    parcels.set(o.number, [parcel('MZP1'), parcel('MZP2')])
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    expect((await (await refresh(o.id)).json()).shipments).toBe(0)
+
+    expect(await tracked(o.id)).toEqual([])
+    const warned = warningsFor(warn, o.number)
+    expect(warned).toHaveLength(1)
+    expect(warned[0]).toContain('2 tracking')
+    expect(warned[0]).toContain('cần đối chiếu tay')
+    expect((await prisma.supplierOrderPush.findFirstOrThrow({ where: { orderId: o.id } })).lastSyncedAt).not.toBeNull()
+  })
+
+  it('the nightly pull holds it the same way, one warning per push', async () => {
+    const o = await twoLineOrder()
+    parcels.set(o.number, [parcel('MZP3'), parcel('MZP4')])
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    await syncMerchizeTracking()
+
+    expect(await tracked(o.id)).toEqual([])
+    expect(warningsFor(warn, o.number)).toHaveLength(1)
+  })
+
+  it('two lines and one tracking (one parcel, or two fulfilments of one number): both lines get it, as before', async () => {
+    const one = await twoLineOrder()
+    const same = await twoLineOrder()
+    parcels.set(one.number, [parcel('MZP5')])
+    parcels.set(same.number, [parcel('MZP6'), parcel('MZP6')])
+
+    expect((await (await refresh(one.id)).json()).shipments).toBe(2)
+    expect((await (await refresh(same.id)).json()).shipments).toBe(2)
+
+    expect(await tracked(one.id)).toEqual([{ lineKey: `${one.number}_1`, trackingNumber: 'MZP5' }, { lineKey: `${one.number}_2`, trackingNumber: 'MZP5' }])
+    expect(await tracked(same.id)).toEqual([{ lineKey: `${same.number}_1`, trackingNumber: 'MZP6' }, { lineKey: `${same.number}_2`, trackingNumber: 'MZP6' }])
+  })
+
+  it('one line back as two parcels: the line gets the first tracking, as before', async () => {
+    const o = await makeOrder()
+    const p = await (await preview(o.id)).json()
+    await push(o.id, p.payloadHash)
+    parcels.set(o.number, [parcel('MZP7'), parcel('MZP8')])
+
+    expect((await (await refresh(o.id)).json()).shipments).toBe(1)
+
+    expect(await tracked(o.id)).toEqual([{ lineKey: `${o.number}_1`, trackingNumber: 'MZP7' }])
+  })
+})
+
+describe('the ids a push stores', () => {
+  it('are the OrderLine and Shopify line ids of exactly the lines it carried', async () => {
+    const o = await makeOrder()
+    const first = await prisma.orderLine.findFirstOrThrow({ where: { orderId: o.id } })
+    await addOpenLine(o, first)
+    const p = await (await preview(o.id)).json()
+    expect((await push(o.id, p.payloadHash)).status).toBe(200)
+    const row = await prisma.supplierOrderPush.findFirstOrThrow({ where: { orderId: o.id } })
+    expect(JSON.parse(row.prevExportJson!)).toMatchObject({ lineIds: [first.id], shopifyLineIds: [first.shopifyLineId] })
+  })
+})
+
 describe('nightly Merchize tracking pull', () => {
   const OTHER_SHOP = 'mz-other.myshopify.com'
   afterEach(async () => {

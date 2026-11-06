@@ -67,6 +67,16 @@ describe('parseSheetCsv', () => {
       ])
     })
 
+    it('takes only digit suffixes as a line key: a letter suffix (a re-send id, a market) maps to no line', () => {
+      const rows = parseSheetCsv(`${MANGO}11/4/2026,#LIT1,#LIT1_2,X,T1\n11/4/2026,#LIT2,LIT2_2_1,X,T2\n11/4/2026,#LIT3,#LIT3_US,X,T3\n11/4/2026,#LIT4,LIT4_R2,X,T4\n`)
+      expect(rows).toEqual([
+        { orderToken: 'LIT1_2', tracking: 'T1', byOrderNumber: true },
+        { orderToken: 'LIT2_2_1', tracking: 'T2', byOrderNumber: true },
+        { orderToken: '#LIT3', tracking: 'T3' },
+        { orderToken: '#LIT4', tracking: 'T4' },
+      ])
+    })
+
     it('two lines of one order with one tracking stay two rows', () => {
       const rows = parseSheetCsv(`${MANGO}11/4/2026,#LIT7,LIT7_1,X,UL7\n11/4/2026,#LIT7,LIT7_2,X,UL7\n11/4/2026,#LIT7,LIT7_2,X,UL7\n`)
       expect(rows.map(r => r.orderToken)).toEqual(['LIT7_1', 'LIT7_2'])

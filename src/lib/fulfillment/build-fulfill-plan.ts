@@ -183,12 +183,17 @@ export function buildFulfillmentPlan(input: {
   }
 
   // A row the sheet wrote by the bare order number finds its line by key among the order's own lines; any other row maps
-  // through the Shipment row of its key, as before.
+  // through the Shipment row of its key, as before. Today's numbering can differ from the one the key was written with (a
+  // line reclassified since): a Shipment row of that key naming another line holds the order.
   const lineIdByKey = new Map((input.productLines ?? []).map(l => [l.lineKey, l.shopifyLineId]))
   for (const row of rows) {
     const ship = row.byOrderNumber ? undefined : shipmentByLineKey.get(row.lineKey)
     const lineId = row.byOrderNumber ? lineIdByKey.get(row.lineKey) : ship?.shopifyLineId
     if (!lineId) return done('needs_manual', `Không map được ${row.lineKey} sang line Shopify`, ageDays)
+    const recorded = row.byOrderNumber ? shipmentByLineKey.get(row.lineKey) : undefined
+    if (recorded && recorded.shopifyLineId !== lineId) {
+      return done('needs_manual', `Mã ${row.lineKey} giờ là dòng khác với dòng Shipment đã ghi cho mã này — kiểm tra tay trước khi fulfill`, ageDays)
+    }
     const open = openByLineId.get(lineId)
     if (!open) {
       // Listed line isn't open: on hold → needs a human; otherwise already fulfilled → skip (idempotent).
