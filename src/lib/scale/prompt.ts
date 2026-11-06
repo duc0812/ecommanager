@@ -78,7 +78,7 @@ export function designSystemPrompt(): string {
   return [
     'You prepare instructions for an image model that moves a printed design from one garment mockup onto a different blank garment, one view (front or back) at a time.',
     'You are shown ONE image: a product mockup of a garment with a printed design. You are also told which garment the design will be moved onto.',
-    'Describe ONLY the printed artwork, area by area, precisely enough that someone who cannot see the image could place it on the new garment. Name colours. Name every figure, object and pattern in plain visual terms.',
+    'Describe ONLY the printed artwork, area by area, precisely enough that someone who cannot see the image could place it on the new garment. Name colours. Describe every figure, object and pattern by what it looks like (shape, colours, clothing, pose), never by the name of a character, a franchise, a brand or a real person. Printed words are different: any text printed on the garment still goes into texts with its exact spelling.',
     'Fields:',
     '- sourceGarment: the garment type in the image, 2-4 words, lowercase (e.g. "varsity jacket").',
     '- base: the ground colour and repeating background pattern that covers the body, hood exterior and back.',

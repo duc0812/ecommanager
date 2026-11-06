@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { DesignSchema, buildMatchPrompt, buildViewPrompt, renderPrintMapping, type Design } from '@/lib/scale/prompt'
+import { DesignSchema, buildMatchPrompt, buildViewPrompt, designSystemPrompt, renderPrintMapping, type Design } from '@/lib/scale/prompt'
 
 const front = { side: 'front' as const, blankDescription: 'unworn zip hoodie, front view, zipper open showing the white sherpa lining.', unprintedParts: 'The ribbing, zipper and sherpa lining' }
 const back = { side: 'back' as const, blankDescription: 'unworn zip hoodie, back view, hood down.', unprintedParts: '' }
@@ -73,6 +73,13 @@ describe('scale prompt', () => {
     const m = renderPrintMapping({ ...design, front: 'line one\nline two' }, 'front')
     expect(m).not.toContain('\n')
     expect(m.toLowerCase()).not.toContain('on on ')
+  })
+
+  it('asks for figures to be described by what they look like, the way the hand-written prompts did', () => {
+    const p = designSystemPrompt()
+    expect(p).toContain('by what it looks like')
+    expect(p).toContain('never by the name of a character, a franchise, a brand or a real person')
+    expect(p).toContain('Printed words are different')
   })
 
   it('rejects a design without sourceGarment or a text without a side', () => {
