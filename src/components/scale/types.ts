@@ -44,6 +44,7 @@ export type ScaleJobView = {
   createdByName?: string | null
   createdAt: string
   hasDesign: boolean
+  canRetryViews?: boolean
   views: { label: string; status: 'waiting' | 'running' | 'done' | 'failed' }[]
 }
 

@@ -45,8 +45,23 @@ describe('kie vision', () => {
     await expect(kieVision('k', f.impl).describe({ model: 'm', system: 's', text: 't', images: [], schema: Schema, schemaName: 'scale_design' })).rejects.toThrow(/unparsable scale_design/)
   })
 
-  it('reports a non-JSON gateway error with its status', async () => {
-    const f = fakeFetch('<html>Bad gateway</html>', 502)
-    await expect(kieVision('k', f.impl).describe({ model: 'm', system: 's', text: 't', images: [], schema: Schema, schemaName: 'x' })).rejects.toThrow(/kie vision HTTP 502/)
+  it('tries again when the gateway times out, and reports the status without the HTML page when it keeps failing', async () => {
+    let n = 0
+    const flaky = (async () => { n += 1; return n < 3 ? new Response('<!DOCTYPE html><html><body>524 timeout</body></html>', { status: 524 }) : new Response(okBody('{"garment":"hoodie"}'), { status: 200 }) }) as unknown as typeof fetch
+    expect(await kieVision('k', flaky, { retryDelayMs: 0 }).describe({ model: 'm', system: 's', text: 't', images: [], schema: Schema, schemaName: 'x' })).toEqual({ garment: 'hoodie' })
+    expect(n).toBe(3)
+    const dead = fakeFetch('<!DOCTYPE html><html><body>Bad gateway</body></html>', 502)
+    const err: any = await kieVision('k', dead.impl, { retryDelayMs: 0 }).describe({ model: 'm', system: 's', text: 't', images: [], schema: Schema, schemaName: 'x' }).catch(e => e)
+    expect(err.message).toBe('kie vision HTTP 502 (máy chủ Kie lỗi tạm thời, thử lại sau)')
+    expect(dead.calls).toHaveLength(3)
+  })
+
+  it('tries again when Kie says the call frequency is too high, but not when the key is refused', async () => {
+    let n = 0
+    const busy = (async () => { n += 1; return new Response(n < 2 ? JSON.stringify({ error: { message: 'Your call frequency is too high. Please try again later.' } }) : okBody('{"garment":"tee"}'), { status: 200 }) }) as unknown as typeof fetch
+    expect(await kieVision('k', busy, { retryDelayMs: 0 }).describe({ model: 'm', system: 's', text: 't', images: [], schema: Schema, schemaName: 'x' })).toEqual({ garment: 'tee' })
+    const refused = fakeFetch(JSON.stringify({ code: 401, msg: 'The API key is not authorized to use this model.' }))
+    await expect(kieVision('k', refused.impl, { retryDelayMs: 0 }).describe({ model: 'm', system: 's', text: 't', images: [], schema: Schema, schemaName: 'x' })).rejects.toThrow(/not authorized/)
+    expect(refused.calls).toHaveLength(1)
   })
 })

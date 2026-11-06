@@ -6,6 +6,7 @@ type Props = {
   canDelete: boolean
   allowFallback: boolean
   onRerun: (job: ScaleJobView) => void
+  onRetryViews: (job: ScaleJobView) => void
   onFallback: (job: ScaleJobView) => void
   onDelete: (job: ScaleJobView) => void
 }
@@ -22,7 +23,7 @@ function when(iso: string) {
   return `${d.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' })} ${d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`
 }
 
-export function ScaleJobCard({ job, canDelete, allowFallback, onRerun, onFallback, onDelete }: Props) {
+export function ScaleJobCard({ job, canDelete, allowFallback, onRerun, onRetryViews, onFallback, onDelete }: Props) {
   const active = job.status === 'describing' || job.status === 'running'
   const resultUrl = job.resultFile ? scaleFileUrl('jobs', job.id, job.resultFile) : null
   const canFallback = job.status === 'failed' && job.hasDesign
@@ -56,7 +57,8 @@ export function ScaleJobCard({ job, canDelete, allowFallback, onRerun, onFallbac
         {canFallback && !allowFallback && <p className="mt-xs text-body-sm text-on-surface-variant">Model dự phòng chưa được bật.</p>}
         <div className="mt-sm flex flex-wrap items-center gap-md text-label-md">
           {resultUrl && <a href={resultUrl} download={`scale-${job.targetName.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-${job.id}.${job.resultFile!.split('.').pop()}`} className="text-secondary hover:underline">Tải về</a>}
-          {!active && <button type="button" onClick={() => onRerun(job)} className="text-secondary hover:underline">Tạo lại</button>}
+          {job.canRetryViews && <button type="button" onClick={() => onRetryViews(job)} className="text-secondary hover:underline">Tạo lại góc lỗi</button>}
+          {!active && <button type="button" onClick={() => onRerun(job)} className="text-secondary hover:underline">Tạo lại {job.canRetryViews ? 'tất cả' : ''}</button>}
           {canFallback && allowFallback && <button type="button" onClick={() => onFallback(job)} className="text-secondary hover:underline">Thử model dự phòng</button>}
           {canDelete && <button type="button" onClick={() => onDelete(job)} className="ml-auto text-on-surface-variant hover:text-error">Xoá</button>}
         </div>

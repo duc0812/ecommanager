@@ -147,6 +147,7 @@ export default function ScalePage() {
                     <ScaleJobCard key={job.id} job={job} allowFallback={allowFallback}
                       canDelete={isSuperadmin || (!!user && job.createdBy === user.userId)}
                       onRerun={j => act(() => postJson(`/api/tools/scale/jobs/${j.id}/rerun`))}
+                      onRetryViews={j => act(() => postJson(`/api/tools/scale/jobs/${j.id}/retry`))}
                       onFallback={j => act(() => postJson(`/api/tools/scale/jobs/${j.id}/fallback`))}
                       onDelete={remove} />
                   ))}
