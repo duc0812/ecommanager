@@ -2,7 +2,7 @@ export type ScaleViewRow = {
   id: string
   targetId: string
   label: string
-  side: 'front' | 'back'
+  side: 'both' | 'front' | 'back'
   blankFile: string | null
   blankDescription: string
   unprintedParts: string
