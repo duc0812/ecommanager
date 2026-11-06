@@ -138,6 +138,29 @@ describe('worker token', () => {
     await revokeCloneWorkerToken()
     expect(await cloneWorkerInfo()).toMatchObject({ configured: false, tokenUpdatedAt: null })
   })
+
+  it('heartbeat, fail và complete cũng ghi lastSeenAt: máy đang chạy job vẫn online', async () => {
+    const setSeen = (ms: number) =>
+      prisma.appSetting.update({ where: { key: CLONE_WORKER_SEEN_KEY }, data: { value: new Date(ms).toISOString() } })
+    const job = await seedJob()
+    const claim = (await claimCloneJob(new Date(Date.now() - 120_000))).job!
+    expect((await cloneWorkerInfo()).online).toBe(false)
+    expect(await heartbeatCloneJob(job.id, claim.attempts, { stage: 'clone' })).toEqual({ ok: true, cancelled: false })
+    expect((await cloneWorkerInfo()).online).toBe(true)
+
+    await setSeen(Date.now() - 120_000)
+    expect(await heartbeatCloneJob(job.id, claim.attempts + 5, {})).toEqual({ ok: false, cancelled: false })
+    expect((await cloneWorkerInfo()).online).toBe(true)
+
+    await setSeen(Date.now() - 120_000)
+    expect(await failCloneJob(job.id, claim.attempts, { failKind: 'TOOL', error: 'x' })).toEqual({ status: 'FAILED' })
+    expect((await cloneWorkerInfo()).online).toBe(true)
+
+    const next = await running()
+    await setSeen(Date.now() - 120_000)
+    expect(await completeCloneJob(next.id, next.attempts, { productGid: GID, qaVerdict: 'FAIL' })).toMatchObject({ status: 'FAILED' })
+    expect((await cloneWorkerInfo()).online).toBe(true)
+  })
 })
 
 describe('claimCloneJob', () => {
@@ -210,6 +233,24 @@ describe('claimCloneJob', () => {
     const lost = await rowOf(job.id)
     expect(lost).toMatchObject({ status: 'FAILED', failKind: 'WORKER_LOST', error: 'Máy xử lý không trả kết quả.', lockedAt: null, attempts: 2 })
     expect(lost.finishedAt?.getTime()).toBe(t0 + 2 * CLONE_LEASE_MS + 2000)
+  })
+
+  it('claim: job hết lease lần 1 nằm sau job đang chờ quay về QUEUED, không có hai job RUNNING', async () => {
+    const lockedAt = new Date(Date.now() - CLONE_LEASE_MS - 1000)
+    const older = await seedJob({ createdAt: new Date(Date.now() - 9000) })
+    const expired = await seedJob({ status: 'RUNNING', attempts: 1, lockedAt, startedAt: lockedAt, createdAt: new Date(Date.now() - 5000) })
+    await prisma.cloneJob.update({ where: { id: expired.id }, data: { stage: 'qa' } })
+
+    expect((await claimCloneJob()).job).toMatchObject({ id: older.id, attempts: 1 })
+    const back = await rowOf(expired.id)
+    expect(back).toMatchObject({ status: 'QUEUED', attempts: 1, lockedAt: null, stage: null, finishedAt: null, failKind: null })
+    expect(back.startedAt?.getTime()).toBe(lockedAt.getTime())
+    expect(await prisma.cloneJob.count({ where: { status: 'RUNNING' } })).toBe(1)
+    expect(await heartbeatCloneJob(expired.id, 1, {})).toEqual({ ok: false, cancelled: false })
+
+    expect(await claimCloneJob()).toEqual({ job: null, paused: false })
+    expect(await failCloneJob(older.id, 1, { failKind: 'TOOL', error: 'x' })).toEqual({ status: 'FAILED' })
+    expect((await claimCloneJob()).job).toMatchObject({ id: expired.id, attempts: 2 })
   })
 
   it('claim: job hết lease lần 2 nằm sau job đang chờ vẫn thành FAILED/WORKER_LOST ngay', async () => {
@@ -590,8 +631,66 @@ describe('makeShopifyProductState', () => {
   const answer = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status })
   const product = {
     status: 'ACTIVE', onlineStoreUrl: ONLINE_URL, handle: 'zw-mug', productType: 'Mug',
-    variants: { nodes: [{ sku: 'ZW2611050001' }, { sku: 'ZW2611050001-BLACK' }, { sku: null }] },
+    variants: { nodes: [{ sku: 'ZW2611050001' }, { sku: 'ZW2611050001-BLACK' }, { sku: null }], pageInfo: { hasNextPage: false, endCursor: 'c1' } },
   }
+
+  // Serves `pages` one per call, following the `after` cursor the caller sends; records every variables object it was sent.
+  const paged = (pages: (string | null)[][], sent: Record<string, unknown>[] = []) => async (_url: string, init?: RequestInit) => {
+    const variables = JSON.parse(String(init?.body)).variables as Record<string, unknown>
+    sent.push(variables)
+    const i = typeof variables.after === 'string' ? Number(variables.after.replace('cursor-', '')) : 0
+    const more = i < pages.length - 1
+    return answer({
+      data: { product: { ...product, variants: { nodes: pages[i].map(sku => ({ sku })), pageInfo: { hasNextPage: more, endCursor: more ? `cursor-${i + 1}` : null } } } },
+    })
+  }
+
+  it('đọc hết mọi trang variant theo con trỏ after', async () => {
+    const sent: Record<string, unknown>[] = []
+    const state = await makeShopifyProductState({ fetchImpl: paged([['A-1', 'A-2'], ['A-3'], [null, 'A-4']], sent) })(STORE, GID)
+    expect(state?.skus).toEqual(['A-1', 'A-2', 'A-3', null, 'A-4'])
+    expect(sent).toEqual([{ id: GID, after: null }, { id: GID, after: 'cursor-1' }, { id: GID, after: 'cursor-2' }])
+  })
+
+  it('cần trang thứ 13 → ném lỗi (không bao giờ coi là đạt); hasNextPage mà thiếu con trỏ → ném lỗi', async () => {
+    const sent: Record<string, unknown>[] = []
+    const logs: string[] = []
+    const pages = Array.from({ length: 13 }, (_, i) => [`P-${i}`])
+    await expect(makeShopifyProductState({ fetchImpl: paged(pages, sent), log: m => logs.push(m) })(STORE, GID)).rejects.toBeInstanceOf(Error)
+    expect(sent).toHaveLength(12)
+    expect(logs).toHaveLength(1)
+
+    const noCursor = async () => answer({ data: { product: { ...product, variants: { ...product.variants, pageInfo: { hasNextPage: true, endCursor: null } } } } })
+    await expect(makeShopifyProductState({ fetchImpl: noCursor, log: () => {} })(STORE, GID)).rejects.toBeInstanceOf(Error)
+  })
+
+  it('complete qua 3 trang: SKU đối thủ ở trang cuối → FAILED/VERIFY; cả 3 trang đúng mã → DONE', async () => {
+    const bad = await running()
+    const b = bad.skuCode
+    const refused = await completeCloneJob(bad.id, bad.attempts, { productGid: GID, qaVerdict: 'PASS' }, {
+      productState: makeShopifyProductState({ fetchImpl: paged([[b, `${b}-S`], [`${b}-M`], [`${b}-L`, 'FS-COMPETITOR-XL']]) }),
+    })
+    expect(refused).toEqual({ status: 'FAILED', error: FOREIGN_SKU })
+    expect(await rowOf(bad.id)).toMatchObject({ status: 'FAILED', failKind: 'VERIFY', error: FOREIGN_SKU, productUrl: null })
+
+    const good = await running()
+    const g = good.skuCode
+    const done = await completeCloneJob(good.id, good.attempts, { productGid: GID, qaVerdict: 'PASS' }, {
+      productState: makeShopifyProductState({ fetchImpl: paged([[g, `${g}-S`], [`${g}-M`], [`${g}-L`]]) }),
+    })
+    expect(done).toEqual({ status: 'DONE' })
+    expect(await rowOf(good.id)).toMatchObject({ status: 'DONE', productUrl: ONLINE_URL, handle: 'zw-mug', productType: 'Mug' })
+  })
+
+  it('complete: sản phẩm cần trang thứ 13 → { retry: true }, job vẫn RUNNING', async () => {
+    const job = await running()
+    const pages = Array.from({ length: 13 }, (_, i) => [`${job.skuCode}-V${i}`])
+    const result = await completeCloneJob(job.id, job.attempts, { productGid: GID, qaVerdict: 'PASS' }, {
+      productState: makeShopifyProductState({ fetchImpl: paged(pages), log: () => {} }),
+    })
+    expect(result).toMatchObject({ retry: true })
+    expect(await rowOf(job.id)).toMatchObject({ status: 'RUNNING', attempts: job.attempts, finishedAt: null, productUrl: null })
+  })
 
   it('hỏi product(id:) của store đích, token chỉ nằm trong header', async () => {
     const seen: { url: string; init: RequestInit }[] = []
@@ -604,8 +703,10 @@ describe('makeShopifyProductState', () => {
     expect((seen[0].init.headers as Record<string, string>)['X-Shopify-Access-Token']).toBe(TOKEN)
     expect(seen[0].init.redirect).toBe('error')
     const body = JSON.parse(String(seen[0].init.body))
-    expect(body.variables).toEqual({ id: GID })
-    expect(body.query.replace(/\s+/g, ' ')).toContain('product(id: $id) { status onlineStoreUrl handle productType variants(first: 250) { nodes { sku } } }')
+    expect(body.variables).toEqual({ id: GID, after: null })
+    expect(body.query.replace(/\s+/g, ' ')).toContain(
+      'product(id: $id) { status onlineStoreUrl handle productType variants(first: 250, after: $after) { nodes { sku } pageInfo { hasNextPage endCursor } } }',
+    )
     expect(seen[0].url).not.toContain(TOKEN)
     expect(String(seen[0].init.body)).not.toContain(TOKEN)
   })

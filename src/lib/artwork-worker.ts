@@ -1,6 +1,6 @@
-import crypto from 'crypto'
 import type { NextRequest } from 'next/server'
 import { prisma } from '@/lib/db'
+import { hashedTokenInfo, mintHashedToken, revokeHashedToken, verifyBearerHash } from '@/lib/hashed-token'
 import { mapTemplate } from '@/lib/print-template-resolve'
 import { parseLayerFields, type LayerFields } from '@/lib/artwork-fields'
 import { RENDER_LINE, renderClaimFor, renderJobFailed, type RenderClaim } from '@/lib/repos/artwork-render'
@@ -11,34 +11,20 @@ export const MAX_JOB_ATTEMPTS = 3
 export const PARSE_PSD = 'PARSE_PSD'
 export const JOB_KINDS = [PARSE_PSD, RENDER_LINE]
 
-function sha256Hex(s: string): string {
-  return crypto.createHash('sha256').update(s, 'utf8').digest('hex')
+export function generateWorkerToken(): Promise<string> {
+  return mintHashedToken('dsw_', WORKER_TOKEN_KEY)
 }
 
-export async function generateWorkerToken(): Promise<string> {
-  const token = `dsw_${crypto.randomBytes(32).toString('base64url')}`
-  const value = sha256Hex(token)
-  await prisma.appSetting.upsert({ where: { key: WORKER_TOKEN_KEY }, create: { key: WORKER_TOKEN_KEY, value }, update: { value } })
-  return token
+export function revokeWorkerToken(): Promise<void> {
+  return revokeHashedToken(WORKER_TOKEN_KEY)
 }
 
-export async function revokeWorkerToken(): Promise<void> {
-  await prisma.appSetting.deleteMany({ where: { key: WORKER_TOKEN_KEY } })
+export function workerTokenInfo(): Promise<{ configured: boolean; updatedAt: string | null }> {
+  return hashedTokenInfo(WORKER_TOKEN_KEY)
 }
 
-export async function workerTokenInfo(): Promise<{ configured: boolean; updatedAt: string | null }> {
-  const row = await prisma.appSetting.findUnique({ where: { key: WORKER_TOKEN_KEY } })
-  return { configured: !!row?.value, updatedAt: row?.updatedAt.toISOString() ?? null }
-}
-
-export async function verifyWorkerToken(header: string | null): Promise<boolean> {
-  const m = /^Bearer\s+(\S+)\s*$/i.exec(header ?? '')
-  if (!m) return false
-  const row = await prisma.appSetting.findUnique({ where: { key: WORKER_TOKEN_KEY } })
-  if (!row?.value || !/^[0-9a-f]{64}$/.test(row.value)) return false
-  const expected = Buffer.from(row.value, 'hex')
-  const actual = Buffer.from(sha256Hex(m[1]), 'hex')
-  return expected.length === actual.length && crypto.timingSafeEqual(expected, actual)
+export function verifyWorkerToken(header: string | null): Promise<boolean> {
+  return verifyBearerHash(header, WORKER_TOKEN_KEY)
 }
 
 export function verifyWorkerRequest(req: NextRequest): Promise<boolean> {

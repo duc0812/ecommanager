@@ -1,14 +1,12 @@
 import { randomInt } from 'crypto'
 import { prisma } from '@/lib/db'
-import { assertSafeExternalUrl } from '@/lib/safe-url'
-import { getStoreConnection, listConnectedStores } from '@/lib/store-connections'
+import { listConnectedStores } from '@/lib/store-connections'
+import { shopifyAdminGraphql, type FetchLike } from '@/lib/clone/shopify-admin'
 
 export const SKU_CODE_RE = /^[A-Z]{2}\d{10}$/
 
 const MAX_ATTEMPTS = 20
 const VIETNAM_OFFSET_MS = 7 * 60 * 60 * 1000
-const SHOPIFY_API_VERSION = '2024-10'
-const SHOPIFY_TIMEOUT_MS = 10_000
 
 const FORMAT_MESSAGE = 'Mã SKU phải là 2 chữ cái A–Z.'
 const TAKEN_MESSAGE = 'Mã SKU này đã thuộc tài khoản khác.'
@@ -50,8 +48,6 @@ export function skuBelongsTo(code: string, sku: string | null): boolean {
   return sku !== null && (sku === code || sku.startsWith(`${code}-`))
 }
 
-type FetchLike = (url: string, init?: RequestInit) => Promise<Response>
-
 const VARIANT_WITH_SKU = 'query($q: String!) { productVariants(first: 1, query: $q) { edges { node { id } } } }'
 
 const defaultLog = (message: string) => console.warn(`[clone sku] ${message}`)
@@ -60,41 +56,15 @@ const defaultLog = (message: string) => console.warn(`[clone sku] ${message}`)
 const skipNote = (storeId: string, reason: string) => `Bỏ qua kiểm SKU trên Shopify của store ${storeId}: ${reason}`
 
 export function makeShopifySkuExists(opts: { fetchImpl?: FetchLike; log?: (message: string) => void } = {}): SkuCodeDeps['shopifySkuExists'] {
-  const fetchImpl: FetchLike = opts.fetchImpl ?? ((url, init) => fetch(url, init))
   const log = opts.log ?? defaultLog
   return async (storeId, code) => {
-    const skip = (reason: string) => {
-      log(skipNote(storeId, reason))
+    const answer = await shopifyAdminGraphql(storeId, VARIANT_WITH_SKU, { q: `sku:${code}*` }, { fetchImpl: opts.fetchImpl })
+    if ('reason' in answer) {
+      log(skipNote(storeId, answer.reason))
       return false
     }
-    let conn: { shop: string; token: string }
-    try {
-      conn = await getStoreConnection(storeId)
-    } catch {
-      return skip('không lấy được kết nối của store')
-    }
-    let url: URL
-    try {
-      url = assertSafeExternalUrl(`https://${conn.shop}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`)
-    } catch {
-      return skip('địa chỉ shop không hợp lệ')
-    }
-    let res: Response
-    try {
-      res = await fetchImpl(url.toString(), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': conn.token },
-        body: JSON.stringify({ query: VARIANT_WITH_SKU, variables: { q: `sku:${code}*` } }),
-        redirect: 'error',
-        signal: AbortSignal.timeout(SHOPIFY_TIMEOUT_MS),
-      })
-    } catch {
-      return skip('không kết nối được tới Shopify')
-    }
-    if (!res.ok) return skip(`Shopify trả về HTTP ${res.status}`)
-    const json = await res.json().catch(() => null) as { data?: { productVariants?: { edges?: unknown[] } }; errors?: unknown } | null
-    if (!json || json.errors) return skip('Shopify trả về dữ liệu không đọc được')
-    return (json.data?.productVariants?.edges?.length ?? 0) > 0
+    const edges = (answer.data as { productVariants?: { edges?: unknown[] } }).productVariants?.edges
+    return (edges?.length ?? 0) > 0
   }
 }
 

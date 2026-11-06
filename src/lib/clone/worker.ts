@@ -1,11 +1,11 @@
-import crypto from 'crypto'
 import type { NextRequest } from 'next/server'
 import { prisma } from '@/lib/db'
-import { assertSafeExternalUrl } from '@/lib/safe-url'
-import { getStoreConnection, listConnectedStores, type StoreConnection } from '@/lib/store-connections'
+import { hashedTokenInfo, mintHashedToken, revokeHashedToken, verifyBearerHash } from '@/lib/hashed-token'
+import { listConnectedStores } from '@/lib/store-connections'
 import { waitForCloneQueue } from '@/lib/clone/jobs'
 import { getCloneSettings } from '@/lib/clone/settings'
 import { skuBelongsTo } from '@/lib/clone/sku-code'
+import { shopifyAdminGraphql, type FetchLike } from '@/lib/clone/shopify-admin'
 
 export const CLONE_WORKER_TOKEN_KEY = 'clone.worker.tokenHash'
 export const CLONE_WORKER_SEEN_KEY = 'clone.worker.lastSeenAt'
@@ -18,8 +18,7 @@ const CLAIM_ROUNDS = 20
 const MAX_ERROR = 2000
 const MAX_QA_NOTE = 500
 const MAX_INT = 2_147_483_647
-const SHOPIFY_API_VERSION = '2024-10'
-const SHOPIFY_TIMEOUT_MS = 15_000
+const MAX_VARIANT_PAGES = 12
 
 // Fixed server texts. VERIFY and WORKER_LOST errors are shown to sellers, so nothing from the runner is ever joined into them.
 const STORE_GONE = 'Store không còn kết nối.'
@@ -37,48 +36,38 @@ const PLATFORM_RE = /^(customily|customall|teeinblue|customix|unknown|unsupporte
 const RUNNER_FAIL_KINDS = ['UNSUPPORTED', 'NOT_ENABLED', 'SOURCE', 'TOOL', 'TOOL_GAP', 'QA', 'TIMEOUT']
 const PRODUCT_GID_RE = /^gid:\/\/shopify\/Product\/\d+$/
 
-function sha256Hex(s: string): string {
-  return crypto.createHash('sha256').update(s, 'utf8').digest('hex')
+export function generateCloneWorkerToken(): Promise<string> {
+  return mintHashedToken('cqw_', CLONE_WORKER_TOKEN_KEY)
 }
 
-export async function generateCloneWorkerToken(): Promise<string> {
-  const token = `cqw_${crypto.randomBytes(32).toString('base64url')}`
-  const value = sha256Hex(token)
-  await prisma.appSetting.upsert({ where: { key: CLONE_WORKER_TOKEN_KEY }, create: { key: CLONE_WORKER_TOKEN_KEY, value }, update: { value } })
-  return token
-}
-
-export async function revokeCloneWorkerToken(): Promise<void> {
-  await prisma.appSetting.deleteMany({ where: { key: CLONE_WORKER_TOKEN_KEY } })
+export function revokeCloneWorkerToken(): Promise<void> {
+  return revokeHashedToken(CLONE_WORKER_TOKEN_KEY)
 }
 
 export async function cloneWorkerInfo(): Promise<{ configured: boolean; tokenUpdatedAt: string | null; lastSeenAt: string | null; online: boolean }> {
   const [token, seen] = await Promise.all([
-    prisma.appSetting.findUnique({ where: { key: CLONE_WORKER_TOKEN_KEY } }),
+    hashedTokenInfo(CLONE_WORKER_TOKEN_KEY),
     prisma.appSetting.findUnique({ where: { key: CLONE_WORKER_SEEN_KEY } }),
   ])
   const seenMs = seen ? Date.parse(seen.value) : NaN
   const lastSeenAt = Number.isFinite(seenMs) ? new Date(seenMs).toISOString() : null
   return {
-    configured: !!token?.value,
-    tokenUpdatedAt: token?.value ? token.updatedAt.toISOString() : null,
+    configured: token.configured,
+    tokenUpdatedAt: token.configured ? token.updatedAt : null,
     lastSeenAt,
     online: lastSeenAt !== null && Date.now() - seenMs <= ONLINE_MS,
   }
 }
 
-async function verifyCloneWorkerToken(header: string | null): Promise<boolean> {
-  const m = /^Bearer\s+(\S+)\s*$/i.exec(header ?? '')
-  if (!m) return false
-  const row = await prisma.appSetting.findUnique({ where: { key: CLONE_WORKER_TOKEN_KEY } })
-  if (!row?.value || !/^[0-9a-f]{64}$/.test(row.value)) return false
-  const expected = Buffer.from(row.value, 'hex')
-  const actual = Buffer.from(sha256Hex(m[1]), 'hex')
-  return expected.length === actual.length && crypto.timingSafeEqual(expected, actual)
+export function verifyCloneWorkerRequest(req: NextRequest): Promise<boolean> {
+  return verifyBearerHash(req.headers.get('authorization'), CLONE_WORKER_TOKEN_KEY)
 }
 
-export function verifyCloneWorkerRequest(req: NextRequest): Promise<boolean> {
-  return verifyCloneWorkerToken(req.headers.get('authorization'))
+// Every runner call counts as a sign of life: while a job runs the runner only heartbeats (every 60 s), and the page calls it
+// offline after 90 s. Only reached after the route has verified the bearer token.
+async function markWorkerSeen(now: Date = new Date()): Promise<void> {
+  const value = now.toISOString()
+  await prisma.appSetting.upsert({ where: { key: CLONE_WORKER_SEEN_KEY }, create: { key: CLONE_WORKER_SEEN_KEY, value }, update: { value } })
 }
 
 export type CloneClaim = {
@@ -93,50 +82,47 @@ export type CloneClaim = {
 
 type ClaimResult = { job: CloneClaim | null; paused: boolean }
 
-type Candidate = { id: string; status: string; attempts: number; lockedAt: Date | null }
-
-// Matches the row only while it is still what the claim read: a claim, heartbeat or report that got there first changes one of these.
-function unchanged(c: Candidate, staleBefore: Date) {
-  const lease = c.status === 'RUNNING' ? { lockedAt: c.lockedAt === null ? null : { lt: staleBefore } } : {}
-  return { id: c.id, status: c.status, attempts: c.attempts, ...lease }
-}
-
-async function failCandidate(c: Candidate, staleBefore: Date, now: Date, failKind: string, error: string): Promise<void> {
-  await prisma.cloneJob.updateMany({ where: unchanged(c, staleBefore), data: { status: 'FAILED', failKind, error, finishedAt: now, lockedAt: null } })
+// The lease condition is the compare-and-set: a heartbeat that lands first moves lockedAt out of it, and the row is left alone.
+async function releaseExpiredLeases(now: Date, staleBefore: Date): Promise<void> {
+  const expired = { status: 'RUNNING', OR: [{ lockedAt: null }, { lockedAt: { lt: staleBefore } }] }
+  await prisma.cloneJob.updateMany({
+    where: { ...expired, attempts: { lt: CLONE_MAX_ATTEMPTS } },
+    data: { status: 'QUEUED', lockedAt: null, stage: null },
+  })
+  await prisma.cloneJob.updateMany({
+    where: { ...expired, attempts: { gte: CLONE_MAX_ATTEMPTS } },
+    data: { status: 'FAILED', failKind: 'WORKER_LOST', error: WORKER_LOST, finishedAt: now, lockedAt: null },
+  })
 }
 
 export async function claimCloneJob(now: Date = new Date()): Promise<ClaimResult> {
-  const seen = now.toISOString()
-  await prisma.appSetting.upsert({ where: { key: CLONE_WORKER_SEEN_KEY }, create: { key: CLONE_WORKER_SEEN_KEY, value: seen }, update: { value: seen } })
+  await markWorkerSeen(now)
   const settings = await getCloneSettings()
   if (settings.paused) return { job: null, paused: true }
   const stores = new Map((await listConnectedStores()).map(s => [s.id, s]))
   const staleBefore = new Date(now.getTime() - CLONE_LEASE_MS)
   const idle: ClaimResult = { job: null, paused: false }
   for (let round = 0; round < CLAIM_ROUNDS; round++) {
-    // One read answers both "is a job still running" and "which job is next": two claims at once see the same oldest job,
-    // one write wins, and the loser reads again and finds it running. Any lost write starts the round over for that reason.
+    await releaseExpiredLeases(now, staleBefore)
+    // After the release every RUNNING row is inside its lease. One read answers both "is a job still running" and "which job is next":
+    // two claims at once see the same oldest job, one write wins, and the loser reads again and finds it running. Any lost write starts the round over.
     const rows = await prisma.cloneJob.findMany({
       where: { status: { in: ['QUEUED', 'RUNNING'] } },
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-      select: { id: true, storeId: true, status: true, attempts: true, lockedAt: true, startedAt: true, sourceUrl: true, skuCode: true, requestedByName: true },
+      select: { id: true, storeId: true, status: true, attempts: true, startedAt: true, sourceUrl: true, skuCode: true, requestedByName: true },
     })
-    if (rows.some(r => r.status === 'RUNNING' && r.lockedAt !== null && r.lockedAt >= staleBefore)) return idle
-    const lost = rows.find(r => r.status === 'RUNNING' && r.attempts >= CLONE_MAX_ATTEMPTS)
-    if (lost) {
-      await failCandidate(lost, staleBefore, now, 'WORKER_LOST', WORKER_LOST)
-      continue
-    }
+    if (rows.some(r => r.status === 'RUNNING')) return idle
     const next = rows[0]
     if (!next) return idle
+    const unchanged = { id: next.id, status: 'QUEUED', attempts: next.attempts }
     const store = stores.get(next.storeId)
     if (!store?.orderPrefix) {
-      await failCandidate(next, staleBefore, now, 'TOOL', STORE_GONE)
+      await prisma.cloneJob.updateMany({ where: unchanged, data: { status: 'FAILED', failKind: 'TOOL', error: STORE_GONE, finishedAt: now, lockedAt: null } })
       continue
     }
     const attempts = next.attempts + 1
     const won = await prisma.cloneJob.updateMany({
-      where: unchanged(next, staleBefore),
+      where: unchanged,
       data: { status: 'RUNNING', attempts, lockedAt: now, stage: null, ...(next.startedAt ? {} : { startedAt: now }) },
     })
     if (won.count === 0) continue
@@ -203,6 +189,7 @@ function durationOf(v: unknown): number | null {
 }
 
 export async function heartbeatCloneJob(id: string, attempts: number, patch: { stage?: unknown; platform?: unknown }): Promise<{ ok: boolean; cancelled: boolean }> {
+  await markWorkerSeen()
   if (isAttempts(attempts)) {
     const stage = stageOf(patch.stage)
     const platform = platformOf(patch.platform)
@@ -221,6 +208,7 @@ export async function failCloneJob(
   attempts: number,
   input: { failKind: unknown; error: unknown; productGid?: unknown; retryable?: unknown },
 ): Promise<{ status: string } | null> {
+  await markWorkerSeen()
   if (!isAttempts(attempts)) return null
   const productGid = productGidOf(input.productGid)
   const data = input.retryable === true && attempts < CLONE_MAX_ATTEMPTS
@@ -239,16 +227,19 @@ export async function failCloneJob(
 
 export type ProductState = { status: string; onlineStoreUrl: string | null; handle: string; productType: string | null; skus: (string | null)[] } | null
 
-type FetchLike = (url: string, init?: RequestInit) => Promise<Response>
+const PRODUCT_STATE_QUERY = 'query($id: ID!, $after: String) { product(id: $id) { status onlineStoreUrl handle productType '
+  + 'variants(first: 250, after: $after) { nodes { sku } pageInfo { hasNextPage endCursor } } } }'
 
-const PRODUCT_STATE_QUERY = 'query($id: ID!) { product(id: $id) { status onlineStoreUrl handle productType variants(first: 250) { nodes { sku } } } }'
+type ProductPage = {
+  status?: unknown; onlineStoreUrl?: unknown; handle?: unknown; productType?: unknown
+  variants?: { nodes?: unknown; pageInfo?: { hasNextPage?: unknown; endCursor?: unknown } }
+}
 
 const defaultVerifyLog = (message: string) => console.warn(`[clone verify] ${message}`)
 
-// Throws when Shopify cannot be asked, so the caller keeps the job RUNNING. Log lines and the thrown message hold the store id and
-// fixed text or an HTTP status only: an error message or a response body can echo the access token.
+// Throws when Shopify cannot be asked, so the caller keeps the job RUNNING. Every variant is read (up to 12 pages of 250): a product
+// with more is also a throw, never a pass, because an unread variant could carry a foreign SKU.
 export function makeShopifyProductState(opts: { fetchImpl?: FetchLike; log?: (message: string) => void } = {}): (storeId: string, gid: string) => Promise<ProductState> {
-  const fetchImpl: FetchLike = opts.fetchImpl ?? ((url, init) => fetch(url, init))
   const log = opts.log ?? defaultVerifyLog
   return async (storeId, gid) => {
     const fail = (reason: string) => {
@@ -256,48 +247,37 @@ export function makeShopifyProductState(opts: { fetchImpl?: FetchLike; log?: (me
       log(message)
       return new Error(message)
     }
-    let conn: StoreConnection
-    try {
-      conn = await getStoreConnection(storeId)
-    } catch {
-      throw fail('không lấy được kết nối của store')
-    }
-    let url: URL
-    try {
-      url = assertSafeExternalUrl(`https://${conn.shop}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`)
-    } catch {
-      throw fail('địa chỉ shop không hợp lệ')
-    }
-    let res: Response
-    try {
-      res = await fetchImpl(url.toString(), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': conn.token },
-        body: JSON.stringify({ query: PRODUCT_STATE_QUERY, variables: { id: gid } }),
-        redirect: 'error',
-        signal: AbortSignal.timeout(SHOPIFY_TIMEOUT_MS),
-      })
-    } catch {
-      throw fail('không kết nối được tới Shopify')
-    }
-    if (!res.ok) throw fail(`Shopify trả về HTTP ${res.status}`)
-    const json = await res.json().catch(() => null) as { data?: { product?: unknown }; errors?: unknown } | null
     const unreadable = () => fail('Shopify trả về dữ liệu không đọc được')
-    if (!json || json.errors || !json.data || !('product' in json.data)) throw unreadable()
-    if (json.data.product === null) return null
-    const p = json.data.product as { status?: unknown; onlineStoreUrl?: unknown; handle?: unknown; productType?: unknown; variants?: { nodes?: unknown } } | undefined
-    const nodes = p?.variants?.nodes
-    if (!p || typeof p.status !== 'string' || typeof p.handle !== 'string' || !Array.isArray(nodes)) throw unreadable()
-    return {
-      status: p.status,
-      onlineStoreUrl: typeof p.onlineStoreUrl === 'string' && p.onlineStoreUrl ? p.onlineStoreUrl : null,
-      handle: p.handle,
-      productType: typeof p.productType === 'string' && p.productType ? p.productType : null,
-      skus: nodes.map(node => {
+    const skus: (string | null)[] = []
+    let after: string | null = null
+    for (let page = 0; page < MAX_VARIANT_PAGES; page++) {
+      const answer = await shopifyAdminGraphql(storeId, PRODUCT_STATE_QUERY, { id: gid, after }, { fetchImpl: opts.fetchImpl })
+      if ('reason' in answer) throw fail(answer.reason)
+      const data = answer.data
+      if (typeof data !== 'object' || data === null || !('product' in data)) throw unreadable()
+      if (data.product === null) return null
+      const p = data.product as ProductPage | undefined
+      const nodes = p?.variants?.nodes
+      const more = p?.variants?.pageInfo?.hasNextPage
+      const cursor = p?.variants?.pageInfo?.endCursor
+      if (!p || typeof p.status !== 'string' || typeof p.handle !== 'string' || !Array.isArray(nodes) || typeof more !== 'boolean') throw unreadable()
+      for (const node of nodes) {
         const sku = (node as { sku?: unknown } | null)?.sku
-        return typeof sku === 'string' ? sku : null
-      }),
+        skus.push(typeof sku === 'string' ? sku : null)
+      }
+      if (!more) {
+        return {
+          status: p.status,
+          onlineStoreUrl: typeof p.onlineStoreUrl === 'string' && p.onlineStoreUrl ? p.onlineStoreUrl : null,
+          handle: p.handle,
+          productType: typeof p.productType === 'string' && p.productType ? p.productType : null,
+          skus,
+        }
+      }
+      if (typeof cursor !== 'string' || !cursor) throw unreadable()
+      after = cursor
     }
+    throw fail(`sản phẩm có hơn ${MAX_VARIANT_PAGES * 250} variant`)
   }
 }
 
@@ -318,6 +298,7 @@ export async function completeCloneJob(
   input: { productGid: unknown; handle?: unknown; qaVerdict: unknown; qaNote?: unknown; reused?: unknown; costUsd?: unknown; durationMs?: unknown },
   deps: { productState?: (storeId: string, gid: string) => Promise<ProductState> } = {},
 ): Promise<CompleteResult> {
+  await markWorkerSeen()
   if (!isAttempts(attempts)) return null
   const row = await prisma.cloneJob.findUnique({ where: { id }, select: { storeId: true, skuCode: true, status: true, attempts: true } })
   if (!row || row.status !== 'RUNNING' || row.attempts !== attempts) return null
