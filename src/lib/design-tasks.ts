@@ -28,7 +28,7 @@ import { MISSING_AREAS_PREFIX, missingPrintAreas, outdatedParts, printFilesReady
 import { exportedSupplierOf, isLineExported } from '@/lib/line-export'
 import { isUniqueViolation, retryOnBusy } from '@/lib/sqlite-busy'
 import {
-  LINE_FIX_EVENT_PREFIX, LINE_FIX_REASONS, heldLinkMessage, lineFixMessage, parseLineFix, readHeldLinkMessage, readLineFixMessage, readSupplierLinkKind,
+  LINE_FIX_EVENT_PREFIX, LINE_FIX_REASONS, NOT_ON_DRIVE_MESSAGE, heldLinkMessage, lineFixMessage, parseLineFix, readHeldLinkMessage, readLineFixMessage, readSupplierLinkKind,
   supplierLinkMessage, type LineFix, type LineFixReason, type SupplierLinkKind,
 } from '@/lib/line-fix'
 
@@ -466,10 +466,10 @@ export async function releaseLibraryTask(taskKey: string, actor: Actor) {
   return { task: row }
 }
 
-export class LineReopenError extends Error {
+export class LineFixError extends Error {
   constructor(message: string, readonly status: number) {
     super(message)
-    this.name = 'LineReopenError'
+    this.name = 'LineFixError'
   }
 }
 
@@ -498,8 +498,18 @@ function lineFixEvents(fix: LineFix, actor: Actor, heldLink: string | null) {
   ]
 }
 
+/**
+ * The link the supplier holds when the line is reopened: the line's link, unless the last fix's re-check was never marked
+ * told. The supplier then never got that cycle's new link and still holds what that cycle recorded (none for a reopen made
+ * before links were recorded, #LIT5105).
+ */
+async function heldLinkAtReopen(taskId: string, lineLink: string | null): Promise<string | null> {
+  const cycle = lastFixCycle(await prisma.designTaskEvent.findMany({ where: { taskId }, select: TASK_EVENT_SELECT }))
+  return cycle?.recheck && !cycle.told ? cycle.held?.link ?? null : lineLink
+}
+
 async function reopenTaskOfLine(task: { id: string; taskKey: string; status: string }, actor: Actor, fix: LineFix, heldLink: string | null): Promise<{ task: TaskRow; changed: boolean }> {
-  if (task.status === 'CANCELLED') throw new LineReopenError(`Task ${task.taskKey} của dòng này đã huỷ — task đã huỷ không mở lại được`, 409)
+  if (task.status === 'CANCELLED') throw new LineFixError(`Task ${task.taskKey} của dòng này đã huỷ — task đã huỷ không mở lại được`, 409)
   const changed = task.status === 'DONE' && await retryOnBusy(() => prisma.$transaction(async tx => {
     const r = await tx.designTask.updateMany({ where: { id: task.id, status: 'DONE' }, data: lineFixReopen(fix) })
     if (r.count === 0) return false
@@ -518,9 +528,9 @@ async function reopenTaskOfLine(task: { id: string; taskKey: string; status: str
  */
 export async function reopenLineForFix(lineId: string, actor: Actor, input: { reason?: unknown; note?: unknown }): Promise<{ task: TaskRow; changed: boolean }> {
   const fix = parseLineFix(input)
-  if ('error' in fix) throw new LineReopenError(fix.error, 400)
+  if ('error' in fix) throw new LineFixError(fix.error, 400)
   const line = await prisma.orderLine.findUnique({ where: { id: lineId } })
-  if (!line) throw new LineReopenError('Không tìm thấy dòng', 404)
+  if (!line) throw new LineFixError('Không tìm thấy dòng', 404)
   const order = await prisma.order.findUniqueOrThrow({
     where: { id: line.orderId },
     select: {
@@ -528,17 +538,17 @@ export async function reopenLineForFix(lineId: string, actor: Actor, input: { re
       lines: { select: { shopifyLineId: true, linePosition: true, sku: true, productTitle: true, shopifyProductType: true } },
     },
   })
-  if (isNonProductLine(line)) throw new LineReopenError('Dòng này không phải sản phẩm (add-on, phí…) — không có design để sửa', 409)
-  if (isClosedOrder(order)) throw new LineReopenError('Đơn đã huỷ hoặc hoàn tiền — không mở lại dòng để sửa', 409)
-  if (isShippedOrder(order)) throw new LineReopenError('Đơn đã giao (fulfilled) — không mở lại dòng để sửa', 409)
-  if (!isSentLine(order, line)) throw new LineReopenError('Dòng chưa gửi xưởng — sửa design ngay trên task, không cần mở lại', 409)
+  if (isNonProductLine(line)) throw new LineFixError('Dòng này không phải sản phẩm (add-on, phí…) — không có design để sửa', 409)
+  if (isClosedOrder(order)) throw new LineFixError('Đơn đã huỷ hoặc hoàn tiền — không mở lại dòng để sửa', 409)
+  if (isShippedOrder(order)) throw new LineFixError('Đơn đã giao (fulfilled) — không mở lại dòng để sửa', 409)
+  if (!isSentLine(order, line)) throw new LineFixError('Dòng chưa gửi xưởng — sửa design ngay trên task, không cần mở lại', 409)
 
   const ofLine = { orderId_shopifyLineId: { orderId: order.id, shopifyLineId: line.shopifyLineId } }
   const existing = await prisma.designTask.findUnique({ where: ofLine })
-  if (existing) return reopenTaskOfLine(existing, actor, fix, line.designDriveLink)
+  if (existing) return reopenTaskOfLine(existing, actor, fix, await heldLinkAtReopen(existing.id, line.designDriveLink))
   const taskKey = lineKeysOf(order.shopifyOrderNumber, order.lines).get(line.shopifyLineId)!
   const keyTaken = `Mã ${taskKey} đang thuộc một task khác — bấm Đồng bộ task rồi thử lại`
-  if (await prisma.designTask.findUnique({ where: { taskKey }, select: { id: true } })) throw new LineReopenError(keyTaken, 409)
+  if (await prisma.designTask.findUnique({ where: { taskKey }, select: { id: true } })) throw new LineFixError(keyTaken, 409)
   const settings = await getDesignSettings()
   const slaHours = line.customized ? settings.slaCustomHours : settings.slaNonCustomHours
   const supplierId = line.exportedToSupplierId ?? line.resolvedSupplierId
@@ -553,7 +563,7 @@ export async function reopenLineForFix(lineId: string, actor: Actor, input: { re
   } catch (e: any) {
     if (!isUniqueViolation(e)) throw e
     const raced = await prisma.designTask.findUnique({ where: ofLine })
-    if (!raced) throw new LineReopenError(keyTaken, 409)
+    if (!raced) throw new LineFixError(keyTaken, 409)
     return reopenTaskOfLine(raced, actor, fix, line.designDriveLink)
   }
   const row = await rowFor(taskKey)
@@ -605,13 +615,13 @@ function lastFixCycle(events: TaskEvent[]): FixCycle | null {
 }
 
 /**
- * Whether the link the supplier holds still leads to the approved fix. It does when it is the line's link after the fix, or
- * the task's own folder (the new file lands there; the line links a single file only until the folder holds it). An unknown
- * link, an empty one, or any other (a library folder, one file the fix replaced) means sending the new link: that costs nothing.
+ * Whether the link the supplier holds still leads to the approved fix: only when it is the task's own Drive folder, where every
+ * new version lands. Any other link (unknown, empty, a library folder, one part's file, even the file the line still links
+ * when the fix is in another part) means sending the new link, which costs nothing. Compared as stored: two spellings of one
+ * folder answer NEW_LINK, the safe side.
  */
-function supplierLinkKind(held: FixCycle['held'], linkAfter: string | null, taskFolder: string | null): SupplierLinkKind {
-  if (!held?.link) return 'NEW_LINK'
-  return held.link === linkAfter || (!!taskFolder && held.link === taskFolder) ? 'SAME_FOLDER' : 'NEW_LINK'
+function supplierLinkKind(held: FixCycle['held'], taskFolder: string | null): SupplierLinkKind {
+  return !!held?.link && !!taskFolder && held.link === taskFolder ? 'SAME_FOLDER' : 'NEW_LINK'
 }
 
 type FixDelivery = { kind: 'API' } | { kind: 'LINK'; supplierName: string; held: FixCycle['held'] }
@@ -724,10 +734,9 @@ export async function transitionTask(taskKey: string, actor: Actor, input: Trans
       const accepted = missing.length > 0 && input.acceptMissingAreas === true && canApprove
       if (missing.length > 0 && !accepted) throw new Error(`${MISSING_AREAS_PREFIX}${missing.join(', ')}`)
       const delivery = current.pipelineStatus === 'DESIGN_REJECTED' ? null : await fixDelivery(task.id, line.id)
-      const approved = await updateLine(line.id, { done: true, requiredAreas: accepted ? [] : slots, reofferLine: delivery?.kind === 'API' })
-      order = approved?.order ?? null
+      order = (await updateLine(line.id, { done: true, requiredAreas: accepted ? [] : slots, reofferLine: delivery?.kind === 'API' }))?.order ?? null
       if (delivery?.kind === 'LINK') {
-        notice = supplierLinkMessage(supplierLinkKind(delivery.held, approved?.line.designDriveLink ?? null, task.driveFolderUrl), delivery.supplierName)
+        notice = supplierLinkMessage(supplierLinkKind(delivery.held, task.driveFolderUrl), delivery.supplierName)
         events.push({ type: SUPPLIER_RECHECK, message: notice, actorId: null })
       }
       data.rejectReasons = null; data.rejectNote = null
@@ -842,8 +851,10 @@ export type SupplierFixRow = {
   linkKind: SupplierLinkKind | null
   /** The link the supplier held when the line was reopened; null when it was not recorded. */
   supplierLink: string | null
-  /** The line's design link now: the one to send. */
+  /** The line's design link now. */
   designLink: string | null
+  /** The link to send for NEW_LINK: the task's Drive folder once the line carries it (it then holds every part); null before. */
+  newLink: string | null
 }
 
 export type SupplierFixList = {
@@ -895,7 +906,7 @@ export async function listSupplierFixes(f: SupplierFixFilter = {}): Promise<Supp
       ],
     },
     select: {
-      id: true, taskKey: true, status: true, shopifyLineId: true, events: { select: TASK_EVENT_SELECT },
+      id: true, taskKey: true, status: true, shopifyLineId: true, driveFolderUrl: true, events: { select: TASK_EVENT_SELECT },
       order: { select: {
         ...SENT_CHECK_SELECT, id: true, shopifyOrderNumber: true, store: { select: { shop: true, project: { select: { name: true } } } },
         lines: { select: { ...SENT_CHECK_SELECT.lines.select, designDriveLink: true } },
@@ -927,7 +938,7 @@ export async function listSupplierFixes(f: SupplierFixFilter = {}): Promise<Supp
         reason: cycle.reason, note: cycle.note, reopenedBy: null, reopenedAt: cycle.reopen.createdAt.toISOString(),
         approvedAt: cycle.recheck?.createdAt.toISOString() ?? null, toldBy: null, toldAt: cycle.told?.createdAt.toISOString() ?? null,
         linkKind: cycle.recheck ? readSupplierLinkKind(cycle.recheck.message) : null, supplierLink: cycle.held?.link ?? null,
-        designLink: line.designDriveLink,
+        designLink: line.designDriveLink, newLink: sendableLink(line.designDriveLink, t.driveFolderUrl),
       },
     })
   }
@@ -957,22 +968,38 @@ export async function listSupplierFixes(f: SupplierFixFilter = {}): Promise<Supp
   }
 }
 
-/** "Đã báo xưởng": records who told the supplier (or sent it which new link), and when. Nothing changes when nothing is waiting. */
+/**
+ * The link staff can send for a NEW_LINK fix: the task's Drive folder, once the line carries it (approval and the folder tidy
+ * put it there when the folder holds every current print). A single file of this server or of Drive is never it: in a design of
+ * several parts the fixed part may be another one.
+ */
+function sendableLink(lineLink: string | null, taskFolder: string | null): string | null {
+  return !!lineLink && !!taskFolder && lineLink === taskFolder ? taskFolder : null
+}
+
+/**
+ * "Đã báo xưởng": records who told the supplier (or sent it which new link), and when. Nothing changes when nothing is waiting.
+ * A new link can only have been sent once there is one (409 before).
+ */
 export async function markSupplierTold(taskKey: string, actor: Actor): Promise<{ changed: boolean }> {
   const task = await prisma.designTask.findUnique({
     where: { taskKey },
-    select: { id: true, status: true, shopifyLineId: true, order: { select: { ...SENT_CHECK_SELECT, lines: { select: { ...SENT_CHECK_SELECT.lines.select, designDriveLink: true } } } } },
+    select: {
+      id: true, status: true, shopifyLineId: true, driveFolderUrl: true,
+      order: { select: { ...SENT_CHECK_SELECT, lines: { select: { ...SENT_CHECK_SELECT.lines.select, designDriveLink: true } } } },
+    },
   })
   if (!task) throw new Error('Task not found')
   const line = task.order.lines.find(l => l.shopifyLineId === task.shopifyLineId)
   const supplierId = line ? (exportedSupplierOf(task.order, line) ?? line.resolvedSupplierId) : null
   const name = (supplierId ? await prisma.supplier.findUnique({ where: { id: supplierId }, select: { name: true } }) : null)?.name ?? 'xưởng'
+  const newLink = sendableLink(line?.designDriveLink ?? null, task.driveFolderUrl)
   return retryOnBusy(() => prisma.$transaction(async tx => {
     const cycle = task.status === 'DONE' ? lastFixCycle(await tx.designTaskEvent.findMany({ where: { taskId: task.id }, select: TASK_EVENT_SELECT })) : null
     if (!cycle?.recheck || cycle.told) return { changed: false }
-    const message = readSupplierLinkKind(cycle.recheck.message) === 'SAME_FOLDER'
-      ? `Đã báo ${name} xem lại folder design`
-      : `Đã gửi ${name} link mới${line?.designDriveLink ? `: ${line.designDriveLink}` : ''}`
+    const kind = readSupplierLinkKind(cycle.recheck.message)
+    if (kind === 'NEW_LINK' && !newLink) throw new LineFixError(NOT_ON_DRIVE_MESSAGE, 409)
+    const message = kind === 'SAME_FOLDER' ? `Đã báo ${name} xem lại folder design` : `Đã gửi ${name} link mới: ${newLink}`
     await tx.designTaskEvent.create({ data: { taskId: task.id, type: SUPPLIER_TOLD, message, actorId: actor.id } })
     return { changed: true }
   }))

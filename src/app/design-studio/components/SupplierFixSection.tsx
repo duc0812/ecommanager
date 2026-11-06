@@ -1,7 +1,7 @@
 'use client'
 import { useCallback, useEffect, useState } from 'react'
 import type { SupplierFixList, SupplierFixRow } from './types'
-import { LINE_FIX_REASONS, SUPPLIER_LINK_KINDS, SUPPLIER_LINK_LABELS, supplierLinkMessage } from '@/lib/line-fix'
+import { LINE_FIX_REASONS, NOT_ON_DRIVE_MESSAGE, SUPPLIER_LINK_KINDS, SUPPLIER_LINK_LABELS, supplierLinkMessage } from '@/lib/line-fix'
 import { StoreLabel } from '@/components/StoreFilter'
 import { copyText, postJson, requestJson, taskUrl } from './model'
 import { ErrorBanner, ExtLink, Icon, Pill, STATUS_META, btn, card, chip, fmtDate, fmtDateTime, iconBtn } from './ui'
@@ -9,11 +9,9 @@ import { ErrorBanner, ExtLink, Icon, Pill, STATUS_META, btn, card, chip, fmtDate
 const ALL = 'ALL'
 const NO_REASON = 'none'
 type Kind = 'waiting' | 'told' | 'fixing'
-/** A file still on this server has an app-only link: the supplier cannot open it until it reaches Drive. */
-const SERVER_ONLY = /^\/api\//
+const NO_HELD_LINK = '(chưa ghi nhận link nào xưởng đang giữ)'
 
 function LinkWithCopy({ href, label, strong, taskKey, onCopy }: { href: string; label: string; strong?: boolean; taskKey: string; onCopy: (link: string) => void }) {
-  if (SERVER_ONLY.test(href)) return <span className="text-on-surface-variant">File chưa lên Drive — tải lại sau để lấy link gửi xưởng</span>
   return (
     <span className="flex items-center gap-xs min-w-0 max-w-full">
       <span className={`truncate ${strong ? 'font-semibold' : ''}`}><ExtLink href={href}>{label}</ExtLink></span>
@@ -24,26 +22,33 @@ function LinkWithCopy({ href, label, strong, taskKey, onCopy }: { href: string; 
   )
 }
 
-/** What staff do for a row: tell the supplier its link still holds the fix, or send the new link (the old one shown struck through). */
+/**
+ * What staff do for a row. SAME_FOLDER: the folder the supplier holds, to point it at. NEW_LINK: the task folder to send, once
+ * the line carries it, and the link the supplier holds struck through so it can be told which one to drop.
+ */
 function SupplierAction({ r, onCopy }: { r: SupplierFixRow; onCopy: (link: string) => void }) {
   if (!r.linkKind) {
-    return r.supplierLink
-      ? <span className="text-on-surface-variant break-all">Xưởng đang giữ: {r.supplierLink}</span>
-      : <span className="text-on-surface-variant">—</span>
+    return <span className="text-on-surface-variant break-all">Xưởng đang giữ: {r.supplierLink ?? NO_HELD_LINK}</span>
   }
-  const isNew = r.linkKind === 'NEW_LINK'
+  if (r.linkKind === 'SAME_FOLDER') {
+    return (
+      <div className="flex flex-col items-start gap-xs min-w-0 max-w-full">
+        <Pill tone="ok" icon="folder_open">{SUPPLIER_LINK_LABELS.SAME_FOLDER}</Pill>
+        <span className="text-on-surface">{supplierLinkMessage('SAME_FOLDER', r.supplierName ?? 'xưởng')}</span>
+        {r.supplierLink && <LinkWithCopy href={r.supplierLink} label="Folder xưởng đang giữ" taskKey={r.taskKey} onCopy={onCopy} />}
+      </div>
+    )
+  }
   return (
     <div className="flex flex-col items-start gap-xs min-w-0 max-w-full">
-      <Pill tone={isNew ? 'warn' : 'ok'} icon={isNew ? 'link' : 'folder_open'}>{SUPPLIER_LINK_LABELS[r.linkKind]}</Pill>
-      <span className={isNew ? 'font-semibold text-on-surface' : 'text-on-surface'}>{supplierLinkMessage(r.linkKind, r.supplierName ?? 'xưởng')}</span>
-      {r.designLink
-        ? <LinkWithCopy href={r.designLink} label={isNew ? 'Link mới' : 'Folder design'} strong={isNew} taskKey={r.taskKey} onCopy={onCopy} />
-        : <span className="text-on-surface-variant">Chưa có link</span>}
-      {isNew && r.supplierLink && r.supplierLink !== r.designLink && (
-        <span className="text-on-surface-variant break-all" title="Link xưởng đang giữ — báo xưởng bỏ link này">
-          Link cũ (bỏ): <span className="line-through">{r.supplierLink}</span>
-        </span>
-      )}
+      <Pill tone="warn" icon="link">{SUPPLIER_LINK_LABELS.NEW_LINK}</Pill>
+      <span className="font-semibold text-on-surface">{supplierLinkMessage('NEW_LINK', r.supplierName ?? 'xưởng')}</span>
+      {r.newLink
+        ? <LinkWithCopy href={r.newLink} label="Link mới" strong taskKey={r.taskKey} onCopy={onCopy} />
+        : <span className="text-on-surface-variant">{NOT_ON_DRIVE_MESSAGE}</span>}
+      {r.supplierLink
+        ? <span className="text-on-surface-variant break-all" title="Link xưởng đang giữ — báo xưởng bỏ link này">Link cũ (bỏ): <span className="line-through">{r.supplierLink}</span></span>
+        : <span className="text-on-surface-variant">{NO_HELD_LINK}</span>}
     </div>
   )
 }
@@ -87,7 +92,8 @@ function Rows({ kind, rows, showStore, busyKey, onOpenTask, onTold, onCopy }: {
                 <div className="flex flex-col items-start gap-xs min-w-0">
                   <SupplierAction r={r} onCopy={onCopy} />
                   {kind === 'waiting' && (
-                    <button type="button" className={btn} disabled={busyKey === r.taskKey} onClick={() => onTold(r.taskKey)}>
+                    <button type="button" className={btn} disabled={busyKey === r.taskKey || (r.linkKind === 'NEW_LINK' && !r.newLink)}
+                      title={r.linkKind === 'NEW_LINK' && !r.newLink ? NOT_ON_DRIVE_MESSAGE : undefined} onClick={() => onTold(r.taskKey)}>
                       <Icon name="done" className="text-[16px]" />Đã báo xưởng
                     </button>
                   )}
@@ -158,7 +164,7 @@ export default function SupplierFixSection({ version, showStore, onOpenTask }: {
           className={`inline-flex items-center h-5 px-[7px] rounded-full text-[11px] font-semibold ${data.waitingTotal ? 'bg-amber-100 text-amber-900' : 'bg-surface-container text-on-surface-variant'}`}>
           {data.waitingTotal}
         </span>
-        <span className="text-label-sm text-on-surface-variant">Dòng gửi bằng link (sheet, CSV) đã sửa design: báo xưởng xem lại folder nếu link cũ vẫn đúng, gửi link mới nếu không. Tool không ghi lại sheet.</span>
+        <span className="text-label-sm text-on-surface-variant">Dòng gửi bằng link (sheet, CSV) đã sửa design: báo xưởng xem lại folder nếu link cũ vẫn đúng, gửi link mới nếu không. Tool không ghi lại sheet. Nếu không chắc xưởng đang giữ link nào, cứ gửi lại link trong dòng.</span>
         <button type="button" className={`${btn} ml-auto`} onClick={load}><Icon name="refresh" className="text-[16px]" />Tải lại</button>
       </div>
       <div className="px-md py-sm flex flex-col gap-sm">

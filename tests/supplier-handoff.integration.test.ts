@@ -790,8 +790,8 @@ describe('lines go to their supplier one by one', () => {
     expect(r.task).toMatchObject({ status: 'REJECTED', rejectReasons: ['Khách yêu cầu sửa'], rejectNote: 'đổi tên Emily' })
     expect(await order(o.id)).toMatchObject({ pipelineStatus: before.pipelineStatus, designReady: before.designReady })
     await transitionTask(o.keys[1], DES, { to: 'REVIEW' })
-    // Approved again with the same print file: the link the supplier got still leads to it.
-    expect((await transitionTask(o.keys[1], DES, { to: 'DONE' })).notice).toMatch(/^Báo .+ xem lại folder design — link cũ vẫn đúng$/)
+    // The line carries a file link of this server (no task folder): only the task's own folder ever counts as "link cũ vẫn đúng".
+    expect((await transitionTask(o.keys[1], DES, { to: 'DONE' })).notice).toMatch(/^Gửi .+ LINK MỚI — link cũ không có file đã sửa$/)
     const [, after] = await linesOf(o.id)
     expect(after.exportedAt).not.toBeNull()
     expect((await handoffStateFor(o.id))!.readyLineIds).not.toContain(sent.id)

@@ -3,7 +3,7 @@ export const LINE_FIX_REASONS = ['Xưởng yêu cầu update design', 'Khách y�
 export type LineFixReason = (typeof LINE_FIX_REASONS)[number]
 export const LINE_FIX_NOTE_MIN = 3
 export const LINE_FIX_NOTE_MAX = 500
-export const LINE_FIX_HELP = 'Chỉ mở lại dòng này. Dòng đã ghi sheet: duyệt lại xong chỉ cần báo xưởng xem lại folder, không ghi sheet nữa. Dòng gửi API: duyệt lại xong riêng dòng này quay về Duyệt sản xuất để gửi lại.'
+export const LINE_FIX_HELP = 'Chỉ mở lại dòng này. Dòng đã ghi sheet: duyệt lại xong không ghi sheet nữa — tool sẽ nói rõ cần báo xưởng xem lại folder cũ hay phải gửi xưởng link mới. Dòng gửi API: duyệt lại xong riêng dòng này quay về Duyệt sản xuất để gửi lại.'
 
 export type LineFix = { reason: LineFixReason; note: string }
 
@@ -60,6 +60,9 @@ const SAME_FOLDER_TAIL = ' xem lại folder design — link cũ vẫn đúng'
 export function supplierLinkMessage(kind: SupplierLinkKind, supplierName: string): string {
   return kind === 'SAME_FOLDER' ? `Báo ${supplierName}${SAME_FOLDER_TAIL}` : `Gửi ${supplierName} LINK MỚI — link cũ không có file đã sửa`
 }
+
+/** A NEW_LINK fix whose line does not carry its task folder yet: there is no link to send, so "Đã báo xưởng" waits. */
+export const NOT_ON_DRIVE_MESSAGE = 'File chưa lên Drive — chưa có link để gửi xưởng'
 
 export function readSupplierLinkKind(message: string): SupplierLinkKind {
   return message.startsWith('Báo ') && message.endsWith(SAME_FOLDER_TAIL) ? 'SAME_FOLDER' : 'NEW_LINK'

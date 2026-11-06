@@ -122,6 +122,8 @@ export type SupplierFixRow = {
   linkKind: 'SAME_FOLDER' | 'NEW_LINK' | null
   supplierLink: string | null
   designLink: string | null
+  /** NEW_LINK: the task folder once the line carries it; null while there is nothing to send. */
+  newLink: string | null
 }
 
 export type SupplierFixList = {
