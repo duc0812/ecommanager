@@ -296,8 +296,10 @@ Trang theo spec 7.4:
   - `runner.validate_job(job: dict) -> str | None` — trả lý do khi: `sourceUrl` không khớp `SOURCE_URL_RE` (bên dưới), `skuCode` không khớp `^[A-Z]{2}\d{10}$`, `orderPrefix` không thuộc `KNOWN_STORES`, `id` không khớp `^[a-z0-9]{10,40}$`.
 
     ```python
-    SOURCE_URL_RE = re.compile(r"^https://[A-Za-z0-9.-]+(/[^\s\"'<>\\^`{|}]*)?$")
+    SOURCE_URL_RE = re.compile(r"^https://[a-z0-9.-]+(/[A-Za-z0-9._~%+,@=:-]*)*(\?view=[A-Za-z0-9_-]+)?$")
     ```
+
+    Cùng mẫu với `SOURCE_URL_RE` trong `src/lib/clone/jobs.ts` (VPS đã dựng lại link theo mẫu này trước khi lưu). Mẫu chỉ cho ký tự vô hại với shell kể cả khi không đặt trong nháy, vì phiên Claude sẽ gõ link này vào dòng lệnh của tool clone.
   - `detect.PLATFORMS = ('customily', 'customall', 'teeinblue', 'customix')`; `detect.detect_platform(html: str) -> str` trả một trong bốn tên đó, `'unsupported:ymq'`, `'unsupported:globo'`, hoặc `'unknown'`. Customily chỉ nhận khi thấy host script của Customily (`cdn.customily.com`, `sh.customily.com`, `app.customily.com`), không nhận chữ `customily` trần.
   - `detect.fetch_html(url, opener=None, timeout=30) -> str | None` — `None` khi lỗi hoặc mã khác 200.
   - `runner.run_job(job: dict, deps) -> None` với `deps` có `client`, `fetch_html`, `find_existing`, `run_session`, `job_root`, `clock`. Thứ tự: `validate_job` → khoá → `find_existing` → nhận diện → kiểm `targets` → `run_session` → báo kết quả.
