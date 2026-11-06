@@ -109,6 +109,20 @@ function fail(id: string, error: string): Promise<ScaleJob> {
   return prisma.scaleJob.update({ where: { id }, data: { status: 'failed', error, completedAt: new Date() } })
 }
 
+const RATE_LIMITED = 'Kie đang giới hạn tốc độ gọi (429), đợi một lát rồi bấm Tạo lại'
+
+// Kie answers 429 "call frequency is too high" when several views start at once; wait and try again before giving up.
+async function kieRetry<T>(fn: () => Promise<T>): Promise<T> {
+  const delay = Number(process.env.SCALE_RETRY_DELAY_MS ?? 5000)
+  for (let attempt = 1; ; attempt++) {
+    try { return await fn() } catch (err: any) {
+      if (!/429|frequency is too high/i.test(String(err?.message ?? err))) throw err
+      if (attempt >= 3) throw new Error(RATE_LIMITED)
+      await new Promise(resolve => setTimeout(resolve, delay * attempt))
+    }
+  }
+}
+
 const current = (id: string) => prisma.scaleJob.findUnique({ where: { id } }).catch(() => null)
 const input = (form: ModelForm, prompt: string, urls: string[], deps: ScaleDeps) => imageInput(form, prompt, urls, deps.settings.resolution, deps.settings.viewAspect)
 
@@ -142,11 +156,11 @@ export async function runPipeline(jobId: string, deps: ScaleDeps): Promise<Scale
     const states: ViewState[] = []
     const prompts: string[] = []
     try {
-      const form = await imageForm(deps.image, job.model)
-      const srcUrl = await deps.image.uploadBase64(srcDataUrl, `scale-${job.id}-src.${job.sourceFile!.split('.').pop()}`)
+      const form = await kieRetry(() => imageForm(deps.image!, job.model))
+      const srcUrl = await kieRetry(() => deps.image!.uploadBase64(srcDataUrl, `scale-${job.id}-src.${job.sourceFile!.split('.').pop()}`))
       for (let i = 0; i < target.views.length; i++) {
         const v = target.views[i]
-        const blankUrl = await deps.image.uploadBase64(toDataUrl(blanks[i]!.bytes, blanks[i]!.mime), `scale-${job.id}-blank-${i}.${v.blankFile!.split('.').pop()}`)
+        const blankUrl = await kieRetry(() => deps.image!.uploadBase64(toDataUrl(blanks[i]!.bytes, blanks[i]!.mime), `scale-${job.id}-blank-${i}.${v.blankFile!.split('.').pop()}`))
         const first = states.findIndex(s => s.side === v.side)
         states.push({ viewId: v.id, label: v.label, side: v.side as ViewSide, status: first === -1 ? 'running' : 'waiting', blankDescription: v.blankDescription, unprintedParts: v.unprintedParts, blankUrl, ...(first === -1 ? {} : { after: first }) })
       }
@@ -155,7 +169,7 @@ export async function runPipeline(jobId: string, deps: ScaleDeps): Promise<Scale
         if (state.status !== 'running') continue
         const prompt = buildViewPrompt(target.name, state, design)
         prompts.push(`[${state.label}]\n${prompt}`)
-        state.taskId = await deps.image.createTask(job.model, input(form, prompt, [srcUrl, state.blankUrl], deps))
+        state.taskId = await kieRetry(() => deps.image!.createTask(job.model, input(form, prompt, [srcUrl, state.blankUrl], deps)))
       }
     } catch (err) {
       throw new Error(explainKieError(err, 'Creative', job.model))
@@ -210,9 +224,9 @@ async function advance(job: ScaleJob, deps: ScaleDeps): Promise<ScaleJob> {
       try {
         const part = await readScaleFile('jobs', job.id, lead.file)
         if (!part) throw new Error('missing finished view')
-        const form = await imageForm(deps.image, job.model)
-        const partUrl = await deps.image.uploadBase64(toDataUrl(part.bytes, part.mime), `scale-${job.id}-${lead.file}`)
-        state.taskId = await deps.image.createTask(job.model, input(form, buildMatchPrompt(job.targetName, state), [partUrl, state.blankUrl], deps))
+        const form = await kieRetry(() => imageForm(deps.image!, job.model))
+        const partUrl = await kieRetry(() => deps.image!.uploadBase64(toDataUrl(part.bytes, part.mime), `scale-${job.id}-${lead.file}`))
+        state.taskId = await kieRetry(() => deps.image!.createTask(job.model, input(form, buildMatchPrompt(job.targetName, state), [partUrl, state.blankUrl], deps)))
         state.status = 'running'
       } catch (err) {
         state.status = 'failed'
@@ -245,7 +259,7 @@ export async function retryFailedViews(id: string, deps: ScaleDeps): Promise<Sca
   const design = DesignSchema.parse(JSON.parse(job.designJson))
   const stamp = Date.now()
   try {
-    const form = await imageForm(deps.image, job.model)
+    const form = await kieRetry(() => imageForm(deps.image!, job.model))
     let srcUrl: string | null = null
     for (let i = 0; i < states.length; i++) {
       const state = states[i]
@@ -253,14 +267,14 @@ export async function retryFailedViews(id: string, deps: ScaleDeps): Promise<Sca
       const view = target.views.find(v => v.id === state.viewId)
       const blank = view?.blankFile ? await readScaleFile('views', view.id, view.blankFile) : null
       if (!view || !blank) throw new ScaleInputError(`Góc "${state.label}" không còn ảnh phôi`)
-      state.blankUrl = await deps.image.uploadBase64(toDataUrl(blank.bytes, blank.mime), `scale-${job.id}-blank-${i}-r${stamp}.${view.blankFile!.split('.').pop()}`)
+      state.blankUrl = await kieRetry(() => deps.image!.uploadBase64(toDataUrl(blank.bytes, blank.mime), `scale-${job.id}-blank-${i}-r${stamp}.${view.blankFile!.split('.').pop()}`))
       delete state.error
       delete state.taskId
       delete state.resultUrl
       delete state.file
       if (state.after !== undefined) { state.status = 'waiting'; continue }
-      srcUrl ??= await deps.image.uploadBase64(toDataUrl(src.bytes, src.mime), `scale-${job.id}-src-r${stamp}.${job.sourceFile!.split('.').pop()}`)
-      state.taskId = await deps.image.createTask(job.model, input(form, buildViewPrompt(job.targetName, state, design), [srcUrl, state.blankUrl], deps))
+      srcUrl ??= await kieRetry(() => deps.image!.uploadBase64(toDataUrl(src.bytes, src.mime), `scale-${job.id}-src-r${stamp}.${job.sourceFile!.split('.').pop()}`))
+      state.taskId = await kieRetry(() => deps.image!.createTask(job.model, input(form, buildViewPrompt(job.targetName, state, design), [srcUrl!, state.blankUrl], deps)))
       state.status = 'running'
     }
   } catch (err) {

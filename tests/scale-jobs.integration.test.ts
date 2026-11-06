@@ -68,6 +68,7 @@ const views = (job: { viewsJson: string }) => JSON.parse(job.viewsJson) as any[]
 beforeAll(async () => {
   tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'scale-jobs-'))
   process.env.DESIGN_STORAGE_DIR = tmp
+  process.env.SCALE_RETRY_DELAY_MS = '0'
   partPng = await sharp({ create: { width: 200, height: 300, channels: 3, background: '#3355aa' } }).png().toBuffer()
   await clean()
   targetId = await makeTarget('JOBT1', 'Test Fleece Zip Hoodie', [{ label: 'Front', side: 'front' }, { label: 'Back', side: 'back' }])
@@ -124,6 +125,21 @@ describe('scale jobs', () => {
     expect(second[2].input_urls).toEqual([`https://tempfile.redpandaai.co/scale-${job.id}-part-0.png`, `https://tempfile.redpandaai.co/scale-${job.id}-blank-1.png`])
     expect(log.filter(l => l[0] === 'upload').map(l => l[1])).toContain(`scale-${job.id}-part-0.png`)
     expect(await refreshScaleJob(job.id, deps)).toMatchObject({ status: 'done', cost: '20 credits' })
+  })
+
+  it('waits and tries again when Kie says the call frequency is too high', async () => {
+    const { deps, creates } = fakeDeps()
+    let schemaCalls = 0
+    let createCalls = 0
+    const realCreate = deps.image!.createTask
+    deps.image!.schema = async () => { schemaCalls += 1; if (schemaCalls === 1) throw new Error('kie schema 429: Your call frequency is too high. Please try again later.'); return { input: editSchema, root: {} } }
+    deps.image!.createTask = async (m, i) => { createCalls += 1; if (createCalls === 1) throw new Error('kie createTask 429: Your call frequency is too high. Please try again later.'); return realCreate(m, i) }
+    const job = await run((await start(deps)).id, deps)
+    expect(job).toMatchObject({ status: 'running', error: null })
+    expect(creates()).toHaveLength(2)
+    const dead = fakeDeps()
+    dead.deps.image!.createTask = async () => { throw new Error('kie createTask 429: Your call frequency is too high. Please try again later.') }
+    expect((await run((await start(dead.deps)).id, dead.deps)).error).toBe('Kie đang giới hạn tốc độ gọi (429), đợi một lát rồi bấm Tạo lại')
   })
 
   it('refuses a target that is not ready, before anything is uploaded', async () => {
