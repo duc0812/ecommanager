@@ -10,7 +10,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   if ('error' in auth) return auth.error
   try {
     const job = await refreshScaleJob(params.id, await loadScaleDeps())
-    return NextResponse.json({ job: scaleJobView(job, { debug: auth.user.role === 'SUPERADMIN' }) })
+    return NextResponse.json({ job: scaleJobView(job) })
   } catch (err) { return scaleError(err) }
 }
 

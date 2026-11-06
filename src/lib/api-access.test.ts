@@ -153,6 +153,8 @@ describe('PGprints API access', () => {
     expect(canCallApi('SELLER', ['tools_scale'], '/api/tools/scale/targets', 'GET')).toBe('ok')
     expect(canCallApi('ADMIN', ['tools_scale'], '/api/tools/scale/targets', 'POST')).toBe('forbidden')
     expect(canCallApi('ADMIN', ['tools_scale'], '/api/tools/scale/settings', 'POST')).toBe('forbidden')
+    expect(canCallApi('ADMIN', ['tools_scale'], '/api/tools/scale/views/v1/blank', 'POST')).toBe('forbidden')
+    expect(canCallApi('SUPERADMIN', [], '/api/tools/scale/views/v1', 'PATCH')).toBe('ok')
     expect(canCallApi('SUPERADMIN', [], '/api/tools/scale/targets', 'POST')).toBe('ok')
     expect(canCallApi('SELLER', DEFAULT_ROLE_PERMISSIONS.SELLER, '/api/tools/scale/jobs', 'GET')).toBe('forbidden')
     expect(canCallApi('ADMIN', DEFAULT_ROLE_PERMISSIONS.ADMIN, '/api/tools/scale/jobs', 'GET')).toBe('ok')

@@ -127,6 +127,7 @@ export const API_ACCESS_RULES: ApiRule[] = [
   { prefix: '/api/tools/creative', access: ['tools_creative'] },
   { prefix: '/api/tools/scale/targets', methods: WRITE, access: 'SUPERADMIN' },
   { prefix: '/api/tools/scale/settings', methods: WRITE, access: 'SUPERADMIN' },
+  { prefix: '/api/tools/scale/views', methods: WRITE, access: 'SUPERADMIN' },
   { prefix: '/api/tools/scale', access: ['tools_scale'] },
   { prefix: '/api/trello/config', methods: READ, access: ['setup_store'] },
   { prefix: '/api/trello/config', methods: WRITE, access: 'SUPERADMIN' },

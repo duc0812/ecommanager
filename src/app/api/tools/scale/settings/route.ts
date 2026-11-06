@@ -18,6 +18,7 @@ export async function POST(req: NextRequest) {
   if (typeof body.fallbackModel === 'string') patch.fallbackModel = body.fallbackModel
   if (typeof body.allowFallback === 'boolean') patch.allowFallback = body.allowFallback
   if (typeof body.resolution === 'string') patch.resolution = body.resolution
+  if (typeof body.viewAspect === 'string') patch.viewAspect = body.viewAspect
   if (body.visionModel === null || typeof body.visionModel === 'string') patch.visionModel = body.visionModel ? body.visionModel : null
   try {
     await saveScaleSettings(patch)

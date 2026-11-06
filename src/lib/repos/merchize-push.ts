@@ -44,6 +44,17 @@ export function methodFor(variant: { methods: string[] } | undefined, preferred:
   return offered.length === 0 || offered.includes(preferred) ? preferred : offered[0]
 }
 
+/**
+ * The methods one variant is sold with. The product lists its methods for every size, but a size may be priced for one only:
+ * Bella 3005US Black 3XL lists DTF and DTG and has only a DTG price, and Merchize refuses DTF for it (LIT5546, 11/06/2026).
+ * Tiers that name no method, or price none of the listed ones, leave the product's list.
+ */
+export function variantMethods(productMethods: string[], tiers: Array<{ name: string; price: number | null }> | undefined): string[] {
+  const priced = (tiers ?? []).filter(t => t.price != null && /^(DTF|DTG)_/i.test(t.name)).map(t => t.name.toUpperCase())
+  const sold = productMethods.filter(m => priced.some(t => t.startsWith(`${m.toUpperCase()}_`)))
+  return sold.length > 0 ? sold : productMethods
+}
+
 /** The Merchize print side a part name stands for; "Artwork" (one-part templates) is the front. */
 export function merchizeSideOf(area: string): DesignField | null {
   return SIDES.find(s => s.match.test(area))?.field ?? null
@@ -159,7 +170,7 @@ export async function buildMerchizePush(orderId: string): Promise<BuiltMerchizeP
   if (creds && parents.length > 0) {
     try {
       for (const p of await searchCatalog(creds, parents)) {
-        for (const v of p.variants) catalogVariants.set(v.sku, { ...v, productId: p._id, methods: p.printing_methods ?? [] })
+        for (const v of p.variants) catalogVariants.set(v.sku, { ...v, productId: p._id, methods: variantMethods(p.printing_methods ?? [], v.tiers) })
       }
     } catch (e: any) {
       error('CATALOG', `Không đọc được catalog Merchize: ${e?.message ?? e}`)

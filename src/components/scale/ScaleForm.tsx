@@ -1,7 +1,7 @@
 'use client'
 import { useRef, useState, type ChangeEvent, type DragEvent } from 'react'
 import { shrinkImage } from '@/components/creative/GenerateForm'
-import { scaleFileUrl, type ScaleTargetView } from '@/components/scale/types'
+import { scaleFileUrl, targetThumbs, type ScaleTargetView } from '@/components/scale/types'
 
 const ACCEPT = ['image/png', 'image/jpeg', 'image/webp']
 const MAX_BYTES = 25 * 1024 * 1024
@@ -75,7 +75,9 @@ export function ScaleForm({ targets, busy, error, onSubmit }: Props) {
               {targets.map(t => (
                 <button key={t.id} type="button" onClick={() => setTargetId(t.id)}
                   className={`overflow-hidden rounded-lg border-2 bg-surface text-left ${targetId === t.id ? 'border-secondary' : 'border-outline-variant/20 hover:border-outline-variant'}`}>
-                  <img src={scaleFileUrl('targets', t.id, t.blankFile!, t.updatedAt)} alt={t.name} className="aspect-square w-full bg-white object-contain" />
+                  <div className="flex aspect-square w-full bg-white">
+                    {targetThumbs(t).map(th => <img key={th.viewId} src={scaleFileUrl('views', th.viewId, th.file, t.updatedAt)} alt={t.name} className="h-full min-w-0 flex-1 object-contain" />)}
+                  </div>
                   <div className="p-sm">
                     <p className="text-label-sm text-on-surface-variant">{t.sku}</p>
                     <p className="text-body-sm text-primary">{t.name}</p>

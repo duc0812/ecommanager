@@ -2,12 +2,12 @@ import fs from 'fs/promises'
 import path from 'path'
 import { storageRoot } from '@/lib/design-storage'
 
-export type ScaleKind = 'targets' | 'jobs'
-export type ScaleBase = 'blank' | 'candidate' | 'src' | 'out'
+export type ScaleKind = 'targets' | 'jobs' | 'views'
+export type ScaleBase = 'blank' | 'candidate' | 'src' | 'out' | `part-${number}`
 
-const KINDS = ['targets', 'jobs']
+const KINDS = ['targets', 'jobs', 'views']
 const ID = /^[a-z0-9_]+$/i
-const FILE_NAME = /^(blank|candidate|src|out)\.(png|jpe?g|webp)$/
+const FILE_NAME = /^(blank|candidate|src|out|part-\d+)\.(png|jpe?g|webp)$/
 const EXT_MIME: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp' }
 
 export function scaleRoot(): string {

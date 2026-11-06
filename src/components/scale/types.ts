@@ -1,17 +1,29 @@
+export type ScaleViewRow = {
+  id: string
+  targetId: string
+  label: string
+  side: 'front' | 'back'
+  blankFile: string | null
+  blankDescription: string
+  unprintedParts: string
+  sortOrder: number
+}
+
+export type ScaleThumb = { viewId: string; file: string }
+
 export type ScaleTargetView = {
   id: string
   name: string
   sku: string
-  blankFile: string | null
-  blankDescription: string
-  unprintedParts: string
-  active: boolean
-  sortOrder: number
-  candidateFile: string | null
-  candidateStatus: 'running' | 'ready' | 'failed' | null
-  candidateError: string | null
   updatedAt: string
   ready: boolean
+  active?: boolean
+  views?: ScaleViewRow[]
+  thumbs?: ScaleThumb[]
+}
+
+export function targetThumbs(t: ScaleTargetView): ScaleThumb[] {
+  return t.thumbs ?? (t.views ?? []).filter(v => v.blankFile).map(v => ({ viewId: v.id, file: v.blankFile! }))
 }
 
 export type ScaleJobStatus = 'describing' | 'running' | 'done' | 'failed'
@@ -32,8 +44,7 @@ export type ScaleJobView = {
   createdByName?: string | null
   createdAt: string
   hasDesign: boolean
-  prompt?: string | null
-  designJson?: string | null
+  views: { label: string; status: 'waiting' | 'running' | 'done' | 'failed' }[]
 }
 
 export type ScaleSettingsView = {
@@ -42,6 +53,7 @@ export type ScaleSettingsView = {
   allowFallback: boolean
   visionModel: string | null
   resolution: string
+  viewAspect: string
   effectiveVisionModel: string
   imageKeyMasked: string | null
   imageKeySource: 'creative' | 'cs' | 'env' | null
@@ -55,7 +67,7 @@ export const SCALE_STATUS_LABEL: Record<ScaleJobStatus, string> = {
   failed: 'Lỗi',
 }
 
-export const scaleFileUrl = (kind: 'targets' | 'jobs', id: string, name: string, version?: string) =>
+export const scaleFileUrl = (kind: 'targets' | 'jobs' | 'views', id: string, name: string, version?: string) =>
   `/api/tools/scale/file/${kind}/${id}/${name}${version ? `?v=${encodeURIComponent(version)}` : ''}`
 
 export async function postJson(url: string, body?: unknown, method = 'POST'): Promise<any> {

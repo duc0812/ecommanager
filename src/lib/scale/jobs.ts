@@ -1,20 +1,46 @@
 import { prisma } from '@/lib/db'
 import type { ScaleJob } from '@/generated/prisma/client'
 import type { PollResult } from '@/lib/creative/kie'
+import type { ModelForm } from '@/lib/creative/schema-map'
 import { fetchImage } from '@/lib/creative/storage'
-import { DesignSchema, buildScalePrompt, designSystemPrompt, designUserText, type Design } from '@/lib/scale/prompt'
+import { composeViews } from '@/lib/scale/compose'
+import { DesignSchema, buildMatchPrompt, buildViewPrompt, designSystemPrompt, designUserText, type Design, type ViewSide } from '@/lib/scale/prompt'
 import { ScaleInputError, explainKieError, type ScaleDeps } from '@/lib/scale/settings'
 import { deleteScaleFolder, readScaleFile, toDataUrl, writeScaleFile } from '@/lib/scale/storage'
-import { imageForm, imageInput, isReady, parseImage } from '@/lib/scale/targets'
+import { getTarget, imageForm, imageInput, isReady, parseImage, type TargetWithViews } from '@/lib/scale/targets'
 
 const DESCRIBE_GIVE_UP_MS = 5 * 60 * 1000
 const RUN_GIVE_UP_MS = 30 * 60 * 1000
 const NOT_READY = 'Sản phẩm đích chưa sẵn sàng'
 
-export function scaleJobView(j: ScaleJob, opts: { debug: boolean }) {
-  const { prompt, designJson, ...rest } = j
-  const base = { ...rest, hasDesign: !!designJson }
-  return opts.debug ? { ...base, prompt, designJson } : base
+type ViewState = {
+  viewId: string
+  label: string
+  side: ViewSide
+  status: 'waiting' | 'running' | 'done' | 'failed'
+  blankDescription: string
+  unprintedParts: string
+  blankUrl: string
+  after?: number
+  taskId?: string
+  resultUrl?: string
+  file?: string
+  credits?: number | null
+  error?: string
+}
+
+function parseViews(job: Pick<ScaleJob, 'viewsJson'>): ViewState[] {
+  try { const v = JSON.parse(job.viewsJson || '[]'); return Array.isArray(v) ? v : [] } catch { return [] }
+}
+
+export function scaleJobView(j: ScaleJob) {
+  const view: Partial<ScaleJob> = { ...j }
+  delete view.prompt
+  delete view.designJson
+  delete view.viewsJson
+  delete view.providerTaskId
+  delete view.resultUrl
+  return { ...(view as Omit<ScaleJob, 'prompt' | 'designJson' | 'viewsJson' | 'providerTaskId' | 'resultUrl'>), hasDesign: !!j.designJson, views: parseViews(j).map(v => ({ label: v.label, status: v.status })) }
 }
 
 async function getJob(id: string): Promise<ScaleJob> {
@@ -23,8 +49,8 @@ async function getJob(id: string): Promise<ScaleJob> {
   return job
 }
 
-async function readyTarget(id: string) {
-  const target = await prisma.scaleTarget.findUnique({ where: { id } })
+async function readyTarget(id: string): Promise<TargetWithViews> {
+  const target = await getTarget(id).catch(() => null)
   if (!target || !isReady(target)) throw new ScaleInputError(NOT_READY)
   return target
 }
@@ -72,6 +98,7 @@ function fail(id: string, error: string): Promise<ScaleJob> {
 }
 
 const current = (id: string) => prisma.scaleJob.findUnique({ where: { id } }).catch(() => null)
+const input = (form: ModelForm, prompt: string, urls: string[], deps: ScaleDeps) => imageInput(form, prompt, urls, deps.settings.resolution, deps.settings.viewAspect)
 
 // A refresh, a delete or a re-run can close the job while this is still talking to Kie; every write is conditional on the job still being open.
 export async function runPipeline(jobId: string, deps: ScaleDeps): Promise<ScaleJob | null> {
@@ -80,8 +107,9 @@ export async function runPipeline(jobId: string, deps: ScaleDeps): Promise<Scale
     if (job.status !== 'describing') return job
     const target = await readyTarget(job.targetId)
     const src = job.sourceFile ? await readScaleFile('jobs', job.id, job.sourceFile) : null
-    const blank = await readScaleFile('targets', target.id, target.blankFile!)
-    if (!src || !blank) throw new ScaleInputError(!src ? 'Ảnh gốc của job này không còn' : NOT_READY)
+    if (!src) throw new ScaleInputError('Ảnh gốc của job này không còn')
+    const blanks = await Promise.all(target.views.map(v => readScaleFile('views', v.id, v.blankFile!)))
+    if (blanks.some(b => !b)) throw new ScaleInputError(NOT_READY)
     if (!job.designJson && !deps.vision) throw new ScaleInputError('Chưa có API key Kie cho bước đọc ảnh')
     if (!deps.image) throw new ScaleInputError('Chưa có API key Kie cho bước tạo ảnh')
     const srcDataUrl = toDataUrl(src.bytes, src.mime)
@@ -91,7 +119,7 @@ export async function runPipeline(jobId: string, deps: ScaleDeps): Promise<Scale
       design = DesignSchema.parse(JSON.parse(job.designJson))
     } else {
       try {
-        design = await deps.vision!.describe({ model: deps.visionModel, system: designSystemPrompt(), text: designUserText(target), images: [srcDataUrl], schema: DesignSchema, schemaName: 'scale_design' })
+        design = await deps.vision!.describe({ model: deps.visionModel, system: designSystemPrompt(), text: designUserText(target.name), images: [srcDataUrl], schema: DesignSchema, schemaName: 'scale_design' })
       } catch (err) {
         throw new Error(explainKieError(err, 'CS', deps.visionModel))
       }
@@ -99,18 +127,28 @@ export async function runPipeline(jobId: string, deps: ScaleDeps): Promise<Scale
       if (!saved.count) return current(jobId)
     }
 
-    const prompt = buildScalePrompt(target, design)
-    let taskId: string
+    const states: ViewState[] = []
+    const prompts: string[] = []
     try {
       const form = await imageForm(deps.image, job.model)
       const srcUrl = await deps.image.uploadBase64(srcDataUrl, `scale-${job.id}-src.${job.sourceFile!.split('.').pop()}`)
-      const blankUrl = await deps.image.uploadBase64(toDataUrl(blank.bytes, blank.mime), `scale-${job.id}-blank.${target.blankFile!.split('.').pop()}`)
+      for (let i = 0; i < target.views.length; i++) {
+        const v = target.views[i]
+        const blankUrl = await deps.image.uploadBase64(toDataUrl(blanks[i]!.bytes, blanks[i]!.mime), `scale-${job.id}-blank-${i}.${v.blankFile!.split('.').pop()}`)
+        const first = states.findIndex(s => s.side === v.side)
+        states.push({ viewId: v.id, label: v.label, side: v.side as ViewSide, status: first === -1 ? 'running' : 'waiting', blankDescription: v.blankDescription, unprintedParts: v.unprintedParts, blankUrl, ...(first === -1 ? {} : { after: first }) })
+      }
       if ((await current(jobId))?.status !== 'describing') return current(jobId)
-      taskId = await deps.image.createTask(job.model, imageInput(form, prompt, [srcUrl, blankUrl], deps.settings.resolution))
+      for (const state of states) {
+        if (state.status !== 'running') continue
+        const prompt = buildViewPrompt(target.name, state, design)
+        prompts.push(`[${state.label}]\n${prompt}`)
+        state.taskId = await deps.image.createTask(job.model, input(form, prompt, [srcUrl, state.blankUrl], deps))
+      }
     } catch (err) {
       throw new Error(explainKieError(err, 'Creative', job.model))
     }
-    await prisma.scaleJob.updateMany({ where: { id: job.id, status: 'describing' }, data: { status: 'running', providerTaskId: taskId, prompt } })
+    await prisma.scaleJob.updateMany({ where: { id: job.id, status: 'describing' }, data: { status: 'running', viewsJson: JSON.stringify(states), prompt: prompts.join('\n\n') } })
     return current(jobId)
   } catch (err: any) {
     await prisma.scaleJob.updateMany({ where: { id: jobId, status: 'describing' }, data: { status: 'failed', error: String(err?.message ?? err), completedAt: new Date() } }).catch(() => null)
@@ -118,17 +156,72 @@ export async function runPipeline(jobId: string, deps: ScaleDeps): Promise<Scale
   }
 }
 
-async function finish(job: ScaleJob, url: string, cost: string | null, fetchImpl: typeof fetch): Promise<ScaleJob> {
-  let resultFile: string
+async function savePart(job: ScaleJob, index: number, state: ViewState, deps: ScaleDeps): Promise<string | null> {
   try {
-    const file = await fetchImage(url, fetchImpl)
-    resultFile = await writeScaleFile('jobs', job.id, 'out', file.bytes, file.ext)
+    const file = await fetchImage(state.resultUrl!, deps.fetchImpl)
+    state.file = await writeScaleFile('jobs', job.id, `part-${index}`, file.bytes, file.ext)
+    state.status = 'done'
+    delete state.resultUrl
+    return null
   } catch (err: any) {
-    return prisma.scaleJob.update({ where: { id: job.id }, data: { resultUrl: url, cost: cost ?? job.cost, error: `Tải ảnh kết quả lỗi, sẽ thử lại: ${err?.message ?? err}` } })
+    return `Tải ảnh kết quả lỗi, sẽ thử lại: ${err?.message ?? err}`
   }
-  const now = new Date()
-  return prisma.scaleJob.update({ where: { id: job.id }, data: { status: 'done', resultFile, resultUrl: null, cost: cost ?? job.cost, error: null, durationMs: now.getTime() - job.createdAt.getTime(), completedAt: now } })
 }
+
+async function advance(job: ScaleJob, deps: ScaleDeps): Promise<ScaleJob> {
+  const states = parseViews(job)
+  let note: string | null = null
+
+  for (let i = 0; i < states.length; i++) {
+    const state = states[i]
+    if (state.status !== 'running') continue
+    if (!state.resultUrl) {
+      if (!state.taskId || !deps.image) continue
+      let result: PollResult
+      try { result = await deps.image.poll(state.taskId) } catch (err: any) { note = `Poll lỗi: ${err?.message ?? err}`; continue }
+      if (result.state === 'running') continue
+      if (result.state === 'failed') { state.status = 'failed'; state.error = result.error; continue }
+      state.resultUrl = result.urls[0]
+      state.credits = result.credits
+    }
+    note = (await savePart(job, i, state, deps)) ?? note
+  }
+
+  const failed = states.find(s => s.status === 'failed')
+  if (failed) return prisma.scaleJob.update({ where: { id: job.id }, data: { status: 'failed', error: `${failed.label}: ${failed.error}`, viewsJson: JSON.stringify(states), completedAt: new Date() } })
+
+  if (deps.image) {
+    for (let i = 0; i < states.length; i++) {
+      const state = states[i]
+      const lead = state.after === undefined ? null : states[state.after]
+      if (state.status !== 'waiting' || !lead || lead.status !== 'done' || !lead.file) continue
+      try {
+        const part = await readScaleFile('jobs', job.id, lead.file)
+        if (!part) throw new Error('missing finished view')
+        const form = await imageForm(deps.image, job.model)
+        const partUrl = await deps.image.uploadBase64(toDataUrl(part.bytes, part.mime), `scale-${job.id}-${lead.file}`)
+        state.taskId = await deps.image.createTask(job.model, input(form, buildMatchPrompt(job.targetName, state), [partUrl, state.blankUrl], deps))
+        state.status = 'running'
+      } catch (err) {
+        state.status = 'failed'
+        state.error = explainKieError(err, 'Creative', job.model)
+        return prisma.scaleJob.update({ where: { id: job.id }, data: { status: 'failed', error: `${state.label}: ${state.error}`, viewsJson: JSON.stringify(states), completedAt: new Date() } })
+      }
+    }
+  }
+
+  if (states.length && states.every(s => s.status === 'done')) {
+    const parts = await Promise.all(states.map(s => readScaleFile('jobs', job.id, s.file!)))
+    const composed = await composeViews(parts.map(p => p!.bytes))
+    const resultFile = await writeScaleFile('jobs', job.id, 'out', composed, 'jpg')
+    const credits = states.reduce((sum, s) => sum + (s.credits ?? 0), 0)
+    const now = new Date()
+    return prisma.scaleJob.update({ where: { id: job.id }, data: { status: 'done', resultFile, viewsJson: JSON.stringify(states), cost: states.some(s => s.credits != null) ? `${credits} credits` : null, error: null, durationMs: now.getTime() - job.createdAt.getTime(), completedAt: now } })
+  }
+  return prisma.scaleJob.update({ where: { id: job.id }, data: { viewsJson: JSON.stringify(states), error: note } })
+}
+
+const locks = new Map<string, Promise<ScaleJob>>()
 
 export async function refreshScaleJob(id: string, deps: ScaleDeps): Promise<ScaleJob> {
   const job = await getJob(id)
@@ -136,16 +229,12 @@ export async function refreshScaleJob(id: string, deps: ScaleDeps): Promise<Scal
   if (job.status === 'describing') return age > DESCRIBE_GIVE_UP_MS ? fail(id, 'Bị gián đoạn, bấm Tạo lại') : job
   if (job.status !== 'running') return job
   if (age > RUN_GIVE_UP_MS) return fail(id, `Quá 30 phút chưa có kết quả, dừng theo dõi${job.error ? ` (lỗi cuối: ${job.error})` : ''}`)
-  if (job.resultUrl) return finish(job, job.resultUrl, job.cost, deps.fetchImpl)
-  if (!job.providerTaskId || !deps.image) return job
-
-  let result: PollResult
-  try { result = await deps.image.poll(job.providerTaskId) } catch (err: any) {
-    return prisma.scaleJob.update({ where: { id }, data: { error: `Poll lỗi: ${err?.message ?? err}` } })
-  }
-  if (result.state === 'running') return job.error ? prisma.scaleJob.update({ where: { id }, data: { error: null } }) : job
-  if (result.state === 'failed') return fail(id, result.error)
-  return finish(job, result.urls[0], result.credits == null ? null : `${result.credits} credits`, deps.fetchImpl)
+  // Two open pages poll the same job; one advance at a time, so a waiting view is never started twice.
+  const running = locks.get(id)
+  if (running) return running
+  const work = advance(job, deps).finally(() => locks.delete(id))
+  locks.set(id, work)
+  return work
 }
 
 export async function listScaleJobs(take = 100): Promise<ScaleJob[]> {

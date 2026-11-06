@@ -144,7 +144,7 @@ export default function ScalePage() {
               ) : (
                 <div className="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-lg">
                   {jobs.map(job => (
-                    <ScaleJobCard key={job.id} job={job} allowFallback={allowFallback} showDebug={isSuperadmin}
+                    <ScaleJobCard key={job.id} job={job} allowFallback={allowFallback}
                       canDelete={isSuperadmin || (!!user && job.createdBy === user.userId)}
                       onRerun={j => act(() => postJson(`/api/tools/scale/jobs/${j.id}/rerun`))}
                       onFallback={j => act(() => postJson(`/api/tools/scale/jobs/${j.id}/fallback`))}
