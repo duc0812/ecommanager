@@ -57,6 +57,19 @@ function ReadAllOrders({ value, canRecheck }: { value: boolean | null; canRechec
   )
 }
 
+const SAMPLE_TRACKING = '1Z999TEST'
+
+// The tracking number is appended to the page link as it is, so the sample shows a wrong ending before it is saved.
+function TrackingSample({ value }: { value: string }) {
+  const page = value.trim()
+  if (!page) return null
+  return (
+    <span className="mt-xs block text-label-sm text-on-surface-variant">
+      Khách sẽ nhận link: <span className="font-mono break-all text-on-surface">{page}{SAMPLE_TRACKING}</span>
+    </span>
+  )
+}
+
 type MerchizeSource = 'store' | 'server' | 'incomplete' | 'none'
 type KeysView = {
   shared: boolean
@@ -431,6 +444,7 @@ export default function StoreConnectionsCard() {
           </div>
           <label className="block text-label-sm text-on-surface-variant max-w-3xl">Link trang tracking của khách (https)
             <input type="url" autoComplete="off" value={form.trackingPageUrl} onChange={e => setField('trackingPageUrl', e.target.value)} placeholder="https://ten-shop.com/apps/track?nums=" className={input} />
+            <TrackingSample value={form.trackingPageUrl} />
           </label>
           <div className="flex items-center gap-sm">
             <button type="button" className={primaryButton} disabled={!!busy || !canSubmit} onClick={submit}>{busy === 'add' ? 'Đang kết nối…' : 'Kết nối store'}</button>
@@ -528,6 +542,7 @@ export default function StoreConnectionsCard() {
                                 type="url" autoComplete="off" value={edit.trackingPageUrl} placeholder="https://ten-shop.com/apps/track?nums="
                                 onChange={e => setEdits(prev => ({ ...prev, [s.id]: { ...edit, trackingPageUrl: e.target.value } }))} className={input}
                               />
+                              <TrackingSample value={edit.trackingPageUrl} />
                             </label>
                             <label className="text-label-sm text-on-surface-variant">Ngày bắt đầu payout{s.payoutStartDate ? ` (${usDay(s.payoutStartDate)})` : ''}
                               <input

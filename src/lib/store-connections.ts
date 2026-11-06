@@ -88,7 +88,7 @@ export class MintError extends Error {
   }
 }
 
-function shopifyErrorCode(body: unknown): string | undefined {
+export function shopifyErrorCode(body: unknown): string | undefined {
   const code = (body as { error?: unknown } | null)?.error
   return typeof code === 'string' && /^[a-z_]{1,64}$/.test(code) ? code : undefined
 }

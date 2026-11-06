@@ -26,11 +26,23 @@ export async function loadOrdersForShipmentSync(storeId: string, since: Date) {
 }
 
 // Idempotent upsert by (orderId, lineKey) so re-syncs refresh tracking without duplicating rows.
+// Line keys count product lines only (lineKeysOf), so a row keyed when add-ons still counted can name a key the order no
+// longer has. Auto Fulfilled maps a sheet row to a Shopify line through that key, so such a row goes, unless it carries a
+// tracking number or a fulfilment: that one is kept, and said once, for a person to check.
 export async function upsertOrderShipments(orderId: string, projectId: string, rows: BuiltShipment[]) {
   const existing = await prisma.shipment.findMany({
     where: { orderId },
-    select: { lineKey: true, shopifyFulfillmentId: true, trackingNumber: true },
+    select: { id: true, lineKey: true, shopifyFulfillmentId: true, trackingNumber: true },
   })
+  const keys = new Set(rows.map(r => r.lineKey))
+  const stale = existing.filter(e => !keys.has(e.lineKey))
+  const staleUntracked = stale.filter(e => !e.trackingNumber && !e.shopifyFulfillmentId)
+  if (staleUntracked.length > 0) await prisma.shipment.deleteMany({ where: { id: { in: staleUntracked.map(e => e.id) } } })
+  const staleTracked = stale.filter(e => e.trackingNumber || e.shopifyFulfillmentId)
+  if (staleTracked.length > 0) {
+    const order = await prisma.order.findUnique({ where: { id: orderId }, select: { shopifyOrderNumber: true } })
+    console.warn(`[shipments] ${order?.shopifyOrderNumber ?? orderId}: kept shipment rows whose key is no longer a line key of the order, they carry tracking or a fulfilment: ${staleTracked.map(e => e.lineKey).join(', ')}`)
+  }
   const supplierTracked = new Set(existing.filter(e => !e.shopifyFulfillmentId && e.trackingNumber).map(e => e.lineKey))
   for (const r of rows) {
     // A tracking number the supplier pushed (PGprints webhook) has no Shopify fulfillment behind it yet;

@@ -934,7 +934,7 @@ describe('Reminiso order lines', () => {
       expect(await keyEvents(ids[3])).toEqual([])
     })
 
-    it('the one-order task sync answers a clear error instead of crashing when the sync fails', async () => {
+    it('the one-order task sync answers a fixed text instead of crashing when the sync fails, and logs the error with the order id', async () => {
       process.env.AUTH_SECRET = 'test-secret-that-is-long-enough-32chars'
       const admin = await prisma.appUser.upsert({ where: { email: 'admin@remi14.test' }, create: { name: 'Admin', email: 'admin@remi14.test', role: 'ADMIN' }, update: {} })
       const token = await signToken({ userId: admin.id, email: admin.email, name: admin.name, role: 'ADMIN', permissions: [], tv: 0 })
@@ -948,18 +948,34 @@ describe('Reminiso order lines', () => {
         req.cookies.set(AUTH_COOKIE, token)
         return syncTasksRoute(req)
       }
+      const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
+      const loggedFor = (text: string) => logged.mock.calls.filter(c => c.map(String).join(' ').includes(order.id) && c.map(String).join(' ').includes(text))
 
       try {
         const held = await post()
         expect(held.status).toBe(409)
         expect((await held.json()).error).toMatch(/mã task/i)
 
-        const spy = vi.spyOn(prisma.order, 'findUnique').mockRejectedValueOnce(new Error('disk I/O error'))
+        const spy = vi.spyOn(prisma.order, 'findUnique').mockRejectedValueOnce(new Error('disk I/O error at D:\\data\\prod.db'))
         const failed = await post()
         spy.mockRestore()
         expect(failed.status).toBe(500)
-        expect((await failed.json()).error).toMatch(/Không đồng bộ được task.*disk I\/O error/)
+        const text = (await failed.json()).error
+        expect(text).toMatch(/^Không đồng bộ được task của đơn này/)
+        expect(text).not.toMatch(/disk I\/O|prod\.db/)
+        expect(loggedFor('disk I/O error')).toHaveLength(1)
+
+        // A unique conflict on another column is not a task key held by another task: 500, same fixed text.
+        const otherConflict = await prisma.shopifyStore.create({ data: { shop: SHOP } }).catch((e: any) => e)
+        expect(otherConflict.code).toBe('P2002')
+        const spyOther = vi.spyOn(prisma.order, 'findUnique').mockRejectedValueOnce(otherConflict)
+        const other = await post()
+        spyOther.mockRestore()
+        expect(other.status).toBe(500)
+        expect((await other.json()).error).toBe(text)
+        expect(loggedFor('(`shop`)')).toHaveLength(1)
       } finally {
+        logged.mockRestore()
         await prisma.appUser.deleteMany({ where: { email: 'admin@remi14.test' } })
       }
     })

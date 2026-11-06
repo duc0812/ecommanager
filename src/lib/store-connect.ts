@@ -89,14 +89,18 @@ export function isoDateToUtc(value: string): Date {
   return new Date(`${value}T00:00:00.000Z`)
 }
 
-// The page customers' tracking links point at. It is stored as typed, but it must be a public https address.
+// The page customers' tracking links point at. It is stored as typed, but it must be a public https address, and the
+// tracking number is appended to it as it is (trackingUrlFor), so it must end where a number can follow.
 export function checkTrackingPageUrl(value: string): string | null {
   try {
     assertSafeExternalUrl(value)
-    return null
   } catch (e) {
     return e instanceof Error ? e.message : 'URL không hợp lệ'
   }
+  if (!/[=/]$/.test(value.trim())) {
+    return 'phải kết thúc bằng "=" hoặc "/" để số tracking nối ngay sau, ví dụ https://ten-shop.com/apps/trackingorder?nums= hoặc https://ten-shop.com/track/'
+  }
+  return null
 }
 
 const scopesKey = (storeId: string) => `store.scopes.${storeId}`

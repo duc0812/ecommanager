@@ -25,8 +25,11 @@ const channel = JSON.parse(fs.readFileSync('scripts/data/sheet-channel-jomall.js
 const mango = JSON.parse(fs.readFileSync('scripts/data/sheet-channel-mango.json', 'utf8'))
 const REMINISO_SHOP = 'reminiso-sheet.myshopify.com'
 const OFF_SHOP = 'switched-off-sheet.myshopify.com'
+const NO_PREFIX_SHOP = 'no-prefix-sheet.myshopify.com'
 // Design Studio skips an order whose store has no project, so every other store gets its own.
-const PROJECT_OF_SHOP: Record<string, string> = { [REMINISO_SHOP]: 'proj_sheet_remi', [OFF_SHOP]: 'proj_sheet_off' }
+const PROJECT_OF_SHOP: Record<string, string> = { [REMINISO_SHOP]: 'proj_sheet_remi', [OFF_SHOP]: 'proj_sheet_off', [NO_PREFIX_SHOP]: 'proj_sheet_nopfx' }
+// Sheet rows find their store again by the order-name prefix, so each store names its orders with its own.
+const PREFIX_OF_SHOP: Record<string, string | null> = { [SHOP]: 'SH', [REMINISO_SHOP]: 'REMI', [OFF_SHOP]: 'OFF', [NO_PREFIX_SHOP]: null }
 const ALL_PROJECTS = [PROJECT, ...Object.values(PROJECT_OF_SHOP)]
 const MANGO_TAB = 'ORDER FULFILL'
 const MANGO_HEADERS = ['a', 'Order Number', 'Order Vendor ', 'Customer Note', 'Phone (Billing)', 'Name (Shipping)', 'Address 1&2 (Shipping)', 'City (Shipping)', 'State Code (Shipping)',
@@ -108,13 +111,16 @@ function fakeGoogle() {
   }))
 }
 
-async function makeOrder(opts: { preview?: string | null; shop?: string; disabled?: boolean; otherLine?: boolean; name?: string } = {}) {
+async function makeOrder(opts: { preview?: string | null; shop?: string; disabled?: boolean; otherLine?: boolean; name?: string; code?: string } = {}) {
   seq++
   const id = `gid://test/Order/sheet-${seq}`
-  const number = `#SH${1000 + seq}`
+  const code = opts.code ?? `${PREFIX_OF_SHOP[opts.shop ?? SHOP] ?? 'NP'}${1000 + seq}`
+  const number = `#${code}`
   const lineId = `shl-${seq}`
   const projectId = opts.shop ? PROJECT_OF_SHOP[opts.shop] : PROJECT
-  const store = opts.shop ? (await prisma.shopifyStore.upsert({ where: { shop: opts.shop }, create: { shop: opts.shop, projectId, enabled: opts.disabled !== true }, update: {} })).id : storeId
+  const store = opts.shop
+    ? (await prisma.shopifyStore.upsert({ where: { shop: opts.shop }, create: { shop: opts.shop, projectId, orderPrefix: PREFIX_OF_SHOP[opts.shop], enabled: opts.disabled !== true }, update: {} })).id
+    : storeId
   await prisma.order.create({
     data: {
       id, projectId, storeId: store, shopifyOrderNumber: number, financialStatus: 'PAID', currency: 'USD',
@@ -137,12 +143,12 @@ async function makeOrder(opts: { preview?: string | null; shop?: string; disable
         }] : []),
       ] },
       designTasks: { create: [
-        { shopifyLineId: lineId, taskKey: `SH${1000 + seq}_1`, status: 'DONE' },
-        ...(opts.otherLine ? [{ shopifyLineId: `${lineId}-b`, taskKey: `SH${1000 + seq}_2`, status: 'DONE' }] : []),
+        { shopifyLineId: lineId, taskKey: `${code}_1`, status: 'DONE' },
+        ...(opts.otherLine ? [{ shopifyLineId: `${lineId}-b`, taskKey: `${code}_2`, status: 'DONE' }] : []),
       ] },
     },
   })
-  return { id, number, key: `SH${1000 + seq}_1`, code: `SH${1000 + seq}` }
+  return { id, number, key: `${code}_1`, code }
 }
 
 const setChannel = (over: Record<string, unknown> = {}) => prisma.appSetting.upsert({
@@ -160,7 +166,7 @@ beforeAll(async () => {
   for (const id of Object.values(PROJECT_OF_SHOP)) {
     await prisma.project.upsert({ where: { id }, create: { id, name: id, startDate: new Date('2026-06-01') }, update: {} })
   }
-  storeId = (await prisma.shopifyStore.upsert({ where: { shop: SHOP }, create: { shop: SHOP, projectId: PROJECT }, update: {} })).id
+  storeId = (await prisma.shopifyStore.upsert({ where: { shop: SHOP }, create: { shop: SHOP, projectId: PROJECT, orderPrefix: PREFIX_OF_SHOP[SHOP] }, update: {} })).id
   await prisma.supplier.upsert({ where: { code: 'jm_sheet' }, create: { id: SUP, name: 'Jomall Test', code: 'jm_sheet' }, update: {} })
   await prisma.supplier.upsert({ where: { code: 'other_sheet' }, create: { id: OTHER_SUP, name: 'Other', code: 'other_sheet' }, update: {} })
   await prisma.supplierProduct.create({ data: { supplierId: SUP, sku: 'JM-HOODIE', baseCost: 19.5, baseSku: 'GAF', productName: '3D Hoodies', variant1Value: 'Pullover Hoodie' } })
@@ -431,6 +437,39 @@ describe('what stops a send', () => {
     await setChannel({ enabled: false })
     const o = await makeOrder()
     await expect(push([o.id])).rejects.toMatchObject({ code: 'NO_CHANNEL' })
+  })
+})
+
+describe('an order carries its own store prefix', () => {
+  it('a prefixed order of each store enters the sheet', async () => {
+    const sh = await makeOrder()
+    const remi = await makeOrder({ shop: REMINISO_SHOP })
+    expect(remi.number).toMatch(/^#REMI\d+$/)
+    const r = await push([sh.id, remi.id])
+    expect(r.results.map(x => [x.lineKey, x.status]).sort()).toEqual([[sh.key, 'WRITTEN'], [remi.key, 'WRITTEN']].sort())
+  })
+
+  it('an order named #1001 of the REMI store is BLOCKED naming the store and its prefix, and the rest still goes', async () => {
+    const bare = await makeOrder({ shop: REMINISO_SHOP, code: '1001' })
+    const sh = await makeOrder()
+    const r = await push([bare.id, sh.id])
+    const blocked = r.results.find(x => x.orderNumber === '#1001')!
+    expect(blocked).toMatchObject({ lineKey: '1001_1', status: 'BLOCKED' })
+    expect(blocked.message).toContain(REMINISO_SHOP)
+    expect(blocked.message).toContain('REMI')
+    expect(r.results.find(x => x.lineKey === sh.key)).toMatchObject({ status: 'WRITTEN' })
+    expect(writes[0].rows).toHaveLength(1)
+    expect((await line(bare.id)).exportedAt).toBeNull()
+    expect(await prisma.supplierSheetWrite.count({ where: { orderId: bare.id } })).toBe(0)
+  })
+
+  it('a store with no prefix keeps every one of its orders out of the sheet', async () => {
+    const a = await makeOrder({ shop: NO_PREFIX_SHOP })
+    const b = await makeOrder({ shop: NO_PREFIX_SHOP, code: '1002' })
+    const r = await push([a.id, b.id])
+    expect(r.results.map(x => x.status)).toEqual(['BLOCKED', 'BLOCKED'])
+    for (const x of r.results) expect(x.message).toContain(NO_PREFIX_SHOP)
+    expect(writes).toHaveLength(0)
   })
 })
 

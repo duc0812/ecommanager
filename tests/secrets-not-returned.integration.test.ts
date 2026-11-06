@@ -159,6 +159,41 @@ describe('Supplier.apiKey', () => {
     expect(await storedApiKey(created.body.id)).toBeNull()
   })
 
+  it('a seller gets only the id, name and code of each supplier; every other role gets the rows as before', async () => {
+    const FULL_ROW = ['_count', 'additionalItemShipFee', 'apiType', 'code', 'createdAt', 'currency', 'firstItemShipFee', 'id', 'isActive', 'name', 'note', 'preferenceRank']
+    await prisma.supplier.update({ where: { id: fx.supplierId }, data: { note: 'secx contact: factory@example.test', apiType: 'secx-api', firstItemShipFee: 4.5 } })
+    try {
+      const rows = async (who: string, url = '/api/suppliers') => {
+        const answer = await json(await listSuppliers(request(url, who)))
+        expect([who, answer.status]).toEqual([who, 200])
+        return answer
+      }
+      const admin = await rows('admin')
+      for (const who of ['sellerA', 'sellerB']) {
+        for (const url of ['/api/suppliers', '/api/suppliers?includeInactive=1']) {
+          const seller = await rows(who, url)
+          expect(seller.body.suppliers.length).toBeGreaterThan(0)
+          for (const s of seller.body.suppliers) expect(Object.keys(s).sort()).toEqual(['code', 'id', 'name'])
+          expect(seller.text).not.toContain('factory@example.test')
+          expect(seller.text).not.toContain('secx-api')
+        }
+      }
+      const seller = await rows('sellerA')
+      expect(seller.body.suppliers.find((s: any) => s.id === fx.supplierId)).toEqual({ id: fx.supplierId, name: 'SEC Supplier', code: 'SECSUP' })
+      expect(seller.body.suppliers.map((s: any) => s.id)).toEqual(admin.body.suppliers.map((s: any) => s.id))
+
+      for (const who of ['admin', 'supportRes', 'super']) {
+        const answer = await rows(who)
+        const mine = answer.body.suppliers.find((s: any) => s.id === fx.supplierId)
+        expect([who, Object.keys(mine).sort()]).toEqual([who, FULL_ROW])
+        expect(mine).toMatchObject({ note: 'secx contact: factory@example.test', apiType: 'secx-api', firstItemShipFee: 4.5, _count: { products: 1, templates: 0 } })
+        expect(answer.body).toEqual(admin.body)
+      }
+    } finally {
+      await prisma.supplier.update({ where: { id: fx.supplierId }, data: { note: null, apiType: null, firstItemShipFee: 0 } })
+    }
+  })
+
   it('seller can GET /api/suppliers and nothing else under it', async () => {
     const id = fx.supplierId
     const list = await json(await listSuppliers(request('/api/suppliers', 'sellerA')))

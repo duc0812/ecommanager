@@ -2,12 +2,15 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireApiAccess } from '@/lib/api-auth'
 import { createSupplier, listAllSuppliers } from '@/lib/repos/suppliers'
 
+// A seller reads the list only to filter orders by supplier (id, name; code on the CSV Export page), and the owner keeps
+// supplier set-up away from staff, so a seller gets those three fields and nothing else.
 export async function GET(req: NextRequest) {
   const auth = await requireApiAccess(req)
   if ('error' in auth) return auth.error
   const { searchParams } = new URL(req.url)
   const includeInactive = searchParams.get('includeInactive') === '1'
   const suppliers = await listAllSuppliers({ includeInactive })
+  if (auth.user.role === 'SELLER') return NextResponse.json({ suppliers: suppliers.map(({ id, name, code }) => ({ id, name, code })) })
   return NextResponse.json({ suppliers })
 }
 

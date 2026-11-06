@@ -121,7 +121,37 @@ describe('Shopify OAuth and status per store', () => {
     expect(b!.connectedAt.getTime()).toBeGreaterThan(old.getTime())
     expect((await credentialOf(A))?.accessToken).toBe('tok-a')
     const store = await prisma.shopifyStore.findUnique({ where: { id: ids[B] } })
-    expect(store).toMatchObject({ lastError: null, lastErrorAt: null })
+    expect(store).toMatchObject({ lastError: 'invalid token' })
+    expect(store!.lastErrorAt).not.toBeNull()
+  })
+
+  it("a successful OAuth leaves the error of a job that failed: only that job clears it", async () => {
+    await twoStores()
+    const at = new Date('2026-11-01T00:00:00Z')
+    await prisma.shopifyStore.update({ where: { id: ids[B] }, data: { lastError: '[order-sync] token revoked', lastErrorAt: at } })
+    saveOAuthState('state-b', B)
+    expect((await oauthCallback(callbackRequest(B, 'state-b', SECRET_B))).status).toBe(200)
+    expect((await credentialOf(B))?.accessToken).toBe('tok-new')
+    expect(await prisma.shopifyStore.findUnique({ where: { id: ids[B] } })).toMatchObject({ lastError: '[order-sync] token revoked', lastErrorAt: at })
+  })
+
+  it('the scopes failing to save does not undo a finished OAuth: success page, token saved, error logged', async () => {
+    await twoStores()
+    saveOAuthState('state-b', B)
+    const upsert = vi.spyOn(prisma.appSetting, 'upsert').mockRejectedValueOnce(new Error('database is locked'))
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const res = await oauthCallback(callbackRequest(B, 'state-b', SECRET_B))
+      expect(res.status).toBe(200)
+      expect(await res.text()).toContain('Kết nối thành công')
+      expect(upsert).toHaveBeenCalledTimes(1)
+      expect(logged.mock.calls.map(c => c.map(String).join(' ')).join('\n')).toContain('database is locked')
+    } finally {
+      upsert.mockRestore()
+      logged.mockRestore()
+    }
+    expect(await credentialOf(B)).toMatchObject({ authMode: 'OAUTH', accessToken: 'tok-new' })
+    expect(await prisma.appSetting.findUnique({ where: { key: `store.scopes.${ids[B]}` } })).toBeNull()
   })
 
   it('a failed token exchange leaves the stored token alone', async () => {
@@ -131,6 +161,24 @@ describe('Shopify OAuth and status per store', () => {
     const res = await oauthCallback(callbackRequest(B, 'state-b', SECRET_B))
     expect(res.status).toBe(502)
     expect((await credentialOf(B))?.accessToken).toBe('tok-b-old')
+  })
+
+  it("a failed token exchange logs Shopify's status and error code, never the rest of its answer", async () => {
+    await twoStores()
+    saveOAuthState('state-b', B)
+    const description = 'The authorization code was not found or was already used for client-b'
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ error: 'invalid_request', error_description: description }), { status: 400 }))
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      expect((await oauthCallback(callbackRequest(B, 'state-b', SECRET_B))).status).toBe(502)
+      const text = logged.mock.calls.map(c => c.map(String).join(' ')).join('\n')
+      expect(text).toContain('400')
+      expect(text).toContain('invalid_request')
+      expect(text).not.toContain('authorization code')
+      expect(text).not.toContain('client-b')
+    } finally {
+      logged.mockRestore()
+    }
   })
 
   it('the state is single use', async () => {

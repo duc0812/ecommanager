@@ -6,7 +6,7 @@ This file tells AI coding agents (Claude Code, Codex, etc.) how to work on this 
 1. `SPEC.md` — architecture, DB schema, design tokens, API conventions
 2. `PLAN.md` — what's done, what's next, known issues
 3. `NOTES.md` — current state, active data, critical implementation quirks
-4. `docs/superpowers/specs/` — active feature specs (in-progress designs). **Currently: Phase 13 Fulfillment & POD module is in brainstorming** — see `docs/superpowers/specs/2026-05-19-fulfillment-pod-design.md` before touching any fulfillment/supplier/order code. Customer Service agent (Freshdesk + Claude): `docs/superpowers/specs/2026-10-23-customer-service-agent-design.md` — read before touching `src/lib/cs/*` or `/cs` pages.
+4. `docs/superpowers/specs/` — active feature specs (in-progress designs). **Phase 13 Fulfillment & POD module is built** (PLAN.md, Phase 13.x DONE) — its design is `docs/superpowers/specs/2026-05-19-fulfillment-pod-design.md`; read it before touching any fulfillment/supplier/order code. Customer Service agent (Freshdesk + Claude): `docs/superpowers/specs/2026-10-23-customer-service-agent-design.md` — read before touching `src/lib/cs/*` or `/cs` pages.
 
 ---
 
@@ -54,6 +54,16 @@ Every new page must:
 - Export named functions: `GET`, `POST`, `DELETE`, `PATCH`
 - Always return `NextResponse.json(data)` or `NextResponse.json({ error: string }, { status: number })`
 - Import prisma: `import { prisma } from '@/lib/db'`
+
+### Multi-store rules
+The tool runs several Shopify stores (Litzzy is the first store, Reminiso the second). Design: `docs/superpowers/specs/2026-11-05-multi-store-design.md`.
+- Get a Shopify connection with `getStoreConnection(storeId)` (`src/lib/store-connections.ts`), never from `AppSetting shopify.connection.*`.
+- Every `/api/*` route that reads orders or finance figures goes through `src/lib/store-scope.ts` (directly, or through `src/lib/order-scope.ts`, which builds on it), so a seller only sees the stores given to them.
+- Credential readers for PGprints, Merchize and ParcelPanel (`getPgprintsSettings`, `merchizeCredentials`, `getParcelPanelApiKey`) take the ORDER's `storeId`. The no-argument form means the shared account (the first store's PGprints and ParcelPanel keys, the server's Merchize account); never call it for another store's order.
+- Order names route to stores by prefix through `src/lib/order-prefix.ts`: the letters immediately followed by the digits (`#REMI1010` is REMI; `#REMI-1010` and `#1001` have no prefix). Sheet rows, Auto Fulfilled and the sheet push all rely on it.
+- Line keys (`lineKeysOf`, `src/lib/order-lines.ts`) number product lines only; add-ons get no key. Design tasks AND shipments follow them.
+- The print library is shared across stores on purpose: same SKU = same print file. Do not add store scoping to it.
+- Secrets never reach a response: settings views return masked values or `has…` flags (`src/lib/secret-view.ts`).
 
 ---
 

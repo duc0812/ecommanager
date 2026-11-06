@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db'
 import { lineKeysOf } from '@/lib/order-lines'
+import { storeForOrderName } from '@/lib/order-prefix'
 import { buildOrdersForCsv } from '@/lib/export-orders'
 import { renderRow, type OrderForCsv } from '@/lib/csv-template'
 import { HUB_WARNING_LABELS, hubView } from '@/lib/handoff-hub'
@@ -99,11 +100,21 @@ async function run(supplierId: string, orderIds: string[] | undefined, userId: s
 
   const orders = orderIdsToLoad.length ? await listOrdersWithLines({ ids: orderIdsToLoad, limit: orderIdsToLoad.length }) : []
   // The channel is shared by every store that is on; a store that is switched off keeps its orders out of the sheet.
+  // Rows read back from the sheet find their store by the order-name prefix (storeForOrderName), and a written row cannot
+  // be taken back, so an order whose name does not carry its own store's prefix stays out as well.
   const switchedOff = new Set((await prisma.shopifyStore.findMany({ where: { enabled: false, id: { in: orders.map(o => o.storeId) } }, select: { id: true } })).map(s => s.id))
+  const blockReason = (o: (typeof orders)[number]) => {
+    if (switchedOff.has(o.storeId)) return `Store ${o.store.shop} đang tắt, đơn của store này không được ghi vào sheet`
+    if (storeForOrderName(o.shopifyOrderNumber, [o.store])?.id === o.storeId) return null
+    return o.store.orderPrefix
+      ? `Tên đơn ${o.shopifyOrderNumber} không bắt đầu bằng tiền tố ${o.store.orderPrefix} của store ${o.store.shop}: dòng trong sheet sẽ không tìm lại được store, không ghi`
+      : `Store ${o.store.shop} chưa có tiền tố đơn: dòng trong sheet sẽ không tìm lại được store, không ghi`
+  }
   const allowed = orders.filter(o => {
-    if (!switchedOff.has(o.storeId)) return true
+    const reason = blockReason(o)
+    if (!reason) return true
     for (const k of Array.from(lineKeysOf(o.shopifyOrderNumber, o.lines).values())) {
-      results.push({ lineKey: k, orderNumber: o.shopifyOrderNumber, status: 'BLOCKED', message: `Store ${o.store.shop} đang tắt, đơn của store này không được ghi vào sheet` })
+      results.push({ lineKey: k, orderNumber: o.shopifyOrderNumber, status: 'BLOCKED', message: reason })
     }
     return false
   })

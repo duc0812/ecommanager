@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import crypto from 'crypto'
 import { prisma } from '@/lib/db'
 import { consumeOAuthState } from '@/lib/token-store'
-import { saveStoreCredential } from '@/lib/store-connections'
+import { saveStoreCredential, shopifyErrorCode } from '@/lib/store-connections'
 import { parseScopeList, saveGrantedScopes } from '@/lib/store-connect'
 import { escapeHtml, normalizeShopDomain } from '@/lib/shopify-shop'
 
@@ -62,7 +62,8 @@ export async function GET(req: NextRequest) {
   }
 
   if (!res.ok) {
-    console.error('[shopify oauth] token exchange failed', res.status, (await res.text()).slice(0, 300))
+    const code = shopifyErrorCode(await res.json().catch(() => null))
+    console.error('[shopify oauth] token exchange failed', res.status, code ?? '(no error code)')
     return html(errorPage(`Token exchange thất bại (HTTP ${res.status}). Kiểm tra API Key/Secret và thử lại.`), 502)
   }
 
@@ -71,9 +72,14 @@ export async function GET(req: NextRequest) {
     return html(errorPage('Shopify không trả về access token.'), 502)
   }
   await saveStoreCredential(store.id, { authMode: 'OAUTH', clientId, clientSecret, accessToken: access_token, connectedAt: new Date() })
+  // The token is saved, so the OAuth is done: scopes that fail to save only leave the card at "chưa kiểm tra" until a re-connect.
+  // lastError stays: only the job that failed clears its own error (store-jobs).
   const granted = parseScopeList(scope)
-  if (granted) await saveGrantedScopes(store.id, granted)
-  await prisma.shopifyStore.update({ where: { id: store.id }, data: { lastError: null, lastErrorAt: null } })
+  try {
+    if (granted) await saveGrantedScopes(store.id, granted)
+  } catch (e) {
+    console.error('[shopify oauth] granted scopes not saved', shop, e)
+  }
 
   return html(successPage(shop))
 }

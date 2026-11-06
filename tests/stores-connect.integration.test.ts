@@ -6,6 +6,7 @@ import { AUTH_COOKIE, signToken } from '@/lib/auth'
 import { getStoreConnection, saveStoreCredential } from '@/lib/store-connections'
 import { saveOAuthState } from '@/lib/token-store'
 import { DEFAULT_ROLE_PERMISSIONS, type FeaturePermission, type UserRole } from '@/lib/roles'
+import { checkTrackingPageUrl } from '@/lib/store-connect'
 import { POST as connectRoute } from '@/app/api/stores/connect/route'
 import { PATCH as patchStore } from '@/app/api/stores/[id]/route'
 import { GET as listStores } from '@/app/api/stores/route'
@@ -191,12 +192,12 @@ describe('POST /api/stores/connect: client credentials', () => {
   })
 
   it('shows the scopes and store settings on the status list, with no secret', async () => {
-    const res = await connect(ccBody('new', { projectName: 'SCT Status', payoutStartDate: '2026-10-06', trackingPageUrl: 'https://remi.example.com/t' }))
+    const res = await connect(ccBody('new', { projectName: 'SCT Status', payoutStartDate: '2026-10-06', trackingPageUrl: 'https://remi.example.com/t/' }))
     const status = await (await getStatus()).json()
     const mine = status.stores.find((s: any) => s.id === res.body.storeId)
     expect(mine).toMatchObject({
       shop: shopOf('new'), connected: true, authMode: 'CLIENT_CREDENTIALS', orderPrefix: 'SCTNEW', payoutStartDate: '2026-10-06',
-      trackingPageUrl: 'https://remi.example.com/t', scopes: ['read_orders', 'read_products'], readAllOrders: false, lastSyncAt: null,
+      trackingPageUrl: 'https://remi.example.com/t/', scopes: ['read_orders', 'read_products'], readAllOrders: false, lastSyncAt: null,
     })
     expectNoSecrets(JSON.stringify(status))
   })
@@ -493,7 +494,7 @@ describe('POST /api/stores/connect: other stores and re-connecting', () => {
     graphReply = () => snapshot({ orders: ['#SCTNEW1010'], tz: 'Asia/Tokyo' })
 
     const res = await connect({
-      shop: shopOf('re'), accessToken: PASTED, projectName: 'SCT Another', payoutStartDate: '2026-10-06', trackingPageUrl: 'https://other.example.com/t', startDate: '2026-02-02',
+      shop: shopOf('re'), accessToken: PASTED, projectName: 'SCT Another', payoutStartDate: '2026-10-06', trackingPageUrl: 'https://other.example.com/t/', startDate: '2026-02-02',
     })
     expect(res.status).toBe(200)
     expect(res.body).toMatchObject({ status: 'CONNECTED', storeId: store.id, orderPrefix: 'SCTKEEP', timezone: 'Asia/Tokyo' })
@@ -512,10 +513,10 @@ describe('POST /api/stores/connect: other stores and re-connecting', () => {
   it('a store registered earlier without a project or settings gets them filled in', async () => {
     const store = await prisma.shopifyStore.create({ data: { shop: shopOf('legacy') } })
     await saveStoreCredential(store.id, { authMode: 'OAUTH', clientId: 'test-other-client-555', clientSecret: OTHER_SECRET, accessToken: 'test-old-token' })
-    const res = await connect(ccBody('legacy', { projectName: 'SCT Legacy', payoutStartDate: '2026-10-06', trackingPageUrl: 'https://legacy.example.com/t' }))
+    const res = await connect(ccBody('legacy', { projectName: 'SCT Legacy', payoutStartDate: '2026-10-06', trackingPageUrl: 'https://legacy.example.com/t?nums=' }))
     expect(res.body).toMatchObject({ status: 'CONNECTED', storeId: store.id, orderPrefix: 'SCTNEW' })
     const after = (await storeOf('legacy'))!
-    expect(after).toMatchObject({ id: store.id, orderPrefix: 'SCTNEW', payoutStartDate: '2026-10-06', trackingPageUrl: 'https://legacy.example.com/t' })
+    expect(after).toMatchObject({ id: store.id, orderPrefix: 'SCTNEW', payoutStartDate: '2026-10-06', trackingPageUrl: 'https://legacy.example.com/t?nums=' })
     expect(after.project?.name).toBe('SCT Legacy')
     expect(after.credential).toMatchObject({ authMode: 'CLIENT_CREDENTIALS', clientId: CLIENT_ID, clientSecret: SECRET, accessToken: MINTED })
     expect(await prisma.shopifyStore.count({ where: { shop: shopOf('legacy') } })).toBe(1)
@@ -837,5 +838,46 @@ describe('PATCH /api/stores/[id]', () => {
     for (const who of ['admin', 'support', 'seller']) expect([who, (await patch(store.id, { enabled: false }, who)).status]).toEqual([who, 403])
     expect((await patch(store.id, { enabled: false }, null)).status).toBe(401)
     expect((await storeOf('set'))!.enabled).toBe(true)
+  })
+})
+
+describe('tracking page url shape', () => {
+  const NO_END = 'https://x.test/apps/track'
+  const ACCEPTED = ['https://x.test/apps/trackingorder?nums=', 'https://x.test/track/']
+  const expectShapeRefusal = (res: { status: number; body: any }) => {
+    expect(res.status).toBe(400)
+    expect(res.body.error).toContain('?nums=')
+    expect(res.body.error).toContain('/track/')
+  }
+
+  it('the tracking number is put after the link as it is, so the link must end with = or /', () => {
+    expect(checkTrackingPageUrl('https://litzzy.com/apps/trackingorder?nums=')).toBeNull()
+    for (const url of ACCEPTED) expect([url, checkTrackingPageUrl(url)]).toEqual([url, null])
+    expect(checkTrackingPageUrl(NO_END)).toEqual(expect.any(String))
+    expect(checkTrackingPageUrl('http://x.test/track/')).toEqual(expect.any(String))
+    expect(checkTrackingPageUrl('https://localhost/track/')).toEqual(expect.any(String))
+  })
+
+  it('connect refuses a link that does not end with = or / and writes nothing, and accepts both shapes', async () => {
+    expectShapeRefusal(await connect(ccBody('shape', { trackingPageUrl: NO_END })))
+    expect(calls).toHaveLength(0)
+    expect(await storeOf('shape')).toBeNull()
+
+    for (const url of ACCEPTED) {
+      expect([url, (await connect(ccBody('shape', { trackingPageUrl: url }))).status]).toEqual([url, 200])
+      expect((await storeOf('shape'))!.trackingPageUrl).toBe(url)
+      await cleanup()
+    }
+  })
+
+  it('PATCH refuses a link that does not end with = or / and keeps the old one, and accepts both shapes', async () => {
+    const store = await prisma.shopifyStore.create({ data: { shop: shopOf('shape'), orderPrefix: 'SCTSHAPE', trackingPageUrl: ACCEPTED[0] } })
+    expectShapeRefusal(await patch(store.id, { trackingPageUrl: NO_END }))
+    expect((await storeOf('shape'))!.trackingPageUrl).toBe(ACCEPTED[0])
+
+    for (const url of [...ACCEPTED].reverse()) {
+      expect([url, (await patch(store.id, { trackingPageUrl: url })).status]).toEqual([url, 200])
+      expect((await storeOf('shape'))!.trackingPageUrl).toBe(url)
+    }
   })
 })

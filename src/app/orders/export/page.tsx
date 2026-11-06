@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Sidebar from '@/components/Sidebar'
 import StoreFilter from '@/components/StoreFilter'
 import { useStoreFilter } from '@/lib/use-store-filter'
+import { csvExportBody, storePickApplies } from '@/lib/csv-export-request'
 
 type Project = { id: string; name: string; shopifyStore: { shop: string } | null }
 type Supplier = { id: string; name: string; code: string }
@@ -12,6 +13,7 @@ type Template = {
   rowMode: 'PER_LINE' | 'PER_ORDER'
   isDefault: boolean
   columns?: string
+  supplier?: { code: string; apiType: string | null }
 }
 type TemplateColumn = { header: string; source: string }
 type PreviewLine = { linePosition: number; lineKey: string; productTitle: string; variantTitle: string | null; included: boolean; alreadyExported: boolean; inDesign?: boolean }
@@ -340,29 +342,21 @@ export default function ExportPage() {
 
   const [lockedMessage, setLockedMessage] = useState('')
 
+  const templateSupplier = selectedTemplate?.supplier
+  const storePickShown = storePickApplies(templateSupplier)
+
   const runPreview = useCallback(async () => {
     if (!templateId) { setMessage('Pick a template'); return }
     setPreviewing(true); setMessage('')
     const res = await fetch('/api/fulfillment/export', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        templateId,
-        projectId: projectId || undefined,
-        storeId: storeFilter.storeId || undefined,
-        dateFrom: dateFrom || undefined,
-        dateTo: dateTo || undefined,
-        pipelineStatus: pipelineStatus || undefined,
-        handoffOnly: handoffOnly || undefined,
-        reExport: reExport || undefined,
-        preview: true,
-        markExported: false,
-      }),
+      body: JSON.stringify(csvExportBody({ templateId, projectId, storeId: storeFilter.storeId, dateFrom, dateTo, pipelineStatus, handoffOnly, reExport }, templateSupplier, 'preview')),
     })
     const data = await res.json()
     if (!res.ok) { setMessage(data.error || 'Preview failed'); setPreviewing(false); return }
     setPreview(data); setPreviewing(false)
-  }, [templateId, projectId, storeFilter.storeId, dateFrom, dateTo, pipelineStatus, handoffOnly, reExport])
+  }, [templateId, templateSupplier, projectId, storeFilter.storeId, dateFrom, dateTo, pipelineStatus, handoffOnly, reExport])
 
   const download = async () => {
     if (!templateId) { setMessage('Pick a template'); return }
@@ -372,17 +366,7 @@ export default function ExportPage() {
     const res = await fetch('/api/fulfillment/export', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        templateId,
-        projectId: projectId || undefined,
-        storeId: storeFilter.storeId || undefined,
-        dateFrom: dateFrom || undefined,
-        dateTo: dateTo || undefined,
-        pipelineStatus: pipelineStatus || undefined,
-        handoffOnly: handoffOnly || undefined,
-        reExport: reExport || undefined,
-        markExported: true,
-      }),
+      body: JSON.stringify(csvExportBody({ templateId, projectId, storeId: storeFilter.storeId, dateFrom, dateTo, pipelineStatus, handoffOnly, reExport }, templateSupplier, 'download')),
     })
     if (!res.ok) {
       const e = await res.json()
@@ -414,7 +398,7 @@ export default function ExportPage() {
       <Sidebar />
       <main className="ml-0 lg:ml-[280px] mt-14 lg:mt-0 w-[calc(100vw-280px)] min-w-0 p-xl">
         <h1 className="text-display-md mb-lg">CSV Export</h1>
-        <div className="mb-md"><StoreFilter filter={storeFilter} /></div>
+        {storePickShown && <div className="mb-md"><StoreFilter filter={storeFilter} /></div>}
         {lockedMessage && (
           <div role="status" className="flex items-center gap-sm rounded-lg px-md py-sm mb-lg text-body-sm border bg-error-container/40 border-error/30 text-on-error-container">
             <span className="material-symbols-outlined text-[18px]">lock</span>{lockedMessage}

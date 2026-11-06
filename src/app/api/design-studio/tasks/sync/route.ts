@@ -9,6 +9,15 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({ lastSync: await getLastDesignTaskSync({ hideError: scope.limited }) })
 }
 
+// A unique violation names its columns in meta.target with the query engine, and in the driver adapter's constraint with
+// the libsql adapter this app runs on.
+function uniqueFieldsOf(e: any): string[] {
+  const fields = e?.meta?.target ?? e?.meta?.driverAdapterError?.cause?.constraint?.fields
+  return Array.isArray(fields) ? fields.map(String) : typeof fields === 'string' ? [fields] : []
+}
+
+const isTaskKeyConflict = (e: any) => e?.code === 'P2002' && uniqueFieldsOf(e).some(f => f.includes('taskKey'))
+
 // One order is checked against the stores of the caller; the run over every order is for those who see every store.
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({} as any))
@@ -22,10 +31,11 @@ export async function POST(req: NextRequest) {
       const r = await syncDesignTasks(orderId)
       return NextResponse.json({ ...r, orders: 1 })
     } catch (e: any) {
-      if (e?.code === 'P2002') {
+      console.error('[design-tasks] one-order task sync failed', orderId, e)
+      if (isTaskKeyConflict(e)) {
         return NextResponse.json({ error: 'Mã task của một dòng đang bị task khác giữ — chưa đồng bộ được task của đơn này, báo kỹ thuật kiểm tra' }, { status: 409 })
       }
-      return NextResponse.json({ error: `Không đồng bộ được task của đơn này: ${e?.message ?? String(e)}` }, { status: 500 })
+      return NextResponse.json({ error: 'Không đồng bộ được task của đơn này — lỗi đã ghi ở server, báo kỹ thuật kiểm tra' }, { status: 500 })
     }
   }
 

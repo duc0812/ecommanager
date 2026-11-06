@@ -45,7 +45,7 @@ export async function listTemplates(supplierId?: string) {
   return prisma.csvTemplate.findMany({
     where: supplierId ? { supplierId } : {},
     orderBy: [{ supplierId: 'asc' }, { createdAt: 'asc' }],
-    include: { supplier: { select: { id: true, name: true, code: true } } },
+    include: { supplier: { select: { id: true, name: true, code: true, apiType: true } } },
   })
 }
 
