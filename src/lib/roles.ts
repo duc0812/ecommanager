@@ -6,6 +6,7 @@ export type FeaturePermission =
   | 'other_bills'
   | 'fulfillment_dashboard'
   | 'fulfillment_crawler'
+  | 'fulfillment_clone'
   | 'fulfillment_orders'
   | 'fulfillment_export'
   | 'fulfillment_suppliers'
@@ -46,6 +47,7 @@ export const FEATURE_LABELS: Record<FeaturePermission, string> = {
   other_bills: 'Other Bills',
   fulfillment_dashboard: 'Fulfillment Dashboard',
   fulfillment_crawler: 'Product Crawler',
+  fulfillment_clone: 'Clone từ link',
   fulfillment_orders: 'Orders & P/L',
   fulfillment_export: 'CSV Export',
   fulfillment_suppliers: 'Suppliers',
@@ -76,6 +78,7 @@ export const FEATURE_GROUPS: { label: string; permissions: FeaturePermission[] }
     permissions: [
       'fulfillment_dashboard',
       'fulfillment_crawler',
+      'fulfillment_clone',
       'fulfillment_orders',
       'fulfillment_export',
       'fulfillment_suppliers',
@@ -102,6 +105,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, FeaturePermission[]> = {
     'other_bills',
     'fulfillment_dashboard',
     'fulfillment_crawler',
+    'fulfillment_clone',
     'fulfillment_orders',
     'fulfillment_export',
     'fulfillment_suppliers',
@@ -142,6 +146,7 @@ const FEATURE_PATHS: Record<FeaturePermission, string[]> = {
   other_bills: ['/finance/other-bills'],
   fulfillment_dashboard: ['/fulfillment', '/finance/fulfillment'],
   fulfillment_crawler: ['/fulfillment/crawler'],
+  fulfillment_clone: ['/fulfillment/clone'],
   fulfillment_orders: ['/fulfillment/orders', '/orders'],
   fulfillment_export: ['/fulfillment/export', '/orders/export'],
   fulfillment_suppliers: ['/fulfillment/suppliers', '/setup/suppliers'],
@@ -229,6 +234,7 @@ const HOME_PRIORITY: FeaturePermission[] = [
   'fulfillment_design_library',
   'design_tasks',
   'fulfillment_crawler',
+  'fulfillment_clone',
   'setup_store',
   'setup_meta',
   'setup_projects',

@@ -29,6 +29,7 @@ const nav: NavEntry[] = [
   { type: 'group', label: 'Fulfillment' },
   { type: 'child', href: '/fulfillment', icon: 'local_shipping', label: 'Dashboard' },
   { type: 'child', href: '/fulfillment/crawler', icon: 'travel_explore', label: 'Product Crawler' },
+  { type: 'child', href: '/fulfillment/clone', icon: 'content_copy', label: 'Clone từ link' },
   { type: 'child', href: '/fulfillment/orders', icon: 'receipt_long', label: 'Orders & P/L' },
   { type: 'child', href: '/fulfillment/export', icon: 'file_download', label: 'CSV Export' },
   { type: 'child', href: '/fulfillment/suppliers', icon: 'factory', label: 'Suppliers' },

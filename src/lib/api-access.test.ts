@@ -170,6 +170,22 @@ describe('PGprints API access', () => {
     expect(canCallApi('SELLER', DEFAULT_ROLE_PERMISSIONS.SELLER, '/api/tools/creative/models', 'GET')).toBe('forbidden')
     expect(canCallApi('SUPERADMIN', [], '/api/tools/creative/settings', 'POST')).toBe('ok')
   })
+
+  it('clone queue: staff with fulfillment_clone call the jobs, the settings are superadmin-only, the worker route is public', () => {
+    expect(canCallApi('SELLER', ['fulfillment_clone'], '/api/fulfillment/clone/jobs', 'POST')).toBe('ok')
+    expect(canCallApi('SELLER', ['fulfillment_clone'], '/api/fulfillment/clone/jobs/j1/cancel', 'POST')).toBe('ok')
+    expect(canCallApi('SELLER', ['fulfillment_crawler'], '/api/fulfillment/clone/jobs', 'GET')).toBe('forbidden')
+    expect(canCallApi('SELLER', ['fulfillment_clone'], '/api/fulfillment/clone/settings', 'GET')).toBe('forbidden')
+    expect(canCallApi('ADMIN', ['fulfillment_clone'], '/api/fulfillment/clone/settings', 'POST')).toBe('forbidden')
+    expect(canCallApi('ADMIN', ['fulfillment_clone'], '/api/fulfillment/clone/settings', 'GET')).toBe('forbidden')
+    expect(canCallApi('SUPERADMIN', [], '/api/fulfillment/clone/settings', 'POST')).toBe('ok')
+    expect(canCallApi('ADMIN', DEFAULT_ROLE_PERMISSIONS.ADMIN, '/api/fulfillment/clone/jobs', 'GET')).toBe('ok')
+    expect(canCallApi('SELLER', DEFAULT_ROLE_PERMISSIONS.SELLER, '/api/fulfillment/clone/jobs', 'GET')).toBe('forbidden')
+    expect(canCallApi(null, [], '/api/clone-worker/claim', 'POST')).toBe('ok')
+    expect(canCallApi(null, [], '/api/clone-worker/jobs/j1/heartbeat', 'POST')).toBe('ok')
+    expect(canCallApi(null, [], '/api/fulfillment/clone/jobs', 'GET')).toBe('unauthenticated')
+    expect(canCallApi(null, [], '/api/fulfillment/clone/settings', 'GET')).toBe('unauthenticated')
+  })
 })
 
 describe('seller API allow-list', () => {
@@ -181,6 +197,7 @@ describe('seller API allow-list', () => {
       '/api/tools/creative',
       '/api/tools/scale',
       '/api/fulfillment/crawler',
+      '/api/fulfillment/clone/jobs',
       '/api/overview',
       '/api/projects',
       '/api/shopify/db-payouts',

@@ -63,6 +63,7 @@ model AppUser {
   status       String   @default("ACTIVE")
   passwordHash String?
   tokenVersion Int      @default(0)
+  skuPrefix    String?  @unique
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
   storeAccess  UserStoreAccess[]
@@ -1603,4 +1604,37 @@ model ScaleTargetView {
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
   @@index([targetId])
+}
+
+model CloneJob {
+  id              String    @id @default(cuid())
+  storeId         String
+  sourceUrl       String
+  sourceKey       String
+  status          String    @default("QUEUED")
+  failKind        String?
+  stage           String?
+  platform        String?
+  skuCode         String    @unique
+  requestedById   String
+  requestedByName String
+  attempts        Int       @default(0)
+  lockedAt        DateTime?
+  startedAt       DateTime?
+  finishedAt      DateTime?
+  productGid      String?
+  handle          String?
+  productUrl      String?
+  productType     String?
+  reused          Boolean   @default(false)
+  qaVerdict       String?
+  qaNote          String?
+  error           String?
+  costUsd         Float?
+  durationMs      Int?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  @@index([status, createdAt])
+  @@index([storeId, sourceKey])
+  @@index([requestedById, createdAt])
 }

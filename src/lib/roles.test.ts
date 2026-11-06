@@ -17,12 +17,29 @@ describe('canAccess picks the feature whose configured path is the longest prefi
     expect(can('SELLER', '/fulfillment/orders', ['fulfillment_crawler'])).toBe(false)
   })
 
+  it('Clone từ link opens /fulfillment/clone without Product Crawler or Fulfillment Dashboard', () => {
+    expect(can('SELLER', '/fulfillment/clone', ['fulfillment_clone'])).toBe(true)
+    expect(can('SELLER', '/fulfillment/clone', ['fulfillment_crawler'])).toBe(false)
+    expect(can('SELLER', '/fulfillment/clone', ['fulfillment_dashboard'])).toBe(false)
+    expect(can('SELLER', '/fulfillment/crawler', ['fulfillment_clone'])).toBe(false)
+    expect(can('SELLER', '/fulfillment', ['fulfillment_clone'])).toBe(false)
+  })
+
+  it('Clone từ link is a default feature of ADMIN only, and lands after Product Crawler in the home priority', () => {
+    expect(DEFAULT_ROLE_PERMISSIONS.ADMIN).toContain('fulfillment_clone')
+    expect(DEFAULT_ROLE_PERMISSIONS.SELLER).not.toContain('fulfillment_clone')
+    expect(DEFAULT_ROLE_PERMISSIONS.SUPPORT).not.toContain('fulfillment_clone')
+    expect(DEFAULT_ROLE_PERMISSIONS.SUPERADMIN).toContain('fulfillment_clone')
+    expect(homePathFor('SELLER', ['fulfillment_clone'])).toBe('/fulfillment/clone')
+    expect(homePathFor('SELLER', ['fulfillment_clone', 'fulfillment_crawler'])).toBe('/fulfillment/crawler')
+  })
+
   it('Fulfillment Dashboard opens its own pages and nothing that has a feature of its own', () => {
     const dashboard: FeaturePermission[] = ['fulfillment_dashboard']
     expect(can('SUPPORT', '/fulfillment', dashboard)).toBe(true)
     expect(can('SUPPORT', '/finance/fulfillment', dashboard)).toBe(true)
     expect(can('SUPPORT', '/fulfillment/auto-fulfill', dashboard)).toBe(true)
-    for (const owned of ['/fulfillment/orders', '/fulfillment/crawler', '/fulfillment/export', '/fulfillment/suppliers', '/fulfillment/mapping', '/fulfillment/tracking', '/fulfillment/design-library']) {
+    for (const owned of ['/fulfillment/orders', '/fulfillment/crawler', '/fulfillment/clone', '/fulfillment/export', '/fulfillment/suppliers', '/fulfillment/mapping', '/fulfillment/tracking', '/fulfillment/design-library']) {
       expect([owned, can('SUPPORT', owned, dashboard)]).toEqual([owned, false])
     }
   })
