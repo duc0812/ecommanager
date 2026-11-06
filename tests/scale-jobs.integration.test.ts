@@ -2,55 +2,76 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import fs from 'fs/promises'
 import os from 'os'
 import path from 'path'
+import sharp from 'sharp'
 import { prisma } from '@/lib/db'
 import type { PollResult } from '@/lib/creative/kie'
 import { DEFAULT_SCALE_SETTINGS, ScaleInputError, type ScaleDeps } from '@/lib/scale/settings'
 import { readScaleFile, scaleRoot } from '@/lib/scale/storage'
-import { createTarget, setBlank, updateTarget } from '@/lib/scale/targets'
+import { createTarget, createView, setViewBlank, updateTarget, updateView } from '@/lib/scale/targets'
 import { createScaleJob, deleteScaleJob, fallbackScaleJob, listScaleJobs, refreshScaleJob, rerunScaleJob, runPipeline, scaleJobView } from '@/lib/scale/jobs'
 
 const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
-const editSchema = { type: 'object', required: ['prompt', 'input_urls', 'aspect_ratio'], properties: { prompt: { type: 'string' }, input_urls: { type: 'array', items: { type: 'string' } }, aspect_ratio: { type: 'string', enum: ['16:9', '1:1'] }, resolution: { type: 'string', enum: ['1K', '2K', '4K'] } } }
-const design = { sourceGarment: 'varsity jacket', base: 'black with stars', front: 'a figure on a hill', back: null, sleeves: null, otherParts: null, texts: [{ text: 'MAY THE 4TH', where: 'the back' }] }
-const downloadFetch = (async () => new Response(Buffer.from('result-bytes'), { status: 200, headers: { 'Content-Type': 'image/png' } })) as unknown as typeof fetch
+const editSchema = { type: 'object', required: ['prompt', 'input_urls', 'aspect_ratio'], properties: { prompt: { type: 'string' }, input_urls: { type: 'array', items: { type: 'string' } }, aspect_ratio: { type: 'string', enum: ['1:1', '2:3'] }, resolution: { type: 'string', enum: ['1K', '2K', '4K'] } } }
+const design = { sourceGarment: 'varsity jacket', base: 'black with stars', front: 'a figure on a hill', back: 'a poster graphic', sleeves: null, otherParts: null, texts: [{ text: 'MAY THE 4TH', where: 'the back', side: 'back' }] }
 const brokenFetch = (async () => { throw new Error('ECONNRESET') }) as unknown as typeof fetch
+let partPng: Buffer
+const downloadFetch = (async () => new Response(partPng, { status: 200, headers: { 'Content-Type': 'image/png' } })) as unknown as typeof fetch
+const done = (n: number): PollResult => ({ state: 'done', urls: [`https://tempfile.redpandaai.co/result-${n}.png`], credits: 10, costTime: null })
 
-function fakeDeps(opts: { polls?: PollResult[]; allowFallback?: boolean } = {}) {
+function fakeDeps(opts: { polls?: Record<string, PollResult[]>; allowFallback?: boolean } = {}) {
   const log: any[] = []
-  const polls = opts.polls ?? [{ state: 'running' as const }]
-  let pollIdx = 0
+  const pollIdx: Record<string, number> = {}
+  let taskNo = 0
   const deps: ScaleDeps = {
     image: {
       schema: async () => ({ input: editSchema, root: {} }),
       uploadBase64: async (_d: string, name: string) => { log.push(['upload', name]); return `https://tempfile.redpandaai.co/${name}` },
-      createTask: async (model: string, input: Record<string, unknown>) => { log.push(['create', model, input]); return 'task-1' },
-      poll: async () => polls[Math.min(pollIdx++, polls.length - 1)],
+      createTask: async (model: string, input: Record<string, unknown>) => { taskNo += 1; log.push(['create', model, input, `task-${taskNo}`]); return `task-${taskNo}` },
+      poll: async (taskId: string) => {
+        const list = opts.polls?.[taskId] ?? [{ state: 'running' as const }]
+        const i = pollIdx[taskId] ?? 0
+        pollIdx[taskId] = i + 1
+        return list[Math.min(i, list.length - 1)]
+      },
     },
     vision: { describe: async (p: any) => { log.push(['vision', p]); return design as any } },
     settings: { ...DEFAULT_SCALE_SETTINGS, allowFallback: opts.allowFallback ?? false },
     visionModel: 'gpt-6.1-sol',
     fetchImpl: downloadFetch,
   }
-  return { deps, log, count: (kind: string) => log.filter(l => l[0] === kind).length }
+  return { deps, log, creates: () => log.filter(l => l[0] === 'create'), count: (kind: string) => log.filter(l => l[0] === kind).length }
 }
 
 let tmp: string
 let targetId: string
+let cloakId: string
 const clean = async () => {
   await prisma.scaleJob.deleteMany({})
+  const mine = await prisma.scaleTarget.findMany({ where: { sku: { startsWith: 'JOBT' } }, select: { id: true } })
+  await prisma.scaleTargetView.deleteMany({ where: { targetId: { in: mine.map(t => t.id) } } })
   await prisma.scaleTarget.deleteMany({ where: { sku: { startsWith: 'JOBT' } } })
 }
+async function makeTarget(sku: string, name: string, views: { label: string; side: 'front' | 'back' }[]) {
+  const t = await createTarget({ name, sku })
+  for (const v of views) {
+    const view = await createView(t.id, v)
+    await setViewBlank(view.id, PNG)
+    await updateView(view.id, { blankDescription: `${v.label} view of the blank.`, unprintedParts: 'The ribbing' })
+  }
+  await updateTarget(t.id, { active: true })
+  return t.id
+}
 const run = async (id: string, deps: ScaleDeps) => (await runPipeline(id, deps))!
-const start = (deps: ScaleDeps, userId = 'user-a') => createScaleJob({ targetId, image: { dataUrl: PNG, name: 'jacket.png' }, userId }, deps, { run: false })
+const start = (deps: ScaleDeps, userId = 'user-a', id = targetId) => createScaleJob({ targetId: id, image: { dataUrl: PNG, name: 'jacket.png' }, userId }, deps, { run: false })
+const views = (job: { viewsJson: string }) => JSON.parse(job.viewsJson) as any[]
 
 beforeAll(async () => {
   tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'scale-jobs-'))
   process.env.DESIGN_STORAGE_DIR = tmp
+  partPng = await sharp({ create: { width: 200, height: 300, channels: 3, background: '#3355aa' } }).png().toBuffer()
   await clean()
-  const t = await createTarget({ name: 'Test Fleece Zip Hoodie', sku: 'JOBT1' })
-  await setBlank(t.id, PNG)
-  await updateTarget(t.id, { blankDescription: 'front view on the left, back view on the right.', unprintedParts: 'The ribbing and zipper', active: true })
-  targetId = t.id
+  targetId = await makeTarget('JOBT1', 'Test Fleece Zip Hoodie', [{ label: 'Front', side: 'front' }, { label: 'Back', side: 'back' }])
+  cloakId = await makeTarget('JOBT3', 'Test Cloak', [{ label: 'Back spread', side: 'back' }, { label: 'Back hood up', side: 'back' }])
 })
 afterAll(async () => {
   await clean()
@@ -59,30 +80,50 @@ afterAll(async () => {
 beforeEach(async () => { await prisma.scaleJob.deleteMany({}) })
 
 describe('scale jobs', () => {
-  it('reads the design, sends source then blank under per-job names, and saves the finished image', async () => {
-    const { deps, log } = fakeDeps({ polls: [{ state: 'running' }, { state: 'done', urls: ['https://tempfile.redpandaai.co/out.png'], credits: 12, costTime: null }] })
+  it('generates each view on its own and joins the finished views into one image', async () => {
+    const { deps, log, creates } = fakeDeps({ polls: { 'task-1': [{ state: 'running' }, done(1)], 'task-2': [done(2)] } })
     const job = await start(deps)
     expect(job).toMatchObject({ status: 'describing', targetName: 'Test Fleece Zip Hoodie', model: 'gpt-image-2-5-flare-image-to-image', sourceFile: 'src.png', createdBy: 'user-a' })
     const running = await run(job.id, deps)
-    expect(running).toMatchObject({ status: 'running', providerTaskId: 'task-1' })
-    expect(log.filter(l => l[0] === 'upload').map(l => l[1])).toEqual([`scale-${job.id}-src.png`, `scale-${job.id}-blank.png`])
-    const vision = log.find(l => l[0] === 'vision')[1]
-    expect(vision).toMatchObject({ model: 'gpt-6.1-sol', schemaName: 'scale_design' })
-    expect(vision.images).toEqual([PNG])
-    expect(vision.text).toContain('Test Fleece Zip Hoodie')
-    const create = log.find(l => l[0] === 'create')
-    expect(create[1]).toBe('gpt-image-2-5-flare-image-to-image')
-    expect(create[2].input_urls).toEqual([`https://tempfile.redpandaai.co/scale-${job.id}-src.png`, `https://tempfile.redpandaai.co/scale-${job.id}-blank.png`])
-    expect(create[2]).toMatchObject({ aspect_ratio: '1:1', resolution: '2K' })
-    expect(create[2].prompt).toContain('Keep IMAGE 2 EXACTLY')
-    expect(create[2].prompt).toContain("the text 'MAY THE 4TH' on the back")
-    expect(create[2].prompt).toContain('Back view: continues the same base pattern with no additional graphic.')
-    expect(JSON.parse(running.designJson!)).toEqual(design)
+    expect(running.status).toBe('running')
+    expect(log.filter(l => l[0] === 'vision')).toHaveLength(1)
+    expect(log.filter(l => l[0] === 'upload').map(l => l[1])).toEqual([`scale-${job.id}-src.png`, `scale-${job.id}-blank-0.png`, `scale-${job.id}-blank-1.png`])
+    expect(creates()).toHaveLength(2)
+    const [frontTask, backTask] = creates()
+    expect(frontTask[2].input_urls).toEqual([`https://tempfile.redpandaai.co/scale-${job.id}-src.png`, `https://tempfile.redpandaai.co/scale-${job.id}-blank-0.png`])
+    expect(frontTask[2]).toMatchObject({ aspect_ratio: '2:3', resolution: '2K' })
+    expect(frontTask[2].prompt).toContain('Use only the FRONT artwork of IMAGE 1')
+    expect(frontTask[2].prompt).toContain('a figure on a hill')
+    expect(frontTask[2].prompt).not.toContain('MAY THE 4TH')
+    expect(backTask[2].input_urls[1]).toBe(`https://tempfile.redpandaai.co/scale-${job.id}-blank-1.png`)
+    expect(backTask[2].prompt).toContain('Use only the BACK artwork of IMAGE 1')
+    expect(backTask[2].prompt).toContain("the text 'MAY THE 4TH' on the back")
+    expect(views(running).map(v => [v.label, v.status])).toEqual([['Front', 'running'], ['Back', 'running']])
 
-    expect((await refreshScaleJob(job.id, deps)).status).toBe('running')
-    const done = await refreshScaleJob(job.id, deps)
-    expect(done).toMatchObject({ status: 'done', resultFile: 'out.png', cost: '12 credits', error: null })
-    expect((await readScaleFile('jobs', job.id, 'out.png'))?.bytes.toString()).toBe('result-bytes')
+    const half = await refreshScaleJob(job.id, deps)
+    expect(half.status).toBe('running')
+    expect(views(half).map(v => v.status)).toEqual(['running', 'done'])
+    const finished = await refreshScaleJob(job.id, deps)
+    expect(finished).toMatchObject({ status: 'done', resultFile: 'out.jpg', cost: '20 credits', error: null })
+    const out = await readScaleFile('jobs', job.id, 'out.jpg')
+    const meta = await sharp(out!.bytes).metadata()
+    expect(meta.width).toBe(meta.height)
+    expect((await readScaleFile('jobs', job.id, 'part-0.png'))?.bytes.length).toBe(partPng.length)
+  })
+
+  it('a second view of the same side waits for the first and copies its finished design', async () => {
+    const { deps, creates, log } = fakeDeps({ polls: { 'task-1': [done(1)], 'task-2': [done(2)] } })
+    const job = await run((await start(deps, 'user-a', cloakId)).id, deps)
+    expect(creates()).toHaveLength(1)
+    expect(views(job).map(v => v.status)).toEqual(['running', 'waiting'])
+    const afterFirst = await refreshScaleJob(job.id, deps)
+    expect(afterFirst.status).toBe('running')
+    expect(creates()).toHaveLength(2)
+    const second = creates()[1]
+    expect(second[2].prompt).toContain('IMAGE 1 is a finished mockup of this same printed garment')
+    expect(second[2].input_urls).toEqual([`https://tempfile.redpandaai.co/scale-${job.id}-part-0.png`, `https://tempfile.redpandaai.co/scale-${job.id}-blank-1.png`])
+    expect(log.filter(l => l[0] === 'upload').map(l => l[1])).toContain(`scale-${job.id}-part-0.png`)
+    expect(await refreshScaleJob(job.id, deps)).toMatchObject({ status: 'done', cost: '20 credits' })
   })
 
   it('refuses a target that is not ready, before anything is uploaded', async () => {
@@ -105,76 +146,45 @@ describe('scale jobs', () => {
     expect(count('create')).toBe(0)
   })
 
-  it('names the CS key when the vision model is refused', async () => {
-    const { deps, count } = fakeDeps()
-    deps.vision!.describe = async () => { throw new Error('kie error 401: The API key is not authorized to use this model.') }
-    const failed = await run((await start(deps)).id, deps)
-    expect(failed).toMatchObject({ status: 'failed', error: 'Key Kie (CS) chưa được cấp quyền model gpt-6.1-sol', designJson: null })
-    expect(count('create')).toBe(0)
-  })
-
-  it('names the Creative key when the image model is refused and keeps the design for a later fallback', async () => {
-    const { deps } = fakeDeps()
-    deps.image!.createTask = async () => { throw new Error('kie createTask 401: The API key is not authorized to use this model.') }
-    const failed = await run((await start(deps)).id, deps)
-    expect(failed.status).toBe('failed')
+  it('names the CS key when the vision model is refused and the Creative key when the image model is', async () => {
+    const a = fakeDeps()
+    a.deps.vision!.describe = async () => { throw new Error('kie error 401: The API key is not authorized to use this model.') }
+    expect(await run((await start(a.deps)).id, a.deps)).toMatchObject({ status: 'failed', error: 'Key Kie (CS) chưa được cấp quyền model gpt-6.1-sol', designJson: null })
+    const b = fakeDeps()
+    b.deps.image!.createTask = async () => { throw new Error('kie createTask 401: The API key is not authorized to use this model.') }
+    const failed = await run((await start(b.deps)).id, b.deps)
     expect(failed.error).toBe('Key Kie (Creative) chưa được cấp quyền model gpt-image-2-5-flare-image-to-image')
     expect(JSON.parse(failed.designJson!)).toEqual(design)
+    expect((await run((await start(a.deps)).id, { ...a.deps, vision: null })).error).toBe('Chưa có API key Kie cho bước đọc ảnh')
+    expect((await run((await start(b.deps)).id, { ...b.deps, image: null })).error).toBe('Chưa có API key Kie cho bước tạo ảnh')
   })
 
-  it('says which step has no key', async () => {
-    const { deps } = fakeDeps()
-    expect((await run((await start(deps)).id, { ...deps, vision: null })).error).toBe('Chưa có API key Kie cho bước đọc ảnh')
-    expect((await run((await start(deps)).id, { ...deps, image: null })).error).toBe('Chưa có API key Kie cho bước tạo ảnh')
-  })
-
-  it('shows the provider message when the image step fails', async () => {
-    const { deps } = fakeDeps({ polls: [{ state: 'failed', error: 'Your request was rejected by the safety system' }] })
+  it('fails the whole job and says which view when one view is rejected', async () => {
+    const { deps } = fakeDeps({ polls: { 'task-1': [done(1)], 'task-2': [{ state: 'failed', error: 'flagged as sensitive' }] } })
     const job = await run((await start(deps)).id, deps)
-    expect(await refreshScaleJob(job.id, deps)).toMatchObject({ status: 'failed', error: 'Your request was rejected by the safety system' })
+    const failed = await refreshScaleJob(job.id, deps)
+    expect(failed.status).toBe('failed')
+    expect(failed.error).toBe('Back: flagged as sensitive')
   })
 
   it('keeps a job running through a poll error and retries a failed download', async () => {
-    const { deps } = fakeDeps({ polls: [{ state: 'done', urls: ['https://tempfile.redpandaai.co/out.png'], credits: 3, costTime: null }] })
+    const { deps } = fakeDeps({ polls: { 'task-1': [done(1)], 'task-2': [done(2)] } })
     const job = await run((await start(deps)).id, deps)
     const flaky = { ...deps, image: { ...deps.image!, poll: async () => { throw new Error('timeout') } } }
     expect(await refreshScaleJob(job.id, flaky)).toMatchObject({ status: 'running', error: 'Poll lỗi: timeout' })
     const pending = await refreshScaleJob(job.id, { ...deps, fetchImpl: brokenFetch })
-    expect(pending).toMatchObject({ status: 'running', resultUrl: 'https://tempfile.redpandaai.co/out.png' })
-    expect(await refreshScaleJob(job.id, deps)).toMatchObject({ status: 'done', resultFile: 'out.png', cost: '3 credits' })
+    expect(pending.status).toBe('running')
+    expect(views(pending).every(v => v.status === 'running' && v.resultUrl)).toBe(true)
+    expect(await refreshScaleJob(job.id, deps)).toMatchObject({ status: 'done', resultFile: 'out.jpg', cost: '20 credits' })
   })
 
-  it('gives up on a job that was interrupted while reading the design', async () => {
-    const { deps } = fakeDeps()
-    const job = await start(deps)
-    expect((await refreshScaleJob(job.id, deps)).status).toBe('describing')
-    await prisma.scaleJob.update({ where: { id: job.id }, data: { createdAt: new Date(Date.now() - 6 * 60 * 1000) } })
-    expect(await refreshScaleJob(job.id, deps)).toMatchObject({ status: 'failed', error: 'Bị gián đoạn, bấm Tạo lại' })
-  })
+  it('gives up on an interrupted or never-ending job', async () => {
+    const { deps } = fakeDeps({ polls: { 'task-1': [done(1)], 'task-2': [done(2)] } })
+    const stuck = await start(deps)
+    expect((await refreshScaleJob(stuck.id, deps)).status).toBe('describing')
+    await prisma.scaleJob.update({ where: { id: stuck.id }, data: { createdAt: new Date(Date.now() - 6 * 60 * 1000) } })
+    expect(await refreshScaleJob(stuck.id, deps)).toMatchObject({ status: 'failed', error: 'Bị gián đoạn, bấm Tạo lại' })
 
-  it('does not start a paid task when the job was closed while the design was being read', async () => {
-    const { deps, count } = fakeDeps()
-    const job = await start(deps)
-    deps.vision!.describe = async () => {
-      await prisma.scaleJob.update({ where: { id: job.id }, data: { status: 'failed', error: 'Bị gián đoạn, bấm Tạo lại' } })
-      return design as any
-    }
-    const after = await run(job.id, deps)
-    expect(after).toMatchObject({ status: 'failed', error: 'Bị gián đoạn, bấm Tạo lại' })
-    expect(count('create')).toBe(0)
-    expect(count('upload')).toBe(0)
-  })
-
-  it('stops quietly when the job was deleted while the design was being read', async () => {
-    const { deps, count } = fakeDeps()
-    const job = await start(deps)
-    deps.vision!.describe = async () => { await prisma.scaleJob.delete({ where: { id: job.id } }); return design as any }
-    await expect(runPipeline(job.id, deps)).resolves.toBeNull()
-    expect(count('create')).toBe(0)
-  })
-
-  it('gives up on a finished job whose result can no longer be downloaded', async () => {
-    const { deps } = fakeDeps({ polls: [{ state: 'done', urls: ['https://tempfile.redpandaai.co/out.png'], credits: 3, costTime: null }] })
     const job = await run((await start(deps)).id, deps)
     await refreshScaleJob(job.id, { ...deps, fetchImpl: brokenFetch })
     await prisma.scaleJob.update({ where: { id: job.id }, data: { createdAt: new Date(Date.now() - 31 * 60 * 1000) } })
@@ -183,27 +193,33 @@ describe('scale jobs', () => {
     expect(gone.error).toContain('Quá 30 phút')
   })
 
-  it('never uses the fallback model unless the owner switched it on', async () => {
-    const off = fakeDeps({ polls: [{ state: 'failed', error: 'rejected' }] })
+  it('does not start paid tasks when the job was closed or deleted while the design was being read', async () => {
+    const a = fakeDeps()
+    const closed = await start(a.deps)
+    a.deps.vision!.describe = async () => { await prisma.scaleJob.update({ where: { id: closed.id }, data: { status: 'failed', error: 'Bị gián đoạn, bấm Tạo lại' } }); return design as any }
+    expect(await runPipeline(closed.id, a.deps)).toMatchObject({ status: 'failed', error: 'Bị gián đoạn, bấm Tạo lại' })
+    expect(a.count('create')).toBe(0)
+    const b = fakeDeps()
+    const deleted = await start(b.deps)
+    b.deps.vision!.describe = async () => { await prisma.scaleJob.delete({ where: { id: deleted.id } }); return design as any }
+    await expect(runPipeline(deleted.id, b.deps)).resolves.toBeNull()
+    expect(b.count('create')).toBe(0)
+  })
+
+  it('never uses the fallback model unless the owner switched it on, and reuses the design when it does', async () => {
+    const off = fakeDeps({ polls: { 'task-1': [{ state: 'failed', error: 'rejected' }], 'task-2': [done(2)] } })
     const job = await run((await start(off.deps)).id, off.deps)
     await refreshScaleJob(job.id, off.deps)
     await expect(fallbackScaleJob(job.id, 'user-b', off.deps, { run: false })).rejects.toThrow('Chưa bật model dự phòng')
     expect(await prisma.scaleJob.count()).toBe(1)
-
     const on = fakeDeps({ allowFallback: true })
     const next = await fallbackScaleJob(job.id, 'user-b', on.deps, { run: false })
     expect(next).toMatchObject({ model: 'seedream/4.5-edit', parentJobId: job.id, status: 'describing', createdBy: 'user-b', sourceFile: 'src.png' })
-    const running = await run(next.id, on.deps)
-    expect(running.status).toBe('running')
+    expect((await run(next.id, on.deps)).status).toBe('running')
     expect(on.count('vision')).toBe(0)
-    expect(on.log.find(l => l[0] === 'create')[1]).toBe('seedream/4.5-edit')
-    expect(on.log.filter(l => l[0] === 'upload').map(l => l[1])).toEqual([`scale-${next.id}-src.png`, `scale-${next.id}-blank.png`])
-  })
-
-  it('only offers the fallback for a failed job that already has a design', async () => {
-    const { deps } = fakeDeps({ allowFallback: true })
-    const job = await run((await start(deps)).id, deps)
-    await expect(fallbackScaleJob(job.id, 'user-a', deps, { run: false })).rejects.toBeInstanceOf(ScaleInputError)
+    expect(on.creates().every(c => c[1] === 'seedream/4.5-edit')).toBe(true)
+    const fresh = await run((await start(on.deps)).id, on.deps)
+    await expect(fallbackScaleJob(fresh.id, 'user-a', on.deps, { run: false })).rejects.toBeInstanceOf(ScaleInputError)
   })
 
   it('re-runs with the same source and a fresh reading of the design', async () => {
@@ -228,13 +244,16 @@ describe('scale jobs', () => {
     expect(await prisma.scaleJob.count()).toBe(0)
   })
 
-  it('never hands out the prompt or the design description, whoever asks', async () => {
+  it('never hands out the prompt, the design description or provider task details', async () => {
     const { deps } = fakeDeps()
     const job = await run((await start(deps)).id, deps)
     const view: any = scaleJobView(job)
     expect(view.prompt).toBeUndefined()
     expect(view.designJson).toBeUndefined()
+    expect(view.viewsJson).toBeUndefined()
     expect(view.hasDesign).toBe(true)
+    expect(view.views).toEqual([{ label: 'Front', status: 'running' }, { label: 'Back', status: 'running' }])
     expect(JSON.stringify(view)).not.toContain('Keep IMAGE 2 EXACTLY')
+    expect(JSON.stringify(view)).not.toContain('task-1')
   })
 })

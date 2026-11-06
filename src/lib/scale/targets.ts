@@ -1,23 +1,27 @@
 import { prisma } from '@/lib/db'
-import type { ScaleTarget } from '@/generated/prisma/client'
+import type { ScaleTarget, ScaleTargetView } from '@/generated/prisma/client'
 import { buildInput, formFromInputSchema, type ModelForm } from '@/lib/creative/schema-map'
-import { MAX_REF_BYTES, REF_TYPES_LABEL, extForMime, fetchImage, parseDataUrl } from '@/lib/creative/storage'
-import { BlankDescriptionSchema, MAKE_BLANK_PROMPT, blankDescriptionSystemPrompt, type BlankDescription } from '@/lib/scale/prompt'
+import { MAX_REF_BYTES, REF_TYPES_LABEL, extForMime, parseDataUrl } from '@/lib/creative/storage'
+import { BlankDescriptionSchema, VIEW_SIDES, blankDescriptionSystemPrompt, type BlankDescription, type ViewSide } from '@/lib/scale/prompt'
 import { ScaleInputError, explainKieError, type ImageClient, type ScaleDeps } from '@/lib/scale/settings'
-import { deleteScaleFolder, readScaleFile, removeScaleFile, toDataUrl, writeScaleFile } from '@/lib/scale/storage'
+import { deleteScaleFolder, readScaleFile, toDataUrl, writeScaleFile } from '@/lib/scale/storage'
 
-export type TargetPatch = Partial<Pick<ScaleTarget, 'name' | 'sku' | 'blankDescription' | 'unprintedParts' | 'active' | 'sortOrder'>>
+export type TargetWithViews = ScaleTarget & { views: ScaleTargetView[] }
+export type TargetPatch = Partial<Pick<ScaleTarget, 'name' | 'sku' | 'active' | 'sortOrder'>>
+export type ViewPatch = Partial<Pick<ScaleTargetView, 'label' | 'side' | 'blankDescription' | 'unprintedParts' | 'sortOrder'>>
 
-export function isReady(t: Pick<ScaleTarget, 'active' | 'blankFile' | 'blankDescription'>): boolean {
-  return t.active && !!t.blankFile && !!t.blankDescription.trim()
+const viewComplete = (v: Pick<ScaleTargetView, 'blankFile' | 'blankDescription'>) => !!v.blankFile && !!v.blankDescription.trim()
+
+export function isReady(t: Pick<TargetWithViews, 'active' | 'views'>): boolean {
+  return t.active && t.views.length > 0 && t.views.every(viewComplete)
 }
 
-export function targetView(t: ScaleTarget) {
+export function targetView(t: TargetWithViews) {
   return { ...t, ready: isReady(t) }
 }
 
-export function staffTargetView(t: ScaleTarget) {
-  return { id: t.id, name: t.name, sku: t.sku, blankFile: t.blankFile, updatedAt: t.updatedAt, ready: isReady(t) }
+export function staffTargetView(t: TargetWithViews) {
+  return { id: t.id, name: t.name, sku: t.sku, thumbs: t.views.filter(v => v.blankFile).map(v => ({ viewId: v.id, file: v.blankFile! })), updatedAt: t.updatedAt, ready: isReady(t) }
 }
 
 export function parseImage(dataUrl: string): { mime: string; bytes: Buffer; ext: string } {
@@ -33,10 +37,11 @@ export function requireImageClient(deps: ScaleDeps): ImageClient {
   return deps.image
 }
 
-export function imageInput(form: ModelForm, prompt: string, urls: string[], resolution: string): Record<string, unknown> {
+export function imageInput(form: ModelForm, prompt: string, urls: string[], resolution: string, aspect: string): Record<string, unknown> {
   const options: Record<string, string> = {}
   for (const opt of form.options) {
     if (opt.name === 'resolution' && opt.values.includes(resolution)) options[opt.name] = resolution
+    else if (opt.values.includes(aspect)) options[opt.name] = aspect
     else if (opt.values.includes('1:1')) options[opt.name] = '1:1'
   }
   return buildInput(form, { prompt, imageUrls: urls, options })
@@ -50,14 +55,23 @@ export async function imageForm(client: ImageClient, model: string): Promise<Mod
   return form
 }
 
-async function getTarget(id: string): Promise<ScaleTarget> {
-  const t = await prisma.scaleTarget.findUnique({ where: { id } })
-  if (!t) throw new ScaleInputError('Không tìm thấy sản phẩm đích')
-  return t
+function attachViews(targets: ScaleTarget[], views: ScaleTargetView[]): TargetWithViews[] {
+  return targets.map(t => ({ ...t, views: views.filter(v => v.targetId === t.id) }))
 }
 
-export async function listTargets(opts: { readyOnly?: boolean } = {}): Promise<ScaleTarget[]> {
-  const rows = await prisma.scaleTarget.findMany({ orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }] })
+export async function getTarget(id: string): Promise<TargetWithViews> {
+  const t = await prisma.scaleTarget.findUnique({ where: { id } })
+  if (!t) throw new ScaleInputError('Không tìm thấy sản phẩm đích')
+  const views = await prisma.scaleTargetView.findMany({ where: { targetId: id }, orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }] })
+  return { ...t, views }
+}
+
+export async function listTargets(opts: { readyOnly?: boolean } = {}): Promise<TargetWithViews[]> {
+  const [targets, views] = await Promise.all([
+    prisma.scaleTarget.findMany({ orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }] }),
+    prisma.scaleTargetView.findMany({ orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }] }),
+  ])
+  const rows = attachViews(targets, views)
   return opts.readyOnly ? rows.filter(isReady) : rows
 }
 
@@ -66,17 +80,18 @@ async function assertSkuFree(sku: string, exceptId?: string) {
   if (clash && clash.id !== exceptId) throw new ScaleInputError(`Mã ${sku} đã có`)
 }
 
-export async function createTarget(p: { name: string; sku: string }): Promise<ScaleTarget> {
+export async function createTarget(p: { name: string; sku: string }): Promise<TargetWithViews> {
   const name = String(p.name ?? '').trim()
   const sku = String(p.sku ?? '').trim().toUpperCase()
   if (!name) throw new ScaleInputError('Chưa nhập tên sản phẩm')
   if (!sku) throw new ScaleInputError('Chưa nhập mã sản phẩm')
   await assertSkuFree(sku)
   const last = await prisma.scaleTarget.findFirst({ orderBy: { sortOrder: 'desc' } })
-  return prisma.scaleTarget.create({ data: { name, sku, sortOrder: (last?.sortOrder ?? 0) + 1 } })
+  const t = await prisma.scaleTarget.create({ data: { name, sku, sortOrder: (last?.sortOrder ?? 0) + 1 } })
+  return { ...t, views: [] }
 }
 
-export async function updateTarget(id: string, p: TargetPatch): Promise<ScaleTarget> {
+export async function updateTarget(id: string, p: TargetPatch): Promise<TargetWithViews> {
   const current = await getTarget(id)
   const data: TargetPatch = {}
   if (typeof p.name === 'string') { if (!p.name.trim()) throw new ScaleInputError('Chưa nhập tên sản phẩm'); data.name = p.name.trim() }
@@ -86,84 +101,82 @@ export async function updateTarget(id: string, p: TargetPatch): Promise<ScaleTar
     await assertSkuFree(sku, id)
     data.sku = sku
   }
-  if (typeof p.blankDescription === 'string') data.blankDescription = p.blankDescription.trim()
-  if (typeof p.unprintedParts === 'string') data.unprintedParts = p.unprintedParts.trim()
   if (typeof p.sortOrder === 'number' && Number.isFinite(p.sortOrder)) data.sortOrder = Math.round(p.sortOrder)
   if (typeof p.active === 'boolean') data.active = p.active
-  const next = { ...current, ...data }
-  if (next.active && !isReady(next)) throw new ScaleInputError('Cần có ảnh phôi và mô tả phôi trước khi bật')
-  return prisma.scaleTarget.update({ where: { id }, data })
+  if (data.active && !isReady({ active: true, views: current.views })) throw new ScaleInputError('Cần ít nhất một góc có ảnh phôi và mô tả trước khi bật')
+  const t = await prisma.scaleTarget.update({ where: { id }, data })
+  return { ...t, views: current.views }
 }
 
 export async function deleteTarget(id: string): Promise<void> {
+  const views = await prisma.scaleTargetView.findMany({ where: { targetId: id }, select: { id: true } })
+  await prisma.scaleTargetView.deleteMany({ where: { targetId: id } })
   await prisma.scaleTarget.deleteMany({ where: { id } })
+  await Promise.all(views.map(v => deleteScaleFolder('views', v.id)))
   await deleteScaleFolder('targets', id)
 }
 
-export async function setBlank(id: string, dataUrl: string): Promise<ScaleTarget> {
-  await getTarget(id)
+function parseSide(side: unknown): ViewSide {
+  if (!VIEW_SIDES.includes(side as ViewSide)) throw new ScaleInputError('Mặt áo phải là front hoặc back')
+  return side as ViewSide
+}
+
+async function getView(id: string): Promise<ScaleTargetView> {
+  const v = await prisma.scaleTargetView.findUnique({ where: { id } })
+  if (!v) throw new ScaleInputError('Không tìm thấy góc này')
+  return v
+}
+
+const touchTarget = (id: string) => prisma.scaleTarget.updateMany({ where: { id }, data: { updatedAt: new Date() } })
+
+export async function createView(targetId: string, p: { label: string; side: ViewSide }): Promise<ScaleTargetView> {
+  await getTarget(targetId)
+  const label = String(p.label ?? '').trim()
+  if (!label) throw new ScaleInputError('Chưa nhập tên góc')
+  const side = parseSide(p.side)
+  const last = await prisma.scaleTargetView.findFirst({ where: { targetId }, orderBy: { sortOrder: 'desc' } })
+  const view = await prisma.scaleTargetView.create({ data: { targetId, label, side, sortOrder: (last?.sortOrder ?? 0) + 1 } })
+  await touchTarget(targetId)
+  return view
+}
+
+export async function updateView(id: string, p: ViewPatch): Promise<ScaleTargetView> {
+  const current = await getView(id)
+  const data: ViewPatch = {}
+  if (typeof p.label === 'string') { if (!p.label.trim()) throw new ScaleInputError('Chưa nhập tên góc'); data.label = p.label.trim() }
+  if (p.side !== undefined) data.side = parseSide(p.side)
+  if (typeof p.blankDescription === 'string') data.blankDescription = p.blankDescription.trim()
+  if (typeof p.unprintedParts === 'string') data.unprintedParts = p.unprintedParts.trim()
+  if (typeof p.sortOrder === 'number' && Number.isFinite(p.sortOrder)) data.sortOrder = Math.round(p.sortOrder)
+  const view = await prisma.scaleTargetView.update({ where: { id }, data })
+  await touchTarget(current.targetId)
+  return view
+}
+
+export async function deleteView(id: string): Promise<void> {
+  const view = await getView(id)
+  await prisma.scaleTargetView.deleteMany({ where: { id } })
+  await deleteScaleFolder('views', id)
+  await touchTarget(view.targetId)
+}
+
+export async function setViewBlank(id: string, dataUrl: string): Promise<ScaleTargetView> {
+  const current = await getView(id)
   const img = parseImage(dataUrl)
-  const name = await writeScaleFile('targets', id, 'blank', img.bytes, img.ext)
-  return prisma.scaleTarget.update({ where: { id }, data: { blankFile: name } })
+  const name = await writeScaleFile('views', id, 'blank', img.bytes, img.ext)
+  const view = await prisma.scaleTargetView.update({ where: { id }, data: { blankFile: name } })
+  await touchTarget(current.targetId)
+  return view
 }
 
-export async function startCandidate(id: string, dataUrl: string, deps: ScaleDeps): Promise<ScaleTarget> {
-  await getTarget(id)
-  const img = parseImage(dataUrl)
-  const client = requireImageClient(deps)
-  const model = deps.settings.imageModel
-  let taskId: string
-  try {
-    const form = await imageForm(client, model)
-    const url = await client.uploadBase64(dataUrl, `scale-blank-${id}-${Date.now()}.${img.ext}`)
-    taskId = await client.createTask(model, imageInput(form, MAKE_BLANK_PROMPT, [url], deps.settings.resolution))
-  } catch (err) {
-    throw new Error(explainKieError(err, 'Creative', model))
-  }
-  await removeScaleFile('targets', id, 'candidate')
-  return prisma.scaleTarget.update({ where: { id }, data: { candidateTaskId: taskId, candidateStatus: 'running', candidateFile: null, candidateError: null } })
-}
-
-export async function refreshCandidate(id: string, deps: ScaleDeps): Promise<ScaleTarget> {
-  const t = await getTarget(id)
-  if (t.candidateStatus !== 'running' || !t.candidateTaskId || !deps.image) return t
-  let result
-  try { result = await deps.image.poll(t.candidateTaskId) } catch (err: any) {
-    return prisma.scaleTarget.update({ where: { id }, data: { candidateError: `Poll lỗi: ${err?.message ?? err}` } })
-  }
-  if (result.state === 'running') return t
-  if (result.state === 'failed') return prisma.scaleTarget.update({ where: { id }, data: { candidateStatus: 'failed', candidateError: result.error } })
-  try {
-    const file = await fetchImage(result.urls[0], deps.fetchImpl)
-    const name = await writeScaleFile('targets', id, 'candidate', file.bytes, file.ext)
-    return prisma.scaleTarget.update({ where: { id }, data: { candidateStatus: 'ready', candidateFile: name, candidateError: null } })
-  } catch (err: any) {
-    return prisma.scaleTarget.update({ where: { id }, data: { candidateError: `Tải ảnh phôi lỗi, sẽ thử lại: ${err?.message ?? err}` } })
-  }
-}
-
-export async function acceptCandidate(id: string): Promise<ScaleTarget> {
-  const t = await getTarget(id)
-  const file = t.candidateStatus === 'ready' && t.candidateFile ? await readScaleFile('targets', id, t.candidateFile) : null
-  if (!file) throw new ScaleInputError('Chưa có ảnh phôi nháp để dùng')
-  const name = await writeScaleFile('targets', id, 'blank', file.bytes, t.candidateFile!.split('.').pop()!)
-  await removeScaleFile('targets', id, 'candidate')
-  return prisma.scaleTarget.update({ where: { id }, data: { blankFile: name, candidateFile: null, candidateStatus: null, candidateTaskId: null, candidateError: null } })
-}
-
-export async function discardCandidate(id: string): Promise<ScaleTarget> {
-  await getTarget(id)
-  await removeScaleFile('targets', id, 'candidate')
-  return prisma.scaleTarget.update({ where: { id }, data: { candidateFile: null, candidateStatus: null, candidateTaskId: null, candidateError: null } })
-}
-
-export async function suggestDescription(id: string, deps: ScaleDeps): Promise<BlankDescription> {
-  const t = await getTarget(id)
-  const blank = t.blankFile ? await readScaleFile('targets', id, t.blankFile) : null
+export async function suggestViewDescription(id: string, deps: ScaleDeps): Promise<BlankDescription> {
+  const view = await getView(id)
+  const target = await getTarget(view.targetId)
+  const blank = view.blankFile ? await readScaleFile('views', id, view.blankFile) : null
   if (!blank) throw new ScaleInputError('Chưa có ảnh phôi')
   if (!deps.vision) throw new ScaleInputError('Chưa có API key Kie cho bước đọc ảnh')
   try {
-    return await deps.vision.describe({ model: deps.visionModel, system: blankDescriptionSystemPrompt(), text: `Blank mockup of: ${t.name}.`, images: [toDataUrl(blank.bytes, blank.mime)], schema: BlankDescriptionSchema, schemaName: 'scale_blank' })
+    return await deps.vision.describe({ model: deps.visionModel, system: blankDescriptionSystemPrompt(), text: `Blank mockup of: ${target.name}. This image shows the ${view.side.toUpperCase()} of the garment.`, images: [toDataUrl(blank.bytes, blank.mime)], schema: BlankDescriptionSchema, schemaName: 'scale_blank' })
   } catch (err) {
     throw new Error(explainKieError(err, 'CS', deps.visionModel))
   }

@@ -10,7 +10,7 @@ export class ScaleInputError extends Error {
   constructor(message: string) { super(message); this.name = 'ScaleInputError' }
 }
 
-export type ScaleSettings = { imageModel: string; fallbackModel: string; allowFallback: boolean; visionModel: string | null; resolution: string }
+export type ScaleSettings = { imageModel: string; fallbackModel: string; allowFallback: boolean; visionModel: string | null; resolution: string; viewAspect: string }
 
 export const DEFAULT_SCALE_SETTINGS: ScaleSettings = {
   imageModel: 'gpt-image-2-5-flare-image-to-image',
@@ -18,6 +18,7 @@ export const DEFAULT_SCALE_SETTINGS: ScaleSettings = {
   allowFallback: false,
   visionModel: null,
   resolution: '2K',
+  viewAspect: '2:3',
 }
 
 export type ImageClient = Pick<ReturnType<typeof kieClient>, 'schema' | 'uploadBase64' | 'createTask' | 'poll'>
@@ -34,6 +35,7 @@ function normalize(raw: any): ScaleSettings {
     allowFallback: typeof raw?.allowFallback === 'boolean' ? raw.allowFallback : d.allowFallback,
     visionModel: typeof raw?.visionModel === 'string' && raw.visionModel.trim() && isValidModelSlug(raw.visionModel.trim()) ? raw.visionModel.trim() : null,
     resolution: typeof raw?.resolution === 'string' && /^[A-Za-z0-9]{1,8}$/.test(raw.resolution.trim()) ? raw.resolution.trim() : d.resolution,
+    viewAspect: typeof raw?.viewAspect === 'string' && /^\d{1,2}:\d{1,2}$/.test(raw.viewAspect.trim()) ? raw.viewAspect.trim() : d.viewAspect,
   }
 }
 

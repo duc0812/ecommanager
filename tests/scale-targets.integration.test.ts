@@ -3,36 +3,32 @@ import fs from 'fs/promises'
 import os from 'os'
 import path from 'path'
 import { prisma } from '@/lib/db'
-import type { PollResult } from '@/lib/creative/kie'
 import { DEFAULT_SCALE_SETTINGS, ScaleInputError, type ScaleDeps } from '@/lib/scale/settings'
 import { readScaleFile, resolveScaleFile, scaleRoot } from '@/lib/scale/storage'
-import { acceptCandidate, createTarget, deleteTarget, discardCandidate, listTargets, refreshCandidate, setBlank, staffTargetView, startCandidate, suggestDescription, targetView, updateTarget } from '@/lib/scale/targets'
+import { createTarget, createView, deleteTarget, deleteView, imageInput, listTargets, setViewBlank, staffTargetView, suggestViewDescription, targetView, updateTarget, updateView } from '@/lib/scale/targets'
 
 const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
 const JPG = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQH/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACv/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AVN//2Q=='
-const editSchema = { type: 'object', required: ['prompt', 'input_urls', 'aspect_ratio'], properties: { prompt: { type: 'string' }, input_urls: { type: 'array', items: { type: 'string' } }, aspect_ratio: { type: 'string', enum: ['16:9', '1:1'] }, resolution: { type: 'string', enum: ['1K', '2K', '4K'] } } }
-const downloadFetch = (async () => new Response(Buffer.from('candidate-bytes'), { status: 200, headers: { 'Content-Type': 'image/png' } })) as unknown as typeof fetch
 
-function fakeDeps(polls: PollResult[] = [{ state: 'running' }]) {
+function fakeDeps() {
   const log: any[] = []
-  let pollIdx = 0
   const deps: ScaleDeps = {
-    image: {
-      schema: async () => ({ input: editSchema, root: {} }),
-      uploadBase64: async (_d: string, name: string) => { log.push(['upload', name]); return `https://tempfile.redpandaai.co/${name}` },
-      createTask: async (model: string, input: Record<string, unknown>) => { log.push(['create', model, input]); return 'task-9' },
-      poll: async () => polls[Math.min(pollIdx++, polls.length - 1)],
-    },
-    vision: { describe: async (p: any) => { log.push(['vision', p]); return { blankDescription: 'front view on the left, back view on the right.', unprintedParts: 'The ribbing and zipper' } as any } },
+    image: null,
+    vision: { describe: async (p: any) => { log.push(p); return { blankDescription: 'unworn hoodie, front view.', unprintedParts: 'The ribbing' } as any } },
     settings: DEFAULT_SCALE_SETTINGS,
     visionModel: 'gpt-6.1-sol',
-    fetchImpl: downloadFetch,
+    fetchImpl: fetch,
   }
   return { deps, log }
 }
 
 let tmp: string
-const clean = () => prisma.scaleTarget.deleteMany({ where: { sku: { startsWith: 'TEST' } } })
+const clean = async () => {
+  const mine = await prisma.scaleTarget.findMany({ where: { sku: { startsWith: 'TEST' } }, select: { id: true } })
+  await prisma.scaleTargetView.deleteMany({ where: { targetId: { in: mine.map(t => t.id) } } })
+  await prisma.scaleTarget.deleteMany({ where: { sku: { startsWith: 'TEST' } } })
+}
+const find = async (sku: string) => (await listTargets()).find(t => t.sku === sku)!
 
 beforeAll(async () => {
   tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'scale-targets-'))
@@ -45,99 +41,86 @@ afterAll(async () => {
 })
 
 describe('scale targets', () => {
-  it('ships the first 14 target products switched off', async () => {
+  it('ships the first 14 target products, none of them ready until views are added', async () => {
     const seeded = (await listTargets()).filter(t => t.id.startsWith('scale_'))
     expect(seeded).toHaveLength(14)
-    expect(seeded[0]).toMatchObject({ sku: 'FEHOVN', active: false, blankFile: null })
+    expect(seeded[0]).toMatchObject({ sku: 'FEHOVN', views: [] })
     expect(await listTargets({ readyOnly: true })).toEqual([])
   })
 
-  it('a new target is not ready and cannot be switched on without a blank and a description', async () => {
+  it('a target is ready only when it is on and every one of its views has a blank and a description', async () => {
     const t = await createTarget({ name: 'Test Hoodie', sku: 'TEST1' })
-    expect(targetView(t).ready).toBe(false)
-    await expect(updateTarget(t.id, { active: true })).rejects.toBeInstanceOf(ScaleInputError)
     await expect(createTarget({ name: 'Dup', sku: 'TEST1' })).rejects.toBeInstanceOf(ScaleInputError)
-    await expect(createTarget({ name: ' ', sku: 'TEST0' })).rejects.toBeInstanceOf(ScaleInputError)
-  })
+    await expect(updateTarget(t.id, { active: true })).rejects.toThrow('Cần ít nhất một góc có ảnh phôi và mô tả trước khi bật')
+    const front = await createView(t.id, { label: 'Mặt trước', side: 'front' })
+    const back = await createView(t.id, { label: 'Mặt sau', side: 'back' })
+    expect((await find('TEST1')).views.map(v => v.label)).toEqual(['Mặt trước', 'Mặt sau'])
+    await expect(createView(t.id, { label: 'x', side: 'left' as any })).rejects.toBeInstanceOf(ScaleInputError)
 
-  it('keeps one blank file per target and lists the target once it is complete and on', async () => {
-    const t = await prisma.scaleTarget.findUniqueOrThrow({ where: { sku: 'TEST1' } })
-    expect((await setBlank(t.id, PNG)).blankFile).toBe('blank.png')
-    expect((await setBlank(t.id, JPG)).blankFile).toBe('blank.jpg')
-    const dir = await fs.readdir(path.join(scaleRoot(), 'targets', t.id))
-    expect(dir).toEqual(['blank.jpg'])
-    await expect(setBlank(t.id, 'data:text/plain;base64,aGk=')).rejects.toBeInstanceOf(ScaleInputError)
-    await updateTarget(t.id, { blankDescription: 'front left, back right.', unprintedParts: 'The ribbing', active: true })
+    expect((await setViewBlank(front.id, PNG)).blankFile).toBe('blank.png')
+    expect((await setViewBlank(front.id, JPG)).blankFile).toBe('blank.jpg')
+    expect(await fs.readdir(path.join(scaleRoot(), 'views', front.id))).toEqual(['blank.jpg'])
+    await expect(setViewBlank(front.id, 'data:text/plain;base64,aGk=')).rejects.toBeInstanceOf(ScaleInputError)
+    await updateView(front.id, { blankDescription: 'front view.', unprintedParts: 'The ribbing' })
+    await expect(updateTarget(t.id, { active: true })).rejects.toBeInstanceOf(ScaleInputError)
+
+    await setViewBlank(back.id, PNG)
+    await updateView(back.id, { blankDescription: 'back view.' })
+    await updateTarget(t.id, { active: true })
     const ready = await listTargets({ readyOnly: true })
     expect(ready.map(x => x.sku)).toEqual(['TEST1'])
+    expect(targetView(ready[0]).ready).toBe(true)
   })
 
-  it('generates a blank candidate through the image model and accepts it as the blank', async () => {
-    const t = await createTarget({ name: 'Test Bomber', sku: 'TEST2' })
-    const { deps, log } = fakeDeps([{ state: 'running' }, { state: 'done', urls: ['https://tempfile.redpandaai.co/out.png'], credits: 8, costTime: null }])
-    const started = await startCandidate(t.id, PNG, deps)
-    expect(started).toMatchObject({ candidateStatus: 'running', candidateTaskId: 'task-9' })
-    const create = log.find(l => l[0] === 'create')
-    expect(create[1]).toBe('gpt-image-2-5-flare-image-to-image')
-    expect(create[2].prompt).toContain('REMOVE ALL PRINTED ARTWORK')
-    expect(create[2].input_urls).toHaveLength(1)
-    expect(create[2]).toMatchObject({ aspect_ratio: '1:1', resolution: '2K' })
-    expect((await refreshCandidate(t.id, deps)).candidateStatus).toBe('running')
-    const ready = await refreshCandidate(t.id, deps)
-    expect(ready).toMatchObject({ candidateStatus: 'ready', candidateFile: 'candidate.png' })
-    const accepted = await acceptCandidate(t.id)
-    expect(accepted).toMatchObject({ blankFile: 'blank.png', candidateFile: null, candidateStatus: null, candidateTaskId: null })
-    expect((await readScaleFile('targets', t.id, 'blank.png'))?.bytes.toString()).toBe('candidate-bytes')
-    expect(await readScaleFile('targets', t.id, 'candidate.png')).toBeNull()
+  it('gives staff only what the picker needs, never the blank descriptions', async () => {
+    const view = staffTargetView(await find('TEST1'))
+    expect(Object.keys(view).sort()).toEqual(['id', 'name', 'ready', 'sku', 'thumbs', 'updatedAt'])
+    expect(view.thumbs).toHaveLength(2)
+    expect(Object.keys(view.thumbs[0]).sort()).toEqual(['file', 'viewId'])
+    expect(JSON.stringify(view)).not.toContain('front view.')
   })
 
-  it('records why a candidate failed and lets it be discarded', async () => {
-    const t = await createTarget({ name: 'Test Cloak', sku: 'TEST3' })
-    const { deps } = fakeDeps([{ state: 'failed', error: 'content policy' }])
-    await startCandidate(t.id, PNG, deps)
-    expect(await refreshCandidate(t.id, deps)).toMatchObject({ candidateStatus: 'failed', candidateError: 'content policy' })
-    expect(await discardCandidate(t.id)).toMatchObject({ candidateStatus: null, candidateError: null })
-    await expect(acceptCandidate(t.id)).rejects.toBeInstanceOf(ScaleInputError)
+  it('a target stops being ready when one of its views loses its description', async () => {
+    const t = await find('TEST1')
+    await updateView(t.views[1].id, { blankDescription: ' ' })
+    expect(await listTargets({ readyOnly: true })).toEqual([])
+    await updateView(t.views[1].id, { blankDescription: 'back view.' })
   })
 
-  it('says which key lacks the image model when the candidate cannot start', async () => {
-    const t = await createTarget({ name: 'Test Tee', sku: 'TEST4' })
-    const { deps } = fakeDeps()
-    deps.image!.createTask = async () => { throw new Error('kie createTask 401: The API key is not authorized to use this model.') }
-    await expect(startCandidate(t.id, PNG, deps)).rejects.toThrow('Key Kie (Creative) chưa được cấp quyền model gpt-image-2-5-flare-image-to-image')
-    await expect(startCandidate(t.id, PNG, { ...deps, image: null })).rejects.toThrow('Chưa có API key Kie cho bước tạo ảnh')
-  })
-
-  it('drafts the blank description from the blank image without saving it', async () => {
-    const t = await prisma.scaleTarget.findUniqueOrThrow({ where: { sku: 'TEST1' } })
+  it('drafts a view description from its blank without saving it', async () => {
+    const t = await find('TEST1')
     const { deps, log } = fakeDeps()
-    const out = await suggestDescription(t.id, deps)
-    expect(out).toEqual({ blankDescription: 'front view on the left, back view on the right.', unprintedParts: 'The ribbing and zipper' })
-    const call = log.find(l => l[0] === 'vision')[1]
-    expect(call.schemaName).toBe('scale_blank')
-    expect(call.model).toBe('gpt-6.1-sol')
-    expect(call.images[0].startsWith('data:image/jpeg;base64,')).toBe(true)
-    expect((await prisma.scaleTarget.findUniqueOrThrow({ where: { id: t.id } })).blankDescription).toBe('front left, back right.')
+    expect(await suggestViewDescription(t.views[0].id, deps)).toEqual({ blankDescription: 'unworn hoodie, front view.', unprintedParts: 'The ribbing' })
+    expect(log[0]).toMatchObject({ schemaName: 'scale_blank', model: 'gpt-6.1-sol' })
+    expect(log[0].text).toContain('FRONT')
+    expect(log[0].images[0].startsWith('data:image/jpeg;base64,')).toBe(true)
+    expect((await find('TEST1')).views[0].blankDescription).toBe('front view.')
+    await expect(suggestViewDescription(t.views[0].id, { ...deps, vision: null })).rejects.toThrow('Chưa có API key Kie cho bước đọc ảnh')
   })
 
-  it('gives staff only what the picker needs, never the blank description', async () => {
-    const t = await prisma.scaleTarget.findUniqueOrThrow({ where: { sku: 'TEST1' } })
-    const view = staffTargetView(t)
-    expect(Object.keys(view).sort()).toEqual(['blankFile', 'id', 'name', 'ready', 'sku', 'updatedAt'])
-    expect(view.ready).toBe(true)
+  it('asks the image model for the configured portrait shape when the model offers it, square otherwise', () => {
+    const form = (ratios: string[]) => ({ promptField: 'prompt', imageField: 'input_urls', imageIsArray: true, options: [{ name: 'aspect_ratio', values: ratios, required: true }, { name: 'resolution', values: ['1K', '2K'], required: false }] })
+    expect(imageInput(form(['1:1', '2:3']), 'p', ['a', 'b'], '2K', '2:3')).toMatchObject({ prompt: 'p', input_urls: ['a', 'b'], aspect_ratio: '2:3', resolution: '2K' })
+    expect(imageInput(form(['1:1', '16:9']), 'p', ['a'], '2K', '2:3')).toMatchObject({ aspect_ratio: '1:1' })
   })
 
   it('only serves whitelisted file names from inside the scale folder', () => {
     expect(resolveScaleFile('jobs', '..', 'out.png')).toBeNull()
     expect(resolveScaleFile('jobs', 'abc123', '../../x.png')).toBeNull()
     expect(resolveScaleFile('other', 'abc123', 'out.png')).toBeNull()
-    expect(resolveScaleFile('targets', 'scale_fehovn', 'blank.png')).toBe(path.resolve(scaleRoot(), 'targets', 'scale_fehovn', 'blank.png'))
+    expect(resolveScaleFile('jobs', 'abc123', 'part-1.png')).toBe(path.resolve(scaleRoot(), 'jobs', 'abc123', 'part-1.png'))
+    expect(resolveScaleFile('views', 'abc123', 'blank.jpg')).toBe(path.resolve(scaleRoot(), 'views', 'abc123', 'blank.jpg'))
   })
 
-  it('deleting a target removes its row and its files', async () => {
-    const t = await prisma.scaleTarget.findUniqueOrThrow({ where: { sku: 'TEST2' } })
+  it('deleting a view or a target removes its rows and files', async () => {
+    const t = await find('TEST1')
+    const [front, back] = t.views
+    await deleteView(back.id)
+    expect(await readScaleFile('views', back.id, 'blank.png')).toBeNull()
+    expect((await find('TEST1')).views).toHaveLength(1)
     await deleteTarget(t.id)
     expect(await prisma.scaleTarget.findUnique({ where: { id: t.id } })).toBeNull()
-    await expect(fs.stat(path.join(scaleRoot(), 'targets', t.id))).rejects.toThrow()
+    expect(await prisma.scaleTargetView.count({ where: { targetId: t.id } })).toBe(0)
+    await expect(fs.stat(path.join(scaleRoot(), 'views', front.id))).rejects.toThrow()
   })
 })

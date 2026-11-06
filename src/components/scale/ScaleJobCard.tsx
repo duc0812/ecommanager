@@ -47,7 +47,7 @@ export function ScaleJobCard({ job, canDelete, allowFallback, onRerun, onFallbac
       </div>
       <div className="p-md">
         <div className="flex flex-wrap items-center gap-sm">
-          <span className={`rounded-full px-sm py-xs text-label-sm ${STATUS_STYLE[job.status]}`}>{SCALE_STATUS_LABEL[job.status]}</span>
+          <span className={`rounded-full px-sm py-xs text-label-sm ${STATUS_STYLE[job.status]}`}>{SCALE_STATUS_LABEL[job.status]}{job.status === 'running' && job.views.length > 1 ? ` ${job.views.filter(v => v.status === 'done').length}/${job.views.length} góc` : ''}</span>
           {job.cost && <span className="text-body-sm text-on-surface-variant">{job.cost}</span>}
           {job.durationMs != null && <span className="text-body-sm text-on-surface-variant">{Math.round(job.durationMs / 1000)}s</span>}
         </div>
