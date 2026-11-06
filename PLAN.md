@@ -200,6 +200,14 @@ Completed 2026-05-19 via subagent-driven development.
 - Rollout: deploy (migration needs `pm2 stop` first), then "Chạy backfill" in Cài đặt CS until remaining = 0
 - Next: Lark notifications, business-hours response times, per-product root-cause drill-down
 
+### 🟡 Scale sản phẩm tool (2026-11-06, branch `feat/scale-product-tool`, worktree `D:\Ecom manager\wt-scale-tool`)
+
+Built, **not yet verified live end to end** and not merged/deployed. Spec `docs/superpowers/specs/2026-11-06-scale-product-tool-design.md`, plan `docs/superpowers/plans/2026-11-06-scale-product-tool.md`.
+
+- `/tools/scale` (permission `tools_scale`): upload one product image → pick a target product → mockup of the same design on the target. Superadmin tabs: Sản phẩm đích (blank image + description per target), Cài đặt (models, fallback switch).
+- Verified live on 11/06/2026: Kie vision step (design description and "Gợi ý mô tả") with the local CS key. **Not verified:** the image step and "Tạo phôi từ ảnh" — the local Kie key is refused for `gpt-image-2-5-flare-image-to-image` (the job shows "Key Kie (Creative) chưa được cấp quyền model …").
+- Open: (1) a Kie key authorised for the image model, then one real run of `D:\LZ POD ECOM\ads\mockups\star-wars-fleece-zip-hoodie\source_varsity.jpg` → FEHOVN compared with `fleece-zip-hoodie-FEHOVN_v2_blankref.png`; (2) one "Tạo phôi từ ảnh" trial (one-call recipe is untested; two-pass variant in the spec if the garment drifts); (3) merge + deploy + nginx body size for `/api/tools/scale/`; (4) 13 blanks still to make (only FEHOVN has one, and it lives in storage, not in git).
+
 ### 🟢 Creative tool (2026-10-24, branch `feat/creative-tool`)
 - `/tools/creative`: prompt + up to 4 reference images + model on Kie (live catalog, China models first) or Replicate (curated China list + free `owner/name`), job history with stored result files, filters, re-use, delete
 - Generic OpenAPI → form mapper (`src/lib/creative/schema-map.ts`) so every model's enum options render without per-model code
