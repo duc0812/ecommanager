@@ -236,6 +236,15 @@ describe('normalizeSourceUrl', () => {
     for (const input of bad) expect(input).not.toMatch(SOURCE_URL_RE)
     for (const { url, ok } of VECTORS.hosts) expect(SOURCE_URL_RE.test(url), url).toBe(ok)
   })
+
+  it('runner.py SOURCE_URL_RE là đúng mẫu này: cùng nhãn, cùng danh sách nhãn cuối bị từ chối', () => {
+    const py = fs.readFileSync(path.resolve(__dirname, '../tools/clone-runner/runner.py'), 'utf8')
+    const literals = Array.from(py.slice(py.indexOf('SOURCE_URL_RE = re.compile(')).matchAll(/r"([^"]*)"/g), m => m[1])
+    const pattern = literals.slice(0, literals.findIndex(part => part.endsWith('$')) + 1).join('')
+    expect(pattern).toBe(SOURCE_URL_RE.source.replace(/\\\//g, '/'))
+    expect(SOURCE_URL_RE.source).toContain('|localdomain|')
+    expect(SOURCE_URL_RE.source).toContain('|arpa)')
+  })
 })
 
 describe('clone settings', () => {
@@ -708,6 +717,21 @@ describe('xem job trả job hết lease', () => {
     expect(await prisma.cloneJob.findUniqueOrThrow({ where: { id: job.id } })).toMatchObject({ status: 'QUEUED', lockedAt: null })
   })
 
+  it('không có job hết lease: xem danh sách và xem một job không ghi gì (chỉ một lần đọc)', async () => {
+    const live = await seedJob({ status: 'RUNNING', attempts: 1, lockedAt: new Date() })
+    const update = vi.spyOn(prisma.cloneJob, 'updateMany')
+    try {
+      await listCloneJobs(users.sellera)
+      await getCloneJob(users.sellera, live.id)
+      expect(update).not.toHaveBeenCalled()
+      await prisma.cloneJob.update({ where: { id: live.id }, data: { lockedAt: stale() } })
+      expect((await listCloneJobs(users.sellera))[0].status).toBe('QUEUED')
+      expect(update).toHaveBeenCalledTimes(2)
+    } finally {
+      update.mockRestore()
+    }
+  })
+
   it('việc trả lease lỗi không làm hỏng lần xem: vẫn trả danh sách, log một dòng cố định không kèm chi tiết lỗi', async () => {
     const job = await seedJob({ status: 'RUNNING', attempts: 1, lockedAt: stale() })
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
@@ -951,7 +975,7 @@ describe('retryCloneJob', () => {
   })
 
   it('job lỗi còn productGid (sản phẩm đã tạo trên store): seller 403, job nguyên; SUPERADMIN thử lại được và productGid bị xoá', async () => {
-    for (const failKind of ['TOOL', 'VERIFY', 'QA']) {
+    for (const failKind of ['TOOL', 'QA', 'TIMEOUT']) {
       await wipe()
       const row = await failed({ failKind, productGid: 'gid://shopify/Product/9054123557021' })
       const e = await codeOf(() => retryCloneJob(users.sellera, row.id))
@@ -959,6 +983,15 @@ describe('retryCloneJob', () => {
       expect(await prisma.cloneJob.findUniqueOrThrow({ where: { id: row.id } })).toEqual(row)
       expect(await retryCloneJob(users.super, row.id)).toMatchObject({ status: 'QUEUED', productGid: null })
       expect(await prisma.cloneJob.findUniqueOrThrow({ where: { id: row.id } })).toMatchObject({ status: 'QUEUED', productGid: null, attempts: 0 })
+    }
+  })
+
+  it('productGid của job reused (sản phẩm gốc) hay của lỗi VERIFY (sản phẩm runner báo) không chặn: người tạo thử lại được', async () => {
+    const gid = 'gid://shopify/Product/9054123557021'
+    for (const over of [{ failKind: 'VERIFY', productGid: gid }, { failKind: 'TOOL', productGid: gid, reused: true }, { failKind: 'VERIFY', productGid: gid, reused: true }]) {
+      await wipe()
+      const row = await failed(over)
+      expect(await retryCloneJob(users.sellera, row.id), JSON.stringify(over)).toMatchObject({ status: 'QUEUED', productGid: null, reused: false })
     }
   })
 

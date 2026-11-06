@@ -5,7 +5,7 @@ import { assertSafeExternalUrl } from '@/lib/safe-url'
 import { storeScopeFor, storeWhere } from '@/lib/store-scope'
 import { listConnectedStores } from '@/lib/store-connections'
 import { issueSkuCode, parseSkuPrefix, type SkuCodeDeps } from '@/lib/clone/sku-code'
-import { releaseExpiredLeases } from '@/lib/clone/leases'
+import { hasExpiredLease, releaseExpiredLeases } from '@/lib/clone/leases'
 
 export type CloneJobRow = CloneJob
 
@@ -59,7 +59,7 @@ export function sourceKeyOf(url: string): string {
   const u = new URL(url.trim())
   const host = u.host.toLowerCase().replace(/^www\./, '')
   const path = u.pathname.toLowerCase().replace(/\/{2,}/g, '/')
-  const product = /\/products\/[^/]+/.exec(path)
+  const product = /(?<!\/collections)\/products\/[^/]+/.exec(path)
   return `${host}${product ? product[0] : path.replace(/\/$/, '')}`
 }
 
@@ -154,7 +154,8 @@ async function findVisible(user: AuthUser, id: string): Promise<CloneJobRow | nu
 // A failure here must never fail the read, and its detail may carry paths, so it logs a fixed line.
 async function releaseDeadJobs(): Promise<void> {
   try {
-    await releaseExpiredLeases(new Date())
+    const now = new Date()
+    if (await hasExpiredLease(now)) await releaseExpiredLeases(now)
   } catch {
     console.warn('[clone jobs] Không trả được job hết lease.')
   }
@@ -176,7 +177,7 @@ export type CreateCloneJobDeps = { sku?: Partial<SkuCodeDeps>; now?: Date }
 
 // The runner on the owner's PC opens the link, so the host must be a public name, never a machine on that PC's LAN: two or more labels,
 // a letters-only last label that is not a local or reserved name, no trailing dot, no IP literal. runner.py SOURCE_URL_RE mirrors it.
-const PUBLIC_HOST = String.raw`(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+(?!(?:local|lan|internal|home|corp|localhost|test|invalid|example)(?![a-z]))[a-z]{2,}`
+const PUBLIC_HOST = String.raw`(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+(?!(?:local|lan|internal|home|corp|localhost|localdomain|test|invalid|example|arpa)(?![a-z]))[a-z]{2,}`
 
 // A Claude session on the owner's PC types the stored link into a shell command, so it may hold only characters that are inert even unquoted.
 // No `%`: cmd.exe expands %NAME% even inside quotes, and a percent-then-hex rule would still let %NAME%20 through.
@@ -304,8 +305,10 @@ export async function cancelCloneJob(user: AuthUser, id: string): Promise<CloneJ
 export async function retryCloneJob(user: AuthUser, id: string): Promise<CloneJobView> {
   const job = await findActionable(user, id, 'thử lại')
   if (job.status !== 'FAILED') throw new CloneInputError(409, NOT_FAILED)
-  // A job that still names a product left it on the store: another run would make a second product with the same SKU code.
-  const adminOnly = (job.failKind !== null && ADMIN_ONLY_FAIL_KINDS.includes(job.failKind)) || job.productGid !== null
+  // A job that made a product and left it on the store: another run would make a second one with the same SKU code. A reused job made
+  // none (its gid is the original product) and a VERIFY fail names whatever the runner reported, so neither counts.
+  const leftProduct = job.productGid !== null && !job.reused && job.failKind !== 'VERIFY'
+  const adminOnly = (job.failKind !== null && ADMIN_ONLY_FAIL_KINDS.includes(job.failKind)) || leftProduct
   if (adminOnly && user.role !== 'SUPERADMIN') {
     throw new CloneInputError(403, 'Job này cần quản trị xử lý trước khi thử lại.')
   }

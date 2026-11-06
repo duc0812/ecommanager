@@ -16,7 +16,7 @@ import urllib.parse
 REGISTER_ROOTS = {'LIT': (r'D:\Ecom manager\clipart-clones', r'D:\Ecom manager\customall-clones')}
 GID_RE = re.compile(r'^gid://shopify/Product/\d+$', re.ASCII)
 DEFAULT_PORTS = {'http': 80, 'https': 443}
-PRODUCT_PATH_RE = re.compile(r'/products/[^/]+')
+PRODUCT_PATH_RE = re.compile(r'(?<!/collections)/products/[^/]+')
 
 
 def source_key(url) -> str | None:

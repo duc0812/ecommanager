@@ -186,6 +186,19 @@ def test_existing_register_entry_reports_reused(tmp_path):
     assert deps.client.named('fail') == []
 
 
+@pytest.mark.parametrize('results, retryable', [
+    ([(502, {})] * 6, True),
+    ([(409, {'error': 'bad'})], False),
+    ([RuntimeError('boom')], False),
+])
+def test_a_reused_jobs_fail_never_names_the_register_product(tmp_path, results, retryable):
+    client = FakeClient(results=results)
+    deps = make_deps(tmp_path, client=client, existing={'productGid': GID, 'handle': 'family-ornament'})
+    runner.run_job(make_job(), deps)
+    [fail] = client.named('fail')
+    assert fail[3] == 'TOOL' and fail[5] is retryable and fail[6] is None
+
+
 def test_forced_job_skips_the_register_and_opens_a_session(tmp_path):
     looked = []
     deps = make_deps(tmp_path, html=fixture('customily.html'))
@@ -465,6 +478,29 @@ def test_heartbeat_not_ok_stops_session(tmp_path):
     assert any(c[3] == 'clone' for c in client.named('heartbeat'))
     assert client.named('result') == []
     assert client.named('fail') == []
+
+
+def test_heartbeat_keeps_the_lease_while_the_result_is_retried(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, 'HEARTBEAT_S', 0.01)
+    client = FakeClient()
+    beat_during = []
+
+    def result(job_id, attempts, payload):
+        client.calls.append(('result', job_id, attempts, payload))
+        seen = len(client.named('heartbeat'))
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline and len(client.named('heartbeat')) == seen:
+            time.sleep(0.01)
+        beat_during.append(len(client.named('heartbeat')) > seen)
+        return (502, {}) if len(beat_during) == 1 else (200, {'status': 'DONE'})
+
+    client.result = result
+    deps = make_deps(tmp_path, client=client, html=fixture('customily.html'))
+    runner.run_job(make_job(), deps)
+    assert beat_during == [True, True]
+    after = len(client.named('heartbeat'))
+    time.sleep(0.1)
+    assert len(client.named('heartbeat')) == after
 
 
 def test_cancelled_before_session_opens_nothing(tmp_path):

@@ -28,7 +28,7 @@ KNOWN_STORES = {'LIT': 'litzzy', 'REMI': 'reminiso'}
 # reserved name, no trailing dot, no IP literal), so a link never points this PC at a machine on its LAN.
 SOURCE_URL_RE = re.compile(
     r"^https://(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+"
-    r"(?!(?:local|lan|internal|home|corp|localhost|test|invalid|example)(?![a-z]))[a-z]{2,}"
+    r"(?!(?:local|lan|internal|home|corp|localhost|localdomain|test|invalid|example|arpa)(?![a-z]))[a-z]{2,}"
     r"(/[A-Za-z0-9._-]*)*(\?view=[A-Za-z0-9_-]+)?$")
 SKU_CODE_RE = re.compile(r'^[A-Z]{2}\d{10}$', re.ASCII)
 JOB_ID_RE = re.compile(r'^[a-z0-9]{10,40}$')
@@ -175,6 +175,9 @@ def _report_pass(job: dict, deps, payload: dict) -> None:
     if not isinstance(gid, str):
         _fail(job, deps, 'TOOL', 'Phiên báo PASS nhưng thiếu productGid.')
         return
+    # A fail names the product the job made, so the server keeps it as a leftover. A reused job made none: its gid is the
+    # register's original product, which must never be reported as one.
+    made = None if payload.get('reused') is True else gid
     status, body = 0, {}
     for n in range(RESULT_RETRIES + 1):
         if n:
@@ -188,21 +191,21 @@ def _report_pass(job: dict, deps, payload: dict) -> None:
             continue
         except Exception as e:
             log(f'Job {job["id"]}: gửi kết quả lỗi ({type(e).__name__}: {e}).')
-            _fail(job, deps, 'TOOL', RESULT_SEND_ERROR, product_gid=gid)
+            _fail(job, deps, 'TOOL', RESULT_SEND_ERROR, product_gid=made)
             return
         if status < 500:
             break
         log(f'Job {job["id"]}: máy chủ trả HTTP {status} khi nhận kết quả.')
     else:
         _fail(job, deps, 'TOOL', f'Không gửi được kết quả sau {RESULT_RETRIES + 1} lần thử.', retryable=True,
-              product_gid=gid)
+              product_gid=made)
         return
     if status == 200:
         log(f'Job {job["id"]}: {body.get("status")} {body.get("error") or ""}'.rstrip())
     elif status == 404:
         log(f'Job {job["id"]}: máy chủ không còn job này (404).')
     else:
-        _fail(job, deps, 'TOOL', f'Máy chủ trả HTTP {status} khi nhận kết quả.', product_gid=gid)
+        _fail(job, deps, 'TOOL', f'Máy chủ trả HTTP {status} khi nhận kết quả.', product_gid=made)
 
 
 def _report(job: dict, deps, outcome) -> None:
@@ -282,17 +285,19 @@ def run_job(job: dict, deps) -> None:
         return
     hb = Heartbeat(deps.client, job, job_dir)
     hb.start()
+    # The heartbeat runs until the report is sent: resending a result can take minutes, and the lease must not run out meanwhile.
     try:
-        outcome = deps.run_session(job, platform, job_dir, hb.should_stop, timeout_s=SESSION_TIMEOUT_S)
-    except Exception as e:
-        outcome = {'verdict': 'FAIL', 'failKind': 'TOOL', 'error': f'Phiên clone lỗi: {type(e).__name__}: {e}'}
+        try:
+            outcome = deps.run_session(job, platform, job_dir, hb.should_stop, timeout_s=SESSION_TIMEOUT_S)
+        except Exception as e:
+            outcome = {'verdict': 'FAIL', 'failKind': 'TOOL', 'error': f'Phiên clone lỗi: {type(e).__name__}: {e}'}
+        if hb.should_stop():
+            log(f'Job {job_id}: đã dừng phiên vì job bị huỷ hoặc không còn thuộc máy này; không báo kết quả.')
+            return
+        log(f'Job {job_id}: phiên trả {outcome.get("verdict") if isinstance(outcome, dict) else outcome!r}.')
+        _report(job, deps, outcome)
     finally:
         hb.close()
-    if hb.should_stop():
-        log(f'Job {job_id}: đã dừng phiên vì job bị huỷ hoặc không còn thuộc máy này; không báo kết quả.')
-        return
-    log(f'Job {job_id}: phiên trả {outcome.get("verdict") if isinstance(outcome, dict) else outcome!r}.')
-    _report(job, deps, outcome)
 
 
 def serve(deps, once: bool = False) -> int:

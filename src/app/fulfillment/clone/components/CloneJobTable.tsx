@@ -1,7 +1,7 @@
 'use client'
 import {
-  FAIL_KIND_LABEL, STATUS_LABEL, canCancel, canRetry, formatDuration, formatWhen, httpsUrl, leftoverProductId, prefixOf, retryQuestion, showsReused,
-  visibleStage,
+  FAIL_KIND_LABEL, STATUS_LABEL, canCancel, canRetry, formatDuration, formatWhen, httpsUrl, leftoverProductId, prefixOf, reportedProductId,
+  retryQuestion, showsReused, visibleStage,
   type CloneJobView, type CloneStatus, type CloneStore, type Viewer,
 } from './types'
 
@@ -42,7 +42,8 @@ function ProductCell({ job, viewer }: { job: CloneJobView; viewer: Viewer }) {
   const href = httpsUrl(value)
   const reused = showsReused(job)
   const leftover = leftoverProductId(job, viewer)
-  if (!value && !reused && !leftover) return <span className={muted}>—</span>
+  const reported = reportedProductId(job, viewer)
+  if (!value && !reused && !leftover && !reported) return <span className={muted}>—</span>
   return (
     <div className="flex flex-col gap-xs">
       {href && (
@@ -53,6 +54,7 @@ function ProductCell({ job, viewer }: { job: CloneJobView; viewer: Viewer }) {
       {value && !href && <span title={value} className="block max-w-[200px] truncate">{value}</span>}
       {reused && <span className="text-label-sm text-on-surface-variant">Đã có sẵn</span>}
       {leftover && <span className="text-label-sm text-on-surface-variant">Còn sản phẩm trên store: {leftover}</span>}
+      {reported && <span className="text-label-sm text-on-surface-variant">Sản phẩm được báo: {reported}</span>}
     </div>
   )
 }

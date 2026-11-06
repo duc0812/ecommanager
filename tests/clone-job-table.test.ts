@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  canRetry, leftoverProductId, retryQuestion, showsReused, visibleStage, type CloneJobView, type CloneStatus, type Viewer,
+  canRetry, leftoverProductId, reportedProductId, retryQuestion, showsReused, visibleStage, type CloneJobView, type CloneStatus, type Viewer,
 } from '@/app/fulfillment/clone/components/types'
 
 const STATUSES: CloneStatus[] = ['QUEUED', 'RUNNING', 'DONE', 'FAILED', 'CANCELLED']
@@ -50,5 +50,23 @@ describe('bảng job clone', () => {
     )
     expect(retryQuestion(job({ status: 'FAILED', productGid: null }), SUPER)).toBeNull()
     expect(retryQuestion(job({ status: 'FAILED', productGid: GID }), SELLER)).toBeNull()
+  })
+
+  it('gid của job reused (sản phẩm gốc) hay của lỗi VERIFY không phải sản phẩm còn lại: không khuyên xoá, không chặn, chỉ ghi "Sản phẩm được báo"', () => {
+    const named = [
+      job({ status: 'FAILED', failKind: 'VERIFY', productGid: GID }),
+      job({ status: 'FAILED', failKind: 'TOOL', productGid: GID, reused: true }),
+      job({ status: 'FAILED', failKind: 'VERIFY', productGid: GID, reused: true }),
+    ]
+    for (const j of named) {
+      expect(leftoverProductId(j, SUPER)).toBeNull()
+      expect(retryQuestion(j, SUPER)).toBeNull()
+      expect(canRetry(j, SELLER)).toBe(true)
+      expect(reportedProductId(j, SUPER)).toBe('9054123557021')
+      for (const viewer of [SELLER, ADMIN]) expect(reportedProductId(j, viewer)).toBeNull()
+    }
+    expect(reportedProductId(job({ status: 'FAILED', failKind: 'TOOL', productGid: GID }), SUPER)).toBeNull()
+    expect(reportedProductId(job({ status: 'FAILED', failKind: 'VERIFY', productGid: null }), SUPER)).toBeNull()
+    expect(reportedProductId(job({ status: 'DONE', failKind: null, productGid: GID, reused: true }), SUPER)).toBeNull()
   })
 })

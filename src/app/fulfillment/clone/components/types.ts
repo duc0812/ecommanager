@@ -73,10 +73,20 @@ export const visibleStage = (job: CloneJobView): string | null => (job.status ==
 
 export const showsReused = (job: CloneJobView): boolean => job.status === 'DONE' && job.reused
 
-// A failed job that names a product left that product on the store; only the SUPERADMIN is shown which one.
+const productIdOf = (job: CloneJobView) => /^gid:\/\/shopify\/Product\/(\d+)$/.exec(job.productGid ?? '')?.[1] ?? null
+
+// The same rule as retryCloneJob: a failed job that made a product left it on the store. A reused job made none (its gid is the
+// original product) and a VERIFY fail names whatever the runner reported, which may not be this job's.
+const leftProduct = (job: CloneJobView) => job.status === 'FAILED' && job.productGid !== null && !job.reused && job.failKind !== 'VERIFY'
+
+// Only the SUPERADMIN is shown which product a failed job left behind.
 export function leftoverProductId(job: CloneJobView, viewer: Viewer): string | null {
-  if (job.status !== 'FAILED' || !viewer.superadmin) return null
-  return /^gid:\/\/shopify\/Product\/(\d+)$/.exec(job.productGid ?? '')?.[1] ?? null
+  return viewer.superadmin && leftProduct(job) ? productIdOf(job) : null
+}
+
+// Any other product a failed job names, shown to the SUPERADMIN without advice.
+export function reportedProductId(job: CloneJobView, viewer: Viewer): string | null {
+  return viewer.superadmin && job.status === 'FAILED' && !leftProduct(job) ? productIdOf(job) : null
 }
 
 // The same rules as cancelCloneJob and retryCloneJob, so a click never answers 403.
@@ -87,7 +97,7 @@ export function canCancel(job: CloneJobView, viewer: Viewer): boolean {
 export function canRetry(job: CloneJobView, viewer: Viewer): boolean {
   if (job.status !== 'FAILED') return false
   if (viewer.superadmin) return true
-  const adminOnly = (job.failKind !== null && ADMIN_ONLY_FAIL_KINDS.includes(job.failKind)) || job.productGid !== null
+  const adminOnly = (job.failKind !== null && ADMIN_ONLY_FAIL_KINDS.includes(job.failKind)) || leftProduct(job)
   return viewer.id !== null && job.requestedById === viewer.id && !adminOnly
 }
 
