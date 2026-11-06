@@ -159,6 +159,24 @@ export function artworkDesignLink(a: { id: string; storage: string; driveWebView
   return a.storage === 'DRIVE' && a.driveWebViewLink ? a.driveWebViewLink : artworkUrl(a.id)
 }
 
+/** What the customer filled, as the task screen shows it: the visible line properties (not the preview link) and the text read back from Customall. */
+export function linePersonalization(l: { previewCdnUrl: string | null; customAttributesJson: string | null; customallFieldsJson: string | null }): PersonalizationField[] {
+  const attrs = parseAttributes(l.customAttributesJson)
+  const preview = l.previewCdnUrl ?? extractPreviewCdnUrl(attrs)
+  return [
+    ...visibleCustomAttributes(attrs).filter(a => a.value !== preview),
+    ...(parseCustomallFields(l.customallFieldsJson) ?? []).map(f => ({ ...f, source: 'customall' as const })),
+  ]
+}
+
+/** The `_print_files` of a line that can be opened as a web link. */
+export function linkedPrintFiles(attrs: CustomAttribute[]): SourcePrintFile[] {
+  return sourcePrintFiles(attrs).flatMap(f => {
+    const url = safeHttpUrl(f.url)
+    return url ? [{ printArea: f.printArea, url }] : []
+  })
+}
+
 function parseVariantOptions(json: string | null): Record<string, string> {
   if (!json) return {}
   try {
@@ -223,20 +241,14 @@ export async function loadWorkspace(orderId: string): Promise<Workspace | null> 
       customized: l.customized,
       variantOptions: parseVariantOptions(l.variantOptions),
       attributesLoaded: l.customAttributesJson != null,
-      personalization: [
-        ...visibleCustomAttributes(attrs).filter(a => a.value !== preview),
-        ...(customall ?? []).map(f => ({ ...f, source: 'customall' as const })),
-      ],
+      personalization: linePersonalization(l),
       customallPending: customall === null && customizationIdOf(attrs) !== null,
       customerDesignLink: safeCustomerDesignLink(attrs, productUrl, l.shopifyVariantId),
       customizedUrl: safeHttpUrl(attrs.find(a => a.key === '_customized_url')?.value),
       previewUrl: safeHttpUrl(preview),
       imageUrl: safeHttpUrl(l.imageUrl),
       imageIsVariant: l.imageIsVariant ?? null,
-      sourcePrintFiles: sourcePrintFiles(attrs).flatMap(f => {
-        const url = safeHttpUrl(f.url)
-        return url ? [{ printArea: f.printArea, url }] : []
-      }),
+      sourcePrintFiles: linkedPrintFiles(attrs),
       supplier: l.resolvedSupplierId ? (supplierById.get(l.resolvedSupplierId) ?? null) : null,
       supplierSku: l.resolvedSupplierSku,
       supplierProduct: l.resolvedSupplierId && l.resolvedSupplierSku ? (supplierProductByKey.get(`${l.resolvedSupplierId}::${l.resolvedSupplierSku}`) ?? null) : null,

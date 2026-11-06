@@ -1,6 +1,10 @@
 import { prisma } from '@/lib/db'
 import { isNonProductLine, lineKeysOf, planTaskKeys, type KeyedTask, type TaskKeyMove } from '@/lib/order-lines'
-import { artworkUrl, parseAttributes, safeHttpUrl, sourcePrintFiles, updateLine, loadWorkspace, type WorkspaceLine, type Workspace } from '@/lib/design-studio'
+import {
+  artworkUrl, linePersonalization, linkedPrintFiles, parseAttributes, safeHttpUrl, sourcePrintFiles, updateLine, loadWorkspace,
+  type PersonalizationField, type SourcePrintFile, type WorkspaceLine, type Workspace,
+} from '@/lib/design-studio'
+import { extractPreviewCdnUrl } from '@/lib/order-line-assets'
 import { fillCustomallFields } from '@/lib/customall-fields'
 import { getDesignSettings, kpiForProductType, type DesignSettings } from '@/lib/design-settings'
 import { visibleCustomAttributes } from '@/lib/order-classify'
@@ -18,7 +22,7 @@ import { activePushByOrder } from '@/lib/repos/push-export'
 import type { HandoffPush } from '@/lib/handoff-shared'
 import { autoRenderEligibility, hasTeeinblueDesign } from '@/lib/artwork-render-eligibility'
 import { autoFromLocalLibrary } from '@/lib/flat-text-coverage'
-import { APP_FILE_PREFIX } from '@/lib/design-links'
+import { APP_FILE_PREFIX, DESIGN_LINK_SEPARATOR, isAppFileLink } from '@/lib/design-links'
 import { saveStudioDesignToLibrary } from '@/lib/studio-library'
 import { MISSING_AREAS_PREFIX, missingPrintAreas, outdatedParts, printFilesReady } from '@/lib/task-files'
 
@@ -141,6 +145,14 @@ export const SHIPPED_WITHOUT_FILE_NOTE = 'Shopify đã báo giao cả đơn như
 
 export type SyncResult = { created: number; cancelled: number; completed: number; reopened: number }
 
+function isClosedOrder(o: { pipelineStatus: string }): boolean {
+  return ['CANCELLED', 'REFUNDED'].includes(o.pipelineStatus)
+}
+
+function isShippedOrder(o: { pipelineStatus: string; fulfillmentStatus: string | null }): boolean {
+  return o.pipelineStatus === 'FULFILLED' || (o.fulfillmentStatus ?? '').toLowerCase() === 'fulfilled'
+}
+
 function reopenedByFactory(task: { rejectReasons: string | null }): boolean {
   return parseRejectReasons(task.rejectReasons).includes(FACTORY_REJECT_REASON)
 }
@@ -226,8 +238,8 @@ export async function syncDesignTasks(orderId: string): Promise<SyncResult> {
   const supplierIds = Array.from(new Set(order.lines.map(l => l.resolvedSupplierId).filter(Boolean) as string[]))
   const suppliers = supplierIds.length ? await prisma.supplier.findMany({ where: { id: { in: supplierIds } }, select: { id: true, name: true } }) : []
   const supplierName = new Map(suppliers.map(s => [s.id, s.name]))
-  const orderClosed = ['CANCELLED', 'REFUNDED'].includes(order.pipelineStatus)
-  const orderShipped = order.pipelineStatus === 'FULFILLED' || (order.fulfillmentStatus ?? '').toLowerCase() === 'fulfilled'
+  const orderClosed = isClosedOrder(order)
+  const orderShipped = isShippedOrder(order)
   const factoryRejected = order.pipelineStatus === 'DESIGN_REJECTED'
   let created = 0, cancelled = 0, completed = 0, reopened = 0
   const withArtwork = await linesWithArtwork(orderId)
@@ -671,6 +683,91 @@ export async function listTasks(f: { statuses?: TaskStatus[]; readiness?: Readin
 
 async function rowFor(taskKey: string): Promise<TaskRow | undefined> {
   return (await listTasks({ taskKeys: [taskKey], statuses: undefined, limit: 1 }))[0]
+}
+
+export type SentLineRow = {
+  lineId: string; lineKey: string; orderId: string; orderNumber: string; placedAt: string; pipelineStatus: string
+  /** The line's own export mark, else the order's (an export made before lines were tracked). */
+  sentAt: string | null
+  sku: string | null; productTitle: string; variantTitle: string | null; qty: number
+  previewUrl: string | null; imageUrl: string | null; supplierName: string | null; storeName: string
+  personalization: PersonalizationField[]
+  /** The design link(s) the line carried to its supplier. */
+  designLinks: string[]
+  sourcePrintFiles: SourcePrintFile[]
+}
+
+export const SENT_LINES_LIMIT = 50
+const SENT_LINES_SCAN = 200
+/** An order handed to production counts as sent even when its lines carry no export mark of their own. */
+const SENT_ORDER_STATUSES = ['EXPORTED', 'READY_TO_PRODUCTION']
+
+function designLinksOf(stored: string | null): string[] {
+  return (stored ?? '').split(DESIGN_LINK_SEPARATOR).map(s => s.trim()).filter(s => isAppFileLink(s) || !!safeHttpUrl(s))
+}
+
+/**
+ * For a search: product lines of a still-open order that went to a supplier but never had a design task (a design from the
+ * library or from outside the studio, exported before the sync made a task). Matched on what a task is matched on, newest order first.
+ */
+export async function listSentLinesWithoutTask(f: { q: string; storeIds?: string[] | null; limit?: number }): Promise<SentLineRow[]> {
+  const q = f.q.trim().replace(/^#/, '')
+  if (!q) return []
+  const limit = f.limit ?? SENT_LINES_LIMIT
+  const orders = await prisma.order.findMany({
+    where: {
+      ...(f.storeIds ? { storeId: { in: f.storeIds } } : {}),
+      pipelineStatus: { notIn: ['FULFILLED', 'CANCELLED', 'REFUNDED'] },
+      AND: [
+        { OR: [{ pipelineStatus: { in: SENT_ORDER_STATUSES } }, { lines: { some: { exportedAt: { not: null } } } }] },
+        { OR: [
+          { shopifyOrderNumber: { contains: q.replace(/_\d+$/, '') } },
+          { lines: { some: { OR: [{ sku: { contains: q } }, { productTitle: { contains: q } }, { customAttributesJson: { contains: q } }] } } },
+        ] },
+      ],
+    },
+    orderBy: { placedAt: 'desc' }, take: SENT_LINES_SCAN,
+    select: {
+      id: true, shopifyOrderNumber: true, placedAt: true, pipelineStatus: true, fulfillmentStatus: true, exportedAt: true,
+      store: { select: { shop: true, project: { select: { name: true } } } },
+      designTasks: { select: { shopifyLineId: true } },
+      lines: { select: {
+        id: true, shopifyLineId: true, linePosition: true, sku: true, productTitle: true, shopifyProductType: true, variantTitle: true, qty: true,
+        previewCdnUrl: true, imageUrl: true, customAttributesJson: true, customallFieldsJson: true, designDriveLink: true,
+        exportedAt: true, exportedToSupplierId: true, resolvedSupplierId: true,
+      } },
+    },
+  })
+  const supplierIds = Array.from(new Set(orders.flatMap(o => o.lines.flatMap(l => [l.exportedToSupplierId, l.resolvedSupplierId])).filter((x): x is string => !!x)))
+  const suppliers = supplierIds.length ? await prisma.supplier.findMany({ where: { id: { in: supplierIds } }, select: { id: true, name: true } }) : []
+  const supplierName = new Map(suppliers.map(s => [s.id, s.name]))
+  const needle = q.toLowerCase()
+  const rows: SentLineRow[] = []
+  for (const o of orders) {
+    if (isClosedOrder(o) || isShippedOrder(o)) continue
+    const keys = lineKeysOf(o.shopifyOrderNumber, o.lines)
+    const tasked = new Set(o.designTasks.map(t => t.shopifyLineId))
+    const orderSent = SENT_ORDER_STATUSES.includes(o.pipelineStatus)
+    for (const line of [...o.lines].sort((a, b) => a.linePosition - b.linePosition)) {
+      if (isNonProductLine(line) || tasked.has(line.shopifyLineId) || (!line.exportedAt && !orderSent)) continue
+      const lineKey = keys.get(line.shopifyLineId)!
+      const attrs = parseAttributes(line.customAttributesJson)
+      const haystacks = [lineKey, line.sku ?? '', line.productTitle, ...visibleCustomAttributes(attrs).map(a => a.value)]
+      if (!haystacks.some(h => h.toLowerCase().includes(needle))) continue
+      const supplierId = line.exportedToSupplierId ?? line.resolvedSupplierId
+      const sentAt = line.exportedAt ?? o.exportedAt
+      rows.push({
+        lineId: line.id, lineKey, orderId: o.id, orderNumber: o.shopifyOrderNumber, placedAt: o.placedAt.toISOString(), pipelineStatus: o.pipelineStatus,
+        sentAt: sentAt ? sentAt.toISOString() : null,
+        sku: line.sku, productTitle: line.productTitle, variantTitle: line.variantTitle, qty: line.qty,
+        previewUrl: safeHttpUrl(line.previewCdnUrl ?? extractPreviewCdnUrl(attrs)), imageUrl: safeHttpUrl(line.imageUrl),
+        supplierName: supplierId ? (supplierName.get(supplierId) ?? null) : null, storeName: o.store.project?.name ?? o.store.shop,
+        personalization: linePersonalization(line), designLinks: designLinksOf(line.designDriveLink), sourcePrintFiles: linkedPrintFiles(attrs),
+      })
+      if (rows.length >= limit) return rows
+    }
+  }
+  return rows
 }
 
 async function profileForLine(line: { orderId: string; shopifyProductId?: string | null }) {

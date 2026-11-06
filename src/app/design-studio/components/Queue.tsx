@@ -1,9 +1,11 @@
 'use client'
 import { useState } from 'react'
-import type { Readiness, TaskRow, TaskStatus } from './types'
+import type { Readiness, SentLineRow, TaskRow, TaskStatus } from './types'
 import { readyLabel, timeLeft } from './model'
-import { Avatar, ErrorBanner, Icon, Note, Pill, READY_META, TEXT_TONE, btn, card } from './ui'
+import { Avatar, ErrorBanner, Icon, Note, Pill, READY_META, TEXT_TONE, btn, card, fmtDate } from './ui'
 import { StoreLabel } from '@/components/StoreFilter'
+
+const SENT_SECTION = 'Đã gửi xưởng — chưa có task'
 
 export type QueueFilter = 'ALL' | Readiness | 'NEEDS_ARTWORK'
 
@@ -63,9 +65,36 @@ function QueueRow({ t, selected, onSelect, waiting, showStore }: { t: TaskRow; s
   )
 }
 
-export default function Queue({ tasks, sel, onSelect, q, onQ, loading, error, retrying, emptyText, onClearFilters, filter, onFilter, counts, mine, onMine, autoLabel = READY_META.AUTO.label, artworkWaiting, showStore = false }: {
+function SentLineQueueRow({ l, selected, onSelect, showStore }: { l: SentLineRow; selected: boolean; onSelect: (lineId: string) => void; showStore?: boolean }) {
+  return (
+    <button type="button" onClick={() => onSelect(l.lineId)} aria-current={selected ? 'true' : undefined}
+      className={`flex gap-sm p-sm mx-xs rounded-lg text-left ${selected ? 'bg-secondary/10 ring-1 ring-inset ring-secondary/40' : 'hover:bg-surface-container-low'}`}>
+      <span className="w-10 h-10 rounded-lg bg-surface-container-high overflow-hidden grid place-items-center text-on-surface-variant shrink-0">
+        {(l.previewUrl ?? l.imageUrl)
+          // eslint-disable-next-line @next/next/no-img-element
+          ? <img src={(l.previewUrl ?? l.imageUrl)!} alt="" className="w-full h-full object-cover" loading="lazy" />
+          : <Icon name="local_shipping" className="text-[20px]" />}
+      </span>
+      <span className="flex-1 min-w-0 flex flex-col gap-[2px]">
+        <span className="flex items-center gap-xs">
+          <span className="font-mono text-label-sm font-medium text-on-surface">{l.lineKey}</span>
+          {l.sentAt && <span className="ml-auto text-label-sm text-on-surface-variant whitespace-nowrap">đã gửi {fmtDate(l.sentAt)}</span>}
+        </span>
+        <span className="text-label-sm text-on-surface-variant truncate">{l.productTitle}{l.variantTitle ? ` · ${l.variantTitle}` : ''}</span>
+        {showStore && <span className="flex"><StoreLabel name={l.storeName} /></span>}
+        <span className="flex items-center gap-xs flex-wrap">
+          <Pill tone="idle" icon="factory">{l.supplierName ?? 'Chưa rõ xưởng'}</Pill>
+        </span>
+      </span>
+    </button>
+  )
+}
+
+export default function Queue({ tasks, sel, onSelect, q, onQ, loading, error, retrying, emptyText, onClearFilters, filter, onFilter, counts, mine, onMine, autoLabel = READY_META.AUTO.label, artworkWaiting, showStore = false, sentLines = [], selLine = null, onSelectLine }: {
   /** Name the store on each row; only worth it when the user sees more than one store. */
   showStore?: boolean
+  /** A search's sent lines without a task, listed after the task sections. */
+  sentLines?: SentLineRow[]; selLine?: string | null; onSelectLine?: (lineId: string) => void
   /** Open lines per product that needs artwork; without it the chip is not offered (Duyệt mẫu has files already). */
   artworkWaiting?: Map<string, number>
   /** The AUTO chip's name: in Duyệt mẫu every AUTO line is already rendered. */
@@ -78,6 +107,8 @@ export default function Queue({ tasks, sel, onSelect, q, onQ, loading, error, re
 }) {
   const [closed, setClosed] = useState<Record<string, boolean>>({})
   const groups = (q.trim() ? SEARCH_SECTIONS : SECTIONS).map(s => ({ ...s, rows: tasks.filter(t => s.statuses.includes(t.status)).sort(byDue) })).filter(g => g.rows.length > 0)
+  const sent = q.trim() && onSelectLine ? sentLines : []
+  const sentOpen = !closed[SENT_SECTION]
   const chipCls = (on: boolean) => `inline-flex items-center gap-xs h-7 px-sm rounded-full border text-label-sm ${on ? 'bg-secondary/10 text-secondary border-transparent font-semibold' : 'bg-surface-container-lowest border-outline-variant text-on-surface-variant'}`
   return (
     <aside aria-label="Hàng đợi task" className={`${card} sticky top-md max-h-[calc(100vh-2rem)] overflow-auto flex flex-col pb-md`}>
@@ -116,11 +147,23 @@ export default function Queue({ tasks, sel, onSelect, q, onQ, loading, error, re
                 <span className={g.tone ?? ''}>{g.title}</span>
                 <span className="font-medium">({g.rows.length})</span>
               </button>
-              {open && g.rows.map(t => <QueueRow key={t.taskKey} t={t} selected={t.taskKey === sel} onSelect={onSelect} waiting={filter === 'NEEDS_ARTWORK' ? artworkWaiting?.get(t.productKey) : undefined} showStore={showStore} />)}
+              {open && g.rows.map(t => <QueueRow key={t.taskKey} t={t} selected={!selLine && t.taskKey === sel} onSelect={onSelect} waiting={filter === 'NEEDS_ARTWORK' ? artworkWaiting?.get(t.productKey) : undefined} showStore={showStore} />)}
             </div>
           )
         })}
-        {groups.length === 0 && !loading && !error && !retrying && (
+        {sent.length > 0 && onSelectLine && (
+          <div className="flex flex-col gap-[2px]">
+            <button type="button" aria-expanded={sentOpen} onClick={() => setClosed({ ...closed, [SENT_SECTION]: sentOpen })}
+              title="Dòng đã gửi xưởng nhưng chưa từng có task design (design có sẵn từ thư viện hoặc làm ngoài studio)"
+              className="flex items-center gap-xs mx-sm mt-sm mb-[2px] px-xs py-xs text-label-sm font-semibold text-on-surface-variant text-left">
+              <Icon name={sentOpen ? 'expand_more' : 'chevron_right'} className="text-[18px]" />
+              <span>{SENT_SECTION}</span>
+              <span className="font-medium">({sent.length})</span>
+            </button>
+            {sentOpen && sent.map(l => <SentLineQueueRow key={l.lineId} l={l} selected={l.lineId === selLine} onSelect={onSelectLine} showStore={showStore} />)}
+          </div>
+        )}
+        {groups.length === 0 && sent.length === 0 && !loading && !error && !retrying && (
           <div className="px-md py-md flex flex-col items-start gap-sm text-label-sm text-on-surface-variant">
             <span>{emptyText}</span>
             {onClearFilters && (

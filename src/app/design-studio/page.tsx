@@ -5,7 +5,7 @@ import Sidebar from '@/components/Sidebar'
 import StoreFilter from '@/components/StoreFilter'
 import { useSellerReadOnly } from '@/components/RoleGate'
 import { useStoreFilter } from '@/lib/use-store-filter'
-import type { Me, TaskDetail, TaskRow, TaskStatus } from './components/types'
+import type { Me, SentLineRow, TaskDetail, TaskRow, TaskStatus } from './components/types'
 import { artworkProducts, emptyQueueText, isAutoNotRendered, isRetryable, postJson, requestJson, retryDelay, taskImages, taskUrl } from './components/model'
 import { machineQa } from './components/ai-qa'
 import { LightboxProvider } from './components/Lightbox'
@@ -21,6 +21,7 @@ import ReviewWorkspace from './components/ReviewWorkspace'
 import ReviewToolbar from './components/ReviewToolbar'
 import HandoffGrid from './components/HandoffGrid'
 import SentGrid from './components/SentGrid'
+import SentLinePanel from './components/SentLinePanel'
 import DriveHealthBanner from './components/DriveHealthBanner'
 import { ToastProvider, useToast } from './components/overlay'
 import { useShopifyRefresh } from './components/useShopifyRefresh'
@@ -90,6 +91,8 @@ function DesignTasks() {
   const readOnly = useSellerReadOnly()
 
   const [tasks, setTasks] = useState<TaskRow[]>([])
+  const [sentLines, setSentLines] = useState<SentLineRow[]>([])
+  const [selLine, setSelLine] = useState<string | null>(null)
   const [, setMe] = useState<Me | null>(null)
   const [handoffCount, setHandoffCount] = useState(0)
   const [listLoading, setListLoading] = useState(false)
@@ -139,7 +142,7 @@ function DesignTasks() {
     if (debouncedQ) qs.set('q', debouncedQ)
     if (listStoreId) qs.set('storeId', listStoreId)
     const query = qs.toString()
-    const r = await requestJson<{ tasks: TaskRow[]; me: Me; handoffCount?: number; lastSync?: { ranAt: string; trigger: string; error: string | null } | null }>(`/api/design-studio/tasks${query ? `?${query}` : ''}`)
+    const r = await requestJson<{ tasks: TaskRow[]; me: Me; handoffCount?: number; lastSync?: { ranAt: string; trigger: string; error: string | null } | null; sentLines?: SentLineRow[] }>(`/api/design-studio/tasks${query ? `?${query}` : ''}`)
     if (id !== listReq.current) return
     setListLoading(false)
     if (!r.ok) {
@@ -157,6 +160,7 @@ function DesignTasks() {
     setListError('')
     if (recovered) onRecovered.current()
     setTasks(r.data.tasks)
+    setSentLines(r.data.sentLines ?? [])
     setMe(r.data.me)
     setHandoffCount(r.data.handoffCount ?? 0)
     setLastSync(r.data.lastSync ?? null)
@@ -208,6 +212,7 @@ function DesignTasks() {
 
   const selectTask = useCallback((key: string) => {
     setSel(key)
+    setSelLine(null)
     setMode('work')
   }, [])
 
@@ -259,6 +264,7 @@ function DesignTasks() {
   }, [tasks])
 
   const current = detail && detail.task.taskKey === sel ? detail : null
+  const currentLine = mode === 'work' && selLine ? sentLines.find(l => l.lineId === selLine) ?? null : null
 
   useEffect(() => {
     if (!current || !current.driveConnected) return
@@ -326,7 +332,8 @@ function DesignTasks() {
         {mode !== 'sent' && <Queue tasks={mode === 'review' ? reviewTasks : visible} sel={mode === 'work' ? sel : mode === 'review' ? reviewSel : null} onSelect={mode === 'review' ? setReviewSel : selectTask}
           q={q} onQ={setQ} loading={listLoading} error={listError} retrying={retrying} showStore={storeFilter.stores.length > 1}
           emptyText={filtered ? emptyText : 'Không có task'} onClearFilters={filtered ? clearFilters : null}
-          filter={filter} onFilter={setFilter} counts={counts} mine={mine} onMine={setMine} autoLabel={mode === 'review' ? 'Auto' : READY_META.AUTO.label} artworkWaiting={mode === 'review' ? undefined : artwork.waiting} />}
+          filter={filter} onFilter={setFilter} counts={counts} mine={mine} onMine={setMine} autoLabel={mode === 'review' ? 'Auto' : READY_META.AUTO.label} artworkWaiting={mode === 'review' ? undefined : artwork.waiting}
+          sentLines={mode === 'work' ? sentLines : []} selLine={currentLine?.lineId ?? null} onSelectLine={mode === 'work' ? setSelLine : undefined} />}
         {mode === 'review' ? (
           <div className="flex flex-col gap-md min-w-0">
             <ReviewToolbar total={reviewTasks.length} version={reviewVersion} onApproved={keys => reviewMoved(keys, 'DONE')} />
@@ -343,6 +350,8 @@ function DesignTasks() {
           <HandoffGrid q={debouncedQ} version={reviewVersion} onOpenTask={selectTask} onChanged={reload} />
         ) : mode === 'sent' ? (
           <SentGrid q={debouncedQ} rawQ={q} onQ={setQ} version={reviewVersion} onOpenTask={selectTask} onChanged={reload} />
+        ) : currentLine ? (
+          <SentLinePanel key={currentLine.lineId} line={currentLine} />
         ) : (
         <div className="flex flex-col gap-md min-w-0">
           {!sel && !listLoading && !listError && (

@@ -20,6 +20,16 @@ export type TaskRow = {
   fromLibrary: boolean; unmapped: boolean; hasPrint: boolean; productKey: string
 }
 
+/** A product line already sent to its supplier that never had a design task; a search lists it beside the tasks. */
+export type SentLineRow = {
+  lineId: string; lineKey: string; orderId: string; orderNumber: string; placedAt: string; pipelineStatus: string; sentAt: string | null
+  sku: string | null; productTitle: string; variantTitle: string | null; qty: number
+  previewUrl: string | null; imageUrl: string | null; supplierName: string | null; storeName: string
+  personalization: { key: string; value: string; source?: 'customall' }[]
+  designLinks: string[]
+  sourcePrintFiles: { printArea: string; url: string }[]
+}
+
 /** `shaped`: the template's guide draws this piece's real outline, so the canvas shows no box around it and names it above. */
 export type TemplateArea = { name: string; x: number; y: number; w: number; h: number; shaped?: boolean }
 
