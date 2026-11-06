@@ -1,6 +1,7 @@
 import json
 import os
 import runpy
+import stat
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -113,6 +114,8 @@ def test_build_argv_is_a_list_and_blocks_ssh():
     for tool in ('Read', 'Edit', 'Write'):
         assert f'{tool}(//**/.ssh/**)' in denied and f'{tool}(~/.ssh/**)' in denied
         assert f'{tool}(//**/SSH~*/**)' in denied
+        assert f'{tool}(//**/shopify.env)' in denied
+    assert 'Read(//**/*.env)' in denied
     for name in ('./.claude/**', './CLAUDE.md', './CLAUDE.local.md', './.mcp.json'):
         assert f'Write({name})' in denied and f'Edit({name})' in denied
     assert values_after(argv, '--add-dir') == [r'D:\queue\job1', r'C:\skills\one', r'D:\work']
@@ -192,7 +195,9 @@ def test_job_prompt_carries_the_spec_rules():
                    'lower case', 'shopify_ops.py', 'environment variable', 'adopt_theme.py" --adopt',
                    'before anything is pushed', 'the message the tool',
                    'is the only change to a skill folder you may make', 'The one write into a skill folder allowed',
-                   'is the one exception'):
+                   'is the one exception', 'Customall jobs included', 'Customily and Customall jobs alike',
+                   'state --product <productGid> --code <skuCode>', '"skusOk": true', '"status": "ACTIVE"',
+                   'non-null `onlineStoreUrl`'):
         assert phrase in text, phrase
     assert 'reused' not in text
     assert text.rstrip().endswith('## This job')
@@ -273,6 +278,16 @@ def test_startup_files_of_an_earlier_attempt_are_removed(skills, job_dir, monkey
     assert not [n for n in session.STARTUP_FILES if os.path.lexists(job_dir / n)]
 
 
+def test_read_only_startup_files_are_removed_too(skills, job_dir, monkeypatch):
+    (job_dir / '.claude' / 'locked').mkdir(parents=True)
+    for path in (job_dir / '.claude' / 'settings.json', job_dir / '.claude' / 'locked' / 'hook.py', job_dir / 'CLAUDE.md'):
+        path.write_text('left behind', encoding='utf-8')
+        os.chmod(path, stat.S_IREAD)
+    os.chmod(job_dir / '.claude' / 'locked', stat.S_IREAD)
+    assert run(job_dir, monkeypatch)['verdict'] == 'PASS'
+    assert seen(job_dir)['startupFiles'] == []
+
+
 @pytest.mark.skipif(os.name != 'nt', reason='junctions are Windows only')
 def test_a_junction_left_in_the_job_folder_is_removed_without_touching_its_target(skills, job_dir, tmp_path,
                                                                                  monkeypatch):
@@ -298,6 +313,13 @@ def test_a_token_the_session_echoes_never_reaches_the_log(skills, job_dir, monke
     assert 'token is *** (echoed)' in log and 'stderr ***' in log
     assert '"total_cost_usd": 1.25' in log
     assert {STORE_TOKEN, WORKER_TOKEN, OTHER_TOKEN} <= set(session._secrets({'SHOPIFY_ADMIN_TOKEN': STORE_TOKEN}))
+
+
+def test_a_token_the_session_writes_into_result_json_is_masked(skills, job_dir, monkeypatch):
+    out = run(job_dir, monkeypatch, mode='leak-result')
+    assert out == {'verdict': 'FAIL', 'failKind': 'QA', 'productGid': GID, 'handle': 'h-***',
+                   'note': 'compared with token ***', 'error': 'store said *** is bad'}
+    assert STORE_TOKEN in (job_dir / 'result.json').read_text(encoding='utf-8')
 
 
 def test_a_failed_exit_never_passes(skills, job_dir, monkeypatch):

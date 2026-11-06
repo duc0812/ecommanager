@@ -5,6 +5,7 @@ start-up files it found in the cwd) in the cwd.
   pass        result.json PASS, CLI JSON on stdout (cost, duration), a line on stderr, exit 0
   pass-reused like pass, with "reused": true in result.json
   echo-secret like pass, after printing its own SHOPIFY_ADMIN_TOKEN on stdout (split over two writes) and stderr
+  leak-result result.json FAIL with its own SHOPIFY_ADMIN_TOKEN in note, error and handle, exit 0
   text        result.json PASS, plain text on stdout, exit 0
   crash       no result.json, exit 2
   pass-exit1  result.json PASS, exit 1
@@ -51,6 +52,11 @@ def main():
     if mode == 'crash':
         print('boom', file=sys.stderr)
         return 2
+    if mode == 'leak-result':
+        token = os.environ.get('SHOPIFY_ADMIN_TOKEN', '')
+        write('result.json', {'verdict': 'FAIL', 'failKind': 'QA', 'productGid': GID, 'handle': 'h-' + token,
+                              'note': 'compared with token ' + token, 'error': f'store said {token} is bad'})
+        return 0
     if mode == 'gap-exit1':
         write('result.json', {'verdict': 'FAIL', 'failKind': 'TOOL_GAP', 'error': 'needs a new layer rule'})
         return 1

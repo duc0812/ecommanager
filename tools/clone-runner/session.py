@@ -12,6 +12,7 @@ import math
 import os
 import re
 import shutil
+import stat
 import time
 
 import proc
@@ -82,7 +83,7 @@ DISALLOWED_TOOLS = (
     'Write(//**/.ssh/**)',
     'Read(//**/SSH~*/**)', 'Edit(//**/SSH~*/**)', 'Write(//**/SSH~*/**)',
     'Read(//**/ssh~*/**)', 'Edit(//**/ssh~*/**)', 'Write(//**/ssh~*/**)',
-    'Read(//**/*.env)',
+    'Read(//**/*.env)', 'Read(//**/shopify.env)', 'Edit(//**/shopify.env)', 'Write(//**/shopify.env)',
     'Write(./.claude/**)', 'Edit(./.claude/**)', 'Write(./CLAUDE.md)', 'Edit(./CLAUDE.md)',
     'Write(./CLAUDE.local.md)', 'Edit(./CLAUDE.local.md)', 'Write(./.mcp.json)', 'Edit(./.mcp.json)',
 )
@@ -318,18 +319,35 @@ def _secrets(env: dict) -> list[str]:
     return [v for v in values if isinstance(v, str) and v]
 
 
+def _is_link(path: str) -> bool:
+    return os.path.islink(path) or os.path.isjunction(path)
+
+
+def _retry_writable(func, path: str, exc: BaseException) -> None:
+    """rmtree's error handler: clears the read-only bit and tries once more. Never on a link or junction, whose
+    attribute change could reach its target."""
+    if _is_link(path) or not os.path.lexists(path):
+        raise exc
+    os.chmod(path, stat.S_IWRITE)
+    func(path)
+
+
 def _remove(path: str) -> None:
-    """Deletes a file or folder; a link or junction is removed itself, never what it points to."""
+    """Deletes a file or folder, read-only ones too; a link or junction is removed itself, never what it points to
+    (rmtree unlinks a junction inside the folder without entering it)."""
     try:
-        if os.path.islink(path) or os.path.isjunction(path):
+        if _is_link(path):
             try:
                 os.unlink(path)
             except OSError:
                 os.rmdir(path)
         elif os.path.isdir(path):
-            shutil.rmtree(path)
+            shutil.rmtree(path, onexc=_retry_writable)
         else:
-            os.remove(path)
+            try:
+                os.remove(path)
+            except PermissionError as e:
+                _retry_writable(os.remove, path, e)
     except FileNotFoundError:
         pass
 
@@ -354,11 +372,12 @@ def run_session(job: dict, platform: str, job_dir: str, should_stop, timeout_s: 
         return _fail('TOOL', BATCH_BIN_ERROR)
 
     log_path = os.path.join(job_dir, LOG_FILE)
+    secrets = _secrets(env)
     with open(log_path, 'ab') as out:
         _say(out, f'Phiên bắt đầu, lần {view["attempt"]}, nền tảng {view["platform"]}.')
         start = out.tell()
         try:
-            child = proc.spawn(argv, cwd=job_dir, env=env, out=out, secrets=_secrets(env))
+            child = proc.spawn(argv, cwd=job_dir, env=env, out=out, secrets=secrets)
         except OSError as e:
             _say(out, f'Không chạy được claude ({type(e).__name__}).')
             return _fail('TOOL', f'Không chạy được claude CLI ({type(e).__name__}).')
@@ -389,4 +408,6 @@ def run_session(job: dict, platform: str, job_dir: str, should_stop, timeout_s: 
             outcome = _fail('TOOL', f'claude thoát với mã {code}{detail}.')
             if gid:
                 outcome['productGid'] = gid
+    # The text fields go to the server: a token the session copied into them is masked like the log.
+    outcome = {k: proc.mask_text(v, secrets) if isinstance(v, str) else v for k, v in outcome.items()}
     return {**outcome, **_usage(cli)}

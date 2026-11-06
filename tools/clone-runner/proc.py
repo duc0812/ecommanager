@@ -100,17 +100,28 @@ def _contain(pid: int):
     return job
 
 
+def _usable(secrets) -> list[str]:
+    """Longest first, so a secret that contains another is masked whole. Short values are skipped: an empty or tiny
+    one would mask ordinary text."""
+    return sorted({s for s in secrets if isinstance(s, str) and len(s) >= MIN_SECRET_LEN}, key=len, reverse=True)
+
+
 def _masked(data: bytes, secrets: list[bytes]) -> bytes:
     for secret in secrets:
         data = data.replace(secret, MASK)
     return data
 
 
+def mask_text(text: str, secrets) -> str:
+    for secret in _usable(secrets):
+        text = text.replace(secret, MASK.decode('ascii'))
+    return text
+
+
 def pump(src, out, secrets=()) -> None:
     """Copies `src` to `out` until EOF with every secret replaced. The tail that could be the start of a secret split
     across two reads is held back until the next read decides it."""
-    found = sorted({s.encode('utf-8') for s in secrets if isinstance(s, str) and len(s) >= MIN_SECRET_LEN},
-                   key=len, reverse=True)
+    found = [s.encode('utf-8') for s in _usable(secrets)]
     hold = max((len(s) for s in found), default=1) - 1
     pending = b''
     try:
