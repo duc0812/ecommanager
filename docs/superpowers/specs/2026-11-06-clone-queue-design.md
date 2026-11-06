@@ -131,6 +131,7 @@ Bảng mới `CloneJob`:
 | `status` | `QUEUED`, `RUNNING`, `DONE`, `FAILED`, `CANCELLED` |
 | `failKind` | `UNSUPPORTED`, `NOT_ENABLED`, `SOURCE`, `TOOL`, `TOOL_GAP` (cần nâng cấp tool, chờ owner), `QA`, `VERIFY`, `TIMEOUT`, `WORKER_LOST` |
 | `reused` | true khi sản phẩm đã có sẵn từ trước (quyết định 15); khi đó `skuCode` không gắn lên sản phẩm |
+| `force` | true khi SUPERADMIN ép chạy lại (quyết định 16); runner bỏ qua bước dò sổ đăng ký cho job này |
 | `productType` | product type của sản phẩm, để SUPERADMIN thấy việc map |
 | `stage` | chữ ngắn cho seller: nhận diện, clone, QA, public |
 | `platform` | `customily`, `customall`, `teeinblue`, `customix`, hoặc tên nền tảng chưa hỗ trợ |
@@ -221,7 +222,7 @@ Runner gọi `claude` ở chế độ không giao diện, thư mục làm việc
 - Không sửa, không xoá sản phẩm nào khác. Không xoá file dùng chung trên store.
 - Không sửa mã của tool clone, phần chạy chung trên theme, hay template dùng chung để hỗ trợ một luật mới. Gặp trường hợp đó thì dừng và ghi `TOOL_GAP` kèm luật còn thiếu (mục "Chờ owner xác nhận", điểm A).
 - Không xong được thì đưa sản phẩm về DRAFT nếu đã public, và ghi FAIL kèm lý do.
-- Kết thúc bằng việc ghi `result.json`: `{ verdict: "PASS" | "FAIL" | "UNSUPPORTED", platform, productGid, handle, productType, note, reused?, failKind?, error? }`.
+- Kết thúc bằng việc ghi `result.json`: `{ verdict: "PASS" | "FAIL" | "UNSUPPORTED", platform, productGid, handle, productType, note, failKind?, error? }`. Phiên không được tự khai "đã có sẵn": chỉ bước dò sổ đăng ký của runner mới đặt `reused`, vì cờ này làm VPS bỏ qua bước kiểm SKU.
 
 Runner chỉ tin `result.json`. Thiếu file, sai dạng, hay phiên thoát lỗi đều là job lỗi.
 
