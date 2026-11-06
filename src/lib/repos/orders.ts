@@ -2,7 +2,7 @@ import { prisma } from '@/lib/db'
 import type { OrderLine } from '@/generated/prisma/client'
 import { PIPELINE_STATUSES, TERMINAL_PIPELINE_STATUSES, type PipelineStatus } from '@/lib/pipeline-status'
 import { WARNING_TYPES, type WarningType } from '@/lib/order-warnings'
-import { isLineExported, legacyMarks, supplierLines } from '@/lib/line-export'
+import { isLineExported, legacyMarks, supplierLines, type ExportTrackedLine, type ExportTrackedOrder } from '@/lib/line-export'
 
 export type OrderFilter = {
   ids?: string[]
@@ -399,6 +399,18 @@ export async function clearLineExports(orderIds: string[]) {
     where: { orderId: { in: orderIds }, OR: [{ exportedAt: { not: null } }, { exportedToSupplierId: { not: null } }] },
     data: { exportedAt: null, exportedToSupplierId: null },
   })
+}
+
+/**
+ * The writes that forget one line was sent, so it alone goes out with the next send. An order exported before lines were
+ * tracked first gets the marks its old export implies for its other lines: they stay sent once the order is no longer Exported.
+ */
+export function clearLineExportOps<L extends ExportTrackedLine & { id: string }>(order: ExportTrackedOrder<L> & { id: string; exportedAt: Date | null }, lineId: string) {
+  return [
+    ...legacyMarks(order).filter(m => m.line.id !== lineId)
+      .map(m => prisma.orderLine.updateMany({ where: { id: m.line.id, exportedAt: null }, data: { exportedAt: order.exportedAt, exportedToSupplierId: m.supplierId } })),
+    prisma.orderLine.updateMany({ where: { id: lineId, orderId: order.id }, data: { exportedAt: null, exportedToSupplierId: null } }),
+  ]
 }
 
 /** A hand-set EXPORTED means every supplier got its lines: each unsent line is marked for the supplier it resolves to. */

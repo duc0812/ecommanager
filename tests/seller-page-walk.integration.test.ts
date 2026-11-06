@@ -155,6 +155,8 @@ const CLASSIFIED: Record<string, Check[]> = {
   '/api/fulfillment/task-fix/fix': [['POST', '/api/fulfillment/task-fix/fix', 'ok']],
   '/api/shopify/orders/sync': [['POST', '/api/shopify/orders/sync', 'ok']],
   '/api/design-studio/tasks/:p': [['PUT', '/api/design-studio/tasks/K1/artwork', 'ok']],
+  // "Mở lại để sửa" on a sent line is a task action of the line's store, like the one above (requireLineScope).
+  '/api/design-studio/lines/:p/reopen': [['POST', '/api/design-studio/lines/l1/reopen', 'ok']],
   // The shared supplier list the order filters use: no store data and no apiKey (Prisma omits it), read-only for a seller, sub-routes closed.
   '/api/suppliers': [['GET', '/api/suppliers', 'ok'], ['POST', '/api/suppliers', 'forbidden']],
   // Intentionally denied. Shared factory data and the all-store parts are not store data a seller may read.

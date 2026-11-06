@@ -233,12 +233,14 @@ export default function ReviewWorkspace({ taskKey, position, onMoved, onOpenTask
   const verdict = useMemo(() => (detail && qa ? reviewVerdict(detail, qa) : null), [detail, qa])
   const images = useMemo(() => (detail ? taskImages(detail) : []), [detail])
 
+  const notice = useRef<string | null>(null)
   async function go(body: TransitionBody): Promise<boolean> {
     if (busy || !detail) return false
     setBusy(true)
-    const r = await postJson(taskUrl(detail.task.taskKey, '/transition'), body)
+    const r = await postJson<{ notice?: string }>(taskUrl(detail.task.taskKey, '/transition'), body)
     setBusy(false)
     if (!r.ok) { toast.say(r.error, 'bad'); return false }
+    notice.current = r.data.notice ?? null
     return true
   }
 
@@ -247,7 +249,7 @@ export default function ReviewWorkspace({ taskKey, position, onMoved, onOpenTask
     const filled = allSlotsFilled(detail)
     if (await go({ to: 'DONE', note: note || undefined, ...(filled ? {} : { acceptMissingAreas: true }) })) {
       setConfirm(false)
-      toast.say(`Đã duyệt design ${detail.task.taskKey}`, 'ok')
+      toast.say(notice.current ? `Đã duyệt ${detail.task.taskKey} — ${notice.current}` : `Đã duyệt design ${detail.task.taskKey}`, 'ok')
       onMoved(detail.task.taskKey, 'DONE')
     }
   }

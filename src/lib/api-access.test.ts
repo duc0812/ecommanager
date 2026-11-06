@@ -235,6 +235,23 @@ describe('seller API allow-list', () => {
     expect(canCallApi('SELLER', ['projects'], '/api/design-studio/tasks', 'GET')).toBe('forbidden')
   })
 
+  it('"Mở lại để sửa" on a sent line and the "Cần báo xưởng" list and close follow the task actions beside them, for every role', () => {
+    const sibling = '/api/design-studio/tasks/K1/transition'
+    const callers: [UserRole, FeaturePermission[], 'ok' | 'forbidden'][] = [
+      ['ADMIN', DEFAULT_ROLE_PERMISSIONS.ADMIN, 'ok'], ['ADMIN', ['cs'], 'forbidden'],
+      ['SUPPORT', DEFAULT_ROLE_PERMISSIONS.SUPPORT, 'ok'], ['SUPPORT', ['fulfillment_orders'], 'ok'], ['SUPPORT', ['cs'], 'forbidden'],
+      ['SELLER', ['design_tasks'], 'ok'], ['SELLER', ['fulfillment_orders'], 'ok'], ['SELLER', ['projects'], 'forbidden'],
+    ]
+    for (const [path, method] of [
+      ['/api/design-studio/lines/l1/reopen', 'POST'], ['/api/design-studio/tasks/supplier-recheck', 'GET'], ['/api/design-studio/tasks/K1/supplier-told', 'POST'],
+    ] as const) {
+      for (const [role, permissions, expected] of callers) {
+        expect([path, role, permissions, canCallApi(role, permissions, path, method)]).toEqual([path, role, permissions, expected])
+        expect(canCallApi(role, permissions, path, method)).toBe(canCallApi(role, permissions, sibling, 'POST'))
+      }
+    }
+  })
+
   it('seller stays out of the shared or all-store parts that sit beside those routes', () => {
     const all = DEFAULT_ROLE_PERMISSIONS.ADMIN
     for (const [path, method] of [

@@ -10,7 +10,8 @@ import { autoDetectStatus, type PipelineStatus } from '@/lib/pipeline-status'
 import { fetchOrderLinePropsByNames, type ShopifyOrderLineProps } from '@/lib/shopify-orders'
 import { getStoreConnectionByShop, tryStoreConnection } from '@/lib/store-connections'
 import { reconcilePushedOrder } from '@/lib/repos/push-export'
-import { clearLineExports } from '@/lib/repos/orders'
+import { clearLineExportOps, clearLineExports } from '@/lib/repos/orders'
+import { isOrderClosed } from '@/lib/line-export'
 import { fileKindOf, folderHoldsPrintFiles, missingPrintAreas, orderedPrintFiles, type FileKind } from '@/lib/task-files'
 import { customizationIdOf, parseCustomallFields } from '@/lib/customall-fields'
 
@@ -283,7 +284,8 @@ export async function loadWorkspace(orderId: string): Promise<Workspace | null> 
   }
 }
 
-export async function updateLine(lineId: string, patch: { note?: string | null; done?: boolean; requiredAreas?: string[] }) {
+/** `reofferLine`: the approved design fixes this line alone after an API push took it, so only this line goes to its supplier again. */
+export async function updateLine(lineId: string, patch: { note?: string | null; done?: boolean; requiredAreas?: string[]; reofferLine?: boolean }) {
   const line = await prisma.orderLine.findUnique({ where: { id: lineId } })
   if (!line) return null
 
@@ -308,22 +310,24 @@ export async function updateLine(lineId: string, patch: { note?: string | null; 
   const updated = await prisma.orderLine.update({ where: { id: lineId }, data })
   const order = patch.done === undefined
     ? await prisma.order.findUniqueOrThrow({ where: { id: line.orderId }, select: { id: true, designReady: true, pipelineStatus: true } })
-    : await recomputeOrderDesign(line.orderId, patch.done)
+    : await recomputeOrderDesign(line.orderId, patch.done, patch.reofferLine ? lineId : null)
   return {
     line: { id: updated.id, designDriveLink: updated.designDriveLink, designNote: updated.designNote },
     order,
   }
 }
 
-async function recomputeOrderDesign(orderId: string, markedDone: boolean) {
+async function recomputeOrderDesign(orderId: string, markedDone: boolean, reofferLineId: string | null = null) {
   const order = await prisma.order.findUnique({ where: { id: orderId }, include: { lines: { orderBy: { linePosition: 'asc' } } } })
   if (!order) throw new Error('order vanished')
+  // A line sent back on its own (the order was not set to Design Rejected) goes out again alone; its siblings stay sent.
+  const reoffer = markedDone && !!reofferLineId && order.pipelineStatus !== 'DESIGN_REJECTED' && !isOrderClosed(order)
   const productLines = order.lines.filter(l => !isNonProductLine(l))
   const designLines = productLines.filter(l => !!l.resolvedSupplierId)
   const designReady = designLines.length > 0 && designLines.every(l => !!l.designDriveLink)
   const currentStatus = (markedDone && designReady && order.pipelineStatus === 'DESIGN_REJECTED'
     ? 'PENDING_DESIGN'
-    : order.pipelineStatus) as PipelineStatus
+    : reoffer && order.pipelineStatus === 'EXPORTED' ? 'READY_TO_PRODUCTION' : order.pipelineStatus) as PipelineStatus
   const pipelineStatus = autoDetectStatus({
     financialStatus: order.financialStatus,
     fulfillmentStatus: order.fulfillmentStatus,
@@ -342,7 +346,7 @@ async function recomputeOrderDesign(orderId: string, markedDone: boolean) {
   // Re-approved after the factory sent the design back: every task was reopened, so every line goes to its supplier again.
   if (markedDone && designReady && order.pipelineStatus === 'DESIGN_REJECTED') await clearLineExports([orderId])
   const select = { id: true, designReady: true, pipelineStatus: true } as const
-  const updated = await prisma.order.update({
+  const write = prisma.order.update({
     where: { id: orderId },
     data: {
       designReady, pipelineStatus, designDriveLink: designReady ? (designLines[0]?.designDriveLink ?? null) : order.designDriveLink,
@@ -350,6 +354,8 @@ async function recomputeOrderDesign(orderId: string, markedDone: boolean) {
     },
     select,
   })
+  // The mark and the status move together: a line no longer marked on an order still Exported would never be offered.
+  const updated = reoffer ? (await prisma.$transaction([...clearLineExportOps(order, reofferLineId!), write])).pop() as Awaited<typeof write> : await write
   if (markedDone && updated.pipelineStatus === 'READY_TO_PRODUCTION' && await reconcilePushedOrder(orderId)) {
     return prisma.order.findUniqueOrThrow({ where: { id: orderId }, select })
   }

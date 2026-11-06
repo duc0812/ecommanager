@@ -106,7 +106,24 @@ export type TaskDetail = {
   library: TaskLibraryState | null
   autoRender: RenderJobView | null
   teeinblue?: boolean
+  /** The line is at its supplier and the order open: "Sửa & gửi lại" asks why and reopens this line only. */
+  reopensSentLine?: boolean
   handoff?: HandoffState | null
+}
+
+/** A row of "Đã update design / Cần báo xưởng" (server: SupplierFixRow in lib/design-tasks). */
+export type SupplierFixRow = {
+  taskKey: string; orderId: string; orderNumber: string; storeName: string; productTitle: string; taskStatus: TaskStatus
+  supplierId: string | null; supplierName: string | null
+  reason: string | null; note: string | null
+  reopenedBy: string | null; reopenedAt: string
+  approvedAt: string | null
+  toldBy: string | null; toldAt: string | null
+  designLink: string | null
+}
+
+export type SupplierFixList = {
+  waiting: SupplierFixRow[]; told: SupplierFixRow[]; fixing: SupplierFixRow[]; waitingTotal: number; suppliers: { id: string; name: string }[]
 }
 
 export type ReviewCard = {

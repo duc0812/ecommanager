@@ -7,15 +7,17 @@ import { OWNED_MOVES, allSlotsFilled, canMove, copyText, filesMissingHint, postJ
 import { buildChecklist } from './checklist'
 import type { QaResult } from './ai-qa'
 import { pushChipLabel } from '@/lib/handoff-shared'
+import { LINE_FIX_HELP } from '@/lib/line-fix'
 import HandoffButton from './HandoffButton'
 import SupplierStrip from './SupplierStrip'
 import NextStepBar from './NextStepBar'
+import LineFixForm from './LineFixForm'
 import { PopoverHead, useDismiss, useToast } from './overlay'
 import {
   Avatar, Icon, Pill, READY_META, STATUS_META, btnMd, btnPrimaryMd, field, fieldLabel, fmtDate, fmtDateTime, iconBtn, menuItem, popover,
 } from './ui'
 
-type Panel = 'none' | 'reject' | 'ask' | 'assign' | 'menu'
+type Panel = 'none' | 'reject' | 'ask' | 'assign' | 'menu' | 'reopen'
 
 function hoursUntil(iso: string | null, fallback: number): number {
   if (!iso) return fallback
@@ -84,7 +86,7 @@ export default function TaskHeader({ detail, qa, holdCount, refreshing, onRefres
   const actionsRef = useRef<HTMLDivElement>(null)
   const assignRef = useRef<HTMLDivElement>(null)
   const close = () => setPanel('none')
-  useDismiss(actionsRef, panel === 'reject' || panel === 'ask' || panel === 'menu', close)
+  useDismiss(actionsRef, panel === 'reject' || panel === 'ask' || panel === 'menu' || panel === 'reopen', close)
   useDismiss(assignRef, panel === 'assign', close)
 
   const owns = me.isLeader || !task.assigneeId || task.assigneeId === me.id
@@ -103,9 +105,10 @@ export default function TaskHeader({ detail, qa, holdCount, refreshing, onRefres
   async function go(body: TransitionBody, after?: () => void) {
     if (busy) return
     setBusy(true)
-    const r = await postJson(taskUrl(task.taskKey, '/transition'), body)
+    const r = await postJson<{ notice?: string }>(taskUrl(task.taskKey, '/transition'), body)
     setBusy(false)
     if (!r.ok) { toast.say(r.error, 'bad'); return }
+    if (r.data.notice) toast.say(r.data.notice)
     after?.()
     onChanged()
   }
@@ -193,7 +196,10 @@ export default function TaskHeader({ detail, qa, holdCount, refreshing, onRefres
   if (can('REJECTED')) {
     secondaries.push(<button key="reject" type="button" className={btnMd} disabled={busy} aria-haspopup="dialog" aria-expanded={panel === 'reject'} onClick={() => { setPanel(panel === 'reject' ? 'none' : 'reject'); setReasons([]) }}><Icon name="assignment_return" className="text-[18px] text-on-surface-variant" />Trả lại sửa</button>)
   }
-  if (task.status === 'DONE' && can('DOING')) {
+  // On a line already at its supplier the same control asks why and reopens that line only (the server takes it so, too).
+  if (task.status === 'DONE' && detail.reopensSentLine) {
+    secondaries.push(<button key="reopen" type="button" className={btnMd} disabled={busy} title={LINE_FIX_HELP} aria-haspopup="dialog" aria-expanded={panel === 'reopen'} onClick={() => setPanel(panel === 'reopen' ? 'none' : 'reopen')}><Icon name="edit" className="text-[18px] text-on-surface-variant" />Mở lại để sửa</button>)
+  } else if (task.status === 'DONE' && can('DOING')) {
     secondaries.push(<button key="reopen" type="button" className={btnMd} disabled={busy} onClick={() => go({ to: 'DOING' })}><Icon name="edit" className="text-[18px] text-on-surface-variant" />Sửa &amp; gửi lại</button>)
   }
 
@@ -323,6 +329,13 @@ export default function TaskHeader({ detail, qa, holdCount, refreshing, onRefres
                 <button type="submit" className={btnPrimaryMd} disabled={busy || reasons.length === 0}>Trả lại · {reasons.length} lý do</button>
               </div>
             </form>
+          )}
+
+          {panel === 'reopen' && (
+            <div role="dialog" aria-label="Mở lại để sửa" className={`${popover} top-12 right-12 w-[440px] p-md flex flex-col gap-sm`}>
+              <PopoverHead title={`Mở lại ${task.taskKey} để sửa`} onClose={close} />
+              <LineFixForm busy={busy} onCancel={close} onSubmit={fix => go({ to: 'DOING', reasons: [fix.reason], note: fix.note }, close)} />
+            </div>
           )}
 
           {panel === 'ask' && (

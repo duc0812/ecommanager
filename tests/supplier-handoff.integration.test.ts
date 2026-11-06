@@ -780,14 +780,17 @@ describe('lines go to their supplier one by one', () => {
     expect(await order(o.id)).toMatchObject({ pipelineStatus: 'EXPORTED', exportedToSupplierId: CSV_SUP })
   })
 
-  it('reopening a line already sent keeps its mark, and it does not go out again once re-approved', async () => {
+  it('reopening a line already sent asks why, reopens it on its own, and once re-approved it keeps its mark: the supplier is told to re-check', async () => {
     const o = await makeOrder({ lines: 2 })
     const [, sent] = await linesOf(o.id)
     await markSent(sent.id)
-    await transitionTask(o.keys[1], DES, { to: 'DOING' })
-    expect(await order(o.id)).toMatchObject({ pipelineStatus: 'PENDING_DESIGN', designReady: false })
+    const before = await order(o.id)
+    await expect(transitionTask(o.keys[1], DES, { to: 'DOING' })).rejects.toThrow(/Chọn lý do/)
+    const r = await transitionTask(o.keys[1], DES, { to: 'DOING', reasons: ['Khách yêu cầu sửa'], note: 'đổi tên Emily' })
+    expect(r.task).toMatchObject({ status: 'REJECTED', rejectReasons: ['Khách yêu cầu sửa'], rejectNote: 'đổi tên Emily' })
+    expect(await order(o.id)).toMatchObject({ pipelineStatus: before.pipelineStatus, designReady: before.designReady })
     await transitionTask(o.keys[1], DES, { to: 'REVIEW' })
-    await transitionTask(o.keys[1], DES, { to: 'DONE' })
+    expect((await transitionTask(o.keys[1], DES, { to: 'DONE' })).notice).toMatch(/kiểm tra lại folder design/)
     const [, after] = await linesOf(o.id)
     expect(after.exportedAt).not.toBeNull()
     expect((await handoffStateFor(o.id))!.readyLineIds).not.toContain(sent.id)

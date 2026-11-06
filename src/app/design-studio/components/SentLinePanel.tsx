@@ -1,8 +1,12 @@
 'use client'
-import type { ReactNode } from 'react'
-import type { SentLineRow } from './types'
+import { useState, type ReactNode } from 'react'
+import type { SentLineRow, TaskRow } from './types'
 import { STATUS_LABELS, type PipelineStatus } from '@/lib/pipeline-status'
-import { Card, ExtLink, Icon, Pill, card, fmtDate } from './ui'
+import { LINE_FIX_HELP, type LineFix } from '@/lib/line-fix'
+import { lineReopenUrl, postJson } from './model'
+import { useToast } from './overlay'
+import LineFixForm from './LineFixForm'
+import { Card, ExtLink, Icon, Pill, btnPrimaryMd, card, fmtDate } from './ui'
 
 function Row({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -13,10 +17,23 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
   )
 }
 
-/** What went to the supplier for a sent line that never had a design task. */
-export default function SentLinePanel({ line }: { line: SentLineRow }) {
+/** What went to the supplier for a sent line that never had a design task, and the button that reopens it for a fix. */
+export default function SentLinePanel({ line, onReopened }: { line: SentLineRow; onReopened: (taskKey: string) => void }) {
+  const toast = useToast()
+  const [busy, setBusy] = useState(false)
+  const [asking, setAsking] = useState(false)
   const image = line.previewUrl ?? line.imageUrl
   const status = STATUS_LABELS[line.pipelineStatus as PipelineStatus] ?? line.pipelineStatus
+
+  async function reopen(fix: LineFix) {
+    if (busy) return
+    setBusy(true)
+    const r = await postJson<{ task: TaskRow; changed: boolean }>(lineReopenUrl(line.lineId), fix)
+    setBusy(false)
+    if (!r.ok) { toast.say(r.error, 'bad'); return }
+    toast.say(r.data.changed ? `Đã mở lại ${r.data.task.taskKey} để sửa` : `${r.data.task.taskKey} đang mở sẵn`)
+    onReopened(r.data.task.taskKey)
+  }
   return (
     <div className="flex flex-col gap-md min-w-0">
       <section aria-label={`Dòng ${line.lineKey}`} className={`${card} px-[20px] py-md flex flex-col gap-sm`}>
@@ -32,6 +49,18 @@ export default function SentLinePanel({ line }: { line: SentLineRow }) {
           <span>Đơn <span className="font-mono text-on-surface">{line.orderNumber}</span> · đặt {fmtDate(line.placedAt)}</span>
           <span>Store {line.storeName}</span>
         </div>
+        {asking ? (
+          <div className="max-w-[560px] rounded-lg border border-outline-variant/40 bg-surface-container-low p-md">
+            <LineFixForm busy={busy} onSubmit={reopen} onCancel={() => setAsking(false)} />
+          </div>
+        ) : (
+          <div className="flex flex-col items-start gap-xs pt-xs">
+            <button type="button" className={btnPrimaryMd} onClick={() => setAsking(true)}>
+              <Icon name="edit" className="text-[18px]" />Mở lại để sửa
+            </button>
+            <span className="text-label-sm text-on-surface-variant">{LINE_FIX_HELP}</span>
+          </div>
+        )}
       </section>
 
       <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-md items-start">

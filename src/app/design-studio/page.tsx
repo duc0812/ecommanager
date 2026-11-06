@@ -349,9 +349,9 @@ function DesignTasks() {
         ) : mode === 'handoff' ? (
           <HandoffGrid q={debouncedQ} version={reviewVersion} onOpenTask={selectTask} onChanged={reload} />
         ) : mode === 'sent' ? (
-          <SentGrid q={debouncedQ} rawQ={q} onQ={setQ} version={reviewVersion} onOpenTask={selectTask} onChanged={reload} />
+          <SentGrid q={debouncedQ} rawQ={q} onQ={setQ} version={reviewVersion} showStore={storeFilter.stores.length > 1} onOpenTask={selectTask} onChanged={reload} />
         ) : currentLine ? (
-          <SentLinePanel key={currentLine.lineId} line={currentLine} />
+          <SentLinePanel key={currentLine.lineId} line={currentLine} onReopened={key => { setSelLine(null); setSel(key); loadList() }} />
         ) : (
         <div className="flex flex-col gap-md min-w-0">
           {!sel && !listLoading && !listError && (

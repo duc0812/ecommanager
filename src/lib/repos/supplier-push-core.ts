@@ -4,7 +4,7 @@ import { requiredSlotsFor, templateForLine } from '@/lib/design-tasks'
 import { artworkUrl } from '@/lib/design-studio'
 import { currentFiles, extraPrintParts, sameLabel } from '@/lib/task-files'
 import { carriedShopifyLineIds, heldLinesMessage, logHandoffEvent, pushLinesJson, type PushLineRef } from '@/lib/repos/push-export'
-import { retryOnBusy } from '@/lib/sqlite-busy'
+import { isUniqueViolation, retryOnBusy } from '@/lib/sqlite-busy'
 import { SHIPMENT_STATUS_FULFILLED, SHIPMENT_STATUS_PENDING } from '@/lib/tracking/build-shipments'
 import { PublicUrlError, ensurePublicToken, publicArtworkUrl, requirePublicBaseUrl } from '@/lib/public-artwork'
 import { STATUS_LABELS, type PipelineStatus } from '@/lib/pipeline-status'
@@ -30,11 +30,7 @@ export function httpsUrl(v: string | null | undefined): string | null {
   try { return new URL(v).protocol === 'https:' ? v : null } catch { return null }
 }
 
-export function isUniqueViolation(e: any): boolean {
-  if (e?.code === 'P2002') return true
-  const msg = `${e?.message ?? ''} ${e?.cause?.message ?? ''}`
-  return msg.includes('UNIQUE constraint failed') || msg.includes('Unique constraint failed')
-}
+export { isUniqueViolation }
 
 export async function toPushViews(rows: PushRow[]): Promise<PushView[]> {
   const userIds = Array.from(new Set(rows.map(r => r.pushedById).filter((x): x is string => !!x)))

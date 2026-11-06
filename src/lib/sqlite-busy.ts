@@ -11,6 +11,12 @@ export function isBusyError(e: any): boolean {
   return msg.includes('database is locked') || msg.includes('sqlite_busy') || msg.includes('sqlite_locked')
 }
 
+export function isUniqueViolation(e: any): boolean {
+  if (e?.code === 'P2002') return true
+  const msg = `${e?.message ?? ''} ${e?.cause?.message ?? ''}`
+  return msg.includes('UNIQUE constraint failed') || msg.includes('Unique constraint failed')
+}
+
 export async function retryOnBusy<T>(run: () => Promise<T>): Promise<T> {
   for (let attempt = 0; ; attempt++) {
     try {

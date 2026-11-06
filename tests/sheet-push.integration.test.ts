@@ -7,8 +7,9 @@ import { DEFAULT_ROLE_PERMISSIONS } from '@/lib/roles'
 import { GOOGLE_KEYS } from '@/lib/google-oauth'
 import { SHEET_CHANNELS_KEY, sheetDate, sheetProduct, variantColor, type SheetChannel } from '@/lib/sheet-channel'
 import { CSV_OPEN_KEY, setCsvLocked } from '@/lib/csv-lock'
-import { handoffOrderCsv, listHandoffHub } from '@/lib/supplier-handoff'
+import { handoffOrderCsv, handoffStateFor, listHandoffHub } from '@/lib/supplier-handoff'
 import { previewSheetPush, pushToSheet } from '@/lib/repos/sheet-push'
+import { listSupplierFixes, markSupplierTold, reopenLineForFix, transitionTask } from '@/lib/design-tasks'
 import { GET as getExport, POST as postExport } from '@/app/api/fulfillment/export/route'
 import { GET as getSheet, POST as postSheet } from '@/app/api/design-studio/handoff/sheet/route'
 
@@ -259,6 +260,45 @@ describe('writing to the sheet', () => {
     expect((await push([o.id])).results).toEqual([expect.objectContaining({ lineKey: o.key, status: 'ALREADY' })])
     expect(writes).toHaveLength(0)
     expect((await line(o.id)).exportedToSupplierId).toBe(SUP)
+  })
+
+  it('a sheet line reopened for a fix and approved again is not written again: the supplier is to re-check its folder', async () => {
+    const o = await makeOrder()
+    await push([o.id])
+    expect(writes).toHaveLength(1)
+    const rows = async () => (await prisma.supplierSheetWrite.findMany({ where: { orderId: o.id } })).map(w => ({ id: w.id, status: w.status, lineKey: w.lineKey, updatedAt: w.updatedAt }))
+    const written = await rows()
+    const admin = await prisma.appUser.findUniqueOrThrow({ where: { email: 'admin@sheet.test' } })
+    const actor = { id: admin.id, name: 'Admin', role: 'ADMIN', permissions: DEFAULT_ROLE_PERMISSIONS.ADMIN }
+    const sent = await line(o.id)
+    const fix = async (version: number) => {
+      const asked = { reason: 'Xưởng yêu cầu update design', note: `bản ${version}: chữ lệch` }
+      expect((await reopenLineForFix(sent.id, actor, asked)).task).toMatchObject({ taskKey: o.key, status: 'REJECTED', rejectReasons: [asked.reason], rejectNote: asked.note })
+      await prisma.designArtwork.create({ data: { orderId: o.id, shopifyLineId: sent.shopifyLineId, printArea: 'PRINT', version, fileName: `fix${version}.png`, storagePath: `x/fix${version}.png`, size: 1, mimeType: 'image/png' } })
+      await transitionTask(o.key, actor, { to: 'REVIEW' })
+      return transitionTask(o.key, actor, { to: 'DONE' })
+    }
+    const open = async () => (await listSupplierFixes()).waiting.filter(r => r.orderId === o.id).map(r => r.taskKey)
+
+    expect((await fix(1)).notice).toBe('Design đã sửa sau khi gửi xưởng — báo Jomall Test kiểm tra lại folder design (không ghi lại sheet)')
+    expect(await prisma.order.findUniqueOrThrow({ where: { id: o.id } })).toMatchObject({ pipelineStatus: 'EXPORTED', supplierHandoffMode: 'SHEET' })
+    expect((await line(o.id)).exportedToSupplierId).toBe(SUP)
+    expect((await line(o.id)).exportedAt).toEqual(sent.exportedAt)
+    expect(await handoffStateFor(o.id)).toMatchObject({ pending: false, readyLineIds: [] })
+    expect(await open()).toEqual([o.key])
+    expect((await push([o.id])).results).toEqual([])
+    expect(writes).toHaveLength(1)
+    expect(await rows()).toEqual(written)
+
+    expect(await markSupplierTold(o.key, actor)).toEqual({ changed: true })
+    expect(await open()).toEqual([])
+    const events = await prisma.designTaskEvent.findMany({ where: { task: { orderId: o.id }, type: { in: ['SUPPLIER_RECHECK', 'SUPPLIER_TOLD'] } }, orderBy: { createdAt: 'asc' } })
+    expect(events.map(e => [e.type, e.actorId])).toEqual([['SUPPLIER_RECHECK', null], ['SUPPLIER_TOLD', admin.id]])
+
+    await fix(2)
+    expect(await open()).toEqual([o.key])
+    expect(writes).toHaveLength(1)
+    expect(await rows()).toEqual(written)
   })
 
   it('leaves the other supplier’s line of a mixed order open', async () => {

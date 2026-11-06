@@ -18,13 +18,16 @@ import type { TaskLibraryState } from '@/lib/artwork-library-types'
 import type { RenderJobView } from '@/lib/artwork-render-eligibility'
 import { latestRenderJob } from '@/lib/artwork-render-jobs'
 import { canApproveDesign, canEditDesignNote, canHandoffToSupplier, isLeaderRole, type FeaturePermission } from '@/lib/roles'
-import { activePushByOrder } from '@/lib/repos/push-export'
+import { ACTIVE_PUSH_STATUSES, activePushByOrder, carriedShopifyLineIds } from '@/lib/repos/push-export'
 import type { HandoffPush } from '@/lib/handoff-shared'
 import { autoRenderEligibility, hasTeeinblueDesign } from '@/lib/artwork-render-eligibility'
 import { autoFromLocalLibrary } from '@/lib/flat-text-coverage'
 import { APP_FILE_PREFIX, DESIGN_LINK_SEPARATOR, isAppFileLink } from '@/lib/design-links'
 import { saveStudioDesignToLibrary } from '@/lib/studio-library'
 import { MISSING_AREAS_PREFIX, missingPrintAreas, outdatedParts, printFilesReady } from '@/lib/task-files'
+import { exportedSupplierOf, isLineExported } from '@/lib/line-export'
+import { isUniqueViolation, retryOnBusy } from '@/lib/sqlite-busy'
+import { LINE_FIX_EVENT_PREFIX, LINE_FIX_REASONS, lineFixMessage, parseLineFix, readLineFixMessage, type LineFix, type LineFixReason } from '@/lib/line-fix'
 
 export { loadTemplateContext, mapTemplate, pickTemplate, type TemplateRow }
 
@@ -34,6 +37,22 @@ export type ActorRole = 'LEADER' | 'DESIGNER'
 export const TASK_STATUSES: TaskStatus[] = ['NEW', 'ASSIGNED', 'DOING', 'REVIEW', 'REJECTED', 'ASK_CUSTOMER', 'DONE', 'CANCELLED']
 const OPEN: TaskStatus[] = ['NEW', 'ASSIGNED', 'DOING', 'REVIEW', 'REJECTED']
 export const FACTORY_REJECT_REASON = 'Xưởng trả file'
+const FACTORY_REOPEN_MESSAGE = 'Xưởng trả file — mở lại task'
+/** A task sent back after its line went to the supplier: by the order (Design Rejected) or one line at a time (LINE_FIX_REASONS, client-shared in line-fix.ts). */
+const SENT_BACK_REASONS: string[] = [FACTORY_REJECT_REASON, ...LINE_FIX_REASONS]
+/** What "Sửa & gửi lại" wrote on a DONE task before a line already sent asked for a reason (#LIT5105). */
+const OLD_REOPEN_MESSAGE = 'Mở lại để sửa'
+/** A fix approved for a line its supplier got by a link: someone tells the supplier to open that link again (SUPPLIER_TOLD). */
+export const SUPPLIER_RECHECK = 'SUPPLIER_RECHECK'
+export const SUPPLIER_TOLD = 'SUPPLIER_TOLD'
+const TOLD_VISIBLE_DAYS = 14
+function supplierRecheckMessage(supplierName: string): string {
+  return `Design đã sửa sau khi gửi xưởng — báo ${supplierName} kiểm tra lại folder design (không ghi lại sheet)`
+}
+/** One line sent back by "Mở lại để sửa": the factory-return state with its own reason and note. */
+function lineFixReopen(fix: LineFix) {
+  return { status: 'REJECTED', rejectReasons: JSON.stringify([fix.reason]), rejectNote: fix.note, prevStatus: null, fromLibrary: false }
+}
 export const APPROVE_MESSAGE = 'Duyệt design'
 
 export function isLeader(role: string): boolean {
@@ -153,8 +172,15 @@ function isShippedOrder(o: { pipelineStatus: string; fulfillmentStatus: string |
   return o.pipelineStatus === 'FULFILLED' || (o.fulfillmentStatus ?? '').toLowerCase() === 'fulfilled'
 }
 
+/** An order handed to production counts as sent even when its lines carry no export mark of their own. */
+const SENT_ORDER_STATUSES = ['EXPORTED', 'READY_TO_PRODUCTION']
+
+function isSentLine(o: { pipelineStatus: string }, line: { exportedAt: Date | null }): boolean {
+  return !!line.exportedAt || SENT_ORDER_STATUSES.includes(o.pipelineStatus)
+}
+
 function reopenedByFactory(task: { rejectReasons: string | null }): boolean {
-  return parseRejectReasons(task.rejectReasons).includes(FACTORY_REJECT_REASON)
+  return parseRejectReasons(task.rejectReasons).some(r => SENT_BACK_REASONS.includes(r))
 }
 
 /** Nobody ever touched the task: NEW, unassigned, no Drive folder, system events only. Files are checked apart: they belong to the line. */
@@ -248,7 +274,7 @@ export async function syncDesignTasks(orderId: string): Promise<SyncResult> {
   await followLineKeys(order, keys, order.designTasks)
     .catch((err: any) => console.warn(`[design tasks] ${order.shopifyOrderNumber}: chưa đổi được mã task — ${err?.message ?? err}`))
   const factoryReopen = { status: 'REJECTED', rejectReasons: JSON.stringify([FACTORY_REJECT_REASON]), rejectNote: null, prevStatus: null }
-  const factoryEvent = { type: 'SYSTEM', message: 'Xưởng trả file — mở lại task' }
+  const factoryEvent = { type: 'SYSTEM', message: FACTORY_REOPEN_MESSAGE }
 
   const everyLine = TASK_FOR_EVERY_LINE.includes(order.pipelineStatus)
 
@@ -392,6 +418,8 @@ export type TaskDetail = {
   driveFolder: { url: string } | null
   /** The line carries a Teeinblue design reference (`_tb_design`), which auto-render cannot draw. */
   teeinblue: boolean
+  /** The line is at its supplier and the order open: "Sửa & gửi lại" on the DONE task asks why and reopens this line only. */
+  reopensSentLine: boolean
 }
 
 /**
@@ -435,7 +463,160 @@ export async function releaseLibraryTask(taskKey: string, actor: Actor) {
   return { task: row }
 }
 
-export async function transitionTask(taskKey: string, actor: Actor, input: TransitionInput) {
+export class LineReopenError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message)
+    this.name = 'LineReopenError'
+  }
+}
+
+const SENT_CHECK_SELECT = {
+  pipelineStatus: true, fulfillmentStatus: true, exportedAt: true, exportedToSupplierId: true,
+  lines: { select: { id: true, shopifyLineId: true, sku: true, productTitle: true, shopifyProductType: true, resolvedSupplierId: true, exportedAt: true, exportedToSupplierId: true } },
+} as const
+
+/**
+ * The line went to its supplier (its own mark, or its order's export from before lines were tracked) and its order is still
+ * open: "Sửa & gửi lại" on its DONE task then asks why and reopens this line alone. A READY_TO_PRODUCTION order whose line has
+ * no mark has not sent it, so that control works there as it always did.
+ */
+async function isSentLineOfOpenOrder(lineId: string): Promise<boolean> {
+  const row = await prisma.orderLine.findUnique({ where: { id: lineId }, select: { order: { select: SENT_CHECK_SELECT } } })
+  const order = row?.order
+  const line = order?.lines.find(l => l.id === lineId)
+  return !!order && !!line && !isNonProductLine(line) && !isClosedOrder(order) && !isShippedOrder(order) && isLineExported(order, line)
+}
+
+async function reopenTaskOfLine(task: { id: string; taskKey: string; status: string }, actor: Actor, fix: LineFix): Promise<{ task: TaskRow; changed: boolean }> {
+  if (task.status === 'CANCELLED') throw new LineReopenError(`Task ${task.taskKey} của dòng này đã huỷ — task đã huỷ không mở lại được`, 409)
+  const changed = task.status === 'DONE' && await retryOnBusy(() => prisma.$transaction(async tx => {
+    const r = await tx.designTask.updateMany({ where: { id: task.id, status: 'DONE' }, data: lineFixReopen(fix) })
+    if (r.count === 0) return false
+    await tx.designTaskEvent.create({ data: { taskId: task.id, type: 'REJECT', message: lineFixMessage(fix), actorId: actor.id } })
+    return true
+  }))
+  const row = await rowFor(task.taskKey)
+  if (!row) throw new Error('Task row not found after update')
+  return { task: row, changed }
+}
+
+/**
+ * "Mở lại để sửa" on a line already sent to its supplier: its task is created, or reopened from DONE, in the factory-return
+ * state with the reason and the note, and nothing else moves (no other task or line, not the order's status, no export mark).
+ * What its approval does is fixDelivery's. A task already open is left as it is, so a second press, or two at once, makes one task.
+ */
+export async function reopenLineForFix(lineId: string, actor: Actor, input: { reason?: unknown; note?: unknown }): Promise<{ task: TaskRow; changed: boolean }> {
+  const fix = parseLineFix(input)
+  if ('error' in fix) throw new LineReopenError(fix.error, 400)
+  const line = await prisma.orderLine.findUnique({ where: { id: lineId } })
+  if (!line) throw new LineReopenError('Không tìm thấy dòng', 404)
+  const order = await prisma.order.findUniqueOrThrow({
+    where: { id: line.orderId },
+    select: {
+      id: true, storeId: true, shopifyOrderNumber: true, placedAt: true, pipelineStatus: true, fulfillmentStatus: true,
+      lines: { select: { shopifyLineId: true, linePosition: true, sku: true, productTitle: true, shopifyProductType: true } },
+    },
+  })
+  if (isNonProductLine(line)) throw new LineReopenError('Dòng này không phải sản phẩm (add-on, phí…) — không có design để sửa', 409)
+  if (isClosedOrder(order)) throw new LineReopenError('Đơn đã huỷ hoặc hoàn tiền — không mở lại dòng để sửa', 409)
+  if (isShippedOrder(order)) throw new LineReopenError('Đơn đã giao (fulfilled) — không mở lại dòng để sửa', 409)
+  if (!isSentLine(order, line)) throw new LineReopenError('Dòng chưa gửi xưởng — sửa design ngay trên task, không cần mở lại', 409)
+
+  const ofLine = { orderId_shopifyLineId: { orderId: order.id, shopifyLineId: line.shopifyLineId } }
+  const existing = await prisma.designTask.findUnique({ where: ofLine })
+  if (existing) return reopenTaskOfLine(existing, actor, fix)
+  const taskKey = lineKeysOf(order.shopifyOrderNumber, order.lines).get(line.shopifyLineId)!
+  const keyTaken = `Mã ${taskKey} đang thuộc một task khác — bấm Đồng bộ task rồi thử lại`
+  if (await prisma.designTask.findUnique({ where: { taskKey }, select: { id: true } })) throw new LineReopenError(keyTaken, 409)
+  const settings = await getDesignSettings()
+  const slaHours = line.customized ? settings.slaCustomHours : settings.slaNonCustomHours
+  const supplierId = line.exportedToSupplierId ?? line.resolvedSupplierId
+  const supplier = supplierId ? await prisma.supplier.findUnique({ where: { id: supplierId }, select: { name: true } }) : null
+  const readiness = await readinessForLine(line, order.storeId, order.shopifyOrderNumber)
+  try {
+    await retryOnBusy(() => prisma.designTask.create({ data: {
+      orderId: order.id, shopifyLineId: line.shopifyLineId, taskKey, readiness, kpi: kpiForProductType(settings, line.shopifyProductType),
+      slaHours, dueAt: dueForNewTask(order.placedAt, slaHours), supplierSnapshot: supplier?.name ?? null, ...lineFixReopen(fix),
+      events: { create: { type: 'REJECT', message: lineFixMessage(fix), actorId: actor.id } },
+    } }))
+  } catch (e: any) {
+    if (!isUniqueViolation(e)) throw e
+    const raced = await prisma.designTask.findUnique({ where: ofLine })
+    if (!raced) throw new LineReopenError(keyTaken, 409)
+    return reopenTaskOfLine(raced, actor, fix)
+  }
+  const row = await rowFor(taskKey)
+  if (!row) throw new Error('Task row not found after create')
+  return { task: row, changed: true }
+}
+
+type TaskEvent = { id: string; type: string; message: string; actorId: string | null; createdAt: Date }
+const TASK_EVENT_SELECT = { id: true, type: true, message: true, actorId: true, createdAt: true } as const
+
+function inOrder(events: TaskEvent[]): TaskEvent[] {
+  return [...events].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+}
+
+/** A reopen of one line already at its supplier: "Mở lại để sửa" with its reason, or the old control's STATUS event (#LIT5105). */
+function isLineReopen(e: TaskEvent): boolean {
+  return (e.type === 'REJECT' && e.message.startsWith(LINE_FIX_EVENT_PREFIX)) || (e.type === 'STATUS' && e.message === OLD_REOPEN_MESSAGE)
+}
+
+type FixCycle = { reopen: TaskEvent; reason: LineFixReason | null; note: string | null; recheck: TaskEvent | null; told: TaskEvent | null }
+
+/**
+ * The task's last trip back to design when it was a reopen of its own line (an order-level return is not one), and what
+ * followed: the approval's re-check and the "told" that closed it. A reopen made before the reason was asked stores none;
+ * its note is what was written on the task between the reopen and the approval.
+ */
+function lastFixCycle(events: TaskEvent[]): FixCycle | null {
+  const sorted = inOrder(events)
+  let at = -1
+  for (let i = sorted.length - 1; i >= 0 && at < 0; i--) {
+    if (isLineReopen(sorted[i]) || (sorted[i].type === 'SYSTEM' && sorted[i].message === FACTORY_REOPEN_MESSAGE)) at = i
+  }
+  if (at < 0 || !isLineReopen(sorted[at])) return null
+  const reopen = sorted[at]
+  const after = sorted.slice(at + 1)
+  const r = after.findIndex(e => e.type === SUPPLIER_RECHECK)
+  const recheck = r >= 0 ? after[r] : null
+  const told = recheck ? after.slice(r + 1).find(e => e.type === SUPPLIER_TOLD) ?? null : null
+  const fix = readLineFixMessage(reopen.message)
+  if (fix) return { reopen, reason: fix.reason, note: fix.note, recheck, told }
+  const notes = (recheck ? after.slice(0, r) : after).filter(e => e.type === 'NOTE').map(e => e.message.trim()).filter(Boolean)
+  return { reopen, reason: null, note: notes.length ? notes.join(' · ') : null, recheck, told }
+}
+
+type FixDelivery = { kind: 'API' } | { kind: 'LINK'; supplierName: string }
+
+/**
+ * How the approved fix of a line reopened after it went to its supplier reaches that supplier (owner 11/06/2026, #LIT5105).
+ * A live API push holding the line: the supplier keeps its own copy of the files, so the line goes out again. Any other send
+ * (a sheet row, a CSV, a mark set by hand) gave the supplier a link: nothing goes out again, someone tells the supplier to
+ * open it again. Null when this approval ends no such reopen (a first design, an order-level return), when the line is not
+ * at a supplier, or when its order is closed.
+ */
+async function fixDelivery(taskId: string, lineId: string): Promise<FixDelivery | null> {
+  if (!lastFixCycle(await prisma.designTaskEvent.findMany({ where: { taskId }, select: TASK_EVENT_SELECT }))) return null
+  const row = await prisma.orderLine.findUnique({
+    where: { id: lineId },
+    select: { order: { select: { ...SENT_CHECK_SELECT, supplierPushes: { where: { status: { in: ACTIVE_PUSH_STATUSES } }, select: { orderId: true, supplierId: true, prevExportJson: true, requestJson: true } } } } },
+  })
+  const order = row?.order
+  const line = order?.lines.find(l => l.id === lineId)
+  if (!order || !line || isClosedOrder(order) || isShippedOrder(order) || !isLineExported(order, line)) return null
+  const supplierId = exportedSupplierOf(order, line)
+  for (const push of order.supplierPushes) {
+    const carried = await carriedShopifyLineIds(push, order.lines)
+    if (carried ? carried.includes(line.shopifyLineId) : push.supplierId === supplierId) return { kind: 'API' }
+  }
+  const supplier = supplierId ? await prisma.supplier.findUnique({ where: { id: supplierId }, select: { name: true } }) : null
+  return { kind: 'LINK', supplierName: supplier?.name ?? 'xưởng' }
+}
+
+type TransitionResult = { task: TaskRow; order: { id: string; designReady: boolean; pipelineStatus: string } | null; notice?: string }
+
+export async function transitionTask(taskKey: string, actor: Actor, input: TransitionInput): Promise<TransitionResult> {
   const task = await prisma.designTask.findUnique({ where: { taskKey } })
   if (!task) throw new Error('Task not found')
   const from = task.status as TaskStatus
@@ -445,15 +626,20 @@ export async function transitionTask(taskKey: string, actor: Actor, input: Trans
     const leaderOnly = from === 'REVIEW' && (input.to === 'DONE' || input.to === 'REJECTED')
     throw new Error(`Chuyển ${from} → ${input.to} không được phép với vai trò ${role}${leaderOnly ? ' — chỉ leader duyệt hoặc trả lại mẫu (cài đặt "Designer được duyệt design" đang tắt, hoặc bạn không có quyền Design Tasks)' : ''}`)
   }
+  const line = await prisma.orderLine.findFirst({ where: { orderId: task.orderId, shopifyLineId: task.shopifyLineId } })
+  if (!line) throw new Error('Line not found')
+  // "Sửa & gửi lại" on a line its supplier already has is "Mở lại để sửa" of that line, open to whoever may press that.
+  if (from === 'DONE' && input.to === 'DOING' && await isSentLineOfOpenOrder(line.id)) {
+    return { task: (await reopenLineForFix(line.id, actor, { reason: input.reasons?.[0], note: input.note })).task, order: null }
+  }
   if (role !== 'LEADER' && task.assigneeId && task.assigneeId !== actor.id && OWNED_MOVES.includes(input.to)) {
     const owner = await prisma.appUser.findUnique({ where: { id: task.assigneeId }, select: { name: true } })
     throw new Error(`Task đang thuộc về ${owner?.name ?? 'người khác'}`)
   }
-  const line = await prisma.orderLine.findFirst({ where: { orderId: task.orderId, shopifyLineId: task.shopifyLineId } })
-  if (!line) throw new Error('Line not found')
 
   const data: any = { status: input.to }
-  const events: { type: string; message: string; actorId: string }[] = []
+  const events: { type: string; message: string; actorId: string | null }[] = []
+  let notice: string | null = null
   const say = (type: string, message: string) => events.push({ type, message, actorId: actor.id })
 
   if (input.to === 'ASSIGNED') {
@@ -468,7 +654,7 @@ export async function transitionTask(taskKey: string, actor: Actor, input: Trans
   } else if (input.to === 'DOING') {
     if (!task.assigneeId) data.assigneeId = actor.id
     if (!task.dueAt) data.dueAt = new Date(Date.now() + task.slaHours * 3600_000)
-    say('STATUS', from === 'ASK_CUSTOMER' ? 'Tiếp tục làm' : from === 'DONE' ? 'Mở lại để sửa' : 'Nhận việc')
+    say('STATUS', from === 'ASK_CUSTOMER' ? 'Tiếp tục làm' : from === 'DONE' ? OLD_REOPEN_MESSAGE : 'Nhận việc')
   } else if (input.to === 'REVIEW') {
     if (!input.continue) {
       const missing = await missingPrintFiles(line)
@@ -477,7 +663,9 @@ export async function transitionTask(taskKey: string, actor: Actor, input: Trans
     say('STATUS', from === 'ASK_CUSTOMER' ? 'Tiếp tục sau khi hỏi khách' : 'Gửi duyệt')
   } else if (input.to === 'REJECTED') {
     const reasons = input.reasons ?? []
-    data.rejectReasons = JSON.stringify(reopenedByFactory(task) && !reasons.includes(FACTORY_REJECT_REASON) ? [FACTORY_REJECT_REASON, ...reasons] : reasons)
+    // A task sent back after it went to the supplier keeps saying so, whatever the reviewer adds.
+    const sentBack = parseRejectReasons(task.rejectReasons).filter(r => SENT_BACK_REASONS.includes(r) && !reasons.includes(r))
+    data.rejectReasons = JSON.stringify([...sentBack, ...reasons])
     data.rejectNote = input.note ?? null
     say('REJECT', `Trả lại sửa: ${(input.reasons ?? []).join(', ')}${input.note ? ` — ${input.note}` : ''}`)
   } else if (input.to === 'ASK_CUSTOMER') {
@@ -507,7 +695,12 @@ export async function transitionTask(taskKey: string, actor: Actor, input: Trans
       const missing = missingPrintAreas(files, slots)
       const accepted = missing.length > 0 && input.acceptMissingAreas === true && canApprove
       if (missing.length > 0 && !accepted) throw new Error(`${MISSING_AREAS_PREFIX}${missing.join(', ')}`)
-      order = (await updateLine(line.id, { done: true, requiredAreas: accepted ? [] : slots }))?.order ?? null
+      const delivery = current.pipelineStatus === 'DESIGN_REJECTED' ? null : await fixDelivery(task.id, line.id)
+      order = (await updateLine(line.id, { done: true, requiredAreas: accepted ? [] : slots, reofferLine: delivery?.kind === 'API' }))?.order ?? null
+      if (delivery?.kind === 'LINK') {
+        notice = supplierRecheckMessage(delivery.supplierName)
+        events.push({ type: SUPPLIER_RECHECK, message: notice, actorId: null })
+      }
       data.rejectReasons = null; data.rejectNote = null
       if (accepted) {
         events.push({ type: 'SYSTEM', message: `Duyệt khi chưa có file cho vùng: ${missing.join(', ')} — không lưu vào Design Library`, actorId: actor.id })
@@ -525,7 +718,7 @@ export async function transitionTask(taskKey: string, actor: Actor, input: Trans
   const updated = await prisma.designTask.update({ where: { id: task.id }, data: { ...data, events: { create: events } } })
   const row = await rowFor(updated.taskKey)
   if (!row) throw new Error('Task row not found after update')
-  return { task: row, order }
+  return { task: row, order, ...(notice ? { notice } : {}) }
 }
 
 export const AUTO_REVIEW_FROM: TaskStatus[] = ['NEW', 'ASSIGNED', 'DOING', 'REJECTED']
@@ -604,6 +797,124 @@ export async function addTaskNote(taskKey: string, actor: Actor, message: string
   const task = await prisma.designTask.findUnique({ where: { taskKey }, select: { id: true } })
   if (!task) throw new Error('Task not found')
   await prisma.designTaskEvent.create({ data: { taskId: task.id, type: 'NOTE', message, actorId: actor.id } })
+}
+
+/** A row of "Đã update design / Cần báo xưởng". Mirrored for the client in components/types.ts. */
+export type SupplierFixRow = {
+  taskKey: string; orderId: string; orderNumber: string; storeName: string; productTitle: string; taskStatus: TaskStatus
+  supplierId: string | null; supplierName: string | null
+  /** Null for a line reopened before the reason was asked (#LIT5105): shown as "—". */
+  reason: LineFixReason | null
+  note: string | null
+  reopenedBy: string | null; reopenedAt: string
+  approvedAt: string | null
+  toldBy: string | null; toldAt: string | null
+  /** The line's design link now: what the supplier is to open again. */
+  designLink: string | null
+}
+
+export type SupplierFixList = {
+  /** Approved again after the reopen, the supplier got the line by a link, nobody has told it yet: oldest approval first. */
+  waiting: SupplierFixRow[]
+  /** Told within TOLD_VISIBLE_DAYS, newest first. */
+  told: SupplierFixRow[]
+  /** Reopened and not approved yet, oldest reopen first. */
+  fixing: SupplierFixRow[]
+  /** Waiting rows before the reason and supplier filters. */
+  waitingTotal: number
+  suppliers: { id: string; name: string }[]
+}
+
+/**
+ * "Đã update design / Cần báo xưởng": the lines staff have to tell their supplier about, read from the task events (a reopen,
+ * the approval's re-check, the "told"), so the list needs no state of its own. `reason: 'none'` keeps the rows without one.
+ */
+export async function listSupplierFixes(f: { storeIds?: string[] | null; reason?: LineFixReason | 'none' | null; supplierId?: string | null; now?: Date } = {}): Promise<SupplierFixList> {
+  const now = f.now ?? new Date()
+  const tasks = await prisma.designTask.findMany({
+    where: {
+      ...(f.storeIds ? { order: { storeId: { in: f.storeIds } } } : {}),
+      OR: [
+        { status: 'DONE', events: { some: { type: SUPPLIER_RECHECK } } },
+        { status: { notIn: ['DONE', 'CANCELLED'] }, events: { some: { OR: [{ type: 'REJECT', message: { startsWith: LINE_FIX_EVENT_PREFIX } }, { type: 'STATUS', message: OLD_REOPEN_MESSAGE }] } } },
+      ],
+    },
+    select: {
+      id: true, taskKey: true, status: true, shopifyLineId: true, events: { select: TASK_EVENT_SELECT },
+      order: { select: {
+        ...SENT_CHECK_SELECT, id: true, shopifyOrderNumber: true, store: { select: { shop: true, project: { select: { name: true } } } },
+        lines: { select: { ...SENT_CHECK_SELECT.lines.select, designDriveLink: true } },
+      } },
+    },
+  })
+  type Built = { list: 'waiting' | 'told' | 'fixing'; row: SupplierFixRow; actorIds: (string | null)[] }
+  const built: Built[] = []
+  for (const t of tasks) {
+    const line = t.order.lines.find(l => l.shopifyLineId === t.shopifyLineId)
+    const cycle = lastFixCycle(t.events)
+    if (!line || !cycle) continue
+    let list: Built['list']
+    if (t.status === 'DONE') {
+      if (!cycle.recheck) continue
+      if (cycle.told && now.getTime() - cycle.told.createdAt.getTime() > TOLD_VISIBLE_DAYS * 86400_000) continue
+      list = cycle.told ? 'told' : 'waiting'
+    } else {
+      // The old control also reopened lines still waiting for hand-off; only a line at its supplier belongs here.
+      if (!readLineFixMessage(cycle.reopen.message) && !isLineExported(t.order, line)) continue
+      list = 'fixing'
+    }
+    built.push({
+      list, actorIds: [cycle.reopen.actorId, cycle.told?.actorId ?? null],
+      row: {
+        taskKey: t.taskKey, orderId: t.order.id, orderNumber: t.order.shopifyOrderNumber, storeName: t.order.store.project?.name ?? t.order.store.shop,
+        productTitle: line.productTitle, taskStatus: t.status as TaskStatus,
+        supplierId: exportedSupplierOf(t.order, line) ?? line.resolvedSupplierId, supplierName: null,
+        reason: cycle.reason, note: cycle.note, reopenedBy: null, reopenedAt: cycle.reopen.createdAt.toISOString(),
+        approvedAt: cycle.recheck?.createdAt.toISOString() ?? null, toldBy: null, toldAt: cycle.told?.createdAt.toISOString() ?? null,
+        designLink: line.designDriveLink,
+      },
+    })
+  }
+  const userIds = Array.from(new Set(built.flatMap(b => b.actorIds).filter((x): x is string => !!x)))
+  const supplierIds = Array.from(new Set(built.map(b => b.row.supplierId).filter((x): x is string => !!x)))
+  const [users, suppliers] = await Promise.all([
+    userIds.length ? prisma.appUser.findMany({ where: { id: { in: userIds } }, select: { id: true, name: true } }) : [],
+    supplierIds.length ? prisma.supplier.findMany({ where: { id: { in: supplierIds } }, select: { id: true, name: true } }) : [],
+  ])
+  const userName = new Map(users.map(u => [u.id, u.name]))
+  const supplierName = new Map(suppliers.map(s => [s.id, s.name]))
+  for (const b of built) {
+    b.row.supplierName = b.row.supplierId ? (supplierName.get(b.row.supplierId) ?? null) : null
+    b.row.reopenedBy = b.actorIds[0] ? (userName.get(b.actorIds[0]) ?? null) : null
+    b.row.toldBy = b.actorIds[1] ? (userName.get(b.actorIds[1]) ?? null) : null
+  }
+  const shown = built.filter(b => (!f.reason || (f.reason === 'none' ? b.row.reason === null : b.row.reason === f.reason)) && (!f.supplierId || b.row.supplierId === f.supplierId))
+  const rows = (list: Built['list'], at: (r: SupplierFixRow) => string, dir: 1 | -1) =>
+    shown.filter(b => b.list === list).map(b => b.row).sort((x, y) => (at(x) < at(y) ? -dir : at(x) > at(y) ? dir : x.taskKey.localeCompare(y.taskKey)))
+  return {
+    waiting: rows('waiting', r => r.approvedAt!, 1),
+    told: rows('told', r => r.toldAt!, -1),
+    fixing: rows('fixing', r => r.reopenedAt, 1),
+    waitingTotal: built.filter(b => b.list === 'waiting').length,
+    suppliers: suppliers.map(s => ({ id: s.id, name: s.name })).sort((x, y) => x.name.localeCompare(y.name)),
+  }
+}
+
+/** "Đã báo xưởng": records who told the supplier about the approved fix, and when. Nothing changes when nothing is waiting. */
+export async function markSupplierTold(taskKey: string, actor: Actor): Promise<{ changed: boolean }> {
+  const task = await prisma.designTask.findUnique({ where: { taskKey }, select: { id: true, status: true, shopifyLineId: true, order: { select: SENT_CHECK_SELECT } } })
+  if (!task) throw new Error('Task not found')
+  const line = task.order.lines.find(l => l.shopifyLineId === task.shopifyLineId)
+  const supplierId = line ? (exportedSupplierOf(task.order, line) ?? line.resolvedSupplierId) : null
+  const supplier = supplierId ? await prisma.supplier.findUnique({ where: { id: supplierId }, select: { name: true } }) : null
+  return retryOnBusy(() => prisma.$transaction(async tx => {
+    const cycle = task.status === 'DONE' ? lastFixCycle(await tx.designTaskEvent.findMany({ where: { taskId: task.id }, select: TASK_EVENT_SELECT })) : null
+    if (!cycle?.recheck || cycle.told) return { changed: false }
+    await tx.designTaskEvent.create({
+      data: { taskId: task.id, type: SUPPLIER_TOLD, message: `Đã báo ${supplier?.name ?? 'xưởng'} kiểm tra lại folder design`, actorId: actor.id },
+    })
+    return { changed: true }
+  }))
 }
 
 export const CS_NOTE_MAX = 2000
@@ -699,8 +1010,6 @@ export type SentLineRow = {
 
 export const SENT_LINES_LIMIT = 50
 const SENT_LINES_SCAN = 200
-/** An order handed to production counts as sent even when its lines carry no export mark of their own. */
-const SENT_ORDER_STATUSES = ['EXPORTED', 'READY_TO_PRODUCTION']
 
 function designLinksOf(stored: string | null): string[] {
   return (stored ?? '').split(DESIGN_LINK_SEPARATOR).map(s => s.trim()).filter(s => isAppFileLink(s) || !!safeHttpUrl(s))
@@ -747,9 +1056,8 @@ export async function listSentLinesWithoutTask(f: { q: string; storeIds?: string
     if (isClosedOrder(o) || isShippedOrder(o)) continue
     const keys = lineKeysOf(o.shopifyOrderNumber, o.lines)
     const tasked = new Set(o.designTasks.map(t => t.shopifyLineId))
-    const orderSent = SENT_ORDER_STATUSES.includes(o.pipelineStatus)
     for (const line of [...o.lines].sort((a, b) => a.linePosition - b.linePosition)) {
-      if (isNonProductLine(line) || tasked.has(line.shopifyLineId) || (!line.exportedAt && !orderSent)) continue
+      if (isNonProductLine(line) || tasked.has(line.shopifyLineId) || !isSentLine(o, line)) continue
       const lineKey = keys.get(line.shopifyLineId)!
       const attrs = parseAttributes(line.customAttributesJson)
       const haystacks = [lineKey, line.sku ?? '', line.productTitle, ...visibleCustomAttributes(attrs).map(a => a.value)]
@@ -892,5 +1200,6 @@ export async function loadTask(taskKey: string): Promise<TaskDetail | null> {
     library,
     autoRender: await latestRenderJob(task.orderId, task.shopifyLineId),
     teeinblue: hasTeeinblueDesign(parseAttributes(orderLine?.customAttributesJson ?? null)),
+    reopensSentLine: await isSentLineOfOpenOrder(line.id),
   }
 }

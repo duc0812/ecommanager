@@ -247,6 +247,10 @@ export function postJson<T = any>(url: string, body: unknown) {
   return requestJson<T>(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
 }
 
+export function lineReopenUrl(lineId: string): string {
+  return `/api/design-studio/lines/${encodeURIComponent(lineId)}/reopen`
+}
+
 export function taskUrl(key: string, suffix = ''): string {
   return `/api/design-studio/tasks/${encodeURIComponent(key)}${suffix}`
 }

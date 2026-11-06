@@ -6,6 +6,7 @@ import { requestJson } from './model'
 import { SENT_STAGE_LABELS, type HandoffSent, type SentStage } from '@/lib/handoff-shared'
 import { fmtDateTime } from './HandoffGrid'
 import HandoffButton from './HandoffButton'
+import SupplierFixSection from './SupplierFixSection'
 import { ErrorBanner, ExtLink, Icon, Pill, btn, card, input } from './ui'
 
 type SentResponse = {
@@ -101,8 +102,8 @@ function SentRow({ c, sent, me, now, onOpenTask, onChanged, onError }: {
   )
 }
 
-export default function SentGrid({ q, rawQ, onQ, version, onOpenTask, onChanged }: {
-  q: string; rawQ: string; onQ: (v: string) => void; version: number; onOpenTask: (key: string) => void; onChanged: () => void
+export default function SentGrid({ q, rawQ, onQ, version, showStore, onOpenTask, onChanged }: {
+  q: string; rawQ: string; onQ: (v: string) => void; version: number; showStore: boolean; onOpenTask: (key: string) => void; onChanged: () => void
 }) {
   const [data, setData] = useState<SentResponse | null>(null)
   const [loading, setLoading] = useState(true)
@@ -187,6 +188,7 @@ export default function SentGrid({ q, rawQ, onQ, version, onOpenTask, onChanged 
           </div>
         )}
       </div>
+      <SupplierFixSection version={version} showStore={showStore} onOpenTask={onOpenTask} />
       {info && <span role="status" className="text-label-sm text-on-surface-variant">{info}</span>}
       <ErrorBanner msg={actionError} onClose={() => setActionError('')} />
       <ErrorBanner msg={error} />
