@@ -172,7 +172,7 @@ Payload job gửi xuống runner chỉ gồm: `id`, `sourceUrl`, `skuCode`, `att
 
 Lease 10 phút, runner heartbeat 60 giây một lần. Job `RUNNING` quá lease thì quay lại `QUEUED` nếu mới chạy 1 lần, lần thứ hai thì `FAILED` với `WORKER_LOST`. Tối đa 2 lần.
 
-Link dán vào phải qua `assertSafeExternalUrl` (chỉ https, không host nội bộ). VPS không lưu nguyên chuỗi người dùng dán: nó dựng lại link thành `https://<host><path>` (giữ thêm `?view=<tên>` nếu có), bỏ mọi tham số khác và phần sau `#`, và từ chối path có ký tự ngoài nhóm chữ, số và `._~%+,@=:-`. Lý do: phiên Claude sẽ gõ link này vào dòng lệnh của tool clone, nên link lưu lại chỉ được chứa ký tự vô hại với shell.
+Link dán vào phải qua `assertSafeExternalUrl` (chỉ https, không host nội bộ). VPS không lưu nguyên chuỗi người dùng dán: nó dựng lại link thành `https://<host><path>` (giữ thêm `?view=<tên>` nếu có), bỏ mọi tham số khác và phần sau `#`, và từ chối path có ký tự ngoài nhóm chữ, số và `._-` (kể cả dấu `%`, vì `%TÊN%` bị cmd.exe của Windows thay bằng biến môi trường). Lý do: phiên Claude sẽ gõ link này vào dòng lệnh của tool clone, nên link lưu lại chỉ được chứa ký tự vô hại với shell.
 
 Seller không thấy nội dung lỗi do runner hay phiên Claude ghi (có thể chứa đường dẫn trên máy owner): với người không phải SUPERADMIN, `error` chỉ hiện khi lỗi do chính VPS ghi (`VERIFY`, `WORKER_LOST`), còn lại trang hiện nhãn cố định theo `failKind`. `qaNote` và `productType` chỉ SUPERADMIN thấy.
 

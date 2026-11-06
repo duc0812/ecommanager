@@ -296,7 +296,7 @@ Trang theo spec 7.4:
   - `runner.validate_job(job: dict) -> str | None` — trả lý do khi: `sourceUrl` không khớp `SOURCE_URL_RE` (bên dưới), `skuCode` không khớp `^[A-Z]{2}\d{10}$`, `orderPrefix` không thuộc `KNOWN_STORES`, `id` không khớp `^[a-z0-9]{10,40}$`.
 
     ```python
-    SOURCE_URL_RE = re.compile(r"^https://[a-z0-9.-]+(/[A-Za-z0-9._~%+,@=:-]*)*(\?view=[A-Za-z0-9_-]+)?$")
+    SOURCE_URL_RE = re.compile(r"^https://[a-z0-9.-]+(/[A-Za-z0-9._-]*)*(\?view=[A-Za-z0-9_-]+)?$")
     ```
 
     Cùng mẫu với `SOURCE_URL_RE` trong `src/lib/clone/jobs.ts` (VPS đã dựng lại link theo mẫu này trước khi lưu). Mẫu chỉ cho ký tự vô hại với shell kể cả khi không đặt trong nháy, vì phiên Claude sẽ gõ link này vào dòng lệnh của tool clone.
