@@ -87,7 +87,14 @@ export function canCancel(job: CloneJobView, viewer: Viewer): boolean {
 export function canRetry(job: CloneJobView, viewer: Viewer): boolean {
   if (job.status !== 'FAILED') return false
   if (viewer.superadmin) return true
-  return viewer.id !== null && job.requestedById === viewer.id && !(job.failKind && ADMIN_ONLY_FAIL_KINDS.includes(job.failKind))
+  const adminOnly = (job.failKind !== null && ADMIN_ONLY_FAIL_KINDS.includes(job.failKind)) || job.productGid !== null
+  return viewer.id !== null && job.requestedById === viewer.id && !adminOnly
+}
+
+// Retrying a job that left a product behind makes a second one, so the SUPERADMIN is asked first.
+export function retryQuestion(job: CloneJobView, viewer: Viewer): string | null {
+  const id = leftoverProductId(job, viewer)
+  return id ? `Job này còn sản phẩm ${id} trên store. Xoá hoặc chuyển nháp sản phẩm đó trước khi thử lại. Thử lại bây giờ?` : null
 }
 
 // The prefix a pair is saved under: uppercase letters only, which is what the settings route accepts.

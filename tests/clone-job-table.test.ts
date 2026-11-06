@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { leftoverProductId, showsReused, visibleStage, type CloneJobView, type CloneStatus, type Viewer } from '@/app/fulfillment/clone/components/types'
+import {
+  canRetry, leftoverProductId, retryQuestion, showsReused, visibleStage, type CloneJobView, type CloneStatus, type Viewer,
+} from '@/app/fulfillment/clone/components/types'
 
 const STATUSES: CloneStatus[] = ['QUEUED', 'RUNNING', 'DONE', 'FAILED', 'CANCELLED']
 const GID = 'gid://shopify/Product/9054123557021'
@@ -33,5 +35,20 @@ describe('bảng job clone', () => {
     for (const productGid of [null, '', 'gid://shopify/ProductVariant/1', `${GID}<b>`, '9054123557021']) {
       expect(leftoverProductId(job({ status: 'FAILED', productGid }), SUPER), String(productGid)).toBeNull()
     }
+  })
+
+  it('job lỗi còn sản phẩm trên store: seller không có nút Thử lại, SUPERADMIN có', () => {
+    const left = job({ status: 'FAILED', failKind: 'TOOL', productGid: GID })
+    expect(canRetry(left, SELLER)).toBe(false)
+    expect(canRetry(left, SUPER)).toBe(true)
+    expect(canRetry(job({ status: 'FAILED', failKind: 'TOOL', productGid: null }), SELLER)).toBe(true)
+  })
+
+  it('SUPERADMIN thử lại job còn sản phẩm: hỏi trước, nêu số id sản phẩm; job không còn sản phẩm thì không hỏi', () => {
+    expect(retryQuestion(job({ status: 'FAILED', productGid: GID }), SUPER)).toBe(
+      'Job này còn sản phẩm 9054123557021 trên store. Xoá hoặc chuyển nháp sản phẩm đó trước khi thử lại. Thử lại bây giờ?',
+    )
+    expect(retryQuestion(job({ status: 'FAILED', productGid: null }), SUPER)).toBeNull()
+    expect(retryQuestion(job({ status: 'FAILED', productGid: GID }), SELLER)).toBeNull()
   })
 })

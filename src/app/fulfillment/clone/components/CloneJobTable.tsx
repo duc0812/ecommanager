@@ -1,6 +1,7 @@
 'use client'
 import {
-  FAIL_KIND_LABEL, STATUS_LABEL, canCancel, canRetry, formatDuration, formatWhen, httpsUrl, leftoverProductId, prefixOf, showsReused, visibleStage,
+  FAIL_KIND_LABEL, STATUS_LABEL, canCancel, canRetry, formatDuration, formatWhen, httpsUrl, leftoverProductId, prefixOf, retryQuestion, showsReused,
+  visibleStage,
   type CloneJobView, type CloneStatus, type CloneStore, type Viewer,
 } from './types'
 
@@ -70,6 +71,11 @@ function ErrorCell({ job }: { job: CloneJobView }) {
 export function CloneJobTable({ jobs, stores, viewer, highlightId, acting, onCancel, onRetry }: Props) {
   const storeById = new Map(stores.map(s => [s.id, s]))
   const showRequester = viewer.role !== null && viewer.role !== 'SELLER'
+  const retry = (job: CloneJobView) => {
+    const question = retryQuestion(job, viewer)
+    if (question && !window.confirm(question)) return
+    onRetry(job)
+  }
 
   return (
     <div className="overflow-x-auto rounded-xl border border-outline-variant/20 bg-surface-container-lowest shadow-card">
@@ -117,7 +123,7 @@ export function CloneJobTable({ jobs, stores, viewer, highlightId, acting, onCan
                     <button type="button" disabled={busy} onClick={() => onCancel(job)} className="text-on-surface-variant hover:text-error disabled:opacity-50">Huỷ</button>
                   )}
                   {canRetry(job, viewer) && (
-                    <button type="button" disabled={busy} onClick={() => onRetry(job)} className="text-secondary hover:underline disabled:opacity-50">Thử lại</button>
+                    <button type="button" disabled={busy} onClick={() => retry(job)} className="text-secondary hover:underline disabled:opacity-50">Thử lại</button>
                   )}
                 </td>
               </tr>

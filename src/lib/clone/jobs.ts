@@ -304,7 +304,9 @@ export async function cancelCloneJob(user: AuthUser, id: string): Promise<CloneJ
 export async function retryCloneJob(user: AuthUser, id: string): Promise<CloneJobView> {
   const job = await findActionable(user, id, 'thử lại')
   if (job.status !== 'FAILED') throw new CloneInputError(409, NOT_FAILED)
-  if (job.failKind && ADMIN_ONLY_FAIL_KINDS.includes(job.failKind) && user.role !== 'SUPERADMIN') {
+  // A job that still names a product left it on the store: another run would make a second product with the same SKU code.
+  const adminOnly = (job.failKind !== null && ADMIN_ONLY_FAIL_KINDS.includes(job.failKind)) || job.productGid !== null
+  if (adminOnly && user.role !== 'SUPERADMIN') {
     throw new CloneInputError(403, 'Job này cần quản trị xử lý trước khi thử lại.')
   }
   await withLinkLock(job.storeId, job.sourceKey, async () => {

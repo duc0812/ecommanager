@@ -911,7 +911,7 @@ describe('retryCloneJob', () => {
       productUrl: 'https://store-a.example.com/products/old-handle', productType: 'Mug', qaNote: 'compared', costUsd: 1.5, durationMs: 90_000,
       platform: 'customily', startedAt: new Date('2026-11-06T00:30:00Z'), createdAt: new Date('2026-11-06T00:00:00Z'),
     })
-    await retryCloneJob(users.sellera, row.id)
+    await retryCloneJob(users.super, row.id)
     const stored = await prisma.cloneJob.findUniqueOrThrow({ where: { id: row.id } })
     expect(stored).toMatchObject({
       status: 'QUEUED', attempts: 0, error: null, failKind: null, stage: null, lockedAt: null, finishedAt: null,
@@ -947,6 +947,18 @@ describe('retryCloneJob', () => {
       expect(e.message).toBe('Job này cần quản trị xử lý trước khi thử lại.')
       expect((await prisma.cloneJob.findUnique({ where: { id: row.id } }))?.status).toBe('FAILED')
       expect((await retryCloneJob(users.super, row.id)).status).toBe('QUEUED')
+    }
+  })
+
+  it('job lỗi còn productGid (sản phẩm đã tạo trên store): seller 403, job nguyên; SUPERADMIN thử lại được và productGid bị xoá', async () => {
+    for (const failKind of ['TOOL', 'VERIFY', 'QA']) {
+      await wipe()
+      const row = await failed({ failKind, productGid: 'gid://shopify/Product/9054123557021' })
+      const e = await codeOf(() => retryCloneJob(users.sellera, row.id))
+      expect(e).toMatchObject({ status: 403, message: 'Job này cần quản trị xử lý trước khi thử lại.' })
+      expect(await prisma.cloneJob.findUniqueOrThrow({ where: { id: row.id } })).toEqual(row)
+      expect(await retryCloneJob(users.super, row.id)).toMatchObject({ status: 'QUEUED', productGid: null })
+      expect(await prisma.cloneJob.findUniqueOrThrow({ where: { id: row.id } })).toMatchObject({ status: 'QUEUED', productGid: null, attempts: 0 })
     }
   })
 
