@@ -359,6 +359,8 @@ describe('Reminiso order lines', () => {
       await sync(fixtureOrder('#REMI9002'))
       const order = await orderRow('#REMI9002')
       const [protect, nameAddOn, tote] = order.lines
+      // Auto Fulfilled fulfils a product line only after it went to its supplier.
+      await prisma.orderLine.update({ where: { id: tote.id }, data: { exportedAt: new Date('2026-11-03T00:00:00Z'), exportedToSupplierId: SUP } })
       await prisma.shipment.create({ data: { orderId: order.id, projectId: PROJECT, lineKey: 'REMI9002_1', shopifyLineId: tote.shopifyLineId } })
       const foLine = (id: string, line: { shopifyLineId: string; sku: string | null }) => ({ id, remainingQuantity: 1, lineItem: { id: line.shopifyLineId, sku: line.sku } })
       servedFulfillmentOrders = [{

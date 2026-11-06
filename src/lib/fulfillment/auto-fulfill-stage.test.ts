@@ -26,7 +26,7 @@ const NOW = new Date('2026-10-28T00:00:00Z')
 const daysAgo = (n: number) => new Date(NOW.getTime() - n * 86_400_000)
 const SHEET = { id: '1', name: 'A', url: 'https://docs.google.com/spreadsheets/d/abc123/edit', enabled: true }
 const dbOrder = (name: string, placedAt: Date, fulfillmentStatus: string | null) =>
-  ({ id: name, shopifyOrderNumber: `#${name}`, placedAt, pipelineStatus: null, fulfillmentStatus, shipments: [], lines: [] })
+  ({ id: name, shopifyOrderNumber: `#${name}`, placedAt, pipelineStatus: null, fulfillmentStatus, shipments: [], lines: [], supplierPushes: [] })
 
 beforeEach(() => { vi.clearAllMocks(); dbOrders.length = 0; pushRows.length = 0; printRows.length = 0 })
 
@@ -55,7 +55,11 @@ describe('runAutoFulfill', () => {
 
 describe('whole-order row checked against the order lines', () => {
   const twoLines = (second: Record<string, unknown>) => {
-    const line = (id: string, more: Record<string, unknown>) => ({ shopifyLineId: id, sku: `SKU-${id}`, productTitle: 'Hoodie', shopifyProductType: 'Hoodie', linePosition: Number(id.slice(1)), resolvedSupplierId: 'sm', exportedToSupplierId: null, exportedAt: null, designDriveLink: 'https://x', ...more })
+    // Each line exported to its own supplier (Auto Fulfilled fulfils a product line only after it went to its supplier).
+    const line = (id: string, more: Record<string, unknown>) => {
+      const l = { id: `ol-${id}`, shopifyLineId: id, sku: `SKU-${id}`, productTitle: 'Hoodie', shopifyProductType: 'Hoodie', linePosition: Number(id.slice(1)), resolvedSupplierId: 'sm', designDriveLink: 'https://x', ...more }
+      return { ...l, exportedToSupplierId: l.resolvedSupplierId, exportedAt: daysAgo(15) }
+    }
     dbOrders.push({ ...dbOrder('LIT1003', daysAgo(20), 'UNFULFILLED'), trelloCardUrl: null, lines: [line('L1', {}), line('L2', second)] })
     ;(fetchOrderFulfillmentOrdersByNames as any).mockResolvedValueOnce(new Map([['LIT1003', { displayFulfillmentStatus: 'UNFULFILLED', createdAt: daysAgo(20).toISOString(), fulfillmentOrders: [
       { id: 'FO', status: 'OPEN', lineItems: [{ id: 'A', remainingQuantity: 1, shopifyLineId: 'L1', sku: 'X' }, { id: 'B', remainingQuantity: 1, shopifyLineId: 'L2', sku: 'Y' }] },

@@ -388,6 +388,121 @@ describe('buildFulfillmentPlan — add-on lines (Shipping protection / Tip / Cus
   })
 })
 
+describe('a product line is fulfilled only after it went to a supplier', () => {
+  const base = { displayFulfillmentStatus: 'UNFULFILLED', now: NOW, minAgeDays: 5, placedAt: days(9) }
+  const twoLineFo = [{ id: 'fo1', status: 'OPEN', lineItems: [
+    { id: 'foli-A', remainingQuantity: 1, shopifyLineId: 'gid://li/A', sku: 'A' },
+    { id: 'foli-B', remainingQuantity: 1, shopifyLineId: 'gid://li/B', sku: 'B' },
+  ] }]
+  const shipments = [
+    { id: 's1', lineKey: 'LIT1_1', shopifyLineId: 'gid://li/A' },
+    { id: 's2', lineKey: 'LIT1_2', shopifyLineId: 'gid://li/B' },
+  ]
+  const productLines = (sentA: boolean, sentB: boolean) => [
+    { shopifyLineId: 'gid://li/A', lineKey: 'LIT1_1', sent: sentA },
+    { shopifyLineId: 'gid://li/B', lineKey: 'LIT1_2', sent: sentB },
+  ]
+  const perLine = (rows: Array<{ lineKey: string; tracking: string }>, lines?: ReturnType<typeof productLines>) =>
+    buildFulfillmentPlan({ ...base, baseOrder: 'LIT1', rows, shipments, fulfillmentOrders: twoLineFo, ...(lines ? { productLines: lines } : {}) })
+
+  it('a per-line row for an exported line plans exactly what it planned before the rule', () => {
+    const rows = [{ lineKey: 'LIT1_1', tracking: 'AA' }, { lineKey: 'LIT1_2', tracking: 'BB' }]
+    const before = perLine(rows)
+    const after = perLine(rows, productLines(true, true))
+    expect(after).toEqual(before)
+    expect(after.status).toBe('will_fulfill')
+    expect(after.fulfillments).toEqual([
+      { fulfillmentOrderId: 'fo1', lineItems: [{ id: 'foli-A', quantity: 1 }], tracking: 'AA', shipmentIds: ['s1'] },
+      { fulfillmentOrderId: 'fo1', lineItems: [{ id: 'foli-B', quantity: 1 }], tracking: 'BB', shipmentIds: ['s2'] },
+    ])
+  })
+
+  it('a per-line row for a line never sent holds the order and names the line', () => {
+    const p = perLine([{ lineKey: 'LIT1_2', tracking: 'BB' }], productLines(true, false))
+    expect(p.status).toBe('needs_manual')
+    expect(p.fulfillments).toEqual([])
+    expect(p.message).toContain('LIT1_2')
+    expect(p.message).toContain('chưa export sang xưởng')
+  })
+
+  it('two per-line rows, one line sent and one not: nothing of the order is fulfilled', () => {
+    const p = perLine([{ lineKey: 'LIT1_1', tracking: 'AA' }, { lineKey: 'LIT1_2', tracking: 'AA' }], productLines(true, false))
+    expect(p.status).toBe('needs_manual')
+    expect(p.fulfillments).toEqual([])
+    expect(p.message).toContain('LIT1_2')
+    expect(p.message).not.toContain('LIT1_1')
+  })
+
+  it('an unsent line that no row lists does not stop the listed, sent line (partial, as before)', () => {
+    const p = perLine([{ lineKey: 'LIT1_1', tracking: 'AA' }], productLines(true, false))
+    expect(p.status).toBe('will_fulfill')
+    expect(p.fulfillments).toEqual([{ fulfillmentOrderId: 'fo1', lineItems: [{ id: 'foli-A', quantity: 1 }], tracking: 'AA', shipmentIds: ['s1'] }])
+  })
+
+  it('a line Shopify has open but the tool does not know counts as not sent', () => {
+    const p = perLine([{ lineKey: 'LIT1_2', tracking: 'BB' }], [{ shopifyLineId: 'gid://li/A', lineKey: 'LIT1_1', sent: true }])
+    expect(p.status).toBe('needs_manual')
+    expect(p.message).toContain('LIT1_2')
+  })
+
+  describe('whole-order row', () => {
+    const fo = [{ id: 'fo1', status: 'OPEN', lineItems: [
+      { id: 'foli-A', remainingQuantity: 1, shopifyLineId: 'gid://li/A', sku: 'A' },
+      { id: 'foli-B', remainingQuantity: 1, shopifyLineId: 'gid://li/B', sku: 'B' },
+      { id: 'foli-P', remainingQuantity: 1, shopifyLineId: 'gid://li/P', sku: null },
+    ] }]
+    const check = { sheets: ['Jomall'], lines: [
+      { shopifyLineId: 'gid://li/A', label: 'dòng 1 A', supplier: 'Jomall', hasFile: true },
+      { shopifyLineId: 'gid://li/B', label: 'dòng 2 B', supplier: 'Jomall', hasFile: true },
+    ] }
+    const whole = (lines?: ReturnType<typeof productLines>) => buildFulfillmentPlan({
+      ...base, baseOrder: 'LIT1', rows: [{ lineKey: 'LIT1', tracking: 'T' }], shipments: [], fulfillmentOrders: fo,
+      addOnLineIds: ['gid://li/P'], wholeRowCheck: check, ...(lines ? { productLines: lines } : {}),
+    })
+
+    it('every open product line sent: the same plan as before, the add-on riding along', () => {
+      const p = whole(productLines(true, true))
+      expect(p).toEqual(whole())
+      expect(p.status).toBe('will_fulfill')
+      expect(p.fulfillments).toEqual([{ fulfillmentOrderId: 'fo1', lineItems: [
+        { id: 'foli-A', quantity: 1 }, { id: 'foli-B', quantity: 1 }, { id: 'foli-P', quantity: 1 },
+      ], tracking: 'T', shipmentIds: [] }])
+    })
+
+    it('one open product line not sent: held, naming it by its line key', () => {
+      const p = whole(productLines(false, true))
+      expect(p.status).toBe('needs_manual')
+      expect(p.fulfillments).toEqual([])
+      expect(p.message).toContain('LIT1_1')
+      expect(p.message).toContain('chưa export sang xưởng')
+      expect(p.message).not.toContain('LIT1_2')
+    })
+
+    it('a one-line order is held too (wholeRowBlockers leaves it alone)', () => {
+      const p = buildFulfillmentPlan({
+        ...base, baseOrder: 'LIT1', rows: [{ lineKey: 'LIT1', tracking: 'T' }], shipments: [], fulfillmentOrders: foOneOpenLine,
+        wholeRowCheck: { sheets: ['Jomall'], lines: [{ shopifyLineId: 'gid://li/A', label: 'dòng 1 A', supplier: 'Printway', hasFile: false }] },
+        productLines: [{ shopifyLineId: 'gid://li/A', lineKey: 'LIT1_1', sent: false }],
+      })
+      expect(p.status).toBe('needs_manual')
+      expect(p.message).toContain('LIT1_1')
+    })
+  })
+
+  it('add-ons on their own fulfillment order still close without tracking once the product lines are sent', () => {
+    const productFo = { id: 'fo1', status: 'OPEN', lineItems: [{ id: 'foli-A', remainingQuantity: 1, shopifyLineId: 'gid://li/A', sku: 'A' }] }
+    const protectionFo = { id: 'fo2', status: 'OPEN', lineItems: [{ id: 'foli-P', remainingQuantity: 1, shopifyLineId: 'gid://li/P', sku: null }] }
+    const input = { ...base, baseOrder: 'LIT1', rows: [{ lineKey: 'LIT1_1', tracking: 'AA' }], shipments: [shipments[0]], fulfillmentOrders: [productFo, protectionFo], addOnLineIds: ['gid://li/P'] }
+    const p = buildFulfillmentPlan({ ...input, productLines: [{ shopifyLineId: 'gid://li/A', lineKey: 'LIT1_1', sent: true }] })
+    expect(p).toEqual(buildFulfillmentPlan(input))
+    expect(p.fulfillments).toEqual([
+      { fulfillmentOrderId: 'fo1', lineItems: [{ id: 'foli-A', quantity: 1 }], tracking: 'AA', shipmentIds: ['s1'] },
+      { fulfillmentOrderId: 'fo2', lineItems: [{ id: 'foli-P', quantity: 1 }], tracking: '', shipmentIds: [], addOn: true },
+    ])
+    expect(buildFulfillmentPlan({ ...input, productLines: [{ shopifyLineId: 'gid://li/A', lineKey: 'LIT1_1', sent: false }] }).fulfillments).toEqual([])
+  })
+})
+
 describe('whole-order row on a multi-item order', () => {
   const fo = { id: 'FO1', status: 'OPEN', lineItems: [
     { id: 'A', remainingQuantity: 1, shopifyLineId: 'L1', sku: 'X' },

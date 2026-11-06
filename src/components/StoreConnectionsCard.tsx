@@ -365,7 +365,7 @@ export default function StoreConnectionsCard() {
   }
 
   function toggle(s: StoreRow) {
-    if (s.enabled && !window.confirm(`Tắt store ${s.shop}? Sync, đơn và báo cáo sẽ bỏ qua store này cho tới khi bật lại.`)) return
+    if (s.enabled && !window.confirm(`Tắt store ${s.shop}? Mọi việc chạy với Shopify (đồng bộ tự động, nút Sync Now, Auto Fulfilled) bỏ qua store này cho tới khi bật lại, và đơn của store không được ghi vào sheet xưởng. Đơn đã có của store vẫn hiện trong danh sách đơn và báo cáo.`)) return
     void patchStore(s, { enabled: !s.enabled }, s.enabled ? `Đã tắt ${s.shop}.` : `Đã bật ${s.shop}.`)
   }
 

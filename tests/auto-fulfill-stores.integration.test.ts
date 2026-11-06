@@ -212,6 +212,13 @@ describe("the fulfilment goes through the order's own store: its token and its t
 
   beforeAll(async () => {
     await prisma.supplier.create({ data: { id: SUPPLIER, name: 'AFF supplier', code: 'AFFSUP' } })
+    // Auto Fulfilled fulfils a product line only after it went to its supplier.
+    for (const orderId of ['gid://test/Order/aff-lit1', 'gid://test/Order/aff-remi1']) {
+      await prisma.orderLine.create({ data: {
+        orderId, shopifyLineId: 'L1', productTitle: 'Hoodie', qty: 1, unitPrice: 10, resolvedSupplierId: SUPPLIER,
+        exportedAt: new Date('2026-10-02T00:00:00Z'), exportedToSupplierId: SUPPLIER,
+      } })
+    }
   })
 
   beforeEach(async () => {

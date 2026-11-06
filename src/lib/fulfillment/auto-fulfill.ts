@@ -3,7 +3,8 @@ import { fetchSheetCsv, parseSheetCsv, csvExportUrl, parseSheetUrl } from './par
 import { type SheetConfig } from './auto-fulfill-sheets'
 import { groupByOrder, mergeSheetGroups, buildFulfillmentPlan, type OrderPlanStatus, type OrderRow, type WholeRowCheck } from './build-fulfill-plan'
 import { fetchOrderFulfillmentOrdersByNames, createFulfillment } from '@/lib/shopify-orders'
-import { isNonProductLine } from '@/lib/order-lines'
+import { isNonProductLine, lineKeysOf } from '@/lib/order-lines'
+import { pushLineIds } from '@/lib/line-export'
 
 export type FulfillmentDetail = { tracking: string; lineKeys: string[]; lineCount: number; addOn?: boolean }
 export type OrderResultRow = { baseOrder: string; status: OrderPlanStatus; trackings: string[]; fulfilledLines: number; message?: string; fulfillments?: FulfillmentDetail[]; shop?: string; storeName?: string }
@@ -58,6 +59,20 @@ export async function pushedShipmentRows(storeId: string): Promise<Map<string, O
     out.set(base, [...(out.get(base) ?? []), ...rows])
   }
   return out
+}
+
+// A product line went to a supplier when it was exported (CSV, sheet push, hand-off, or an API push that marked it), or
+// when a push that landed (CREATED) carried it: a push made while the order could not be marked exported stays unmarked.
+// What a push carried is read as the tracking pull reads it: its lineIds, or every line of its supplier for an older push.
+function isSentToSupplier(
+  line: { id: string; resolvedSupplierId: string | null; exportedAt: Date | null },
+  createdPushes: Array<{ supplierId: string; prevExportJson: string | null }>,
+): boolean {
+  if (line.exportedAt) return true
+  return createdPushes.some(p => {
+    const carried = pushLineIds(p)
+    return p.supplierId === line.resolvedSupplierId && (!carried || carried.includes(line.id))
+  })
 }
 
 export type SheetData = { name: string; groups: Map<string, OrderRow[]> }
@@ -138,7 +153,10 @@ export async function runAutoFulfill(opts: {
       shipments: { select: { id: true, lineKey: true, shopifyLineId: true } },
       // Non-product lines (Shipping protection / Tip / Custom Text) have no Shipment row and
       // never appear in a supplier sheet, but Shopify still waits for them to be fulfilled.
-      lines: { select: { shopifyLineId: true, sku: true, productTitle: true, shopifyProductType: true, linePosition: true, resolvedSupplierId: true, exportedToSupplierId: true, exportedAt: true, designDriveLink: true } },
+      lines: { select: { id: true, shopifyLineId: true, sku: true, productTitle: true, shopifyProductType: true, linePosition: true, resolvedSupplierId: true, exportedToSupplierId: true, exportedAt: true, designDriveLink: true } },
+      // Pushes that landed, for isSentToSupplier. No orderBy in these relations: every sheet order is read here (thousands),
+      // and Prisma cannot split an ordered relation under SQLite's bind limit.
+      supplierPushes: { where: { status: 'CREATED' }, select: { supplierId: true, prevExportJson: true } },
     },
   })
   const dbByName = new Map(orders.map(o => [o.shopifyOrderNumber.replace(/^#/, ''), o]))
@@ -174,6 +192,12 @@ export async function runAutoFulfill(opts: {
     }))
     return { sheets: Array.from(sheets), lines }
   }
+  const productLinesFor = (db: (typeof orders)[number]) => {
+    const keys = lineKeysOf(db.shopifyOrderNumber, db.lines)
+    return db.lines.filter(l => !isNonProductLine(l)).map(l => ({
+      shopifyLineId: l.shopifyLineId, lineKey: keys.get(l.shopifyLineId) as string, sent: isSentToSupplier(l, db.supplierPushes),
+    }))
+  }
 
   // 3) Evaluate every sheet order in-memory (the Shopify + DB fetches above already ran).
   type Evaluated = { base: string; plan: ReturnType<typeof buildFulfillmentPlan>; db: (typeof orders)[number] | undefined; fulfilledLines: number }
@@ -189,6 +213,7 @@ export async function runAutoFulfill(opts: {
       displayFulfillmentStatus: fo?.displayFulfillmentStatus ?? null,
       addOnLineIds: (db?.lines ?? []).filter(l => isNonProductLine(l)).map(l => l.shopifyLineId),
       wholeRowCheck: wholeRowCheckFor(base),
+      productLines: db ? productLinesFor(db) : undefined,
       placedAt: db?.placedAt ?? (fo ? new Date(fo.createdAt) : null),
       now, minAgeDays: minAgeFor(base),
     })

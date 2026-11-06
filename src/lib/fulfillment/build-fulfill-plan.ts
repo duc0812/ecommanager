@@ -84,6 +84,10 @@ export function buildFulfillmentPlan(input: {
   // is ever fulfilled, so a missing/stale mapping can never over-fulfill.
   addOnLineIds?: string[]
   wholeRowCheck?: WholeRowCheck
+  // The order's product lines in the DB, each with its line key and whether it went to a supplier. A product line that
+  // would be fulfilled but was not sent (or is unknown to the DB) holds the whole order: a fulfilment emails the
+  // customer about an item no supplier makes. Omitted when the order isn't in the DB → the checks above only.
+  productLines?: Array<{ shopifyLineId: string; lineKey: string; sent: boolean }>
   placedAt: Date | null
   now: Date
   minAgeDays: number
@@ -148,6 +152,8 @@ export function buildFulfillmentPlan(input: {
     if (shipmentId && !g.shipmentIds.includes(shipmentId)) g.shipmentIds.push(shipmentId)
     groups.set(key, g)
   }
+  // Lines the rows put into a fulfilment, with the key a per-line row named them by.
+  const planned: Array<{ lineId: string; lineKey?: string }> = []
 
   // Fulfill ONLY the sub-orders listed in the sheet, grouped by tracking:
   //  - all listed sub-orders share one tracking → merge into ONE fulfillment (whole order);
@@ -176,6 +182,7 @@ export function buildFulfillmentPlan(input: {
     openByLineId.forEach((open, lineId) => {
       if (addOnLineIds.has(lineId)) return // add-ons are closed below, without tracking
       addLine(tracking, open.foId, open.foLineItemId, open.quantity, shipmentIdByLineId.get(lineId))
+      planned.push({ lineId })
     })
   } else {
     for (const row of input.rows) {
@@ -191,7 +198,16 @@ export function buildFulfillmentPlan(input: {
       if (prev && prev !== row.tracking) return done('needs_manual', `Line ${row.lineKey} có 2 tracking khác nhau`, ageDays)
       lineTracking.set(open.foLineItemId, row.tracking)
       addLine(row.tracking, open.foId, open.foLineItemId, open.quantity, ship.id)
+      planned.push({ lineId: ship.shopifyLineId, lineKey: row.lineKey })
     }
+  }
+
+  // Owner 2026-11-06: a line not exported to a supplier is never fulfilled (the customer would claim an item nobody
+  // makes). Hold the whole order rather than fulfil the rest and silently drop that line.
+  if (input.productLines) {
+    const known = new Map(input.productLines.map(l => [l.shopifyLineId, l]))
+    const unsent = Array.from(new Set(planned.filter(p => !addOnLineIds.has(p.lineId) && !known.get(p.lineId)?.sent).map(p => p.lineKey ?? known.get(p.lineId)?.lineKey ?? p.lineId)))
+    if (unsent.length) return done('needs_manual', `Dòng ${unsent.join(', ')} chưa export sang xưởng — không fulfill để tránh khách claim`, ageDays)
   }
 
   // Non-product add-on lines (Shipping protection, Tip, Custom Text) are never listed in a

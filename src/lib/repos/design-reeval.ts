@@ -6,17 +6,15 @@ import { lineFamily, reduceOrderType } from '@/lib/order-classify'
 import { hasUnresolvedProductLine, isNonProductLine } from '@/lib/order-lines'
 import { autoDetectStatus, isValidPipelineStatus, type PipelineStatus } from '@/lib/pipeline-status'
 
-// Re-evaluate existing orders against the CURRENT design library (no Shopify fetch).
-// Called after a design-library entry is saved so orders that use it reflect the change
-// immediately: fills newly-resolved line design links, re-derives orderType / designReady /
-// pipelineStatus. Supplier-scoped and mode-aware (VARIANT exact, PARENT prefix), so only
-// orders whose line resolves to the SAME supplier and matches the entry are touched.
-// `customized` is read from the persisted `OrderLine.customized` flag (set at Shopify sync
-// time from print-files / preview / external custom fields), so re-eval never regresses a
-// customized order back to non-custom.
-export async function reevaluateOrdersForDesignEntry(entry: {
-  sku: string; supplierId: string; matchMode: string
-}): Promise<number> {
+type DesignEntryRef = { sku: string; supplierId: string; matchMode: string }
+
+// Lines ordered inside the order query are loaded by a second query binding one parameter per parent order, which
+// Prisma cannot split: past SQLite's 999 bind values it throws (measured: 997 parents work, 998 throw; see
+// SHIPMENT_SYNC_PAGE_SIZE in shipments.ts). The lines are read for chunks of orders well under that, as listOrdersWithLines does.
+const ORDER_LINES_CHUNK = 500
+
+/** The open orders with a line of the entry's supplier that the entry matches, each with every line in line order. */
+export async function loadOrdersForDesignEntry(entry: DesignEntryRef) {
   const isParent = (entry.matchMode ?? 'VARIANT').toUpperCase() === 'PARENT'
   const lineWhere: any = isParent
     ? { resolvedSupplierId: entry.supplierId, sku: { startsWith: entry.sku } }
@@ -27,17 +25,40 @@ export async function reevaluateOrdersForDesignEntry(entry: {
       pipelineStatus: { notIn: ['CANCELLED', 'REFUNDED'] },
       lines: { some: lineWhere },
     },
+    select: { id: true, financialStatus: true, fulfillmentStatus: true, pipelineStatus: true },
+  })
+  const linesOf = new Map<string, Array<Omit<Awaited<ReturnType<typeof linesOfOrders>>[number], 'orderId'>>>()
+  for (let i = 0; i < orders.length; i += ORDER_LINES_CHUNK) {
+    for (const { orderId, ...line } of await linesOfOrders(orders.slice(i, i + ORDER_LINES_CHUNK).map(o => o.id))) {
+      const list = linesOf.get(orderId)
+      if (list) list.push(line)
+      else linesOf.set(orderId, [line])
+    }
+  }
+  return orders.map(o => ({ ...o, lines: linesOf.get(o.id) ?? [] }))
+}
+
+function linesOfOrders(orderIds: string[]) {
+  return prisma.orderLine.findMany({
+    where: { orderId: { in: orderIds } },
+    orderBy: { linePosition: 'asc' },
     select: {
-      id: true, financialStatus: true, fulfillmentStatus: true, pipelineStatus: true,
-      lines: {
-        orderBy: { linePosition: 'asc' },
-        select: {
-          id: true, sku: true, resolvedSupplierId: true, resolvedSupplierSku: true, productTitle: true,
-          shopifyProductType: true, previewCdnUrl: true, designDriveLink: true, customized: true,
-        },
-      },
+      orderId: true, id: true, sku: true, resolvedSupplierId: true, resolvedSupplierSku: true, productTitle: true,
+      shopifyProductType: true, previewCdnUrl: true, designDriveLink: true, customized: true,
     },
   })
+}
+
+// Re-evaluate existing orders against the CURRENT design library (no Shopify fetch).
+// Called after a design-library entry is saved so orders that use it reflect the change
+// immediately: fills newly-resolved line design links, re-derives orderType / designReady /
+// pipelineStatus. Supplier-scoped and mode-aware (VARIANT exact, PARENT prefix), so only
+// orders whose line resolves to the SAME supplier and matches the entry are touched.
+// `customized` is read from the persisted `OrderLine.customized` flag (set at Shopify sync
+// time from print-files / preview / external custom fields), so re-eval never regresses a
+// customized order back to non-custom.
+export async function reevaluateOrdersForDesignEntry(entry: DesignEntryRef): Promise<number> {
+  const orders = await loadOrdersForDesignEntry(entry)
   if (orders.length === 0) return 0
 
   const designEntries = await loadReadyDesignEntries()
