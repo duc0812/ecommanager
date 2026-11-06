@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState, type DragEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import type { TaskDetail } from './types'
-import { artworkImage, isImage, mockupFiles, versionsFor, type LightboxImage } from './model'
+import { artworkImage, isImage, mockupFiles, printFiles, versionsFor, type LightboxImage } from './model'
 import type { ArtworkRow } from './types'
 import { MOCKUP_ACCEPT, uploadItemLabel, useArtworkUpload, type UploadItem } from './useArtworkUpload'
 import { useArtworkRemove } from './useArtworkRemove'
@@ -10,7 +10,9 @@ import { useLightbox } from './Lightbox'
 import { useDismiss } from './overlay'
 import FileMenu from './FileMenu'
 import { ArtImg } from './art-src'
-import { ErrorBanner, Icon, btnTonal, btnText, card, iconBtn } from './ui'
+import TemplateCanvas, { BgSwatches, type CanvasArtActions, type CanvasBg } from './TemplateCanvas'
+import { ALL_GUIDES, NO_GUIDES } from './canvas-guides'
+import { ErrorBanner, Icon, btnTonal, btnText, card, chip, iconBtn } from './ui'
 
 function UploadList({ items, onDismiss }: { items: UploadItem[]; onDismiss: (id: number) => void }) {
   if (items.length === 0) return null
@@ -91,37 +93,71 @@ function Empty({ icon, text }: { icon: string; text: string }) {
   )
 }
 
-function SideBySide({ left, leftTitle, right, rightArt, onClose }: { left: LightboxImage | null; leftTitle: string; right: LightboxImage | null; rightArt?: ArtworkRow; onClose: () => void }) {
+function SideBySide({ left, leftTitle, right, rightTitle, rightSub, tools, onClose }: {
+  left: LightboxImage | null; leftTitle: string; right: ReactNode; rightTitle: string; rightSub?: string; tools?: ReactNode; onClose: () => void
+}) {
   useEffect(() => {
     function onKey(e: KeyboardEvent) { if (e.key === 'Escape') onClose() }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
-  const pane = (img: LightboxImage | null, title: string, art?: ArtworkRow) => (
+  const pane = (title: string, sub: string | undefined, body: ReactNode) => (
     <figure className="flex-1 min-w-0 flex flex-col gap-sm">
-      <figcaption className="text-body-sm font-semibold text-white">{title}{img ? <span className="font-normal text-white/70"> · {img.label}</span> : null}</figcaption>
+      <figcaption className="text-body-sm font-semibold text-white truncate">{title}{sub ? <span className="font-normal text-white/70"> · {sub}</span> : null}</figcaption>
       <div className="flex-1 min-h-0 rounded-lg bg-white/5 grid place-items-center overflow-hidden">
-        {img && art
-          ? <ArtImg art={art} px={2400} full alt={img.label} className="max-w-full max-h-full object-contain" />
-          : img
-          // eslint-disable-next-line @next/next/no-img-element
-          ? <img src={img.url} alt={img.label} className="max-w-full max-h-full object-contain" />
-          : <span className="text-body-sm text-white/70">Chưa có ảnh</span>}
+        {body ?? <span className="text-body-sm text-white/70">Chưa có ảnh</span>}
       </div>
     </figure>
   )
+  // eslint-disable-next-line @next/next/no-img-element
+  const leftBody = left ? <img src={left.url} alt={left.label} className="max-w-full max-h-full object-contain" /> : null
   return createPortal(
-    <div role="dialog" aria-modal="true" aria-label="So sánh preview khách và mockup" className="fixed inset-0 z-[110] bg-black/85 p-lg flex flex-col gap-md" onClick={e => { if (e.target === e.currentTarget) onClose() }}>
-      <div className="flex items-center">
-        <span className="text-body-md font-semibold text-white">Soi {leftTitle.toLowerCase()} ↔ mockup từ file in</span>
-        <button type="button" onClick={onClose} aria-label="Đóng" className="ml-auto inline-grid place-items-center w-10 h-10 rounded-lg text-white hover:bg-white/10"><Icon name="close" className="text-[24px]" /></button>
+    <div role="dialog" aria-modal="true" aria-label={`So sánh ${leftTitle.toLowerCase()} và ${rightTitle.toLowerCase()}`} className="fixed inset-0 z-[110] bg-black/85 p-lg flex flex-col gap-md" onClick={e => { if (e.target === e.currentTarget) onClose() }}>
+      <div className="flex items-center gap-sm">
+        <span className="text-body-md font-semibold text-white">Soi {leftTitle.toLowerCase()} ↔ {rightTitle.toLowerCase()}</span>
+        <span className="ml-auto flex items-center gap-xs">{tools}</span>
+        <button type="button" onClick={onClose} aria-label="Đóng" className="inline-grid place-items-center w-10 h-10 rounded-lg text-white hover:bg-white/10"><Icon name="close" className="text-[24px]" /></button>
       </div>
       <div className="flex-1 min-h-0 flex gap-md">
-        {pane(left, leftTitle)}
-        {pane(right, 'Mockup từ file in', rightArt)}
+        {pane(leftTitle, left?.label, leftBody)}
+        {pane(rightTitle, rightSub, right)}
       </div>
     </div>,
     document.body,
+  )
+}
+
+const PANE_BG: Record<CanvasBg, string> = {
+  checker: 'bg-[repeating-conic-gradient(theme(colors.outline-variant)_0_25%,theme(colors.surface-container-lowest)_0_50%)] bg-[length:12px_12px]',
+  white: 'bg-white',
+  black: 'bg-black',
+}
+// the tall cell is 460px high; the pane keeps 8px of padding and room for the sheet's legend line
+const DESIGN_PANE_PX = 420
+
+/**
+ * The print files as the factory gets them: laid on the template sheet, or `file` alone — a part the sheet has no area for, or any part of a product without a template.
+ * `big` is the side-by-side dialog, which sits above the lightbox — nothing opens from there.
+ */
+function DesignPane({ detail, file, bg, clean, big = false, onView }: { detail: TaskDetail; file?: ArtworkRow; bg: CanvasBg; clean: boolean; big?: boolean; onView: (a: ArtworkRow) => void }) {
+  const { line, template, slots } = detail
+  if (template && !file) {
+    const artActions: CanvasArtActions | null = big ? null : { onView, onRemove: () => {}, canRemove: () => ({ ok: false }) }
+    return (
+      <div className="w-full h-full flex flex-col p-sm">
+        <TemplateCanvas template={template} line={line} slots={slots} bg={bg} guide={50} guides={clean ? NO_GUIDES : ALL_GUIDES} artActions={artActions}
+          maxPx={big ? Math.round(window.innerHeight * 0.74) : DESIGN_PANE_PX} />
+      </div>
+    )
+  }
+  if (!file) return big ? null : <Empty icon="hide_image" text="Chưa có file in" />
+  const label = `File in ${file.printArea} v${file.version}`
+  if (!isImage(file)) return big ? <span className="text-body-sm text-white/70">{file.fileName}</span> : <Empty icon="description" text={file.fileName} />
+  if (big) return <ArtImg art={file} px={2400} full alt={label} className={`max-w-full max-h-full object-contain ${PANE_BG[bg]}`} />
+  return (
+    <button type="button" onClick={() => onView(file)} aria-label={`Mở lớn: ${label}`} title={`${file.printArea} · v${file.version} · ${file.fileName}`} className={`block w-full h-full cursor-zoom-in ${PANE_BG[bg]}`}>
+      <ArtImg art={file} px={1000} full alt={label} className="w-full h-full object-contain p-sm" loading="lazy" />
+    </button>
   )
 }
 
@@ -130,10 +166,10 @@ const BACK = /back|sau|mat-?sau|_b\b/i
 
 /**
  * `three`: the task screen's row — variant photo, customer preview, mockup from the print files.
- * `pair`: the review screen — one tall pane for the customer's picture (preview, or the listing photo) next to the mockup.
+ * `pair`: the review screen — one tall pane for the customer's picture (preview, or the listing photo) next to the uploaded design on its template.
  */
 export default function CompareRow({ detail, onChanged, layout = 'three' }: { detail: TaskDetail; onChanged: () => void; layout?: 'three' | 'pair' }) {
-  const { line, task, me } = detail
+  const { line, task, me, template, slots } = detail
   const lightbox = useLightbox()
   const up = useArtworkUpload(task.taskKey, onChanged)
   const remover = useArtworkRemove(onChanged)
@@ -145,6 +181,9 @@ export default function CompareRow({ detail, onChanged, layout = 'three' }: { de
   const [idx, setIdx] = useState(0)
   const [soi, setSoi] = useState(false)
   const [leftPick, setLeftPick] = useState<'preview' | 'variant'>('preview')
+  const [bg, setBg] = useState<CanvasBg>('checker')
+  const [clean, setClean] = useState(false)
+  const [designIdx, setDesignIdx] = useState<number | null>(null)
   useDismiss(menuRef, menu, () => setMenu(false))
   const pair = layout === 'pair'
 
@@ -167,6 +206,38 @@ export default function CompareRow({ detail, onChanged, layout = 'three' }: { de
   const dragHasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes('Files')
   const open = (img: LightboxImage) => lightbox?.open(img.url, img)
 
+  // The sheet is one stop; every print file it has no area for is a stop of its own.
+  const onSheet = (a: ArtworkRow) => !!template && template.areas.some(x => x.name === a.printArea)
+  const designs = printFiles(line, slots)
+  const loose = designs.filter(a => !onSheet(a))
+  const sheetStops = template ? 1 : 0
+  const stops = sheetStops + loose.length
+  const emptySheet = !!template && loose.length > 0 && !designs.some(onSheet)
+  const designAt = Math.min(designIdx ?? (emptySheet ? 1 : 0), Math.max(0, stops - 1))
+  const design = designAt >= sheetStops ? loose[designAt - sheetStops] : undefined
+  const designTitle = template ? 'Design trên template' : 'Design đã upload'
+  const designSub = design
+    ? [design.printArea, `v${design.version}`, design.widthPx && design.heightPx ? `${design.widthPx}×${design.heightPx}` : null, template ? 'file ngoài tấm template' : 'chưa có template'].filter(Boolean).join(' · ')
+    : template ? `${template.name} · ${template.widthPx}×${template.heightPx} · ${template.dpi} DPI` : 'chưa có template'
+  const viewDesign = (a: ArtworkRow) => lightbox?.open(a.url, artworkImage(a))
+  const designTools = (
+    <>
+      {stops > 1 && (
+        <span className="flex items-center text-label-sm text-on-surface-variant" title={template ? `Tấm template, rồi ${loose.length} file in ngoài tấm` : `${loose.length} file in`}>
+          <button type="button" onClick={() => setDesignIdx((designAt - 1 + stops) % stops)} aria-label="File in trước" className={`${iconBtn} w-6 h-6`}><Icon name="chevron_left" className="text-[18px]" /></button>
+          {designAt + 1}/{stops}
+          <button type="button" onClick={() => setDesignIdx((designAt + 1) % stops)} aria-label="File in sau" className={`${iconBtn} w-6 h-6`}><Icon name="chevron_right" className="text-[18px]" /></button>
+        </span>
+      )}
+      <span role="group" aria-label="Nền" className="inline-flex items-center gap-xs"><BgSwatches bg={bg} onBg={setBg} /></span>
+      {template && !design && (
+        <button type="button" aria-pressed={!clean} onClick={() => setClean(!clean)} className={chip(!clean)} title="Hiện / ẩn vùng in, vùng an toàn, bleed và artguide của template">
+          <Icon name={clean ? 'visibility_off' : 'visibility'} className="text-[14px]" />Guide
+        </button>
+      )}
+    </>
+  )
+
   const designLink = line.customerDesignLink && (
     <a href={line.customerDesignLink} target="_blank" rel="noreferrer" className="inline-flex items-center gap-[2px] text-[13px] font-medium text-secondary hover:underline whitespace-nowrap">
       Mở lại thiết kế<Icon name="open_in_new" className="text-[15px]" />
@@ -177,8 +248,8 @@ export default function CompareRow({ detail, onChanged, layout = 'three' }: { de
   const leftTitle = left === preview && preview ? 'Preview khách' : 'Mockup variant'
 
   const mockupCell = (
-    <Cell n={pair ? undefined : 3} tall={pair} title="Mockup từ file in" sub={mockups.length ? `${mockups.length} ảnh${cur ? ` · ${cur.printArea}` : ''}` : undefined}
-      tip={pair ? 'Mockup designer dựng từ file in — so với ảnh bên trái' : 'Mockup dựng từ file in để QA với ① và ②'}
+    <Cell n={3} title="Mockup từ file in" sub={mockups.length ? `${mockups.length} ảnh${cur ? ` · ${cur.printArea}` : ''}` : undefined}
+      tip="Mockup dựng từ file in để QA với ① và ②"
           right={(
             <div ref={menuRef} className="relative flex items-center gap-xs">
               {sided && <Segmented label="Mặt" value={side} onChange={s => { setSide(s); setIdx(0) }} options={[{ v: 'front', label: 'Trước' }, { v: 'back', label: 'Sau' }]} />}
@@ -230,7 +301,7 @@ export default function CompareRow({ detail, onChanged, layout = 'three' }: { de
       <div className="flex items-center gap-sm">
         <span className="text-body-sm font-semibold text-on-surface">{pair ? 'So sánh khách đặt ↔ file in' : 'So sánh'}</span>
         <span className="text-label-sm text-on-surface-variant">bấm ảnh để mở lớn</span>
-        <button type="button" className={`${btnText} ml-auto`} disabled={!left && !mockImg} onClick={() => setSoi(true)}>
+        <button type="button" className={`${btnText} ml-auto`} disabled={pair ? !left && !template && !design : !left && !mockImg} onClick={() => setSoi(true)}>
           <Icon name="compare" className="text-[18px]" />{pair ? 'Soi cỡ lớn' : 'Soi preview khách ↔ mockup cỡ lớn'}
         </button>
       </div>
@@ -244,7 +315,9 @@ export default function CompareRow({ detail, onChanged, layout = 'three' }: { de
             </>}>
             {left ? <Shot img={left} onOpen={() => open(left)} /> : <Empty icon="hide_image" text={line.customized ? 'Không có preview lẫn ảnh variant — Nạp lại từ Shopify' : 'Không có ảnh variant — Nạp lại từ Shopify'} />}
           </Cell>
-          {mockupCell}
+          <Cell tall title={designTitle} sub={designSub} tip="File in designer upload, đặt trên template của xưởng — so với ảnh khách đặt bên trái" right={designTools}>
+            <DesignPane detail={detail} file={design} bg={bg} clean={clean} onView={viewDesign} />
+          </Cell>
         </div>
       ) : (
         <div className="grid grid-cols-3 gap-md">
@@ -257,7 +330,11 @@ export default function CompareRow({ detail, onChanged, layout = 'three' }: { de
           {mockupCell}
         </div>
       )}
-      {soi && <SideBySide left={left} leftTitle={leftTitle} right={mockImg} rightArt={cur} onClose={() => setSoi(false)} />}
+      {soi && (pair
+        ? <SideBySide left={left} leftTitle={leftTitle} rightTitle={designTitle} rightSub={designSub} tools={designTools} onClose={() => setSoi(false)}
+            right={template || design ? <DesignPane detail={detail} file={design} bg={bg} clean={clean} big onView={viewDesign} /> : null} />
+        : <SideBySide left={left} leftTitle={leftTitle} rightTitle="Mockup từ file in" rightSub={mockImg?.label} onClose={() => setSoi(false)}
+            right={mockImg && cur ? <ArtImg art={cur} px={2400} full alt={mockImg.label} className="max-w-full max-h-full object-contain" /> : null} />)}
     </section>
   )
 }
