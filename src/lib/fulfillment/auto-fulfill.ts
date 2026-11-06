@@ -1,7 +1,7 @@
 import { prisma } from '@/lib/db'
 import { fetchSheetCsv, parseSheetCsv, csvExportUrl, parseSheetUrl } from './parse-sheet'
 import { type SheetConfig } from './auto-fulfill-sheets'
-import { groupByOrder, mergeSheetGroups, buildFulfillmentPlan, type OrderPlanStatus, type OrderRow, type WholeRowCheck } from './build-fulfill-plan'
+import { groupByOrder, mergeSheetGroups, buildFulfillmentPlan, type OrderPlanStatus, type OrderRow } from './build-fulfill-plan'
 import { fetchOrderFulfillmentOrdersByNames, createFulfillment } from '@/lib/shopify-orders'
 import { isNonProductLine, lineKeysOf } from '@/lib/order-lines'
 import { pushLineIds } from '@/lib/line-export'
@@ -40,7 +40,8 @@ export function settleFromDb(
 
 // Orders pushed to a supplier by API (PGprints) get their tracking on Shipment rows from the
 // supplier sync rather than a sheet. Those trackings exist only once the parcel shipped, so
-// these orders skip the min-age gate that protects pre-printed sheet trackings.
+// these orders skip the min-age gate that protects pre-printed sheet trackings. Each row is one
+// Shipment, so one line: a row under the bare order number is held by the plan, never read as the whole order.
 export async function pushedShipmentRows(storeId: string): Promise<Map<string, OrderRow[]>> {
   const pushes = await prisma.supplierOrderPush.findMany({
     where: { status: 'CREATED', order: { storeId } },
@@ -125,18 +126,13 @@ export async function runAutoFulfill(opts: {
   // 1) Group rows of the sheets by base order. Rows for the same order are
   //    MERGED across sheets — a multi-supplier order lists its sub-orders in each supplier's
   //    own sheet, so keeping only the first sheet's rows would silently skip the others.
-  const byOrder = new Map<string, { rows: Array<{ lineKey: string; tracking: string }> }>()
-  const wholeRowSheets = new Map<string, Set<string>>()
+  //    Each row keeps the sheet it came from: a sheet row fulfils a line only from the supplier the line was sent to.
+  const byOrder = new Map<string, { rows: OrderRow[] }>()
   const read = opts.sheetData ? { sheets: opts.sheetData, errorRows: [] as OrderResultRow[] } : await readAutoFulfillSheets(opts.sheets, opts.onStage)
   const sheetErrorRows = read.errorRows
-  for (const sheet of read.sheets) {
-    for (const [base, rows] of Array.from(sheet.groups)) {
-      if (rows.some(r => r.lineKey === base)) wholeRowSheets.set(base, (wholeRowSheets.get(base) ?? new Set<string>()).add(sheet.name))
-    }
-    mergeSheetGroups(byOrder, sheet.groups)
-  }
+  for (const sheet of read.sheets) mergeSheetGroups(byOrder, sheet.groups, sheet.name)
   const pushed = await pushedShipmentRows(opts.storeId)
-  mergeSheetGroups(byOrder, pushed)
+  mergeSheetGroups(byOrder, new Map(Array.from(pushed, ([base, rows]) => [base, rows.map(r => ({ ...r, pushed: true }))])))
   const minAgeFor = (base: string) => (pushed.has(base) ? 0 : opts.minAgeDays)
 
   const names = Array.from(byOrder.keys())
@@ -149,11 +145,11 @@ export async function runAutoFulfill(opts: {
   const orders = await prisma.order.findMany({
     where: { storeId: opts.storeId, shopifyOrderNumber: { in: [...names, ...names.map(n => `#${n}`)] } },
     select: {
-      id: true, shopifyOrderNumber: true, placedAt: true, pipelineStatus: true, fulfillmentStatus: true, trelloCardUrl: true,
+      id: true, shopifyOrderNumber: true, placedAt: true, pipelineStatus: true, fulfillmentStatus: true,
       shipments: { select: { id: true, lineKey: true, shopifyLineId: true } },
       // Non-product lines (Shipping protection / Tip / Custom Text) have no Shipment row and
       // never appear in a supplier sheet, but Shopify still waits for them to be fulfilled.
-      lines: { select: { id: true, shopifyLineId: true, sku: true, productTitle: true, shopifyProductType: true, linePosition: true, resolvedSupplierId: true, exportedToSupplierId: true, exportedAt: true, designDriveLink: true } },
+      lines: { select: { id: true, shopifyLineId: true, sku: true, productTitle: true, shopifyProductType: true, linePosition: true, resolvedSupplierId: true, exportedToSupplierId: true, exportedAt: true } },
       // Pushes that landed, for isSentToSupplier. No orderBy in these relations: every sheet order is read here (thousands),
       // and Prisma cannot split an ordered relation under SQLite's bind limit.
       supplierPushes: { where: { status: 'CREATED' }, select: { supplierId: true, prevExportJson: true } },
@@ -171,31 +167,14 @@ export async function runAutoFulfill(opts: {
   const foMap = await fetchOrderFulfillmentOrdersByNames(opts.shop, opts.accessToken, names.filter(n => !settled.has(n)), undefined,
     (done, total) => opts.onStage?.('shopify', done, total))
 
-  const wholeRowOrderIds = names.filter(n => !settled.has(n) && wholeRowSheets.has(n)).map(n => dbByName.get(n)?.id).filter((id): id is string => !!id)
-  const [suppliers, printed] = wholeRowOrderIds.length
-    ? await Promise.all([
-      prisma.supplier.findMany({ select: { id: true, name: true } }),
-      prisma.designArtwork.findMany({ where: { orderId: { in: wholeRowOrderIds }, kind: 'PRINT', removedAt: null }, select: { orderId: true, shopifyLineId: true } }),
-    ])
-    : [[], []]
+  // A read-back sheet is named after its supplier: a line's supplier is the one it was exported to, else the one it maps to.
+  const suppliers = names.some(n => !settled.has(n) && dbByName.has(n)) ? await prisma.supplier.findMany({ select: { id: true, name: true } }) : []
   const supplierName = new Map(suppliers.map(s => [s.id, s.name]))
-  const printedLines = new Set(printed.map(a => `${a.orderId} ${a.shopifyLineId}`))
-  const wholeRowCheckFor = (base: string): WholeRowCheck | undefined => {
-    const sheets = wholeRowSheets.get(base)
-    if (!sheets) return undefined
-    const db = dbByName.get(base)
-    const lines = (db?.lines ?? []).filter(l => !isNonProductLine(l)).map(l => ({
-      shopifyLineId: l.shopifyLineId,
-      label: `dòng ${l.linePosition} ${l.sku ?? l.productTitle}`,
-      supplier: supplierName.get(l.exportedToSupplierId ?? l.resolvedSupplierId ?? '') ?? null,
-      hasFile: printedLines.has(`${db?.id} ${l.shopifyLineId}`) || !!l.designDriveLink || !!db?.trelloCardUrl,
-    }))
-    return { sheets: Array.from(sheets), lines }
-  }
   const productLinesFor = (db: (typeof orders)[number]) => {
     const keys = lineKeysOf(db.shopifyOrderNumber, db.lines)
     return db.lines.filter(l => !isNonProductLine(l)).map(l => ({
       shopifyLineId: l.shopifyLineId, lineKey: keys.get(l.shopifyLineId) as string, sent: isSentToSupplier(l, db.supplierPushes),
+      supplier: supplierName.get(l.exportedToSupplierId ?? l.resolvedSupplierId ?? '') ?? null,
     }))
   }
 
@@ -212,7 +191,6 @@ export async function runAutoFulfill(opts: {
       fulfillmentOrders: fo ? fo.fulfillmentOrders : null,
       displayFulfillmentStatus: fo?.displayFulfillmentStatus ?? null,
       addOnLineIds: (db?.lines ?? []).filter(l => isNonProductLine(l)).map(l => l.shopifyLineId),
-      wholeRowCheck: wholeRowCheckFor(base),
       productLines: db ? productLinesFor(db) : undefined,
       placedAt: db?.placedAt ?? (fo ? new Date(fo.createdAt) : null),
       now, minAgeDays: minAgeFor(base),

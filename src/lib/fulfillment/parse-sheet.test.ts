@@ -44,4 +44,40 @@ describe('parseSheetCsv', () => {
     const rows = parseSheetCsv('Order,Tracking\n#LIT1,AA\n\n#LIT2,\n#LIT1,AA\n')
     expect(rows).toEqual([{ orderToken: '#LIT1', tracking: 'AA' }])
   })
+
+  describe('a sheet that writes the bare order number and the line key in Order Vendor (Mangoshao)', () => {
+    const MANGO = 'Date,Order Number,Order Vendor,SKU,Tracking\n'
+
+    it('reads the line key of the same order as the row token', () => {
+      const rows = parseSheetCsv(`${MANGO}11/4/2026,#LIT5708,LIT5708_1,X,UL1\n11/4/2026,#LIT6000,#LIT6000_2,X,UL2\n11/4/2026,#LIT6000,lit6000_3,X,UL2\n`)
+      expect(rows).toEqual([
+        { orderToken: 'LIT5708_1', tracking: 'UL1', byOrderNumber: true },
+        { orderToken: 'LIT6000_2', tracking: 'UL2', byOrderNumber: true },
+        { orderToken: 'LIT6000_3', tracking: 'UL2', byOrderNumber: true },
+      ])
+    })
+
+    it('keeps the bare order number when Order Vendor is empty, is no line key, or names another order', () => {
+      const rows = parseSheetCsv(`${MANGO}11/4/2026,#LIT6001,LIT6002_1,X,UL3\n11/4/2026,#LIT6003,,X,UL4\n11/4/2026,#LIT6004,LIT6004,X,UL5\n11/4/2026,#LIT6005,LIT60051_1,X,UL6\n`)
+      expect(rows).toEqual([
+        { orderToken: '#LIT6001', tracking: 'UL3' },
+        { orderToken: '#LIT6003', tracking: 'UL4' },
+        { orderToken: '#LIT6004', tracking: 'UL5' },
+        { orderToken: '#LIT6005', tracking: 'UL6' },
+      ])
+    })
+
+    it('two lines of one order with one tracking stay two rows', () => {
+      const rows = parseSheetCsv(`${MANGO}11/4/2026,#LIT7,LIT7_1,X,UL7\n11/4/2026,#LIT7,LIT7_2,X,UL7\n11/4/2026,#LIT7,LIT7_2,X,UL7\n`)
+      expect(rows.map(r => r.orderToken)).toEqual(['LIT7_1', 'LIT7_2'])
+    })
+  })
+
+  it('a Jomall row (line key in Order Number, bare order in Order Vendor) is read as before', () => {
+    const rows = parseSheetCsv('Date,Order Number,Order Vendor,Tracking\n11/4/2026,#LIT7000_2,LIT7000,UL5\n11/4/2026,#LIT7001,LIT7001,UL6\n')
+    expect(rows).toEqual([
+      { orderToken: '#LIT7000_2', tracking: 'UL5' },
+      { orderToken: '#LIT7001', tracking: 'UL6' },
+    ])
+  })
 })

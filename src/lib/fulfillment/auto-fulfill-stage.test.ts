@@ -2,10 +2,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const dbOrders: any[] = []
 const pushRows: any[] = []
-const printRows: any[] = []
 vi.mock('@/lib/db', () => ({ prisma: {
   order: { findMany: vi.fn(async () => dbOrders), update: vi.fn() }, supplierOrderPush: { findMany: vi.fn(async () => pushRows) },
-  supplier: { findMany: vi.fn(async () => [{ id: 'sm', name: 'Mangoshao' }, { id: 'sj', name: 'Jomall' }]) }, designArtwork: { findMany: vi.fn(async () => printRows) },
+  supplier: { findMany: vi.fn(async () => [{ id: 'sm', name: 'Mangoshao' }, { id: 'sj', name: 'Jomall' }]) },
 } }))
 vi.mock('./parse-sheet', async (orig) => ({
   ...(await orig<typeof import('./parse-sheet')>()),
@@ -28,7 +27,7 @@ const SHEET = { id: '1', name: 'A', url: 'https://docs.google.com/spreadsheets/d
 const dbOrder = (name: string, placedAt: Date, fulfillmentStatus: string | null) =>
   ({ id: name, shopifyOrderNumber: `#${name}`, placedAt, pipelineStatus: null, fulfillmentStatus, shipments: [], lines: [], supplierPushes: [] })
 
-beforeEach(() => { vi.clearAllMocks(); dbOrders.length = 0; pushRows.length = 0; printRows.length = 0 })
+beforeEach(() => { vi.clearAllMocks(); dbOrders.length = 0; pushRows.length = 0 })
 
 describe('runAutoFulfill', () => {
   it('reports each sheet read and the Shopify batches before evaluating orders', async () => {
@@ -54,37 +53,39 @@ describe('runAutoFulfill', () => {
 })
 
 describe('whole-order row checked against the order lines', () => {
-  const twoLines = (second: Record<string, unknown>) => {
+  const withLines = (suppliers: string[]) => {
     // Each line exported to its own supplier (Auto Fulfilled fulfils a product line only after it went to its supplier).
-    const line = (id: string, more: Record<string, unknown>) => {
-      const l = { id: `ol-${id}`, shopifyLineId: id, sku: `SKU-${id}`, productTitle: 'Hoodie', shopifyProductType: 'Hoodie', linePosition: Number(id.slice(1)), resolvedSupplierId: 'sm', designDriveLink: 'https://x', ...more }
-      return { ...l, exportedToSupplierId: l.resolvedSupplierId, exportedAt: daysAgo(15) }
-    }
-    dbOrders.push({ ...dbOrder('LIT1003', daysAgo(20), 'UNFULFILLED'), trelloCardUrl: null, lines: [line('L1', {}), line('L2', second)] })
+    const line = (n: number, supplier: string) => ({
+      id: `ol-L${n}`, shopifyLineId: `L${n}`, sku: `SKU-L${n}`, productTitle: 'Hoodie', shopifyProductType: 'Hoodie', linePosition: n,
+      resolvedSupplierId: supplier, exportedToSupplierId: supplier, exportedAt: daysAgo(15),
+    })
+    const lines = suppliers.map((s, i) => line(i + 1, s))
+    dbOrders.push({ ...dbOrder('LIT1003', daysAgo(20), 'UNFULFILLED'), lines })
     ;(fetchOrderFulfillmentOrdersByNames as any).mockResolvedValueOnce(new Map([['LIT1003', { displayFulfillmentStatus: 'UNFULFILLED', createdAt: daysAgo(20).toISOString(), fulfillmentOrders: [
-      { id: 'FO', status: 'OPEN', lineItems: [{ id: 'A', remainingQuantity: 1, shopifyLineId: 'L1', sku: 'X' }, { id: 'B', remainingQuantity: 1, shopifyLineId: 'L2', sku: 'Y' }] },
+      { id: 'FO', status: 'OPEN', lineItems: lines.map(l => ({ id: `fol-${l.shopifyLineId}`, remainingQuantity: 1, shopifyLineId: l.shopifyLineId, sku: l.sku })) },
     ] }]]))
   }
   const run = () => runAutoFulfill({ shop: 's', accessToken: 't', storeId: 'st', minAgeDays: 5, apply: true, now: NOW, sheets: [{ ...SHEET, name: 'Mangoshao' }] })
+  const rowOf = (r: Awaited<ReturnType<typeof run>>) => r.rows.find(x => x.baseOrder === 'LIT1003')
 
-  it('does not fulfill when the row comes from another supplier than a line', async () => {
-    twoLines({ resolvedSupplierId: 'sj' })
-    const r = await run()
+  it('does not fulfill a two-line order, even when both lines are the sheet supplier\'s: the sheet must name the line', async () => {
+    withLines(['sm', 'sm'])
+    const row = rowOf(await run())
     expect(createFulfillment).not.toHaveBeenCalled()
-    const row = r.rows.find(x => x.baseOrder === 'LIT1003')
     expect(row?.status).toBe('needs_manual')
-    expect(row?.message).toContain('xưởng Jomall')
+    expect(row?.message).toContain('mã dòng')
   })
-  it('does not fulfill when a line has no file, and a print on the line counts as a file', async () => {
-    twoLines({ designDriveLink: null })
-    expect((await run()).rows.find(x => x.baseOrder === 'LIT1003')?.message).toContain('chưa có file')
+  it('fulfils a one-line order from the sheet of the supplier the line went to, and not from another', async () => {
+    withLines(['sj'])
+    const held = rowOf(await run())
+    expect(held?.status).toBe('needs_manual')
+    expect(held?.message).toContain('Jomall')
     expect(createFulfillment).not.toHaveBeenCalled()
 
     dbOrders.length = 0
-    twoLines({ designDriveLink: null })
-    printRows.push({ orderId: 'LIT1003', shopifyLineId: 'L2' })
+    withLines(['sm'])
     ;(createFulfillment as any).mockResolvedValue({ ok: true, fulfillmentId: 'F1' })
-    expect((await run()).rows.find(x => x.baseOrder === 'LIT1003')?.status).toBe('will_fulfill')
+    expect(rowOf(await run())?.status).toBe('will_fulfill')
     expect(createFulfillment).toHaveBeenCalledTimes(1)
   })
 })

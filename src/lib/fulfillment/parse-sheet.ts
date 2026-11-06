@@ -16,11 +16,26 @@ export function csvExportUrl(ref: SheetRef): string {
   return ref.gid ? `${base}&gid=${ref.gid}` : base
 }
 
-export type SheetRow = { orderToken: string; tracking: string }
+// byOrderNumber: the sheet wrote the bare order number and the token is the line key from its Order Vendor column.
+export type SheetRow = { orderToken: string; tracking: string; byOrderNumber?: boolean }
 
 function splitCsvLine(line: string): string[] {
   // Sheet data has no embedded commas/quotes, but tolerate simple quoted cells.
   return line.split(',').map(c => c.trim().replace(/^"(.*)"$/, '$1').trim())
+}
+
+// The Mangoshao channel writes Order Number = the bare order number and Order Vendor = the line key; Jomall writes the
+// line key in Order Number. The vendor's key is taken only when it is a line key of that same order.
+const VENDOR_HEADER = 'order vendor'
+const LINE_SUFFIX = /(_[A-Za-z0-9]+)+$/
+
+function lineKeyFromVendor(orderCell: string, vendorCell: string): string | null {
+  const order = orderCell.trim().replace(/^#/, '')
+  const vendor = vendorCell.trim().replace(/^#/, '')
+  if (!order || LINE_SUFFIX.test(order)) return null
+  const suffix = vendor.match(LINE_SUFFIX)?.[0]
+  if (!suffix || vendor.slice(0, -suffix.length).toUpperCase() !== order.toUpperCase()) return null
+  return `${order}${suffix}`
 }
 
 export function parseSheetCsv(text: string): SheetRow[] {
@@ -30,23 +45,28 @@ export function parseSheetCsv(text: string): SheetRow[] {
   const hasHeader = first.some(c => c.includes('order')) && first.some(c => c.includes('track'))
   let orderCol = 0
   let trackCol = -1 // last column
+  let vendorCol = -1
   let start = 0
   if (hasHeader) {
     orderCol = first.findIndex(c => c.includes('order'))
     trackCol = first.findIndex(c => c.includes('track'))
+    vendorCol = first.indexOf(VENDOR_HEADER)
+    if (vendorCol === orderCol) vendorCol = -1
     start = 1
   }
   const seen = new Set<string>()
   const out: SheetRow[] = []
   for (let i = start; i < lines.length; i++) {
     const cells = splitCsvLine(lines[i])
-    const orderToken = (cells[orderCol] ?? '').trim()
+    const orderCell = (cells[orderCol] ?? '').trim()
     const tracking = (trackCol === -1 ? cells[cells.length - 1] : cells[trackCol] ?? '').trim()
-    if (!orderToken || !tracking) continue
+    if (!orderCell || !tracking) continue
+    const fromVendor = vendorCol >= 0 ? lineKeyFromVendor(orderCell, cells[vendorCol] ?? '') : null
+    const orderToken = fromVendor ?? orderCell
     const key = `${orderToken} ${tracking}`
     if (seen.has(key)) continue
     seen.add(key)
-    out.push({ orderToken, tracking })
+    out.push(fromVendor ? { orderToken, tracking, byOrderNumber: true } : { orderToken, tracking })
   }
   return out
 }

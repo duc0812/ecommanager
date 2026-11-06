@@ -12,36 +12,45 @@ export function normalizeBaseOrder(token: string): string {
   return orderLineKey(token).replace(/(_[A-Za-z0-9]+)+$/, '')
 }
 
-export function groupByOrder(rows: SheetRow[]): Map<string, Array<{ lineKey: string; tracking: string }>> {
-  const g = new Map<string, Array<{ lineKey: string; tracking: string }>>()
+export function groupByOrder(rows: SheetRow[]): Map<string, OrderRow[]> {
+  const g = new Map<string, OrderRow[]>()
   for (const r of rows) {
     const base = normalizeBaseOrder(r.orderToken)
     const arr = g.get(base) ?? []
-    arr.push({ lineKey: orderLineKey(r.orderToken), tracking: r.tracking.trim() })
+    arr.push({ lineKey: orderLineKey(r.orderToken), tracking: r.tracking.trim(), ...(r.byOrderNumber ? { byOrderNumber: true } : {}) })
     g.set(base, arr)
   }
   return g
 }
 
-export type OrderRow = { lineKey: string; tracking: string }
+// sheets: the read-back sheets that wrote the row (each one is a supplier's). pushed: the row is the tracking an API push
+// brought back, already tied to the push's supplier. byOrderNumber: the sheet wrote the bare order number, so the line is
+// found by its key among the order's own lines (an open order has no Shipment row yet).
+export type OrderRow = { lineKey: string; tracking: string; sheets?: string[]; pushed?: boolean; byOrderNumber?: boolean }
 
 // Merge one sheet's grouped rows into the accumulator. A multi-supplier order lists its
 // sub-orders across DIFFERENT supplier sheets, so rows must be MERGED — dropping an order
 // already seen in an earlier sheet silently loses the other supplier's lines (they then
-// never get fulfilled). Identical (lineKey, tracking) pairs dedupe; a real conflict (same
-// line, two trackings) is kept so buildFulfillmentPlan can flag it as needs_manual.
+// never get fulfilled). Identical (lineKey, tracking) pairs dedupe, keeping every sheet that wrote them; a real conflict
+// (same line, two trackings) is kept so buildFulfillmentPlan can flag it as needs_manual. A row written by the bare order
+// number stays apart from one that names its line key, as it did when it read as the whole order.
 export function mergeSheetGroups(
   target: Map<string, { rows: OrderRow[] }>,
   grouped: Map<string, OrderRow[]>,
+  sheet?: string,
 ): void {
   for (const [base, rows] of Array.from(grouped)) {
-    const existing = target.get(base)
-    if (!existing) {
-      target.set(base, { rows: [...rows] })
-      continue
-    }
-    for (const r of rows) {
-      if (!existing.rows.some(x => x.lineKey === r.lineKey && x.tracking === r.tracking)) existing.rows.push(r)
+    const entry = target.get(base) ?? { rows: [] }
+    target.set(base, entry)
+    for (const row of rows) {
+      const r: OrderRow = sheet ? { ...row, sheets: [sheet] } : { ...row }
+      const same = entry.rows.find(x => x.lineKey === r.lineKey && x.tracking === r.tracking && !x.byOrderNumber === !r.byOrderNumber)
+      if (!same) {
+        entry.rows.push(r)
+        continue
+      }
+      if (r.sheets) same.sheets = Array.from(new Set([...(same.sheets ?? []), ...r.sheets]))
+      if (r.pushed) same.pushed = true
     }
   }
 }
@@ -53,29 +62,11 @@ export type PlannedFulfillment = { fulfillmentOrderId: string; lineItems: Array<
 export type OrderPlanStatus = 'will_fulfill' | 'too_recent' | 'already_fulfilled' | 'not_found' | 'needs_manual' | 'error'
 export type OrderPlan = { baseOrder: string; status: OrderPlanStatus; fulfillments: PlannedFulfillment[]; message?: string; ageDays?: number; openLineCount?: number; hasHeldLines?: boolean }
 
-// What a whole-order (unsuffixed) sheet row is checked against: the sheets that wrote it and the order's product lines.
-export type WholeRowCheck = { sheets: string[]; lines: Array<{ shopifyLineId: string; label: string; supplier: string | null; hasFile: boolean }> }
-
-// A supplier's unsuffixed row only proves its own parcel shipped. On a multi-item order every open line must belong to that
-// supplier and have a file, otherwise the row would tell the customer that items nobody made are on the way.
-export function wholeRowBlockers(check: WholeRowCheck, openLineIds: string[]): string[] {
-  if (check.lines.length < 2 && openLineIds.length < 2) return []
-  const sheets = new Set(check.sheets.map(n => n.trim().toLowerCase()))
-  const blockers: string[] = []
-  for (const id of openLineIds) {
-    const line = check.lines.find(l => l.shopifyLineId === id)
-    if (!line) { blockers.push(`line ${id} không có trong tool`); continue }
-    const issues: string[] = []
-    if (!line.supplier || !sheets.has(line.supplier.trim().toLowerCase())) issues.push(`xưởng ${line.supplier ?? 'chưa gán'}`)
-    if (!line.hasFile) issues.push('chưa có file')
-    if (issues.length) blockers.push(`${line.label}: ${issues.join(', ')}`)
-  }
-  return blockers
-}
+const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase()
 
 export function buildFulfillmentPlan(input: {
   baseOrder: string
-  rows: Array<{ lineKey: string; tracking: string }>
+  rows: OrderRow[]
   shipments: Array<{ id: string; lineKey: string; shopifyLineId: string | null }>
   fulfillmentOrders: FulfillmentOrderRef[] | null
   displayFulfillmentStatus: string | null
@@ -83,11 +74,11 @@ export function buildFulfillmentPlan(input: {
   // ships and no sheet ever lists. Omitted when the order isn't in the DB → nothing extra
   // is ever fulfilled, so a missing/stale mapping can never over-fulfill.
   addOnLineIds?: string[]
-  wholeRowCheck?: WholeRowCheck
-  // The order's product lines in the DB, each with its line key and whether it went to a supplier. A product line that
-  // would be fulfilled but was not sent (or is unknown to the DB) holds the whole order: a fulfilment emails the
-  // customer about an item no supplier makes. Omitted when the order isn't in the DB → the checks above only.
-  productLines?: Array<{ shopifyLineId: string; lineKey: string; sent: boolean }>
+  // The order's product lines in the DB, each with its line key, whether it went to a supplier and the name of the supplier
+  // it went to. A product line that would be fulfilled but was not sent (or is unknown to the DB) holds the whole order: a
+  // fulfilment emails the customer about an item no supplier makes. Omitted when the order isn't in the DB → nothing is
+  // found by its key, and the checks on sent lines and suppliers are not made.
+  productLines?: Array<{ shopifyLineId: string; lineKey: string; sent: boolean; supplier?: string | null }>
   placedAt: Date | null
   now: Date
   minAgeDays: number
@@ -152,62 +143,81 @@ export function buildFulfillmentPlan(input: {
     if (shipmentId && !g.shipmentIds.includes(shipmentId)) g.shipmentIds.push(shipmentId)
     groups.set(key, g)
   }
-  // Lines the rows put into a fulfilment, with the key a per-line row named them by.
-  const planned: Array<{ lineId: string; lineKey?: string }> = []
+  // Lines the rows put into a fulfilment, with the key and the sheets of the row that named them.
+  const planned: Array<{ lineId: string; lineKey: string; sheets?: string[] }> = []
 
-  // Fulfill ONLY the sub-orders listed in the sheet, grouped by tracking:
-  //  - all listed sub-orders share one tracking → merge into ONE fulfillment (whole order);
+  // Owner 2026-11-06: a fulfilment covers exactly the line a row names, never the whole order. Fulfil ONLY the listed
+  // sub-orders, grouped by tracking:
+  //  - all listed sub-orders share one tracking → merge into ONE fulfillment;
   //  - different trackings → one fulfillment per tracking (split shipment);
   //  - only some items listed (the rest not shipped yet) → fulfill the listed lines and
   //    leave the others untouched (partial). A line NOT listed is never fulfilled.
   // Anything ambiguous → needs_manual (never guess — this feature emails customers).
-  const hasWhole = input.rows.some(r => isWholeOrderRow(r.lineKey))
-  const hasSuffixed = input.rows.some(r => !isWholeOrderRow(r.lineKey))
-
-  if (hasWhole && hasSuffixed) {
-    // A whole-order (unsuffixed) row mixed with per-line (suffixed) rows is contradictory.
+  let rows = input.rows
+  const whole = rows.filter(r => isWholeOrderRow(r.lineKey))
+  const byNumber = rows.filter(r => r.byOrderNumber).length
+  // A whole-order (unsuffixed) row mixed with per-line (suffixed) rows is contradictory. A row written by the bare order
+  // number with its key in Order Vendor still counts as written by the order number here, as it was before that key was read.
+  if ((whole.length > 0 && whole.length < rows.length) || (byNumber > 0 && byNumber + whole.length < rows.length)) {
     return done('needs_manual', 'Sheet vừa có dòng cả đơn vừa có dòng lẻ cho cùng đơn', ageDays)
   }
-
-  if (hasWhole) {
-    // Only unsuffixed row(s): whole order. They must agree on one tracking.
-    const wholeTrackings = new Set(input.rows.map(r => r.tracking))
-    if (wholeTrackings.size > 1) return done('needs_manual', 'Dòng cả đơn nhưng nhiều tracking khác nhau', ageDays)
-    if (input.wholeRowCheck) {
-      const openProductLines = Array.from(openByLineId.keys()).filter(id => !addOnLineIds.has(id))
-      const blockers = wholeRowBlockers(input.wholeRowCheck, openProductLines)
-      if (blockers.length) return done('needs_manual', `Sheet ${input.wholeRowCheck.sheets.join(', ')} ghi cả đơn nhưng ${blockers.join('; ')}`, ageDays)
+  if (whole.length > 0) {
+    if (new Set(whole.map(r => r.tracking)).size > 1) return done('needs_manual', 'Dòng cả đơn nhưng nhiều tracking khác nhau', ageDays)
+    // A push records its tracking per line; one under the bare order number is a row nobody can tie to a line.
+    if (whole.some(r => r.pushed)) return done('needs_manual', `Tracking xưởng API của ${baseOrder} không có mã dòng — không fulfill cả đơn`, ageDays)
+    // The bare order number stands for the order's line only when the order has exactly one product line (add-ons aside),
+    // in the tool and open in Shopify alike.
+    const productIds = new Set([
+      ...(input.productLines ?? []).map(l => l.shopifyLineId),
+      ...Array.from(openByLineId.keys()).filter(id => !addOnLineIds.has(id)),
+    ])
+    const only = input.productLines?.length === 1 && productIds.size === 1 ? input.productLines[0] : null
+    if (!only) {
+      const sheets = Array.from(new Set(whole.flatMap(r => r.sheets ?? [])))
+      const sheet = sheets.length ? `Sheet ${sheets.join(', ')}` : 'Sheet'
+      if (!input.productLines) return done('needs_manual', `${sheet} ghi số đơn ${baseOrder} không có mã dòng và tool không có đơn này — không biết fulfill dòng nào`, ageDays)
+      const keys = input.productLines.map(l => l.lineKey)
+      return done('needs_manual', `${sheet} ghi số đơn ${baseOrder} không có mã dòng mà đơn có ${productIds.size} dòng sản phẩm${keys.length ? ` (${keys.join(', ')})` : ''} — xưởng/người fulfill phải ghi mã dòng (vd #${baseOrder}_2), không fulfill cả đơn`, ageDays)
     }
-    const tracking = input.rows[0].tracking
-    openByLineId.forEach((open, lineId) => {
-      if (addOnLineIds.has(lineId)) return // add-ons are closed below, without tracking
-      addLine(tracking, open.foId, open.foLineItemId, open.quantity, shipmentIdByLineId.get(lineId))
-      planned.push({ lineId })
-    })
-  } else {
-    for (const row of input.rows) {
-      const ship = shipmentByLineKey.get(row.lineKey)
-      if (!ship || !ship.shopifyLineId) return done('needs_manual', `Không map được ${row.lineKey} sang line Shopify`, ageDays)
-      const open = openByLineId.get(ship.shopifyLineId)
-      if (!open) {
-        // Listed line isn't open: on hold → needs a human; otherwise already fulfilled → skip (idempotent).
-        if (heldLineIds.has(ship.shopifyLineId)) return done('needs_manual', `Line ${row.lineKey} đang on-hold/scheduled`, ageDays)
-        continue
-      }
-      const prev = lineTracking.get(open.foLineItemId)
-      if (prev && prev !== row.tracking) return done('needs_manual', `Line ${row.lineKey} có 2 tracking khác nhau`, ageDays)
-      lineTracking.set(open.foLineItemId, row.tracking)
-      addLine(row.tracking, open.foId, open.foLineItemId, open.quantity, ship.id)
-      planned.push({ lineId: ship.shopifyLineId, lineKey: row.lineKey })
-    }
+    rows = [{ ...whole[0], lineKey: only.lineKey, byOrderNumber: true }]
   }
 
-  // Owner 2026-11-06: a line not exported to a supplier is never fulfilled (the customer would claim an item nobody
-  // makes). Hold the whole order rather than fulfil the rest and silently drop that line.
+  // A row the sheet wrote by the bare order number finds its line by key among the order's own lines; any other row maps
+  // through the Shipment row of its key, as before.
+  const lineIdByKey = new Map((input.productLines ?? []).map(l => [l.lineKey, l.shopifyLineId]))
+  for (const row of rows) {
+    const ship = row.byOrderNumber ? undefined : shipmentByLineKey.get(row.lineKey)
+    const lineId = row.byOrderNumber ? lineIdByKey.get(row.lineKey) : ship?.shopifyLineId
+    if (!lineId) return done('needs_manual', `Không map được ${row.lineKey} sang line Shopify`, ageDays)
+    const open = openByLineId.get(lineId)
+    if (!open) {
+      // Listed line isn't open: on hold → needs a human; otherwise already fulfilled → skip (idempotent).
+      if (heldLineIds.has(lineId)) return done('needs_manual', `Line ${row.lineKey} đang on-hold/scheduled`, ageDays)
+      continue
+    }
+    const prev = lineTracking.get(open.foLineItemId)
+    if (prev && prev !== row.tracking) return done('needs_manual', `Line ${row.lineKey} có 2 tracking khác nhau`, ageDays)
+    lineTracking.set(open.foLineItemId, row.tracking)
+    addLine(row.tracking, open.foId, open.foLineItemId, open.quantity, ship ? ship.id : shipmentIdByLineId.get(lineId))
+    planned.push({ lineId, lineKey: row.lineKey, ...(row.sheets && !row.pushed ? { sheets: row.sheets } : {}) })
+  }
+
   if (input.productLines) {
     const known = new Map(input.productLines.map(l => [l.shopifyLineId, l]))
-    const unsent = Array.from(new Set(planned.filter(p => !addOnLineIds.has(p.lineId) && !known.get(p.lineId)?.sent).map(p => p.lineKey ?? known.get(p.lineId)?.lineKey ?? p.lineId)))
+    const products = planned.filter(p => !addOnLineIds.has(p.lineId))
+    // Owner 2026-11-06: a line not exported to a supplier is never fulfilled (the customer would claim an item nobody
+    // makes). Hold the whole order rather than fulfil the rest and silently drop that line.
+    const unsent = Array.from(new Set(products.filter(p => !known.get(p.lineId)?.sent).map(p => p.lineKey)))
     if (unsent.length) return done('needs_manual', `Dòng ${unsent.join(', ')} chưa export sang xưởng — không fulfill để tránh khách claim`, ageDays)
+    // A sheet row fulfils a line only from the supplier the line was sent to: each read-back sheet is one supplier's.
+    const foreign = products.filter(p => {
+      const supplier = known.get(p.lineId)?.supplier
+      return p.sheets && !(supplier && p.sheets.some(s => sameName(s, supplier)))
+    })
+    if (foreign.length) {
+      const which = foreign.map(p => `dòng ${p.lineKey} gửi xưởng ${known.get(p.lineId)?.supplier ?? 'chưa rõ'} mà tracking ở sheet ${p.sheets!.join(', ')}`)
+      return done('needs_manual', `${Array.from(new Set(which)).join('; ')} — chỉ fulfill theo sheet của xưởng đã nhận dòng`, ageDays)
+    }
   }
 
   // Non-product add-on lines (Shipping protection, Tip, Custom Text) are never listed in a

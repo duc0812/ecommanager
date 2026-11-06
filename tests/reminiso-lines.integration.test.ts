@@ -373,7 +373,8 @@ describe('Reminiso order lines', () => {
 
       const summary = await runAutoFulfill({
         shop: SHOP, accessToken: 'token-remi14', storeId, sheets: [],
-        sheetData: [{ name: 'Sheet', groups: new Map([['REMI9002', [{ lineKey: 'REMI9002_1', tracking: 'TRK1' }]]]) }],
+        // The read-back sheet of the supplier the tote went to: a sheet row fulfils a line only from that supplier's sheet.
+        sheetData: [{ name: 'Remi14 Sup', groups: new Map([['REMI9002', [{ lineKey: 'REMI9002_1', tracking: 'TRK1' }]]]) }],
         minAgeDays: 0, apply: false, now: new Date('2026-11-06T00:00:00Z'),
       })
 

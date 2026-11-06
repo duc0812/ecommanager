@@ -132,16 +132,16 @@ describe('Auto Fulfilled fulfils a product line only after it went to a supplier
     expect((await shipmentsOf('SNT3')).map(x => x.trackingNumber)).toEqual([null, null])
   })
 
-  it('a whole-order row fulfils every open line when each one was exported, and holds the order naming the one that was not', async () => {
-    await makeOrder('SNT4', [{ exported: true }, { exported: true }])
-    await makeOrder('SNT5', [{ exported: true }, { exported: false }])
+  it('a whole-order row fulfils the one line of a one-line order when it was exported, and holds it naming the line when not', async () => {
+    await makeOrder('SNT4', [{ exported: true }])
+    await makeOrder('SNT5', [{ exported: false }])
     const s = await run({ SNT4: [{ lineKey: 'SNT4', tracking: 'TRK4' }], SNT5: [{ lineKey: 'SNT5', tracking: 'TRK5' }] })
-    expect(rowOf(s, 'SNT4')).toMatchObject({ status: 'will_fulfill', fulfilledLines: 2 })
+    expect(rowOf(s, 'SNT4')).toMatchObject({ status: 'will_fulfill', fulfilledLines: 1 })
     const held = rowOf(s, 'SNT5')
     expect(held).toMatchObject({ status: 'needs_manual', fulfilledLines: 0 })
-    expect(held.message).toContain('SNT5_2')
+    expect(held.message).toContain('SNT5_1')
     expect(held.message).toContain('chưa export sang xưởng')
-    expect(fulfilledFo()).toEqual([['FO-SNT4', ['FOL-SNT4-1', 'FOL-SNT4-2'], 'TRK4']])
+    expect(fulfilledFo()).toEqual([['FO-SNT4', ['FOL-SNT4-1'], 'TRK4']])
   })
 
   it('add-on lines still close (own fulfillment order, no tracking, no email) when the product line was exported', async () => {

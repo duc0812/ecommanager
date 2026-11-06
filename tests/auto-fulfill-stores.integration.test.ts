@@ -211,7 +211,8 @@ describe("the fulfilment goes through the order's own store: its token and its t
   const callFor = (shop: string) => mocks.createFulfillment.mock.calls.find(c => c[0] === shop)?.[2]
 
   beforeAll(async () => {
-    await prisma.supplier.create({ data: { id: SUPPLIER, name: 'AFF supplier', code: 'AFFSUP' } })
+    // The rows come from the Mangoshao sheet: Auto Fulfilled fulfils a line only from the sheet of the supplier it went to.
+    await prisma.supplier.create({ data: { id: SUPPLIER, name: 'Mangoshao', code: 'AFFSUP' } })
     // Auto Fulfilled fulfils a product line only after it went to its supplier.
     for (const orderId of ['gid://test/Order/aff-lit1', 'gid://test/Order/aff-remi1']) {
       await prisma.orderLine.create({ data: {
