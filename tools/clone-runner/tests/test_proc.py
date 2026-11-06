@@ -1,3 +1,4 @@
+import io
 import os
 import sys
 
@@ -52,6 +53,46 @@ def test_exit_is_reported_with_the_child_code(tmp_path):
             proc.close(child)
     assert child.popen.returncode == 3
     assert (tmp_path / 'out.log').read_bytes().strip() == b'hi'
+
+
+class Chunks:
+    def __init__(self, parts):
+        self.parts = list(parts)
+
+    def read1(self, n):
+        return self.parts.pop(0) if self.parts else b''
+
+    def close(self):
+        pass
+
+
+def test_pump_masks_a_secret_split_anywhere():
+    secret, other = 'shpat_secret_value_123', 'cqw_other_secret_value'
+    text = f'a {secret} b {secret} c {other}\n'.encode()
+    want = b'a *** b *** c ***\n'
+    for cut in range(1, len(text)):
+        out = io.BytesIO()
+        proc.pump(Chunks([text[:cut], text[cut:]]), out, [secret, other])
+        assert out.getvalue() == want, cut
+    out = io.BytesIO()
+    proc.pump(Chunks([bytes([b]) for b in text]), out, [other, secret])
+    assert out.getvalue() == want
+    out = io.BytesIO()
+    proc.pump(Chunks([b'short abc ', b'and the end']), out, ['abc', '', None])
+    assert out.getvalue() == b'short abc and the end'
+
+
+def test_spawn_masks_secrets_on_the_way_to_the_log(tmp_path):
+    secret = 'shpat_secret_value_for_spawn'
+    code = f'import sys, time; sys.stdout.write("{secret[:6]}"); sys.stdout.flush(); time.sleep(0.2); print("{secret[6:]} x")'
+    with open(tmp_path / 'out.log', 'ab') as out:
+        child = proc.spawn([sys.executable, '-c', code], cwd=str(tmp_path), env=dict(os.environ), out=out,
+                           secrets=[secret])
+        try:
+            assert proc.wait(child, 30, lambda: False) == 'exited'
+        finally:
+            proc.close(child)
+    assert (tmp_path / 'out.log').read_bytes().strip() == b'*** x'
 
 
 @pytest.mark.skipif(os.name != 'nt', reason='Job Objects are Windows only')

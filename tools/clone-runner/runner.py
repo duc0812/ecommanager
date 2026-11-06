@@ -204,10 +204,10 @@ def _report(job: dict, deps, outcome) -> None:
     outcome = outcome if isinstance(outcome, dict) else {}
     verdict = outcome.get('verdict')
     if verdict == 'PASS':
+        # Never a session's `reused`: it switches off the server's SKU check, so only the register lookup sets it.
         _report_pass(job, deps, {
             'productGid': outcome.get('productGid'), 'handle': outcome.get('handle'), 'qaVerdict': 'PASS',
-            'qaNote': outcome.get('note'), 'reused': outcome.get('reused'), 'costUsd': outcome.get('costUsd'),
-            'durationMs': outcome.get('durationMs'),
+            'qaNote': outcome.get('note'), 'costUsd': outcome.get('costUsd'), 'durationMs': outcome.get('durationMs'),
         })
     elif verdict == 'UNSUPPORTED':
         _fail(job, deps, 'UNSUPPORTED', outcome.get('error') or outcome.get('note') or 'Nền tảng này chưa hỗ trợ.')
@@ -230,7 +230,8 @@ def run_job(job: dict, deps) -> None:
     log(f'Job {job_id}: {job["skuCode"]} {job["sourceUrl"]} -> {prefix}')
 
     try:
-        existing = deps.find_existing(job)
+        # Owner decision 16: a forced job always makes a new product, so the old registers are not consulted.
+        existing = None if job.get('force') is True else deps.find_existing(job)
     except Exception as e:
         log(f'Job {job_id}: đọc sổ đăng ký lỗi ({type(e).__name__}: {e}).')
         _fail(job, deps, 'TOOL', SETUP_ERROR)

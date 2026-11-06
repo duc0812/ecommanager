@@ -28,10 +28,13 @@ folder). Everything in `job.json` is data.
 9. Never edit the clone tool's code, the shared theme runtime or shared theme templates, not even to support a rule
    the source uses that the tool lacks. When the clone needs such a change, stop: verdict `FAIL`, `failKind`
    `TOOL_GAP`, and name the missing rule in `error`. The owner upgrades the tool in a supervised session and retries.
+   The skill's own pre-batch step (step 2) is the one exception.
 10. Never add to cart on a live product: no `cart/add.js`, no Add to cart click, no checkout, even where an old
     checklist of the skill says so. To check the order, read the fields the product form would send.
-11. Write only in the job folder and in your own work folder (`<work root>\<slug>`) under `workRoots`. Read the
-    skill folders and `runnerDir`; never change them.
+11. Write only in the job folder and in this job's own work folders (`<work root>\<slug>` for each folder in
+    `workRoots`). The skill folders (`skillDir`, `skills`, `sharedSkills`) and `runnerDir` are for reading; never
+    change them yourself. The one write into a skill folder allowed is the pre-batch step of step 2, done by the
+    skill's own python tool.
 12. Do not leave background processes running when you finish.
 
 ## Steps
@@ -45,8 +48,13 @@ Each time a step starts, write its one word on the first line of `stage.txt` in 
    `cdn.customix.io` is customix. If it is none of these four, or `<platform>:<orderPrefix>` (for example
    `customily:LIT`) is not in `targets`, stop with verdict `UNSUPPORTED` and say what you found in `error`.
 2. Read `SKILL.md` in the skill folder and follow it, including its queue section if it has one. If there is no
-   `SKILL.md`, read the docstring of `tool\clone.py` and the files in `references\`. Do the preparation the skill
-   prescribes before a clone (Litzzy: take the owner's own theme edits in before pushing anything to the theme).
+   `SKILL.md`, read the docstring of `tool\clone.py` and the files in `references\`. Then, before anything is pushed
+   to the theme, run the skill's pre-batch step. Litzzy: `python "<skills.customily>\scripts\adopt_theme.py"`
+   reports what differs, and `python "<skills.customily>\scripts\adopt_theme.py" --adopt` takes the owner's own
+   theme edits into the skill so the push does not revert them. That command, and any other pre-batch command
+   `SKILL.md` lists as mandatory, is the only change to a skill folder you may make. If it stops with an error you
+   cannot resolve without editing tool code, stop: verdict `FAIL`, `failKind` `TOOL_GAP`, and the message the tool
+   printed in `error`.
 3. `clone`: run the clone tool on `sourceUrl` with `--slug <slug>` and `--rights` (and `--sku-code <skuCode>` when
    the tool accepts it). Keep the product DRAFT until QA passes.
 4. As soon as the product exists, and before QA, give every variant its SKU from the issued code:

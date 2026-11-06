@@ -180,6 +180,25 @@ def test_existing_register_entry_reports_reused(tmp_path):
     assert deps.client.named('fail') == []
 
 
+def test_forced_job_skips_the_register_and_opens_a_session(tmp_path):
+    looked = []
+    deps = make_deps(tmp_path, html=fixture('customily.html'))
+    deps.find_existing = lambda job: looked.append(job) or {'productGid': GID, 'handle': 'old'}
+    runner.run_job(make_job(force=True), deps)
+    assert looked == [] and len(deps.sessions) == 1
+    assert 'reused' not in deps.client.named('result')[0][3]
+    runner.run_job(make_job(force='true'), deps)
+    assert len(looked) == 1 and len(deps.sessions) == 1
+
+
+def test_a_session_reused_is_never_forwarded(tmp_path):
+    deps = make_deps(tmp_path, html=fixture('customily.html'), session_result={
+        'verdict': 'PASS', 'productGid': GID, 'handle': 'someone-elses-product', 'reused': True})
+    runner.run_job(make_job(), deps)
+    [call] = deps.client.named('result')
+    assert 'reused' not in call[3] and call[3]['productGid'] == GID
+
+
 def test_session_pass_reports_result_in_job_folder(tmp_path):
     deps = make_deps(tmp_path, html=fixture('customily.html'), session_result={
         'verdict': 'PASS', 'productGid': GID, 'handle': 'family-ornament', 'note': 'QA PASS', 'costUsd': 1.5,

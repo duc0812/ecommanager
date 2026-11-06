@@ -3,18 +3,26 @@
 On Windows the child goes into its own Job Object with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: every process in it dies when
 the last handle to the job closes, and the OS closes that handle when the runner dies, so a session never outlives the
 runner. When the child cannot be put in a job, `kill_tree` falls back to `taskkill /T`.
+
+The child's stdout and stderr come through a pipe and a reader thread that replaces each secret value with `***`
+before anything reaches the log file, so a value the session echoes is never written to disk.
 """
 from __future__ import annotations
 
 import os
 import signal
 import subprocess
+import threading
 import time
 
 CONTAIN_FAILED = ('Không gắn được phiên vào Job Object: nếu runner chết, phiên có thể còn chạy. '
                   'Khi dừng phiên, runner dùng taskkill /T.')
 KILL_WAIT_S = 30
 POLL_S = 0.5
+PUMP_JOIN_S = 10
+READ_CHUNK = 65536
+MASK = b'***'
+MIN_SECRET_LEN = 8
 
 if os.name == 'nt':
     import ctypes
@@ -58,9 +66,10 @@ if os.name == 'nt':
 
 
 class Child:
-    def __init__(self, popen: subprocess.Popen, job):
+    def __init__(self, popen: subprocess.Popen, job, pump: threading.Thread):
         self.popen = popen
         self.job = job
+        self.pump = pump
 
     @property
     def pid(self) -> int:
@@ -91,15 +100,52 @@ def _contain(pid: int):
     return job
 
 
-def spawn(argv: list[str], cwd: str, env: dict, out) -> Child:
-    """Starts `argv` (a list, never through a shell) with stdout and stderr into the open binary file `out`."""
-    if os.name == 'nt':
-        popen = subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=out,
-                                 stderr=subprocess.STDOUT, shell=False)
-        return Child(popen, _contain(popen.pid))
-    popen = subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
-                             shell=False, start_new_session=True)
-    return Child(popen, None)
+def _masked(data: bytes, secrets: list[bytes]) -> bytes:
+    for secret in secrets:
+        data = data.replace(secret, MASK)
+    return data
+
+
+def pump(src, out, secrets=()) -> None:
+    """Copies `src` to `out` until EOF with every secret replaced. The tail that could be the start of a secret split
+    across two reads is held back until the next read decides it."""
+    found = sorted({s.encode('utf-8') for s in secrets if isinstance(s, str) and len(s) >= MIN_SECRET_LEN},
+                   key=len, reverse=True)
+    hold = max((len(s) for s in found), default=1) - 1
+    pending = b''
+    try:
+        while True:
+            chunk = src.read1(READ_CHUNK)
+            if not chunk:
+                break
+            pending = _masked(pending + chunk, found)
+            if len(pending) > hold:
+                cut = len(pending) - hold
+                out.write(pending[:cut])
+                out.flush()
+                pending = pending[cut:]
+        out.write(_masked(pending, found))
+        out.flush()
+    except (OSError, ValueError):
+        pass
+    finally:
+        try:
+            src.close()
+        except OSError:
+            pass
+
+
+def spawn(argv: list[str], cwd: str, env: dict, out, secrets=()) -> Child:
+    """Starts `argv` (a list, never through a shell); stdout and stderr reach the open binary file `out` through
+    `pump`, with each of `secrets` masked."""
+    extra = {} if os.name == 'nt' else {'start_new_session': True}
+    popen = subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                             stderr=subprocess.STDOUT, shell=False, **extra)
+    job = _contain(popen.pid) if os.name == 'nt' else None
+    reader = threading.Thread(target=pump, args=(popen.stdout, out, tuple(secrets)), name=f'pump-{popen.pid}',
+                              daemon=True)
+    reader.start()
+    return Child(popen, job, reader)
 
 
 def kill_tree(child: Child) -> None:
@@ -148,7 +194,9 @@ def wait(child: Child, timeout_s: float, should_stop, poll_s: float = POLL_S) ->
 
 
 def close(child: Child) -> None:
-    """Releases the job; any process of the session still running dies with it."""
+    """Releases the job (any process of the session still running dies with it), then waits for the output to be
+    written. A process that escaped the job and still holds the pipe only delays this by PUMP_JOIN_S."""
     if os.name == 'nt' and child.job:
         _k32.CloseHandle(child.job)
         child.job = None
+    child.pump.join(PUMP_JOIN_S)
