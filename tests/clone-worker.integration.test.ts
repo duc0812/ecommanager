@@ -26,6 +26,8 @@ const MISSING = 'Sản phẩm không có trên store.'
 const NOT_ACTIVE = 'Sản phẩm chưa ACTIVE.'
 const NOT_ONLINE = 'Sản phẩm chưa lên Online Store.'
 const FOREIGN_SKU = 'Còn variant mang SKU khác mã đã cấp.'
+const NOT_THIS_JOB = 'Sản phẩm không phải do job này tạo.'
+const NOT_EXISTING = 'Sản phẩm không phải sản phẩm có sẵn.'
 
 async function makeStore(id: string, opts: { enabled?: boolean; orderPrefix?: string | null } = {}) {
   await prisma.shopifyStore.create({
@@ -223,6 +225,25 @@ describe('claimCloneJob', () => {
     expect((await rowOf(job.id)).status).toBe('QUEUED')
   })
 
+  it('paused vẫn trả job hết lease: lần 1 về QUEUED, lần 2 thành FAILED/WORKER_LOST, job còn hạn giữ nguyên', async () => {
+    await saveCloneSettings({ paused: true })
+    const lockedAt = new Date(Date.now() - CLONE_LEASE_MS - 1000)
+    const first = await seedJob({ status: 'RUNNING', attempts: 1, lockedAt, startedAt: lockedAt })
+    await prisma.cloneJob.update({ where: { id: first.id }, data: { stage: 'qa' } })
+    expect(await claimCloneJob()).toEqual({ job: null, paused: true })
+    expect(await rowOf(first.id)).toMatchObject({ status: 'QUEUED', attempts: 1, lockedAt: null, stage: null, finishedAt: null })
+
+    const second = await seedJob({ status: 'RUNNING', attempts: 2, lockedAt, startedAt: lockedAt })
+    const live = await seedJob({ status: 'RUNNING', attempts: 1, lockedAt: new Date(), startedAt: lockedAt })
+    const now = new Date()
+    expect(await claimCloneJob(now)).toEqual({ job: null, paused: true })
+    const lost = await rowOf(second.id)
+    expect(lost).toMatchObject({ status: 'FAILED', failKind: 'WORKER_LOST', error: 'Máy xử lý không trả kết quả.', lockedAt: null, attempts: 2 })
+    expect(lost.finishedAt?.getTime()).toBe(now.getTime())
+    expect(await rowOf(live.id)).toMatchObject({ status: 'RUNNING', attempts: 1 })
+    expect((await rowOf(first.id)).status).toBe('QUEUED')
+  })
+
   it('lease hết lần 1: job được nhận lại với attempts 2; hết lần 2: FAILED/WORKER_LOST', async () => {
     const t0 = Date.now() - 3 * CLONE_LEASE_MS
     const job = await seedJob({ createdAt: new Date(t0 - 1000) })
@@ -367,6 +388,23 @@ describe('failCloneJob', () => {
     expect(failed.finishedAt).not.toBeNull()
   })
 
+  it('fail retryable kèm productGid hợp lệ ở lần 1 → FAILED giữ productGid (không clone lần hai); không kèm hoặc gid sai dạng → QUEUED', async () => {
+    const left = await running()
+    const sent = { failKind: 'TOOL', error: 'Không gửi được kết quả sau 6 lần thử.', retryable: true, productGid: GID }
+    expect(await failCloneJob(left.id, 1, sent)).toEqual({ status: 'FAILED' })
+    const row = await rowOf(left.id)
+    expect(row).toMatchObject({ status: 'FAILED', failKind: 'TOOL', error: sent.error, productGid: GID, attempts: 1, lockedAt: null })
+    expect(row.finishedAt).not.toBeNull()
+    expect(await claimCloneJob()).toEqual({ job: null, paused: false })
+
+    for (const productGid of [undefined, null, '', 'gid://shopify/ProductVariant/1', `${GID}\n`]) {
+      const plain = await running()
+      expect(await failCloneJob(plain.id, 1, { failKind: 'TOOL', error: 'x', retryable: true, productGid })).toEqual({ status: 'QUEUED' })
+      expect(await rowOf(plain.id)).toMatchObject({ status: 'QUEUED', productGid: null, failKind: null, finishedAt: null })
+      await prisma.cloneJob.update({ where: { id: plain.id }, data: { status: 'CANCELLED' } })
+    }
+  })
+
   it('fail: failKind lạ hoặc của server thành TOOL, error cắt 2000 ký tự, productGid chỉ nhận gid sản phẩm', async () => {
     for (const failKind of ['VERIFY', 'WORKER_LOST', 'tool', 'NOPE', 42, undefined]) {
       const { id, attempts } = await running()
@@ -402,8 +440,9 @@ describe('failCloneJob', () => {
 
 describe('completeCloneJob', () => {
   const state = (over: Partial<NonNullable<ProductState>> = {}, code = ''): ProductState => ({
-    status: 'ACTIVE', onlineStoreUrl: ONLINE_URL, handle: 'zw-mug-shopify', productType: 'Mug', skus: [code, `${code}-BLACK-XL`], ...over,
+    status: 'ACTIVE', onlineStoreUrl: ONLINE_URL, handle: 'zw-mug-shopify', productType: 'Mug', createdAt: new Date().toISOString(), skus: [code, `${code}-BLACK-XL`], ...over,
   })
+  const OLD = '2025-06-01T00:00:00Z'
   const asked: [string, string][] = []
   const fake = (answer: ProductState | Error | ((code: string) => ProductState), code: string) => ({
     productState: async (storeId: string, gid: string) => {
@@ -491,21 +530,64 @@ describe('completeCloneJob', () => {
 
   it('complete reused: bỏ qua điều kiện SKU', async () => {
     const { id, attempts, skuCode } = await running()
-    const result = await completeCloneJob(id, attempts, { ...pass, reused: true }, fake(state({ skus: ['FS-OLD-SKU-1', null] }), skuCode))
+    const result = await completeCloneJob(id, attempts, { ...pass, reused: true }, fake(state({ skus: ['FS-OLD-SKU-1', null], createdAt: OLD }), skuCode))
     expect(result).toEqual({ status: 'DONE' })
     expect(await rowOf(id)).toMatchObject({ status: 'DONE', reused: true, productUrl: ONLINE_URL })
 
     const draft = await running()
-    const refused = await completeCloneJob(draft.id, draft.attempts, { ...pass, reused: true }, fake(state({ status: 'DRAFT', skus: ['FS-OLD'] }), draft.skuCode))
+    const refused = await completeCloneJob(draft.id, draft.attempts, { ...pass, reused: true }, fake(state({ status: 'DRAFT', skus: ['FS-OLD'], createdAt: OLD }), draft.skuCode))
     await expectVerifyFail(draft.id, refused, NOT_ACTIVE)
 
     const offline = await running()
-    const hidden = await completeCloneJob(offline.id, offline.attempts, { ...pass, reused: true }, fake(state({ onlineStoreUrl: null, skus: ['FS-OLD'] }), offline.skuCode))
+    const hidden = await completeCloneJob(offline.id, offline.attempts, { ...pass, reused: true }, fake(state({ onlineStoreUrl: null, skus: ['FS-OLD'], createdAt: OLD }), offline.skuCode))
     await expectVerifyFail(offline.id, hidden, NOT_ONLINE)
 
     const loose = await running()
     const strict = await completeCloneJob(loose.id, loose.attempts, { ...pass, reused: 'true' }, fake(state({ skus: ['FS-OLD'] }), loose.skuCode))
     await expectVerifyFail(loose.id, strict, FOREIGN_SKU)
+  })
+
+  const atOffset = async (id: string, ms: number) => new Date((await rowOf(id)).createdAt.getTime() + ms).toISOString()
+  const MIN = 60_000
+
+  it('complete thường: sản phẩm tạo sau job hoặc trước tối đa 5 phút (lệch giờ) → DONE; tạo trước hơn thế → FAILED/VERIFY', async () => {
+    for (const offset of [MIN, 0, -5 * MIN]) {
+      const job = await running()
+      const createdAt = await atOffset(job.id, offset)
+      expect(await completeCloneJob(job.id, job.attempts, pass, fake(code => state({ createdAt }, code), job.skuCode)), `${offset}`).toEqual({ status: 'DONE' })
+    }
+    for (const offset of [-5 * MIN - 1, -24 * 60 * MIN]) {
+      const job = await running()
+      const createdAt = await atOffset(job.id, offset)
+      await expectVerifyFail(job.id, await completeCloneJob(job.id, job.attempts, pass, fake(code => state({ createdAt }, code), job.skuCode)), NOT_THIS_JOB)
+    }
+  })
+
+  it('complete reused: sản phẩm tạo trước job → DONE; tạo đúng lúc hoặc sau job → FAILED/VERIFY', async () => {
+    const reused = { ...pass, reused: true }
+    for (const offset of [-1, -6 * MIN]) {
+      const job = await running()
+      const createdAt = await atOffset(job.id, offset)
+      expect(await completeCloneJob(job.id, job.attempts, reused, fake(state({ createdAt, skus: ['FS-OLD'] }), job.skuCode)), `${offset}`).toEqual({ status: 'DONE' })
+    }
+    for (const offset of [0, MIN]) {
+      const job = await running()
+      const createdAt = await atOffset(job.id, offset)
+      await expectVerifyFail(job.id, await completeCloneJob(job.id, job.attempts, reused, fake(state({ createdAt, skus: ['FS-OLD'] }), job.skuCode)), NOT_EXISTING)
+    }
+  })
+
+  it('complete: createdAt thiếu hoặc không đọc được → { retry: true }, job vẫn RUNNING, không bao giờ là đạt', async () => {
+    for (const reused of [false, true]) {
+      for (const createdAt of ['', 'yesterday', '12', '2026-13-45T00:00:00Z', '2026-11-06', undefined, null, 1_700_000_000_000]) {
+        const job = await running()
+        const answer = state({ createdAt: createdAt as never, skus: [job.skuCode] })
+        const result = await completeCloneJob(job.id, job.attempts, { ...pass, reused }, fake(answer, job.skuCode))
+        expect(result, `${reused} ${String(createdAt)}`).toMatchObject({ retry: true })
+        expect(await rowOf(job.id)).toMatchObject({ status: 'RUNNING', failKind: null, error: null, finishedAt: null, productUrl: null })
+        await prisma.cloneJob.update({ where: { id: job.id }, data: { status: 'CANCELLED' } })
+      }
+    }
   })
 
   it('complete: qaVerdict khác PASS → FAILED/QA, không hỏi Shopify', async () => {
@@ -694,26 +776,30 @@ describe('claimWithWait', () => {
 describe('makeShopifyProductState', () => {
   const answer = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status })
   const product = {
-    status: 'ACTIVE', onlineStoreUrl: ONLINE_URL, handle: 'zw-mug', productType: 'Mug',
+    status: 'ACTIVE', onlineStoreUrl: ONLINE_URL, handle: 'zw-mug', productType: 'Mug', createdAt: '2026-11-05T08:30:00Z',
     variants: { nodes: [{ sku: 'ZW2611050001' }, { sku: 'ZW2611050001-BLACK' }, { sku: null }], pageInfo: { hasNextPage: false, endCursor: 'c1' } },
   }
 
   // Serves `pages` one per call, following the `after` cursor the caller sends; records every variables object it was sent.
+  // Only the first page carries a fresh createdAt: later pages send none, which the reader must not need.
   const paged = (pages: (string | null)[][], sent: Record<string, unknown>[] = []) => async (_url: string, init?: RequestInit) => {
     const variables = JSON.parse(String(init?.body)).variables as Record<string, unknown>
     sent.push(variables)
     const i = typeof variables.after === 'string' ? Number(variables.after.replace('cursor-', '')) : 0
     const more = i < pages.length - 1
+    const createdAt = i === 0 ? new Date().toISOString() : undefined
     return answer({
-      data: { product: { ...product, variants: { nodes: pages[i].map(sku => ({ sku })), pageInfo: { hasNextPage: more, endCursor: more ? `cursor-${i + 1}` : null } } } },
+      data: { product: { ...product, createdAt, variants: { nodes: pages[i].map(sku => ({ sku })), pageInfo: { hasNextPage: more, endCursor: more ? `cursor-${i + 1}` : null } } } },
     })
   }
 
-  it('đọc hết mọi trang variant theo con trỏ after', async () => {
+  it('đọc hết mọi trang variant theo con trỏ after; createdAt lấy một lần từ trang đầu', async () => {
     const sent: Record<string, unknown>[] = []
+    const before = Date.now()
     const state = await makeShopifyProductState({ fetchImpl: paged([['A-1', 'A-2'], ['A-3'], [null, 'A-4']], sent) })(STORE, GID)
     expect(state?.skus).toEqual(['A-1', 'A-2', 'A-3', null, 'A-4'])
     expect(sent).toEqual([{ id: GID, after: null }, { id: GID, after: 'cursor-1' }, { id: GID, after: 'cursor-2' }])
+    expect(Date.parse(state!.createdAt)).toBeGreaterThanOrEqual(before)
   })
 
   it('cần trang thứ 13 → ném lỗi (không bao giờ coi là đạt); hasNextPage mà thiếu con trỏ → ném lỗi', async () => {
@@ -756,11 +842,25 @@ describe('makeShopifyProductState', () => {
     expect(await rowOf(job.id)).toMatchObject({ status: 'RUNNING', attempts: job.attempts, finishedAt: null, productUrl: null })
   })
 
+  it('complete: Shopify trả createdAt không đọc được hoặc thiếu → { retry: true }, job vẫn RUNNING', async () => {
+    for (const createdAt of ['not-a-date', undefined]) {
+      const job = await running()
+      const body = { data: { product: { ...product, createdAt, variants: { nodes: [{ sku: job.skuCode }], pageInfo: { hasNextPage: false, endCursor: null } } } } }
+      const result = await completeCloneJob(job.id, job.attempts, { productGid: GID, qaVerdict: 'PASS', reused: true }, {
+        productState: makeShopifyProductState({ fetchImpl: async () => answer(body), log: () => {} }),
+      })
+      expect(result).toMatchObject({ retry: true })
+      expect(await rowOf(job.id)).toMatchObject({ status: 'RUNNING', finishedAt: null, productUrl: null })
+      await prisma.cloneJob.update({ where: { id: job.id }, data: { status: 'CANCELLED' } })
+    }
+  })
+
   it('hỏi product(id:) của store đích, token chỉ nằm trong header', async () => {
     const seen: { url: string; init: RequestInit }[] = []
     const ask = makeShopifyProductState({ fetchImpl: async (url, init) => { seen.push({ url: String(url), init: init ?? {} }); return answer({ data: { product } }) } })
     expect(await ask(STORE, GID)).toEqual({
-      status: 'ACTIVE', onlineStoreUrl: ONLINE_URL, handle: 'zw-mug', productType: 'Mug', skus: ['ZW2611050001', 'ZW2611050001-BLACK', null],
+      status: 'ACTIVE', onlineStoreUrl: ONLINE_URL, handle: 'zw-mug', productType: 'Mug', createdAt: '2026-11-05T08:30:00Z',
+      skus: ['ZW2611050001', 'ZW2611050001-BLACK', null],
     })
     expect(seen).toHaveLength(1)
     expect(seen[0].url).toBe(`https://${STORE}.myshopify.com/admin/api/2024-10/graphql.json`)
@@ -769,7 +869,7 @@ describe('makeShopifyProductState', () => {
     const body = JSON.parse(String(seen[0].init.body))
     expect(body.variables).toEqual({ id: GID, after: null })
     expect(body.query.replace(/\s+/g, ' ')).toContain(
-      'product(id: $id) { status onlineStoreUrl handle productType variants(first: 250, after: $after) { nodes { sku } pageInfo { hasNextPage endCursor } } }',
+      'product(id: $id) { status onlineStoreUrl handle productType createdAt variants(first: 250, after: $after) { nodes { sku } pageInfo { hasNextPage endCursor } } }',
     )
     expect(seen[0].url).not.toContain(TOKEN)
     expect(String(seen[0].init.body)).not.toContain(TOKEN)
@@ -788,6 +888,9 @@ describe('makeShopifyProductState', () => {
       { storeId: STORE, fetchImpl: async () => answer({ errors: [{ message: `Throttled ${TOKEN}` }] }) },
       { storeId: STORE, fetchImpl: async () => new Response(`<html>${TOKEN}</html>`, { status: 200 }) },
       { storeId: STORE, fetchImpl: async () => answer({ data: { product: { ...product, variants: null } } }) },
+      { storeId: STORE, fetchImpl: async () => answer({ data: { product: { ...product, createdAt: undefined } } }) },
+      { storeId: STORE, fetchImpl: async () => answer({ data: { product: { ...product, createdAt: 'yesterday' } } }) },
+      { storeId: STORE, fetchImpl: async () => answer({ data: { product: { ...product, createdAt: '12' } } }) },
       { storeId: STORE, fetchImpl: async () => answer({ data: {} }) },
       { storeId: `${P}-store-missing`, fetchImpl: async () => answer({ data: { product } }) },
     ]

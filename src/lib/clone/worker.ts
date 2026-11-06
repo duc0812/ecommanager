@@ -3,14 +3,14 @@ import { prisma } from '@/lib/db'
 import { hashedTokenInfo, mintHashedToken, revokeHashedToken, verifyBearerHash } from '@/lib/hashed-token'
 import { listConnectedStores } from '@/lib/store-connections'
 import { waitForCloneQueue } from '@/lib/clone/jobs'
+import { CLONE_LEASE_MS, CLONE_MAX_ATTEMPTS, releaseExpiredLeases } from '@/lib/clone/leases'
 import { getCloneSettings } from '@/lib/clone/settings'
 import { skuBelongsTo } from '@/lib/clone/sku-code'
 import { shopifyAdminGraphql, type FetchLike } from '@/lib/clone/shopify-admin'
 
+export { CLONE_LEASE_MS, CLONE_MAX_ATTEMPTS }
 export const CLONE_WORKER_TOKEN_KEY = 'clone.worker.tokenHash'
 export const CLONE_WORKER_SEEN_KEY = 'clone.worker.lastSeenAt'
-export const CLONE_LEASE_MS = 10 * 60 * 1000
-export const CLONE_MAX_ATTEMPTS = 2
 export const CLONE_MAX_WAIT_S = 25
 
 const ONLINE_MS = 90_000
@@ -19,10 +19,11 @@ const MAX_ERROR = 2000
 const MAX_QA_NOTE = 500
 const MAX_INT = 2_147_483_647
 const MAX_VARIANT_PAGES = 12
+const CLOCK_SKEW_MS = 5 * 60 * 1000
+const SHOPIFY_DATE_TIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/
 
-// Fixed server texts. VERIFY and WORKER_LOST errors are shown to sellers, so nothing from the runner is ever joined into them.
+// Fixed server texts. VERIFY and WORKER_LOST (leases.ts) errors are shown to sellers, so nothing from the runner is ever joined into them.
 const STORE_GONE = 'Store không còn kết nối.'
-const WORKER_LOST = 'Máy xử lý không trả kết quả.'
 const QA_FAILED = 'QA không đạt.'
 const BAD_PRODUCT_GID = 'Kết quả không có productGid hợp lệ.'
 const ASK_AGAIN = 'Chưa hỏi được Shopify, gửi lại kết quả sau.'
@@ -30,6 +31,8 @@ const MISSING = 'Sản phẩm không có trên store.'
 const NOT_ACTIVE = 'Sản phẩm chưa ACTIVE.'
 const NOT_ONLINE = 'Sản phẩm chưa lên Online Store.'
 const FOREIGN_SKU = 'Còn variant mang SKU khác mã đã cấp.'
+const NOT_THIS_JOB = 'Sản phẩm không phải do job này tạo.'
+const NOT_EXISTING = 'Sản phẩm không phải sản phẩm có sẵn.'
 
 const STAGES = ['nhận diện', 'clone', 'qa', 'public']
 const PLATFORM_RE = /^(customily|customall|teeinblue|customix|unknown|unsupported:[a-z0-9-]{1,20})$/
@@ -83,28 +86,16 @@ export type CloneClaim = {
 
 type ClaimResult = { job: CloneClaim | null; paused: boolean }
 
-// The lease condition is the compare-and-set: a heartbeat that lands first moves lockedAt out of it, and the row is left alone.
-async function releaseExpiredLeases(now: Date, staleBefore: Date): Promise<void> {
-  const expired = { status: 'RUNNING', OR: [{ lockedAt: null }, { lockedAt: { lt: staleBefore } }] }
-  await prisma.cloneJob.updateMany({
-    where: { ...expired, attempts: { lt: CLONE_MAX_ATTEMPTS } },
-    data: { status: 'QUEUED', lockedAt: null, stage: null },
-  })
-  await prisma.cloneJob.updateMany({
-    where: { ...expired, attempts: { gte: CLONE_MAX_ATTEMPTS } },
-    data: { status: 'FAILED', failKind: 'WORKER_LOST', error: WORKER_LOST, finishedAt: now, lockedAt: null },
-  })
-}
-
 export async function claimCloneJob(now: Date = new Date()): Promise<ClaimResult> {
   await markWorkerSeen(now)
+  // Before the paused answer: a job whose runner died must still leave RUNNING while the queue is paused.
+  await releaseExpiredLeases(now)
   const settings = await getCloneSettings()
   if (settings.paused) return { job: null, paused: true }
   const stores = new Map((await listConnectedStores()).map(s => [s.id, s]))
-  const staleBefore = new Date(now.getTime() - CLONE_LEASE_MS)
   const idle: ClaimResult = { job: null, paused: false }
   for (let round = 0; round < CLAIM_ROUNDS; round++) {
-    await releaseExpiredLeases(now, staleBefore)
+    if (round > 0) await releaseExpiredLeases(now)
     // After the release every RUNNING row is inside its lease. One read answers both "is a job still running" and "which job is next":
     // two claims at once see the same oldest job, one write wins, and the loser reads again and finds it running. Any lost write starts the round over.
     const rows = await prisma.cloneJob.findMany({
@@ -227,7 +218,8 @@ export async function failCloneJob(
   await markWorkerSeen()
   if (!isAttempts(attempts)) return null
   const productGid = productGidOf(input.productGid)
-  const data = input.retryable === true && attempts < CLONE_MAX_ATTEMPTS
+  // A fail that names a product means the clone already made one: a second run would leave two live products with the same SKU code.
+  const data = input.retryable === true && attempts < CLONE_MAX_ATTEMPTS && !productGid
     ? { status: 'QUEUED', lockedAt: null, stage: null }
     : {
         status: 'FAILED',
@@ -241,14 +233,23 @@ export async function failCloneJob(
   return count > 0 ? { status: data.status } : null
 }
 
-export type ProductState = { status: string; onlineStoreUrl: string | null; handle: string; productType: string | null; skus: (string | null)[] } | null
+export type ProductState = {
+  status: string; onlineStoreUrl: string | null; handle: string; productType: string | null; createdAt: string; skus: (string | null)[]
+} | null
 
-const PRODUCT_STATE_QUERY = 'query($id: ID!, $after: String) { product(id: $id) { status onlineStoreUrl handle productType '
+const PRODUCT_STATE_QUERY = 'query($id: ID!, $after: String) { product(id: $id) { status onlineStoreUrl handle productType createdAt '
   + 'variants(first: 250, after: $after) { nodes { sku } pageInfo { hasNextPage endCursor } } } }'
 
 type ProductPage = {
-  status?: unknown; onlineStoreUrl?: unknown; handle?: unknown; productType?: unknown
+  status?: unknown; onlineStoreUrl?: unknown; handle?: unknown; productType?: unknown; createdAt?: unknown
   variants?: { nodes?: unknown; pageInfo?: { hasNextPage?: unknown; endCursor?: unknown } }
+}
+
+// Only Shopify's own DateTime shape counts: a lenient parse would turn a stray value into some date that a reused result could pass on.
+function dateTimeMs(v: unknown): number | null {
+  if (typeof v !== 'string' || !SHOPIFY_DATE_TIME_RE.test(v)) return null
+  const ms = Date.parse(v)
+  return Number.isFinite(ms) ? ms : null
 }
 
 const defaultVerifyLog = (message: string) => console.warn(`[clone verify] ${message}`)
@@ -265,6 +266,7 @@ export function makeShopifyProductState(opts: { fetchImpl?: FetchLike; log?: (me
     }
     const unreadable = () => fail('Shopify trả về dữ liệu không đọc được')
     const skus: (string | null)[] = []
+    let createdAt = ''
     let after: string | null = null
     for (let page = 0; page < MAX_VARIANT_PAGES; page++) {
       const answer = await shopifyAdminGraphql(storeId, PRODUCT_STATE_QUERY, { id: gid, after }, { fetchImpl: opts.fetchImpl })
@@ -277,6 +279,10 @@ export function makeShopifyProductState(opts: { fetchImpl?: FetchLike; log?: (me
       const more = p?.variants?.pageInfo?.hasNextPage
       const cursor = p?.variants?.pageInfo?.endCursor
       if (!p || typeof p.status !== 'string' || typeof p.handle !== 'string' || !Array.isArray(nodes) || typeof more !== 'boolean') throw unreadable()
+      if (page === 0) {
+        if (typeof p.createdAt !== 'string' || dateTimeMs(p.createdAt) === null) throw unreadable()
+        createdAt = p.createdAt
+      }
       for (const node of nodes) {
         const sku = (node as { sku?: unknown } | null)?.sku
         skus.push(typeof sku === 'string' ? sku : null)
@@ -287,6 +293,7 @@ export function makeShopifyProductState(opts: { fetchImpl?: FetchLike; log?: (me
           onlineStoreUrl: typeof p.onlineStoreUrl === 'string' && p.onlineStoreUrl ? p.onlineStoreUrl : null,
           handle: p.handle,
           productType: typeof p.productType === 'string' && p.productType ? p.productType : null,
+          createdAt,
           skus,
         }
       }
@@ -295,6 +302,13 @@ export function makeShopifyProductState(opts: { fetchImpl?: FetchLike; log?: (me
     }
     throw fail(`sản phẩm có hơn ${MAX_VARIANT_PAGES * 250} variant`)
   }
+}
+
+// `reused` comes from the runner and switches off the SKU check, so the product's age decides which kind of product it may be:
+// a clone is made after its job was queued (give or take clock skew), a reused product existed before it.
+function ageProblem(productMs: number, jobCreatedAt: Date, reused: boolean): string | null {
+  if (reused) return productMs < jobCreatedAt.getTime() ? null : NOT_EXISTING
+  return productMs >= jobCreatedAt.getTime() - CLOCK_SKEW_MS ? null : NOT_THIS_JOB
 }
 
 function verifyProblem(state: NonNullable<ProductState>, skuCode: string, reused: boolean): string | null {
@@ -306,8 +320,8 @@ function verifyProblem(state: NonNullable<ProductState>, skuCode: string, reused
 
 type CompleteResult = { status: 'DONE' | 'FAILED'; error?: string } | { retry: true; error: string } | null
 
-// Spec 7.9: DONE only after the store's own Shopify answer shows the product ACTIVE, on the Online Store, and (unless reused)
-// carrying only the issued SKU code. handle, productUrl and productType come from that answer, never from the runner.
+// Spec 7.9: DONE only after the store's own Shopify answer shows the product of the right age, ACTIVE, on the Online Store, and
+// (unless reused) carrying only the issued SKU code. handle, productUrl and productType come from that answer, never from the runner.
 export async function completeCloneJob(
   id: string,
   attempts: number,
@@ -316,7 +330,7 @@ export async function completeCloneJob(
 ): Promise<CompleteResult> {
   await markWorkerSeen()
   if (!isAttempts(attempts)) return null
-  const row = await prisma.cloneJob.findUnique({ where: { id }, select: { storeId: true, skuCode: true, status: true, attempts: true } })
+  const row = await prisma.cloneJob.findUnique({ where: { id }, select: { storeId: true, skuCode: true, status: true, attempts: true, createdAt: true } })
   if (!row || row.status !== 'RUNNING' || row.attempts !== attempts) return null
 
   const productGid = productGidOf(input.productGid)
@@ -350,7 +364,9 @@ export async function completeCloneJob(
     return { retry: true, error: ASK_AGAIN }
   }
   if (!state) return fail('VERIFY', MISSING)
-  const problem = verifyProblem(state, row.skuCode, reused)
+  const productMs = dateTimeMs(state.createdAt)
+  if (productMs === null) return { retry: true, error: ASK_AGAIN }
+  const problem = ageProblem(productMs, row.createdAt, reused) ?? verifyProblem(state, row.skuCode, reused)
   if (problem) return fail('VERIFY', problem)
 
   const done = await write({

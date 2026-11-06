@@ -3,8 +3,10 @@ import json
 import pytest
 
 import registers
+from conftest import fixture
 
 LINK = 'https://shop.example.com/products/family-ornament'
+LINK_VECTORS = json.loads(fixture('link_vectors.json'))
 
 
 def make_job(**over):
@@ -73,20 +75,24 @@ def test_unreadable_and_malformed_entries_are_skipped(roots, tmp_path):
         'productGid': 'gid://shopify/Product/888', 'handle': None}
 
 
-@pytest.mark.parametrize('url, key', [
-    ('https://Shop.Example.com/products/A/', 'shop.example.com/products/A'),
-    ('https://shop.example.com', 'shop.example.com'),
-    ('https://shop.example.com//', 'shop.example.com'),
-    ('https://shop.example.com:443/x?y=1#z', 'shop.example.com/x'),
-    ('https://shop.example.com:8443/x', 'shop.example.com:8443/x'),
-    ('http://shop.example.com:80/x', 'shop.example.com/x'),
-    ('  https://shop.example.com/x  ', 'shop.example.com/x'),
-    ('not a url', None),
-    ('https://shop.example.com:99999/x', None),
-    (None, None),
-])
-def test_source_key_follows_the_server_rule(url, key):
-    assert registers.source_key(url) == key
+@pytest.mark.parametrize('vector', LINK_VECTORS['keys'], ids=lambda v: v['url'])
+def test_source_key_gives_the_server_key_for_the_shared_vectors(vector):
+    assert registers.source_key(vector['url']) == vector['key']
+
+
+@pytest.mark.parametrize('url', ['not a url', 'https://shop.example.com:99999/x', None, 42])
+def test_source_key_of_a_non_link_is_none(url):
+    assert registers.source_key(url) is None
+
+
+def test_find_existing_matches_a_collection_or_www_form_of_the_same_product(roots):
+    clip, cma = roots
+    entry(cma, 'family-live', source='https://www.shop.example.com/collections/gifts/products/Family-Ornament',
+          product='gid://shopify/Product/333', handle='family-live', status='ACTIVE')
+    assert registers.find_existing(make_job(), roots=[str(clip), str(cma)]) == {
+        'productGid': 'gid://shopify/Product/333', 'handle': 'family-live'}
+    other = make_job(sourceUrl='https://shop.example.com/en-us/products/family-ornament-2')
+    assert registers.find_existing(other, roots=[str(clip), str(cma)]) is None
 
 
 def test_default_roots_are_the_litzzy_registers():

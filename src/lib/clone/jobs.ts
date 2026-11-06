@@ -5,6 +5,7 @@ import { assertSafeExternalUrl } from '@/lib/safe-url'
 import { storeScopeFor, storeWhere } from '@/lib/store-scope'
 import { listConnectedStores } from '@/lib/store-connections'
 import { issueSkuCode, parseSkuPrefix, type SkuCodeDeps } from '@/lib/clone/sku-code'
+import { releaseExpiredLeases } from '@/lib/clone/leases'
 
 export type CloneJobRow = CloneJob
 
@@ -52,9 +53,14 @@ const ADMIN_ONLY_FAIL_KINDS = ['TOOL_GAP', 'UNSUPPORTED', 'NOT_ENABLED']
 // The only failure texts the server itself writes; every other error comes from the runner or a Claude session on the owner's PC.
 const SERVER_ERROR_KINDS = ['VERIFY', 'WORKER_LOST']
 
+// One product, one key, however the link was reached (www., a collection or locale prefix, letter case, doubled slashes).
+// The key only: sourceUrl, which the runner opens, keeps the path normalizeSourceUrl gave it. The runner's registers.source_key mirrors this.
 export function sourceKeyOf(url: string): string {
   const u = new URL(url.trim())
-  return `${u.host.toLowerCase()}${u.pathname.replace(/\/+$/, '')}`
+  const host = u.host.toLowerCase().replace(/^www\./, '')
+  const path = u.pathname.toLowerCase().replace(/\/{2,}/g, '/')
+  const product = /\/products\/[^/]+/.exec(path)
+  return `${host}${product ? product[0] : path.replace(/\/$/, '')}`
 }
 
 const iso = (d: Date | null) => (d ? d.toISOString() : null)
@@ -144,23 +150,39 @@ async function findVisible(user: AuthUser, id: string): Promise<CloneJobRow | nu
   return prisma.cloneJob.findFirst({ where: { id, ...(await visibleWhere(user)) } })
 }
 
+// Opening the page is enough to clear a job whose runner never came back, even with the queue paused or no runner claiming at all.
+// A failure here must never fail the read, and its detail may carry paths, so it logs a fixed line.
+async function releaseDeadJobs(): Promise<void> {
+  try {
+    await releaseExpiredLeases(new Date())
+  } catch {
+    console.warn('[clone jobs] Không trả được job hết lease.')
+  }
+}
+
 export async function listCloneJobs(user: AuthUser): Promise<CloneJobView[]> {
+  await releaseDeadJobs()
   const rows = await prisma.cloneJob.findMany({ where: await visibleWhere(user), orderBy: { createdAt: 'desc' }, take: LIST_LIMIT })
   return rows.map(row => cloneJobView(row, user))
 }
 
 export async function getCloneJob(user: AuthUser, id: string): Promise<CloneJobView | null> {
+  await releaseDeadJobs()
   const row = await findVisible(user, id)
   return row ? cloneJobView(row, user) : null
 }
 
 export type CreateCloneJobDeps = { sku?: Partial<SkuCodeDeps>; now?: Date }
 
+// The runner on the owner's PC opens the link, so the host must be a public name, never a machine on that PC's LAN: two or more labels,
+// a letters-only last label that is not a local or reserved name, no trailing dot, no IP literal. runner.py SOURCE_URL_RE mirrors it.
+const PUBLIC_HOST = String.raw`(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+(?!(?:local|lan|internal|home|corp|localhost|test|invalid|example)(?![a-z]))[a-z]{2,}`
+
 // A Claude session on the owner's PC types the stored link into a shell command, so it may hold only characters that are inert even unquoted.
 // No `%`: cmd.exe expands %NAME% even inside quotes, and a percent-then-hex rule would still let %NAME%20 through.
-export const SOURCE_URL_RE = /^https:\/\/[a-z0-9.-]+(\/[A-Za-z0-9._-]*)*(\?view=[A-Za-z0-9_-]+)?$/
+export const SOURCE_URL_RE = new RegExp(String.raw`^https:\/\/${PUBLIC_HOST}(\/[A-Za-z0-9._-]*)*(\?view=[A-Za-z0-9_-]+)?$`)
 
-const HOST_RE = /^[a-z0-9.-]+$/
+const HOST_RE = new RegExp(`^${PUBLIC_HOST}$`)
 const PATH_RE = /^(\/[A-Za-z0-9._-]*)*$/
 const VIEW_RE = /^[A-Za-z0-9_-]+$/
 
@@ -286,14 +308,21 @@ export async function retryCloneJob(user: AuthUser, id: string): Promise<CloneJo
     throw new CloneInputError(403, 'Job này cần quản trị xử lý trước khi thử lại.')
   }
   await withLinkLock(job.storeId, job.sourceKey, async () => {
-    const other = await prisma.cloneJob.findFirst({
-      where: { id: { not: id }, storeId: job.storeId, sourceKey: job.sourceKey, status: { in: LIVE_STATUSES } },
-      select: { id: true },
-    })
-    if (other) throw new CloneInputError(409, LINK_TAKEN)
+    // A forced job was made to clone a link that already has a product, so the original DONE job never blocks it.
+    if (!job.force) {
+      const other = await prisma.cloneJob.findFirst({
+        where: { id: { not: id }, storeId: job.storeId, sourceKey: job.sourceKey, status: { in: LIVE_STATUSES } },
+        select: { id: true },
+      })
+      if (other) throw new CloneInputError(409, LINK_TAKEN)
+    }
+    // Nothing of the earlier attempt survives except skuCode, force and createdAt.
     const { count } = await prisma.cloneJob.updateMany({
       where: { id, status: 'FAILED' },
-      data: { status: 'QUEUED', attempts: 0, error: null, failKind: null, stage: null, lockedAt: null, finishedAt: null },
+      data: {
+        status: 'QUEUED', attempts: 0, error: null, failKind: null, stage: null, lockedAt: null, finishedAt: null, startedAt: null, platform: null,
+        reused: false, qaVerdict: null, qaNote: null, productGid: null, handle: null, productUrl: null, productType: null, costUsd: null, durationMs: null,
+      },
     })
     if (count === 0) throw new CloneInputError(409, NOT_FAILED)
   })

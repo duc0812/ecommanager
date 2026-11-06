@@ -24,7 +24,12 @@ import detect
 from api import FAIL_KINDS, TIMEOUT_S, ApiError, AuthError, Client
 
 KNOWN_STORES = {'LIT': 'litzzy', 'REMI': 'reminiso'}
-SOURCE_URL_RE = re.compile(r"^https://[a-z0-9.-]+(/[A-Za-z0-9._-]*)*(\?view=[A-Za-z0-9_-]+)?$")
+# The server's SOURCE_URL_RE: the host is a public name (two or more labels, a letters-only last label that is not a local or
+# reserved name, no trailing dot, no IP literal), so a link never points this PC at a machine on its LAN.
+SOURCE_URL_RE = re.compile(
+    r"^https://(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+"
+    r"(?!(?:local|lan|internal|home|corp|localhost|test|invalid|example)(?![a-z]))[a-z]{2,}"
+    r"(/[A-Za-z0-9._-]*)*(\?view=[A-Za-z0-9_-]+)?$")
 SKU_CODE_RE = re.compile(r'^[A-Z]{2}\d{10}$', re.ASCII)
 JOB_ID_RE = re.compile(r'^[a-z0-9]{10,40}$')
 

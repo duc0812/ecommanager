@@ -1,6 +1,6 @@
 'use client'
 import {
-  FAIL_KIND_LABEL, STATUS_LABEL, canCancel, canRetry, formatDuration, formatWhen, httpsUrl, prefixOf,
+  FAIL_KIND_LABEL, STATUS_LABEL, canCancel, canRetry, formatDuration, formatWhen, httpsUrl, leftoverProductId, prefixOf, showsReused, visibleStage,
   type CloneJobView, type CloneStatus, type CloneStore, type Viewer,
 } from './types'
 
@@ -36,10 +36,12 @@ function SourceCell({ url }: { url: string }) {
   )
 }
 
-function ProductCell({ job }: { job: CloneJobView }) {
+function ProductCell({ job, viewer }: { job: CloneJobView; viewer: Viewer }) {
   const value = job.status === 'DONE' ? job.productUrl : null
   const href = httpsUrl(value)
-  if (!value && !job.reused) return <span className={muted}>—</span>
+  const reused = showsReused(job)
+  const leftover = leftoverProductId(job, viewer)
+  if (!value && !reused && !leftover) return <span className={muted}>—</span>
   return (
     <div className="flex flex-col gap-xs">
       {href && (
@@ -48,7 +50,8 @@ function ProductCell({ job }: { job: CloneJobView }) {
         </a>
       )}
       {value && !href && <span title={value} className="block max-w-[200px] truncate">{value}</span>}
-      {job.reused && <span className="text-label-sm text-on-surface-variant">Đã có sẵn</span>}
+      {reused && <span className="text-label-sm text-on-surface-variant">Đã có sẵn</span>}
+      {leftover && <span className="text-label-sm text-on-surface-variant">Còn sản phẩm trên store: {leftover}</span>}
     </div>
   )
 }
@@ -90,6 +93,7 @@ export function CloneJobTable({ jobs, stores, viewer, highlightId, acting, onCan
           {jobs.map(job => {
             const store = storeById.get(job.storeId)
             const busy = acting === job.id
+            const stage = visibleStage(job)
             return (
               <tr key={job.id} id={`clone-job-${job.id}`} className={job.id === highlightId ? 'bg-secondary/10 ring-2 ring-inset ring-secondary' : undefined}>
                 <td className={`${td} whitespace-nowrap`}>
@@ -100,10 +104,10 @@ export function CloneJobTable({ jobs, stores, viewer, highlightId, acting, onCan
                 <td className={td}><SourceCell url={job.sourceUrl} /></td>
                 <td className={td}>
                   <span className={`inline-block rounded-full px-sm py-xs text-label-sm ${STATUS_STYLE[job.status] ?? STATUS_STYLE.QUEUED}`}>{STATUS_LABEL[job.status] ?? job.status}</span>
-                  {job.stage && <p className={`mt-xs text-label-sm ${muted}`}>{job.stage}</p>}
+                  {stage && <p className={`mt-xs text-label-sm ${muted}`}>{stage}</p>}
                 </td>
                 <td className={`${td} font-mono text-label-sm`}>{job.skuCode ?? '—'}</td>
-                <td className={td}><ProductCell job={job} /></td>
+                <td className={td}><ProductCell job={job} viewer={viewer} /></td>
                 <td className={td}><ErrorCell job={job} /></td>
                 {viewer.superadmin && <td className={`${td} whitespace-nowrap`}>{job.costUsd == null ? '—' : `$${job.costUsd.toFixed(2)}`}</td>}
                 {viewer.superadmin && <td className={`${td} whitespace-nowrap`}>{formatDuration(job.durationMs)}</td>}

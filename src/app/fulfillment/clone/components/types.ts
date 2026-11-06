@@ -11,6 +11,7 @@ export type CloneJobView = {
   requestedById: string
   requestedByName: string
   productUrl: string | null
+  productGid: string | null
   reused: boolean
   error: string | null
   createdAt: string
@@ -67,6 +68,16 @@ const ADMIN_ONLY_FAIL_KINDS = ['TOOL_GAP', 'UNSUPPORTED', 'NOT_ENABLED']
 export type Viewer = { id: string | null; role: string | null; superadmin: boolean }
 
 export const isActive = (job: CloneJobView) => job.status === 'QUEUED' || job.status === 'RUNNING'
+
+export const visibleStage = (job: CloneJobView): string | null => (job.status === 'RUNNING' ? job.stage : null)
+
+export const showsReused = (job: CloneJobView): boolean => job.status === 'DONE' && job.reused
+
+// A failed job that names a product left that product on the store; only the SUPERADMIN is shown which one.
+export function leftoverProductId(job: CloneJobView, viewer: Viewer): string | null {
+  if (job.status !== 'FAILED' || !viewer.superadmin) return null
+  return /^gid:\/\/shopify\/Product\/(\d+)$/.exec(job.productGid ?? '')?.[1] ?? null
+}
 
 // The same rules as cancelCloneJob and retryCloneJob, so a click never answers 403.
 export function canCancel(job: CloneJobView, viewer: Viewer): boolean {

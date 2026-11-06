@@ -135,6 +135,12 @@ def test_validate_job_rejects_hostile_values():
     assert runner.KNOWN_STORES == {'LIT': 'litzzy', 'REMI': 'reminiso'}
 
 
+@pytest.mark.parametrize('vector', json.loads(fixture('link_vectors.json'))['hosts'], ids=lambda v: v['url'])
+def test_source_url_host_must_be_a_public_name_like_the_server_says(vector):
+    assert bool(runner.SOURCE_URL_RE.fullmatch(vector['url'])) is vector['ok']
+    assert (runner.validate_job(make_job(sourceUrl=vector['url'])) is None) is vector['ok']
+
+
 def test_run_job_with_invalid_job_fails_without_spawning(tmp_path):
     deps = make_deps(tmp_path, html=fixture('customily.html'))
     runner.run_job(make_job(sourceUrl='https://shop.example.com/a b'), deps)

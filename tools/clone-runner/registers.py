@@ -16,11 +16,13 @@ import urllib.parse
 REGISTER_ROOTS = {'LIT': (r'D:\Ecom manager\clipart-clones', r'D:\Ecom manager\customall-clones')}
 GID_RE = re.compile(r'^gid://shopify/Product/\d+$', re.ASCII)
 DEFAULT_PORTS = {'http': 80, 'https': 443}
+PRODUCT_PATH_RE = re.compile(r'/products/[^/]+')
 
 
 def source_key(url) -> str | None:
-    """The server's `sourceKeyOf`: lower-cased host (with a non-default port) + path, without query, hash or
-    trailing slashes."""
+    """The server's `sourceKeyOf`: one key per product. Lower-cased host (with a non-default port) without a leading
+    `www.`, then the lower-cased path with `//` collapsed and no trailing slash, cut to `/products/<handle>` when it has
+    one (no collection or locale prefix, nothing after the handle); no query or hash."""
     if not isinstance(url, str):
         return None
     try:
@@ -32,7 +34,10 @@ def source_key(url) -> str | None:
         return None
     if port is not None and port != DEFAULT_PORTS.get(parts.scheme):
         host = f'{host}:{port}'
-    return host + parts.path.rstrip('/')
+    host = host[4:] if host.startswith('www.') else host
+    path = re.sub(r'/{2,}', '/', parts.path.lower())
+    product = PRODUCT_PATH_RE.search(path)
+    return host + (product.group(0) if product else path.rstrip('/'))
 
 
 def _entries(root: str):

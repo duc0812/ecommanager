@@ -110,7 +110,12 @@ function installShopify() {
     if (!shopify.product) return answer({ data: { product: null } })
     const nodes = (shopify.skus ?? []).map(sku => ({ sku }))
     return answer({
-      data: { product: { status: 'ACTIVE', onlineStoreUrl: ONLINE_URL, handle: 'alice-mug', productType: 'Mug', variants: { nodes, pageInfo: { hasNextPage: false, endCursor: null } } } },
+      data: {
+        product: {
+          status: 'ACTIVE', onlineStoreUrl: ONLINE_URL, handle: 'alice-mug', productType: 'Mug', createdAt: new Date().toISOString(),
+          variants: { nodes, pageInfo: { hasNextPage: false, endCursor: null } },
+        },
+      },
     })
   })
 }
@@ -754,6 +759,25 @@ describe('luồng của runner', () => {
     expect(last).toEqual({ status: 200, body: { status: 'FAILED' }, text: expect.any(String) })
     expect(await rowOf(job.id)).toMatchObject({ status: 'FAILED', failKind: 'UNSUPPORTED', error: 'no personaliser', productGid: GID })
     expect((await listJobs({ who: 'sellerA' })).body.jobs[0].error).toBeNull()
+  })
+
+  it('fail retryable kèm productGid ở lần 1: 200 FAILED, không quay lại hàng chờ, SUPERADMIN thấy productGid còn lại', async () => {
+    const token = await generateCloneWorkerToken()
+    const auth = bearer(token)
+    const job = await seedJob()
+    expect((await claim({ bearer: auth, json: { waitSeconds: 0 } })).body.job.id).toBe(job.id)
+    const sent = { attempts: 1, failKind: 'TOOL', error: 'Không gửi được kết quả sau 6 lần thử.', retryable: true, productGid: GID }
+    expect(await fail(job.id, { bearer: auth, json: sent })).toMatchObject({ status: 200, body: { status: 'FAILED' } })
+    expect((await claim({ bearer: auth, json: { waitSeconds: 0 } })).body).toEqual({ job: null, paused: false })
+    expect((await listJobs({ who: 'super' })).body.jobs[0]).toMatchObject({ id: job.id, status: 'FAILED', productGid: GID })
+  })
+
+  it('GET jobs khi không còn runner nào: job hết lease được trả về hàng chờ ngay lúc mở trang', async () => {
+    const stale = await seedJob({ status: 'RUNNING', attempts: 1, lockedAt: new Date(Date.now() - 11 * 60_000), stage: 'qa' })
+    const listed = await listJobs({ who: 'sellerA' })
+    expect(listed.status).toBe(200)
+    expect(listed.body.jobs.find((j: any) => j.id === stale.id)).toMatchObject({ status: 'QUEUED', stage: null })
+    expect(await cancelJob(stale.id, { who: 'sellerA' })).toMatchObject({ status: 200, body: { job: { status: 'CANCELLED' } } })
   })
 
   it('heartbeat báo job đã bị huỷ: { ok: false, cancelled: true }', async () => {
