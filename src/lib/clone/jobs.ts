@@ -148,18 +148,32 @@ export async function getCloneJob(user: AuthUser, id: string): Promise<CloneJobV
 
 export type CreateCloneJobDeps = { sku?: Partial<SkuCodeDeps>; now?: Date }
 
-// The stored link is the parsed one (`href`): the URL parser drops tabs and newlines and percent-encodes spaces and quotes, so what travels to the runner is what was checked.
-function safeLink(raw: unknown): string {
-  const typed = typeof raw === 'string' ? raw.trim() : ''
-  if (typed.length > MAX_URL_LENGTH) throw new CloneInputError(400, BAD_LINK)
-  let href: string
+// A Claude session on the owner's PC types the stored link into a shell command, so it may hold only characters that are inert even unquoted.
+export const SOURCE_URL_RE = /^https:\/\/[a-z0-9.-]+(\/[A-Za-z0-9._~%+,@=:-]*)*(\?view=[A-Za-z0-9_-]+)?$/
+
+const HOST_RE = /^[a-z0-9.-]+$/
+const PATH_RE = /^(\/[A-Za-z0-9._~%+,@=:-]*)*$/
+const VIEW_RE = /^[A-Za-z0-9_-]+$/
+
+// The server rebuilds the link instead of storing what was pasted: ad query strings and the hash are dropped, and only a `view` parameter
+// (some stores serve the personalised page behind a view template) survives. A link whose host or path holds anything else is refused.
+export function normalizeSourceUrl(input: unknown): string {
+  const bad = () => new CloneInputError(400, BAD_LINK)
+  const typed = typeof input === 'string' ? input.trim() : ''
+  if (typed.length > MAX_URL_LENGTH) throw bad()
+  let url: URL
   try {
-    href = assertSafeExternalUrl(typed).href
+    url = assertSafeExternalUrl(typed)
   } catch {
-    throw new CloneInputError(400, BAD_LINK)
+    throw bad()
   }
-  if (href.length > MAX_URL_LENGTH) throw new CloneInputError(400, BAD_LINK)
-  return href
+  const host = url.hostname.toLowerCase()
+  if (url.port || url.username || url.password || !HOST_RE.test(host) || !PATH_RE.test(url.pathname)) throw bad()
+  const views = url.searchParams.getAll('view')
+  const view = views.length === 1 && VIEW_RE.test(views[0]) ? `?view=${views[0]}` : ''
+  const result = `https://${host}${url.pathname}${view}`
+  if (result.length > MAX_URL_LENGTH || !SOURCE_URL_RE.test(result)) throw bad()
+  return result
 }
 
 declare global {
@@ -203,7 +217,7 @@ export async function createCloneJob(
   const prefix = parseSkuPrefix(owner?.skuPrefix)
   if (!prefix) throw new CloneInputError(400, NO_SKU_PREFIX)
 
-  const sourceUrl = safeLink(input.url)
+  const sourceUrl = normalizeSourceUrl(input.url)
   const sourceKey = sourceKeyOf(sourceUrl)
 
   return withLinkLock(storeId, sourceKey, async () => {

@@ -3,8 +3,8 @@ import { prisma } from '@/lib/db'
 import type { AuthUser } from '@/lib/api-auth'
 import { saveStoreCredential } from '@/lib/store-connections'
 import {
-  CloneInputError, cancelCloneJob, cloneJobView, createCloneJob, getCloneJob, listCloneJobs, notifyCloneQueue, retryCloneJob,
-  sourceKeyOf, waitForCloneQueue,
+  CloneInputError, SOURCE_URL_RE, cancelCloneJob, cloneJobView, createCloneJob, getCloneJob, listCloneJobs, normalizeSourceUrl, notifyCloneQueue,
+  retryCloneJob, sourceKeyOf, waitForCloneQueue,
 } from '@/lib/clone/jobs'
 import { CLONE_SETTINGS_KEY, getCloneSettings, saveCloneSettings } from '@/lib/clone/settings'
 import { SKU_CODE_RE } from '@/lib/clone/sku-code'
@@ -17,6 +17,7 @@ const STORE_OFF = `${P}-store-off`
 const STORE_BARE = `${P}-store-bare`
 const LINK = 'https://Shop.Example.com/products/abc'
 const LINK_KEY = 'shop.example.com/products/abc'
+const LINK_STORED = 'https://shop.example.com/products/abc'
 
 const EMAILS = ['super', 'admin', 'support', 'sellera', 'sellera2', 'sellerb', 'noprefix', 'unknown'].map(k => `${P}-${k}@test.local`)
 
@@ -52,7 +53,7 @@ async function seedJob(over: Partial<{
   jobN++
   return prisma.cloneJob.create({
     data: {
-      storeId: STORE_A, sourceUrl: LINK, sourceKey: LINK_KEY, skuCode: `ZZ26110${String(jobN).padStart(5, '0')}`,
+      storeId: STORE_A, sourceUrl: LINK_STORED, sourceKey: LINK_KEY, skuCode: `ZZ26110${String(jobN).padStart(5, '0')}`,
       requestedById: users.sellera.id, requestedByName: users.sellera.name, ...over,
     },
   })
@@ -94,8 +95,11 @@ beforeAll(async () => {
 
 beforeEach(wipe)
 
-afterEach(() => {
+// Whatever a test leaves in the table, created through the API or seeded by hand, must be a link that is inert in a shell.
+afterEach(async () => {
   vi.useRealTimers()
+  const rows = await prisma.cloneJob.findMany({ where: { storeId: { startsWith: `${P}-` } }, select: { sourceUrl: true } })
+  for (const row of rows) expect(row.sourceUrl).toMatch(SOURCE_URL_RE)
 })
 
 afterAll(async () => {
@@ -116,6 +120,80 @@ describe('sourceKeyOf', () => {
     expect(sourceKeyOf('https://shop.example.com/products/abc///')).toBe('shop.example.com/products/abc')
     expect(sourceKeyOf('https://Shop.Example.com/')).toBe('shop.example.com')
     expect(sourceKeyOf('https://shop.example.com')).toBe('shop.example.com')
+  })
+})
+
+describe('normalizeSourceUrl', () => {
+  const refused = (input: unknown) => {
+    try {
+      normalizeSourceUrl(input)
+    } catch (e) {
+      expect(e).toBeInstanceOf(CloneInputError)
+      expect(e).toMatchObject({ status: 400, message: 'Link không hợp lệ.' })
+      return
+    }
+    throw new Error(`accepted: ${String(input)}`)
+  }
+
+  it('dựng lại link: host chữ thường, path giữ nguyên, bỏ query và hash, chỉ giữ view hợp lệ', () => {
+    const cases: [string, string][] = [
+      ['https://Shop.Example.com/Products/Abc?utm_source=fb&utm_medium=cpc#reviews', 'https://shop.example.com/Products/Abc'],
+      ['https://shop.example.com/p?view=dn06051656&variant=1', 'https://shop.example.com/p?view=dn06051656'],
+      ['https://shop.example.com/p?variant=1&view=dn06051656#x', 'https://shop.example.com/p?view=dn06051656'],
+      ['https://shop.example.com/p?view=a_b-C9', 'https://shop.example.com/p?view=a_b-C9'],
+      ['https://shop.example.com/p?view=dn%30', 'https://shop.example.com/p?view=dn0'],
+      ['https://shop.example.com/p?view=a$b', 'https://shop.example.com/p'],
+      ['https://shop.example.com/p?view=a;b&x=$(id)', 'https://shop.example.com/p'],
+      ['https://shop.example.com/p?view=', 'https://shop.example.com/p'],
+      ['https://shop.example.com/p?view=a&view=b', 'https://shop.example.com/p'],
+      ['https://shop.example.com/p?VIEW=a', 'https://shop.example.com/p'],
+      ['https://shop.example.com', 'https://shop.example.com/'],
+      ['  https://shop.example.com/p/  ', 'https://shop.example.com/p/'],
+      ['https://shop.example.com/a%20b/c,d+e@f=g:h~i_j.k-l', 'https://shop.example.com/a%20b/c,d+e@f=g:h~i_j.k-l'],
+      ['https://shop.example.com/a b/"c"/`d`', 'https://shop.example.com/a%20b/%22c%22/%60d%60'],
+      ['https://shop.example.com:443/p', 'https://shop.example.com/p'],
+      ['https://bücher.example/p', 'https://xn--bcher-kva.example/p'],
+    ]
+    for (const [input, expected] of cases) {
+      const out = normalizeSourceUrl(input)
+      expect(out).toBe(expected)
+      expect(out).toMatch(SOURCE_URL_RE)
+    }
+  })
+
+  it('path với ký tự không an toàn trong shell, cổng, đăng nhập, host lạ, http, link nội bộ hay quá dài: 400', () => {
+    const bad: unknown[] = [
+      'https://shop.example.com/$(id)', 'https://shop.example.com/a$b', 'https://shop.example.com/a(b)', 'https://shop.example.com/a;b',
+      'https://shop.example.com/a&b', "https://shop.example.com/a'b", 'https://shop.example.com/a*b', 'https://shop.example.com/a!b',
+      'https://shop.example.com/a|b', 'https://shop.example.com/a[b]',
+      'https://shop.example.com:8443/p', 'https://shop.example.com:80/p', 'https://user:pw@shop.example.com/p', 'https://user@shop.example.com/p',
+      'https://sh_op.example.com/p', 'https://[2001:db8::1]/p',
+      'http://shop.example.com/p', 'https://localhost/p', 'https://10.0.0.1/p', 'ftp://shop.example.com/p', 'javascript:alert(1)',
+      '', '   ', 'not a url', undefined, null, 12, {}, ['https://shop.example.com/p'],
+      `https://shop.example.com/${'a'.repeat(2048)}`, `https://shop.example.com/${'"'.repeat(1000)}`,
+    ]
+    for (const input of bad) refused(input)
+  })
+
+  it('control và ký tự xuống dòng nằm giữa link bị trình phân tích bỏ đi, không lọt vào kết quả', () => {
+    const out = normalizeSourceUrl('https://shop.example.com/pro\nducts/a\tb\r\n')
+    expect(out).toBe('https://shop.example.com/products/ab')
+    expect(out).not.toMatch(/[\u0000-\u001f\u007f\s]/)
+  })
+
+  it('đúng 2048 ký tự thì nhận', () => {
+    const head = 'https://shop.example.com/'
+    expect(normalizeSourceUrl(head + 'a'.repeat(2048 - head.length))).toHaveLength(2048)
+  })
+
+  it('SOURCE_URL_RE từ chối mọi ký tự nguy hiểm và nhận đúng dạng đã dựng', () => {
+    for (const ok of ['https://a.com/', 'https://a.com', 'https://a.b-c.com/x/y.z?view=ab_C-1', 'https://a.com/%20x']) expect(ok).toMatch(SOURCE_URL_RE)
+    const bad = [
+      'http://a.com/', 'https://A.com/', 'https://a.com:80/', 'https://a.com/$', 'https://a.com/a b', 'https://a.com/a\nb', 'https://a.com/a;b',
+      'https://a.com/a?x=1', 'https://a.com/a?view=a&x=1', 'https://a.com/a#x', "https://a.com/'", 'https://a.com/`', 'https://a.com/a?view=a$',
+      'https://a.com/a\\b', 'https://u@a.com/', ' https://a.com/', 'https://a.com/\n',
+    ]
+    for (const input of bad) expect(input).not.toMatch(SOURCE_URL_RE)
   })
 })
 
@@ -239,16 +317,51 @@ describe('createCloneJob', () => {
     expect(e.message).toBe('Link không hợp lệ.')
   })
 
-  it('3. xuống dòng, tab và ký tự lạ trong link không vào được kho: lưu đúng chuỗi đã được kiểm', async () => {
-    const dirty = 'https://Shop.Example.com/prod\nucts/a\tb `c` "d" $(id) e'
+  it('3. xuống dòng, tab, khoảng trắng, nháy kép và dấu huyền trong path vào kho dưới dạng đã mã hoá phần trăm', async () => {
+    const dirty = 'https://Shop.Example.com/prod\nucts/a\tb `c` "d" e'
     const job = await createCloneJob(users.sellera, { url: dirty, storeId: STORE_A }, deps())
-    const parsed = new URL(dirty.trim())
-    expect(job.sourceUrl).toBe(parsed.href)
-    expect(job.sourceUrl).toBe('https://shop.example.com/products/ab%20%60c%60%20%22d%22%20$(id)%20e')
+    expect(job.sourceUrl).toBe('https://shop.example.com/products/ab%20%60c%60%20%22d%22%20e')
     expect(job.sourceUrl).not.toMatch(/[\s\n\t\r"`]/)
     expect(job.sourceKey).toBe(sourceKeyOf(job.sourceUrl))
-    expect(job.sourceKey).toBe('shop.example.com/products/ab%20%60c%60%20%22d%22%20$(id)%20e')
     expect((await prisma.cloneJob.findUnique({ where: { id: job.id } }))?.sourceUrl).toBe(job.sourceUrl)
+  })
+
+  it('3. query quảng cáo và hash bị bỏ: ?utm_source=fb&utm_medium=cpc#reviews lưu không có query và hash', async () => {
+    const job = await createCloneJob(users.sellera, { url: `${LINK}?utm_source=fb&utm_medium=cpc#reviews`, storeId: STORE_A }, deps())
+    expect(job.sourceUrl).toBe(LINK_STORED)
+    expect(job.sourceKey).toBe(LINK_KEY)
+  })
+
+  it('3. chỉ giữ tham số view: ?view=dn06051656&variant=1 lưu thành ?view=dn06051656', async () => {
+    const job = await createCloneJob(users.sellera, { url: `${LINK}?view=dn06051656&variant=1#x`, storeId: STORE_A }, deps())
+    expect(job.sourceUrl).toBe(`${LINK_STORED}?view=dn06051656`)
+    expect(job.sourceKey).toBe(LINK_KEY)
+  })
+
+  it('3. link có và không có view là cùng một khoá', async () => {
+    await createCloneJob(users.sellera, { url: `${LINK}?view=dn06051656`, storeId: STORE_A }, deps())
+    const e = await codeOf(() => createCloneJob(users.sellera, { url: LINK, storeId: STORE_A }, deps()))
+    expect(e.status).toBe(409)
+    expect(e.message).toBe('Bạn đã dán link này rồi.')
+  })
+
+  it('3. path có $(id), ;, nháy đơn, cổng rõ ràng hay tên đăng nhập: 400 "Link không hợp lệ.", không có job', async () => {
+    const bad = [
+      'https://shop.example.com/products/$(id)', 'https://shop.example.com/products/a;b', "https://shop.example.com/products/a'b",
+      'https://shop.example.com:8443/products/abc', 'https://user:pw@shop.example.com/products/abc', 'https://user@shop.example.com/products/abc',
+    ]
+    for (const url of bad) {
+      const e = await codeOf(() => createCloneJob(users.sellera, { url, storeId: STORE_A }, deps()))
+      expect(e.status).toBe(400)
+      expect(e.message).toBe('Link không hợp lệ.')
+    }
+    expect(await prisma.cloneJob.count({ where: { storeId: STORE_A } })).toBe(0)
+  })
+
+  it('3. host chữ hoa được lưu chữ thường', async () => {
+    const job = await createCloneJob(users.sellera, { url: 'https://SHOP.Example.COM/Products/Abc', storeId: STORE_A }, deps())
+    expect(job.sourceUrl).toBe('https://shop.example.com/Products/Abc')
+    expect(job.sourceKey).toBe('shop.example.com/Products/Abc')
   })
 
   it('3. hai dạng của cùng một link (có và không có xuống dòng) là một khoá', async () => {
@@ -331,7 +444,7 @@ describe('createCloneJob', () => {
     await waiting
     expect(woke).toHaveBeenCalledTimes(1)
     expect(job).toMatchObject({
-      status: 'QUEUED', storeId: STORE_A, sourceUrl: 'https://shop.example.com/products/abc/?variant=1', sourceKey: LINK_KEY, requestedById: users.sellera.id,
+      status: 'QUEUED', storeId: STORE_A, sourceUrl: 'https://shop.example.com/products/abc/', sourceKey: LINK_KEY, requestedById: users.sellera.id,
       requestedByName: users.sellera.name, attempts: 0, failKind: null,
     })
     expect(job.skuCode).toMatch(SKU_CODE_RE)
