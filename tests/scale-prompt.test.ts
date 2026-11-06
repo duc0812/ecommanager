@@ -39,6 +39,13 @@ describe('scale prompt', () => {
     expect(renderPrintMapping({ ...design, front: 'line one\nline two' })).not.toContain('\n')
   })
 
+  it('does not double the preposition when the model already wrote where a text sits', () => {
+    const p = renderPrintMapping({ ...design, texts: [{ text: 'STAR WARS', where: 'on each upper sleeve' }, { text: '2026', where: 'On the back, below the banner.' }] })
+    expect(p).toContain("the text 'STAR WARS' on each upper sleeve")
+    expect(p).toContain("the text '2026' on the back, below the banner")
+    expect(p.toLowerCase()).not.toContain('on on ')
+  })
+
   it('rejects a design without sourceGarment', () => {
     expect(DesignSchema.safeParse({ ...design, sourceGarment: undefined }).success).toBe(false)
   })

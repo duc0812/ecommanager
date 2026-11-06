@@ -18,6 +18,7 @@ export type PromptTarget = { name: string; blankDescription: string; unprintedPa
 
 const oneLine = (s: string) => s.replace(/\s+/g, ' ').trim()
 const sentence = (s: string) => { const t = oneLine(s).replace(/[.;,]+$/, ''); return t ? `${t}.` : '' }
+const place = (s: string) => { const t = oneLine(s).replace(/[.;,]+$/, '').replace(/^on\s+/i, ''); return t.charAt(0).toLowerCase() + t.slice(1) }
 const quote = (s: string) => oneLine(s).replace(/'/g, '’')
 
 export function renderPrintMapping(d: Design): string {
@@ -29,7 +30,7 @@ export function renderPrintMapping(d: Design): string {
   if (d.sleeves) parts.push(sentence(`Sleeves: ${d.sleeves}`))
   if (d.otherParts) parts.push(sentence(`Other parts: ${d.otherParts}`))
   if (d.texts.length) {
-    const list = d.texts.map(t => `the text '${quote(t.text)}' on ${oneLine(t.where).replace(/[.;,]+$/, '')}`).join(', ')
+    const list = d.texts.map(t => `the text '${quote(t.text)}' on ${place(t.where)}`).join(', ')
     parts.push(`Texts, each spelled exactly the same as in IMAGE 1: ${list}.`)
   }
   return parts.filter(Boolean).join(' ')

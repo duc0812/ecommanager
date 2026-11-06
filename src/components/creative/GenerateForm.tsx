@@ -18,7 +18,7 @@ function readAsDataUrl(blob: Blob): Promise<string> {
 }
 
 // Phone photos are 3-12 MB; nginx and the JSON body cannot take four of them. Shrink to ≤2048 px JPEG unless the file is already small.
-async function shrinkImage(file: File): Promise<string> {
+export async function shrinkImage(file: File): Promise<string> {
   const bitmap = await createImageBitmap(file).catch(() => null)
   if (!bitmap) return readAsDataUrl(file)
   const scale = Math.min(1, MAX_EDGE / Math.max(bitmap.width, bitmap.height))
