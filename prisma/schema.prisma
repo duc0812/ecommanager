@@ -1408,14 +1408,58 @@ model CsTicket {
   rootCauseById   String?
   reviewedAt      DateTime?
   reviewSeq       Int      @default(0)
+  lastAgentAt     DateTime?
+  staffReadAt     DateTime?
+  staffReadById   String?
+  staffReadByName String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
   messages        CsMessage[]
   analyses        CsAnalysis[]
   reviews         CsReplyReview[]
   directives      CsDirective[]
+  tasks           CsTask[]
   @@index([needsHuman, urgency, lastCustomerAt])
   @@index([fdUpdatedAt])
+}
+
+// A job a CS ticket needs from someone (fulfillment, design, CS itself): the agent opens it, staff move it through its
+// statuses, and every change or comment is a CsTaskEvent so the thread shows how it ended.
+model CsTask {
+  id            String    @id @default(cuid())
+  ticketId      String?
+  ticket        CsTicket? @relation(fields: [ticketId], references: [id], onDelete: SetNull)
+  orderNumber   String?
+  type          String
+  dept          String
+  priority      Int
+  status        String    @default("NEW")
+  detail        String
+  amount        Float?
+  source        String    @default("AGENT")
+  createdById   String?
+  createdByName String?
+  dueAt         DateTime?
+  doneAt        DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  events        CsTaskEvent[]
+  @@index([status, priority])
+  @@index([ticketId])
+}
+
+model CsTaskEvent {
+  id         String   @id @default(cuid())
+  taskId     String
+  task       CsTask   @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  kind       String
+  body       String
+  fromStatus String?
+  toStatus   String?
+  authorId   String?
+  authorName String?
+  createdAt  DateTime @default(now())
+  @@index([taskId, createdAt])
 }
 
 model CsMessage {

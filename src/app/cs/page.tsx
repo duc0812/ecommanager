@@ -9,11 +9,12 @@ import { CATEGORY_LABELS } from '@/lib/cs/labels'
 type Row = {
   id: string; fdTicketId: number; subject: string; requesterEmail: string | null; requesterName: string | null; orderNumber: string | null
   category: string | null; urgency: string | null; sentiment: string | null; needsHuman: boolean; autoReplied: boolean
-  lastCustomerAt: string | null; lastReplyAt: string | null; summary: string | null; hoursUnanswered: number
+  lastCustomerAt: string | null; lastReplyAt: string | null; summary: string | null; hoursUnanswered: number; needsRead: boolean
 }
-type Tab = 'todo' | 'agent' | 'done'
+type Tab = 'todo' | 'unread' | 'agent' | 'done'
 const TABS: { key: Tab; label: string }[] = [
   { key: 'todo', label: 'Cần xử lý' },
+  { key: 'unread', label: 'Chưa đọc' },
   { key: 'agent', label: 'Agent đã trả lời' },
   { key: 'done', label: 'Đã xong' },
 ]
@@ -117,6 +118,7 @@ export default function CsInboxPage() {
                     <p className={`text-label-sm ${r.hoursUnanswered > 24 ? 'text-error' : 'text-on-surface-variant'}`}>{hoursLabel(r.hoursUnanswered)}</p>
                     <p className="text-label-sm text-on-surface-variant">{fmtDate(r.lastCustomerAt, true)}</p>
                     {r.autoReplied && <span className="mt-xs inline-block rounded-full bg-secondary/10 px-sm py-xs text-label-sm text-secondary">Agent đã trả lời</span>}
+                    {r.needsRead && <span className="ml-xs mt-xs inline-block rounded-full bg-error/10 px-sm py-xs text-label-sm text-error">Chưa đọc</span>}
                   </td>
                 </tr>
               ))}

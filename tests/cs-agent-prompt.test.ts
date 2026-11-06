@@ -41,6 +41,11 @@ describe('buildSystemPrompt', () => {
     for (const needle of ['## customer asks for a person', 'humanrequested', 'real person', 'automated', 'a member of our support team will personally reply within 24 hours', 'never claim to be a person', 'no longer answers'])
       expect(s, needle).toContain(needle)
   })
+  it('opens tasks for the team: third-party changes, refunds only once accepted, written in Vietnamese', () => {
+    const s = buildSystemPrompt([], settings).toLowerCase()
+    for (const needle of ['## tasks for the team', 'size_change', 'address_change', 'personalization_change', 'cancel_order', 'resend', 'carrier_check', 'refund', 'discount_code', 'only when the customer has accepted', 'in vietnamese', 'tasks is an empty list', 'amount is the agreed sum'])
+      expect(s, needle).toContain(needle)
+  })
   it('cancellations: ask the reason once, keep the customer in control, never argue', () => {
     const s = buildSystemPrompt([], settings).toLowerCase()
     for (const needle of ['## cancellation requests', 'what made them change their mind', 'holding it so nothing is made', 'one ask only', 'the question is mandatory', 'without asking', 'not our mistake', 'do not ask again', 'cancel as requested'])
