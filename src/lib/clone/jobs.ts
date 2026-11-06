@@ -11,7 +11,8 @@ export type CloneJobRow = CloneJob
 type SuperadminOnly = 'costUsd' | 'durationMs' | 'lockedAt' | 'qaNote' | 'productType'
 type DateColumn = 'createdAt' | 'updatedAt' | 'startedAt' | 'finishedAt'
 
-export type CloneJobView = Omit<CloneJobRow, DateColumn | SuperadminOnly> & {
+export type CloneJobView = Omit<CloneJobRow, DateColumn | SuperadminOnly | 'skuCode'> & {
+  skuCode: string | null
   createdAt: string
   updatedAt: string
   startedAt: string | null
@@ -59,6 +60,7 @@ const iso = (d: Date | null) => (d ? d.toISOString() : null)
 
 // Lists the columns on purpose: a column added to CloneJob later stays out of every response until it is added here.
 // Only a SUPERADMIN gets the cost, the lease, the QA note and the product type, and `error` text that did not come from the server.
+// A reused product keeps its old SKUs, so the code issued to the job is never shown for it, to anyone.
 export function cloneJobView(job: CloneJobRow, viewer: AuthUser): CloneJobView {
   const superadmin = viewer.role === 'SUPERADMIN'
   const view: CloneJobView = {
@@ -70,7 +72,7 @@ export function cloneJobView(job: CloneJobRow, viewer: AuthUser): CloneJobView {
     failKind: job.failKind,
     stage: job.stage,
     platform: job.platform,
-    skuCode: job.skuCode,
+    skuCode: job.reused ? null : job.skuCode,
     requestedById: job.requestedById,
     requestedByName: job.requestedByName,
     attempts: job.attempts,
@@ -149,10 +151,11 @@ export async function getCloneJob(user: AuthUser, id: string): Promise<CloneJobV
 export type CreateCloneJobDeps = { sku?: Partial<SkuCodeDeps>; now?: Date }
 
 // A Claude session on the owner's PC types the stored link into a shell command, so it may hold only characters that are inert even unquoted.
-export const SOURCE_URL_RE = /^https:\/\/[a-z0-9.-]+(\/[A-Za-z0-9._~%+,@=:-]*)*(\?view=[A-Za-z0-9_-]+)?$/
+// No `%`: cmd.exe expands %NAME% even inside quotes, and a percent-then-hex rule would still let %NAME%20 through.
+export const SOURCE_URL_RE = /^https:\/\/[a-z0-9.-]+(\/[A-Za-z0-9._-]*)*(\?view=[A-Za-z0-9_-]+)?$/
 
 const HOST_RE = /^[a-z0-9.-]+$/
-const PATH_RE = /^(\/[A-Za-z0-9._~%+,@=:-]*)*$/
+const PATH_RE = /^(\/[A-Za-z0-9._-]*)*$/
 const VIEW_RE = /^[A-Za-z0-9_-]+$/
 
 // The server rebuilds the link instead of storing what was pasted: ad query strings and the hash are dropped, and only a `view` parameter

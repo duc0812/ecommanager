@@ -48,7 +48,7 @@ let jobN = 0
 async function seedJob(over: Partial<{
   storeId: string; sourceUrl: string; sourceKey: string; status: string; failKind: string | null; requestedById: string; requestedByName: string
   productUrl: string | null; attempts: number; stage: string | null; error: string | null; costUsd: number | null; durationMs: number | null
-  lockedAt: Date | null; finishedAt: Date | null; createdAt: Date; qaNote: string | null; qaVerdict: string | null; productType: string | null
+  lockedAt: Date | null; finishedAt: Date | null; createdAt: Date; qaNote: string | null; qaVerdict: string | null; productType: string | null; reused: boolean
 }> = {}) {
   jobN++
   return prisma.cloneJob.create({
@@ -149,8 +149,8 @@ describe('normalizeSourceUrl', () => {
       ['https://shop.example.com/p?VIEW=a', 'https://shop.example.com/p'],
       ['https://shop.example.com', 'https://shop.example.com/'],
       ['  https://shop.example.com/p/  ', 'https://shop.example.com/p/'],
-      ['https://shop.example.com/a%20b/c,d+e@f=g:h~i_j.k-l', 'https://shop.example.com/a%20b/c,d+e@f=g:h~i_j.k-l'],
-      ['https://shop.example.com/a b/"c"/`d`', 'https://shop.example.com/a%20b/%22c%22/%60d%60'],
+      ['https://shop.example.com/Products/a.b_c-D9/x.y', 'https://shop.example.com/Products/a.b_c-D9/x.y'],
+      ['https://shop.example.com//a//', 'https://shop.example.com//a//'],
       ['https://shop.example.com:443/p', 'https://shop.example.com/p'],
       ['https://bücher.example/p', 'https://xn--bcher-kva.example/p'],
     ]
@@ -175,6 +175,21 @@ describe('normalizeSourceUrl', () => {
     for (const input of bad) refused(input)
   })
 
+  it('path chỉ nhận chữ, số và ._- : khoảng trắng, nháy, mọi ký tự bị mã hoá phần trăm, %, , + @ = : ~ đều bị từ chối', () => {
+    const inPath = [
+      'a b', 'a"b', 'a`b', 'a<b>', 'a{b}', 'a^b', 'ü', 'a%20b', 'a%2Fb', '%20', '%PATH%', '%DESIGN_WORKER_TOKEN%20', '%25', 'a%',
+      'a,b', 'a+b', 'a@b', 'a=b', 'a:b', 'a~b',
+    ]
+    for (const segment of inPath) refused(`https://shop.example.com/products/${segment}`)
+    refused('https://shop.example.com/%PATH%/x')
+    refused(`https://shop.example.com/a b/"c"/\`d\``)
+  })
+
+  it('tham số view vẫn nhận khi path hợp lệ, và %, , + @ = : ~ trong query bị bỏ chứ không làm hỏng link', () => {
+    expect(normalizeSourceUrl('https://shop.example.com/p/?a=%PATH%&b=c,d+e@f=g:h~i&view=ok_1')).toBe('https://shop.example.com/p/?view=ok_1')
+    expect(normalizeSourceUrl('https://shop.example.com/p?x=%PATH%')).toBe('https://shop.example.com/p')
+  })
+
   it('control và ký tự xuống dòng nằm giữa link bị trình phân tích bỏ đi, không lọt vào kết quả', () => {
     const out = normalizeSourceUrl('https://shop.example.com/pro\nducts/a\tb\r\n')
     expect(out).toBe('https://shop.example.com/products/ab')
@@ -187,8 +202,10 @@ describe('normalizeSourceUrl', () => {
   })
 
   it('SOURCE_URL_RE từ chối mọi ký tự nguy hiểm và nhận đúng dạng đã dựng', () => {
-    for (const ok of ['https://a.com/', 'https://a.com', 'https://a.b-c.com/x/y.z?view=ab_C-1', 'https://a.com/%20x']) expect(ok).toMatch(SOURCE_URL_RE)
+    for (const ok of ['https://a.com/', 'https://a.com', 'https://a.b-c.com/x/y.z?view=ab_C-1', 'https://a.com/A_b-9.c']) expect(ok).toMatch(SOURCE_URL_RE)
     const bad = [
+      'https://a.com/%20x', 'https://a.com/%PATH%', 'https://a.com/a%', 'https://a.com/a,b', 'https://a.com/a+b', 'https://a.com/a@b',
+      'https://a.com/a=b', 'https://a.com/a:b', 'https://a.com/a~b',
       'http://a.com/', 'https://A.com/', 'https://a.com:80/', 'https://a.com/$', 'https://a.com/a b', 'https://a.com/a\nb', 'https://a.com/a;b',
       'https://a.com/a?x=1', 'https://a.com/a?view=a&x=1', 'https://a.com/a#x', "https://a.com/'", 'https://a.com/`', 'https://a.com/a?view=a$',
       'https://a.com/a\\b', 'https://u@a.com/', ' https://a.com/', 'https://a.com/\n',
@@ -311,19 +328,33 @@ describe('createCloneJob', () => {
     expect(job.sourceUrl).toHaveLength(2048)
   })
 
-  it('3. link ngắn lúc dán nhưng dài quá 2048 sau khi mã hoá phần trăm: 400', async () => {
-    const e = await codeOf(() => createCloneJob(users.sellera, { url: `https://shop.example.com/${'"'.repeat(1000)}`, storeId: STORE_A }, deps()))
-    expect(e.status).toBe(400)
-    expect(e.message).toBe('Link không hợp lệ.')
-  })
-
-  it('3. xuống dòng, tab, khoảng trắng, nháy kép và dấu huyền trong path vào kho dưới dạng đã mã hoá phần trăm', async () => {
-    const dirty = 'https://Shop.Example.com/prod\nucts/a\tb `c` "d" e'
-    const job = await createCloneJob(users.sellera, { url: dirty, storeId: STORE_A }, deps())
-    expect(job.sourceUrl).toBe('https://shop.example.com/products/ab%20%60c%60%20%22d%22%20e')
+  it('3. xuống dòng và tab nằm giữa link bị trình phân tích bỏ đi, link sạch còn lại được lưu', async () => {
+    const job = await createCloneJob(users.sellera, { url: 'https://Shop.Example.com/prod\nucts/a\tbc', storeId: STORE_A }, deps())
+    expect(job.sourceUrl).toBe('https://shop.example.com/products/abc')
     expect(job.sourceUrl).not.toMatch(/[\s\n\t\r"`]/)
     expect(job.sourceKey).toBe(sourceKeyOf(job.sourceUrl))
     expect((await prisma.cloneJob.findUnique({ where: { id: job.id } }))?.sourceUrl).toBe(job.sourceUrl)
+  })
+
+  it('3. path có khoảng trắng, nháy, ký tự bị mã hoá phần trăm, %20, %PATH%, ",", "+", "@", "=", ":" hay "~": 400, không có job', async () => {
+    const bad = [
+      'https://shop.example.com/products/a b', 'https://shop.example.com/products/a"b', 'https://shop.example.com/products/a`b',
+      'https://shop.example.com/products/ü', 'https://shop.example.com/products/a%20b', 'https://shop.example.com/%PATH%',
+      'https://shop.example.com/products/%DESIGN_WORKER_TOKEN%20', 'https://shop.example.com/products/a,b', 'https://shop.example.com/products/a+b',
+      'https://shop.example.com/products/a@b', 'https://shop.example.com/products/a=b', 'https://shop.example.com/products/a:b',
+      'https://shop.example.com/products/a~b',
+    ]
+    for (const url of bad) {
+      const e = await codeOf(() => createCloneJob(users.sellera, { url, storeId: STORE_A }, deps()))
+      expect(e.status).toBe(400)
+      expect(e.message).toBe('Link không hợp lệ.')
+    }
+    expect(await prisma.cloneJob.count({ where: { storeId: STORE_A } })).toBe(0)
+  })
+
+  it('3. path chỉ có chữ, số và ._- vào kho nguyên văn', async () => {
+    const job = await createCloneJob(users.sellera, { url: 'https://shop.example.com/Products/a.b_c-D9/x.y', storeId: STORE_A }, deps())
+    expect(job.sourceUrl).toBe('https://shop.example.com/Products/a.b_c-D9/x.y')
   })
 
   it('3. query quảng cáo và hash bị bỏ: ?utm_source=fb&utm_medium=cpc#reviews lưu không có query và hash', async () => {
@@ -629,6 +660,25 @@ describe('cloneJobView', () => {
     expect(view.finishedAt).toBe('2026-11-06T02:00:00.000Z')
     expect(view.startedAt).toBeNull()
     expect(view).toMatchObject({ skuCode: row.skuCode, failKind: 'VERIFY', error: 'Sản phẩm chưa ACTIVE.', stage: 'QA', reused: false })
+  })
+
+  it('job reused: skuCode là null với mọi người xem, kể cả SUPERADMIN; job thường vẫn có mã', async () => {
+    const reused = await seedJob({ status: 'DONE', reused: true, productUrl: 'https://store-a.example.com/products/old' })
+    const fresh = await seedJob({ status: 'DONE', reused: false, sourceKey: 'shop.example.com/products/fresh', sourceUrl: 'https://shop.example.com/products/fresh' })
+    for (const who of [users.sellera, users.admin, users.support, users.super]) {
+      const view = cloneJobView(reused, who)
+      expect(view.skuCode).toBeNull()
+      expect(view.reused).toBe(true)
+      expect(JSON.stringify(view)).not.toContain(reused.skuCode)
+      expect(cloneJobView(fresh, who).skuCode).toBe(fresh.skuCode)
+    }
+    for (const who of [users.sellera, users.super]) {
+      expect((await getCloneJob(who, reused.id))?.skuCode).toBeNull()
+      const listed = await listCloneJobs(who)
+      expect(listed.find(j => j.id === reused.id)?.skuCode).toBeNull()
+      expect(listed.find(j => j.id === fresh.id)?.skuCode).toBe(fresh.skuCode)
+    }
+    expect(await prisma.cloneJob.findUnique({ where: { id: reused.id }, select: { skuCode: true } })).toEqual({ skuCode: reused.skuCode })
   })
 
   it('người không phải SUPERADMIN không có qaNote và productType; SUPERADMIN có', async () => {
