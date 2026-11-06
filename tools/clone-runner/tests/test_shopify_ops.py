@@ -1,6 +1,7 @@
 import io
 import json
 import urllib.error
+import urllib.request
 
 import pytest
 
@@ -34,9 +35,9 @@ class FakeResponse:
         return False
 
 
-def http_error(status: int, body=None):
+def http_error(status: int, body=None, headers=None):
     raw = b'' if body is None else json.dumps(body).encode('utf-8')
-    return urllib.error.HTTPError(BASE + 'graphql.json', status, 'err', {}, io.BytesIO(raw))
+    return urllib.error.HTTPError(BASE + 'graphql.json', status, 'err', headers or {}, io.BytesIO(raw))
 
 
 class FakeOpener:
@@ -69,6 +70,11 @@ def gql(data):
 def node(i, *values, sku=''):
     return {'id': f'gid://shopify/ProductVariant/{i}', 'sku': sku,
             'selectedOptions': [{'name': n, 'value': v} for n, v in zip(NAMES, values)]}
+
+
+def default_node(i):
+    return {'id': f'gid://shopify/ProductVariant/{i}', 'sku': '',
+            'selectedOptions': [{'name': 'Title', 'value': 'Default Title'}]}
 
 
 def page(nodes, next_cursor=None, options=OPTIONS):
@@ -111,12 +117,25 @@ def test_suffix_strips_everything_but_letters_and_digits():
 
 
 def test_single_default_variant_gets_the_bare_code():
-    assert skus('DC2611057392', ['Default Title']) == ['DC2611057392']
+    assert list(shopify_ops.sku_plan('DC2611057392', [default_node(1)]).values()) == ['DC2611057392']
     assert skus('DC2611057392', ['XL']) == ['DC2611057392-XL']
+
+
+def test_default_title_is_bare_only_under_the_option_named_title():
+    assert skus(CODE, ['Default Title']) == [f'{CODE}-DEFAULTTITLE']
+    renamed = {'id': 'gid://shopify/ProductVariant/1', 'selectedOptions': [{'name': 'Option', 'value': 'Default Title'}]}
+    assert list(shopify_ops.sku_plan(CODE, [renamed]).values()) == [f'{CODE}-DEFAULTTITLE']
+    titled = {'id': 'gid://shopify/ProductVariant/1', 'selectedOptions': [{'name': 'Title', 'value': 'Large'}]}
+    assert list(shopify_ops.sku_plan(CODE, [titled]).values()) == [f'{CODE}-LARGE']
+    two_options = {'id': 'gid://shopify/ProductVariant/1', 'selectedOptions': [
+        {'name': 'Title', 'value': 'Default Title'}, {'name': 'Size', 'value': 'XL'}]}
+    assert list(shopify_ops.sku_plan(CODE, [two_options]).values()) == [f'{CODE}-DEFAULTTITLE-XL']
 
 
 def test_default_title_among_several_variants_is_an_ordinary_value():
     assert skus(CODE, ['Default Title'], ['XL']) == [f'{CODE}-DEFAULTTITLE', f'{CODE}-XL']
+    plan = shopify_ops.sku_plan(CODE, [default_node(1), default_node(2)])
+    assert list(plan.values()) == [f'{CODE}-DEFAULTTITLE', f'{CODE}-DEFAULTTITLE-2']
 
 
 def test_duplicate_suffix_gets_numbered():
@@ -297,16 +316,17 @@ def test_set_skus_keeps_the_same_skus_when_the_variants_already_carry_them(capsy
 
 def test_set_skus_user_errors_stop_the_run_and_are_reported(capsys):
     nodes = [node(i, f'C{i}') for i in range(1, 151)]
-    errors = [{'field': ['variants', '0'], 'message': 'SKU is too long'}, {'field': None, 'message': 'Second problem'}]
+    errors = [{'field': ['variants', '0'], 'message': 'Price is invalid'}, {'field': None, 'message': 'Second problem'}]
     status, lines, opener, _, _ = run(capsys, ['set-skus', '--product', GID, '--code', CODE],
                                       page(nodes), updated(), updated(errors))
     assert status == 1
-    assert lines == [{'ok': False, 'reason': 'SKU is too long; Second problem'}]
+    assert lines == [{'ok': False, 'reason': 'Price is invalid; Second problem', 'written': 100}]
     assert len(mutation_batches(opener)) == 2
 
     status, lines, opener, _, _ = run(capsys, ['set-skus', '--product', GID, '--code', CODE],
                                       page(nodes), updated(errors), updated())
     assert status == 1
+    assert lines == [{'ok': False, 'reason': 'Price is invalid; Second problem'}]
     assert len(mutation_batches(opener)) == 1
 
 
@@ -523,3 +543,206 @@ def test_output_is_one_ascii_json_line(capsys):
     assert out.out.count('\n') == 1
     out.out.encode('ascii')
     assert json.loads(out.out)['reason'] == 'Titre invalide: café ★'
+
+
+def test_no_redirect_handler_declines_every_redirect():
+    handler = shopify_ops.NoRedirect()
+    request = urllib.request.Request(BASE + 'graphql.json')
+    assert handler.redirect_request(request, None, 302, 'Found', {}, 'https://evil.example/steal') is None
+
+
+def test_token_echoed_in_a_publish_user_error_is_scrubbed(capsys):
+    echoed = gql({'productUpdate': {'product': None, 'userErrors': [{'message': f'token {TOKEN} rejected'}]}})
+    status, lines, opener, _, out = run(capsys, ['publish', '--product', GID], echoed)
+    assert status == 1
+    assert TOKEN not in out.out and TOKEN not in out.err
+    assert lines == [{'ok': False, 'reason': 'token *** rejected'}]
+    assert len(opener.calls) == 1
+
+
+def test_check_plan_refuses_a_sku_longer_than_255_characters():
+    shopify_ops.check_plan(CODE, {'a': CODE, 'b': f'{CODE}-' + 'X' * 242})
+    with pytest.raises(shopify_ops.OpsError, match='SKU too long for variant 2'):
+        shopify_ops.check_plan(CODE, {'a': CODE, 'b': f'{CODE}-' + 'X' * 243})
+
+
+def test_a_300_character_sku_is_refused_before_any_chunk_is_written(capsys):
+    nodes = [node(i, f'C{i}') for i in range(1, 151)]
+    nodes[119] = node(120, 'X' * 300)
+    status, lines, opener, _, _ = run(capsys, ['set-skus', '--product', GID, '--code', CODE], page(nodes))
+    assert (status, lines) == (1, [{'ok': False, 'reason': 'SKU too long for variant 120'}])
+    assert len(opener.calls) == 1
+    assert mutation_batches(opener) == []
+
+
+def three_chunks():
+    first = [node(i, f'C{i}') for i in range(1, 251)]
+    second = [node(i, f'C{i}') for i in range(251, 301)]
+    return [page(first, 'CURSOR1'), page(second)]
+
+
+def test_a_failure_in_the_middle_chunk_says_how_many_variants_were_written(capsys):
+    refused = updated([{'field': None, 'message': 'Variant is locked'}])
+    status, lines, opener, _, _ = run(capsys, ['set-skus', '--product', GID, '--code', CODE],
+                                      *three_chunks(), updated(), refused)
+    assert (status, lines) == (1, [{'ok': False, 'reason': 'Variant is locked', 'written': 100}])
+    assert [len(b) for b in mutation_batches(opener)] == [100, 100]
+
+
+@pytest.mark.parametrize('failure, reason', [
+    (http_error(500), 'HTTP 500'),
+    (urllib.error.URLError('gone'), 'could not reach Shopify'),
+    (gql({'productVariantsBulkUpdate': {}}), 'unexpected answer from Shopify'),
+    (gql({'productVariantsBulkUpdate': None}), 'unexpected answer from Shopify'),
+])
+def test_written_counts_every_earlier_chunk_whatever_the_failure(capsys, failure, reason):
+    status, lines, opener, _, _ = run(capsys, ['set-skus', '--product', GID, '--code', CODE],
+                                      *three_chunks(), updated(), updated(), failure)
+    assert (status, lines) == (1, [{'ok': False, 'reason': reason, 'written': 200}])
+    assert [len(b) for b in mutation_batches(opener)] == [100, 100, 100]
+
+
+def test_a_failure_before_anything_was_written_has_no_written_key(capsys):
+    status, lines, _, _, _ = run(capsys, ['set-skus', '--product', GID, '--code', CODE],
+                                 page([node(1, 'Black')]), http_error(500))
+    assert (status, lines) == (1, [{'ok': False, 'reason': 'HTTP 500'}])
+
+
+def throttled_answer(code='THROTTLED'):
+    return FakeResponse(200, {'errors': [{'message': 'Throttled: details', 'extensions': {'code': code}}]})
+
+
+def test_http_429_waits_for_retry_after_capped_at_10_seconds_and_retries_the_same_request(capsys):
+    status, lines, opener, sleeps, _ = run(
+        capsys, ['state', '--product', GID],
+        http_error(429, headers={'Retry-After': '3'}), http_error(429, headers={'Retry-After': '25'}), readback())
+    assert status == 0
+    assert lines[0]['status'] == 'ACTIVE'
+    assert sleeps == [3, 10]
+    assert len(opener.calls) == 3
+    assert opener.calls[0] == opener.calls[1] == opener.calls[2]
+
+
+def test_http_429_without_retry_after_backs_off_2_4_8_seconds(capsys):
+    status, lines, opener, sleeps, _ = run(
+        capsys, ['state', '--product', GID], http_error(429), http_error(429), http_error(429), readback())
+    assert status == 0
+    assert sleeps == [2, 4, 8]
+    assert len(opener.calls) == 4
+
+
+@pytest.mark.parametrize('header', ['Wed, 21 Oct 2026 07:28:00 GMT', 'soon', '-5', ''])
+def test_an_unreadable_retry_after_falls_back_to_the_backoff(capsys, header):
+    status, _, _, sleeps, _ = run(
+        capsys, ['state', '--product', GID], http_error(429, headers={'Retry-After': header}), readback())
+    assert status == 0
+    assert sleeps == [2]
+
+
+def test_http_429_that_outlasts_three_retries_exits_1_as_throttled(capsys):
+    status, lines, opener, sleeps, _ = run(
+        capsys, ['state', '--product', GID], http_error(429), http_error(429), http_error(429), http_error(429))
+    assert (status, lines) == (1, [{'ok': False, 'reason': 'throttled'}])
+    assert sleeps == [2, 4, 8]
+    assert len(opener.calls) == 4
+
+
+def test_graphql_throttled_is_retried_and_then_gives_up(capsys):
+    status, lines, opener, sleeps, _ = run(
+        capsys, ['state', '--product', GID], throttled_answer(), throttled_answer(), readback())
+    assert status == 0
+    assert sleeps == [2, 4]
+
+    status, lines, opener, sleeps, _ = run(
+        capsys, ['state', '--product', GID], *[throttled_answer() for _ in range(4)])
+    assert (status, lines) == (1, [{'ok': False, 'reason': 'throttled'}])
+    assert sleeps == [2, 4, 8]
+    assert len(opener.calls) == 4
+
+
+def test_throttling_in_the_middle_of_set_skus_reports_what_was_written(capsys):
+    status, lines, opener, sleeps, _ = run(
+        capsys, ['set-skus', '--product', GID, '--code', CODE], *three_chunks(), updated(),
+        *[throttled_answer() for _ in range(4)])
+    assert (status, lines) == (1, [{'ok': False, 'reason': 'throttled', 'written': 100}])
+    assert sleeps == [2, 4, 8]
+    batches = mutation_batches(opener)
+    assert len(batches) == 5 and batches[1] == batches[2] == batches[3] == batches[4]
+
+
+def test_rest_429_in_publish_is_retried(capsys):
+    first = publish_outcomes()[0]
+    rest_ok = FakeResponse(200, {'product': {'id': 9054123557021}})
+    status, lines, opener, sleeps, _ = run(capsys, ['publish', '--product', GID], first,
+                                           http_error(429, headers={'Retry-After': '1'}), rest_ok, readback())
+    assert status == 0
+    assert sleeps == [1]
+    assert [c['method'] for c in opener.calls] == ['POST', 'PUT', 'PUT', 'POST']
+
+
+def test_graphql_error_code_is_printed_when_it_is_a_plain_code_and_nothing_else(capsys):
+    denied = FakeResponse(200, {'errors': [{'message': 'Access denied for productUpdate. Required: write_products',
+                                            'extensions': {'code': 'ACCESS_DENIED'}}]})
+    status, lines, opener, sleeps, out = run(capsys, ['state', '--product', GID], denied)
+    assert (status, lines) == (1, [{'ok': False, 'reason': 'Shopify GraphQL error (ACCESS_DENIED)'}])
+    assert 'write_products' not in out.out
+    assert sleeps == [] and len(opener.calls) == 1
+
+
+@pytest.mark.parametrize('code', ['access_denied', 'ACCESS-DENIED', 'A' * 41, '', 7, None, ['ACCESS_DENIED'], TOKEN])
+def test_graphql_error_code_that_is_not_a_plain_code_is_left_out(capsys, code):
+    odd = FakeResponse(200, {'errors': [{'message': 'm', 'extensions': {'code': code}}]})
+    status, lines, _, _, out = run(capsys, ['state', '--product', GID], odd)
+    assert (status, lines) == (1, [{'ok': False, 'reason': 'Shopify GraphQL error'}])
+    assert TOKEN not in out.out
+
+
+@pytest.mark.parametrize('errors', ['Not Found', [{'message': 'm'}], [{'extensions': 'x'}], [None, 3]])
+def test_graphql_errors_without_a_readable_code_give_the_plain_reason(capsys, errors):
+    status, lines, _, _, _ = run(capsys, ['state', '--product', GID], FakeResponse(200, {'errors': errors}))
+    assert (status, lines) == (1, [{'ok': False, 'reason': 'Shopify GraphQL error'}])
+
+
+def bare_shop():
+    opener = FakeOpener()
+    return shopify_ops.Shopify(STORE, TOKEN, '2026-07', opener), opener
+
+
+@pytest.mark.parametrize('bad', ['9054123557021', 'gid://shopify/ProductVariant/1', 'gid://shopify/Product/12\n',
+                                 'gid://shopify/Product/१२', '', None, 12])
+def test_functions_revalidate_the_product_gid_before_any_request(bad):
+    shop, opener = bare_shop()
+    calls = (lambda: shopify_ops.set_skus(shop, bad, CODE), lambda: shopify_ops.publish(shop, bad),
+             lambda: shopify_ops.read_product(shop, bad), lambda: shopify_ops.read_variants(shop, bad),
+             lambda: shopify_ops.product_state(shop, bad, None), lambda: shopify_ops.product_state(shop, bad, CODE))
+    for call in calls:
+        with pytest.raises(shopify_ops.UsageError):
+            call()
+    assert opener.calls == []
+
+
+@pytest.mark.parametrize('bad', ['dc2611057392', 'DC26110573', 'DC2611057392\n', 'DC26110573९२', '', None, 5])
+def test_set_skus_revalidates_the_code_before_any_request(bad):
+    shop, opener = bare_shop()
+    with pytest.raises(shopify_ops.UsageError):
+        shopify_ops.set_skus(shop, GID, bad)
+    assert opener.calls == []
+
+
+def test_state_revalidates_a_given_code_but_does_not_require_one():
+    shop, opener = bare_shop()
+    for bad in ('dc2611057392', ''):
+        with pytest.raises(shopify_ops.UsageError):
+            shopify_ops.product_state(shop, GID, bad)
+    assert opener.calls == []
+
+
+@pytest.mark.parametrize('payload', [{}, {'userErrors': None}, {'userErrors': 'none'}, {'userErrors': {'message': 'x'}}])
+def test_a_mutation_payload_without_a_user_errors_list_is_not_a_success(capsys, payload):
+    status, lines, opener, _, _ = run(capsys, ['set-skus', '--product', GID, '--code', CODE],
+                                      page([node(1, 'Black')]), gql({'productVariantsBulkUpdate': payload}))
+    assert (status, lines) == (1, [{'ok': False, 'reason': 'unexpected answer from Shopify'}])
+
+    status, lines, opener, _, _ = run(capsys, ['publish', '--product', GID], gql({'productUpdate': payload}))
+    assert (status, lines) == (1, [{'ok': False, 'reason': 'unexpected answer from Shopify'}])
+    assert len(opener.calls) == 1
