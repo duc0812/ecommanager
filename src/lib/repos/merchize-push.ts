@@ -10,9 +10,10 @@ import { PublicUrlError, ensurePublicToken, isLineApproved, publicArtworkUrl, re
 import { expectedSize, printFileFit } from '@/lib/print-file-fit'
 import { PushError, hashPayload } from '@/lib/repos/pgprints-push'
 import {
-  CLOSED_FINANCIAL, CLOSED_PIPELINE, EXPORT_READY, UNKNOWN_RESULT_GRACE_MS, activeKeyFor, closeCancelledPush, httpsUrl, isActive, isUniqueViolation,
-  latestPush, reservePush, toPushViews, upsertLineTracking, viewOf, type PushRow,
+  ACTIVE_STATUSES, CLOSED_FINANCIAL, CLOSED_PIPELINE, EXPORT_READY, UNKNOWN_RESULT_GRACE_MS, activeKeyFor, closeCancelledPush, httpsUrl, isActive,
+  isUniqueViolation, latestPush, reservePush, toPushViews, upsertLineTracking, viewOf, type PushRow,
 } from '@/lib/repos/supplier-push-core'
+import { safeErrorText } from '@/lib/store-jobs'
 import {
   MerchizeError, cancelOrder, createOrder, getOrderDetail, isMerchizeSupplier, merchizeMissingMessage, merchizePrintingMethod, resolveMerchize,
   pushToProduction, searchCatalog, serializeOrderPayload,
@@ -21,6 +22,8 @@ import {
 import type { PreviewFile, PreviewIssue, PreviewLine, PushPreview, PushView } from '@/lib/pgprints-shared'
 
 const DUPLICATE_MESSAGE = 'Đơn này đã có một lần gửi Merchize đang hiệu lực — không gửi trùng'
+// As Bondre and Printway: tracking stops being worth asking for long before this; it keeps a stuck push from being asked about forever.
+const TRACKING_WINDOW_DAYS = 90
 type DesignField = 'design_front' | 'design_back' | 'design_sleeve' | 'design_hood'
 // Specific sides first: "Artwork" alone (one-part templates) is the front, "Back Artwork" is not.
 const SIDES: Array<{ field: DesignField; match: RegExp }> = [
@@ -425,11 +428,16 @@ export async function refreshMerchizePush(orderId: string): Promise<{ push: Push
     ? (await latestPush(orderId, supplier.id, ['SENDING', 'CREATED'])) ?? (await latestPush(orderId, supplier.id, ['CANCELLED', 'FAILED']))
     : null
   if (!push) throw new PushError('Đơn chưa từng gửi Merchize', 404, 'NOT_FOUND')
-  const creds = await credentialsForOrder(orderId)
+  const { found, shipments } = await refreshOne(await credentialsForOrder(orderId), push)
+  return { push: await viewOf(push.id), found, shipments }
+}
+
+/** One push against Merchize, for the refresh button and the nightly pull alike: a found order lands it and brings its tracking. */
+async function refreshOne(creds: MerchizeCredentials, push: PushRow): Promise<{ found: boolean; shipments: number }> {
   const now = Date.now()
   let remote: Awaited<ReturnType<typeof getOrderDetail>>
   try {
-    remote = await getOrderDetail(creds, push.externalOrderId, await identifierFor(orderId, push))
+    remote = await getOrderDetail(creds, push.externalOrderId, await identifierFor(push.orderId, push))
   } catch (e: any) {
     throw new PushError(`Không lấy được trạng thái từ Merchize: ${e?.message ?? e}`, e instanceof MerchizeError && e.noResponse ? 504 : 502, 'REFRESH_FAILED')
   }
@@ -442,7 +450,7 @@ export async function refreshMerchizePush(orderId: string): Promise<{ push: Push
         ? { status: 'FAILED', activeKey: null, lastSyncedAt, error: 'Merchize không có đơn này — lần gửi không thành công, có thể gửi lại' }
         : { lastSyncedAt },
     })
-    return { push: await viewOf(push.id), found: false, shipments: 0 }
+    return { found: false, shipments: 0 }
   }
   const landed = push.status === 'SENDING' || push.status === 'FAILED'
   try {
@@ -460,6 +468,55 @@ export async function refreshMerchizePush(orderId: string): Promise<{ push: Push
     throw e
   }
   if (landed) await markPushExported(push)
-  const shipments = push.status === 'CANCELLED' ? 0 : await upsertTracking(push, remote.tracking)
-  return { push: await viewOf(push.id), found: true, shipments }
+  return { found: true, shipments: push.status === 'CANCELLED' ? 0 : await upsertTracking(push, remote.tracking) }
+}
+
+/**
+ * Status and tracking of every open Merchize push (same window and order rules as Bondre and Printway), each pulled with the
+ * account of its order's store (resolveMerchize). A store with no usable account is skipped and logged, never pulled with
+ * another store's. One push or store failing does not stop the rest. Auto Fulfill turns the trackings into fulfillments.
+ */
+export async function syncMerchizeTracking(): Promise<{ pushes: number; found: number; shipments: number; skipped?: string }> {
+  const supplier = await findMerchizeSupplier()
+  if (!supplier) return { pushes: 0, found: 0, shipments: 0, skipped: 'no Merchize supplier' }
+  const since = new Date(Date.now() - TRACKING_WINDOW_DAYS * 24 * 3600 * 1000)
+  const live = await prisma.supplierOrderPush.findMany({
+    where: { supplierId: supplier.id, status: { in: ACTIVE_STATUSES }, pushedAt: { gte: since }, order: { pipelineStatus: { notIn: ['FULFILLED', ...CLOSED_PIPELINE] } } },
+    include: { order: { select: { store: { select: { id: true, shop: true, project: { select: { name: true } } } } } } },
+  })
+  const byStore = new Map<string, { name: string; pushes: typeof live }>()
+  for (const push of live) {
+    const store = push.order.store
+    const group = byStore.get(store.id) ?? { name: store.project?.name ?? store.shop, pushes: [] }
+    group.pushes.push(push)
+    byStore.set(store.id, group)
+  }
+  const total = { pushes: 0, found: 0, shipments: 0 }
+  const withoutAccount: string[] = []
+  for (const [storeId, { name, pushes }] of Array.from(byStore.entries())) {
+    let resolved: Awaited<ReturnType<typeof resolveMerchize>>
+    try {
+      resolved = await resolveMerchize(storeId)
+    } catch (e) {
+      console.error(`[merchize] tracking sync failed for ${name}: ${safeErrorText(e)}`)
+      continue
+    }
+    if (!resolved.creds) {
+      console.log(`[merchize] tracking sync: ${name} has no usable Merchize account (missing ${resolved.missing}), skipped its ${pushes.length} live push(es)`)
+      withoutAccount.push(name)
+      continue
+    }
+    const creds = resolved.creds
+    total.pushes += pushes.length
+    for (const push of pushes) {
+      try {
+        const r = await refreshOne(creds, push)
+        if (r.found) total.found++
+        total.shipments += r.shipments
+      } catch (e) {
+        console.error('[merchize] tracking sync failed for push', push.id, safeErrorText(e, [creds.token, creds.baseUrl]))
+      }
+    }
+  }
+  return { ...total, ...(withoutAccount.length > 0 ? { skipped: `no Merchize credentials for ${withoutAccount.join(', ')}` } : {}) }
 }

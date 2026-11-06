@@ -213,7 +213,7 @@ export async function handoffStates(orders: StateOrder[]): Promise<Map<string, H
       readyLineIds: ready.map(l => l.id),
       sentLineIds: productLines.filter(l => l.exportedAt).map(l => l.id),
       // A live push of the same supplier may hold these lines; the window then shows that push instead of a send.
-      pushBeside: ready.some(l => (isApiLine(l) || l.resolvedSupplierId === pg?.id) && canSendBeside(o.supplierPushes.filter(p => p.supplierId === l.resolvedSupplierId), [l.id])),
+      pushBeside: ready.some(l => (isApiLine(l) || l.resolvedSupplierId === pg?.id) && canSendBeside(o.supplierPushes.filter(p => p.supplierId === l.resolvedSupplierId), [l.id], o.lines)),
       blocked: pending || handedOff ? null : blockedReason(o, openTasks),
       mode: api ? 'API' : 'CSV',
       apiName: api ? SUPPLIER_API_NAMES[apiKind] : null,

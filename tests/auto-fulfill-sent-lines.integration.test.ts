@@ -12,6 +12,7 @@ vi.mock('@/lib/shopify-orders', () => ({
 import { prisma } from '@/lib/db'
 import { runAutoFulfill, type AutoFulfillSummary } from '@/lib/fulfillment/auto-fulfill'
 import type { FulfillmentOrderRef, OrderRow } from '@/lib/fulfillment/build-fulfill-plan'
+import { resyncOrder } from './helpers/resync-order'
 
 const SHOP = 'snt.myshopify.com'
 const PROJECT = 'proj_snt'
@@ -182,6 +183,43 @@ describe('Auto Fulfilled fulfils a product line only after it went to a supplier
       await push('SNT9', { exportMarked: false, lineIds: null })
       await track('SNT9', 'SNT9_1', 'PG9')
       expect(rowOf(await run({}), 'SNT9')).toMatchObject({ status: 'will_fulfill', fulfilledLines: 1 })
+    })
+
+    // The order sync makes every OrderLine anew each time it reads the order: the ids a push stored are soon gone.
+    const verdict = async (name: string) => { const r = rowOf(await run({}, false), name); return [r.status, r.message ?? null] }
+
+    it('a line the push carried still counts as sent after the order sync made the lines anew', async () => {
+      await makeOrder('SNT14', [{ exported: false, supplierId: PGPRINTS }])
+      const [line] = await prisma.orderLine.findMany({ where: { orderId: orderId('SNT14') } })
+      await prisma.supplierOrderPush.create({ data: {
+        orderId: orderId('SNT14'), supplierId: PGPRINTS, externalOrderId: 'snt-SNT14', status: 'CREATED', requestJson: '{}', exportMarked: false,
+        prevExportJson: JSON.stringify({ lineIds: [line.id], shopifyLineIds: [line.shopifyLineId] }),
+      } })
+      await track('SNT14', 'SNT14_1', 'PG14')
+      expect(await verdict('SNT14')).toEqual(['will_fulfill', null])
+      await resyncOrder(orderId('SNT14'))
+      expect(await verdict('SNT14')).toEqual(['will_fulfill', null])
+    })
+
+    it('a push stored with OrderLine ids only carries, after the sync, the line whose print file it sent and no other', async () => {
+      await makeOrder('SNT15', [{ exported: false, supplierId: PGPRINTS }, { exported: false, supplierId: PGPRINTS }])
+      const lines = await prisma.orderLine.findMany({ where: { orderId: orderId('SNT15') }, orderBy: { linePosition: 'asc' } })
+      const token = 'c'.repeat(64)
+      await prisma.designArtwork.create({ data: {
+        orderId: orderId('SNT15'), shopifyLineId: lines[0].shopifyLineId, printArea: 'Front', version: 1, fileName: 'front.png', size: 1, mimeType: 'image/png', publicToken: token,
+      } })
+      await prisma.supplierOrderPush.create({ data: {
+        orderId: orderId('SNT15'), supplierId: PGPRINTS, externalOrderId: 'snt-SNT15', status: 'CREATED', exportMarked: false,
+        requestJson: JSON.stringify({ line_items: [{ print_files: [{ url: `https://tool.example/api/public/artwork/${token}/front.png` }] }] }),
+        prevExportJson: JSON.stringify({ lineIds: [lines[0].id] }),
+      } })
+      await track('SNT15', 'SNT15_1', 'PG15')
+      expect(await verdict('SNT15')).toEqual(['will_fulfill', null])
+      await resyncOrder(orderId('SNT15'))
+      expect(await verdict('SNT15')).toEqual(['will_fulfill', null])
+      await track('SNT15', 'SNT15_2', 'PG15')
+      expect(await verdict('SNT15')).toEqual(['needs_manual', expect.stringContaining('SNT15_2')])
+      expect((await verdict('SNT15'))[1]).not.toContain('SNT15_1')
     })
 
     it('a supplier-tracked line the push did not carry and nobody exported holds the order', async () => {

@@ -10,6 +10,7 @@ import { handoffOrderCsv, handoffStateFor, listHandoffTabs } from '@/lib/supplie
 import { pushedShipmentRows } from '@/lib/fulfillment/auto-fulfill'
 import { syncPrintwayTracking } from '@/lib/repos/printway-push'
 import { syncApiSupplierTracking } from '@/lib/repos/supplier-tracking-sync'
+import { resyncOrder } from './helpers/resync-order'
 import { PRINTWAY_KEYS, getPrintwaySettings } from '@/lib/printway-settings'
 import { GET as getPreview } from '@/app/api/fulfillment/printway/orders/[orderId]/preview/route'
 import { POST as postPush } from '@/app/api/fulfillment/printway/orders/[orderId]/push/route'
@@ -514,6 +515,38 @@ describe('Printway tracking', () => {
     const printway = results.find(r => r.name === 'Printway')
     expect(printway).toMatchObject({ pushes: expect.any(Number) })
     expect(results.map(r => r.name)).toEqual(expect.arrayContaining(['Bondre', 'Printway']))
+  })
+})
+
+// The order sync makes every OrderLine anew each time it reads the order: a push's stored OrderLine ids are soon gone.
+describe('Printway tracking after the order sync made the lines anew', () => {
+  const pushed = async () => {
+    const o = await makeOrder()
+    const p = await (await preview(o.id)).json()
+    await push(o.id, p.payloadHash)
+    const line = await prisma.orderLine.findFirstOrThrow({ where: { orderId: o.id } })
+    return { o, line, row: await prisma.supplierOrderPush.findFirstOrThrow({ where: { orderId: o.id } }) }
+  }
+
+  it('a push records the Shopify line ids it carries, and its tracking still reaches the line', async () => {
+    const { o, line, row } = await pushed()
+    expect(JSON.parse(row.prevExportJson!)).toMatchObject({ lineIds: [line.id], shopifyLineIds: [line.shopifyLineId] })
+    await resyncOrder(o.id)
+    remoteOrders.get(o.number)!.tracking = 'YT7101'
+    expect((await (await refresh(o.id)).json()).shipments).toBe(1)
+    expect(await prisma.shipment.findFirstOrThrow({ where: { orderId: o.id } }))
+      .toMatchObject({ lineKey: `${o.number}_1`, shopifyLineId: line.shopifyLineId, trackingNumber: 'YT7101', supplierId: SUP })
+  })
+
+  it('a push stored with OrderLine ids only finds its line by the print file it sent', async () => {
+    const { o, line, row } = await pushed()
+    const { shopifyLineIds: _recorded, ...older } = JSON.parse(row.prevExportJson!)
+    await prisma.supplierOrderPush.update({ where: { id: row.id }, data: { prevExportJson: JSON.stringify(older) } })
+    await resyncOrder(o.id)
+    remoteOrders.get(o.number)!.tracking = 'YT7102'
+    await syncPrintwayTracking()
+    expect(await prisma.shipment.findFirstOrThrow({ where: { orderId: o.id } }))
+      .toMatchObject({ lineKey: `${o.number}_1`, shopifyLineId: line.shopifyLineId, trackingNumber: 'YT7102', supplierId: SUP })
   })
 })
 

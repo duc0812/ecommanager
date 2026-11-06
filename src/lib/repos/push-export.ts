@@ -1,6 +1,9 @@
 import { prisma } from '@/lib/db'
 import { markOrdersExported } from '@/lib/repos/orders'
-import { canSendBeside, isLineExported, pushLineIds, type ExportTrackedLine, type ExportTrackedOrder } from '@/lib/line-export'
+import {
+  canSendBeside, isLineExported, needsFileLines, pushFileTokens, pushLineIds, pushShopifyLineIds, pushedShopifyLineIds,
+  type ExportTrackedLine, type ExportTrackedOrder, type PushedLine,
+} from '@/lib/line-export'
 import { isLineApproved } from '@/lib/public-artwork'
 
 export const ACTIVE_PUSH_STATUSES = ['SENDING', 'CREATED']
@@ -21,12 +24,12 @@ export async function logHandoffEvent(orderId: string, message: string, actorId:
  */
 export function planPushLines<L extends ExportTrackedLine & { id: string; shopifyLineId: string; designDriveLink: string | null }>(
   order: ExportTrackedOrder<L> & { designTasks: { shopifyLineId: string; status: string }[] }, own: L[],
-  pushes: { status: string; exportMarked: boolean; prevExportJson: string | null }[],
+  pushes: { supplierId: string; status: string; exportMarked: boolean; prevExportJson: string | null }[],
 ): { lines: L[]; held: L[]; later: boolean } {
   const unsent = own.filter(l => !isLineExported(order, l))
   const cleared = unsent.filter(l => isLineApproved(l, order.designTasks.find(t => t.shopifyLineId === l.shopifyLineId)))
   const live = pushes.filter(p => ACTIVE_PUSH_STATUSES.includes(p.status))
-  const later = live.length > 0 && cleared.length > 0 && canSendBeside(live, cleared.map(l => l.id))
+  const later = live.length > 0 && cleared.length > 0 && canSendBeside(live, cleared.map(l => l.id), order.lines)
   if (cleared.length > 0 && (live.length === 0 || later)) return { lines: cleared, held: unsent.filter(l => !cleared.includes(l)), later }
   return { lines: live.length > 0 || unsent.length === 0 ? own : unsent, held: [], later: false }
 }
@@ -49,8 +52,27 @@ export async function nextExternalOrderId(
   }
 }
 
+/** A send whose lines the order sync replaced between the preview and the confirm. */
+export const ORDER_CHANGED_MESSAGE = 'Đơn vừa được đồng bộ lại sau khi xem trước — mở lại bản xem trước rồi xác nhận'
+
 export function heldLinesMessage(keys: string[]): string {
   return `Chỉ gửi các dòng đã duyệt; dòng ${keys.join(', ')} còn đang làm design — duyệt xong gửi sau`
+}
+
+/** The Shopify lines whose print or mockup files a push sent: each public file link names a DesignArtwork of its order. */
+export async function sentFileLines(push: { orderId: string; requestJson: string | null }): Promise<string[]> {
+  const tokens = pushFileTokens(push.requestJson)
+  if (tokens.length === 0) return []
+  const files = await prisma.designArtwork.findMany({ where: { orderId: push.orderId, publicToken: { in: tokens } }, select: { shopifyLineId: true } })
+  return Array.from(new Set(files.map(f => f.shopifyLineId)))
+}
+
+/** pushedShopifyLineIds, reading the files an older push sent once the order sync has replaced the OrderLine ids it stored. */
+export async function carriedShopifyLineIds(
+  push: { orderId: string; supplierId: string; prevExportJson: string | null; requestJson?: string | null }, lines: PushedLine[],
+): Promise<string[] | null> {
+  const fileLines = needsFileLines(push, lines) ? await sentFileLines({ orderId: push.orderId, requestJson: push.requestJson ?? null }) : []
+  return pushedShopifyLineIds(push, lines, fileLines)
 }
 
 /**
@@ -60,14 +82,20 @@ export function heldLinesMessage(keys: string[]): string {
  * Returns false when nothing was marked (the order is not in an exportable status, or has no line of this supplier).
  */
 export async function markPushExported(push: PushRef): Promise<boolean> {
-  const lineIds = pushLineIds(await prisma.supplierOrderPush.findUniqueOrThrow({ where: { id: push.id }, select: { prevExportJson: true } }))
+  const stored = await prisma.supplierOrderPush.findUniqueOrThrow({ where: { id: push.id }, select: { prevExportJson: true, requestJson: true } })
+  const storedLineIds = pushLineIds(stored)
+  const storedShopifyLineIds = pushShopifyLineIds(stored)
   const before = await prisma.order.findUnique({
     where: { id: push.orderId },
     select: {
       pipelineStatus: true, exportedAt: true, exportedToSupplierId: true,
       supplierHandoffAt: true, supplierHandoffMode: true, supplierHandoffById: true,
+      lines: { select: { id: true, shopifyLineId: true, exportedToSupplierId: true } },
     },
   })
+  // The lines it carried as the order has them now: the order sync may have replaced the OrderLine ids the push stored.
+  const carried = before ? await carriedShopifyLineIds({ ...push, ...stored }, before.lines) : null
+  const lineIds = before && carried ? before.lines.filter(l => carried.includes(l.shopifyLineId)).map(l => l.id) : storedLineIds
   const marked = await markOrdersExported([push.orderId], push.supplierId, push.pushedAt, { mode: 'API', byId: push.pushedById ?? null }, lineIds ? { lineIds } : {})
   if (marked.count === 0 || !before) return false
   await prisma.supplierOrderPush.update({
@@ -82,7 +110,8 @@ export async function markPushExported(push: PushRef): Promise<boolean> {
         supplierHandoffMode: before.supplierHandoffMode,
         supplierHandoffById: before.supplierHandoffById,
         linesMarked: marked.lines,
-        ...(lineIds ? { lineIds } : {}),
+        ...(storedLineIds ? { lineIds: storedLineIds } : {}),
+        ...(storedShopifyLineIds ? { shopifyLineIds: storedShopifyLineIds } : {}),
       }),
     },
   })

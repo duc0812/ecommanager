@@ -8,6 +8,7 @@ import { upsertLineTracking } from '@/lib/repos/supplier-push-core'
 const SHOP = 'stk-store.myshopify.com'
 const PROJECT = 'proj_stk'
 const SUPPLIER = 'sup_stk'
+const OTHER = 'sup_stk_other'
 let storeId = ''
 
 const lineId = (order: number, n: number) => `gid://shopify/LineItem/stk-${order}-${n}`
@@ -37,9 +38,10 @@ const shape = (r: Awaited<ReturnType<typeof rowsOf>>[number]) => [r.lineKey, r.s
 beforeAll(async () => {
   await prisma.shopifyStore.deleteMany({ where: { shop: SHOP } })
   await prisma.project.deleteMany({ where: { id: PROJECT } })
-  await prisma.supplier.deleteMany({ where: { id: SUPPLIER } })
+  await prisma.supplier.deleteMany({ where: { id: { in: [SUPPLIER, OTHER] } } })
   await prisma.project.create({ data: { id: PROJECT, name: 'STK', startDate: new Date('2026-05-01') } })
   await prisma.supplier.create({ data: { id: SUPPLIER, name: 'STK Supplier', code: 'STK' } })
+  await prisma.supplier.create({ data: { id: OTHER, name: 'STK Other', code: 'STKOTHER' } })
   storeId = (await prisma.shopifyStore.create({ data: { shop: SHOP, orderPrefix: 'REMI' } })).id
 })
 
@@ -51,7 +53,7 @@ afterAll(async () => {
   await prisma.order.deleteMany({ where: { storeId } })
   await prisma.shopifyStore.deleteMany({ where: { shop: SHOP } })
   await prisma.project.deleteMany({ where: { id: PROJECT } })
-  await prisma.supplier.deleteMany({ where: { id: SUPPLIER } })
+  await prisma.supplier.deleteMany({ where: { id: { in: [SUPPLIER, OTHER] } } })
 })
 
 describe('PGprints tracking (applyTrackingWebhook)', () => {
@@ -138,5 +140,33 @@ describe('Merchize, Bondre and Printway tracking (upsertLineTracking)', () => {
     expect(await write(order.id)).toBe(1)
 
     expect((await rowsOf(order.id)).map(shape)).toEqual([['REMI9915_1', lineId(9915, 2), 'TOTE-1', 'Custom Tote Bag', 'MZ-1', 'UPS', SUPPLIER, 'FULFILLED']])
+  })
+
+  // Auto Fulfilled takes a pushed tracking only from a row of the push's supplier (pushedShipmentRows).
+  it('a row the order sync made under another supplier takes the pushed supplier with the tracking', async () => {
+    const order = await makeOrder(9916)
+    await rowOn(order.id, 'REMI9916_1', 'tote', 9916, { supplierId: OTHER })
+
+    expect(await write(order.id)).toBe(1)
+
+    expect((await rowsOf(order.id)).map(shape)).toEqual([['REMI9916_1', lineId(9916, 2), 'OLD-SKU', 'Old title', 'MZ-1', 'UPS', SUPPLIER, 'FULFILLED']])
+  })
+
+  it('a row that already has this tracking under another supplier takes the pushed supplier, the rest as it was', async () => {
+    const order = await makeOrder(9917)
+    await rowOn(order.id, 'REMI9917_1', 'tote', 9917, { trackingNumber: 'MZ-1', carrier: 'UPS', supplierId: OTHER, status: 'IN_TRANSIT' })
+
+    expect(await write(order.id)).toBe(1)
+
+    expect((await rowsOf(order.id)).map(shape)).toEqual([['REMI9917_1', lineId(9917, 2), 'OLD-SKU', 'Old title', 'MZ-1', 'UPS', SUPPLIER, 'IN_TRANSIT']])
+  })
+
+  it('never touches a row that has a Shopify fulfilment and a tracking', async () => {
+    const order = await makeOrder(9918)
+    const before = await rowOn(order.id, 'REMI9918_1', 'tote', 9918, { trackingNumber: 'SHOP-1', shopifyFulfillmentId: 'gid://shopify/Fulfillment/1', supplierId: OTHER, status: 'DELIVERED' })
+
+    expect(await write(order.id)).toBe(0)
+
+    expect(await rowsOf(order.id)).toEqual([before])
   })
 })

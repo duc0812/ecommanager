@@ -165,21 +165,67 @@ export function readyLines<L extends ExportTrackedLine & DesignGateLine>(order: 
   return supplierLines(order.lines).filter(l => !l.exportedAt && !lineHold(order, l))
 }
 
-/** The lines a push carried. Null for a push made before sends went by line: it carried every line of its supplier. */
-export function pushLineIds(push: { prevExportJson: string | null }): string[] | null {
+function storedIds(push: { prevExportJson: string | null }, field: 'lineIds' | 'shopifyLineIds'): string[] | null {
   try {
-    const ids = JSON.parse(push.prevExportJson ?? '{}').lineIds
+    const ids = JSON.parse(push.prevExportJson ?? '{}')[field]
     return Array.isArray(ids) ? ids : null
   } catch {
     return null
   }
 }
 
-/** A live push blocks a new send until it landed and was marked, and it can only be sent beside when it does not hold these lines. */
-export function canSendBeside(live: Pick<LivePush, 'status' | 'exportMarked' | 'prevExportJson'>[], lineIds: string[]): boolean {
+/**
+ * The OrderLine ids of the lines a push carried, as it stored them. Null for a push made before sends went by line: it carried
+ * every line of its supplier. The order sync makes the lines anew under new ids: read a push's lines with pushedShopifyLineIds.
+ */
+export function pushLineIds(push: { prevExportJson: string | null }): string[] | null {
+  return storedIds(push, 'lineIds')
+}
+
+/** The Shopify line ids a push stored beside its OrderLine ids (since 2026-11-06); they survive the order sync. */
+export function pushShopifyLineIds(push: { prevExportJson: string | null }): string[] | null {
+  return storedIds(push, 'shopifyLineIds')
+}
+
+const ARTWORK_LINK = /\/api\/public\/artwork\/([0-9a-f]{64})\//g
+
+/** The DesignArtwork tokens of the public print and mockup links a push sent: each file belongs to one line. */
+export function pushFileTokens(requestJson: string | null | undefined): string[] {
+  return Array.from(new Set(Array.from((requestJson ?? '').matchAll(ARTWORK_LINK), m => m[1])))
+}
+
+export type PushedLine = { id: string; shopifyLineId: string; exportedToSupplierId: string | null }
+
+/** A push stored before Shopify line ids were recorded whose OrderLine ids the order sync has replaced. */
+export function needsFileLines(push: { prevExportJson: string | null }, lines: Pick<PushedLine, 'id'>[]): boolean {
+  const ids = pushLineIds(push)
+  return !pushShopifyLineIds(push) && !!ids && ids.some(id => !lines.some(l => l.id === id))
+}
+
+/**
+ * The Shopify lines a push carried, among the order's lines now. Null for a push made before sends went by line (every line
+ * of its supplier). An older push whose OrderLine ids are gone carries the lines whose files it sent (`fileLines`, read from
+ * its request by sentFileLines), else every line exported to its supplier.
+ */
+export function pushedShopifyLineIds(push: { supplierId: string; prevExportJson: string | null }, lines: PushedLine[], fileLines: string[] = []): string[] | null {
+  const recorded = pushShopifyLineIds(push)
+  if (recorded) return recorded
+  const ids = pushLineIds(push)
+  if (!ids) return null
+  if (!needsFileLines(push, lines)) return ids.map(id => lines.find(l => l.id === id)!.shopifyLineId)
+  if (fileLines.length > 0) return fileLines
+  return lines.filter(l => l.exportedToSupplierId === push.supplierId).map(l => l.shopifyLineId)
+}
+
+/**
+ * A live push blocks a new send until it landed and was marked, and it can only be sent beside when it does not hold these
+ * lines (`lineIds` among the order's `lines`). The lines are compared by Shopify line id, so the answer outlives the order sync.
+ */
+export function canSendBeside(live: Pick<LivePush, 'supplierId' | 'status' | 'exportMarked' | 'prevExportJson'>[], lineIds: string[], lines: PushedLine[]): boolean {
+  const sending = lineIds.map(id => lines.find(l => l.id === id)?.shopifyLineId)
   return live.every(p => {
-    const carried = pushLineIds(p)
-    return p.status === 'CREATED' && p.exportMarked && !!carried && !lineIds.some(id => carried.includes(id))
+    const carried = pushedShopifyLineIds(p, lines)
+    return p.status === 'CREATED' && p.exportMarked && !!carried && sending.every(id => !!id && !carried.includes(id))
   })
 }
 

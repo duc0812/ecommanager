@@ -8,7 +8,10 @@ import { prisma } from '@/lib/db'
 import { AUTH_COOKIE, signToken } from '@/lib/auth'
 import { DEFAULT_ROLE_PERMISSIONS } from '@/lib/roles'
 import { handoffOrderCsv, handoffStateFor, handoffStates } from '@/lib/supplier-handoff'
-import { IMPORT_WAIT, methodFor } from '@/lib/repos/merchize-push'
+import { IMPORT_WAIT, methodFor, syncMerchizeTracking } from '@/lib/repos/merchize-push'
+import { syncApiSupplierTracking } from '@/lib/repos/supplier-tracking-sync'
+import { setStoreSetting } from '@/lib/store-settings'
+import { resyncOrder } from './helpers/resync-order'
 import { GET as getPreview } from '@/app/api/fulfillment/merchize/orders/[orderId]/preview/route'
 import { POST as postPush } from '@/app/api/fulfillment/merchize/orders/[orderId]/push/route'
 import { POST as postCancel } from '@/app/api/fulfillment/merchize/orders/[orderId]/cancel/route'
@@ -545,5 +548,116 @@ describe('tracking of a send beside another', () => {
     const r = await (await refresh(o.id)).json()
     expect(r.shipments).toBe(1)
     expect(await prisma.shipment.findMany({ where: { orderId: o.id }, select: { lineKey: true } })).toEqual([{ lineKey: `${o.number}_1` }])
+  })
+})
+
+const pushedOrder = async () => {
+  const o = await makeOrder()
+  const p = await (await preview(o.id)).json()
+  expect((await push(o.id, p.payloadHash)).status).toBe(200)
+  const line = await prisma.orderLine.findFirstOrThrow({ where: { orderId: o.id } })
+  return { o, line, row: await prisma.supplierOrderPush.findFirstOrThrow({ where: { orderId: o.id } }) }
+}
+
+// The order sync makes every OrderLine anew each time it reads the order: a push's stored OrderLine ids are soon gone.
+describe('Merchize tracking after the order sync made the lines anew', () => {
+  it('a push records the Shopify line ids it carries, and its tracking still reaches the line', async () => {
+    const { o, line, row } = await pushedOrder()
+    expect(JSON.parse(row.prevExportJson!)).toMatchObject({ lineIds: [line.id], shopifyLineIds: [line.shopifyLineId] })
+    await resyncOrder(o.id)
+    expect((await (await refresh(o.id)).json()).shipments).toBe(1)
+    expect(await prisma.shipment.findFirstOrThrow({ where: { orderId: o.id } }))
+      .toMatchObject({ lineKey: `${o.number}_1`, shopifyLineId: line.shopifyLineId, trackingNumber: '9400111', supplierId: SUP })
+  })
+
+  it('a push stored with OrderLine ids only finds its line by the print file it sent', async () => {
+    const { o, line, row } = await pushedOrder()
+    const { shopifyLineIds: _recorded, ...older } = JSON.parse(row.prevExportJson!)
+    await prisma.supplierOrderPush.update({ where: { id: row.id }, data: { prevExportJson: JSON.stringify(older) } })
+    await resyncOrder(o.id)
+    await syncMerchizeTracking()
+    expect(await prisma.shipment.findFirstOrThrow({ where: { orderId: o.id } }))
+      .toMatchObject({ lineKey: `${o.number}_1`, shopifyLineId: line.shopifyLineId, trackingNumber: '9400111', supplierId: SUP })
+  })
+})
+
+describe('nightly Merchize tracking pull', () => {
+  const OTHER_SHOP = 'mz-other.myshopify.com'
+  afterEach(async () => {
+    vi.restoreAllMocks()
+    const other = await prisma.shopifyStore.findUnique({ where: { shop: OTHER_SHOP } })
+    if (!other) return
+    await prisma.order.deleteMany({ where: { storeId: other.id } })
+    await setStoreSetting(other.id, 'merchize.apiUrl', null)
+    await prisma.shopifyStore.delete({ where: { id: other.id } })
+  })
+
+  it('writes the tracking of each live push on its line and records the pull; closed and old orders are left alone', async () => {
+    const live = await pushedOrder()
+    const closed = await pushedOrder()
+    const old = await pushedOrder()
+    await prisma.order.update({ where: { id: closed.o.id }, data: { pipelineStatus: 'FULFILLED' } })
+    await prisma.supplierOrderPush.update({ where: { id: old.row.id }, data: { pushedAt: new Date(Date.now() - 100 * 86_400_000) } })
+    calls = []
+
+    const result = await syncMerchizeTracking()
+
+    expect(result.shipments).toBeGreaterThanOrEqual(1)
+    expect(await prisma.shipment.findFirstOrThrow({ where: { orderId: live.o.id } }))
+      .toMatchObject({ lineKey: `${live.o.number}_1`, trackingNumber: '9400111', carrier: 'USPS', supplierId: SUP })
+    const row = await prisma.supplierOrderPush.findUniqueOrThrow({ where: { id: live.row.id } })
+    expect(row.lastSyncedAt).not.toBeNull()
+    expect(row.remoteStatus).toBe('in_production')
+    const asked = callsTo('/order/external/orders/order-detail').map(c => c.query.get('external_number'))
+    expect(asked).toContain(live.o.number)
+    expect(asked).not.toContain(closed.o.number)
+    expect(asked).not.toContain(old.o.number)
+    expect(await prisma.shipment.count({ where: { orderId: { in: [closed.o.id, old.o.id] } } })).toBe(0)
+  })
+
+  it('one push whose pull fails does not stop the next, and the log carries no key', async () => {
+    const failing = await pushedOrder()
+    const next = await pushedOrder()
+    handler = call => call.path.endsWith('/order-detail') && call.query.get('external_number') === failing.o.number
+      ? { status: 500, json: { success: false, message: 'upstream broke for token mz-test-token' } }
+      : defaultHandler(call)
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    await syncMerchizeTracking()
+
+    expect(await prisma.shipment.findFirstOrThrow({ where: { orderId: next.o.id } })).toMatchObject({ trackingNumber: '9400111' })
+    expect(await prisma.shipment.count({ where: { orderId: failing.o.id } })).toBe(0)
+    const logged = JSON.stringify(errors.mock.calls)
+    expect(logged).toContain(failing.row.id)
+    expect(logged).not.toContain('mz-test-token')
+  })
+
+  it('a store with no usable Merchize account is skipped and logged, never pulled with another account', async () => {
+    const other = await prisma.shopifyStore.create({ data: { shop: OTHER_SHOP } })
+    await setStoreSetting(other.id, 'merchize.apiUrl', 'https://bo-group-9-9.merchize.com/other/bo-api')
+    await prisma.order.create({ data: {
+      id: 'gid://test/Order/mz-other-1', projectId: PROJECT, storeId: other.id, shopifyOrderNumber: '#MZO1', financialStatus: 'PAID', currency: 'USD',
+      grossAmount: 1, expectedPayout: 1, totalFees: 0, refundedAmount: 0, placedAt: new Date(), pipelineStatus: 'EXPORTED',
+    } })
+    await prisma.supplierOrderPush.create({ data: {
+      orderId: 'gid://test/Order/mz-other-1', supplierId: SUP, externalOrderId: 'MZO1', status: 'CREATED', requestJson: '{}', exportMarked: true,
+    } })
+    const logs = vi.spyOn(console, 'log').mockImplementation(() => {})
+    calls = []
+
+    const result = await syncMerchizeTracking()
+
+    expect(callsTo('/order/external/orders/order-detail').map(c => c.query.get('external_number'))).not.toContain('MZO1')
+    expect(result.skipped).toContain(OTHER_SHOP)
+    expect(JSON.stringify(logs.mock.calls)).toContain(OTHER_SHOP)
+    expect((await prisma.supplierOrderPush.findUniqueOrThrow({ where: { externalOrderId: 'MZO1' } })).lastSyncedAt).toBeNull()
+  })
+
+  it('runs in the shared nightly sync beside Bondre and Printway', async () => {
+    const { o } = await pushedOrder()
+    const results = await syncApiSupplierTracking()
+    expect(results.map(r => r.name)).toEqual(['Bondre', 'Printway', 'Merchize'])
+    expect(results.find(r => r.name === 'Merchize')).toMatchObject({ pushes: expect.any(Number) })
+    expect(await prisma.shipment.findFirstOrThrow({ where: { orderId: o.id } })).toMatchObject({ trackingNumber: '9400111' })
   })
 })

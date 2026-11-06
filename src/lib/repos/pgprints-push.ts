@@ -4,7 +4,7 @@ import { isNonProductLine, lineKeysOf } from '@/lib/order-lines'
 import { requiredSlotsFor, templateForLine } from '@/lib/design-tasks'
 import { artworkUrl } from '@/lib/design-studio'
 import { currentFiles, extraPrintParts, sameLabel } from '@/lib/task-files'
-import { heldLinesMessage, logHandoffEvent, markPushExported, nextExternalOrderId, planPushLines } from '@/lib/repos/push-export'
+import { ORDER_CHANGED_MESSAGE, heldLinesMessage, logHandoffEvent, markPushExported, nextExternalOrderId, planPushLines } from '@/lib/repos/push-export'
 import { STATUS_LABELS, type PipelineStatus } from '@/lib/pipeline-status'
 import { retryOnBusy } from '@/lib/sqlite-busy'
 import { SHIPMENT_STATUS_FULFILLED, SHIPMENT_STATUS_PENDING } from '@/lib/tracking/build-shipments'
@@ -377,12 +377,16 @@ async function reservePush(input: { orderId: string; supplierId: string; externa
     return await retryOnBusy(() => prisma.$transaction(async tx => {
       const existing = await tx.supplierOrderPush.findMany({ where: { orderId: input.orderId, supplierId: input.supplierId } })
       const live = existing.filter(p => isActive(p.status))
-      if (!canSendBeside(live, input.lineIds)) throw new PushError(DUPLICATE_MESSAGE, 409, 'DUPLICATE')
+      const lines = await tx.orderLine.findMany({ where: { orderId: input.orderId }, select: { id: true, shopifyLineId: true, exportedToSupplierId: true } })
+      const shopifyLineIds = input.lineIds.map(id => lines.find(l => l.id === id)?.shopifyLineId)
+      if (shopifyLineIds.some(id => !id)) throw new PushError(ORDER_CHANGED_MESSAGE, 409, 'PAYLOAD_CHANGED')
+      if (!canSendBeside(live, input.lineIds, lines)) throw new PushError(DUPLICATE_MESSAGE, 409, 'DUPLICATE')
       const activeKey = live.length > 0 ? `${activeKeyFor(input.orderId, input.supplierId)}::${input.externalOrderId}` : activeKeyFor(input.orderId, input.supplierId)
       const fresh = {
         status: 'SENDING', activeKey, requestJson: input.requestJson, responseJson: null, error: null,
         supplierOrderCode: null, supplierInternalId: null, remoteStatus: null, totalCost: null, shippingFee: null, handleFee: null,
-        pushedById: input.userId, pushedAt, cancelledAt: null, lastSyncedAt: null, exportMarked: false, prevExportJson: JSON.stringify({ lineIds: input.lineIds }),
+        pushedById: input.userId, pushedAt, cancelledAt: null, lastSyncedAt: null, exportMarked: false,
+        prevExportJson: JSON.stringify({ lineIds: input.lineIds, shopifyLineIds }),
       }
       const failed = existing.find(p => p.status === 'FAILED' && p.externalOrderId === input.externalOrderId)
       if (failed) {

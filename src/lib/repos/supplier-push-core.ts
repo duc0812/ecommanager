@@ -3,12 +3,12 @@ import { isNonProductLine, lineKeysOf } from '@/lib/order-lines'
 import { requiredSlotsFor, templateForLine } from '@/lib/design-tasks'
 import { artworkUrl } from '@/lib/design-studio'
 import { currentFiles, extraPrintParts, sameLabel } from '@/lib/task-files'
-import { heldLinesMessage, logHandoffEvent } from '@/lib/repos/push-export'
+import { ORDER_CHANGED_MESSAGE, carriedShopifyLineIds, heldLinesMessage, logHandoffEvent } from '@/lib/repos/push-export'
 import { retryOnBusy } from '@/lib/sqlite-busy'
 import { SHIPMENT_STATUS_FULFILLED, SHIPMENT_STATUS_PENDING } from '@/lib/tracking/build-shipments'
 import { PublicUrlError, ensurePublicToken, publicArtworkUrl, requirePublicBaseUrl } from '@/lib/public-artwork'
 import { STATUS_LABELS, type PipelineStatus } from '@/lib/pipeline-status'
-import { canSendBeside, exportedSupplierOf, pushLineIds } from '@/lib/line-export'
+import { canSendBeside, exportedSupplierOf } from '@/lib/line-export'
 import { expectedSize, printFileFit } from '@/lib/print-file-fit'
 import { PushError } from '@/lib/repos/pgprints-push'
 import type { DesignArtwork } from '@/generated/prisma/client'
@@ -66,12 +66,16 @@ export async function reservePush(
     return await retryOnBusy(() => prisma.$transaction(async tx => {
       const existing = await tx.supplierOrderPush.findMany({ where: { orderId: input.orderId, supplierId: input.supplierId } })
       const live = existing.filter(p => isActive(p.status))
-      if (!canSendBeside(live, input.lineIds)) throw new PushError(duplicateMessage, 409, 'DUPLICATE')
+      const lines = await tx.orderLine.findMany({ where: { orderId: input.orderId }, select: { id: true, shopifyLineId: true, exportedToSupplierId: true } })
+      const shopifyLineIds = input.lineIds.map(id => lines.find(l => l.id === id)?.shopifyLineId)
+      if (shopifyLineIds.some(id => !id)) throw new PushError(ORDER_CHANGED_MESSAGE, 409, 'PAYLOAD_CHANGED')
+      if (!canSendBeside(live, input.lineIds, lines)) throw new PushError(duplicateMessage, 409, 'DUPLICATE')
       const activeKey = live.length > 0 ? `${activeKeyFor(input.orderId, input.supplierId)}::${input.externalOrderId}` : activeKeyFor(input.orderId, input.supplierId)
       const fresh = {
         status: 'SENDING', activeKey, requestJson: input.requestJson, responseJson: null, error: null,
         supplierOrderCode: null, supplierInternalId: null, remoteStatus: null, totalCost: null, shippingFee: null, handleFee: null,
-        pushedById: input.userId, pushedAt, cancelledAt: null, lastSyncedAt: null, exportMarked: false, prevExportJson: JSON.stringify({ lineIds: input.lineIds }),
+        pushedById: input.userId, pushedAt, cancelledAt: null, lastSyncedAt: null, exportMarked: false,
+        prevExportJson: JSON.stringify({ lineIds: input.lineIds, shopifyLineIds }),
       }
       const failed = existing.find(p => p.status === 'FAILED' && p.externalOrderId === input.externalOrderId)
       if (failed) {
@@ -194,25 +198,31 @@ export async function checkOrderForPush(
 
 type TrackedLine = { shopifyLineId: string; resolvedSupplierId: string | null; resolvedSupplierSku: string | null }
 
-/** Writes a tracking number on the Shipment of each line this push carried; `pick` returns null for a line with none yet. */
+/**
+ * Writes a tracking number on the Shipment of each line this push carried; `pick` returns null for a line with none yet.
+ * The row then carries the push's supplier: Auto Fulfilled takes a pushed tracking only from a row of that supplier.
+ */
 export async function upsertLineTracking(
-  push: Pick<PushRow, 'orderId' | 'supplierId' | 'prevExportJson'>,
+  push: Pick<PushRow, 'orderId' | 'supplierId' | 'prevExportJson'> & Partial<Pick<PushRow, 'requestJson'>>,
   pick: (line: TrackedLine) => { number: string; company: string | null } | null,
 ): Promise<number> {
   const order = await prisma.order.findUnique({
     where: { id: push.orderId },
     select: {
       id: true, projectId: true, shopifyOrderNumber: true,
-      lines: { orderBy: { linePosition: 'asc' }, select: { id: true, shopifyLineId: true, sku: true, productTitle: true, shopifyProductType: true, linePosition: true, resolvedSupplierId: true, resolvedSupplierSku: true } },
+      lines: {
+        orderBy: { linePosition: 'asc' },
+        select: { id: true, shopifyLineId: true, sku: true, productTitle: true, shopifyProductType: true, linePosition: true, resolvedSupplierId: true, resolvedSupplierSku: true, exportedToSupplierId: true },
+      },
     },
   })
   if (!order) return 0
   const productLines = order.lines.filter(l => !isNonProductLine(l))
   const lineKeys = lineKeysOf(order.shopifyOrderNumber, order.lines)
-  const carried = pushLineIds(push)
+  const carried = await carriedShopifyLineIds(push, order.lines)
   let touched = 0
   for (const line of productLines) {
-    if (line.resolvedSupplierId !== push.supplierId || (carried && !carried.includes(line.id))) continue
+    if (line.resolvedSupplierId !== push.supplierId || (carried && !carried.includes(line.shopifyLineId))) continue
     const t = pick(line)
     if (!t) continue
     const lineKey = lineKeys.get(line.shopifyLineId)!
@@ -230,11 +240,11 @@ export async function upsertLineTracking(
     if (existing.shopifyFulfillmentId && existing.trackingNumber) continue
     // A row made when add-ons counted can still point at an add-on under this key; the tracking is the product's.
     const onLine = existing.shopifyLineId === line.shopifyLineId
-    if (onLine && existing.trackingNumber === t.number && existing.status !== SHIPMENT_STATUS_PENDING) continue
+    if (onLine && existing.trackingNumber === t.number && existing.status !== SHIPMENT_STATUS_PENDING && existing.supplierId === push.supplierId) continue
     await prisma.shipment.update({
       where: { id: existing.id },
       data: {
-        trackingNumber: t.number, carrier: t.company ?? existing.carrier, supplierId: existing.supplierId ?? push.supplierId,
+        trackingNumber: t.number, carrier: t.company ?? existing.carrier, supplierId: push.supplierId,
         ...(existing.status === SHIPMENT_STATUS_PENDING ? { status: SHIPMENT_STATUS_FULFILLED } : {}),
         ...(onLine ? {} : { shopifyLineId: line.shopifyLineId, sku: line.sku, productTitle: line.productTitle }),
       },

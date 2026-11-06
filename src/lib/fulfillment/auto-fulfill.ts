@@ -4,7 +4,8 @@ import { type SheetConfig } from './auto-fulfill-sheets'
 import { groupByOrder, mergeSheetGroups, buildFulfillmentPlan, type OrderPlanStatus, type OrderRow } from './build-fulfill-plan'
 import { fetchOrderFulfillmentOrdersByNames, createFulfillment } from '@/lib/shopify-orders'
 import { isNonProductLine, lineKeysOf } from '@/lib/order-lines'
-import { pushLineIds } from '@/lib/line-export'
+import { needsFileLines, pushedShopifyLineIds } from '@/lib/line-export'
+import { sentFileLines } from '@/lib/repos/push-export'
 
 export type FulfillmentDetail = { tracking: string; lineKeys: string[]; lineCount: number; addOn?: boolean }
 export type OrderResultRow = { baseOrder: string; status: OrderPlanStatus; trackings: string[]; fulfilledLines: number; message?: string; fulfillments?: FulfillmentDetail[]; shop?: string; storeName?: string }
@@ -64,16 +65,13 @@ export async function pushedShipmentRows(storeId: string): Promise<Map<string, O
 
 // A product line went to a supplier when it was exported (CSV, sheet push, hand-off, or an API push that marked it), or
 // when a push that landed (CREATED) carried it: a push made while the order could not be marked exported stays unmarked.
-// What a push carried is read as the tracking pull reads it: its lineIds, or every line of its supplier for an older push.
+// What a push carried is read as the tracking pull reads it (pushedShopifyLineIds), so it outlives the order sync.
 function isSentToSupplier(
-  line: { id: string; resolvedSupplierId: string | null; exportedAt: Date | null },
-  createdPushes: Array<{ supplierId: string; prevExportJson: string | null }>,
+  line: { shopifyLineId: string; resolvedSupplierId: string | null; exportedAt: Date | null },
+  carriedByPush: Array<{ supplierId: string; carried: string[] | null }>,
 ): boolean {
   if (line.exportedAt) return true
-  return createdPushes.some(p => {
-    const carried = pushLineIds(p)
-    return p.supplierId === line.resolvedSupplierId && (!carried || carried.includes(line.id))
-  })
+  return carriedByPush.some(p => p.supplierId === line.resolvedSupplierId && (!p.carried || p.carried.includes(line.shopifyLineId)))
 }
 
 export type SheetData = { name: string; groups: Map<string, OrderRow[]> }
@@ -152,7 +150,7 @@ export async function runAutoFulfill(opts: {
       lines: { select: { id: true, shopifyLineId: true, sku: true, productTitle: true, shopifyProductType: true, linePosition: true, resolvedSupplierId: true, exportedToSupplierId: true, exportedAt: true } },
       // Pushes that landed, for isSentToSupplier. No orderBy in these relations: every sheet order is read here (thousands),
       // and Prisma cannot split an ordered relation under SQLite's bind limit.
-      supplierPushes: { where: { status: 'CREATED' }, select: { supplierId: true, prevExportJson: true } },
+      supplierPushes: { where: { status: 'CREATED' }, select: { id: true, supplierId: true, prevExportJson: true } },
     },
   })
   const dbByName = new Map(orders.map(o => [o.shopifyOrderNumber.replace(/^#/, ''), o]))
@@ -170,10 +168,23 @@ export async function runAutoFulfill(opts: {
   // A read-back sheet is named after its supplier: a line's supplier is the one it was exported to, else the one it maps to.
   const suppliers = names.some(n => !settled.has(n) && dbByName.has(n)) ? await prisma.supplier.findMany({ select: { id: true, name: true } }) : []
   const supplierName = new Map(suppliers.map(s => [s.id, s.name]))
+  // A push stored before Shopify line ids were recorded, whose OrderLine ids the order sync replaced, is read by the files it
+  // sent. Only those few pushes have their request loaded.
+  const stale = names.filter(n => !settled.has(n)).flatMap(n => {
+    const db = dbByName.get(n)
+    return db ? db.supplierPushes.filter(p => needsFileLines(p, db.lines)).map(p => p.id) : []
+  })
+  const fileLinesOf = new Map<string, string[]>()
+  if (stale.length) {
+    for (const p of await prisma.supplierOrderPush.findMany({ where: { id: { in: stale } }, select: { id: true, orderId: true, requestJson: true } })) {
+      fileLinesOf.set(p.id, await sentFileLines(p))
+    }
+  }
   const productLinesFor = (db: (typeof orders)[number]) => {
     const keys = lineKeysOf(db.shopifyOrderNumber, db.lines)
+    const carriedByPush = db.supplierPushes.map(p => ({ supplierId: p.supplierId, carried: pushedShopifyLineIds(p, db.lines, fileLinesOf.get(p.id)) }))
     return db.lines.filter(l => !isNonProductLine(l)).map(l => ({
-      shopifyLineId: l.shopifyLineId, lineKey: keys.get(l.shopifyLineId) as string, sent: isSentToSupplier(l, db.supplierPushes),
+      shopifyLineId: l.shopifyLineId, lineKey: keys.get(l.shopifyLineId) as string, sent: isSentToSupplier(l, carriedByPush),
       supplier: supplierName.get(l.exportedToSupplierId ?? l.resolvedSupplierId ?? '') ?? null,
     }))
   }
