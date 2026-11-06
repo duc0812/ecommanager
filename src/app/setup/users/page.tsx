@@ -22,6 +22,7 @@ type AppUser = {
   status: string
   createdAt: string
   storeIds: string[]
+  skuPrefix: string | null
 }
 
 type StoreOption = { id: string; name: string; shop: string; enabled: boolean }
@@ -34,6 +35,7 @@ export default function UsersPage() {
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [role, setRole] = useState<UserRole>('SELLER')
+  const [skuPrefix, setSkuPrefix] = useState('')
   const [permissions, setPermissions] = useState<FeaturePermission[]>(DEFAULT_ROLE_PERMISSIONS.SELLER)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -110,6 +112,7 @@ export default function UsersPage() {
     setRole(user.role)
     setPermissions(user.permissions)
     setStoreIds(user.storeIds ?? [])
+    setSkuPrefix(user.skuPrefix ?? '')
     setSaveError('')
   }
 
@@ -120,6 +123,7 @@ export default function UsersPage() {
     setRole('SELLER')
     setPermissions(DEFAULT_ROLE_PERMISSIONS.SELLER)
     setStoreIds([])
+    setSkuPrefix('')
     setSaveError('')
   }
 
@@ -130,7 +134,7 @@ export default function UsersPage() {
     const res = await fetch('/api/users', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, email, role, permissions, ...(role === 'SELLER' ? { storeIds } : {}) }),
+      body: JSON.stringify({ name, email, role, permissions, skuPrefix: skuPrefix.trim(), ...(role === 'SELLER' ? { storeIds } : {}) }),
     })
     if (!res.ok) {
       const data = await res.json().catch(() => ({}))
@@ -165,6 +169,7 @@ export default function UsersPage() {
             <div className="space-y-md">
               <input value={name} onChange={e => setName(e.target.value)} placeholder="Name" className="w-full rounded-lg border border-outline-variant/30 bg-surface-container px-md py-sm outline-none" />
               <input value={email} onChange={e => setEmail(e.target.value)} placeholder="Email" disabled={!!editingId} className="w-full rounded-lg border border-outline-variant/30 bg-surface-container px-md py-sm outline-none disabled:opacity-60" />
+              <input value={skuPrefix} onChange={e => setSkuPrefix(e.target.value.toUpperCase())} maxLength={2} placeholder="Mã SKU (2 chữ cái)" className="w-full rounded-lg border border-outline-variant/30 bg-surface-container px-md py-sm outline-none" />
               <select value={role} onChange={e => changeRole(e.target.value as UserRole)} className="w-full rounded-lg border border-outline-variant/30 bg-surface-container px-md py-sm outline-none">
                 <option value="ADMIN">Admin</option>
                 <option value="SELLER">Seller</option>
@@ -248,7 +253,7 @@ export default function UsersPage() {
             <table className="w-full">
               <thead>
                 <tr className="bg-surface-container-low/40 text-left">
-                  {['User', 'Role', 'Access', 'Store', 'Status', ''].map(h => <th key={h} className="px-lg py-sm text-label-sm uppercase tracking-wider text-on-surface-variant">{h}</th>)}
+                  {['User', 'Role', 'Access', 'Store', 'Mã SKU', 'Status', ''].map(h => <th key={h} className="px-lg py-sm text-label-sm uppercase tracking-wider text-on-surface-variant">{h}</th>)}
                 </tr>
               </thead>
               <tbody className="divide-y divide-outline-variant/10">
@@ -263,6 +268,7 @@ export default function UsersPage() {
                       {accessSummary(user.role, user.permissions)}
                     </td>
                     <td className="max-w-[220px] px-lg py-md text-body-sm text-on-surface-variant">{storesLabel(user)}</td>
+                    <td className="px-lg py-md text-body-sm font-mono text-primary">{user.skuPrefix ?? '—'}</td>
                     <td className="px-lg py-md"><span className="rounded-full bg-on-tertiary-container/15 px-sm py-xs text-label-sm text-on-tertiary-container">{user.status}</span></td>
                     <td className="px-lg py-md text-right">
                       <div className="flex justify-end gap-sm">

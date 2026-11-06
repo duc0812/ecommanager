@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db'
 import { DEFAULT_ROLE_PERMISSIONS, FeaturePermission, parsePermissions, UserRole } from '@/lib/roles'
 import { requireSuperadmin } from '@/lib/api-auth'
 import { ONLY_SELLER_HAS_STORES, parseStoreIds, replaceStoreAccess, storeIdsOf } from '@/lib/user-store-access'
+import { resolveSkuPrefixChange } from '@/lib/clone/sku-code'
 
 export const dynamic = 'force-dynamic'
 
@@ -51,6 +52,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Không thể sửa tài khoản Super Admin qua API này' }, { status: 400 })
   }
 
+  const skuPrefix = await resolveSkuPrefixChange(body.skuPrefix, existing?.id)
+  if ('error' in skuPrefix) return NextResponse.json({ error: skuPrefix.error }, { status: skuPrefix.status })
+
   let storeIds: string[] | undefined
   if (body.storeIds !== undefined) {
     const parsed = await parseStoreIds(body.storeIds)
@@ -70,10 +74,11 @@ export async function POST(req: NextRequest) {
           role,
           permissions,
           ...(status !== undefined ? { status } : {}),
+          ...(skuPrefix.change ? { skuPrefix: skuPrefix.value } : {}),
           ...(accessChanged ? { tokenVersion: { increment: 1 } } : {}),
         },
       })
-    : await prisma.appUser.create({ data: { name, email, role, permissions, status: status ?? 'ACTIVE' } })
+    : await prisma.appUser.create({ data: { name, email, role, permissions, status: status ?? 'ACTIVE', skuPrefix: skuPrefix.change ? skuPrefix.value : null } })
   if (role !== 'SELLER') await replaceStoreAccess(user.id, [])
   else if (storeIds) await replaceStoreAccess(user.id, storeIds)
   return NextResponse.json(normalizeUser(user, await storeIdsOf(user.id)))
