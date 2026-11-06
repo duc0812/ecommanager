@@ -40,7 +40,19 @@ export function scaleJobView(j: ScaleJob) {
   delete view.viewsJson
   delete view.providerTaskId
   delete view.resultUrl
-  return { ...(view as Omit<ScaleJob, 'prompt' | 'designJson' | 'viewsJson' | 'providerTaskId' | 'resultUrl'>), hasDesign: !!j.designJson, views: parseViews(j).map(v => ({ label: v.label, status: v.status })) }
+  const states = parseViews(j)
+  return {
+    ...(view as Omit<ScaleJob, 'prompt' | 'designJson' | 'viewsJson' | 'providerTaskId' | 'resultUrl'>),
+    hasDesign: !!j.designJson,
+    views: states.map(v => ({ label: v.label, status: v.status })),
+    canRetryViews: j.status === 'failed' && !!j.designJson && states.some(v => v.status === 'failed'),
+  }
+}
+
+function viewError(state: Pick<ViewState, 'label' | 'error'>): string {
+  const raw = state.error ?? 'lỗi không rõ'
+  const refused = /sensitive|flagged|moderation|safety|policy/i.test(raw)
+  return `${state.label}: ${refused ? `Kie từ chối nội dung của góc này (bộ lọc kiểm duyệt của model): ${raw}` : raw}`
 }
 
 async function getJob(id: string): Promise<ScaleJob> {
@@ -188,7 +200,7 @@ async function advance(job: ScaleJob, deps: ScaleDeps): Promise<ScaleJob> {
   }
 
   const failed = states.find(s => s.status === 'failed')
-  if (failed) return prisma.scaleJob.update({ where: { id: job.id }, data: { status: 'failed', error: `${failed.label}: ${failed.error}`, viewsJson: JSON.stringify(states), completedAt: new Date() } })
+  if (failed) return prisma.scaleJob.update({ where: { id: job.id }, data: { status: 'failed', error: viewError(failed), viewsJson: JSON.stringify(states), completedAt: new Date() } })
 
   if (deps.image) {
     for (let i = 0; i < states.length; i++) {
@@ -205,7 +217,7 @@ async function advance(job: ScaleJob, deps: ScaleDeps): Promise<ScaleJob> {
       } catch (err) {
         state.status = 'failed'
         state.error = explainKieError(err, 'Creative', job.model)
-        return prisma.scaleJob.update({ where: { id: job.id }, data: { status: 'failed', error: `${state.label}: ${state.error}`, viewsJson: JSON.stringify(states), completedAt: new Date() } })
+        return prisma.scaleJob.update({ where: { id: job.id }, data: { status: 'failed', error: viewError(state), viewsJson: JSON.stringify(states), completedAt: new Date() } })
       }
     }
   }
@@ -219,6 +231,44 @@ async function advance(job: ScaleJob, deps: ScaleDeps): Promise<ScaleJob> {
     return prisma.scaleJob.update({ where: { id: job.id }, data: { status: 'done', resultFile, viewsJson: JSON.stringify(states), cost: states.some(s => s.credits != null) ? `${credits} credits` : null, error: null, durationMs: now.getTime() - job.createdAt.getTime(), completedAt: now } })
   }
   return prisma.scaleJob.update({ where: { id: job.id }, data: { viewsJson: JSON.stringify(states), error: note } })
+}
+
+// Re-makes only the views that failed; finished views (already paid for) are kept and still-running ones are collected on the next refresh.
+export async function retryFailedViews(id: string, deps: ScaleDeps): Promise<ScaleJob> {
+  const job = await getJob(id)
+  const states = parseViews(job)
+  if (job.status !== 'failed' || !job.designJson || !states.some(s => s.status === 'failed')) throw new ScaleInputError('Job này không có góc lỗi để tạo lại')
+  if (!deps.image) throw new ScaleInputError('Chưa có API key Kie cho bước tạo ảnh')
+  const src = job.sourceFile ? await readScaleFile('jobs', job.id, job.sourceFile) : null
+  if (!src) throw new ScaleInputError('Ảnh gốc của job này không còn')
+  const target = await readyTarget(job.targetId)
+  const design = DesignSchema.parse(JSON.parse(job.designJson))
+  const stamp = Date.now()
+  try {
+    const form = await imageForm(deps.image, job.model)
+    let srcUrl: string | null = null
+    for (let i = 0; i < states.length; i++) {
+      const state = states[i]
+      if (state.status !== 'failed') continue
+      const view = target.views.find(v => v.id === state.viewId)
+      const blank = view?.blankFile ? await readScaleFile('views', view.id, view.blankFile) : null
+      if (!view || !blank) throw new ScaleInputError(`Góc "${state.label}" không còn ảnh phôi`)
+      state.blankUrl = await deps.image.uploadBase64(toDataUrl(blank.bytes, blank.mime), `scale-${job.id}-blank-${i}-r${stamp}.${view.blankFile!.split('.').pop()}`)
+      delete state.error
+      delete state.taskId
+      delete state.resultUrl
+      delete state.file
+      if (state.after !== undefined) { state.status = 'waiting'; continue }
+      srcUrl ??= await deps.image.uploadBase64(toDataUrl(src.bytes, src.mime), `scale-${job.id}-src-r${stamp}.${job.sourceFile!.split('.').pop()}`)
+      state.taskId = await deps.image.createTask(job.model, input(form, buildViewPrompt(job.targetName, state, design), [srcUrl, state.blankUrl], deps))
+      state.status = 'running'
+    }
+  } catch (err) {
+    if (err instanceof ScaleInputError) throw err
+    throw new Error(explainKieError(err, 'Creative', job.model))
+  }
+  // createdAt restarts the 30-minute give-up clock for the re-made views (the job also moves back to the top of the history).
+  return prisma.scaleJob.update({ where: { id }, data: { status: 'running', error: null, completedAt: null, createdAt: new Date(), viewsJson: JSON.stringify(states) } })
 }
 
 const locks = new Map<string, Promise<ScaleJob>>()

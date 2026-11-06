@@ -8,7 +8,7 @@ import type { PollResult } from '@/lib/creative/kie'
 import { DEFAULT_SCALE_SETTINGS, ScaleInputError, type ScaleDeps } from '@/lib/scale/settings'
 import { readScaleFile, scaleRoot } from '@/lib/scale/storage'
 import { createTarget, createView, setViewBlank, updateTarget, updateView } from '@/lib/scale/targets'
-import { createScaleJob, deleteScaleJob, fallbackScaleJob, listScaleJobs, refreshScaleJob, rerunScaleJob, runPipeline, scaleJobView } from '@/lib/scale/jobs'
+import { createScaleJob, deleteScaleJob, fallbackScaleJob, listScaleJobs, refreshScaleJob, rerunScaleJob, retryFailedViews, runPipeline, scaleJobView } from '@/lib/scale/jobs'
 
 const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
 const editSchema = { type: 'object', required: ['prompt', 'input_urls', 'aspect_ratio'], properties: { prompt: { type: 'string' }, input_urls: { type: 'array', items: { type: 'string' } }, aspect_ratio: { type: 'string', enum: ['1:1', '2:3'] }, resolution: { type: 'string', enum: ['1K', '2K', '4K'] } } }
@@ -164,7 +164,35 @@ describe('scale jobs', () => {
     const job = await run((await start(deps)).id, deps)
     const failed = await refreshScaleJob(job.id, deps)
     expect(failed.status).toBe('failed')
-    expect(failed.error).toBe('Back: flagged as sensitive')
+    expect(failed.error).toBe('Back: Kie từ chối nội dung của góc này (bộ lọc kiểm duyệt của model): flagged as sensitive')
+  })
+
+  it('re-makes only the rejected view and keeps the views that were already paid for', async () => {
+    const { deps, creates, log } = fakeDeps({ polls: { 'task-1': [{ state: 'failed', error: 'The input or output was flagged as sensitive.' }], 'task-2': [done(2)], 'task-3': [done(3)] } })
+    const job = await run((await start(deps)).id, deps)
+    const failed = await refreshScaleJob(job.id, deps)
+    expect(failed.status).toBe('failed')
+    expect(failed.error).toBe('Front: Kie từ chối nội dung của góc này (bộ lọc kiểm duyệt của model): The input or output was flagged as sensitive.')
+    expect(views(failed).map(v => v.status)).toEqual(['failed', 'done'])
+    expect((scaleJobView(failed) as any).canRetryViews).toBe(true)
+
+    const again = await retryFailedViews(job.id, deps)
+    expect(again).toMatchObject({ id: job.id, status: 'running', error: null, completedAt: null })
+    expect(creates()).toHaveLength(3)
+    expect(creates()[2][2].prompt).toContain('Use only the FRONT artwork of IMAGE 1')
+    expect(log.filter(l => l[0] === 'vision')).toHaveLength(1)
+    expect(views(again).map(v => v.status)).toEqual(['running', 'done'])
+    expect(await refreshScaleJob(job.id, deps)).toMatchObject({ status: 'done', resultFile: 'out.jpg', cost: '20 credits' })
+    await expect(retryFailedViews(job.id, deps)).rejects.toBeInstanceOf(ScaleInputError)
+  })
+
+  it('still collects a view that was running when another view failed', async () => {
+    const { deps } = fakeDeps({ polls: { 'task-1': [{ state: 'failed', error: 'rejected' }], 'task-2': [{ state: 'running' }, done(2)], 'task-3': [done(3)] } })
+    const job = await run((await start(deps)).id, deps)
+    const failed = await refreshScaleJob(job.id, deps)
+    expect(views(failed).map(v => v.status)).toEqual(['failed', 'running'])
+    await retryFailedViews(job.id, deps)
+    expect(await refreshScaleJob(job.id, deps)).toMatchObject({ status: 'done', cost: '20 credits' })
   })
 
   it('keeps a job running through a poll error and retries a failed download', async () => {
