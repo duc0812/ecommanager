@@ -228,13 +228,13 @@ describe('scale jobs', () => {
     expect(await prisma.scaleJob.count()).toBe(0)
   })
 
-  it('hides the prompt and the design from staff', async () => {
+  it('never hands out the prompt or the design description, whoever asks', async () => {
     const { deps } = fakeDeps()
     const job = await run((await start(deps)).id, deps)
-    const staff: any = scaleJobView(job, { debug: false })
-    expect(staff.prompt).toBeUndefined()
-    expect(staff.designJson).toBeUndefined()
-    expect(staff.hasDesign).toBe(true)
-    expect((scaleJobView(job, { debug: true }) as any).prompt).toContain('Keep IMAGE 2 EXACTLY')
+    const view: any = scaleJobView(job)
+    expect(view.prompt).toBeUndefined()
+    expect(view.designJson).toBeUndefined()
+    expect(view.hasDesign).toBe(true)
+    expect(JSON.stringify(view)).not.toContain('Keep IMAGE 2 EXACTLY')
   })
 })

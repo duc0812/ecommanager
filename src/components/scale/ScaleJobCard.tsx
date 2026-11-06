@@ -5,7 +5,6 @@ type Props = {
   job: ScaleJobView
   canDelete: boolean
   allowFallback: boolean
-  showDebug: boolean
   onRerun: (job: ScaleJobView) => void
   onFallback: (job: ScaleJobView) => void
   onDelete: (job: ScaleJobView) => void
@@ -23,7 +22,7 @@ function when(iso: string) {
   return `${d.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' })} ${d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`
 }
 
-export function ScaleJobCard({ job, canDelete, allowFallback, showDebug, onRerun, onFallback, onDelete }: Props) {
+export function ScaleJobCard({ job, canDelete, allowFallback, onRerun, onFallback, onDelete }: Props) {
   const active = job.status === 'describing' || job.status === 'running'
   const resultUrl = job.resultFile ? scaleFileUrl('jobs', job.id, job.resultFile) : null
   const canFallback = job.status === 'failed' && job.hasDesign
@@ -61,12 +60,6 @@ export function ScaleJobCard({ job, canDelete, allowFallback, showDebug, onRerun
           {canFallback && allowFallback && <button type="button" onClick={() => onFallback(job)} className="text-secondary hover:underline">Thử model dự phòng</button>}
           {canDelete && <button type="button" onClick={() => onDelete(job)} className="ml-auto text-on-surface-variant hover:text-error">Xoá</button>}
         </div>
-        {showDebug && job.prompt && (
-          <details className="mt-sm">
-            <summary className="cursor-pointer text-label-sm text-on-surface-variant">Prompt đã gửi</summary>
-            <pre className="mt-xs max-h-60 overflow-auto whitespace-pre-wrap rounded-lg bg-surface p-sm text-body-sm text-on-surface-variant">{job.prompt}</pre>
-          </details>
-        )}
       </div>
     </article>
   )

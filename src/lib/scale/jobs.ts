@@ -11,10 +11,11 @@ const DESCRIBE_GIVE_UP_MS = 5 * 60 * 1000
 const RUN_GIVE_UP_MS = 30 * 60 * 1000
 const NOT_READY = 'Sản phẩm đích chưa sẵn sàng'
 
-export function scaleJobView(j: ScaleJob, opts: { debug: boolean }) {
-  const { prompt, designJson, ...rest } = j
-  const base = { ...rest, hasDesign: !!designJson }
-  return opts.debug ? { ...base, prompt, designJson } : base
+export function scaleJobView(j: ScaleJob) {
+  const view: Partial<ScaleJob> = { ...j }
+  delete view.prompt
+  delete view.designJson
+  return { ...(view as Omit<ScaleJob, 'prompt' | 'designJson'>), hasDesign: !!j.designJson }
 }
 
 async function getJob(id: string): Promise<ScaleJob> {

@@ -13,9 +13,8 @@ export async function GET(req: NextRequest) {
   const ids = Array.from(new Set(jobs.map(j => j.createdBy).filter((x): x is string => !!x)))
   const users = ids.length ? await prisma.appUser.findMany({ where: { id: { in: ids } }, select: { id: true, name: true } }) : []
   const names: Record<string, string> = Object.fromEntries(users.map(u => [u.id, u.name]))
-  const debug = auth.user.role === 'SUPERADMIN'
   return NextResponse.json({
-    jobs: jobs.map(j => ({ ...scaleJobView(j, { debug }), createdByName: j.createdBy ? names[j.createdBy] ?? null : null })),
+    jobs: jobs.map(j => ({ ...scaleJobView(j), createdByName: j.createdBy ? names[j.createdBy] ?? null : null })),
     allowFallback: settings.allowFallback,
   })
 }
@@ -26,6 +25,6 @@ export async function POST(req: NextRequest) {
   const body = await jsonBody(req)
   try {
     const job = await createScaleJob({ targetId: String(body.targetId ?? ''), image: { dataUrl: String(body.image?.dataUrl ?? ''), name: String(body.image?.name ?? 'image') }, userId: auth.user.id }, await loadScaleDeps())
-    return NextResponse.json({ job: { ...scaleJobView(job, { debug: auth.user.role === 'SUPERADMIN' }), createdByName: auth.user.name } })
+    return NextResponse.json({ job: { ...scaleJobView(job), createdByName: auth.user.name } })
   } catch (err) { return scaleError(err) }
 }

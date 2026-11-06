@@ -32,8 +32,6 @@ export type ScaleJobView = {
   createdByName?: string | null
   createdAt: string
   hasDesign: boolean
-  prompt?: string | null
-  designJson?: string | null
 }
 
 export type ScaleSettingsView = {

@@ -10,6 +10,6 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   if ('error' in auth) return auth.error
   try {
     const job = await rerunScaleJob(params.id, auth.user.id, await loadScaleDeps())
-    return NextResponse.json({ job: { ...scaleJobView(job, { debug: auth.user.role === 'SUPERADMIN' }), createdByName: auth.user.name } })
+    return NextResponse.json({ job: { ...scaleJobView(job), createdByName: auth.user.name } })
   } catch (err) { return scaleError(err) }
 }
