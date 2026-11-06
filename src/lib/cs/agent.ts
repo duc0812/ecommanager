@@ -4,7 +4,9 @@ import { FreshdeskBudgetExceeded, FreshdeskClient } from '@/lib/cs/freshdesk'
 import { llmFor, pickLlmKey, type Llm } from '@/lib/llm/anthropic'
 import { syncTickets } from '@/lib/cs/sync'
 import { analyzeTicket } from '@/lib/cs/analyze'
-import { afterHoursText, analysisHash, autoReply, notify, writeBack, type Notifier } from '@/lib/cs/actions'
+import { afterHoursText, analysisHash, autoReply, humanHandoffText, humanRequestedOf, notify, writeBack, type Notifier } from '@/lib/cs/actions'
+import { HUMAN_ONLY_TAG } from '@/lib/cs/policy'
+import { ticketTags } from '@/lib/cs/triage'
 import { effectiveMode } from '@/lib/cs/hours'
 import { getCsSecrets, getCsSettings } from '@/lib/cs/settings'
 import { investigateTicket, pendingInvestigations } from '@/lib/cs/root-cause'
@@ -91,13 +93,18 @@ export async function runAgentCycle(deps: CycleDeps, opts: { ticketIds?: string[
             try { await notify(deps.notifier, { ...ticket, lastNoteHash: null }, analysis, settings, deps.appUrl) }
             catch (err: any) { errors.push(`notify ${id}: ${err?.message ?? String(err)}`) }
           }
+          const handedToPerson = humanRequestedOf(analysis) && !ticketTags(ticket.fdTags).includes(HUMAN_ONLY_TAG)
+          if (handedToPerson) {
+            try { await deps.notifier(humanHandoffText(analysis, ticket, deps.appUrl)) }
+            catch (err: any) { errors.push(`notify ${id}: ${err?.message ?? String(err)}`) }
+          }
           const gate = JSON.parse(analysis.gateJson || '{}')
           const afterHours = gate.mode === 'AFTER_HOURS'
           const sendable = afterHours ? analysis.autoReplyEligible : (!analysis.needsHuman && !before.autoReplied)
           if (opts.autoReply !== false && fresh && gate.allowed && analysis.draftReply && sendable) {
             await autoReply(deps.fd, ticket, analysis, now, { afterHours })
             autoReplied += 1
-            if (afterHours && analysis.needsHuman) {
+            if (afterHours && analysis.needsHuman && !handedToPerson) {
               try { await deps.notifier(afterHoursText(analysis, ticket, deps.appUrl)) }
               catch (err: any) { errors.push(`notify ${id}: ${err?.message ?? String(err)}`) }
             }

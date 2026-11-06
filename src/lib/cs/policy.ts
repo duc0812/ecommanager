@@ -17,7 +17,8 @@ export type GateInput = {
   now: Date
   textMentionsRefundAddressOrCancel: boolean
   autoRepliesToday: number
-  autoRepliesOnTicket24h: number
+  agentRepliesOnTicket: number
+  humanOnly: boolean
   openDirectives: number
   hasActiveCaseForCategory: boolean
 }
@@ -25,7 +26,15 @@ export type GateInput = {
 export type GateResult = { allowed: boolean; reasons: string[]; mode: CsMode }
 
 export const BASELINE_CATEGORIES: CsCategory[] = ['ORDER_STATUS']
-export const AFTER_HOURS_TICKET_CAP = 2
+export const AGENT_TICKET_CAP = 2
+export const HUMAN_ONLY_TAG = 'em-human-only'
+
+function ticketLimits(i: GateInput): string[] {
+  const reasons: string[] = []
+  if (i.agentRepliesOnTicket >= AGENT_TICKET_CAP) reasons.push('agent already replied twice on this ticket')
+  if (i.humanOnly) reasons.push('customer asked for a person — staff only')
+  return reasons
+}
 
 const RISKY = /refund|charge ?back|dispute|cancel|wrong address|change (the |my )?address|different address|send(ing)? it to/i
 
@@ -64,12 +73,11 @@ function afterHoursGate(i: GateInput): string[] {
   if (i.orderMatch !== 'EXACT' && i.orderMatch !== 'BY_EMAIL' && i.category !== 'PRODUCT_QUESTION') reasons.push(`order match ${i.orderMatch}`)
   if (i.sentiment === 'DISPUTE_THREAT') reasons.push(`sentiment ${i.sentiment}`)
   if (i.openDirectives > 0) reasons.push('open admin directive — staff carries it out')
-  if (i.autoRepliesOnTicket24h >= AFTER_HOURS_TICKET_CAP) reasons.push('ticket already auto-replied twice in 24h')
   if (i.autoRepliesToday >= s.autoReplyDailyCap) reasons.push('daily cap reached')
   return reasons
 }
 
 export function autoReplyGate(i: GateInput): GateResult {
-  const reasons = i.mode === 'AFTER_HOURS' ? afterHoursGate(i) : businessGate(i)
+  const reasons = [...(i.mode === 'AFTER_HOURS' ? afterHoursGate(i) : businessGate(i)), ...ticketLimits(i)]
   return { allowed: reasons.length === 0, reasons, mode: i.mode }
 }

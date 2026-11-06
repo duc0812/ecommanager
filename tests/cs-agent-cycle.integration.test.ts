@@ -5,6 +5,7 @@ import { FreshdeskBudgetExceeded } from '@/lib/cs/freshdesk'
 import type { Analysis } from '@/lib/cs/analysis-schema'
 import type { Llm } from '@/lib/llm/anthropic'
 import { runAgentCycle } from '@/lib/cs/agent'
+import { analyzeTicket } from '@/lib/cs/analyze'
 import { dailyDigest, replySource, resendAlerts, sendStaffReply } from '@/lib/cs/actions'
 import { saveCsSettings } from '@/lib/cs/settings'
 import ticketsPage from './fixtures/cs/tickets-page.json'
@@ -35,8 +36,9 @@ function fakeFd(): FreshdeskClient & { calls: Call[] } {
 
 const base: Analysis = {
   category: 'ORDER_STATUS', urgency: 'NORMAL', sentiment: 'CALM', orderNumber: null, summary: 'Khách hỏi đơn đến đâu', facts: [], proposal: 'Gửi tracking',
-  citedCaseIds: [], draftReply: 'Hi, your order is on its way.\n\nLitzzy Support', needsHuman: false, needsHumanReason: '', autoReplyEligible: true, autoReplyReason: 'first wismo',
+  citedCaseIds: [], draftReply: 'Hi, your order is on its way.\n\nLitzzy Support', needsHuman: false, needsHumanReason: '', autoReplyEligible: true, autoReplyReason: 'first wismo', humanRequested: false,
 }
+let askHuman = false
 function fakeLlm(): Llm & { calls: number; rootCauseCalls: number } {
   const llm = {
     calls: 0,
@@ -47,7 +49,9 @@ function fakeLlm(): Llm & { calls: number; rootCauseCalls: number } {
     },
     async analyze({ user }: { user: string }) {
       llm.calls++
-      const output: Analysis = user.includes('Ticket #119') && user.includes('# Mode: AFTER_HOURS')
+      const output: Analysis = askHuman && user.includes('Ticket #119')
+        ? { ...base, category: 'ADDRESS_CHANGE', urgency: 'HIGH', sentiment: 'ANGRY', orderNumber: '#LIT4525', summary: 'Khách muốn gặp người thật', proposal: 'Nhân viên trả lời trực tiếp', draftReply: 'Hi Paul,\n\nA member of our support team will personally reply within 24 hours.\n\nWarm regards,\nLitzzy Support', needsHuman: true, needsHumanReason: 'asked for a person', autoReplyEligible: true, autoReplyReason: 'handoff', humanRequested: true }
+        : user.includes('Ticket #119') && user.includes('# Mode: AFTER_HOURS')
         ? { ...base, category: 'ADDRESS_CHANGE', urgency: 'HIGH', sentiment: 'ANGRY', orderNumber: '#LIT4525', summary: 'Khách báo gửi sai địa chỉ', facts: ['Địa chỉ mới: 12 Test St'], proposal: 'Áp địa chỉ mới trước khi xuất xưởng', draftReply: 'Hi Paul,\n\nThis is entirely on us. We have noted 12 Test St and the team applies it before production.\n\nWarm regards,\nLitzzy Support', needsHuman: true, needsHumanReason: 'staff applies the address', autoReplyEligible: true, autoReplyReason: 'after hours' }
         : user.includes('Ticket #119')
         ? { ...base, category: 'ADDRESS_CHANGE', urgency: 'HIGH', sentiment: 'ANGRY', orderNumber: '#LIT4525', summary: 'Khách báo gửi sai địa chỉ', facts: ['Địa chỉ mới: 12 Test St'], proposal: 'Liên hệ carrier đổi địa chỉ', draftReply: null, needsHuman: true, needsHumanReason: 'address', autoReplyEligible: false }
@@ -153,6 +157,28 @@ describe('runAgentCycle', () => {
     const d2 = { ...deps(), now: new Date('2026-10-23T15:10:00Z') }
     await runAgentCycle({ ...d2, notifier: collector().notifier })
     expect(d2.fd.calls.filter(c => c.kind === 'reply')).toHaveLength(0)
+  })
+
+  it('after hours: a customer who asks for a person gets one handoff email, the ticket turns human-only, Telegram is told, and the agent stops', async () => {
+    askHuman = true
+    try {
+      await saveCsSettings({ afterHoursAutoReply: true, afterHoursCategories: ['ADDRESS_CHANGE'] })
+      const d = deps()
+      const c = collector()
+      await runAgentCycle({ ...d, notifier: c.notifier })
+      const replies = d.fd.calls.filter(x => x.kind === 'reply')
+      expect(replies.map(r => r.id)).toEqual([119])
+      expect(replies[0].payload).toContain('personally reply within 24 hours')
+      const tagUpdates = d.fd.calls.filter(x => x.kind === 'update' && x.id === 119 && x.payload.tags)
+      expect(tagUpdates.at(-1)!.payload.tags).toEqual(expect.arrayContaining(['em-human-only', 'em-auto-replied', 'em-after-hours']))
+      expect(c.texts.some(t => t.includes('người thật') && t.includes('#119'))).toBe(true)
+      const t = await prisma.csTicket.findUniqueOrThrow({ where: { fdTicketId: 119 } })
+      expect(JSON.parse(t.fdTags)).toContain('em-human-only')
+      const again = await analyzeTicket(t.id, { llm: fakeLlm(), now: new Date('2026-10-23T15:30:00Z'), force: true })
+      expect(JSON.parse(again.gateJson).reasons.join(' ')).toContain('person')
+    } finally {
+      askHuman = false
+    }
   })
 
   it('after hours: a ticket analysed in business mode and still waiting is re-analysed and answered once night falls', async () => {

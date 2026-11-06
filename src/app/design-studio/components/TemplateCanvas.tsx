@@ -50,15 +50,27 @@ function fit(box: { x: number; y: number; w: number; h: number }, w: number, h: 
   return { x: box.x + (box.w - aw) / 2, y: box.y + (box.h - ah) / 2, w: aw, h: ah, s }
 }
 
+const BG_SWATCHES: { k: CanvasBg; label: string; cls: string }[] = [
+  { k: 'checker', label: 'Nền ô cờ', cls: 'bg-[repeating-conic-gradient(theme(colors.outline-variant)_0_25%,theme(colors.surface-container-lowest)_0_50%)] bg-[length:8px_8px]' },
+  { k: 'white', label: 'Nền trắng', cls: 'bg-white' },
+  { k: 'black', label: 'Nền đen', cls: 'bg-black' },
+]
+
+export function BgSwatches({ bg, onBg }: { bg: CanvasBg; onBg: (b: CanvasBg) => void }) {
+  return (
+    <>
+      {BG_SWATCHES.map(s => (
+        <button key={s.k} type="button" aria-label={s.label} aria-pressed={bg === s.k} title={s.label} onClick={() => onBg(s.k)}
+          className={`w-[18px] h-[18px] rounded border border-outline-variant ${s.cls} ${bg === s.k ? 'outline outline-2 outline-offset-1 outline-secondary' : ''}`} />
+      ))}
+    </>
+  )
+}
+
 export function CanvasTools({ bg, onBg, guide, onGuide, hasGuide, guides, onGuides, hasBleed = true }: {
   bg: CanvasBg; onBg: (b: CanvasBg) => void; guide: number; onGuide: (n: number) => void; hasGuide: boolean
   guides?: Guides; onGuides?: (g: Guides) => void; hasBleed?: boolean
 }) {
-  const swatches: { k: CanvasBg; label: string; cls: string }[] = [
-    { k: 'checker', label: 'Nền ô cờ', cls: 'bg-[repeating-conic-gradient(theme(colors.outline-variant)_0_25%,theme(colors.surface-container-lowest)_0_50%)] bg-[length:8px_8px]' },
-    { k: 'white', label: 'Nền trắng', cls: 'bg-white' },
-    { k: 'black', label: 'Nền đen', cls: 'bg-black' },
-  ]
   const toggles: { k: keyof Guides; label: string; show: boolean }[] = [
     { k: 'areas', label: 'Vùng in', show: true },
     { k: 'safe', label: 'An toàn', show: true },
@@ -71,10 +83,7 @@ export function CanvasTools({ bg, onBg, guide, onGuide, hasGuide, guides, onGuid
   return (
     <div className="flex items-center gap-md flex-wrap text-label-sm text-on-surface-variant">
       <span className="inline-flex items-center gap-xs">Nền
-        {swatches.map(s => (
-          <button key={s.k} type="button" aria-label={s.label} aria-pressed={bg === s.k} title={s.label} onClick={() => onBg(s.k)}
-            className={`w-[18px] h-[18px] rounded border border-outline-variant ${s.cls} ${bg === s.k ? 'outline outline-2 outline-offset-1 outline-secondary' : ''}`} />
-        ))}
+        <BgSwatches bg={bg} onBg={onBg} />
       </span>
       {guides && onGuides && (
         <span className="inline-flex items-center gap-xs flex-wrap" role="group" aria-label="Hiện guide">
@@ -101,10 +110,12 @@ export function CanvasTools({ bg, onBg, guide, onGuide, hasGuide, guides, onGuid
 type AreaBox = { x: number; y: number; w: number; h: number }
 type AreaPct = { left: string; top: string; width: string; height: string }
 
-function Sheet({ template, bg, guide, guides, renderArea, overlay, underlay, legend, svgRef, highlight, frameProps, frameOverlay, areaLayer, maxVh, compact }: {
+function Sheet({ template, bg, guide, guides, renderArea, overlay, underlay, legend, svgRef, highlight, frameProps, frameOverlay, areaLayer, maxVh, maxPx, compact }: {
   template: TemplateRow; bg: CanvasBg; guide: number; guides: Guides
   /** Caps the sheet's height to this share of the viewport, keeping its proportions. */
   maxVh?: number
+  /** The same cap in pixels, for a pane of fixed height; wins over `maxVh`. */
+  maxPx?: number
   /** Legend and rulers go into the frame's tooltip instead of a line under the sheet. */
   compact?: boolean
   renderArea: (a: TemplateArea, box: AreaBox) => ReactNode
@@ -132,6 +143,7 @@ function Sheet({ template, bg, guide, guides, renderArea, overlay, underlay, leg
   })
 
   const ratio = viewBox.w / viewBox.h
+  const cap = maxPx ? `${Math.round(maxPx * ratio)}px` : maxVh ? `calc(${maxVh}vh * ${ratio.toFixed(4)})` : null
   const shaped = template.areas.some(a => a.shaped)
   const legendText = [
     showBleed && `nét đỏ = bleed ${template.bleedIn}″`,
@@ -146,7 +158,7 @@ function Sheet({ template, bg, guide, guides, renderArea, overlay, underlay, leg
     <div className="flex flex-col gap-sm flex-1 min-h-0">
       <div {...frameProps} title={compact ? frameProps?.title ? `${frameProps.title} — ${legendText}` : legendText : frameProps?.title}
         className={`relative flex-1 rounded-lg ${compact ? '' : 'border border-outline-variant/20 bg-surface-container-low p-sm'} grid place-items-center overflow-hidden ${frameProps?.className ?? ''}`}>
-        <div className="relative w-full mx-auto" style={maxVh ? { width: `min(100%, calc(${maxVh}vh * ${ratio.toFixed(4)}))` } : undefined}>
+        <div className="relative w-full mx-auto" style={cap ? { width: `min(100%, ${cap})` } : undefined}>
         <svg ref={svgRef} viewBox={`${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`} role="img" aria-label={`Template ${template.name}`} className="block max-w-full h-auto w-full">
           <defs>
             <pattern id={patternId} width="18" height="18" patternUnits="userSpaceOnUse">
@@ -379,7 +391,7 @@ function NoTemplateCanvas({ line, upload, artActions, selected }: { line: Worksp
   )
 }
 
-function TaskCanvas({ template: stored, line, slots, bg, guide, guides, upload, artActions, selected, maxVh }: TaskProps) {
+function TaskCanvas({ template: stored, line, slots, bg, guide, guides, upload, artActions, selected, maxVh, maxPx }: TaskProps) {
   const template = stored ? readableSheet(stored) : null
   const firstArea = template?.areas.find(a => a.name === slots[0]) ?? template?.areas[0]
   const sourceUrl = line.sourcePrintFiles[0]?.url ?? null
@@ -408,7 +420,7 @@ function TaskCanvas({ template: stored, line, slots, bg, guide, guides, upload, 
 
   return (
     <Sheet
-      template={tpl} bg={bg} guide={guide} guides={guides} svgRef={svgRef} highlight={highlight} frameProps={frameProps} maxVh={tpl.areas.some(a => a.shaped) ? undefined : maxVh} compact
+      template={tpl} bg={bg} guide={guide} guides={guides} svgRef={svgRef} highlight={highlight} frameProps={frameProps} maxVh={tpl.areas.some(a => a.shaped) ? undefined : maxVh} maxPx={maxPx} compact
       frameOverlay={upload ? <UploadOverlay busy={upload.busy} target={drag} /> : null}
       renderArea={(a, { x, y, w, h }) => {
         const art = newestFor(line, a.name)
@@ -510,11 +522,12 @@ type TaskProps = {
   /** The area the header's Upload goes to; outlined on the sheet. */
   selected?: string
   maxVh?: number
+  maxPx?: number
 }
 type StandaloneProps = { template: TemplateRow; masterUrl?: string | null; line?: undefined; slots?: undefined; bg?: CanvasBg; guide?: number }
 
 export default function TemplateCanvas(props: (Omit<TaskProps, 'guides'> & { guides?: Guides }) | StandaloneProps) {
-  if (props.line) return <TaskCanvas template={props.template} line={props.line} slots={props.slots} bg={props.bg} guide={props.guide} guides={props.guides ?? ALL_GUIDES} upload={props.upload} artActions={props.artActions} selected={props.selected} maxVh={props.maxVh} />
+  if (props.line) return <TaskCanvas template={props.template} line={props.line} slots={props.slots} bg={props.bg} guide={props.guide} guides={props.guides ?? ALL_GUIDES} upload={props.upload} artActions={props.artActions} selected={props.selected} maxVh={props.maxVh} maxPx={props.maxPx} />
   const p = props as StandaloneProps
   return <StandaloneCanvas template={p.template} masterUrl={p.masterUrl ?? null} bg={p.bg ?? 'checker'} guide={p.guide ?? 50} />
 }

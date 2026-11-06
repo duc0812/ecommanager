@@ -45,4 +45,8 @@ describe('finalUrgency / priority / tags', () => {
     expect(tagsFor('ADDRESS_CHANGE', 'URGENT', ['shadow-email-ai-agent', 'em-order-status'])).toEqual(['shadow-email-ai-agent', 'em-address-change', 'em-urgent'])
     expect(tagsFor('ORDER_STATUS', 'NORMAL', ['em-urgent'])).toEqual(['em-order-status'])
   })
+  it('keeps the tags that record what the agent did: auto-replied, after hours, handed to a person', () => {
+    expect(tagsFor('ORDER_STATUS', 'HIGH', ['em-auto-replied', 'em-after-hours', 'em-human-only', 'em-refund-request']))
+      .toEqual(['em-auto-replied', 'em-after-hours', 'em-human-only', 'em-order-status', 'em-high'])
+  })
 })

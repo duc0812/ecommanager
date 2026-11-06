@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import Link from 'next/link'
 import type { TaskDetail, TaskStatus, TransitionBody } from './types'
-import { allSlotsFilled, canMove, copyText, newestFor, postJson, printPartNames, productPageUrl, requestJson, taskImages, taskUrl, timeLeft } from './model'
+import { allSlotsFilled, canMove, copyText, mockupFiles, newestFor, postJson, printPartNames, productPageUrl, requestJson, taskImages, taskUrl, timeLeft } from './model'
 import { machineQa } from './ai-qa'
 import { reviewVerdict, type ReviewVerdict } from './review-check'
 import { printFileFit } from '@/lib/print-file-fit'
@@ -45,6 +45,7 @@ function VerdictStrip({ v }: { v: ReviewVerdict }) {
 function PrintFiles({ detail }: { detail: TaskDetail }) {
   const { line, slots, template } = detail
   const parts = printPartNames(line, slots)
+  const mockups = mockupFiles(line)
   const wrong = (area: string) => {
     const art = newestFor(line, area, 'PRINT')
     return !!art && printFileFit(template, area, art).state === 'bad'
@@ -54,13 +55,14 @@ function PrintFiles({ detail }: { detail: TaskDetail }) {
       <div className="flex items-center gap-sm">
         <Icon name="print" className="text-[20px] text-on-surface-variant" />
         <span className="text-body-sm font-semibold text-on-surface">File in</span>
-        <span className="text-label-sm text-on-surface-variant">{parts.length} vùng · bấm để xem lớn</span>
+        <span className="text-label-sm text-on-surface-variant">{parts.length} vùng{mockups.length > 0 ? ` · ${mockups.length} mockup` : ''} · bấm để xem lớn</span>
       </div>
-      {parts.length === 0 ? (
+      {parts.length === 0 && mockups.length === 0 ? (
         <div className="rounded-lg border border-dashed border-error/50 px-md py-lg text-center text-body-sm text-error">Chưa có file in</div>
       ) : (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-sm">
           {parts.map(area => <PrintFileThumb key={area} line={line} area={area} refLabel={detail.task.taskKey} wrongSize={wrong(area)} />)}
+          {mockups.map(m => <PrintFileThumb key={`m-${m.printArea}`} line={line} area={m.printArea} kind="MOCKUP" refLabel={detail.task.taskKey} />)}
         </div>
       )}
     </section>
