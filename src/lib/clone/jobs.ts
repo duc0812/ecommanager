@@ -39,12 +39,12 @@ export class CloneInputError extends Error {
 const NOT_YOUR_STORE = 'Bạn không có quyền xem store này.'
 const NO_SKU_PREFIX = 'Tài khoản chưa có mã SKU 2 chữ cái. Nhờ quản trị điền ở Setup › Users.'
 const BAD_LINK = 'Link không hợp lệ.'
-const JOB_NOT_FOUND = 'Không tìm thấy job.'
+export const JOB_NOT_FOUND = 'Không tìm thấy job.'
 const NOT_WAITING = 'Chỉ huỷ được job đang chờ.'
 const NOT_FAILED = 'Chỉ thử lại được job lỗi.'
 const LIST_LIMIT = 200
 const LINK_TAKEN = 'Link này đã có job khác.'
-const NO_SKU_CODE = 'Không cấp được mã SKU, thử lại sau.'
+export const NO_SKU_CODE = 'Không cấp được mã SKU, thử lại sau.'
 const MAX_URL_LENGTH = 2048
 const LIVE_STATUSES = ['QUEUED', 'RUNNING', 'DONE']
 const ADMIN_ONLY_FAIL_KINDS = ['TOOL_GAP', 'UNSUPPORTED', 'NOT_ENABLED']
