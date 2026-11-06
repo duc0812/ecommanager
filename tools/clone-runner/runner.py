@@ -24,7 +24,7 @@ import detect
 from api import FAIL_KINDS, TIMEOUT_S, ApiError, AuthError, Client
 
 KNOWN_STORES = {'LIT': 'litzzy', 'REMI': 'reminiso'}
-SOURCE_URL_RE = re.compile(r"^https://[a-z0-9.-]+(/[A-Za-z0-9._~%+,@=:-]*)*(\?view=[A-Za-z0-9_-]+)?$")
+SOURCE_URL_RE = re.compile(r"^https://[a-z0-9.-]+(/[A-Za-z0-9._-]*)*(\?view=[A-Za-z0-9_-]+)?$")
 SKU_CODE_RE = re.compile(r'^[A-Z]{2}\d{10}$', re.ASCII)
 JOB_ID_RE = re.compile(r'^[a-z0-9]{10,40}$')
 
@@ -36,14 +36,15 @@ HEARTBEAT_S = 60
 SESSION_TIMEOUT_S = 7200
 RESULT_RETRIES = 5
 RESULT_RETRY_S = 30
+FAIL_RETRIES = 3
+FAIL_RETRY_S = 10
 DETECT_STAGE = 'nhận diện'
 SESSION_STAGES = ('clone', 'qa', 'public')
 REUSED_NOTE = 'Đã có sẵn trong sổ đăng ký'
+SETUP_ERROR = 'Runner không chuẩn bị được job.'
 AUTH_MESSAGE = 'Máy chủ từ chối token (401). Kiểm lại CLONE_WORKER_TOKEN rồi chạy lại runner.'
-
-PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-ERROR_ACCESS_DENIED = 5
-STILL_ACTIVE = 259
+# The byte locked sits past the pid text so other programs can still read the pid while the runner holds the lock.
+LOCK_OFFSET = 1 << 20
 
 
 def log(msg: str) -> None:
@@ -149,12 +150,23 @@ def _fail(job: dict, deps, kind: str, error, retryable: bool = False, product_gi
     error = str(error)
     log(f'Job {job.get("id")}: {kind} {error}')
     gid = product_gid if isinstance(product_gid, str) and product_gid else None
-    deps.client.fail(job.get('id'), job.get('attempts'), kind, error, retryable=retryable, product_gid=gid)
+    for n in range(FAIL_RETRIES + 1):
+        if n:
+            deps.clock.sleep(FAIL_RETRY_S)
+        try:
+            deps.client.fail(job.get('id'), job.get('attempts'), kind, error, retryable=retryable, product_gid=gid)
+            return
+        except AuthError:
+            raise
+        except ApiError as e:
+            log(f'Job {job.get("id")}: gửi báo lỗi không được ({e}).')
+    log(f'Job {job.get("id")}: bỏ cuộc sau {FAIL_RETRIES + 1} lần gửi báo lỗi; job nằm chờ tới khi hết lease.')
 
 
 def _report_pass(job: dict, deps, payload: dict) -> None:
     payload = {k: v for k, v in payload.items() if v is not None}
-    if not isinstance(payload.get('productGid'), str):
+    gid = payload.get('productGid')
+    if not isinstance(gid, str):
         _fail(job, deps, 'TOOL', 'Phiên báo PASS nhưng thiếu productGid.')
         return
     status, body = 0, {}
@@ -168,19 +180,19 @@ def _report_pass(job: dict, deps, payload: dict) -> None:
         except ApiError as e:
             log(f'Job {job["id"]}: gửi kết quả lỗi ({e}).')
             continue
-        if status != 502:
+        if status < 500:
             break
-        log(f'Job {job["id"]}: máy chủ chưa kiểm được Shopify (502).')
+        log(f'Job {job["id"]}: máy chủ trả HTTP {status} khi nhận kết quả.')
     else:
         _fail(job, deps, 'TOOL', f'Không gửi được kết quả sau {RESULT_RETRIES + 1} lần thử.', retryable=True,
-              product_gid=payload['productGid'])
+              product_gid=gid)
         return
     if status == 200:
         log(f'Job {job["id"]}: {body.get("status")} {body.get("error") or ""}'.rstrip())
     elif status == 404:
         log(f'Job {job["id"]}: máy chủ không còn job này (404).')
     else:
-        log(f'Job {job["id"]}: máy chủ trả HTTP {status} khi nhận kết quả ({body.get("error") or ""}).')
+        _fail(job, deps, 'TOOL', f'Máy chủ trả HTTP {status} khi nhận kết quả.', product_gid=gid)
 
 
 def _report(job: dict, deps, outcome) -> None:
@@ -215,11 +227,18 @@ def run_job(job: dict, deps) -> None:
     try:
         existing = deps.find_existing(job)
     except Exception as e:
-        _fail(job, deps, 'TOOL', f'Không đọc được sổ đăng ký: {type(e).__name__}: {e}')
+        log(f'Job {job_id}: đọc sổ đăng ký lỗi ({type(e).__name__}: {e}).')
+        _fail(job, deps, 'TOOL', SETUP_ERROR)
         return
-    if existing and existing.get('productGid'):
-        _report_pass(job, deps, {'productGid': existing.get('productGid'), 'handle': existing.get('handle'),
-                                 'qaVerdict': 'PASS', 'qaNote': REUSED_NOTE, 'reused': True})
+    if existing is not None:
+        gid = existing.get('productGid') if isinstance(existing, dict) else None
+        handle = existing.get('handle') if isinstance(existing, dict) else None
+        if not isinstance(gid, str) or not gid or not isinstance(handle, (str, type(None))):
+            log(f'Job {job_id}: sổ đăng ký trả giá trị lạ ({type(existing).__name__}).')
+            _fail(job, deps, 'TOOL', SETUP_ERROR)
+            return
+        _report_pass(job, deps, {'productGid': gid, 'handle': handle, 'qaVerdict': 'PASS', 'qaNote': REUSED_NOTE,
+                                 'reused': True})
         return
 
     if not beat(deps.client, job, DETECT_STAGE):
@@ -240,11 +259,16 @@ def run_job(job: dict, deps) -> None:
         return
 
     job_dir = os.path.join(deps.job_root, job_id)
-    os.makedirs(job_dir, exist_ok=True)
     try:
-        os.remove(os.path.join(job_dir, 'stage.txt'))
-    except FileNotFoundError:
-        pass
+        os.makedirs(job_dir, exist_ok=True)
+        try:
+            os.remove(os.path.join(job_dir, 'stage.txt'))
+        except FileNotFoundError:
+            pass
+    except OSError as e:
+        log(f'Job {job_id}: không dựng được thư mục job ({type(e).__name__}: {e}).')
+        _fail(job, deps, 'TOOL', SETUP_ERROR)
+        return
     hb = Heartbeat(deps.client, job, job_dir)
     hb.start()
     try:
@@ -289,70 +313,38 @@ def serve(deps, once: bool = False) -> int:
             return 0
 
 
-def pid_alive(pid: int) -> bool:
-    if pid <= 0:
-        return False
-    if os.name == 'nt':
-        # os.kill(pid, 0) on Windows sends CTRL_C_EVENT instead of probing, so ask the kernel directly.
-        import ctypes
-        from ctypes import wintypes
-        kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
-        kernel32.OpenProcess.restype = wintypes.HANDLE
-        kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
-        kernel32.GetExitCodeProcess.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD))
-        kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
-        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
-        if not handle:
-            return ctypes.get_last_error() == ERROR_ACCESS_DENIED
-        try:
-            code = wintypes.DWORD()
-            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
-                return True
-            return code.value == STILL_ACTIVE
-        finally:
-            kernel32.CloseHandle(handle)
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
+def acquire_lock(path: str) -> int | None:
+    """An OS lock held on the open file for the runner's lifetime; the OS drops it when the process dies.
 
-
-def _read_pid(path: str) -> int | None:
+    Returns the file descriptor to keep, or None when another runner holds the lock. The pid written into the file
+    is information only."""
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
     try:
-        with open(path, encoding='ascii', errors='replace') as fh:
-            return int(fh.read(32).strip())
-    except (OSError, ValueError):
+        if os.name == 'nt':
+            import msvcrt
+            os.lseek(fd, LOCK_OFFSET, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(fd)
         return None
+    os.ftruncate(fd, 0)
+    os.lseek(fd, 0, os.SEEK_SET)
+    os.write(fd, str(os.getpid()).encode('ascii'))
+    return fd
 
 
-def acquire_lock(path: str) -> bool:
-    for _ in range(2):
-        try:
-            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        except FileExistsError:
-            pid = _read_pid(path)
-            if pid is not None and pid_alive(pid):
-                return False
-            try:
-                os.remove(path)
-            except FileNotFoundError:
-                pass
-            continue
-        with os.fdopen(fd, 'w', encoding='ascii') as fh:
-            fh.write(str(os.getpid()))
-        return True
-    return False
-
-
-def release_lock(path: str) -> None:
-    if _read_pid(path) == os.getpid():
-        try:
-            os.remove(path)
-        except OSError:
-            pass
+def release_lock(fd: int) -> None:
+    try:
+        if os.name == 'nt':
+            import msvcrt
+            os.lseek(fd, LOCK_OFFSET, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+    except OSError:
+        pass
+    os.close(fd)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -365,17 +357,23 @@ def main(argv: list[str] | None = None) -> int:
     if not base or not token:
         log('Thiếu ECOM_URL hoặc CLONE_WORKER_TOKEN trong biến môi trường.')
         return 2
+    try:
+        client = Client(base, token)
+    except ValueError as e:
+        log(str(e))
+        return 2
     os.makedirs(args.job_root, exist_ok=True)
     lock = os.path.join(args.job_root, LOCK_NAME)
-    if not acquire_lock(lock):
+    lock_fd = acquire_lock(lock)
+    if lock_fd is None:
         log(f'Một runner khác đang chạy (khoá {lock}).')
         return 1
     try:
-        deps = default_deps(Client(base, token), args.job_root)
+        deps = default_deps(client, args.job_root)
         log(f'Runner đang chạy, thư mục job {args.job_root}.')
         return serve(deps, once=args.once)
     finally:
-        release_lock(lock)
+        release_lock(lock_fd)
 
 
 if __name__ == '__main__':

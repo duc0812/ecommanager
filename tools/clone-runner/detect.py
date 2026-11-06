@@ -1,6 +1,7 @@
 """Which personaliser a source product page uses, read from markers in its HTML."""
 from __future__ import annotations
 
+import threading
 import urllib.parse
 import urllib.request
 
@@ -23,6 +24,7 @@ MARKERS = (
 )
 
 MAX_BYTES = 3 * 1024 * 1024
+FETCH_BUDGET_S = 45
 USER_AGENT = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) '
               'Chrome/130.0.0.0 Safari/537.36')
 
@@ -42,7 +44,7 @@ class HttpsOnlyRedirect(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
-def fetch_html(url: str, opener=None, timeout: int = 30) -> str | None:
+def fetch_html(url: str, opener=None, timeout: int = 30, budget_s: float = FETCH_BUDGET_S) -> str | None:
     if urllib.parse.urlsplit(url or '').scheme != 'https':
         return None
     opener = opener or urllib.request.build_opener(HttpsOnlyRedirect())
@@ -51,12 +53,30 @@ def fetch_html(url: str, opener=None, timeout: int = 30) -> str | None:
         'Accept': 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.9',
     })
-    try:
-        with opener.open(req, timeout=timeout) as resp:
-            if resp.status != 200:
-                return None
-            raw = resp.read(MAX_BYTES)
-            charset = resp.headers.get_content_charset() or 'utf-8'
-        return raw.decode(charset, errors='replace')
-    except Exception:
+    box: dict = {}
+
+    def work() -> None:
+        try:
+            with opener.open(req, timeout=timeout) as resp:
+                box['resp'] = resp
+                if resp.status != 200:
+                    return
+                raw = resp.read(MAX_BYTES)
+                charset = resp.headers.get_content_charset() or 'utf-8'
+            box['html'] = raw.decode(charset, errors='replace')
+        except Exception:
+            pass
+
+    # `timeout` bounds each socket read only; a server dripping bytes would otherwise hold the runner for ever.
+    worker = threading.Thread(target=work, name='fetch-html', daemon=True)
+    worker.start()
+    worker.join(budget_s)
+    if worker.is_alive():
+        resp = box.get('resp')
+        if resp is not None:
+            try:
+                resp.close()
+            except Exception:
+                pass
         return None
+    return box.get('html')

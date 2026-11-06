@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -20,6 +21,10 @@ CLAIM_TIMEOUT_S = 40
 TIMEOUT_S = 30
 MAX_ERROR_CHARS = 2000
 FAIL_KINDS = ('UNSUPPORTED', 'NOT_ENABLED', 'SOURCE', 'TOOL', 'TOOL_GAP', 'QA', 'TIMEOUT')
+TOKEN_RE = re.compile(r'^cqw_[A-Za-z0-9_-]{20,}$')
+LOCAL_HOSTS = ('localhost', '127.0.0.1')
+BAD_TOKEN_MESSAGE = 'CLONE_WORKER_TOKEN không đúng dạng (cần cqw_ và ít nhất 20 ký tự chữ, số, _ hoặc -).'
+BAD_URL_MESSAGE = 'ECOM_URL phải là https:// (chỉ cho http:// với localhost hoặc 127.0.0.1 khi thử trên máy).'
 
 
 class ApiError(Exception):
@@ -42,10 +47,23 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+def base_url_allowed(base_url: str) -> bool:
+    try:
+        parts = urllib.parse.urlsplit(base_url or '')
+        host = parts.hostname
+    except ValueError:
+        return False
+    if parts.scheme == 'https':
+        return bool(host)
+    return parts.scheme == 'http' and host in LOCAL_HOSTS
+
+
 class Client:
     def __init__(self, base_url: str, token: str, opener=None):
-        if not base_url or not token:
-            raise ValueError('ECOM_URL and CLONE_WORKER_TOKEN are required')
+        if not base_url_allowed(base_url):
+            raise ValueError(BAD_URL_MESSAGE)
+        if not isinstance(token, str) or not TOKEN_RE.fullmatch(token):
+            raise ValueError(BAD_TOKEN_MESSAGE)
         self._base = base_url.rstrip('/') + '/api/clone-worker'
         self._token = token
         self._opener = opener or urllib.request.build_opener(NoRedirect())

@@ -1,4 +1,6 @@
 import io
+import threading
+import time
 import urllib.error
 from email.message import Message
 import urllib.request
@@ -89,6 +91,32 @@ def test_fetch_html_returns_text_and_sends_browser_user_agent():
 ])
 def test_fetch_html_returns_none_on_error_or_non_200(outcome):
     assert detect.fetch_html('https://shop.example.com/p', opener=FakeOpener(outcome)) is None
+
+
+class StallingResponse(FakeResponse):
+    """A server that sends headers and then drips the body slower than any total budget."""
+
+    def __init__(self):
+        super().__init__(b'<html>cdn.customily.com</html>')
+        self.released = threading.Event()
+        self.closed = False
+
+    def read(self, size=-1):
+        self.released.wait(10)
+        return super().read(size)
+
+    def close(self):
+        self.closed = True
+        self.released.set()
+
+
+def test_fetch_html_gives_up_after_its_total_budget():
+    resp = StallingResponse()
+    started = time.monotonic()
+    assert detect.fetch_html('https://shop.example.com/p', opener=FakeOpener(resp), budget_s=0.3) is None
+    assert time.monotonic() - started < 3
+    assert resp.closed is True
+    assert detect.FETCH_BUDGET_S == 45
 
 
 def test_fetch_html_refuses_non_https():

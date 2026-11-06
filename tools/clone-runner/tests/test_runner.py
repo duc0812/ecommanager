@@ -29,11 +29,12 @@ def make_job(**over):
 
 
 class FakeClient:
-    def __init__(self, beat=None, results=None, claims=None):
+    def __init__(self, beat=None, results=None, claims=None, fails=None):
         self.calls = []
         self.beat = beat or (lambda stage, platform: OK_BEAT)
         self.results = list(results or [])
         self.claims = list(claims or [])
+        self.fails = list(fails or [])
 
     def claim(self, wait_seconds=25):
         self.calls.append(('claim', wait_seconds))
@@ -48,11 +49,17 @@ class FakeClient:
 
     def result(self, job_id, attempts, payload):
         self.calls.append(('result', job_id, attempts, payload))
-        return self.results.pop(0) if self.results else (200, {'status': 'DONE'})
+        out = self.results.pop(0) if self.results else (200, {'status': 'DONE'})
+        if isinstance(out, Exception):
+            raise out
+        return out
 
     def fail(self, job_id, attempts, fail_kind, error, retryable=False, product_gid=None):
         self.calls.append(('fail', job_id, attempts, fail_kind, error, retryable, product_gid))
-        return {'status': 'FAILED'}
+        out = self.fails.pop(0) if self.fails else {'status': 'FAILED'}
+        if isinstance(out, Exception):
+            raise out
+        return out
 
     def named(self, name):
         return [c for c in self.calls if c[0] == name]
@@ -104,6 +111,15 @@ def test_validate_job_rejects_hostile_values():
         'https://shop.example.com/products/a?view=x&y=1',
         'https://shop.example.com/products/a\n',
         'https://Shop.example.com/products/a',
+        'https://shop.example.com/products/a%20b',
+        'https://shop.example.com/p/%DESIGN_WORKER_TOKEN%20',
+        'https://shop.example.com/products/%PATH%',
+        'https://shop.example.com/products/a,b',
+        'https://shop.example.com/products/a+b',
+        'https://shop.example.com/products/a@b',
+        'https://shop.example.com/products/a=b',
+        'https://shop.example.com/products/a:b',
+        'https://shop.example.com/products/~a',
         '',
         None,
     ]
@@ -244,19 +260,101 @@ def test_result_502_then_done_stops_retrying(tmp_path):
 
 def test_result_network_error_is_retried(tmp_path):
     client = FakeClient(results=[api.NetworkError('result: URLError'), (200, {'status': 'DONE'})])
-    real_result = client.result
-
-    def result(job_id, attempts, payload):
-        out = real_result(job_id, attempts, payload)
-        if isinstance(out, Exception):
-            raise out
-        return out
-
-    client.result = result
     deps = make_deps(tmp_path, client=client, html=fixture('customily.html'))
     runner.run_job(make_job(), deps)
     assert len(client.named('result')) == 2
     assert client.named('fail') == []
+
+
+def test_result_any_5xx_is_retried_like_502(tmp_path):
+    client = FakeClient(results=[(500, {}), (503, {}), (504, {}), (500, {}), (599, {}), (500, {})])
+    deps = make_deps(tmp_path, client=client, html=fixture('customily.html'))
+    runner.run_job(make_job(), deps)
+    assert len(client.named('result')) == 6
+    assert deps.clock.sleeps == [30] * 5
+    [fail] = client.named('fail')
+    assert fail[3] == 'TOOL' and fail[5] is True and fail[6] == GID
+
+
+@pytest.mark.parametrize('status', [400, 409, 302, 301])
+def test_result_unexpected_status_fails_the_job_not_retryable(tmp_path, status):
+    client = FakeClient(results=[(status, {'error': 'bad'})])
+    deps = make_deps(tmp_path, client=client, html=fixture('customily.html'))
+    runner.run_job(make_job(), deps)
+    assert len(client.named('result')) == 1
+    assert deps.clock.sleeps == []
+    [fail] = client.named('fail')
+    assert fail[3] == 'TOOL' and str(status) in fail[4] and fail[5] is False and fail[6] == GID
+
+
+def test_result_404_is_logged_only(tmp_path):
+    client = FakeClient(results=[(404, {'error': 'not found'})])
+    deps = make_deps(tmp_path, client=client, html=fixture('customily.html'))
+    runner.run_job(make_job(), deps)
+    assert client.named('fail') == []
+
+
+def test_fail_that_raises_is_retried_three_times_then_given_up(tmp_path, capsys):
+    ne = api.NetworkError('fail: URLError')
+    client = FakeClient(fails=[ne, api.ApiError('fail: HTTP 500', 500), ne, ne])
+    deps = make_deps(tmp_path, client=client, html=fixture('globo.html'))
+    runner.run_job(make_job(), deps)
+    assert len(client.named('fail')) == 4
+    assert deps.clock.sleeps == [10, 10, 10]
+    assert 'bỏ cuộc' in capsys.readouterr().out
+
+
+def test_fail_retry_stops_once_it_gets_through(tmp_path):
+    client = FakeClient(fails=[api.NetworkError('fail: URLError'), {'status': 'FAILED'}])
+    deps = make_deps(tmp_path, client=client, html=fixture('globo.html'))
+    runner.run_job(make_job(), deps)
+    assert len(client.named('fail')) == 2
+    assert deps.clock.sleeps == [10]
+
+
+def test_fail_401_is_not_retried(tmp_path):
+    client = FakeClient(fails=[api.AuthError('fail: HTTP 401', 401)])
+    deps = make_deps(tmp_path, client=client, html=fixture('globo.html'))
+    with pytest.raises(api.AuthError):
+        runner.run_job(make_job(), deps)
+    assert len(client.named('fail')) == 1
+
+
+@pytest.mark.parametrize('existing', ['yes', ['gid://shopify/Product/1'], {}, {'handle': 'x'}, {'productGid': 7},
+                                      {'productGid': GID, 'handle': 3}, False])
+def test_malformed_register_answer_fails_without_session(tmp_path, existing):
+    deps = make_deps(tmp_path, html=fixture('customily.html'), existing=existing)
+    runner.run_job(make_job(), deps)
+    assert deps.sessions == [] and deps.fetched == []
+    assert deps.client.named('result') == []
+    assert [f[3:6] for f in deps.client.named('fail')] == [('TOOL', runner.SETUP_ERROR, False)]
+
+
+def test_register_exception_fails_with_fixed_text(tmp_path):
+    deps = make_deps(tmp_path, html=fixture('customily.html'))
+
+    def boom(job):
+        raise OSError(r'D:\Ecom manager\clipart-clones\x\clone.json unreadable')
+
+    deps.find_existing = boom
+    runner.run_job(make_job(), deps)
+    assert deps.sessions == []
+    assert [f[3:6] for f in deps.client.named('fail')] == [('TOOL', runner.SETUP_ERROR, False)]
+
+
+def test_job_folder_errors_fail_without_session(tmp_path):
+    not_a_dir = tmp_path / 'root-is-a-file'
+    not_a_dir.write_text('x', encoding='utf-8')
+    deps = make_deps(not_a_dir, html=fixture('customily.html'))
+    runner.run_job(make_job(), deps)
+    assert deps.sessions == []
+    assert [f[3:6] for f in deps.client.named('fail')] == [('TOOL', runner.SETUP_ERROR, False)]
+
+    (tmp_path / 'cmh1a2b3c4d5e6f7' / 'stage.txt').mkdir(parents=True)
+    deps = make_deps(tmp_path, html=fixture('customily.html'))
+    runner.run_job(make_job(), deps)
+    assert deps.sessions == []
+    assert [f[3:6] for f in deps.client.named('fail')] == [('TOOL', runner.SETUP_ERROR, False)]
 
 
 def test_heartbeat_not_ok_stops_session(tmp_path):
@@ -340,33 +438,96 @@ def test_serve_once_runs_one_job(tmp_path):
     assert len(client.named('result')) == 1
 
 
-def test_second_runner_refuses_when_lock_pid_alive(tmp_path, monkeypatch, capsys):
+LOCK_TOKEN = 'cqw_lock_test_token_0123456789'
+HOLD_LOCK = (
+    'import sys, time\n'
+    'sys.path.insert(0, sys.argv[1])\n'
+    'import runner\n'
+    'fd = runner.acquire_lock(sys.argv[2])\n'
+    'print("locked" if fd is not None else "busy", flush=True)\n'
+    'time.sleep(60)\n'
+)
+
+
+def acquire_within(path, seconds=5.0):
+    deadline = time.monotonic() + seconds
+    while True:
+        fd = runner.acquire_lock(path)
+        if fd is not None or time.monotonic() > deadline:
+            return fd
+        time.sleep(0.05)
+
+
+def test_second_runner_refuses_when_lock_is_held(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv('ECOM_URL', 'http://127.0.0.1:9')
-    monkeypatch.setenv('CLONE_WORKER_TOKEN', 'cqw_lock_test_token')
+    monkeypatch.setenv('CLONE_WORKER_TOKEN', LOCK_TOKEN)
     monkeypatch.setattr(runner, 'default_deps', lambda *a, **k: pytest.fail('must not start'))
-    lock = tmp_path / 'runner.lock'
-    lock.write_text(str(os.getpid()), encoding='utf-8')
-    assert runner.main(['--once', '--job-root', str(tmp_path)]) != 0
-    assert lock.read_text(encoding='utf-8') == str(os.getpid())
-    assert 'cqw_lock_test_token' not in capsys.readouterr().out
+    lock = str(tmp_path / 'runner.lock')
+    first = runner.acquire_lock(lock)
+    assert first is not None
+    with open(lock, encoding='ascii') as fh:
+        assert fh.read() == str(os.getpid())
+    assert runner.acquire_lock(lock) is None
+    assert runner.main(['--once', '--job-root', str(tmp_path)]) == 1
+    assert LOCK_TOKEN not in capsys.readouterr().out
+    runner.release_lock(first)
+    second = runner.acquire_lock(lock)
+    assert second is not None
+    runner.release_lock(second)
 
 
-def test_stale_lock_is_taken_over_and_released(tmp_path):
-    child = subprocess.Popen([sys.executable, '-c', 'pass'])
-    child.wait()
+def test_lock_is_freed_when_the_holder_dies(tmp_path):
+    lock = str(tmp_path / 'runner.lock')
+    root = os.path.dirname(os.path.abspath(runner.__file__))
+    child = subprocess.Popen([sys.executable, '-c', HOLD_LOCK, root, lock], stdout=subprocess.PIPE, text=True)
+    try:
+        assert child.stdout.readline().strip() == 'locked'
+        assert runner.acquire_lock(lock) is None
+    finally:
+        child.kill()
+        child.wait()
+        child.stdout.close()
+    fd = acquire_within(lock)
+    assert fd is not None
+    with open(lock, encoding='ascii') as fh:
+        assert fh.read() == str(os.getpid())
+    runner.release_lock(fd)
+
+
+def test_leftover_lock_file_with_a_live_pid_does_not_block(tmp_path):
     lock = tmp_path / 'runner.lock'
-    lock.write_text(str(child.pid), encoding='utf-8')
-    assert runner.pid_alive(child.pid) is False
-    assert runner.pid_alive(os.getpid()) is True
-    assert runner.acquire_lock(str(lock)) is True
-    assert lock.read_text(encoding='utf-8') == str(os.getpid())
-    assert runner.acquire_lock(str(lock)) is False
-    runner.release_lock(str(lock))
-    assert not lock.exists()
+    lock.write_text(str(os.getppid()), encoding='ascii')
+    fd = runner.acquire_lock(str(lock))
+    assert fd is not None
+    assert lock.read_text(encoding='ascii') == str(os.getpid())
+    runner.release_lock(fd)
 
 
 def test_main_needs_url_and_token(tmp_path, monkeypatch):
     monkeypatch.delenv('ECOM_URL', raising=False)
     monkeypatch.delenv('CLONE_WORKER_TOKEN', raising=False)
-    assert runner.main(['--once', '--job-root', str(tmp_path)]) != 0
+    assert runner.main(['--once', '--job-root', str(tmp_path)]) == 2
+    assert not (tmp_path / 'runner.lock').exists()
+
+
+@pytest.mark.parametrize('token', ['cqw_' + 'a' * 20 + '\r\nX-Evil: 1', 'cqw_tooshort', 'not-a-worker-token-at-all'])
+def test_main_refuses_malformed_token_without_printing_it(tmp_path, monkeypatch, capsys, token):
+    monkeypatch.setenv('ECOM_URL', 'https://ecom.example.test')
+    monkeypatch.setenv('CLONE_WORKER_TOKEN', token)
+    monkeypatch.setattr(runner, 'default_deps', lambda *a, **k: pytest.fail('must not start'))
+    assert runner.main(['--once', '--job-root', str(tmp_path)]) == 2
+    out = capsys.readouterr()
+    assert api.BAD_TOKEN_MESSAGE in out.out
+    assert token.strip() not in out.out and token.strip() not in out.err
+    assert not (tmp_path / 'runner.lock').exists()
+
+
+@pytest.mark.parametrize('base', ['http://ecom.example.test', 'http://localhost.evil.example:3002'])
+def test_main_refuses_cleartext_ecom_url(tmp_path, monkeypatch, capsys, base):
+    monkeypatch.setenv('ECOM_URL', base)
+    monkeypatch.setenv('CLONE_WORKER_TOKEN', LOCK_TOKEN)
+    monkeypatch.setattr(runner, 'default_deps', lambda *a, **k: pytest.fail('must not start'))
+    assert runner.main(['--once', '--job-root', str(tmp_path)]) == 2
+    out = capsys.readouterr().out
+    assert api.BAD_URL_MESSAGE in out and LOCK_TOKEN not in out
     assert not (tmp_path / 'runner.lock').exists()

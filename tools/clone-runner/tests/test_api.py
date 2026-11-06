@@ -142,3 +142,45 @@ def test_client_requires_url_and_token():
         api.Client('', TOKEN)
     with pytest.raises(ValueError):
         api.Client(BASE, '')
+
+
+@pytest.mark.parametrize('token', [
+    TOKEN + '\r\nX-Evil: 1',
+    TOKEN + '\n',
+    'cqw_short',
+    'dsw_' + 'a' * 30,
+    'cqw_' + 'a' * 19,
+    'cqw_' + 'a' * 20 + ' ',
+    'cqw_' + 'a' * 20 + '%',
+    None,
+])
+def test_client_refuses_a_malformed_token_without_echoing_it(token):
+    with pytest.raises(ValueError) as info:
+        api.Client(BASE, token)
+    assert str(info.value) == api.BAD_TOKEN_MESSAGE
+    if token:
+        assert token.strip() not in str(info.value) and token.strip() not in repr(info.value)
+    api.Client(BASE, 'cqw_' + 'a' * 20)
+
+
+@pytest.mark.parametrize('base, ok', [
+    ('https://ecom.example.test', True),
+    ('https://ecom.example.test/', True),
+    ('http://localhost:3002', True),
+    ('http://LOCALHOST', True),
+    ('http://127.0.0.1:3013/', True),
+    ('http://ecom.example.test', False),
+    ('http://localhost.evil.example', False),
+    ('http://localhost@evil.example', False),
+    ('http://127.0.0.1.evil.example', False),
+    ('ftp://ecom.example.test', False),
+    ('https://', False),
+    ('ecom.example.test', False),
+])
+def test_client_refuses_cleartext_base_url(base, ok):
+    if ok:
+        api.Client(base, TOKEN)
+        return
+    with pytest.raises(ValueError) as info:
+        api.Client(base, TOKEN)
+    assert str(info.value) == api.BAD_URL_MESSAGE
