@@ -5,7 +5,7 @@ import { RoleGate, useCurrentUser } from '@/components/RoleGate'
 import { CloneForm, type PasteNotice } from './components/CloneForm'
 import { CloneJobTable } from './components/CloneJobTable'
 import { CloneSettings } from './components/CloneSettings'
-import { NETWORK_ERROR, httpUrl, isActive, prefixOf, requestJson, type CloneJobView, type CloneJobsResponse } from './components/types'
+import { NETWORK_ERROR, isActive, prefixOf, requestJson, type CloneJobView, type CloneJobsResponse } from './components/types'
 
 const JOBS_URL = '/api/fulfillment/clone/jobs'
 const POLL_MS = 5000
@@ -13,7 +13,7 @@ const MAX_POLL_MS = 60000
 
 export default function CloneFromLinkPage() {
   const { user } = useCurrentUser()
-  const viewer = useMemo(() => ({ id: user?.userId ?? null, superadmin: user?.role === 'SUPERADMIN' }), [user])
+  const viewer = useMemo(() => ({ id: user?.userId ?? null, role: user?.role ?? null, superadmin: user?.role === 'SUPERADMIN' }), [user])
   const [data, setData] = useState<CloneJobsResponse | null>(null)
   const [loadFailed, setLoadFailed] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
@@ -23,22 +23,25 @@ export default function CloneFromLinkPage() {
   const [acting, setActing] = useState<string | null>(null)
   const alive = useRef(true)
   const failures = useRef(0)
+  const seq = useRef(0)
 
   useEffect(() => {
     alive.current = true
     return () => { alive.current = false }
   }, [])
 
+  // Only the newest request may write: an older answer (a poll in flight when the user clicked) is dropped, along with its failure count.
   const load = useCallback(async () => {
+    const mine = ++seq.current
     try {
       const r = await requestJson(JOBS_URL)
+      if (mine !== seq.current || !alive.current) return
       if (!r.ok || !Array.isArray(r.body.jobs)) throw new Error('load failed')
-      if (!alive.current) return
       failures.current = 0
       setData(r.body)
       setLoadFailed(false)
     } catch {
-      if (!alive.current) return
+      if (mine !== seq.current || !alive.current) return
       failures.current += 1
       setLoadFailed(true)
     }
@@ -67,6 +70,7 @@ export default function CloneFromLinkPage() {
   }, [notice])
 
   const upsert = useCallback((job: CloneJobView) => {
+    seq.current += 1
     setData(prev => prev && {
       ...prev,
       jobs: prev.jobs.some(j => j.id === job.id) ? prev.jobs.map(j => (j.id === job.id ? { ...j, ...job } : j)) : [job, ...prev.jobs],
@@ -94,7 +98,7 @@ export default function CloneFromLinkPage() {
       if (jobId) await load()
       setNotice({
         error: typeof r.body.error === 'string' ? r.body.error : `Lỗi ${r.status}`,
-        productUrl: httpUrl(r.body.productUrl),
+        productUrl: typeof r.body.productUrl === 'string' ? r.body.productUrl : undefined,
         jobId,
         attempt: r.status === 409 ? { url, storeId } : undefined,
       })

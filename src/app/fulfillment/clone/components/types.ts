@@ -9,6 +9,7 @@ export type CloneJobView = {
   stage: string | null
   skuCode: string | null
   requestedById: string
+  requestedByName: string
   productUrl: string | null
   reused: boolean
   error: string | null
@@ -63,7 +64,7 @@ export const NETWORK_ERROR = 'Không kết nối được máy chủ. Kiểm tra
 
 const ADMIN_ONLY_FAIL_KINDS = ['TOOL_GAP', 'UNSUPPORTED', 'NOT_ENABLED']
 
-export type Viewer = { id: string | null; superadmin: boolean }
+export type Viewer = { id: string | null; role: string | null; superadmin: boolean }
 
 export const isActive = (job: CloneJobView) => job.status === 'QUEUED' || job.status === 'RUNNING'
 
@@ -100,8 +101,8 @@ export function formatDuration(ms: number | null | undefined): string {
   return minutes > 0 ? `${minutes}m ${String(total % 60).padStart(2, '0')}s` : `${total}s`
 }
 
-export function httpUrl(value: unknown): string | undefined {
-  return typeof value === 'string' && /^https?:\/\//i.test(value) ? value : undefined
+export function httpsUrl(value: unknown): string | undefined {
+  return typeof value === 'string' && /^https:\/\//i.test(value) ? value : undefined
 }
 
 export async function requestJson(url: string, init: { method?: string; body?: unknown } = {}): Promise<{ ok: boolean; status: number; body: any }> {

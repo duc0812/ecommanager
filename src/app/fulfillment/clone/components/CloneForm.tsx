@@ -1,6 +1,6 @@
 'use client'
 import { useState, type FormEvent } from 'react'
-import { NO_SKU_PREFIX_MESSAGE, formatWhen, prefixOf, type CloneStore, type CloneWorkerState } from './types'
+import { NO_SKU_PREFIX_MESSAGE, formatWhen, httpsUrl, prefixOf, type CloneStore, type CloneWorkerState } from './types'
 
 export type PasteNotice = {
   error: string
@@ -42,6 +42,7 @@ export function CloneForm({ ready, stores, hasSkuPrefix, paused, worker, busy, n
   const chosen = stores.some(s => s.id === storeId) ? storeId : stores[0]?.id ?? ''
   const locked = !ready || !hasSkuPrefix || stores.length === 0
   const canSubmit = !locked && !busy && url.trim() !== ''
+  const productHref = httpsUrl(notice?.productUrl)
 
   async function send(e: FormEvent) {
     e.preventDefault()
@@ -85,9 +86,8 @@ export function CloneForm({ ready, stores, hasSkuPrefix, paused, worker, busy, n
           <div role="alert" className="mt-md flex flex-wrap items-center gap-md rounded-lg border border-error/30 bg-error/5 px-md py-sm text-body-sm text-error">
             <span className="material-symbols-outlined text-[18px]">error</span>
             <span className="break-words">{notice.error}</span>
-            {notice.productUrl && (
-              <a href={notice.productUrl} target="_blank" rel="noopener noreferrer" className="text-label-md text-secondary hover:underline">Mở sản phẩm đang có</a>
-            )}
+            {productHref && <a href={productHref} target="_blank" rel="noopener noreferrer" className="text-label-md text-secondary hover:underline">Mở sản phẩm đang có</a>}
+            {notice.productUrl && !productHref && <span className="max-w-[320px] truncate" title={notice.productUrl}>{notice.productUrl}</span>}
             {isSuperadmin && notice.attempt && (
               <button type="button" disabled={busy} onClick={forceAgain} className="text-label-md text-secondary hover:underline disabled:opacity-50">Vẫn clone lại</button>
             )}

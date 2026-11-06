@@ -8,6 +8,22 @@ type Msg = { ok: boolean; text: string } | null
 
 const msgClass = (m: NonNullable<Msg>) => `text-body-sm ${m.ok ? 'text-on-surface-variant' : 'text-error'}`
 
+// A 200 whose body is not the settings (an empty object, a proxy's HTML page) must not reach the render.
+function parseSettings(body: any): CloneSettingsView | null {
+  const w = body?.worker
+  if (typeof body?.paused !== 'boolean' || !Array.isArray(body.targets) || typeof w !== 'object' || w === null) return null
+  return {
+    paused: body.paused,
+    targets: body.targets.filter((t: unknown): t is string => typeof t === 'string'),
+    worker: {
+      configured: w.configured === true,
+      tokenUpdatedAt: typeof w.tokenUpdatedAt === 'string' ? w.tokenUpdatedAt : null,
+      lastSeenAt: typeof w.lastSeenAt === 'string' ? w.lastSeenAt : null,
+      online: w.online === true,
+    },
+  }
+}
+
 // The token lives only in this component's state, so closing the block (which unmounts it) or reloading the page drops it.
 function SettingsBody({ stores, onPausedChange }: { stores: CloneStore[]; onPausedChange: (paused: boolean) => void }) {
   const [settings, setSettings] = useState<CloneSettingsView | null>(null)
@@ -36,9 +52,11 @@ function SettingsBody({ stores, onPausedChange }: { stores: CloneStore[]; onPaus
       const r = await requestJson(SETTINGS_URL)
       if (!alive.current) return
       if (!r.ok) { setLoadError(r.body.error ?? `Lỗi ${r.status}`); return }
+      const parsed = parseSettings(r.body)
+      if (!parsed) { setLoadError('Phản hồi cài đặt không hợp lệ. Đóng khối này rồi mở lại.'); return }
       setLoadError(null)
-      setSettings(r.body)
-      if (first) setTargets(Array.isArray(r.body.targets) ? r.body.targets : [])
+      setSettings(parsed)
+      if (first) setTargets(parsed.targets)
     } catch {
       if (alive.current) setLoadError(NETWORK_ERROR)
     }
@@ -83,7 +101,7 @@ function SettingsBody({ stores, onPausedChange }: { stores: CloneStore[]; onPaus
   }
 
   async function mintToken() {
-    if (settings?.worker.configured && !window.confirm('Token cũ sẽ ngừng hoạt động. Tạo token mới?')) return
+    if (!window.confirm('Token cũ sẽ ngừng hoạt động. Tạo token mới?')) return
     const minted = await send('token', { action: 'mint-token' }, setTokenMsg)
     if (!minted || typeof minted.token !== 'string') return
     setToken(minted.token)
@@ -121,6 +139,7 @@ function SettingsBody({ stores, onPausedChange }: { stores: CloneStore[]; onPaus
 
   return (
     <div className="flex flex-col gap-xl p-lg">
+      {loadError && <p className="text-body-sm text-error">{loadError}</p>}
       <div>
         <div className="flex flex-wrap items-center gap-md">
           <button type="button" role="switch" aria-checked={settings.paused} aria-label="Tạm dừng hàng chờ" disabled={busy === 'pause'} onClick={togglePause}

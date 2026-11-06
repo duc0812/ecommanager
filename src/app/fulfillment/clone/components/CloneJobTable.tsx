@@ -1,6 +1,6 @@
 'use client'
 import {
-  FAIL_KIND_LABEL, STATUS_LABEL, canCancel, canRetry, formatDuration, formatWhen, httpUrl, prefixOf,
+  FAIL_KIND_LABEL, STATUS_LABEL, canCancel, canRetry, formatDuration, formatWhen, httpsUrl, prefixOf,
   type CloneJobView, type CloneStatus, type CloneStore, type Viewer,
 } from './types'
 
@@ -26,9 +26,20 @@ const th = 'px-md py-sm font-medium whitespace-nowrap'
 const td = 'px-md py-sm align-top'
 const muted = 'text-on-surface-variant'
 
+function SourceCell({ url }: { url: string }) {
+  const href = httpsUrl(url)
+  if (!href) return <span title={url} className="block max-w-[260px] truncate">{url}</span>
+  return (
+    <a href={href} target="_blank" rel="noopener noreferrer" title={url} className="block max-w-[260px] truncate text-secondary hover:underline">
+      {url.replace(/^https:\/\//i, '')}
+    </a>
+  )
+}
+
 function ProductCell({ job }: { job: CloneJobView }) {
-  const href = job.status === 'DONE' ? httpUrl(job.productUrl) : undefined
-  if (!href && !job.reused) return <span className={muted}>—</span>
+  const value = job.status === 'DONE' ? job.productUrl : null
+  const href = httpsUrl(value)
+  if (!value && !job.reused) return <span className={muted}>—</span>
   return (
     <div className="flex flex-col gap-xs">
       {href && (
@@ -36,6 +47,7 @@ function ProductCell({ job }: { job: CloneJobView }) {
           Mở sản phẩm <span className="material-symbols-outlined text-[16px]">open_in_new</span>
         </a>
       )}
+      {value && !href && <span title={value} className="block max-w-[200px] truncate">{value}</span>}
       {job.reused && <span className="text-label-sm text-on-surface-variant">Đã có sẵn</span>}
     </div>
   )
@@ -54,6 +66,7 @@ function ErrorCell({ job }: { job: CloneJobView }) {
 
 export function CloneJobTable({ jobs, stores, viewer, highlightId, acting, onCancel, onRetry }: Props) {
   const storeById = new Map(stores.map(s => [s.id, s]))
+  const showRequester = viewer.role !== null && viewer.role !== 'SELLER'
 
   return (
     <div className="overflow-x-auto rounded-xl border border-outline-variant/20 bg-surface-container-lowest shadow-card">
@@ -79,13 +92,12 @@ export function CloneJobTable({ jobs, stores, viewer, highlightId, acting, onCan
             const busy = acting === job.id
             return (
               <tr key={job.id} id={`clone-job-${job.id}`} className={job.id === highlightId ? 'bg-secondary/10 ring-2 ring-inset ring-secondary' : undefined}>
-                <td className={`${td} whitespace-nowrap`}>{formatWhen(job.createdAt)}</td>
-                <td className={td} title={store?.shop}>{store ? prefixOf(store) ?? store.shop : '—'}</td>
-                <td className={td}>
-                  <a href={httpUrl(job.sourceUrl)} target="_blank" rel="noopener noreferrer" title={job.sourceUrl} className="block max-w-[260px] truncate text-secondary hover:underline">
-                    {job.sourceUrl.replace(/^https?:\/\//, '')}
-                  </a>
+                <td className={`${td} whitespace-nowrap`}>
+                  {formatWhen(job.createdAt)}
+                  {showRequester && <p className={`mt-xs max-w-[180px] truncate text-label-sm ${muted}`} title={job.requestedByName}>Người dán: {job.requestedByName}</p>}
                 </td>
+                <td className={td} title={store?.shop}>{store ? prefixOf(store) ?? store.shop : '—'}</td>
+                <td className={td}><SourceCell url={job.sourceUrl} /></td>
                 <td className={td}>
                   <span className={`inline-block rounded-full px-sm py-xs text-label-sm ${STATUS_STYLE[job.status] ?? STATUS_STYLE.QUEUED}`}>{STATUS_LABEL[job.status] ?? job.status}</span>
                   {job.stage && <p className={`mt-xs text-label-sm ${muted}`}>{job.stage}</p>}
