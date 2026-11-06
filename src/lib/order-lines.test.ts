@@ -40,6 +40,14 @@ describe('isNonProductLine', () => {
     expect(isNonProductLine({ sku: 'SP-1', productTitle: 'Shipping protection', shopifyProductType: 'Kaching Cart Upsell Toggle' })).toBe(true)
   })
 
+  it('treats a Bundle Gift line as non-product even with a SKU', () => {
+    expect(isNonProductLine({ sku: 'GIFT-SMALL-WALLET', productTitle: 'Free Matching Small Leather Wallet', shopifyProductType: 'Bundle Gift' })).toBe(true)
+  })
+
+  it('matches Bundle Gift case-insensitively', () => {
+    expect(isNonProductLine({ productTitle: 'x', shopifyProductType: '  bundle gift ' })).toBe(true)
+  })
+
   it('keeps physical products with a real product type mappable', () => {
     expect(isNonProductLine({ sku: 'TEE1', productTitle: 'Premium Tee', shopifyProductType: 'Apparel' })).toBe(false)
   })

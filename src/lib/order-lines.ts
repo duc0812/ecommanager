@@ -11,6 +11,9 @@ const DIGITAL_PRODUCT_TITLES = ['custom text']
 // Checkout add-ons. Matched by title alone: a store can sell them as ordinary products, so they
 // may carry a SKU and inherit an unrelated product type (Package Protection ships as 'Jewelry').
 const ADD_ON_TITLES = ['tip', 'shipping protection', 'package protection']
+// Free gifts that the supplier makes and ships inside the main item's own SKU (the Jeep bag's
+// wallet): the gift line itself needs no task, mapping or supplier order.
+const GIFT_PRODUCT_TYPES = ['bundle gift']
 
 function normalize(value: string | null | undefined): string {
   return (value ?? '').toLowerCase().trim()
@@ -19,7 +22,7 @@ function normalize(value: string | null | undefined): string {
 export function isNonProductLine(line: LineForClassification): boolean {
   const title = normalize(line.productTitle)
   const productType = normalize(line.shopifyProductType)
-  if (DIGITAL_PRODUCT_TYPES.includes(productType)) return true
+  if (DIGITAL_PRODUCT_TYPES.includes(productType) || GIFT_PRODUCT_TYPES.includes(productType)) return true
   if (DIGITAL_PRODUCT_TITLES.includes(title)) return true
   return ADD_ON_TITLES.includes(title)
 }
