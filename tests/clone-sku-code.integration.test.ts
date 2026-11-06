@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest'
 import { prisma } from '@/lib/db'
 import { SKU_CODE_RE, isCodeTaken, issueSkuCode, makeShopifySkuExists, parseSkuPrefix, skuBelongsTo, skuCodeFor } from '@/lib/clone/sku-code'
 
@@ -45,6 +45,11 @@ beforeAll(async () => {
     data: { storeId, shopifyProductId: `${P}-p1`, printTemplateId: TEMPLATE, supplierId: SUPPLIER, title: `Mug ${code(5)} Gift` },
   })
   await prisma.productProfile.create({ data: { storeId, shopifyProductId: `${P}-p2`, title: `Mug ${code(6)} Personalized` } })
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
+  vi.unstubAllGlobals()
 })
 
 afterAll(async () => {
@@ -116,15 +121,17 @@ describe('isCodeTaken', () => {
     expect(await isCodeTaken(code(8), deps)).toBe(false)
   })
 
-  it('skips a store Shopify cannot be asked about and logs it', async () => {
+  it('skips a store Shopify cannot be asked about and logs it without the error text', async () => {
     const logs: string[] = []
     const taken = await isCodeTaken(code(8), {
       ...deps,
-      shopifySkuExists: async () => { throw new Error('boom') },
+      shopifySkuExists: async () => { throw new Error(`boom ${TOKEN}`) },
       log: m => logs.push(m),
     })
     expect(taken).toBe(false)
     expect(logs).toHaveLength(1)
+    expect(logs[0]).toContain(storeId)
+    expect(logs[0]).not.toContain(TOKEN)
   })
 })
 
@@ -171,6 +178,31 @@ describe('issueSkuCode', () => {
     expect(calls).toBe(20)
   })
 
+  it('logs a skipped store to console.warn when no logger is passed', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const issued = await issueSkuCode('DC', NOW, {
+      random: () => 8,
+      storeIds: async () => [storeId],
+      shopifySkuExists: async () => { throw new Error('Shopify 500') },
+    })
+    expect(issued).toBe(code(8))
+    expect(warn).toHaveBeenCalledTimes(1)
+    expect(String(warn.mock.calls[0][0])).toContain('[clone sku]')
+    expect(String(warn.mock.calls[0][0])).toContain(storeId)
+  })
+
+  it('logs to console.warn when the default Shopify check is refused, without the token', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.stubGlobal('fetch', async () => new Response(`denied for ${TOKEN}`, { status: 403 }))
+    const issued = await issueSkuCode('DC', NOW, { random: () => 8, storeIds: async () => [storeId] })
+    expect(issued).toBe(code(8))
+    expect(warn).toHaveBeenCalledTimes(1)
+    const line = String(warn.mock.calls[0][0])
+    expect(line).toContain('[clone sku]')
+    expect(line).toContain('HTTP 403')
+    expect(line).not.toContain(TOKEN)
+  })
+
   it('draws numbers from crypto.randomInt by default', async () => {
     const issued = await issueSkuCode('DC', NOW, { storeIds: async () => [], shopifySkuExists: noShopify })
     expect(issued).toMatch(SKU_CODE_RE)
@@ -194,6 +226,23 @@ describe('makeShopifySkuExists', () => {
     const body = JSON.parse(String(seen[0].init.body))
     expect(body.query).toContain('productVariants(first: 1')
     expect(body.variables).toEqual({ q: 'sku:DC2611057392*' })
+    expect(seen[0].init.redirect).toBe('error')
+  })
+
+  it('does not send the token to a shop address that is not a public https host', async () => {
+    const privateStore = await prisma.shopifyStore.create({
+      data: { shop: `${P}-internal.local`, credential: { create: { authMode: 'TOKEN', accessToken: TOKEN } } },
+    })
+    try {
+      const logs: string[] = []
+      let fetched = 0
+      const exists = makeShopifySkuExists({ log: m => logs.push(m), fetchImpl: async () => { fetched++; return answer(edges(1)) } })
+      expect(await exists(privateStore.id, 'DC2611057392')).toBe(false)
+      expect(fetched).toBe(0)
+      expect(logs).toHaveLength(1)
+    } finally {
+      await prisma.shopifyStore.delete({ where: { id: privateStore.id } })
+    }
   })
 
   it('answers false when no variant matches', async () => {
@@ -201,14 +250,20 @@ describe('makeShopifySkuExists', () => {
     expect(await exists(storeId, 'DC2611057392')).toBe(false)
   })
 
-  it('answers false and logs, without the token, when Shopify or the connection fails', async () => {
+  it('answers false and logs fixed text, never the token, when Shopify or the connection fails', async () => {
     const logs: string[] = []
     const log = (m: string) => logs.push(m)
-    expect(await makeShopifySkuExists({ log, fetchImpl: async () => answer({ errors: 'no' }, 500) })(storeId, 'DC2611057392')).toBe(false)
-    expect(await makeShopifySkuExists({ log, fetchImpl: async () => answer({ errors: [{ message: 'Throttled' }] }) })(storeId, 'DC2611057392')).toBe(false)
-    expect(await makeShopifySkuExists({ log, fetchImpl: async () => { throw new Error('network down') } })(storeId, 'DC2611057392')).toBe(false)
-    expect(await makeShopifySkuExists({ log, fetchImpl: async () => answer(edges(1)) })('csk-no-such-store', 'DC2611057392')).toBe(false)
-    expect(logs).toHaveLength(4)
-    for (const line of logs) expect(line).not.toContain(TOKEN)
+    const ask = (fetchImpl: () => Promise<Response>, id = storeId) => makeShopifySkuExists({ log, fetchImpl })(id, 'DC2611057392')
+    expect(await ask(async () => answer({ errors: `bad ${TOKEN}` }, 500))).toBe(false)
+    expect(await ask(async () => answer({ errors: [{ message: `Throttled ${TOKEN}` }] }))).toBe(false)
+    expect(await ask(async () => new Response(`{"data": ${TOKEN}`, { status: 200 }))).toBe(false)
+    expect(await ask(async () => { throw new Error(`network down for ${TOKEN}`) })).toBe(false)
+    expect(await ask(async () => answer(edges(1)), 'csk-no-such-store')).toBe(false)
+    expect(logs).toHaveLength(5)
+    for (const line of logs) {
+      expect(line).not.toContain(TOKEN)
+      expect(line).toContain('Bỏ qua kiểm SKU trên Shopify')
+    }
+    expect(logs[0]).toContain('HTTP 500')
   })
 })

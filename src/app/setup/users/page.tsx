@@ -43,6 +43,9 @@ export default function UsersPage() {
   const [newPassword, setNewPassword] = useState('')
   const [passwordSaving, setPasswordSaving] = useState(false)
   const [passwordError, setPasswordError] = useState('')
+  const [skuDrafts, setSkuDrafts] = useState<Record<string, string>>({})
+  const [skuErrors, setSkuErrors] = useState<Record<string, string>>({})
+  const [skuSavingId, setSkuSavingId] = useState<string | null>(null)
 
   async function savePassword() {
     if (!passwordUserId || newPassword.length < 10) {
@@ -64,6 +67,29 @@ export default function UsersPage() {
       setPasswordError(data.error || 'Lỗi khi lưu password')
     }
     setPasswordSaving(false)
+  }
+
+  // The Super Admin row cannot go through the form (POST refuses that account), so its SKU letters are saved with PATCH.
+  async function saveOwnSkuPrefix(user: AppUser) {
+    setSkuSavingId(user.id)
+    setSkuErrors(current => ({ ...current, [user.id]: '' }))
+    const res = await fetch(`/api/users/${user.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ skuPrefix: (skuDrafts[user.id] ?? '').trim() }),
+    })
+    if (res.ok) {
+      setSkuDrafts(current => {
+        const next = { ...current }
+        delete next[user.id]
+        return next
+      })
+      await load()
+    } else {
+      const data = await res.json().catch(() => ({}))
+      setSkuErrors(current => ({ ...current, [user.id]: data.error || 'Không lưu được mã SKU' }))
+    }
+    setSkuSavingId(null)
   }
 
   async function load() {
@@ -268,7 +294,30 @@ export default function UsersPage() {
                       {accessSummary(user.role, user.permissions)}
                     </td>
                     <td className="max-w-[220px] px-lg py-md text-body-sm text-on-surface-variant">{storesLabel(user)}</td>
-                    <td className="px-lg py-md text-body-sm font-mono text-primary">{user.skuPrefix ?? '—'}</td>
+                    <td className="px-lg py-md text-body-sm font-mono text-primary">
+                      {user.role === 'SUPERADMIN' ? (
+                        <div className="space-y-xs">
+                          <div className="flex items-center gap-sm">
+                            <input
+                              value={skuDrafts[user.id] ?? user.skuPrefix ?? ''}
+                              onChange={e => setSkuDrafts(current => ({ ...current, [user.id]: e.target.value.toUpperCase() }))}
+                              maxLength={2}
+                              placeholder="Mã SKU"
+                              aria-label="Mã SKU (2 chữ cái)"
+                              className="w-20 rounded-lg border border-outline-variant/30 bg-surface-container px-sm py-xs outline-none"
+                            />
+                            <button
+                              onClick={() => saveOwnSkuPrefix(user)}
+                              disabled={skuSavingId === user.id || skuDrafts[user.id] === undefined || skuDrafts[user.id] === (user.skuPrefix ?? '')}
+                              className="text-secondary text-label-sm hover:underline disabled:opacity-50 disabled:no-underline"
+                            >
+                              {skuSavingId === user.id ? 'Đang lưu...' : 'Lưu'}
+                            </button>
+                          </div>
+                          {skuErrors[user.id] && <p className="font-sans text-label-sm text-error">{skuErrors[user.id]}</p>}
+                        </div>
+                      ) : (user.skuPrefix ?? '—')}
+                    </td>
                     <td className="px-lg py-md"><span className="rounded-full bg-on-tertiary-container/15 px-sm py-xs text-label-sm text-on-tertiary-container">{user.status}</span></td>
                     <td className="px-lg py-md text-right">
                       <div className="flex justify-end gap-sm">

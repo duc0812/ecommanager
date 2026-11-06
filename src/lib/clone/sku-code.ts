@@ -1,5 +1,6 @@
 import { randomInt } from 'crypto'
 import { prisma } from '@/lib/db'
+import { assertSafeExternalUrl } from '@/lib/safe-url'
 import { getStoreConnection, listConnectedStores } from '@/lib/store-connections'
 
 export const SKU_CODE_RE = /^[A-Z]{2}\d{10}$/
@@ -53,34 +54,58 @@ type FetchLike = (url: string, init?: RequestInit) => Promise<Response>
 
 const VARIANT_WITH_SKU = 'query($q: String!) { productVariants(first: 1, query: $q) { edges { node { id } } } }'
 
+const defaultLog = (message: string) => console.warn(`[clone sku] ${message}`)
+
+// Log lines carry the store id and fixed text or an HTTP status only: an error message or a response body can echo the access token.
+const skipNote = (storeId: string, reason: string) => `Bỏ qua kiểm SKU trên Shopify của store ${storeId}: ${reason}`
+
 export function makeShopifySkuExists(opts: { fetchImpl?: FetchLike; log?: (message: string) => void } = {}): SkuCodeDeps['shopifySkuExists'] {
   const fetchImpl: FetchLike = opts.fetchImpl ?? ((url, init) => fetch(url, init))
+  const log = opts.log ?? defaultLog
   return async (storeId, code) => {
-    try {
-      const { shop, token } = await getStoreConnection(storeId)
-      const res = await fetchImpl(`https://${shop}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': token },
-        body: JSON.stringify({ query: VARIANT_WITH_SKU, variables: { q: `sku:${code}*` } }),
-        signal: AbortSignal.timeout(SHOPIFY_TIMEOUT_MS),
-      })
-      if (!res.ok) throw new Error(`Shopify trả về HTTP ${res.status}`)
-      const json = await res.json()
-      if (json.errors) throw new Error('Shopify báo lỗi truy vấn')
-      return (json.data?.productVariants?.edges?.length ?? 0) > 0
-    } catch (e) {
-      opts.log?.(`Không hỏi được Shopify của store ${storeId}: ${e instanceof Error ? e.message : String(e)}`)
+    const skip = (reason: string) => {
+      log(skipNote(storeId, reason))
       return false
     }
+    let conn: { shop: string; token: string }
+    try {
+      conn = await getStoreConnection(storeId)
+    } catch {
+      return skip('không lấy được kết nối của store')
+    }
+    let url: URL
+    try {
+      url = assertSafeExternalUrl(`https://${conn.shop}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`)
+    } catch {
+      return skip('địa chỉ shop không hợp lệ')
+    }
+    let res: Response
+    try {
+      res = await fetchImpl(url.toString(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': conn.token },
+        body: JSON.stringify({ query: VARIANT_WITH_SKU, variables: { q: `sku:${code}*` } }),
+        redirect: 'error',
+        signal: AbortSignal.timeout(SHOPIFY_TIMEOUT_MS),
+      })
+    } catch {
+      return skip('không kết nối được tới Shopify')
+    }
+    if (!res.ok) return skip(`Shopify trả về HTTP ${res.status}`)
+    const json = await res.json().catch(() => null) as { data?: { productVariants?: { edges?: unknown[] } }; errors?: unknown } | null
+    if (!json || json.errors) return skip('Shopify trả về dữ liệu không đọc được')
+    return (json.data?.productVariants?.edges?.length ?? 0) > 0
   }
 }
 
 function withDefaults(deps: Partial<SkuCodeDeps>): SkuCodeDeps {
+  const log = deps.log ?? defaultLog
   return {
     random: () => randomInt(0, 10000),
-    shopifySkuExists: makeShopifySkuExists({ log: deps.log }),
+    shopifySkuExists: makeShopifySkuExists({ log }),
     storeIds: async () => (await listConnectedStores()).map(s => s.id),
     ...deps,
+    log,
   }
 }
 
@@ -95,8 +120,8 @@ export async function isCodeTaken(code: string, deps: SkuCodeDeps): Promise<bool
   for (const storeId of await deps.storeIds()) {
     try {
       if (await deps.shopifySkuExists(storeId, code)) return true
-    } catch (e) {
-      deps.log?.(`Không hỏi được Shopify của store ${storeId}: ${e instanceof Error ? e.message : String(e)}`)
+    } catch {
+      (deps.log ?? defaultLog)(skipNote(storeId, 'không hỏi được Shopify'))
     }
   }
   return false
