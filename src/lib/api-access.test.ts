@@ -148,6 +148,16 @@ describe('PGprints API access', () => {
     expect(canCallApi('SELLER', ['fulfillment_orders', 'fulfillment_suppliers'], '/api/suppliers/s1', 'GET')).toBe('forbidden')
   })
 
+  it('scale tool: staff with tools_scale can run jobs and read targets; target and settings writes are superadmin-only', () => {
+    expect(canCallApi('SELLER', ['tools_scale'], '/api/tools/scale/jobs', 'POST')).toBe('ok')
+    expect(canCallApi('SELLER', ['tools_scale'], '/api/tools/scale/targets', 'GET')).toBe('ok')
+    expect(canCallApi('ADMIN', ['tools_scale'], '/api/tools/scale/targets', 'POST')).toBe('forbidden')
+    expect(canCallApi('ADMIN', ['tools_scale'], '/api/tools/scale/settings', 'POST')).toBe('forbidden')
+    expect(canCallApi('SUPERADMIN', [], '/api/tools/scale/targets', 'POST')).toBe('ok')
+    expect(canCallApi('SELLER', DEFAULT_ROLE_PERMISSIONS.SELLER, '/api/tools/scale/jobs', 'GET')).toBe('forbidden')
+    expect(canCallApi('ADMIN', DEFAULT_ROLE_PERMISSIONS.ADMIN, '/api/tools/scale/jobs', 'GET')).toBe('ok')
+  })
+
   it('creative tool routes follow the tools_creative permission; the token write is superadmin-only', () => {
     expect(canCallApi('ADMIN', ['tools_creative'], '/api/tools/creative/jobs', 'GET')).toBe('ok')
     expect(canCallApi('ADMIN', ['tools_creative'], '/api/tools/creative/jobs', 'POST')).toBe('ok')
@@ -167,6 +177,7 @@ describe('seller API allow-list', () => {
       '/api/spy',
       '/api/tools/spy-idea',
       '/api/tools/creative',
+      '/api/tools/scale',
       '/api/fulfillment/crawler',
       '/api/overview',
       '/api/projects',

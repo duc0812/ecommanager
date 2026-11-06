@@ -54,6 +54,7 @@ const nav: NavEntry[] = [
   { type: 'child', href: '/tools/spy-idea', icon: 'travel_explore', label: 'Spy Idea' },
   { type: 'child', href: '/tools/resources', icon: 'dns', label: 'Resources' },
   { type: 'child', href: '/tools/creative', icon: 'auto_awesome', label: 'Creative' },
+  { type: 'child', href: '/tools/scale', icon: 'swap_horiz', label: 'Scale sản phẩm' },
   { type: 'divider' },
   { type: 'group', label: 'Setup' },
   { type: 'child', href: '/setup', icon: 'tune', label: 'Theo khối' },
