@@ -35,16 +35,21 @@ export async function saveRef(jobId: string, index: number, parsed: { mime: stri
   return { name, mime: parsed.mime, bytes: parsed.bytes }
 }
 
-export async function saveResult(jobId: string, index: number, url: string, fetchImpl: typeof fetch = fetch): Promise<string> {
+export async function fetchImage(url: string, fetchImpl: typeof fetch = fetch): Promise<{ bytes: Buffer; ext: string }> {
   const safe = assertSafeExternalUrl(url)
   const res = await fetchImpl(safe.toString())
   if (!res.ok) throw new Error(`download HTTP ${res.status} for ${url}`)
   const mime = (res.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase()
   const ext = extForMime(mime) ?? (/\.(jpe?g|webp)(\?|$)/i.exec(safe.pathname)?.[1]?.toLowerCase().replace('jpeg', 'jpg') ?? 'png')
+  return { bytes: Buffer.from(await res.arrayBuffer()), ext }
+}
+
+export async function saveResult(jobId: string, index: number, url: string, fetchImpl: typeof fetch = fetch): Promise<string> {
+  const { bytes, ext } = await fetchImage(url, fetchImpl)
   const name = `out-${index}.${ext}`
   const dir = path.join(creativeRoot(), jobId)
   await fs.mkdir(dir, { recursive: true })
-  await fs.writeFile(path.join(dir, name), Buffer.from(await res.arrayBuffer()))
+  await fs.writeFile(path.join(dir, name), bytes)
   return name
 }
 
