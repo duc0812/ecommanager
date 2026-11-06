@@ -200,7 +200,7 @@ Link dán vào phải qua `assertSafeExternalUrl` (chỉ https, không host nộ
 - Không bao giờ ghép giá trị của job vào một chuỗi lệnh. Mọi lệnh con chạy bằng danh sách tham số; dữ liệu job nằm trong `job.json`.
 - Nhận diện nền tảng bằng dấu hiệu trong HTML của trang nguồn: host script của Customily (không dùng chữ "customily" trần), `apis-v2.customall.io`, `sdk.teeinblue.com` hoặc `TeeInBlueProduct`, `cdn.customix.io`, và dấu hiệu của YMQ, Globo. Không tải được trang hoặc không thấy dấu hiệu nào thì để phiên Claude xem.
 - Mỗi job có thư mục riêng `D:\Ecom manager\clone-queue\<jobId>\` chứa `job.json`, log, và `result.json`.
-- Một khoá file bảo đảm chỉ một runner chạy. Runner không chạy job khi thấy khoá của một lần clone khác đang giữ.
+- Một khoá file bảo đảm chỉ một runner chạy. Các lần clone tay của owner không lấy khoá này (quyết định 18).
 - Giới hạn cứng 120 phút cho một phiên. Quá giờ thì dừng phiên, báo `TIMEOUT`.
 - Token đọc từ biến môi trường `CLONE_WORKER_TOKEN`, URL từ `ECOM_URL`, như máy thiết kế. Có script đặt token và script đăng ký tự khởi động lúc đăng nhập Windows.
 - Log không ghi token, không ghi nội dung file env của các tool.
