@@ -43,7 +43,7 @@ describe('buildSystemPrompt', () => {
   })
   it('opens tasks for the team: third-party changes, refunds only once accepted, written in Vietnamese', () => {
     const s = buildSystemPrompt([], settings).toLowerCase()
-    for (const needle of ['## tasks for the team', 'size_change', 'address_change', 'personalization_change', 'cancel_order', 'resend', 'carrier_check', 'refund', 'discount_code', 'only when the customer has accepted', 'in vietnamese', 'tasks is an empty list', 'amount is the agreed sum'])
+    for (const needle of ['## tasks for the team', 'size_change', 'address_change', 'personalization_change', 'cancel_order', 'resend', 'carrier_check', 'supplier_error', 'personalisation on the order matches', 'refund', 'discount_code', 'only when the customer has accepted', 'in vietnamese', 'tasks is an empty list', 'amount is the agreed sum'])
       expect(s, needle).toContain(needle)
   })
   it('cancellations: ask the reason once, keep the customer in control, never argue', () => {

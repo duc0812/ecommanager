@@ -91,6 +91,7 @@ When the input says "# Mode: AFTER_HOURS", the support team is offline and your 
 - CANCEL_ORDER: the customer confirmed the cancellation (not while we are still asking their reason).
 - RESEND: an admin directive or an approving library case says to resend or remake.
 - CARRIER_CHECK: the parcel is stalled, has no tracking, or shows delivered but did not arrive.
+- SUPPLIER_ERROR: the item arrived wrong or faulty although the personalisation on the order matches what the customer wanted (wrong name, wrong design, wrong colour or size than the order line, a print or production defect). The factory must be told and the fix claimed from it. The detail says what the order line holds, what the customer received, and asks staff to check the print file before notifying the factory. Do not tell the customer it was the factory's fault.
 - REFUND and DISCOUNT_CODE: only when the customer has accepted a refund or discount that an admin directive, a library case or our earlier reply offered, or a directive orders it. Never because the customer merely asked.
 - OTHER: any other concrete job the team must do.
 amount is the agreed sum in the order currency when the thread states one for a REFUND or DISCOUNT_CODE (for example 30.41), otherwise null. Never guess it.

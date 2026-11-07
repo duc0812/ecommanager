@@ -57,6 +57,7 @@ describe('applyAgentTasks', () => {
     expect(TASK_META.REFUND).toMatchObject({ dept: 'CS', priority: 2 })
     expect(TASK_META.SIZE_CHANGE).toMatchObject({ dept: 'FULFILLMENT', priority: 1 })
     expect(TASK_META.PERSONALIZATION_CHANGE).toMatchObject({ dept: 'DESIGN', priority: 1 })
+    expect(TASK_META.SUPPLIER_ERROR).toMatchObject({ dept: 'FULFILLMENT', priority: 1 })
   })
   it('does not open a second task of the same type while one is open; a changed detail is logged on the open one', async () => {
     const t = await mk(7003)
