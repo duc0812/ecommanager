@@ -24,6 +24,8 @@ export type HandoffState = {
   merchizeOpen?: boolean
   /** The API supplier with an unsent line and a saved key; those lines go by API, not CSV. */
   apiOpenKind?: SupplierApiKind | null
+  /** Supplier id → the API window its unsent lines open now; the hub's tab for that supplier sends with it. */
+  apiBySupplier?: Record<string, SupplierApiKind>
   /** The order has lines of an API supplier, and another supplier's unsent lines that still wait for a CSV export. */
   csvRemainder?: boolean
   /** A line of a supplier on the sheet channel has not been sent; it can only go through the hub. */
@@ -34,6 +36,17 @@ export type HandoffState = {
   handedOff: { at: string; mode: HandoffMode; byName: string | null } | null
   canUndo: boolean
   push: HandoffPush | null
+}
+
+/**
+ * The order's state as one supplier's tab of the hub sends it: that supplier's API window when its lines go by API,
+ * otherwise no API at all, so a CSV supplier's tab never opens another supplier's window.
+ */
+export function stateForSupplier(state: HandoffState, supplierId: string): HandoffState {
+  if (!state.apiBySupplier) return state
+  const kind = state.apiBySupplier[supplierId]
+  if (kind) return { ...state, mode: 'API', apiKind: kind, apiName: SUPPLIER_API_NAMES[kind] }
+  return state.mode === 'API' ? { ...state, mode: 'CSV', apiName: null } : state
 }
 
 export type HandoffLine = {
