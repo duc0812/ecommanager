@@ -29,6 +29,7 @@ export type CsSettings = {
   businessHoursStart: number
   businessHoursEnd: number
   weekendIsAfterHours: boolean
+  workSaturdayAnchor: string | null
 }
 
 export const AFTER_HOURS_DEFAULT_CATEGORIES = ['ORDER_STATUS', 'ADDRESS_CHANGE', 'CANCEL_ORDER', 'DAMAGED_OR_DEFECTIVE', 'WRONG_ITEM', 'MISSING_ITEM', 'DELIVERED_NOT_RECEIVED', 'REFUND_REQUEST', 'PRODUCT_QUESTION', 'PERSONALIZATION_ISSUE']
@@ -57,6 +58,7 @@ export const DEFAULT_CS_SETTINGS: CsSettings = {
   businessHoursStart: 8,
   businessHoursEnd: 17,
   weekendIsAfterHours: true,
+  workSaturdayAnchor: null,
 }
 
 export type CsSecrets = { freshdeskApiKey: string | null; anthropicApiKey: string | null; kieApiKey: string | null }
@@ -76,6 +78,7 @@ const SECRET_KEYS = { freshdeskApiKey: 'cs.freshdeskApiKey', anthropicApiKey: 'c
 const num = (v: unknown, d: number) => (typeof v === 'number' && Number.isFinite(v) ? v : d)
 const hour = (v: unknown, d: number) => (typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 23 ? v : d)
 const bool = (v: unknown, d: boolean) => (typeof v === 'boolean' ? v : d)
+const saturday = (v: unknown) => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) && new Date(`${v}T12:00:00Z`).getUTCDay() === 6 ? v : null)
 const strList = (v: unknown, d: string[]) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : d)
 const numList = (v: unknown, d: number[]) => (Array.isArray(v) ? v.filter((x): x is number => typeof x === 'number') : d)
 
@@ -105,6 +108,7 @@ function normalize(parsed: any): CsSettings {
     businessHoursStart: hour(parsed.businessHoursStart, d.businessHoursStart),
     businessHoursEnd: hour(parsed.businessHoursEnd, d.businessHoursEnd),
     weekendIsAfterHours: bool(parsed.weekendIsAfterHours, d.weekendIsAfterHours),
+    workSaturdayAnchor: saturday(parsed.workSaturdayAnchor),
   }
 }
 

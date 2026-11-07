@@ -52,4 +52,14 @@ describe('cs settings', () => {
     await saveCsSettings({ llmProvider: 'nope' as any })
     expect((await getCsSettings()).llmProvider).toBe('kie')
   })
+
+  it('the work-Saturday anchor keeps only a real Saturday date', async () => {
+    expect(DEFAULT_CS_SETTINGS.workSaturdayAnchor).toBeNull()
+    await saveCsSettings({ workSaturdayAnchor: '2026-11-07' })
+    expect((await getCsSettings()).workSaturdayAnchor).toBe('2026-11-07')
+    await saveCsSettings({ workSaturdayAnchor: '2026-11-08' })
+    expect((await getCsSettings()).workSaturdayAnchor).toBeNull()
+    await saveCsSettings({ workSaturdayAnchor: 'next week' as any })
+    expect((await getCsSettings()).workSaturdayAnchor).toBeNull()
+  })
 })
