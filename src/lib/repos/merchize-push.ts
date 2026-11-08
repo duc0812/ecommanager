@@ -428,33 +428,49 @@ export async function cancelMerchizePush(orderId: string): Promise<{ push: PushV
 }
 
 /**
- * One tracking number (one package, or several of one number) goes on every line the push carried. Several numbers go line by
- * line: a line takes the package that holds its catalog SKU, the one its push item was sent under (apiSku of its supplier SKU,
- * as buildMerchizePush reads it). A line no package holds, or packages of two numbers hold, gets none and the order is flagged:
- * a tracking is never written on a line it may not belong to.
+ * A push that carried one line gives it the tracking when Merchize reports one number. Otherwise every line goes by its catalog
+ * SKU, the one its push item was sent under (apiSku of its supplier SKU, as buildMerchizePush reads it), and takes the package of
+ * the one number that holds it. Merchize leaves out parcels with no tracking yet, so a line whose own parcel has not shipped must
+ * not borrow another line's. Lines sharing a SKU take a package only when it holds at least their quantity together. A line left
+ * without a package gets none and the order is flagged: a tracking is never written on a line it may not belong to.
  */
 async function upsertTracking(push: PushRow, packages: MerchizePackage[]): Promise<number> {
   const numbers = new Set(packages.map(p => p.number)).size
   if (numbers === 0) return 0
-  if (numbers === 1) return upsertLineTracking(push, () => packages[0])
   const found = await pushCarriedLines(push)
-  if (!found) return 0
+  if (!found || found.lines.length === 0) return 0
+  if (found.lines.length === 1 && numbers === 1) return upsertLineTracking(push, () => packages[0])
   const supplierSkus = Array.from(new Set(found.lines.map(l => l.resolvedSupplierSku).filter((x): x is string => !!x)))
   const products = supplierSkus.length
     ? await prisma.supplierProduct.findMany({ where: { supplierId: push.supplierId, sku: { in: supplierSkus } }, select: { sku: true, apiSku: true } })
     : []
   const catalogSkuOf = new Map(products.map(p => [p.sku, p.apiSku?.trim() || p.sku]))
-  const packageFor = (line: { resolvedSupplierSku: string | null }): MerchizePackage | null => {
-    const sku = line.resolvedSupplierSku ? catalogSkuOf.get(line.resolvedSupplierSku) : undefined
-    const holding = sku ? packages.filter(p => p.items.some(i => i.catalogSku === sku)) : []
-    return new Set(holding.map(p => p.number)).size === 1 ? holding[0] : null
+  const skuOf = (l: { resolvedSupplierSku: string | null }) => (l.resolvedSupplierSku ? catalogSkuOf.get(l.resolvedSupplierSku) : undefined) ?? null
+  const quantities = await prisma.orderLine.findMany({ where: { id: { in: found.lines.map(l => l.id) } }, select: { id: true, qty: true } })
+  const qtyOf = new Map(quantities.map(l => [l.id, l.qty]))
+  const wanted = new Map<string, { lines: number; qty: number }>()
+  for (const l of found.lines) {
+    const sku = skuOf(l)
+    if (!sku) continue
+    const w = wanted.get(sku) ?? { lines: 0, qty: 0 }
+    wanted.set(sku, { lines: w.lines + 1, qty: w.qty + (qtyOf.get(l.id) ?? 0) })
   }
+  const packageOf = (sku: string | null): MerchizePackage | null => {
+    if (!sku) return null
+    const holding = packages.filter(p => p.items.some(i => i.catalogSku === sku))
+    if (new Set(holding.map(p => p.number)).size !== 1) return null
+    const w = wanted.get(sku)!
+    if (w.lines === 1) return holding[0]
+    const shipped = holding.flatMap(p => p.items).filter(i => i.catalogSku === sku).reduce((n, i) => n + (i.quantity ?? 0), 0)
+    return shipped >= w.qty ? holding[0] : null
+  }
+  const assigned = new Map(found.lines.map(l => [l.shopifyLineId, packageOf(skuOf(l))]))
   const lineKeys = lineKeysOf(found.order.shopifyOrderNumber, found.order.lines)
-  const open = found.lines.filter(l => !packageFor(l)).map(l => lineKeys.get(l.shopifyLineId) ?? l.shopifyLineId)
+  const open = found.lines.filter(l => !assigned.get(l.shopifyLineId)).map(l => lineKeys.get(l.shopifyLineId) ?? l.shopifyLineId)
   if (open.length > 0) {
-    console.warn(`[merchize] ${found.order.shopifyOrderNumber}: ${numbers} tracking khác nhau, không xác định được kiện của dòng ${open.join(', ')} theo SKU — không ghi tracking cho dòng đó, cần đối chiếu tay`)
+    console.warn(`[merchize] ${found.order.shopifyOrderNumber}: Merchize báo ${numbers} mã tracking; dòng ${open.join(', ')} không có kiện có tracking của riêng dòng đó (theo SKU và số lượng) — không ghi tracking cho dòng đó, cần đối chiếu tay`)
   }
-  return upsertLineTracking(push, packageFor)
+  return upsertLineTracking(push, line => assigned.get(line.shopifyLineId) ?? null)
 }
 
 export async function refreshMerchizePush(orderId: string): Promise<{ push: PushView; found: boolean; shipments: number }> {

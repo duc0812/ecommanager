@@ -43,10 +43,11 @@ const TEE_XL = 'MZ-TEE-BLACK-XL'
 const TEE_XL_CATALOG = '5000US000BLKAA05'
 
 // One package of Merchize's tracking answer (GET /order/external/orders/tracking), as seen live on 2026-11-08.
+const item = (sku: string, quantity = 1) => ({ ffm_mapped_catalog_sku: sku, size: 'L', color: 'Light Blue', variant_title: 'Light Blue / L', quantity, fulfilled_quantity: quantity })
 const pkg = (number: string, skus: string[], extra: Record<string, unknown> = {}) => ({
   status: 'fulfilled', shipment_status: 'in_transit', tracking_company: 'USPS', tracking_number: number,
   tracking_url: `https://t.example/${number}`, has_tracking: true,
-  items: skus.map(sku => ({ ffm_mapped_catalog_sku: sku, size: 'L', color: 'Light Blue', variant_title: 'Light Blue / L', quantity: 1, fulfilled_quantity: 1 })),
+  items: skus.map(sku => item(sku)),
   created: '2026-11-01T10:00:00Z', updated: '2026-11-02T10:00:00Z',
   ...extra,
 })
@@ -428,6 +429,15 @@ describe('Merchize tracking answer', () => {
     expect(await getOrderTracking(creds, 'MZ7002', 'MZ')).toEqual([])
   })
 
+  it('throws on a success answer without the package list, never reading it as nothing shipped', async () => {
+    for (const json of [{ success: true }, { success: true, data: null }, { success: true, data: { packages: [] } }]) {
+      answer(json)
+      const e = await getOrderTracking(creds, 'MZ7005', 'MZ').catch(x => x)
+      expect(e).toBeInstanceOf(MerchizeError)
+      expect(e.message).toContain('không đúng dạng')
+    }
+  })
+
   it('is null when Merchize holds no order under that number', async () => {
     answer({ success: false, message: 'Order not found' }, 404)
     expect(await getOrderTracking(creds, 'MZ7003', 'MZ')).toBeNull()
@@ -691,8 +701,8 @@ describe('a Merchize order shipped in several parcels', () => {
     expect(await tracked(o.id)).toEqual([])
     const warned = warningsFor(warn, o.number)
     expect(warned).toHaveLength(1)
-    expect(warned[0]).toContain('2 tracking')
-    expect(warned[0]).toContain(`${o.number}_1, ${o.number}_2`)
+    expect(warned[0]).toContain('2 mã tracking')
+    expect(warned[0]).toContain(`dòng ${o.number}_1, ${o.number}_2 `)
     expect(warned[0]).toContain('cần đối chiếu tay')
     expect((await prisma.supplierOrderPush.findFirstOrThrow({ where: { orderId: o.id } })).lastSyncedAt).not.toBeNull()
   })
@@ -750,10 +760,10 @@ describe('a Merchize order shipped in several parcels', () => {
     expect(warned[0]).toContain(`dòng ${o.number}_2 `)
   })
 
-  it('two lines and one tracking (one parcel, or two packages of one number): both lines get it, as before', async () => {
+  it('two lines and one tracking (one parcel, or two packages of one number) holding both: both lines get it', async () => {
     const one = await twoLineOrder(TEE_XL)
     const same = await twoLineOrder()
-    parcels.set(one.number, [pkg('MZP5', [TEE_L])])
+    parcels.set(one.number, [pkg('MZP5', [TEE_L, TEE_XL_CATALOG])])
     parcels.set(same.number, [pkg('MZP6', [TEE_L]), pkg('MZP6', [TEE_L])])
 
     expect((await (await refresh(one.id)).json()).shipments).toBe(2)
@@ -761,6 +771,40 @@ describe('a Merchize order shipped in several parcels', () => {
 
     expect((await tracked(one.id)).map(t => [t.lineKey, t.trackingNumber])).toEqual([[`${one.number}_1`, 'MZP5'], [`${one.number}_2`, 'MZP5']])
     expect((await tracked(same.id)).map(t => [t.lineKey, t.trackingNumber])).toEqual([[`${same.number}_1`, 'MZP6'], [`${same.number}_2`, 'MZP6']])
+  })
+
+  // Merchize leaves out a parcel with no tracking yet: the line still waiting must not take the shipped line's tracking.
+  it('two lines and the one tracked parcel holds only the first: the first gets it, the second gets none and is flagged', async () => {
+    const o = await twoLineOrder(TEE_XL)
+    parcels.set(o.number, [pkg('MZP15', [TEE_L]), pkg('', [TEE_XL_CATALOG], { status: 'unfulfilled', has_tracking: false })])
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    expect((await (await refresh(o.id)).json()).shipments).toBe(1)
+
+    expect(await tracked(o.id)).toEqual([{ lineKey: `${o.number}_1`, trackingNumber: 'MZP15', carrier: 'USPS' }])
+    const warned = warningsFor(warn, o.number)
+    expect(warned).toHaveLength(1)
+    expect(warned[0]).toContain('1 mã tracking')
+    expect(warned[0]).toContain(`dòng ${o.number}_2 `)
+    expect(warned[0]).not.toContain(`${o.number}_1`)
+    expect(warned[0]).not.toContain('khác nhau')
+  })
+
+  it('two lines of one SKU take a parcel only when it holds both units', async () => {
+    const short = await twoLineOrder()
+    const whole = await twoLineOrder()
+    parcels.set(short.number, [pkg('MZP16', [TEE_L])])
+    parcels.set(whole.number, [pkg('MZP17', [], { items: [item(TEE_L, 2)] })])
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    expect((await (await refresh(short.id)).json()).shipments).toBe(0)
+    expect((await (await refresh(whole.id)).json()).shipments).toBe(2)
+
+    expect(await tracked(short.id)).toEqual([])
+    expect(warningsFor(warn, short.number)).toHaveLength(1)
+    expect(warningsFor(warn, short.number)[0]).toContain(`dòng ${short.number}_1, ${short.number}_2 `)
+    expect((await tracked(whole.id)).map(t => [t.lineKey, t.trackingNumber])).toEqual([[`${whole.number}_1`, 'MZP17'], [`${whole.number}_2`, 'MZP17']])
+    expect(warningsFor(warn, whole.number)).toEqual([])
   })
 
   it('one line back as two parcels of different numbers that both hold it: no tracking is written, the order is flagged', async () => {

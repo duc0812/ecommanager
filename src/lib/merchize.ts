@@ -232,9 +232,9 @@ export async function getOrderTracking(creds: MerchizeCredentials, externalNumbe
     if (isOrderMissing(e)) return null
     throw e
   }
-  const data = json?.data ?? []
-  // A changed answer must show in the log, not read as "nothing shipped" night after night.
-  if (!Array.isArray(data)) throw new MerchizeError('Merchize trả về tracking không đúng dạng (data không phải danh sách)', 200, json)
+  const data = json?.data
+  // A success answer always carries the list; anything else must show in the log, not read as "nothing shipped" night after night.
+  if (!Array.isArray(data)) throw new MerchizeError('Merchize trả về tracking không đúng dạng (thiếu danh sách data)', 200, json)
   return data
     .filter((p: any) => p?.has_tracking !== false)
     .map((p: any): MerchizePackage => ({
