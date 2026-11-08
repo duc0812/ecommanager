@@ -505,6 +505,16 @@ Spec: `docs/superpowers/specs/2026-10-23-customer-service-agent-design.md`. Fres
 - **Rollout**: deploy with poll on, auto-reply off; review a week of summaries; then enable `ORDER_STATUS` auto-reply; fill the library before widening. Tests: `tests/cs-*.test.ts` (fixtures in `tests/fixtures/cs`, anonymised copies of real tickets 119/194/195).
 - **Deployed 2026-10-24** (main `4448672`). Prod gotcha: `prisma migrate deploy` on the VPS fails with "database is locked" while pm2 runs the app — `pm2 stop podmanager` → migrate → `pm2 start podmanager --update-env`. Existing users got `cs` via `scripts/backfill-cs-permission.mjs --apply` (3 users). Keys live in the VPS `.env` (FRESHDESK_API_KEY/FRESHDESK_DOMAIN/KIE_API_KEY). Analysis stays idle until the Kie key is allowed to use chat models.
 
+## 1★ review outreach (2026-11-08, branch `feat/cs-reviews`, deployed `18edcd8`)
+
+Spec: `docs/superpowers/specs/2026-11-08-cs-one-star-review-flow-design.md`. Every 3 h (`'15 */3 * * *'`, `runReviewCycle` in `src/lib/cs/scheduler.ts`, needs the Judge.me token + Freshdesk key): `syncReviews` (Judge.me rating=1 into `CsReview`) → `processReviews` → `followUpRatings` (logs a rating change on the task).
+
+- **Token**: settings card "Review 1★ (Judge.me)" (`cs.judgemeApiToken`, env `JUDGEME_API_TOKEN` fallback), shop domain `caramiaus-store.myshopify.com`, switch `reviewOutreachEnabled` (default OFF; kill switch also stops sends).
+- **Match** (`matchReview`): exact reviewer email on an order placed before the review, then product gid or SKU parent code from the title; Shipping protection → the real product of the latest order.
+- **Park, never email** (status PARKED + `REVIEW_RECOVERY` task on `/cs/tasks`): no confident order, a Freshdesk or local ticket from that email in the last 90 days, a refunded order, a reviewer name that fits no name on the order ("Anonymous" passes). The owner decides those.
+- **Draft** (`review-recovery-prompt.ts`): case table (NOT_RECEIVED, NOT_AS_PICTURED, WRONG_ITEM, PERSONALIZATION, QUALITY, OTHER) × order state; one question, no remedy. `guardDraft` blocks subject/body that names stars/rating, asks to change/remove the review, offers refund/replacement/discount…, or never says we saw their review → BLOCKED (CS writes by hand).
+- **Send** only with the switch on, and only after re-checking: task still open, review still 1★ and visible, no new ticket/refund. Outbound email tag `em-review-1star`; replies on that ticket get a prompt line forbidding any mention of the score. 3 failures on one review → ERROR (others keep going).
+
 ## CS insights & staff performance (2026-10-24, branch `feat/cs-insights`)
 
 Spec: `docs/superpowers/specs/2026-10-24-cs-insights-performance-design.md`. Two more LLM passes ride on the 2-min cycle, after triage, each ≤5 tickets per cycle and all under the daily cap `cs.settings.llmDailyCallCap` (500; counter in AppSetting `cs.llmCalls.<VN date>`, `src/lib/llm/cap.ts`). `Llm.complete()` (`src/lib/llm/types.ts`) is the one structured call every pass uses.
