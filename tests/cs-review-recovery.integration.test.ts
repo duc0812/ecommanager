@@ -103,3 +103,28 @@ describe('matchReview', () => {
     expect(m).toMatchObject({ orderNumber: o.number })
   })
 })
+
+describe('draftForReview', () => {
+  it('stores the draft and returns the guard result', async () => {
+    const { draftForReview } = await import('@/lib/cs/review-recovery')
+    await makeOrder('ann@example.com', '2026-10-01T00:00:00Z', [{ sku: 'ST1-L', title: 'Stwa Galaxy Shirt', productId: 'gid://shopify/Product/8891490140317' }])
+    await syncReviews(fakeClient([[jm({ id: 11 })]]))
+    const row = await prisma.csReview.findUniqueOrThrow({ where: { judgemeId: 11 } })
+    const m = await matchReview(row)
+    await prisma.csReview.update({ where: { id: row.id }, data: { orderNumber: m.orderNumber } })
+    let seenUser = ''
+    const llm = {
+      async analyze(): Promise<any> { throw new Error('not used') },
+      async complete({ user }: { user: string }): Promise<any> {
+        seenUser = user
+        return { output: { caseType: 'NOT_RECEIVED', taskType: 'CARRIER_CHECK', taskDetail: 'Kiểm tra vận chuyển', subject: 'Your Stwa shirt', body: 'Hi Ann,\n\nWe saw the review you left for the Stwa Galaxy Shirt on order #RR1. Could you tell us what happened?\n\nWarm regards,\nLitzzy Support', alsoCsComplaint: false }, tokensIn: 1, tokensOut: 1 }
+      },
+    }
+    const d = await draftForReview(row.id, { llm: llm as any })
+    expect(d).toMatchObject({ caseType: 'NOT_RECEIVED', taskType: 'CARRIER_CHECK', blocked: null })
+    expect(seenUser).toContain('Stwa Galaxy Shirt')
+    const after = await prisma.csReview.findUniqueOrThrow({ where: { id: row.id } })
+    expect(after).toMatchObject({ caseType: 'NOT_RECEIVED', draftSubject: 'Your Stwa shirt' })
+    expect(after.draftBody).toContain('We saw the review')
+  })
+})

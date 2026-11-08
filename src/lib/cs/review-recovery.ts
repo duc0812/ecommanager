@@ -1,6 +1,11 @@
 import { prisma } from '@/lib/db'
 import type { CsReview } from '@/generated/prisma/client'
 import type { JmReview, JudgemeClient } from '@/lib/cs/judgeme'
+import type { Llm } from '@/lib/llm/types'
+import { withCap } from '@/lib/llm/cap'
+import { getCsSettings } from '@/lib/cs/settings'
+import { buildOrderContext } from '@/lib/cs/order-context'
+import { buildReviewSystemPrompt, buildReviewUserPrompt, guardDraft, ReviewDraftSchema, type ReviewDraft } from '@/lib/cs/review-recovery-prompt'
 
 const PER_PAGE = 50
 const MAX_PAGES = 10
@@ -61,4 +66,23 @@ export async function matchReview(r: Pick<CsReview, 'reviewerEmail' | 'productEx
     if (byCode) return { orderNumber: o.shopifyOrderNumber, lineId: byCode.id }
   }
   return { orderNumber: null, reason: `Không có đơn nào của ${email} chứa sản phẩm "${r.productTitle ?? r.productExternalId ?? '?'}"` }
+}
+
+export async function draftForReview(reviewId: string, deps: { llm: Llm; now?: Date }): Promise<ReviewDraft & { blocked: string | null }> {
+  const now = deps.now ?? new Date()
+  const review = await prisma.csReview.findUniqueOrThrow({ where: { id: reviewId } })
+  const settings = await getCsSettings()
+  const ctx = await buildOrderContext({ subject: '', texts: [], cfOrderId: review.orderNumber, email: review.reviewerEmail })
+  const order = ctx.order
+  const refunded = order ? (await prisma.order.findUnique({ where: { id: order.id }, select: { refundedAmount: true } }))?.refundedAmount ?? 0 : 0
+  const reviewedLine = SHIPPING_PROTECTION.test(review.productTitle ?? '') ? order?.lines.find(l => !ADD_ON.test(l.title))?.title ?? null : review.productTitle
+  const { output } = await withCap(settings.llmDailyCallCap, () => deps.llm.complete<ReviewDraft>({
+    system: buildReviewSystemPrompt(),
+    user: buildReviewUserPrompt({ review, order, reviewedLine, refunded }),
+    model: settings.model,
+    schema: ReviewDraftSchema,
+    schemaName: 'review_draft',
+  }), now)
+  await prisma.csReview.update({ where: { id: reviewId }, data: { caseType: output.caseType, draftSubject: output.subject, draftBody: output.body } })
+  return { ...output, blocked: guardDraft(output.body) }
 }
