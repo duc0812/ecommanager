@@ -31,11 +31,11 @@ export async function markRead(ticketId: string, user: Actor, now = new Date()):
   await prisma.csTicket.update({ where: { id: ticketId }, data: { staffReadAt: now, staffReadById: user.id, staffReadByName: user.name } })
 }
 
-async function openTask(data: { ticketId: string | null; orderNumber: string | null; type: TaskType; detail: string; amount?: number | null; dept?: TaskDept; source: 'AGENT' | 'STAFF'; actor: Actor | null }, now: Date): Promise<CsTask> {
+export async function openTask(data: { ticketId: string | null; orderNumber: string | null; type: TaskType; detail: string; amount?: number | null; dept?: TaskDept; source: 'AGENT' | 'STAFF'; actor: Actor | null; reviewId?: string | null }, now: Date): Promise<CsTask> {
   const meta = TASK_META[data.type]
   return prisma.csTask.create({
     data: {
-      ticketId: data.ticketId, orderNumber: data.orderNumber, type: data.type, dept: data.dept ?? meta.dept, priority: meta.priority,
+      ticketId: data.ticketId, orderNumber: data.orderNumber, reviewId: data.reviewId ?? null, type: data.type, dept: data.dept ?? meta.dept, priority: meta.priority,
       detail: data.detail, amount: data.amount ?? null, source: data.source, createdById: data.actor?.id ?? null, createdByName: data.actor?.name ?? null,
       dueAt: new Date(now.getTime() + DUE_HOURS * 3600_000), createdAt: now,
       events: { create: { kind: 'CREATED', body: data.detail, toStatus: 'NEW', authorId: data.actor?.id ?? null, authorName: data.actor?.name ?? 'Agent', createdAt: now } },

@@ -47,7 +47,7 @@ export async function analyzeTicket(ticketId: string, deps: { llm: Llm; now?: Da
   const cases = await prisma.csCase.findMany({ where: { active: true }, orderBy: { updatedAt: 'desc' } })
   const { output, tokensIn, tokensOut } = await withCap(settings.llmDailyCallCap, () => deps.llm.analyze({
     system: buildSystemPrompt(cases, settings),
-    user: buildUserPrompt({ ticket, messages: ticket.messages, order, previous: ticket.analyses, directives: ticket.directives, mode }),
+    user: buildUserPrompt({ ticket, messages: ticket.messages, order, previous: ticket.analyses, directives: ticket.directives, mode, reviewOrigin: ticketTags(ticket.fdTags).includes('em-review-1star') }),
     model: settings.model,
   }), now)
 

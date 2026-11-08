@@ -94,6 +94,16 @@ export class FreshdeskClient {
     return this.call('POST', '/tickets/outbound_email', payload)
   }
 
+  // Freshdesk answers 400 "no contact matching the given email" for someone who never wrote in.
+  async ticketsByEmail(email: string): Promise<{ id: number; created_at: string }[]> {
+    try {
+      return await this.call('GET', `/tickets?email=${encodeURIComponent(email)}&per_page=100`)
+    } catch (err) {
+      if (err instanceof FreshdeskError && err.status === 400) return []
+      throw err
+    }
+  }
+
   note(ticketId: number, bodyHtml: string): Promise<{ id: number }> {
     return this.call('POST', `/tickets/${ticketId}/notes`, { body: bodyHtml, private: true })
   }

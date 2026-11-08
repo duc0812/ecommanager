@@ -71,3 +71,16 @@ describe('FreshdeskClient', () => {
     expect(JSON.parse(init.body as string)).toEqual({ priority: 4, tags: ['em-urgent'] })
   })
 })
+
+describe('ticketsByEmail', () => {
+  const client = (status: number, body: unknown) => new FreshdeskClient({ domain: 'litzzy', apiKey: 'k', fetchImpl: (async () => new Response(JSON.stringify(body), { status })) as unknown as typeof fetch })
+  it('returns the tickets of a known contact', async () => {
+    expect(await client(200, [{ id: 5, created_at: '2026-11-01T00:00:00Z' }]).ticketsByEmail('a@b.com')).toEqual([{ id: 5, created_at: '2026-11-01T00:00:00Z' }])
+  })
+  it('treats "no contact matching the given email" as no tickets', async () => {
+    expect(await client(400, { description: 'Validation failed', errors: [{ field: 'email', message: 'There is no contact matching the given email' }] }).ticketsByEmail('new@b.com')).toEqual([])
+  })
+  it('still throws on other errors', async () => {
+    await expect(client(500, {}).ticketsByEmail('a@b.com')).rejects.toThrow()
+  })
+})

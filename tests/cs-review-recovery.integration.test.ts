@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest'
 import { prisma } from '@/lib/db'
 import type { JmReview } from '@/lib/cs/judgeme'
-import { matchReview, syncReviews } from '@/lib/cs/review-recovery'
+import { followUpRatings, matchReview, processReviews, syncReviews } from '@/lib/cs/review-recovery'
+import { saveCsSettings } from '@/lib/cs/settings'
 
 const PROJECT = 'proj_rr'
 const SHOP = 'rr-test.myshopify.com'
@@ -126,5 +127,140 @@ describe('draftForReview', () => {
     const after = await prisma.csReview.findUniqueOrThrow({ where: { id: row.id } })
     expect(after).toMatchObject({ caseType: 'NOT_RECEIVED', draftSubject: 'Your Stwa shirt' })
     expect(after.draftBody).toContain('We saw the review')
+  })
+})
+
+describe('processReviews', () => {
+  const CLEAN = 'Hi Ann,\n\nWe saw the review you left for the Stwa Galaxy Shirt on order #RR1. Could you tell us what happened?\n\nWarm regards,\nLitzzy Support'
+  function llmReturning(body = CLEAN) {
+    const llm = {
+      calls: 0,
+      async analyze(): Promise<any> { throw new Error('not used') },
+      async complete(): Promise<any> {
+        llm.calls++
+        return { output: { caseType: 'NOT_RECEIVED', taskType: 'CARRIER_CHECK', taskDetail: 'Kiểm tra vận chuyển đơn', subject: 'About your Stwa shirt', body, alsoCsComplaint: false }, tokensIn: 1, tokensOut: 1 }
+      },
+    }
+    return llm
+  }
+  function fd(ticketsByEmail: Record<string, { id: number; created_at: string }[]> = {}) {
+    const sent: any[] = []
+    return {
+      sent,
+      fd: { async outboundEmail(p: any) { sent.push(p); return { id: 900 + sent.length } } },
+      fdLookup: { async ticketsByEmail(email: string) { return ticketsByEmail[email] ?? [] } },
+    }
+  }
+  const NOW = new Date('2026-11-08T12:00:00Z')
+  async function seed(id = 21) {
+    const o = await makeOrder('ann@example.com', '2026-10-01T00:00:00Z', [{ sku: 'ST1-L', title: 'Stwa Galaxy Shirt', productId: 'gid://shopify/Product/8891490140317' }])
+    await syncReviews(fakeClient([[jm({ id })]]))
+    return o
+  }
+  beforeEach(async () => { await saveCsSettings({ reviewOutreachEnabled: false, killSwitch: false }) })
+
+  it('a matched review gets a task and an email when the switch is on', async () => {
+    const o = await seed()
+    await saveCsSettings({ reviewOutreachEnabled: true })
+    const f = fd()
+    const r = await processReviews({ llm: llmReturning() as any, fd: f.fd, fdLookup: f.fdLookup, now: NOW })
+    expect(r).toMatchObject({ tasks: 1, sent: 1 })
+    expect(f.sent[0]).toMatchObject({ email: 'ann@example.com', tags: ['em-review-1star'], custom_fields: { cf_order_id: o.number }, status: 6 })
+    const review = await prisma.csReview.findFirstOrThrow()
+    expect(review).toMatchObject({ status: 'SENT', fdTicketId: 901, orderNumber: o.number })
+    const task = await prisma.csTask.findFirstOrThrow({ include: { events: true } })
+    expect(task).toMatchObject({ type: 'REVIEW_RECOVERY', status: 'WAITING', reviewId: review.id, orderNumber: o.number })
+    expect(task.events.some(e => e.body.includes('#901'))).toBe(true)
+  })
+  it('with the switch off it drafts and opens the task but sends nothing', async () => {
+    await seed()
+    const f = fd()
+    const r = await processReviews({ llm: llmReturning() as any, fd: f.fd, fdLookup: f.fdLookup, now: NOW })
+    expect(r).toMatchObject({ tasks: 1, sent: 0 })
+    expect((await prisma.csReview.findFirstOrThrow()).status).toBe('DRAFTED')
+    expect((await prisma.csTask.findFirstOrThrow()).status).toBe('NEW')
+  })
+  it('turning the switch on sends the stored drafts once', async () => {
+    await seed()
+    const f = fd()
+    const llm = llmReturning()
+    await processReviews({ llm: llm as any, fd: f.fd, fdLookup: f.fdLookup, now: NOW })
+    await saveCsSettings({ reviewOutreachEnabled: true })
+    await processReviews({ llm: llm as any, fd: f.fd, fdLookup: f.fdLookup, now: NOW })
+    await processReviews({ llm: llm as any, fd: f.fd, fdLookup: f.fdLookup, now: NOW })
+    expect(f.sent).toHaveLength(1)
+    expect(llm.calls).toBe(1)
+    expect((await prisma.csReview.findFirstOrThrow()).status).toBe('SENT')
+  })
+  it('a reviewer with a ticket in the last 90 days is parked without an email or llm call', async () => {
+    await seed()
+    await saveCsSettings({ reviewOutreachEnabled: true })
+    const f = fd({ 'ann@example.com': [{ id: 249, created_at: '2026-10-26T00:00:00Z' }] })
+    const llm = llmReturning()
+    await processReviews({ llm: llm as any, fd: f.fd, fdLookup: f.fdLookup, now: NOW })
+    expect(f.sent).toHaveLength(0)
+    expect(llm.calls).toBe(0)
+    expect((await prisma.csReview.findFirstOrThrow()).status).toBe('PARKED')
+    expect((await prisma.csTask.findFirstOrThrow()).detail).toContain('#249')
+  })
+  it('a ticket older than 90 days does not park the review', async () => {
+    await seed()
+    const f = fd({ 'ann@example.com': [{ id: 10, created_at: '2026-06-01T00:00:00Z' }] })
+    await processReviews({ llm: llmReturning() as any, fd: f.fd, fdLookup: f.fdLookup, now: NOW })
+    expect((await prisma.csReview.findFirstOrThrow()).status).toBe('DRAFTED')
+  })
+  it('a refunded order is parked', async () => {
+    const o = await seed()
+    await prisma.order.update({ where: { id: o.id }, data: { refundedAmount: 12 } })
+    const f = fd()
+    await processReviews({ llm: llmReturning() as any, fd: f.fd, fdLookup: f.fdLookup, now: NOW })
+    expect((await prisma.csReview.findFirstOrThrow()).status).toBe('PARKED')
+    expect((await prisma.csTask.findFirstOrThrow()).detail).toMatch(/hoàn tiền/i)
+  })
+  it('an unmatched review is parked with the reason', async () => {
+    await syncReviews(fakeClient([[jm({ id: 31, reviewerEmail: 'nobody@example.com' })]]))
+    const f = fd()
+    await processReviews({ llm: llmReturning() as any, fd: f.fd, fdLookup: f.fdLookup, now: NOW })
+    expect((await prisma.csReview.findFirstOrThrow()).status).toBe('PARKED')
+    expect((await prisma.csTask.findFirstOrThrow()).detail).toContain('nobody@example.com')
+  })
+  it('a blocked draft is not sent and the task says CS must write it', async () => {
+    await seed()
+    await saveCsSettings({ reviewOutreachEnabled: true })
+    const f = fd()
+    await processReviews({ llm: llmReturning(CLEAN + '\nWould you consider updating your review?') as any, fd: f.fd, fdLookup: f.fdLookup, now: NOW })
+    expect(f.sent).toHaveLength(0)
+    expect((await prisma.csReview.findFirstOrThrow()).status).toBe('BLOCKED')
+    const task = await prisma.csTask.findFirstOrThrow({ include: { events: true } })
+    expect(task.events.some(e => e.body.includes('CS viết tay'))).toBe(true)
+  })
+  it('second run sends nothing and opens no task', async () => {
+    await seed()
+    await saveCsSettings({ reviewOutreachEnabled: true })
+    const f = fd()
+    await processReviews({ llm: llmReturning() as any, fd: f.fd, fdLookup: f.fdLookup, now: NOW })
+    await syncReviews(fakeClient([[jm({ id: 21 })]]))
+    await processReviews({ llm: llmReturning() as any, fd: f.fd, fdLookup: f.fdLookup, now: NOW })
+    expect(f.sent).toHaveLength(1)
+    expect(await prisma.csTask.count()).toBe(1)
+  })
+  it('the kill switch stops sending', async () => {
+    await seed()
+    await saveCsSettings({ reviewOutreachEnabled: true, killSwitch: true })
+    const f = fd()
+    await processReviews({ llm: llmReturning() as any, fd: f.fd, fdLookup: f.fdLookup, now: NOW })
+    expect(f.sent).toHaveLength(0)
+  })
+  it('a raised rating is logged on the open task', async () => {
+    await seed()
+    const f = fd()
+    await processReviews({ llm: llmReturning() as any, fd: f.fd, fdLookup: f.fdLookup, now: NOW })
+    const client = { async getReview(id: number) { return jm({ id, rating: 4 }) } }
+    expect((await followUpRatings(client, NOW)).changed).toBe(1)
+    expect((await prisma.csReview.findFirstOrThrow()).rating).toBe(4)
+    const task = await prisma.csTask.findFirstOrThrow({ include: { events: true } })
+    expect(task.events.some(e => e.body.includes('Khách đã đổi đánh giá: 4★'))).toBe(true)
+    expect(task.status).toBe('NEW')
+    expect((await followUpRatings(client, NOW)).changed).toBe(0)
   })
 })

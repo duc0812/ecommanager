@@ -109,6 +109,14 @@ describe('buildUserPrompt', () => {
     expect(day).not.toContain('AFTER_HOURS')
     expect(buildUserPrompt(base)).toContain('# Mode: BUSINESS_HOURS')
   })
+  it('a review-origin ticket tells the agent never to raise the review', () => {
+    const ticket = { id: 't1', fdTicketId: 119, subject: 'About your shirt', requesterEmail: 'p@x.com', requesterName: 'Paul', fdCreatedAt: new Date('2026-10-20T05:48:29Z') } as any
+    const base = { ticket, messages: [], order: { match: 'NONE', order: null, candidates: [] } as any, previous: [] }
+    const p = buildUserPrompt({ ...base, reviewOrigin: true })
+    expect(p).toContain('# Origin')
+    expect(p.toLowerCase()).toContain('never mention the star score')
+    expect(buildUserPrompt(base)).not.toContain('# Origin')
+  })
   it('shows the personalisation the customer typed on each line and tells the model to quote it, never guess', () => {
     const s = buildSystemPrompt([], settings).toLowerCase()
     for (const needle of ['personalisation the customer typed', 'quote it exactly', 'never guess'])

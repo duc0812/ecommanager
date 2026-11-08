@@ -136,6 +136,7 @@ export function buildUserPrompt(i: {
   previous: Pick<CsAnalysis, 'category' | 'urgency' | 'summary'>[]
   directives?: { body: string; createdByName: string | null; createdAt: Date }[]
   mode?: CsMode
+  reviewOrigin?: boolean
 }): string {
   const o = i.order.order
   const orderBlock = o
@@ -170,8 +171,11 @@ export function buildUserPrompt(i: {
     ? '# Mode: AFTER_HOURS — the team is offline; draftReply is sent to the customer automatically. Apply "After-hours mode".'
     : '# Mode: BUSINESS_HOURS — the team is online; draftReply is a draft that staff review and send.'
 
+  const origin = i.reviewOrigin
+    ? "\n# Origin: this ticket started from our email about the customer's 1★ review. Never mention the star score and never ask them to change or remove the review; solve the problem under the usual rules.\n"
+    : ''
   return `${mode}
-
+${origin}
 # Ticket #${i.ticket.fdTicketId}
 subject: ${i.ticket.subject}
 requester: ${i.ticket.requesterName ?? '—'} <${i.ticket.requesterEmail ?? '—'}>
