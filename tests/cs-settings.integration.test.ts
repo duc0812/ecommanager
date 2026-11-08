@@ -53,6 +53,12 @@ describe('cs settings', () => {
     expect((await getCsSettings()).llmProvider).toBe('kie')
   })
 
+  it('the outbound email config defaults to the LITZZY SUPPORT mailbox', async () => {
+    expect(DEFAULT_CS_SETTINGS.outboundEmailConfigId).toBe(158000294295)
+    await saveCsSettings({ outboundEmailConfigId: 123 })
+    expect((await getCsSettings()).outboundEmailConfigId).toBe(123)
+  })
+
   it('the work-Saturday anchor keeps only a real Saturday date', async () => {
     expect(DEFAULT_CS_SETTINGS.workSaturdayAnchor).toBeNull()
     await saveCsSettings({ workSaturdayAnchor: '2026-11-07' })

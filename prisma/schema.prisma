@@ -1430,6 +1430,7 @@ model CsTask {
   ticketId      String?
   ticket        CsTicket? @relation(fields: [ticketId], references: [id], onDelete: SetNull)
   orderNumber   String?
+  designTaskKey String?
   type          String
   dept          String
   priority      Int
@@ -1446,6 +1447,7 @@ model CsTask {
   events        CsTaskEvent[]
   @@index([status, priority])
   @@index([ticketId])
+  @@index([designTaskKey])
 }
 
 model CsTaskEvent {

@@ -14,7 +14,7 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({ settings: view, lastRun: lastRun ? JSON.parse(lastRun.value) : null })
 }
 
-const PATCH_KEYS: (keyof CsSettings)[] = ['freshdeskDomain', 'llmProvider', 'model', 'pollEnabled', 'killSwitch', 'autoReplyEnabled', 'autoReplyCategories', 'autoReplyDailyCap', 'notifyLevels', 'productionDays', 'shippingDays', 'reviewEnabled', 'weeklyReport', 'reviewModel', 'llmDailyCallCap', 'afterHoursAutoReply', 'afterHoursCategories', 'businessHoursStart', 'businessHoursEnd', 'weekendIsAfterHours', 'workSaturdayAnchor']
+const PATCH_KEYS: (keyof CsSettings)[] = ['freshdeskDomain', 'llmProvider', 'model', 'pollEnabled', 'killSwitch', 'autoReplyEnabled', 'autoReplyCategories', 'autoReplyDailyCap', 'notifyLevels', 'productionDays', 'shippingDays', 'reviewEnabled', 'weeklyReport', 'reviewModel', 'llmDailyCallCap', 'afterHoursAutoReply', 'afterHoursCategories', 'businessHoursStart', 'businessHoursEnd', 'weekendIsAfterHours', 'workSaturdayAnchor', 'outboundEmailConfigId']
 
 export async function POST(req: NextRequest) {
   const auth = await requireSuperadmin(req)

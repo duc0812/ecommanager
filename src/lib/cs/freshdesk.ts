@@ -90,6 +90,10 @@ export class FreshdeskClient {
     return this.call('POST', `/tickets/${ticketId}/reply`, { body: bodyHtml })
   }
 
+  outboundEmail(payload: { email: string; subject: string; description: string; email_config_id: number; status: number; priority: number; tags: string[]; custom_fields: Record<string, string> }): Promise<{ id: number }> {
+    return this.call('POST', '/tickets/outbound_email', payload)
+  }
+
   note(ticketId: number, bodyHtml: string): Promise<{ id: number }> {
     return this.call('POST', `/tickets/${ticketId}/notes`, { body: bodyHtml, private: true })
   }

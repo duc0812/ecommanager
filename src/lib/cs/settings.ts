@@ -30,6 +30,7 @@ export type CsSettings = {
   businessHoursEnd: number
   weekendIsAfterHours: boolean
   workSaturdayAnchor: string | null
+  outboundEmailConfigId: number
 }
 
 export const AFTER_HOURS_DEFAULT_CATEGORIES = ['ORDER_STATUS', 'ADDRESS_CHANGE', 'CANCEL_ORDER', 'DAMAGED_OR_DEFECTIVE', 'WRONG_ITEM', 'MISSING_ITEM', 'DELIVERED_NOT_RECEIVED', 'REFUND_REQUEST', 'PRODUCT_QUESTION', 'PERSONALIZATION_ISSUE']
@@ -59,6 +60,7 @@ export const DEFAULT_CS_SETTINGS: CsSettings = {
   businessHoursEnd: 17,
   weekendIsAfterHours: true,
   workSaturdayAnchor: null,
+  outboundEmailConfigId: 158000294295,
 }
 
 export type CsSecrets = { freshdeskApiKey: string | null; anthropicApiKey: string | null; kieApiKey: string | null }
@@ -109,6 +111,7 @@ function normalize(parsed: any): CsSettings {
     businessHoursEnd: hour(parsed.businessHoursEnd, d.businessHoursEnd),
     weekendIsAfterHours: bool(parsed.weekendIsAfterHours, d.weekendIsAfterHours),
     workSaturdayAnchor: saturday(parsed.workSaturdayAnchor),
+    outboundEmailConfigId: num(parsed.outboundEmailConfigId, d.outboundEmailConfigId),
   }
 }
 

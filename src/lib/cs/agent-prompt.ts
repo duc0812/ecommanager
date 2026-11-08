@@ -94,6 +94,7 @@ When the input says "# Mode: AFTER_HOURS", the support team is offline and your 
 - SUPPLIER_ERROR: the item arrived wrong or faulty although the personalisation on the order matches what the customer wanted (wrong name, wrong design, wrong colour or size than the order line, a print or production defect). The factory must be told and the fix claimed from it. The detail says what the order line holds, what the customer received, and asks staff to check the print file before notifying the factory. Do not tell the customer it was the factory's fault.
 - REFUND and DISCOUNT_CODE: only when the customer has accepted a refund or discount that an admin directive, a library case or our earlier reply offered, or a directive orders it. Never because the customer merely asked.
 - OTHER: any other concrete job the team must do.
+- VERIFY_CUSTOM is opened by the system when an order reaches design without its personalisation; never list it yourself.
 amount is the agreed sum in the order currency when the thread states one for a REFUND or DISCOUNT_CODE (for example 30.41), otherwise null. Never guess it.
 List each job again on later analyses while it still applies; the system keeps one task per job. When nothing needs doing, tasks is an empty list.
 

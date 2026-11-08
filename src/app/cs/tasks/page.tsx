@@ -8,7 +8,7 @@ import { DEPT_LABELS, STATUS_LABELS, TASK_DEPTS, TASK_META, TASK_TYPES, type Tas
 
 type Task = {
   id: string; ticketId: string | null; orderNumber: string | null; type: TaskType; dept: TaskDept; priority: number; status: TaskStatus
-  detail: string; amount: number | null; source: string; createdByName: string | null; dueAt: string | null; doneAt: string | null; createdAt: string; updatedAt: string
+  detail: string; amount: number | null; designTaskKey: string | null; source: string; createdByName: string | null; dueAt: string | null; doneAt: string | null; createdAt: string; updatedAt: string
   ticket: { id: string; fdTicketId: number; subject: string; requesterName: string | null } | null; eventCount: number
 }
 type TaskEvent = { id: string; kind: string; body: string; fromStatus: string | null; toStatus: string | null; authorName: string | null; createdAt: string }
@@ -190,8 +190,11 @@ function TaskDrawer({ id, onClose, onChanged }: { id: string; onClose: () => voi
                 {t.ticket && <> · <Link href={`/cs/${t.ticket.id}`} className="text-secondary">Ticket #{t.ticket.fdTicketId}</Link></>}
                 {' '}· tạo bởi {t.createdByName ?? 'Agent'} {fmtDate(t.createdAt, true)}
                 {t.dueAt && isOpen(t.status) && <> · hạn {fmtDate(t.dueAt, true)}</>}
+                {t.designTaskKey && <> · <Link href={`/design-studio?task=${encodeURIComponent(t.designTaskKey)}`} className="text-secondary">Mở task design {t.designTaskKey}</Link></>}
               </p>
             </div>
+
+            {t.type === 'VERIFY_CUSTOM' && <VerifyEmail id={id} onSent={async () => { await load(); onChanged() }} />}
 
             <div className="flex flex-wrap items-center gap-sm">
               <label className="text-label-sm text-on-surface-variant">Bộ phận</label>
@@ -210,7 +213,7 @@ function TaskDrawer({ id, onClose, onChanged }: { id: string; onClose: () => voi
 
             <div className="space-y-xs rounded-lg bg-surface-container-low p-md">
               <p className="text-label-sm uppercase text-on-surface-variant">Chuyển trạng thái</p>
-              <textarea value={note} onChange={e => setNote(e.target.value)} rows={2} placeholder="Ghi chú kết quả (vd: đã báo xưởng Mango, xưởng xác nhận đổi size)" className="w-full rounded-lg border border-outline-variant/40 bg-surface px-md py-xs" />
+              <textarea value={note} onChange={e => setNote(e.target.value)} rows={2} placeholder={t.type === 'VERIFY_CUSTOM' ? 'Câu trả lời của khách (bắt buộc khi chuyển Xong, sẽ ghi vào Ghi chú CS cho designer)' : 'Ghi chú kết quả (vd: đã báo xưởng Mango, xưởng xác nhận đổi size)'} className="w-full rounded-lg border border-outline-variant/40 bg-surface px-md py-xs" />
               <div className="flex flex-wrap gap-xs">
                 {(Object.keys(STATUS_LABELS) as TaskStatus[]).filter(s => s !== t.status).map(s => (
                   <button key={s} disabled={busy} onClick={async () => { if (await call(`/api/cs/tasks/${id}`, 'PATCH', { status: s, note })) setNote('') }}
@@ -241,6 +244,57 @@ function TaskDrawer({ id, onClose, onChanged }: { id: string; onClose: () => voi
           </div>
         )}
       </aside>
+    </div>
+  )
+}
+
+function VerifyEmail({ id, onSent }: { id: string; onSent: () => Promise<void> }) {
+  const [draft, setDraft] = useState<{ to: string | null; subject: string; body: string } | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [sent, setSent] = useState<number | null>(null)
+
+  async function compose() {
+    setBusy(true)
+    setError(null)
+    const res = await fetch(`/api/cs/tasks/${id}/verify-email`)
+    const d = await res.json().catch(() => ({}))
+    setBusy(false)
+    if (!res.ok) { setError(d.error ?? 'Không soạn được email'); return }
+    setDraft(d)
+  }
+
+  async function send() {
+    if (!draft) return
+    setBusy(true)
+    setError(null)
+    const res = await fetch(`/api/cs/tasks/${id}/verify-email`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ subject: draft.subject, body: draft.body }) })
+    const d = await res.json().catch(() => ({}))
+    setBusy(false)
+    if (!res.ok) { setError(d.error ?? 'Không gửi được email'); return }
+    setSent(d.fdTicketId)
+    setDraft(null)
+    await onSent()
+  }
+
+  return (
+    <div className="space-y-xs rounded-lg border border-secondary/40 bg-secondary/5 p-md">
+      <p className="text-label-sm uppercase text-on-surface-variant">Email xác minh cho khách</p>
+      {error && <p className="text-body-sm text-error">{error}</p>}
+      {sent && <p className="text-body-sm text-secondary">Đã gửi (Freshdesk #{sent}). Khách trả lời thì ghi câu trả lời và chuyển task sang Xong.</p>}
+      {!draft ? (
+        <button disabled={busy} onClick={compose} className="rounded-lg border border-secondary/40 px-md py-xs text-label-md text-secondary disabled:opacity-50">{busy ? 'Đang soạn…' : 'Soạn email xác minh'}</button>
+      ) : (
+        <>
+          <p className="text-label-sm text-on-surface-variant">Gửi tới: {draft.to ?? 'không có email khách'}</p>
+          <input value={draft.subject} onChange={e => setDraft({ ...draft, subject: e.target.value })} className="w-full rounded-lg border border-outline-variant/40 bg-surface px-md py-xs" />
+          <textarea value={draft.body} onChange={e => setDraft({ ...draft, body: e.target.value })} rows={12} className="w-full rounded-lg border border-outline-variant/40 bg-surface px-md py-xs" />
+          <div className="flex gap-sm">
+            <button disabled={busy || !draft.to || !draft.subject.trim() || !draft.body.trim()} onClick={send} className="rounded-lg bg-secondary px-lg py-sm text-label-md text-on-secondary disabled:opacity-50">{busy ? 'Đang gửi…' : 'Gửi email'}</button>
+            <button disabled={busy} onClick={() => setDraft(null)} className="rounded-lg border border-outline-variant/40 px-md py-xs text-label-md">Huỷ</button>
+          </div>
+        </>
+      )}
     </div>
   )
 }

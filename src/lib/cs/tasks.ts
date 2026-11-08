@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db'
 import type { CsTask, CsTaskEvent, CsTicket } from '@/generated/prisma/client'
+import { releaseVerifiedDesign } from '@/lib/cs/custom-verify'
 import { OPEN_STATUSES, TASK_DEPTS, TASK_META, TASK_STATUSES, TASK_TYPES, DEPT_LABELS, type TaskDept, type TaskStatus, type TaskType } from '@/lib/cs/task-labels'
 export { DEPT_LABELS, OPEN_STATUSES, STATUS_LABELS, TASK_DEPTS, TASK_META, TASK_STATUSES, TASK_TYPES, type TaskDept, type TaskStatus, type TaskType } from '@/lib/cs/task-labels'
 
@@ -79,6 +80,7 @@ export async function updateTask(id: string, patch: { status?: string; dept?: st
   if (patch.status !== undefined && !isStatus(patch.status)) throw new Error('Trạng thái không hợp lệ')
   if (patch.dept !== undefined && !isDept(patch.dept)) throw new Error('Bộ phận không hợp lệ')
   const note = patch.note?.trim() ?? ''
+  if (task.type === 'VERIFY_CUSTOM' && patch.status === 'DONE' && task.status !== 'DONE' && !note) throw new Error('Ghi câu trả lời của khách vào ô ghi chú trước khi chuyển sang Xong')
   const events: { kind: string; body: string; fromStatus?: string; toStatus?: string; authorId: string; authorName: string; createdAt: Date }[] = []
   const data: Record<string, unknown> = {}
   if (patch.status && patch.status !== task.status) {
@@ -95,7 +97,10 @@ export async function updateTask(id: string, patch: { status?: string; dept?: st
     events.push({ kind: 'AMOUNT', body: amount == null ? 'Xoá số tiền' : fmtAmount(amount), authorId: user.id, authorName: user.name, createdAt: now })
   }
   if (!events.length && note) events.push({ kind: 'COMMENT', body: note, authorId: user.id, authorName: user.name, createdAt: now })
-  return prisma.csTask.update({ where: { id }, data: { ...data, events: { create: events } } })
+  const updated = await prisma.csTask.update({ where: { id }, data: { ...data, events: { create: events } } })
+  const closed = data.status === 'DONE' || (data.status === 'CANCELLED' && note)
+  if (task.type === 'VERIFY_CUSTOM' && closed) await releaseVerifiedDesign(task, note, user, now)
+  return updated
 }
 
 export async function addTaskComment(id: string, body: string, user: Actor, now = new Date()): Promise<CsTaskEvent> {

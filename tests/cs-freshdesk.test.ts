@@ -39,6 +39,17 @@ describe('FreshdeskClient', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2)
   })
 
+  it('outboundEmail posts the payload to /tickets/outbound_email and returns the new ticket', async () => {
+    const fetchImpl = fakeFetch(201, { id: 541 })
+    const fd = new FreshdeskClient({ domain: 'litzzy', apiKey: 'k', fetchImpl: fetchImpl as any })
+    const payload = { email: 'a@b.c', subject: 'Q', description: '<p>Hi</p>', email_config_id: 1, status: 6, priority: 2, tags: ['em-verify-custom'], custom_fields: { cf_order_id: '#LIT1' } }
+    expect((await fd.outboundEmail(payload)).id).toBe(541)
+    const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit]
+    expect(url).toBe('https://litzzy.freshdesk.com/api/v2/tickets/outbound_email')
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(String(init.body))).toEqual(payload)
+  })
+
   it('reply posts {body} to /tickets/:id/reply', async () => {
     const fetchImpl = fakeFetch(201, { id: 99 })
     const fd = new FreshdeskClient({ domain: 'litzzy', apiKey: 'k', fetchImpl: fetchImpl as any })
