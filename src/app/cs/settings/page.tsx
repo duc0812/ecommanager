@@ -13,8 +13,8 @@ type View = {
   freshdeskDomain: string; llmProvider: 'anthropic' | 'kie'; model: string; pollEnabled: boolean; killSwitch: boolean; autoReplyEnabled: boolean; autoReplyCategories: string[]; autoReplyDailyCap: number
   notifyLevels: string[]; productionDays: number; shippingDays: number; syncUpdatedSince: string | null
   reviewEnabled: boolean; weeklyReport: boolean; reviewModel: string | null; llmDailyCallCap: number
-  afterHoursAutoReply: boolean; afterHoursCategories: string[]; businessHoursStart: number; businessHoursEnd: number; weekendIsAfterHours: boolean; workSaturdayAnchor: string | null; autoVerifyShopApp: boolean; shopAppVerifyFrom: string | null
-  hasFreshdeskApiKey: boolean; freshdeskApiKeyMasked?: string | null; hasAnthropicApiKey: boolean; anthropicApiKeyMasked?: string | null; hasKieApiKey: boolean; kieApiKeyMasked?: string | null
+  afterHoursAutoReply: boolean; afterHoursCategories: string[]; businessHoursStart: number; businessHoursEnd: number; weekendIsAfterHours: boolean; workSaturdayAnchor: string | null; autoVerifyShopApp: boolean; shopAppVerifyFrom: string | null; reviewOutreachEnabled: boolean; judgemeShopDomain: string
+  hasFreshdeskApiKey: boolean; freshdeskApiKeyMasked?: string | null; hasAnthropicApiKey: boolean; anthropicApiKeyMasked?: string | null; hasKieApiKey: boolean; kieApiKeyMasked?: string | null; hasJudgemeApiToken: boolean; judgemeApiTokenMasked?: string | null
 }
 type LastRun = { ranAt: string; ticketsSeen: number; analysed: number; autoReplied: number; fdRequests: number; error: string | null } | null
 
@@ -22,7 +22,7 @@ export default function CsSettingsPage() {
   const [view, setView] = useState<View | null>(null)
   const [lastRun, setLastRun] = useState<LastRun>(null)
   const [form, setForm] = useState<Partial<View>>({})
-  const [secrets, setSecrets] = useState({ freshdeskApiKey: '', anthropicApiKey: '', kieApiKey: '' })
+  const [secrets, setSecrets] = useState({ freshdeskApiKey: '', anthropicApiKey: '', kieApiKey: '', judgemeApiToken: '' })
   const [message, setMessage] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [backfill, setBackfill] = useState<{ last: any; remaining: number; running?: boolean } | null>(null)
@@ -38,12 +38,12 @@ export default function CsSettingsPage() {
   async function save() {
     setBusy('save')
     setMessage(null)
-    const body = { ...form, ...(secrets.freshdeskApiKey ? { freshdeskApiKey: secrets.freshdeskApiKey } : {}), ...(secrets.anthropicApiKey ? { anthropicApiKey: secrets.anthropicApiKey } : {}), ...(secrets.kieApiKey ? { kieApiKey: secrets.kieApiKey } : {}) }
+    const body = { ...form, ...(secrets.freshdeskApiKey ? { freshdeskApiKey: secrets.freshdeskApiKey } : {}), ...(secrets.anthropicApiKey ? { anthropicApiKey: secrets.anthropicApiKey } : {}), ...(secrets.kieApiKey ? { kieApiKey: secrets.kieApiKey } : {}), ...(secrets.judgemeApiToken ? { judgemeApiToken: secrets.judgemeApiToken } : {}) }
     const res = await fetch('/api/cs/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
     const data = await res.json().catch(() => ({}))
     setBusy(null)
     if (!res.ok) { setMessage(data.error ?? 'Lưu thất bại (cần quyền Super Admin)'); return }
-    setSecrets({ freshdeskApiKey: '', anthropicApiKey: '', kieApiKey: '' })
+    setSecrets({ freshdeskApiKey: '', anthropicApiKey: '', kieApiKey: '', judgemeApiToken: '' })
     setMessage('Đã lưu.')
     load()
   }
@@ -55,7 +55,7 @@ export default function CsSettingsPage() {
     const data = await res.json().catch(() => ({}))
     setBusy(null)
     if (!res.ok) { setMessage(data.error ?? 'Không test được'); return }
-    setMessage(`Freshdesk: ${data.freshdesk.ok ? `OK (${data.freshdesk.tickets} ticket trong 1h)` : data.freshdesk.error} · Model: ${data.llm.ok ? 'OK' : data.llm.error}`)
+    setMessage(`Freshdesk: ${data.freshdesk.ok ? `OK (${data.freshdesk.tickets} ticket trong 1h)` : data.freshdesk.error} · Model: ${data.llm.ok ? 'OK' : data.llm.error} · Judge.me: ${data.judgeme?.ok ? 'OK' : data.judgeme?.error ?? '—'}`)
   }
 
   async function resend() {
@@ -202,6 +202,16 @@ export default function CsSettingsPage() {
                   ))}
                 </div>
               </div>
+            </>)}
+
+            {card('Review 1★ (Judge.me)', <>
+              <label className="block">
+                <span className="text-label-sm text-on-surface-variant">Judge.me private API token · {secretStatusLabel(view.hasJudgemeApiToken, view.judgemeApiTokenMasked)}</span>
+                <input type="password" value={secrets.judgemeApiToken} onChange={e => setSecrets({ ...secrets, judgemeApiToken: e.target.value })} placeholder="Dán token mới để thay" className="mt-xs w-full rounded-lg border border-outline-variant/40 bg-surface px-md py-sm text-body-sm" />
+                <span className="text-label-sm text-on-surface-variant">Lấy trong Judge.me → Settings → Integrations → Developers (private token). Lưu xong bấm &quot;Test kết nối&quot;.</span>
+              </label>
+              {input('Shop domain trên Judge.me', 'judgemeShopDomain')}
+              {check('Tự liên hệ review 1★ (agent tự gửi email hỏi khách gặp vấn đề gì; tắt = chỉ soạn nháp lên board)', 'reviewOutreachEnabled')}
             </>)}
 
             {card('Đánh giá & điều tra', <>

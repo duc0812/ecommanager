@@ -2,7 +2,7 @@ import { describe, it, expect, afterAll, beforeEach } from 'vitest'
 import { prisma } from '@/lib/db'
 import { DEFAULT_CS_SETTINGS, getCsSecrets, getCsSettings, saveCsSecrets, saveCsSettings, toCsSettingsView } from '@/lib/cs/settings'
 
-const KEYS = ['cs.settings', 'cs.freshdeskApiKey', 'cs.anthropicApiKey']
+const KEYS = ['cs.settings', 'cs.freshdeskApiKey', 'cs.anthropicApiKey', 'cs.judgemeApiToken']
 async function clean() { await prisma.appSetting.deleteMany({ where: { key: { in: KEYS } } }) }
 
 beforeEach(clean)
@@ -51,6 +51,22 @@ describe('cs settings', () => {
     expect((await getCsSettings()).llmProvider).toBe('anthropic')
     await saveCsSettings({ llmProvider: 'nope' as any })
     expect((await getCsSettings()).llmProvider).toBe('kie')
+  })
+
+  it('review outreach defaults off and the shop domain to Litzzy', async () => {
+    expect(DEFAULT_CS_SETTINGS.reviewOutreachEnabled).toBe(false)
+    expect(DEFAULT_CS_SETTINGS.judgemeShopDomain).toBe('caramiaus-store.myshopify.com')
+    await saveCsSettings({ reviewOutreachEnabled: true })
+    expect((await getCsSettings()).reviewOutreachEnabled).toBe(true)
+  })
+
+  it('the Judge.me token is stored masked', async () => {
+    await saveCsSecrets({ judgemeApiToken: 'abcd1234wxyz' })
+    const secrets = await getCsSecrets()
+    expect(secrets.judgemeApiToken).toBe('abcd1234wxyz')
+    const view = toCsSettingsView(await getCsSettings(), secrets)
+    expect(view.hasJudgemeApiToken).toBe(true)
+    expect(view.judgemeApiTokenMasked).toBe('abcd…wxyz')
   })
 
   it('the outbound email config defaults to the LITZZY SUPPORT mailbox', async () => {
