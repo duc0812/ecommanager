@@ -8,10 +8,12 @@ import { UrgencyChip, fmtDate, hoursLabel } from '@/components/cs/UrgencyChip'
 import { CATEGORY_LABELS, FACTORY_LABELS, ISSUE_LABELS, SENTIMENT_LABELS, STAGE_LABELS } from '@/lib/cs/labels'
 import { STAGES } from '@/lib/cs/root-cause-prompt'
 import { RUBRIC_LABELS } from '@/lib/cs/review-prompt'
+import { STATUS_LABELS, TASK_META, TASK_TYPES, type TaskStatus, type TaskType } from '@/lib/cs/task-labels'
 
 type Message = { id: string; author: string; private: boolean; bodyText: string; displayText: string; quoted: string | null; createdAt: string; fromEmail: string | null; source: string; sentiment: string | null }
 type ReviewRow = { messageId: string; score: number; issues: string; reason: string; rewrite: string | null }
 type Directive = { id: string; body: string; createdByName: string | null; createdAt: string; resolvedAt: string | null }
+type TicketTask = { id: string; type: TaskType; status: TaskStatus; detail: string; amount: number | null; createdAt: string }
 type Analysis = { id: string; runAt: string; category: string; urgency: string; sentiment: string; summary: string; proposal: string; draftReply: string | null; needsHuman: boolean; citedCaseIds: string; gateJson: string; outputJson: string; model: string; rootCauseStage: string | null; rootCauseEvidence: string | null; rootCauseConfidence: string | null; issueType: string | null }
 type Order = {
   shopifyOrderNumber: string; placedAt: string; customerName: string | null; shipTo: string; factoryState: keyof typeof FACTORY_LABELS; pipelineStatus: string; supplierHandoffAt: string | null
@@ -20,13 +22,15 @@ type Order = {
   designTaskStatuses: string[]
 }
 type Detail = {
-  ticket: { id: string; fdTicketId: number; subject: string; requesterEmail: string | null; requesterName: string | null; orderNumber: string | null; urgency: string | null; category: string | null; sentiment: string | null; needsHuman: boolean; autoReplied: boolean; resolvedInTool: boolean; fdStatus: number; lastCustomerAt: string | null; lastReplyAt: string | null; rootCauseStageOverride: string | null; rootCauseNote: string | null }
+  ticket: { id: string; fdTicketId: number; subject: string; requesterEmail: string | null; requesterName: string | null; orderNumber: string | null; urgency: string | null; category: string | null; sentiment: string | null; needsHuman: boolean; autoReplied: boolean; resolvedInTool: boolean; fdStatus: number; lastCustomerAt: string | null; lastReplyAt: string | null; rootCauseStageOverride: string | null; rootCauseNote: string | null; staffReadAt: string | null; staffReadByName: string | null }
   messages: Message[]
   analysis: Analysis | null
   order: { match: string; order: Order | null; candidates: string[] }
   cases: { id: string; title: string }[]
   reviews: ReviewRow[]
   directives: Directive[]
+  tasks: TicketTask[]
+  needsRead: boolean
 }
 
 const FACTORY_COLOR: Record<string, string> = { NOT_SENT: 'text-on-tertiary-container', AT_FACTORY: 'text-secondary', SHIPPED: 'text-primary', DELIVERED: 'text-on-surface-variant', CANCELLED: 'text-error' }
@@ -41,6 +45,7 @@ export default function CsTicketPage() {
   const [lastSent, setLastSent] = useState<string | null>(null)
   const [rootCauseForm, setRootCauseForm] = useState<{ stage: string; note: string } | null>(null)
   const [directiveText, setDirectiveText] = useState('')
+  const [taskForm, setTaskForm] = useState<{ type: TaskType; detail: string; amount: string } | null>(null)
   const { user } = useCurrentUser()
   const isAdmin = user?.role === 'ADMIN' || user?.role === 'SUPERADMIN'
 
@@ -88,6 +93,19 @@ export default function CsTicketPage() {
     load()
   }
 
+  async function markRead() {
+    if (await post(`/api/cs/tickets/${id}/read`, undefined, 'read')) { setMessage('Đã đánh dấu đã đọc.'); load() }
+  }
+
+  async function addTask() {
+    if (!taskForm || !taskForm.detail.trim()) return
+    const data = await post('/api/cs/tasks', { ticketId: id, type: taskForm.type, detail: taskForm.detail, amount: taskForm.amount.trim() ? Number(taskForm.amount) : null }, 'task')
+    if (!data) return
+    setTaskForm(null)
+    setMessage('Đã tạo task.')
+    load()
+  }
+
   async function promote() {
     if (!lastSent) return
     const data = await post('/api/cs/cases/promote', { ticketId: id, replyBody: lastSent }, 'promote')
@@ -102,7 +120,7 @@ export default function CsTicketPage() {
     )
   }
 
-  const { ticket, messages, analysis, order, cases, reviews, directives } = detail
+  const { ticket, messages, analysis, order, cases, reviews, directives, tasks, needsRead } = detail
   const reviewByMessage = new Map(reviews.map(r => [r.messageId, r]))
   const effectiveStage = ticket.rootCauseStageOverride ?? analysis?.rootCauseStage ?? null
   const o = order.order
@@ -183,6 +201,16 @@ export default function CsTicketPage() {
                 </div>
               </div>
             </div>
+
+            <div className={`flex flex-wrap items-center gap-md rounded-xl border px-lg py-md shadow-card ${needsRead ? 'border-error/50 bg-error/5' : 'border-outline-variant/20 bg-surface-container-lowest'}`}>
+              <span className={`material-symbols-outlined ${needsRead ? 'text-error' : 'text-secondary'}`}>{needsRead ? 'mark_email_unread' : 'task_alt'}</span>
+              <p className="text-body-sm">
+                {needsRead
+                  ? (ticket.staffReadAt ? `Có tin mới sau lần đọc trước (${ticket.staffReadByName ?? '—'}, ${fmtDate(ticket.staffReadAt, true)}). Đọc lại toàn bộ rồi xác nhận.` : 'Chưa nhân sự nào xác nhận đã đọc ticket này.')
+                  : `Đã đọc bởi ${ticket.staffReadByName ?? '—'} · ${fmtDate(ticket.staffReadAt, true)}`}
+              </p>
+              {needsRead && <button onClick={markRead} disabled={busy !== null} className="ml-auto rounded-lg bg-secondary px-lg py-sm text-label-md text-on-secondary disabled:opacity-50">{busy === 'read' ? 'Đang lưu…' : 'Tôi đã đọc ticket này'}</button>}
+            </div>
           </section>
 
           <aside className="space-y-md">
@@ -207,6 +235,37 @@ export default function CsTicketPage() {
                 )}
               </div>
             </div>
+            <div className={`rounded-xl border bg-surface-container-lowest shadow-card ${tasks.some(t => t.status === 'NEW' || t.status === 'IN_PROGRESS' || t.status === 'WAITING') ? 'border-secondary/50' : 'border-outline-variant/20'}`}>
+              <div className="flex items-center justify-between border-b border-outline-variant/20 px-lg py-md">
+                <h3 className="text-headline-sm text-primary">Task</h3>
+                <Link href="/cs/tasks" className="text-label-sm text-secondary">Mở board</Link>
+              </div>
+              <div className="space-y-sm p-lg text-body-sm">
+                {tasks.length === 0 && <p className="text-on-surface-variant">Chưa có task. Agent tự tạo khi ticket cần bên khác làm (đổi size, địa chỉ, custom, huỷ, refund…); nhân sự cũng tạo tay được.</p>}
+                {tasks.map(t => (
+                  <Link key={t.id} href={`/cs/tasks?task=${t.id}`} className={`block rounded-lg p-sm ${t.status === 'DONE' || t.status === 'CANCELLED' ? 'bg-surface-container text-on-surface-variant' : 'bg-secondary/10'}`}>
+                    <p className="text-label-md">{TASK_META[t.type]?.label ?? t.type} · {STATUS_LABELS[t.status] ?? t.status}{t.amount != null ? ` · $${t.amount.toFixed(2)}` : ''}</p>
+                    <p className="line-clamp-2">{t.detail}</p>
+                  </Link>
+                ))}
+                {taskForm ? (
+                  <div className="space-y-xs">
+                    <select value={taskForm.type} onChange={e => setTaskForm({ ...taskForm, type: e.target.value as TaskType })} className="w-full rounded-lg border border-outline-variant/40 bg-surface px-md py-xs">
+                      {TASK_TYPES.map(t => <option key={t} value={t}>{TASK_META[t].label}</option>)}
+                    </select>
+                    <textarea value={taskForm.detail} onChange={e => setTaskForm({ ...taskForm, detail: e.target.value })} rows={3} placeholder="Cần làm gì, cụ thể (size mới, địa chỉ mới, nội dung custom mới…)" className="w-full rounded-lg border border-outline-variant/40 bg-surface px-md py-xs" />
+                    {(taskForm.type === 'REFUND' || taskForm.type === 'DISCOUNT_CODE') && <input value={taskForm.amount} onChange={e => setTaskForm({ ...taskForm, amount: e.target.value })} inputMode="decimal" placeholder="Số tiền đã chốt ($)" className="w-full rounded-lg border border-outline-variant/40 bg-surface px-md py-xs" />}
+                    <div className="flex gap-sm">
+                      <button onClick={addTask} disabled={busy !== null || !taskForm.detail.trim()} className="rounded-lg bg-secondary px-md py-xs text-label-md text-on-secondary disabled:opacity-50">{busy === 'task' ? 'Đang tạo…' : 'Tạo task'}</button>
+                      <button onClick={() => setTaskForm(null)} className="rounded-lg border border-outline-variant/40 px-md py-xs text-label-md">Huỷ</button>
+                    </div>
+                  </div>
+                ) : (
+                  <button onClick={() => setTaskForm({ type: 'SIZE_CHANGE', detail: '', amount: '' })} className="text-label-sm text-secondary">+ Tạo task</button>
+                )}
+              </div>
+            </div>
+
             <div className="rounded-xl border border-outline-variant/20 bg-surface-container-lowest shadow-card">
               <div className="border-b border-outline-variant/20 px-lg py-md"><h3 className="text-headline-sm text-primary">Đơn hàng</h3></div>
               <div className="space-y-sm p-lg text-body-sm">

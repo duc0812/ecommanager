@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { kieResponsesLlm, parseResponsesBody } from '@/lib/llm/kie-responses'
 import { LlmError } from '@/lib/llm/anthropic'
 
-const analysis = { category: 'ORDER_STATUS', urgency: 'NORMAL', sentiment: 'CALM', orderNumber: '#LIT1', summary: 's', facts: [], proposal: 'p', citedCaseIds: [], draftReply: null, needsHuman: true, needsHumanReason: 'r', autoReplyEligible: false, autoReplyReason: 'a', humanRequested: false }
+const analysis = { category: 'ORDER_STATUS', urgency: 'NORMAL', sentiment: 'CALM', orderNumber: '#LIT1', summary: 's', facts: [], proposal: 'p', citedCaseIds: [], draftReply: null, needsHuman: true, needsHumanReason: 'r', autoReplyEligible: false, autoReplyReason: 'a', humanRequested: false, tasks: [], customAnswers: [] }
 const responseObject = {
   id: 'resp_1', object: 'response', status: 'completed', model: 'gpt-6.1-sol',
   output: [

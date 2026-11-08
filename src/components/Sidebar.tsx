@@ -47,6 +47,7 @@ const nav: NavEntry[] = [
   { type: 'divider' },
   { type: 'group', label: 'Customer Service' },
   { type: 'child', href: '/cs', icon: 'support_agent', label: 'Tickets' },
+  { type: 'child', href: '/cs/tasks', icon: 'task_alt', label: 'Task' },
   { type: 'child', href: '/cs/cases', icon: 'menu_book', label: 'Thư viện case' },
   { type: 'child', href: '/cs/insights', icon: 'analytics', label: 'Thống kê lỗi' },
   { type: 'child', href: '/cs/performance', icon: 'grading', label: 'Đánh giá CS' },

@@ -173,7 +173,12 @@ export async function handoffStates(orders: StateOrder[]): Promise<Map<string, H
     const productLines = o.lines.filter(l => !isNonProductLine(l))
     const ready = readyLines(o)
     const isReady = (l: { id: string }) => ready.some(r => r.id === l.id)
-    const allPg = !!pg && productLines.length > 0 && productLines.every(l => l.resolvedSupplierId === pg.id)
+    const account = accounts.get(o.storeId) ?? { name: '', pgprints: false, merchizeNote: 'Không tìm thấy store của đơn' }
+    // PGprints goes line by line like the other API suppliers: an order with another supplier's lines still sends its PGprints lines by API.
+    const pgLines = pg ? productLines.filter(l => l.resolvedSupplierId === pg.id) : []
+    const pgOpen = pgLines.some(isReady)
+    const missingApiSku = pgLines.filter(isReady).filter(l => !l.resolvedSupplierSku || !apiSkuBySku.get(l.resolvedSupplierSku)).map(l => l.resolvedSupplierSku ?? '—')
+    const pgLive = pgLines.length > 0 && account.pgprints && missingApiSku.length === 0
     const mzLines = mz ? productLines.filter(l => l.resolvedSupplierId === mz.id) : []
     const merchizeOpen = mzLines.some(isReady)
     const keyedLines = keyed.map(k => {
@@ -184,19 +189,21 @@ export async function handoffStates(orders: StateOrder[]): Promise<Map<string, H
     const sheetOpen = productLines.some(l => !!l.resolvedSupplierId && sheetSupplierIds.has(l.resolvedSupplierId) && isReady(l))
     // Merchize has no CSV route (owner 11/04/2026): its lines go by API, and only another supplier's lines can wait for an export.
     const isApiLine = (l: { resolvedSupplierId: string | null }) => l.resolvedSupplierId === mz?.id || keyedLines.some(k => k.live && l.resolvedSupplierId === k.supplier?.id)
-    const csvRemainder = (mzLines.length > 0 || keyedLines.some(k => k.apiLines.length > 0)) && productLines.some(l => !isApiLine(l) && !l.exportedAt)
-    const account = accounts.get(o.storeId) ?? { name: '', pgprints: false, merchizeNote: 'Không tìm thấy store của đơn' }
-    const missingApiSku = allPg ? ready.filter(l => !l.resolvedSupplierSku || !apiSkuBySku.get(l.resolvedSupplierSku)).map(l => l.resolvedSupplierSku ?? '—') : []
-    const pgApi = allPg && account.pgprints && missingApiSku.length === 0
+      || (pgLive && l.resolvedSupplierId === pg?.id)
+    const csvRemainder = (mzLines.length > 0 || keyedLines.some(k => k.apiLines.length > 0) || pgLive) && productLines.some(l => !isApiLine(l) && !l.exportedAt)
+    const pgApi = pgLive && (pgOpen || !csvRemainder)
     const mzApi = mzLines.length > 0 && (merchizeOpen || !csvRemainder)
     const keyedApi = keyedLines.find(k => k.apiLines.length > 0 && (k.open || !csvRemainder))
     const api = pgApi || mzApi || !!keyedApi
-    const apiNote = mzApi ? (account.merchizeNote ? `${account.merchizeNote} — chưa gửi được đơn này`
-        : csvRemainder ? 'Đơn nhiều xưởng — dòng Merchize gửi qua API, các dòng còn lại lưu chờ xuất CSV' : null)
-      : keyedApi ? (csvRemainder ? `Đơn nhiều xưởng — dòng ${SUPPLIER_API_NAMES[keyedApi.kind]} gửi qua API, các dòng còn lại lưu chờ xuất CSV` : null)
-      : !allPg || api ? null
-      : !account.pgprints ? `Store ${account.name} chưa có Store ID / Secret key PGprints — lưu chờ xuất CSV`
-      : `SKU xưởng ${Array.from(new Set(missingApiSku)).join(', ')} chưa có "SKU API" — lưu chờ xuất CSV`
+    const mixedNote = (name: string) => csvRemainder ? `Đơn nhiều xưởng — dòng ${name} gửi qua API, các dòng còn lại lưu chờ xuất CSV` : null
+    const pgNote = pgOpen && !pgLive
+      ? (!account.pgprints ? `Store ${account.name} chưa có Store ID / Secret key PGprints — lưu chờ xuất CSV`
+        : `SKU xưởng ${Array.from(new Set(missingApiSku)).join(', ')} chưa có "SKU API" — lưu chờ xuất CSV`)
+      : null
+    const apiNote = mzApi ? (account.merchizeNote ? `${account.merchizeNote} — chưa gửi được đơn này` : mixedNote('Merchize'))
+      : keyedApi ? mixedNote(SUPPLIER_API_NAMES[keyedApi.kind])
+      : pgApi ? mixedNote('PGprints')
+      : pgNote
     const openTasks = o.designTasks.filter(t => t.status !== 'DONE' && t.status !== 'CANCELLED').length
     const handedOff = o.supplierHandoffAt
       ? {
@@ -207,7 +214,14 @@ export async function handoffStates(orders: StateOrder[]): Promise<Map<string, H
     const pending = ready.length > 0
     const push = pushes.get(o.id) ?? null
     const apiOpenKind = keyedLines.find(k => k.open)?.kind ?? null
-    const apiKind: SupplierApiKind = merchizeOpen ? 'merchize' : apiOpenKind ?? (mzLines.length > 0 ? 'merchize' : keyedLines.find(k => k.lines.length > 0)?.kind ?? 'pgprints')
+    // PGprints keeps its CSV route, so it never forbids a CSV save (apiOpenKind), but its unsent lines still open its window.
+    const apiKind: SupplierApiKind = merchizeOpen ? 'merchize' : apiOpenKind ?? (pgLive && pgOpen ? 'pgprints'
+      : mzLines.length > 0 ? 'merchize' : keyedLines.find(k => k.lines.length > 0)?.kind ?? 'pgprints')
+    // Each supplier tab of the hub sends its own lines: the API window a supplier's unsent lines open now.
+    const apiBySupplier: Record<string, SupplierApiKind> = {}
+    if (mz && merchizeOpen) apiBySupplier[mz.id] = 'merchize'
+    for (const k of keyedLines) if (k.supplier && k.open) apiBySupplier[k.supplier.id] = k.kind
+    if (pg && pgLive && pgOpen) apiBySupplier[pg.id] = 'pgprints'
     out.set(o.id, {
       pending,
       readyLineIds: ready.map(l => l.id),
@@ -220,6 +234,7 @@ export async function handoffStates(orders: StateOrder[]): Promise<Map<string, H
       apiKind,
       merchizeOpen,
       apiOpenKind,
+      apiBySupplier,
       csvRemainder,
       sheetOpen,
       csvLocked,

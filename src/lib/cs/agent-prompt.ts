@@ -85,12 +85,33 @@ When the input says "# Mode: AFTER_HOURS", the support team is offline and your 
 - needsHuman true whenever the team must do something next (apply an address, decide a remedy, anything with money); false only for a plain status answer. Keep the proposal for staff precise: what they must do in the morning.
 - autoReplyEligible true when this reply is safe to send unattended under these rules — a damaged, wrong or missing item, a personalisation fix, a stalled parcel or a sizing question are all answerable tonight (acknowledge, say you are checking with your supervisor and answer within 24 hours). Set it false only when the customer threatens a dispute, chargeback or legal action, when their last message needs no answer (a thank-you, an acknowledgement), or when you genuinely cannot tell what they want.
 
+## Tasks for the team
+"tasks" lists the jobs someone must do for this ticket, so nothing is forgotten after the reply. One entry per job, each with a type and a detail written in Vietnamese that says exactly what to do (the new size, the full new address, the exact new personalisation text as the customer typed it, which order).
+- SIZE_CHANGE, ADDRESS_CHANGE, PERSONALIZATION_CHANGE: the customer asked to change it.
+- CANCEL_ORDER: the customer confirmed the cancellation (not while we are still asking their reason).
+- RESEND: an admin directive or an approving library case says to resend or remake.
+- CARRIER_CHECK: the parcel is stalled, has no tracking, or shows delivered but did not arrive.
+- SUPPLIER_ERROR: the item arrived wrong or faulty although the personalisation on the order matches what the customer wanted (wrong name, wrong design, wrong colour or size than the order line, a print or production defect). The factory must be told and the fix claimed from it. The detail says what the order line holds, what the customer received, and asks staff to check the print file before notifying the factory. Do not tell the customer it was the factory's fault.
+- REFUND and DISCOUNT_CODE: only when the customer has accepted a refund or discount that an admin directive, a library case or our earlier reply offered, or a directive orders it. Never because the customer merely asked.
+- OTHER: any other concrete job the team must do.
+- VERIFY_CUSTOM is opened by the system when an order reaches design without its personalisation; never list it yourself.
+amount is the agreed sum in the order currency when the thread states one for a REFUND or DISCOUNT_CODE (for example 30.41), otherwise null. Never guess it.
+List each job again on later analyses while it still applies; the system keeps one task per job. When nothing needs doing, tasks is an empty list.
+
+## Answers to our verification email
+When the thread holds our email asking the customer to confirm the personalisation of an order (house, design, colour, character, a name…) and the customer has answered, list one entry per order in customAnswers:
+- orderNumber: the order the answer is for (#LIT1234).
+- answer: every detail they gave, labelled and exactly as the customer typed it (same spelling, capitals and spacing), e.g. "House: Ravenclaw; Name: Amy" or "Name: none".
+- clear is true only when every detail we asked for is answered without doubt. If they leave one out, hesitate, change something else (size, colour, address), or ask a question, clear is false.
+Then draftReply thanks them and repeats exactly what we will print. When the thread holds no such answer, customAnswers is an empty list.
+
 ## Output rules
 - summary (max 3 short lines), facts and proposal are written in Vietnamese for the staff. facts lists what the customer stated or asked (new address, what is wrong, deadlines, items).
 - draftReply is the English email body ready to send to the customer, signed "Litzzy Support", or null when a reply would be wrong before a human acts. Never quote the thread, never invent tracking or dates that are not in the order data.
 - citedCaseIds lists the ids of the library cases you relied on. In business hours, if no case fits a situation that is not a plain order-status question, set autoReplyEligible to false and needsHuman to true. In after-hours mode a missing case is never a reason to withhold the reply: write the email from the After-hours rules and set autoReplyEligible true; needsHuman true means staff confirm in the morning, not that the customer waits.
 - orderNumber is the order you believe the ticket is about (format #LIT1234) or null.
 - humanRequested follows "Customer asks for a person".
+- customAnswers follows "Answers to our verification email".
 
 ## Categories
 ADDRESS_CHANGE (wrong or new ship-to), CANCEL_ORDER, ORDER_STATUS (where is my order / when will it arrive), DAMAGED_OR_DEFECTIVE, WRONG_ITEM (wrong design, size, colour, personalisation printed), MISSING_ITEM, DELIVERED_NOT_RECEIVED, REFUND_REQUEST, PRODUCT_QUESTION (pre-sale, sizing, materials), PERSONALIZATION_ISSUE (customer wants to change the text or photo before production), OTHER, SPAM.
@@ -115,6 +136,7 @@ export function buildUserPrompt(i: {
   previous: Pick<CsAnalysis, 'category' | 'urgency' | 'summary'>[]
   directives?: { body: string; createdByName: string | null; createdAt: Date }[]
   mode?: CsMode
+  reviewOrigin?: boolean
 }): string {
   const o = i.order.order
   const orderBlock = o
@@ -149,8 +171,11 @@ export function buildUserPrompt(i: {
     ? '# Mode: AFTER_HOURS — the team is offline; draftReply is sent to the customer automatically. Apply "After-hours mode".'
     : '# Mode: BUSINESS_HOURS — the team is online; draftReply is a draft that staff review and send.'
 
+  const origin = i.reviewOrigin
+    ? "\n# Origin: this ticket started from our email about the customer's 1★ review. Never mention the star score and never ask them to change or remove the review; solve the problem under the usual rules.\n"
+    : ''
   return `${mode}
-
+${origin}
 # Ticket #${i.ticket.fdTicketId}
 subject: ${i.ticket.subject}
 requester: ${i.ticket.requesterName ?? '—'} <${i.ticket.requesterEmail ?? '—'}>

@@ -97,7 +97,7 @@ export async function autoReply(fd: Pick<FreshdeskClient, 'reply' | 'update'>, t
   const status = followUp ? 3 : 6
   await fd.update(ticket.fdTicketId, { status, tags })
   const msg = await storeOutgoing(ticket, sent.id, 'AGENT', a.draftReply, false, now, 'AGENT')
-  await prisma.csTicket.update({ where: { id: ticket.id }, data: { autoReplied: true, needsHuman: followUp, fdStatus: status, fdTags: JSON.stringify(tags) } })
+  await prisma.csTicket.update({ where: { id: ticket.id }, data: { autoReplied: true, needsHuman: followUp, fdStatus: status, fdTags: JSON.stringify(tags), lastAgentAt: now } })
   return msg
 }
 
@@ -121,12 +121,15 @@ export function humanHandoffText(a: CsAnalysis, ticket: CsTicket, appUrl: string
   ].join('\n')
 }
 
-export async function sendStaffReply(fd: Pick<FreshdeskClient, 'reply' | 'note' | 'update'>, ticket: CsTicket, body: string, opts: { private: boolean; source?: MessageSource }, now = new Date()): Promise<CsMessage> {
+export async function sendStaffReply(fd: Pick<FreshdeskClient, 'reply' | 'note' | 'update'>, ticket: CsTicket, body: string, opts: { private: boolean; source?: MessageSource; reader?: { id: string; name: string } }, now = new Date()): Promise<CsMessage> {
   const html = textToHtml(body)
   const sent = opts.private ? await fd.note(ticket.fdTicketId, html) : await fd.reply(ticket.fdTicketId, html)
+  const read = opts.reader ? { staffReadAt: now, staffReadById: opts.reader.id, staffReadByName: opts.reader.name } : {}
   if (!opts.private) {
     await fd.update(ticket.fdTicketId, { status: 6 })
-    await prisma.csTicket.update({ where: { id: ticket.id }, data: { fdStatus: 6, needsHuman: false } })
+    await prisma.csTicket.update({ where: { id: ticket.id }, data: { fdStatus: 6, needsHuman: false, ...read } })
+  } else if (opts.reader) {
+    await prisma.csTicket.update({ where: { id: ticket.id }, data: read })
   }
   return storeOutgoing(ticket, sent.id, 'STAFF', body, opts.private, now, opts.source ?? 'OWN')
 }

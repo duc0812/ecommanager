@@ -36,7 +36,7 @@ function fakeFd(): FreshdeskClient & { calls: Call[] } {
 
 const base: Analysis = {
   category: 'ORDER_STATUS', urgency: 'NORMAL', sentiment: 'CALM', orderNumber: null, summary: 'Khách hỏi đơn đến đâu', facts: [], proposal: 'Gửi tracking',
-  citedCaseIds: [], draftReply: 'Hi, your order is on its way.\n\nLitzzy Support', needsHuman: false, needsHumanReason: '', autoReplyEligible: true, autoReplyReason: 'first wismo', humanRequested: false,
+  citedCaseIds: [], draftReply: 'Hi, your order is on its way.\n\nLitzzy Support', needsHuman: false, needsHumanReason: '', autoReplyEligible: true, autoReplyReason: 'first wismo', humanRequested: false, tasks: [], customAnswers: [],
 }
 let askHuman = false
 function fakeLlm(): Llm & { calls: number; rootCauseCalls: number } {
@@ -147,6 +147,7 @@ describe('runAgentCycle', () => {
     expect(replies[0].payload).toContain('noted 12 Test St')
     const t = await prisma.csTicket.findUnique({ where: { fdTicketId: 119 }, include: { messages: true, analyses: { orderBy: { runAt: 'desc' }, take: 1 } } })
     expect(t!.autoReplied).toBe(true)
+    expect(t!.lastAgentAt).toEqual(new Date('2026-10-23T15:00:00Z'))
     expect(t!.needsHuman).toBe(true)
     expect(t!.fdStatus).toBe(3)
     expect(JSON.parse(t!.analyses[0].gateJson).mode).toBe('AFTER_HOURS')
@@ -357,6 +358,16 @@ describe('reply source', () => {
     expect(msg.author).toBe('STAFF')
     const own = await sendStaffReply(d.fd, ticket!, 'Custom text', { private: false })
     expect(own.source).toBe('OWN')
+  })
+
+  it('a staff reply sent from the tool counts as reading the ticket', async () => {
+    const d = deps()
+    await runAgentCycle({ ...d, notifier: collector().notifier })
+    const ticket = await prisma.csTicket.findUnique({ where: { fdTicketId: 195 } })
+    await sendStaffReply(d.fd, ticket!, 'Hi, your order is on its way.', { private: false, reader: { id: 'u1', name: 'Huyền' } }, new Date('2026-10-23T16:00:00Z'))
+    const after = await prisma.csTicket.findUniqueOrThrow({ where: { fdTicketId: 195 } })
+    expect(after.staffReadByName).toBe('Huyền')
+    expect(after.staffReadAt).toEqual(new Date('2026-10-23T16:00:00Z'))
   })
 })
 

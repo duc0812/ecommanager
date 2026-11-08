@@ -29,6 +29,12 @@ export type CsSettings = {
   businessHoursStart: number
   businessHoursEnd: number
   weekendIsAfterHours: boolean
+  workSaturdayAnchor: string | null
+  outboundEmailConfigId: number
+  autoVerifyShopApp: boolean
+  shopAppVerifyFrom: string | null
+  reviewOutreachEnabled: boolean
+  judgemeShopDomain: string
 }
 
 export const AFTER_HOURS_DEFAULT_CATEGORIES = ['ORDER_STATUS', 'ADDRESS_CHANGE', 'CANCEL_ORDER', 'DAMAGED_OR_DEFECTIVE', 'WRONG_ITEM', 'MISSING_ITEM', 'DELIVERED_NOT_RECEIVED', 'REFUND_REQUEST', 'PRODUCT_QUESTION', 'PERSONALIZATION_ISSUE']
@@ -57,9 +63,15 @@ export const DEFAULT_CS_SETTINGS: CsSettings = {
   businessHoursStart: 8,
   businessHoursEnd: 17,
   weekendIsAfterHours: true,
+  workSaturdayAnchor: null,
+  outboundEmailConfigId: 158000294295,
+  autoVerifyShopApp: true,
+  shopAppVerifyFrom: null,
+  reviewOutreachEnabled: false,
+  judgemeShopDomain: 'caramiaus-store.myshopify.com',
 }
 
-export type CsSecrets = { freshdeskApiKey: string | null; anthropicApiKey: string | null; kieApiKey: string | null }
+export type CsSecrets = { freshdeskApiKey: string | null; anthropicApiKey: string | null; kieApiKey: string | null; judgemeApiToken: string | null }
 
 export type CsSettingsView = CsSettings & {
   hasFreshdeskApiKey: boolean
@@ -68,14 +80,17 @@ export type CsSettingsView = CsSettings & {
   anthropicApiKeyMasked: string | null
   hasKieApiKey: boolean
   kieApiKeyMasked: string | null
+  hasJudgemeApiToken: boolean
+  judgemeApiTokenMasked: string | null
 }
 
 const KEY = 'cs.settings'
-const SECRET_KEYS = { freshdeskApiKey: 'cs.freshdeskApiKey', anthropicApiKey: 'cs.anthropicApiKey', kieApiKey: 'cs.kieApiKey' } as const
+const SECRET_KEYS = { freshdeskApiKey: 'cs.freshdeskApiKey', anthropicApiKey: 'cs.anthropicApiKey', kieApiKey: 'cs.kieApiKey', judgemeApiToken: 'cs.judgemeApiToken' } as const
 
 const num = (v: unknown, d: number) => (typeof v === 'number' && Number.isFinite(v) ? v : d)
 const hour = (v: unknown, d: number) => (typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 23 ? v : d)
 const bool = (v: unknown, d: boolean) => (typeof v === 'boolean' ? v : d)
+const saturday = (v: unknown) => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) && new Date(`${v}T12:00:00Z`).getUTCDay() === 6 ? v : null)
 const strList = (v: unknown, d: string[]) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : d)
 const numList = (v: unknown, d: number[]) => (Array.isArray(v) ? v.filter((x): x is number => typeof x === 'number') : d)
 
@@ -105,6 +120,12 @@ function normalize(parsed: any): CsSettings {
     businessHoursStart: hour(parsed.businessHoursStart, d.businessHoursStart),
     businessHoursEnd: hour(parsed.businessHoursEnd, d.businessHoursEnd),
     weekendIsAfterHours: bool(parsed.weekendIsAfterHours, d.weekendIsAfterHours),
+    workSaturdayAnchor: saturday(parsed.workSaturdayAnchor),
+    outboundEmailConfigId: num(parsed.outboundEmailConfigId, d.outboundEmailConfigId),
+    autoVerifyShopApp: bool(parsed.autoVerifyShopApp, d.autoVerifyShopApp),
+    reviewOutreachEnabled: bool(parsed.reviewOutreachEnabled, d.reviewOutreachEnabled),
+    judgemeShopDomain: typeof parsed.judgemeShopDomain === 'string' && /^[a-z0-9-]+.myshopify.com$/i.test(parsed.judgemeShopDomain.trim()) ? parsed.judgemeShopDomain.trim().toLowerCase() : d.judgemeShopDomain,
+    shopAppVerifyFrom: typeof parsed.shopAppVerifyFrom === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(parsed.shopAppVerifyFrom) && !Number.isNaN(Date.parse(parsed.shopAppVerifyFrom)) ? parsed.shopAppVerifyFrom : null,
   }
 }
 
@@ -128,13 +149,15 @@ export async function getCsSecrets(): Promise<CsSecrets> {
     freshdeskApiKey: pick(SECRET_KEYS.freshdeskApiKey, process.env.FRESHDESK_API_KEY),
     anthropicApiKey: pick(SECRET_KEYS.anthropicApiKey, process.env.ANTHROPIC_API_KEY),
     kieApiKey: pick(SECRET_KEYS.kieApiKey, process.env.KIE_API_KEY),
+    judgemeApiToken: pick(SECRET_KEYS.judgemeApiToken, process.env.JUDGEME_API_TOKEN),
   }
 }
 
-export async function saveCsSecrets(p: { freshdeskApiKey?: string; anthropicApiKey?: string; kieApiKey?: string }) {
+export async function saveCsSecrets(p: { freshdeskApiKey?: string; anthropicApiKey?: string; kieApiKey?: string; judgemeApiToken?: string }) {
   if (p.freshdeskApiKey?.trim()) await saveSetting(SECRET_KEYS.freshdeskApiKey, p.freshdeskApiKey.trim())
   if (p.anthropicApiKey?.trim()) await saveSetting(SECRET_KEYS.anthropicApiKey, p.anthropicApiKey.trim())
   if (p.kieApiKey?.trim()) await saveSetting(SECRET_KEYS.kieApiKey, p.kieApiKey.trim())
+  if (p.judgemeApiToken?.trim()) await saveSetting(SECRET_KEYS.judgemeApiToken, p.judgemeApiToken.trim())
 }
 
 export function toCsSettingsView(s: CsSettings, secrets: CsSecrets): CsSettingsView {
@@ -146,5 +169,7 @@ export function toCsSettingsView(s: CsSettings, secrets: CsSecrets): CsSettingsV
     anthropicApiKeyMasked: maskApiKey(secrets.anthropicApiKey),
     hasKieApiKey: !!secrets.kieApiKey,
     kieApiKeyMasked: maskApiKey(secrets.kieApiKey),
+    hasJudgemeApiToken: !!secrets.judgemeApiToken,
+    judgemeApiTokenMasked: maskApiKey(secrets.judgemeApiToken),
   }
 }

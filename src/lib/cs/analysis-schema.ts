@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { CS_CATEGORIES, CS_SENTIMENTS, CS_URGENCIES } from '@/lib/cs/triage'
+import { TASK_TYPES } from '@/lib/cs/task-labels'
 
 export const AnalysisSchema = z.object({
   category: z.enum(CS_CATEGORIES),
@@ -16,6 +17,8 @@ export const AnalysisSchema = z.object({
   autoReplyEligible: z.boolean(),
   autoReplyReason: z.string(),
   humanRequested: z.boolean(),
+  tasks: z.array(z.object({ type: z.enum(TASK_TYPES), detail: z.string(), amount: z.number().nullable() })),
+  customAnswers: z.array(z.object({ orderNumber: z.string(), answer: z.string(), clear: z.boolean() })),
 })
 
 export type Analysis = z.infer<typeof AnalysisSchema>

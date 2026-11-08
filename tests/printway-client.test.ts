@@ -143,12 +143,46 @@ describe('findOrder', () => {
     stubFetch(() => jsonResponse(500, { message: 'Server error' }))
     await expect(findOrder(TOKEN, 'LIT1')).rejects.toMatchObject({ status: 500 })
   })
+
+  // Shape of the live answer for a shipped CSV-imported order (11/07/2026, #LIT5772).
+  it('reads the live answer: a list, items under orderitems with a tracking object, order numbers under trackings', async () => {
+    const tracking = { trackingNumber: '4201522892', trackingUrl: 'https://tools.usps.com/x', carrierName: 'USPS', carrierCode: 'USPS' }
+    stubFetch(() => jsonResponse(200, { success: true, data: [{
+      pw_order_id: 'PWN9004190', order_name: '#LIT5772', trackings: [tracking],
+      orderitems: [{ item_sku: 'PW-CSAONMT-5X5 INCHES-ONE SIDE', quantity: 1, order_status: 'shipped', tracking }],
+    }] }))
+    const order = await findOrder(TOKEN, '#LIT5772')
+    expect(order).toMatchObject({ pwOrderId: 'PWN9004190', status: 'shipped' })
+    expect(order!.tracking).toEqual([{ number: '4201522892', company: 'USPS', sku: 'PW-CSAONMT-5X5 INCHES-ONE SIDE' }])
+  })
+
+  it('treats an empty list as no order', async () => {
+    stubFetch(() => jsonResponse(200, { success: true, message: 'Get detail order completed!', data: [] }))
+    await expect(findOrder(TOKEN, 'LIT1')).resolves.toBeNull()
+  })
 })
 
 describe('listAllSkus', () => {
   it('reads SKU rows wherever the list sits in the answer', async () => {
     stubFetch(() => jsonResponse(200, { data: { items: [{ item_sku: 'PW-A', variant_id: 77, product_name: 'Ornament' }] } }))
     await expect(listAllSkus(TOKEN)).resolves.toEqual([{ skuName: 'PW-A', skuCode: '77', productName: 'Ornament' }])
+  })
+
+  // Shape of the live catalogue (11/07/2026): one row per product, its SKUs under variants, some SKUs listed twice.
+  it('reads the SKUs under each product of the live catalogue, once each', async () => {
+    stubFetch(() => jsonResponse(200, { data: [
+      { product_name: 'Custom Shape Acrylic Ornament', code: 'CSAONMT', variants: [
+        { sku: 'PW-CSAONMT-5X5 INCHES-ONE SIDE', title: '5X5 INCHES/ONE SIDE', variant_id: '103328' },
+        { sku: 'PW-CSAONMT-3.5X7 INCHES-ONE SIDE', title: '3.5X7 INCHES/ONE SIDE', variant_id: '10078098' },
+        { sku: 'PW-CSAONMT-3.5X7 INCHES-ONE SIDE', title: '3.5X7 INCHES/ONE SIDE', variant_id: '10078104' },
+      ] },
+      { product_name: 'Custom Shape Car Ornament', code: 'CSCORM', variants: [{ sku: 'PW-CSCORM-WOOD-4X4 INCHES-ONE SIDE', variant_id: '10014272' }] },
+    ] }))
+    await expect(listAllSkus(TOKEN)).resolves.toEqual([
+      { skuName: 'PW-CSAONMT-5X5 INCHES-ONE SIDE', skuCode: '103328', productName: 'Custom Shape Acrylic Ornament' },
+      { skuName: 'PW-CSAONMT-3.5X7 INCHES-ONE SIDE', skuCode: '10078098', productName: 'Custom Shape Acrylic Ornament' },
+      { skuName: 'PW-CSCORM-WOOD-4X4 INCHES-ONE SIDE', skuCode: '10014272', productName: 'Custom Shape Car Ornament' },
+    ])
   })
 })
 

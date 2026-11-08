@@ -399,6 +399,7 @@ model Order {
   projectId            String
   project              Project     @relation(fields: [projectId], references: [id])
   shopifyOrderNumber   String
+  salesChannel         String?
   customerEmail        String?
   customerName         String?
   shippingCountry      String?
@@ -1408,14 +1409,90 @@ model CsTicket {
   rootCauseById   String?
   reviewedAt      DateTime?
   reviewSeq       Int      @default(0)
+  lastAgentAt     DateTime?
+  staffReadAt     DateTime?
+  staffReadById   String?
+  staffReadByName String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
   messages        CsMessage[]
   analyses        CsAnalysis[]
   reviews         CsReplyReview[]
   directives      CsDirective[]
+  tasks           CsTask[]
   @@index([needsHuman, urgency, lastCustomerAt])
   @@index([fdUpdatedAt])
+}
+
+// A job a CS ticket needs from someone (fulfillment, design, CS itself): the agent opens it, staff move it through its
+// statuses, and every change or comment is a CsTaskEvent so the thread shows how it ended.
+model CsTask {
+  id            String    @id @default(cuid())
+  ticketId      String?
+  ticket        CsTicket? @relation(fields: [ticketId], references: [id], onDelete: SetNull)
+  orderNumber   String?
+  designTaskKey String?
+  reviewId      String?
+  type          String
+  dept          String
+  priority      Int
+  status        String    @default("NEW")
+  detail        String
+  amount        Float?
+  source        String    @default("AGENT")
+  createdById   String?
+  createdByName String?
+  dueAt         DateTime?
+  doneAt        DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  events        CsTaskEvent[]
+  @@index([status, priority])
+  @@index([ticketId])
+  @@index([designTaskKey])
+}
+
+// A 1-star Judge.me review the agent follows up: matched to its order, drafted, sent or parked for the owner.
+model CsReview {
+  id                String    @id @default(cuid())
+  judgemeId         Int       @unique
+  rating            Int
+  title             String?
+  body              String
+  productExternalId String?
+  productTitle      String?
+  reviewerEmail     String?
+  reviewerName      String?
+  verified          String?
+  hidden            Boolean   @default(false)
+  reviewCreatedAt   DateTime
+  orderNumber       String?
+  matchNote         String?
+  caseType          String?
+  status            String    @default("NEW")
+  draftSubject      String?
+  draftBody         String?
+  fdTicketId        Int?
+  sentAt            DateTime?
+  taskId            String?
+  failCount         Int       @default(0)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  @@index([status])
+}
+
+model CsTaskEvent {
+  id         String   @id @default(cuid())
+  taskId     String
+  task       CsTask   @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  kind       String
+  body       String
+  fromStatus String?
+  toStatus   String?
+  authorId   String?
+  authorName String?
+  createdAt  DateTime @default(now())
+  @@index([taskId, createdAt])
 }
 
 model CsMessage {

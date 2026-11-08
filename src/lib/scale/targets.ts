@@ -117,7 +117,7 @@ export async function deleteTarget(id: string): Promise<void> {
 }
 
 function parseSide(side: unknown): ViewSide {
-  if (!VIEW_SIDES.includes(side as ViewSide)) throw new ScaleInputError('Mặt áo phải là front hoặc back')
+  if (!VIEW_SIDES.includes(side as ViewSide)) throw new ScaleInputError('Mặt áo phải là both, front hoặc back')
   return side as ViewSide
 }
 
@@ -176,7 +176,7 @@ export async function suggestViewDescription(id: string, deps: ScaleDeps): Promi
   if (!blank) throw new ScaleInputError('Chưa có ảnh phôi')
   if (!deps.vision) throw new ScaleInputError('Chưa có API key Kie cho bước đọc ảnh')
   try {
-    return await deps.vision.describe({ model: deps.visionModel, system: blankDescriptionSystemPrompt(), text: `Blank mockup of: ${target.name}. This image shows the ${view.side.toUpperCase()} of the garment.`, images: [toDataUrl(blank.bytes, blank.mime)], schema: BlankDescriptionSchema, schemaName: 'scale_blank' })
+    return await deps.vision.describe({ model: deps.visionModel, system: blankDescriptionSystemPrompt(), text: `Blank mockup of: ${target.name}. This image shows ${view.side === 'both' ? 'the FRONT and the BACK' : `the ${view.side.toUpperCase()}`} of the garment.`, images: [toDataUrl(blank.bytes, blank.mime)], schema: BlankDescriptionSchema, schemaName: 'scale_blank' })
   } catch (err) {
     throw new Error(explainKieError(err, 'CS', deps.visionModel))
   }

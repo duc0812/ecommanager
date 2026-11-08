@@ -15,7 +15,7 @@ describe('claudeLlm error shapes', () => {
   })
 
   it('parses a normal structured-output message', async () => {
-    const analysis = { category: 'ORDER_STATUS', urgency: 'NORMAL', sentiment: 'CALM', orderNumber: '#LIT1', summary: 's', facts: [], proposal: 'p', citedCaseIds: [], draftReply: null, needsHuman: true, needsHumanReason: 'r', autoReplyEligible: false, autoReplyReason: 'a', humanRequested: false }
+    const analysis = { category: 'ORDER_STATUS', urgency: 'NORMAL', sentiment: 'CALM', orderNumber: '#LIT1', summary: 's', facts: [], proposal: 'p', citedCaseIds: [], draftReply: null, needsHuman: true, needsHumanReason: 'r', autoReplyEligible: false, autoReplyReason: 'a', humanRequested: false, tasks: [], customAnswers: [] }
     const message = { id: 'msg_1', type: 'message', role: 'assistant', model: 'claude-haiku-5-5', stop_reason: 'end_turn', stop_sequence: null, content: [{ type: 'text', text: JSON.stringify(analysis) }], usage: { input_tokens: 11, output_tokens: 7 } }
     const llm = claudeLlm('anthropic', 'k', { fetch: fakeFetch(message) })
     const res = await llm.analyze({ system: 's', user: 'u', model: 'claude-haiku-5-5' })

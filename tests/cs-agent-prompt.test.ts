@@ -41,6 +41,16 @@ describe('buildSystemPrompt', () => {
     for (const needle of ['## customer asks for a person', 'humanrequested', 'real person', 'automated', 'a member of our support team will personally reply within 24 hours', 'never claim to be a person', 'no longer answers'])
       expect(s, needle).toContain(needle)
   })
+  it('opens tasks for the team: third-party changes, refunds only once accepted, written in Vietnamese', () => {
+    const s = buildSystemPrompt([], settings).toLowerCase()
+    for (const needle of ['## tasks for the team', 'size_change', 'address_change', 'personalization_change', 'cancel_order', 'resend', 'carrier_check', 'supplier_error', 'verify_custom is opened by the system', 'personalisation on the order matches', 'refund', 'discount_code', 'only when the customer has accepted', 'in vietnamese', 'tasks is an empty list', 'amount is the agreed sum'])
+      expect(s, needle).toContain(needle)
+  })
+  it('reads the answers to our verification email exactly as typed', () => {
+    const s = buildSystemPrompt([], settings).toLowerCase()
+    for (const needle of ['## answers to our verification email', 'customanswers', 'exactly as the customer typed', 'clear is true only when', 'customanswers is an empty list'])
+      expect(s, needle).toContain(needle)
+  })
   it('cancellations: ask the reason once, keep the customer in control, never argue', () => {
     const s = buildSystemPrompt([], settings).toLowerCase()
     for (const needle of ['## cancellation requests', 'what made them change their mind', 'holding it so nothing is made', 'one ask only', 'the question is mandatory', 'without asking', 'not our mistake', 'do not ask again', 'cancel as requested'])
@@ -98,6 +108,14 @@ describe('buildUserPrompt', () => {
     expect(day).toContain('# Mode: BUSINESS_HOURS')
     expect(day).not.toContain('AFTER_HOURS')
     expect(buildUserPrompt(base)).toContain('# Mode: BUSINESS_HOURS')
+  })
+  it('a review-origin ticket tells the agent never to raise the review', () => {
+    const ticket = { id: 't1', fdTicketId: 119, subject: 'About your shirt', requesterEmail: 'p@x.com', requesterName: 'Paul', fdCreatedAt: new Date('2026-10-20T05:48:29Z') } as any
+    const base = { ticket, messages: [], order: { match: 'NONE', order: null, candidates: [] } as any, previous: [] }
+    const p = buildUserPrompt({ ...base, reviewOrigin: true })
+    expect(p).toContain('# Origin')
+    expect(p.toLowerCase()).toContain('never mention the star score')
+    expect(buildUserPrompt(base)).not.toContain('# Origin')
   })
   it('shows the personalisation the customer typed on each line and tells the model to quote it, never guess', () => {
     const s = buildSystemPrompt([], settings).toLowerCase()

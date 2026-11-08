@@ -20,7 +20,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   try {
     const latest = await prisma.csAnalysis.findFirst({ where: { ticketId: ticket.id }, orderBy: { runAt: 'desc' }, select: { draftReply: true } })
     const source = isPrivate ? 'OWN' : replySource(text, latest?.draftReply ?? null)
-    const message = await sendStaffReply(deps.fd, ticket, text, { private: isPrivate, source })
+    const message = await sendStaffReply(deps.fd, ticket, text, { private: isPrivate, source, reader: { id: user.id, name: user.name } })
     return NextResponse.json({ message })
   } catch (err: any) {
     return NextResponse.json({ error: `Freshdesk: ${err?.message ?? err}` }, { status: 502 })

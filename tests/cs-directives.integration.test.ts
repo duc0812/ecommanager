@@ -16,7 +16,7 @@ function fakeLlm() {
     async analyze({ user }: { user: string }) {
       llm.calls += 1
       llm.lastUser = user
-      return { output: { category: 'WRONG_ITEM', urgency: 'HIGH', sentiment: 'FRUSTRATED', orderNumber: null, summary: 's', facts: [], proposal: 'Resend', citedCaseIds: [], draftReply: 'Hi, we are resending a new one today.', needsHuman: true, needsHumanReason: 'directive', autoReplyEligible: false, autoReplyReason: 'directive', humanRequested: false }, tokensIn: 1, tokensOut: 1 }
+      return { output: { category: 'WRONG_ITEM', urgency: 'HIGH', sentiment: 'FRUSTRATED', orderNumber: null, summary: 's', facts: [], proposal: 'Resend', citedCaseIds: [], draftReply: 'Hi, we are resending a new one today.', needsHuman: true, needsHumanReason: 'directive', autoReplyEligible: false, autoReplyReason: 'directive', humanRequested: false, tasks: [], customAnswers: [] }, tokensIn: 1, tokensOut: 1 }
     },
   }
   return llm as Llm & { calls: number; lastUser: string }

@@ -1,89 +1,57 @@
 import { describe, it, expect } from 'vitest'
-import { DesignSchema, buildMatchPrompt, buildViewPrompt, designSystemPrompt, renderPrintMapping, type Design } from '@/lib/scale/prompt'
+import { SHEET_PROMPT, blankDescriptionSystemPrompt, buildApplyPrompt } from '@/lib/scale/prompt'
 
-const front = { side: 'front' as const, blankDescription: 'unworn zip hoodie, front view, zipper open showing the white sherpa lining.', unprintedParts: 'The ribbing, zipper and sherpa lining' }
-const back = { side: 'back' as const, blankDescription: 'unworn zip hoodie, back view, hood down.', unprintedParts: '' }
-const name = 'All-over Print Fleece Zip Hoodie'
-const design: Design = {
-  sourceGarment: 'varsity jacket',
-  base: 'black with small yellow-green sparkles and orange clouds',
-  front: 'an armored figure on a hill in front of a large orange sun',
-  back: 'a large poster graphic centered on the back panel',
-  sleeves: 'cream base with orange clouds',
-  otherParts: null,
-  texts: [
-    { text: 'CELEBRATION', where: 'on the lower front', side: 'front' },
-    { text: 'STAR WARS DAY', where: 'the back', side: 'back' },
-    { text: 'STAR WARS', where: 'On each upper sleeve.', side: 'sleeve' },
-  ],
-}
+const name = 'All-over Print Knitted Cardigan'
+const both = { side: 'both' as const, blankDescription: 'front view at the upper left with an open V-neck and a button placket, back view at the lower right.', unprintedParts: 'The buttons, inner lining and neck label' }
+const back = { side: 'back' as const, blankDescription: 'two back views of a man wearing the cloak', unprintedParts: '' }
+const front = { side: 'front' as const, blankDescription: 'front view, zipper open.', unprintedParts: 'The zipper' }
 
 describe('scale prompt', () => {
-  it('a front view gets the front artwork and front texts only', () => {
-    const p = buildViewPrompt(name, front, design)
-    expect(p).toContain('IMAGE 2 is a blank All-over Print Fleece Zip Hoodie mockup on a white background showing the FRONT of the garment: unworn zip hoodie, front view')
+  it('step 1 asks for one flat pattern sheet with every captioned piece and nothing of the photo scene', () => {
+    expect(SHEET_PROMPT).toContain('print-pattern layout')
+    expect(SHEET_PROMPT).toContain('like a sewing pattern sheet')
+    for (const piece of ['FRONT', 'LEFT FRONT and RIGHT FRONT', 'BACK', 'SLEEVE', 'HOOD']) expect(SHEET_PROMPT).toContain(piece)
+    expect(SHEET_PROMPT).toContain('exactly as printed')
+    expect(SHEET_PROMPT).toContain('When the photo does not show the back')
+    expect(SHEET_PROMPT).not.toContain('\n')
+  })
+
+  it('step 2 on a two-view blank puts front pieces on the front view and the back piece on the back view', () => {
+    const p = buildApplyPrompt(name, both)
+    expect(p).toContain('IMAGE 1 is a flat print-pattern sheet')
+    expect(p).toContain('IMAGE 2 is a blank All-over Print Knitted Cardigan mockup on a white background showing the FRONT and the BACK of the same garment: front view at the upper left')
     expect(p).toContain('Keep IMAGE 2 EXACTLY')
-    expect(p).toContain('from IMAGE 1 (a varsity jacket mockup)')
-    expect(p).toContain('IMAGE 1 is the source of the artwork ONLY')
-    expect(p).toContain('Use only the FRONT artwork of IMAGE 1')
-    expect(p).toContain('an armored figure on a hill')
-    expect(p).not.toContain('a large poster graphic')
-    expect(p).toContain("the text 'CELEBRATION' on the lower front")
-    expect(p).toContain("the text 'STAR WARS' on each upper sleeve")
-    expect(p).not.toContain('STAR WARS DAY')
-    expect(p).toContain('spelled exactly the same')
-    expect(p).toContain('The ribbing, zipper and sherpa lining stay unprinted.')
-    expect(p).toContain('Do not invent new graphics or text.')
+    expect(p).toContain('On each FRONT view: the FRONT piece covers the front body')
+    expect(p).toContain('On each BACK view: the BACK piece covers the whole back')
+    expect(p).toContain('Front artwork appears only on front views and back artwork only on back views')
+    expect(p).toContain('The buttons, inner lining and neck label stay unprinted.')
+    expect(p).toContain('The captions and the white page of the sheet are not part of the design')
+    expect(p).toContain('do not invent new graphics or text')
   })
 
-  it('a back view gets the back artwork and back texts only', () => {
-    const p = buildViewPrompt(name, back, design)
-    expect(p).toContain('showing the BACK of the garment')
-    expect(p).toContain('Use only the BACK artwork of IMAGE 1')
-    expect(p).toContain('a large poster graphic')
-    expect(p).not.toContain('an armored figure on a hill')
-    expect(p).toContain("the text 'STAR WARS DAY' on the back")
-    expect(p).not.toContain('CELEBRATION')
-    expect(p).not.toContain('stay unprinted')
+  it('a back-only blank gets the back piece only, a front-only blank the front pieces only', () => {
+    const b = buildApplyPrompt('All-over Print Hooded Cloak Coat', back)
+    expect(b).toContain('showing the BACK of the garment')
+    expect(b).toContain('The BACK piece covers the whole back in every view shown. The FRONT pieces do not belong on this image.')
+    expect(b).not.toContain('stay unprinted')
+    const f = buildApplyPrompt(name, front)
+    expect(f).toContain('showing the FRONT of the garment')
+    expect(f).toContain('The BACK piece does not belong on this image.')
   })
 
-  it('does not invent a back graphic when the source shows no back', () => {
-    const p = buildViewPrompt(name, back, { ...design, back: null, texts: [] })
-    expect(p).toContain('Back view: continues the same base pattern with no additional graphic.')
-    expect(p).not.toContain('spelled exactly')
-  })
-
-  it('prints the whole outer fabric: no placeholder colour and no bare patch may remain', () => {
-    const p = buildViewPrompt(name, back, design)
+  it('prints the whole outer fabric, ribbing and placket included, and keeps a model untouched', () => {
+    const p = buildApplyPrompt(name, both)
     expect(p).not.toContain('grey')
-    expect(p).toContain('placeholder colour or colour blocks are not a design and must disappear completely')
     expect(p).toContain('printed edge to edge')
+    expect(p).toContain('are not a design and must disappear completely')
+    expect(p).toContain('Ribbed cuffs, hem or waistband, collar or neckband and the button placket are outer fabric too')
     expect(p).toContain('a person wearing it')
   })
 
-  it('a second view of the same side copies the finished first view instead of reading the source again', () => {
-    const p = buildMatchPrompt(name, back)
-    expect(p).toContain('IMAGE 1 is a finished mockup of this same printed garment')
-    expect(p).toContain('showing the BACK of the garment: unworn zip hoodie, back view')
-    expect(p).toContain('exactly the same printed design')
-    expect(p).toContain('printed edge to edge')
-  })
-
-  it('keeps model text on one line and does not double the preposition', () => {
-    const m = renderPrintMapping({ ...design, front: 'line one\nline two' }, 'front')
-    expect(m).not.toContain('\n')
-    expect(m.toLowerCase()).not.toContain('on on ')
-  })
-
-  it('asks for figures to be described by what they look like, the way the hand-written prompts did', () => {
-    const p = designSystemPrompt()
-    expect(p).toContain('by what it looks like')
-    expect(p).toContain('never by the name of a character, a franchise, a brand or a real person')
-    expect(p).toContain('Printed words are different')
-  })
-
-  it('rejects a design without sourceGarment or a text without a side', () => {
-    expect(DesignSchema.safeParse({ ...design, sourceGarment: undefined }).success).toBe(false)
-    expect(DesignSchema.safeParse({ ...design, texts: [{ text: 'A', where: 'the back' }] }).success).toBe(false)
+  it('blank descriptions list ribbing as unprinted only when it is a different fixed colour', () => {
+    const rule = blankDescriptionSystemPrompt()
+    expect(rule).toContain('same placeholder colour as the rest of the outer fabric is printable and must NOT be listed')
+    expect(rule).toContain('clearly a different fixed colour')
+    expect(rule).toContain('the front, the back, or both views')
   })
 })

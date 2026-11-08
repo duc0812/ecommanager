@@ -9,7 +9,7 @@ import { DEFAULT_ROLE_PERMISSIONS } from '@/lib/roles'
 import { PGPRINTS_KEYS } from '@/lib/pgprints-settings'
 import { syncDesignTasks, transitionTask, type Actor } from '@/lib/design-tasks'
 import { countPendingHandoff, handoffStateFor, listHandoffCards, listSentCards, listHandoffHub } from '@/lib/supplier-handoff'
-import { UNMAPPED_TAB } from '@/lib/handoff-shared'
+import { UNMAPPED_TAB, stateForSupplier } from '@/lib/handoff-shared'
 import { hubView } from '@/lib/handoff-hub'
 import { nextExternalOrderId } from '@/lib/repos/push-export'
 import { GET as getTasks } from '@/app/api/design-studio/tasks/route'
@@ -630,6 +630,27 @@ describe('hub tabs by supplier', () => {
     expect(hub.selected).toBe(PG_SUP)
     expect(hub.pending.map(c => c.order.id)).toEqual([o.id])
     expect(hub.pending[0].lines.find(l => l.line.supplier?.id === CSV_SUP)).toMatchObject({ baseCost: 12 })
+  })
+
+  // #LIT6229 / #LIT5579 (11/07/2026): a PGprints line beside another supplier's line sat behind the CSV lock with no API button.
+  it('sends the PGprints line of a mixed order by API, from the PGprints tab only', async () => {
+    const o = await twoSuppliers()
+    const state = (await handoffStateFor(o.id))!
+    expect(state).toMatchObject({ pending: true, mode: 'API', apiKind: 'pgprints', apiName: 'PGprints', csvRemainder: true, apiBySupplier: { [PG_SUP]: 'pgprints' } })
+    expect(state.apiNote).toContain('dòng PGprints gửi qua API')
+    expect(stateForSupplier(state, PG_SUP)).toMatchObject({ mode: 'API', apiKind: 'pgprints' })
+    expect(stateForSupplier(state, CSV_SUP)).toMatchObject({ mode: 'CSV', apiName: null })
+    const pre = await preview(o.id, adminToken)
+    expect(pre.canPush).toBe(true)
+    expect(pre.lines.map((l: { lineId: string }) => l.lineId)).toEqual([o.second.id])
+  })
+
+  it('a mixed order whose PGprints line has no API SKU says which SKU, and has no API window', async () => {
+    const o = await twoSuppliers()
+    await prisma.orderLine.update({ where: { id: o.second.id }, data: { resolvedSupplierSku: 'NO-API' } })
+    const state = (await handoffStateFor(o.id))!
+    expect(state).toMatchObject({ mode: 'CSV', apiName: null, apiBySupplier: {} })
+    expect(state.apiNote).toContain('NO-API')
   })
 
   it('drops a supplier once its lines are sent', async () => {

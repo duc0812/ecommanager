@@ -4,7 +4,7 @@ import { shrinkImage } from '@/components/creative/GenerateForm'
 import { postJson, scaleFileUrl, type ScaleTargetView, type ScaleViewRow } from '@/components/scale/types'
 
 const ACCEPT = 'image/png,image/jpeg,image/webp'
-const SIDE_LABEL = { front: 'Mặt trước', back: 'Mặt sau' }
+const SIDE_LABEL = { both: 'Trước + sau (ảnh ghép)', front: 'Mặt trước', back: 'Mặt sau' }
 const input = 'w-full rounded-lg border border-outline-variant/40 bg-surface px-md py-sm text-body-sm'
 
 type Change = (t: ScaleTargetView) => void
@@ -64,7 +64,9 @@ function ViewRow({ view, version, onChange }: { view: ScaleViewRow; version: str
         <div className="grid grid-cols-1 sm:grid-cols-[1fr_160px] gap-sm">
           <input value={form.label} onChange={e => setForm({ ...form, label: e.target.value })} placeholder="Tên góc" className={input} />
           <select value={form.side} onChange={e => setForm({ ...form, side: e.target.value as ScaleViewRow['side'] })} className={input}>
-            <option value="front">{SIDE_LABEL.front}</option>
+            <option value="both">{SIDE_LABEL.both}</option>
+            <option value="both">{SIDE_LABEL.both}</option>
+          <option value="front">{SIDE_LABEL.front}</option>
             <option value="back">{SIDE_LABEL.back}</option>
           </select>
         </div>
@@ -83,7 +85,7 @@ function ViewRow({ view, version, onChange }: { view: ScaleViewRow; version: str
 
 function TargetRow({ target, onChange, onRemoved }: { target: ScaleTargetView; onChange: Change; onRemoved: (id: string) => void }) {
   const [form, setForm] = useState({ name: target.name, sku: target.sku })
-  const [newView, setNewView] = useState<{ label: string; side: 'front' | 'back' }>({ label: '', side: 'front' })
+  const [newView, setNewView] = useState<{ label: string; side: ScaleViewRow['side'] }>({ label: '', side: 'both' })
   const { busy, message, run } = useAction(onChange)
   const base = `/api/tools/scale/targets/${target.id}`
   const views = target.views ?? []
@@ -97,7 +99,7 @@ function TargetRow({ target, onChange, onRemoved }: { target: ScaleTargetView; o
 
   async function addView() {
     const json = await run('view', () => postJson(`${base}/views`, newView))
-    if (json?.target) setNewView({ label: '', side: 'front' })
+    if (json?.target) setNewView({ label: '', side: 'both' })
   }
 
   return (
@@ -117,13 +119,14 @@ function TargetRow({ target, onChange, onRemoved }: { target: ScaleTargetView; o
       {message && <p className={`text-body-sm ${message.error ? 'text-error' : 'text-on-surface-variant'}`}>{message.text}</p>}
       {views.map(v => <ViewRow key={v.id} view={v} version={target.updatedAt} onChange={onChange} />)}
       <div className="flex flex-wrap items-center gap-sm">
-        <input value={newView.label} onChange={e => setNewView({ ...newView, label: e.target.value })} placeholder="Tên góc mới (ví dụ: Mặt trước)" className={`${input} max-w-[280px]`} />
-        <select value={newView.side} onChange={e => setNewView({ ...newView, side: e.target.value as 'front' | 'back' })} className={`${input} max-w-[160px]`}>
+        <input value={newView.label} onChange={e => setNewView({ ...newView, label: e.target.value })} placeholder="Tên ảnh phôi mới (ví dụ: Trước + sau)" className={`${input} max-w-[280px]`} />
+        <select value={newView.side} onChange={e => setNewView({ ...newView, side: e.target.value as ScaleViewRow['side'] })} className={`${input} max-w-[160px]`}>
+          <option value="both">{SIDE_LABEL.both}</option>
           <option value="front">{SIDE_LABEL.front}</option>
           <option value="back">{SIDE_LABEL.back}</option>
         </select>
         <button type="button" disabled={!!busy || !newView.label.trim()} onClick={addView} className="text-label-md text-secondary hover:underline disabled:opacity-50">Thêm góc</button>
-        <p className="text-body-sm text-on-surface-variant">Mỗi góc được tạo riêng rồi ghép lại theo thứ tự. Hai góc cùng một mặt: góc sau chép thiết kế của góc trước.</p>
+        <p className="text-body-sm text-on-surface-variant">Thường mỗi sản phẩm chỉ cần một ảnh phôi ghép sẵn mặt trước và mặt sau. Có nhiều ảnh phôi thì mỗi ảnh được in riêng rồi ghép lại theo thứ tự.</p>
       </div>
     </div>
   )

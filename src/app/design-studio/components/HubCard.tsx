@@ -5,7 +5,7 @@ import { ArtImg } from './art-src'
 import HandoffButton from './HandoffButton'
 import { Icon, Pill, btnPrimary, card as cardClass } from './ui'
 import { HUB_WARNING_LABELS, fmtUsd, hubTypeLabel, hubView } from '@/lib/handoff-hub'
-import { HANDOFF_LABELS, UNMAPPED_TAB } from '@/lib/handoff-shared'
+import { HANDOFF_LABELS, UNMAPPED_TAB, stateForSupplier } from '@/lib/handoff-shared'
 
 const fmtDate = (iso: string) => new Date(iso).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit' })
 
@@ -74,7 +74,7 @@ export default function HubCard({ c, tabId, sheet, me, onOpenTask, onSheet, onCh
               title={view.warnings.length ? `Sửa cảnh báo trước: ${warnText}` : 'Ghi đơn vào sheet của xưởng'}>
               <Icon name="table_view" className="text-[16px]" />{HANDOFF_LABELS.produceSheet}
             </button>
-          ) : <HandoffButton compact orderId={order.id} state={state} canHandoff={!!me?.canHandoff} onChanged={onChanged} onError={onError} />}
+          ) : <HandoffButton compact orderId={order.id} state={stateForSupplier(state, tabId)} canHandoff={!!me?.canHandoff} onChanged={onChanged} onError={onError} />}
         </span>
       </div>
     </article>

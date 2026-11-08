@@ -118,11 +118,19 @@ function rowsIn(data: any): any[] {
   return []
 }
 
+// The catalogue answers one row per product with its SKUs under `variants`; a flat SKU row is read too. A SKU listed twice keeps its first row.
 export async function listAllSkus(token: string): Promise<SkuOption[]> {
   const json = await call(token, 'GET', '/products/list-sku-catalogs')
+  const seen = new Set<string>()
   return rowsIn(payloadOf(json)).flatMap(r => {
-    const skuName = str(r?.item_sku) ?? str(r?.sku)
-    return skuName ? [{ skuName, skuCode: str(r?.variant_id), productName: str(r?.product_name) ?? str(r?.name) }] : []
+    const productName = str(r?.product_name) ?? str(r?.name)
+    const rows: any[] = Array.isArray(r?.variants) ? r.variants : [r]
+    return rows.flatMap(v => {
+      const skuName = str(v?.item_sku) ?? str(v?.sku)
+      if (!skuName || seen.has(skuName)) return []
+      seen.add(skuName)
+      return [{ skuName, skuCode: str(v?.variant_id), productName }]
+    })
   })
 }
 
@@ -147,14 +155,25 @@ export async function cancelOrder(token: string, pwOrderId: string): Promise<voi
   await call(token, 'POST', '/order/cancel-order-api', JSON.stringify({ pw_order_id: pwOrderId }))
 }
 
+function itemsOf(order: any): any[] {
+  return [order?.orderitems, order?.order_items].find(Array.isArray) ?? []
+}
+
+// The live answer lists items under `orderitems`, each with a `tracking` object, and the order's numbers under `trackings`,
+// in camelCase; the snake_case shape is read too. A number an item names keeps its SKU and is not listed again for the order.
 function trackingsOf(order: any): PrintwayTracking[] {
   const out: PrintwayTracking[] = []
   const add = (src: any, sku: string | null) => {
-    const number = str(src?.tracking_number)
-    if (number) out.push({ number, company: str(src?.carrier_name) ?? str(src?.carrier_code), sku })
+    const number = str(src?.tracking_number) ?? str(src?.trackingNumber)
+    if (!number || out.some(t => t.number === number)) return
+    out.push({ number, company: str(src?.carrier_name) ?? str(src?.carrierName) ?? str(src?.carrier_code) ?? str(src?.carrierCode), sku })
+  }
+  for (const item of itemsOf(order)) {
+    add(item, str(item?.item_sku))
+    if (item?.tracking && typeof item.tracking === 'object') add(item.tracking, str(item?.item_sku))
   }
   add(order, null)
-  for (const item of Array.isArray(order?.order_items) ? order.order_items : []) add(item, str(item?.item_sku))
+  for (const t of Array.isArray(order?.trackings) ? order.trackings : []) add(t, null)
   return out
 }
 
@@ -173,7 +192,7 @@ export async function findOrder(token: string, orderName: string): Promise<Print
   if (!order || typeof order !== 'object') return null
   const pwOrderId = str(order.pw_order_id)
   if (!pwOrderId) return null
-  return { pwOrderId, status: str(order.order_status) ?? str(order.status), tracking: trackingsOf(order) }
+  return { pwOrderId, status: str(order.order_status) ?? str(order.status) ?? str(itemsOf(order)[0]?.order_status), tracking: trackingsOf(order) }
 }
 
 /** The tracking of a line: the one naming its SKU, or the order's only number. Different numbers with no SKU match stay unassigned rather than guessed. */

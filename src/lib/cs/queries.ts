@@ -1,9 +1,10 @@
 import { prisma } from '@/lib/db'
-import type { CsAnalysis, CsCase, CsDirective, CsMessage, CsReplyReview, CsTicket } from '@/generated/prisma/client'
+import type { CsAnalysis, CsCase, CsDirective, CsMessage, CsReplyReview, CsTask, CsTicket } from '@/generated/prisma/client'
 import { buildOrderContext, type OrderContext } from '@/lib/cs/order-context'
 import { displayText, splitQuoted } from '@/lib/cs/message-text'
+import { needsRead, ticketTasks } from '@/lib/cs/tasks'
 
-export type TicketTab = 'todo' | 'agent' | 'done'
+export type TicketTab = 'todo' | 'agent' | 'done' | 'unread'
 
 export type TicketRow = {
   id: string
@@ -22,6 +23,8 @@ export type TicketRow = {
   lastReplyAt: Date | null
   summary: string | null
   hoursUnanswered: number
+  needsRead: boolean
+  staffReadByName: string | null
 }
 
 const URGENCY_RANK: Record<string, number> = { URGENT: 0, HIGH: 1, NORMAL: 2, LOW: 3 }
@@ -29,6 +32,7 @@ const URGENCY_RANK: Record<string, number> = { URGENT: 0, HIGH: 1, NORMAL: 2, LO
 function whereFor(tab: TicketTab) {
   if (tab === 'agent') return { autoReplied: true, needsHuman: false, resolvedInTool: false, fdStatus: { notIn: [4, 5] } }
   if (tab === 'done') return { OR: [{ resolvedInTool: true }, { fdStatus: { in: [4, 5] } }] }
+  if (tab === 'unread') return { fdStatus: { notIn: [4, 5] } }
   return { needsHuman: true, resolvedInTool: false, fdStatus: { notIn: [4, 5] } }
 }
 
@@ -66,8 +70,10 @@ export async function listTickets(tab: TicketTab, q?: string, now = new Date()):
     lastReplyAt: t.lastReplyAt,
     summary: t.analyses[0]?.summary ?? null,
     hoursUnanswered: hoursUnansweredOf(t, now),
-  }))
-  if (tab === 'todo') {
+    needsRead: needsRead(t),
+    staffReadByName: t.staffReadByName,
+  })).filter(r => tab !== 'unread' || r.needsRead)
+  if (tab === 'todo' || tab === 'unread') {
     rows.sort((a, b) => {
       const ra = URGENCY_RANK[a.urgency ?? ''] ?? 9
       const rb = URGENCY_RANK[b.urgency ?? ''] ?? 9
@@ -90,6 +96,8 @@ export type TicketDetail = {
   cases: Pick<CsCase, 'id' | 'title'>[]
   reviews: CsReplyReview[]
   directives: CsDirective[]
+  tasks: CsTask[]
+  needsRead: boolean
 }
 
 export async function ticketDetail(id: string): Promise<TicketDetail | null> {
@@ -111,5 +119,6 @@ export async function ticketDetail(id: string): Promise<TicketDetail | null> {
   const reviews = await prisma.csReplyReview.findMany({ where: { ticketId: id } })
   const directives = await prisma.csDirective.findMany({ where: { ticketId: id }, orderBy: { createdAt: 'desc' } })
   const shaped: DetailMessage[] = messages.map(m => { const { main, quoted } = splitQuoted(displayText(m.bodyHtml, m.bodyText)); return { ...m, displayText: main, quoted } })
-  return { ticket: rest as CsTicket, messages: shaped, analysis, order, cases, reviews, directives }
+  const tasks = await ticketTasks(id)
+  return { ticket: rest as CsTicket, messages: shaped, analysis, order, cases, reviews, directives, tasks, needsRead: needsRead(rest as CsTicket) }
 }
