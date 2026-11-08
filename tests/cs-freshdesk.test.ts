@@ -84,3 +84,16 @@ describe('ticketsByEmail', () => {
     await expect(client(500, {}).ticketsByEmail('a@b.com')).rejects.toThrow()
   })
 })
+
+describe('ticketsByEmail window and errors', () => {
+  it('asks for tickets updated in the last 90 days', async () => {
+    const calls: string[] = []
+    const c = new FreshdeskClient({ domain: 'litzzy', apiKey: 'k', fetchImpl: (async (u: string) => { calls.push(String(u)); return new Response('[]', { status: 200 }) }) as unknown as typeof fetch })
+    await c.ticketsByEmail('a@b.com', new Date('2026-11-08T00:00:00Z'))
+    expect(calls[0]).toContain('updated_since=2026-08-10')
+  })
+  it('throws on a 400 that is not the unknown-contact answer', async () => {
+    const c = new FreshdeskClient({ domain: 'litzzy', apiKey: 'k', fetchImpl: (async () => new Response(JSON.stringify({ description: 'Validation failed', errors: [{ field: 'updated_since', message: 'invalid date' }] }), { status: 400 })) as unknown as typeof fetch })
+    await expect(c.ticketsByEmail('a@b.com')).rejects.toThrow()
+  })
+})

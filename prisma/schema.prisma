@@ -1475,6 +1475,7 @@ model CsReview {
   fdTicketId        Int?
   sentAt            DateTime?
   taskId            String?
+  failCount         Int       @default(0)
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
   @@index([status])

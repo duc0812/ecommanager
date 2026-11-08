@@ -94,12 +94,14 @@ export class FreshdeskClient {
     return this.call('POST', '/tickets/outbound_email', payload)
   }
 
-  // Freshdesk answers 400 "no contact matching the given email" for someone who never wrote in.
-  async ticketsByEmail(email: string): Promise<{ id: number; created_at: string }[]> {
+  // Freshdesk answers 400 "no contact matching the given email" for someone who never wrote in, and without updated_since
+  // lists only tickets created in the last 30 days.
+  async ticketsByEmail(email: string, now = new Date()): Promise<{ id: number; created_at: string }[]> {
+    const since = new Date(now.getTime() - 90 * 86400_000).toISOString().slice(0, 10)
     try {
-      return await this.call('GET', `/tickets?email=${encodeURIComponent(email)}&per_page=100`)
+      return await this.call('GET', `/tickets?email=${encodeURIComponent(email)}&updated_since=${since}T00:00:00Z&per_page=100`)
     } catch (err) {
-      if (err instanceof FreshdeskError && err.status === 400) return []
+      if (err instanceof FreshdeskError && err.status === 400 && /no contact matching/i.test(err.message)) return []
       throw err
     }
   }

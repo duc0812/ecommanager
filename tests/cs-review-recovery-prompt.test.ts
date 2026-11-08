@@ -32,3 +32,11 @@ describe('guardDraft', () => {
   it('rejects an offer', () => expect(guardDraft(clean + '\nWe can send a replacement.')).not.toBeNull())
   it('rejects a draft that never mentions the review', () => expect(guardDraft(clean.replace('We saw the review you left for', 'About'))).not.toBeNull())
 })
+
+describe('guardDraft on the subject and stars', () => {
+  const clean = "Hi Ann,\n\nWe saw the review you left for the Stwa shirt on order #LIT1. Could you tell us what happened?\n\nWarm regards,\nLitzzy Support"
+  it('rejects the star character', () => expect(guardDraft(clean.replace('Stwa shirt', 'Stwa shirt ★'))).not.toBeNull())
+  it('rejects a subject that names the score', () => expect(guardDraft(clean, 'About your 1-star review')).not.toBeNull())
+  it('rejects an empty subject', () => expect(guardDraft(clean, ' ')).not.toBeNull())
+  it('passes a clean subject', () => expect(guardDraft(clean, 'About your Stwa shirt, order #LIT1')).toBeNull())
+})

@@ -264,3 +264,130 @@ describe('processReviews', () => {
     expect((await followUpRatings(client, NOW)).changed).toBe(0)
   })
 })
+
+describe('final review fixes', () => {
+  const CLEAN = 'Hi Ann,\n\nWe saw the review you left for the Stwa Galaxy Shirt on order #RR1. Could you tell us what happened?\n\nWarm regards,\nLitzzy Support'
+  function llmReturning(body = CLEAN, subject = 'About your Stwa shirt') {
+    const llm = {
+      calls: 0,
+      async analyze(): Promise<any> { throw new Error('not used') },
+      async complete(): Promise<any> {
+        llm.calls++
+        return { output: { caseType: 'NOT_RECEIVED', taskType: 'CARRIER_CHECK', taskDetail: 'Kiểm tra', subject, body, alsoCsComplaint: false }, tokensIn: 1, tokensOut: 1 }
+      },
+    }
+    return llm
+  }
+  function fd(ticketsByEmail: Record<string, { id: number; created_at: string }[]> = {}) {
+    const sent: any[] = []
+    return {
+      sent,
+      fd: { async outboundEmail(p: any) { sent.push(p); return { id: 900 + sent.length } } },
+      fdLookup: { async ticketsByEmail(email: string) { return ticketsByEmail[email] ?? [] } },
+    }
+  }
+  const NOW = new Date('2026-11-08T12:00:00Z')
+  async function seed(id = 41, review: Partial<JmReview> = {}, customerName = 'Ann Lee') {
+    const o = await makeOrder('ann@example.com', '2026-10-01T00:00:00Z', [{ sku: 'ST1-L', title: 'Stwa Galaxy Shirt', productId: 'gid://shopify/Product/8891490140317' }], { customerName })
+    await syncReviews(fakeClient([[jm({ id, ...review })]]))
+    return o
+  }
+  beforeEach(async () => {
+    await saveCsSettings({ reviewOutreachEnabled: false, killSwitch: false })
+    await prisma.csTicket.deleteMany({ where: { fdTicketId: 88001 } })
+  })
+
+  it('a ticket the tool already holds for the reviewer parks the review', async () => {
+    await seed()
+    await prisma.csTicket.create({ data: { fdTicketId: 88001, subject: 'x', fdStatus: 4, fdPriority: 1, requesterEmail: 'Ann@Example.com', fdCreatedAt: new Date('2026-09-20T00:00:00Z'), fdUpdatedAt: new Date('2026-09-20T00:00:00Z') } })
+    const f = fd()
+    await processReviews({ llm: llmReturning() as any, fd: f.fd, fdLookup: f.fdLookup, now: NOW })
+    expect((await prisma.csReview.findFirstOrThrow()).status).toBe('PARKED')
+    expect((await prisma.csTask.findFirstOrThrow()).detail).toContain('#88001')
+  })
+  it('a stored draft is not sent once its task was closed', async () => {
+    await seed()
+    const f = fd()
+    await processReviews({ llm: llmReturning() as any, fd: f.fd, fdLookup: f.fdLookup, now: NOW })
+    await prisma.csTask.updateMany({ data: { status: 'DONE' } })
+    await saveCsSettings({ reviewOutreachEnabled: true })
+    await processReviews({ llm: llmReturning() as any, fd: f.fd, fdLookup: f.fdLookup, now: NOW })
+    expect(f.sent).toHaveLength(0)
+  })
+  it('a stored draft is not sent once the customer raised the rating', async () => {
+    await seed()
+    const f = fd()
+    await processReviews({ llm: llmReturning() as any, fd: f.fd, fdLookup: f.fdLookup, now: NOW })
+    await prisma.csReview.updateMany({ data: { rating: 4 } })
+    await saveCsSettings({ reviewOutreachEnabled: true })
+    await processReviews({ llm: llmReturning() as any, fd: f.fd, fdLookup: f.fdLookup, now: NOW })
+    expect(f.sent).toHaveLength(0)
+  })
+  it('a stored draft is parked when the customer opened a ticket meanwhile', async () => {
+    await seed()
+    const f = fd()
+    await processReviews({ llm: llmReturning() as any, fd: f.fd, fdLookup: f.fdLookup, now: NOW })
+    await saveCsSettings({ reviewOutreachEnabled: true })
+    const later = fd({ 'ann@example.com': [{ id: 555, created_at: '2026-11-07T00:00:00Z' }] })
+    await processReviews({ llm: llmReturning() as any, fd: later.fd, fdLookup: later.fdLookup, now: NOW })
+    expect(later.sent).toHaveLength(0)
+    expect((await prisma.csReview.findFirstOrThrow()).status).toBe('PARKED')
+  })
+  it('a subject that names the review score is blocked', async () => {
+    await seed()
+    await saveCsSettings({ reviewOutreachEnabled: true })
+    const f = fd()
+    await processReviews({ llm: llmReturning(CLEAN, 'About your 1-star review') as any, fd: f.fd, fdLookup: f.fdLookup, now: NOW })
+    expect(f.sent).toHaveLength(0)
+    expect((await prisma.csReview.findFirstOrThrow()).status).toBe('BLOCKED')
+  })
+  it('an empty subject is blocked', async () => {
+    await seed()
+    await saveCsSettings({ reviewOutreachEnabled: true })
+    const f = fd()
+    await processReviews({ llm: llmReturning(CLEAN, '  ') as any, fd: f.fd, fdLookup: f.fdLookup, now: NOW })
+    expect(f.sent).toHaveLength(0)
+    expect((await prisma.csReview.findFirstOrThrow()).status).toBe('BLOCKED')
+  })
+  it('one failing review does not stop the others, and gives up after three tries', async () => {
+    await makeOrder('ann@example.com', '2026-10-01T00:00:00Z', [{ sku: 'ST1-L', title: 'Stwa Galaxy Shirt', productId: 'gid://shopify/Product/8891490140317' }])
+    await makeOrder('bob@example.com', '2026-10-01T00:00:00Z', [{ sku: 'ST1-L', title: 'Stwa Galaxy Shirt', productId: 'gid://shopify/Product/8891490140317' }], { customerName: 'Bob Ray' })
+    await syncReviews(fakeClient([[jm({ id: 51, createdAt: new Date('2026-11-06T00:00:00Z') }), jm({ id: 52, reviewerEmail: 'bob@example.com', reviewerName: 'Bob R.', createdAt: new Date('2026-11-05T00:00:00Z') })]]))
+    const flaky = {
+      async analyze(): Promise<any> { throw new Error('not used') },
+      async complete({ user }: { user: string }): Promise<any> {
+        if (user.includes('Ann L.')) throw new Error('model output failed the schema')
+        return { output: { caseType: 'NOT_RECEIVED', taskType: 'CARRIER_CHECK', taskDetail: 'x', subject: 'About your shirt', body: CLEAN.replace('Ann', 'Bob'), alsoCsComplaint: false }, tokensIn: 1, tokensOut: 1 }
+      },
+    }
+    const f = fd()
+    for (let i = 0; i < 3; i++) await processReviews({ llm: flaky as any, fd: f.fd, fdLookup: f.fdLookup, now: NOW })
+    expect((await prisma.csReview.findUniqueOrThrow({ where: { judgemeId: 52 } })).status).toBe('DRAFTED')
+    const bad = await prisma.csReview.findUniqueOrThrow({ where: { judgemeId: 51 } })
+    expect(bad.status).toBe('ERROR')
+    expect(bad.matchNote).toContain('schema')
+  })
+  it('a reviewer name that does not fit the order name is parked', async () => {
+    await seed(61, { reviewerName: 'Gladys' }, 'Ann Lee')
+    const f = fd()
+    await processReviews({ llm: llmReturning() as any, fd: f.fd, fdLookup: f.fdLookup, now: NOW })
+    expect((await prisma.csReview.findFirstOrThrow()).status).toBe('PARKED')
+    expect((await prisma.csTask.findFirstOrThrow()).detail).toMatch(/tên/i)
+  })
+  it('an anonymous reviewer name does not block the match', async () => {
+    await seed(62, { reviewerName: 'Anonymous' }, 'Ann Lee')
+    const f = fd()
+    await processReviews({ llm: llmReturning() as any, fd: f.fd, fdLookup: f.fdLookup, now: NOW })
+    expect((await prisma.csReview.findFirstOrThrow()).status).toBe('DRAFTED')
+  })
+  it('a hidden review is left alone', async () => {
+    await seed(71, { hidden: true })
+    await saveCsSettings({ reviewOutreachEnabled: true })
+    const f = fd()
+    const llm = llmReturning()
+    await processReviews({ llm: llm as any, fd: f.fd, fdLookup: f.fdLookup, now: NOW })
+    expect(f.sent).toHaveLength(0)
+    expect(llm.calls).toBe(0)
+    expect(await prisma.csTask.count()).toBe(0)
+  })
+})

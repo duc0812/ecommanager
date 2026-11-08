@@ -85,15 +85,18 @@ ${order}
 ${new Date().toISOString().slice(0, 10)}`
 }
 
-const SCORE = /\b(stars?|rating|rated)\b/i
+const SCORE = /[★☆]|\b(stars?|rating|rated)\b/i
 const ASK_ABOUT_REVIEW = /\b(updat|chang|edit|remov|delet|revis|reconsider|amend|tak(e|ing)\s+down)\w*\s+(your|the|this|that)\s+(review|rating|feedback)\b/i
 const OFFER = /\b(refunds?|refunded|refunding|replacements?|replace|re-?send|resending|reprint|remake|credit|discount|voucher|coupon)\b|free of charge|for free|at no (extra )?(cost|charge)/i
 
 // Why a draft must not go out, or null when it may.
-export function guardDraft(body: string): string | null {
-  if (SCORE.test(body)) return 'nhắc tới số sao / đánh giá'
-  if (ASK_ABOUT_REVIEW.test(body)) return 'đề nghị khách sửa / gỡ review'
-  if (OFFER.test(body)) return 'hứa phương án đền bù khi chưa được duyệt'
+export function guardDraft(body: string, subject?: string): string | null {
+  if (subject !== undefined && !subject.trim()) return 'tiêu đề trống'
+  if (!body.trim()) return 'nội dung trống'
+  const text = `${subject ?? ''}\n${body}`
+  if (SCORE.test(text)) return 'nhắc tới số sao / đánh giá'
+  if (ASK_ABOUT_REVIEW.test(text)) return 'đề nghị khách sửa / gỡ review'
+  if (OFFER.test(text)) return 'hứa phương án đền bù khi chưa được duyệt'
   if (!/\breview\b/i.test(body)) return 'không nói rõ mình liên hệ vì thấy review của khách'
   return null
 }
