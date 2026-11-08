@@ -36,7 +36,7 @@ function fakeFd(): FreshdeskClient & { calls: Call[] } {
 
 const base: Analysis = {
   category: 'ORDER_STATUS', urgency: 'NORMAL', sentiment: 'CALM', orderNumber: null, summary: 'Khách hỏi đơn đến đâu', facts: [], proposal: 'Gửi tracking',
-  citedCaseIds: [], draftReply: 'Hi, your order is on its way.\n\nLitzzy Support', needsHuman: false, needsHumanReason: '', autoReplyEligible: true, autoReplyReason: 'first wismo', humanRequested: false, tasks: [],
+  citedCaseIds: [], draftReply: 'Hi, your order is on its way.\n\nLitzzy Support', needsHuman: false, needsHumanReason: '', autoReplyEligible: true, autoReplyReason: 'first wismo', humanRequested: false, tasks: [], customAnswers: [],
 }
 let askHuman = false
 function fakeLlm(): Llm & { calls: number; rootCauseCalls: number } {

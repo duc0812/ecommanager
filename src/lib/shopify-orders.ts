@@ -59,6 +59,7 @@ export type ShopifyOrder = {
   lines: ShopifyOrderLine[]
   transactions: ShopifyTransaction[]
   refundedAmount: number
+  salesChannel?: string | null  // Shopify app that took the order: 'Online Store', 'Shop' (Shop app), 'Facebook & Instagram'…
 }
 
 export type ShopifyShopInfo = {
@@ -72,6 +73,7 @@ query SyncOrders($cursor: String, $query: String) {
     pageInfo { hasNextPage endCursor }
     nodes {
       id name createdAt processedAt cancelledAt
+      sourceName app { name }
       displayFinancialStatus displayFulfillmentStatus
       currencyCode
       currentTotalPriceSet { shopMoney { amount } }
@@ -187,6 +189,7 @@ export async function fetchOrdersPage(
       taxMarketplaceCollected,
       customerEmail: n.customer?.email ?? null,
       customerName: n.customer?.displayName ?? null,
+      salesChannel: n.app?.name ?? n.sourceName ?? null,
       shippingCountry: n.shippingAddress?.countryCodeV2 ?? n.shippingAddress?.country ?? null,
       shippingState: n.shippingAddress?.province ?? null,
       shippingStateCode: n.shippingAddress?.provinceCode ?? null,

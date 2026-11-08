@@ -14,7 +14,7 @@ function fakeLlm(output: Partial<Analysis>): Llm & { calls: number } {
   const base: Analysis = {
     category: 'ADDRESS_CHANGE', urgency: 'NORMAL', sentiment: 'ANGRY', orderNumber: '#LIT7001',
     summary: 'Khách báo gửi sai địa chỉ', facts: ['Địa chỉ mới: 12 Test St'], proposal: 'Đổi địa chỉ với xưởng ngay', citedCaseIds: [],
-    draftReply: 'Hi Paul, we are on it.', needsHuman: true, needsHumanReason: 'address change', autoReplyEligible: false, autoReplyReason: 'address', humanRequested: false, tasks: [],
+    draftReply: 'Hi Paul, we are on it.', needsHuman: true, needsHumanReason: 'address change', autoReplyEligible: false, autoReplyReason: 'address', humanRequested: false, tasks: [], customAnswers: [],
   }
   const llm = {
     calls: 0,

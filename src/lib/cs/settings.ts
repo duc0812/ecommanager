@@ -31,6 +31,8 @@ export type CsSettings = {
   weekendIsAfterHours: boolean
   workSaturdayAnchor: string | null
   outboundEmailConfigId: number
+  autoVerifyShopApp: boolean
+  shopAppVerifyFrom: string | null
 }
 
 export const AFTER_HOURS_DEFAULT_CATEGORIES = ['ORDER_STATUS', 'ADDRESS_CHANGE', 'CANCEL_ORDER', 'DAMAGED_OR_DEFECTIVE', 'WRONG_ITEM', 'MISSING_ITEM', 'DELIVERED_NOT_RECEIVED', 'REFUND_REQUEST', 'PRODUCT_QUESTION', 'PERSONALIZATION_ISSUE']
@@ -61,6 +63,8 @@ export const DEFAULT_CS_SETTINGS: CsSettings = {
   weekendIsAfterHours: true,
   workSaturdayAnchor: null,
   outboundEmailConfigId: 158000294295,
+  autoVerifyShopApp: true,
+  shopAppVerifyFrom: null,
 }
 
 export type CsSecrets = { freshdeskApiKey: string | null; anthropicApiKey: string | null; kieApiKey: string | null }
@@ -112,6 +116,8 @@ function normalize(parsed: any): CsSettings {
     weekendIsAfterHours: bool(parsed.weekendIsAfterHours, d.weekendIsAfterHours),
     workSaturdayAnchor: saturday(parsed.workSaturdayAnchor),
     outboundEmailConfigId: num(parsed.outboundEmailConfigId, d.outboundEmailConfigId),
+    autoVerifyShopApp: bool(parsed.autoVerifyShopApp, d.autoVerifyShopApp),
+    shopAppVerifyFrom: typeof parsed.shopAppVerifyFrom === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(parsed.shopAppVerifyFrom) && !Number.isNaN(Date.parse(parsed.shopAppVerifyFrom)) ? parsed.shopAppVerifyFrom : null,
   }
 }
 

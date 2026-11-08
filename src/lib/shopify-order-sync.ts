@@ -318,6 +318,7 @@ export async function syncStoreOrders(storeId: string, opts: { fromOrderName?: s
         shopifyOrderNumber: o.name,
         customerEmail: o.customerEmail,
         customerName: o.customerName,
+        salesChannel: o.salesChannel ?? null,
         shippingCountry: o.shippingCountry,
         shippingState: o.shippingState,
         shippingStateCode: o.shippingStateCode,

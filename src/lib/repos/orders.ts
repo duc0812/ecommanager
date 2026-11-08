@@ -116,6 +116,7 @@ export type UpsertOrderInput = {
   storeId: string
   shopifyOrderNumber: string
   customerEmail: string | null
+  salesChannel?: string | null
   customerName: string | null
   shippingCountry: string | null
   shippingState: string | null
@@ -212,6 +213,7 @@ export async function upsertOrderWithLines(input: UpsertOrderInput) {
         shopifyOrderNumber: input.shopifyOrderNumber,
         customerEmail: input.customerEmail,
         customerName: input.customerName,
+        salesChannel: input.salesChannel ?? null,
         shippingCountry: input.shippingCountry,
         shippingState: input.shippingState,
         shippingStateCode: input.shippingStateCode ?? null,
@@ -262,6 +264,7 @@ export async function upsertOrderWithLines(input: UpsertOrderInput) {
         shippingZip: input.shippingZip ?? null,
         shippingPhone: input.shippingPhone ?? null,
         ...(input.shippingStateCode !== undefined ? { shippingStateCode: input.shippingStateCode } : {}),
+        ...(input.salesChannel ? { salesChannel: input.salesChannel } : {}),
         ...(input.pipelineStatus !== undefined ? { pipelineStatus: input.pipelineStatus } : {}),
         ...(input.orderType !== undefined ? { orderType: input.orderType } : {}),
         ...(input.trelloCardId !== undefined ? { trelloCardId: input.trelloCardId } : {}),

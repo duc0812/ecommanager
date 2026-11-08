@@ -23,7 +23,7 @@ describe('Llm.complete', () => {
     expect(body.text.format.schema.properties.a.type).toBe('number')
   })
   it('analyze still works through complete', async () => {
-    const analysis = { category: 'ORDER_STATUS', urgency: 'NORMAL', sentiment: 'CALM', orderNumber: null, summary: 's', facts: [], proposal: 'p', citedCaseIds: [], draftReply: null, needsHuman: true, needsHumanReason: 'r', autoReplyEligible: false, autoReplyReason: 'a', humanRequested: false, tasks: [] }
+    const analysis = { category: 'ORDER_STATUS', urgency: 'NORMAL', sentiment: 'CALM', orderNumber: null, summary: 's', facts: [], proposal: 'p', citedCaseIds: [], draftReply: null, needsHuman: true, needsHumanReason: 'r', autoReplyEligible: false, autoReplyReason: 'a', humanRequested: false, tasks: [], customAnswers: [] }
     const llm = claudeLlm('anthropic', 'k', { fetch: (async () => new Response(JSON.stringify(message(JSON.stringify(analysis))), { status: 200, headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch })
     const r = await llm.analyze({ system: 's', user: 'u', model: 'claude-haiku-5-5' })
     expect(r.output.category).toBe('ORDER_STATUS')

@@ -399,6 +399,7 @@ model Order {
   projectId            String
   project              Project     @relation(fields: [projectId], references: [id])
   shopifyOrderNumber   String
+  salesChannel         String?
   customerEmail        String?
   customerName         String?
   shippingCountry      String?

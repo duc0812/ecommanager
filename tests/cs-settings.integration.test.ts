@@ -59,6 +59,21 @@ describe('cs settings', () => {
     expect((await getCsSettings()).outboundEmailConfigId).toBe(123)
   })
 
+  it('Shop app verification emails are on by default and can be switched off', async () => {
+    expect(DEFAULT_CS_SETTINGS.autoVerifyShopApp).toBe(true)
+    await saveCsSettings({ autoVerifyShopApp: false })
+    expect((await getCsSettings()).autoVerifyShopApp).toBe(false)
+    await saveCsSettings({ autoVerifyShopApp: true })
+  })
+
+  it('the Shop app start date keeps only a real date', async () => {
+    expect(DEFAULT_CS_SETTINGS.shopAppVerifyFrom).toBeNull()
+    await saveCsSettings({ shopAppVerifyFrom: '2026-11-08' })
+    expect((await getCsSettings()).shopAppVerifyFrom).toBe('2026-11-08')
+    await saveCsSettings({ shopAppVerifyFrom: 'today' as any })
+    expect((await getCsSettings()).shopAppVerifyFrom).toBeNull()
+  })
+
   it('the work-Saturday anchor keeps only a real Saturday date', async () => {
     expect(DEFAULT_CS_SETTINGS.workSaturdayAnchor).toBeNull()
     await saveCsSettings({ workSaturdayAnchor: '2026-11-07' })

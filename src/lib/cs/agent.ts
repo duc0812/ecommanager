@@ -10,7 +10,7 @@ import { ticketTags } from '@/lib/cs/triage'
 import { effectiveMode } from '@/lib/cs/hours'
 import { getCsSecrets, getCsSettings } from '@/lib/cs/settings'
 import { investigateTicket, pendingInvestigations } from '@/lib/cs/root-cause'
-import { openCustomVerifications } from '@/lib/cs/custom-verify'
+import { openCustomVerifications, sendShopAppVerifications } from '@/lib/cs/custom-verify'
 import { LlmCapReached, withCap } from '@/lib/llm/cap'
 import { LlmError } from '@/lib/llm/types'
 import { pendingReviews, reviewTicket } from '@/lib/cs/review'
@@ -143,8 +143,10 @@ export async function runAgentCycle(deps: CycleDeps, opts: { ticketIds?: string[
     errors.push(err?.message ?? String(err))
   }
   if (!opts.ticketIds) {
-    try { await openCustomVerifications(now) }
-    catch (err: any) { errors.push(`custom verify: ${err?.message ?? String(err)}`) }
+    try {
+      await openCustomVerifications(now)
+      await sendShopAppVerifications({ fd: deps.fd, emailConfigId: (await getCsSettings()).outboundEmailConfigId }, now)
+    } catch (err: any) { errors.push(`custom verify: ${err?.message ?? String(err)}`) }
   }
 
   const finished = await prisma.csAgentRun.update({

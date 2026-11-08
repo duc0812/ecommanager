@@ -9,6 +9,7 @@ import { finalUrgency, ruleUrgency, ticketTags } from '@/lib/cs/triage'
 import { autoReplyGate, HUMAN_ONLY_TAG, mentionsRefundAddressOrCancel } from '@/lib/cs/policy'
 import { withCap } from '@/lib/llm/cap'
 import { applyAgentTasks } from '@/lib/cs/tasks'
+import { applyCustomAnswers } from '@/lib/cs/custom-verify'
 import { effectiveMode, type CsMode } from '@/lib/cs/hours'
 
 export function inputHashFor(messages: Pick<CsMessage, 'id' | 'author'>[], order: OrderContext, directiveIds: string[] = [], mode: CsMode = 'BUSINESS'): string {
@@ -117,6 +118,7 @@ export async function analyzeTicket(ticketId: string, deps: { llm: Llm; now?: Da
       lastAnalysisAt: now,
     },
   })
+  if (output.customAnswers?.length) await applyCustomAnswers(output.customAnswers, now)
   if (output.tasks?.length) await applyAgentTasks({ id: ticketId, orderNumber: order.order?.shopifyOrderNumber ?? ticket.orderNumber }, output.tasks, now)
   return analysis
 }

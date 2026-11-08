@@ -18,6 +18,7 @@ export const AnalysisSchema = z.object({
   autoReplyReason: z.string(),
   humanRequested: z.boolean(),
   tasks: z.array(z.object({ type: z.enum(TASK_TYPES), detail: z.string(), amount: z.number().nullable() })),
+  customAnswers: z.array(z.object({ orderNumber: z.string(), answer: z.string(), clear: z.boolean() })),
 })
 
 export type Analysis = z.infer<typeof AnalysisSchema>

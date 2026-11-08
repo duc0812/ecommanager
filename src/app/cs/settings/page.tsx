@@ -13,7 +13,7 @@ type View = {
   freshdeskDomain: string; llmProvider: 'anthropic' | 'kie'; model: string; pollEnabled: boolean; killSwitch: boolean; autoReplyEnabled: boolean; autoReplyCategories: string[]; autoReplyDailyCap: number
   notifyLevels: string[]; productionDays: number; shippingDays: number; syncUpdatedSince: string | null
   reviewEnabled: boolean; weeklyReport: boolean; reviewModel: string | null; llmDailyCallCap: number
-  afterHoursAutoReply: boolean; afterHoursCategories: string[]; businessHoursStart: number; businessHoursEnd: number; weekendIsAfterHours: boolean; workSaturdayAnchor: string | null
+  afterHoursAutoReply: boolean; afterHoursCategories: string[]; businessHoursStart: number; businessHoursEnd: number; weekendIsAfterHours: boolean; workSaturdayAnchor: string | null; autoVerifyShopApp: boolean; shopAppVerifyFrom: string | null
   hasFreshdeskApiKey: boolean; freshdeskApiKeyMasked?: string | null; hasAnthropicApiKey: boolean; anthropicApiKeyMasked?: string | null; hasKieApiKey: boolean; kieApiKeyMasked?: string | null
 }
 type LastRun = { ranAt: string; ticketsSeen: number; analysed: number; autoReplied: number; fdRequests: number; error: string | null } | null
@@ -185,6 +185,11 @@ export default function CsSettingsPage() {
                 {input('Giờ kết thúc làm việc (0–23)', 'businessHoursEnd', 'number')}
               </div>
               {check('Thứ 7 & Chủ nhật tính là ngoài giờ', 'weekendIsAfterHours')}
+              {check('Tự gửi email xác minh custom cho đơn Shop App (mỗi khách một email, mỗi dòng hỏi một lần)', 'autoVerifyShopApp')}
+              <label className="block text-body-sm">
+                <span className="text-label-sm text-on-surface-variant">Chỉ xác minh đơn Shop App đặt từ ngày (giờ VN; để trống = mọi đơn chưa gửi xưởng)</span>
+                <input type="date" value={form.shopAppVerifyFrom ?? ''} onChange={e => setForm({ ...form, shopAppVerifyFrom: e.target.value || null })} className="mt-xs block rounded-lg border border-outline-variant/40 bg-surface px-md py-xs" />
+              </label>
               <label className="block text-body-sm">
                 <span className="text-label-sm text-on-surface-variant">Thứ 7 đi làm cách tuần: chọn một thứ 7 đi làm (để trống = thứ 7 nào cũng nghỉ). Thứ 7 đi làm tính như ngày thường.</span>
                 <input type="date" value={form.workSaturdayAnchor ?? ''} onChange={e => setForm({ ...form, workSaturdayAnchor: e.target.value || null })} className="mt-xs block rounded-lg border border-outline-variant/40 bg-surface px-md py-xs" />

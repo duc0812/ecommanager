@@ -73,6 +73,8 @@ describe('POST /api/shopify/orders/sync', () => {
           nodes: [{
             id: 'gid://shopify/Order/4090412213889',
             name: '#1023',
+            sourceName: '3890849',
+            app: { name: 'Shop' },
             createdAt: '2026-05-18T07:06:00Z',
             processedAt: '2026-05-18T07:06:00Z',
             displayFinancialStatus: 'PAID',
@@ -134,6 +136,7 @@ describe('POST /api/shopify/orders/sync', () => {
     expect(saved!.defaultSupplierId).toBe('sup_test')
     expect(saved!.lines).toHaveLength(1)
     expect(saved!.lines[0].resolvedBaseCost).toBeCloseTo(48.20, 2)
+    expect(saved!.salesChannel).toBe('Shop')
 
     fetchSpy.mockRestore()
   })
