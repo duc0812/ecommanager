@@ -92,12 +92,10 @@ export async function openCustomVerifications(now = new Date()): Promise<{ opene
       const line = order.lines.find(l => l.shopifyLineId === dt.shopifyLineId)
       if (!line || line.sku?.startsWith('ADDON-')) continue
       if (await hasVerification(dt.taskKey, order.shopifyOrderNumber)) continue
-      const parent = line.sku?.split('-')[0]
-      const siblings = parent
-        ? await prisma.orderLine.findMany({ where: { sku: { startsWith: parent }, NOT: { id: line.id } }, orderBy: { order: { placedAt: 'desc' } }, take: SIBLINGS, select: { customAttributesJson: true, customallFieldsJson: true } })
-        : []
-      const gap = customGap(line, siblings)
-      if (!gap) continue
+      // Only a name switched on without a name is opened by itself: an empty line is also what a buyer leaves who skipped an
+      // optional name, so a Shop app order waits for the order sync to record the sales channel (Shopify channelInformation).
+      const gap = customGap(line, [])
+      if (gap?.kind !== 'NAME_MISSING') continue
       await openTask({
         orderNumber: order.shopifyOrderNumber, designTaskKey: dt.taskKey,
         detail: `Xác minh custom ${dt.taskKey}: ${describe(gap)}. Sản phẩm: ${line.productTitle}${line.variantTitle ? ` (${line.variantTitle})` : ''}. Email khách: ${order.customerEmail ?? '—'}. Gửi email hỏi khách bằng nút "Soạn email xác minh"; khách trả lời thì ghi câu trả lời và chuyển task sang Xong để design làm tiếp.`,

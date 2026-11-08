@@ -89,13 +89,11 @@ describe('openCustomVerifications', () => {
     expect((await openCustomVerifications(NOW)).opened).toBe(0)
     expect(await prisma.csTask.count()).toBe(1)
   })
-  it('finds the Shop app order that lost its personalisation', async () => {
+  it('does not guess a Shop app order from its siblings: optional names leave lines empty too, so it waits for a channel flag', async () => {
     for (const n of ['A', 'B', 'C']) await makeOrder(housed(n), { pipeline: 'EXPORTED', exportedAt: new Date('2026-11-01T00:00:00Z'), taskStatus: 'DONE' })
     const o = await makeOrder({})
-    const r = await openCustomVerifications(NOW)
-    expect(r.opened).toBe(1)
-    const task = await prisma.csTask.findFirstOrThrow({ where: { orderNumber: o.number } })
-    expect(task.detail).toContain('Choose Your House')
+    expect((await openCustomVerifications(NOW)).opened).toBe(0)
+    expect((await prisma.designTask.findUniqueOrThrow({ where: { taskKey: o.taskKey } })).status).toBe('NEW')
   })
   it('leaves orders already sent to the factory alone', async () => {
     await makeOrder({ attrs: [{ key: '_Custom Name:', value: 'Yes' }] }, { pipeline: 'EXPORTED', exportedAt: new Date('2026-11-07T00:00:00Z') })
