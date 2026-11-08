@@ -8,7 +8,7 @@ const SHIPPING_PROTECTION = /shipping protection/i
 const ADD_ON = /shipping protection|add[- ]?on|^tip\b|custom text/i
 
 const skuParent = (sku: string | null | undefined) => (sku ?? '').split('-')[0].trim().toUpperCase()
-const titleCodes = (title: string | null | undefined) => (title ?? '').toUpperCase().match(/\b[A-Z]{2}\d{6,}\b/g) ?? []
+const titleCodes = (title: string | null | undefined): string[] => Array.from((title ?? '').toUpperCase().match(/\b[A-Z]{2}\d{6,}\b/g) ?? [])
 
 // Newest 1★ reviews first; a page made only of reviews already stored means the rest are older and stored too.
 export async function syncReviews(client: Pick<JudgemeClient, 'listReviews'>, now = new Date()): Promise<{ added: number }> {
