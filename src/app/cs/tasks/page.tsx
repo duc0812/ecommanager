@@ -10,7 +10,14 @@ type Task = {
   id: string; ticketId: string | null; orderNumber: string | null; type: TaskType; dept: TaskDept; priority: number; status: TaskStatus
   detail: string; amount: number | null; designTaskKey: string | null; source: string; createdByName: string | null; dueAt: string | null; doneAt: string | null; createdAt: string; updatedAt: string
   ticket: { id: string; fdTicketId: number; subject: string; requesterName: string | null } | null; eventCount: number
+  review?: Review | null
 }
+type Review = {
+  judgemeId: number; rating: number; title: string | null; body: string; productTitle: string | null; reviewerName: string | null; reviewerEmail: string | null; reviewCreatedAt: string
+  status: string; caseType: string | null; orderNumber: string | null; matchNote: string | null; draftSubject: string | null; draftBody: string | null; fdTicketId: number | null
+}
+const REVIEW_STATUS: Record<string, string> = { NEW: 'Chưa xử lý', DRAFTED: 'Bản nháp, chờ bật công tắc tự liên hệ', SENT: 'Đã gửi email', PARKED: 'Tạm giữ', BLOCKED: 'Bản nháp bị chặn, CS viết tay' }
+const stars = (n: number) => '★'.repeat(Math.max(0, Math.min(5, n))) + '☆'.repeat(Math.max(0, 5 - n))
 type TaskEvent = { id: string; kind: string; body: string; fromStatus: string | null; toStatus: string | null; authorName: string | null; createdAt: string }
 
 const COLUMNS: { key: TaskStatus; hint: string }[] = [
@@ -120,7 +127,9 @@ function TaskCard({ t, now, onOpen }: { t: Task; now: number; onOpen: () => void
         <span className="text-label-md text-primary">{TASK_META[t.type]?.label ?? t.type}</span>
         {t.status === 'CANCELLED' && <span className="text-label-sm text-on-surface-variant">· huỷ</span>}
       </p>
-      <p className="mt-xs line-clamp-3 text-body-sm text-on-surface">{t.detail}</p>
+      {t.review
+        ? <p className="mt-xs line-clamp-3 text-body-sm text-on-surface"><span className="text-amber-600">{stars(t.review.rating)}</span> “{t.review.body}”</p>
+        : <p className="mt-xs line-clamp-3 text-body-sm text-on-surface">{t.detail}</p>}
       {MONEY.includes(t.type) && (
         t.amount != null
           ? <p className="mt-xs text-label-md text-primary">{money(t.amount)}</p>
@@ -136,6 +145,32 @@ function TaskCard({ t, now, onOpen }: { t: Task; now: number; onOpen: () => void
         {t.status === 'DONE' && t.doneAt ? `Xong ${fmtDate(t.doneAt, true)}` : late ? `Quá hạn · tạo ${fmtDate(t.createdAt, true)}` : `Tạo ${fmtDate(t.createdAt, true)}`}
       </p>
     </button>
+  )
+}
+
+function ReviewPanel({ r }: { r: Review }) {
+  return (
+    <div className="space-y-xs rounded-lg border border-amber-200 bg-amber-50 p-md">
+      <p className="flex flex-wrap items-center gap-sm">
+        <span className="text-amber-600">{stars(r.rating)}</span>
+        <span className="text-label-sm text-on-surface-variant">{r.reviewerName ?? '—'}{r.reviewerEmail ? ` · ${r.reviewerEmail}` : ''} · {fmtDate(r.reviewCreatedAt, true)}</span>
+      </p>
+      <p className="text-label-sm text-on-surface-variant">{r.productTitle ?? '—'}{r.caseType ? ` · nhóm ${r.caseType}` : ''}</p>
+      {r.title && <p className="text-label-md">{r.title}</p>}
+      <p className="whitespace-pre-wrap">“{r.body}”</p>
+      <p className="text-label-sm">
+        {REVIEW_STATUS[r.status] ?? r.status}
+        {r.status === 'PARKED' && r.matchNote ? `: ${r.matchNote}` : ''}
+        {r.fdTicketId ? <> · <a className="text-secondary" href={`https://litzzy.freshdesk.com/a/tickets/${r.fdTicketId}`} target="_blank" rel="noreferrer">Freshdesk #{r.fdTicketId}</a></> : null}
+      </p>
+      {r.draftBody && (
+        <details>
+          <summary className="cursor-pointer text-label-sm text-secondary">Email {r.status === 'SENT' ? 'đã gửi' : 'nháp'}</summary>
+          <p className="mt-xs text-label-md">{r.draftSubject}</p>
+          <p className="whitespace-pre-wrap text-label-sm">{r.draftBody}</p>
+        </details>
+      )}
+    </div>
   )
 }
 
@@ -195,6 +230,7 @@ function TaskDrawer({ id, onClose, onChanged }: { id: string; onClose: () => voi
             </div>
 
             {t.type === 'VERIFY_CUSTOM' && <VerifyEmail id={id} onSent={async () => { await load(); onChanged() }} />}
+            {t.review && <ReviewPanel r={t.review} />}
 
             <div className="flex flex-wrap items-center gap-sm">
               <label className="text-label-sm text-on-surface-variant">Bộ phận</label>

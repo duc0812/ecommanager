@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/db'
-import type { CsTask, CsTaskEvent, CsTicket } from '@/generated/prisma/client'
+import type { CsReview, CsTask, CsTaskEvent, CsTicket } from '@/generated/prisma/client'
 import { releaseVerifiedDesign } from '@/lib/cs/custom-verify'
 import { OPEN_STATUSES, TASK_DEPTS, TASK_META, TASK_STATUSES, TASK_TYPES, DEPT_LABELS, type TaskDept, type TaskStatus, type TaskType } from '@/lib/cs/task-labels'
 export { DEPT_LABELS, OPEN_STATUSES, STATUS_LABELS, TASK_DEPTS, TASK_META, TASK_STATUSES, TASK_TYPES, type TaskDept, type TaskStatus, type TaskType } from '@/lib/cs/task-labels'
@@ -110,7 +110,16 @@ export async function addTaskComment(id: string, body: string, user: Actor, now 
   return prisma.csTaskEvent.create({ data: { taskId: id, kind: 'COMMENT', body: text, authorId: user.id, authorName: user.name, createdAt: now } })
 }
 
-export type TaskRow = CsTask & { ticket: Pick<CsTicket, 'id' | 'fdTicketId' | 'subject' | 'requesterName'> | null; eventCount: number }
+export type TaskReview = Pick<CsReview, 'id' | 'judgemeId' | 'rating' | 'title' | 'body' | 'productTitle' | 'reviewerName' | 'reviewerEmail' | 'reviewCreatedAt' | 'status' | 'caseType' | 'orderNumber' | 'matchNote' | 'draftSubject' | 'draftBody' | 'fdTicketId'>
+export type TaskRow = CsTask & { ticket: Pick<CsTicket, 'id' | 'fdTicketId' | 'subject' | 'requesterName'> | null; eventCount: number; review?: TaskReview | null }
+
+const REVIEW_SELECT = { id: true, judgemeId: true, rating: true, title: true, body: true, productTitle: true, reviewerName: true, reviewerEmail: true, reviewCreatedAt: true, status: true, caseType: true, orderNumber: true, matchNote: true, draftSubject: true, draftBody: true, fdTicketId: true } as const
+
+async function reviewsFor(ids: (string | null)[]): Promise<Map<string, TaskReview>> {
+  const wanted = ids.filter((x): x is string => !!x)
+  if (!wanted.length) return new Map()
+  return new Map((await prisma.csReview.findMany({ where: { id: { in: wanted } }, select: REVIEW_SELECT })).map(r => [r.id, r]))
+}
 
 export async function listTasks(filter: { dept?: string; type?: string; doneSince?: Date }): Promise<TaskRow[]> {
   const doneSince = filter.doneSince ?? new Date(Date.now() - 7 * 86400_000)
@@ -124,17 +133,19 @@ export async function listTasks(filter: { dept?: string; type?: string; doneSinc
     orderBy: [{ priority: 'asc' }, { createdAt: 'asc' }],
     take: 500,
   })
-  return tasks.map(({ _count, ...t }) => ({ ...t, eventCount: _count.events }))
+  const reviews = await reviewsFor(tasks.map(t => t.reviewId))
+  return tasks.map(({ _count, ...t }) => ({ ...t, eventCount: _count.events, review: t.reviewId ? reviews.get(t.reviewId) ?? null : null }))
 }
 
-export async function taskDetail(id: string): Promise<{ task: TaskRow; events: CsTaskEvent[] } | null> {
+export async function taskDetail(id: string): Promise<{ task: TaskRow; events: CsTaskEvent[]; review: TaskReview | null } | null> {
   const task = await prisma.csTask.findUnique({
     where: { id },
     include: { ticket: { select: { id: true, fdTicketId: true, subject: true, requesterName: true } }, events: { orderBy: { createdAt: 'asc' } } },
   })
   if (!task) return null
   const { events, ...rest } = task
-  return { task: { ...rest, eventCount: events.length }, events }
+  const review = rest.reviewId ? (await reviewsFor([rest.reviewId])).get(rest.reviewId) ?? null : null
+  return { task: { ...rest, eventCount: events.length, review }, events, review }
 }
 
 export async function ticketTasks(ticketId: string): Promise<CsTask[]> {

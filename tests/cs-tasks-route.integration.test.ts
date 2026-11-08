@@ -86,6 +86,15 @@ describe('/api/cs/tasks', () => {
     const empty = await commentRoute(req(`/api/cs/tasks/${ok.task.id}/comments`, { method: 'POST', body: { body: ' ' } }), { params: { id: ok.task.id } })
     expect(empty.status).toBe(400)
   })
+  it('task detail carries its review', async () => {
+    const review = await prisma.csReview.create({ data: { judgemeId: 70001, rating: 1, body: 'Still waiting for my shirt', productTitle: 'Stwa Galaxy Shirt', reviewerName: 'Maricela', reviewerEmail: 'm@x.com', reviewCreatedAt: new Date('2026-11-08T00:00:00Z'), status: 'DRAFTED', orderNumber: '#LIT1' } })
+    const task = await prisma.csTask.create({ data: { type: 'REVIEW_RECOVERY', dept: 'CS', priority: 2, detail: 'review', reviewId: review.id, orderNumber: '#LIT1' } })
+    const d = await (await taskRoute(req(`/api/cs/tasks/${task.id}`), { params: { id: task.id } })).json()
+    expect(d.review).toMatchObject({ body: 'Still waiting for my shirt', rating: 1, status: 'DRAFTED', productTitle: 'Stwa Galaxy Shirt' })
+    const list = await (await listTasksRoute(req('/api/cs/tasks'))).json()
+    expect(list.tasks.find((t: any) => t.id === task.id).review.body).toBe('Still waiting for my shirt')
+    await prisma.csReview.delete({ where: { id: review.id } })
+  })
   it('404 for a task that does not exist', async () => {
     const res = await taskRoute(req('/api/cs/tasks/nope'), { params: { id: 'nope' } })
     expect(res.status).toBe(404)
