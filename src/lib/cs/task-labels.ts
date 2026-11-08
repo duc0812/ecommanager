@@ -1,4 +1,4 @@
-export const TASK_TYPES = ['SIZE_CHANGE', 'ADDRESS_CHANGE', 'PERSONALIZATION_CHANGE', 'CANCEL_ORDER', 'RESEND', 'CARRIER_CHECK', 'SUPPLIER_ERROR', 'VERIFY_CUSTOM', 'REFUND', 'DISCOUNT_CODE', 'OTHER'] as const
+export const TASK_TYPES = ['SIZE_CHANGE', 'ADDRESS_CHANGE', 'PERSONALIZATION_CHANGE', 'CANCEL_ORDER', 'RESEND', 'CARRIER_CHECK', 'SUPPLIER_ERROR', 'VERIFY_CUSTOM', 'REVIEW_RECOVERY', 'REFUND', 'DISCOUNT_CODE', 'OTHER'] as const
 export type TaskType = (typeof TASK_TYPES)[number]
 export const TASK_STATUSES = ['NEW', 'IN_PROGRESS', 'WAITING', 'DONE', 'CANCELLED'] as const
 export type TaskStatus = (typeof TASK_STATUSES)[number]
@@ -15,6 +15,7 @@ export const TASK_META: Record<TaskType, { label: string; dept: TaskDept; priori
   CARRIER_CHECK: { label: 'Kiểm tra vận chuyển', dept: 'FULFILLMENT', priority: 1 },
   SUPPLIER_ERROR: { label: 'Lỗi supplier – báo xưởng', dept: 'FULFILLMENT', priority: 1 },
   VERIFY_CUSTOM: { label: 'Xác minh custom', dept: 'CS', priority: 1 },
+  REVIEW_RECOVERY: { label: 'Review 1★', dept: 'CS', priority: 2 },
   REFUND: { label: 'Refund', dept: 'CS', priority: 2 },
   DISCOUNT_CODE: { label: 'Gửi mã giảm giá', dept: 'CS', priority: 2 },
   OTHER: { label: 'Khác', dept: 'CS', priority: 3 },

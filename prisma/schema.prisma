@@ -1432,6 +1432,7 @@ model CsTask {
   ticket        CsTicket? @relation(fields: [ticketId], references: [id], onDelete: SetNull)
   orderNumber   String?
   designTaskKey String?
+  reviewId      String?
   type          String
   dept          String
   priority      Int
@@ -1449,6 +1450,34 @@ model CsTask {
   @@index([status, priority])
   @@index([ticketId])
   @@index([designTaskKey])
+}
+
+// A 1-star Judge.me review the agent follows up: matched to its order, drafted, sent or parked for the owner.
+model CsReview {
+  id                String    @id @default(cuid())
+  judgemeId         Int       @unique
+  rating            Int
+  title             String?
+  body              String
+  productExternalId String?
+  productTitle      String?
+  reviewerEmail     String?
+  reviewerName      String?
+  verified          String?
+  hidden            Boolean   @default(false)
+  reviewCreatedAt   DateTime
+  orderNumber       String?
+  matchNote         String?
+  caseType          String?
+  status            String    @default("NEW")
+  draftSubject      String?
+  draftBody         String?
+  fdTicketId        Int?
+  sentAt            DateTime?
+  taskId            String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  @@index([status])
 }
 
 model CsTaskEvent {
