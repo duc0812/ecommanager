@@ -113,7 +113,12 @@ export type MerchizeCatalogProduct = {
 export type MerchizeRemoteOrder = {
   code: string | null; id: string | null; status: string | null
   fulfillmentCost: number | null; shippingCost: number | null
-  tracking: { number: string; company: string | null; url: string | null }[]
+}
+
+/** One parcel Merchize shipped; `catalogSku` is the catalog variant SKU of each item in it (the item `sku` the push sent). */
+export type MerchizePackage = {
+  number: string; company: string | null; url: string | null; shipmentStatus: string | null
+  items: { catalogSku: string | null; size: string | null; color: string | null; quantity: number | null }[]
 }
 
 function str(v: unknown): string | null {
@@ -193,25 +198,50 @@ export async function cancelOrder(creds: MerchizeCredentials, externalNumber: st
   return call(creds, 'POST', '/order/external/orders/cancel', JSON.stringify({ order: { external_number: externalNumber, identifier } }))
 }
 
-/** null when Merchize holds no order under that external number. */
+const isOrderMissing = (e: unknown) => e instanceof MerchizeError && (e.status === 404 || /does not exist|not found/i.test(e.message))
+
+/** Status and costs; null when Merchize holds no order under that external number. It carries no tracking: see getOrderTracking. */
 export async function getOrderDetail(creds: MerchizeCredentials, externalNumber: string, identifier: string): Promise<MerchizeRemoteOrder | null> {
   const q = new URLSearchParams({ external_number: externalNumber, identifier })
   let json: any
   try {
     json = await call(creds, 'GET', `/order/external/orders/order-detail?${q}`)
   } catch (e) {
-    if (e instanceof MerchizeError && (e.status === 404 || /does not exist|not found/i.test(e.message))) return null
+    if (isOrderMissing(e)) return null
     throw e
   }
   const d = json?.data
   if (!d || typeof d !== 'object') return null
-  const fulfillments: any[] = Array.isArray(d.fulfillments) ? d.fulfillments : []
   return {
     code: str(d.code), id: str(d._id), status: str(d.order_status) ?? str(d.status),
     fulfillmentCost: num(d.fulfillment_cost?.total ?? d.fulfillment_cost),
     shippingCost: num(d.fulfillment_cost?.shipping_cost ?? d.shipping_cost),
-    tracking: fulfillments
-      .map(f => ({ number: str(f?.tracking_number) ?? '', company: str(f?.tracking_company), url: str(f?.tracking_url) }))
-      .filter(t => t.number),
   }
+}
+
+/**
+ * The parcels of an order that carry a tracking number, one entry per package; [] while nothing shipped, null when Merchize
+ * holds no order under that external number.
+ */
+export async function getOrderTracking(creds: MerchizeCredentials, externalNumber: string, identifier: string): Promise<MerchizePackage[] | null> {
+  const q = new URLSearchParams({ external_number: externalNumber, identifier })
+  let json: any
+  try {
+    json = await call(creds, 'GET', `/order/external/orders/tracking?${q}`)
+  } catch (e) {
+    if (isOrderMissing(e)) return null
+    throw e
+  }
+  const data = json?.data ?? []
+  // A changed answer must show in the log, not read as "nothing shipped" night after night.
+  if (!Array.isArray(data)) throw new MerchizeError('Merchize trả về tracking không đúng dạng (data không phải danh sách)', 200, json)
+  return data
+    .filter((p: any) => p?.has_tracking !== false)
+    .map((p: any): MerchizePackage => ({
+      number: str(p?.tracking_number) ?? '', company: str(p?.tracking_company), url: str(p?.tracking_url), shipmentStatus: str(p?.shipment_status),
+      items: (Array.isArray(p?.items) ? p.items : []).map((i: any) => ({
+        catalogSku: str(i?.ffm_mapped_catalog_sku), size: str(i?.size), color: str(i?.color), quantity: num(i?.quantity),
+      })),
+    }))
+    .filter((p: MerchizePackage) => p.number)
 }

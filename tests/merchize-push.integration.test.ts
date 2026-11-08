@@ -9,6 +9,7 @@ import { AUTH_COOKIE, signToken } from '@/lib/auth'
 import { DEFAULT_ROLE_PERMISSIONS } from '@/lib/roles'
 import { handoffOrderCsv, handoffStateFor, handoffStates } from '@/lib/supplier-handoff'
 import { IMPORT_WAIT, methodFor, syncMerchizeTracking } from '@/lib/repos/merchize-push'
+import { MerchizeError, getOrderTracking } from '@/lib/merchize'
 import { syncApiSupplierTracking } from '@/lib/repos/supplier-tracking-sync'
 import { setStoreSetting } from '@/lib/store-settings'
 import { resyncOrder } from './helpers/resync-order'
@@ -36,6 +37,20 @@ let calls: Call[] = []
 let handler: (call: Call) => Reply | Promise<Reply>
 let remoteOrders: Set<string>
 
+const TEE_L = '5000US000LTBAA03'
+// A supplier SKU whose Merchize catalog SKU (apiSku) is another string: tracking finds the line through the apiSku.
+const TEE_XL = 'MZ-TEE-BLACK-XL'
+const TEE_XL_CATALOG = '5000US000BLKAA05'
+
+// One package of Merchize's tracking answer (GET /order/external/orders/tracking), as seen live on 2026-11-08.
+const pkg = (number: string, skus: string[], extra: Record<string, unknown> = {}) => ({
+  status: 'fulfilled', shipment_status: 'in_transit', tracking_company: 'USPS', tracking_number: number,
+  tracking_url: `https://t.example/${number}`, has_tracking: true,
+  items: skus.map(sku => ({ ffm_mapped_catalog_sku: sku, size: 'L', color: 'Light Blue', variant_title: 'Light Blue / L', quantity: 1, fulfilled_quantity: 1 })),
+  created: '2026-11-01T10:00:00Z', updated: '2026-11-02T10:00:00Z',
+  ...extra,
+})
+
 const CATALOG = {
   success: true,
   data: {
@@ -47,6 +62,13 @@ const CATALOG = {
         attributes: [
           { name: 'color', type: 'color', value_text: 'Light Blue', value_code: 'lightblue' },
           { name: 'size', type: 'size', value_text: 'L', value_code: 'l' },
+        ],
+        shipping_prices: [], tiers: [{ name: 'dtf_tier1', price: 5.25 }],
+      }, {
+        _id: 'v2', sku: TEE_XL_CATALOG,
+        attributes: [
+          { name: 'color', type: 'color', value_text: 'Black', value_code: 'black' },
+          { name: 'size', type: 'size', value_text: 'XL', value_code: 'xl' },
         ],
         shipping_prices: [], tiers: [{ name: 'dtf_tier1', price: 5.25 }],
       }],
@@ -66,13 +88,16 @@ function defaultHandler(call: Call): Reply {
     remoteOrders.delete(JSON.parse(call.body).order.external_number)
     return { status: 200, json: { success: true, data: true } }
   }
+  // Order detail carries status and cost only: Merchize sends no tracking there, whatever the status.
   if (call.path.endsWith('/order/external/orders/order-detail')) {
     const n = call.query.get('external_number') ?? ''
     if (!remoteOrders.has(n)) return { status: 200, json: { success: false, message: 'Order does not exist' } }
-    return { status: 200, json: { success: true, data: {
-      _id: `mz-${n}`, code: `RX-${n}`, order_status: 'in_production', fulfillment_cost: 10.65,
-      fulfillments: [{ tracking_number: '9400111', tracking_company: 'USPS', tracking_url: 'https://t.example/9400111' }],
-    } } }
+    return { status: 200, json: { success: true, data: { _id: `mz-${n}`, code: `RX-${n}`, order_status: 'in_production', fulfillment_cost: 10.65 } } }
+  }
+  if (call.path.endsWith('/order/external/orders/tracking')) {
+    const n = call.query.get('external_number') ?? ''
+    if (!remoteOrders.has(n)) return { status: 404, json: { success: false, message: 'Order not found' } }
+    return { status: 200, json: { success: true, data: [pkg('9400111', [TEE_L])] } }
   }
   return { status: 404, json: { success: false, message: 'unexpected path in test' } }
 }
@@ -145,6 +170,9 @@ beforeAll(async () => {
   })
   await prisma.supplierProduct.create({
     data: { supplierId: SUP, sku: '5000US000GONE03', baseSku: '5000US', baseCost: 5.25, printTemplateId: template.id },
+  })
+  await prisma.supplierProduct.create({
+    data: { supplierId: SUP, sku: TEE_XL, apiSku: TEE_XL_CATALOG, baseSku: '5000US', baseCost: 5.25, printTemplateId: template.id },
   })
   const adminId = (await prisma.appUser.upsert({ where: { email: 'admin@mz.test' }, create: { name: 'Admin', email: 'admin@mz.test', role: 'ADMIN', permissions: JSON.stringify(DEFAULT_ROLE_PERMISSIONS.ADMIN) }, update: {} })).id
   adminToken = await signToken({ userId: adminId, email: 'admin@mz.test', name: 'Admin', role: 'ADMIN', permissions: [], tv: 0 })
@@ -372,6 +400,49 @@ describe('printing method', () => {
   })
 })
 
+describe('Merchize tracking answer', () => {
+  const creds = { baseUrl: API, token: 'mz-test-token' }
+  const answer = (json: unknown, status = 200) => {
+    handler = call => call.path.endsWith('/order/external/orders/tracking') ? { status, json } : defaultHandler(call)
+  }
+
+  it('returns the packages that carry a tracking number, each with the catalog SKUs it holds', async () => {
+    answer({ success: true, data: [
+      pkg('9200190384072911375377', [TEE_L], { shipment_status: 'delivered' }),
+      pkg('', [TEE_XL_CATALOG], { status: 'unfulfilled', shipment_status: null, tracking_company: null, tracking_url: null }),
+      pkg('LABEL-ONLY-1', [TEE_XL_CATALOG], { status: 'unfulfilled', has_tracking: false, shipment_status: null }),
+    ] })
+
+    expect(await getOrderTracking(creds, 'MZ7001', 'MZ')).toEqual([{
+      number: '9200190384072911375377', company: 'USPS', url: 'https://t.example/9200190384072911375377', shipmentStatus: 'delivered',
+      items: [{ catalogSku: TEE_L, size: 'L', color: 'Light Blue', quantity: 1 }],
+    }])
+    const asked = callsTo('/order/external/orders/tracking')
+    expect(asked).toHaveLength(1)
+    expect(Object.fromEntries(asked[0].query)).toEqual({ external_number: 'MZ7001', identifier: 'MZ' })
+    expect(asked[0].headers.Authorization).toBe('Bearer mz-test-token')
+  })
+
+  it('is empty while nothing shipped', async () => {
+    answer({ success: true, data: [] })
+    expect(await getOrderTracking(creds, 'MZ7002', 'MZ')).toEqual([])
+  })
+
+  it('is null when Merchize holds no order under that number', async () => {
+    answer({ success: false, message: 'Order not found' }, 404)
+    expect(await getOrderTracking(creds, 'MZ7003', 'MZ')).toBeNull()
+    answer({ success: false, message: 'Order does not exist' })
+    expect(await getOrderTracking(creds, 'MZ7003', 'MZ')).toBeNull()
+  })
+
+  it('throws any other refusal', async () => {
+    answer({ success: false, message: 'Identifier is invalid' })
+    const e = await getOrderTracking(creds, 'MZ7004', 'MZ').catch(x => x)
+    expect(e).toBeInstanceOf(MerchizeError)
+    expect(e.message).toBe('Identifier is invalid')
+  })
+})
+
 describe('handoff state', () => {
   it('sends only the Merchize lines of a mixed order and leaves the other supplier\'s line open', async () => {
     const o = await makeOrder()
@@ -581,39 +652,38 @@ describe('Merchize tracking after the order sync made the lines anew', () => {
   })
 })
 
-// Merchize's order detail lists its fulfilments with a tracking number and carrier only, nothing that names an item.
+// Merchize's tracking answer lists one package per parcel, each naming the catalog SKUs (ffm_mapped_catalog_sku) it holds.
 describe('a Merchize order shipped in several parcels', () => {
-  let parcels = new Map<string, Array<{ tracking_number: string; tracking_company: string }>>()
+  let parcels = new Map<string, unknown[]>()
   beforeEach(() => {
     parcels = new Map()
     handler = call => {
       const n = call.query.get('external_number') ?? ''
-      if (call.path.endsWith('/order/external/orders/order-detail') && parcels.has(n) && remoteOrders.has(n)) {
-        return { status: 200, json: { success: true, data: { _id: `mz-${n}`, code: `RX-${n}`, order_status: 'in_production', fulfillments: parcels.get(n) } } }
+      if (call.path.endsWith('/order/external/orders/tracking') && parcels.has(n) && remoteOrders.has(n)) {
+        return { status: 200, json: { success: true, data: parcels.get(n) } }
       }
       return defaultHandler(call)
     }
   })
   afterEach(() => { vi.restoreAllMocks() })
 
-  const twoLineOrder = async () => {
+  const twoLineOrder = async (secondSku = TEE_L) => {
     const o = await makeOrder()
     const first = await prisma.orderLine.findFirstOrThrow({ where: { orderId: o.id } })
-    await approveOpenLine(o, await addOpenLine(o, first))
+    await approveOpenLine(o, await addOpenLine(o, { ...first, resolvedSupplierSku: secondSku }))
     const p = await (await preview(o.id)).json()
     expect(p.lines.map((l: any) => l.refId)).toEqual([`${o.number}_1`, `${o.number}_2`])
     expect((await push(o.id, p.payloadHash)).status).toBe(200)
     return o
   }
-  const parcel = (n: string) => ({ tracking_number: n, tracking_company: 'USPS' })
   const tracked = (orderId: string) => prisma.shipment.findMany({
-    where: { orderId, trackingNumber: { not: null } }, orderBy: { lineKey: 'asc' }, select: { lineKey: true, trackingNumber: true },
+    where: { orderId, trackingNumber: { not: null } }, orderBy: { lineKey: 'asc' }, select: { lineKey: true, trackingNumber: true, carrier: true },
   })
   const warningsFor = (spy: { mock: { calls: unknown[][] } }, number: string) => spy.mock.calls.map(c => c.join(' ')).filter(m => m.includes(number))
 
-  it('two lines back as two parcels with different trackings: no tracking is written, the order is flagged once, the pull is recorded', async () => {
+  it('two lines of one SKU back as two parcels with different trackings: no tracking is written, the order is flagged once, the pull is recorded', async () => {
     const o = await twoLineOrder()
-    parcels.set(o.number, [parcel('MZP1'), parcel('MZP2')])
+    parcels.set(o.number, [pkg('MZP1', [TEE_L]), pkg('MZP2', [TEE_L])])
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
     expect((await (await refresh(o.id)).json()).shipments).toBe(0)
@@ -622,13 +692,14 @@ describe('a Merchize order shipped in several parcels', () => {
     const warned = warningsFor(warn, o.number)
     expect(warned).toHaveLength(1)
     expect(warned[0]).toContain('2 tracking')
+    expect(warned[0]).toContain(`${o.number}_1, ${o.number}_2`)
     expect(warned[0]).toContain('cần đối chiếu tay')
     expect((await prisma.supplierOrderPush.findFirstOrThrow({ where: { orderId: o.id } })).lastSyncedAt).not.toBeNull()
   })
 
   it('the nightly pull holds it the same way, one warning per push', async () => {
     const o = await twoLineOrder()
-    parcels.set(o.number, [parcel('MZP3'), parcel('MZP4')])
+    parcels.set(o.number, [pkg('MZP3', [TEE_L]), pkg('MZP4', [TEE_L])])
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
     await syncMerchizeTracking()
@@ -637,28 +708,120 @@ describe('a Merchize order shipped in several parcels', () => {
     expect(warningsFor(warn, o.number)).toHaveLength(1)
   })
 
-  it('two lines and one tracking (one parcel, or two fulfilments of one number): both lines get it, as before', async () => {
-    const one = await twoLineOrder()
+  it('two lines of different SKUs in two parcels: each line gets the parcel that holds its catalog SKU', async () => {
+    const o = await twoLineOrder(TEE_XL)
+    parcels.set(o.number, [pkg('MZP9', [TEE_XL_CATALOG], { tracking_company: 'UPS' }), pkg('MZP10', [TEE_L])])
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    expect((await (await refresh(o.id)).json()).shipments).toBe(2)
+
+    expect(await tracked(o.id)).toEqual([
+      { lineKey: `${o.number}_1`, trackingNumber: 'MZP10', carrier: 'USPS' },
+      { lineKey: `${o.number}_2`, trackingNumber: 'MZP9', carrier: 'UPS' },
+    ])
+    expect(warningsFor(warn, o.number)).toEqual([])
+    expect(callsTo('/order/external/orders/tracking').at(-1)!.query.get('identifier')).toBe('MZ')
+  })
+
+  it('a line two parcels hold gets no tracking and is flagged; the line only one parcel holds still gets it', async () => {
+    const o = await twoLineOrder(TEE_XL)
+    parcels.set(o.number, [pkg('MZP11', [TEE_L, TEE_XL_CATALOG]), pkg('MZP12', [TEE_L])])
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    expect((await (await refresh(o.id)).json()).shipments).toBe(1)
+
+    expect(await tracked(o.id)).toEqual([{ lineKey: `${o.number}_2`, trackingNumber: 'MZP11', carrier: 'USPS' }])
+    const warned = warningsFor(warn, o.number)
+    expect(warned).toHaveLength(1)
+    expect(warned[0]).toContain(`dòng ${o.number}_1 `)
+    expect(warned[0]).not.toContain(`${o.number}_2`)
+  })
+
+  it('a line no parcel names gets no tracking and is flagged', async () => {
+    const o = await twoLineOrder(TEE_XL)
+    parcels.set(o.number, [pkg('MZP13', [TEE_L]), pkg('MZP14', [])])
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    expect((await (await refresh(o.id)).json()).shipments).toBe(1)
+
+    expect(await tracked(o.id)).toEqual([{ lineKey: `${o.number}_1`, trackingNumber: 'MZP13', carrier: 'USPS' }])
+    const warned = warningsFor(warn, o.number)
+    expect(warned).toHaveLength(1)
+    expect(warned[0]).toContain(`dòng ${o.number}_2 `)
+  })
+
+  it('two lines and one tracking (one parcel, or two packages of one number): both lines get it, as before', async () => {
+    const one = await twoLineOrder(TEE_XL)
     const same = await twoLineOrder()
-    parcels.set(one.number, [parcel('MZP5')])
-    parcels.set(same.number, [parcel('MZP6'), parcel('MZP6')])
+    parcels.set(one.number, [pkg('MZP5', [TEE_L])])
+    parcels.set(same.number, [pkg('MZP6', [TEE_L]), pkg('MZP6', [TEE_L])])
 
     expect((await (await refresh(one.id)).json()).shipments).toBe(2)
     expect((await (await refresh(same.id)).json()).shipments).toBe(2)
 
-    expect(await tracked(one.id)).toEqual([{ lineKey: `${one.number}_1`, trackingNumber: 'MZP5' }, { lineKey: `${one.number}_2`, trackingNumber: 'MZP5' }])
-    expect(await tracked(same.id)).toEqual([{ lineKey: `${same.number}_1`, trackingNumber: 'MZP6' }, { lineKey: `${same.number}_2`, trackingNumber: 'MZP6' }])
+    expect((await tracked(one.id)).map(t => [t.lineKey, t.trackingNumber])).toEqual([[`${one.number}_1`, 'MZP5'], [`${one.number}_2`, 'MZP5']])
+    expect((await tracked(same.id)).map(t => [t.lineKey, t.trackingNumber])).toEqual([[`${same.number}_1`, 'MZP6'], [`${same.number}_2`, 'MZP6']])
   })
 
-  it('one line back as two parcels: the line gets the first tracking, as before', async () => {
+  it('one line back as two parcels of different numbers that both hold it: no tracking is written, the order is flagged', async () => {
     const o = await makeOrder()
     const p = await (await preview(o.id)).json()
     await push(o.id, p.payloadHash)
-    parcels.set(o.number, [parcel('MZP7'), parcel('MZP8')])
+    parcels.set(o.number, [pkg('MZP7', [TEE_L]), pkg('MZP8', [TEE_L])])
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
-    expect((await (await refresh(o.id)).json()).shipments).toBe(1)
+    expect((await (await refresh(o.id)).json()).shipments).toBe(0)
 
-    expect(await tracked(o.id)).toEqual([{ lineKey: `${o.number}_1`, trackingNumber: 'MZP7' }])
+    expect(await tracked(o.id)).toEqual([])
+    expect(warningsFor(warn, o.number)).toHaveLength(1)
+  })
+})
+
+describe('a failing Merchize tracking call', () => {
+  afterEach(() => { vi.restoreAllMocks() })
+
+  it('keeps the status the refresh wrote: the push lands, the order is found with no shipment, the failure is logged', async () => {
+    const o = await makeOrder()
+    handler = call => {
+      if (call.path.endsWith('/order/external/orders') && call.method === 'POST') {
+        remoteOrders.add(JSON.parse(call.body).order_id)
+        return 'network-error'
+      }
+      return defaultHandler(call)
+    }
+    const p = await (await preview(o.id)).json()
+    expect((await push(o.id, p.payloadHash)).status).toBe(504)
+    const row = await prisma.supplierOrderPush.findFirstOrThrow({ where: { orderId: o.id } })
+    expect(row.status).toBe('SENDING')
+    handler = call => call.path.endsWith('/order/external/orders/tracking') ? 'network-error' : defaultHandler(call)
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const res = await refresh(o.id)
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({ found: true, shipments: 0, push: { status: 'CREATED', remoteStatus: 'in_production', totalCost: 10.65 } })
+    expect(callsTo('/order/external/orders/tracking')).toHaveLength(1)
+    expect((await prisma.order.findUniqueOrThrow({ where: { id: o.id } })).pipelineStatus).toBe('EXPORTED')
+    expect(await prisma.shipment.count({ where: { orderId: o.id } })).toBe(0)
+    expect(JSON.stringify(errors.mock.calls)).toContain(row.id)
+  })
+
+  it('in the nightly pull, counts the order found and logs no key', async () => {
+    const { o, row } = await pushedOrder()
+    handler = call => call.path.endsWith('/order/external/orders/tracking') && call.query.get('external_number') === o.number
+      ? { status: 500, json: { success: false, message: 'upstream broke for token mz-test-token' } }
+      : defaultHandler(call)
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const result = await syncMerchizeTracking()
+
+    expect(result.found).toBeGreaterThanOrEqual(1)
+    expect(await prisma.supplierOrderPush.findUniqueOrThrow({ where: { id: row.id } })).toMatchObject({ remoteStatus: 'in_production', lastSyncedAt: expect.any(Date) })
+    expect(await prisma.shipment.count({ where: { orderId: o.id } })).toBe(0)
+    const logged = JSON.stringify(errors.mock.calls)
+    expect(logged).toContain(row.id)
+    expect(logged).toContain('upstream broke')
+    expect(logged).not.toContain('mz-test-token')
   })
 })
 
