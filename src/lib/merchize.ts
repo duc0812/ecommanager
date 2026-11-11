@@ -16,6 +16,7 @@ export class MerchizeError extends Error {
     readonly body: unknown = null,
     // True when no HTTP answer came back (timeout, network): the request may still have been processed.
     readonly noResponse = false,
+    readonly retryAfterMs?: number,
   ) {
     super(message)
     this.name = 'MerchizeError'
@@ -115,10 +116,9 @@ export type MerchizeRemoteOrder = {
   fulfillmentCost: number | null; shippingCost: number | null
 }
 
-/** One parcel Merchize shipped; `catalogSku` is the catalog variant SKU of each item in it (the item `sku` the push sent). */
-export type MerchizePackage = {
-  number: string; company: string | null; url: string | null; shipmentStatus: string | null
-  items: { catalogSku: string | null; size: string | null; color: string | null; quantity: number | null }[]
+export type MerchizeTracking = {
+  number: string; company: string | null; url: string | null
+  items: { sku: string | null; catalogSku: string | null; quantity: number | null }[]
 }
 
 function str(v: unknown): string | null {
@@ -143,6 +143,7 @@ async function call(creds: MerchizeCredentials, method: 'GET' | 'POST', path: st
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   let status = 0
   let text = ''
+  let retryAfterMs: number | undefined
   try {
     const res = await fetch(url, {
       method,
@@ -153,6 +154,12 @@ async function call(creds: MerchizeCredentials, method: 'GET' | 'POST', path: st
       redirect: 'error',
     })
     status = res.status
+    const retryAfter = res.headers.get('Retry-After')
+    if (retryAfter) {
+      const seconds = Number(retryAfter)
+      const delay = Number.isFinite(seconds) ? seconds * 1000 : Date.parse(retryAfter) - Date.now()
+      if (Number.isFinite(delay)) retryAfterMs = Math.max(0, delay)
+    }
     text = await res.text()
   } catch (e: any) {
     const timedOut = e?.name === 'AbortError' || controller.signal.aborted
@@ -166,15 +173,35 @@ async function call(creds: MerchizeCredentials, method: 'GET' | 'POST', path: st
   let json: any = null
   try { json = text ? JSON.parse(text) : null } catch {}
   if (status < 200 || status >= 300 || json?.success === false) {
-    throw new MerchizeError(errorMessage(json, text, status), status, json ?? text.slice(0, 2000))
+    throw new MerchizeError(errorMessage(json, text, status), status, json ?? text.slice(0, 2000), false, retryAfterMs)
   }
   if (json === null) throw new MerchizeError('Merchize trả về dữ liệu không phải JSON', status, text.slice(0, 2000))
   return json
 }
 
+const readCooldown = new Map<string, number>()
+
+async function read(creds: MerchizeCredentials, path: string): Promise<any> {
+  for (let attempt = 0; ; attempt++) {
+    const wait = (readCooldown.get(creds.baseUrl) ?? 0) - Date.now()
+    if (wait > 60_000) throw new MerchizeError('Merchize đang giới hạn tần suất, thử lại ở lượt đồng bộ sau', 429, null, false, wait)
+    if (wait > 0) await new Promise(resolve => setTimeout(resolve, wait))
+    try {
+      const result = await call(creds, 'GET', path)
+      readCooldown.delete(creds.baseUrl)
+      return result
+    } catch (e) {
+      if (!(e instanceof MerchizeError) || e.status !== 429) throw e
+      const delay = e.retryAfterMs ?? 30_000 * (attempt + 1)
+      readCooldown.set(creds.baseUrl, Date.now() + delay)
+      if (attempt >= 2 || delay > 60_000) throw e
+    }
+  }
+}
+
 export async function searchCatalog(creds: MerchizeCredentials, skus: string[]): Promise<MerchizeCatalogProduct[]> {
   const q = new URLSearchParams({ limit: '50', page: '1', search: skus.join(',') })
-  const json = await call(creds, 'GET', `/product/catalog?${q}`)
+  const json = await read(creds, `/product/catalog?${q}`)
   const products: any[] = Array.isArray(json?.data?.products) ? json.data.products : []
   return products as MerchizeCatalogProduct[]
 }
@@ -198,16 +225,14 @@ export async function cancelOrder(creds: MerchizeCredentials, externalNumber: st
   return call(creds, 'POST', '/order/external/orders/cancel', JSON.stringify({ order: { external_number: externalNumber, identifier } }))
 }
 
-const isOrderMissing = (e: unknown) => e instanceof MerchizeError && (e.status === 404 || /does not exist|not found/i.test(e.message))
-
-/** Status and costs; null when Merchize holds no order under that external number. It carries no tracking: see getOrderTracking. */
+/** null when Merchize holds no order under that external number. */
 export async function getOrderDetail(creds: MerchizeCredentials, externalNumber: string, identifier: string): Promise<MerchizeRemoteOrder | null> {
   const q = new URLSearchParams({ external_number: externalNumber, identifier })
   let json: any
   try {
-    json = await call(creds, 'GET', `/order/external/orders/order-detail?${q}`)
+    json = await read(creds, `/order/external/orders/order-detail?${q}`)
   } catch (e) {
-    if (isOrderMissing(e)) return null
+    if (e instanceof MerchizeError && (e.status === 404 || /does not exist|not found/i.test(e.message))) return null
     throw e
   }
   const d = json?.data
@@ -219,29 +244,21 @@ export async function getOrderDetail(creds: MerchizeCredentials, externalNumber:
   }
 }
 
-/**
- * The parcels of an order that carry a tracking number, one entry per package; [] while nothing shipped, null when Merchize
- * holds no order under that external number.
- */
-export async function getOrderTracking(creds: MerchizeCredentials, externalNumber: string, identifier: string): Promise<MerchizePackage[] | null> {
+export async function getOrderTracking(creds: MerchizeCredentials, externalNumber: string, identifier: string): Promise<MerchizeTracking[]> {
   const q = new URLSearchParams({ external_number: externalNumber, identifier })
   let json: any
   try {
-    json = await call(creds, 'GET', `/order/external/orders/tracking?${q}`)
+    json = await read(creds, `/order/external/orders/tracking?${q}`)
   } catch (e) {
-    if (isOrderMissing(e)) return null
+    if (e instanceof MerchizeError && /^Order has not fulfilled(?:[.!]|$)/i.test(e.message)) return []
     throw e
   }
-  const data = json?.data
-  // A success answer always carries the list; anything else must show in the log, not read as "nothing shipped" night after night.
-  if (!Array.isArray(data)) throw new MerchizeError('Merchize trả về tracking không đúng dạng (thiếu danh sách data)', 200, json)
-  return data
-    .filter((p: any) => p?.has_tracking !== false)
-    .map((p: any): MerchizePackage => ({
-      number: str(p?.tracking_number) ?? '', company: str(p?.tracking_company), url: str(p?.tracking_url), shipmentStatus: str(p?.shipment_status),
-      items: (Array.isArray(p?.items) ? p.items : []).map((i: any) => ({
-        catalogSku: str(i?.ffm_mapped_catalog_sku), size: str(i?.size), color: str(i?.color), quantity: num(i?.quantity),
-      })),
-    }))
-    .filter((p: MerchizePackage) => p.number)
+  if (!Array.isArray(json?.data)) throw new MerchizeError('Merchize trả về danh sách tracking không hợp lệ', 502)
+  return json.data.filter((p: any) => p?.has_tracking !== false && str(p?.tracking_number)).map((p: any) => ({
+    number: str(p.tracking_number)!, company: str(p.tracking_company), url: str(p.tracking_url),
+    items: (Array.isArray(p.items) ? p.items : []).map((item: any) => ({
+      sku: str(item?.sku), catalogSku: str(item?.ffm_mapped_catalog_sku),
+      quantity: num(item?.fulfilled_quantity) ?? num(item?.quantity),
+    })),
+  }))
 }

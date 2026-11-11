@@ -266,7 +266,7 @@ describe('PUT /api/design-studio/tasks/[key]/artwork', () => {
 
     const line = await lineRow()
     const fd = new FormData()
-    fd.append('file', new File([png(1, 1)], 'back.png', { type: 'image/png' }))
+    fd.append('file', new File([new Uint8Array(png(1, 1))], 'back.png', { type: 'image/png' }))
     fd.append('printArea', 'Back')
     await legacyUpload(new NextRequest(`http://localhost/api/design-studio/lines/${line.id}/artwork`, { method: 'POST', body: fd, headers: { cookie: `${AUTH_COOKIE}=${designerToken}` } }), { params: { lineId: line.id } })
     const after = await prisma.designTaskEvent.findMany({ where: { task: { taskKey: TASK }, type: 'ARTWORK' }, orderBy: { createdAt: 'asc' } })

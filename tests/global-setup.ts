@@ -13,8 +13,9 @@ export default function globalSetup() {
   for (const suffix of ['', '-journal', '-wal', '-shm']) {
     try { fs.unlinkSync(dbPath + suffix) } catch {}
   }
+  fs.writeFileSync(dbPath, '')
   execSync('npx prisma migrate deploy', {
     stdio: 'inherit',
-    env: { ...process.env, DATABASE_URL: `file:${dbPath}` },
+    env: { ...process.env, DATABASE_URL: TEST_DATABASE_URL.replace(/\\/g, '/') },
   })
 }

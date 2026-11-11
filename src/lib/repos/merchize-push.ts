@@ -14,10 +14,11 @@ import {
   isUniqueViolation, latestPush, pushCarriedLines, reservePush, toPushViews, upsertLineTracking, viewOf, type PushRow,
 } from '@/lib/repos/supplier-push-core'
 import { safeErrorText } from '@/lib/store-jobs'
+import { matchMerchizeTracking } from '@/lib/merchize-tracking'
 import {
-  MerchizeError, cancelOrder, createOrder, getOrderDetail, getOrderTracking, isMerchizeSupplier, merchizeMissingMessage, merchizePrintingMethod,
-  resolveMerchize, pushToProduction, searchCatalog, serializeOrderPayload,
-  type MerchizeCatalogVariant, type MerchizeCredentials, type MerchizePackage, type MerchizePrintingMethod, type MerchizeOrderItem, type MerchizeOrderPayload,
+  MerchizeError, cancelOrder, createOrder, getOrderDetail, getOrderTracking, isMerchizeSupplier, merchizeMissingMessage, merchizePrintingMethod, resolveMerchize,
+  pushToProduction, searchCatalog, serializeOrderPayload,
+  type MerchizeCatalogVariant, type MerchizeCredentials, type MerchizePrintingMethod, type MerchizeOrderItem, type MerchizeOrderPayload, type MerchizeTracking,
 } from '@/lib/merchize'
 import type { PreviewFile, PreviewIssue, PreviewLine, PushPreview, PushView } from '@/lib/pgprints-shared'
 
@@ -427,50 +428,18 @@ export async function cancelMerchizePush(orderId: string): Promise<{ push: PushV
   return { push: await viewOf(push.id), exportReverted }
 }
 
-/**
- * A push that carried one line gives it the tracking when Merchize reports one number. Otherwise every line goes by its catalog
- * SKU, the one its push item was sent under (apiSku of its supplier SKU, as buildMerchizePush reads it), and takes the package of
- * the one number that holds it. Merchize leaves out parcels with no tracking yet, so a line whose own parcel has not shipped must
- * not borrow another line's. Lines sharing a SKU take a package only when it holds at least their quantity together. A line left
- * without a package gets none and the order is flagged: a tracking is never written on a line it may not belong to.
- */
-async function upsertTracking(push: PushRow, packages: MerchizePackage[]): Promise<number> {
-  const numbers = new Set(packages.map(p => p.number)).size
-  if (numbers === 0) return 0
+async function upsertTracking(push: PushRow, tracking: MerchizeTracking[]): Promise<number> {
+  if (!tracking.length) return 0
   const found = await pushCarriedLines(push)
-  if (!found || found.lines.length === 0) return 0
-  if (found.lines.length === 1 && numbers === 1) return upsertLineTracking(push, () => packages[0])
-  const supplierSkus = Array.from(new Set(found.lines.map(l => l.resolvedSupplierSku).filter((x): x is string => !!x)))
-  const products = supplierSkus.length
-    ? await prisma.supplierProduct.findMany({ where: { supplierId: push.supplierId, sku: { in: supplierSkus } }, select: { sku: true, apiSku: true } })
-    : []
-  const catalogSkuOf = new Map(products.map(p => [p.sku, p.apiSku?.trim() || p.sku]))
-  const skuOf = (l: { resolvedSupplierSku: string | null }) => (l.resolvedSupplierSku ? catalogSkuOf.get(l.resolvedSupplierSku) : undefined) ?? null
-  const quantities = await prisma.orderLine.findMany({ where: { id: { in: found.lines.map(l => l.id) } }, select: { id: true, qty: true } })
-  const qtyOf = new Map(quantities.map(l => [l.id, l.qty]))
-  const wanted = new Map<string, { lines: number; qty: number }>()
-  for (const l of found.lines) {
-    const sku = skuOf(l)
-    if (!sku) continue
-    const w = wanted.get(sku) ?? { lines: 0, qty: 0 }
-    wanted.set(sku, { lines: w.lines + 1, qty: w.qty + (qtyOf.get(l.id) ?? 0) })
-  }
-  const packageOf = (sku: string | null): MerchizePackage | null => {
-    if (!sku) return null
-    const holding = packages.filter(p => p.items.some(i => i.catalogSku === sku))
-    if (new Set(holding.map(p => p.number)).size !== 1) return null
-    const w = wanted.get(sku)!
-    if (w.lines === 1) return holding[0]
-    const shipped = holding.flatMap(p => p.items).filter(i => i.catalogSku === sku).reduce((n, i) => n + (i.quantity ?? 0), 0)
-    return shipped >= w.qty ? holding[0] : null
-  }
-  const assigned = new Map(found.lines.map(l => [l.shopifyLineId, packageOf(skuOf(l))]))
-  const lineKeys = lineKeysOf(found.order.shopifyOrderNumber, found.order.lines)
-  const open = found.lines.filter(l => !assigned.get(l.shopifyLineId)).map(l => lineKeys.get(l.shopifyLineId) ?? l.shopifyLineId)
-  if (open.length > 0) {
-    console.warn(`[merchize] ${found.order.shopifyOrderNumber}: Merchize báo ${numbers} mã tracking; dòng ${open.join(', ')} không có kiện có tracking của riêng dòng đó (theo SKU và số lượng) — không ghi tracking cho dòng đó, cần đối chiếu tay`)
-  }
-  return upsertLineTracking(push, line => assigned.get(line.shopifyLineId) ?? null)
+  if (!found) return 0
+  const products = await prisma.supplierProduct.findMany({ where: { supplierId: push.supplierId }, select: { sku: true, apiSku: true } })
+  const apiSkuOf = new Map(products.map(p => [p.sku, p.apiSku]))
+  const matched = matchMerchizeTracking(found.lines.map(l => ({
+    shopifyLineId: l.shopifyLineId, sku: l.sku, qty: l.qty,
+    catalogSkus: [l.resolvedSupplierSku, l.resolvedSupplierSku ? apiSkuOf.get(l.resolvedSupplierSku) : null].filter((s): s is string => !!s),
+  })), tracking)
+  if (matched.ambiguous) console.warn(`[merchize] ${found.order.shopifyOrderNumber}: ${new Set(tracking.map(t => t.number)).size} tracking cho ${found.lines.length} dòng, chỉ ghi kiện ghép chắc chắn theo SKU và số lượng; phần còn lại cần đối chiếu tay`)
+  return upsertLineTracking(push, line => matched.byLine.get(line.shopifyLineId) ?? null)
 }
 
 export async function refreshMerchizePush(orderId: string): Promise<{ push: PushView; found: boolean; shipments: number }> {
@@ -486,13 +455,11 @@ export async function refreshMerchizePush(orderId: string): Promise<{ push: Push
 /** One push against Merchize, for the refresh button and the nightly pull alike: a found order lands it and brings its tracking. */
 async function refreshOne(creds: MerchizeCredentials, push: PushRow): Promise<{ found: boolean; shipments: number }> {
   const now = Date.now()
-  let identifier: string
   let remote: Awaited<ReturnType<typeof getOrderDetail>>
   try {
-    identifier = await identifierFor(push.orderId, push)
-    remote = await getOrderDetail(creds, push.externalOrderId, identifier)
+    remote = await getOrderDetail(creds, push.externalOrderId, await identifierFor(push.orderId, push))
   } catch (e: any) {
-    throw new PushError(`Không lấy được trạng thái từ Merchize: ${e?.message ?? e}`, e instanceof MerchizeError && e.noResponse ? 504 : 502, 'REFRESH_FAILED')
+    throw new PushError(`Không lấy được trạng thái từ Merchize: ${e?.message ?? e}`, e instanceof MerchizeError ? (e.status === 429 ? 429 : e.noResponse ? 504 : 502) : 502, 'REFRESH_FAILED')
   }
   const lastSyncedAt = new Date(now)
   if (!remote) {
@@ -522,15 +489,13 @@ async function refreshOne(creds: MerchizeCredentials, push: PushRow): Promise<{ 
   }
   if (landed) await markPushExported(push)
   if (push.status === 'CANCELLED') return { found: true, shipments: 0 }
-  let packages: MerchizePackage[]
+  let tracking: MerchizeTracking[]
   try {
-    packages = (await getOrderTracking(creds, push.externalOrderId, identifier)) ?? []
+    tracking = await getOrderTracking(creds, push.externalOrderId, await identifierFor(push.orderId, push))
   } catch (e) {
-    // The status above stays written; the tracking is asked for again on the next pull.
-    console.error('[merchize] tracking pull failed for push', push.id, safeErrorText(e, [creds.token, creds.baseUrl]))
-    return { found: true, shipments: 0 }
+    throw new PushError(`Không lấy được tracking từ Merchize: ${safeErrorText(e, [creds.token, creds.baseUrl])}`, e instanceof MerchizeError && e.status === 429 ? 429 : 502, 'TRACKING_FAILED')
   }
-  return { found: true, shipments: await upsertTracking(push, packages) }
+  return { found: true, shipments: await upsertTracking(push, tracking) }
 }
 
 /**
@@ -538,7 +503,7 @@ async function refreshOne(creds: MerchizeCredentials, push: PushRow): Promise<{ 
  * account of its order's store (resolveMerchize). A store with no usable account is skipped and logged, never pulled with
  * another store's. One push or store failing does not stop the rest. Auto Fulfill turns the trackings into fulfillments.
  */
-export async function syncMerchizeTracking(): Promise<{ pushes: number; found: number; shipments: number; skipped?: string }> {
+export async function syncMerchizeTracking(): Promise<{ pushes: number; found: number; shipments: number; skipped?: string; error?: string }> {
   const supplier = await findMerchizeSupplier()
   if (!supplier) return { pushes: 0, found: 0, shipments: 0, skipped: 'no Merchize supplier' }
   const since = new Date(Date.now() - TRACKING_WINDOW_DAYS * 24 * 3600 * 1000)
@@ -554,13 +519,16 @@ export async function syncMerchizeTracking(): Promise<{ pushes: number; found: n
     byStore.set(store.id, group)
   }
   const total = { pushes: 0, found: 0, shipments: 0 }
+  const errors: string[] = []
   const withoutAccount: string[] = []
   for (const [storeId, { name, pushes }] of Array.from(byStore.entries())) {
     let resolved: Awaited<ReturnType<typeof resolveMerchize>>
     try {
       resolved = await resolveMerchize(storeId)
     } catch (e) {
-      console.error(`[merchize] tracking sync failed for ${name}: ${safeErrorText(e)}`)
+      const message = safeErrorText(e)
+      errors.push(`${name}: ${message}`)
+      console.error(`[merchize] tracking sync failed for ${name}: ${message}`)
       continue
     }
     if (!resolved.creds) {
@@ -576,9 +544,12 @@ export async function syncMerchizeTracking(): Promise<{ pushes: number; found: n
         if (r.found) total.found++
         total.shipments += r.shipments
       } catch (e) {
-        console.error('[merchize] tracking sync failed for push', push.id, safeErrorText(e, [creds.token, creds.baseUrl]))
+        const message = safeErrorText(e, [creds.token, creds.baseUrl])
+        errors.push(`${push.id}: ${message}`)
+        console.error('[merchize] tracking sync failed for push', push.id, message)
+        if (e instanceof PushError && e.status === 429) break
       }
     }
   }
-  return { ...total, ...(withoutAccount.length > 0 ? { skipped: `no Merchize credentials for ${withoutAccount.join(', ')}` } : {}) }
+  return { ...total, ...(withoutAccount.length > 0 ? { skipped: `no Merchize credentials for ${withoutAccount.join(', ')}` } : {}), ...(errors.length ? { error: errors.join('; ') } : {}) }
 }

@@ -188,7 +188,7 @@ export async function checkOrderForPush(
   return { baseUrl, keyOf }
 }
 
-type TrackedLine = { shopifyLineId: string; resolvedSupplierId: string | null; resolvedSupplierSku: string | null }
+type TrackedLine = { shopifyLineId: string; sku: string | null; qty: number; resolvedSupplierId: string | null; resolvedSupplierSku: string | null }
 
 type TrackedPush = Pick<PushRow, 'orderId' | 'supplierId' | 'prevExportJson'> & Partial<Pick<PushRow, 'requestJson'>>
 
@@ -200,7 +200,7 @@ export async function pushCarriedLines(push: TrackedPush) {
       id: true, projectId: true, shopifyOrderNumber: true,
       lines: {
         orderBy: { linePosition: 'asc' },
-        select: { id: true, shopifyLineId: true, sku: true, productTitle: true, shopifyProductType: true, linePosition: true, resolvedSupplierId: true, resolvedSupplierSku: true, exportedToSupplierId: true },
+        select: { id: true, shopifyLineId: true, sku: true, qty: true, productTitle: true, shopifyProductType: true, linePosition: true, resolvedSupplierId: true, resolvedSupplierSku: true, exportedToSupplierId: true },
       },
     },
   })

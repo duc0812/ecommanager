@@ -14,7 +14,7 @@ const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJA
 const editSchema = { type: 'object', required: ['prompt', 'input_urls', 'aspect_ratio'], properties: { prompt: { type: 'string' }, input_urls: { type: 'array', items: { type: 'string' } }, aspect_ratio: { type: 'string', enum: ['1:1', '2:3', '3:2'] }, resolution: { type: 'string', enum: ['1K', '2K', '4K'] } } }
 const brokenFetch = (async () => { throw new Error('ECONNRESET') }) as unknown as typeof fetch
 let partPng: Buffer
-const downloadFetch = (async () => new Response(partPng, { status: 200, headers: { 'Content-Type': 'image/png' } })) as unknown as typeof fetch
+const downloadFetch = (async () => new Response(new Uint8Array(partPng), { status: 200, headers: { 'Content-Type': 'image/png' } })) as unknown as typeof fetch
 const done = (n: number): PollResult => ({ state: 'done', urls: [`https://tempfile.redpandaai.co/result-${n}.png`], credits: 10, costTime: null })
 const rejected: PollResult = { state: 'failed', error: 'The input or output was flagged as sensitive.' }
 const REFUSED = 'Kie từ chối nội dung của bước này (bộ lọc kiểm duyệt của model): The input or output was flagged as sensitive.'

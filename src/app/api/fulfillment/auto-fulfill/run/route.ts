@@ -19,6 +19,7 @@ export async function POST(req: NextRequest) {
       const send = (o: any) => controller.enqueue(encoder.encode(JSON.stringify(o) + '\n'))
       // First bytes go out before any slow work, so the proxy sees a response straight away.
       send({ type: 'stage', stage: 'pgprints', done: 0, total: 1 })
+      const heartbeat = setInterval(() => { try { send({ type: 'heartbeat' }) } catch { clearInterval(heartbeat) } }, 15_000)
       try {
         const pg = await syncPgprintsTracking().catch((e: any) => ({ error: e?.message ?? String(e) }))
         send({ type: 'pgprints', ...pg })
@@ -32,7 +33,7 @@ export async function POST(req: NextRequest) {
         else send({ type: 'done', apply, ...summary, stores: storeRunSummary(results) })
       } catch (e: any) {
         send({ type: 'error', error: e?.message ?? 'failed' })
-      } finally { controller.close() }
+      } finally { clearInterval(heartbeat); controller.close() }
     },
   })
   return new Response(stream, { headers: { 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-cache, no-transform', 'X-Accel-Buffering': 'no' } })
