@@ -184,3 +184,49 @@ The runner heartbeats every 60 s (stage read from `stage.txt` the session may up
 - Server: vitest integration tests on `test.db` for enqueue rules, claim/lease/heartbeat, result → events + libraryState, affected list (open/sent/fulfilled, before/after), library decision → job after DONE, Lark webhook (challenge, bad token, wrong chat, duplicate event, out-of-scope) with the Claude call stubbed.
 - PC: unit tests for the safe-zone geometry and the "No" guard on fixture images; runner tests with a fake `claude` executable (success, missing result.json, timeout).
 - Not testable here: a live Lark round trip, the scheduled tasks, a real 5-way concurrent Codex run. These are listed as unverified in the hand-over.
+
+## Interface contract (server ↔ PC tools) — fixed, both sides build to this
+
+All runner calls: `Authorization: Bearer dag_…`; 401 `{ "error": "unauthorized" }` otherwise. JSON in and out unless stated. Base path `/api/design-agent/runner`.
+
+| Call | Request | Response |
+|---|---|---|
+| `POST /claim` | `{ "free": 3, "waitSeconds": 25 }` | `{ "jobs": [Job…] }` (empty array when nothing; never 204) |
+| `POST /jobs/{id}/heartbeat` | `{ "stage": "round 1: codex", "rounds": 1 }` | `{ "ok": true }` or 409 `{ "error": "not running" }` |
+| `POST /jobs/{id}/result` | `{ "outcome": "DONE" \| "NEEDS_OWNER", "summary": "…", "rounds": 2, "result": { … } }` | `{ "ok": true, "status": "DONE" }`, 409 when the job is not RUNNING |
+| `POST /jobs/{id}/fail` | `{ "error": "…", "permanent": false }` | `{ "ok": true, "status": "QUEUED" \| "FAILED", "attempts": 1 }` |
+| `POST /notes` | `{ "taskKey": "LIT6262_1", "message": "…" }` | `{ "ok": true }`, 404 unknown task |
+| `POST /hold` | `{ "taskKey": "…", "reason": "…" }` | `{ "ok": true, "jobId": "…" \| null }` (`null` when the switch is off: note only) |
+| `PUT /tasks/{key}/artwork?printArea=FRONT&fileName=FRONT.jpg&kind=PRINT` | raw file body | `{ "ok": true, "artworkId": "…", "version": 2, "printArea": "FRONT" }`, 409 when the task has no RUNNING job |
+| `POST /tasks/{key}/submit` | `{}` | `{ "ok": true, "status": "REVIEW" }`, 400 `{ "error": "…", "missing": ["BACK"] }` |
+| `POST /tasks/{key}/reopen` | `{ "reason": "Nội bộ phát hiện lỗi", "note": "…" }` | `{ "ok": true, "status": "DOING" \| "REJECTED", "sent": true \| false }` |
+
+`Job` as returned by `/claim`:
+
+```json
+{
+  "id": "…", "kind": "FIX", "source": "REJECT", "attempts": 1, "priority": 0,
+  "requestText": "Lý do: Sai chi tiết; Khác: sao trên mũ lệch\nGhi chú: …",
+  "requestedBy": "Huong",
+  "task": { "key": "LIT6262_1", "status": "REJECTED", "readiness": "LOW", "orderNumber": "#LIT6262", "linePosition": 1,
+            "sku": "DN1710260219-Fleece Zip Hoodie", "designCode": "DN1710260219", "supplierSku": "WZIP-XL",
+            "supplierId": "…", "productTitle": "…", "variantTitle": "…", "imageUrl": "…",
+            "customFields": { "Custom Name Yes or No": "No" }, "sent": false, "driveFolderUrl": "…", "templateId": "…" },
+  "files": [ { "kind": "PRINT", "printArea": "FRONT", "version": 1, "fileName": "…", "url": "…", "widthPx": 6091, "heightPx": 6070 } ],
+  "events": [ { "at": "2026-11-11T12:28:00.192Z", "type": "REJECT", "message": "…", "actor": "Huong" } ],
+  "affected": [ { "taskKey": "LIT5325_1", "orderNumber": "#LIT5325", "placedAt": "…", "taskStatus": "DONE", "sent": true, "sameSupplierSku": false } ],
+  "parent": null
+}
+```
+
+For `LIBRARY_APPLY`, `task` is the approved fixed task, `affected` is the list to update, and `parent` is `{ "id": "…", "summary": "…" }` of the FIX job.
+
+Job status values: `QUEUED`, `RUNNING`, `DONE`, `NEEDS_OWNER`, `FAILED`, `CANCELLED`. Lease: a RUNNING job with no heartbeat for `leaseMinutes` (default 20) is requeued on the next claim; after 2 attempts it becomes FAILED with error "runner lost".
+
+Session-side file the runner reads when the headless session ends — `<job folder>/result.json`:
+
+```json
+{ "outcome": "DONE", "summary": "Đã sửa thân trước: …", "rounds": 2, "pushed": ["FRONT", "HOOD"], "problems": [] }
+```
+
+`outcome` ∈ `DONE` (delivered and submitted), `NEEDS_OWNER` (3 failed rounds, missing source, unclear request — `summary` says why). Anything else, or no file, is reported with `/fail`.
