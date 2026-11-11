@@ -56,9 +56,20 @@ export default function SheetPushDialog({ supplierId, orderIds, onClose, onDone 
         {preview && !result && (
           <>
             <p className="text-body-sm text-on-surface">
-              Ghi <b>{preview.ready} đơn</b> vào tab <b>{preview.tabName}</b>. Dòng đã có trong sheet sẽ được bỏ qua.
+              Ghi <b>{preview.ready} dòng</b> vào tab <b>{preview.tabName}</b>. Dòng đã có trong sheet sẽ được bỏ qua.
             </p>
-            {preview.blocked > 0 && <p className="text-label-sm text-amber-900">{preview.blocked} đơn có cảnh báo sẽ không được gửi. Mở task để sửa.</p>}
+            {preview.blocked > 0 && <p className="text-label-sm text-amber-900">{preview.blocked} dòng có cảnh báo được giữ lại. Các dòng hợp lệ vẫn được gửi.</p>}
+            <div className="overflow-auto">
+              <table className="w-full text-label-sm text-left">
+                <thead><tr><th>Dòng</th><th>Mã xưởng</th><th>Mã sheet</th><th>Size</th><th>Màu</th><th>Tên in</th><th>Trạng thái</th></tr></thead>
+                <tbody>{preview.lines?.map(l => (
+                  <tr key={l.lineKey} className={l.blocked ? 'text-amber-900' : ''}>
+                    <td className="py-xs font-mono">{l.lineKey}</td><td>{l.supplierSku}</td><td>{l.sku}</td><td className="font-semibold">{l.size}</td><td>{l.color}</td><td>{l.customName || '—'}</td>
+                    <td>{l.blocked ? l.message : 'Sẵn sàng gửi'}</td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
             <p className="text-label-sm text-on-surface-variant">Tool không xoá được dòng đã ghi. Muốn huỷ phải làm việc trực tiếp với xưởng.</p>
             <div className="flex justify-end">
               <button type="button" className={btnPrimary} disabled={busy || preview.ready === 0} onClick={send}>

@@ -1,3 +1,4 @@
+import { isPrintCutTemplate } from '@/lib/print-cut'
 import type { TaskDetail } from './types'
 import type { QaResult } from './ai-qa'
 import { buildChecklist } from './checklist'
@@ -43,7 +44,7 @@ export function reviewVerdict(detail: Input, qa: QaResult): ReviewVerdict {
 
   const files = printFiles(line, slots)
   const parts = [
-    template ? `${template.name} · ${template.widthPx}×${template.heightPx} · ${template.dpi} DPI` : null,
+    template ? `${template.name} · ${isPrintCutTemplate(template) ? '2 ô in/cắt · khổ tự do' : `${template.widthPx}×${template.heightPx} · ${template.dpi} DPI`}` : null,
     slots.length ? `${slots.length}/${slots.length} vùng in` : files.length ? `${files.length} file in` : null,
     qa.items.find(i => i.key === 'format')?.level === 'pass' ? 'PNG/JPG' : null,
     mockups ? `${mockups} mockup` : null,

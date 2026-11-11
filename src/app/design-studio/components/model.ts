@@ -1,5 +1,6 @@
 import { isLayerlessField } from '@/lib/layer-fields'
 import { currentFiles, extraPrintParts, fileKindOf, missingPrintAreas, newerFile, orderedPrintFiles, printFilesReady, sameLabel, type FileKind } from '@/lib/task-files'
+import { isPrintCutTemplate } from '@/lib/print-cut'
 import type { ArtworkRow, LayerMapEntry, TaskDetail, TaskRow, TaskStatus, TemplateArea, TemplateRow, WorkspaceLine } from './types'
 
 export const OPEN_STATUSES: TaskStatus[] = ['NEW', 'ASSIGNED', 'DOING', 'REVIEW', 'REJECTED']
@@ -129,7 +130,13 @@ export function newestArtwork(line: Files): ArtworkRow | undefined {
  */
 export function readableSheet<T extends TemplateRow>(template: T): T {
   const { areas } = template
-  if (areas.length < 3 || areas.some(a => a.y !== 0 || a.w <= 0 || a.h <= 0)) return template
+  // The guide is registered to the stored coordinates; moving pieces would misalign its cut lines.
+  if (template.guideImageUrl) return template
+  if (areas.length < 2 || areas.some(a => a.y !== 0 || a.w <= 0 || a.h <= 0)) return template
+  const overlaps = areas.some((a, index) => areas.slice(index + 1).some(b =>
+    a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h,
+  ))
+  if (areas.length === 2 && !overlaps) return template
   const gap = Math.round(Math.max(...areas.map(a => a.w)) * 0.04)
   let x = 0
   const row: TemplateArea[] = areas.map(a => {
@@ -146,7 +153,7 @@ export function targetFor(template: TemplateRow, printArea: string | undefined):
 }
 
 export function sharpnessRatio(template: TemplateRow, art: ArtworkRow | undefined): number | null {
-  if (!art || !art.widthPx || !art.heightPx) return null
+  if (isPrintCutTemplate(template) || !art || !art.widthPx || !art.heightPx) return null
   const t = targetFor(template, art.printArea)
   return Math.min(art.widthPx / t.w, art.heightPx / t.h)
 }

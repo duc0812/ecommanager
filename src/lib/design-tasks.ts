@@ -1,3 +1,4 @@
+import { printCutCheck } from '@/lib/print-cut'
 import { prisma } from '@/lib/db'
 import { isNonProductLine, lineKeysOf, planTaskKeys, type KeyedTask, type TaskKeyMove } from '@/lib/order-lines'
 import {
@@ -96,7 +97,7 @@ export async function canAutoRenderLine(line: ReadinessLine, storeId: string, or
   const template = await templateForLine(line, profile)
   if (!template) return false
   const slots = requiredSlotsFor(template)
-  const personalization = visibleCustomAttributes(attrs)
+  const personalization = linePersonalization({ previewCdnUrl: null, customAttributesJson: line.customAttributesJson, customallFieldsJson: line.customallFieldsJson ?? null })
   const local = (await readLocalEntries() ?? []).filter(e => e.storeId === storeId && e.shopifyProductId === line.shopifyProductId && e.printTemplateId === template.id)
   if (local.length > 0 && autoFromLocalLibrary(local, {
     sku: line.sku, supplierSku: line.resolvedSupplierSku, variantTitle: line.variantTitle ?? null, orderNumber,
@@ -677,6 +678,12 @@ export async function transitionTask(taskKey: string, actor: Actor, input: Trans
     throw new Error(`Task đang thuộc về ${owner?.name ?? 'người khác'}`)
   }
 
+  if (input.to === 'REVIEW' || input.to === 'DONE') {
+    const files = await prisma.designArtwork.findMany({ where: { orderId: line.orderId, shopifyLineId: line.shopifyLineId, removedAt: null } })
+    const pair = printCutCheck(await templateForLine(line), files)
+    if (pair && !pair.ok) throw new Error(pair.message)
+  }
+
   const data: any = { status: input.to }
   const events: { type: string; message: string; actorId: string | null }[] = []
   let notice: string | null = null
@@ -797,7 +804,7 @@ export async function listReviewCards(f: { assigneeId?: string; q?: string; stor
   const [orderLines, orders, workspaces, pushes] = await Promise.all([
     prisma.orderLine.findMany({
       where: { orderId: { in: orderIds } },
-      select: { orderId: true, shopifyLineId: true, resolvedSupplierId: true, resolvedSupplierSku: true, shopifyProductId: true, customAttributesJson: true, variantOptions: true },
+      select: { orderId: true, shopifyLineId: true, resolvedSupplierId: true, resolvedSupplierSku: true, shopifyProductId: true, customAttributesJson: true, variantOptions: true, shopifyProductType: true },
     }),
     prisma.order.findMany({ where: { id: { in: orderIds } }, select: { id: true, storeId: true } }),
     Promise.all(orderIds.map(id => loadWorkspace(id))),
@@ -1196,7 +1203,7 @@ export async function templateForLine(line: TemplateLookupLine, profile?: { prin
 /** The part set the line is filling now (its template's areas, or the alternative set its print files lean towards). */
 export async function requiredSlotsForLine(orderId: string, shopifyLineId: string): Promise<string[]> {
   const line = await prisma.orderLine.findFirst({
-    where: { orderId, shopifyLineId }, select: { orderId: true, resolvedSupplierId: true, resolvedSupplierSku: true, shopifyProductId: true },
+    where: { orderId, shopifyLineId }, select: { orderId: true, resolvedSupplierId: true, resolvedSupplierSku: true, shopifyProductId: true, shopifyProductType: true },
   })
   if (!line) return []
   const files = await prisma.designArtwork.findMany({ where: { orderId, shopifyLineId, kind: 'PRINT', removedAt: null }, select: { kind: true, printArea: true } })
@@ -1206,7 +1213,7 @@ export async function requiredSlotsForLine(orderId: string, shopifyLineId: strin
 /** Every part name an upload may land in: the template's areas and those of its alternative sets, so `FRONT.jpg` finds its slot on a one-sheet template. */
 export async function uploadSlotsForLine(orderId: string, shopifyLineId: string): Promise<string[]> {
   const line = await prisma.orderLine.findFirst({
-    where: { orderId, shopifyLineId }, select: { orderId: true, resolvedSupplierId: true, resolvedSupplierSku: true, shopifyProductId: true },
+    where: { orderId, shopifyLineId }, select: { orderId: true, resolvedSupplierId: true, resolvedSupplierSku: true, shopifyProductId: true, shopifyProductType: true },
   })
   return line ? allSlotNames(await templateForLine(line)) : []
 }
@@ -1267,7 +1274,7 @@ export async function loadTask(taskKey: string): Promise<TaskDetail | null> {
 
   const orderLine = await prisma.orderLine.findFirst({
     where: { orderId: task.orderId, shopifyLineId: task.shopifyLineId },
-    select: { orderId: true, resolvedSupplierId: true, resolvedSupplierSku: true, customAttributesJson: true, shopifyProductId: true, variantOptions: true },
+    select: { orderId: true, resolvedSupplierId: true, resolvedSupplierSku: true, customAttributesJson: true, shopifyProductId: true, variantOptions: true, shopifyProductType: true },
   })
   const productId = orderLine?.shopifyProductId ?? null
   const storeId = productId

@@ -2,9 +2,11 @@
 import { useEffect, useId, useRef, useState, type DragEvent, type HTMLAttributes, type ReactNode, type Ref } from 'react'
 import type { ArtworkRow, TemplateArea, TemplateRow, WorkspaceLine } from './types'
 import { isImage, newestFor, printFiles, readableSheet, sharpnessRatio } from './model'
-import { ALL_GUIDES, NO_GUIDES, areaAt, clientToTemplate, type Guides, type ViewBox } from './canvas-guides'
+import { ALL_GUIDES, NO_GUIDES, areaAt, areaViewBox, clientToTemplate, type Guides, type ViewBox } from './canvas-guides'
 import { Icon, chip } from './ui'
 import { ArtImg, SvgArtImage } from './art-src'
+import { isPrintCutTemplate } from '@/lib/print-cut'
+import PrintCutCanvas from './PrintCutCanvas'
 
 export type CanvasBg = 'checker' | 'white' | 'black'
 export type CanvasUpload = {
@@ -110,8 +112,9 @@ export function CanvasTools({ bg, onBg, guide, onGuide, hasGuide, guides, onGuid
 type AreaBox = { x: number; y: number; w: number; h: number }
 type AreaPct = { left: string; top: string; width: string; height: string }
 
-function Sheet({ template, bg, guide, guides, renderArea, overlay, underlay, legend, svgRef, highlight, frameProps, frameOverlay, areaLayer, maxVh, maxPx, compact }: {
+function Sheet({ template, bg, guide, guides, renderArea, overlay, underlay, legend, svgRef, highlight, frameProps, frameOverlay, areaLayer, maxVh, maxPx, compact, inspect = false }: {
   template: TemplateRow; bg: CanvasBg; guide: number; guides: Guides
+  inspect?: boolean
   /** Caps the sheet's height to this share of the viewport, keeping its proportions. */
   maxVh?: number
   /** The same cap in pixels, for a pane of fixed height; wins over `maxVh`. */
@@ -130,7 +133,19 @@ function Sheet({ template, bg, guide, guides, renderArea, overlay, underlay, leg
 }) {
   const rawId = useId()
   const patternId = `ck${rawId.replace(/[^a-zA-Z0-9]/g, '')}`
-  const { k, H, viewBox } = sheetGeometry(template)
+  const { k, H, viewBox: wholeView } = sheetGeometry(template)
+  const initialZoom = inspect && template.widthPx / template.heightPx > 3 ? 250 : 100
+  const [zoom, setZoom] = useState(initialZoom)
+  const [focus, setFocus] = useState('')
+  const [guideError, setGuideError] = useState(false)
+  useEffect(() => { setZoom(initialZoom); setFocus('') }, [template.id, template.areaSet, initialZoom])
+  useEffect(() => { setGuideError(false) }, [template.guideImageUrl])
+  const sleeves = template.areas.filter(a => /sleeve/i.test(a.name))
+  const focused = focus === '__sleeves' ? sleeves : template.areas.filter(a => a.name === focus)
+  const viewBox = inspect && focused.length ? areaViewBox(focused, k)! : wholeView
+  const shownAreas = inspect && focused.length ? focused : template.areas
+  const annotationScale = Math.min(1, viewBox.w / wholeView.w) / (inspect ? zoom / 100 : 1)
+  const focusClip = `${patternId}-focus`
   const bleed = template.bleedIn * template.dpi * k
   const safe = template.safeIn * template.dpi * k
   const showBleed = guides.bleed && template.bleedIn > 0
@@ -156,11 +171,31 @@ function Sheet({ template, bg, guide, guides, renderArea, overlay, underlay, leg
 
   return (
     <div className="flex flex-col gap-sm flex-1 min-h-0">
+      {inspect && <div className="flex items-center gap-sm flex-wrap text-label-sm text-on-surface-variant" role="group" aria-label="Phóng to canvas">
+        <label className="inline-flex items-center gap-xs">Xem
+          <select aria-label="Mảnh cần kiểm tra" value={focus} onChange={e => { setFocus(e.target.value); setZoom(100) }} className="rounded-md border border-outline-variant/40 bg-surface-container-lowest px-sm py-xs max-w-[220px]">
+            <option value="">Tất cả mảnh</option>
+            {sleeves.length > 1 && <option value="__sleeves">Hai tay áo</option>}
+            {template.areas.map(a => <option key={a.name} value={a.name}>{a.name}</option>)}
+          </select>
+        </label>
+        <button type="button" aria-label="Thu nhỏ canvas" disabled={zoom <= 100} onClick={() => setZoom(z => Math.max(100, z - 50))} className={chip(false)}>−</button>
+        <output aria-label="Mức phóng to canvas" className="w-12 text-center">{zoom}%</output>
+        <button type="button" aria-label="Phóng to canvas" disabled={zoom >= 600} onClick={() => setZoom(z => Math.min(600, z + 50))} className={chip(false)}>+</button>
+        <button type="button" onClick={() => { setFocus(''); setZoom(100) }} className={chip(false)}>Vừa khung</button>
+        {zoom > 100 && <span>Cuộn ngang để kiểm tra các mảnh</span>}
+      </div>}
+      {guides.guide && guideError && <span role="alert" className="text-label-sm text-error">Không tải được artguide. Tải lại trang để thử lại.</span>}
       <div {...frameProps} title={compact ? frameProps?.title ? `${frameProps.title} — ${legendText}` : legendText : frameProps?.title}
-        className={`relative flex-1 rounded-lg ${compact ? '' : 'border border-outline-variant/20 bg-surface-container-low p-sm'} grid place-items-center overflow-hidden ${frameProps?.className ?? ''}`}>
-        <div className="relative w-full mx-auto" style={cap ? { width: `min(100%, ${cap})` } : undefined}>
+        aria-label={inspect ? 'Canvas kiểm tra artwork' : undefined}
+        style={inspect ? { maxHeight: maxPx ? `${maxPx}px` : `${maxVh ?? 70}vh` } : undefined}
+        className={`relative flex-1 min-w-0 rounded-lg ${compact ? '' : 'border border-outline-variant/20 bg-surface-container-low p-sm'} ${inspect ? 'overflow-auto' : 'grid place-items-center overflow-hidden'} ${frameProps?.className ?? ''}`}>
+        <div className={`relative mx-auto ${inspect && focus ? 'overflow-hidden' : ''}`} style={inspect && zoom > 100 ? { width: `${zoom}%` } : { width: cap ? `min(100%, ${cap})` : '100%' }}>
         <svg ref={svgRef} viewBox={`${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`} role="img" aria-label={`Template ${template.name}`} className="block max-w-full h-auto w-full">
           <defs>
+            {inspect && focused.length > 0 && <clipPath id={focusClip}>
+              {focused.map(a => <rect key={a.name} x={a.x * k} y={a.y * k} width={a.w * k} height={a.h * k} />)}
+            </clipPath>}
             <pattern id={patternId} width="18" height="18" patternUnits="userSpaceOnUse">
               <rect width="18" height="18" className="fill-surface-container-lowest" />
               <rect width="9" height="9" className="fill-surface-container" />
@@ -169,24 +204,24 @@ function Sheet({ template, bg, guide, guides, renderArea, overlay, underlay, leg
           </defs>
           <rect width={W} height={H} fill={bgFill} className={bgCls} />
           {underlay?.(k, W, H)}
-          {template.areas.map(a => {
+          {shownAreas.map(a => {
             const x = a.x * k, y = a.y * k, w = a.w * k, h = a.h * k
             return (
               <g key={a.name}>
                 {guides.areas && !a.shaped && <rect x={x} y={y} width={w} height={h} className="fill-outline/20 stroke-outline-variant" />}
                 {renderArea(a, { x, y, w, h })}
-                {showBleed && !a.shaped && <rect x={x + bleed} y={y + bleed} width={Math.max(0, w - 2 * bleed)} height={Math.max(0, h - 2 * bleed)} fill="none" strokeWidth="1.2" strokeDasharray="5 4" className="stroke-error" />}
-                {guides.safe && !a.shaped && <rect x={x + safe} y={y + safe} width={Math.max(0, w - 2 * safe)} height={Math.max(0, h - 2 * safe)} fill="none" strokeWidth="1.2" strokeDasharray="3 4" className="stroke-on-tertiary-container" />}
-                {guides.areas && !a.shaped && <text x={x + 6} y={y + 14} fontSize="10" className="fill-on-surface-variant font-mono">{a.name} · {a.w}×{a.h}</text>}
+                {showBleed && !a.shaped && <rect x={x + bleed} y={y + bleed} width={Math.max(0, w - 2 * bleed)} height={Math.max(0, h - 2 * bleed)} fill="none" strokeWidth={1.2 * annotationScale} strokeDasharray={`${5 * annotationScale} ${4 * annotationScale}`} className="stroke-error" />}
+                {guides.safe && !a.shaped && <rect x={x + safe} y={y + safe} width={Math.max(0, w - 2 * safe)} height={Math.max(0, h - 2 * safe)} fill="none" strokeWidth={1.2 * annotationScale} strokeDasharray={`${3 * annotationScale} ${4 * annotationScale}`} className="stroke-on-tertiary-container" />}
+                {guides.areas && !a.shaped && <text x={x + 6 * annotationScale} y={y + 14 * annotationScale} fontSize={10 * annotationScale} className="fill-on-surface-variant font-mono">{a.name} · {a.w}×{a.h}</text>}
               </g>
             )
           })}
           {overlay(k)}
           {template.guideImageUrl && guides.guide && (
-            <image href={template.guideImageUrl} x={0} y={0} width={W} height={H} preserveAspectRatio="none" opacity={shaped ? 1 : guide / 100} pointerEvents="none" />
+            <image aria-label="Artguide đường cắt" href={template.guideImageUrl} x={0} y={0} width={W} height={H} preserveAspectRatio="none" opacity={shaped ? 1 : guide / 100} clipPath={inspect && focused.length ? `url(#${focusClip})` : undefined} pointerEvents="none" onError={() => setGuideError(true)} onLoad={() => setGuideError(false)} />
           )}
-          {shaped && template.areas.map(a => (
-            <text key={a.name} x={(a.x + a.w / 2) * k} y={a.y * k - 5} textAnchor="middle" fontSize="11" className="fill-on-surface font-medium" pointerEvents="none">{a.name}</text>
+          {shaped && shownAreas.map(a => (
+            <text key={a.name} x={(a.x + a.w / 2) * k} y={a.y * k - 5 * annotationScale} textAnchor="middle" fontSize={11 * annotationScale} className="fill-on-surface font-medium" pointerEvents="none">{a.name}</text>
           ))}
           {highlight && <rect x={highlight.x} y={highlight.y} width={highlight.w} height={highlight.h} strokeWidth="3" className="fill-secondary/20 stroke-secondary" pointerEvents="none" />}
           <rect width={W} height={H} fill="none" className="stroke-outline-variant" />
@@ -403,7 +438,8 @@ function TaskCanvas({ template: stored, line, slots, bg, guide, guides, upload, 
     const svg = svgRef.current
     if (!svg || !template) return null
     const g = sheetGeometry(template)
-    const p = clientToTemplate(svg.getBoundingClientRect(), g.viewBox, g.k, e.clientX, e.clientY)
+    const v = svg.viewBox.baseVal
+    const p = clientToTemplate(svg.getBoundingClientRect(), { x: v.x, y: v.y, w: v.width, h: v.height }, g.k, e.clientX, e.clientY)
     return areaAt(template.areas, p.x, p.y)?.name ?? null
   })
 
@@ -420,7 +456,7 @@ function TaskCanvas({ template: stored, line, slots, bg, guide, guides, upload, 
 
   return (
     <Sheet
-      template={tpl} bg={bg} guide={guide} guides={guides} svgRef={svgRef} highlight={highlight} frameProps={frameProps} maxVh={tpl.areas.some(a => a.shaped) ? undefined : maxVh} maxPx={maxPx} compact
+      template={tpl} bg={bg} guide={guide} guides={guides} svgRef={svgRef} highlight={highlight} frameProps={frameProps} maxVh={tpl.areas.some(a => a.shaped) ? undefined : maxVh} maxPx={maxPx} compact inspect={maxPx === undefined}
       frameOverlay={upload ? <UploadOverlay busy={upload.busy} target={drag} /> : null}
       renderArea={(a, { x, y, w, h }) => {
         const art = newestFor(line, a.name)
@@ -527,7 +563,9 @@ type TaskProps = {
 type StandaloneProps = { template: TemplateRow; masterUrl?: string | null; line?: undefined; slots?: undefined; bg?: CanvasBg; guide?: number }
 
 export default function TemplateCanvas(props: (Omit<TaskProps, 'guides'> & { guides?: Guides }) | StandaloneProps) {
+  if (props.line && props.template && isPrintCutTemplate(props.template)) return <PrintCutCanvas template={props.template} line={props.line} upload={props.upload} artActions={props.artActions} bg={props.bg} />
   if (props.line) return <TaskCanvas template={props.template} line={props.line} slots={props.slots} bg={props.bg} guide={props.guide} guides={props.guides ?? ALL_GUIDES} upload={props.upload} artActions={props.artActions} selected={props.selected} maxVh={props.maxVh} maxPx={props.maxPx} />
   const p = props as StandaloneProps
+  if (isPrintCutTemplate(p.template)) return <PrintCutCanvas template={p.template} line={{ artworks: [] }} bg={p.bg} />
   return <StandaloneCanvas template={p.template} masterUrl={p.masterUrl ?? null} bg={p.bg ?? 'checker'} guide={p.guide ?? 50} />
 }

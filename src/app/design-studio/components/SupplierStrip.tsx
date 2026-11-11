@@ -1,4 +1,5 @@
 'use client'
+import { isPrintCutTemplate } from '@/lib/print-cut'
 import Link from 'next/link'
 import type { TaskDetail } from './types'
 import { copyText } from './model'
@@ -20,7 +21,7 @@ export default function SupplierStrip({ detail }: { detail: TaskDetail }) {
         <span className="font-semibold">Chưa map xưởng</span>
         <span>SKU <span className="font-mono">{task.sku ?? '—'}</span> chưa có xưởng{task.supplierName ? ` (trước: ${task.supplierName})` : ''}</span>
         {sep}
-        <span className="font-semibold">Chưa có template</span>
+        <span className="font-semibold">{isPrintCutTemplate(template) ? '2 ô in/cắt · khổ tự do' : 'Chưa có template'}</span>
         <Link href="/fulfillment/mapping" className="ml-auto inline-flex items-center gap-xs h-8 px-sm rounded-lg border border-error bg-surface-container-lowest font-semibold hover:bg-error-container/40">
           Mở Mapping<Icon name="open_in_new" className="text-[15px]" />
         </Link>
@@ -54,8 +55,8 @@ export default function SupplierStrip({ detail }: { detail: TaskDetail }) {
           {tplLink
             ? <a href={tplLink} target="_blank" rel="noreferrer" className={ext}>Template {template.name}<Icon name="open_in_new" className="text-[15px]" /></a>
             : <span className="text-on-surface">Template {template.name}</span>}
-          <span className="font-mono text-on-surface">{template.widthPx}×{template.heightPx} px</span>
-          <span>{template.dpi} DPI</span>
+          <span className="font-mono text-on-surface">{isPrintCutTemplate(template) ? 'Khổ tự do · file in/cắt cùng khổ' : `${template.widthPx}×${template.heightPx} px`}</span>
+          {!isPrintCutTemplate(template) && <span>{template.dpi} DPI</span>}
           <span>{zones} vùng in</span>
           {template.mirror && <span className="font-semibold text-amber-900" title="Xưởng in lật gương file này">mirror</span>}
         </>

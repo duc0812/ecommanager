@@ -72,6 +72,6 @@ export async function libraryStateFor(input: {
   if (!e) return { key, entryId: null, status: 'NONE', label: 'Thiếu', optionKey: '', optionLabel: null, layers: [] }
   const status = e.status as EntryStatus
   const label = labelFor(status)
-  const layers = parseFields(e.fields).map(f => ({ field: f.field, layer: f.layer, fit: f.fit, ...(f.maxChars ? { maxChars: f.maxChars } : {}) }))
+  const layers = parseFields(e.fields).map(f => ({ field: f.field, layer: f.layer, fit: f.fit, ...(f.maxChars ? { maxChars: f.maxChars } : {}), ...(f.required !== undefined ? { required: f.required } : {}) }))
   return { key, entryId: e.id, status, label, optionKey: e.optionKey, optionLabel: e.optionKey ? optionComboLabel(e.optionKey) : null, layers }
 }

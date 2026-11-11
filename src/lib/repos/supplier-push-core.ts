@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db'
 import { isNonProductLine, lineKeysOf } from '@/lib/order-lines'
+import { printCutCheck } from '@/lib/print-cut'
 import { requiredSlotsFor, templateForLine } from '@/lib/design-tasks'
 import { artworkUrl } from '@/lib/design-studio'
 import { currentFiles, extraPrintParts, sameLabel } from '@/lib/task-files'
@@ -279,6 +280,8 @@ export async function collectLineFiles(
   const template = await templateForLine(line)
   const slots = requiredSlotsFor(template)
   const lineFiles = artworks.filter(a => a.shopifyLineId === line.shopifyLineId)
+  const pair = printCutCheck(template, lineFiles)
+  if (pair && !pair.ok) report.error('PRINT_CUT_MISMATCH', `${refId}: ${pair.message}`, refId)
   const current = currentFiles(lineFiles, 'PRINT')
   const parts = [...slots, ...extraPrintParts(lineFiles, slots)]
   if (parts.length === 0) report.error('NO_ARTWORK', `${refId}: chưa có file in nào`, refId)

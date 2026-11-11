@@ -1,3 +1,4 @@
+import { PRINT_CUT_SIZING, isPrintCutTemplate } from '@/lib/print-cut'
 import fs from 'fs/promises'
 import path from 'path'
 import { prisma } from '@/lib/db'
@@ -15,7 +16,7 @@ export const SOURCE_MIME: Record<string, string> = {
 
 const CLOSED_PIPELINE = ['EXPORTED', 'FULFILLED', 'CANCELLED', 'REFUNDED']
 
-export type AreaInput = { name: string; x: number; y: number; w: number; h: number }
+export type AreaInput = { name: string; x: number; y: number; w: number; h: number; sizing?: typeof PRINT_CUT_SIZING }
 export type TemplateFields = {
   name: string; widthPx: number; heightPx: number; dpi: number; bleedIn: number; safeIn: number; mirror: boolean; areas: AreaInput[]
   /** JSON of the alternative part sets (see `parseAltSets`), null when the template has none. */
@@ -80,10 +81,13 @@ export function validateTemplateFields(raw: Record<string, unknown>, existing?: 
     if (![x, y, w, h].every(n => Number.isFinite(n))) return { ok: false, error: `Vùng ${area.name}: x, y, w, h phải là số` }
     if ((x as number) < 0 || (y as number) < 0 || (w as number) <= 0 || (h as number) <= 0) return { ok: false, error: `Vùng ${area.name}: x, y ≥ 0 và w, h > 0` }
     if ((x as number) + (w as number) > W || (y as number) + (h as number) > H) return { ok: false, error: `Vùng ${area.name} nằm ngoài khổ ${W}×${H}` }
-    areas.push({ name: area.name, x: Math.round(x as number), y: Math.round(y as number), w: Math.round(w as number), h: Math.round(h as number) })
+    if (a.sizing !== undefined && a.sizing !== PRINT_CUT_SIZING) return { ok: false, error: 'Chế độ kích thước không hợp lệ' }
+    areas.push({ name: area.name, x: Math.round(x as number), y: Math.round(y as number), w: Math.round(w as number), h: Math.round(h as number), ...(a.sizing === PRINT_CUT_SIZING ? { sizing: PRINT_CUT_SIZING } : {}) })
   }
+  if (areas.some(a => a.sizing) && !isPrintCutTemplate({ areas })) return { ok: false, error: 'In/cắt cần đúng 2 ô, cả hai cùng chế độ MATCH_PRINT_CUT' }
   const alt = validateAltSets(raw.altAreas, existing?.altAreas ?? null)
   if (!alt.ok) return alt
+  if (isPrintCutTemplate({ areas }) && alt.json) return { ok: false, error: 'Template in/cắt chỉ dùng 2 ô, không có bộ vùng thay thế' }
   return { ok: true, fields: { name, widthPx: W, heightPx: H, dpi: Math.round(dpi), bleedIn, safeIn, mirror, areas, altAreas: alt.json } }
 }
 

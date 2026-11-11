@@ -60,6 +60,7 @@ export default function HandoffGrid({ q, version, onOpenTask, onChanged }: {
   const pending = data?.pending ?? []
   const me = data?.me ?? null
   const warned = selected ? pending.filter(c => hubView(c, selected).warnings.length > 0).length : 0
+  const sendable = selected ? pending.filter(c => hubView(c, selected).sendableLines.length > 0).length : 0
 
   return (
     <section aria-label="Duyệt sản xuất" className="flex flex-col gap-md min-w-0">
@@ -98,8 +99,8 @@ export default function HandoffGrid({ q, version, onOpenTask, onChanged }: {
           {current.channel === 'CSV' && <a href="/fulfillment/export" className="ml-auto text-secondary font-semibold hover:underline">Mở CSV Export</a>}
           {current.channel === 'SHEET' && !data?.sheetsConnected && <a href="/setup?block=fulfill" className="ml-auto text-secondary font-semibold hover:underline">Kết nối Google Sheets ở Setup</a>}
           {current.channel === 'SHEET' && data?.sheetsConnected && (
-            <button type="button" className={`${btnPrimary} ml-auto`} disabled={!me?.canHandoff || pending.length === warned} onClick={() => setSheetDialog({})}>
-              <Icon name="table_view" className="text-[16px]" />Sản xuất tất cả ({pending.length - warned})
+            <button type="button" className={`${btnPrimary} ml-auto`} disabled={!me?.canHandoff || sendable === 0} onClick={() => setSheetDialog({})}>
+              <Icon name="table_view" className="text-[16px]" />Sản xuất tất cả ({sendable})
             </button>
           )}
         </div>

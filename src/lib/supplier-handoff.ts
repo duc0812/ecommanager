@@ -19,6 +19,7 @@ import { enabledChannelFor, getSheetChannels, sheetProduct, sizeLabel, type Shee
 import { CSV_LOCKED_MESSAGE, isCsvLocked } from '@/lib/csv-lock'
 import { customNameOf } from '@/lib/custom-name'
 import { loadLineResolver, recalculateMissingOrderLineCosts } from '@/lib/repos/order-costs'
+import { printCutCheck } from '@/lib/print-cut'
 import { printFileFit } from '@/lib/print-file-fit'
 import { currentFiles, sameLabel } from '@/lib/task-files'
 import { canSendBeside, exportProgress, exportProgressLabel, exportedSupplierOf, isDesignOpen, lineHold, readyLines } from '@/lib/line-export'
@@ -308,7 +309,7 @@ async function buildCards(where: any, orderBy: any, opts: { checks?: boolean; se
   const resolvable = opts.checks
     ? await prisma.orderLine.findMany({
         where: { orderId: { in: orders.map(o => o.id) } },
-        select: { id: true, shopifyVariantId: true, shopifyProductType: true, variantOptions: true, shopifyProductId: true },
+        select: { id: true, shopifyVariantId: true, shopifyProductType: true, variantOptions: true, shopifyProductId: true, productionOverrideJson: true },
       })
     : []
 
@@ -329,6 +330,8 @@ async function buildCards(where: any, orderBy: any, opts: { checks?: boolean; se
       const wrongSizeAreas = opts.checks
         ? currentFiles(line.artworks, 'PRINT').filter(a => slots.some(s => sameLabel(s, a.printArea)) && printFileFit(template, a.printArea, a).state === 'bad').map(a => a.printArea)
         : []
+      const pair = opts.checks ? printCutCheck(template, line.artworks) : null
+      if (pair && !pair.ok) wrongSizeAreas.push(...slots)
       const r = resolveNow ? resolvable.find(x => x.id === line.id) : null
       const now = r && resolveNow && !sentTo ? resolveNow({ ...r, order: { storeId: o.storeId, shippingCountry: o.shippingCountry } }) : null
       const mappingNow = now && (now.supplierId !== line.supplier?.id || now.sku !== (line.supplierSku ?? null))

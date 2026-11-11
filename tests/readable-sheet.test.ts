@@ -3,7 +3,7 @@ import { readableSheet } from '@/app/design-studio/components/model'
 import type { TemplateRow } from '@/app/design-studio/components/types'
 
 const row = (areas: TemplateRow['areas'], widthPx: number, heightPx: number) =>
-  ({ id: 't', name: 'x', widthPx, heightPx, dpi: 200, bleedIn: 0, safeIn: 0, mirror: false, areas, guideImageUrl: 'guide.png', templateUrl: null, altSets: [] }) as unknown as TemplateRow
+  ({ id: 't', name: 'x', widthPx, heightPx, dpi: 200, bleedIn: 0, safeIn: 0, mirror: false, areas, guideImageUrl: null, templateUrl: null, altSets: [] }) as unknown as TemplateRow
 
 const inRow = (sizes: Array<[string, number, number]>) => {
   let x = 0
@@ -15,6 +15,12 @@ const PIECES: Array<[string, number, number]> = [
 ]
 
 describe('readableSheet', () => {
+  it('preserves a cut guide and its registered piece positions', () => {
+    const template = { ...row(inRow(PIECES), 37674, 5644), guideImageUrl: '/api/design-studio/file/guide/bj-2xl?v=1' }
+    expect(readableSheet(template)).toBe(template)
+    expect(readableSheet(template).guideImageUrl).toBe(template.guideImageUrl)
+    expect(readableSheet(template).areas).toEqual(template.areas)
+  })
   it('keeps every piece in one horizontal row, with every size and name', () => {
     const view = readableSheet(row(inRow(PIECES), 37674, 5644))
     expect(view.areas.map(a => [a.name, a.w, a.h])).toEqual(PIECES)
@@ -32,7 +38,19 @@ describe('readableSheet', () => {
       }
     }
   })
-  it('leaves a real sheet layout and a one or two part template alone', () => {
+  it('separates two overlapping print areas into independent canvas cells', () => {
+    const source = row([
+      { name: 'Front', x: 0, y: 0, w: 4200, h: 4800 },
+      { name: 'Back', x: 0, y: 0, w: 4200, h: 4800 },
+    ], 4200, 4800)
+    const view = readableSheet(source)
+    expect(view.areas.map(a => [a.name, a.x, a.y, a.w, a.h])).toEqual([
+      ['Front', 0, 0, 4200, 4800],
+      ['Back', 4368, 0, 4200, 4800],
+    ])
+    expect([view.widthPx, view.heightPx, view.guideImageUrl]).toEqual([8568, 4800, null])
+  })
+  it('leaves a real sheet layout and an already separated two-part template alone', () => {
     const sheet = row([{ name: 'A', x: 0, y: 0, w: 10, h: 10 }, { name: 'B', x: 0, y: 20, w: 10, h: 10 }, { name: 'C', x: 20, y: 0, w: 10, h: 10 }], 30, 30)
     expect(readableSheet(sheet)).toBe(sheet)
     const two = row(inRow([['Front', 10, 10], ['Back', 10, 10]]), 20, 10)

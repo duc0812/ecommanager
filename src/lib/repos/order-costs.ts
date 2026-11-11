@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/db'
+import { productionOverride } from '@/lib/production-override'
 import { autoDetectStatus, isValidPipelineStatus, type PipelineStatus } from '@/lib/pipeline-status'
 import { profileKey, resolveByProductBase, supplierParentKey, swapToSizeSibling } from '@/lib/product-mapping'
 import { loadProductBasesForResolver, loadLegacyTypesForResolver, loadProductProfilesForResolver, loadTypeAliasesForResolver, loadVariantManualMappingsForResolver } from '@/lib/repos/mapping'
@@ -26,6 +27,7 @@ type SupplierProductWithSupplier = Awaited<ReturnType<typeof prisma.supplierProd
 }>>>[number]
 
 export type ResolvableLine = {
+  productionOverrideJson?: string | null
   shopifyVariantId: string | null; shopifyProductType: string | null; variantOptions: string | null; shopifyProductId: string | null
   order: { storeId: string; shippingCountry: string | null }
 }
@@ -48,6 +50,8 @@ export async function loadLineResolver(): Promise<(line: ResolvableLine) => Supp
     supplierProductsByParent.set(key, [...(supplierProductsByParent.get(key) ?? []), p])
   }
   return line => {
+    const edit = productionOverride(line.productionOverrideJson)
+    if (edit) return rawSupplierProductById.get(edit.supplierProductId) ?? null
     const selectedOptions = parseVariantOptions(line.variantOptions)
     const result = resolveByProductBase(
       line.shopifyVariantId,
@@ -116,8 +120,8 @@ export async function recalculateMissingOrderLineCosts(filter: {
     const supplierProduct = resolveLine(line)
     if (!supplierProduct) {
       if (filter.refreshExisting && !(filter.preserveUnchangedSnapshot && !line.resolvedSupplierId)) {
-        await prisma.orderLine.update({
-          where: { id: line.id },
+        const changed = await prisma.orderLine.updateMany({
+          where: { id: line.id, productionOverrideJson: line.productionOverrideJson },
           data: {
             resolvedSupplierId: null,
             resolvedSupplierSku: null,
@@ -128,6 +132,7 @@ export async function recalculateMissingOrderLineCosts(filter: {
             costSnapshotAt: null,
           },
         })
+        if (!changed.count) continue
         touchedOrderIds.add(line.orderId)
         changedOrderIds.add(line.orderId)
       }
@@ -149,8 +154,8 @@ export async function recalculateMissingOrderLineCosts(filter: {
       : {}
     const zoneRate = shippingByRegion[zone]
 
-    await prisma.orderLine.update({
-      where: { id: line.id },
+    const changed = await prisma.orderLine.updateMany({
+      where: { id: line.id, productionOverrideJson: line.productionOverrideJson },
       data: {
         resolvedSupplierId: supplierProduct.supplierId,
         resolvedSupplierSku: supplierProduct.sku,
@@ -161,6 +166,7 @@ export async function recalculateMissingOrderLineCosts(filter: {
         costSnapshotAt: now,
       },
     })
+    if (!changed.count) continue
     touchedOrderIds.add(line.orderId)
     changedOrderIds.add(line.orderId)
     updatedLines++

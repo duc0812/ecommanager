@@ -1,8 +1,9 @@
+import { isPrintCutTemplate, printCutCheck } from '@/lib/print-cut'
 import type { ArtworkRow, TaskDetail, TemplateRow } from './types'
 import { isImage, missingAreas, newestFor, printFiles, sharpnessRatio, targetFor } from './model'
 
 export type QaLevel = 'pass' | 'warn' | 'error'
-export type QaKey = 'size' | 'format' | 'coverage' | 'areas'
+export type QaKey = 'size' | 'format' | 'coverage' | 'areas' | 'print-cut'
 export type QaItem = { key: QaKey; label: string; level: QaLevel; detail: string }
 export type QaStatus = 'none' | 'pass' | 'warn' | 'error'
 export type QaResult = { status: QaStatus; items: QaItem[]; newest: ArtworkRow | null }
@@ -40,7 +41,9 @@ export function machineQa(detail: Pick<TaskDetail, 'line' | 'slots' | 'template'
 
   // Files under other names than the template's areas have no size to meet; the missing areas already say what is wrong.
   const inAreas = template ? slots.map(s => newestFor(line, s)).filter((a): a is ArtworkRow => !!a) : []
-  if (template && inAreas.length > 0) {
+  const pairCheck = printCutCheck(template, line.artworks)
+  if (pairCheck) items.push({ key: 'print-cut', label: 'File in ↔ file cắt', level: pairCheck.ok ? 'pass' : 'error', detail: pairCheck.message })
+  if (template && !isPrintCutTemplate(template) && inAreas.length > 0) {
     const checked = inAreas
     const sizes = checked.map(a => sizeOf(template, a))
     const level = worst(sizes.map(s => s.level))

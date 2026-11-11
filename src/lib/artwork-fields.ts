@@ -20,6 +20,7 @@ export type ArtworkField = {
   stroke?: { px: number; color: string }
   shadow?: { dx: number; dy: number; blur: number; color: string; opacity: number; spread?: number }
   scaleX?: number; charColors?: string[]; layers?: string[]
+  rotation?: number; pivot?: { x: number; y: number }; required?: boolean
   gradient?: FieldGradient; bevel?: FieldBevel
   fit: FieldFit; maxChars?: number
 }
@@ -124,6 +125,19 @@ export function normalizeField(v: unknown, i: number): ArtworkField {
   if (scaleX !== undefined) {
     if (scaleX <= 0) throw new FieldValidationError(`${w}.scaleX phải > 0`)
     field.scaleX = scaleX
+  }
+  const rotation = num(o.rotation, `${w}.rotation`, { optional: true })
+  if (rotation !== undefined) {
+    if (rotation < -360 || rotation > 360) throw new FieldValidationError(`${w}.rotation phải trong -360–360`)
+    field.rotation = rotation
+  }
+  if (o.pivot !== undefined && o.pivot !== null) {
+    const p = obj(o.pivot, `${w}.pivot`)
+    field.pivot = { x: num(p.x, `${w}.pivot.x`) as number, y: num(p.y, `${w}.pivot.y`) as number }
+  }
+  if (o.required !== undefined) {
+    if (typeof o.required !== 'boolean') throw new FieldValidationError(`${w}.required phải là boolean`)
+    field.required = o.required
   }
   if (o.charColors !== undefined && o.charColors !== null) {
     if (!Array.isArray(o.charColors) || o.charColors.length > 2000) throw new FieldValidationError(`${w}.charColors phải là danh sách màu`)
@@ -274,6 +288,7 @@ export function carryOverEdits(next: ArtworkField[], previous: ArtworkField[]): 
     const prev = byLayer.get(f.layer)
     if (!prev) return f
     const merged: ArtworkField = { ...f, field: prev.field, fit: prev.fit }
+    if (prev.required !== undefined) merged.required = prev.required
     if (prev.maxChars !== undefined) merged.maxChars = prev.maxChars
     else delete merged.maxChars
     return merged

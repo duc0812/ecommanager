@@ -1,3 +1,5 @@
+import { printCutCheck } from '@/lib/print-cut'
+import { loadTemplateContext, pickTemplate } from '@/lib/print-template-resolve'
 import { prisma } from '@/lib/db'
 import type { OrderForCsv } from '@/lib/csv-template'
 import { DESIGN_AREA_SOURCE_PREFIX, MOCKUP_LINK_SOURCE } from '@/lib/csv-template'
@@ -21,6 +23,24 @@ function orderLinkOf(o: ExportOrder, lines: ExportOrder['lines']): string | null
 export async function buildOrdersForCsv({ orders, supplierId, columns, perOrder, linesOf }: {
   orders: ExportOrder[]; supplierId: string; columns: { source: string }[]; perOrder: boolean; linesOf: (o: ExportOrder) => ExportOrder['lines']
 }): Promise<{ problems: ExportLinkProblem[]; ordersForCsv: OrderForCsv[] }> {
+  const candidates = orders.flatMap(order => linesOf(order).map(line => ({ order, line })))
+  const profiles = candidates.length ? await prisma.productProfile.findMany({ where: {
+    storeId: { in: Array.from(new Set(orders.map(o => o.storeId))) },
+    shopifyProductId: { in: Array.from(new Set(candidates.map(c => c.line.shopifyProductId).filter((p): p is string => !!p))) },
+  }, select: { storeId: true, shopifyProductId: true, printTemplateId: true } }) : []
+  const profileByKey = new Map(profiles.map(p => [`${p.storeId}~${p.shopifyProductId}`, p]))
+  const templates = await loadTemplateContext(candidates.map(c => c.line), profiles.map(p => p.printTemplateId))
+  const pairs = candidates.map(c => ({ ...c, template: pickTemplate(c.line, profileByKey.get(`${c.order.storeId}~${c.line.shopifyProductId}`) ?? null, templates) }))
+    .filter(c => c.template?.areas.some(a => a.sizing))
+  if (pairs.length) {
+    const files = await prisma.designArtwork.findMany({ where: { orderId: { in: Array.from(new Set(pairs.map(c => c.order.id))) }, removedAt: null } })
+    const pairProblems: ExportLinkProblem[] = []
+    for (const { order, line, template } of pairs) {
+      const check = printCutCheck(template, files.filter(f => f.orderId === order.id && f.shopifyLineId === line.shopifyLineId))
+      if (check && !check.ok) pairProblems.push({ orderNumber: order.shopifyOrderNumber, reason: check.message })
+    }
+    if (pairProblems.length) return { problems: pairProblems, ordersForCsv: [] }
+  }
   const supplierSkus = Array.from(new Set(
     orders.flatMap(o => o.lines.map(l => l.resolvedSupplierSku).filter((sku): sku is string => Boolean(sku))),
   ))

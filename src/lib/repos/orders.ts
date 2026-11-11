@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db'
 import type { OrderLine } from '@/generated/prisma/client'
+import { applyProductionOverride, productionOverride } from '@/lib/production-override'
 import { PIPELINE_STATUSES, TERMINAL_PIPELINE_STATUSES, type PipelineStatus } from '@/lib/pipeline-status'
 import { WARNING_TYPES, type WarningType } from '@/lib/order-warnings'
 import { isLineExported, legacyMarks, supplierLines, type ExportTrackedLine, type ExportTrackedOrder } from '@/lib/line-export'
@@ -174,37 +175,38 @@ export type UpsertOrderInput = {
 
 export async function upsertOrderWithLines(input: UpsertOrderInput) {
   const now = new Date()
+  return prisma.$transaction(async tx => {
 
-  // Preserve cost snapshots for lines that were already priced — re-sync must not overwrite
-  // old costs when supplier prices change (only new orders get fresh prices)
-  const existingLines = await prisma.orderLine.findMany({
-    where: { orderId: input.id },
-    select: {
-      shopifyLineId: true,
-      resolvedSupplierId: true,
-      resolvedSupplierSku: true,
-      resolvedBaseCost: true,
-      manualBaseCost: true,
-      costSnapshotAt: true,
-      resolvedShipFirst: true,
-      resolvedShipAdditional: true,
-      resolvedImportTax: true,
-      previewCdnUrl: true,
-      designDriveLink: true,
-      customAttributesJson: true,
-      customallFieldsJson: true,
-      imageUrl: true,
-      shopifyProductId: true,
-      designNote: true,
-      exportedAt: true,
-      exportedToSupplierId: true,
-    },
-  })
-  const snapshots = new Map(existingLines.map(l => [l.shopifyLineId, l]))
+    // Preserve cost snapshots for lines that were already priced — re-sync must not overwrite
+    // old costs when supplier prices change (only new orders get fresh prices)
+    const existingLines = await tx.orderLine.findMany({
+      where: { orderId: input.id },
+      select: {
+        shopifyLineId: true,
+        resolvedSupplierId: true,
+        resolvedSupplierSku: true,
+        resolvedBaseCost: true,
+        manualBaseCost: true,
+        costSnapshotAt: true,
+        resolvedShipFirst: true,
+        resolvedShipAdditional: true,
+        resolvedImportTax: true,
+        previewCdnUrl: true,
+        designDriveLink: true,
+        customAttributesJson: true,
+        customallFieldsJson: true,
+        productionOverrideJson: true,
+        imageUrl: true,
+        shopifyProductId: true,
+        designNote: true,
+        exportedAt: true,
+        exportedToSupplierId: true,
+      },
+    })
+    const snapshots = new Map(existingLines.map(l => [l.shopifyLineId, l]))
 
-  await prisma.$transaction([
-    prisma.orderLine.deleteMany({ where: { orderId: input.id } }),
-    prisma.order.upsert({
+    await tx.orderLine.deleteMany({ where: { orderId: input.id } })
+    await tx.order.upsert({
       where: { id: input.id },
       create: {
         id: input.id,
@@ -271,10 +273,12 @@ export async function upsertOrderWithLines(input: UpsertOrderInput) {
         ...(input.trelloCardUrl !== undefined ? { trelloCardUrl: input.trelloCardUrl } : {}),
         ...(input.designReady !== undefined ? { designReady: input.designReady } : {}),
       },
-    }),
-    prisma.orderLine.createMany({
+    })
+    await tx.orderLine.createMany({
       data: input.lines.map(l => {
         const snap = snapshots.get(l.shopifyLineId)
+        const edited = applyProductionOverride({ ...l, customallFieldsJson: snap?.customallFieldsJson ?? null }, productionOverride(snap?.productionOverrideJson))
+        l = edited
         const preserveSnapshot = !!l.resolvedSupplierId &&
           !!snap &&
           snap.resolvedSupplierId === l.resolvedSupplierId &&
@@ -297,9 +301,10 @@ export async function upsertOrderWithLines(input: UpsertOrderInput) {
           resolvedShipAdditional: preserveSnapshot ? snap.resolvedShipAdditional : (l.resolvedShipAdditional ?? null),
           resolvedImportTax: preserveSnapshot ? snap.resolvedImportTax : (l.resolvedImportTax ?? null),
           previewCdnUrl: l.previewCdnUrl ?? snap?.previewCdnUrl ?? null,
-          designDriveLink: l.designDriveLink ?? snap?.designDriveLink ?? null,
+          designDriveLink: snap?.productionOverrideJson ? snap.designDriveLink : (l.designDriveLink ?? snap?.designDriveLink ?? null),
           customAttributesJson: l.customAttributesJson !== undefined ? l.customAttributesJson : (snap?.customAttributesJson ?? null),
-          customallFieldsJson: snap?.customallFieldsJson ?? null,
+          customallFieldsJson: edited.customallFieldsJson,
+          productionOverrideJson: snap?.productionOverrideJson ?? null,
           imageUrl: l.imageUrl !== undefined ? l.imageUrl : (snap?.imageUrl ?? null),
           shopifyProductId: l.shopifyProductId !== undefined ? l.shopifyProductId : (snap?.shopifyProductId ?? null),
           designNote: snap?.designNote ?? null,
@@ -311,8 +316,8 @@ export async function upsertOrderWithLines(input: UpsertOrderInput) {
           customized: l.customized ?? false,
         }
       }),
-    }),
-  ])
+    })
+  })
 }
 
 export const EXPORTABLE_PIPELINE_STATUSES: PipelineStatus[] = ['READY_TO_PRODUCTION', 'EXPORTED']

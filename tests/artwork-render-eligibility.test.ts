@@ -11,7 +11,7 @@ const base: AutoRenderInput = {
 
 describe('auto render eligibility', () => {
   it('is ready when the entry is READY and every field has a value', () => {
-    expect(autoRenderEligibility(base)).toEqual({ ok: true, busy: false, reason: null, fields: ['Custom Name'], missing: [] })
+    expect(autoRenderEligibility(base)).toEqual({ ok: true, busy: false, reason: null, fields: ['Custom Name'], missing: [], noName: false })
   })
 
   it('placements of one field need the value once; names match ignoring case and spaces', () => {

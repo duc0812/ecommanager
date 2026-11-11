@@ -1,3 +1,4 @@
+import { isPrintCutTemplate, printCutCheck } from '@/lib/print-cut'
 import { isLayerlessField } from '@/lib/layer-fields'
 import { currentFiles, extraPrintParts, missingPrintAreas, type FileKind } from '@/lib/task-files'
 import type { TaskDetail } from './types'
@@ -41,7 +42,7 @@ export const NO_TEMPLATE_REASON = 'Sản phẩm chưa có template — upload fi
 function templateItem({ line, template, me }: ChecklistInput): CheckItem {
   const title = 'Template in'
   if (template) {
-    return { key: 'template', title, state: 'done', reason: `${template.name} · ${template.widthPx}×${template.heightPx} · ${template.areas.length} vùng in`, action: null }
+    return { key: 'template', title, state: 'done', reason: isPrintCutTemplate(template) ? `${template.name} · 2 ô in/cắt · khổ tự do` : `${template.name} · ${template.widthPx}×${template.heightPx} · ${template.areas.length} vùng in`, action: null }
   }
   if (!line.supplier) return { key: 'template', title, state: 'blocked', reason: 'Cần map xưởng trước', action: null }
   // A template is optional: without one the designer uploads the print file straight away. Only admins can open the template setup.
@@ -63,6 +64,7 @@ const LIBRARY_REASON: Record<string, string> = {
 
 function libraryItem({ line, template, library }: ChecklistInput): CheckItem {
   const title = 'Artwork gốc của sản phẩm'
+  if (isPrintCutTemplate(template)) return { key: 'library', title, state: 'na', reason: 'Upload trực tiếp file in và file cắt cho task', action: null }
   if (!template) {
     return line.supplier
       ? { key: 'library', title, state: 'na', reason: 'Artwork gốc gắn theo template — sản phẩm chưa có template nên bỏ qua', action: null }
@@ -116,7 +118,7 @@ function customerItem(input: ChecklistInput): CheckItem {
 
 export const NO_PRINT_FILE_REASON = 'Chưa có file in — upload ít nhất một file (sản phẩm nhiều mặt in: mỗi mặt một file)'
 
-function filesItem({ line, slots }: ChecklistInput): CheckItem {
+function filesItem({ line, slots, template }: ChecklistInput): CheckItem {
   const prints = currentFiles(line.artworks, 'PRINT')
   if (slots.length === 0) {
     const title = 'File in'
@@ -129,6 +131,8 @@ function filesItem({ line, slots }: ChecklistInput): CheckItem {
   const have = slots.length - missing.length
   const extras = extraPrintParts(line.artworks, slots).length
   const more = extras > 0 ? ` · thêm ${extras} file khác` : ''
+  const pair = printCutCheck(template, line.artworks)
+  if (missing.length === 0 && pair && !pair.ok) return { key: 'files', title: 'File in / file cắt', state: 'blocked', reason: pair.message, action: { kind: 'upload', label: 'Thay file cắt', area: slots[1] } }
   if (missing.length === 0) return { key: 'files', title, state: 'done', reason: `${have}/${slots.length} vùng in đã có file${more}`, action: null }
   return {
     key: 'files', title, state: 'missing', reason: `${have}/${slots.length} vùng in có file — thiếu ${missing.join(', ')}${more}`,

@@ -12,6 +12,7 @@ export const HUB_WARNING_LABELS: Record<HubWarningCode, string> = {
 export type HubView = {
   /** The lines of this tab's supplier ready to go. */
   lines: HandoffLine[]
+  sendableLines: HandoffLine[]
   /** Lines of this order, at any supplier, still in design: more to come, nothing that holds this card back. */
   inDesign: HandoffLine[]
   first: HandoffLine | null
@@ -42,6 +43,7 @@ export function hubView(card: HandoffCard, tabId: string): HubView {
   })
   return {
     lines,
+    sendableLines: lines.filter(l => !warnings.some(w => w.lineKey === l.lineKey)),
     inDesign: card.lines.filter(l => l.waiting === 'DESIGN'),
     first: lines[0] ?? null,
     extra: Math.max(0, lines.length - 1),

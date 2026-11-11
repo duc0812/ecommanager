@@ -9,6 +9,7 @@ import { SHEET_CHANNELS_KEY, sheetDate, sheetProduct, variantColor, type SheetCh
 import { CSV_OPEN_KEY, setCsvLocked } from '@/lib/csv-lock'
 import { handoffOrderCsv, handoffStateFor, listHandoffHub } from '@/lib/supplier-handoff'
 import { previewSheetPush, pushToSheet } from '@/lib/repos/sheet-push'
+import { editLineProduction } from '@/lib/repos/line-production'
 import { listSupplierFixes, markSupplierTold, reopenLineForFix, transitionTask } from '@/lib/design-tasks'
 import { GET as getExport, POST as postExport } from '@/app/api/fulfillment/export/route'
 import { GET as getSheet, POST as postSheet } from '@/app/api/design-studio/handoff/sheet/route'
@@ -199,6 +200,7 @@ afterAll(async () => {
   await prisma.order.deleteMany({ where: { projectId: { in: ALL_PROJECTS } } })
   await prisma.csvTemplate.deleteMany({ where: { supplierId: SUP } })
   await prisma.supplierProduct.deleteMany({ where: { supplierId: SUP } })
+  await prisma.printTemplate.deleteMany({ where: { supplierId: SUP } })
   await prisma.supplier.deleteMany({ where: { id: { in: [SUP, OTHER_SUP] } } })
   await prisma.shopifyStore.deleteMany({ where: { projectId: { in: ALL_PROJECTS } } })
   await prisma.project.deleteMany({ where: { id: { in: ALL_PROJECTS } } })
@@ -414,6 +416,62 @@ describe('what stops a send', () => {
     expect(writes[0].rows).toHaveLength(1)
   })
 
+  it.each([
+    ['size', 'sai khổ file'],
+    ['mapping', 'xưởng lệch mapping'],
+    ['mockup', 'thiếu mockup'],
+  ])('sends valid siblings while holding only the line with a %s warning', async (kind, reason) => {
+    const o = await makeOrder({ otherLine: true })
+    const sibling = await prisma.orderLine.findFirstOrThrow({ where: { orderId: o.id, linePosition: 2 } })
+    await prisma.orderLine.update({ where: { id: sibling.id }, data: { resolvedSupplierId: SUP, resolvedSupplierSku: 'JM-HOODIE' } })
+    if (kind === 'mockup') {
+      await prisma.orderLine.update({ where: { id: sibling.id }, data: { previewCdnUrl: null } })
+    } else if (kind === 'mapping') {
+      const product = await prisma.supplierProduct.findUniqueOrThrow({ where: { supplierId_sku: { supplierId: SUP, sku: 'JM-HOODIE' } } })
+      const variantId = `sheet-warning-${seq}`
+      await prisma.variantManualMapping.create({ data: { shopifyVariantId: variantId, shopifyProductTitle: sibling.productTitle, supplierProductId: product.id } })
+      await prisma.orderLine.update({ where: { id: sibling.id }, data: { shopifyVariantId: variantId, resolvedSupplierSku: 'OLD-SKU' } })
+    } else {
+      const template = await prisma.printTemplate.create({ data: { supplierId: SUP, name: 'Sheet warning test', widthPx: 2000, heightPx: 1000, areas: JSON.stringify([{ name: 'Print', x: 0, y: 0, w: 2000, h: 1000 }]) } })
+      const product = await prisma.supplierProduct.create({ data: { supplierId: SUP, sku: `BAD-SIZE-${seq}`, baseSku: 'GAF', baseCost: 10, printTemplateId: template.id } })
+      await prisma.orderLine.update({ where: { id: sibling.id }, data: { resolvedSupplierSku: product.sku } })
+      await prisma.designArtwork.create({ data: { orderId: o.id, shopifyLineId: sibling.shopifyLineId, printArea: 'Print', version: 1, fileName: 'wrong.png', size: 1, mimeType: 'image/png', source: 'AUTO', widthPx: 1000, heightPx: 500 } })
+    }
+
+    const preview = await previewSheetPush(SUP, [o.id])
+    expect(preview).toMatchObject({ ready: 1, blocked: 1 })
+    expect(preview.lines).toEqual([
+      expect.objectContaining({ lineKey: o.key, blocked: false, message: null }),
+      expect.objectContaining({ lineKey: `${o.code}_2`, blocked: true, message: expect.stringContaining(reason) }),
+    ])
+    const result = await push([o.id])
+    expect(result.results).toEqual(expect.arrayContaining([
+      expect.objectContaining({ lineKey: o.key, status: 'WRITTEN' }),
+      expect.objectContaining({ lineKey: `${o.code}_2`, status: 'BLOCKED', message: expect.stringContaining(reason) }),
+    ]))
+    expect(result.results).toHaveLength(2)
+    expect(writes).toHaveLength(1)
+    expect(writes[0].rows).toHaveLength(1)
+    expect(rowOf(writes[0].rows[0].map(c => c ?? ''), 'Order Number')).toBe(`#${o.key}`)
+    expect((await line(o.id)).exportedToSupplierId).toBe(SUP)
+    expect((await prisma.orderLine.findUniqueOrThrow({ where: { id: sibling.id } })).exportedAt).toBeNull()
+    expect(await prisma.supplierSheetWrite.findMany({ where: { orderId: o.id } })).toEqual([expect.objectContaining({ orderLineId: (await line(o.id)).id, status: 'WRITTEN' })])
+
+    expect(await previewSheetPush(SUP, [o.id])).toMatchObject({ ready: 0, blocked: 1 })
+    expect((await push([o.id])).results).toEqual([expect.objectContaining({ lineKey: `${o.code}_2`, status: 'BLOCKED' })])
+    expect(writes).toHaveLength(1)
+
+    if (kind === 'mockup') await prisma.orderLine.update({ where: { id: sibling.id }, data: { previewCdnUrl: 'https://cdn.shopify.com/s/files/fixed.png' } })
+    else if (kind === 'mapping') await prisma.orderLine.update({ where: { id: sibling.id }, data: { resolvedSupplierSku: 'JM-HOODIE' } })
+    else await prisma.designArtwork.updateMany({ where: { orderId: o.id, shopifyLineId: sibling.shopifyLineId }, data: { widthPx: 2000, heightPx: 1000 } })
+    expect(await previewSheetPush(SUP, [o.id])).toMatchObject({ ready: 1, blocked: 0 })
+    expect((await push([o.id])).results).toEqual([expect.objectContaining({ lineKey: `${o.code}_2`, status: 'WRITTEN' })])
+    expect(writes).toHaveLength(2)
+    expect(writes[1].rows).toHaveLength(1)
+    expect(rowOf(writes[1].rows[0].map(c => c ?? ''), 'Order Number')).toBe(`#${o.code}_2`)
+    expect(await prisma.order.findUniqueOrThrow({ where: { id: o.id } })).toMatchObject({ pipelineStatus: 'EXPORTED', supplierHandoffMode: 'SHEET' })
+  })
+
   it('a Reminiso order enters the shared Jomall channel next to a Litzzy one', async () => {
     const lit = await makeOrder()
     const remi = await makeOrder({ shop: REMINISO_SHOP, name: 'Remi Buyer' })
@@ -524,7 +582,25 @@ describe('the rest of the hub with the channel on', () => {
     const o = await makeOrder()
     const hub = await listHandoffHub({ q: o.number })
     expect(hub.tabs).toEqual([expect.objectContaining({ id: SUP, channel: 'SHEET', baseCostTotal: 39 })])
-    expect(await previewSheetPush(SUP, [o.id])).toEqual({ supplierName: 'Jomall Test', tabName: expect.stringMatching(/^ORDER /), ready: 1, blocked: 0 })
+    expect(await previewSheetPush(SUP, [o.id])).toEqual({ supplierName: 'Jomall Test', tabName: expect.stringMatching(/^ORDER /), ready: 1, blocked: 0, lines: [{ lineKey: o.key, supplierSku: 'JM-HOODIE', sku: 'GAF', size: 'XL', color: '', customName: 'Allyssa', blocked: false, message: null }] })
+  })
+
+  it('previews and writes the edited production size/name to the actual sheet columns', async () => {
+    const o = await makeOrder()
+    const current = await prisma.supplierProduct.create({ data: { supplierId: SUP, sku: 'EDIT-S', baseSku: 'GAF', productName: 'Edited Hoodie', variant1Value: 'S', baseCost: 20 } })
+    const large = await prisma.supplierProduct.create({ data: { supplierId: SUP, sku: 'EDIT-L', baseSku: 'GAF', productName: 'Edited Hoodie', variant1Value: 'L', baseCost: 22 } })
+    await prisma.orderLine.updateMany({ where: { orderId: o.id }, data: { resolvedSupplierSku: current.sku, variantTitle: 'Orange / S / Unisex', variantOptions: JSON.stringify({ Color: 'Orange', Size: 'S', Style: 'Unisex' }) } })
+    await prisma.designTask.update({ where: { taskKey: o.key }, data: { status: 'REVIEW' } })
+    const actor = await prisma.appUser.findUniqueOrThrow({ where: { email: 'admin@sheet.test' } })
+    await editLineProduction(o.key, { supplierProductId: large.id, customName: 'Marcie', reason: 'Customer requested Large / Marcie', revision: null }, actor)
+    await prisma.designTask.update({ where: { taskKey: o.key }, data: { status: 'DONE' } })
+    await prisma.orderLine.updateMany({ where: { orderId: o.id }, data: { designDriveLink: 'https://drive.google.com/drive/folders/approved-large-marcie' } })
+    await prisma.order.update({ where: { id: o.id }, data: { pipelineStatus: 'READY_TO_PRODUCTION', designReady: true } })
+    expect((await previewSheetPush(SUP, [o.id])).lines).toEqual([{ lineKey: o.key, supplierSku: 'EDIT-L', sku: 'GAF', size: 'L', color: '', customName: 'Marcie', blocked: false, message: null }])
+    expect((await push([o.id])).results[0].status).toBe('WRITTEN')
+    const row = writes[0].rows[0].map(c => c ?? '')
+    expect(rowOf(row, 'Size')).toBe('L')
+    expect(rowOf(row, 'Custom Name')).toBe('Marcie')
   })
 
   it('closes the CSV routes for that supplier', async () => {

@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useParams, usePathname } from 'next/navigation'
 import Sidebar from '@/components/Sidebar'
+import { isPrintCutTemplate, PRINT_CUT_SIZING } from '@/lib/print-cut'
 import { useCurrentUser } from '@/components/RoleGate'
 import TemplateCanvas, { CanvasTools, type CanvasBg } from '@/app/design-studio/components/TemplateCanvas'
 import type { TemplateArea, TemplateRow } from '@/app/design-studio/components/types'
@@ -11,7 +12,7 @@ import { Card, ErrorBanner, Icon, Note, Pill, btn, card, input } from '@/app/des
 type Supplier = { id: string; name: string; code: string }
 type SupplierProduct = { id: string; sku: string; productName: string | null; productType: string | null; variant1Value: string | null; variant2Value: string | null }
 type PrintTemplate = TemplateRow & { sourceFileName: string | null; sourceUrl: string | null; supplierProductIds: string[] }
-type AreaForm = { name: string; x: string; y: string; w: string; h: string }
+type AreaForm = { name: string; x: string; y: string; w: string; h: string; sizing?: 'MATCH_PRINT_CUT' }
 type Form = {
   name: string; widthPx: string; heightPx: string; dpi: string; bleedIn: string; safeIn: string; mirror: boolean
   areas: AreaForm[]; productIds: string[]
@@ -28,7 +29,7 @@ function toForm(t: PrintTemplate): Form {
   return {
     name: t.name, widthPx: String(t.widthPx), heightPx: String(t.heightPx), dpi: String(t.dpi), bleedIn: String(t.bleedIn),
     safeIn: String(t.safeIn), mirror: t.mirror, productIds: t.supplierProductIds,
-    areas: t.areas.map(a => ({ name: a.name, x: String(a.x), y: String(a.y), w: String(a.w), h: String(a.h) })),
+    areas: t.areas.map(a => ({ name: a.name, x: String(a.x), y: String(a.y), w: String(a.w), h: String(a.h), sizing: a.sizing })),
     altAreas: t.altSets?.length ? JSON.stringify(t.altSets, null, 1) : '',
   }
 }
@@ -48,7 +49,7 @@ function Field({ label, children, className = '' }: { label: string; children: R
 
 function previewAreas(form: Form, W: number, H: number): TemplateArea[] {
   const rows = form.areas
-    .map((a, i) => ({ name: a.name.trim() || `vùng ${i + 1}`, x: num(a.x), y: num(a.y), w: num(a.w), h: num(a.h) }))
+    .map((a, i) => ({ name: a.name.trim() || `vùng ${i + 1}`, x: num(a.x), y: num(a.y), w: num(a.w), h: num(a.h), sizing: a.sizing }))
     .filter(a => [a.x, a.y, a.w, a.h].every(Number.isFinite) && a.w > 0 && a.h > 0)
   const seen = new Set<string>()
   const unique = rows.filter(a => (seen.has(a.name) ? false : (seen.add(a.name), true)))
@@ -153,7 +154,7 @@ export default function SupplierPrintTemplatesPage() {
     if (!(widthPx > 0) || !(heightPx > 0) || !(dpi > 0)) { setError('Rộng, cao và DPI phải lớn hơn 0.'); return }
     const areas = []
     for (const a of form.areas) {
-      const row = { name: a.name.trim(), x: num(a.x), y: num(a.y), w: num(a.w), h: num(a.h) }
+      const row = { name: a.name.trim(), x: num(a.x), y: num(a.y), w: num(a.w), h: num(a.h), sizing: a.sizing }
       if (!row.name || ![row.x, row.y, row.w, row.h].every(Number.isFinite) || row.w <= 0 || row.h <= 0) {
         setError('Mỗi vùng in cần tên và x, y, rộng, cao hợp lệ.')
         return
@@ -200,6 +201,7 @@ export default function SupplierPrintTemplatesPage() {
     await load()
   }
 
+  const pairMode = isPrintCutTemplate({ areas: form.areas })
   const W = num(form.widthPx), H = num(form.heightPx)
   const previewTemplate: TemplateRow | null = W > 0 && H > 0 ? {
     id: selectedId ?? 'new', name: form.name || 'template', widthPx: W, heightPx: H, dpi: num(form.dpi) > 0 ? num(form.dpi) : 300,
@@ -255,7 +257,7 @@ export default function SupplierPrintTemplatesPage() {
                         </span>
                         <span className="flex-1 min-w-0">
                           <span className="block text-body-sm font-semibold text-on-surface truncate">{t.name}</span>
-                          <span className="block text-label-sm text-on-surface-variant">{t.widthPx}×{t.heightPx} px · {t.dpi} DPI</span>
+                          <span className="block text-label-sm text-on-surface-variant">{isPrintCutTemplate(t) ? '2 ô in/cắt · khổ tự do' : `${t.widthPx}×${t.heightPx} px · ${t.dpi} DPI`}</span>
                         </span>
                         <Pill tone={t.supplierProductIds.length > 0 ? 'ok' : 'idle'}>{t.supplierProductIds.length} variant</Pill>
                         {t.mirror && <Pill tone="warn">mirror</Pill>}
@@ -277,7 +279,15 @@ export default function SupplierPrintTemplatesPage() {
                   <Field label="Tên template" className="col-span-2">
                     <input className={input} value={form.name} onChange={e => set('name', e.target.value)} aria-label="Tên template" placeholder="20oz Stainless Steel Tumbler (US)" />
                   </Field>
-                  <Field label="Rộng (px)">
+                  <label className="col-span-2 inline-flex items-center gap-xs text-body-sm">
+                    <input type="checkbox" checked={pairMode} aria-label="Hai ô in/cắt, khổ tự do" onChange={e => setForm(f => e.target.checked ? {
+                      ...f, widthPx: '2000', heightPx: '1000', dpi: '300', bleedIn: '0', safeIn: '0', mirror: false, altAreas: '',
+                      areas: ['Print', 'Cut'].map((name, i) => ({ name, x: String(i * 1000), y: '0', w: '1000', h: '1000', sizing: PRINT_CUT_SIZING })),
+                    } : { ...f, areas: f.areas.map(a => ({ ...a, sizing: undefined })) })} />
+                    Hai ô in/cắt, khổ tự do
+                  </label>
+                  {pairMode && <p className="col-span-2 text-body-sm text-on-surface-variant">File in và file cắt phải cùng khổ. Không kiểm khổ chuẩn, DPI, bleed hoặc vùng an toàn.</p>}
+                  {!pairMode && <><Field label="Rộng (px)">
                     <input className={input} type="number" min={1} value={form.widthPx} onChange={e => set('widthPx', e.target.value)} aria-label="Rộng px" />
                   </Field>
                   <Field label="Cao (px)">
@@ -297,10 +307,10 @@ export default function SupplierPrintTemplatesPage() {
                   <label className="col-span-2 inline-flex items-center gap-xs text-body-sm text-on-surface">
                     <input type="checkbox" checked={form.mirror} onChange={e => set('mirror', e.target.checked)} className="accent-secondary" />
                     Mirror (in lật gương)
-                  </label>
+                  </label></>}
                 </div>
 
-                <div className="flex items-center gap-sm border-t border-outline-variant/20 pt-sm">
+                {!pairMode && <><div className="flex items-center gap-sm border-t border-outline-variant/20 pt-sm">
                   <span className="text-body-sm font-semibold text-on-surface">Vùng in ({form.areas.length || 'mặc định: cả khổ'})</span>
                   <button type="button" className={`${btn} ml-auto`} onClick={() => set('areas', [...form.areas, { name: form.areas.length ? '' : 'Print', x: '0', y: '0', w: form.widthPx, h: form.heightPx }])}>
                     <Icon name="add" className="text-[16px]" />Thêm vùng
@@ -324,6 +334,7 @@ export default function SupplierPrintTemplatesPage() {
                     aria-label="Bộ vùng in thay thế" placeholder='[{"label":"12 mảnh","widthPx":40000,"heightPx":6000,"areas":[{"name":"FRONT","x":0,"y":0,"w":4963,"h":5493}, …]}]' />
                 </Field>
 
+                </>}
                 <div className="grid grid-cols-2 gap-sm border-t border-outline-variant/20 pt-sm">
                   <Field label="Artguide (PNG/JPG, vẽ đè lên khổ in)">
                     <input key={`g${fileKey}`} type="file" accept=".png,.jpg,.jpeg,image/png,image/jpeg" className="text-label-sm"

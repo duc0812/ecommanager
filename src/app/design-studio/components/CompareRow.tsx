@@ -1,4 +1,5 @@
 'use client'
+import { isPrintCutTemplate } from '@/lib/print-cut'
 import { useEffect, useRef, useState, type DragEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import type { TaskDetail } from './types'
@@ -218,7 +219,7 @@ export default function CompareRow({ detail, onChanged, layout = 'three' }: { de
   const designTitle = template ? 'Design trên template' : 'Design đã upload'
   const designSub = design
     ? [design.printArea, `v${design.version}`, design.widthPx && design.heightPx ? `${design.widthPx}×${design.heightPx}` : null, template ? 'file ngoài tấm template' : 'chưa có template'].filter(Boolean).join(' · ')
-    : template ? `${template.name} · ${template.widthPx}×${template.heightPx} · ${template.dpi} DPI` : 'chưa có template'
+    : template ? `${template.name} · ${isPrintCutTemplate(template) ? '2 ô in/cắt · khổ tự do' : `${template.widthPx}×${template.heightPx} · ${template.dpi} DPI`}` : 'chưa có template'
   const viewDesign = (a: ArtworkRow) => lightbox?.open(a.url, artworkImage(a))
   const designTools = (
     <>

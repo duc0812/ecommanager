@@ -52,7 +52,7 @@ export default function AiQaPanel({ qa }: { qa: QaResult }) {
         </div>
       )}
       <span className="text-label-sm text-on-surface-variant">
-        Máy kiểm khổ, DPI, định dạng, phủ panel và đủ vùng. So chữ với text khách, màu và preview cần AI nhìn ảnh — chưa có, người duyệt tự soi ở hàng So sánh.
+        Máy kiểm đủ file và kích thước theo chế độ của sản phẩm. Với in/cắt: kiểm hai file cùng khổ, soi đường cắt bằng ảnh chồng; với khổ cố định: kiểm thêm DPI và phủ panel. So chữ với text khách, màu và preview cần AI nhìn ảnh — chưa có, người duyệt tự soi ở hàng So sánh.
       </span>
     </section>
   )

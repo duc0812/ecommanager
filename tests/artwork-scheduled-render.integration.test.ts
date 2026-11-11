@@ -64,7 +64,8 @@ beforeAll(async () => {
   token = await generateWorkerToken()
 
   await makeOrder('ready', [{ key: 'Custom Name', value: 'Marie' }])
-  await makeOrder('empty', [{ key: 'Custom Name: Yes Or No?', value: 'No' }])
+  await makeOrder('noname', [{ key: 'Custom Name: Yes Or No?', value: 'No' }])
+  await makeOrder('empty', [{ key: 'Custom Name: Yes Or No?', value: 'Yes' }])
   const withFile = await makeOrder('file', [{ key: 'Custom Name', value: 'Ana' }])
   const line = await prisma.orderLine.findFirstOrThrow({ where: { orderId: withFile } })
   await prisma.designArtwork.create({ data: {
@@ -98,12 +99,13 @@ describe('daily auto-render', () => {
     expect(res.status).toBe(200)
     const summary = await res.json()
     const ours = summary.queued.filter((q: { taskKey: string }) => Object.values(keys).includes(q.taskKey))
-    expect(ours.map((q: { taskKey: string }) => q.taskKey)).toEqual([keys.ready])
+    expect(ours.map((q: { taskKey: string }) => q.taskKey)).toEqual([keys.ready, keys.noname])
     expect(summary.skipped).toEqual(expect.arrayContaining([
       expect.objectContaining({ reason: 'Khách chưa điền đủ' }), expect.objectContaining({ reason: 'Đã có file in' }),
     ]))
 
     expect(await jobsFor(named('ready'))).toEqual([expect.objectContaining({ status: 'QUEUED', printArea: 'Print', shopifyLineId: 'l1' })])
+    expect(await jobsFor(named('noname'))).toEqual([expect.objectContaining({ status: 'QUEUED', printArea: 'Print', shopifyLineId: 'l1' })])
     for (const name of ['empty', 'file', 'doing']) expect(await jobsFor(named(name))).toEqual([])
     const events = await prisma.designTaskEvent.findMany({ where: { task: { taskKey: keys.ready } } })
     expect(events.map(e => e.message)).toContain('Lịch hằng ngày: xếp hàng tạo file in tự động (Print) từ artwork gốc')

@@ -1,6 +1,7 @@
 import { decompressFromBase64 } from 'lz-string'
 import { unpack } from 'jsonpack'
 import { prisma } from '@/lib/db'
+import { productionFields, productionOverride } from '@/lib/production-override'
 
 // Orders from Customall-app products carry no readable text: only `_customallcustomid` and a mockup.
 // Customall keeps what the shopper typed under that id. A request names its target as JSON, XORed
@@ -169,7 +170,7 @@ export async function fillCustomallFields(orderIds: string[], opts: { force?: bo
       customAttributesJson: { contains: '_customallcustomid' },
       ...(opts.force ? {} : { customallFieldsJson: null }),
     },
-    select: { id: true, customAttributesJson: true, shopifyProductId: true, order: { select: { store: { select: { shop: true } } } } },
+    select: { id: true, customAttributesJson: true, shopifyProductId: true, productionOverrideJson: true, order: { select: { store: { select: { shop: true } } } } },
   })
   const now = opts.now ?? Date.now()
   const tried = attempts()
@@ -190,7 +191,7 @@ export async function fillCustomallFields(orderIds: string[], opts: { force?: bo
         if (!campaigns.has(key)) campaigns.set(key, fetchCampaign(shop, productId))
         campaign = await campaigns.get(key)!
       }
-      await prisma.orderLine.update({ where: { id: line.id }, data: { customallFieldsJson: JSON.stringify(customallFields(values, campaign)) } })
+      await prisma.orderLine.updateMany({ where: { id: line.id, productionOverrideJson: line.productionOverrideJson }, data: { customallFieldsJson: productionFields(JSON.stringify(customallFields(values, campaign)), productionOverride(line.productionOverrideJson)?.customName ?? null, false) } })
       tried.delete(customizationId)
       result.filled++
     } catch (e: any) {

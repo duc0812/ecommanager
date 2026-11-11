@@ -2,13 +2,12 @@ import { lineKeyOf } from '@/lib/order-lines'
 import fsp from 'fs/promises'
 import { prisma } from '@/lib/db'
 import { parseFields } from '@/lib/artwork-fields'
-import { TEEINBLUE_REASON, autoRenderEligibility, customerValues, hasTeeinblueDesign, renderFields, type RenderJobView } from '@/lib/artwork-render-eligibility'
+import { TEEINBLUE_REASON, autoRenderEligibility, hasTeeinblueDesign, renderPersonalization, type RenderJobView } from '@/lib/artwork-render-eligibility'
 import { RENDER_LINE, latestRenderJob, renderJobView } from '@/lib/artwork-render-jobs'
-import { parseAttributes } from '@/lib/design-studio'
+import { linePersonalization, parseAttributes } from '@/lib/design-studio'
 import { saveArtwork } from '@/lib/design-storage'
 import { enqueueDrivePush } from '@/lib/drive-push-queue'
 import { loadTask, retireOutdatedParts, submitAutoRenderForReview, type Actor } from '@/lib/design-tasks'
-import { visibleCustomAttributes } from '@/lib/order-classify'
 import { mapTemplate } from '@/lib/print-template-resolve'
 import type { TempFile } from '@/lib/library-storage'
 import { LibraryError } from '@/lib/repos/artwork-library'
@@ -106,7 +105,7 @@ export type RenderClaim = {
   template: ReturnType<typeof mapTemplate>
   artwork: { id: string; fileName: string; size: number; sha256: string }
   fonts: { postscriptName: string; fileId: string; sha256: string }[]
-  values: Record<string, string>
+  values: Record<string, string>; noName: boolean
   target: { orderId: string; shopifyLineId: string; orderNumber: string; linePosition: number; taskKey: string | null; printArea: string }
 }
 
@@ -117,7 +116,7 @@ export async function renderClaimFor(job: { id: string; kind: string; attempts: 
     prisma.artworkEntry.findUnique({ where: { id: job.entryId }, include: { printTemplate: true, artworkFile: true } }),
     prisma.orderLine.findFirst({
       where: { orderId: job.orderId, shopifyLineId: job.shopifyLineId },
-      select: { linePosition: true, customAttributesJson: true, order: { select: { shopifyOrderNumber: true } } },
+      select: { linePosition: true, customAttributesJson: true, customallFieldsJson: true, order: { select: { shopifyOrderNumber: true } } },
     }),
     prisma.designTask.findUnique({ where: { orderId_shopifyLineId: { orderId: job.orderId, shopifyLineId: job.shopifyLineId } }, select: { taskKey: true } }),
   ])
@@ -128,11 +127,11 @@ export async function renderClaimFor(job: { id: string; kind: string; attempts: 
   const attrs = parseAttributes(line.customAttributesJson)
   // The queue refuses these lines; a job queued before that rule existed must not render either.
   if (hasTeeinblueDesign(attrs)) return { error: TEEINBLUE_REASON }
-  const fields = parseFields(entry.fields)
-  const names = renderFields({ layers: fields.map(f => ({ field: f.field, layer: f.layer, fit: f.fit })) })
-  const values = customerValues(names, visibleCustomAttributes(attrs))
-  const missing = names.filter(n => values[n] === undefined)
+  const allFields = parseFields(entry.fields)
+  const personalization = linePersonalization({ previewCdnUrl: null, customAttributesJson: line.customAttributesJson, customallFieldsJson: line.customallFieldsJson })
+  const { values, noName, missing } = renderPersonalization({ layers: allFields }, personalization)
   if (missing.length) return { error: `Khách chưa điền: ${missing.join(', ')}` }
+  const fields = noName ? [] : allFields.filter(f => values[f.field] !== undefined)
   const wanted = Array.from(new Set(fields.map(f => f.font.toLowerCase()).filter(Boolean)))
   const fonts = wanted.length
     ? await prisma.designFont.findMany({ include: { file: { select: { sha256: true } } } })
@@ -146,7 +145,7 @@ export async function renderClaimFor(job: { id: string; kind: string; attempts: 
     template: mapTemplate(entry.printTemplate),
     artwork: { id: entry.artworkFile.id, fileName: entry.artworkFile.fileName, size: entry.artworkFile.size, sha256: entry.artworkFile.sha256 },
     fonts: fonts.filter(f => wanted.includes(f.postscriptName.toLowerCase())).map(f => ({ postscriptName: f.postscriptName, fileId: f.fileId, sha256: f.file.sha256 })),
-    values,
+    values, noName,
     target: {
       orderId: job.orderId, shopifyLineId: job.shopifyLineId, orderNumber: line.order.shopifyOrderNumber, linePosition: line.linePosition,
       taskKey: task?.taskKey ?? null, printArea: job.printArea,

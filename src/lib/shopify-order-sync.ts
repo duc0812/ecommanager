@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/db'
+import { productionFields, productionOverride } from '@/lib/production-override'
 import { fetchOrdersPage, fetchShopInfo } from '@/lib/shopify-orders'
 import { computeOrderPL, type SupplierInput } from '@/lib/pl-calculator'
 import { upsertOrderWithLines } from '@/lib/repos/orders'
@@ -189,15 +190,25 @@ export async function syncStoreOrders(storeId: string, opts: { fromOrderName?: s
       const grossExcludingMarketplaceTax = o.grossAmount - o.taxMarketplaceCollected
       const storedLines = await prisma.orderLine.findMany({
         where: { orderId: o.id },
-        select: { shopifyLineId: true, designDriveLink: true, shopifyProductType: true },
+        select: { shopifyLineId: true, designDriveLink: true, shopifyProductType: true, productionOverrideJson: true },
       })
       // A line whose product was deleted in Shopify comes back with no product type. The type last stored still says what the
       // line is, so a fee line stays a fee line (and the tasks keep their keys); a new non-null type still replaces it.
       const storedType = new Map(storedLines.map(l => [l.shopifyLineId, l.shopifyProductType]))
+      const production = new Map(storedLines.map(l => [l.shopifyLineId, productionOverride(l.productionOverrideJson)]))
+      for (const l of o.lines) {
+        const edit = production.get(l.id)
+        if (!edit) continue
+        l.variantTitle = edit.variantTitle
+        l.selectedOptions = edit.variantOptions
+        l.customAttributes = JSON.parse(productionFields(JSON.stringify(l.customAttributes), edit.customName)!)
+      }
       for (const l of o.lines) if (l.productType == null) l.productType = storedType.get(l.id) ?? null
       const resolvedLines = o.lines.map(l => ({
         line: l,
         pbResolve: (() => {
+          const edit = production.get(l.id)
+          if (edit) return { supplierProductId: supplierProductById.has(edit.supplierProductId) ? edit.supplierProductId : null, resolvedVia: 'variant_manual' as const }
           if (isNonProductLine({ sku: l.sku, productTitle: l.title, shopifyProductType: l.productType })) {
             return { supplierProductId: null, resolvedVia: 'unresolved' as const }
           }

@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/db'
+import { productionFields, productionOverride, type ProductionOverride } from '@/lib/production-override'
 import { countryCodeOf, countryNameOf } from '@/lib/shipping-address'
 import { visibleCustomAttributes, customerDesignLink, addOnSummaries, type AddOnSummary } from '@/lib/order-classify'
 import { extractPreviewCdnUrl } from '@/lib/order-line-assets'
@@ -28,6 +29,7 @@ export type ArtworkRow = {
 }
 export type ArtworkStorage = 'LOCAL' | 'DRIVE'
 export type WorkspaceLine = {
+  productionEdit?: ProductionOverride | null
   id: string; shopifyLineId: string; linePosition: number; sku: string | null; productTitle: string; variantTitle: string | null
   qty: number; isNonProduct: boolean; customized: boolean
   variantOptions: Record<string, string>
@@ -237,6 +239,7 @@ export async function loadWorkspace(orderId: string): Promise<Workspace | null> 
       sku: l.sku,
       productTitle: l.productTitle,
       variantTitle: l.variantTitle,
+      productionEdit: productionOverride(l.productionOverrideJson),
       qty: l.qty,
       isNonProduct,
       customized: l.customized,
@@ -363,7 +366,7 @@ async function recomputeOrderDesign(orderId: string, markedDone: boolean, reoffe
 }
 
 export async function applyLineProps(orderId: string, props: ShopifyOrderLineProps[]) {
-  const lines = await prisma.orderLine.findMany({ where: { orderId }, orderBy: { linePosition: 'asc' }, select: { id: true, sku: true, productTitle: true } })
+  const lines = await prisma.orderLine.findMany({ where: { orderId }, orderBy: { linePosition: 'asc' }, select: { id: true, sku: true, productTitle: true, productionOverrideJson: true } })
   const byPosition = lines.length === props.length
   let updated = 0, unmatched = 0
   const used = new Set<string>()
@@ -374,9 +377,10 @@ export async function applyLineProps(orderId: string, props: ShopifyOrderLinePro
       : lines.find(l => !used.has(l.id) && (l.sku ?? '') === (p.sku ?? '') && l.productTitle === p.title)
     if (!line) { unmatched++; continue }
     used.add(line.id)
-    const attrs = p.productUrl ? [...p.customAttributes, { key: '_product_url', value: p.productUrl }] : p.customAttributes
-    await prisma.orderLine.update({ where: { id: line.id }, data: { customAttributesJson: JSON.stringify(attrs), imageUrl: p.imageUrl ?? null, imageIsVariant: p.imageUrl ? (p.imageIsVariant ?? null) : null, ...(p.productId !== undefined ? { shopifyProductId: p.productId } : {}) } })
-    updated++
+    const rawAttrs = p.productUrl ? [...p.customAttributes, { key: '_product_url', value: p.productUrl }] : p.customAttributes
+    const attrs = parseAttributes(productionFields(JSON.stringify(rawAttrs), productionOverride(line.productionOverrideJson)?.customName ?? null))
+    const changed = await prisma.orderLine.updateMany({ where: { id: line.id, productionOverrideJson: line.productionOverrideJson }, data: { customAttributesJson: JSON.stringify(attrs), imageUrl: p.imageUrl ?? null, imageIsVariant: p.imageUrl ? (p.imageIsVariant ?? null) : null, ...(p.productId !== undefined ? { shopifyProductId: p.productId } : {}) } })
+    updated += changed.count
   }
   return { updated, unmatched }
 }

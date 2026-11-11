@@ -1,8 +1,9 @@
+import { isTopperProductType, topperPrintCutTemplate } from '@/lib/print-cut'
 import { prisma } from '@/lib/db'
 import { partKey } from '@/lib/task-files'
 
 /** `shaped`: the template's guide draws this piece's real outline, so the canvas shows no box around it and names it above. */
-export type TemplateArea = { name: string; x: number; y: number; w: number; h: number; shaped?: boolean }
+export type TemplateArea = { name: string; x: number; y: number; w: number; h: number; shaped?: boolean; sizing?: 'MATCH_PRINT_CUT' }
 /** A part set a line may deliver instead of the template's own areas (Mango WZIP: 12 piece files instead of the one sheet). */
 export type TemplateAreaSet = { label: string; widthPx: number; heightPx: number; areas: TemplateArea[]; filesUntil?: string }
 
@@ -14,7 +15,7 @@ export type TemplateRow = {
   areaSet: string | null
 }
 
-export type TemplateLookupLine = { orderId: string; resolvedSupplierId: string | null; resolvedSupplierSku: string | null; shopifyProductId?: string | null }
+export type TemplateLookupLine = { orderId: string; resolvedSupplierId: string | null; resolvedSupplierSku: string | null; shopifyProductId?: string | null; shopifyProductType?: string | null }
 
 function parseTemplateAreas(json: string): TemplateRow['areas'] {
   try {
@@ -84,7 +85,7 @@ export function templateViewFor<T extends TemplateRow>(template: T | null, files
 }
 
 type TemplateRecord = Parameters<typeof mapTemplate>[0] & { supplierId: string; supplierSku: string | null }
-export type TemplateContext = { byId: Map<string, TemplateRecord>; productTemplate: Map<string, TemplateRecord>; bySupplier: Map<string, TemplateRecord[]> }
+export type TemplateContext = { byId: Map<string, TemplateRecord>; productTemplate: Map<string, TemplateRecord>; bySupplier: Map<string, TemplateRecord[]>; supplierCodes?: Map<string, string> }
 
 const pairKey = (supplierId: string, sku: string) => `${supplierId}\u0000${sku}`
 
@@ -92,19 +93,21 @@ export async function loadTemplateContext(lines: TemplateLookupLine[], profileTe
   const ids = Array.from(new Set(profileTemplateIds.filter((x): x is string => !!x)))
   const supplierIds = Array.from(new Set(lines.map(l => l.resolvedSupplierId).filter((x): x is string => !!x)))
   const skus = Array.from(new Set(lines.filter(l => l.resolvedSupplierId && l.resolvedSupplierSku).map(l => l.resolvedSupplierSku as string)))
-  const [profileTemplates, products, supplierTemplates] = await Promise.all([
+  const topperSupplierIds = Array.from(new Set(lines.filter(l => isTopperProductType(l.shopifyProductType)).map(l => l.resolvedSupplierId).filter((id): id is string => !!id)))
+  const [profileTemplates, products, supplierTemplates, topperSuppliers] = await Promise.all([
     ids.length ? prisma.printTemplate.findMany({ where: { id: { in: ids } } }) : [],
     supplierIds.length && skus.length
       ? prisma.supplierProduct.findMany({ where: { supplierId: { in: supplierIds }, sku: { in: skus }, printTemplateId: { not: null } }, select: { supplierId: true, sku: true, printTemplate: true } })
       : [],
     supplierIds.length ? prisma.printTemplate.findMany({ where: { supplierId: { in: supplierIds } } }) : [],
+    topperSupplierIds.length ? prisma.supplier.findMany({ where: { id: { in: topperSupplierIds } }, select: { id: true, code: true } }) : [],
   ])
   const byId = new Map<string, TemplateRecord>(profileTemplates.map(t => [t.id, t]))
   const productTemplate = new Map<string, TemplateRecord>()
   for (const p of products) if (p.printTemplate) productTemplate.set(pairKey(p.supplierId, p.sku), p.printTemplate)
   const bySupplier = new Map<string, TemplateRecord[]>()
   for (const t of supplierTemplates) bySupplier.set(t.supplierId, [...(bySupplier.get(t.supplierId) ?? []), t])
-  return { byId, productTemplate, bySupplier }
+  return { byId, productTemplate, bySupplier, supplierCodes: new Map(topperSuppliers.map(s => [s.id, s.code])) }
 }
 
 /** A pin ending in -S/-M/-L/-XL names one size of a set: a line of another size takes the set's template of its own size (owner 11-03: TN2407261608 on C932-PGWB2-*; TN2407261539, whose blank SKUs read M--114-INCHES, on LBW-PG-*). */
@@ -122,7 +125,7 @@ export const GUIDE_SIZE = /^(XS|S|M|L|XL|[2-6]XL)$/
 /** A guide path holding {SIZE} has one image per size on one template row (owner 11-04: TBEJ), so the library entries on that row keep working. */
 export function pickTemplate(line: TemplateLookupLine, profile: { printTemplateId: string | null } | null, ctx: TemplateContext): TemplateRow | null {
   const picked = pickTemplateRecord(line, profile, ctx)
-  if (!picked) return null
+  if (!picked) return topperPrintCutTemplate(line.shopifyProductType, line.resolvedSupplierId ? ctx.supplierCodes?.get(line.resolvedSupplierId) ?? null : undefined)
   const row = mapTemplate(picked)
   const size = line.resolvedSupplierSku?.match(/-([0-9A-Z]+)$/i)?.[1].toUpperCase()
   if (row.guideImageUrl && picked.guideImagePath?.includes(GUIDE_SIZE_TOKEN) && size && GUIDE_SIZE.test(size)) {

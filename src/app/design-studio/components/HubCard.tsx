@@ -70,8 +70,8 @@ export default function HubCard({ c, tabId, sheet, me, onOpenTask, onSheet, onCh
           {tabId === UNMAPPED_TAB ? (
             <a href="/fulfillment/mapping" className={btnPrimary} title="Dòng này chưa có xưởng"><Icon name="account_tree" className="text-[16px]" />Vào Mapping</a>
           ) : sheet ? (
-            <button type="button" className={btnPrimary} disabled={!me?.canHandoff || view.warnings.length > 0} onClick={() => onSheet(order.id)}
-              title={view.warnings.length ? `Sửa cảnh báo trước: ${warnText}` : 'Ghi đơn vào sheet của xưởng'}>
+            <button type="button" className={btnPrimary} disabled={!me?.canHandoff || view.sendableLines.length === 0} onClick={() => onSheet(order.id)}
+              title={view.sendableLines.length === 0 ? `Sửa cảnh báo trước: ${warnText}` : `Ghi ${view.sendableLines.length} dòng hợp lệ vào sheet của xưởng${view.warnings.length ? ' — các dòng có cảnh báo được giữ lại' : ''}`}>
               <Icon name="table_view" className="text-[16px]" />{HANDOFF_LABELS.produceSheet}
             </button>
           ) : <HandoffButton compact orderId={order.id} state={stateForSupplier(state, tabId)} canHandoff={!!me?.canHandoff} onChanged={onChanged} onError={onError} />}

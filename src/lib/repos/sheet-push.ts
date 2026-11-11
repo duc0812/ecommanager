@@ -3,7 +3,7 @@ import { lineKeysOf } from '@/lib/order-lines'
 import { storeForOrderName } from '@/lib/order-prefix'
 import { buildOrdersForCsv } from '@/lib/export-orders'
 import { renderRow, type OrderForCsv } from '@/lib/csv-template'
-import { HUB_WARNING_LABELS, hubView } from '@/lib/handoff-hub'
+import { HUB_WARNING_LABELS, hubView, type HubWarning } from '@/lib/handoff-hub'
 import { listOrdersWithLines, markOrdersExported } from '@/lib/repos/orders'
 import { logHandoffEvent } from '@/lib/repos/push-export'
 import { pendingCardsForSupplier } from '@/lib/supplier-handoff'
@@ -23,7 +23,7 @@ export class SheetPushError extends Error {
 export type SheetLineStatus = 'WRITTEN' | 'ALREADY' | 'BLOCKED' | 'FAILED'
 export type SheetLineResult = { lineKey: string; orderNumber: string; status: SheetLineStatus; message: string | null }
 export type SheetPushResult = { tabName: string; results: SheetLineResult[] }
-export type SheetPushPreview = { supplierName: string; tabName: string; ready: number; blocked: number }
+export type SheetPushPreview = { supplierName: string; tabName: string; ready: number; blocked: number; lines: { lineKey: string; supplierSku: string | null; sku: string | null; size: string; color: string; customName: string; blocked: boolean; message: string | null }[] }
 
 declare global {
   // eslint-disable-next-line no-var
@@ -65,14 +65,22 @@ async function existingKeys(channel: SheetChannel, tabs: string[], at: Date): Pr
   return keys
 }
 
-/** What a send would do, for the confirm box. */
+function warningMessage(warnings: HubWarning[], lineKey: string): string | null {
+  return warnings.filter(w => w.lineKey === lineKey).map(w => `${w.lineKey}: ${HUB_WARNING_LABELS[w.code]}`).join('; ') || null
+}
+
+/** What a send would do, for the confirm box. Counts are per line, including orders with both valid and blocked lines. */
 export async function previewSheetPush(supplierId: string, orderIds?: string[]): Promise<SheetPushPreview> {
   const { supplier, channel } = await channelOf(supplierId)
   const { tabName } = await openTab(channel, new Date())
   const cards = await pendingCardsForSupplier(supplierId, orderIds)
   const views = cards.map(c => hubView(c, supplierId))
-  const blocked = views.filter(v => v.warnings.length > 0)
-  return { supplierName: supplier.name, tabName, ready: views.length - blocked.length, blocked: blocked.length }
+  const lines = views.flatMap(v => v.lines.map(l => {
+    const message = warningMessage(v.warnings, l.lineKey)
+    return { lineKey: l.lineKey, supplierSku: l.line.supplierSku, ...l.send, blocked: !!message, message }
+  }))
+  const blocked = lines.filter(l => l.blocked).length
+  return { supplierName: supplier.name, tabName, ready: lines.length - blocked, blocked, lines }
 }
 
 async function run(supplierId: string, orderIds: string[] | undefined, userId: string | null, at: Date): Promise<SheetPushResult> {
@@ -89,13 +97,13 @@ async function run(supplierId: string, orderIds: string[] | undefined, userId: s
 
   for (const c of cards) {
     const view = hubView(c, supplierId)
-    if (view.warnings.length > 0) {
-      const message = view.warnings.map(w => `${w.lineKey}: ${HUB_WARNING_LABELS[w.code]}`).join('; ')
-      for (const l of view.lines) results.push({ lineKey: l.lineKey, orderNumber: c.order.orderNumber, status: 'BLOCKED', message })
-      continue
+    for (const l of view.lines) {
+      const message = warningMessage(view.warnings, l.lineKey)
+      if (message) results.push({ lineKey: l.lineKey, orderNumber: c.order.orderNumber, status: 'BLOCKED', message })
     }
+    if (view.sendableLines.length === 0) continue
     orderIdsToLoad.push(c.order.id)
-    for (const l of view.lines) customNames.set(l.line.id, l.send.customName)
+    for (const l of view.sendableLines) customNames.set(l.line.id, l.send.customName)
   }
 
   const orders = orderIdsToLoad.length ? await listOrdersWithLines({ ids: orderIdsToLoad, limit: orderIdsToLoad.length }) : []
@@ -113,8 +121,10 @@ async function run(supplierId: string, orderIds: string[] | undefined, userId: s
   const allowed = orders.filter(o => {
     const reason = blockReason(o)
     if (!reason) return true
-    for (const k of Array.from(lineKeysOf(o.shopifyOrderNumber, o.lines).values())) {
-      results.push({ lineKey: k, orderNumber: o.shopifyOrderNumber, status: 'BLOCKED', message: reason })
+    const keys = lineKeysOf(o.shopifyOrderNumber, o.lines)
+    for (const l of o.lines.filter(l => customNames.has(l.id))) {
+      const key = keys.get(l.shopifyLineId)
+      if (key) results.push({ lineKey: key, orderNumber: o.shopifyOrderNumber, status: 'BLOCKED', message: reason })
     }
     return false
   })

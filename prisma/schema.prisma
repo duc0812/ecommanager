@@ -462,6 +462,7 @@ model OrderLine {
   shopifyLineId           String
   shopifyVariantId        String?
   variantOptions          String?
+  productionOverrideJson  String?
   sku                     String?
   resolvedSupplierSku     String?
   variantTitle            String?

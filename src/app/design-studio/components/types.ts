@@ -31,7 +31,7 @@ export type SentLineRow = {
 }
 
 /** `shaped`: the template's guide draws this piece's real outline, so the canvas shows no box around it and names it above. */
-export type TemplateArea = { name: string; x: number; y: number; w: number; h: number; shaped?: boolean }
+export type TemplateArea = { name: string; x: number; y: number; w: number; h: number; shaped?: boolean; sizing?: 'MATCH_PRINT_CUT' }
 
 export type TemplateAreaSet = { label: string; widthPx: number; heightPx: number; areas: TemplateArea[]; filesUntil?: string }
 
@@ -53,6 +53,7 @@ export type ArtworkRow = {
 }
 
 export type WorkspaceLine = {
+  productionEdit?: import('@/lib/production-override').ProductionOverride | null
   id: string; shopifyLineId: string; linePosition: number; sku: string | null; productTitle: string; variantTitle: string | null
   qty: number; isNonProduct: boolean; customized: boolean
   variantOptions: Record<string, string>

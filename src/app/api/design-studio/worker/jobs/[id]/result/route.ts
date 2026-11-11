@@ -18,8 +18,8 @@ function pickFile(files: MultipartFile[], base: string, ext = 'png'): MultipartF
   return files.find(f => f.field === base || f.field === `${base}.${ext}`) ?? files.find(f => f.fileName === `${base}.${ext}`)
 }
 
-async function renderResult(jobId: string, parts: MultipartResult, json: any) {
-  const print = pickFile(parts.files, 'print')
+async function renderResult(jobId: string, printArea: string | null, parts: MultipartResult, json: any) {
+  const print = pickFile(parts.files, 'print') ?? parts.files.find(f => printArea && f.field === `piece.${printArea}`)
   if (!print) return bad('Thiếu print.png')
   if (!print.head.subarray(0, 8).equals(PNG_MAGIC)) return bad('print.png không phải PNG')
   const preview = pickFile(parts.files, 'preview', 'jpg') ?? null
@@ -43,9 +43,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     let json: any
     try { json = JSON.parse(raw) } catch { return bad('result.json không phải JSON') }
     if (!json || typeof json !== 'object' || Array.isArray(json)) return bad('result.json phải là object')
-    const job = await prisma.artworkJob.findUnique({ where: { id: params.id }, select: { kind: true } })
+    const job = await prisma.artworkJob.findUnique({ where: { id: params.id }, select: { kind: true, printArea: true } })
     if (!job) return bad('Không tìm thấy job', 404)
-    if (job.kind === RENDER_LINE) return await renderResult(params.id, parts, json)
+    if (job.kind === RENDER_LINE) return await renderResult(params.id, job.printArea, parts, json)
     const artwork = pickFile(parts.files, 'artwork')
     if (!artwork) return bad('Thiếu artwork.png')
     const preview = pickFile(parts.files, 'preview') ?? null

@@ -10,6 +10,7 @@ import { LightboxProvider } from './Lightbox'
 import { ConfirmApprove } from './TaskHeader'
 import CompareRow from './CompareRow'
 import CustomerInputs from './CustomerInputs'
+import ProductionEditor from './ProductionEditor'
 import PrintFileThumb from './PrintFileThumb'
 import ActivityPanel from './ActivityPanel'
 import { useShopifyRefresh } from './useShopifyRefresh'
@@ -283,6 +284,7 @@ export default function ReviewWorkspace({ taskKey, position, onMoved, onOpenTask
         onApprove={onApprove} onReject={reject} onRefresh={refresh} onOpenTask={() => onOpenTask(key)} />
       <CompareRow key={`m-${key}`} detail={detail} onChanged={refreshAll} layout="pair" />
       <CustomerInputs key={`c-${key}`} detail={detail} refreshing={refreshing} onRefresh={refresh} onChanged={refreshAll} />
+      <ProductionEditor key={`p-${key}`} detail={detail} onChanged={refreshAll} />
       <PrintFiles key={`p-${key}`} detail={detail} />
       <ActivityPanel key={`e-${key}`} detail={detail} onChanged={refreshAll} />
       {confirm && <ConfirmApprove qa={qa} busy={busy} onCancel={() => setConfirm(false)} onConfirm={note => approve(note)} />}

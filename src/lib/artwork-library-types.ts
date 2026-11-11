@@ -63,7 +63,7 @@ export type LibraryFontRow = {
   storage: string; usedBy: number; createdAt: string
 }
 
-export type TaskLibraryLayer = { field: string; layer: string; fit: string; maxChars?: number }
+export type TaskLibraryLayer = { field: string; layer: string; fit: string; maxChars?: number; required?: boolean }
 
 export type TaskLibraryState = {
   key: string; entryId: string | null; status: EntryStatus | 'NONE'; label: 'Sẵn sàng' | 'Thiếu' | 'Đang đọc'

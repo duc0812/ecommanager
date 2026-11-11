@@ -13,6 +13,7 @@ import Queue, { byDue, type QueueFilter } from './components/Queue'
 import TaskHeader from './components/TaskHeader'
 import TaskHandoffChecks from './components/TaskHandoffChecks'
 import CustomerInputs from './components/CustomerInputs'
+import ProductionEditor from './components/ProductionEditor'
 import ArtworkPanel from './components/ArtworkPanel'
 import CompareRow from './components/CompareRow'
 import AiQaPanel from './components/AiQaPanel'
@@ -74,6 +75,7 @@ function TaskWorkspace({ detail, holdCount, onChanged }: { detail: TaskDetail; h
       <TaskHeader key={`h-${key}`} detail={detail} qa={qa} holdCount={holdCount} refreshing={refreshing} onRefresh={refresh} onChanged={onChanged} />
       {detail.handoff?.pending && <TaskHandoffChecks key={`checks-${key}`} orderId={detail.task.orderId} me={detail.me} onChanged={onChanged} />}
       <CustomerInputs key={`c-${key}`} detail={detail} refreshing={refreshing} onRefresh={refresh} onChanged={onChanged} />
+      <ProductionEditor key={`p-${key}`} detail={detail} onChanged={onChanged} />
       <ArtworkPanel key={`a-${key}`} detail={detail} onChanged={onChanged} />
       <CompareRow key={`m-${key}`} detail={detail} onChanged={onChanged} />
       <AiQaPanel qa={qa} />

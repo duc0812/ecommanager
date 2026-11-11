@@ -18,6 +18,17 @@ export function parseGuides(json: string | null | undefined): Guides {
 export type ViewBox = { x: number; y: number; w: number; h: number }
 export type ClientRect = { left: number; top: number; width: number; height: number }
 
+export function areaViewBox(areas: TemplateArea[], scale: number, padding = 10): ViewBox | null {
+  if (!areas.length) return null
+  const x = Math.min(...areas.map(a => a.x)) * scale
+  const y = Math.min(...areas.map(a => a.y)) * scale
+  return {
+    x: x - padding, y: y - padding,
+    w: Math.max(...areas.map(a => a.x + a.w)) * scale - x + 2 * padding,
+    h: Math.max(...areas.map(a => a.y + a.h)) * scale - y + 2 * padding,
+  }
+}
+
 export function clientToTemplate(rect: ClientRect, viewBox: ViewBox, scale: number, clientX: number, clientY: number): { x: number; y: number } {
   const s = Math.min(rect.width / viewBox.w, rect.height / viewBox.h)
   const ox = rect.left + (rect.width - viewBox.w * s) / 2

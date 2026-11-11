@@ -51,6 +51,20 @@ describe('hubView', () => {
     expect(v.warnings).toEqual([{ code: 'WRONG_SIZE', lineKey: 'LIT1_2' }, { code: 'MAPPING', lineKey: 'LIT1_3' }])
   })
 
+  it('keeps valid lines sendable beside lines with size, mapping or mockup warnings', () => {
+    const v = hubView(card([
+      line(),
+      line({ key: 'LIT1_2', wrongSizeAreas: ['Front'] }),
+      line({ key: 'LIT1_3', mappingNow: { supplierName: 'Mango', sku: 'X' } }),
+      line({ key: 'LIT1_4', previewUrl: null }),
+      line({ key: 'LIT1_5', supplierId: 'mz' }),
+      line({ key: 'LIT1_6', waiting: 'DESIGN' }),
+      line({ key: 'LIT1_7', exportedTo: 'Jomall' }),
+    ]), 'jm')
+    expect(v.sendableLines.map(l => l.lineKey)).toEqual(['LIT1_1'])
+    expect(v.warnings.map(w => w.lineKey)).toEqual(['LIT1_2', 'LIT1_3', 'LIT1_4'])
+  })
+
   it('needs an uploaded mockup or the preview, not only the product photo', () => {
     expect(hubView(card([line({ previewUrl: null })]), 'jm').warnings).toEqual([{ code: 'NO_MOCKUP', lineKey: 'LIT1_1' }])
     expect(hubView(card([line({ previewUrl: null, mockup: true })]), 'jm').warnings).toEqual([])

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ALL_GUIDES, areaAt, clientToTemplate, parseGuides } from '@/app/design-studio/components/canvas-guides'
+import { ALL_GUIDES, areaAt, areaViewBox, clientToTemplate, parseGuides } from '@/app/design-studio/components/canvas-guides'
 
 const front = { name: 'Front', x: 0, y: 0, w: 1000, h: 1200 }
 const back = { name: 'Back', x: 1100, y: 0, w: 1000, h: 1200 }
@@ -24,6 +24,18 @@ describe('areaAt', () => {
 })
 
 describe('clientToTemplate', () => {
+  it('maps a drop into the correct panel after focusing and zooming the view', () => {
+    const focused = areaViewBox([back], 0.5)!
+    const rect = { left: -200, top: 10, width: focused.w * 3, height: focused.h * 3 }
+    const p = clientToTemplate(rect, focused, 0.5, rect.left + rect.width / 2, rect.top + rect.height / 2)
+    expect(p.x).toBeCloseTo(1600)
+    expect(p.y).toBeCloseTo(600)
+    expect(areaAt([front, back], p.x, p.y)?.name).toBe('Back')
+  })
+  it('fits both selected pieces without changing their positions', () => {
+    expect(areaViewBox([front, back], 1)).toEqual({ x: -10, y: -10, w: 2120, h: 1220 })
+    expect(areaViewBox([], 1)).toBeNull()
+  })
   const viewBox = { x: -30, y: -22, w: 1260, h: 1250 }
   it('maps a client point through the viewBox and sheet scale', () => {
     const rect = { left: 100, top: 50, width: 630, height: 625 }
