@@ -156,7 +156,7 @@ export default function CsTicketPage() {
         {message && <p className="mb-md rounded-lg bg-surface-container px-md py-sm text-body-sm text-on-surface-variant">{message}</p>}
 
         <div className="grid grid-cols-1 gap-lg xl:grid-cols-[1fr_380px]">
-          <section className="space-y-md">
+          <section className="min-w-0 space-y-md">
             <div className="rounded-xl border border-outline-variant/20 bg-surface-container-lowest shadow-card">
               <div className="border-b border-outline-variant/20 px-lg py-md"><h3 className="text-headline-sm text-primary">Hội thoại</h3></div>
               <div className="space-y-md p-lg">
@@ -168,11 +168,11 @@ export default function CsTicketPage() {
                         <p className={`mb-xs text-label-sm ${m.private ? 'text-on-surface-variant' : mine ? 'text-on-secondary-container/80' : 'text-on-surface-variant'}`}>
                           {m.author === 'CUSTOMER' ? 'Khách' : m.author === 'AGENT' ? 'Agent' : m.author === 'STAFF' ? 'Nhân sự' : m.author}{m.private ? ' · Ghi chú nội bộ' : ''} · {fmtDate(m.createdAt, true)}
                         </p>
-                        <p className="whitespace-pre-wrap text-body-sm leading-relaxed">{m.displayText || m.bodyText || '(trống)'}</p>
+                        <p className="whitespace-pre-wrap text-body-sm leading-relaxed [overflow-wrap:anywhere]">{m.displayText || m.bodyText || '(trống)'}</p>
                         {m.quoted && (
                           <details className="mt-xs">
                             <summary className="cursor-pointer text-label-sm text-on-surface-variant">Phần trích dẫn / chữ ký</summary>
-                            <p className="mt-xs whitespace-pre-wrap text-label-sm text-on-surface-variant">{m.quoted}</p>
+                            <p className="mt-xs whitespace-pre-wrap text-label-sm text-on-surface-variant [overflow-wrap:anywhere]">{m.quoted}</p>
                           </details>
                         )}
                         {m.author === 'STAFF' && m.source === 'DRAFT_UNCHANGED' && <p className="mt-xs text-label-sm text-on-secondary-container/80">gửi nguyên nháp agent</p>}
@@ -220,7 +220,7 @@ export default function CsTicketPage() {
             </div>
           </section>
 
-          <aside className="space-y-md">
+          <aside className="min-w-0 space-y-md">
             <div className={`rounded-xl border bg-surface-container-lowest shadow-card ${directives.some(d => !d.resolvedAt) ? 'border-secondary/50' : 'border-outline-variant/20'}`}>
               <div className="border-b border-outline-variant/20 px-lg py-md"><h3 className="text-headline-sm text-primary">Chỉ đạo của admin</h3></div>
               <div className="space-y-sm p-lg text-body-sm">

@@ -22,6 +22,13 @@ describe('splitQuoted', () => {
     expect(r.main).toBe('I typed it wrong.')
     expect(r.quoted).toContain('Did we get it right?')
   })
+  it('splits at the French, Spanish and German reply headers', () => {
+    const fr = splitQuoted('1 of 2 not all delevery\n\nLe mer. 11 nov. 2026, 3 h 52 p.m., Litzzy <no-reply@parcelpanel.net> a écrit :\n> Your order has been delivered')
+    expect(fr.main).toBe('1 of 2 not all delevery')
+    expect(fr.quoted).toContain('Your order has been delivered')
+    expect(splitQuoted('No llegó.\nEl mié, 11 nov 2026 a las 15:52, Litzzy <a@b.c> escribió:\n> hi').main).toBe('No llegó.')
+    expect(splitQuoted('Fehlt.\nAm Mi., 11. Nov. 2026 um 15:52 Uhr schrieb Litzzy <a@b.c>:\n> hi').main).toBe('Fehlt.')
+  })
   it('splits when the marker sits mid-line after a mobile signature', () => {
     const r = splitQuoted('I spelled it Laurence - no big deal Sent from my iPhone On Oct 14, 2026, at 9:02 AM, Litzzy <support@litzzy.com> wrote: Did we get it right?')
     expect(r.main).toBe('I spelled it Laurence - no big deal')
