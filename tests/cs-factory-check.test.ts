@@ -94,5 +94,7 @@ describe('item lines carry the conclusion', () => {
     expect(itemSummaryVi(m)).toContain(' · Kết luận: Fulfillment thiếu: …')
     expect(itemPromptLine(m)).toContain('; FACTORY CHECK: NOT in parcel UL648908989YP — the factory that shipped it has no record of this item, so our fulfillment is missing it')
     expect(itemPromptLine({ ...m, check: { ...check, verdict: 'NOT_SENT' } })).toContain('; FACTORY CHECK: MISSED SEND — no factory has any record of this item, so it was never sent to production; parcel UL648908989YP does not hold it')
+    const looked = { ...check, verdict: 'NOT_SENT' as const, lookups: [{ supplier: 'Pgprints', found: false, detail: 'API không có đơn LIT5554' }, { supplier: 'Mangoshao', found: false, detail: 'chỉ có LIT5554_1' }] }
+    expect(itemPromptLine({ ...m, check: looked })).toContain(' (checked, in order: Pgprints — không có: API không có đơn LIT5554; Mangoshao — không có: chỉ có LIT5554_1)')
   })
 })

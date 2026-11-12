@@ -22,6 +22,8 @@ describe('buildSystemPrompt', () => {
     expect(s).toContain('Never promise a resend, refund or remake: staff decide')
     expect(s).toContain('"MISSED SEND": no factory has any record of the item')
     expect(s).toContain('=> Kết luận giả định: Chưa gửi hàng')
+    expect(s).toContain('list only the item in question, one line per factory checked, in the order checked')
+    expect(s).toContain('never list items the customer already received')
     expect(s).toContain('1- Email xin lỗi khách và báo sẽ gửi ngay lập tức (bản nháp ở khung Trả lời)')
     expect(s).toContain('2- Gửi ngay lập tức món còn thiếu:')
     expect(s).toContain('Never name a factory or supplier to the customer')
