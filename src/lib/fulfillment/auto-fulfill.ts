@@ -41,7 +41,7 @@ export function settleFromDb(
 
 // Orders pushed to a supplier by API (PGprints) get their tracking on Shipment rows from the
 // supplier sync rather than a sheet. Those trackings exist only once the parcel shipped, so
-// these orders skip the min-age gate that protects pre-printed sheet trackings. Each row is one
+// these rows skip the min-age gate that protects pre-printed sheet trackings (sheet rows of the same order still wait). Each row is one
 // Shipment, so one line: a row under the bare order number is held by the plan, never read as the whole order.
 export async function pushedShipmentRows(storeId: string): Promise<Map<string, OrderRow[]>> {
   const pushes = await prisma.supplierOrderPush.findMany({
@@ -144,7 +144,7 @@ export async function runAutoFulfill(opts: {
     where: { storeId: opts.storeId, shopifyOrderNumber: { in: [...names, ...names.map(n => `#${n}`)] } },
     select: {
       id: true, shopifyOrderNumber: true, placedAt: true, pipelineStatus: true, fulfillmentStatus: true,
-      shipments: { select: { id: true, lineKey: true, shopifyLineId: true } },
+      shipments: { select: { id: true, lineKey: true, shopifyLineId: true, trackingNumber: true } },
       // Non-product lines (Shipping protection / Tip / Custom Text) have no Shipment row and
       // never appear in a supplier sheet, but Shopify still waits for them to be fulfilled.
       lines: { select: { id: true, shopifyLineId: true, sku: true, productTitle: true, shopifyProductType: true, linePosition: true, resolvedSupplierId: true, exportedToSupplierId: true, exportedAt: true } },
@@ -204,7 +204,8 @@ export async function runAutoFulfill(opts: {
       addOnLineIds: (db?.lines ?? []).filter(l => isNonProductLine(l)).map(l => l.shopifyLineId),
       productLines: db ? productLinesFor(db) : undefined,
       placedAt: db?.placedAt ?? (fo ? new Date(fo.createdAt) : null),
-      now, minAgeDays: minAgeFor(base),
+      // The plan lets pushed rows through at any age and holds the sheet rows of the same order to the gate.
+      now, minAgeDays: opts.minAgeDays,
     })
     const plannedLines = plan.fulfillments.reduce((sum, f) => sum + f.lineItems.length, 0)
     evaluated.push({ base, plan, db, fulfilledLines: opts.apply ? 0 : plannedLines })

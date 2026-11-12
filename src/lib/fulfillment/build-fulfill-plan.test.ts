@@ -519,18 +519,24 @@ describe('a fulfilment covers exactly the line a row names, from the supplier th
     expect(p.message).toContain('LIT1_4')
   })
 
-  it('a Mango row beside a per-line row of another sheet is held as mixed, as when the Mango row read as the whole order', () => {
+  // Owner 2026-11-13: an order sent to several suppliers is fulfilled supplier by supplier (it was held as mixed before).
+  it('a Mango row beside a per-line row of another sheet: each fulfils its own line', () => {
     const rows: OrderRow[] = [mango('LIT1_1'), { lineKey: 'LIT1_2', tracking: 'J', sheets: ['Jomall'] }]
     const p = plan(rows, lines('Mangoshao', 'Jomall'), { shipments: twoShipments })
-    expect(p).toMatchObject({ status: 'needs_manual', fulfillments: [], message: 'Sheet vừa có dòng cả đơn vừa có dòng lẻ cho cùng đơn' })
+    expect(p.status).toBe('will_fulfill')
+    expect(p.fulfillments.filter(f => !f.addOn)).toEqual([
+      { fulfillmentOrderId: 'FO1', lineItems: [{ id: 'fol-L1', quantity: 1 }], tracking: 'T', shipmentIds: ['s1'] },
+      { fulfillmentOrderId: 'FO1', lineItems: [{ id: 'fol-L2', quantity: 1 }], tracking: 'J', shipmentIds: ['s2'] },
+    ])
   })
 
-  it('a Mango row beside a pushed or per-line row naming the same line and tracking is held as mixed too', () => {
+  it('a Mango row beside a pushed row naming the same line and tracking is one fulfilment of that line', () => {
     const target = new Map<string, { rows: OrderRow[] }>()
     mergeSheetGroups(target, new Map([['LIT1', [{ lineKey: 'LIT1_2', tracking: 'T', byOrderNumber: true }]]]), 'Mangoshao')
     mergeSheetGroups(target, new Map([['LIT1', [{ lineKey: 'LIT1_2', tracking: 'T', pushed: true }]]]))
     const p = plan(target.get('LIT1')!.rows, lines('Mangoshao', 'Mangoshao'), { shipments: twoShipments })
-    expect(p).toMatchObject({ status: 'needs_manual', fulfillments: [], message: 'Sheet vừa có dòng cả đơn vừa có dòng lẻ cho cùng đơn' })
+    expect(p.status).toBe('will_fulfill')
+    expect(p.fulfillments).toEqual([{ fulfillmentOrderId: 'FO1', lineItems: [{ id: 'fol-L2', quantity: 1 }], tracking: 'T', shipmentIds: ['s2'] }])
   })
 
   it('two Mango rows naming the same line and tracking are one row', () => {
@@ -627,5 +633,121 @@ describe('a fulfilment covers exactly the line a row names, from the supplier th
       const p = plan([{ lineKey: 'LIT1', tracking: 'T', pushed: true }], productLines, { shipments })
       expect(p).toMatchObject({ status: 'needs_manual', fulfillments: [] })
     }
+  })
+})
+
+describe('an order sent to several suppliers is fulfilled supplier by supplier', () => {
+  const base = { displayFulfillmentStatus: 'UNFULFILLED', now: NOW, minAgeDays: 7, placedAt: days(10) }
+  const fo = (ids: string[]) => [
+    { id: 'FO1', status: 'OPEN', lineItems: ids.map(id => ({ id: `fol-${id}`, remainingQuantity: 1, shopifyLineId: id, sku: id })) },
+    { id: 'FO2', status: 'OPEN', lineItems: [{ id: 'fol-FEE', remainingQuantity: 1, shopifyLineId: 'FEE', sku: null }] },
+  ]
+  const lines = (...suppliers: Array<string | null>) => suppliers.map((supplier, i) => ({ shopifyLineId: `L${i + 1}`, lineKey: `LIT1_${i + 1}`, sent: true, supplier }))
+  type Input = Parameters<typeof buildFulfillmentPlan>[0]
+  const shipmentsOf = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `s${i + 1}`, lineKey: `LIT1_${i + 1}`, shopifyLineId: `L${i + 1}` }))
+  const plan = (rows: OrderRow[], productLines: ReturnType<typeof lines>, more: Partial<Input> = {}) => buildFulfillmentPlan({
+    ...base, baseOrder: 'LIT1', rows, shipments: shipmentsOf(productLines.length), fulfillmentOrders: fo(productLines.map(l => l.shopifyLineId)), addOnLineIds: ['FEE'], productLines, ...more,
+  })
+  const linesOf = (p: ReturnType<typeof buildFulfillmentPlan>) => p.fulfillments.map(f => `${f.tracking || '-'}:${f.lineItems.map(l => l.id.replace('fol-', '')).join('+')}`).sort()
+
+  it('a Mango row with its line key and a Jomall per-line row each fulfil their own line', () => {
+    const rows: OrderRow[] = [{ lineKey: 'LIT1_1', tracking: 'M', byOrderNumber: true, sheets: ['Mangoshao'] }, { lineKey: 'LIT1_2', tracking: 'J', sheets: ['Jomall'] }]
+    const p = plan(rows, lines('Mangoshao', 'Jomall'))
+    expect(p.status).toBe('will_fulfill')
+    expect(linesOf(p)).toEqual(['-:FEE', 'J:L2', 'M:L1'])
+  })
+
+  // #LIT5907: the Mangoshao sheet wrote the bare order number; the order has one Mangoshao line and one Bondre line.
+  it('a bare order number in the sheet of one supplier is the only line of that supplier, never a line of another', () => {
+    const p = plan([{ lineKey: 'LIT1', tracking: 'M', sheets: ['Mangoshao'] }], lines('Bondre', 'Mangoshao'))
+    expect(p.status).toBe('will_fulfill')
+    expect(linesOf(p)).toEqual(['M:L2'])
+  })
+
+  // #LIT6229: PGprints tracking came back by API for one line, the Mangoshao sheet wrote the bare order number for the other.
+  it('an API tracking and a bare sheet row for the other supplier are both fulfilled', () => {
+    const rows: OrderRow[] = [{ lineKey: 'LIT1_1', tracking: 'P', pushed: true }, { lineKey: 'LIT1', tracking: 'M', sheets: ['Mangoshao'] }]
+    const p = plan(rows, lines('Pgprints', 'Mangoshao'))
+    expect(p.status).toBe('will_fulfill')
+    expect(linesOf(p)).toEqual(['-:FEE', 'M:L2', 'P:L1'])
+  })
+
+  // #LIT5235: the Jomall sheet names a line the tool sent to Mangoshao. That doubt holds the Jomall row, not the PGprints parcel.
+  it('a doubt about the rows of one supplier holds those rows only', () => {
+    const rows: OrderRow[] = [{ lineKey: 'LIT1_1', tracking: 'P', pushed: true }, { lineKey: 'LIT1_2', tracking: 'J', sheets: ['Jomall'] }]
+    const p = plan(rows, lines('Pgprints', 'Mangoshao'))
+    expect(p.status).toBe('will_fulfill')
+    expect(linesOf(p)).toEqual(['P:L1'])
+    expect(p.message).toContain('LIT1_2')
+    expect(p.message).toContain('Jomall')
+  })
+
+  it('a bare order number is still held when that supplier has two lines of the order, and the other supplier goes out', () => {
+    const rows: OrderRow[] = [{ lineKey: 'LIT1', tracking: 'M', sheets: ['Mangoshao'] }, { lineKey: 'LIT1_3', tracking: 'J', sheets: ['Jomall'] }]
+    const p = plan(rows, lines('Mangoshao', 'Mangoshao', 'Jomall'))
+    expect(p.status).toBe('will_fulfill')
+    expect(linesOf(p)).toEqual(['J:L3'])
+    expect(p.message).toContain('LIT1_1, LIT1_2')
+  })
+
+  // #LIT5926: the Mangoshao sheet names two lines by key and writes the bare number for the third.
+  it('a bare order number beside per-line rows of the same sheet is the one line of that supplier no row names', () => {
+    const rows: OrderRow[] = [
+      { lineKey: 'LIT1_1', tracking: 'A', sheets: ['Mangoshao'] }, { lineKey: 'LIT1_3', tracking: 'A', sheets: ['Mangoshao'] },
+      { lineKey: 'LIT1', tracking: 'B', sheets: ['Mangoshao'] },
+    ]
+    const p = plan(rows, lines('Mangoshao', 'Mangoshao', 'Mangoshao'))
+    expect(p.status).toBe('will_fulfill')
+    expect(linesOf(p)).toEqual(['-:FEE', 'A:L1+L3', 'B:L2'])
+  })
+
+  // #LIT5714: the Jomall tracking sheet looked the bare order number up and showed the Mangoshao parcel number.
+  it('one tracking under the bare order number in the sheets of two suppliers fulfils nothing', () => {
+    const p = plan([{ lineKey: 'LIT1', tracking: 'M', sheets: ['Mangoshao', 'Jomall'] }], lines('Mangoshao', 'Jomall'))
+    expect(p).toMatchObject({ status: 'needs_manual', fulfillments: [] })
+  })
+
+  it('one tracking claimed for lines of two suppliers by two sheets holds both', () => {
+    const rows: OrderRow[] = [{ lineKey: 'LIT1', tracking: 'M', sheets: ['Mangoshao'] }, { lineKey: 'LIT1_2', tracking: 'M', sheets: ['Jomall'] }]
+    const p = plan(rows, lines('Mangoshao', 'Jomall'))
+    expect(p).toMatchObject({ status: 'needs_manual', fulfillments: [] })
+    expect(p.message).toContain('hai xưởng')
+  })
+
+  it('a tracking already on a fulfilled line of another supplier is not given to a line of this supplier', () => {
+    const p = plan([{ lineKey: 'LIT1', tracking: 'M', sheets: ['Jomall'] }], lines('Mangoshao', 'Jomall'), {
+      fulfillmentOrders: [{ id: 'FO1', status: 'OPEN', lineItems: [{ id: 'fol-L1', remainingQuantity: 0, shopifyLineId: 'L1', sku: 'L1' }, { id: 'fol-L2', remainingQuantity: 1, shopifyLineId: 'L2', sku: 'L2' }] }],
+      shipments: [{ id: 's1', lineKey: 'LIT1_1', shopifyLineId: 'L1', trackingNumber: 'M' }, { id: 's2', lineKey: 'LIT1_2', shopifyLineId: 'L2', trackingNumber: null }],
+    })
+    expect(p).toMatchObject({ status: 'needs_manual', fulfillments: [] })
+    expect(p.message).toContain('hai xưởng')
+  })
+
+  it('a key the order does not have holds that sheet only', () => {
+    const rows: OrderRow[] = [{ lineKey: 'LIT1_1', tracking: 'M', sheets: ['Mangoshao'] }, { lineKey: 'LIT1_9', tracking: 'M', sheets: ['Mangoshao'] }, { lineKey: 'LIT1_2', tracking: 'J', sheets: ['Jomall'] }]
+    const p = plan(rows, lines('Mangoshao', 'Jomall'))
+    expect(p.status).toBe('will_fulfill')
+    expect(linesOf(p)).toEqual(['J:L2'])
+    expect(p.message).toContain('LIT1_9')
+  })
+
+  it('the add-on lines wait while any supplier is held', () => {
+    const rows: OrderRow[] = [{ lineKey: 'LIT1_1', tracking: 'P', pushed: true }, { lineKey: 'LIT1_9', tracking: 'J', sheets: ['Jomall'] }]
+    const p = plan(rows, lines('Pgprints'))
+    expect(linesOf(p)).toEqual(['P:L1'])
+    expect(p.message).toContain('LIT1_9')
+  })
+
+  describe('age gate', () => {
+    const young = { placedAt: days(3) }
+    it('an API tracking goes out at any age while the sheet row of the same order waits for the gate', () => {
+      const rows: OrderRow[] = [{ lineKey: 'LIT1_1', tracking: 'P', pushed: true }, { lineKey: 'LIT1', tracking: 'M', sheets: ['Mangoshao'] }]
+      const p = plan(rows, lines('Pgprints', 'Mangoshao'), young)
+      expect(p.status).toBe('will_fulfill')
+      expect(linesOf(p)).toEqual(['P:L1'])
+    })
+    it('sheet rows alone on a young order are too recent', () => {
+      expect(plan([{ lineKey: 'LIT1', tracking: 'M', sheets: ['Mangoshao'] }], lines('Mangoshao'), young).status).toBe('too_recent')
+    })
   })
 })

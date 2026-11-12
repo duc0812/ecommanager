@@ -67,7 +67,8 @@ const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().t
 export function buildFulfillmentPlan(input: {
   baseOrder: string
   rows: OrderRow[]
-  shipments: Array<{ id: string; lineKey: string; shopifyLineId: string | null }>
+  // trackingNumber: what the line already carries, to catch one tracking claimed by two suppliers.
+  shipments: Array<{ id: string; lineKey: string; shopifyLineId: string | null; trackingNumber?: string | null }>
   fulfillmentOrders: FulfillmentOrderRef[] | null
   displayFulfillmentStatus: string | null
   // Shopify line ids of the order's non-product lines (isNonProductLine), which no supplier
@@ -91,7 +92,10 @@ export function buildFulfillmentPlan(input: {
 
   if (!input.placedAt) return done('needs_manual', 'Không có ngày đặt để kiểm tra tuổi đơn')
   const ageDays = Math.floor((input.now.getTime() - input.placedAt.getTime()) / 86_400_000)
-  if (ageDays < input.minAgeDays) return done('too_recent', `Mới ${ageDays} ngày`, ageDays)
+  // A sheet tracking waits for the age gate (it can be a label printed before the parcel left). A tracking an API push
+  // brought back exists only once the parcel shipped, so those rows go out at any age.
+  const liveRows = ageDays < input.minAgeDays ? input.rows.filter(r => r.pushed) : input.rows
+  if (liveRows.length === 0 && ageDays < input.minAgeDays) return done('too_recent', `Mới ${ageDays} ngày`, ageDays)
 
   if ((input.displayFulfillmentStatus ?? '').toUpperCase() === 'FULFILLED') return done('already_fulfilled', undefined, ageDays)
 
@@ -135,7 +139,6 @@ export function buildFulfillmentPlan(input: {
 
   // key: `${foId} ${tracking}` -> PlannedFulfillment
   const groups = new Map<string, PlannedFulfillment>()
-  const lineTracking = new Map<string, string>() // foLineItemId -> tracking, to catch conflicts
   const addLine = (tracking: string, foId: string, foLineItemId: string, quantity: number, shipmentId?: string, addOn?: boolean) => {
     const key = `${foId} ${tracking}`
     const g = groups.get(key) ?? { fulfillmentOrderId: foId, lineItems: [], tracking, shipmentIds: [], ...(addOn ? { addOn: true } : {}) }
@@ -143,86 +146,157 @@ export function buildFulfillmentPlan(input: {
     if (shipmentId && !g.shipmentIds.includes(shipmentId)) g.shipmentIds.push(shipmentId)
     groups.set(key, g)
   }
-  // Lines the rows put into a fulfilment, with the key and the sheets of the row that named them.
-  const planned: Array<{ lineId: string; lineKey: string; sheets?: string[] }> = []
-
   // Owner 2026-11-06: a fulfilment covers exactly the line a row names, never the whole order. Fulfil ONLY the listed
   // sub-orders, grouped by tracking:
   //  - all listed sub-orders share one tracking → merge into ONE fulfillment;
   //  - different trackings → one fulfillment per tracking (split shipment);
   //  - only some items listed (the rest not shipped yet) → fulfill the listed lines and
   //    leave the others untouched (partial). A line NOT listed is never fulfilled.
-  // Anything ambiguous → needs_manual (never guess — this feature emails customers).
-  let rows = input.rows
-  const whole = rows.filter(r => isWholeOrderRow(r.lineKey))
-  const byNumber = rows.filter(r => r.byOrderNumber).length
-  // A whole-order (unsuffixed) row mixed with per-line (suffixed) rows is contradictory. A row written by the bare order
-  // number with its key in Order Vendor still counts as written by the order number here, as it was before that key was read.
-  if ((whole.length > 0 && whole.length < rows.length) || (byNumber > 0 && byNumber + whole.length < rows.length)) {
-    return done('needs_manual', 'Sheet vừa có dòng cả đơn vừa có dòng lẻ cho cùng đơn', ageDays)
-  }
-  if (whole.length > 0) {
-    if (new Set(whole.map(r => r.tracking)).size > 1) return done('needs_manual', 'Dòng cả đơn nhưng nhiều tracking khác nhau', ageDays)
-    // A push records its tracking per line; one under the bare order number is a row nobody can tie to a line.
-    if (whole.some(r => r.pushed)) return done('needs_manual', `Tracking xưởng API của ${baseOrder} không có mã dòng — không fulfill cả đơn`, ageDays)
-    // The bare order number stands for the order's line only when the order has exactly one product line (add-ons aside),
-    // in the tool and open in Shopify alike.
-    const productIds = new Set([
-      ...(input.productLines ?? []).map(l => l.shopifyLineId),
-      ...Array.from(openByLineId.keys()).filter(id => !addOnLineIds.has(id)),
-    ])
-    const only = input.productLines?.length === 1 && productIds.size === 1 ? input.productLines[0] : null
-    if (!only) {
-      const sheets = Array.from(new Set(whole.flatMap(r => r.sheets ?? [])))
-      const sheet = sheets.length ? `Sheet ${sheets.join(', ')}` : 'Sheet'
-      if (!input.productLines) return done('needs_manual', `${sheet} ghi số đơn ${baseOrder} không có mã dòng và tool không có đơn này — không biết fulfill dòng nào`, ageDays)
-      const keys = input.productLines.map(l => l.lineKey)
-      return done('needs_manual', `${sheet} ghi số đơn ${baseOrder} không có mã dòng mà đơn có ${productIds.size} dòng sản phẩm${keys.length ? ` (${keys.join(', ')})` : ''} — xưởng/người fulfill phải ghi mã dòng (vd #${baseOrder}_2), không fulfill cả đơn`, ageDays)
-    }
-    rows = [{ ...whole[0], lineKey: only.lineKey, byOrderNumber: true }]
-  }
-
-  // A row the sheet wrote by the bare order number finds its line by key among the order's own lines; any other row maps
-  // through the Shipment row of its key, as before. Today's numbering can differ from the one the key was written with (a
-  // line reclassified since): a Shipment row of that key naming another line holds the order.
+  // Anything ambiguous is held (never guess — this feature emails customers).
+  //
+  // Owner 2026-11-13: an order sent to several suppliers is fulfilled supplier by supplier. Each read-back sheet is one
+  // supplier's and an API push names its own, so the rows are judged source by source: a doubt about one source holds
+  // that source's lines and never the parcel another supplier already has a tracking for. Rows that carry no source (a
+  // caller that read no sheet name) are one group, judged together as before.
+  type Pick = { lineId: string; lineKey: string; tracking: string; shipmentId?: string; sheets?: string[] }
+  const known = new Map((input.productLines ?? []).map(l => [l.shopifyLineId, l]))
   const lineIdByKey = new Map((input.productLines ?? []).map(l => [l.lineKey, l.shopifyLineId]))
-  for (const row of rows) {
-    const ship = row.byOrderNumber ? undefined : shipmentByLineKey.get(row.lineKey)
-    const lineId = row.byOrderNumber ? lineIdByKey.get(row.lineKey) : ship?.shopifyLineId
-    if (!lineId) return done('needs_manual', `Không map được ${row.lineKey} sang line Shopify`, ageDays)
-    const recorded = row.byOrderNumber ? shipmentByLineKey.get(row.lineKey) : undefined
-    if (recorded && recorded.shopifyLineId !== lineId) {
-      return done('needs_manual', `Mã ${row.lineKey} giờ là dòng khác với dòng Shipment đã ghi cho mã này — kiểm tra tay trước khi fulfill`, ageDays)
+  const MIXED = 'Sheet vừa có dòng cả đơn vừa có dòng lẻ cho cùng đơn'
+
+  const judge = (rows: OrderRow[], sheets: string[]): { picks: Pick[] } | { held: string } => {
+    const whole = rows.filter(r => isWholeOrderRow(r.lineKey))
+    const keyed = rows.filter(r => !isWholeOrderRow(r.lineKey))
+    const byNumber = rows.filter(r => r.byOrderNumber).length
+    // With no sheet name to tell whose rows these are, a whole-order (unsuffixed) row mixed with per-line (suffixed)
+    // rows stays contradictory, and so does a row whose key came from Order Vendor beside one that names its key.
+    if (sheets.length === 0 && ((whole.length > 0 && whole.length < rows.length) || (byNumber > 0 && byNumber + whole.length < rows.length))) {
+      return { held: MIXED }
     }
-    const open = openByLineId.get(lineId)
-    if (!open) {
-      // Listed line isn't open: on hold → needs a human; otherwise already fulfilled → skip (idempotent).
-      if (heldLineIds.has(lineId)) return done('needs_manual', `Line ${row.lineKey} đang on-hold/scheduled`, ageDays)
-      continue
+    let resolved = keyed
+    if (whole.length > 0) {
+      if (new Set(whole.map(r => r.tracking)).size > 1) return { held: 'Dòng cả đơn nhưng nhiều tracking khác nhau' }
+      // A push records its tracking per line; one under the bare order number is a row nobody can tie to a line.
+      if (whole.some(r => r.pushed)) return { held: `Tracking xưởng API của ${baseOrder} không có mã dòng — không fulfill cả đơn` }
+      // The bare order number stands for the order's line when the order has exactly one product line (add-ons aside),
+      // in the tool and open in Shopify alike. In a supplier's own sheet it also stands for that supplier's line of the
+      // order when the supplier has exactly one that no row of the sheet names by key.
+      const productIds = new Set([
+        ...(input.productLines ?? []).map(l => l.shopifyLineId),
+        ...Array.from(openByLineId.keys()).filter(id => !addOnLineIds.has(id)),
+      ])
+      let only = input.productLines?.length === 1 && productIds.size === 1 ? input.productLines[0] : null
+      if (!only && sheets.length > 0 && input.productLines && productIds.size === input.productLines.length) {
+        const named = new Set(keyed.map(r => r.lineKey))
+        const theirs = input.productLines.filter(l => l.supplier && sheets.some(s => sameName(s, l.supplier as string)) && !named.has(l.lineKey))
+        if (theirs.length === 1) only = theirs[0]
+      }
+      if (!only) {
+        const names = Array.from(new Set(whole.flatMap(r => r.sheets ?? [])))
+        const sheet = names.length ? `Sheet ${names.join(', ')}` : 'Sheet'
+        if (!input.productLines) return { held: `${sheet} ghi số đơn ${baseOrder} không có mã dòng và tool không có đơn này — không biết fulfill dòng nào` }
+        const keys = input.productLines.map(l => l.lineKey)
+        return { held: `${sheet} ghi số đơn ${baseOrder} không có mã dòng mà đơn có ${productIds.size} dòng sản phẩm${keys.length ? ` (${keys.join(', ')})` : ''} — xưởng/người fulfill phải ghi mã dòng (vd #${baseOrder}_2), không fulfill cả đơn` }
+      }
+      resolved = [...keyed, { ...whole[0], lineKey: only.lineKey, byOrderNumber: true }]
     }
-    const prev = lineTracking.get(open.foLineItemId)
-    if (prev && prev !== row.tracking) return done('needs_manual', `Line ${row.lineKey} có 2 tracking khác nhau`, ageDays)
-    lineTracking.set(open.foLineItemId, row.tracking)
-    addLine(row.tracking, open.foId, open.foLineItemId, open.quantity, ship ? ship.id : shipmentIdByLineId.get(lineId))
-    planned.push({ lineId, lineKey: row.lineKey, ...(row.sheets && !row.pushed ? { sheets: row.sheets } : {}) })
+
+    // A row the sheet wrote by the bare order number finds its line by key among the order's own lines; any other row maps
+    // through the Shipment row of its key, as before. Today's numbering can differ from the one the key was written with (a
+    // line reclassified since): a Shipment row of that key naming another line holds these rows.
+    const picks: Pick[] = []
+    const trackingOf = new Map<string, string>()
+    for (const row of resolved) {
+      const ship = row.byOrderNumber ? undefined : shipmentByLineKey.get(row.lineKey)
+      const lineId = row.byOrderNumber ? lineIdByKey.get(row.lineKey) : ship?.shopifyLineId
+      if (!lineId) return { held: `Không map được ${row.lineKey} sang line Shopify` }
+      const recorded = row.byOrderNumber ? shipmentByLineKey.get(row.lineKey) : undefined
+      if (recorded && recorded.shopifyLineId !== lineId) {
+        return { held: `Mã ${row.lineKey} giờ là dòng khác với dòng Shipment đã ghi cho mã này — kiểm tra tay trước khi fulfill` }
+      }
+      if (!openByLineId.has(lineId)) {
+        // Listed line isn't open: on hold → needs a human; otherwise already fulfilled → skip (idempotent).
+        if (heldLineIds.has(lineId)) return { held: `Line ${row.lineKey} đang on-hold/scheduled` }
+        continue
+      }
+      const prev = trackingOf.get(lineId)
+      if (prev && prev !== row.tracking) return { held: `Line ${row.lineKey} có 2 tracking khác nhau` }
+      trackingOf.set(lineId, row.tracking)
+      picks.push({
+        lineId, lineKey: row.lineKey, tracking: row.tracking, shipmentId: ship ? ship.id : shipmentIdByLineId.get(lineId),
+        ...(row.sheets && !row.pushed ? { sheets: row.sheets } : {}),
+      })
+    }
+
+    if (input.productLines) {
+      const products = picks.filter(p => !addOnLineIds.has(p.lineId))
+      // Owner 2026-11-06: a line not exported to a supplier is never fulfilled (the customer would claim an item nobody
+      // makes). Hold these rows rather than fulfil the rest of them and silently drop that line.
+      const unsent = Array.from(new Set(products.filter(p => !known.get(p.lineId)?.sent).map(p => p.lineKey)))
+      if (unsent.length) return { held: `Dòng ${unsent.join(', ')} chưa export sang xưởng — không fulfill để tránh khách claim` }
+      // A sheet row fulfils a line only from the supplier the line was sent to: each read-back sheet is one supplier's.
+      const foreign = products.filter(p => {
+        const supplier = known.get(p.lineId)?.supplier
+        return p.sheets && !(supplier && p.sheets.some(s => sameName(s, supplier)))
+      })
+      if (foreign.length) {
+        const which = foreign.map(p => `dòng ${p.lineKey} gửi xưởng ${known.get(p.lineId)?.supplier ?? 'chưa rõ'} mà tracking ở sheet ${p.sheets!.join(', ')}`)
+        return { held: `${Array.from(new Set(which)).join('; ')} — chỉ fulfill theo sheet của xưởng đã nhận dòng` }
+      }
+    }
+    return { picks }
   }
 
-  if (input.productLines) {
-    const known = new Map(input.productLines.map(l => [l.shopifyLineId, l]))
-    const products = planned.filter(p => !addOnLineIds.has(p.lineId))
-    // Owner 2026-11-06: a line not exported to a supplier is never fulfilled (the customer would claim an item nobody
-    // makes). Hold the whole order rather than fulfil the rest and silently drop that line.
-    const unsent = Array.from(new Set(products.filter(p => !known.get(p.lineId)?.sent).map(p => p.lineKey)))
-    if (unsent.length) return done('needs_manual', `Dòng ${unsent.join(', ')} chưa export sang xưởng — không fulfill để tránh khách claim`, ageDays)
-    // A sheet row fulfils a line only from the supplier the line was sent to: each read-back sheet is one supplier's.
-    const foreign = products.filter(p => {
-      const supplier = known.get(p.lineId)?.supplier
-      return p.sheets && !(supplier && p.sheets.some(s => sameName(s, supplier)))
-    })
-    if (foreign.length) {
-      const which = foreign.map(p => `dòng ${p.lineKey} gửi xưởng ${known.get(p.lineId)?.supplier ?? 'chưa rõ'} mà tracking ở sheet ${p.sheets!.join(', ')}`)
-      return done('needs_manual', `${Array.from(new Set(which)).join('; ')} — chỉ fulfill theo sheet của xưởng đã nhận dòng`, ageDays)
+  const bySource = new Map<string, { rows: OrderRow[]; sheets: string[] }>()
+  for (const row of liveRows) {
+    const sheets = row.pushed ? [] : (row.sheets ?? [])
+    const key = row.pushed ? '\u0000push' : sheets.map(s => s.trim().toLowerCase()).sort().join('|')
+    const entry = bySource.get(key) ?? { rows: [], sheets }
+    entry.rows.push(row)
+    bySource.set(key, entry)
+  }
+  const holds: string[] = []
+  let sources: Pick[][] = []
+  bySource.forEach(({ rows, sheets }) => {
+    const r = judge(rows, sheets)
+    if ('held' in r) holds.push(r.held)
+    else if (r.picks.length) sources.push(r.picks)
+  })
+
+  // Between sources: one line with two trackings, or one tracking on lines of two suppliers (a tracking sheet that looks
+  // the bare order number up shows the other supplier's parcel). Either way nobody can tell which is right: hold both.
+  const supplierOf = (lineId: string) => known.get(lineId)?.supplier?.trim().toLowerCase() || null
+  const twoSuppliers = (a: string, b: string) => { const x = supplierOf(a), y = supplierOf(b); return !!x && !!y && x !== y }
+  const clash = (a: Pick[], b: Pick[]): string | null => {
+    for (const p of a) for (const q of b) {
+      if (p.lineId === q.lineId && p.tracking !== q.tracking) return `Line ${p.lineKey} có 2 tracking khác nhau`
+      if (p.lineId !== q.lineId && p.tracking === q.tracking && twoSuppliers(p.lineId, q.lineId)) {
+        return `Tracking ${p.tracking} được ghi cho dòng của hai xưởng khác nhau (${p.lineKey}, ${q.lineKey}) — kiểm tra sheet tracking`
+      }
     }
+    return null
+  }
+  const dropped = new Set<number>()
+  for (let i = 0; i < sources.length; i++) for (let j = i + 1; j < sources.length; j++) {
+    const why = clash(sources[i], sources[j])
+    if (!why) continue
+    if (!holds.includes(why)) holds.push(why)
+    dropped.add(i); dropped.add(j)
+  }
+  sources = sources.filter((_, i) => !dropped.has(i))
+  // The same check against what is already fulfilled: a tracking that sits on another supplier's line of this order.
+  sources = sources.filter(picks => {
+    for (const p of picks) {
+      const other = input.shipments.find(s => s.shopifyLineId && s.shopifyLineId !== p.lineId && (s.trackingNumber ?? '').trim() === p.tracking && twoSuppliers(p.lineId, s.shopifyLineId))
+      if (!other) continue
+      const why = `Tracking ${p.tracking} được ghi cho dòng của hai xưởng khác nhau (${p.lineKey}, ${other.lineKey}) — kiểm tra sheet tracking`
+      if (!holds.includes(why)) holds.push(why)
+      return false
+    }
+    return true
+  })
+  for (const picks of sources) for (const p of picks) {
+    const open = openByLineId.get(p.lineId)!
+    addLine(p.tracking, open.foId, open.foLineItemId, open.quantity, p.shipmentId)
   }
 
   // Non-product add-on lines (Shipping protection, Tip, Custom Text) are never listed in a
@@ -242,7 +316,7 @@ export function buildFulfillmentPlan(input: {
   // A product line parked on a non-open FO (on hold/scheduled) also means the order is not
   // done shipping, so the add-ons keep waiting too.
   const hasHeldProductLine = Array.from(heldLineIds).some(id => !addOnLineIds.has(id))
-  if (openAddOns.length > 0 && uncoveredProductLines === 0 && !hasHeldProductLine) {
+  if (openAddOns.length > 0 && uncoveredProductLines === 0 && !hasHeldProductLine && holds.length === 0) {
     for (const a of openAddOns) {
       // Same fulfillment order as goods going out now → ride along on that fulfillment (one
       // shipping email, one tracking). Its own fulfillment order → close it with NO tracking
@@ -254,11 +328,14 @@ export function buildFulfillmentPlan(input: {
   }
 
   const fulfillments = Array.from(groups.values()).filter(f => f.lineItems.length > 0)
-  if (fulfillments.length === 0) return done('already_fulfilled', undefined, ageDays)
+  if (fulfillments.length === 0) return holds.length ? done('needs_manual', holds.join('; '), ageDays) : done('already_fulfilled', undefined, ageDays)
   // openLineCount lets the caller tell a FULL fulfillment (every open line covered) from a
   // partial one, so it can mark the order FULFILLED only when nothing remains open.
   // hasHeldLines: the order also has lines on non-open (on-hold/scheduled) FOs, so even
   // fulfilling every OPEN line does not complete the order — the caller must not mark it
   // fully FULFILLED in that case.
-  return { baseOrder, status: 'will_fulfill', fulfillments, ageDays, openLineCount: openByLineId.size, hasHeldLines: heldLineIds.size > 0 }
+  return {
+    baseOrder, status: 'will_fulfill', fulfillments, ageDays, openLineCount: openByLineId.size, hasHeldLines: heldLineIds.size > 0,
+    ...(holds.length ? { message: `Fulfill phần đã chắc; còn giữ: ${holds.join('; ')}` } : {}),
+  }
 }
