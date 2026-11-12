@@ -230,3 +230,11 @@ Session-side file the runner reads when the headless session ends — `<job fold
 ```
 
 `outcome` ∈ `DONE` (delivered and submitted), `NEEDS_OWNER` (3 failed rounds, missing source, unclear request — `summary` says why). Anything else, or no file, is reported with `/fail`.
+
+### Contract additions (from the server plan, 11/12)
+
+- `GET /files/{artworkId}` (bearer) returns the raw file. Each `files[]` item of a claimed job carries `id` and a `url` pointing at this route; the public artwork URL refuses unapproved lines. The runner downloads the current files into `<job folder>/current/` before the session starts; `agent_api.py download <artworkId> <dest>` does the same on demand.
+- Delivery endpoints accept the job's own task and, for a RUNNING `LIBRARY_APPLY` job, the task keys in its affected list.
+- `/result` answers `{ "ok": true, "status": "NEEDS_OWNER" }` to a `DONE` report when the task was never submitted.
+- The agent may reopen a task assigned to someone else (reopen only) and does not become its assignee.
+- Lark event de-duplication uses a small `LarkEvent` table (second migration).
