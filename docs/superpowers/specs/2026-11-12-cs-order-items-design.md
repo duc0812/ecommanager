@@ -28,3 +28,17 @@ A warning is attached when the tracking may not be that item's parcel:
 ## Already handled elsewhere
 Auto Fulfill no longer fulfils a multi-item order from a sheet row that has only the bare order number (needs_manual, on prod
 since before 11/12).
+
+## Factory check (owner 11/12/2026, #LIT5554)
+
+For an item with a warning, the analysis checks the factories before the model writes: first the factory the item was sent
+to, then the factory that shipped the tracking. PGprints is read through its order search API; sheet suppliers
+(`supplier.sheetChannels`, e.g. Mangoshao `ORDER FULFILL`) through the sheet, matching the line key in "Order Vendor".
+
+- Tracking factory has the line → **in parcel**: fulfillment is right.
+- Tracking factory has no line for it → **Fulfillment thiếu**: the parcel does not hold the item; the sent factory's result
+  says where the item is, or that no factory has it.
+- A factory that cannot be read decides nothing (**not decided**).
+
+The result is kept in the analysis (`outputJson.factoryChecks`) and shown in the prompt, the Freshdesk note ("Kết luận")
+and the ticket panel. Auto-reply stays blocked for any warning.

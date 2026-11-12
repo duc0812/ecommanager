@@ -14,6 +14,13 @@ describe('buildSystemPrompt', () => {
     ]) expect(s, needle).toContain(needle)
     expect(s).toContain('(empty')
   })
+  it('reads the factory check of a suspect item: missing fulfillment is owned, a packed item is not called missing', () => {
+    const s = buildSystemPrompt([], settings)
+    expect(s).toContain('"NOT in parcel": the delivered parcel did not hold this item; our fulfillment is missing it')
+    expect(s).toContain('The summary starts with "Fulfillment thiếu"')
+    expect(s).toContain('"in parcel": the factory that shipped the parcel has this item')
+    expect(s).toContain('Never promise a resend, refund or remake: staff decide')
+  })
   it('fixes the reply structure: acknowledge, action with timing, closing promise within 24 hours', () => {
     const s = buildSystemPrompt([], settings).toLowerCase()
     for (const needle of ['## reply structure', 'first name', 'entirely our', 'put this right', 'frustrated, angry', 'calm', 'do not apologise', 'apologi', 'tracking', 'within 24 hours', 'follow', 'warm regards', '90', 'never open with "you'])

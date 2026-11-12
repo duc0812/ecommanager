@@ -11,6 +11,7 @@ import { withCap } from '@/lib/llm/cap'
 import { applyAgentTasks } from '@/lib/cs/tasks'
 import { applyCustomAnswers } from '@/lib/cs/custom-verify'
 import { effectiveMode, type CsMode } from '@/lib/cs/hours'
+import { checkSuspectItems, withChecks, type ItemCheck, type LookupFn } from '@/lib/cs/factory-check'
 
 export function inputHashFor(messages: Pick<CsMessage, 'id' | 'author'>[], order: OrderContext, directiveIds: string[] = [], mode: CsMode = 'BUSINESS'): string {
   const parts = [
@@ -30,7 +31,7 @@ function startOfToday(now: Date): Date {
   return d
 }
 
-export async function analyzeTicket(ticketId: string, deps: { llm: Llm; now?: Date; force?: boolean }): Promise<CsAnalysis> {
+export async function analyzeTicket(ticketId: string, deps: { llm: Llm; now?: Date; force?: boolean; lookup?: LookupFn }): Promise<CsAnalysis> {
   const now = deps.now ?? new Date()
   const ticket = await prisma.csTicket.findUniqueOrThrow({
     where: { id: ticketId },
@@ -43,6 +44,12 @@ export async function analyzeTicket(ticketId: string, deps: { llm: Llm; now?: Da
   const inputHash = inputHashFor(ticket.messages, order, ticket.directives.map(d => d.id), mode)
   const latest = ticket.analyses[0]
   if (latest && latest.inputHash === inputHash && !deps.force) return latest
+
+  let factoryChecks: ItemCheck[] = []
+  if (order.order?.items.some(it => it.warning)) {
+    factoryChecks = await checkSuspectItems(order.order, deps.lookup)
+    order.order.items = withChecks(order.order.items, factoryChecks)
+  }
 
   const cases = await prisma.csCase.findMany({ where: { active: true }, orderBy: { updatedAt: 'desc' } })
   const { output, tokensIn, tokensOut } = await withCap(settings.llmDailyCallCap, () => deps.llm.analyze({
@@ -91,7 +98,7 @@ export async function analyzeTicket(ticketId: string, deps: { llm: Llm; now?: Da
       ticketId,
       model: settings.model,
       inputHash,
-      outputJson: JSON.stringify(output),
+      outputJson: JSON.stringify(factoryChecks.length ? { ...output, factoryChecks } : output),
       category: output.category,
       urgency,
       sentiment: output.sentiment,

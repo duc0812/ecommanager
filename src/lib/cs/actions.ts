@@ -7,6 +7,7 @@ import { tagsFor, ticketTags, urgencyToPriority, type CsCategory, type CsUrgency
 import { CATEGORY_LABELS, URGENCY_LABELS } from '@/lib/cs/labels'
 import { HUMAN_ONLY_TAG } from '@/lib/cs/policy'
 import { buildOrderContext, itemSummaryVi, type OrderItem } from '@/lib/cs/order-context'
+import { checksOf, withChecks } from '@/lib/cs/factory-check'
 
 export type Notifier = (text: string) => Promise<unknown>
 export type MessageSource = 'FRESHDESK' | 'OWN' | 'DRAFT_EDITED' | 'DRAFT_UNCHANGED' | 'AGENT'
@@ -76,7 +77,7 @@ export async function writeBack(fd: Pick<FreshdeskClient, 'update' | 'note'>, ti
   const hash = analysisHash(a, ticket.orderNumber)
   if (ticket.lastNoteHash === hash) return { noted: false }
   const ctx = ticket.orderNumber ? await buildOrderContext({ subject: '', texts: [], cfOrderId: ticket.orderNumber, email: null }) : null
-  await fd.note(ticket.fdTicketId, noteHtml(a, ticket, appUrl, ctx?.order?.items ?? []))
+  await fd.note(ticket.fdTicketId, noteHtml(a, ticket, appUrl, withChecks(ctx?.order?.items ?? [], checksOf(a.outputJson))))
   await prisma.csTicket.update({ where: { id: ticket.id }, data: { lastNoteHash: hash } })
   void settings
   return { noted: true }

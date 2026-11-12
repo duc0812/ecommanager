@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/db'
 import type { CsAnalysis, CsCase, CsDirective, CsMessage, CsReplyReview, CsTask, CsTicket } from '@/generated/prisma/client'
 import { buildOrderContext, type OrderContext } from '@/lib/cs/order-context'
+import { checksOf, withChecks } from '@/lib/cs/factory-check'
 import { displayText, splitQuoted } from '@/lib/cs/message-text'
 import { needsRead, ticketTasks } from '@/lib/cs/tasks'
 
@@ -114,6 +115,7 @@ export async function ticketDetail(id: string): Promise<TicketDetail | null> {
     cfOrderId: ticket.orderNumber,
     email: ticket.requesterEmail,
   })
+  if (analysis && order.order) order.order.items = withChecks(order.order.items, checksOf(analysis.outputJson))
   const citedIds: string[] = analysis ? (() => { try { return JSON.parse(analysis.citedCaseIds) } catch { return [] } })() : []
   const cases = citedIds.length ? await prisma.csCase.findMany({ where: { id: { in: citedIds } }, select: { id: true, title: true } }) : []
   const reviews = await prisma.csReplyReview.findMany({ where: { ticketId: id } })

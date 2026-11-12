@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db'
 import { lineKeysOf, productLinesOnly } from '@/lib/order-lines'
+import type { ItemCheck } from '@/lib/cs/factory-check'
 
 export type FactoryState = 'NOT_SENT' | 'AT_FACTORY' | 'SHIPPED' | 'DELIVERED' | 'CANCELLED'
 export type OrderMatch = 'EXACT' | 'BY_EMAIL' | 'AMBIGUOUS' | 'NONE'
@@ -25,7 +26,7 @@ export type OrderItemParcel = {
   trackingNumber: string; carrier: string | null; status: string; lastEvent: string | null; lastEventAt: Date | null; deliveredAt: Date | null
   trackingUrl: string | null; fromSupplier: string | null; sharedWith: string[]
 }
-export type OrderItem = { lineKey: string | null; title: string; variant: string | null; qty: number; send: OrderItemSend | null; parcel: OrderItemParcel | null; warning: string | null }
+export type OrderItem = { lineKey: string | null; title: string; variant: string | null; qty: number; send: OrderItemSend | null; parcel: OrderItemParcel | null; warning: string | null; check?: ItemCheck | null }
 
 export type OrderContext = { match: OrderMatch; order: OrderContextOrder | null; candidates: string[] }
 
@@ -202,7 +203,7 @@ export function itemSummaryVi(it: OrderItem): string {
   const parcel = p
     ? `${p.trackingNumber} ${p.carrier ?? ''} ${p.status}${p.deliveredAt ? `, giao ${fmtUs(p.deliveredAt)}` : ''}${p.lastEvent ? `, scan ${fmtUs(p.lastEventAt)} "${p.lastEvent}"` : ''}${p.sharedWith.length ? `, chung kiện với ${p.sharedWith.join(', ')}` : ''}`
     : 'chưa có tracking'
-  return `${head}: ${sent} · ${parcel}${it.warning ? ` · ⚠ ${it.warning}` : ''}`
+  return `${head}: ${sent} · ${parcel}${it.warning ? ` · ⚠ ${it.warning}` : ''}${it.check ? ` · Kết luận: ${it.check.conclusion}` : ''}`
 }
 
 const include = { lines: { orderBy: { linePosition: 'asc' as const } }, shipments: true, designTasks: true, supplierPushes: true }

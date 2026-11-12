@@ -24,6 +24,7 @@ type Order = {
 }
 type Item = {
   lineKey: string | null; title: string; variant: string | null; qty: number; warning: string | null
+  check?: { verdict: 'IN_PARCEL' | 'NOT_IN_PARCEL' | 'UNKNOWN'; conclusion: string; lookups: { supplier: string; found: boolean | null; detail: string }[] } | null
   send: { supplier: string; via: 'API' | 'SHEET' | 'CSV'; ref: string | null; sentAt: string | null; factoryStatus: string | null; checkedAt: string | null } | null
   parcel: { trackingNumber: string; carrier: string | null; status: string; lastEvent: string | null; lastEventAt: string | null; deliveredAt: string | null; trackingUrl: string | null; sharedWith: string[] } | null
 }
@@ -296,6 +297,12 @@ export default function CsTicketPage() {
                                 </p>
                               : <p className="text-on-surface-variant">Chưa có tracking.</p>}
                             {it.warning && <p className="text-label-sm text-error"><span className="material-symbols-outlined align-middle text-[16px]">warning</span> {it.warning}</p>}
+                            {it.check && (
+                              <div className={`mt-xs rounded-md px-sm py-xs text-label-sm ${it.check.verdict === 'NOT_IN_PARCEL' ? 'bg-error/10 text-error' : it.check.verdict === 'IN_PARCEL' ? 'bg-secondary/10 text-secondary' : 'bg-surface-container text-on-surface-variant'}`}>
+                                <p className="font-semibold">Kết luận: {it.check.conclusion}</p>
+                                {it.check.lookups.map((l, j) => <p key={j} className="text-on-surface-variant">Tra {l.supplier}: {l.found === true ? 'có' : l.found === false ? 'không có' : 'chưa tra được'} — {l.detail}</p>)}
+                              </div>
+                            )}
                           </div>
                         ))}
                       </div>
