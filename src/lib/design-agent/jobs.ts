@@ -154,3 +154,49 @@ export function waitForAgentQueue(ms: number, signal?: AbortSignal): Promise<voi
     else signal?.addEventListener('abort', wake)
   })
 }
+
+function affectedRowCount(json: string | null): number {
+  if (!json) return 0
+  try {
+    const parsed = JSON.parse(json)
+    const rows = Array.isArray(parsed) ? parsed : parsed?.rows
+    return Array.isArray(rows) ? rows.length : 0
+  } catch { return 0 }
+}
+
+export async function queueLibraryApplyOnApproval(taskId: string, by: { id: string | null; name: string }): Promise<DesignAgentJob | null> {
+  const parent = await prisma.designAgentJob.findFirst({
+    where: { taskId, kind: 'FIX', libraryState: 'YES' }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+  })
+  if (!parent || !parent.taskKey) return null
+  if (await prisma.designAgentJob.findFirst({ where: { parentJobId: parent.id }, select: { id: true } })) return null
+  const { job } = await enqueueAgentJob({
+    kind: 'LIBRARY_APPLY',
+    source: 'LIBRARY',
+    taskKey: parent.taskKey,
+    parentJobId: parent.id,
+    requestedById: by.id,
+    requestedBy: by.name,
+    factory: parent.priority === 10,
+    requestText: `Cập nhật thư viện và các đơn cùng design ${parent.designCode ?? ''} từ bản sửa đã duyệt của ${parent.taskKey}`,
+  })
+  return job
+}
+
+export async function decideLibrary(
+  jobId: string, save: boolean, by: { id: string; name: string },
+): Promise<{ libraryState: 'YES' | 'NO'; applyJobId: string | null }> {
+  const job = await prisma.designAgentJob.findUnique({ where: { id: jobId } })
+  if (!job) throw new AgentJobError('Không tìm thấy job', 404)
+  const libraryState = save ? 'YES' : 'NO'
+  const taken = await prisma.designAgentJob.updateMany({ where: { id: jobId, libraryState: 'ASKED' }, data: { libraryState } })
+  if (taken.count === 0) throw new AgentJobError('Câu hỏi này đã được trả lời', 409)
+  const task = job.taskId ? await prisma.designTask.findUnique({ where: { id: job.taskId }, select: { id: true, status: true } }) : null
+  if (task) {
+    const message = save ? `Lưu thư viện: có — cập nhật ${affectedRowCount(job.affectedJson)} đơn sau khi duyệt` : 'Lưu thư viện: không — chỉ sửa đơn này'
+    await prisma.designTaskEvent.create({ data: { taskId: task.id, type: 'NOTE', message, actorId: by.id } })
+  }
+  if (!save || !task || task.status !== 'DONE') return { libraryState, applyJobId: null }
+  const apply = await queueLibraryApplyOnApproval(task.id, by)
+  return { libraryState, applyJobId: apply?.id ?? null }
+}

@@ -32,7 +32,7 @@ import {
   LINE_FIX_EVENT_PREFIX, LINE_FIX_REASONS, FIX_NOT_IN_FOLDER_MESSAGE, heldLinkMessage, lineFixMessage, parseLineFix, readHeldLinkMessage, readLineFixMessage, readSupplierLinkKind,
   supplierLinkMessage, type LineFix, type LineFixReason, type SupplierLinkKind,
 } from '@/lib/line-fix'
-import { cancelQueuedJobsForTask, enqueueFixOnReject } from '@/lib/design-agent/jobs'
+import { cancelQueuedJobsForTask, enqueueFixOnReject, queueLibraryApplyOnApproval } from '@/lib/design-agent/jobs'
 
 export { loadTemplateContext, mapTemplate, pickTemplate, type TemplateRow }
 
@@ -783,6 +783,12 @@ export async function transitionTask(taskKey: string, actor: Actor, input: Trans
     const reasons = parseRejectReasons(updated.rejectReasons)
     await enqueueFixOnReject({
       taskKey: updated.taskKey, reasons, note: updated.rejectNote, by: actor, source: 'REJECT', factory: reasons.some(r => SENT_BACK_REASONS.includes(r)),
+    })
+  }
+  if (input.to === 'DONE') {
+    await queueLibraryApplyOnApproval(task.id, actor).catch(async e => {
+      const message = `Chưa xếp được job cập nhật thư viện: ${e?.message ?? e}`
+      await prisma.designTaskEvent.create({ data: { taskId: task.id, type: 'SYSTEM', message } }).catch(() => {})
     })
   }
   if (!opts.agent && (from === 'REJECTED' || input.to === 'CANCELLED')) {

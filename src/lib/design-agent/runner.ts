@@ -113,6 +113,12 @@ export async function buildAgentClaim(job: DesignAgentJob): Promise<AgentClaim |
     isSentLineOfOpenOrder(line.id),
     affectedForTask(task.id),
   ])
+  let parent: AgentClaim['parent'] = null
+  if (job.kind === 'LIBRARY_APPLY') {
+    await prisma.designAgentJob.update({ where: { id: job.id }, data: { affectedJson: JSON.stringify({ rows: affected.rows, fulfilledCount: affected.fulfilledCount }) } })
+    const fix = job.parentJobId ? await prisma.designAgentJob.findUnique({ where: { id: job.parentJobId }, select: { id: true, summary: true } }) : null
+    parent = fix ? { id: fix.id, summary: fix.summary } : null
+  }
   const actorIds = Array.from(new Set(recent.map(e => e.actorId).filter((x): x is string => !!x)))
   const actors = actorIds.length ? await prisma.appUser.findMany({ where: { id: { in: actorIds } }, select: { id: true, name: true } }) : []
   const actorName = new Map(actors.map(a => [a.id, a.name]))
@@ -135,7 +141,7 @@ export async function buildAgentClaim(job: DesignAgentJob): Promise<AgentClaim |
     files,
     events: recent.reverse().map(e => ({ at: e.createdAt.toISOString(), type: e.type, message: e.message, actor: e.actorId ? (actorName.get(e.actorId) ?? null) : null })),
     affected: affected.rows,
-    parent: null,
+    parent,
   }
 }
 
@@ -329,6 +335,9 @@ export async function completeAgentJob(
   })
   if (written.count === 0) return { error: 'not running', status: 409 }
 
+  if (job.kind === 'LIBRARY_APPLY' && status === 'DONE' && job.parentJobId) {
+    await prisma.designAgentJob.updateMany({ where: { id: job.parentJobId, libraryState: 'YES' }, data: { libraryState: 'APPLIED' } })
+  }
   await noteOnTask(job.taskId, `Agent: ${summary}`)
   if (status === 'NEEDS_OWNER') await tellOwner({ jobId: job.id, taskKey: job.taskKey, kind: job.kind as AgentJobKind, reason: 'NEEDS_OWNER', summary })
   if (refix) {
