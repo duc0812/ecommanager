@@ -32,6 +32,7 @@ import {
   LINE_FIX_EVENT_PREFIX, LINE_FIX_REASONS, FIX_NOT_IN_FOLDER_MESSAGE, heldLinkMessage, lineFixMessage, parseLineFix, readHeldLinkMessage, readLineFixMessage, readSupplierLinkKind,
   supplierLinkMessage, type LineFix, type LineFixReason, type SupplierLinkKind,
 } from '@/lib/line-fix'
+import { cancelQueuedJobsForTask, enqueueFixOnReject } from '@/lib/design-agent/jobs'
 
 export { loadTemplateContext, mapTemplate, pickTemplate, type TemplateRow }
 
@@ -43,7 +44,7 @@ const OPEN: TaskStatus[] = ['NEW', 'ASSIGNED', 'DOING', 'REVIEW', 'REJECTED']
 export const FACTORY_REJECT_REASON = 'Xưởng trả file'
 const FACTORY_REOPEN_MESSAGE = 'Xưởng trả file — mở lại task'
 /** A task sent back after its line went to the supplier: by the order (Design Rejected) or one line at a time (LINE_FIX_REASONS, client-shared in line-fix.ts). */
-const SENT_BACK_REASONS: string[] = [FACTORY_REJECT_REASON, ...LINE_FIX_REASONS]
+export const SENT_BACK_REASONS: string[] = [FACTORY_REJECT_REASON, ...LINE_FIX_REASONS]
 /** What "Sửa & gửi lại" wrote on a DONE task before a line already sent asked for a reason (#LIT5105). */
 const OLD_REOPEN_MESSAGE = 'Mở lại để sửa'
 /**
@@ -484,7 +485,7 @@ const SENT_CHECK_SELECT = {
  * open: "Sửa & gửi lại" on its DONE task then asks why and reopens this line alone. A READY_TO_PRODUCTION order whose line has
  * no mark has not sent it, so that control works there as it always did.
  */
-async function isSentLineOfOpenOrder(lineId: string): Promise<boolean> {
+export async function isSentLineOfOpenOrder(lineId: string): Promise<boolean> {
   const row = await prisma.orderLine.findUnique({ where: { id: lineId }, select: { order: { select: SENT_CHECK_SELECT } } })
   const order = row?.order
   const line = order?.lines.find(l => l.id === lineId)
@@ -529,7 +530,18 @@ async function reopenTaskOfLine(task: { id: string; taskKey: string; status: str
  * state with the reason and the note, and nothing else moves (no other task or line, not the order's status, no export mark).
  * What its approval does is fixDelivery's. A task already open is left as it is, so a second press, or two at once, makes one task.
  */
-export async function reopenLineForFix(lineId: string, actor: Actor, input: { reason?: unknown; note?: unknown }): Promise<{ task: TaskRow; changed: boolean }> {
+export async function reopenLineForFix(
+  lineId: string, actor: Actor, input: { reason?: unknown; note?: unknown }, opts: { agent?: boolean } = {},
+): Promise<{ task: TaskRow; changed: boolean }> {
+  const result = await reopenSentLine(lineId, actor, input)
+  if (result.changed && !opts.agent) {
+    const fix = parseLineFix(input) as LineFix
+    await enqueueFixOnReject({ taskKey: result.task.taskKey, reasons: [fix.reason], note: fix.note, by: actor, source: 'LINE_REOPEN', factory: true })
+  }
+  return result
+}
+
+async function reopenSentLine(lineId: string, actor: Actor, input: { reason?: unknown; note?: unknown }): Promise<{ task: TaskRow; changed: boolean }> {
   const fix = parseLineFix(input)
   if ('error' in fix) throw new LineFixError(fix.error, 400)
   const line = await prisma.orderLine.findUnique({ where: { id: lineId } })
@@ -657,10 +669,14 @@ async function fixDelivery(taskId: string, lineId: string): Promise<FixDelivery 
 
 type TransitionResult = { task: TaskRow; order: { id: string; designReady: boolean; pipelineStatus: string } | null; notice?: string }
 
-export async function transitionTask(taskKey: string, actor: Actor, input: TransitionInput): Promise<TransitionResult> {
+const AGENT_REOPEN_ONLY = 'Agent chỉ được mở lại task đã duyệt'
+const TAKEN_OVER = 'Task đã được người xử lý trước khi Agent nhận'
+
+export async function transitionTask(taskKey: string, actor: Actor, input: TransitionInput, opts: { agent?: boolean } = {}): Promise<TransitionResult> {
   const task = await prisma.designTask.findUnique({ where: { taskKey } })
   if (!task) throw new Error('Task not found')
   const from = task.status as TaskStatus
+  if (opts.agent && !(from === 'DONE' && input.to === 'DOING')) throw new Error(AGENT_REOPEN_ONLY)
   const role = actorRole(actor)
   const canApprove = canApproveDesign(actor.role, actor.permissions, (await getDesignSettings()).designerCanApprove)
   if (!(input.continue && from === 'ASK_CUSTOMER' && input.to === (task.prevStatus ?? 'NEW')) && !canTransition(from, input.to, role, canApprove)) {
@@ -671,9 +687,9 @@ export async function transitionTask(taskKey: string, actor: Actor, input: Trans
   if (!line) throw new Error('Line not found')
   // "Sửa & gửi lại" on a line its supplier already has is "Mở lại để sửa" of that line, open to whoever may press that.
   if (from === 'DONE' && input.to === 'DOING' && await isSentLineOfOpenOrder(line.id)) {
-    return { task: (await reopenLineForFix(line.id, actor, { reason: input.reasons?.[0], note: input.note })).task, order: null }
+    return { task: (await reopenLineForFix(line.id, actor, { reason: input.reasons?.[0], note: input.note }, opts)).task, order: null }
   }
-  if (role !== 'LEADER' && task.assigneeId && task.assigneeId !== actor.id && OWNED_MOVES.includes(input.to)) {
+  if (!opts.agent && role !== 'LEADER' && task.assigneeId && task.assigneeId !== actor.id && OWNED_MOVES.includes(input.to)) {
     const owner = await prisma.appUser.findUnique({ where: { id: task.assigneeId }, select: { name: true } })
     throw new Error(`Task đang thuộc về ${owner?.name ?? 'người khác'}`)
   }
@@ -699,7 +715,7 @@ export async function transitionTask(taskKey: string, actor: Actor, input: Trans
   } else if (input.to === 'NEW') {
     data.assigneeId = null; say('STATUS', 'Từ chối việc — trả về leader giao lại')
   } else if (input.to === 'DOING') {
-    if (!task.assigneeId) data.assigneeId = actor.id
+    if (!task.assigneeId && !opts.agent) data.assigneeId = actor.id
     if (!task.dueAt) data.dueAt = new Date(Date.now() + task.slaHours * 3600_000)
     say('STATUS', from === 'ASK_CUSTOMER' ? 'Tiếp tục làm' : from === 'DONE' ? OLD_REOPEN_MESSAGE : 'Nhận việc')
   } else if (input.to === 'REVIEW') {
@@ -763,6 +779,15 @@ export async function transitionTask(taskKey: string, actor: Actor, input: Trans
   if (from === 'DONE' && input.to === 'DOING') order = (await updateLine(line.id, { done: false }))?.order ?? null
 
   const updated = await prisma.designTask.update({ where: { id: task.id }, data: { ...data, events: { create: events } } })
+  if (input.to === 'REJECTED') {
+    const reasons = parseRejectReasons(updated.rejectReasons)
+    await enqueueFixOnReject({
+      taskKey: updated.taskKey, reasons, note: updated.rejectNote, by: actor, source: 'REJECT', factory: reasons.some(r => SENT_BACK_REASONS.includes(r)),
+    })
+  }
+  if (!opts.agent && (from === 'REJECTED' || input.to === 'CANCELLED')) {
+    await cancelQueuedJobsForTask(task.id, TAKEN_OVER).catch(e => console.error(`[design agent] không huỷ được job của ${taskKey}:`, e?.message ?? e))
+  }
   const row = await rowFor(updated.taskKey)
   if (!row) throw new Error('Task row not found after update')
   return { task: row, order, ...(notice ? { notice } : {}) }
