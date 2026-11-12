@@ -21,7 +21,8 @@ def _home(tmp_path, monkeypatch):
     home = tmp_path / 'home'
     home.mkdir()
     monkeypatch.setenv('DESIGN_AGENT_HOME', str(home))
-    for name in ('DESIGN_AGENT_ENV', 'DESIGN_AGENT_JOB_DIR', 'DESIGN_AGENT_TOKEN', 'FAKE_CLAUDE_MODE', 'FAKE_CLAUDE_SLEEP'):
+    for name in ('DESIGN_AGENT_ENV', 'DESIGN_AGENT_JOB_DIR', 'DESIGN_AGENT_TOKEN', 'DESIGN_AGENT_PHASE', 'DESIGN_AGENT_ROUND',
+                 'FAKE_CLAUDE_MODE', 'FAKE_CLAUDE_SLEEP', 'FAKE_CLAUDE_PLAN', 'FAKE_CLAUDE_NAP'):
         monkeypatch.delenv(name, raising=False)
     return home
 

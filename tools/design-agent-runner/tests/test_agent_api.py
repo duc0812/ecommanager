@@ -97,3 +97,42 @@ def test_cli_config_and_network_errors_never_show_the_token(server, env_file, tm
     assert agent_api.main(['submit', 'LIT1_1']) == 2 and 'thiếu ECOM_URL hoặc DESIGN_AGENT_TOKEN' in capsys.readouterr().out
     env_file(server, ECOM_URL='http://127.0.0.1:9')
     assert agent_api.main(['submit', 'LIT1_1']) == 3 and server.token not in capsys.readouterr().out
+
+
+def test_413_is_a_clear_refusal_for_every_call(server, tmp_path):
+    f = tmp_path / 'FRONT.jpg'; f.write_bytes(b'x' * 5000)
+    server.status = {'/tasks/LIT6262_1/artwork': (413, b'<html><body>413 Request Entity Too Large</body></html>'),
+                     '/tasks/LIT6262_1/submit': (413, b'<html>413</html>')}
+    for call in (lambda: api(server).upload('LIT6262_1', 'FRONT', f), lambda: api(server).submit('LIT6262_1')):
+        with pytest.raises(agent_api.ApiError) as e: call()
+        assert e.value.status == 413 and e.value.body == {'error': 'máy chủ từ chối: file quá lớn (413)'} and 'html' not in str(e.value)
+
+
+def test_connection_reset_while_sending_is_named(server, tmp_path, monkeypatch):
+    import requests
+    f = tmp_path / 'FRONT.jpg'; f.write_bytes(b'x' * 5000)
+
+    def reset(*a, **k):
+        raise requests.ConnectionError(ConnectionResetError(10054, 'An existing connection was forcibly closed'))
+    monkeypatch.setattr(agent_api.requests, 'request', reset)
+    with pytest.raises(agent_api.ApiError) as e: api(server).upload('LIT6262_1', 'FRONT', f)
+    assert e.value.status is None and e.value.body['error'] == 'mất kết nối khi đang tải lên'
+    with pytest.raises(agent_api.ApiError) as e: api(server).submit('LIT6262_1')
+    assert 'không kết nối được máy chủ' in e.value.body['error']
+
+
+def test_cli_upload_413_and_reset_exit_non_zero_and_never_log_status_0(server, env_file, tmp_path, capsys, monkeypatch):
+    import requests
+    env_file(server); f = tmp_path / 'FRONT.jpg'; f.write_bytes(b'abc'); monkeypatch.setenv('DESIGN_AGENT_JOB_DIR', str(tmp_path))
+    server.status = {'/tasks/LIT6262_1/artwork': (413, b'<html>413</html>')}
+    assert agent_api.main(['upload', 'LIT6262_1', 'FRONT', str(f)]) == 1
+    assert json.loads(capsys.readouterr().out) == {'ok': False, 'status': 413, 'error': 'máy chủ từ chối: file quá lớn (413)'}
+
+    def reset(*a, **k):
+        raise requests.ConnectionError(ConnectionResetError(10054, 'reset'))
+    monkeypatch.setattr(agent_api.requests, 'request', reset)
+    assert agent_api.main(['upload', 'LIT6262_1', 'FRONT', str(f)]) == 3
+    assert json.loads(capsys.readouterr().out) == {'ok': False, 'error': 'mất kết nối khi đang tải lên'}
+    logged = [json.loads(l) for l in (tmp_path / 'api-calls.jsonl').read_text(encoding='utf-8').splitlines()]
+    assert [(c['status'], c['error']) for c in logged] == [(413, 'máy chủ từ chối: file quá lớn (413)'), (None, 'mất kết nối khi đang tải lên')]
+    assert all(c['status'] != 0 for c in logged)

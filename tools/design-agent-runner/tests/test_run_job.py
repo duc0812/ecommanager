@@ -8,17 +8,20 @@ import runner
 from conftest import calls, wait_dead
 
 
-def test_done_session_is_reported_with_its_own_words(server, run, cfg):
-    assert run(server, 'done') == 'DONE'
+def test_library_session_is_reported_with_its_own_words(server, run, cfg):
+    assert run(server, 'done', job=dict(kind='LIBRARY_APPLY')) == 'DONE'
     assert calls(server, '/jobs/job1/result') == [{'outcome': 'DONE', 'summary': 'Đã sửa thân trước: dời tên vào trong khung.', 'rounds': 1,
                                                    'result': {'pushed': ['FRONT'], 'problems': []}}]
     d = cfg.artwork_builder / 'LIT6262_1-agent-job1'
     fake = json.loads((d / 'fake.json').read_text(encoding='utf-8'))
     assert Path(fake['cwd']) == cfg.project_dir and fake['argv'][0] == '-p' and fake['env']['DESIGN_AGENT_TOKEN'] is None
+    assert fake['phase'] == '' and not list(d.glob('fake-*.json')) and (d / 'session.log').exists()      # one session, the old path
     assert (d / 'current' / 'PRINT-FRONT-v1.jpg').exists()
     assert calls(server, '/jobs/job1/heartbeat')[0] == {'stage': 'khởi động', 'rounds': 0}
     assert ('POST', '/api/design-agent/runner/tasks/LIT6262_1/submit', {}) in server.calls and not calls(server, '/fail')
     assert json.loads((d / 'runner-state.json').read_text(encoding='utf-8'))['outcome'] == 'DONE'
+    argv = fake['argv']; deny = argv[argv.index('--disallowedTools') + 1:argv.index('--add-dir')]
+    assert 'Bash(*agent_api*)' not in deny and 'Bash(*runner.env*)' in deny
 
 
 def test_server_may_downgrade_done_and_the_runner_does_not_retry(server, run):
@@ -33,7 +36,11 @@ def test_needs_owner_is_passed_on(server, run):
 
 def test_missing_result_is_a_failure_never_a_success(server, run):
     assert run(server, 'no-result', cli_down_window_s=0) == 'FAILED'
-    assert calls(server, '/jobs/job1/fail') == [{'error': 'phiên kết thúc mà không có result.json', 'permanent': False}] and not calls(server, '/result')
+    assert calls(server, '/jobs/job1/fail') == [{'error': 'vòng 1: phiên sửa kết thúc mà không có READY.json hay result.json', 'permanent': False}]
+    assert not calls(server, '/result') and not calls(server, '/artwork')
+    server.calls.clear()
+    assert run(server, 'no-result', cli_down_window_s=0, job=dict(kind='LIBRARY_APPLY', id='job2')) == 'FAILED'
+    assert calls(server, '/jobs/job2/fail') == [{'error': 'phiên kết thúc mà không có result.json', 'permanent': False}] and not calls(server, '/result')
 
 
 def test_stale_result_of_an_earlier_attempt_is_not_reported(server, run, cfg):   # Review Focus 1
@@ -42,9 +49,18 @@ def test_stale_result_of_an_earlier_attempt_is_not_reported(server, run, cfg):  
     assert run(server, 'no-result', cli_down_window_s=0, job=dict(attempts=2)) == 'FAILED' and not calls(server, '/result')
 
 
-def test_invalid_result_is_a_permanent_failure(server, run):
-    assert run(server, 'bad-outcome') == 'FAILED'
+def test_invalid_result_of_the_library_session_is_a_permanent_failure(server, run):
+    assert run(server, 'bad-outcome', job=dict(kind='LIBRARY_APPLY')) == 'FAILED'
     body = calls(server, '/jobs/job1/fail')[0]; assert body['permanent'] is True and body['error'].startswith('result.json không hợp lệ: ')
+
+
+def test_maker_result_other_than_needs_owner_fails_and_is_retried(server, run):
+    assert run(server, 'bad-outcome') == 'FAILED'
+    body = calls(server, '/jobs/job1/fail')[0]
+    assert body == {'error': 'vòng 1: result.json của phiên sửa không hợp lệ: outcome phải là DONE hoặc NEEDS_OWNER', 'permanent': False}
+    assert run(server, 'claims-done', job=dict(id='job2')) == 'FAILED'
+    assert calls(server, '/jobs/job2/fail')[0]['error'].startswith('vòng 1: phiên sửa chỉ được kết thúc bằng READY.json hoặc result.json NEEDS_OWNER')
+    assert not calls(server, '/artwork') and not calls(server, '/result')
 
 
 def test_cli_that_cannot_run_is_cli_down(server, run):
@@ -80,7 +96,10 @@ def test_unsafe_job_gets_no_folder(server, run, cfg):                           
 
 def test_token_is_masked_in_the_session_log_and_download_failure_fails_the_job(server, run, cfg):
     assert run(server, 'echo-token') == 'DONE'
-    assert server.token not in (cfg.artwork_builder / 'LIT6262_1-agent-job1' / 'session.log').read_text(encoding='utf-8', errors='replace')
+    d = cfg.artwork_builder / 'LIT6262_1-agent-job1'
+    for log in ['session-round-1-maker.log', 'session-round-1-qa.log']:
+        text = (d / log).read_text(encoding='utf-8', errors='replace')
+        assert 'token is ***' in text and server.token not in text
     server.files = {}
     assert run(server, 'done', job=dict(id='job4')) == 'FAILED'
     assert calls(server, '/jobs/job4/fail') == [{'error': 'không tải được file hiện tại của task (HTTP 404)', 'permanent': False}]
@@ -188,6 +207,6 @@ def test_uncontained_session_is_logged(server, deps, job, monkeypatch, capsys):
 
 def test_killed_session_leaves_the_events_it_already_printed(server, run, cfg):
     assert run(server, 'stream-then-hang', timeout_s=3) == 'FAILED'
-    log = (cfg.artwork_builder / 'LIT6262_1-agent-job1' / 'session.log').read_text(encoding='utf-8', errors='replace')
+    log = (cfg.artwork_builder / 'LIT6262_1-agent-job1' / 'session-round-1-maker.log').read_text(encoding='utf-8', errors='replace')
     assert '"subtype": "init"' in log and 'EVENT-BEFORE-KILL' in log
     assert calls(server, '/jobs/job1/fail')[0]['permanent'] is True

@@ -14,6 +14,9 @@ import runner
 def test_config_defaults_and_loud_errors(server, env_file, tmp_path):
     cfg = runner.load_config(env_file(server))
     assert (cfg.max_concurrent, cfg.claude_bin, cfg.permission_mode, cfg.job_timeout_s, cfg.bash_timeout_ms) == (5, 'claude', 'dontAsk', 5400, 600000)
+    assert (cfg.model, cfg.qa_model) == ('', '')
+    assert (lambda c: (c.model, c.qa_model))(runner.load_config(env_file(server, CLAUDE_MODEL='opus'))) == ('opus', 'opus')
+    assert runner.load_config(env_file(server, CLAUDE_MODEL='opus', CLAUDE_QA_MODEL='sonnet')).qa_model == 'sonnet'
     assert cfg.allowed_tools == ('Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'Skill')
     assert cfg.disallowed_tools == runner.DEFAULT_DISALLOWED
     assert runner.load_config(env_file(server, CLAUDE_DISALLOWED_TOOLS='Bash(*x.sh*), WebFetch')).disallowed_tools == ('Bash(*x.sh*)', 'WebFetch')
@@ -49,8 +52,13 @@ def test_job_folder_job_json_and_a_retry_never_inherits_a_result(cfg, job):     
     saved = json.loads((d / 'job.json').read_text(encoding='utf-8'))
     assert saved['requestText'] == 'Lý do: Sai chi tiết' and saved['runner']['attempt'] == 1 and saved['runner']['codexBin'] == 'C:/codex.exe'
     (d / 'result.json').write_text('{"outcome": "DONE", "summary": "cũ"}', encoding='utf-8'); (d / 'ps-lock.held').write_text('')
+    (d / 'round-1' / 'deliver').mkdir(parents=True); (d / 'round-1' / 'READY.json').write_text('{}'); (d / 'QA-claude').mkdir()
+    (d / 'session-round-1-maker.log').write_text('x'); (d / 'prompt-round-1-qa.md').write_text('x')
     runner.prepare_job_dir(cfg, job(attempts=2), 'C:/codex.exe', datetime(2026, 11, 12, 10, 30))
     assert runner.read_result(d) == (None, None) and (d / 'prev-20261112-103000-result.json').exists() and not (d / 'ps-lock.held').exists()
+    for name in ['round-1', 'QA-claude', 'session-round-1-maker.log', 'prompt-round-1-qa.md']:   # a retry never inherits a round
+        assert not (d / name).exists() and (d / f'prev-20261112-103000-{name}').exists(), name
+    assert runner.read_rounds(d) == 0
 
 
 def test_current_files_are_downloaded_before_the_session(server, cfg, job, tmp_path):
@@ -75,11 +83,20 @@ def test_prompt_and_command_line(cfg, job, tmp_path):
                         '--add-dir', str(d), str(cfg.artwork_builder)]
     for script in ['push-local-renders', 'push-shared-prints', 'push_s2n', 'apply_chunk', 'process-new-orders']:
         assert any(script in rule and rule.startswith('Bash(') for rule in deny), script
+    for rule in ['Bash(*runner.env*)', 'Bash(*.design-agent*)', 'Bash(*agent_api*)', 'Bash(*design-agent/runner*)', 'Read(~/.design-agent/**)']:
+        assert rule in deny, rule
     assert all(' ' not in rule and ',' not in rule for rule in deny)
+    lib = runner.build_argv(cfg, prompt, d, library=True)                     # the library session still delivers through the CLI
+    lib_deny = lib[lib.index('--disallowedTools') + 1:lib.index('--add-dir')]
+    assert 'Bash(*agent_api*)' not in lib_deny and 'Bash(*runner.env*)' in lib_deny and len(lib_deny) == len(deny) - 1
     assert '--disallowedTools' not in runner.build_argv(dataclasses.replace(cfg, disallowed_tools=()), prompt, d)
     assert runner.build_argv(dataclasses.replace(cfg, model='opus'), prompt, d)[-2:] == ['--model', 'opus']
+    assert runner.build_argv(dataclasses.replace(cfg, model='opus'), prompt, d, model='sonnet')[-2:] == ['--model', 'sonnet']
     env = runner.child_env(cfg, d, base={'DESIGN_AGENT_TOKEN': 'dag_x', 'PATH': 'p'})
     assert 'DESIGN_AGENT_TOKEN' not in env and env['BASH_MAX_TIMEOUT_MS'] == env['BASH_DEFAULT_TIMEOUT_MS'] == '600000' and env['DESIGN_AGENT_JOB_DIR'] == str(d)
+    assert 'DESIGN_AGENT_PHASE' not in env
+    qa_env = runner.child_env(cfg, d, base={'DESIGN_AGENT_TOKEN': 'dag_x'}, phase='qa', round_n=2)
+    assert (qa_env['DESIGN_AGENT_PHASE'], qa_env['DESIGN_AGENT_ROUND']) == ('qa', '2') and 'DESIGN_AGENT_TOKEN' not in qa_env
 
 
 def test_result_stage_and_rounds_are_read_defensively(tmp_path):

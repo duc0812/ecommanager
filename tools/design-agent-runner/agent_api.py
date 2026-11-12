@@ -17,6 +17,8 @@ import requests
 BASE_PATH = '/api/design-agent/runner'
 SHORT_TIMEOUT = (10, 60)
 UPLOAD_TIMEOUT = (10, 1800)
+TOO_LARGE = 'máy chủ từ chối: file quá lớn (413)'
+UPLOAD_LOST = 'mất kết nối khi đang tải lên'
 
 
 def home() -> Path:
@@ -66,6 +68,14 @@ def check_base_url(url: str) -> str:
     return url.rstrip('/')
 
 
+def _never_connected(exc: Exception) -> bool:
+    """True when the request failed before any byte was sent (refused, DNS, connect timeout)."""
+    if isinstance(exc, requests.ConnectTimeout):
+        return True
+    text = repr(exc)
+    return 'NewConnectionError' in text or 'NameResolutionError' in text or 'getaddrinfo' in text
+
+
 def _seg(value: str) -> str:
     return quote(str(value), safe='')
 
@@ -78,22 +88,27 @@ class AgentApi:
     def __repr__(self) -> str:
         return f'AgentApi({self.base_url!r})'
 
-    def _request(self, method: str, path: str, *, ok_statuses=(), timeout=SHORT_TIMEOUT, **kwargs):
+    def _request(self, method: str, path: str, *, ok_statuses=(), timeout=SHORT_TIMEOUT, sending=False, **kwargs):
         headers = {'Authorization': f'Bearer {self._token}', **kwargs.pop('headers', {})}
         try:
             resp = requests.request(method, self.base_url + BASE_PATH + path, headers=headers, timeout=timeout,
                                     allow_redirects=False, **kwargs)
         except requests.RequestException as exc:
+            if sending and not _never_connected(exc):
+                raise ApiError(None, {'error': UPLOAD_LOST}) from None
             raise ApiError(None, {'error': f'không kết nối được máy chủ ({type(exc).__name__})'}) from None
         try:
             if 200 <= resp.status_code < 300 or resp.status_code in ok_statuses:
                 return resp
-            try:
-                body = resp.json()
-                if not isinstance(body, dict):
-                    body = {'error': str(body)[:200]}
-            except ValueError:
-                body = {'error': (resp.text or '')[:200]}
+            if resp.status_code == 413:
+                body = {'error': TOO_LARGE}
+            else:
+                try:
+                    body = resp.json()
+                    if not isinstance(body, dict):
+                        body = {'error': str(body)[:200]}
+                except ValueError:
+                    body = {'error': (resp.text or '')[:200]}
             cls = AuthError if resp.status_code == 401 else ApiError
             raise cls(resp.status_code, body)
         except BaseException:
@@ -136,7 +151,7 @@ class AgentApi:
         file_path = Path(file_path)
         params = {'printArea': print_area, 'fileName': file_path.name, 'kind': 'MOCKUP' if mockup else 'PRINT'}
         with open(file_path, 'rb') as fh:
-            resp = self._request('PUT', f'/tasks/{_seg(task_key)}/artwork', params=params, data=fh,
+            resp = self._request('PUT', f'/tasks/{_seg(task_key)}/artwork', params=params, data=fh, sending=True,
                                  headers={'Content-Type': 'application/octet-stream'}, timeout=UPLOAD_TIMEOUT)
         try:
             data = resp.json()
@@ -204,7 +219,7 @@ def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     cmd = args[0] if args else ''
     rest = args[1:]
-    entry: dict = {'cmd': cmd, 'taskKey': None, 'status': 0}
+    entry: dict = {'cmd': cmd, 'taskKey': None, 'status': None}
 
     def usage_error(text: str = USAGE) -> int:
         _log_call(entry)
@@ -266,7 +281,8 @@ def main(argv: list[str] | None = None) -> int:
             size = client.download(rest[0], Path(rest[1]))
             reply = {'ok': True, 'bytes': size, 'path': rest[1]}
     except ApiError as exc:
-        entry['status'] = exc.status or 0
+        entry['status'] = exc.status
+        entry['error'] = str(exc.body.get('error') or '')[:300]
         _log_call(entry)
         if exc.status is None:
             _emit({'ok': False, 'error': exc.body.get('error') or 'không kết nối được máy chủ'})

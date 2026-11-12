@@ -80,7 +80,7 @@ class FakeServer:
                 for prefix, forced in list(outer.status.items()):
                     if rel.startswith(prefix):
                         if isinstance(forced, tuple):
-                            return self._send(forced[0], forced[1])
+                            return self._send(forced[0], forced[1], raw=isinstance(forced[1], bytes))
                         return self._send(forced, {'error': 'unauthorized' if forced == 401 else 'forced'})
                 seg = rel.strip('/').split('/')
                 if self.command == 'POST' and rel == '/claim':
