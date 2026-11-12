@@ -53,6 +53,14 @@ export default function LarkSettingsCard() {
     setSaved('Đã lưu cài đặt Lark.')
   }
 
+  async function sendTest() {
+    setBusy(true); setError(''); setSaved('')
+    const r = await requestJson(URL, { method: 'PUT' })
+    setBusy(false)
+    if (!r.ok) { setError(r.error); return }
+    setSaved('Đã gửi tin thử vào nhóm.')
+  }
+
   const right = !status ? '' : !status.configured ? 'chưa cấu hình' : status.enabled ? 'đang bật' : 'đang tắt'
   const field = 'flex flex-col gap-xs text-label-sm text-on-surface-variant'
 
@@ -96,6 +104,7 @@ export default function LarkSettingsCard() {
 
       <div className="flex items-center gap-sm">
         <button type="button" className={btn} disabled={busy || !status} onClick={() => void save()}><Icon name="save" className="text-[16px]" />Lưu cài đặt Lark</button>
+        <button type="button" className={btn} disabled={busy || !status?.configured} onClick={() => void sendTest()}><Icon name="send" className="text-[16px]" />Gửi tin thử</button>
         {saved && <span className="text-label-sm text-on-surface-variant" role="status">{saved}</span>}
       </div>
       <ErrorBanner msg={error} onClose={() => setError('')} />
