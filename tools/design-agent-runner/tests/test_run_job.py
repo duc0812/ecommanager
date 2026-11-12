@@ -94,15 +94,75 @@ def test_stop_event_kills_the_session_and_posts_nothing(server, cfg, deps, job):
     assert out == ['LOST'] and wait_dead(pid) and not calls(server, '/result') and not calls(server, '/fail')
 
 
-def test_network_error_while_reporting_is_retried_then_left_to_the_lease(server, run, monkeypatch):
-    import agent_api
-    real = agent_api.AgentApi.result; seen = []
+class StepClock:
+    """monotonic advances only by the seconds slept."""
 
-    def flaky(self, *a, **k):
+    def __init__(self):
+        self.now = 1000.0
+        self.sleeps = []
+
+    def sleep(self, seconds):
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+    def monotonic(self):
+        return self.now
+
+    def time(self):
+        return self.now
+
+
+def test_network_error_while_reporting_is_retried_for_the_window_then_left_to_the_lease(server, run, monkeypatch, capsys):
+    import agent_api
+    seen = []
+
+    def down(self, *a, **k):
         seen.append(1)
         raise agent_api.ApiError(None, {'error': 'mạng'})
-    monkeypatch.setattr(agent_api.AgentApi, 'result', flaky)
-    assert run(server, 'done', report_retries=3, report_retry_s=0) == 'LOST' and len(seen) == 3
+    monkeypatch.setattr(agent_api.AgentApi, 'result', down)
+    clock = StepClock()
+    assert run(server, 'done', clock=clock, report_window_s=900, report_retry_s=10) == 'LOST'
+    assert len(seen) > 3 and 880 <= sum(clock.sleeps) <= 900 and max(clock.sleeps) <= 120
+    assert clock.sleeps[:3] == [10, 20, 40]
+    assert not calls(server, '/fail')
+    out = capsys.readouterr().out
+    assert 'KHÔNG GỬI ĐƯỢC' in out and 'job1' in out and 'lease' in out
+
+
+def test_5xx_on_result_is_retried_until_the_server_answers(server, run):
+    server.sequence['/jobs/job1/result'] = [502, 503]
+    clock = StepClock()
+    assert run(server, 'done', clock=clock, report_window_s=900, report_retry_s=10) == 'DONE'
+    assert len(calls(server, '/jobs/job1/result')) == 3 and clock.sleeps == [10, 20] and not calls(server, '/fail')
+
+
+def test_409_on_result_means_the_server_already_has_an_outcome(server, run, capsys):
+    server.sequence['/jobs/job1/result'] = [409]
+    clock = StepClock()
+    assert run(server, 'done', clock=clock) == 'LOST'
+    assert len(calls(server, '/jobs/job1/result')) == 1 and not calls(server, '/fail') and clock.sleeps == []
+    assert 'đã có kết quả' in capsys.readouterr().out
+
+
+def test_4xx_on_result_is_final_and_fails_the_job_for_good(server, run):
+    server.sequence['/jobs/job1/result'] = [400]
+    clock = StepClock()
+    assert run(server, 'done', clock=clock) == 'FAILED'
+    assert len(calls(server, '/jobs/job1/result')) == 1 and clock.sleeps == []
+    [fail] = calls(server, '/jobs/job1/fail')
+    assert fail['permanent'] is True and '400' in fail['error']
+
+
+def test_fail_is_retried_on_5xx_and_final_on_4xx(server, run):
+    server.sequence['/jobs/job1/fail'] = [500]
+    clock = StepClock()
+    assert run(server, 'no-result', cli_down_window_s=0, clock=clock, report_retry_s=10) == 'FAILED'
+    assert len(calls(server, '/jobs/job1/fail')) == 2 and clock.sleeps == [10]
+    server.calls.clear()
+    server.sequence['/jobs/job1/fail'] = [404]
+    clock = StepClock()
+    assert run(server, 'no-result', cli_down_window_s=0, clock=clock, report_retry_s=10) == 'FAILED'
+    assert len(calls(server, '/jobs/job1/fail')) == 1 and clock.sleeps == []
 
 
 def test_409_on_the_first_beat_starts_no_session(server, run, cfg):

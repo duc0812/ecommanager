@@ -15,6 +15,9 @@ def test_config_defaults_and_loud_errors(server, env_file, tmp_path):
     cfg = runner.load_config(env_file(server))
     assert (cfg.max_concurrent, cfg.claude_bin, cfg.permission_mode, cfg.job_timeout_s, cfg.bash_timeout_ms) == (5, 'claude', 'dontAsk', 5400, 3600000)
     assert cfg.allowed_tools == ('Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'Skill')
+    assert cfg.disallowed_tools == runner.DEFAULT_DISALLOWED
+    assert runner.load_config(env_file(server, CLAUDE_DISALLOWED_TOOLS='Bash(*x.sh*), WebFetch')).disallowed_tools == ('Bash(*x.sh*)', 'WebFetch')
+    assert runner.load_config(env_file(server, CLAUDE_DISALLOWED_TOOLS='none')).disallowed_tools == ()
     assert runner.load_config(env_file(server, MAX_CONCURRENT='99')).max_concurrent == 10
     for over, text in [(dict(DESIGN_AGENT_TOKEN=None), 'DESIGN_AGENT_TOKEN'), (dict(PROJECT_DIR=str(tmp_path / 'no')), 'PROJECT_DIR'),
                        (dict(CLAUDE_BIN='claude.cmd'), 'CLAUDE_BIN'), (dict(JOB_TIMEOUT_MINUTES='abc'), 'JOB_TIMEOUT_MINUTES')]:
@@ -67,7 +70,13 @@ def test_prompt_and_command_line(cfg, job, tmp_path):
     assert d.as_posix() in prompt and 'agent_api.py' in prompt and (d / 'prompt.md').read_text(encoding='utf-8') == prompt
     argv = runner.build_argv(cfg, prompt, d)
     assert argv[:7] == ['claude', '-p', prompt, '--output-format', 'json', '--permission-mode', 'dontAsk']
-    assert argv[7:] == ['--allowedTools', 'Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'Skill', '--add-dir', str(d), str(cfg.artwork_builder)]
+    deny = list(runner.DEFAULT_DISALLOWED)
+    assert argv[7:] == ['--allowedTools', 'Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'Skill', '--disallowedTools', *deny,
+                        '--add-dir', str(d), str(cfg.artwork_builder)]
+    for script in ['push-local-renders', 'push-shared-prints', 'push_s2n', 'apply_chunk', 'process-new-orders']:
+        assert any(script in rule and rule.startswith('Bash(') for rule in deny), script
+    assert all(' ' not in rule and ',' not in rule for rule in deny)
+    assert '--disallowedTools' not in runner.build_argv(dataclasses.replace(cfg, disallowed_tools=()), prompt, d)
     assert runner.build_argv(dataclasses.replace(cfg, model='opus'), prompt, d)[-2:] == ['--model', 'opus']
     env = runner.child_env(cfg, d, base={'DESIGN_AGENT_TOKEN': 'dag_x', 'PATH': 'p'})
     assert 'DESIGN_AGENT_TOKEN' not in env and env['BASH_MAX_TIMEOUT_MS'] == env['BASH_DEFAULT_TIMEOUT_MS'] == '3600000' and env['DESIGN_AGENT_JOB_DIR'] == str(d)

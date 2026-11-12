@@ -179,6 +179,10 @@ USAGE = ('cách dùng: upload <taskKey> <vùng in> <file> [--mockup] | submit <t
          'reopen <taskKey> <lý do> <ghi chú> | note <taskKey> <nội dung> | download <artworkId> <file đích>')
 
 
+REOPENED = ('DOING', 'REJECTED')
+NOT_REOPENED = ('NEW', 'ASSIGNED', 'REVIEW', 'ASK_CUSTOMER')
+
+
 def _emit(obj: dict) -> None:
     sys.stdout.write(json.dumps(obj, ensure_ascii=False) + '\n')
     sys.stdout.flush()
@@ -246,6 +250,16 @@ def main(argv: list[str] | None = None) -> int:
             reply = client.submit(rest[0])
         elif cmd == 'reopen':
             reply = client.reopen(rest[0], rest[1], rest[2])
+            status = reply.get('status')
+            if status in REOPENED:
+                reply = {**reply, 'reopened': True}
+            elif status in NOT_REOPENED:
+                reply = {**reply, 'reopened': False, 'message': f'task đang {status}, chưa duyệt nên không cần mở lại'}
+            else:
+                entry['status'] = 200
+                _log_call(entry)
+                _emit({'ok': False, 'status': 200, 'error': f'máy chủ trả trạng thái không hợp lệ sau reopen: {status!r}'})
+                return 1
         elif cmd == 'note':
             reply = client.note(rest[0], rest[1])
         else:

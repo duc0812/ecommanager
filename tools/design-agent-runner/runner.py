@@ -30,6 +30,10 @@ KEY_RE = r'^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$'
 ID_RE = r'^[A-Za-z0-9_-]{1,64}$'
 DEFAULT_ARTWORK_BUILDER = r'D:\Ecom manager\artwork-builder'
 DEFAULT_TOOLS = 'Bash,Read,Write,Edit,Glob,Grep,Skill'
+DEFAULT_DISALLOWED = (
+    'Bash(*push-local-renders*)', 'Bash(*push-shared-prints*)', 'Bash(*push_s2n*)', 'Bash(*apply_chunk*)',
+    'Bash(*process-new-orders*)', 'Bash(ssh:*)', 'Bash(scp:*)',
+)
 STALE_NAMES = ('result.json', 'stage.txt', 'session.log', 'api-calls.jsonl', 'ps-lock.held')
 
 
@@ -47,6 +51,7 @@ class Config:
     artwork_builder: Path
     codex_bin: str
     allowed_tools: tuple
+    disallowed_tools: tuple
     permission_mode: str
     model: str
     job_timeout_s: float
@@ -90,12 +95,19 @@ def load_config(path: Path) -> Config:
     if claude_bin.lower().endswith(('.cmd', '.bat')):
         raise ConfigError(f'CLAUDE_BIN không được là .cmd / .bat: {claude_bin} (file {path}); dùng claude.exe')
     tools = tuple(t for t in re.split(r'[,\s]+', values.get('CLAUDE_ALLOWED_TOOLS', '').strip() or DEFAULT_TOOLS) if t)
+    deny_raw = values.get('CLAUDE_DISALLOWED_TOOLS', '').strip()
+    if not deny_raw:
+        deny = DEFAULT_DISALLOWED
+    elif deny_raw.lower() == 'none':
+        deny = ()
+    else:
+        deny = tuple(t.strip() for t in deny_raw.split(',') if t.strip())
     max_concurrent = max(1, min(10, _number(values, 'MAX_CONCURRENT', 5, int, path)))
     minutes = _number(values, 'JOB_TIMEOUT_MINUTES', 90, float, path)
     return Config(
         ecom_url=ecom_url, token=token, max_concurrent=max_concurrent, claude_bin=claude_bin,
         project_dir=project_dir, artwork_builder=builder, codex_bin=values.get('CODEX_BIN', '').strip(),
-        allowed_tools=tools, permission_mode=values.get('CLAUDE_PERMISSION_MODE', '').strip() or 'dontAsk',
+        allowed_tools=tools, disallowed_tools=deny, permission_mode=values.get('CLAUDE_PERMISSION_MODE', '').strip() or 'dontAsk',
         model=values.get('CLAUDE_MODEL', '').strip(), job_timeout_s=minutes * 60,
         bash_timeout_ms=_number(values, 'BASH_TIMEOUT_MS', 3600000, int, path))
 
@@ -221,8 +233,10 @@ def render_prompt(cfg: Config, job: dict, job_dir: Path, codex_bin: str) -> str:
 
 def build_argv(cfg: Config, prompt: str, job_dir: Path, claude_cmd: list[str] | None = None) -> list[str]:
     argv = [*(claude_cmd or [cfg.claude_bin]), '-p', prompt, '--output-format', 'json',
-            '--permission-mode', cfg.permission_mode, '--allowedTools', *cfg.allowed_tools,
-            '--add-dir', str(job_dir), str(cfg.artwork_builder)]
+            '--permission-mode', cfg.permission_mode, '--allowedTools', *cfg.allowed_tools]
+    if cfg.disallowed_tools:
+        argv += ['--disallowedTools', *cfg.disallowed_tools]
+    argv += ['--add-dir', str(job_dir), str(cfg.artwork_builder)]
     if cfg.model:
         argv += ['--model', cfg.model]
     return argv
@@ -307,7 +321,7 @@ class Deps:
     timeout_s: float | None = None
     cli_down_window_s: float = 90
     cli_backoff_s: float = 1800
-    report_retries: int = 3
+    report_window_s: float = 900
     report_retry_s: float = 10
     clock: object = time
 
@@ -345,25 +359,44 @@ def _set_state(job_dir: Path, **changes) -> None:
         pass
 
 
+REPORT_MAX_BACKOFF_S = 120
+
+
 def _send(deps: Deps, jid: str, label: str, call):
-    """(reply, state) with state one of ok / auth / conflict / refused / net; a network error is retried."""
-    for attempt in range(max(1, deps.report_retries)):
+    """(reply, state) with state one of ok / auth / conflict / refused / net.
+
+    A network error or a 5xx (a deploy, a restart) is retried with backoff for deps.report_window_s, which stays under the
+    server's lease; any other 4xx is final.
+    """
+    deadline = deps.clock.monotonic() + deps.report_window_s
+    wait = deps.report_retry_s
+    attempt = 0
+    while True:
+        attempt += 1
         try:
             return call(), 'ok'
         except AuthError:
             return None, 'auth'
         except ApiError as exc:
             if exc.status == 409:
-                deps.log.line(f'server không còn giữ job {jid} (409)')
+                if label == 'result':
+                    deps.log.line(f'server đã có kết quả của job {jid} (409): không gửi fail')
+                else:
+                    deps.log.line(f'server không còn giữ job {jid} (409)')
                 return None, 'conflict'
-            if exc.status is None:
-                deps.log.line(f'lỗi mạng khi gửi {label} job {jid} (lần {attempt + 1})')
-                if attempt + 1 < deps.report_retries:
-                    deps.clock.sleep(deps.report_retry_s)
-                continue
-            deps.log.line(f'server từ chối {label} job {jid} (HTTP {exc.status})')
-            return None, 'refused'
-    deps.log.line(f'không gửi được kết quả job {jid}; để server thu hồi theo lease')
+            if exc.status is not None and exc.status < 500:
+                deps.log.line(f'server từ chối {label} job {jid} (HTTP {exc.status})')
+                return None, f'refused:{exc.status}'
+            left = deadline - deps.clock.monotonic()
+            what = 'lỗi mạng' if exc.status is None else f'HTTP {exc.status}'
+            if left <= 0:
+                break
+            pause = min(wait, left)
+            deps.log.line(f'{what} khi gửi {label} job {jid} (lần {attempt}); thử lại sau {pause:g} giây')
+            deps.clock.sleep(pause)
+            wait = min(wait * 2, REPORT_MAX_BACKOFF_S)
+    deps.log.line(f'!!! KHÔNG GỬI ĐƯỢC {label} của job {jid} sau {deps.report_window_s / 60:g} phút thử lại — '
+                  f'để server thu hồi job theo lease; kiểm tra máy chủ và thư mục job')
     return None, 'net'
 
 
@@ -470,8 +503,10 @@ def run_job(job: dict, deps: Deps, stop: threading.Event) -> str:
         if got != res['outcome']:
             log.line(f'server ghi nhận job {jid} là {got}')
         outcome = got if got in ('DONE', 'NEEDS_OWNER') else 'FAILED'
+    elif state.startswith('refused:'):
+        return _fail(deps, jid, f'máy chủ từ chối kết quả của phiên (HTTP {state.split(":", 1)[1]})', True, 'FAILED', job_dir)
     else:
-        outcome = {'auth': 'AUTH', 'refused': 'FAILED'}.get(state, 'LOST')
+        outcome = {'auth': 'AUTH'}.get(state, 'LOST')
     log.line(f'job {jid}: {outcome}')
     _set_state(job_dir, finished=True, outcome=outcome)
     return outcome

@@ -27,6 +27,7 @@ Chạy trên máy tính của shop. Khi designer reject một design (hoặc khi
 | `CODEX_BIN` | đường dẫn `codex.exe`; để trống = bản mới nhất đi kèm app Codex | trống |
 | `ARTWORK_BUILDER` | thư mục gốc chứa thư mục job | `D:\Ecom manager\artwork-builder` |
 | `CLAUDE_ALLOWED_TOOLS` | các tool phiên được dùng | `Bash,Read,Write,Edit,Glob,Grep,Skill` |
+| `CLAUDE_DISALLOWED_TOOLS` | lệnh phiên bị cấm (cách nhau bằng dấu phẩy; `none` = không cấm) | các script push thẳng DB (`push-local-renders`, `push-shared-prints`, `push_s2n`, `apply_chunk`, `process-new-orders`), `ssh`, `scp` |
 | `CLAUDE_PERMISSION_MODE` | chế độ quyền | `dontAsk` |
 | `CLAUDE_MODEL` | model (tuỳ chọn) | trống |
 | `JOB_TIMEOUT_MINUTES` | giới hạn thời gian mỗi job | `90` |
@@ -44,7 +45,7 @@ Thư mục job: `<ARTWORK_BUILDER>\<MÃ TASK>-agent-<id job>\`, gồm: `job.json
 Dòng lệnh (cwd = `PROJECT_DIR`, stdin đóng):
 
 ```
-claude -p "<prompt>" --output-format json --permission-mode dontAsk --allowedTools Bash Read Write Edit Glob Grep Skill --add-dir "<thư mục job>" "<ARTWORK_BUILDER>" [--model <CLAUDE_MODEL>]
+claude -p "<prompt>" --output-format json --permission-mode dontAsk --allowedTools Bash Read Write Edit Glob Grep Skill --disallowedTools "Bash(*push-local-renders*)" … --add-dir "<thư mục job>" "<ARTWORK_BUILDER>" [--model <CLAUDE_MODEL>]
 ```
 
 - Nhịp tim mỗi 60 giây, kèm bước đọc từ `stage.txt` và số vòng (số thư mục `round-N`).

@@ -21,6 +21,7 @@ class FakeServer:
         self.fail_reply = {'ok': True, 'status': 'QUEUED', 'attempts': 1}
         self.files = {'art1': b'front-v1'}
         self.status: dict = {}
+        self.sequence: dict = {}
         self.calls: list[tuple] = []
         self.times: list[tuple] = []
         self.lock = threading.Lock()
@@ -71,6 +72,11 @@ class FakeServer:
                 if not path.startswith(BASE):
                     return self._send(404, {'error': 'not found'})
                 rel = path[len(BASE):]
+                with outer.lock:
+                    queued = outer.sequence.get(rel)
+                    forced_once = queued.pop(0) if queued else None
+                if forced_once is not None:
+                    return self._send(forced_once, {'error': 'forced'})
                 for prefix, forced in list(outer.status.items()):
                     if rel.startswith(prefix):
                         if isinstance(forced, tuple):

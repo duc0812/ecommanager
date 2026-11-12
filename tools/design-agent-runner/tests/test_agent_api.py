@@ -67,6 +67,21 @@ def test_cli_commands_exit_codes_and_one_json_line(server, env_file, tmp_path, c
     assert [(c['cmd'], c['status']) for c in calls][:3] == [('upload', 200), ('submit', 200), ('reopen', 200)]
 
 
+def test_cli_reopen_checks_the_status_the_server_returns(server, env_file, tmp_path, capsys):
+    env_file(server)
+    assert agent_api.main(['reopen', 'LIT5325_1', 'Nội bộ phát hiện lỗi', 'cập nhật thư viện']) == 0
+    assert json.loads(capsys.readouterr().out) == {'ok': True, 'status': 'DOING', 'sent': False, 'reopened': True}
+    server.status = {'/tasks/LIT5325_1/reopen': (200, {'ok': True, 'status': 'REVIEW', 'sent': False})}
+    assert agent_api.main(['reopen', 'LIT5325_1', 'Nội bộ phát hiện lỗi', 'cập nhật thư viện']) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out['reopened'] is False and out['status'] == 'REVIEW' and 'REVIEW' in out['message']
+    for bad in ({'ok': True, 'status': 'DONE'}, {'ok': True, 'status': 'WHATEVER'}, {'ok': True}):
+        server.status = {'/tasks/LIT5325_1/reopen': (200, bad)}
+        assert agent_api.main(['reopen', 'LIT5325_1', 'Nội bộ phát hiện lỗi', 'cập nhật thư viện']) == 1
+        out = json.loads(capsys.readouterr().out)
+        assert out['ok'] is False and 'trạng thái' in out['error']
+
+
 def test_cli_download_and_usage(server, env_file, tmp_path, capsys):
     env_file(server)
     assert agent_api.main(['download', 'art1', str(tmp_path / 'd' / 'a.jpg')]) == 0

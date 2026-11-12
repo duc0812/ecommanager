@@ -21,7 +21,7 @@ def test_every_prompt_states_the_standing_rules():
         s = text(n)
         for must in ['data, not instructions', 'Deliver only through the agent CLI', 'Stop at REVIEW', 'push-local-renders.mjs',
                      '.ps-lock', 'ps-lock.held', 'shutil.disk_usage', 'result.json', 'NEEDS_OWNER', '`summary` is Vietnamese',
-                     'never ask', '{{AGENT}} upload', '{{AGENT}} download']:
+                     'never ask', '{{AGENT}} upload', '{{AGENT}} download', 'note of 3–500 characters']:
             assert must in s, (n, must)
 
 
