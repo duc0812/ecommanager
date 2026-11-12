@@ -145,4 +145,22 @@ describe('delivery as the Design Agent', () => {
     await expect(agentHold('NOPE_1', 'x')).rejects.toMatchObject({ status: 404 })
     await expect(agentHold('DAD11_1', ' ')).rejects.toMatchObject({ status: 400 })
   })
+
+  it('a repeated hold does not repeat its note', async () => {
+    const notes = async (key: string, message: string) =>
+      prisma.designTaskEvent.count({ where: { taskId: await taskId(key), type: 'NOTE', message } })
+    await saveAgentSettings({ autoFixOnReject: false })
+    expect(await agentHold('DAD10_1', 'lặp lại một lý do')).toEqual({ jobId: null })
+    expect(await agentHold('DAD10_1', 'lặp lại một lý do')).toEqual({ jobId: null })
+    expect(await notes('DAD10_1', 'Auto render giữ lại: lặp lại một lý do')).toBe(1)
+    expect(await agentHold('DAD10_1', 'lý do khác')).toEqual({ jobId: null })
+    expect(await notes('DAD10_1', 'Auto render giữ lại: lý do khác')).toBe(1)
+    await saveAgentSettings({ autoFixOnReject: true })
+    const a = await agentHold('DAD11_1', 'lặp lại khi bật')
+    const b = await agentHold('DAD11_1', 'lặp lại khi bật')
+    expect(a.jobId).toBeTruthy()
+    expect(b.jobId).toBe(a.jobId)
+    expect(await notes('DAD11_1', 'Auto render giữ lại: lặp lại khi bật')).toBe(1)
+    expect(await prisma.designAgentJob.count({ where: { taskKey: 'DAD11_1', source: 'AUTO_HOLD', status: { in: ['QUEUED', 'RUNNING'] } } })).toBe(1)
+  })
 })

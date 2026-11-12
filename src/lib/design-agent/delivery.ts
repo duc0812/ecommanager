@@ -108,9 +108,13 @@ export async function agentRejectReview(taskKey: string, input: { reason: string
   if (!(await rejectReviewAsAgent(taskKey, agent.id, input))) throw new AgentJobError('Task không ở Chờ duyệt', 409)
 }
 
-async function writeAgentNote(taskKey: string, message: string): Promise<void> {
+async function writeAgentNote(taskKey: string, message: string, skipRepeat = false): Promise<void> {
   const task = await prisma.designTask.findUnique({ where: { taskKey }, select: { id: true } })
   if (!task) throw new AgentJobError(NO_TASK, 404)
+  if (skipRepeat) {
+    const last = await prisma.designTaskEvent.findFirst({ where: { taskId: task.id, type: 'NOTE' }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], select: { message: true } })
+    if (last?.message === message) return
+  }
   const agent = await ensureAgentUser()
   await prisma.designTaskEvent.create({ data: { taskId: task.id, type: 'NOTE', message, actorId: agent.id } })
 }
@@ -125,7 +129,7 @@ export async function agentHold(taskKey: string, reason: string): Promise<{ jobI
   const why = typeof reason === 'string' ? reason.trim().slice(0, MAX_HOLD_REASON) : ''
   if (!why) throw new AgentJobError('Thiếu lý do giữ lại', 400)
   const text = `${HOLD_NOTE_PREFIX}${why}`
-  await writeAgentNote(taskKey, text)
+  await writeAgentNote(taskKey, text, true)
   if (!(await getDesignSettings()).agent.autoFixOnReject) return { jobId: null }
   const { job } = await enqueueAgentJob({ kind: 'FIX', source: 'AUTO_HOLD', taskKey, requestText: text, requestedBy: 'Auto render' })
   return { jobId: job.id }
