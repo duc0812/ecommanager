@@ -30,9 +30,9 @@ export function displayText(bodyHtml: string | null | undefined, bodyText: strin
 
 const QUOTE_MARKERS = [
   /(?:^|\n|\s)On [A-Z][a-z]{2}[^\n]{3,160}?wrote:/m,
-  /(?:^|\n|\s)Le [a-zé]{3,4}\.?[^\n]{3,160}?a écrit\s?:/m,
-  /(?:^|\n|\s)El [a-zé]{3,4}\.?[^\n]{3,160}?escribió:/m,
-  /(?:^|\n|\s)Am [A-Z][a-z]{1,2}\.?[^\n]{3,160}?schrieb[^\n]{0,160}?:/m,
+  /(?:^|\n|\s)Le [a-zé]{3,4}\.?[^\n]{3,160}?a\s+écrit\s?:/m,
+  /(?:^|\n|\s)El [a-zé]{3,4}\.?[^\n]{3,160}?\s+escribió:/m,
+  /(?:^|\n|\s)Am [A-Z][a-z]{1,2}\.?[^\n]{3,160}?\s+schrieb[^\n]{0,160}?:/m,
   /^-{2,}\s*Original Message\s*-{2,}$/im,
   /^From: .+$/m,
   /(?:^|\n|\s)Sent from my (iPhone|iPad|Galaxy|Samsung|Android|Verizon)/im,

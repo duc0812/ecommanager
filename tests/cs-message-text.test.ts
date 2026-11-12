@@ -26,6 +26,7 @@ describe('splitQuoted', () => {
     const fr = splitQuoted('1 of 2 not all delevery\n\nLe mer. 11 nov. 2026, 3 h 52 p.m., Litzzy <no-reply@parcelpanel.net> a écrit :\n> Your order has been delivered')
     expect(fr.main).toBe('1 of 2 not all delevery')
     expect(fr.quoted).toContain('Your order has been delivered')
+    expect(splitQuoted('1 of 2 not all delevery\n\nLe mer. 11 nov. 2026, 3 h 52 p.m., Litzzy <no-reply@parcelpanel.net> a\nécrit :\n\n> Litzzy').main).toBe('1 of 2 not all delevery')
     expect(splitQuoted('No llegó.\nEl mié, 11 nov 2026 a las 15:52, Litzzy <a@b.c> escribió:\n> hi').main).toBe('No llegó.')
     expect(splitQuoted('Fehlt.\nAm Mi., 11. Nov. 2026 um 15:52 Uhr schrieb Litzzy <a@b.c>:\n> hi').main).toBe('Fehlt.')
   })
