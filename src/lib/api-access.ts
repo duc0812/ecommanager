@@ -64,6 +64,7 @@ export const API_ACCESS_RULES: ApiRule[] = [
   { prefix: '/api/fulfillment/design-', access: ['fulfillment_design_library', 'fulfillment_orders'] },
   { prefix: '/api/design-agent/runner/', access: 'PUBLIC' },
   { prefix: '/api/design-agent/backfill', access: 'SUPERADMIN' },
+  { prefix: '/api/design-agent/settings/lark', access: 'SUPERADMIN' },
   { prefix: '/api/design-agent/settings', methods: WRITE, access: 'SUPERADMIN' },
   { prefix: '/api/design-agent/settings', methods: READ, access: ['design_tasks'] },
   { prefix: '/api/design-agent/jobs/', access: ['design_tasks'] },
