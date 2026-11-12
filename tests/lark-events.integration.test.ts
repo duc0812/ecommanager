@@ -112,4 +112,16 @@ describe('Lark webhook', () => {
     expect(ignored.status).toBe(200); expect(processSpy).toHaveBeenCalledTimes(1)
     expect(canCallApi(null, [], '/api/public/lark/events', 'POST')).toBe('ok'); expect(canCallApi(null, [], '/api/public/lark/events', 'GET')).toBe('unauthenticated')
   })
+
+  it('the route refuses a body over 1 MB, by its declared length first, then while reading', async () => {
+    const declared = await POST(new NextRequest('http://localhost/api/public/lark/events', {
+      method: 'POST', headers: { 'content-length': '5000000' }, body: JSON.stringify(evt({ eventId: 'ev-big-1' })),
+    }))
+    expect(declared.status).toBe(400)
+    const big = JSON.stringify({ ...evt({ eventId: 'ev-big-2' }), pad: 'x'.repeat(1_000_001) })
+    const read = await POST(new NextRequest('http://localhost/api/public/lark/events', { method: 'POST', body: big }))
+    expect(read.status).toBe(400)
+    expect(processSpy).not.toHaveBeenCalled()
+    expect(await prisma.larkEvent.count({ where: { eventId: { startsWith: 'ev-big' } } })).toBe(0)
+  })
 })

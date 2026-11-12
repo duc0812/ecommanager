@@ -5,6 +5,8 @@ type Resolved = { tasks: AgentTaskState[]; ambiguous: { ref: string; candidates:
 
 const REF = /^([A-Z]*)(\d+)(?:_(\d+))?$/
 const ORDER_NO = /^#?([A-Za-z]+)(\d+)$/
+const MIN_DIGITS_ALONE = 4
+const MAX_SUFFIX_ROWS = 200
 
 function normalise(ref: string): string {
   return ref.trim().replace(/^#/, '').replace(/\s+/g, '').toUpperCase()
@@ -18,7 +20,12 @@ function digitsInText(digits: string, text: string): boolean {
 async function ordersFor(letters: string, digits: string): Promise<{ id: string; name: string }[]> {
   const rows = letters
     ? await prisma.order.findMany({ where: { shopifyOrderNumber: { in: [`#${letters}${digits}`, `${letters}${digits}`] } }, select: { id: true, shopifyOrderNumber: true } })
-    : await prisma.order.findMany({ where: { shopifyOrderNumber: { endsWith: digits } }, select: { id: true, shopifyOrderNumber: true } })
+    : digits.length < MIN_DIGITS_ALONE
+      ? []
+      : await prisma.order.findMany({
+        where: { shopifyOrderNumber: { endsWith: digits } }, select: { id: true, shopifyOrderNumber: true },
+        orderBy: { placedAt: 'desc' }, take: MAX_SUFFIX_ROWS,
+      })
   return rows
     .filter(r => {
       const m = ORDER_NO.exec(r.shopifyOrderNumber)

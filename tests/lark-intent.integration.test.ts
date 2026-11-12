@@ -23,6 +23,7 @@ beforeAll(async () => {
   await fx.order(7000)
   await fxB.order(7000)
   await fx.order(8000, { taskStatus: 'CANCELLED' })
+  await fx.order(626)
 })
 
 afterAll(async () => {
@@ -87,6 +88,8 @@ describe('order references', () => {
     expect(await resolveTaskRefs(['LIR6262_1'], 'sửa giúp đơn hôm qua')).toMatchObject({ tasks: [], unknown: ['LIR6262_1'] })
     expect((await resolveTaskRefs(['LIR62621_1'], 'LIR6262_1 sửa')).unknown).toEqual(['LIR62621_1'])
     expect((await resolveTaskRefs(['LIR9999_1'], 'LIR9999_1')).unknown).toEqual(['LIR9999_1'])
+    expect((await resolveTaskRefs(['626_1'], 'đơn 626 dòng 1')).unknown).toEqual(['626_1'])
+    expect((await resolveTaskRefs(['LIR626_1'], 'LIR626_1 sửa')).tasks.map(t => t.taskKey)).toEqual(['LIR626_1'])
     expect((await resolveTaskRefs(['LIR8000'], 'LIR8000')).unknown).toEqual(['LIR8000'])
     expect((await resolveTaskRefs(["LIR6262_1' OR 1=1"], "LIR6262_1' OR 1=1")).unknown).toEqual(["LIR6262_1'OR1=1"])
   })

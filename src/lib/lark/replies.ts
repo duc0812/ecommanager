@@ -27,3 +27,5 @@ export const replyAmbiguous = (ref: string, candidates: string[]) => `${ref} có
 export const REPLY_OUT_OF_SCOPE = 'Bot chỉ nhận việc của Design Studio (sửa mẫu, làm mẫu, mockup).'
 
 export const REPLY_NOT_READ = 'Bot chưa đọc được yêu cầu (lỗi AI). Thử lại sau, hoặc trả lại task trên tool.'
+
+export const REPLY_FAILED = 'Bot không xử lý được yêu cầu, thử lại sau.'

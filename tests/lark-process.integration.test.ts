@@ -1,6 +1,17 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest'
 
 const failEnqueue = vi.hoisted(() => ({ on: false }))
+const failResolve = vi.hoisted(() => ({ on: false }))
+vi.mock('@/lib/lark/resolve', async importOriginal => {
+  const real = await importOriginal<typeof import('@/lib/lark/resolve')>()
+  return {
+    ...real,
+    resolveTaskRefs: async (...args: Parameters<typeof real.resolveTaskRefs>) => {
+      if (failResolve.on) throw new Error('database is locked')
+      return real.resolveTaskRefs(...args)
+    },
+  }
+})
 vi.mock('@/lib/design-agent/jobs', async importOriginal => {
   const real = await importOriginal<typeof import('@/lib/design-agent/jobs')>()
   return {
@@ -20,7 +31,7 @@ import { LarkApiError } from '@/lib/lark/api'
 import type { AcceptedLarkMessage } from '@/lib/lark/events'
 import type { LarkIntent } from '@/lib/lark/intent'
 import { processLarkMessage } from '@/lib/lark/process'
-import { REPLY_NOT_READ, REPLY_OTHER, REPLY_SENT } from '@/lib/lark/replies'
+import { REPLY_FAILED, REPLY_NOT_READ, REPLY_OTHER, REPLY_SENT } from '@/lib/lark/replies'
 import { agentFixture } from './helpers/design-agent-fixture'
 
 const fx = agentFixture('lip')
@@ -204,6 +215,23 @@ describe('Lark message processing', () => {
     const junk = await insert(msg('LIP13_1 sửa'))
     expect((await processLarkMessage(junk, { lark, llm: { llm: fakeLlm({ scope: 'RUN_SHELL', kind: 'FIX', lineKeys: ['LIP13_1'], instruction: 'x' }), model: 'm', cap: 100000 } })).outcome).toBe('ERROR')
     expect(await jobsOf('LIP13_1')).toEqual([])
+  })
+
+  it('a throw while processing records ERROR with the error and sends one generic reply', async () => {
+    failResolve.on = true
+    try {
+      const r = await run('LIP1_1 sửa nền', fix('FIX', ['LIP1_1'], 'sửa nền'))
+      expect(r).toMatchObject({ outcome: 'ERROR', jobIds: [], reply: REPLY_FAILED })
+      expect(lark.reply).toHaveBeenCalledTimes(1); expect(lark.reply).toHaveBeenCalledWith(expect.any(String), REPLY_FAILED)
+      expect(await eventOf(r)).toMatchObject({ outcome: 'ERROR', reply: REPLY_FAILED, error: 'database is locked' })
+      lark.reply.mockClear()
+      lark.reply.mockImplementation(async () => { throw new LarkApiError('Lark /reply: 99991663 token expired') })
+      const quiet = await run('LIP1_1 sửa nền', fix('FIX', ['LIP1_1'], 'sửa nền'))
+      expect(quiet).toMatchObject({ outcome: 'ERROR', reply: null })
+      expect((await eventOf(quiet)).outcome).toBe('ERROR'); expect((await eventOf(quiet)).error).toContain('database is locked')
+    } finally {
+      failResolve.on = false
+    }
   })
 
   it('a failing reply keeps the job and records the error', async () => {

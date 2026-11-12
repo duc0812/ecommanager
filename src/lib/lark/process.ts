@@ -5,7 +5,7 @@ import { getLarkConfig } from '@/lib/lark/settings'
 import { larkLlm, parseLarkIntent, type LarkLlm } from '@/lib/lark/intent'
 import { resolveTaskRefs } from '@/lib/lark/resolve'
 import {
-  REPLY_NOT_READ, REPLY_OTHER, REPLY_OUT_OF_SCOPE, REPLY_SENT, REPLY_UNCLEAR,
+  REPLY_FAILED, REPLY_NOT_READ, REPLY_OTHER, REPLY_OUT_OF_SCOPE, REPLY_SENT, REPLY_UNCLEAR,
   replyAccepted, replyAmbiguous, replyAppended, replyAskCustomer, replyCancelled, replyOrderClosed, replyRunning, replyWhatToFix,
 } from '@/lib/lark/replies'
 import { AgentJobError, enqueueAgentJob, openJobForTask, type AgentJobKind } from '@/lib/design-agent/jobs'
@@ -122,7 +122,20 @@ async function decide(text: string, sender: string, llm: LarkLlm | null, now?: D
 }
 
 export async function processLarkMessage(msg: AcceptedLarkMessage, deps: Partial<LarkDeps> = {}): Promise<Processed> {
-  const lark = deps.lark ?? larkApi(await getLarkConfig())
+  let lark: LarkApi | null = deps.lark ?? null
+  try {
+    lark ??= larkApi(await getLarkConfig())
+    return await handleLarkMessage(msg, lark, deps)
+  } catch (e) {
+    const error = errText(e)
+    console.error('[lark] xử lý lỗi', error)
+    const reply = lark ? await lark.reply(msg.messageId, REPLY_FAILED).then(() => REPLY_FAILED, () => null) : null
+    await record(msg.eventId, { outcome: 'ERROR', jobIds: [], reply, error })
+    return { outcome: 'ERROR', jobIds: [], reply }
+  }
+}
+
+async function handleLarkMessage(msg: AcceptedLarkMessage, lark: LarkApi, deps: Partial<LarkDeps>): Promise<Processed> {
   let llm: LarkLlm | null = null
   let llmError: string | null = null
   if ('llm' in deps) llm = deps.llm ?? null
