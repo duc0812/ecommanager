@@ -44,6 +44,10 @@ afterAll(async () => {
 })
 
 describe('design agent hooks in design-tasks', () => {
+  it('the server refuses an empty "Khác:"', async () => {
+    await expect(transitionTask('DAH4_1', LEAD, { to: 'REJECTED', reasons: ['Khác: a'] })).rejects.toThrow('Lý do khác dài từ 3 đến 200 ký tự')
+  })
+
   it('switch off: a reject queues nothing', async () => {
     await reject('DAH1_1')
     expect(await jobsOf('DAH1_1')).toEqual([])

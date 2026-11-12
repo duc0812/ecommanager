@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import Sidebar from '@/components/Sidebar'
 import type { Me, TaskRow } from '../components/types'
+import { rejectReasonBucket } from '@/lib/reject-reasons'
 import { OPEN_STATUSES, requestJson } from '../components/model'
 import { Avatar, Card, ErrorBanner, Icon, Pill, card, btn } from '../components/ui'
 
@@ -78,7 +79,7 @@ export default function DesignDashboard() {
     const reasonTasks = new Map<string, TaskRow>()
     for (const t of [...open, ...done]) if ((t.status === 'REJECTED' || t.status === 'DONE') && t.rejectReasons.length) reasonTasks.set(t.id, t)
     const counts = new Map<string, number>()
-    for (const t of Array.from(reasonTasks.values())) for (const r of t.rejectReasons) counts.set(r, (counts.get(r) ?? 0) + 1)
+    for (const t of Array.from(reasonTasks.values())) for (const r of t.rejectReasons) { const b = rejectReasonBucket(r); counts.set(b, (counts.get(b) ?? 0) + 1) }
     const reasons = Array.from(counts.entries()).sort((x, y) => y[1] - x[1])
 
     return {

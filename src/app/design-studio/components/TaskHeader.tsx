@@ -12,6 +12,7 @@ import HandoffButton from './HandoffButton'
 import SupplierStrip from './SupplierStrip'
 import NextStepBar from './NextStepBar'
 import LineFixForm from './LineFixForm'
+import RejectDialog from './RejectDialog'
 import { PopoverHead, useDismiss, useToast } from './overlay'
 import {
   Avatar, Icon, Pill, READY_META, STATUS_META, btnMd, btnPrimaryMd, field, fieldLabel, fmtDate, fmtDateTime, iconBtn, menuItem, popover,
@@ -76,8 +77,6 @@ export default function TaskHeader({ detail, qa, holdCount, refreshing, onRefres
   const [busy, setBusy] = useState(false)
   const [panel, setPanel] = useState<Panel>('none')
   const [confirm, setConfirm] = useState(false)
-  const [reasons, setReasons] = useState<string[]>([])
-  const [rejectNote, setRejectNote] = useState('')
   const [askNote, setAskNote] = useState('')
   const [assignee, setAssignee] = useState(task.assigneeId ?? detail.assignable[0]?.id ?? '')
   const [kpi, setKpi] = useState(String(task.kpi))
@@ -140,12 +139,6 @@ export default function TaskHeader({ detail, qa, holdCount, refreshing, onRefres
     }, () => { setAssignNote(''); close() })
   }
 
-  function submitReject(e: FormEvent) {
-    e.preventDefault()
-    if (reasons.length === 0) return
-    go({ to: 'REJECTED', reasons, note: rejectNote.trim() || undefined }, () => { close(); setReasons([]); setRejectNote('') })
-  }
-
   function submitAsk(e: FormEvent) {
     e.preventDefault()
     if (!askNote.trim()) return
@@ -194,7 +187,7 @@ export default function TaskHeader({ detail, qa, holdCount, refreshing, onRefres
     secondaries.push(<button key="ask" type="button" className={btnMd} disabled={busy} aria-haspopup="dialog" aria-expanded={panel === 'ask'} onClick={() => setPanel(panel === 'ask' ? 'none' : 'ask')}><Icon name="contact_support" className="text-[18px] text-on-surface-variant" />Hỏi khách</button>)
   }
   if (can('REJECTED')) {
-    secondaries.push(<button key="reject" type="button" className={btnMd} disabled={busy} aria-haspopup="dialog" aria-expanded={panel === 'reject'} onClick={() => { setPanel(panel === 'reject' ? 'none' : 'reject'); setReasons([]) }}><Icon name="assignment_return" className="text-[18px] text-on-surface-variant" />Trả lại sửa</button>)
+    secondaries.push(<button key="reject" type="button" className={btnMd} disabled={busy} aria-haspopup="dialog" aria-expanded={panel === 'reject'} onClick={() => { setPanel(panel === 'reject' ? 'none' : 'reject') }}><Icon name="assignment_return" className="text-[18px] text-on-surface-variant" />Trả lại sửa</button>)
   }
   // On a line already at its supplier the same control asks why and reopens that line only (the server takes it so, too).
   if (task.status === 'DONE' && detail.reopensSentLine) {
@@ -305,30 +298,7 @@ export default function TaskHeader({ detail, qa, holdCount, refreshing, onRefres
           </button>
 
           {panel === 'reject' && (
-            <form role="dialog" aria-label="Trả lại sửa" onSubmit={submitReject} className={`${popover} top-12 right-12 w-[400px] p-md flex flex-col gap-sm`}>
-              <PopoverHead title="Trả lại sửa" onClose={close} />
-              <div className="flex flex-col gap-xs">
-                <span className="text-label-sm text-on-surface-variant">Lý do (chọn nhiều)</span>
-                <div className="flex flex-wrap gap-xs">
-                  {settings.rejectReasons.map(r => {
-                    const on = reasons.includes(r)
-                    return (
-                      <button key={r} type="button" aria-pressed={on} onClick={() => setReasons(on ? reasons.filter(x => x !== r) : [...reasons, r])}
-                        className={`inline-flex items-center gap-xs h-8 px-sm rounded-full border text-label-sm ${on ? 'bg-secondary/10 border-secondary text-secondary font-semibold' : 'bg-surface-container-lowest border-outline-variant text-on-surface'}`}>
-                        {on && <Icon name="check" className="text-[16px]" />}{r}
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
-              <label className={fieldLabel}>Ghi chú cho designer
-                <textarea rows={3} value={rejectNote} onChange={e => setRejectNote(e.target.value)} placeholder="Vd. tên đang là Emely, khách nhập Emily" className={`${field} h-auto py-sm`} />
-              </label>
-              <div className="flex justify-end gap-sm">
-                <button type="button" className={btnMd} onClick={close}>Huỷ</button>
-                <button type="submit" className={btnPrimaryMd} disabled={busy || reasons.length === 0}>Trả lại · {reasons.length} lý do</button>
-              </div>
-            </form>
+            <RejectDialog reasons={settings.rejectReasons} busy={busy} onCancel={close} onSubmit={(r, n) => go({ to: 'REJECTED', reasons: r, note: n || undefined }, close)} />
           )}
 
           {panel === 'reopen' && (

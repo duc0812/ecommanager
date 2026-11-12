@@ -1,5 +1,5 @@
 'use client'
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import type { TaskDetail, TaskStatus, TransitionBody } from './types'
 import { allSlotsFilled, canMove, copyText, mockupFiles, newestFor, postJson, printPartNames, productPageUrl, requestJson, taskImages, taskUrl, timeLeft } from './model'
@@ -13,9 +13,10 @@ import CustomerInputs from './CustomerInputs'
 import ProductionEditor from './ProductionEditor'
 import PrintFileThumb from './PrintFileThumb'
 import ActivityPanel from './ActivityPanel'
+import RejectDialog from './RejectDialog'
 import { useShopifyRefresh } from './useShopifyRefresh'
-import { PopoverHead, useDismiss, useToast } from './overlay'
-import { Avatar, ErrorBanner, Icon, Pill, STATUS_META, btnMd, btnPrimaryMd, card, field, fieldLabel, fmtDate, fmtDateTime, iconBtn, menuItem, popover } from './ui'
+import { useDismiss, useToast } from './overlay'
+import { Avatar, ErrorBanner, Icon, Pill, STATUS_META, btnMd, btnPrimaryMd, card, fmtDate, fmtDateTime, iconBtn, menuItem, popover } from './ui'
 
 type Panel = 'none' | 'reject' | 'menu'
 
@@ -77,8 +78,6 @@ function ReviewHeader({ detail, verdict, position, busy, refreshing, onApprove, 
   const { task, line, settings } = detail
   const toast = useToast()
   const [panel, setPanel] = useState<Panel>('none')
-  const [reasons, setReasons] = useState<string[]>([])
-  const [note, setNote] = useState('')
   const ref = useRef<HTMLDivElement>(null)
   const close = () => setPanel('none')
   useDismiss(ref, panel !== 'none', close)
@@ -88,11 +87,6 @@ function ReviewHeader({ detail, verdict, position, busy, refreshing, onApprove, 
   const canApprove = inReview && canMove(detail, 'DONE')
   const canReject = inReview && canMove(detail, 'REJECTED')
 
-  async function submitReject(e: FormEvent) {
-    e.preventDefault()
-    if (reasons.length === 0) return
-    if (await onReject(reasons, note.trim())) { close(); setReasons([]); setNote('') }
-  }
   async function copy(value: string) { toast.say(await copyText(value) ? `Đã chép "${value}"` : 'Không chép được') }
 
   const links: { href: string; label: string; icon: string; internal?: boolean }[] = [
@@ -135,7 +129,7 @@ function ReviewHeader({ detail, verdict, position, busy, refreshing, onApprove, 
 
         <div ref={ref} className="relative flex-auto flex items-center justify-end gap-sm">
           {canReject && (
-            <button type="button" className={btnMd} disabled={busy} aria-haspopup="dialog" aria-expanded={panel === 'reject'} onClick={() => { setPanel(panel === 'reject' ? 'none' : 'reject'); setReasons([]) }}>
+            <button type="button" className={btnMd} disabled={busy} aria-haspopup="dialog" aria-expanded={panel === 'reject'} onClick={() => { setPanel(panel === 'reject' ? 'none' : 'reject') }}>
               <Icon name="assignment_return" className="text-[18px] text-on-surface-variant" />Trả lại sửa
             </button>
           )}
@@ -154,30 +148,7 @@ function ReviewHeader({ detail, verdict, position, busy, refreshing, onApprove, 
           </button>
 
           {panel === 'reject' && (
-            <form role="dialog" aria-label="Trả lại sửa" onSubmit={submitReject} className={`${popover} top-12 right-12 w-[400px] p-md flex flex-col gap-sm`}>
-              <PopoverHead title="Trả lại sửa" onClose={close} />
-              <div className="flex flex-col gap-xs">
-                <span className="text-label-sm text-on-surface-variant">Lý do (chọn nhiều)</span>
-                <div className="flex flex-wrap gap-xs">
-                  {settings.rejectReasons.map(r => {
-                    const on = reasons.includes(r)
-                    return (
-                      <button key={r} type="button" aria-pressed={on} onClick={() => setReasons(on ? reasons.filter(x => x !== r) : [...reasons, r])}
-                        className={`inline-flex items-center gap-xs h-8 px-sm rounded-full border text-label-sm ${on ? 'bg-secondary/10 border-secondary text-secondary font-semibold' : 'bg-surface-container-lowest border-outline-variant text-on-surface'}`}>
-                        {on && <Icon name="check" className="text-[16px]" />}{r}
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
-              <label className={fieldLabel}>Ghi chú cho designer
-                <textarea rows={3} value={note} onChange={e => setNote(e.target.value)} placeholder="Vd. tên đang là Emely, khách nhập Emily" className={`${field} h-auto py-sm`} />
-              </label>
-              <div className="flex justify-end gap-sm">
-                <button type="button" className={btnMd} onClick={close}>Huỷ</button>
-                <button type="submit" className={btnPrimaryMd} disabled={busy || reasons.length === 0}>Trả lại · {reasons.length} lý do</button>
-              </div>
-            </form>
+            <RejectDialog reasons={settings.rejectReasons} busy={busy} onCancel={close} onSubmit={async (r, n) => { if (await onReject(r, n)) close() }} />
           )}
 
           {panel === 'menu' && (

@@ -1,5 +1,6 @@
 import { printCutCheck } from '@/lib/print-cut'
 import { prisma } from '@/lib/db'
+import { rejectReasonsError } from '@/lib/reject-reasons'
 import { isNonProductLine, lineKeysOf, planTaskKeys, type KeyedTask, type TaskKeyMove } from '@/lib/order-lines'
 import {
   artworkUrl, linePersonalization, linkedPrintFiles, parseAttributes, safeHttpUrl, sourcePrintFiles, updateLine, loadWorkspace,
@@ -726,6 +727,8 @@ export async function transitionTask(taskKey: string, actor: Actor, input: Trans
     say('STATUS', from === 'ASK_CUSTOMER' ? 'Tiếp tục sau khi hỏi khách' : 'Gửi duyệt')
   } else if (input.to === 'REJECTED') {
     const reasons = input.reasons ?? []
+    const reasonError = rejectReasonsError(reasons)
+    if (reasonError) throw new Error(reasonError)
     // A task sent back after it went to the supplier keeps saying so, whatever the reviewer adds.
     const sentBack = parseRejectReasons(task.rejectReasons).filter(r => SENT_BACK_REASONS.includes(r) && !reasons.includes(r))
     data.rejectReasons = JSON.stringify([...sentBack, ...reasons])

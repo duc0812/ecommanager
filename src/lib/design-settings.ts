@@ -42,7 +42,7 @@ export const DEFAULT_DESIGN_SETTINGS: DesignSettings = {
   slaCustomHours: 24,
   slaNonCustomHours: 48,
   kpiByType: { jersey: 0.3, shirt: 0.3, hoodie: 0.4, socks: 0.4, ornament: 0.2, tumbler: 0.15, mug: 0.15, default: 0.3 },
-  rejectReasons: ['Sai chính tả / nội dung', 'Lệch tâm / ra ngoài vùng an toàn', 'Thiếu nét', 'Sai màu / biến thể', 'Thiếu bleed', 'Font sai'],
+  rejectReasons: ['Sai chính tả / nội dung', 'Lệch tâm / ra ngoài vùng an toàn', 'Thiếu nét', 'Sai màu / biến thể', 'Thiếu bleed', 'Font sai', 'Nền không đồng màu giữa các mảnh', 'Hoạ tiết chính nằm ngoài safe zone', 'Sai template đang mapping', 'Sai chi tiết'],
   designerCanApprove: true,
   trelloMode: 'BOTH',
   agent: DEFAULT_AGENT_SETTINGS,
