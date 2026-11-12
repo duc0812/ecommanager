@@ -24,6 +24,7 @@ describe('buildSystemPrompt', () => {
   })
   it('writes the summary as three staff lines: the customer, the order, where it stands', () => {
     const s = buildSystemPrompt([], settings)
+    expect(s).toContain('Every date you write, for staff or the customer, is MM/DD/YYYY (10/30/2026)')
     expect(s).toContain('summary is exactly 3 lines in Vietnamese: "Khách: …" (what the customer reports or asks), "Đơn hàng: …" (what our data says is really wrong with the order or item: which item, which factory, where it is), "Hiện trạng: …"')
   })
   it('fixes the reply structure: acknowledge, action with timing, closing promise within 24 hours', () => {
