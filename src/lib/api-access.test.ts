@@ -196,6 +196,7 @@ describe('seller API allow-list', () => {
       '/api/tools/spy-idea',
       '/api/tools/creative',
       '/api/tools/scale',
+      '/api/design-agent/jobs',
       '/api/fulfillment/crawler',
       '/api/fulfillment/clone/jobs',
       '/api/overview',
