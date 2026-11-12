@@ -348,15 +348,15 @@ def run_process_new_orders(cfg: Config, since: str, out_dir: Path, log: RunLog, 
     log.line(f'chạy process-new-orders --since {since} (không --push)')
     code, out = _run(cmd, cfg.tool_worktree, timeout_s)
     log.block('process', out)
-    if code is None:
-        raise StageError('process', f'process-new-orders quá {math.ceil(timeout_s / 60)} phút')
-    if code != 0:
-        raise StageError('process', f'process-new-orders thoát mã {code}')
     snap = None
     for line in out.splitlines():
         line = line.strip()
         if line.startswith('snapshot '):
             snap = Path(line[len('snapshot '):].strip())
+    if code is None or code != 0:
+        e = StageError('process', f'process-new-orders quá {math.ceil(timeout_s / 60)} phút' if code is None else f'process-new-orders thoát mã {code}')
+        e.snapshot = snap  # printed by this run's own freshSnapshot(): ours to drop
+        raise e
     if snap is None or not snap.exists():
         raise StageError('process', 'không xác định được snapshot của lần chạy')
     shared = Path(out_dir) / 'spec-shared.json'
@@ -672,6 +672,9 @@ def build_plan(cfg: Config, pr: ProcessResult, since: str, tmp_dir: Path, log: R
             results = []
             for r, i in zip(rows, ins):
                 if i['fields'] is None:
+                    if no and '-noname.' not in r['fileName']:
+                        results.append(sz.GuardResult('HOLD', 'NO', 'khách chọn No nhưng file in có tên', {'file': r['fileName']}))
+                        continue
                     results.append(sz.GuardResult('UNCHECKED', None, 'không kiểm được safe zone (không có entry thư viện)', {}))
                     continue
                 inset = sz.safe_inset_px(i['safe_in'], i['dpi'], None)
@@ -768,6 +771,14 @@ def pid_alive(pid: int) -> bool:
         k32.CloseHandle(handle)
 
 
+def lock_identity(lock_dir: Path) -> tuple[int, int] | None:
+    try:
+        st = os.stat(lock_dir)
+    except OSError:
+        return None
+    return st.st_ino, st.st_ctime_ns
+
+
 class PushLock:
     """artwork-builder/.push-lock (mkdir/rmdir). Waits, never breaks another holder's lock; frees only a lock its own marker says
     a dead process of this tool left behind (a run killed by the task's time limit)."""
@@ -783,10 +794,16 @@ class PushLock:
             self.marker.unlink(missing_ok=True)
             return False
         try:
-            pid = int(self.marker.read_text().strip())
-        except ValueError:
+            raw = self.marker.read_text().strip()
+            m = json.loads(raw) if raw.startswith('{') else {'pid': int(raw)}
+            pid = int(m['pid'])
+        except (ValueError, KeyError, TypeError):
             return False
         if pid_alive(pid):
+            return False
+        # our run is dead; the folder is ours only if it is the very folder that run created
+        if (m.get('ino'), m.get('ctimeNs')) != lock_identity(self.lock_dir):
+            self.marker.unlink(missing_ok=True)
             return False
         try:
             self.lock_dir.rmdir()
@@ -807,7 +824,8 @@ class PushLock:
                     raise LockBusy(str(self.lock_dir))
                 self.sleep(self.poll_s)
         self.marker.parent.mkdir(parents=True, exist_ok=True)
-        self.marker.write_text(str(os.getpid()))
+        ino, ctime_ns = lock_identity(self.lock_dir)
+        self.marker.write_text(json.dumps({'pid': os.getpid(), 'ino': ino, 'ctimeNs': ctime_ns}))
         return self
 
     def __exit__(self, *exc):
@@ -994,6 +1012,9 @@ def run_stages(cfg: Config, log: RunLog, summary: dict, args) -> int:
     except StageError as e:
         log.line(f'dừng ở bước {e.stage}: {e.message}')
         summary['errors'].append(_err(e))
+        if snapshot is None and getattr(e, 'snapshot', None):
+            snapshot = e.snapshot
+            summary['snapshot'] = str(snapshot)
     finally:
         if snapshot and not args.keep_snapshot:
             drop_own_snapshot(cfg, snapshot, log)

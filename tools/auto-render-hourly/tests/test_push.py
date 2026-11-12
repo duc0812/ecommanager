@@ -1,3 +1,4 @@
+import json
 import os
 
 import pytest
@@ -52,9 +53,15 @@ def test_lock_waits_then_gives_up_without_breaking_it(tmp_path):
     assert lock.exists() and clock.slept == 1800
 
 
+def _marker(tmp_path, pid, lock, identity=None):
+    ino, ctime_ns = identity or ar.lock_identity(lock)
+    (tmp_path / 'push-lock.owner').write_text(json.dumps({'pid': pid, 'ino': ino, 'ctimeNs': ctime_ns}))
+
+
 def test_own_stale_lock_is_recovered_another_holders_is_not(tmp_path):          # Review Focus 1
-    lock = tmp_path / '.push-lock'; lock.mkdir(); (tmp_path / 'push-lock.owner').write_text(str(DEAD_PID))
-    with ar.PushLock(lock, tmp_path, wait_s=0): assert (tmp_path / 'push-lock.owner').read_text() == str(os.getpid())
+    lock = tmp_path / '.push-lock'; lock.mkdir(); _marker(tmp_path, DEAD_PID, lock)
+    with ar.PushLock(lock, tmp_path, wait_s=0):
+        assert json.loads((tmp_path / 'push-lock.owner').read_text())['pid'] == os.getpid()
     assert not lock.exists() and not (tmp_path / 'push-lock.owner').exists()
     lock.mkdir(); (tmp_path / 'push-lock.owner').write_text(str(os.getpid()))   # a live pid: not ours to break
     with pytest.raises(ar.LockBusy):
@@ -83,3 +90,27 @@ def test_flat_text_goes_through_its_own_stable_ledger(world):
     assert ar.main(['--config', str(w.config)]) == 0 and w.summary()['pushed'] == ['LIT7_1']
     call = next(c for c in w.node.calls() if c['script'].endswith('push-shared-prints.mjs'))
     assert call['args'][call['args'].index('--out') + 1] == str(w.home / 'flat-ledger') and call['args'][call['args'].index('--spec') + 1].endswith('.auto.json')
+
+
+def test_stale_marker_never_breaks_a_lock_it_did_not_create(tmp_path):        # review fix 2
+    lock = tmp_path / '.push-lock'; lock.mkdir()
+    real = ar.lock_identity(lock)
+    _marker(tmp_path, DEAD_PID, lock, identity=(real[0] + 1, real[1] + 1))   # our killed run's lock was cleared, another session took it
+    with pytest.raises(ar.LockBusy):
+        with ar.PushLock(lock, tmp_path, wait_s=0): pass
+    assert lock.exists() and not (tmp_path / 'push-lock.owner').exists()
+    (tmp_path / 'push-lock.owner').write_text(str(DEAD_PID))                    # a marker without identity proves nothing
+    with pytest.raises(ar.LockBusy):
+        with ar.PushLock(lock, tmp_path, wait_s=0): pass
+    assert lock.exists()
+
+
+def test_failed_process_run_drops_the_snapshot_it_made(world):                 # review minor
+    w = world(lines=[dict(key='LIT1_1', readiness='AUTO', ink=(210, 110, 390, 150))])
+    plan = json.loads((w.node.dir / 'plan.json').read_text(encoding='utf-8'))
+    plan['process']['exit'] = 1
+    w.node.plan(**plan)
+    other = w.snapshot.with_name('prod-snap-20261111-0800.db'); other.write_bytes(b'x')
+    assert ar.main(['--config', str(w.config)]) == 1
+    assert not w.snapshot.exists() and other.exists()
+    assert w.summary()['errors'][0]['message'] == 'process-new-orders thoát mã 1'

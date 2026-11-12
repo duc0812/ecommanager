@@ -421,8 +421,9 @@ def build_dbs(cfg, snapshot: Path, lines: list[dict]):
             make_piece(storage / 'library' / 'e1' / 'artwork.png', storage / rel, ink=ln.get('ink'))
             local.execute('INSERT INTO DesignTask VALUES (?,?,?,?,?,?,?)', (f'lt{i}', oid, lid, key, 'REVIEW', ln['readiness'], f'2026-11-12T09:00:{i:02d}.000+00:00'))
             local.execute('INSERT INTO "Order" VALUES (?,?,?)', (oid, 'store1', '2026-11-11T10:00:00.000+00:00'))
-            local.execute("INSERT INTO DesignArtwork VALUES (?,?,?,'PRINT','Print',1,?,?,'AUTO',NULL,?,600,400,'e1',NULL)",
-                          (f'a{i}', oid, lid, ln.get('fileName', f'{n}_1_Print_auto.png'), rel, '2026-11-12T09:30:00.000+00:00'))
+            local.execute("INSERT INTO DesignArtwork VALUES (?,?,?,'PRINT','Print',1,?,?,'AUTO',NULL,?,600,400,?,NULL)",
+                          (f'a{i}', oid, lid, ln.get('fileName', f'{n}_1_Print_auto.png'), rel, '2026-11-12T09:30:00.000+00:00',
+                           ln.get('entryId', 'e1')))
     for c in (local, prod):
         c.commit()
         c.close()

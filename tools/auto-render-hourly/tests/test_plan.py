@@ -72,3 +72,13 @@ def test_reuse_goes_and_cm_builder_does_not(cfg, make_dbs, tmp_path):
     plan = ar.build_plan(cfg, pr, '2026-10-29', tmp_path / 'tmp', log)
     assert [g['lines'] for g in json.loads(plan.shared_spec.read_text(encoding='utf-8'))['groups']] == [['LIT10_1']]
     assert plan.skipped == [{'taskKey': 'LIT11_1', 'reason': 'cm-builder: không thuộc auto render hàng giờ'}]
+
+
+def test_lone_no_is_checked_even_without_a_library_entry(cfg, make_dbs, tmp_path):   # review fix 1
+    no = [('Custom Name: Yes Or No?', 'No'), ('Custom Name', 'KANTORSKI')]
+    pr = make_dbs(tmp_path, [dict(key='LIT12_1', readiness='AUTO', pairs=no, ink=(210, 110, 390, 150), fileName='12_1_Print_auto.png', entryId=None),
+                             dict(key='LIT13_1', readiness='AUTO', pairs=no, ink=None, fileName='13_1_Print_auto-noname.png', entryId=None)])
+    plan = ar.build_plan(cfg, pr, '2026-10-29', tmp_path / 'tmp', log)
+    held = next(l for l in plan.lines if l.key == 'LIT12_1').result
+    assert (held.verdict, held.guard, held.reason) == ('HOLD', 'NO', 'khách chọn No nhưng file in có tên')
+    assert keys(plan, 'UNCHECKED') == ['LIT13_1'] and plan.push_local == ['LIT13_1']
