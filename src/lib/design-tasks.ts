@@ -817,6 +817,53 @@ export async function submitAutoRenderForReview(orderId: string, shopifyLineId: 
   return moved ? { moved: true, reason: null } : { moved: false, reason: 'Task vừa đổi trạng thái' }
 }
 
+export const AGENT_SUBMIT_MESSAGE = 'Gửi duyệt lại (Agent)'
+const AGENT_SUBMIT_FROM: TaskStatus[] = ['NEW', 'ASSIGNED', 'DOING', 'REJECTED']
+type AgentSubmitResult = { moved: true } | { moved: false; error: string; missing: string[]; status: 400 | 404 | 409 }
+
+/** The Design Agent's "Gửi duyệt": outside canTransition (it is never the assignee), with the checks a designer's press runs. */
+export async function submitAgentForReview(taskKey: string, agentId: string): Promise<AgentSubmitResult> {
+  const task = await prisma.designTask.findUnique({ where: { taskKey } })
+  if (!task) return { moved: false, error: 'Không tìm thấy task', missing: [], status: 404 }
+  if (task.status === 'REVIEW') return { moved: true }
+  if (!AGENT_SUBMIT_FROM.includes(task.status as TaskStatus)) return { moved: false, error: `Task đang ${task.status}`, missing: [], status: 409 }
+  const line = await prisma.orderLine.findFirst({ where: { orderId: task.orderId, shopifyLineId: task.shopifyLineId } })
+  if (!line) return { moved: false, error: 'Không tìm thấy dòng đơn', missing: [], status: 404 }
+  const files = await prisma.designArtwork.findMany({ where: { orderId: line.orderId, shopifyLineId: line.shopifyLineId, removedAt: null } })
+  const template = await templateForLine(line)
+  const missingAreas = () => template ? missingPrintAreas(files, requiredSlotsFor(templateViewFor(template, files))) : []
+  const pair = printCutCheck(template, files)
+  if (pair && !pair.ok) return { moved: false, error: pair.message, missing: missingAreas(), status: 400 }
+  const missing = await missingPrintFiles(line)
+  if (missing) return { moved: false, error: missing, missing: missingAreas(), status: 400 }
+  const moved = await prisma.$transaction(async tx => {
+    const r = await tx.designTask.updateMany({ where: { id: task.id, status: task.status }, data: { status: 'REVIEW', prevStatus: null } })
+    if (r.count === 0) return false
+    await tx.designTaskEvent.create({ data: { taskId: task.id, type: 'STATUS', message: AGENT_SUBMIT_MESSAGE, actorId: agentId } })
+    return true
+  })
+  if (moved) return { moved: true }
+  const now = await prisma.designTask.findUnique({ where: { id: task.id }, select: { status: true } })
+  if (now?.status === 'REVIEW') return { moved: true }
+  return { moved: false, error: `Task đang ${now?.status ?? 'không còn'}`, missing: [], status: 409 }
+}
+
+/** REVIEW → REJECTED for the Design Agent (a request relayed from chat). Queues nothing: the request itself is the job. */
+export async function rejectReviewAsAgent(taskKey: string, agentId: string, input: { reason: string; note: string }): Promise<boolean> {
+  const task = await prisma.designTask.findUnique({ where: { taskKey } })
+  if (!task || task.status !== 'REVIEW') return false
+  const sentBack = parseRejectReasons(task.rejectReasons).filter(r => SENT_BACK_REASONS.includes(r) && r !== input.reason)
+  return prisma.$transaction(async tx => {
+    const r = await tx.designTask.updateMany({
+      where: { id: task.id, status: 'REVIEW' },
+      data: { status: 'REJECTED', rejectReasons: JSON.stringify([...sentBack, input.reason]), rejectNote: input.note || null },
+    })
+    if (r.count === 0) return false
+    await tx.designTaskEvent.create({ data: { taskId: task.id, type: 'REJECT', message: `Trả lại sửa: ${input.reason}${input.note ? ` — ${input.note}` : ''}`, actorId: agentId } })
+    return true
+  })
+}
+
 export type ReviewCard = {
   task: TaskRow; line: WorkspaceLine; slots: string[]; push: HandoffPush | null
   template: TemplateRow | null; profile: TaskProfile | null; library: TaskLibraryState | null; shipTo: Workspace['order']['shipTo'] | null
