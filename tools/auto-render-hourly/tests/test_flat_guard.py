@@ -66,3 +66,11 @@ def test_photoshop_spec_and_renderer_crash(tmp_path, fake_tools):
 def test_nothing_is_written_next_to_the_renderer(tmp_path, fake_tools):
     run(tmp_path, fake_tools, TEXT, {'Custom Name': 'Anna'})
     assert sorted(p.name for p in fake_tools.iterdir()) == ['name_render.py']
+
+
+def test_lone_no_with_a_text_area_missing_from_the_spec_is_an_error(tmp_path, fake_tools):
+    back = {'area': 'BACK', 'field': 'Custom Name', 'box': [300, 300, 700, 380], '_ink': [200, 60]}
+    spec = flat_spec(tmp_path, [back])
+    files = [{'printArea': 'BACK', 'path': 'x/LIT1_1 - BACK.png', 'widthPx': 1000, 'heightPx': 800}]
+    r = sz.check_flat_line('LIT1_1', spec, {}, True, files, tmp_path / '_out', 0.2, fake_tools, sys.executable, tmp_path / 'tmp')
+    assert r.verdict == 'ERROR' and 'thiếu vùng in BACK' in r.reason

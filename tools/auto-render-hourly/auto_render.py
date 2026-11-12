@@ -786,6 +786,7 @@ class PushLock:
     def __init__(self, lock_dir: Path, home: Path, wait_s: float = LOCK_WAIT_S, poll_s: float = 10, sleep=time.sleep, clock=time.monotonic):
         self.lock_dir, self.marker = Path(lock_dir), Path(home) / 'push-lock.owner'
         self.wait_s, self.poll_s, self.sleep, self.clock = wait_s, poll_s, sleep, clock
+        self.release_error: str | None = None
 
     def recover(self) -> bool:
         if not self.marker.exists():
@@ -832,8 +833,10 @@ class PushLock:
         self.marker.unlink(missing_ok=True)
         try:
             self.lock_dir.rmdir()
-        except OSError:
+        except FileNotFoundError:
             pass
+        except OSError as e:
+            self.release_error = f'{type(e).__name__}: {e}'
         return False
 
 
@@ -921,6 +924,9 @@ class HoldState:
 
     def get(self, key: str) -> dict:
         return self.data.get(key) or {}
+
+    def unanswered(self, key: str) -> bool:
+        return key in self.data and self.data[key].get('jobId') is None
 
     def record(self, key: str, guard: str | None, reason: str, job_id: str | None):
         self.data[key] = {'sig': self.sig(guard, reason), 'reportedAt': datetime.now().isoformat(timespec='seconds'), 'jobId': job_id}
@@ -1042,8 +1048,9 @@ def _push_phase(cfg, log, summary, plan, snapshot, since, started, left):
             summary['skipped'].append({'taskKey': key, 'reason': reason})
             log.line(f'{key} bị bỏ qua trên prod: {reason}')
 
+    lock = PushLock(cfg.artwork_builder / '.push-lock', log.home, wait_s=wait)
     try:
-        with PushLock(cfg.artwork_builder / '.push-lock', log.home, wait_s=wait):
+        with lock:
             for key in plan.push_local:
                 note(key, push_local_line(cfg, snapshot, since, key, started, log, timeout_s=budget()))
             for spec, ledger in ((plan.shared_spec, None), (plan.flat_spec, log.home / 'flat-ledger')):
@@ -1058,6 +1065,10 @@ def _push_phase(cfg, log, summary, plan, snapshot, since, started, left):
     except StageError as e:
         log.line(f'dừng đẩy: {e.message}{f" ({e.task_key})" if e.task_key else ""}')
         summary['errors'].append(_err(e))
+    if lock.release_error:
+        msg = f'KHÔNG nhả được khoá .push-lock của lần chạy này ({lock.release_error}) — cần xoá tay thư mục {lock.lock_dir}'
+        log.line(msg)
+        summary['errors'].append({'stage': 'lock', 'message': msg})
 
 
 def _hold_phase(cfg, log, summary, dry_run):
@@ -1074,7 +1085,7 @@ def _hold_phase(cfg, log, summary, dry_run):
             if not configured:
                 log.line(f'giữ lại {key}: {reason} (chưa cấu hình /hold — chỉ ghi log)')
                 continue
-            if state.needs_report(key, guard, reason):
+            if state.needs_report(key, guard, reason) or state.unanswered(key):
                 job = post_hold(cfg, key, reason)
                 state.record(key, guard, reason, job)
                 item['reported'], item['jobId'] = True, job

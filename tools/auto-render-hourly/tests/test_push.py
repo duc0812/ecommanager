@@ -1,5 +1,6 @@
 import json
 import os
+from pathlib import Path
 
 import pytest
 
@@ -114,3 +115,28 @@ def test_failed_process_run_drops_the_snapshot_it_made(world):                 #
     assert ar.main(['--config', str(w.config)]) == 1
     assert not w.snapshot.exists() and other.exists()
     assert w.summary()['errors'][0]['message'] == 'process-new-orders thoát mã 1'
+
+
+def test_failed_release_of_own_lock_is_loud_and_fails_the_run(world, monkeypatch):
+    w = world(lines=[dict(key='LIT1_1', readiness='AUTO', ink=(210, 110, 390, 150))])
+    real = Path.rmdir
+
+    def deny(self):
+        if self.name == '.push-lock':
+            raise PermissionError('denied')
+        return real(self)
+    monkeypatch.setattr(Path, 'rmdir', deny)
+    assert ar.main(['--config', str(w.config)]) == 1
+    err = next(e for e in w.summary()['errors'] if e['stage'] == 'lock')
+    assert 'KHÔNG nhả được khoá .push-lock' in err['message'] and 'PermissionError' in err['message'] and 'KHÔNG nhả được khoá' in w.log()
+
+
+def test_hold_answered_without_a_job_is_sent_again_until_a_job_comes_back(world):
+    w = world(lines=[dict(key='LIT3_1', readiness='AUTO', ink=(210, 110, 420, 150))], hold=True)
+    w.agent.job_id = None
+    ar.main(['--config', str(w.config)]); w.rerun(); ar.main(['--config', str(w.config)])
+    assert len(w.agent.holds) == 2
+    w.agent.job_id = 'job-9'; w.rerun(); ar.main(['--config', str(w.config)])
+    assert len(w.agent.holds) == 3 and w.summary()['held'][0]['jobId'] == 'job-9'
+    w.rerun(); ar.main(['--config', str(w.config)])
+    assert len(w.agent.holds) == 3

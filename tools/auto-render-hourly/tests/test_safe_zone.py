@@ -40,3 +40,11 @@ def test_judge_box_safe_unchecked_pass():
     r = sz.judge([BOX], [(210, 110, 590, 190)], AREA, None)
     assert (r.verdict, r.reason) == ('UNCHECKED', 'không kiểm được safe zone (không có template)')
     assert sz.judge([BOX], [None], AREA, 60, box_overflow=9).guard == 'BOX'
+
+
+def test_unequal_box_and_ink_lists_still_check_the_box_guard():
+    two = [BOX, sz.NameBox('FRONT', 'Line 2', (200, 220, 600, 320))]
+    assert sz.judge(two, [(210, 110, 590, 300)], AREA, 60).verdict == 'PASS'
+    r = sz.judge(two, [(210, 110, 650, 300)], AREA, 60)
+    assert (r.verdict, r.guard) == ('HOLD', 'BOX') and r.details['overflowPx'] == 50
+    assert sz.judge(two, [None], AREA, 60).verdict == 'PASS'

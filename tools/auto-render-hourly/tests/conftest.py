@@ -337,9 +337,10 @@ def agent_server():
             if req.headers.get('authorization') != f'Bearer {token}':
                 return 401, {}, {'error': 'unauthorized'}
             req.server_ref.holds.append(json.loads(body))
-            return 200, {}, {'ok': True, 'jobId': job_id}
+            return 200, {}, {'ok': True, 'jobId': req.server_ref.job_id}
         s = _Server(_handler(answer))
         s.holds = []
+        s.job_id = job_id
         servers.append(s)
         return s
     yield make

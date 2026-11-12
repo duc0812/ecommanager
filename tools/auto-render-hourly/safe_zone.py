@@ -109,12 +109,22 @@ def judge(boxes: list[NameBox], inks: list[Rect | None], area: Rect, inset_px: f
     details = {'boxes': [list(b.rect) for b in boxes], 'inks': [list(i) if i else None for i in inks],
                'overflowPx': 0.0, 'insetPx': inset_px}
     worst, worst_box = None, boxes[0] if boxes else None
-    for b, ink in paired:
-        if ink is None:
-            continue
-        o = overflow(ink, b.rect, b.check_x, b.check_y)
-        if worst is None or o > worst:
-            worst, worst_box = o, b
+    if paired:
+        for b, ink in paired:
+            if ink is None:
+                continue
+            o = overflow(ink, b.rect, b.check_x, b.check_y)
+            if worst is None or o > worst:
+                worst, worst_box = o, b
+    elif boxes:
+        union = (min(b.rect[0] for b in boxes), min(b.rect[1] for b in boxes), max(b.rect[2] for b in boxes), max(b.rect[3] for b in boxes))
+        check_x, check_y = any(b.check_x for b in boxes), any(b.check_y for b in boxes)
+        for ink in inks:
+            if ink is None:
+                continue
+            o = overflow(ink, union, check_x, check_y)
+            if worst is None or o > worst:
+                worst = o
     if box_overflow is not None and (worst is None or box_overflow > worst):
         worst = float(box_overflow)
     details['overflowPx'] = max(0.0, worst or 0.0)
@@ -395,7 +405,7 @@ def check_flat_line(key: str, spec_path: Path, values: dict[str, str], said_no: 
                 ref = fresh.get(f['printArea'])
                 pushed = Path(files_root) / f['path']
                 if ref is None:
-                    continue
+                    return GuardResult('ERROR', None, f'spec flat-text thiếu vùng in {f["printArea"]} — không so được với bản không tên', {'area': f['printArea']})
                 with Image.open(pushed) as a, Image.open(ref) as b:
                     if a.size != b.size:
                         return GuardResult('ERROR', None, 'spec flat-text không khớp khổ file', {'area': f['printArea']})
