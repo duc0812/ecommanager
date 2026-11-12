@@ -6,10 +6,13 @@ import { getDesignSettings } from '@/lib/design-settings'
 import { designOf } from '@/lib/flat-text-coverage'
 import { linePersonalization, safeHttpUrl } from '@/lib/design-studio'
 import { currentFiles, type FileKind } from '@/lib/task-files'
-import { isSentLineOfOpenOrder, templateForLine, type Readiness, type TaskStatus } from '@/lib/design-tasks'
-import { notifyAgentQueue, waitForAgentQueue, type AgentJobKind, type AgentJobSource } from '@/lib/design-agent/jobs'
+import { AGENT_SUBMIT_MESSAGE, SENT_BACK_REASONS, isSentLineOfOpenOrder, templateForLine, type Readiness, type TaskStatus } from '@/lib/design-tasks'
+import {
+  enqueueFixOnReject, notifyAgentQueue, waitForAgentQueue, type AgentJobKind, type AgentJobSource, type AgentJobStatus,
+} from '@/lib/design-agent/jobs'
 import { affectedForTask, type AffectedRow } from '@/lib/design-agent/affected'
 import { ensureAgentUser } from '@/lib/design-agent/agent-user'
+import { notifyNeedsOwner, type OwnerNotice } from '@/lib/design-agent/notify'
 
 export const DESIGN_AGENT_TOKEN_KEY = 'design.agent.tokenHash'
 export const DESIGN_AGENT_SEEN_KEY = 'design.agent.lastSeenAt'
@@ -27,6 +30,24 @@ const TASK_CANCELLED = 'Task đã huỷ'
 const TASK_APPROVED = 'Task đã được duyệt'
 const LINE_GONE = 'Không tìm thấy dòng của task'
 const NO_ERROR_TEXT = 'Runner không gửi lý do'
+const MAX_SUMMARY = 4000
+const MAX_RESULT = 20000
+const NOT_SUBMITTED = '\n(Agent báo xong nhưng task chưa được gửi duyệt.)'
+
+// The notice is a side channel: a throw (Lark down) never fails the runner's call.
+async function tellOwner(notice: OwnerNotice): Promise<void> {
+  try {
+    await notifyNeedsOwner(notice)
+  } catch (e) {
+    console.error(`[design agent] không báo được chủ shop cho job ${notice.jobId}:`, (e as Error)?.message ?? e)
+  }
+}
+
+async function noteOnTask(taskId: string | null, message: string): Promise<void> {
+  if (!taskId || !(await prisma.designTask.findUnique({ where: { id: taskId }, select: { id: true } }))) return
+  const agent = await ensureAgentUser()
+  await prisma.designTaskEvent.create({ data: { taskId, type: 'NOTE', message, actorId: agent.id } })
+}
 
 export function generateAgentRunnerToken(): Promise<string> {
   return mintHashedToken('dag_', DESIGN_AGENT_TOKEN_KEY)
@@ -129,7 +150,8 @@ export async function releaseExpiredAgentLeases(now: Date = new Date()): Promise
     if (job.attempts < AGENT_MAX_ATTEMPTS) {
       await prisma.designAgentJob.updateMany({ where, data: { status: 'QUEUED', lockedAt: null, stage: null } })
     } else {
-      await prisma.designAgentJob.updateMany({ where, data: { status: 'FAILED', error: RUNNER_LOST, finishedAt: now, lockedAt: null } })
+      const r = await prisma.designAgentJob.updateMany({ where, data: { status: 'FAILED', error: RUNNER_LOST, finishedAt: now, lockedAt: null } })
+      if (r.count > 0) await tellOwner({ jobId: job.id, taskKey: job.taskKey, kind: job.kind as AgentJobKind, reason: 'FAILED', summary: RUNNER_LOST })
     }
   }
 }
@@ -246,9 +268,75 @@ export async function failAgentJob(id: string, input: { error: unknown; permanen
   }
   const r = await prisma.designAgentJob.updateMany({ where, data: { status: 'FAILED', lockedAt: null, finishedAt: new Date(), error } })
   if (r.count === 0) return null
-  if (job.taskId && await prisma.designTask.findUnique({ where: { id: job.taskId }, select: { id: true } })) {
-    const agent = await ensureAgentUser()
-    await prisma.designTaskEvent.create({ data: { taskId: job.taskId, type: 'NOTE', message: `Agent: không chạy được — ${error.slice(0, MAX_NOTE_ERROR)}`, actorId: agent.id } })
-  }
+  await noteOnTask(job.taskId, `Agent: không chạy được — ${error.slice(0, MAX_NOTE_ERROR)}`)
+  await tellOwner({ jobId: job.id, taskKey: job.taskKey, kind: job.kind as AgentJobKind, reason: 'FAILED', summary: error })
   return { status: 'FAILED', attempts: job.attempts }
+}
+
+function rejectReasonsOf(json: string | null): string[] {
+  if (!json) return []
+  try {
+    const parsed = JSON.parse(json)
+    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === 'string') : []
+  } catch { return [] }
+}
+
+async function submittedSince(taskId: string, since: Date | null): Promise<boolean> {
+  const e = await prisma.designTaskEvent.findFirst({
+    where: { taskId, type: 'STATUS', message: AGENT_SUBMIT_MESSAGE, ...(since ? { createdAt: { gte: since } } : {}) }, select: { id: true },
+  })
+  return !!e
+}
+
+export async function completeAgentJob(
+  id: string, input: { outcome: unknown; summary: unknown; rounds?: unknown; result?: unknown },
+): Promise<{ status: AgentJobStatus } | { error: string; status: 400 | 409 }> {
+  const told = typeof input.summary === 'string' ? input.summary.trim() : ''
+  if ((input.outcome !== 'DONE' && input.outcome !== 'NEEDS_OWNER') || !told) return { error: 'outcome và summary là bắt buộc', status: 400 }
+  const job = await prisma.designAgentJob.findUnique({ where: { id } })
+  if (!job || job.status !== 'RUNNING') return { error: 'not running', status: 409 }
+
+  let status: AgentJobStatus = input.outcome
+  let summary = told.slice(0, MAX_SUMMARY)
+  let libraryState: string | null = null
+  let affectedJson: string | undefined
+  let refix: { taskKey: string; reasons: string[]; note: string | null } | null = null
+  if (input.outcome === 'DONE' && (job.kind === 'FIX' || job.kind === 'MAKE')) {
+    const task = job.taskId ? await prisma.designTask.findUnique({ where: { id: job.taskId } }) : null
+    const submitted = !!task && (task.status === 'REVIEW' || task.status === 'DONE' || await submittedSince(task.id, job.startedAt))
+    if (!task || !submitted) {
+      status = 'NEEDS_OWNER'
+      summary += NOT_SUBMITTED
+    } else if (task.status === 'REJECTED') {
+      refix = { taskKey: task.taskKey, reasons: rejectReasonsOf(task.rejectReasons), note: task.rejectNote }
+    } else if (job.kind === 'FIX') {
+      const affected = await affectedForTask(task.id)
+      if (affected.rows.length > 0) {
+        libraryState = 'ASKED'
+        affectedJson = JSON.stringify({ rows: affected.rows, fulfilledCount: affected.fulfilledCount })
+      }
+    }
+  }
+
+  const rounds = Number.isInteger(input.rounds) && (input.rounds as number) >= 0 ? Math.min(input.rounds as number, MAX_INT) : undefined
+  const resultJson = input.result === undefined ? null : (JSON.stringify(input.result) ?? null)?.slice(0, MAX_RESULT) ?? null
+  const written = await prisma.designAgentJob.updateMany({
+    where: { id, status: 'RUNNING', attempts: job.attempts },
+    data: {
+      status, summary, resultJson, finishedAt: new Date(), lockedAt: null, libraryState,
+      ...(rounds !== undefined ? { rounds } : {}), ...(affectedJson !== undefined ? { affectedJson } : {}),
+    },
+  })
+  if (written.count === 0) return { error: 'not running', status: 409 }
+
+  await noteOnTask(job.taskId, `Agent: ${summary}`)
+  if (status === 'NEEDS_OWNER') await tellOwner({ jobId: job.id, taskKey: job.taskKey, kind: job.kind as AgentJobKind, reason: 'NEEDS_OWNER', summary })
+  if (refix) {
+    const agent = await ensureAgentUser()
+    await enqueueFixOnReject({
+      taskKey: refix.taskKey, reasons: refix.reasons, note: refix.note, by: agent, source: 'REJECT',
+      factory: refix.reasons.some(r => SENT_BACK_REASONS.includes(r)),
+    })
+  }
+  return { status }
 }
