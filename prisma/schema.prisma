@@ -1748,3 +1748,18 @@ model DesignAgentJob {
   @@index([status, priority, createdAt])
   @@index([taskId])
 }
+
+model LarkEvent {
+  eventId      String   @id
+  messageId    String   @unique
+  senderOpenId String
+  senderName   String?
+  text         String
+  outcome      String   @default("RECEIVED") // RECEIVED JOB REPLIED IGNORED ERROR
+  jobIds       String?
+  reply        String?
+  error        String?
+  createdAt    DateTime @default(now())
+
+  @@index([createdAt])
+}

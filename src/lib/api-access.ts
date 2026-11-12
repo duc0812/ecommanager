@@ -36,6 +36,7 @@ export const API_ACCESS_RULES: ApiRule[] = [
   { prefix: '/api/fulfillment/crawler', access: ['fulfillment_crawler'] },
   { prefix: '/api/public/artwork/', access: 'PUBLIC' },
   { prefix: '/api/public/pgprints/tracking', exact: true, methods: ['POST'], access: 'PUBLIC' },
+  { prefix: '/api/public/lark/events', exact: true, methods: ['POST'], access: 'PUBLIC' },
   { prefix: '/api/fulfillment/pgprints/settings/test', methods: WRITE, access: 'ADMIN' },
   { prefix: '/api/fulfillment/pgprints/settings', methods: WRITE, access: 'SUPERADMIN' },
   { prefix: '/api/fulfillment/pgprints/settings', methods: READ, access: ['fulfillment_suppliers', 'fulfillment_orders', 'fulfillment_export'] },
