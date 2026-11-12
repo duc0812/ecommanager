@@ -35,10 +35,11 @@ def deliver():
         subprocess.run([sys.executable, api, *cmd], check=True, stdout=subprocess.DEVNULL)
     write_result({'outcome': 'DONE', 'summary': 'Đã sửa thân trước: dời tên vào trong khung.', 'rounds': 1,
                   'pushed': ['FRONT'], 'problems': []})
-    print(json.dumps({'type': 'result', 'is_error': False}))
+    print(json.dumps({'type': 'result', 'is_error': False}), flush=True)
 
 
 record()
+print(json.dumps({'type': 'system', 'subtype': 'init'}), flush=True)
 if mode == 'done':
     deliver()
 elif mode == 'echo-token':
@@ -51,6 +52,9 @@ elif mode == 'echo-token':
 elif mode == 'needs-owner':
     write_result({'outcome': 'NEEDS_OWNER', 'summary': 'Sau 3 vòng tay áo vẫn lệch đường may.', 'rounds': 3,
                   'pushed': [], 'problems': ['tay áo']})
+elif mode == 'stream-then-hang':
+    print(json.dumps({'type': 'assistant', 'note': 'EVENT-BEFORE-KILL'}), flush=True)
+    time.sleep(120)
 elif mode == 'no-result':
     time.sleep(float(os.environ.get('FAKE_CLAUDE_SLEEP', '0')))
 elif mode == 'fast-exit':

@@ -184,3 +184,10 @@ def test_uncontained_session_is_logged(server, deps, job, monkeypatch, capsys):
     assert r.run_job(job(), deps(server, 'done'), threading.Event()) == 'DONE'
     out = capsys.readouterr().out
     assert 'job1' in out and 'Job Object' in out
+
+
+def test_killed_session_leaves_the_events_it_already_printed(server, run, cfg):
+    assert run(server, 'stream-then-hang', timeout_s=3) == 'FAILED'
+    log = (cfg.artwork_builder / 'LIT6262_1-agent-job1' / 'session.log').read_text(encoding='utf-8', errors='replace')
+    assert '"subtype": "init"' in log and 'EVENT-BEFORE-KILL' in log
+    assert calls(server, '/jobs/job1/fail')[0]['permanent'] is True

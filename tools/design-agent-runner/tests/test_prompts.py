@@ -42,8 +42,27 @@ def test_loop_names_the_exact_codex_calls_and_files():
 
 def test_only_known_placeholders_and_no_job_text(cfg, job):
     for kind, n in runner.KINDS.items():
-        assert set(re.findall(r'\{\{(\w+)\}\}', text(n))) <= {'JOB_DIR', 'AGENT', 'CODEX_BIN', 'ARTWORK_BUILDER', 'PROJECT_DIR', 'PYTHON'}
+        assert set(re.findall(r'\{\{(\w+)\}\}', text(n))) <= {'JOB_DIR', 'AGENT', 'CODEX_BIN', 'ARTWORK_BUILDER', 'PROJECT_DIR', 'PYTHON',
+                                                                          'JOB_MINUTES', 'LIMIT_MINUTES', 'CMD_MINUTES'}
         j = job(kind=kind, requestText='XYZZY-REQUEST'); d = runner.prepare_job_dir(cfg, j, 'C:/codex.exe', datetime(2026, 11, 12))
         rendered = runner.render_prompt(cfg, j, d, 'C:/codex.exe')
         assert 'XYZZY-REQUEST' not in rendered and '{{' not in rendered and '\\' not in rendered
     assert 'do not `submit`' in text('mockup.md') and 'sync-library-state' in text('library-apply.md')
+
+
+def _rendered(cfg, job, kind):
+    j = job(kind=kind); d = runner.prepare_job_dir(cfg, j, 'C:/codex.exe', datetime(2026, 11, 12))
+    return runner.render_prompt(cfg, j, d, 'C:/codex.exe')
+
+
+def test_every_prompt_states_time_discipline_with_the_configured_numbers(cfg, job):
+    import dataclasses
+    for kind in runner.KINDS:
+        s = _rendered(cfg, job, kind)
+        for must in ['Bạn có 90 phút', 'trong 10 phút', '2000 px', 'stage.txt', 'QA vòng N', 'hai phần ba', '60 phút', 'NEEDS_OWNER',
+                     'build script', 'không bao giờ chạy tìm kiếm lưới']:
+            assert must in s, (kind, must)
+        assert 'longest timeout allowed (60 minutes)' not in s
+        other = _rendered(dataclasses.replace(cfg, job_timeout_s=45 * 60, bash_timeout_ms=5 * 60000), job, kind)
+        assert 'Bạn có 45 phút' in other and 'trong 5 phút' in other and 'hai phần ba tổng thời gian (30 phút)' in other
+        assert 'Bạn có 90 phút' not in other and 'trong 10 phút' not in other

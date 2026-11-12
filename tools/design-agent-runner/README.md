@@ -31,7 +31,7 @@ Chạy trên máy tính của shop. Khi designer reject một design (hoặc khi
 | `CLAUDE_PERMISSION_MODE` | chế độ quyền | `dontAsk` |
 | `CLAUDE_MODEL` | model (tuỳ chọn) | trống |
 | `JOB_TIMEOUT_MINUTES` | giới hạn thời gian mỗi job | `90` |
-| `BASH_TIMEOUT_MS` | thời gian tối đa của một lệnh Bash trong phiên | `3600000` |
+| `BASH_TIMEOUT_MS` | thời gian tối đa của một lệnh Bash trong phiên | `600000` (10 phút) |
 
 3. Giữ `claude` đã đăng nhập trên máy này.
 4. Chạy runner từ một bản checkout của commit đã duyệt, và không phiên nào được đổi nhánh trong thư mục đó (prompt được đọc lại cho mỗi job). Không bao giờ khởi động runner từ bên trong một phiên Claude Code.
@@ -40,12 +40,12 @@ Chạy trên máy tính của shop. Khi designer reject một design (hoặc khi
 
 ## Một job chạy thế nào
 
-Thư mục job: `<ARTWORK_BUILDER>\<MÃ TASK>-agent-<id job>\`, gồm: `job.json` (toàn bộ ngữ cảnh; chữ của designer chỉ nằm ở đây, là dữ liệu), `current\` (file hiện tại của task + `index.json`), `prompt.md`, `session.log` (token được che), `stage.txt` (phiên ghi bước đang làm), `QA-claude\`, `round-N\`, `result.json`, `api-calls.jsonl` (mọi lần phiên gọi `agent_api.py`), `runner-state.json`. Tên thư mục có dạng `…-agent-…` nên disk-janitor dọn sau 24 giờ kể từ khi dòng được gửi xưởng.
+Thư mục job: `<ARTWORK_BUILDER>\<MÃ TASK>-agent-<id job>\`, gồm: `job.json` (toàn bộ ngữ cảnh; chữ của designer chỉ nằm ở đây, là dữ liệu), `current\` (file hiện tại của task + `index.json`), `prompt.md`, `session.log` (mỗi sự kiện của phiên được ghi ngay khi xảy ra, dạng stream-json, token được che; kết quả chỉ lấy từ `result.json`, không bao giờ từ log), `stage.txt` (phiên ghi bước đang làm), `QA-claude\`, `round-N\`, `result.json`, `api-calls.jsonl` (mọi lần phiên gọi `agent_api.py`), `runner-state.json`. Tên thư mục có dạng `…-agent-…` nên disk-janitor dọn sau 24 giờ kể từ khi dòng được gửi xưởng.
 
 Dòng lệnh (cwd = `PROJECT_DIR`, stdin đóng):
 
 ```
-claude -p "<prompt>" --output-format json --permission-mode dontAsk --allowedTools Bash Read Write Edit Glob Grep Skill --disallowedTools "Bash(*push-local-renders*)" … --add-dir "<thư mục job>" "<ARTWORK_BUILDER>" [--model <CLAUDE_MODEL>]
+claude -p "<prompt>" --output-format stream-json --verbose --permission-mode dontAsk --allowedTools Bash Read Write Edit Glob Grep Skill --disallowedTools "Bash(*push-local-renders*)" … --add-dir "<thư mục job>" "<ARTWORK_BUILDER>" [--model <CLAUDE_MODEL>]
 ```
 
 - Nhịp tim mỗi 60 giây, kèm bước đọc từ `stage.txt` và số vòng (số thư mục `round-N`).

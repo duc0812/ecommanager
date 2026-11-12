@@ -34,6 +34,7 @@ DEFAULT_DISALLOWED = (
     'Bash(*push-local-renders*)', 'Bash(*push-shared-prints*)', 'Bash(*push_s2n*)', 'Bash(*apply_chunk*)',
     'Bash(*process-new-orders*)', 'Bash(ssh:*)', 'Bash(scp:*)',
 )
+DEFAULT_BASH_TIMEOUT_MS = 600000
 STALE_NAMES = ('result.json', 'stage.txt', 'session.log', 'api-calls.jsonl', 'ps-lock.held')
 
 
@@ -109,7 +110,7 @@ def load_config(path: Path) -> Config:
         project_dir=project_dir, artwork_builder=builder, codex_bin=values.get('CODEX_BIN', '').strip(),
         allowed_tools=tools, disallowed_tools=deny, permission_mode=values.get('CLAUDE_PERMISSION_MODE', '').strip() or 'dontAsk',
         model=values.get('CLAUDE_MODEL', '').strip(), job_timeout_s=minutes * 60,
-        bash_timeout_ms=_number(values, 'BASH_TIMEOUT_MS', 3600000, int, path))
+        bash_timeout_ms=_number(values, 'BASH_TIMEOUT_MS', DEFAULT_BASH_TIMEOUT_MS, int, path))
 
 
 def resolve_codex(configured: str, local_appdata: str | None = None) -> str:
@@ -219,12 +220,18 @@ def _posix(p) -> str:
     return Path(p).as_posix()
 
 
+def _minutes(seconds: float) -> str:
+    return f'{seconds / 60:.1f}'.rstrip('0').rstrip('.') if seconds % 60 else str(int(seconds // 60))
+
+
 def render_prompt(cfg: Config, job: dict, job_dir: Path, codex_bin: str) -> str:
     text = (HERE / 'prompts' / KINDS[job['kind']]).read_text(encoding='utf-8')
     py = _posix(sys.executable)
     values = {'JOB_DIR': _posix(job_dir), 'ARTWORK_BUILDER': _posix(cfg.artwork_builder),
               'PROJECT_DIR': _posix(cfg.project_dir), 'CODEX_BIN': _posix(codex_bin), 'PYTHON': py,
-              'AGENT': f'"{py}" "{_posix(HERE / "agent_api.py")}"'}
+              'AGENT': f'"{py}" "{_posix(HERE / "agent_api.py")}"',
+              'JOB_MINUTES': _minutes(cfg.job_timeout_s), 'LIMIT_MINUTES': _minutes(cfg.job_timeout_s * 2 / 3),
+              'CMD_MINUTES': _minutes(cfg.bash_timeout_ms / 1000)}
     for key, value in values.items():
         text = text.replace('{{' + key + '}}', value)
     (Path(job_dir) / 'prompt.md').write_text(text, encoding='utf-8')
@@ -232,7 +239,7 @@ def render_prompt(cfg: Config, job: dict, job_dir: Path, codex_bin: str) -> str:
 
 
 def build_argv(cfg: Config, prompt: str, job_dir: Path, claude_cmd: list[str] | None = None) -> list[str]:
-    argv = [*(claude_cmd or [cfg.claude_bin]), '-p', prompt, '--output-format', 'json',
+    argv = [*(claude_cmd or [cfg.claude_bin]), '-p', prompt, '--output-format', 'stream-json', '--verbose',
             '--permission-mode', cfg.permission_mode, '--allowedTools', *cfg.allowed_tools]
     if cfg.disallowed_tools:
         argv += ['--disallowedTools', *cfg.disallowed_tools]
