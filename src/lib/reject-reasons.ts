@@ -19,6 +19,12 @@ export function rejectSelection(picked: string[], otherOn: boolean, otherText: s
   return { reasons, error: reasons.length === 0 ? 'Chọn ít nhất một lý do' : null }
 }
 
+export function otherReasonError(otherOn: boolean, otherText: string, touched: boolean): string | null {
+  if (!otherOn || !touched) return null
+  const len = otherText.trim().length
+  return len < OTHER_REASON_MIN || len > OTHER_REASON_MAX ? OTHER_ERROR : null
+}
+
 export function rejectReasonsError(reasons: string[]): string | null {
   for (const r of reasons) {
     if (!isOtherReason(r)) continue

@@ -79,6 +79,7 @@ export default function TaskHeader({ detail, qa, holdCount, refreshing, onRefres
   const [panel, setPanel] = useState<Panel>('none')
   const [confirm, setConfirm] = useState(false)
   const [askNote, setAskNote] = useState('')
+  const [rejectNote, setRejectNote] = useState('')
   const [assignee, setAssignee] = useState(task.assigneeId ?? detail.assignable[0]?.id ?? '')
   const [kpi, setKpi] = useState(String(task.kpi))
   const [dueHours, setDueHours] = useState(() => String(hoursUntil(task.dueAt, task.slaHours)))
@@ -299,7 +300,8 @@ export default function TaskHeader({ detail, qa, holdCount, refreshing, onRefres
           </button>
 
           {panel === 'reject' && (
-            <RejectDialog reasons={settings.rejectReasons} busy={busy} onCancel={close} onSubmit={(r, n) => go({ to: 'REJECTED', reasons: r, note: n || undefined }, close)} />
+            <RejectDialog reasons={settings.rejectReasons} busy={busy} note={rejectNote} onNoteChange={setRejectNote} onCancel={close}
+              onSubmit={(r, n) => go({ to: 'REJECTED', reasons: r, note: n || undefined }, () => { close(); setRejectNote('') })} />
           )}
 
           {panel === 'reopen' && (

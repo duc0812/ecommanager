@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { rejectSelection, rejectReasonBucket } from '@/lib/reject-reasons'
+import { otherReasonError, rejectSelection, rejectReasonBucket } from '@/lib/reject-reasons'
 import { DEFAULT_DESIGN_SETTINGS } from '@/lib/design-settings'
 
 describe('reject reasons', () => {
@@ -9,6 +9,14 @@ describe('reject reasons', () => {
     expect(rejectSelection([], true, 'ab').error).toBe('Lý do khác dài từ 3 đến 200 ký tự')
     expect(rejectSelection([], true, 'x'.repeat(201)).error).toBe('Lý do khác dài từ 3 đến 200 ký tự')
     expect(rejectSelection([], false, '').error).toBe('Chọn ít nhất một lý do')
+  })
+
+  it('the "Lý do khác" error waits until the leader typed or tried to submit', () => {
+    expect(otherReasonError(true, '', false)).toBeNull()
+    expect(otherReasonError(true, 'ab', true)).toBe('Lý do khác dài từ 3 đến 200 ký tự')
+    expect(otherReasonError(true, '', true)).toBe('Lý do khác dài từ 3 đến 200 ký tự')
+    expect(otherReasonError(true, 'sao lệch', true)).toBeNull()
+    expect(otherReasonError(false, '', true)).toBeNull()
   })
 
   it('every "Khác: …" counts under "Lý do khác"', () => {

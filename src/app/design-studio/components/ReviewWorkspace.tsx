@@ -79,6 +79,7 @@ function ReviewHeader({ detail, verdict, position, busy, refreshing, onApprove, 
   const { task, line, settings } = detail
   const toast = useToast()
   const [panel, setPanel] = useState<Panel>('none')
+  const [rejectNote, setRejectNote] = useState('')
   const ref = useRef<HTMLDivElement>(null)
   const close = () => setPanel('none')
   useDismiss(ref, panel !== 'none', close)
@@ -149,7 +150,8 @@ function ReviewHeader({ detail, verdict, position, busy, refreshing, onApprove, 
           </button>
 
           {panel === 'reject' && (
-            <RejectDialog reasons={settings.rejectReasons} busy={busy} onCancel={close} onSubmit={async (r, n) => { if (await onReject(r, n)) close() }} />
+            <RejectDialog reasons={settings.rejectReasons} busy={busy} note={rejectNote} onNoteChange={setRejectNote} onCancel={close}
+              onSubmit={async (r, n) => { if (await onReject(r, n)) { close(); setRejectNote('') } }} />
           )}
 
           {panel === 'menu' && (

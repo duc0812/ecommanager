@@ -42,26 +42,28 @@ export default function AgentStrip({ detail, onChanged }: { detail: TaskDetail; 
         <div className="flex flex-col gap-sm px-[20px] py-[10px] bg-surface-container-low border-t border-outline-variant/40 text-body-sm text-on-surface">
           <span className="font-semibold">Lưu bản sửa này vào thư viện?</span>
           {shown.length > 0 && (
-            <table className="w-full max-w-3xl text-left text-[13px] leading-[18px]">
-              <thead>
-                <tr className="text-label-sm text-on-surface-variant">
-                  <th className="py-xs pr-md font-medium">Đơn</th>
-                  <th className="py-xs pr-md font-medium">Ngày đặt</th>
-                  <th className="py-xs pr-md font-medium">Trạng thái</th>
-                  <th className="py-xs font-medium">Xưởng</th>
-                </tr>
-              </thead>
-              <tbody>
-                {shown.map(a => (
-                  <tr key={a.taskKey} className="border-t border-outline-variant/30">
-                    <td className="py-xs pr-md"><b>{a.orderNumber}</b> <span className="font-mono text-on-surface-variant">{a.taskKey}</span></td>
-                    <td className="py-xs pr-md">{fmtDate(a.placedAt)}</td>
-                    <td className="py-xs pr-md">{a.taskStatus ? STATUS_META[a.taskStatus as TaskStatus]?.label ?? a.taskStatus : 'Chưa có task'}</td>
-                    <td className="py-xs">{a.sent ? 'Đã gửi xưởng' : 'Chưa gửi'}</td>
+            <div className="max-h-60 max-w-3xl overflow-y-auto">
+              <table className="w-full text-left text-[13px] leading-[18px]">
+                <thead className="sticky top-0 bg-surface-container-low">
+                  <tr className="text-label-sm text-on-surface-variant">
+                    <th className="py-xs pr-md font-medium">Đơn</th>
+                    <th className="py-xs pr-md font-medium">Ngày đặt</th>
+                    <th className="py-xs pr-md font-medium">Trạng thái</th>
+                    <th className="py-xs font-medium">Xưởng</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {shown.map(a => (
+                    <tr key={a.taskKey} className="border-t border-outline-variant/30">
+                      <td className="py-xs pr-md"><b>{a.orderNumber}</b> <span className="font-mono text-on-surface-variant">{a.taskKey}</span></td>
+                      <td className="py-xs pr-md">{fmtDate(a.placedAt)}</td>
+                      <td className="py-xs pr-md">{a.taskStatus ? STATUS_META[a.taskStatus as TaskStatus]?.label ?? a.taskStatus : 'Chưa có task'}</td>
+                      <td className="py-xs">{a.sent ? 'Đã gửi xưởng' : 'Chưa gửi'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
           {more > 0 && <span className="text-on-surface-variant">{`và ${more} đơn khác`}</span>}
           {view.fulfilledCount > 0 && <span className="text-on-surface-variant">{`${view.fulfilledCount} đơn đã giao, không sửa được`}</span>}
