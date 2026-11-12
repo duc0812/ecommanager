@@ -88,6 +88,15 @@ describe('Lark webhook', () => {
     expect((await receiveLarkEvent(bad, NO_HEADERS)).status).toBe(401)
   })
 
+  it('with an Encrypt Key stored, a plain body is refused even with the right token', async () => {
+    const plain = await receive(evt({ eventId: 'ev-plain' }))
+    expect(plain).toMatchObject({ status: 401, body: { error: 'unauthorized' } }); expect(plain.accepted).toBeUndefined()
+    expect((await receive({ type: 'url_verification', token: 'vt-1', challenge: 'abc' })).status).toBe(401)
+    const raw = JSON.stringify(evt({ eventId: 'ev-plain-signed' }))
+    expect((await receiveLarkEvent(raw, { timestamp: '1', nonce: 'n', signature: larkSignature('1', 'n', 'ek', raw) })).status).toBe(401)
+    expect(await prisma.larkEvent.count({ where: { eventId: { startsWith: 'ev-plain' } } })).toBe(0)
+  })
+
   it('an encrypted body without a stored Encrypt Key is refused', async () => {
     await saveLarkConfig({ encryptKey: '-' })
     const raw = JSON.stringify({ encrypt: encryptForTest(JSON.stringify(evt()), 'ek') })

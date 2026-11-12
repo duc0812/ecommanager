@@ -1,4 +1,17 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest'
+
+const failEnqueue = vi.hoisted(() => ({ on: false }))
+vi.mock('@/lib/design-agent/jobs', async importOriginal => {
+  const real = await importOriginal<typeof import('@/lib/design-agent/jobs')>()
+  return {
+    ...real,
+    enqueueAgentJob: async (input: Parameters<typeof real.enqueueAgentJob>[0]) => {
+      if (failEnqueue.on) throw new Error('database is locked')
+      return real.enqueueAgentJob(input)
+    },
+  }
+})
+
 import { prisma } from '@/lib/db'
 import { loadTask } from '@/lib/design-tasks'
 import { saveAgentSettings } from '@/lib/design-settings'
@@ -55,6 +68,7 @@ beforeAll(async () => {
     5: {}, 6: { taskStatus: 'DOING' }, 7: { taskStatus: 'DONE' }, 8: { taskStatus: 'ASK_CUSTOMER' }, 9: { taskStatus: 'REJECTED' },
     10: { taskStatus: 'REJECTED' }, 11: { taskStatus: 'REJECTED' }, 12: { taskStatus: 'REJECTED', skus: ['DN1-Hoodie', 'DN2-Tee'] },
     13: { taskStatus: 'REJECTED' }, 14: { taskStatus: 'REJECTED' }, 15: { taskStatus: 'REVIEW' }, 16: { taskStatus: 'CANCELLED' },
+    17: { taskStatus: 'REVIEW' }, 18: { taskStatus: 'DONE' },
   }
   for (const [n, o] of Object.entries(statuses)) await fx.order(Number(n), { ...o, withPrint: true })
 })
@@ -204,5 +218,23 @@ describe('Lark message processing', () => {
     const r = await processLarkMessage(m, { lark, llm: { llm: fakeLlm(fix('OTHER', ['LIP1_1'])), model: 'm', cap: 100000 } })
     expect(r.outcome).toBe('REPLIED')
     expect((await eventOf(m)).senderName).toBe('Lark 123456')
+  })
+
+  it('a reject or reopen that cannot be followed by a job leaves a note and says so', async () => {
+    failEnqueue.on = true
+    try {
+      const rejected = await run('LIP17_1 sai màu nền', fix('FIX', ['LIP17_1'], 'sai màu nền'))
+      expect(rejected).toMatchObject({ outcome: 'REPLIED', jobIds: [], reply: 'LIP17_1: đã trả lại task nhưng chưa xếp được việc cho Agent — hãy xếp lại trên tool.' })
+      expect((await loadTask('LIP17_1'))!.task.status).toBe('REJECTED')
+      expect((await lastEvent('LIP17_1')).message).toBe('Agent: không xếp được việc sau khi trả lại sửa theo yêu cầu Lark; cần xếp lại')
+      expect((await eventOf(rejected)).error).toContain('database is locked')
+      const reopened = await run('LIP18_1 sửa chữ', fix('FIX', ['LIP18_1'], 'sửa chữ'))
+      expect(reopened.reply).toBe('LIP18_1: đã mở lại task nhưng chưa xếp được việc cho Agent — hãy xếp lại trên tool.')
+      expect((await loadTask('LIP18_1'))!.task.status).toBe('DOING')
+      expect((await lastEvent('LIP18_1')).message).toBe('Agent: không xếp được việc sau khi mở lại để sửa theo yêu cầu Lark; cần xếp lại')
+      expect(await prisma.designAgentJob.count({ where: { taskKey: { in: ['LIP17_1', 'LIP18_1'] } } })).toBe(0)
+    } finally {
+      failEnqueue.on = false
+    }
   })
 })

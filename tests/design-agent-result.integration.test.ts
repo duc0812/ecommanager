@@ -9,7 +9,7 @@ import { transitionTask, type Actor } from '@/lib/design-tasks'
 import { openJobForTask } from '@/lib/design-agent/jobs'
 import { AGENT_USER_EMAIL } from '@/lib/design-agent/agent-user'
 import { agentSubmit } from '@/lib/design-agent/delivery'
-import { completeAgentJob, failAgentJob } from '@/lib/design-agent/runner'
+import { completeAgentJob, failAgentJob, settleOwnerNotices } from '@/lib/design-agent/runner'
 import { agentFixture } from './helpers/design-agent-fixture'
 
 const fx = agentFixture('das')
@@ -83,6 +83,7 @@ describe('result of an agent job', () => {
   it('DONE without a submit becomes NEEDS_OWNER', async () => {
     expect(await completeAgentJob(ids.j3, { outcome: 'DONE', summary: 'xong' })).toEqual({ status: 'NEEDS_OWNER' })
     expect(await rowOf(ids.j3)).toMatchObject({ status: 'NEEDS_OWNER', summary: 'xong\n(Agent báo xong nhưng task chưa được gửi duyệt.)', libraryState: null })
+    await settleOwnerNotices()
     expect(notify).toHaveBeenCalledWith(expect.objectContaining({ jobId: ids.j3, taskKey: 'DAS3_1', kind: 'FIX', reason: 'NEEDS_OWNER' }))
   })
 
@@ -100,6 +101,7 @@ describe('result of an agent job', () => {
     notify.mockClear()
     notify.mockRejectedValueOnce(new Error('lark down'))
     expect(await completeAgentJob(ids.j5, { outcome: 'NEEDS_OWNER', summary: '3 vòng chưa đạt' })).toEqual({ status: 'NEEDS_OWNER' })
+    await settleOwnerNotices()
     expect(notify).toHaveBeenCalledTimes(1)
     expect(notify).toHaveBeenCalledWith({ jobId: ids.j5, taskKey: 'DAS5_1', kind: 'FIX', reason: 'NEEDS_OWNER', summary: '3 vòng chưa đạt' })
     expect(await rowOf(ids.j5)).toMatchObject({ status: 'NEEDS_OWNER', summary: '3 vòng chưa đạt' })
@@ -116,6 +118,39 @@ describe('result of an agent job', () => {
   it('a job that ends FAILED calls the owner', async () => {
     notify.mockClear()
     expect(await failAgentJob(ids.failing, { error: 'no result.json', permanent: true })).toEqual({ status: 'FAILED', attempts: 1 })
+    await settleOwnerNotices()
     expect(notify).toHaveBeenCalledWith(expect.objectContaining({ jobId: ids.failing, reason: 'FAILED', summary: 'no result.json' }))
+  })
+
+  it('a Lark notice that never answers does not hold up the result or the failure', async () => {
+    const held: (() => void)[] = []
+    const hang = () => new Promise<void>(r => { held.push(r) })
+    const soon = <T>(p: Promise<T>) => Promise.race([p, new Promise<'late'>(r => setTimeout(() => r('late'), 2000))])
+    notify.mockClear()
+    notify.mockImplementation(hang)
+    const owner = await running('DAS5_1')
+    expect(await soon(completeAgentJob(owner, { outcome: 'NEEDS_OWNER', summary: 'Lark treo' }))).toEqual({ status: 'NEEDS_OWNER' })
+    expect(await rowOf(owner)).toMatchObject({ status: 'NEEDS_OWNER', summary: 'Lark treo' })
+    const failed = await running('DAS9_1')
+    expect(await soon(failAgentJob(failed, { error: 'boom', permanent: true }))).toEqual({ status: 'FAILED', attempts: 1 })
+    expect(await rowOf(failed)).toMatchObject({ status: 'FAILED', error: 'boom' })
+    expect(notify).toHaveBeenCalledTimes(2)
+    notify.mockImplementation(async () => {})
+    held.forEach(release => release())
+    await settleOwnerNotices()
+  })
+
+  it('a rejecting notice is swallowed and logged, for the result and the failure', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    notify.mockClear()
+    notify.mockRejectedValueOnce(new Error('lark down')).mockRejectedValueOnce(new Error('lark down'))
+    const owner = await running('DAS5_1')
+    expect(await completeAgentJob(owner, { outcome: 'NEEDS_OWNER', summary: 'x' })).toEqual({ status: 'NEEDS_OWNER' })
+    const failed = await running('DAS9_1')
+    expect(await failAgentJob(failed, { error: 'y', permanent: true })).toEqual({ status: 'FAILED', attempts: 1 })
+    await settleOwnerNotices()
+    expect(notify).toHaveBeenCalledTimes(2)
+    expect(log.mock.calls.filter(c => String(c[0]).includes('không báo được chủ shop'))).toHaveLength(2)
+    log.mockRestore()
   })
 })

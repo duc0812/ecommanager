@@ -34,13 +34,29 @@ const MAX_SUMMARY = 4000
 const MAX_RESULT = 20000
 const NOT_SUBMITTED = '\n(Agent báo xong nhưng task chưa được gửi duyệt.)'
 
-// The notice is a side channel: a throw (Lark down) never fails the runner's call.
-async function tellOwner(notice: OwnerNotice): Promise<void> {
-  try {
-    await notifyNeedsOwner(notice)
-  } catch (e) {
-    console.error(`[design agent] không báo được chủ shop cho job ${notice.jobId}:`, (e as Error)?.message ?? e)
-  }
+declare global {
+  // eslint-disable-next-line no-var
+  var __designAgentOwnerNotices: Set<Promise<void>> | undefined
+}
+
+function pendingNotices(): Set<Promise<void>> {
+  if (!globalThis.__designAgentOwnerNotices) globalThis.__designAgentOwnerNotices = new Set()
+  return globalThis.__designAgentOwnerNotices
+}
+
+// Fire-and-forget: a slow or failing Lark must never delay or fail the runner's /result or /fail.
+function tellOwner(notice: OwnerNotice): void {
+  let sent: Promise<void>
+  try { sent = Promise.resolve(notifyNeedsOwner(notice)) } catch (e) { sent = Promise.reject(e) }
+  const tracked = sent
+    .catch(e => { console.error(`[design agent] không báo được chủ shop cho job ${notice.jobId}:`, (e as Error)?.message ?? e) })
+    .finally(() => { pendingNotices().delete(tracked) })
+  pendingNotices().add(tracked)
+}
+
+/** Waits for the owner notices already started (tests). */
+export async function settleOwnerNotices(): Promise<void> {
+  await Promise.all(Array.from(pendingNotices()))
 }
 
 async function noteOnTask(taskId: string | null, message: string): Promise<void> {
@@ -157,7 +173,7 @@ export async function releaseExpiredAgentLeases(now: Date = new Date()): Promise
       await prisma.designAgentJob.updateMany({ where, data: { status: 'QUEUED', lockedAt: null, stage: null } })
     } else {
       const r = await prisma.designAgentJob.updateMany({ where, data: { status: 'FAILED', error: RUNNER_LOST, finishedAt: now, lockedAt: null } })
-      if (r.count > 0) await tellOwner({ jobId: job.id, taskKey: job.taskKey, kind: job.kind as AgentJobKind, reason: 'FAILED', summary: RUNNER_LOST })
+      if (r.count > 0) tellOwner({ jobId: job.id, taskKey: job.taskKey, kind: job.kind as AgentJobKind, reason: 'FAILED', summary: RUNNER_LOST })
     }
   }
 }
@@ -275,7 +291,7 @@ export async function failAgentJob(id: string, input: { error: unknown; permanen
   const r = await prisma.designAgentJob.updateMany({ where, data: { status: 'FAILED', lockedAt: null, finishedAt: new Date(), error } })
   if (r.count === 0) return null
   await noteOnTask(job.taskId, `Agent: không chạy được — ${error.slice(0, MAX_NOTE_ERROR)}`)
-  await tellOwner({ jobId: job.id, taskKey: job.taskKey, kind: job.kind as AgentJobKind, reason: 'FAILED', summary: error })
+  tellOwner({ jobId: job.id, taskKey: job.taskKey, kind: job.kind as AgentJobKind, reason: 'FAILED', summary: error })
   return { status: 'FAILED', attempts: job.attempts }
 }
 
@@ -339,7 +355,6 @@ export async function completeAgentJob(
     await prisma.designAgentJob.updateMany({ where: { id: job.parentJobId, libraryState: 'YES' }, data: { libraryState: 'APPLIED' } })
   }
   await noteOnTask(job.taskId, `Agent: ${summary}`)
-  if (status === 'NEEDS_OWNER') await tellOwner({ jobId: job.id, taskKey: job.taskKey, kind: job.kind as AgentJobKind, reason: 'NEEDS_OWNER', summary })
   if (refix) {
     const agent = await ensureAgentUser()
     await enqueueFixOnReject({
@@ -347,5 +362,6 @@ export async function completeAgentJob(
       factory: refix.reasons.some(r => SENT_BACK_REASONS.includes(r)),
     })
   }
+  if (status === 'NEEDS_OWNER') tellOwner({ jobId: job.id, taskKey: job.taskKey, kind: job.kind as AgentJobKind, reason: 'NEEDS_OWNER', summary })
   return { status }
 }

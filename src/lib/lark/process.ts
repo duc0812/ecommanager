@@ -33,7 +33,7 @@ async function enqueueFor(kind: AgentJobKind, task: AgentTaskState, instruction:
 
 export async function requestForTask(
   kind: 'FIX' | 'NEW_DESIGN' | 'MOCKUP', task: AgentTaskState, instruction: string, sender: string,
-): Promise<{ jobId: string | null; reply: string }> {
+): Promise<{ jobId: string | null; reply: string; error?: string }> {
   const key = task.taskKey
   if (task.status === 'CANCELLED') return { jobId: null, reply: replyCancelled(key) }
   if (task.status === 'ASK_CUSTOMER') return { jobId: null, reply: replyAskCustomer(key) }
@@ -47,13 +47,26 @@ export async function requestForTask(
   const note = `Theo yêu cầu của ${sender} trên Lark`
   if (task.status === 'REVIEW') {
     await agentRejectReview(key, { reason: `Khác: ${instruction.trim().slice(0, 200)}`, note })
-    return enqueueFor('FIX', task, instruction, sender, true)
+    return enqueueAfterMove(task, instruction, sender, { did: 'trả lại', after: 'trả lại sửa' }, true)
   }
   if (task.status === 'DONE') {
     await agentReopenTask(key, { note }, { allowSent: false })
-    return enqueueFor('FIX', task, instruction, sender)
+    return enqueueAfterMove(task, instruction, sender, { did: 'mở lại', after: 'mở lại để sửa' })
   }
   return enqueueFor('FIX', task, instruction, sender)
+}
+
+async function enqueueAfterMove(
+  task: AgentTaskState, instruction: string, sender: string, move: { did: string; after: string }, accepted = false,
+): Promise<{ jobId: string | null; reply: string; error?: string }> {
+  try {
+    return await enqueueFor('FIX', task, instruction, sender, accepted)
+  } catch (e) {
+    const error = `${task.taskKey}: ${errText(e)}`
+    await agentAddNote(task.taskKey, `không xếp được việc sau khi ${move.after} theo yêu cầu Lark; cần xếp lại`)
+      .catch(n => console.error('[lark] chưa ghi được ghi chú', errText(n)))
+    return { jobId: null, reply: `${task.taskKey}: đã ${move.did} task nhưng chưa xếp được việc cho Agent — hãy xếp lại trên tool.`, error }
+  }
 }
 
 function stripMentions(text: string, msg: AcceptedLarkMessage): string {
@@ -97,6 +110,7 @@ async function decide(text: string, sender: string, llm: LarkLlm | null, now?: D
       const r = await requestForTask(intent.kind, task, instruction, sender)
       if (r.jobId && !jobIds.includes(r.jobId)) jobIds.push(r.jobId)
       lines.push(r.reply)
+      if (r.error) errors.push(r.error)
     } catch (e) {
       if (e instanceof AgentJobError) { lines.push(`${task.taskKey}: ${e.message}`); continue }
       errors.push(`${task.taskKey}: ${errText(e)}`)

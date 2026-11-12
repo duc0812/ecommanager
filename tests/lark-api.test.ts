@@ -79,6 +79,29 @@ describe('Lark API client', () => {
     expect(calls.filter(c => c.url.endsWith('/bot/v3/info'))).toHaveLength(1)
   })
 
+  it('a Lark call that hangs is cut off by a timeout and surfaces as LarkApiError', async () => {
+    resetLarkCache()
+    const signals: (AbortSignal | null | undefined)[] = []
+    const hanging = (async (url: string, init: RequestInit) => {
+      signals.push(init.signal)
+      if (new URL(url).pathname === TOKEN_PATH) return new Response(JSON.stringify(TOKEN[TOKEN_PATH]), { status: 200 })
+      return new Promise<Response>((_, reject) => {
+        init.signal?.addEventListener('abort', () => reject(init.signal!.reason))
+      })
+    }) as unknown as typeof fetch
+    const started = Date.now()
+    const err = await larkApi({ appId: 'cli_a1', appSecret: 's3cret' }, hanging, Date.now, 50).reply('om_hang', 'x').catch(e => e)
+    expect(Date.now() - started).toBeLessThan(2000)
+    expect(err).toBeInstanceOf(LarkApiError)
+    expect(err.message).toBe('Lark /open-apis/im/v1/messages/om_hang/reply: timeout')
+    expect(err.message).not.toContain('s3cret'); expect(err.message).not.toContain('t-1')
+    expect(signals.every(s => s instanceof AbortSignal)).toBe(true)
+    resetLarkCache()
+    const seen: (AbortSignal | null | undefined)[] = []
+    await larkApi({ appId: 'cli_a1', appSecret: 's3cret' }, (async (url: string, init: RequestInit) => { seen.push(init.signal); return fakeFetch(TOKEN)(url, init) }) as unknown as typeof fetch).reply('om_ok', 'x')
+    expect(seen.length).toBeGreaterThan(0); expect(seen.every(s => s instanceof AbortSignal)).toBe(true)
+  })
+
   it('signature and decryption', () => {
     expect(larkSignature('1700000000', 'n0nce', 'ek', '{"encrypt":"abc"}')).toBe(createHash('sha256').update('1700000000n0nceek{"encrypt":"abc"}').digest('hex'))
     expect(JSON.parse(decryptLarkPayload(encryptForTest('{"type":"url_verification"}', 'ek'), 'ek'))).toEqual({ type: 'url_verification' })

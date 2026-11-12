@@ -32,19 +32,25 @@ export function resetLarkCache(): void {
 
 const seg = (id: string) => encodeURIComponent(id)
 
-export function larkApi(config: Pick<LarkConfig, 'appId' | 'appSecret'>, fetchImpl: typeof fetch = fetch, now: () => number = Date.now): LarkApi {
+export const LARK_TIMEOUT_MS = 10_000
+
+export function larkApi(
+  config: Pick<LarkConfig, 'appId' | 'appSecret'>, fetchImpl: typeof fetch = fetch, now: () => number = Date.now, timeoutMs: number = LARK_TIMEOUT_MS,
+): LarkApi {
   async function call(path: string, init: { method: 'GET' | 'POST'; body?: unknown; token?: string }, query = ''): Promise<any> {
     const headers: Record<string, string> = { ...JSON_HEADERS }
     if (init.token) headers.Authorization = `Bearer ${init.token}`
+    const signal = AbortSignal.timeout(timeoutMs)
     let res: Response
     try {
       res = await fetchImpl(`${LARK_HOST}${path}${query}`, {
-        method: init.method, headers, ...(init.body !== undefined ? { body: JSON.stringify(init.body) } : {}),
+        method: init.method, headers, signal, ...(init.body !== undefined ? { body: JSON.stringify(init.body) } : {}),
       })
     } catch (e) {
-      throw new LarkApiError(`Lark ${path}: network ${(e as Error)?.name ?? 'error'}`)
+      throw new LarkApiError(`Lark ${path}: ${signal.aborted ? 'timeout' : `network ${(e as Error)?.name ?? 'error'}`}`)
     }
     const data: any = await res.json().catch(() => null)
+    if (signal.aborted && data === null) throw new LarkApiError(`Lark ${path}: timeout`)
     const code = data && typeof data.code === 'number' ? data.code : null
     if (!res.ok || code !== 0) {
       const msg = typeof data?.msg === 'string' ? data.msg.slice(0, 200) : `HTTP ${res.status}`

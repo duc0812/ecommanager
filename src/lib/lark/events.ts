@@ -57,6 +57,8 @@ export async function receiveLarkEvent(rawBody: string, headers: LarkHeaders): P
       if (!sameSecret(signature.toLowerCase(), larkSignature(timestamp, nonce, config.encryptKey, rawBody))) return UNAUTHORIZED
     }
     body = plain
+  } else if (config.encryptKey) {
+    return UNAUTHORIZED
   }
 
   if (body.type === 'url_verification') {
