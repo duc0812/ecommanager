@@ -15,6 +15,8 @@ class FakeServer:
         self.token = 'dag_test-token-0123456789abcdef'
         self.jobs: list[dict] = []
         self.heartbeat_status = 200
+        self.heartbeat_ok_first = 0
+        self.heartbeats = 0
         self.result_reply = None
         self.fail_reply = {'ok': True, 'status': 'QUEUED', 'attempts': 1}
         self.files = {'art1': b'front-v1'}
@@ -84,6 +86,9 @@ class FakeServer:
                     return self._send(200, {'jobs': out})
                 if self.command == 'POST' and len(seg) == 3 and seg[0] == 'jobs':
                     if seg[2] == 'heartbeat':
+                        outer.heartbeats += 1
+                        if outer.heartbeats <= outer.heartbeat_ok_first:
+                            return self._send(200, {'ok': True})
                         if outer.heartbeat_status == 409:
                             return self._send(409, {'error': 'not running'})
                         return self._send(outer.heartbeat_status, {'ok': True})

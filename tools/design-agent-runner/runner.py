@@ -405,7 +405,10 @@ def run_job(job: dict, deps: Deps, stop: threading.Event) -> str:
                      'FAILED', job_dir)
     prompt = render_prompt(cfg, job, job_dir, codex)
     try:
-        api.heartbeat(jid, read_stage(job_dir), read_rounds(job_dir))
+        if not api.heartbeat(jid, read_stage(job_dir), read_rounds(job_dir)):
+            log.line(f'job {jid}: server không còn giữ job (409), không mở phiên')
+            _set_state(job_dir, finished=True, outcome='LOST')
+            return 'LOST'
     except AuthError:
         _set_state(job_dir, finished=True, outcome='AUTH')
         return 'AUTH'
@@ -419,6 +422,8 @@ def run_job(job: dict, deps: Deps, stop: threading.Event) -> str:
     except OSError:
         out.close()
         return _fail(deps, jid, CLI_DOWN_TEXT, False, 'CLI_DOWN', job_dir)
+    if os.name == 'nt' and not child.contained:
+        log.line(f'job {jid}: {proc.CONTAIN_FAILED} (pid {child.pid})')
     started = deps.clock.monotonic()
     flags = {'lost': False, 'auth': False}
     done = threading.Event()

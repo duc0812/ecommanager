@@ -67,7 +67,7 @@ def test_killed_session_gives_back_the_photoshop_lock_only_with_its_marker(serve
 
 
 def test_lost_lease_kills_the_session_and_posts_nothing(server, run, cfg):
-    server.heartbeat_status = 409
+    server.heartbeat_status = 409; server.heartbeat_ok_first = 1
     assert run(server, 'sleep', heartbeat_s=0.5) == 'LOST' and not calls(server, '/result') and not calls(server, '/fail')
     assert wait_dead(json.loads((cfg.artwork_builder / 'LIT6262_1-agent-job1' / 'fake.json').read_text())['pid'])
 
@@ -103,3 +103,24 @@ def test_network_error_while_reporting_is_retried_then_left_to_the_lease(server,
         raise agent_api.ApiError(None, {'error': 'mạng'})
     monkeypatch.setattr(agent_api.AgentApi, 'result', flaky)
     assert run(server, 'done', report_retries=3, report_retry_s=0) == 'LOST' and len(seen) == 3
+
+
+def test_409_on_the_first_beat_starts_no_session(server, run, cfg):
+    server.heartbeat_status = 409
+    assert run(server, 'sleep') == 'LOST' and not calls(server, '/result') and not calls(server, '/fail')
+    assert not (cfg.artwork_builder / 'LIT6262_1-agent-job1' / 'fake.json').exists()
+
+
+def test_uncontained_session_is_logged(server, deps, job, monkeypatch, capsys):
+    import runner as r
+    proc = r.load_proc()
+    real = proc.spawn
+
+    def spawn(*a, **k):
+        child = real(*a, **k)
+        child.job = None
+        return child
+    monkeypatch.setattr(proc, 'spawn', spawn)
+    assert r.run_job(job(), deps(server, 'done'), threading.Event()) == 'DONE'
+    out = capsys.readouterr().out
+    assert 'job1' in out and 'Job Object' in out
