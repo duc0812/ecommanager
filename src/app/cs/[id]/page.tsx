@@ -7,6 +7,7 @@ import { RoleGate, useCurrentUser } from '@/components/RoleGate'
 import { UrgencyChip, fmtDate, hoursLabel } from '@/components/cs/UrgencyChip'
 import { CATEGORY_LABELS, FACTORY_LABELS, ISSUE_LABELS, SENTIMENT_LABELS, STAGE_LABELS } from '@/lib/cs/labels'
 import { STAGES } from '@/lib/cs/root-cause-prompt'
+import { agentNoteParts } from '@/lib/cs/message-text'
 import { RUBRIC_LABELS } from '@/lib/cs/review-prompt'
 import { STATUS_LABELS, TASK_META, TASK_TYPES, type TaskStatus, type TaskType } from '@/lib/cs/task-labels'
 
@@ -24,7 +25,7 @@ type Order = {
 }
 type Item = {
   lineKey: string | null; title: string; variant: string | null; qty: number; warning: string | null
-  check?: { verdict: 'IN_PARCEL' | 'NOT_IN_PARCEL' | 'UNKNOWN'; conclusion: string; lookups: { supplier: string; found: boolean | null; detail: string }[] } | null
+  check?: { verdict: 'IN_PARCEL' | 'NOT_IN_PARCEL' | 'NOT_SENT' | 'UNKNOWN'; conclusion: string; lookups: { supplier: string; found: boolean | null; detail: string }[] } | null
   send: { supplier: string; via: 'API' | 'SHEET' | 'CSV'; ref: string | null; sentAt: string | null; factoryStatus: string | null; checkedAt: string | null } | null
   parcel: { trackingNumber: string; carrier: string | null; status: string; lastEvent: string | null; lastEventAt: string | null; deliveredAt: string | null; trackingUrl: string | null; sharedWith: string[] } | null
 }
@@ -132,7 +133,6 @@ export default function CsTicketPage() {
   const effectiveStage = ticket.rootCauseStageOverride ?? analysis?.rootCauseStage ?? null
   const o = order.order
   const gate: { allowed?: boolean; reasons?: string[] } = analysis ? (() => { try { return JSON.parse(analysis.gateJson) } catch { return {} } })() : {}
-  const facts: string[] = analysis ? (() => { try { return JSON.parse(analysis.outputJson).facts ?? [] } catch { return [] } })() : []
   const hours = ticket.lastCustomerAt && (!ticket.lastReplyAt || ticket.lastReplyAt < ticket.lastCustomerAt) ? (Date.now() - new Date(ticket.lastCustomerAt).getTime()) / 3600_000 : 0
 
   return (
@@ -144,6 +144,7 @@ export default function CsTicketPage() {
           <Link href="/cs" className="text-label-sm uppercase tracking-wider text-on-surface-variant">← Tickets</Link>
           <div className="mt-xs flex flex-wrap items-center gap-sm">
             <UrgencyChip urgency={ticket.urgency} />
+            {analysis && <span className="rounded-full bg-surface-container px-sm py-xs text-label-sm">{CATEGORY_LABELS[analysis.category as keyof typeof CATEGORY_LABELS] ?? analysis.category}</span>}
             <h2 className="text-headline-lg text-primary">#{ticket.fdTicketId} · {ticket.subject || '(không tiêu đề)'}</h2>
           </div>
           <p className="mt-xs text-body-sm text-on-surface-variant">
@@ -168,7 +169,23 @@ export default function CsTicketPage() {
                         <p className={`mb-xs text-label-sm ${m.private ? 'text-on-surface-variant' : mine ? 'text-on-secondary-container/80' : 'text-on-surface-variant'}`}>
                           {m.author === 'CUSTOMER' ? 'Khách' : m.author === 'AGENT' ? 'Agent' : m.author === 'STAFF' ? 'Nhân sự' : m.author}{m.private ? ' · Ghi chú nội bộ' : ''} · {fmtDate(m.createdAt, true)}
                         </p>
-                        <p className="whitespace-pre-wrap text-body-sm leading-relaxed [overflow-wrap:anywhere]">{m.displayText || m.bodyText || '(trống)'}</p>
+                        {(() => {
+                          const note = m.private ? agentNoteParts(m.displayText || m.bodyText || '') : null
+                          if (!note) return <p className="whitespace-pre-wrap text-body-sm leading-relaxed [overflow-wrap:anywhere]">{m.displayText || m.bodyText || '(trống)'}</p>
+                          return (
+                            <div className="space-y-sm text-body-sm leading-relaxed [overflow-wrap:anywhere]">
+                              <p className="text-label-md">{note.head}</p>
+                              <div><p className="text-label-sm uppercase text-on-surface-variant">Tóm tắt</p><p className="whitespace-pre-wrap font-medium text-error">{note.summary}</p></div>
+                              <div><p className="text-label-sm uppercase text-on-surface-variant">Đề xuất</p><p className="whitespace-pre-wrap">{note.proposal}</p></div>
+                              {note.details && (
+                                <details>
+                                  <summary className="cursor-pointer text-label-sm uppercase text-on-surface-variant">Chi tiết</summary>
+                                  <p className="mt-xs whitespace-pre-wrap text-label-sm text-on-surface-variant">{note.details}</p>
+                                </details>
+                              )}
+                            </div>
+                          )
+                        })()}
                         {m.quoted && (
                           <details className="mt-xs">
                             <summary className="cursor-pointer text-label-sm text-on-surface-variant">Phần trích dẫn / chữ ký</summary>
@@ -197,7 +214,10 @@ export default function CsTicketPage() {
             <div className="rounded-xl border border-outline-variant/20 bg-surface-container-lowest shadow-card">
               <div className="flex items-center justify-between border-b border-outline-variant/20 px-lg py-md">
                 <h3 className="text-headline-sm text-primary">Trả lời</h3>
-                {analysis?.draftReply && reply !== analysis.draftReply && <button onClick={() => setReply(analysis.draftReply!)} className="text-label-sm text-secondary">Lấy lại bản nháp của agent</button>}
+                <div className="flex items-center gap-md">
+                  {analysis?.draftReply && reply !== analysis.draftReply && <button onClick={() => setReply(analysis.draftReply!)} className="text-label-sm text-secondary">Lấy lại bản nháp của agent</button>}
+                  <button onClick={async () => { if (await post(`/api/cs/tickets/${id}/analyze`, undefined, 'analyze')) { setReply(''); load() } }} disabled={busy !== null} className="text-label-sm text-secondary disabled:opacity-50">{busy === 'analyze' ? 'Đang phân tích…' : 'Phân tích lại'}</button>
+                </div>
               </div>
               <div className="p-lg">
                 <textarea value={reply} onChange={e => setReply(e.target.value)} rows={8} placeholder="Viết thư cho khách (tiếng Anh)…" className="w-full rounded-lg border border-outline-variant/40 bg-surface px-md py-sm text-body-sm" />
@@ -205,7 +225,18 @@ export default function CsTicketPage() {
                   <button onClick={() => send(false)} disabled={busy !== null || !reply.trim()} className="rounded-lg bg-secondary px-lg py-sm text-label-md text-on-secondary disabled:opacity-50">{busy === 'send' ? 'Đang gửi…' : 'Gửi khách'}</button>
                   <button onClick={() => send(true)} disabled={busy !== null || !reply.trim()} className="rounded-lg border border-outline-variant/40 px-lg py-sm text-label-md text-primary disabled:opacity-50">Ghi chú nội bộ</button>
                   {lastSent && <button onClick={promote} disabled={busy !== null} className="ml-auto rounded-lg border border-secondary/40 px-lg py-sm text-label-md text-secondary">Lưu thành case mẫu</button>}
+                  {!ticket.resolvedInTool && (
+                    <button onClick={async () => { if (await post(`/api/cs/tickets/${id}/resolve`, undefined, 'resolve')) load() }} disabled={busy !== null} className={`${lastSent ? '' : 'ml-auto '}rounded-lg border border-outline-variant/40 px-lg py-sm text-label-md text-primary disabled:opacity-50`}>{busy === 'resolve' ? 'Đang cập nhật…' : 'Đánh dấu xong'}</button>
+                  )}
                 </div>
+                {!analysis && <p className="mt-sm text-label-sm text-on-surface-variant">Chưa có phân tích (cần Anthropic API key trong Cài đặt CS).</p>}
+                {analysis && (
+                  <p className="mt-sm text-label-sm text-on-surface-variant">
+                    {gate.allowed === false && gate.reasons && gate.reasons.length > 0 ? `Không tự gửi vì: ${gate.reasons.join('; ')} · ` : ''}
+                    {cases.length > 0 && <>Theo case: {cases.map(c => <Link key={c.id} href={`/cs/cases?edit=${c.id}`} className="mr-sm text-secondary">{c.title}</Link>)} · </>}
+                    {analysis.model} · {fmtDate(analysis.runAt, true)}
+                  </p>
+                )}
               </div>
             </div>
 
@@ -298,7 +329,7 @@ export default function CsTicketPage() {
                               : <p className="text-on-surface-variant">Chưa có tracking.</p>}
                             {it.warning && <p className="text-label-sm text-error"><span className="material-symbols-outlined align-middle text-[16px]">warning</span> {it.warning}</p>}
                             {it.check && (
-                              <div className={`mt-xs rounded-md px-sm py-xs text-label-sm ${it.check.verdict === 'NOT_IN_PARCEL' ? 'bg-error/10 text-error' : it.check.verdict === 'IN_PARCEL' ? 'bg-secondary/10 text-secondary' : 'bg-surface-container text-on-surface-variant'}`}>
+                              <div className={`mt-xs rounded-md px-sm py-xs text-label-sm ${it.check.verdict === 'NOT_IN_PARCEL' || it.check.verdict === 'NOT_SENT' ? 'bg-error/10 text-error' : it.check.verdict === 'IN_PARCEL' ? 'bg-secondary/10 text-secondary' : 'bg-surface-container text-on-surface-variant'}`}>
                                 <p className="font-semibold">Kết luận: {it.check.conclusion}</p>
                                 {it.check.lookups.map((l, j) => <p key={j} className="text-on-surface-variant">Tra {l.supplier}: {l.found === true ? 'có' : l.found === false ? 'không có' : 'chưa tra được'} — {l.detail}</p>)}
                               </div>
@@ -325,38 +356,6 @@ export default function CsTicketPage() {
               </div>
             </div>
 
-            <div className="rounded-xl border border-outline-variant/20 bg-surface-container-lowest shadow-card">
-              <div className="flex items-center justify-between border-b border-outline-variant/20 px-lg py-md">
-                <h3 className="text-headline-sm text-primary">Agent</h3>
-                <button onClick={async () => { if (await post(`/api/cs/tickets/${id}/analyze`, undefined, 'analyze')) { setReply(''); load() } }} disabled={busy !== null} className="text-label-sm text-secondary disabled:opacity-50">{busy === 'analyze' ? 'Đang phân tích…' : 'Phân tích lại'}</button>
-              </div>
-              <div className="space-y-sm p-lg text-body-sm">
-                {!analysis && <p className="text-on-surface-variant">Chưa có phân tích (cần Anthropic API key trong Cài đặt CS).</p>}
-                {analysis && (
-                  <>
-                    <p className="flex flex-wrap gap-xs">
-                      <UrgencyChip urgency={analysis.urgency} />
-                      <span className="rounded-full bg-surface-container px-sm py-xs text-label-sm">{CATEGORY_LABELS[analysis.category as keyof typeof CATEGORY_LABELS] ?? analysis.category}</span>
-                      <span className="rounded-full bg-surface-container px-sm py-xs text-label-sm">{SENTIMENT_LABELS[analysis.sentiment as keyof typeof SENTIMENT_LABELS] ?? analysis.sentiment}</span>
-                    </p>
-                    <p className="whitespace-pre-wrap">{analysis.summary}</p>
-                    {facts.length > 0 && <ul className="list-disc pl-md text-on-surface-variant">{facts.map((f, i) => <li key={i}>{f}</li>)}</ul>}
-                    <div className="rounded-lg bg-surface-container-low p-md">
-                      <p className="text-label-sm uppercase text-on-surface-variant">Đề xuất</p>
-                      <p className="whitespace-pre-wrap">{analysis.proposal}</p>
-                      {cases.length > 0 && <p className="mt-xs text-label-sm">Theo case: {cases.map(c => <Link key={c.id} href={`/cs/cases?edit=${c.id}`} className="mr-sm text-secondary">{c.title}</Link>)}</p>}
-                    </div>
-                    {gate.allowed === false && gate.reasons && gate.reasons.length > 0 && (
-                      <p className="text-label-sm text-on-surface-variant">Không tự gửi vì: {gate.reasons.join('; ')}</p>
-                    )}
-                    <p className="text-label-sm text-on-surface-variant">{analysis.model} · {fmtDate(analysis.runAt, true)}</p>
-                  </>
-                )}
-                {!ticket.resolvedInTool && (
-                  <button onClick={async () => { if (await post(`/api/cs/tickets/${id}/resolve`, undefined, 'resolve')) load() }} disabled={busy !== null} className="mt-sm w-full rounded-lg border border-outline-variant/40 px-lg py-sm text-label-md text-primary disabled:opacity-50">{busy === 'resolve' ? 'Đang cập nhật…' : 'Đánh dấu xong'}</button>
-                )}
-              </div>
-            </div>
             <div className="rounded-xl border border-outline-variant/20 bg-surface-container-lowest shadow-card">
               <div className="border-b border-outline-variant/20 px-lg py-md"><h3 className="text-headline-sm text-primary">Nguyên nhân</h3></div>
               <div className="space-y-sm p-lg text-body-sm">

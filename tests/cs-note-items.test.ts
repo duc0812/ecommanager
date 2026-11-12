@@ -32,6 +32,8 @@ describe('noteHtml', () => {
   it('details hold each item, what the customer stated and the ticket link', () => {
     const html = noteHtml(a, ticket, 'https://app', [tumbler, hoodie])
     const details = html.slice(html.indexOf('<b>Chi tiết</b>'))
+    expect(html).toContain('<details><summary><b>Chi tiết</b></summary>')
+    expect(html.trim().endsWith('</details>')).toBe(true)
     expect(details).toContain('LIT4987_2 Zip Hoodie (2XL): gửi Mangoshao')
     expect(details).toContain('&quot;Delivered, handed to customer&quot;')
     expect(details).toContain('Khách nêu: Thiếu 1/2 tumbler; Tên Malek')

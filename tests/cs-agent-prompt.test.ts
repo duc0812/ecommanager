@@ -20,6 +20,9 @@ describe('buildSystemPrompt', () => {
     expect(s).toContain('The "Đơn hàng:" line of the summary starts with "Fulfillment thiếu"')
     expect(s).toContain('"in parcel": the factory that shipped the parcel has this item')
     expect(s).toContain('Never promise a resend, refund or remake: staff decide')
+    expect(s).toContain('"MISSED SEND": no factory has any record of the item')
+    expect(s).toContain('The "Đơn hàng:" line starts with "Dự đoán gửi thiếu"')
+    expect(s).toContain('The proposal is "Xin lỗi khách và gửi đơn ngay lập tức"')
     expect(s).toContain('Never name a factory or supplier to the customer')
   })
   it('writes the summary as three staff lines: the customer, the order, where it stands', () => {

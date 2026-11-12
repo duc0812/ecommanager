@@ -3,7 +3,7 @@ function htmlToLines(html: string): string {
     .replace(/<(style|script)[\s\S]*?<\/\1>/gi, '')
     .replace(/<!--[\s\S]*?-->/g, '')
     .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/(p|div|li|tr|h\d|blockquote|table)>/gi, '\n')
+    .replace(/<\/(p|div|li|tr|h\d|blockquote|table|summary|details)>/gi, '\n')
     .replace(/<[^>]+>/g, '')
     .replace(/&nbsp;/g, ' ')
     .replace(/&amp;/g, '&')
@@ -50,4 +50,13 @@ export function splitQuoted(text: string): { main: string; quoted: string | null
   const quoted = text.slice(cut).trim()
   if (!main) return { main: text.trim(), quoted: null }
   return { main, quoted: quoted || null }
+}
+
+export type AgentNoteParts = { head: string; summary: string; proposal: string; details: string }
+
+/** The agent's three-part note (owner 11/12): head line, then "Tóm tắt", "Đề xuất" and "Chi tiết" sections. */
+export function agentNoteParts(text: string): AgentNoteParts | null {
+  const m = /^([^\n]*Ecom Manager[^\n]*)\n+Tóm tắt\n([\s\S]*?)\n+Đề xuất\n([\s\S]*?)\n+Chi tiết\n?([\s\S]*)$/.exec(text.trim())
+  if (!m) return null
+  return { head: m[1].trim(), summary: m[2].trim(), proposal: m[3].trim(), details: m[4].trim() }
 }

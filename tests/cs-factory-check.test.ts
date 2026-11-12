@@ -9,10 +9,18 @@ const belle = { ...malek, lineKey: 'LIT5554_1', variant: '30oz', send: { ...male
 const order = { shopifyOrderNumber: '#LIT5554', placedAt: new Date('2026-10-26T00:00:20Z'), items: [belle, malek] } as any
 
 describe('verdictOf', () => {
-  it('fulfillment is missing when the tracking factory has no line for the item', () => {
+  it('predicts a missed send when no factory has the item (owner 11/12, LIT5554)', () => {
     const v = verdictOf(malek, { supplier: 'Pgprints', found: false, detail: 'không có đơn LIT5554' }, { supplier: 'Mangoshao', found: false, detail: 'chỉ có LIT5554_1' })
+    expect(v.verdict).toBe('NOT_SENT')
+    expect(v.conclusion).toBe('Dự đoán gửi thiếu: không có thông tin gửi LIT5554_2 ở xưởng nào (Pgprints: không có đơn LIT5554; Mangoshao: chỉ có LIT5554_1), kiện UL648908989YP không chứa sản phẩm này')
+  })
+  it('an item with no send record that the tracking factory lacks is a missed send too', () => {
+    expect(verdictOf({ ...malek, send: null }, null, { supplier: 'Mangoshao', found: false, detail: 'chỉ có LIT5554_1' }).verdict).toBe('NOT_SENT')
+  })
+  it('fulfillment is missing, item unknown, when the sent factory cannot be read', () => {
+    const v = verdictOf(malek, { supplier: 'Pgprints', found: null, detail: 'chưa có key PGprints' }, { supplier: 'Mangoshao', found: false, detail: 'chỉ có LIT5554_1' })
     expect(v.verdict).toBe('NOT_IN_PARCEL')
-    expect(v.conclusion).toBe('Fulfillment thiếu: xưởng Mangoshao không có LIT5554_2 (chỉ có LIT5554_1), kiện UL648908989YP không chứa sản phẩm này; Pgprints cũng không có (không có đơn LIT5554) — không tìm được sản phẩm ở xưởng nào')
+    expect(v.conclusion).toBe('Fulfillment thiếu: xưởng Mangoshao không có LIT5554_2 (chỉ có LIT5554_1), kiện UL648908989YP không chứa sản phẩm này; chưa tra được Pgprints (chưa có key PGprints)')
   })
   it('the parcel holds the item when its factory has the line', () => {
     const v = verdictOf(malek, { supplier: 'Pgprints', found: false, detail: 'x' }, { supplier: 'Mangoshao', found: true, detail: 'dòng LIT5554_2 ở tab ORDER FULFILL' })
@@ -38,7 +46,7 @@ describe('checkSuspectItems', () => {
     expect(lookup.mock.calls.map(c => c[0])).toEqual(['Pgprints', 'Mangoshao'])
     expect(lookup.mock.calls[0][1]).toMatchObject({ orderNumber: '#LIT5554', lineKey: 'LIT5554_2' })
     expect(checks).toHaveLength(1)
-    expect(checks[0]).toMatchObject({ lineKey: 'LIT5554_2', verdict: 'NOT_IN_PARCEL' })
+    expect(checks[0]).toMatchObject({ lineKey: 'LIT5554_2', verdict: 'NOT_SENT' })
   })
   it('an item with no send record only checks the tracking factory', async () => {
     const lookup = vi.fn(async (supplier: string, _q: any) => ({ supplier, found: true, detail: 'ok' }))
@@ -85,5 +93,6 @@ describe('item lines carry the conclusion', () => {
     const [, m] = withChecks([belle, malek], [check])
     expect(itemSummaryVi(m)).toContain(' · Kết luận: Fulfillment thiếu: …')
     expect(itemPromptLine(m)).toContain('; FACTORY CHECK: NOT in parcel UL648908989YP — the factory that shipped it has no record of this item, so our fulfillment is missing it')
+    expect(itemPromptLine({ ...m, check: { ...check, verdict: 'NOT_SENT' } })).toContain('; FACTORY CHECK: MISSED SEND — no factory has any record of this item, so it was never sent to production; parcel UL648908989YP does not hold it')
   })
 })

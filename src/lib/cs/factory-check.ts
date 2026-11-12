@@ -8,7 +8,7 @@ import { findPgprintsSupplier } from '@/lib/repos/pgprints-push'
 
 /** found null: the factory could not be read, so it decides nothing. */
 export type FactoryLookup = { supplier: string; found: boolean | null; detail: string }
-export type ItemVerdict = 'IN_PARCEL' | 'NOT_IN_PARCEL' | 'UNKNOWN'
+export type ItemVerdict = 'IN_PARCEL' | 'NOT_IN_PARCEL' | 'NOT_SENT' | 'UNKNOWN'
 export type ItemCheck = { lineKey: string; lookups: FactoryLookup[]; verdict: ItemVerdict; conclusion: string }
 export type LookupQuery = { orderNumber: string; lineKey: string; placedAt: Date }
 export type LookupFn = (supplier: string, q: LookupQuery) => Promise<FactoryLookup>
@@ -26,6 +26,10 @@ export function verdictOf(it: OrderItem, sent: FactoryLookup | null, parcel: Fac
   const key = it.lineKey ?? it.title
   const rest = sentPart(sent, !!it.send)
   if (parcel?.found === true) return { verdict: 'IN_PARCEL', conclusion: `Xưởng ${parcel.supplier} có ${key} (${parcel.detail}) → kiện ${t} có chứa sản phẩm này, fulfillment đúng` }
+  if (parcel?.found === false && (!it.send || sent?.found === false)) {
+    const where = [sent, parcel].filter((l): l is FactoryLookup => !!l).map(l => `${l.supplier}: ${l.detail}`).join('; ')
+    return { verdict: 'NOT_SENT', conclusion: `Dự đoán gửi thiếu: không có thông tin gửi ${key} ở xưởng nào (${where}), kiện ${t} không chứa sản phẩm này` }
+  }
   if (parcel?.found === false) return { verdict: 'NOT_IN_PARCEL', conclusion: `Fulfillment thiếu: xưởng ${parcel.supplier} không có ${key} (${parcel.detail}), kiện ${t} không chứa sản phẩm này${rest}` }
   const who = parcel ? `xưởng ${parcel.supplier} (${parcel.detail})` : 'xưởng của tracking'
   return { verdict: 'UNKNOWN', conclusion: `Chưa tra được ${who} nên chưa kết luận kiện ${t} có chứa sản phẩm này không${rest}` }

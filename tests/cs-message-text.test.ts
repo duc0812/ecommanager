@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { displayText, splitQuoted } from '@/lib/cs/message-text'
+import { agentNoteParts, displayText, splitQuoted } from '@/lib/cs/message-text'
 
 describe('displayText', () => {
   it('rebuilds line breaks from the html when body_text lost them', () => {
@@ -41,5 +41,24 @@ describe('splitQuoted', () => {
   it('splits at a signature-only tail and keeps text without markers whole', () => {
     expect(splitQuoted('Thanks\nSent from my iPhone').main).toBe('Thanks')
     expect(splitQuoted('plain text').quoted).toBeNull()
+  })
+})
+
+describe('agentNoteParts', () => {
+  const note = 'Ecom Manager · Cao · Thiếu hàng · #LIT5554\n\nTóm tắt\nKhách: thiếu Malek\nĐơn hàng: Dự đoán gửi thiếu\nHiện trạng: chờ\n\nĐề xuất\nXin lỗi khách và gửi đơn ngay lập tức.\n\nChi tiết\nTừng sản phẩm:\nLIT5554_1 …\n\nhttps://app/cs/t1'
+  it('splits the three-part note', () => {
+    expect(agentNoteParts(note)).toEqual({
+      head: 'Ecom Manager · Cao · Thiếu hàng · #LIT5554',
+      summary: 'Khách: thiếu Malek\nĐơn hàng: Dự đoán gửi thiếu\nHiện trạng: chờ',
+      proposal: 'Xin lỗi khách và gửi đơn ngay lập tức.',
+      details: 'Từng sản phẩm:\nLIT5554_1 …\n\nhttps://app/cs/t1',
+    })
+  })
+  it('the details heading may run into its first line when the html folded it', () => {
+    expect(agentNoteParts(note.replace('Chi tiết\nTừng', 'Chi tiếtTừng'))?.details.startsWith('Từng sản phẩm:')).toBe(true)
+  })
+  it('any other note is not one', () => {
+    expect(agentNoteParts('Ecom Manager · Cao · Thiếu hàng\n\nKhách xác nhận thiếu\n\nĐề xuất: x')).toBeNull()
+    expect(agentNoteParts('Called the customer')).toBeNull()
   })
 })
