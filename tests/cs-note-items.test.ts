@@ -18,17 +18,26 @@ describe('itemSummaryVi', () => {
 })
 
 describe('noteHtml', () => {
-  const a = { category: 'MISSING_ITEM', urgency: 'HIGH', summary: 'Khách thiếu tumbler', proposal: 'Kiểm tra kiện riêng' } as any
+  const a = { category: 'MISSING_ITEM', urgency: 'HIGH', summary: 'Khách: chưa nhận tumbler 20oz "Malek"\nĐơn hàng: món này không có trong kiện đã giao\nHiện trạng: đã báo khách đang kiểm tra', proposal: 'Hỏi xưởng món đang ở đâu', outputJson: JSON.stringify({ facts: ['Thiếu 1/2 tumbler', 'Tên Malek'] }) } as any
   const ticket = { id: 't1', orderNumber: '#LIT4987' } as any
-  it('puts a per-item block under the summary, written from data', () => {
+  it('three parts in order: red summary, proposal, then details', () => {
     const html = noteHtml(a, ticket, 'https://app', [tumbler, hoodie])
-    expect(html).toContain('<b>Từng sản phẩm:</b>')
-    expect(html.indexOf('Khách thiếu tumbler')).toBeLessThan(html.indexOf('Từng sản phẩm'))
-    expect(html.indexOf('Từng sản phẩm')).toBeLessThan(html.indexOf('Đề xuất'))
-    expect(html).toContain('LIT4987_2 Zip Hoodie (2XL): gửi Mangoshao')
-    expect(html).toContain('&quot;Delivered, handed to customer&quot;')
+    const at = (s: string) => html.indexOf(s)
+    expect(at('<b>Tóm tắt</b>')).toBeGreaterThan(-1)
+    expect(at('<b>Tóm tắt</b>')).toBeLessThan(at('<b>Đề xuất</b>'))
+    expect(at('<b>Đề xuất</b>')).toBeLessThan(at('<b>Chi tiết</b>'))
+    expect(html).toContain('<span style="color:#d32f2f">Khách: chưa nhận tumbler 20oz &quot;Malek&quot;<br>Đơn hàng: món này không có trong kiện đã giao<br>Hiện trạng: đã báo khách đang kiểm tra</span>')
+    expect(at('Hỏi xưởng món đang ở đâu')).toBeLessThan(at('<b>Chi tiết</b>'))
   })
-  it('has no block when there is no order', () => {
+  it('details hold each item, what the customer stated and the ticket link', () => {
+    const html = noteHtml(a, ticket, 'https://app', [tumbler, hoodie])
+    const details = html.slice(html.indexOf('<b>Chi tiết</b>'))
+    expect(details).toContain('LIT4987_2 Zip Hoodie (2XL): gửi Mangoshao')
+    expect(details).toContain('&quot;Delivered, handed to customer&quot;')
+    expect(details).toContain('Khách nêu: Thiếu 1/2 tumbler; Tên Malek')
+    expect(details).toContain('https://app/cs/t1')
+  })
+  it('no item lines when there is no order', () => {
     expect(noteHtml(a, ticket, 'https://app')).not.toContain('Từng sản phẩm')
   })
 })

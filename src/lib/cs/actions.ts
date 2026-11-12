@@ -30,14 +30,29 @@ export function textToHtml(text: string): string {
   return text.trim().split(/\n{2,}/).map(p => `<p>${esc(p).replace(/\n/g, '<br>')}</p>`).join('')
 }
 
+function factsOf(a: Pick<CsAnalysis, 'outputJson'>): string[] {
+  try {
+    const f = JSON.parse(a.outputJson || '{}').facts
+    return Array.isArray(f) ? f.filter((x: unknown): x is string => typeof x === 'string' && x.trim() !== '') : []
+  } catch { return [] }
+}
+
+const lines = (s: string) => esc(s.trim()).replace(/"/g, '&quot;').replace(/\n+/g, '<br>')
+
+/** Owner 11/12: a red three-line summary (customer, order, where it stands), then the proposal, then the details. */
 export function noteHtml(a: CsAnalysis, ticket: CsTicket, appUrl: string, items: OrderItem[] = []): string {
   const cat = CATEGORY_LABELS[a.category as CsCategory] ?? a.category
+  const facts = factsOf(a)
+  const details = [
+    ...(items.length ? [`<b>Từng sản phẩm:</b><br>${items.map(it => lines(itemSummaryVi(it))).join('<br>')}`] : []),
+    ...(facts.length ? [`Khách nêu: ${lines(facts.join('; '))}`] : []),
+    `<a href="${ticketUrl(appUrl, ticket)}">${ticketUrl(appUrl, ticket)}</a>`,
+  ]
   return [
     `<p><b>Ecom Manager</b> · ${esc(URGENCY_LABELS[a.urgency as CsUrgency] ?? a.urgency)} · ${esc(cat)}${ticket.orderNumber ? ` · ${esc(ticket.orderNumber)}` : ''}</p>`,
-    `<p>${esc(a.summary).replace(/\n/g, '<br>')}</p>`,
-    ...(items.length ? [`<p><b>Từng sản phẩm:</b><br>${items.map(it => esc(itemSummaryVi(it)).replace(/"/g, '&quot;')).join('<br>')}</p>`] : []),
-    `<p><b>Đề xuất:</b> ${esc(a.proposal).replace(/\n/g, '<br>')}</p>`,
-    `<p><a href="${ticketUrl(appUrl, ticket)}">${ticketUrl(appUrl, ticket)}</a></p>`,
+    `<p><b>Tóm tắt</b><br><span style="color:#d32f2f">${lines(a.summary)}</span></p>`,
+    `<p><b>Đề xuất</b><br>${lines(a.proposal)}</p>`,
+    `<p><b>Chi tiết</b><br>${details.join('<br><br>')}</p>`,
   ].join('')
 }
 

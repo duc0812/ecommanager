@@ -17,10 +17,14 @@ describe('buildSystemPrompt', () => {
   it('reads the factory check of a suspect item: missing fulfillment is owned, a packed item is not called missing', () => {
     const s = buildSystemPrompt([], settings)
     expect(s).toContain('"NOT in parcel": the delivered parcel did not hold this item; our fulfillment is missing it')
-    expect(s).toContain('The summary starts with "Fulfillment thiếu"')
+    expect(s).toContain('The "Đơn hàng:" line of the summary starts with "Fulfillment thiếu"')
     expect(s).toContain('"in parcel": the factory that shipped the parcel has this item')
     expect(s).toContain('Never promise a resend, refund or remake: staff decide')
     expect(s).toContain('Never name a factory or supplier to the customer')
+  })
+  it('writes the summary as three staff lines: the customer, the order, where it stands', () => {
+    const s = buildSystemPrompt([], settings)
+    expect(s).toContain('summary is exactly 3 lines in Vietnamese: "Khách: …" (what the customer reports or asks), "Đơn hàng: …" (what our data says is really wrong with the order or item: which item, which factory, where it is), "Hiện trạng: …"')
   })
   it('fixes the reply structure: acknowledge, action with timing, closing promise within 24 hours', () => {
     const s = buildSystemPrompt([], settings).toLowerCase()
