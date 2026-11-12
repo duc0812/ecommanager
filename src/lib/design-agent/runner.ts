@@ -13,6 +13,7 @@ import {
 import { affectedForTask, type AffectedRow } from '@/lib/design-agent/affected'
 import { ensureAgentUser } from '@/lib/design-agent/agent-user'
 import { notifyNeedsOwner, type OwnerNotice } from '@/lib/design-agent/notify'
+import { ORDER_CLOSED, isOrderOpen } from '@/lib/design-agent/order-open'
 
 export const DESIGN_AGENT_TOKEN_KEY = 'design.agent.tokenHash'
 export const DESIGN_AGENT_SEEN_KEY = 'design.agent.lastSeenAt'
@@ -196,9 +197,10 @@ async function claimRound(free: number, now: Date, gone: () => boolean): Promise
   const jobs: AgentClaim[] = []
   for (const job of queued) {
     if (jobs.length >= capacity || gone()) break
-    const task = job.taskId ? await prisma.designTask.findUnique({ where: { id: job.taskId }, select: { status: true } }) : null
+    const task = job.taskId ? await prisma.designTask.findUnique({ where: { id: job.taskId }, select: { status: true, orderId: true } }) : null
     if (!task || task.status === 'CANCELLED') { await cancelJob(job.id, TASK_CANCELLED, now); continue }
     if ((job.kind === 'FIX' || job.kind === 'MAKE') && task.status === 'DONE') { await cancelJob(job.id, TASK_APPROVED, now); continue }
+    if (job.kind !== 'LIBRARY_APPLY' && !(await isOrderOpen(task.orderId))) { await cancelJob(job.id, ORDER_CLOSED, now); continue }
     if (busy.has(job.taskId!)) continue
     const taken = await prisma.designAgentJob.updateMany({
       where: { id: job.id, status: 'QUEUED', attempts: job.attempts },

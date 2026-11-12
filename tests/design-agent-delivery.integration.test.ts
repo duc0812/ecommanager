@@ -51,6 +51,11 @@ beforeAll(async () => {
   await fx.order(9, { skus: ['DD9-Hoodie'] })
   await fx.order(10, { skus: ['DD10-Hoodie'] })
   await fx.order(11, { skus: ['DD11-Hoodie'] })
+  await fx.order(12, { skus: ['DD12-Hoodie'], taskStatus: 'DONE', withPrint: true, pipelineStatus: 'FULFILLED' })
+  await fx.order(13, { skus: ['DD13-Hoodie'], taskStatus: 'DONE', withPrint: true, exported: true, pipelineStatus: 'CANCELLED' })
+  const o14 = await fx.order(14, { skus: ['DD14-Hoodie'], withPrint: true, exported: true })
+  await prisma.designTask.deleteMany({ where: { orderId: o14.orderId } })
+  await prisma.order.update({ where: { id: o14.orderId }, data: { financialStatus: 'REFUNDED' } })
   await run('DAD2_1', 'MOCKUP')
   await run('DAD4_1', 'LIBRARY_APPLY', { source: 'LIBRARY', affectedJson: JSON.stringify({ rows: [{ taskKey: 'DAD9_1' }], fulfilledCount: 0 }) })
 })
@@ -104,6 +109,17 @@ describe('delivery as the Design Agent', () => {
     expect(await agentReopenTask('DAD7_1', fix, { allowSent: true })).toMatchObject({ status: 'REJECTED', sent: true })
     expect(await prisma.designAgentJob.count({ where: { taskKey: 'DAD7_1' } })).toBe(0)
     await expect(agentReopenTask('DAD999_1', fix, { allowSent: true })).rejects.toMatchObject({ status: 404 })
+  })
+
+  it('reopen: a fulfilled, cancelled or refunded order is refused and left as it is', async () => {
+    const fix = { reason: 'Nội bộ phát hiện lỗi', note: 'cập nhật thư viện' }
+    const closed = { status: 409, message: 'Đơn đã giao hoặc đã đóng — Agent không sửa nữa' }
+    expect(await agentTaskState('DAD12_1')).toMatchObject({ orderOpen: false })
+    await expect(agentReopenTask('DAD12_1', { note: 'x' }, { allowSent: false })).rejects.toMatchObject(closed)
+    await expect(agentReopenTask('DAD13_1', fix, { allowSent: true })).rejects.toMatchObject(closed)
+    await expect(agentReopenTask('DAD14_1', fix, { allowSent: true })).rejects.toMatchObject(closed)
+    expect((await loadTask('DAD12_1'))!.task.status).toBe('DONE')
+    expect((await loadTask('DAD13_1'))!.task.status).toBe('DONE')
   })
 
   it('reject from review as Design Agent queues nothing by itself', async () => {

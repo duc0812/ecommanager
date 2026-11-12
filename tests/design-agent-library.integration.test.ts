@@ -115,6 +115,21 @@ describe('library decision', () => {
     expect((await rowOf(ids.jYes)).libraryState).toBe('APPLIED')
   })
 
+  it('an older yes is not applied once a later job of the task was answered no or did not finish', async () => {
+    await fx.order(13, { skus: ['DL13-Hoodie'], taskStatus: 'REVIEW', withPrint: true })
+    await fx.order(14, { skus: ['DL14-Hoodie'], taskStatus: 'REVIEW', withPrint: true })
+    const older = new Date('2026-11-10T00:00:00Z')
+    const later = new Date('2026-11-11T00:00:00Z')
+    const yes13 = await asked('DAL13_1', { libraryState: 'YES', createdAt: older })
+    await asked('DAL13_1', { libraryState: 'NO', createdAt: later })
+    const yes14 = await asked('DAL14_1', { libraryState: 'YES', createdAt: older })
+    await asked('DAL14_1', { status: 'FAILED', libraryState: null, affectedJson: null, createdAt: later })
+    await transitionTask('DAL13_1', LEAD, { to: 'DONE' })
+    await transitionTask('DAL14_1', LEAD, { to: 'DONE' })
+    expect(await prisma.designAgentJob.count({ where: { parentJobId: { in: [yes13, yes14] } } })).toBe(0)
+    expect(await prisma.designAgentJob.count({ where: { kind: 'LIBRARY_APPLY', taskKey: { in: ['DAL13_1', 'DAL14_1'] } } })).toBe(0)
+  })
+
   it('route: design permission and the task\'s store', async () => {
     expect((await post(ids.jAsk, { save: 'yes' }, des)).status).toBe(400)
     expect((await post(ids.jAsk, { save: true }, sellerOfOtherStore)).status).toBe(404)

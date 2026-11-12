@@ -63,12 +63,13 @@ beforeAll(async () => {
   await prisma.appSetting.deleteMany({ where: { key: 'design.settings' } })
   await fx.cleanup()
   await fx.seed()
-  const statuses: Record<number, { taskStatus?: string; exported?: boolean; skus?: string[] }> = {
+  const statuses: Record<number, { taskStatus?: string; exported?: boolean; skus?: string[]; pipelineStatus?: string }> = {
     1: { taskStatus: 'REJECTED' }, 2: { taskStatus: 'REVIEW' }, 3: { taskStatus: 'DONE' }, 4: { taskStatus: 'DONE', exported: true },
     5: {}, 6: { taskStatus: 'DOING' }, 7: { taskStatus: 'DONE' }, 8: { taskStatus: 'ASK_CUSTOMER' }, 9: { taskStatus: 'REJECTED' },
     10: { taskStatus: 'REJECTED' }, 11: { taskStatus: 'REJECTED' }, 12: { taskStatus: 'REJECTED', skus: ['DN1-Hoodie', 'DN2-Tee'] },
     13: { taskStatus: 'REJECTED' }, 14: { taskStatus: 'REJECTED' }, 15: { taskStatus: 'REVIEW' }, 16: { taskStatus: 'CANCELLED' },
     17: { taskStatus: 'REVIEW' }, 18: { taskStatus: 'DONE' },
+    19: { taskStatus: 'REJECTED', pipelineStatus: 'FULFILLED' }, 20: { taskStatus: 'DONE', pipelineStatus: 'CANCELLED' },
   }
   for (const [n, o] of Object.entries(statuses)) await fx.order(Number(n), { ...o, withPrint: true })
 })
@@ -146,6 +147,14 @@ describe('Lark message processing', () => {
     expect((await loadTask('LIP3_1'))!.task.status).toBe('DOING'); expect(await jobsOf('LIP3_1')).toHaveLength(1)
     expect((await run('LIP4_1 sửa chữ', fix('FIX', ['LIP4_1'], 'sửa chữ'))).reply).toBe(REPLY_SENT)
     expect(await jobsOf('LIP4_1')).toEqual([]); expect((await loadTask('LIP4_1'))!.task.status).toBe('DONE')
+  })
+
+  it('a fulfilled or closed order gets a reply, not a job, and is not moved', async () => {
+    expect((await run('LIP19_1 sửa chữ', fix('FIX', ['LIP19_1'], 'sửa chữ'))).reply).toBe('LIP19_1: đơn đã giao hoặc đã đóng — không nhận yêu cầu.')
+    expect((await run('LIP20_1 sửa chữ', fix('FIX', ['LIP20_1'], 'sửa chữ'))).reply).toBe('LIP20_1: đơn đã giao hoặc đã đóng — không nhận yêu cầu.')
+    expect((await run('LIP19_1 làm mockup', fix('MOCKUP', ['LIP19_1']))).reply).toBe('LIP19_1: đơn đã giao hoặc đã đóng — không nhận yêu cầu.')
+    expect(await prisma.designAgentJob.count({ where: { taskKey: { in: ['LIP19_1', 'LIP20_1'] } } })).toBe(0)
+    expect((await loadTask('LIP19_1'))!.task.status).toBe('REJECTED'); expect((await loadTask('LIP20_1'))!.task.status).toBe('DONE')
   })
 
   it('NEW_DESIGN is MAKE on a new task and FIX elsewhere; MOCKUP never moves the task', async () => {

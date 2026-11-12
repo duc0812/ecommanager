@@ -167,9 +167,9 @@ function affectedRowCount(json: string | null): number {
 
 export async function queueLibraryApplyOnApproval(taskId: string, by: { id: string | null; name: string }): Promise<DesignAgentJob | null> {
   const parent = await prisma.designAgentJob.findFirst({
-    where: { taskId, kind: 'FIX', libraryState: 'YES' }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    where: { taskId, kind: { in: ['FIX', 'MAKE'] }, status: { not: 'CANCELLED' } }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
   })
-  if (!parent || !parent.taskKey) return null
+  if (!parent || parent.kind !== 'FIX' || parent.libraryState !== 'YES' || !parent.taskKey) return null
   if (await prisma.designAgentJob.findFirst({ where: { parentJobId: parent.id }, select: { id: true } })) return null
   const { job } = await enqueueAgentJob({
     kind: 'LIBRARY_APPLY',

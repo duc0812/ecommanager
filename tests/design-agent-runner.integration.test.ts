@@ -41,6 +41,11 @@ beforeAll(async () => {
   for (const n of [3, 4, 5, 6]) await fx.order(n, { skus: [`DR${n}-Hoodie`] })
   await fx.order(7, { skus: ['DR7-Hoodie'], taskStatus: 'CANCELLED' })
   await fx.order(8, { skus: ['DR8-Hoodie'], taskStatus: 'DONE' })
+  await fx.order(9, { skus: ['DR9-Hoodie'], taskStatus: 'REJECTED', pipelineStatus: 'FULFILLED' })
+  await fx.order(10, { skus: ['DR10-Hoodie'], taskStatus: 'REJECTED', pipelineStatus: 'CANCELLED' })
+  await fx.order(11, { skus: ['DR11-Hoodie'], taskStatus: 'REJECTED' })
+  await prisma.order.update({ where: { id: 'gid://test/Order/dar-11' }, data: { financialStatus: 'REFUNDED' } })
+  await fx.order(12, { skus: ['DR12-Hoodie'], taskStatus: 'REJECTED', fulfillmentStatus: 'FULFILLED' })
 })
 
 beforeEach(async () => {
@@ -135,6 +140,12 @@ describe('design agent runner core', () => {
     expect(await claimAgentJobs(5)).toEqual([])
     expect(await rowOf(cancelledTaskJob)).toMatchObject({ status: 'CANCELLED', error: 'Task đã huỷ' })
     expect(await rowOf(approvedTaskJob)).toMatchObject({ status: 'CANCELLED', error: 'Task đã được duyệt' })
+  })
+
+  it('a job of a fulfilled, cancelled or refunded order is cancelled at the claim', async () => {
+    const ids = [(await job('DAR9_1')).id, (await job('DAR10_1')).id, (await job('DAR11_1')).id, (await job('DAR12_1')).id]
+    expect(await claimAgentJobs(5)).toEqual([])
+    for (const id of ids) expect(await rowOf(id)).toMatchObject({ status: 'CANCELLED', error: 'Đơn đã giao hoặc đã đóng — Agent không sửa nữa' })
   })
 
   it('heartbeat renews a running job only', async () => {

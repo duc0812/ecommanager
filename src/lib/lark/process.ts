@@ -6,7 +6,7 @@ import { larkLlm, parseLarkIntent, type LarkLlm } from '@/lib/lark/intent'
 import { resolveTaskRefs } from '@/lib/lark/resolve'
 import {
   REPLY_NOT_READ, REPLY_OTHER, REPLY_OUT_OF_SCOPE, REPLY_SENT, REPLY_UNCLEAR,
-  replyAccepted, replyAmbiguous, replyAppended, replyAskCustomer, replyCancelled, replyRunning, replyWhatToFix,
+  replyAccepted, replyAmbiguous, replyAppended, replyAskCustomer, replyCancelled, replyOrderClosed, replyRunning, replyWhatToFix,
 } from '@/lib/lark/replies'
 import { AgentJobError, enqueueAgentJob, openJobForTask, type AgentJobKind } from '@/lib/design-agent/jobs'
 import { agentAddNote, agentRejectReview, agentReopenTask, type AgentTaskState } from '@/lib/design-agent/delivery'
@@ -36,6 +36,7 @@ export async function requestForTask(
 ): Promise<{ jobId: string | null; reply: string; error?: string }> {
   const key = task.taskKey
   if (task.status === 'CANCELLED') return { jobId: null, reply: replyCancelled(key) }
+  if (!task.orderOpen) return { jobId: null, reply: replyOrderClosed(key) }
   if (task.status === 'ASK_CUSTOMER') return { jobId: null, reply: replyAskCustomer(key) }
   if (kind === 'MOCKUP') return enqueueFor('MOCKUP', task, instruction, sender)
   if (kind === 'NEW_DESIGN' && (task.status === 'NEW' || task.status === 'ASSIGNED')) return enqueueFor('MAKE', task, instruction, sender)

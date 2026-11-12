@@ -8,6 +8,7 @@ import {
 import { AgentJobError, enqueueAgentJob } from '@/lib/design-agent/jobs'
 import { findLineByKey } from '@/lib/design-agent/affected'
 import { ensureAgentUser } from '@/lib/design-agent/agent-user'
+import { ORDER_CLOSED, isOrderOpen } from '@/lib/design-agent/order-open'
 
 export const HOLD_NOTE_PREFIX = 'Auto render giữ lại: '
 
@@ -16,7 +17,9 @@ const MAX_HOLD_REASON = 300
 const NO_TASK = 'Không tìm thấy task'
 const SENT_NEEDS_TOOL = 'Đơn đã gửi xưởng — cần mở lại trên tool với lý do'
 
-export type AgentTaskState = { taskId: string; taskKey: string; status: TaskStatus; sent: boolean; lineId: string; orderId: string; orderNumber: string }
+export type AgentTaskState = {
+  taskId: string; taskKey: string; status: TaskStatus; sent: boolean; orderOpen: boolean; lineId: string; orderId: string; orderNumber: string
+}
 
 export async function agentTaskState(taskKey: string): Promise<AgentTaskState | null> {
   const task = await prisma.designTask.findUnique({ where: { taskKey }, include: { order: { select: { shopifyOrderNumber: true } } } })
@@ -24,7 +27,7 @@ export async function agentTaskState(taskKey: string): Promise<AgentTaskState | 
   const line = await prisma.orderLine.findFirst({ where: { orderId: task.orderId, shopifyLineId: task.shopifyLineId }, select: { id: true } })
   if (!line) return null
   return {
-    taskId: task.id, taskKey: task.taskKey, status: task.status as TaskStatus, sent: await isSentLineOfOpenOrder(line.id),
+    taskId: task.id, taskKey: task.taskKey, status: task.status as TaskStatus, sent: await isSentLineOfOpenOrder(line.id), orderOpen: await isOrderOpen(task.orderId),
     lineId: line.id, orderId: task.orderId, orderNumber: task.order.shopifyOrderNumber,
   }
 }
@@ -77,6 +80,7 @@ async function reopenSentAsAgent(lineId: string, input: { reason?: unknown; note
 export async function agentReopenTask(key: string, input: { reason?: unknown; note?: unknown }, opts: { allowSent: boolean }): Promise<{ status: TaskStatus; sent: boolean }> {
   const state = await agentTaskState(key)
   if (state) {
+    if (!state.orderOpen) throw new AgentJobError(ORDER_CLOSED, 409)
     if (state.status !== 'DONE') return { status: state.status, sent: state.sent }
     if (!state.sent) {
       const agent = await ensureAgentUser()
@@ -92,6 +96,7 @@ export async function agentReopenTask(key: string, input: { reason?: unknown; no
   }
   const line = await findLineByKey(key)
   if (!line) throw new AgentJobError(`Không tìm thấy task hoặc dòng ${key}`, 404)
+  if (!(await isOrderOpen(line.orderId))) throw new AgentJobError(ORDER_CLOSED, 409)
   if (!(await isSentLineOfOpenOrder(line.lineId))) throw new AgentJobError('Dòng chưa có task — bấm Đồng bộ task trên tool', 409)
   if (!opts.allowSent) throw new AgentJobError(SENT_NEEDS_TOOL, 409)
   return reopenSentAsAgent(line.lineId, input)

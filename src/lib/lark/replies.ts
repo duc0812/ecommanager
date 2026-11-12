@@ -14,6 +14,8 @@ export const replyAskCustomer = (taskKey: string) => `${taskKey} đang chờ kh�
 
 export const replyCancelled = (taskKey: string) => `${taskKey} đã huỷ, không nhận yêu cầu.`
 
+export const replyOrderClosed = (taskKey: string) => `${taskKey}: đơn đã giao hoặc đã đóng — không nhận yêu cầu.`
+
 export const replyWhatToFix = (taskKey: string) => `Cần sửa gì ở ${taskKey}? Hãy ghi rõ chỗ sai.`
 
 export const REPLY_OTHER = 'Bot làm được: sửa mẫu, làm mẫu, làm mockup cho một đơn cụ thể. Hãy nhắn kèm mã đơn, ví dụ: LIT6262_1 sửa sao trên mũ bị lệch.'
