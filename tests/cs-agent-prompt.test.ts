@@ -74,7 +74,7 @@ describe('buildUserPrompt', () => {
         factoryState: 'SHIPPED', supplierHandoffAt: new Date('2026-10-05T00:00:00Z'), pipelineStatus: 'EXPORTED',
         lines: [{ title: 'Family Ornament', variant: '3 people', qty: 1, customized: true, personalization: 'Custom Name: Maree' }],
         shipments: [{ trackingNumber: 'SWX1', carrier: 'USPS', status: 'IN_TRANSIT', lastCheckpointAt: new Date('2026-10-20T00:00:00Z'), trackingUrl: 'https://litzzy.com/apps/trackingorder?nums=SWX1' }],
-        designTaskStatuses: ['DONE'],
+        designTaskStatuses: ['DONE'], items: [],
       },
     }
     const ticket = { id: 't1', fdTicketId: 119, subject: 'Wrong place', requesterEmail: 'p@x.com', requesterName: 'Paul', fdCreatedAt: new Date('2026-10-20T05:48:29Z') } as any
@@ -126,5 +126,40 @@ describe('buildUserPrompt', () => {
     const p = buildUserPrompt({ ticket: { id: 't', fdTicketId: 1, subject: 's', fdCreatedAt: new Date() } as any, messages: [], order: { match: 'AMBIGUOUS', order: null, candidates: ['#LIT1', '#LIT2'] }, previous: [] })
     expect(p).toContain('AMBIGUOUS')
     expect(p).toContain('#LIT1, #LIT2')
+  })
+})
+
+describe('per-item order status (LIT4987)', () => {
+  const item = (n: number, extra: Record<string, unknown> = {}) => ({
+    lineKey: `LIT4987_${n}`, title: n === 1 ? 'Tumbler' : 'Zip Hoodie', variant: n === 1 ? '20oz' : '2XL', qty: 1, send: null, parcel: null, warning: null, ...extra,
+  })
+  const parcel = { trackingNumber: 'UL645924611YP', carrier: 'Yodel', status: 'DELIVERED', lastEvent: 'Delivered, handed to customer, NANTGARW', lastEventAt: new Date('2026-11-09T12:55:01Z'), deliveredAt: new Date('2026-11-09T12:55:01Z'), trackingUrl: null, fromSupplier: 'Mangoshao', sharedWith: [] as string[] }
+  const order: OrderContext = {
+    match: 'EXACT', candidates: ['#LIT4987'],
+    order: {
+      id: 'o', shopifyOrderNumber: '#LIT4987', placedAt: new Date('2026-10-15T00:00:00Z'), customerName: 'Eryl', customerEmail: 'e@x.com', shipTo: 'Abergavenny, GB',
+      factoryState: 'DELIVERED', supplierHandoffAt: null, pipelineStatus: 'FULFILLED', lines: [], shipments: [], designTaskStatuses: [],
+      items: [
+        item(1, { parcel: { ...parcel, sharedWith: ['LIT4987_2'] }, warning: 'Không tìm được thông tin gửi xưởng mà sản phẩm đã gắn tracking UL645924611YP' }),
+        item(2, { send: { supplier: 'Mangoshao', via: 'SHEET', ref: 'CN_POD_MS-20261028', sentAt: new Date('2026-10-28T01:52:59Z'), factoryStatus: null, checkedAt: null }, parcel: { ...parcel, sharedWith: ['LIT4987_1'] } }),
+        item(3, { title: 'Mug', send: { supplier: 'Pgprints', via: 'API', ref: 'PG8160-1060', sentAt: new Date('2026-10-26T05:44:26Z'), factoryStatus: 'in-production', checkedAt: new Date('2026-11-07T20:30:00Z') } }),
+      ],
+    } as any,
+  }
+  const p = buildUserPrompt({ ticket: { id: 't', fdTicketId: 623, subject: 's', fdCreatedAt: new Date() } as any, messages: [], order, previous: [] })
+  it('lists every item with its factory, how and when it was sent, and its parcel', () => {
+    expect(p).toContain('items:')
+    expect(p).toContain('LIT4987_1 Tumbler (20oz): sent: no record found')
+    expect(p).toContain('LIT4987_2 Zip Hoodie (2XL): sent to Mangoshao by sheet CN_POD_MS-20261028 on 10/28/2026')
+    expect(p).toContain('parcel UL645924611YP Yodel DELIVERED, delivered 10/09/2026'.replace('10/09', '11/09'))
+    expect(p).toContain('latest scan 11/09/2026 "Delivered, handed to customer, NANTGARW"')
+    expect(p).toContain('same parcel as LIT4987_1')
+    expect(p).toContain('sent to Pgprints by API PG8160-1060 on 10/26/2026, factory status in-production (checked 11/07/2026); parcel: none yet')
+    expect(p).toContain('WARNING: Không tìm được thông tin gửi xưởng')
+  })
+  it('tells the agent to read items first and never to call a warned item lost or our fault', () => {
+    const s = buildSystemPrompt([], settings).toLowerCase()
+    for (const needle of ['## items', 'each item', 'no record found', 'never guess', 'warning', 'separate parcel', 'do not say', 'entirely on us'])
+      expect(s, needle).toContain(needle)
   })
 })

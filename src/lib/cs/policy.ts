@@ -21,6 +21,7 @@ export type GateInput = {
   humanOnly: boolean
   openDirectives: number
   hasActiveCaseForCategory: boolean
+  itemWarning?: boolean
 }
 
 export type GateResult = { allowed: boolean; reasons: string[]; mode: CsMode }
@@ -33,6 +34,7 @@ function ticketLimits(i: GateInput): string[] {
   const reasons: string[] = []
   if (i.agentRepliesOnTicket >= AGENT_TICKET_CAP) reasons.push('agent already replied twice on this ticket')
   if (i.humanOnly) reasons.push('customer asked for a person — staff only')
+  if (i.itemWarning) reasons.push('an item has a tracking that may not be its parcel — staff check first')
   return reasons
 }
 

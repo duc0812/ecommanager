@@ -1,10 +1,24 @@
 import type { CsAnalysis, CsCase, CsMessage, CsTicket } from '@/generated/prisma/client'
-import type { OrderContext } from '@/lib/cs/order-context'
+import type { OrderContext, OrderItem } from '@/lib/cs/order-context'
 import type { CsSettings } from '@/lib/cs/settings'
 import type { CsMode } from '@/lib/cs/hours'
 
 const fmtDate = (d: Date | null | undefined) => (d ? d.toLocaleDateString('en-US', { timeZone: 'UTC', month: '2-digit', day: '2-digit', year: 'numeric' }) : '—')
 const fmtDateTime = (d: Date) => `${fmtDate(d)} ${d.toISOString().slice(11, 16)}`
+const VIA = { API: 'API', SHEET: 'sheet', CSV: 'CSV export' } as const
+
+export function itemPromptLine(it: OrderItem): string {
+  const head = `${it.lineKey ?? '—'} ${it.title}${it.variant ? ` (${it.variant})` : ''}${it.qty > 1 ? ` ×${it.qty}` : ''}`
+  const s = it.send
+  const sent = s
+    ? `sent to ${s.supplier} by ${VIA[s.via]}${s.ref ? ` ${s.ref}` : ''} on ${fmtDate(s.sentAt)}${s.factoryStatus ? `, factory status ${s.factoryStatus} (checked ${fmtDate(s.checkedAt)})` : ''}`
+    : 'sent: no record found'
+  const p = it.parcel
+  const parcel = p
+    ? `parcel ${p.trackingNumber} ${p.carrier ?? ''} ${p.status}${p.deliveredAt ? `, delivered ${fmtDate(p.deliveredAt)}` : ''}${p.lastEvent ? `, latest scan ${fmtDate(p.lastEventAt)} "${p.lastEvent}"` : ''}${p.sharedWith.length ? `, same parcel as ${p.sharedWith.join(', ')}` : ''}`
+    : 'parcel: none yet'
+  return `- ${head}: ${sent}; ${parcel}${it.warning ? `; WARNING: ${it.warning}` : ''}`
+}
 
 export function buildSystemPrompt(cases: Pick<CsCase, 'id' | 'title' | 'category' | 'situation' | 'resolution' | 'toneNotes' | 'forbidden' | 'exampleReply'>[], settings: Pick<CsSettings, 'productionDays' | 'shippingDays'>): string {
   const caseBlock = cases.length
@@ -33,6 +47,12 @@ export function buildSystemPrompt(cases: Pick<CsCase, 'id' | 'title' | 'category
 - Tracking page: https://litzzy.com/apps/trackingorder?nums=<tracking number>.
 - Each order line carries the personalisation the customer typed at checkout ("[personalised: Custom Name: Maree; Custom Number: 35]"). When a customer asks what name or text is on their order, or whether we received it, answer from this data and quote it exactly as typed (case, spacing, spelling) — never guess, never "we will check" when the data is right there. A line with no personalisation text means nothing was typed; say so and ask what they want.
 - Refund, partial refund, resend, reprint or credit at our cost are decisions for the human team (see "Offers need approval").
+
+## Items — read them before anything else
+"items" lists each item of the order on its own: which factory it was sent to, how and when, the factory's status, and its own parcel (tracking, carrier, latest scan, delivery date, which items share the parcel). Items of one order often go to different factories and travel in separate parcels.
+- Start the summary from items: for each item, whether it was sent (factory, date) and where its parcel is. "no record found" means we do not know: say so, never guess a factory, a date or a parcel.
+- An item with a WARNING has a tracking that may not be its parcel. When the customer reports that item missing or not received, do not say it was lost, left out of the box or our fault, and do not open with "entirely on us": say we are checking whether it ships in a separate parcel and answer within 24 hours; the proposal asks staff to check that item's own factory and parcel.
+- Answer about the item the customer asks about, from that item's own line; never apply one item's tracking or delivery to another unless items says they share the parcel.
 
 ## Reply structure (draftReply) — every customer email follows it
 1. Greet the customer by first name.
@@ -150,6 +170,7 @@ export function buildUserPrompt(i: {
         `lines: ${o.lines.map(l => `${l.qty}× ${l.title}${l.variant ? ` (${l.variant})` : ''}${l.personalization ? ` [personalised: ${l.personalization}]` : l.customized ? ' [personalised]' : ''}`).join('; ') || '—'}`,
         `shipments: ${o.shipments.map(s => `${s.trackingNumber ?? 'no tracking'} ${s.carrier ?? ''} ${s.status} last scan ${fmtDate(s.lastCheckpointAt)}${s.trackingUrl ? ` ${s.trackingUrl}` : ''}`).join('; ') || 'none yet'}`,
         `designTasks: ${o.designTaskStatuses.join(', ') || '—'}`,
+        `items:\n${o.items.map(itemPromptLine).join('\n') || '- none'}`,
       ].join('\n')
     : `match: ${i.order.match}${i.order.candidates.length ? `\ncandidates: ${i.order.candidates.join(', ')}` : ''}`
 

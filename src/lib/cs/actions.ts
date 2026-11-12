@@ -6,6 +6,7 @@ import type { CsSettings } from '@/lib/cs/settings'
 import { tagsFor, ticketTags, urgencyToPriority, type CsCategory, type CsUrgency } from '@/lib/cs/triage'
 import { CATEGORY_LABELS, URGENCY_LABELS } from '@/lib/cs/labels'
 import { HUMAN_ONLY_TAG } from '@/lib/cs/policy'
+import { buildOrderContext, itemSummaryVi, type OrderItem } from '@/lib/cs/order-context'
 
 export type Notifier = (text: string) => Promise<unknown>
 export type MessageSource = 'FRESHDESK' | 'OWN' | 'DRAFT_EDITED' | 'DRAFT_UNCHANGED' | 'AGENT'
@@ -28,11 +29,12 @@ export function textToHtml(text: string): string {
   return text.trim().split(/\n{2,}/).map(p => `<p>${esc(p).replace(/\n/g, '<br>')}</p>`).join('')
 }
 
-export function noteHtml(a: CsAnalysis, ticket: CsTicket, appUrl: string): string {
+export function noteHtml(a: CsAnalysis, ticket: CsTicket, appUrl: string, items: OrderItem[] = []): string {
   const cat = CATEGORY_LABELS[a.category as CsCategory] ?? a.category
   return [
     `<p><b>Ecom Manager</b> · ${esc(URGENCY_LABELS[a.urgency as CsUrgency] ?? a.urgency)} · ${esc(cat)}${ticket.orderNumber ? ` · ${esc(ticket.orderNumber)}` : ''}</p>`,
     `<p>${esc(a.summary).replace(/\n/g, '<br>')}</p>`,
+    ...(items.length ? [`<p><b>Từng sản phẩm:</b><br>${items.map(it => esc(itemSummaryVi(it)).replace(/"/g, '&quot;')).join('<br>')}</p>`] : []),
     `<p><b>Đề xuất:</b> ${esc(a.proposal).replace(/\n/g, '<br>')}</p>`,
     `<p><a href="${ticketUrl(appUrl, ticket)}">${ticketUrl(appUrl, ticket)}</a></p>`,
   ].join('')
@@ -73,7 +75,8 @@ export async function writeBack(fd: Pick<FreshdeskClient, 'update' | 'note'>, ti
   await prisma.csTicket.update({ where: { id: ticket.id }, data: { fdPriority: patch.priority, fdTags: JSON.stringify(patch.tags) } })
   const hash = analysisHash(a, ticket.orderNumber)
   if (ticket.lastNoteHash === hash) return { noted: false }
-  await fd.note(ticket.fdTicketId, noteHtml(a, ticket, appUrl))
+  const ctx = ticket.orderNumber ? await buildOrderContext({ subject: '', texts: [], cfOrderId: ticket.orderNumber, email: null }) : null
+  await fd.note(ticket.fdTicketId, noteHtml(a, ticket, appUrl, ctx?.order?.items ?? []))
   await prisma.csTicket.update({ where: { id: ticket.id }, data: { lastNoteHash: hash } })
   void settings
   return { noted: true }

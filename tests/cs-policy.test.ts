@@ -68,3 +68,11 @@ describe('mentionsRefundAddressOrCancel', () => {
     expect(mentionsRefundAddressOrCancel('Where is my order? It has been a week.')).toBe(false)
   })
 })
+
+describe('items with a doubtful parcel (LIT4987)', () => {
+  it('never auto-sends while an item carries a tracking that may not be its parcel, in either mode', () => {
+    blocked({ itemWarning: true }, 'parcel')
+    const ah = autoReplyGate({ ...passing, mode: 'AFTER_HOURS', itemWarning: true, settings: { ...passing.settings, afterHoursAutoReply: true, afterHoursCategories: ['ORDER_STATUS'] } })
+    expect(ah.allowed).toBe(false)
+  })
+})

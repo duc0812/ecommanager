@@ -73,6 +73,7 @@ export async function analyzeTicket(ticketId: string, deps: { llm: Llm; now?: Da
     customerMessageCount: customerCount,
     hasAnyReply: replies.length > 0,
     pendingCustomerMessage: !!firstUnanswered,
+    itemWarning: !!order.order?.items.some(it => it.warning),
     hasTracking: !!order.order?.shipments.some(s => s.trackingNumber && s.status !== 'EXPIRED' && s.status !== 'EXCEPTION'),
     placedAt: order.order?.placedAt ?? null,
     now,

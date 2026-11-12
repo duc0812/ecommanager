@@ -20,6 +20,12 @@ type Order = {
   lines: { title: string; variant: string | null; qty: number; customized: boolean }[]
   shipments: { trackingNumber: string | null; carrier: string | null; status: string; lastCheckpointAt: string | null; trackingUrl: string | null }[]
   designTaskStatuses: string[]
+  items?: Item[]
+}
+type Item = {
+  lineKey: string | null; title: string; variant: string | null; qty: number; warning: string | null
+  send: { supplier: string; via: 'API' | 'SHEET' | 'CSV'; ref: string | null; sentAt: string | null; factoryStatus: string | null; checkedAt: string | null } | null
+  parcel: { trackingNumber: string; carrier: string | null; status: string; lastEvent: string | null; lastEventAt: string | null; deliveredAt: string | null; trackingUrl: string | null; sharedWith: string[] } | null
 }
 type Detail = {
   ticket: { id: string; fdTicketId: number; subject: string; requesterEmail: string | null; requesterName: string | null; orderNumber: string | null; urgency: string | null; category: string | null; sentiment: string | null; needsHuman: boolean; autoReplied: boolean; resolvedInTool: boolean; fdStatus: number; lastCustomerAt: string | null; lastReplyAt: string | null; rootCauseStageOverride: string | null; rootCauseNote: string | null; staffReadAt: string | null; staffReadByName: string | null }
@@ -275,15 +281,37 @@ export default function CsTicketPage() {
                     <p><Link href={`/fulfillment/orders?q=${encodeURIComponent(o.shopifyOrderNumber)}`} className="text-label-md text-secondary">{o.shopifyOrderNumber}</Link> <span className="text-on-surface-variant">· đặt {fmtDate(o.placedAt)}{order.match === 'BY_EMAIL' ? ' · tìm theo email' : ''}</span></p>
                     <p className={`text-label-md ${FACTORY_COLOR[o.factoryState] ?? ''}`}>{FACTORY_LABELS[o.factoryState] ?? o.factoryState}{o.supplierHandoffAt ? ` (${fmtDate(o.supplierHandoffAt)})` : ''}</p>
                     <p className="text-on-surface-variant">Ship to: {o.shipTo || '—'}</p>
-                    <ul className="list-disc pl-md">
-                      {o.lines.map((l, i) => <li key={i}>{l.qty}× {l.title}{l.variant ? ` (${l.variant})` : ''}{l.customized ? ' · cá nhân hoá' : ''}</li>)}
-                    </ul>
-                    {o.shipments.length > 0 ? o.shipments.map((s, i) => (
-                      <p key={i}>
-                        {s.trackingUrl ? <a className="text-secondary" href={s.trackingUrl} target="_blank" rel="noreferrer">{s.trackingNumber}</a> : (s.trackingNumber ?? 'chưa có tracking')}
-                        <span className="text-on-surface-variant"> · {s.carrier ?? ''} {s.status} · scan {fmtDate(s.lastCheckpointAt)}</span>
-                      </p>
-                    )) : <p className="text-on-surface-variant">Chưa có tracking.</p>}
+                    {o.items && o.items.length > 0 ? (
+                      <div className="space-y-sm">
+                        {o.items.map((it, i) => (
+                          <div key={i} className="rounded-lg border border-outline-variant/20 p-sm">
+                            <p className="text-label-md">{it.lineKey ? `${it.lineKey} · ` : ''}{it.qty > 1 ? `${it.qty}× ` : ''}{it.title}{it.variant ? ` (${it.variant})` : ''}</p>
+                            {it.send
+                              ? <p className="text-on-surface-variant">Xưởng {it.send.supplier} · {it.send.via === 'SHEET' ? 'sheet' : it.send.via}{it.send.ref ? ` ${it.send.ref}` : ''} · gửi {fmtDate(it.send.sentAt)}{it.send.factoryStatus ? ` · xưởng báo ${it.send.factoryStatus}` : ''}</p>
+                              : <p className="text-error">Không tìm được thông tin gửi xưởng</p>}
+                            {it.parcel
+                              ? <p>
+                                  {it.parcel.trackingUrl ? <a className="text-secondary" href={it.parcel.trackingUrl} target="_blank" rel="noreferrer">{it.parcel.trackingNumber}</a> : it.parcel.trackingNumber}
+                                  <span className="text-on-surface-variant"> · {it.parcel.carrier ?? ''} {it.parcel.status}{it.parcel.deliveredAt ? ` · giao ${fmtDate(it.parcel.deliveredAt)}` : ''}{it.parcel.lastEvent ? ` · ${fmtDate(it.parcel.lastEventAt)}: ${it.parcel.lastEvent}` : ''}{it.parcel.sharedWith.length ? ` · chung kiện với ${it.parcel.sharedWith.join(', ')}` : ''}</span>
+                                </p>
+                              : <p className="text-on-surface-variant">Chưa có tracking.</p>}
+                            {it.warning && <p className="text-label-sm text-error"><span className="material-symbols-outlined align-middle text-[16px]">warning</span> {it.warning}</p>}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <>
+                      <ul className="list-disc pl-md">
+                        {o.lines.map((l, i) => <li key={i}>{l.qty}× {l.title}{l.variant ? ` (${l.variant})` : ''}{l.customized ? ' · cá nhân hoá' : ''}</li>)}
+                      </ul>
+                      {o.shipments.length > 0 ? o.shipments.map((s, i) => (
+                        <p key={i}>
+                          {s.trackingUrl ? <a className="text-secondary" href={s.trackingUrl} target="_blank" rel="noreferrer">{s.trackingNumber}</a> : (s.trackingNumber ?? 'chưa có tracking')}
+                          <span className="text-on-surface-variant"> · {s.carrier ?? ''} {s.status} · scan {fmtDate(s.lastCheckpointAt)}</span>
+                        </p>
+                      )) : <p className="text-on-surface-variant">Chưa có tracking.</p>}
+                      </>
+                    )}
                     {o.designTaskStatuses.length > 0 && <p className="text-on-surface-variant">Design: {o.designTaskStatuses.join(', ')}</p>}
                   </>
                 )}

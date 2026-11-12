@@ -15,7 +15,7 @@ describe('buildReviewUserPrompt', () => {
       review: { body: 'Still waiting for my shirt', title: 'Sad', productTitle: 'Shipping protection', reviewerName: 'Maricela', reviewCreatedAt: new Date('2026-11-08T10:00:00Z') },
       order: { id: 'o', shopifyOrderNumber: '#LIT1', placedAt: new Date('2026-10-01T00:00:00Z'), customerName: 'Maricela Ruiz', customerEmail: 'm@x.com', shipTo: 'Austin TX', factoryState: 'SHIPPED', supplierHandoffAt: null, pipelineStatus: 'FULFILLED',
         lines: [{ title: 'Stwa Galaxy Shirt', variant: 'L', qty: 1, customized: true, personalization: 'Custom Name: Mari' }],
-        shipments: [{ trackingNumber: 'YT1', carrier: 'YunExpress', status: 'IN_TRANSIT', lastCheckpointAt: new Date('2026-10-20T00:00:00Z'), trackingUrl: 'https://litzzy.com/apps/trackingorder?nums=YT1' }], designTaskStatuses: [] },
+        shipments: [{ trackingNumber: 'YT1', carrier: 'YunExpress', status: 'IN_TRANSIT', lastCheckpointAt: new Date('2026-10-20T00:00:00Z'), trackingUrl: 'https://litzzy.com/apps/trackingorder?nums=YT1' }], designTaskStatuses: [], items: [] },
       reviewedLine: 'Stwa Galaxy Shirt',
       refunded: 0,
     })

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { extractOrderNumbers, factoryStateOf, personalizationOf } from '@/lib/cs/order-context'
+import { extractOrderNumbers, factoryStateOf, orderItemsOf, personalizationOf } from '@/lib/cs/order-context'
 
 const base = { supplierHandoffAt: null as Date | null, pipelineStatus: 'READY_TO_PRODUCTION', fulfillmentStatus: null as string | null, supplierPushes: [] as { status: string }[], shipments: [] as { status: string }[] }
 
@@ -62,5 +62,76 @@ describe('factoryStateOf', () => {
   })
   it('CANCELLED pipeline wins', () => {
     expect(factoryStateOf({ ...base, pipelineStatus: 'CANCELLED', shipments: [{ status: 'DELIVERED' }] })).toBe('CANCELLED')
+  })
+})
+
+describe('orderItemsOf', () => {
+  const names = new Map([['mango', 'Mangoshao'], ['pg', 'Pgprints']])
+  const line = (n: number, extra: Record<string, unknown> = {}) => ({
+    id: `ol-${n}`, shopifyLineId: `gid/${n}`, productTitle: `Item ${n}`, variantTitle: 'One', qty: 1, linePosition: n, sku: `SKU${n}`, shopifyProductType: 'Tumbler',
+    resolvedSupplierId: 'mango', exportedToSupplierId: null as string | null, exportedAt: null as Date | null, ...extra,
+  })
+  const ship = (lineId: string, extra: Record<string, unknown> = {}) => ({
+    shopifyLineId: lineId, lineKey: null, trackingNumber: 'UL1', carrier: 'Other', detectedCarrier: 'Yanwen', lastMileCarrier: 'Yodel', status: 'DELIVERED', supplierId: 'mango',
+    lastCheckpointAt: new Date('2026-11-09T12:55:01Z'), trackingUrl: null,
+    checkpointsJson: JSON.stringify([{ time: '2026-11-09T10:35:18', desc: 'Driver enroute, NANTGARW', status: 'IN_TRANSIT' }, { time: '2026-11-09T12:55:01', desc: 'Delivered, handed to customer, NANTGARW', status: 'DELIVERED' }]),
+    ppTimingJson: JSON.stringify({ deliveryDate: '2026-11-09T12:55:01' }), ...extra,
+  })
+  const input = (o: Partial<Parameters<typeof orderItemsOf>[0]>) => ({ orderNumber: '#LIT4987', lines: [], pushes: [], sheetWrites: [], shipments: [], supplierNames: names, ...o })
+
+  it('reads the factory, the way and the date each item was sent, skipping add-ons', () => {
+    const items = orderItemsOf(input({
+      lines: [
+        line(1),
+        line(2, { productTitle: 'Shipping protection', sku: null, shopifyProductType: 'Kaching Cart Upsell Toggle' }),
+        line(3, { exportedToSupplierId: 'mango', exportedAt: new Date('2026-10-28T01:52:59Z') }),
+        line(4, { resolvedSupplierId: 'pg' }),
+      ],
+      pushes: [{ supplierId: 'pg', status: 'CREATED', supplierOrderCode: 'PG8160-1060', pushedAt: new Date('2026-10-26T05:44:26Z'), remoteStatus: 'in-production', lastSyncedAt: new Date('2026-11-07T20:30:00Z'), prevExportJson: JSON.stringify({ shopifyLineIds: ['gid/4'] }) }],
+      sheetWrites: [{ orderLineId: 'ol-1', lineKey: 'LIT4987_1', supplierId: 'mango', tabName: 'CN_POD_MS-20261028', status: 'WRITTEN', createdAt: new Date('2026-10-28T02:00:00Z') }],
+    }))
+    expect(items.map(i => i.lineKey)).toEqual(['LIT4987_1', 'LIT4987_2', 'LIT4987_3'])
+    expect(items[0].send).toMatchObject({ supplier: 'Mangoshao', via: 'SHEET', ref: 'CN_POD_MS-20261028' })
+    expect(items[1].send).toMatchObject({ supplier: 'Mangoshao', via: 'CSV', sentAt: new Date('2026-10-28T01:52:59Z') })
+    expect(items[2].send).toMatchObject({ supplier: 'Pgprints', via: 'API', ref: 'PG8160-1060', factoryStatus: 'in-production' })
+  })
+  it('gives the newest scan, the delivery date and the items sharing a tracking', () => {
+    const items = orderItemsOf(input({
+      lines: [line(1, { exportedToSupplierId: 'mango', exportedAt: new Date('2026-10-28T00:00:00Z') }), line(2, { exportedToSupplierId: 'mango', exportedAt: new Date('2026-10-28T00:00:00Z') })],
+      shipments: [ship('gid/1'), ship('gid/2')],
+    }))
+    expect(items[0].parcel).toMatchObject({ trackingNumber: 'UL1', carrier: 'Yodel', status: 'DELIVERED', lastEvent: 'Delivered, handed to customer, NANTGARW', sharedWith: ['LIT4987_2'] })
+    expect(items[0].parcel?.deliveredAt?.toISOString()).toBe('2026-11-09T12:55:01.000Z')
+    expect(items[0].warning).toBeNull()
+  })
+  it('warns when an item carries a tracking but no record of being sent (LIT4987 tumbler)', () => {
+    const items = orderItemsOf(input({
+      lines: [line(1), line(2, { exportedToSupplierId: 'mango', exportedAt: new Date('2026-10-28T00:00:00Z') })],
+      shipments: [ship('gid/1'), ship('gid/2')],
+    }))
+    expect(items[0].send).toBeNull()
+    expect(items[0].warning).toMatch(/không tìm được thông tin gửi xưởng/i)
+    expect(items[1].warning).toBeNull()
+  })
+  it('warns when the tracking came from another factory than the one the item was sent to', () => {
+    const items = orderItemsOf(input({
+      lines: [line(1, { exportedToSupplierId: 'pg', exportedAt: new Date('2026-10-26T00:00:00Z') })],
+      shipments: [ship('gid/1')],
+    }))
+    expect(items[0].warning).toMatch(/Mangoshao.*Pgprints/)
+  })
+  it('an item with no send record and no tracking just says so, without a warning', () => {
+    const [item] = orderItemsOf(input({ lines: [line(1)] }))
+    expect(item.send).toBeNull()
+    expect(item.parcel).toBeNull()
+    expect(item.warning).toBeNull()
+  })
+  it('ignores a failed push and a failed sheet write', () => {
+    const [item] = orderItemsOf(input({
+      lines: [line(1)],
+      pushes: [{ supplierId: 'pg', status: 'FAILED', supplierOrderCode: null, pushedAt: new Date('2026-10-26T00:00:00Z'), remoteStatus: null, lastSyncedAt: null, prevExportJson: JSON.stringify({ shopifyLineIds: ['gid/1'] }) }],
+      sheetWrites: [{ orderLineId: 'ol-1', lineKey: 'LIT4987_1', supplierId: 'mango', tabName: 'X', status: 'FAILED', createdAt: new Date('2026-10-26T00:00:00Z') }],
+    }))
+    expect(item.send).toBeNull()
   })
 })
