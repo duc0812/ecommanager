@@ -222,4 +222,22 @@ describe('runner API', () => {
     expect((await files(get(`/files/${ids.artOther}`), art(ids.artOther))).status).toBe(404)
     expect((await files(get('/files/nope'), art('nope'))).status).toBe(404)
   })
+
+  it('a task covered only by a running LIBRARY_APPLY job takes upload and submit, and is refused once that job stops', async () => {
+    const target = await fx.order(9, { skus: ['DR9-Hoodie'], taskStatus: 'REJECTED' })
+    await storedArtwork(target.orderId, 'l1', 'Cover.png', png(100, 100))
+    await fx.order(10, { skus: ['DR10-Hoodie'], taskStatus: 'REJECTED' })
+    const apply = await run('DAR10_1', 'LIBRARY_APPLY', { source: 'LIBRARY', affectedJson: JSON.stringify({ rows: [{ taskKey: 'DAR9_1' }], fulfilledCount: 0 }) })
+    expect((await artwork(put('DAR9_1', 'Front', png(100, 100)), key('DAR9_1'))).status).toBe(200)
+    expect(await lastEvent('DAR9_1')).toMatchObject({ type: 'ARTWORK', actorName: 'Design Agent' })
+
+    await prisma.designAgentJob.update({ where: { id: apply }, data: { status: 'DONE' } })
+    expect(await body(artwork(put('DAR9_1', 'Front', png(100, 100)), key('DAR9_1')))).toEqual([409, { error: 'Task không có job Agent đang chạy' }])
+    expect(await body(submit(post('/tasks/DAR9_1/submit', {}), key('DAR9_1')))).toEqual([409, { error: 'Task không có job Agent đang chạy' }])
+    expect((await prisma.designTask.findUniqueOrThrow({ where: { taskKey: 'DAR9_1' } })).status).toBe('REJECTED')
+
+    await prisma.designAgentJob.update({ where: { id: apply }, data: { status: 'RUNNING' } })
+    expect(await body(submit(post('/tasks/DAR9_1/submit', {}), key('DAR9_1')))).toEqual([200, { ok: true, status: 'REVIEW' }])
+    expect((await prisma.designTask.findUniqueOrThrow({ where: { taskKey: 'DAR9_1' } })).status).toBe('REVIEW')
+  })
 })
