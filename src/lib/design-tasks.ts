@@ -820,6 +820,9 @@ export async function submitAutoRenderForReview(orderId: string, shopifyLineId: 
     await tx.designTaskEvent.create({ data: { taskId: task.id, type: 'SYSTEM', message: AUTO_REVIEW_MESSAGE } })
     return true
   })
+  if (moved && task.status === 'REJECTED') {
+    await cancelQueuedJobsForTask(task.id, TAKEN_OVER).catch(e => console.error(`[design agent] không huỷ được job của ${task.taskKey}:`, e?.message ?? e))
+  }
   return moved ? { moved: true, reason: null } : { moved: false, reason: 'Task vừa đổi trạng thái' }
 }
 

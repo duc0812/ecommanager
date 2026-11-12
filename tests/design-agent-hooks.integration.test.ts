@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { prisma } from '@/lib/db'
 import { saveAgentSettings } from '@/lib/design-settings'
-import { reopenLineForFix, transitionTask, type Actor } from '@/lib/design-tasks'
+import { reopenLineForFix, submitAutoRenderForReview, transitionTask, type Actor } from '@/lib/design-tasks'
 import { agentFixture } from './helpers/design-agent-fixture'
 
 const fx = agentFixture('dah')
@@ -33,6 +33,8 @@ beforeAll(async () => {
   await prisma.designTask.update({ where: { taskKey: 'DAH5_1' }, data: { assigneeId: desId } })
   await fx.order(6, { taskStatus: 'DONE', withPrint: true })
   otherSentLineId = await lineOf((await fx.order(7, { taskStatus: 'DONE', withPrint: true, exported: true })).orderId)
+  await fx.order(8, { taskStatus: 'REJECTED', withPrint: true })
+  await fx.order(9, { taskStatus: 'REJECTED', withPrint: true })
 })
 
 afterAll(async () => {
@@ -79,5 +81,20 @@ describe('design agent hooks in design-tasks', () => {
     await reopenLineForFix(otherSentLineId, AGENT, { reason: 'Nội bộ phát hiện lỗi', note: 'cập nhật thư viện' }, { agent: true })
     expect((await prisma.designTask.findUniqueOrThrow({ where: { taskKey: 'DAH7_1' } })).status).toBe('REJECTED')
     expect(await jobsOf('DAH7_1')).toEqual([])
+  })
+
+  it('an auto render moving a rejected task to review cancels its queued job', async () => {
+    const o8 = await prisma.designTask.findUniqueOrThrow({ where: { taskKey: 'DAH8_1' } })
+    await prisma.designAgentJob.create({ data: { kind: 'FIX', source: 'REJECT', taskId: o8.id, taskKey: 'DAH8_1', requestText: 'Lý do: Sai chi tiết' } })
+    expect(await submitAutoRenderForReview(o8.orderId, o8.shopifyLineId)).toEqual({ moved: true, reason: null })
+    expect((await jobsOf('DAH8_1'))[0]).toMatchObject({ status: 'CANCELLED', error: 'Task đã được người xử lý trước khi Agent nhận' })
+  })
+
+  it('an auto render with no job and the switch off changes nothing else', async () => {
+    await saveAgentSettings({ autoFixOnReject: false })
+    const o9 = await prisma.designTask.findUniqueOrThrow({ where: { taskKey: 'DAH9_1' } })
+    expect(await submitAutoRenderForReview(o9.orderId, o9.shopifyLineId)).toEqual({ moved: true, reason: null })
+    expect((await prisma.designTask.findUniqueOrThrow({ where: { taskKey: 'DAH9_1' } })).status).toBe('REVIEW')
+    expect(await jobsOf('DAH9_1')).toEqual([])
   })
 })
