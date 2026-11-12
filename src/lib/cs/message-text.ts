@@ -56,7 +56,7 @@ export type AgentNoteParts = { head: string; summary: string; proposal: string; 
 
 /** The agent's three-part note (owner 11/12): head line, then "Tóm tắt", "Đề xuất" and "Chi tiết" sections. */
 export function agentNoteParts(text: string): AgentNoteParts | null {
-  const m = /^([^\n]*Ecom Manager[^\n]*)\n+Tóm tắt\n([\s\S]*?)\n+Đề xuất\n([\s\S]*?)\n+Chi tiết\n?([\s\S]*)$/.exec(text.trim())
+  const m = /^([^\n]*Ecom Manager[^\n]*)\n+(?:Tóm tắt\n)?((?:Vấn đề:|Khách:)[\s\S]*?)\n+Đề xuất:?\n([\s\S]*?)\n+Chi tiết\n?([\s\S]*)$/.exec(text.trim())
   if (!m) return null
   return { head: m[1].trim(), summary: m[2].trim(), proposal: m[3].trim(), details: m[4].trim() }
 }

@@ -18,16 +18,18 @@ describe('itemSummaryVi', () => {
 })
 
 describe('noteHtml', () => {
-  const a = { category: 'MISSING_ITEM', urgency: 'HIGH', summary: 'Khách: chưa nhận tumbler 20oz "Malek"\nĐơn hàng: món này không có trong kiện đã giao\nHiện trạng: đã báo khách đang kiểm tra', proposal: 'Hỏi xưởng món đang ở đâu', outputJson: JSON.stringify({ facts: ['Thiếu 1/2 tumbler', 'Tên Malek'] }) } as any
+  const a = { category: 'MISSING_ITEM', urgency: 'HIGH', summary: 'Vấn đề: Khách nhận thiếu Tumbler 20oz "Malek"\nĐơn hàng:\n1- Pgprints không có\n2- Mango cũng không có\n=> Kết luận giả định: Chưa gửi hàng', proposal: '1- Email xin lỗi khách\n2- Gửi ngay món còn thiếu', outputJson: JSON.stringify({ facts: ['Thiếu 1/2 tumbler', 'Tên Malek'] }) } as any
   const ticket = { id: 't1', orderNumber: '#LIT4987' } as any
   it('three parts in order: red summary, proposal, then details', () => {
     const html = noteHtml(a, ticket, 'https://app', [tumbler, hoodie])
     const at = (s: string) => html.indexOf(s)
-    expect(at('<b>Tóm tắt</b>')).toBeGreaterThan(-1)
-    expect(at('<b>Tóm tắt</b>')).toBeLessThan(at('<b>Đề xuất</b>'))
-    expect(at('<b>Đề xuất</b>')).toBeLessThan(at('<b>Chi tiết</b>'))
-    expect(html).toContain('<span style="color:#d32f2f">Khách: chưa nhận tumbler 20oz &quot;Malek&quot;<br>Đơn hàng: món này không có trong kiện đã giao<br>Hiện trạng: đã báo khách đang kiểm tra</span>')
-    expect(at('Hỏi xưởng món đang ở đâu')).toBeLessThan(at('<b>Chi tiết</b>'))
+    expect(at('Vấn đề:')).toBeGreaterThan(-1)
+    expect(at('Vấn đề:')).toBeLessThan(at('<b>Đề xuất:</b>'))
+    expect(html).not.toContain('Tóm tắt')
+    expect(at('<b>Đề xuất:</b>')).toBeLessThan(at('<b>Chi tiết</b>'))
+    expect(html).toContain('<span style="color:#d32f2f">Vấn đề: Khách nhận thiếu Tumbler 20oz &quot;Malek&quot;<br>Đơn hàng:<br>1- Pgprints không có<br>2- Mango cũng không có<br>=&gt; Kết luận giả định: Chưa gửi hàng</span>')
+    expect(html).toContain('<b>Đề xuất:</b><br>1- Email xin lỗi khách<br>2- Gửi ngay món còn thiếu')
+    expect(at('2- Gửi ngay món còn thiếu')).toBeLessThan(at('<b>Chi tiết</b>'))
   })
   it('details hold each item, what the customer stated and the ticket link', () => {
     const html = noteHtml(a, ticket, 'https://app', [tumbler, hoodie])

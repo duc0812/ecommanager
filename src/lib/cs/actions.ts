@@ -50,8 +50,8 @@ export function noteHtml(a: CsAnalysis, ticket: CsTicket, appUrl: string, items:
   ]
   return [
     `<p><b>Ecom Manager</b> · ${esc(URGENCY_LABELS[a.urgency as CsUrgency] ?? a.urgency)} · ${esc(cat)}${ticket.orderNumber ? ` · ${esc(ticket.orderNumber)}` : ''}</p>`,
-    `<p><b>Tóm tắt</b><br><span style="color:#d32f2f">${lines(a.summary)}</span></p>`,
-    `<p><b>Đề xuất</b><br>${lines(a.proposal)}</p>`,
+    `<p><span style="color:#d32f2f">${lines(a.summary)}</span></p>`,
+    `<p><b>Đề xuất:</b><br>${lines(a.proposal)}</p>`,
     `<details><summary><b>Chi tiết</b></summary><p>${details.join('<br><br>')}</p></details>`,
   ].join('')
 }

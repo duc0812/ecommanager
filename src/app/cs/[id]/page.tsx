@@ -175,8 +175,8 @@ export default function CsTicketPage() {
                           return (
                             <div className="space-y-sm text-body-sm leading-relaxed [overflow-wrap:anywhere]">
                               <p className="text-label-md">{note.head}</p>
-                              <div><p className="text-label-sm uppercase text-on-surface-variant">Tóm tắt</p><p className="whitespace-pre-wrap font-medium text-error">{note.summary}</p></div>
-                              <div><p className="text-label-sm uppercase text-on-surface-variant">Đề xuất</p><p className="whitespace-pre-wrap">{note.proposal}</p></div>
+                              <p className="whitespace-pre-wrap font-medium text-error">{note.summary}</p>
+                              <div><p className="font-semibold">Đề xuất:</p><p className="whitespace-pre-wrap">{note.proposal}</p></div>
                               {note.details && (
                                 <details>
                                   <summary className="cursor-pointer text-label-sm uppercase text-on-surface-variant">Chi tiết</summary>

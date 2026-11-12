@@ -45,14 +45,18 @@ describe('splitQuoted', () => {
 })
 
 describe('agentNoteParts', () => {
-  const note = 'Ecom Manager · Cao · Thiếu hàng · #LIT5554\n\nTóm tắt\nKhách: thiếu Malek\nĐơn hàng: Dự đoán gửi thiếu\nHiện trạng: chờ\n\nĐề xuất\nXin lỗi khách và gửi đơn ngay lập tức.\n\nChi tiết\nTừng sản phẩm:\nLIT5554_1 …\n\nhttps://app/cs/t1'
-  it('splits the three-part note', () => {
+  const note = 'Ecom Manager · Cao · Thiếu hàng · #LIT5554\n\nVấn đề: Khách nhận thiếu Malek\nĐơn hàng:\n1- Pgprints không có\n2- Mango cũng không có\n=> Kết luận giả định: Chưa gửi hàng\n\nĐề xuất:\n1- Email xin lỗi khách\n2- Gửi ngay\n\nChi tiết\nTừng sản phẩm:\nLIT5554_1 …\n\nhttps://app/cs/t1'
+  it('splits the note: summary from "Vấn đề", proposal, folded details', () => {
     expect(agentNoteParts(note)).toEqual({
       head: 'Ecom Manager · Cao · Thiếu hàng · #LIT5554',
-      summary: 'Khách: thiếu Malek\nĐơn hàng: Dự đoán gửi thiếu\nHiện trạng: chờ',
-      proposal: 'Xin lỗi khách và gửi đơn ngay lập tức.',
+      summary: 'Vấn đề: Khách nhận thiếu Malek\nĐơn hàng:\n1- Pgprints không có\n2- Mango cũng không có\n=> Kết luận giả định: Chưa gửi hàng',
+      proposal: '1- Email xin lỗi khách\n2- Gửi ngay',
       details: 'Từng sản phẩm:\nLIT5554_1 …\n\nhttps://app/cs/t1',
     })
+  })
+  it('still reads the earlier note with a "Tóm tắt" heading', () => {
+    const old = 'Ecom Manager · Cao · Thiếu hàng · #LIT5554\n\nTóm tắt\nKhách: thiếu Malek\n\nĐề xuất\nXin lỗi.\n\nChi tiết\nx'
+    expect(agentNoteParts(old)).toMatchObject({ summary: 'Khách: thiếu Malek', proposal: 'Xin lỗi.', details: 'x' })
   })
   it('the details heading may run into its first line when the html folded it', () => {
     expect(agentNoteParts(note.replace('Chi tiết\nTừng', 'Chi tiếtTừng'))?.details.startsWith('Từng sản phẩm:')).toBe(true)
