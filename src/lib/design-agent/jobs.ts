@@ -200,3 +200,54 @@ export async function decideLibrary(
   const apply = await queueLibraryApplyOnApproval(task.id, by)
   return { libraryState, applyJobId: apply?.id ?? null }
 }
+
+export async function agentQueueCounts(): Promise<{ queued: number; running: number; needsOwner: number; failed: number }> {
+  const rows = await prisma.designAgentJob.groupBy({ by: ['status'], _count: { _all: true } })
+  const n = (s: AgentJobStatus) => rows.find(r => r.status === s)?._count._all ?? 0
+  return { queued: n('QUEUED'), running: n('RUNNING'), needsOwner: n('NEEDS_OWNER'), failed: n('FAILED') }
+}
+
+function storedReasons(json: string | null): string[] {
+  if (!json) return []
+  try {
+    const parsed = JSON.parse(json)
+    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === 'string') : []
+  } catch { return [] }
+}
+
+export async function backfillRejected(opts: {
+  dryRun: boolean
+  by: { id: string; name: string }
+  factoryReasons: string[]
+}): Promise<{ dryRun: boolean; count: number; taskKeys: string[]; queued: number }> {
+  const [rejected, open] = await Promise.all([
+    prisma.designTask.findMany({
+      where: { status: 'REJECTED' }, orderBy: { taskKey: 'asc' },
+      include: { order: { select: { pipelineStatus: true, financialStatus: true, fulfillmentStatus: true } } },
+    }),
+    prisma.designAgentJob.findMany({ where: { status: { in: OPEN }, taskId: { not: null } }, select: { taskId: true } }),
+  ])
+  const busy = new Set(open.map(j => j.taskId))
+  const tasks = rejected.filter(t => {
+    const o = t.order
+    if (['CANCELLED', 'REFUNDED', 'FULFILLED'].includes(o.pipelineStatus)) return false
+    if (['REFUNDED', 'VOIDED'].includes(o.financialStatus.toUpperCase())) return false
+    return (o.fulfillmentStatus ?? '').toLowerCase() !== 'fulfilled' && !busy.has(t.id)
+  })
+  const taskKeys = tasks.map(t => t.taskKey)
+  if (opts.dryRun) return { dryRun: true, count: taskKeys.length, taskKeys, queued: 0 }
+  let queued = 0
+  for (const t of tasks) {
+    const reasons = storedReasons(t.rejectReasons)
+    try {
+      const { created } = await enqueueAgentJob({
+        kind: 'FIX', source: 'BACKFILL', taskKey: t.taskKey, requestText: buildRequestText(reasons, t.rejectNote),
+        requestedById: opts.by.id, requestedBy: opts.by.name, factory: reasons.some(r => opts.factoryReasons.includes(r)),
+      })
+      if (created) queued++
+    } catch (e) {
+      console.error(`[design agent] backfill không xếp được ${t.taskKey}:`, (e as Error)?.message ?? e)
+    }
+  }
+  return { dryRun: false, count: taskKeys.length, taskKeys, queued }
+}
