@@ -2,6 +2,7 @@ import { prisma } from '@/lib/db'
 import type { DesignAgentJob } from '@/generated/prisma/client'
 import { designOf } from '@/lib/flat-text-coverage'
 import { getDesignSettings } from '@/lib/design-settings'
+import type { AffectedRow } from '@/lib/design-agent/affected'
 
 export type AgentJobKind = 'FIX' | 'MAKE' | 'MOCKUP' | 'LIBRARY_APPLY'
 export type AgentJobSource = 'REJECT' | 'LINE_REOPEN' | 'LARK' | 'LIBRARY' | 'AUTO_HOLD' | 'BACKFILL'
@@ -250,4 +251,39 @@ export async function backfillRejected(opts: {
     }
   }
   return { dryRun: false, count: taskKeys.length, taskKeys, queued }
+}
+
+export type AgentTaskView = {
+  jobId: string; kind: AgentJobKind; status: AgentJobStatus; stage: string | null; rounds: number
+  summary: string | null; error: string | null; requestedBy: string | null
+  libraryState: 'ASKED' | 'YES' | 'NO' | 'APPLIED' | null
+  affected: AffectedRow[]; fulfilledCount: number
+  apply: { status: AgentJobStatus; summary: string | null } | null
+}
+
+function parseAffected(json: string | null): { rows: AffectedRow[]; fulfilledCount: number } {
+  if (!json) return { rows: [], fulfilledCount: 0 }
+  try {
+    const parsed = JSON.parse(json)
+    const rows = Array.isArray(parsed) ? parsed : parsed?.rows
+    const fulfilled = Number(parsed?.fulfilledCount)
+    return { rows: Array.isArray(rows) ? rows : [], fulfilledCount: Number.isFinite(fulfilled) ? fulfilled : 0 }
+  } catch { return { rows: [], fulfilledCount: 0 } }
+}
+
+export async function agentViewForTask(taskId: string): Promise<AgentTaskView | null> {
+  const job = await prisma.designAgentJob.findFirst({
+    where: { taskId, kind: { not: 'LIBRARY_APPLY' }, status: { not: 'CANCELLED' } },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+  })
+  if (!job) return null
+  const apply = await prisma.designAgentJob.findFirst({ where: { parentJobId: job.id }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }] })
+  const { rows, fulfilledCount } = parseAffected(job.affectedJson)
+  return {
+    jobId: job.id, kind: job.kind as AgentJobKind, status: job.status as AgentJobStatus, stage: job.stage, rounds: job.rounds,
+    summary: job.summary, error: job.error, requestedBy: job.requestedBy,
+    libraryState: job.libraryState as AgentTaskView['libraryState'],
+    affected: rows, fulfilledCount,
+    apply: apply ? { status: apply.status as AgentJobStatus, summary: apply.summary } : null,
+  }
 }

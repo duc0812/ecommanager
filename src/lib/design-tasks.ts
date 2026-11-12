@@ -33,7 +33,7 @@ import {
   LINE_FIX_EVENT_PREFIX, LINE_FIX_REASONS, FIX_NOT_IN_FOLDER_MESSAGE, heldLinkMessage, lineFixMessage, parseLineFix, readHeldLinkMessage, readLineFixMessage, readSupplierLinkKind,
   supplierLinkMessage, type LineFix, type LineFixReason, type SupplierLinkKind,
 } from '@/lib/line-fix'
-import { cancelQueuedJobsForTask, enqueueFixOnReject, queueLibraryApplyOnApproval } from '@/lib/design-agent/jobs'
+import { agentViewForTask, cancelQueuedJobsForTask, enqueueFixOnReject, openJobStatusByTask, queueLibraryApplyOnApproval, type AgentTaskView } from '@/lib/design-agent/jobs'
 
 export { loadTemplateContext, mapTemplate, pickTemplate, type TemplateRow }
 
@@ -412,6 +412,7 @@ export type TaskRow = {
   hasPrint: boolean
   /** Lines of one product share this: its artwork, once made, serves them all. */
   productKey: string
+  agent: 'QUEUED' | 'RUNNING' | null
 }
 
 export type TaskProfile = { key: string; status: LibraryProductStatus; layerMap: LayerMapEntry[] }
@@ -426,6 +427,7 @@ export type TaskDetail = {
   teeinblue: boolean
   /** The line is at its supplier and the order open: "Sửa & gửi lại" on the DONE task asks why and reopens this line only. */
   reopensSentLine: boolean
+  agent: AgentTaskView | null
 }
 
 /**
@@ -1152,6 +1154,8 @@ export async function listTasks(f: { statuses?: TaskStatus[]; readiness?: Readin
   })
   const printedLines = new Set(printed.map(a => `${a.orderId}\u0000${a.shopifyLineId}`))
 
+  const agentByTask = await openJobStatusByTask(tasks.map(t => t.id))
+
   const q = f.q?.trim().toLowerCase()
   const rows: TaskRow[] = []
   for (const task of tasks) {
@@ -1174,6 +1178,7 @@ export async function listTasks(f: { statuses?: TaskStatus[]; readiness?: Readin
       fromLibrary: task.fromLibrary, unmapped: !line.resolvedSupplierId,
       hasPrint: printedLines.has(`${task.orderId}\u0000${task.shopifyLineId}`),
       productKey: line.shopifyProductId ?? line.productTitle,
+      agent: agentByTask.get(task.id) ?? null,
     })
   }
 
@@ -1395,5 +1400,6 @@ export async function loadTask(taskKey: string): Promise<TaskDetail | null> {
     autoRender: await latestRenderJob(task.orderId, task.shopifyLineId),
     teeinblue: hasTeeinblueDesign(parseAttributes(orderLine?.customAttributesJson ?? null)),
     reopensSentLine: await isSentLineOfOpenOrder(line.id),
+    agent: await agentViewForTask(task.id),
   }
 }

@@ -14,6 +14,7 @@ import ProductionEditor from './ProductionEditor'
 import PrintFileThumb from './PrintFileThumb'
 import ActivityPanel from './ActivityPanel'
 import RejectDialog from './RejectDialog'
+import AgentStrip from './AgentStrip'
 import { useShopifyRefresh } from './useShopifyRefresh'
 import { useDismiss, useToast } from './overlay'
 import { Avatar, ErrorBanner, Icon, Pill, STATUS_META, btnMd, btnPrimaryMd, card, fmtDate, fmtDateTime, iconBtn, menuItem, popover } from './ui'
@@ -71,9 +72,9 @@ function PrintFiles({ detail }: { detail: TaskDetail }) {
   )
 }
 
-function ReviewHeader({ detail, verdict, position, busy, refreshing, onApprove, onReject, onRefresh, onOpenTask }: {
+function ReviewHeader({ detail, verdict, position, busy, refreshing, onApprove, onReject, onRefresh, onOpenTask, onChanged }: {
   detail: TaskDetail; verdict: ReviewVerdict; position: { index: number; total: number }; busy: boolean; refreshing: boolean
-  onApprove: () => void; onReject: (reasons: string[], note: string) => Promise<boolean>; onRefresh: () => void; onOpenTask: () => void
+  onApprove: () => void; onReject: (reasons: string[], note: string) => Promise<boolean>; onRefresh: () => void; onOpenTask: () => void; onChanged: () => void
 }) {
   const { task, line, settings } = detail
   const toast = useToast()
@@ -171,6 +172,7 @@ function ReviewHeader({ detail, verdict, position, busy, refreshing, onApprove, 
         </div>
       </div>
       <VerdictStrip v={verdict} />
+      <AgentStrip detail={detail} onChanged={onChanged} />
     </section>
   )
 }
@@ -252,7 +254,7 @@ export default function ReviewWorkspace({ taskKey, position, onMoved, onOpenTask
   return (
     <LightboxProvider images={images}>
       <ReviewHeader key={`h-${key}`} detail={detail} verdict={verdict} position={position} busy={busy} refreshing={refreshing}
-        onApprove={onApprove} onReject={reject} onRefresh={refresh} onOpenTask={() => onOpenTask(key)} />
+        onApprove={onApprove} onReject={reject} onRefresh={refresh} onOpenTask={() => onOpenTask(key)} onChanged={refreshAll} />
       <CompareRow key={`m-${key}`} detail={detail} onChanged={refreshAll} layout="pair" />
       <CustomerInputs key={`c-${key}`} detail={detail} refreshing={refreshing} onRefresh={refresh} onChanged={refreshAll} />
       <ProductionEditor key={`p-${key}`} detail={detail} onChanged={refreshAll} />

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/db'
-import { transitionTask, type Actor } from '@/lib/design-tasks'
+import { listTasks, loadTask, transitionTask, type Actor } from '@/lib/design-tasks'
 import { AGENT_USER_EMAIL } from '@/lib/design-agent/agent-user'
 import { decideLibrary } from '@/lib/design-agent/jobs'
 import { claimAgentJobs, completeAgentJob } from '@/lib/design-agent/runner'
@@ -55,6 +55,9 @@ beforeAll(async () => {
   await fx.order(4, { skus: ['DL2-Hoodie'], taskStatus: 'DONE' })
   await fx.order(5, { skus: ['DL5-Hoodie'], taskStatus: 'DONE', withPrint: true })
   await fx.order(6, { skus: ['DL6-Hoodie'], taskStatus: 'REVIEW', withPrint: true })
+  await fx.order(10, { skus: ['DL10-Hoodie'], taskStatus: 'REJECTED' })
+  await fx.order(11, { skus: ['DL11-Hoodie'], taskStatus: 'REJECTED' })
+  await fx.order(12, { skus: ['DL12-Hoodie'], taskStatus: 'REVIEW', withPrint: true })
   ids.jNo = await asked('DAL1_1')
   ids.jYes = await asked('DAL2_1')
   ids.jLate = await asked('DAL5_1')
@@ -118,5 +121,16 @@ describe('library decision', () => {
     expect((await post('nope', { save: true }, des)).status).toBe(404)
     expect(await (await post(ids.jAsk, { save: true }, des)).json()).toEqual({ libraryState: 'YES', applyJobId: null })
     expect((await post(ids.jAsk, { save: false }, des)).status).toBe(409)
+  })
+})
+
+describe('task view', () => {
+  it('the task page and the list carry the agent state', async () => {
+    await asked('DAL12_1', { affectedJson: JSON.stringify({ rows: [row(0, 'DAL6_1')], fulfilledCount: 2 }) })
+    await prisma.designAgentJob.create({ data: { kind: 'FIX', source: 'REJECT', taskId: await taskId('DAL10_1'), taskKey: 'DAL10_1', requestText: 'x', status: 'CANCELLED' } })
+    await prisma.designAgentJob.create({ data: { kind: 'FIX', source: 'REJECT', taskId: await taskId('DAL11_1'), taskKey: 'DAL11_1', requestText: 'x', status: 'QUEUED' } })
+    expect((await loadTask('DAL12_1'))!.agent).toMatchObject({ status: 'DONE', libraryState: 'ASKED', affected: [{ taskKey: 'DAL6_1' }], fulfilledCount: 2, apply: null })
+    expect((await loadTask('DAL10_1'))!.agent).toBeNull()
+    expect((await listTasks({ taskKeys: ['DAL11_1', 'DAL10_1'] })).map(t => t.agent).sort()).toEqual(['QUEUED', null])
   })
 })

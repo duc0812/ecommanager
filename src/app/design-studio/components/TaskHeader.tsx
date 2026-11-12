@@ -10,6 +10,7 @@ import { pushChipLabel } from '@/lib/handoff-shared'
 import { LINE_FIX_HELP } from '@/lib/line-fix'
 import HandoffButton from './HandoffButton'
 import SupplierStrip from './SupplierStrip'
+import AgentStrip from './AgentStrip'
 import NextStepBar from './NextStepBar'
 import LineFixForm from './LineFixForm'
 import RejectDialog from './RejectDialog'
@@ -352,6 +353,7 @@ export default function TaskHeader({ detail, qa, holdCount, refreshing, onRefres
       </div>
 
       <SupplierStrip detail={detail} />
+      <AgentStrip detail={detail} onChanged={onChanged} />
       <NextStepBar checklist={checklist} onRefresh={onRefresh} refreshing={refreshing} />
 
       {confirm && (

@@ -56,6 +56,7 @@ function QueueRow({ t, selected, onSelect, waiting, showStore }: { t: TaskRow; s
         <span className="flex items-center gap-xs flex-wrap">
           <Pill tone={ready.tone} icon={ready.icon}>{readyLabel(t, ready.label)}</Pill>
           {t.fromLibrary && (t.status === 'NEW' || t.status === 'ASSIGNED') && <Pill tone="brand" icon="inventory_2">Thư viện</Pill>}
+          {t.agent && <Pill tone="brand" icon="smart_toy" title={t.agent === 'RUNNING' ? 'Agent đang sửa' : 'Agent đang chờ'}>Agent</Pill>}
           {t.unmapped && <Pill tone="bad" icon="account_tree">Chưa mapping</Pill>}
           {waiting !== undefined && <Pill tone="brand" icon="layers">{waiting} đơn chờ</Pill>}
           {t.assigneeName && <span className="ml-auto"><Avatar name={t.assigneeName} /></span>}

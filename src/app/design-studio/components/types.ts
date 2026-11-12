@@ -7,6 +7,17 @@ import type { FileKind } from '@/lib/task-files'
 export type { FileKind, HandoffCard, HandoffLine, HandoffPush, HandoffState }
 
 export type TaskStatus = 'NEW' | 'ASSIGNED' | 'DOING' | 'REVIEW' | 'REJECTED' | 'ASK_CUSTOMER' | 'DONE' | 'CANCELLED'
+export type AgentJobKind = 'FIX' | 'MAKE' | 'MOCKUP' | 'LIBRARY_APPLY'
+export type AgentJobStatus = 'QUEUED' | 'RUNNING' | 'DONE' | 'NEEDS_OWNER' | 'FAILED' | 'CANCELLED'
+export type AgentAffectedRow = { taskKey: string; orderNumber: string; placedAt: string; taskStatus: string | null; sent: boolean; sameSupplierSku: boolean }
+export type AgentTaskView = {
+  jobId: string; kind: AgentJobKind; status: AgentJobStatus; stage: string | null; rounds: number
+  summary: string | null; error: string | null; requestedBy: string | null
+  libraryState: 'ASKED' | 'YES' | 'NO' | 'APPLIED' | null
+  affected: AgentAffectedRow[]; fulfilledCount: number
+  apply: { status: AgentJobStatus; summary: string | null } | null
+}
+
 export type Readiness = 'AUTO' | 'LOW' | 'MANUAL'
 
 export type Me = { id: string; name: string; role: string; isLeader: boolean; canApprove: boolean; canHandoff: boolean; canEditNote?: boolean }
@@ -18,6 +29,7 @@ export type TaskRow = {
   sku: string | null; productTitle: string; variantTitle: string | null; previewUrl: string | null; imageUrl: string | null
   supplierName: string | null; customized: boolean; storeName: string
   fromLibrary: boolean; unmapped: boolean; hasPrint: boolean; productKey: string
+  agent: 'QUEUED' | 'RUNNING' | null
 }
 
 /** A product line already sent to its supplier that never had a design task; a search lists it beside the tasks. */
@@ -109,6 +121,7 @@ export type TaskDetail = {
   teeinblue?: boolean
   /** The line is at its supplier and the order open: "Sửa & gửi lại" asks why and reopens this line only. */
   reopensSentLine?: boolean
+  agent: AgentTaskView | null
   handoff?: HandoffState | null
 }
 

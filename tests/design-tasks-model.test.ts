@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  previewImages, timeLeft, allSlotsFilled, taskImages, canRemoveArtwork, canMove, retryDelay, isRetryable, emptyQueueText, mockupFiles, newestFor, printFiles, printPartNames, versionsFor, isAutoNotRendered, readyLabel, artworkProducts, needsArtwork } from '@/app/design-studio/components/model'
+  previewImages, timeLeft, allSlotsFilled, taskImages, canRemoveArtwork, canMove, retryDelay, isRetryable, emptyQueueText, mockupFiles, newestFor, printFiles, printPartNames, versionsFor, isAutoNotRendered, readyLabel, artworkProducts, needsArtwork, agentStripState } from '@/app/design-studio/components/model'
 
 const NOW = Date.parse('2026-10-10T12:00:00Z')
 
@@ -174,5 +174,18 @@ describe('Cần làm artwork', () => {
     expect(waiting.get('p1')).toBe(3)
     expect(waiting.get('p2')).toBe(1)
     expect(waiting.has('p3')).toBe(false)
+  })
+})
+
+describe('agentStripState', () => {
+  it('names the state of the newest job', () => {
+    expect(agentStripState({ kind: 'FIX', status: 'QUEUED', rounds: 0 }, 'REJECTED').label).toBe('Đang chờ')
+    expect(agentStripState({ kind: 'FIX', status: 'RUNNING', rounds: 2 }, 'REJECTED').label).toBe('Đang sửa – vòng 2')
+    expect(agentStripState({ kind: 'FIX', status: 'RUNNING', rounds: 0 }, 'REJECTED').label).toBe('Đang sửa')
+    expect(agentStripState({ kind: 'FIX', status: 'DONE', rounds: 2 }, 'REVIEW').label).toBe('Đã sửa, chờ duyệt')
+    expect(agentStripState({ kind: 'FIX', status: 'DONE', rounds: 2 }, 'DONE').label).toBe('Đã sửa')
+    expect(agentStripState({ kind: 'FIX', status: 'NEEDS_OWNER', rounds: 3 }, 'REJECTED')).toMatchObject({ label: 'Cần chủ shop', tone: 'bad' })
+    expect(agentStripState({ kind: 'FIX', status: 'FAILED', rounds: 0 }, 'REJECTED').label).toBe('Agent không chạy được')
+    expect(agentStripState({ kind: 'MOCKUP', status: 'DONE', rounds: 0 }, 'DONE').label).toBe('Đã làm mockup')
   })
 })

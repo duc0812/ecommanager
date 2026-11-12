@@ -1,7 +1,7 @@
 import { isLayerlessField } from '@/lib/layer-fields'
 import { currentFiles, extraPrintParts, fileKindOf, missingPrintAreas, newerFile, orderedPrintFiles, printFilesReady, sameLabel, type FileKind } from '@/lib/task-files'
 import { isPrintCutTemplate } from '@/lib/print-cut'
-import type { ArtworkRow, LayerMapEntry, TaskDetail, TaskRow, TaskStatus, TemplateArea, TemplateRow, WorkspaceLine } from './types'
+import type { AgentTaskView, ArtworkRow, LayerMapEntry, TaskDetail, TaskRow, TaskStatus, TemplateArea, TemplateRow, WorkspaceLine } from './types'
 
 export const OPEN_STATUSES: TaskStatus[] = ['NEW', 'ASSIGNED', 'DOING', 'REVIEW', 'REJECTED']
 export const OWNED_MOVES: TaskStatus[] = ['DOING', 'NEW', 'REVIEW', 'ASK_CUSTOMER']
@@ -168,6 +168,26 @@ export function timeLeft(t: Pick<TaskRow, 'status' | 'dueAt'>, now = Date.now())
   if (ms < 0) return { label: `quá ${h}h`, tone: 'bad', icon: 'error' }
   if (h <= 4) return { label: `còn ${h}h`, tone: 'warn', icon: 'schedule' }
   return { label: `còn ${h}h`, tone: 'idle', icon: 'schedule' }
+}
+
+export function agentStripState(view: Pick<AgentTaskView, 'kind' | 'status' | 'rounds'>, taskStatus: TaskStatus): { label: string; tone: Tone; icon: string } {
+  const { kind, status, rounds } = view
+  switch (status) {
+    case 'QUEUED': return { label: 'Đang chờ', tone: 'idle', icon: 'schedule' }
+    case 'RUNNING': return {
+      label: kind === 'MAKE' ? 'Đang làm mẫu' : kind === 'MOCKUP' ? 'Đang làm mockup' : rounds > 0 ? `Đang sửa – vòng ${rounds}` : 'Đang sửa',
+      tone: 'brand', icon: 'progress_activity',
+    }
+    case 'DONE': {
+      const review = taskStatus === 'REVIEW'
+      return {
+        label: kind === 'MAKE' ? (review ? 'Đã làm mẫu, chờ duyệt' : 'Đã làm mẫu') : kind === 'MOCKUP' ? 'Đã làm mockup' : (review ? 'Đã sửa, chờ duyệt' : 'Đã sửa'),
+        tone: 'ok', icon: 'check_circle',
+      }
+    }
+    case 'NEEDS_OWNER': return { label: 'Cần chủ shop', tone: 'bad', icon: 'support_agent' }
+    default: return { label: 'Agent không chạy được', tone: 'bad', icon: 'error' }
+  }
 }
 
 export function layerOf(key: string): string {
