@@ -4,6 +4,7 @@ import Sidebar from '@/components/Sidebar'
 import { useCurrentUser } from '@/components/RoleGate'
 import type { DesignSettings, TrelloMode } from '../components/types'
 import { requestJson } from '../components/model'
+import AgentSettingsCard from '../components/AgentSettingsCard'
 import { Card, ErrorBanner, Icon, Note, btn, input } from '../components/ui'
 
 type KpiRow = { type: string; value: string }
@@ -256,6 +257,10 @@ export default function DesignSettingsPage() {
 
         {!loading && (
           <div className="mt-md max-w-3xl"><WorkerTokenCard canManage={canSave} /></div>
+        )}
+
+        {!loading && (
+          <div className="mt-md max-w-3xl"><AgentSettingsCard canManage={canSave} /></div>
         )}
 
         {canSave && !loading && (
