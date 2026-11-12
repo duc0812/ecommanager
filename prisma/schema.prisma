@@ -1717,3 +1717,34 @@ model CloneJob {
   @@index([storeId, sourceKey])
   @@index([requestedById, createdAt])
 }
+
+model DesignAgentJob {
+  id            String    @id @default(cuid())
+  kind          String
+  source        String
+  taskId        String?
+  taskKey       String?
+  designCode    String?
+  requestText   String
+  requestedById String?
+  requestedBy   String?
+  priority      Int       @default(0)
+  status        String    @default("QUEUED")
+  stage         String?
+  rounds        Int       @default(0)
+  attempts      Int       @default(0)
+  lockedAt      DateTime?
+  startedAt     DateTime?
+  finishedAt    DateTime?
+  summary       String?
+  resultJson    String?
+  libraryState  String?
+  affectedJson  String?
+  parentJobId   String?
+  error         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([status, priority, createdAt])
+  @@index([taskId])
+}

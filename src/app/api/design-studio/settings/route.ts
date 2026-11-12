@@ -48,6 +48,7 @@ export async function PUT(req: NextRequest) {
     rejectReasons: rejectReasons as string[],
     designerCanApprove: designerCanApprove ?? current.designerCanApprove,
     trelloMode: trelloMode ?? current.trelloMode,
+    agent: current.agent,
   }
   await saveDesignSettings(settings)
   return NextResponse.json(settings)

@@ -92,7 +92,7 @@ export type AddOn = { title: string; variantTitle: string | null; qty: number; d
 export type TaskEvent = { id: string; type: string; message: string; actorName: string | null; createdAt: string }
 
 export type TrelloMode = 'BOTH' | 'READ_ONLY' | 'OFF'
-export type DesignSettings = { slaCustomHours: number; slaNonCustomHours: number; kpiByType: Record<string, number>; rejectReasons: string[]; designerCanApprove: boolean; trelloMode: TrelloMode }
+export type DesignSettings = { slaCustomHours: number; slaNonCustomHours: number; kpiByType: Record<string, number>; rejectReasons: string[]; designerCanApprove: boolean; trelloMode: TrelloMode; agent: { autoFixOnReject: boolean; maxConcurrent: number; leaseMinutes: number } }
 
 export type LayerFit = 'shrink' | 'wrap' | 'none'
 export type LayerMapEntry = { field: string; layer: string; font?: string; maxChars?: number; fit: LayerFit }

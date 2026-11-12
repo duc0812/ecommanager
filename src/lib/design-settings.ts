@@ -10,6 +10,24 @@ export function isTrelloMode(v: unknown): v is TrelloMode {
 
 export const TRELLO_OFF_MESSAGE = 'Trello đang tắt (Design Studio → Settings → Trello) — không đọc thẻ Trello'
 
+export type AgentSettings = { autoFixOnReject: boolean; maxConcurrent: number; leaseMinutes: number }
+
+export const DEFAULT_AGENT_SETTINGS: AgentSettings = { autoFixOnReject: false, maxConcurrent: 5, leaseMinutes: 20 }
+
+function clampInt(v: unknown, min: number, max: number, fallback: number): number {
+  if (typeof v !== 'number' || !Number.isFinite(v)) return fallback
+  return Math.min(max, Math.max(min, Math.round(v)))
+}
+
+export function normalizeAgentSettings(raw: unknown): AgentSettings {
+  const r = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {}
+  return {
+    autoFixOnReject: typeof r.autoFixOnReject === 'boolean' ? r.autoFixOnReject : DEFAULT_AGENT_SETTINGS.autoFixOnReject,
+    maxConcurrent: clampInt(r.maxConcurrent, 1, 10, DEFAULT_AGENT_SETTINGS.maxConcurrent),
+    leaseMinutes: clampInt(r.leaseMinutes, 5, 120, DEFAULT_AGENT_SETTINGS.leaseMinutes),
+  }
+}
+
 export type DesignSettings = {
   slaCustomHours: number
   slaNonCustomHours: number
@@ -17,6 +35,7 @@ export type DesignSettings = {
   rejectReasons: string[]
   designerCanApprove: boolean
   trelloMode: TrelloMode
+  agent: AgentSettings
 }
 
 export const DEFAULT_DESIGN_SETTINGS: DesignSettings = {
@@ -26,6 +45,7 @@ export const DEFAULT_DESIGN_SETTINGS: DesignSettings = {
   rejectReasons: ['Sai chính tả / nội dung', 'Lệch tâm / ra ngoài vùng an toàn', 'Thiếu nét', 'Sai màu / biến thể', 'Thiếu bleed', 'Font sai'],
   designerCanApprove: true,
   trelloMode: 'BOTH',
+  agent: DEFAULT_AGENT_SETTINGS,
 }
 
 const KEY = 'design.settings'
@@ -42,6 +62,7 @@ export async function getDesignSettings(): Promise<DesignSettings> {
       rejectReasons: Array.isArray(parsed.rejectReasons) && parsed.rejectReasons.length ? parsed.rejectReasons : DEFAULT_DESIGN_SETTINGS.rejectReasons,
       designerCanApprove: typeof parsed.designerCanApprove === 'boolean' ? parsed.designerCanApprove : DEFAULT_DESIGN_SETTINGS.designerCanApprove,
       trelloMode: isTrelloMode(parsed.trelloMode) ? parsed.trelloMode : DEFAULT_DESIGN_SETTINGS.trelloMode,
+      agent: normalizeAgentSettings(parsed.agent),
     }
   } catch { return DEFAULT_DESIGN_SETTINGS }
 }
@@ -52,6 +73,13 @@ export async function getTrelloMode(): Promise<TrelloMode> {
 
 export async function saveDesignSettings(s: DesignSettings) {
   await prisma.appSetting.upsert({ where: { key: KEY }, create: { key: KEY, value: JSON.stringify(s) }, update: { value: JSON.stringify(s) } })
+}
+
+export async function saveAgentSettings(patch: Partial<AgentSettings>): Promise<AgentSettings> {
+  const current = await getDesignSettings()
+  const agent = normalizeAgentSettings({ ...current.agent, ...patch })
+  await saveDesignSettings({ ...current, agent })
+  return agent
 }
 
 export function kpiForProductType(s: DesignSettings, productType: string | null): number {
