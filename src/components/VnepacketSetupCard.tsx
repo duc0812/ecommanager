@@ -22,6 +22,41 @@ async function send(url: string, method: 'POST' | 'PUT', body?: unknown): Promis
   }
 }
 
+/** The sync answers as NDJSON (heartbeats, then one "done" or "error" line). */
+async function readSync(body: unknown): Promise<{ ok: boolean; error: string; data: any }> {
+  try {
+    const res = await fetch('/api/fulfillment/vnepacket/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    if (!res.ok || !res.body) {
+      const data = await res.json().catch(() => ({}))
+      return { ok: false, error: data.error ?? `Lỗi HTTP ${res.status}`, data: null }
+    }
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let last: any = null
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      let i
+      while ((i = buffer.indexOf('\n')) >= 0) {
+        const line = buffer.slice(0, i).trim()
+        buffer = buffer.slice(i + 1)
+        if (!line) continue
+        try {
+          const o = JSON.parse(line)
+          if (o.type === 'done' || o.type === 'error') last = o
+        } catch {}
+      }
+    }
+    if (!last) return { ok: false, error: 'Mất kết nối giữa chừng — đồng bộ có thể vẫn chạy xong phía máy chủ', data: null }
+    if (last.type === 'error') return { ok: false, error: last.error, data: null }
+    return { ok: true, error: '', data: last }
+  } catch {
+    return { ok: false, error: 'Mất kết nối tới máy chủ', data: null }
+  }
+}
+
 const usDate = (iso: string) => new Date(iso).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' })
 
 /** The VNEpacket account Gỗ 3D ships our parcels with: the tool reads each line's tracking from it. */
@@ -75,7 +110,7 @@ export default function VnepacketSetupCard() {
     setBusy('sync')
     setBanner(null)
     setLines(null)
-    const r = await send('/api/fulfillment/vnepacket/sync', 'POST', orderNumber.trim() ? { orderNumber } : {})
+    const r = await readSync(orderNumber.trim() ? { orderNumber } : {})
     setBusy('')
     if (!r.ok) { setBanner({ ok: false, text: r.error }); return }
     const d = r.data
