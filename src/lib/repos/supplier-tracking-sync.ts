@@ -1,6 +1,7 @@
 import { syncBondreTracking } from '@/lib/repos/bondre-push'
 import { syncPrintwayTracking } from '@/lib/repos/printway-push'
 import { syncMerchizeTracking } from '@/lib/repos/merchize-push'
+import { syncVnepacketTracking } from '@/lib/repos/vnepacket-tracking'
 
 export type ApiTrackingResult = { name: string; pushes?: number; found?: number; shipments?: number; skipped?: string; error?: string }
 
@@ -8,6 +9,7 @@ const SYNCS = [
   { name: 'Bondre', run: syncBondreTracking },
   { name: 'Printway', run: syncPrintwayTracking },
   { name: 'Merchize', run: syncMerchizeTracking },
+  { name: 'Gỗ 3D (VNEpacket)', run: () => syncVnepacketTracking() },
 ]
 
 /** Every supplier whose tracking is read one order at a time. One failing does not stop the others. */

@@ -5,6 +5,7 @@ import GoogleDriveSetupCard from '@/components/GoogleDriveSetupCard'
 import GoogleSheetsSetupCard from '@/components/GoogleSheetsSetupCard'
 import BondreSetupCard from '@/components/BondreSetupCard'
 import PrintwaySetupCard from '@/components/PrintwaySetupCard'
+import VnepacketSetupCard from '@/components/VnepacketSetupCard'
 import StoreConnectionsCard from '@/components/StoreConnectionsCard'
 import { SetupBlockLinks, SetupBlockTabs } from '@/components/SetupBlockNav'
 import { SETUP_BLOCKS, blockFromSearch, type SetupBlock } from '@/lib/setup-blocks'
@@ -364,6 +365,7 @@ export default function SetupPage() {
         {block === 'fulfill' && <GoogleSheetsSetupCard />}
         {block === 'fulfill' && <BondreSetupCard />}
         {block === 'fulfill' && <PrintwaySetupCard />}
+        {block === 'fulfill' && <VnepacketSetupCard />}
         {block === 'design' && <GoogleDriveSetupCard />}
         {/* Trello Config */}
         {block === 'design' && (
