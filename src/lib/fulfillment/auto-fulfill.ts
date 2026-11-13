@@ -6,6 +6,7 @@ import { fetchOrderFulfillmentOrdersByNames, createFulfillment } from '@/lib/sho
 import { isNonProductLine, lineKeysOf } from '@/lib/order-lines'
 import { needsFileLines, pushedShopifyLineIds } from '@/lib/line-export'
 import { sentFileLines } from '@/lib/repos/push-export'
+import { vnepacketShipmentRows } from '@/lib/repos/vnepacket-tracking'
 
 export type FulfillmentDetail = { tracking: string; lineKeys: string[]; lineCount: number; addOn?: boolean }
 export type OrderResultRow = { baseOrder: string; status: OrderPlanStatus; trackings: string[]; fulfilledLines: number; message?: string; fulfillments?: FulfillmentDetail[]; shop?: string; storeName?: string }
@@ -130,6 +131,8 @@ export async function runAutoFulfill(opts: {
   const sheetErrorRows = read.errorRows
   for (const sheet of read.sheets) mergeSheetGroups(byOrder, sheet.groups, sheet.name)
   const pushed = await pushedShipmentRows(opts.storeId)
+  // Gỗ 3D has no push: its parcels come from VNEpacket once the HPW warehouse checked them in, and count as pushed rows.
+  for (const [base, rows] of Array.from(await vnepacketShipmentRows(opts.storeId))) pushed.set(base, [...(pushed.get(base) ?? []), ...rows])
   mergeSheetGroups(byOrder, new Map(Array.from(pushed, ([base, rows]) => [base, rows.map(r => ({ ...r, pushed: true }))])))
   const minAgeFor = (base: string) => (pushed.has(base) ? 0 : opts.minAgeDays)
 

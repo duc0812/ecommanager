@@ -110,12 +110,14 @@ describe('shipmentStatusOf', () => {
     expect(shipmentStatusOf(t(null, ['SHIPMENT LABEL CREATED']))).toBe('INFO_RECEIVED')
     expect(shipmentStatusOf(t(null, [], null))).toBe('PENDING')
     expect(shipmentStatusOf(t(null, ['DELIVERY ATTEMPTED - NO ACCESS']))).toBe('EXCEPTION')
+    expect(shipmentStatusOf(t('_in_transit', []))).toBe('IN_TRANSIT')
+    expect(shipmentStatusOf({ ...t(null, []), checkedIn: true })).toBe('IN_TRANSIT')
   })
 })
 
 describe('referenceCandidates', () => {
   it('tries the line key first and the bare order only for a lone line at the supplier', () => {
-    expect(referenceCandidates('LIT5166_1', '#LIT5166', true)).toEqual(['LIT5166_1', '#LIT5166_1', 'LIT5166', '#LIT5166'])
-    expect(referenceCandidates('LIT5166_2', '#LIT5166', false)).toEqual(['LIT5166_2', '#LIT5166_2'])
+    expect(referenceCandidates('LIT5166_1', '#LIT5166', true)).toEqual(['#LIT5166_1', 'LIT5166_1', '#LIT5166', 'LIT5166'])
+    expect(referenceCandidates('LIT5166_2', '#LIT5166', false)).toEqual(['#LIT5166_2', 'LIT5166_2'])
   })
 })

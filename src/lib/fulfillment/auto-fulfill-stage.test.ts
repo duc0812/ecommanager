@@ -6,6 +6,7 @@ vi.mock('@/lib/db', () => ({ prisma: {
   order: { findMany: vi.fn(async () => dbOrders), update: vi.fn() }, supplierOrderPush: { findMany: vi.fn(async () => pushRows) },
   supplier: { findMany: vi.fn(async () => [{ id: 'sm', name: 'Mangoshao' }, { id: 'sj', name: 'Jomall' }]) },
 } }))
+vi.mock('@/lib/repos/vnepacket-tracking', () => ({ vnepacketShipmentRows: vi.fn(async () => new Map()) }))
 vi.mock('./parse-sheet', async (orig) => ({
   ...(await orig<typeof import('./parse-sheet')>()),
   fetchSheetCsv: vi.fn(async () => 'Order,Tracking\nLIT1001,TRK1\nLIT1002,TRK2\nLIT1003,TRK3\n'),

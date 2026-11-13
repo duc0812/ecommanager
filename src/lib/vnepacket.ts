@@ -157,16 +157,18 @@ export function shipmentStatusOf(t: Pick<VnepacketTracking, 'status' | 'events' 
   if (has(/out[ _]for[ _]deliver/)) return 'OUT_FOR_DELIVERY'
   if (has(/return|exception|fail|undeliverable|attempt/)) return 'EXCEPTION'
   if (has(/cancel/)) return 'EXCEPTION'
-  if (t.events.some(e => !/label created/i.test(e.desc))) return 'IN_TRANSIT'
+  // Checked in = the HPW warehouse holds the parcel: it left Gỗ 3D even when no carrier scan came back yet.
+  if (/transit/.test(raw) || t.checkedIn || t.events.some(e => !/label created/i.test(e.desc))) return 'IN_TRANSIT'
   return t.trackingNumber ? 'INFO_RECEIVED' : 'PENDING'
 }
 
 /**
- * The references a Gỗ 3D parcel may be under, most likely first: the line key the supplier sheet shows ("LIT5166_1"),
- * and the bare order number only when the order has no other line at this supplier (one parcel, one line).
+ * The references a Gỗ 3D parcel may be under, most likely first: Gỗ 3D creates shipments under "#" + the code its sheet
+ * shows ("#LIT5166_1", "#LIT5202"), and the bare order number only stands for a line when the order has no other line at
+ * this supplier (one parcel, one line).
  */
 export function referenceCandidates(lineKey: string, orderNumber: string, onlyLineAtSupplier: boolean): string[] {
   const order = orderNumber.replace(/^#/, '')
   const bases = [lineKey, ...(onlyLineAtSupplier ? [order] : [])]
-  return Array.from(new Set(bases.flatMap(b => [b, `#${b}`])))
+  return Array.from(new Set(bases.flatMap(b => [`#${b}`, b])))
 }

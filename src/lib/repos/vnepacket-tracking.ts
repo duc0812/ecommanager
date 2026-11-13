@@ -2,7 +2,7 @@ import { prisma } from '@/lib/db'
 import { isNonProductLine, lineKeysOf } from '@/lib/order-lines'
 import { detectLastMileCarrier } from '@/lib/tracking/lastmile-carrier'
 import { SHIPMENT_STATUS_PENDING } from '@/lib/tracking/build-shipments'
-import { CLOSED_PIPELINE } from '@/lib/repos/supplier-push-core'
+import type { OrderRow } from '@/lib/fulfillment/build-fulfill-plan'
 import { VnepacketError, getTracking, referenceCandidates, shipmentStatusOf, type VnepacketSession, type VnepacketTracking } from '@/lib/vnepacket'
 import { getVnepacketSettings, hasVnepacketAccount, vnepacketSession } from '@/lib/vnepacket-settings'
 
@@ -11,6 +11,9 @@ export const GO3D_SUPPLIER_CODE = '3'
 export const VNEPACKET_API_TYPE = 'vnepacket'
 const TRACKING_WINDOW_DAYS = 90
 const PAUSE_MS = 250
+const CLOSED_PIPELINE = ['CANCELLED', 'REFUNDED']
+// A parcel the HPW warehouse checked in has left Gỗ 3D; a label alone has not.
+const SHIPPED_STATUSES = ['IN_TRANSIT', 'OUT_FOR_DELIVERY', 'DELIVERED', 'EXCEPTION']
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 
@@ -155,4 +158,32 @@ export async function syncVnepacketTracking(opts: { orderNumber?: string; withLi
   }
   if (errors.length > 0) console.error(`[vnepacket] ${errors.length} line(s) failed: ${errors.slice(0, 5).join('; ')}`)
   return { pushes: checked, found, shipments: written, ...(opts.withLines ? { lines } : {}), ...(errors.length > 0 ? { errors: errors.slice(0, 20) } : {}) }
+}
+
+/**
+ * Auto Fulfilled rows from VNEpacket: one per line that went to Gỗ 3D and whose parcel VNEpacket shows on its way, not yet
+ * fulfilled on Shopify. Like an API push, the row is already tied to the supplier the line was sent to, and already shipped.
+ */
+export async function vnepacketShipmentRows(storeId: string): Promise<Map<string, OrderRow[]>> {
+  const out = new Map<string, OrderRow[]>()
+  const supplierIds = (await findVnepacketSuppliers()).map(s => s.id)
+  if (supplierIds.length === 0) return out
+  const rows = await prisma.shipment.findMany({
+    where: {
+      crawlSource: 'vnepacket', supplierId: { in: supplierIds }, trackingNumber: { not: null }, shopifyFulfillmentId: null,
+      status: { in: SHIPPED_STATUSES }, order: { storeId, pipelineStatus: { notIn: CLOSED_PIPELINE } },
+    },
+    select: {
+      lineKey: true, trackingNumber: true, supplierId: true, shopifyLineId: true,
+      order: { select: { shopifyOrderNumber: true, lines: { select: { shopifyLineId: true, exportedToSupplierId: true } } } },
+    },
+  })
+  for (const r of rows) {
+    const tracking = r.trackingNumber?.trim()
+    const line = r.order.lines.find(l => l.shopifyLineId === r.shopifyLineId)
+    if (!tracking || !line || line.exportedToSupplierId !== r.supplierId) continue
+    const base = r.order.shopifyOrderNumber.replace(/^#/, '')
+    out.set(base, [...(out.get(base) ?? []), { lineKey: r.lineKey, tracking }])
+  }
+  return out
 }

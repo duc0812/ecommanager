@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest'
 import { prisma } from '@/lib/db'
-import { syncVnepacketTracking } from '@/lib/repos/vnepacket-tracking'
+import { syncVnepacketTracking, vnepacketShipmentRows } from '@/lib/repos/vnepacket-tracking'
 import { VNEPACKET_KEYS, saveVnepacketSettings } from '@/lib/vnepacket-settings'
 
 const SHOP = 'vnep-store.myshopify.com'
@@ -97,8 +97,8 @@ describe('syncVnepacketTracking', () => {
 
     await syncVnepacketTracking()
 
-    expect(asked).toEqual(['LIT7002_2', '#LIT7002_2', 'LIT7002', '#LIT7002'])
-    expect((await rowsOf(order.id)).map(r => [r.lineKey, r.trackingNumber, r.status])).toEqual([['LIT7002_2', 'UUS6AN1260246558603', 'INFO_RECEIVED']])
+    expect(asked).toEqual(['#LIT7002_2', 'LIT7002_2', '#LIT7002'])
+    expect((await rowsOf(order.id)).map(r => [r.lineKey, r.trackingNumber, r.status])).toEqual([['LIT7002_2', 'UUS6AN1260246558603', 'IN_TRANSIT']])
   })
 
   it('never reads a bare order number onto one of several Gỗ 3D lines', async () => {
@@ -127,6 +127,22 @@ describe('syncVnepacketTracking', () => {
 
     expect(await syncVnepacketTracking()).toMatchObject({ found: 1, shipments: 0 })
     expect((await rowsOf(order.id))[0]).toMatchObject({ trackingNumber: 'SHOPIFY-1', crawlSource: null })
+  })
+
+  it('gives Auto Fulfilled the shipped, unfulfilled parcels of lines sent to Gỗ 3D only', async () => {
+    const a = await makeOrder(7101, [{ supplier: GO3D, exported: true }, { supplier: GO3D, exported: true }])
+    const b = await makeOrder(7102, [{ supplier: GO3D, exported: true }])
+    const c = await makeOrder(7103, [{ supplier: GO3D, exported: true }])
+    const row = (orderId: string, order: number, n: number, extra: Record<string, unknown>) => prisma.shipment.create({ data: {
+      orderId, projectId: PROJECT, lineKey: `LIT${order}_${n}`, shopifyLineId: lineId(order, n), supplierId: GO3D, crawlSource: 'vnepacket', ...extra,
+    } })
+    await row(a.id, 7101, 1, { trackingNumber: 'T-1', status: 'IN_TRANSIT' })
+    await row(a.id, 7101, 2, { trackingNumber: 'T-LABEL', status: 'INFO_RECEIVED' })
+    await row(b.id, 7102, 1, { trackingNumber: 'T-DONE', status: 'DELIVERED', shopifyFulfillmentId: 'gid://shopify/Fulfillment/9' })
+    await prisma.orderLine.updateMany({ where: { orderId: c.id }, data: { exportedToSupplierId: OTHER } })
+    await row(c.id, 7103, 1, { trackingNumber: 'T-OTHER', status: 'DELIVERED' })
+
+    expect(Array.from(await vnepacketShipmentRows(storeId))).toEqual([['LIT7101', [{ lineKey: 'LIT7101_1', tracking: 'T-1' }]]])
   })
 
   it('does nothing without an account', async () => {

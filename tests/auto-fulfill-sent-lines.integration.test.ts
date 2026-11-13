@@ -18,6 +18,7 @@ const SHOP = 'snt.myshopify.com'
 const PROJECT = 'proj_snt'
 const JOMALL = 'sup_snt_jomall'
 const PGPRINTS = 'sup_snt_pg'
+const GO3D = 'sup_snt_go3d'
 const NOW = new Date('2026-11-06T00:00:00Z')
 const PLACED = new Date('2026-10-20T00:00:00Z')
 const EXPORTED_AT = new Date('2026-10-22T00:00:00Z')
@@ -75,7 +76,7 @@ async function cleanup() {
   const stores = await prisma.shopifyStore.findMany({ where: { shop: SHOP }, select: { id: true } })
   await prisma.order.deleteMany({ where: { storeId: { in: stores.map(s => s.id) } } })
   await prisma.shopifyStore.deleteMany({ where: { shop: SHOP } })
-  await prisma.supplier.deleteMany({ where: { id: { in: [JOMALL, PGPRINTS] } } })
+  await prisma.supplier.deleteMany({ where: { id: { in: [JOMALL, PGPRINTS, GO3D] } } })
   await prisma.project.deleteMany({ where: { id: PROJECT } })
 }
 
@@ -85,6 +86,7 @@ beforeAll(async () => {
   storeId = (await prisma.shopifyStore.create({ data: { shop: SHOP, orderPrefix: 'SNT', connectedAt: new Date('2026-09-01') } })).id
   await prisma.supplier.create({ data: { id: JOMALL, name: 'Jomall', code: 'SNTJOM' } })
   await prisma.supplier.create({ data: { id: PGPRINTS, name: 'Pgprints', code: 'SNTPG' } })
+  await prisma.supplier.create({ data: { id: GO3D, name: 'Gỗ 3D VN', code: 'SNTGO3D', apiType: 'vnepacket' } })
 })
 
 beforeEach(async () => {
@@ -232,6 +234,24 @@ describe('Auto Fulfilled fulfils a product line only after it went to a supplier
       expect(row.message).toContain('SNT10_2')
       expect(mocks.createFulfillment).not.toHaveBeenCalled()
     })
+  })
+
+  it('a Gỗ 3D line whose VNEpacket parcel is on its way is fulfilled with that tracking, the other supplier line stays open', async () => {
+    await makeOrder('SNT20', [{ exported: true }, { exported: true, supplierId: GO3D }])
+    await prisma.shipment.updateMany({ where: { orderId: orderId('SNT20'), lineKey: 'SNT20_2' }, data: { trackingNumber: 'VN-1', status: 'IN_TRANSIT', crawlSource: 'vnepacket' } })
+    const s = await run({})
+    expect(rowOf(s, 'SNT20')).toMatchObject({ status: 'will_fulfill', fulfilledLines: 1, trackings: ['VN-1'] })
+    expect(fulfilledFo()).toEqual([['FO-SNT20', ['FOL-SNT20-2'], 'VN-1']])
+  })
+
+  it('a Gỗ 3D parcel with only a label, or on a line not exported, is not fulfilled', async () => {
+    await makeOrder('SNT21', [{ exported: true, supplierId: GO3D }])
+    await prisma.shipment.updateMany({ where: { orderId: orderId('SNT21') }, data: { trackingNumber: 'VN-2', status: 'INFO_RECEIVED', crawlSource: 'vnepacket' } })
+    await makeOrder('SNT22', [{ exported: false, supplierId: GO3D }])
+    await prisma.shipment.updateMany({ where: { orderId: orderId('SNT22') }, data: { trackingNumber: 'VN-3', status: 'IN_TRANSIT', crawlSource: 'vnepacket' } })
+    const s = await run({})
+    expect(s.rows.map(r => r.baseOrder)).toEqual([])
+    expect(fulfilledFo()).toEqual([])
   })
 
   it('Preview (apply false) reports the statuses the run acts on, and writes nothing', async () => {
