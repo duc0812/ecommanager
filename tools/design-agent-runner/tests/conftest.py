@@ -22,7 +22,8 @@ def _home(tmp_path, monkeypatch):
     home.mkdir()
     monkeypatch.setenv('DESIGN_AGENT_HOME', str(home))
     for name in ('DESIGN_AGENT_ENV', 'DESIGN_AGENT_JOB_DIR', 'DESIGN_AGENT_TOKEN', 'DESIGN_AGENT_PHASE', 'DESIGN_AGENT_ROUND',
-                 'FAKE_CLAUDE_MODE', 'FAKE_CLAUDE_SLEEP', 'FAKE_CLAUDE_PLAN', 'FAKE_CLAUDE_NAP'):
+                 'FAKE_CLAUDE_MODE', 'FAKE_CLAUDE_SLEEP', 'FAKE_CLAUDE_PLAN', 'FAKE_CLAUDE_NAP',
+                 'FAKE_CODEX_MODE', 'FAKE_CODEX_PLAN', 'FAKE_CODEX_SLEEP', 'FAKE_CODEX_ECHO_FILE'):
         monkeypatch.delenv(name, raising=False)
     return home
 
@@ -188,7 +189,8 @@ def deps(env_file, monkeypatch):
         monkeypatch.setenv('FAKE_CLAUDE_MODE', mode)
         for k, v in env.items():
             monkeypatch.setenv(k, v)
-        fields = {'claude_cmd': [sys.executable, str(HERE / 'fake_claude.py')]}
+        fields = {'claude_cmd': [sys.executable, str(HERE / 'fake_claude.py')],
+                  'codex_cmd': [sys.executable, str(HERE / 'fake_codex.py')]}
         fields.update(over)
         return runner.Deps(cfg, agent_api.AgentApi(cfg.ecom_url, cfg.token), runner.Log(agent_api.home(), [cfg.token]), **fields)
     return make

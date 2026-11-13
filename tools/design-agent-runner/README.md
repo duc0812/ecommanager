@@ -4,7 +4,7 @@
 
 Chạy trên máy tính của shop. Khi designer reject một design (hoặc khi chủ shop bấm giao việc), Ecom Manager xếp một job vào hàng đợi. Runner này hỏi máy chủ xem có job không (long-poll, tối đa 5 job cùng lúc), với mỗi job nó tạo một thư mục riêng và tải về các file hiện tại của task.
 
-- Job `FIX`, `MAKE`, `MOCKUP`: runner điều khiển tối đa 3 vòng. Mỗi vòng có một **phiên sửa** (prompt `fix` / `make` / `mockup`) chỉ làm file trong thư mục job, rồi một **phiên QA mới** (prompt `qa`, không phải phiên đã làm file) chấm theo danh sách kiểm tra cố định. QA đạt thì **chính runner** tải file lên và gửi duyệt; các phiên không bao giờ gọi máy chủ.
+- Job `FIX`, `MAKE`, `MOCKUP`: runner điều khiển tối đa 3 vòng. Mỗi vòng có một **phiên sửa** chỉ làm file trong thư mục job — một phiên Claude (prompt `fix` / `make` / `mockup`, mặc định) hoặc một phiên Codex (`MAKER_ENGINE=codex`, prompt `codex-maker`) — rồi một **phiên QA mới**, luôn là Claude (prompt `qa`, không phải phiên đã làm file), chấm theo danh sách kiểm tra cố định. QA đạt thì **chính runner** tải file lên và gửi duyệt; các phiên không bao giờ gọi máy chủ.
 - Job `LIBRARY_APPLY`: như trước, một phiên duy nhất làm việc, giao file qua `agent_api.py` và ghi `result.json`.
 
 Runner báo nhịp tim mỗi 60 giây, giới hạn 90 phút cho cả job, rồi báo kết quả cho máy chủ. Agent không bao giờ duyệt task, không liên hệ xưởng hay khách: mọi thứ dừng ở REVIEW.
@@ -13,11 +13,12 @@ Runner báo nhịp tim mỗi 60 giây, giới hạn 90 phút cho cả job, rồi
 |---|---|
 | `agent_api.py` | hợp đồng với máy chủ: lớp `AgentApi` (runner dùng để giao file) và CLI (`upload`, `submit`, `reopen`, `note`, `download`) cho phiên `library-apply` và cho người |
 | `runner.py` | cấu hình, log, tìm Codex, thư mục job, prompt, dòng lệnh, vòng sửa/QA, kiểm `READY.json` và kết quả QA, giao file, vòng nhận job, khóa, `main` |
-| `prompts/fix.md`, `make.md`, `mockup.md` | phiên sửa: chỉ làm file, kết thúc bằng `READY.json` hoặc `result.json` NEEDS_OWNER |
+| `prompts/fix.md`, `make.md`, `mockup.md` | phiên sửa Claude: chỉ làm file, kết thúc bằng `READY.json` hoặc `result.json` NEEDS_OWNER |
+| `prompts/codex-maker.md` | phiên sửa Codex (FIX, MAKE, MOCKUP; runner chỉ giữ đoạn `<!-- kind:… -->` của loại job): đọc SKILL.md và luật của design, sửa ở nguồn dựng lớp trước, cùng hợp đồng `READY.json` / NEEDS_OWNER |
 | `prompts/qa.md` | phiên QA độc lập: danh sách kiểm tra 8 mục, ghi `QA-claude/round-N-result.json` |
 | `prompts/library-apply.md` | phiên duy nhất của job thư viện (giao qua `agent_api.py`) |
 | `install-task.ps1` | đăng ký tác vụ Task Scheduler (chỉ chủ shop chạy); `-PrintOnly` để xem trước |
-| `tests/` | test với máy chủ giả và `claude` giả |
+| `tests/` | test với máy chủ giả, `claude` giả và `codex` giả |
 
 ## Cài đặt (chủ shop)
 
@@ -31,7 +32,10 @@ Runner báo nhịp tim mỗi 60 giây, giới hạn 90 phút cho cả job, rồi
 | `PROJECT_DIR` | thư mục dự án mà các phiên dùng (có `CLAUDE.md` và skill) | bắt buộc |
 | `MAX_CONCURRENT` | số job chạy cùng lúc (1 đến 10) | `5` |
 | `CLAUDE_BIN` | lệnh `claude` (file `.cmd` / `.bat` bị từ chối) | `claude` |
-| `CODEX_BIN` | đường dẫn `codex.exe`; để trống = bản mới nhất đi kèm app Codex | trống |
+| `CODEX_BIN` | đường dẫn `codex.exe`; để trống = bản mới nhất đi kèm app Codex (`%LOCALAPPDATA%\OpenAI\Codex\bin\*\codex.exe`) | trống |
+| `MAKER_ENGINE` | ai làm phiên sửa của FIX / MAKE / MOCKUP: `claude` hoặc `codex` (QA luôn là Claude, LIBRARY_APPLY không đổi) | `claude` |
+| `CODEX_MODEL` | (chỉ khi `codex`) thêm `-m <model>`; trống = model trong `~/.codex/config.toml` của chủ shop | trống |
+| `CODEX_EXTRA_ARGS` | (chỉ khi `codex`) cờ thêm cho `codex exec`, tách như shell (dùng `/` trong đường dẫn), ví dụ `-c model_reasoning_effort=high` | trống |
 | `ARTWORK_BUILDER` | thư mục gốc chứa thư mục job | `D:\Ecom manager\artwork-builder` |
 | `CLAUDE_ALLOWED_TOOLS` | các tool phiên được dùng | `Bash,Read,Write,Edit,Glob,Grep,Skill` |
 | `CLAUDE_DISALLOWED_TOOLS` | lệnh phiên bị cấm (cách nhau bằng dấu phẩy; `none` = không cấm) | các script push thẳng DB (`push-local-renders`, `push-shared-prints`, `push_s2n`, `apply_chunk`, `process-new-orders`), `ssh`, `scp`, và mọi lệnh Bash nhắc tới `runner.env`, `.design-agent`, `agent_api` hay đường dẫn `design-agent/runner` của máy chủ, cộng `Read(~/.design-agent/**)` (xem "Rào chắn") |
@@ -41,7 +45,7 @@ Runner báo nhịp tim mỗi 60 giây, giới hạn 90 phút cho cả job, rồi
 | `JOB_TIMEOUT_MINUTES` | giới hạn thời gian mỗi job | `90` |
 | `BASH_TIMEOUT_MS` | thời gian tối đa của một lệnh Bash trong phiên | `600000` (10 phút) |
 
-3. Giữ `claude` đã đăng nhập trên máy này.
+3. Giữ `claude` đã đăng nhập trên máy này (và Codex, khi `MAKER_ENGINE=codex`).
 4. Chạy runner từ một bản checkout của commit đã duyệt, và không phiên nào được đổi nhánh trong thư mục đó (prompt được đọc lại cho mỗi job). Không bao giờ khởi động runner từ bên trong một phiên Claude Code.
 5. Lần đầu chạy có người xem, từ terminal thường: `python tools\design-agent-runner\runner.py --once`
 6. Sau đó mới đăng ký tác vụ: `powershell -ExecutionPolicy Bypass -File tools\design-agent-runner\install-task.ps1` (chỉ chủ shop, hoặc agent theo lời chủ shop). Xem trước: thêm `-PrintOnly`.
@@ -58,9 +62,10 @@ Thư mục job: `<ARTWORK_BUILDER>\<MÃ TASK>-agent-<id job>\`. Tên có dạng 
 | `round-N\deliver\` | phiên sửa | file ứng viên của vòng N (`.jpg`, `.jpeg`, `.png`) |
 | `round-N\READY.json` | phiên sửa | `{ "round": N, "files": [ { "kind": "PRINT" \| "MOCKUP", "printArea": "…", "file": "round-N/deliver/…" } ], "changed": "…", "unchanged": "…" }` |
 | `round-N\work\` | phiên sửa | brief cho Codex, bản nháp, log Codex |
+| `round-N\codex-last-message.txt` | Codex (`-o`) | tin nhắn cuối của phiên sửa Codex; chỉ để đọc, không bao giờ là kết quả |
 | `QA-claude\round-N-result.json` | phiên QA | `{ "verdict": "PASS" \| "FAIL", "summary": "…", "findings": [ { "piece", "problem", "fix", "passCondition" } ] }` |
 | `result.json` | phiên sửa (chỉ `NEEDS_OWNER`) hoặc phiên thư viện | `{ "outcome", "summary", … }` |
-| `session.log` / `session-round-N-maker.log` / `session-round-N-qa.log` | runner | mọi sự kiện stream-json của phiên, ghi ngay khi xảy ra, token được che; kết quả không bao giờ lấy từ log |
+| `session.log` / `session-round-N-maker.log` / `session-round-N-qa.log` | runner | mọi sự kiện stream-json của phiên Claude (với Codex: stdout + stderr của `codex exec`), ghi ngay khi xảy ra, token được che; kết quả không bao giờ lấy từ log |
 | `stage.txt` | phiên | bước đang làm (runner xoá trước mỗi phiên) |
 | `api-calls.jsonl` | `agent_api.py` | mọi lần phiên thư viện gọi CLI |
 | `runner-state.json` | runner | vòng, pha, kết quả QA, kết quả cuối |
@@ -71,7 +76,7 @@ Khi job chạy lại (lần 2), mọi file và thư mục của lần trước (
 
 Mỗi vòng N (1 đến 3), trong cùng một đồng hồ của job (`JOB_TIMEOUT_MINUTES`; mỗi phiên chỉ được phần thời gian còn lại):
 
-1. **Phiên sửa** (`CLAUDE_MODEL`). Vòng 2 và 3 được dặn đọc `QA-claude/round-<N-1>-result.json` và chỉ sửa các mảnh trong `findings`, bắt đầu từ file của chính nó ở vòng trước. Phiên phải kết thúc bằng đúng một trong hai:
+1. **Phiên sửa** (`CLAUDE_MODEL`, hoặc Codex khi `MAKER_ENGINE=codex`). Vòng 2 và 3 được dặn đọc `QA-claude/round-<N-1>-result.json` và chỉ sửa các mảnh trong `findings`, bắt đầu từ file của chính nó ở vòng trước. Phiên phải kết thúc bằng đúng một trong hai:
    - `round-N/READY.json` + file trong `round-N/deliver/`. Runner kiểm: đúng `round`, có file, mỗi file nằm trong `round-N/deliver/`, tồn tại, không rỗng, đuôi `.jpg`/`.jpeg`/`.png`, không trùng vùng, có `changed` và `unchanged`; job FIX: vùng in `PRINT` phải có trong file hiện tại của task; job MOCKUP: chỉ file `MOCKUP`.
    - `result.json` với `outcome: "NEEDS_OWNER"`: báo nguyên văn lên máy chủ, không chạy QA.
    - Khác đi (không có gì, file sai dạng, cả hai cùng lúc, `DONE` do phiên tự ghi): `fail` tạm, có lý do tiếng Việt.
@@ -92,6 +97,22 @@ cwd = `PROJECT_DIR`, stdin đóng, token bị xoá khỏi môi trường, `DESIG
 ```
 claude -p "<prompt của vòng>" --output-format stream-json --verbose --permission-mode dontAsk --allowedTools Bash Read Write Edit Glob Grep Skill --disallowedTools "Bash(*push-local-renders*)" … "Bash(*runner.env*)" "Bash(*.design-agent*)" "Bash(*agent_api*)" "Bash(*design-agent/runner*)" "Read(~/.design-agent/**)" --add-dir "<thư mục job>" "<ARTWORK_BUILDER>" [--model <CLAUDE_MODEL hoặc CLAUDE_QA_MODEL>]
 ```
+
+### Phiên sửa bằng Codex (`MAKER_ENGINE=codex`)
+
+Đổi engine: thêm `MAKER_ENGINE=codex` vào `runner.env` rồi khởi động lại runner (cấu hình chỉ đọc lúc khởi động); bỏ dòng đó hoặc ghi `claude` để quay lại. Chỉ phiên sửa của FIX / MAKE / MOCKUP đổi; phiên QA vẫn là một phiên Claude mới (`CLAUDE_QA_MODEL`), LIBRARY_APPLY vẫn là một phiên Claude. Mọi thứ khác giữ nguyên: cùng đồng hồ job, nhịp tim, diệt cả cây tiến trình khi quá giờ hay khi dừng, gỡ `.ps-lock` theo `ps-lock.held`, kiểm `READY.json` / `result.json`, sha256 trước QA, runner giao file.
+
+Dòng lệnh (cwd = thư mục job, stdin đóng, stdout + stderr nối vào `session-round-N-maker.log` với token bị che):
+
+```
+<codex.exe> exec -C "<thư mục job>" --skip-git-repo-check --color never --add-dir "<ARTWORK_BUILDER>" -o "<thư mục job>\round-N\codex-last-message.txt" [-m <CODEX_MODEL>] [<CODEX_EXTRA_ARGS>…] "<prompt codex-maker của vòng>"
+```
+
+- `--add-dir <ARTWORK_BUILDER>` để `.ps-lock` (nằm ngoài thư mục job) ghi được khi sandbox của Codex là `workspace-write`; với `danger-full-access` nó vô hại.
+- Không có cờ model hay sandbox mặc định: Codex chạy với `~/.codex/config.toml` của chính chủ shop, như khi chủ shop dùng hằng ngày (hiện là `danger-full-access`, `approval: never`), tức là **toàn quyền trên máy**. Vì vậy luật "không liên lạc máy chủ, không đọc `runner.env` / `.design-agent`, không chạy file nào trong `tools/design-agent-runner`" với Codex **chỉ là luật trong prompt**, không có danh sách cấm nào ép nó (khác với `--disallowedTools` của phiên Claude). Thứ thật sự giữ an toàn vẫn là cách làm: token không có trong môi trường, phiên không có bước giao nào, runner chỉ giao sau khi một phiên QA Claude khác chấm đạt.
+- Môi trường của Codex: như phiên Claude (không `DESIGN_AGENT_TOKEN`), và bỏ thêm mọi biến `CLAUDE*`, `ANTHROPIC*`, `MCP_*`, `DESIGN_AGENT_ENV`, `DESIGN_AGENT_HOME`. Môi trường của phiên Claude không đổi.
+- Codex không có skill của Claude: prompt bảo nó đọc `%USERPROFILE%\.claude\skills\processing-litzzy-orders\SKILL.md` và luật của design (`flat-text/<CODE>-RULES.md`, `design-rules/<CODE>.*`) trước, và **sửa ở nguồn dựng lớp** (PSD / TIF trong `//TMTEAM/TEMPLATE/LIBRARY/products/<CODE>` hay `//TMTEAM/TEMPLATE/2026/…`, build script / spec trong `artwork-builder`) thay vì cắt vá tấm in phẳng; không có nguồn thì phải nói trong `changed`.
+- Codex thoát trong 90 giây mà không để lại gì, hoặc không khởi động được: `fail` tạm `Codex không chạy được (…)` và ngừng nhận job 30 phút, như với Claude.
 
 ### Các trường hợp khác
 
@@ -127,9 +148,13 @@ Phiên sửa và phiên QA được dặn trong prompt là không gọi máy ch�
 
 `%USERPROFILE%\.design-agent\logs\runner-<ngày>.log`, giữ 30 ngày. Token không bao giờ xuất hiện (đổi thành `***`).
 
+## Giới hạn đã biết
+
+- Trường custom trùng tên (ví dụ hai "Custom Name" trên áo jersey: trước và sau): máy chủ dựng `task.customFields` là một object `{ tên: giá trị }` (`src/lib/design-agent/runner.ts`, `customFields[f.key] = f.value`), nên giá trị trước đã bị ghi đè trước khi tới runner. Runner ghi `job.json` đúng như máy chủ gửi và không khôi phục được giá trị đã mất; cần sửa ở máy chủ (gửi danh sách `{ key, value }`).
+
 ## Chưa kiểm chứng
 
-Chỉ chạy thật mới biết: một phiên `claude -p` thật với đúng các cờ này trên một job thật (đặc biệt: `dontAsk` cùng các tool cho phép có cho phiên ghi vào thư viện NAS không, `Skill` có nạp skill của người dùng ở chế độ print không, và CLI đang cài có khớp `Bash(*…*)` / `Read(~/…)` đúng như mong đợi không); một vòng Codex thật do phiên khởi động; phiên QA thật có tự đo đủ 8 mục trong thời gian còn lại không; năm phiên chạy cùng lúc; tác vụ Task Scheduler; việc gỡ `.ps-lock` sau một lần diệt thật.
+Chỉ chạy thật mới biết: một `codex exec` thật với đúng dòng lệnh trên (prompt dài trên dòng lệnh Windows, `-o` khi thư mục `round-N` đã có, Codex có tự đọc SKILL.md và dùng Photoshop / công cụ ảnh của nó trong thời gian còn lại không); một phiên `claude -p` thật với đúng các cờ này trên một job thật (đặc biệt: `dontAsk` cùng các tool cho phép có cho phiên ghi vào thư viện NAS không, `Skill` có nạp skill của người dùng ở chế độ print không, và CLI đang cài có khớp `Bash(*…*)` / `Read(~/…)` đúng như mong đợi không); một vòng Codex thật do phiên khởi động; phiên QA thật có tự đo đủ 8 mục trong thời gian còn lại không; năm phiên chạy cùng lúc; tác vụ Task Scheduler; việc gỡ `.ps-lock` sau một lần diệt thật.
 
 ## Test
 
@@ -137,4 +162,4 @@ Chỉ chạy thật mới biết: một phiên `claude -p` thật với đúng c
 python -m pytest tools/design-agent-runner/tests -q -p no:cacheprovider
 ```
 
-`tests/fake_claude.py` chọn việc theo từng pha và vòng qua `FAKE_CLAUDE_PLAN` (JSON, ví dụ `{"maker": ["ready"], "qa": ["fail", "pass"]}`), hoặc `FAKE_CLAUDE_MODE` cho mọi phiên.
+`tests/fake_claude.py` chọn việc theo từng pha và vòng qua `FAKE_CLAUDE_PLAN` (JSON, ví dụ `{"maker": ["ready"], "qa": ["fail", "pass"]}`), hoặc `FAKE_CLAUDE_MODE` cho mọi phiên. `tests/fake_codex.py` thay `codex.exe` (`Deps.codex_cmd`): `FAKE_CODEX_PLAN` (danh sách theo vòng) hoặc `FAKE_CODEX_MODE` = `ready`, `needs-owner`, `nothing`, `hang`.

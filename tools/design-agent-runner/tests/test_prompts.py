@@ -74,8 +74,8 @@ def test_qa_prompt_has_the_fixed_checklist():
 
 def test_only_known_placeholders_and_no_job_text(cfg, job):
     known = {'JOB_DIR', 'AGENT', 'CODEX_BIN', 'ARTWORK_BUILDER', 'PROJECT_DIR', 'PYTHON', 'JOB_MINUTES', 'LEFT_MINUTES',
-             'LIMIT_MINUTES', 'CMD_MINUTES'}
-    for n in NAMES:
+             'LIMIT_MINUTES', 'CMD_MINUTES', 'SKILLS_DIR'}
+    for n in NAMES + ['codex-maker.md']:
         assert set(re.findall(r'\{\{(\w+)\}\}', text(n))) <= known, n
     for kind in runner.KINDS:
         j = job(kind=kind, requestText='XYZZY-REQUEST'); d = runner.prepare_job_dir(cfg, j, 'C:/codex.exe', datetime(2026, 11, 12))

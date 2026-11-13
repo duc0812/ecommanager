@@ -1,7 +1,8 @@
 """Design Agent runner: claims jobs from Ecom Manager and runs each with headless Claude Code sessions on this PC.
 
 One process, one claim loop, one thread per running job. FIX, MAKE and MOCKUP jobs run in rounds: a maker session
-writes candidate files, a fresh QA session judges them, and only the runner talks to the server and delivers.
+(Claude, or Codex with MAKER_ENGINE=codex) writes candidate files, a fresh Claude QA session judges them, and only the
+runner talks to the server and delivers.
 LIBRARY_APPLY runs as one session that delivers through agent_api.py. See README.md and the spec
 docs/superpowers/specs/2026-11-12-designer-agent-design.md ("Runner on the PC", "Interface contract").
 """
@@ -14,6 +15,7 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import shutil
 import sys
 import threading
@@ -35,6 +37,10 @@ DEFAULT_ARTWORK_BUILDER = r'D:\Ecom manager\artwork-builder'
 DEFAULT_TOOLS = 'Bash,Read,Write,Edit,Glob,Grep,Skill'
 ROUND_KINDS = ('FIX', 'MAKE', 'MOCKUP')
 QA_PROMPT = 'qa.md'
+CODEX_PROMPT = 'codex-maker.md'
+ENGINES = ('claude', 'codex')
+CODEX_SCRUB_PREFIXES = ('CLAUDE', 'ANTHROPIC', 'MCP_')
+CODEX_SCRUB_NAMES = ('DESIGN_AGENT_ENV', 'DESIGN_AGENT_HOME')
 MAX_ROUNDS = 3
 DELIVER_EXT = ('.jpg', '.jpeg', '.png')
 CLI_RULE_MARK = 'agent_api'
@@ -71,6 +77,9 @@ class Config:
     qa_model: str
     job_timeout_s: float
     bash_timeout_ms: int
+    maker_engine: str = 'claude'
+    codex_model: str = ''
+    codex_extra_args: tuple = ()
 
 
 def _number(values: dict, key: str, default, cast, path: Path):
@@ -120,12 +129,20 @@ def load_config(path: Path) -> Config:
     max_concurrent = max(1, min(10, _number(values, 'MAX_CONCURRENT', 5, int, path)))
     minutes = _number(values, 'JOB_TIMEOUT_MINUTES', 90, float, path)
     model = values.get('CLAUDE_MODEL', '').strip()
+    engine = values.get('MAKER_ENGINE', '').strip().lower() or 'claude'
+    if engine not in ENGINES:
+        raise ConfigError(f'MAKER_ENGINE phải là claude hoặc codex (đang là "{engine}") trong {path}')
+    try:
+        codex_extra = tuple(shlex.split(values.get('CODEX_EXTRA_ARGS', '').strip()))
+    except ValueError as exc:
+        raise ConfigError(f'CODEX_EXTRA_ARGS không tách được ({exc}) trong {path}') from None
     return Config(
         ecom_url=ecom_url, token=token, max_concurrent=max_concurrent, claude_bin=claude_bin,
         project_dir=project_dir, artwork_builder=builder, codex_bin=values.get('CODEX_BIN', '').strip(),
         allowed_tools=tools, disallowed_tools=deny, permission_mode=values.get('CLAUDE_PERMISSION_MODE', '').strip() or 'dontAsk',
         model=model, qa_model=values.get('CLAUDE_QA_MODEL', '').strip() or model, job_timeout_s=minutes * 60,
-        bash_timeout_ms=_number(values, 'BASH_TIMEOUT_MS', DEFAULT_BASH_TIMEOUT_MS, int, path))
+        bash_timeout_ms=_number(values, 'BASH_TIMEOUT_MS', DEFAULT_BASH_TIMEOUT_MS, int, path),
+        maker_engine=engine, codex_model=values.get('CODEX_MODEL', '').strip(), codex_extra_args=codex_extra)
 
 
 def resolve_codex(configured: str, local_appdata: str | None = None) -> str:
@@ -249,6 +266,8 @@ def _whole_minutes(seconds: float) -> str:
 def render_prompt(cfg: Config, job: dict, job_dir: Path, codex_bin: str, *, name: str | None = None,
                   left_s: float | None = None, extra: str = '', out_name: str = 'prompt.md') -> str:
     text = (HERE / 'prompts' / (name or KINDS[job['kind']])).read_text(encoding='utf-8')
+    if name == CODEX_PROMPT:
+        text = select_kind(text, job['kind'])
     if extra:
         text = text.rstrip('\n') + '\n\n' + extra.strip('\n') + '\n'
     py = _posix(sys.executable)
@@ -260,11 +279,20 @@ def render_prompt(cfg: Config, job: dict, job_dir: Path, codex_bin: str, *, name
               'PROJECT_DIR': _posix(cfg.project_dir), 'CODEX_BIN': _posix(codex_bin), 'PYTHON': py,
               'AGENT': f'"{py}" "{_posix(HERE / "agent_api.py")}"',
               'JOB_MINUTES': _minutes(cfg.job_timeout_s), 'LEFT_MINUTES': left, 'LIMIT_MINUTES': limit,
-              'CMD_MINUTES': _minutes(cfg.bash_timeout_ms / 1000)}
+              'CMD_MINUTES': _minutes(cfg.bash_timeout_ms / 1000),
+              'SKILLS_DIR': _posix(Path.home() / '.claude' / 'skills')}
     for key, value in values.items():
         text = text.replace('{{' + key + '}}', value)
     (Path(job_dir) / out_name).write_text(text, encoding='utf-8')
     return text
+
+
+_KIND_BLOCK = re.compile(r'<!-- kind:(\w+):start -->\n?(.*?)<!-- kind:\1:end -->\n?', re.S)
+
+
+def select_kind(text: str, kind: str) -> str:
+    """Keeps only the `<!-- kind:KIND:start -->…<!-- kind:KIND:end -->` block of this job's kind, without its markers."""
+    return _KIND_BLOCK.sub(lambda m: m.group(2) if m.group(1) == kind else '', text)
 
 
 def maker_round_text(n: int) -> str:
@@ -319,6 +347,29 @@ def child_env(cfg: Config, job_dir: Path, base=None, phase: str = '', round_n: i
     else:
         env.pop('DESIGN_AGENT_PHASE', None)
         env.pop('DESIGN_AGENT_ROUND', None)
+    return env
+
+
+def codex_last_message(job_dir: Path, n: int) -> Path:
+    return Path(job_dir) / f'round-{n}' / 'codex-last-message.txt'
+
+
+def build_codex_argv(cfg: Config, prompt: str, job_dir: Path, n: int, codex_cmd: list[str]) -> list[str]:
+    """`codex exec` for the maker of round n. No model or sandbox flag unless configured: Codex runs with the owner's
+    own ~/.codex/config.toml."""
+    argv = [*codex_cmd, 'exec', '-C', str(job_dir), '--skip-git-repo-check', '--color', 'never',
+            '--add-dir', str(cfg.artwork_builder), '-o', str(codex_last_message(job_dir, n))]
+    if cfg.codex_model:
+        argv += ['-m', cfg.codex_model]
+    return argv + [*cfg.codex_extra_args, prompt]
+
+
+def codex_env(cfg: Config, job_dir: Path, round_n: int, base=None) -> dict:
+    """The maker env of a Claude session, without any Claude / Anthropic / MCP variable or the runner's config path."""
+    env = child_env(cfg, job_dir, base, phase='maker', round_n=round_n)
+    for name in list(env):
+        if name.upper().startswith(CODEX_SCRUB_PREFIXES) or name.upper() in CODEX_SCRUB_NAMES:
+            env.pop(name)
     return env
 
 
@@ -388,6 +439,7 @@ class Deps:
     api: AgentApi
     log: Log
     claude_cmd: list | None = None
+    codex_cmd: list | None = None
     heartbeat_s: float = 60
     timeout_s: float | None = None
     cli_down_window_s: float = 90
@@ -481,6 +533,7 @@ def _fail(deps: Deps, jid: str, error: str, permanent: bool, ret: str, job_dir: 
 
 
 CLI_DOWN_TEXT = 'Claude CLI không chạy được (chưa đăng nhập, hết hạn mức hoặc lỗi khởi động)'
+CODEX_DOWN_TEXT = 'Codex không chạy được (chưa đăng nhập, hết hạn mức hoặc lỗi khởi động)'
 
 
 class _Beat:
@@ -516,13 +569,13 @@ class _Beat:
 
 
 def _session(deps: Deps, jid: str, job_dir: Path, argv: list, env: dict, timeout: float, should_stop,
-             log_name: str) -> tuple[str, float]:
+             log_name: str, cwd: Path | None = None) -> tuple[str, float]:
     """('exited' | 'timeout' | 'stopped' | 'spawn-failed', seconds). The tree is dead and .ps-lock released on return."""
     cfg = deps.cfg
     proc = load_proc()
     out = open(Path(job_dir) / log_name, 'ab')
     try:
-        child = proc.spawn(argv, cwd=str(cfg.project_dir), env=env, out=out, secrets=[cfg.token])
+        child = proc.spawn(argv, cwd=str(cwd or cfg.project_dir), env=env, out=out, secrets=[cfg.token])
     except OSError:
         out.close()
         return 'spawn-failed', 0.0
@@ -539,10 +592,11 @@ def _session(deps: Deps, jid: str, job_dir: Path, argv: list, env: dict, timeout
     return status, elapsed
 
 
-def _ended(deps: Deps, jid: str, job_dir: Path, status: str, beat: _Beat, what: str = '') -> str | None:
+def _ended(deps: Deps, jid: str, job_dir: Path, status: str, beat: _Beat, what: str = '',
+           down_text: str = CLI_DOWN_TEXT) -> str | None:
     """The job's outcome when a session did not simply exit, else None."""
     if status == 'spawn-failed':
-        return _fail(deps, jid, CLI_DOWN_TEXT, False, 'CLI_DOWN', job_dir)
+        return _fail(deps, jid, down_text, False, 'CLI_DOWN', job_dir)
     if status == 'stopped':
         outcome = beat.outcome()
         deps.log.line(f'job {jid}: đã dừng phiên ({outcome})')
@@ -804,27 +858,38 @@ def _run_rounds(job: dict, deps: Deps, stop: threading.Event, job_dir: Path, cod
     deadline = deps.clock.monotonic() + total
     ctx = {'round': 0, 'stage': 'khởi động', 'live': False}
     beat = _Beat(deps, jid, lambda: round_stage(ctx, job_dir))
+    use_codex = cfg.maker_engine == 'codex'
+    maker_down = CODEX_DOWN_TEXT if use_codex else CLI_DOWN_TEXT
 
     def phase(n: int, role: str) -> tuple[str, float]:
         ctx.update(round=n, stage=f'vòng {n}: {"sửa" if role == "maker" else "QA"}')
-        _set_state(job_dir, round=n, phase=role)
+        _set_state(job_dir, round=n, phase=role, engine=cfg.maker_engine if role == 'maker' else 'claude')
         _discard(job_dir / 'stage.txt')
         left = deadline - deps.clock.monotonic()
         if left <= 0:
             return 'timeout', 0.0
-        if role == 'maker':
-            text = render_prompt(cfg, job, job_dir, codex, left_s=left, extra=maker_round_text(n),
+        cwd = None
+        if role == 'maker' and use_codex:
+            text = render_prompt(cfg, job, job_dir, codex, name=CODEX_PROMPT, left_s=left, extra=maker_round_text(n),
                                  out_name=f'prompt-round-{n}-maker.md')
-            model = cfg.model
+            (job_dir / f'round-{n}').mkdir(exist_ok=True)
+            argv = build_codex_argv(cfg, text, job_dir, n, deps.codex_cmd or [codex])
+            env, cwd = codex_env(cfg, job_dir, n), job_dir
         else:
-            text = render_prompt(cfg, job, job_dir, codex, name=QA_PROMPT, left_s=left, extra=qa_round_text(n, kind),
-                                 out_name=f'prompt-round-{n}-qa.md')
-            model = cfg.qa_model
-        argv = build_argv(cfg, text, job_dir, deps.claude_cmd, model=model)
+            if role == 'maker':
+                text = render_prompt(cfg, job, job_dir, codex, left_s=left, extra=maker_round_text(n),
+                                     out_name=f'prompt-round-{n}-maker.md')
+                model = cfg.model
+            else:
+                text = render_prompt(cfg, job, job_dir, codex, name=QA_PROMPT, left_s=left,
+                                     extra=qa_round_text(n, kind), out_name=f'prompt-round-{n}-qa.md')
+                model = cfg.qa_model
+            argv = build_argv(cfg, text, job_dir, deps.claude_cmd, model=model)
+            env = child_env(cfg, job_dir, phase=role, round_n=n)
         ctx['live'] = True
         try:
-            return _session(deps, jid, job_dir, argv, child_env(cfg, job_dir, phase=role, round_n=n), left,
-                            lambda: beat.halted(stop), f'session-round-{n}-{role}.log')
+            return _session(deps, jid, job_dir, argv, env, left, lambda: beat.halted(stop),
+                            f'session-round-{n}-{role}.log', cwd=cwd)
         finally:
             ctx['live'] = False
 
@@ -844,7 +909,7 @@ def _run_rounds(job: dict, deps: Deps, stop: threading.Event, job_dir: Path, cod
         for n in range(1, MAX_ROUNDS + 1):
             _stash(job_dir / 'result.json')
             status, elapsed = phase(n, 'maker')
-            done = _ended(deps, jid, job_dir, status, beat, f' (vòng {n}: sửa)') or halted()
+            done = _ended(deps, jid, job_dir, status, beat, f' (vòng {n}: sửa)', maker_down) or halted()
             if done:
                 return done
             ready_path = job_dir / f'round-{n}' / 'READY.json'
@@ -859,7 +924,7 @@ def _run_rounds(job: dict, deps: Deps, stop: threading.Event, job_dir: Path, cod
                 return _post_result(deps, jid, res, job_dir)
             if not ready_path.exists():
                 if elapsed < deps.cli_down_window_s:
-                    return _fail(deps, jid, CLI_DOWN_TEXT, False, 'CLI_DOWN', job_dir)
+                    return _fail(deps, jid, maker_down, False, 'CLI_DOWN', job_dir)
                 return fail(f'vòng {n}: phiên sửa kết thúc mà không có READY.json hay result.json')
             ready, why = read_ready(job_dir, n, job)
             if why:
@@ -1116,7 +1181,8 @@ def main(argv: list[str] | None = None) -> int:
         prune_logs(home)
         recover_after_restart(cfg, log)
         deps = Deps(cfg, AgentApi(cfg.ecom_url, cfg.token), log)
-        log.line(f'runner bắt đầu: tối đa {cfg.max_concurrent} job cùng lúc, máy chủ {cfg.ecom_url}')
+        log.line(f'runner bắt đầu: tối đa {cfg.max_concurrent} job cùng lúc, phiên sửa {cfg.maker_engine}, '
+                 f'máy chủ {cfg.ecom_url}')
         code = serve(deps, once=args.once)
         log.line(f'runner dừng (mã {code})')
         return code
