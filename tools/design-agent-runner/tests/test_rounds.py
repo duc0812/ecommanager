@@ -122,6 +122,36 @@ def test_ready_is_checked_strictly(tmp_path, job):
     assert 'chỉ được giao file MOCKUP' in runner.read_ready(d, 1, job(kind='MOCKUP'))[1]
 
 
+GARBLED = 'Kh?ch ch?n kh?ng t?n, m?u l?u ??i ?en v?ng c? m? l?a ch?n 175027.120.'
+
+
+def test_garbled_detects_powershell_question_marks_but_not_urls_or_real_questions():
+    assert runner.garbled(GARBLED)
+    assert not runner.garbled('Khách chọn không tên, mẫu lâu đài đen vàng.')
+    assert not runner.garbled('Ảnh https://cdn.shopify.com/a.png?v=1793205931 và https://x.io/b?c=d?e=f vẫn đúng.')
+    assert not runner.garbled('Tên có nằm trong khung không? Có.')
+
+
+def test_garbled_result_summary_is_replaced_by_the_makers_last_message(tmp_path):
+    (tmp_path / 'round-1').mkdir()
+    (tmp_path / 'result.json').write_text(json.dumps({'outcome': 'NEEDS_OWNER', 'summary': GARBLED}), encoding='utf-8')
+    (tmp_path / 'round-1' / 'codex-last-message.txt').write_text('Thiếu nguồn bản đen vàng 175027.120.\n', encoding='utf-8')
+    res, why = runner.read_result(tmp_path)
+    assert why is None and res['summary'] == 'Thiếu nguồn bản đen vàng 175027.120.'
+    (tmp_path / 'round-1' / 'codex-last-message.txt').write_text(GARBLED, encoding='utf-8')
+    res, why = runner.read_result(tmp_path)
+    assert why is None and res['summary'] == runner.GARBLED_TEXT and not runner.garbled(res['summary'])
+
+
+def test_garbled_ready_text_is_replaced(tmp_path, job):
+    deliver = tmp_path / 'round-1' / 'deliver'; deliver.mkdir(parents=True); (deliver / 'FRONT.jpg').write_bytes(b'x')
+    body = {'round': 1, 'files': [{'kind': 'PRINT', 'printArea': 'FRONT', 'file': 'round-1/deliver/FRONT.jpg'}],
+            'changed': GARBLED, 'unchanged': GARBLED}
+    (tmp_path / 'round-1' / 'READY.json').write_text(json.dumps(body), encoding='utf-8')
+    res, why = runner.read_ready(tmp_path, 1, job())
+    assert why is None and res['changed'] == runner.GARBLED_TEXT and res['unchanged'] == runner.GARBLED_TEXT
+
+
 def test_qa_that_changes_a_deliver_file_fails_the_job(server, run, cfg):
     assert run(server, 'done', env=plan(qa=['tamper'])) == 'FAILED'
     [body] = calls(server, '/jobs/job1/fail')

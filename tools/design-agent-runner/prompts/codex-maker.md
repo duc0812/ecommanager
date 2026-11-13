@@ -80,6 +80,7 @@ Một phiên QA độc lập, chưa làm file nào, sẽ đo kết quả của b
 2. Ổ đĩa: trước mỗi lần render, chạy Photoshop hay tạo ảnh, chạy `"{{PYTHON}}" -c "import shutil;print(shutil.disk_usage('D:/').free//2**30)"`. Dưới 30: nếu có `{{PROJECT_DIR}}/tools/disk-janitor/janitor.py` thì chạy nó một lần với tham số `run` rồi kiểm lại. Vẫn dưới 30: kết thúc bằng b), summary "Ổ D còn dưới 30 GB nên chưa làm được."
 3. Đọc master, base và nguồn ngay tại thư viện hay NAS; không chép chúng vào thư mục job (trừ spec cần đổi, như trên). Mỗi file đầu ra giữ một phiên bản.
 4. Ghi bước hiện tại vào `{{JOB_DIR}}/stage.txt` (một dòng tiếng Việt ngắn, ghi đè file) ở đầu mỗi bước: `đọc job`, `tìm nguồn`, `đo`, `sửa`, `tạo ảnh`, `kiểm file`; runner hiện nó là "vòng N: <dòng đó>".
+5. Shell của bạn là Windows PowerShell 5.1: chữ đi qua pipe sang chương trình khác (`@'…'@ | python -`, `echo … | python`) bị đổi thành ASCII, mọi chữ tiếng Việt thành "?". Mọi script có chữ ngoài ASCII (READY.json, result.json, đường dẫn có dấu) thì ghi ra file `.py` trong `round-N/work/` bằng công cụ sửa file của bạn rồi chạy `"{{PYTHON}}" <file>`; hoặc viết chữ có dấu trong mã bằng mã thoát Unicode của Python. Ghi xong thì đọc lại và kiểm không có "?" thay cho chữ có dấu.
 
 ## Thời gian
 

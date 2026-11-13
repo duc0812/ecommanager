@@ -452,6 +452,28 @@ def read_rounds(job_dir: Path) -> int:
     return best
 
 
+GARBLED_TEXT = ('Agent ghi tóm tắt bị mất dấu tiếng Việt (ký tự "?"), runner không đăng lại nguyên văn. '
+                'Xem result.json và nhật ký phiên trong thư mục job trên máy chạy agent.')
+_URL = re.compile(r'\S+://\S+')
+_LOST_LETTER = re.compile(r'\w\?\w|\?\?')
+
+
+def garbled(text: str) -> bool:
+    """Windows PowerShell 5.1 pipes text to native programs as ASCII, turning every Vietnamese letter into '?'."""
+    return len(_LOST_LETTER.findall(_URL.sub(' ', text or ''))) >= 2
+
+
+def _last_message(job_dir: Path) -> str:
+    for n in range(read_rounds(job_dir), 0, -1):
+        try:
+            text = (Path(job_dir) / f'round-{n}' / 'codex-last-message.txt').read_text(encoding='utf-8-sig').strip()
+        except OSError:
+            continue
+        if text:
+            return text
+    return ''
+
+
 def read_result(job_dir: Path) -> tuple[dict | None, str | None]:
     path = Path(job_dir) / 'result.json'
     if not path.exists():
@@ -469,6 +491,9 @@ def read_result(job_dir: Path) -> tuple[dict | None, str | None]:
         return None, 'thiếu summary'
     rounds = data.get('rounds')
     rounds = rounds if isinstance(rounds, int) and not isinstance(rounds, bool) and rounds >= 0 else read_rounds(job_dir)
+    if garbled(summary):
+        last = _last_message(job_dir)
+        summary = last if last and not garbled(last) else GARBLED_TEXT
     rest = {k: v for k, v in data.items() if k not in ('outcome', 'summary', 'rounds')}
     return {'outcome': data['outcome'], 'summary': summary[:4000], 'rounds': rounds, 'result': rest}, None
 
@@ -834,7 +859,9 @@ def read_ready(job_dir: Path, n: int, job: dict) -> tuple[dict | None, str | Non
         return None, 'thiếu "changed"'
     if not isinstance(data.get('unchanged'), str):
         return None, 'thiếu "unchanged"'
-    return {'round': n, 'files': files, 'changed': changed[:2000], 'unchanged': data['unchanged'].strip()[:2000]}, None
+    unchanged = data['unchanged'].strip()
+    changed, unchanged = (GARBLED_TEXT if garbled(t) else t for t in (changed, unchanged))
+    return {'round': n, 'files': files, 'changed': changed[:2000], 'unchanged': unchanged[:2000]}, None
 
 
 def read_qa(job_dir: Path, n: int) -> tuple[dict | None, str | None]:
