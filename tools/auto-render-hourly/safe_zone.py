@@ -381,6 +381,27 @@ def _hold_rank(results: list[GuardResult]) -> GuardResult:
     return _first(results)
 
 
+def shared_no_name(spec: dict, prints: list[dict]) -> GuardResult:
+    shared = {f.get('printArea'): f for f in spec.get('noNameFiles') or []}
+    unchecked = []
+    for f in prints:
+        area = f.get('printArea')
+        ref = shared.get(area)
+        if ref is None:
+            unchecked.append(f'spec không có file không tên dùng chung cho vùng in {area}')
+        elif f.get('driveFileId'):
+            if ref.get('driveFileId') and f['driveFileId'] != ref['driveFileId']:
+                unchecked.append(f'vùng in {area} không phải file không tên dùng chung đã duyệt ({ref["driveFileId"]})')
+        elif ref.get('widthPx') and f.get('widthPx') and (f['widthPx'], f.get('heightPx')) != (ref['widthPx'], ref.get('heightPx')):
+            return GuardResult('ERROR', None, f'file in {area} {f["widthPx"]}x{f.get("heightPx")} khác khổ file không tên dùng chung '
+                                              f'{ref["widthPx"]}x{ref.get("heightPx")}', {'area': area})
+        else:
+            unchecked.append(f'vùng in {area} là bản render, không so được nội dung với file không tên dùng chung (chỉ có trên Drive)')
+    if unchecked:
+        return GuardResult('UNCHECKED', None, 'khách chọn No: ' + '; '.join(unchecked), {})
+    return GuardResult('PASS', None, '', {'files': 'shared-no-name'})
+
+
 def check_flat_line(key: str, spec_path: Path, values: dict[str, str], said_no: bool, files: list[dict], files_root: Path,
                     safe_in: float | None, tools_dir: Path, python: str, tmp_dir: Path, tol: float = TOLERANCE_PX) -> GuardResult:
     try:
@@ -389,6 +410,8 @@ def check_flat_line(key: str, spec_path: Path, values: dict[str, str], said_no: 
         prints = [f for f in files if (f.get('kind') or 'PRINT') != 'MOCKUP']
         if said_no and values:
             return GuardResult('HOLD', 'NO', 'khách chọn No nhưng file in có tên', {'values': dict(values)})
+        if said_no and not values and spec.get('noNameFiles'):
+            return shared_no_name(spec, prints)
         if spec.get('photoshop'):
             return GuardResult('UNCHECKED', None, 'không kiểm được safe zone (spec Photoshop)', {})
         if not values:

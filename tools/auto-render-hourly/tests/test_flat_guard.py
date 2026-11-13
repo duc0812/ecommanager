@@ -74,3 +74,27 @@ def test_lone_no_with_a_text_area_missing_from_the_spec_is_an_error(tmp_path, fa
     files = [{'printArea': 'BACK', 'path': 'x/LIT1_1 - BACK.png', 'widthPx': 1000, 'heightPx': 800}]
     r = sz.check_flat_line('LIT1_1', spec, {}, True, files, tmp_path / '_out', 0.2, fake_tools, sys.executable, tmp_path / 'tmp')
     assert r.verdict == 'ERROR' and 'thiếu vùng in BACK' in r.reason
+
+
+def test_lone_no_on_a_shared_no_name_photoshop_spec(tmp_path, fake_tools):    # PK28041053-TBEJ shape
+    keys = dict(noTextOk=True, photoshop={'psd': 'master.psd', 'width': 1000, 'height': 800},
+                noNameFiles=[{'printArea': 'FRONT', 'driveFileId': 'shared1', 'widthPx': 1000, 'heightPx': 800}])
+    blank = render(flat_spec(tmp_path, [TEXT], **keys), 'LIT1_1')                                   # local file at the sheet size
+    r = run(tmp_path, fake_tools, TEXT, {}, said_no=True, files=blank, **keys)
+    assert r.verdict == 'UNCHECKED' and 'file không tên dùng chung' in r.reason
+    shared = [{'printArea': 'FRONT', 'driveFileId': 'shared1'}]
+    assert run(tmp_path, fake_tools, TEXT, {}, said_no=True, files=shared, **keys).verdict == 'PASS'
+    other = [{'printArea': 'FRONT', 'driveFileId': 'other'}]
+    r = run(tmp_path, fake_tools, TEXT, {}, said_no=True, files=other, **keys)
+    assert r.verdict == 'UNCHECKED' and 'shared1' in r.reason
+    wrong = [{'printArea': 'FRONT', 'path': 'x/LIT1_1 - FRONT.png', 'widthPx': 900, 'heightPx': 800}]
+    r = run(tmp_path, fake_tools, TEXT, {}, said_no=True, files=wrong, **keys)
+    assert r.verdict == 'ERROR' and '900x800' in r.reason and '1000x800' in r.reason
+    assert run(tmp_path, fake_tools, TEXT, {'Custom Name': 'Anna'}, said_no=True, **keys).guard == 'NO'
+
+
+def test_lone_no_on_a_photoshop_spec_without_shared_files_is_unchecked(tmp_path, fake_tools):
+    keys = dict(photoshop={'psd': 'master.psd', 'width': 1000, 'height': 800})
+    blank = render(flat_spec(tmp_path, [TEXT], **keys), 'LIT1_1')
+    r = run(tmp_path, fake_tools, TEXT, {}, said_no=True, files=blank, **keys)
+    assert (r.verdict, r.reason) == ('UNCHECKED', 'không kiểm được safe zone (spec Photoshop)')

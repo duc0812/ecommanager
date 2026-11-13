@@ -654,6 +654,18 @@ def _image_size(p: Path) -> tuple[int, int] | None:
         return None
 
 
+def spec_sheet_size(spec: dict, spec_dir: Path, area: dict) -> tuple[int, int] | None:
+    ps = spec.get('photoshop')
+    if isinstance(ps, dict) and ps.get('width') and ps.get('height'):
+        return int(ps['width']), int(ps['height'])
+    if area.get('base'):
+        size = _image_size(Path(spec_dir) / area['base'])
+        if size:
+            return size
+    nn = next((f for f in spec.get('noNameFiles') or [] if f.get('printArea') == area['printArea'] and f.get('widthPx')), None)
+    return (int(nn['widthPx']), int(nn['heightPx'])) if nn else None
+
+
 def build_plan(cfg: Config, pr: ProcessResult, since: str, tmp_dir: Path, log: RunLog) -> Plan:
     prod = read_prod(pr.snapshot)
     cands = {k for k, v in prod.items() if v['status'] == 'NEW' and v['prints'] == 0}
@@ -717,7 +729,8 @@ def build_plan(cfg: Config, pr: ProcessResult, since: str, tmp_dir: Path, log: R
                     if not f or not f.get('path'):
                         continue
                     size = (f.get('widthPx'), f.get('heightPx')) if f.get('widthPx') else _image_size(files_root / f['path'])
-                    if size and tuple(size) != _image_size(spec_path.parent / a['base']):
+                    want = spec_sheet_size(spec, spec_path.parent, a)
+                    if size and want and tuple(size) != want:
                         mismatch = True
                 if mismatch:
                     add(key, 'flat-text', sz.GuardResult('ERROR', None, 'spec flat-text không khớp khổ file', {'spec': str(spec_path)}))
