@@ -1,6 +1,8 @@
 from datetime import datetime
 from pathlib import Path
 
+import sys
+
 import pytest
 
 import auto_render as ar
@@ -81,3 +83,38 @@ def test_a_failed_side_step_of_process_new_orders_is_reported(cfg, fake_node, tm
     assert len(pr.step_errors) == 2
     assert pr.step_errors[0].startswith('flat_text_batch lỗi') and "KeyError: 'texts'" in pr.step_errors[0]
     assert pr.step_errors[1] == 'qa sheet lỗi: boom'
+
+
+def _jobs_db(tmp_path, rows):
+    import sqlite3
+    p = tmp_path / 'dev-jobs.db'
+    c = sqlite3.connect(p)
+    c.execute('CREATE TABLE ArtworkJob (id TEXT, kind TEXT, status TEXT, lockedAt TEXT)')
+    c.executemany('INSERT INTO ArtworkJob VALUES (?, ?, ?, ?)', rows)
+    c.commit(); c.close()
+    return p
+
+
+def test_leftover_queued_renders_are_drained_before_the_run(cfg, tmp_path, monkeypatch):
+    marker = tmp_path / 'drained.txt'
+    script = tmp_path / 'fake_worker.py'
+    script.write_text(f"open(r'{marker}', 'a').write('x')\n", encoding='utf-8')
+    monkeypatch.setattr(ar, 'worker_drain_cmd', lambda c: [sys.executable, str(script)])
+    db = _jobs_db(tmp_path, [('j1', 'RENDER_LINE', 'QUEUED', None), ('j2', 'RENDER_LINE', 'QUEUED', None), ('j3', 'PARSE_PSD', 'QUEUED', None),
+                             ('j4', 'RENDER_LINE', 'DONE', None)])
+    assert ar.drain_leftover_renders(cfg, log, db, timeout_s=60) is None
+    assert marker.read_text() == 'x'
+
+
+def test_no_leftover_renders_means_no_drain(cfg, tmp_path, monkeypatch):
+    monkeypatch.setattr(ar, 'worker_drain_cmd', lambda c: (_ for _ in ()).throw(AssertionError('must not run')))
+    assert ar.drain_leftover_renders(cfg, log, _jobs_db(tmp_path, [('j4', 'RENDER_LINE', 'DONE', None)]), timeout_s=60) is None
+    assert ar.drain_leftover_renders(cfg, log, tmp_path / 'no-such.db', timeout_s=60) is None
+
+
+def test_a_failed_leftover_drain_is_reported_not_fatal(cfg, tmp_path, monkeypatch):
+    script = tmp_path / 'fail_worker.py'
+    script.write_text('import sys; sys.exit(3)\n', encoding='utf-8')
+    monkeypatch.setattr(ar, 'worker_drain_cmd', lambda c: [sys.executable, str(script)])
+    msg = ar.drain_leftover_renders(cfg, log, _jobs_db(tmp_path, [('j1', 'RENDER_LINE', 'QUEUED', None)]), timeout_s=60)
+    assert msg and 'worker' in msg and '3' in msg

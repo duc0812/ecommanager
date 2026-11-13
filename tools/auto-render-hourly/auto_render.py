@@ -346,6 +346,50 @@ def _has_groups(p: Path) -> bool:
 SIDE_STEP_FAILED = re.compile(r'^(flat_text_batch|qa sheet|cm_export|lib_mock|mockup)[\w ]* lỗi')
 
 
+def worker_drain_cmd(cfg: Config) -> list[str]:
+    py = cfg.main_checkout / 'tools' / 'artwork-worker' / '.venv' / 'Scripts' / 'python.exe'
+    return [str(py), str(cfg.tool_worktree / 'tools' / 'artwork-worker' / 'worker.py'), '--drain']
+
+
+def _worker_env(cfg: Config) -> dict:
+    env = {}
+    f = Path(os.environ.get('USERPROFILE') or Path.home()) / '.artwork-worker' / 'local.env'
+    try:
+        for raw in f.read_text(encoding='utf-8-sig').splitlines():
+            k, sep, v = raw.partition('=')
+            if sep and not raw.lstrip().startswith('#'):
+                env[k.strip()] = v.strip().strip('"')
+    except OSError:
+        pass
+    env.update(ECOM_URL=cfg.local_url, PSD_TOOLS_MAX_ALLOC_BYTES='12884901888')
+    return env
+
+
+def drain_leftover_renders(cfg: Config, log: 'RunLog', local_db: Path, timeout_s: float) -> str | None:
+    """Render jobs an earlier run queued but never drained block their lines forever: process-new-orders refuses a line
+    that already has a RENDER_LINE job and only drains when it queued something itself (seen 11/13 after a stopped run)."""
+    import sqlite3
+    try:
+        c = sqlite3.connect(f'file:{Path(local_db).as_posix()}?mode=ro', uri=True)
+        try:
+            n = c.execute("SELECT COUNT(*) FROM ArtworkJob WHERE kind = 'RENDER_LINE' AND status IN ('QUEUED', 'RUNNING')").fetchone()[0]
+        finally:
+            c.close()
+    except sqlite3.Error:
+        return None
+    if not n:
+        return None
+    cmd = worker_drain_cmd(cfg)
+    log.line(f'còn {n} việc render đang chờ từ lần trước — chạy worker --drain')
+    code, out = _run(cmd, Path(cmd[1]).parent, timeout_s, _worker_env(cfg))
+    log.block('worker', out)
+    if code is None:
+        return f'worker --drain quá {round(timeout_s / 60)} phút (việc render còn lại từ lần trước)'
+    if code != 0:
+        return f'worker --drain thoát mã {code} (việc render còn lại từ lần trước)'
+    return None
+
+
 def run_process_new_orders(cfg: Config, since: str, out_dir: Path, log: RunLog, timeout_s: float = PROCESS_TIMEOUT_S) -> ProcessResult:
     import math
     cmd = cfg.node + ['scripts/process-new-orders.mjs', '--since', since, '--url', cfg.local_url, '--out', str(out_dir)]
@@ -1007,6 +1051,10 @@ def run_stages(cfg: Config, log: RunLog, summary: dict, args) -> int:
     snapshot = None
     try:
         ensure_tool(cfg, log, cfg.main_checkout / 'dev.db')
+        drained = drain_leftover_renders(cfg, log, cfg.main_checkout / 'dev.db', timeout_s=min(1200, max(60, left() - 1500)))
+        if drained:
+            log.line(drained)
+            summary['errors'].append({'stage': 'worker', 'message': drained})
         out_dir = cfg.main_checkout / 'db-backups' / 'process-new-orders' / f'auto-{now:%Y%m%d-%H%M%S}'
         pr = run_process_new_orders(cfg, since, out_dir, log, timeout_s=min(PROCESS_TIMEOUT_S, max(60, left() - 600)))
         snapshot = pr.snapshot
