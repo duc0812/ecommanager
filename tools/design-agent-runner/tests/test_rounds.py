@@ -2,6 +2,8 @@
 import json
 import threading
 
+import pytest
+
 import agent_api
 import runner
 from conftest import calls, wait_dead
@@ -224,3 +226,70 @@ def test_stop_during_qa_posts_nothing(server, deps, job, cfg):
     t = threading.Thread(target=lambda: out.append(runner.run_job(job(), d, stop))); t.start()
     wait_until(lambda: fake(cfg, 'qa', 1) is not None); stop.set(); t.join(20)
     assert out == ['LOST'] and wait_dead(fake(cfg, 'qa', 1)['pid']) and not calls(server, '/fail') and not calls(server, '/result')
+
+
+HELD = 'Dòng AUTO bị giữ'
+
+
+def _held_render(cfg, key='LIT6262_1'):
+    out = cfg.artwork_builder / 'flat-text' / '_out' / key
+    out.mkdir(parents=True)
+    (out / f'{key} - FRONT.jpg').write_bytes(b'held-print')
+    (out / 'photoshop-report.json').write_text('{"ok": true}', encoding='utf-8')
+    return out
+
+
+def _held_job(**over):
+    return dict(source='AUTO_HOLD', files=[], requestText='Auto render giữ: XYZZY-HOLD vượt khung 18 px (FRONT · Custom Name)', **over)
+
+
+@pytest.mark.parametrize('engine', ['claude', 'codex'])
+def test_held_auto_line_without_files_is_made_from_the_held_render(server, run, cfg, engine):
+    out = _held_render(cfg)
+    assert run(server, 'done', MAKER_ENGINE=engine, job=_held_job()) == 'DONE'
+    d = jdir(cfg)
+    maker = (d / 'prompt-round-1-maker.md').read_text(encoding='utf-8')
+    assert HELD in maker and 'AUTO_HOLD' in maker and '`requestText`' in maker
+    assert f'{cfg.artwork_builder.as_posix()}/flat-text/_out/LIT6262_1/' in maker and f'{d.as_posix()}/current/held/' in maker
+    assert f'{cfg.project_dir.as_posix()}/storage/design/LIT6262_1/' in maker and 'Mockup rule' in maker
+    assert 'mọi vùng in của template' in maker and 'XYZZY-HOLD' not in maker and '\\' not in maker
+    if engine == 'codex':
+        assert 'Job MAKE' in maker and 'Job FIX' not in maker
+    else:
+        assert maker.startswith('# Design Agent — make job')
+    qa = (d / 'prompt-round-1-qa.md').read_text(encoding='utf-8')
+    assert 'QA vòng 1 (job MAKE)' in qa and HELD in qa
+    held = d / 'current' / 'held'
+    assert (held / 'LIT6262_1 - FRONT.jpg').read_bytes() == b'held-print' and (held / 'photoshop-report.json').exists()
+    index = json.loads((held / 'index.json').read_text(encoding='utf-8'))
+    assert [(i['file'], i['printArea']) for i in index] == [('LIT6262_1 - FRONT.jpg', 'FRONT'), ('photoshop-report.json', None)]
+    assert index[0]['source'] == (out / 'LIT6262_1 - FRONT.jpg').as_posix()
+    assert sorted(p.name for p in out.iterdir()) == ['LIT6262_1 - FRONT.jpg', 'photoshop-report.json']      # originals stay
+    assert json.loads((d / 'current' / 'index.json').read_text(encoding='utf-8')) == []
+    assert len(calls(server, SUBMIT)) == 1 and puts(server)[0]['printArea'] == 'FRONT'
+
+
+@pytest.mark.parametrize('engine', ['claude', 'codex'])
+def test_held_auto_line_without_a_held_render_still_gets_the_make_prompt(server, run, cfg, engine):
+    assert run(server, 'done', MAKER_ENGINE=engine, job=_held_job()) == 'DONE'
+    d = jdir(cfg)
+    assert HELD in (d / 'prompt-round-1-maker.md').read_text(encoding='utf-8')
+    assert json.loads((d / 'current' / 'held' / 'index.json').read_text(encoding='utf-8')) == []
+
+
+@pytest.mark.parametrize('engine', ['claude', 'codex'])
+def test_held_auto_line_with_files_stays_a_fix(server, run, cfg, engine):
+    _held_render(cfg)
+    assert run(server, 'done', MAKER_ENGINE=engine, job=dict(source='AUTO_HOLD')) == 'DONE'
+    d = jdir(cfg)
+    maker = (d / 'prompt-round-1-maker.md').read_text(encoding='utf-8')
+    assert HELD not in maker and not (d / 'current' / 'held').exists() and (d / 'current' / 'PRINT-FRONT-v1.jpg').exists()
+    assert ('Job FIX' in maker and 'Job MAKE' not in maker) if engine == 'codex' else maker.startswith('# Design Agent — fix job')
+    assert 'QA vòng 1 (job FIX)' in (d / 'prompt-round-1-qa.md').read_text(encoding='utf-8')
+
+
+def test_rejected_line_without_files_is_not_treated_as_held(server, run, cfg):
+    _held_render(cfg)
+    assert run(server, 'done', job=dict(files=[])) == 'DONE'
+    d = jdir(cfg)
+    assert HELD not in (d / 'prompt-round-1-maker.md').read_text(encoding='utf-8') and not (d / 'current' / 'held').exists()

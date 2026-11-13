@@ -5,6 +5,7 @@
 Chạy trên máy tính của shop. Khi designer reject một design (hoặc khi chủ shop bấm giao việc), Ecom Manager xếp một job vào hàng đợi. Runner này hỏi máy chủ xem có job không (long-poll, tối đa 5 job cùng lúc), với mỗi job nó tạo một thư mục riêng và tải về các file hiện tại của task.
 
 - Job `FIX`, `MAKE`, `MOCKUP`: runner điều khiển tối đa 3 vòng. Mỗi vòng có một **phiên sửa** chỉ làm file trong thư mục job — một phiên Claude (prompt `fix` / `make` / `mockup`, mặc định) hoặc một phiên Codex (`MAKER_ENGINE=codex`, prompt `codex-maker`) — rồi một **phiên QA mới**, luôn là Claude (prompt `qa`, không phải phiên đã làm file), chấm theo danh sách kiểm tra cố định. QA đạt thì **chính runner** tải file lên và gửi duyệt; các phiên không bao giờ gọi máy chủ.
+- Job `FIX` có `source: "AUTO_HOLD"` mà không có file `PRINT` hiện tại (dòng AUTO bị auto render hằng giờ giữ, chưa từng được đẩy): runner chép bản render bị giữ trong `ARTWORK_BUILDER\flat-text\_out\<TASKKEY>\` (nếu có) sang `current\held\` kèm `index.json`, không đụng bản gốc, rồi chạy như job MAKE (prompt `make` / đoạn MAKE của `codex-maker`, thêm mục "Dòng AUTO bị giữ"; QA chấm như job make). Giao file giữ nguyên: QA, runner tải lên, gửi duyệt về REVIEW.
 - Job `LIBRARY_APPLY`: như trước, một phiên duy nhất làm việc, giao file qua `agent_api.py` và ghi `result.json`.
 
 Runner báo nhịp tim mỗi 60 giây, giới hạn 90 phút cho cả job, rồi báo kết quả cho máy chủ. Agent không bao giờ duyệt task, không liên hệ xưởng hay khách: mọi thứ dừng ở REVIEW.

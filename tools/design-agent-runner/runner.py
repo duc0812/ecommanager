@@ -42,6 +42,8 @@ ENGINES = ('claude', 'codex')
 CODEX_SCRUB_PREFIXES = ('CLAUDE', 'ANTHROPIC', 'MCP_')
 CODEX_SCRUB_NAMES = ('DESIGN_AGENT_ENV', 'DESIGN_AGENT_HOME')
 MAX_ROUNDS = 3
+HELD_SOURCE = 'AUTO_HOLD'
+HELD_IMAGE_EXT = ('.jpg', '.jpeg', '.png', '.tif', '.tiff')
 DELIVER_EXT = ('.jpg', '.jpeg', '.png')
 CLI_RULE_MARK = 'agent_api'
 SERVER_GUARD = (
@@ -249,6 +251,62 @@ def fetch_current_files(api: AgentApi, job: dict, job_dir: Path) -> list[dict]:
                       'version': item.get('version'), 'fileName': item.get('fileName'), 'path': str(dest)})
     (cur / 'index.json').write_text(json.dumps(index, ensure_ascii=False, indent=1), encoding='utf-8')
     return index
+
+
+def is_held_make(job: dict, index: list[dict]) -> bool:
+    return job.get('kind') == 'FIX' and job.get('source') == HELD_SOURCE and not any(i.get('kind') == 'PRINT' for i in index)
+
+
+def copy_held_render(cfg: Config, job: dict, job_dir: Path) -> list[dict]:
+    key = job['task']['key']
+    src = Path(cfg.artwork_builder) / 'flat-text' / '_out' / key
+    dest = Path(job_dir) / 'current' / 'held'
+    if dest.exists():
+        shutil.rmtree(dest)
+    dest.mkdir(parents=True)
+    index: list[dict] = []
+    if src.is_dir():
+        prefix = f'{key} - '
+        for item in sorted(src.iterdir()):
+            if not item.is_file():
+                continue
+            shutil.copy2(item, dest / item.name)
+            area = item.stem[len(prefix):] if item.suffix.lower() in HELD_IMAGE_EXT and item.stem.startswith(prefix) else None
+            index.append({'file': item.name, 'printArea': area, 'path': _posix(dest / item.name), 'source': _posix(item)})
+    (dest / 'index.json').write_text(json.dumps(index, ensure_ascii=False, indent=1), encoding='utf-8')
+    return index
+
+
+def held_make_text(key: str) -> str:
+    ab, pd, jd = '{{ARTWORK_BUILDER}}', '{{PROJECT_DIR}}', '{{JOB_DIR}}'
+    return '\n'.join([
+        '## Dòng AUTO bị giữ', '',
+        'Job này đến từ auto render hằng giờ (`source` là `AUTO_HOLD`), không phải từ designer. Dòng đã được render ở máy '
+        'local nhưng bị giữ lại, chưa bao giờ được đẩy lên, vì lý do ghi trong `requestText` (ví dụ tên vượt khung). Vì vậy '
+        '`files` và `current/index.json` rỗng là đúng: không có bản in lỗi nào trên server để sửa hay để đo. Làm job này như '
+        'một job MAKE (làm file in cho dòng chưa có); không kết thúc chỉ vì thiếu file hiện tại.',
+        '',
+        f'- Bản render bị giữ: render flat-text nằm ở `{ab}/flat-text/_out/{key}/` (cùng `photoshop-job.json` và '
+        f'`photoshop-report.json` khi spec render bằng Photoshop); render từ thư viện nằm trong storage của tool local, '
+        f'`{pd}/storage/design/{key}/<vùng in>/` (các hàng DesignArtwork của task trong `{pd}/dev.db`). Runner đã chép bản '
+        f'flat-text tìm thấy vào `{jd}/current/held/` kèm `index.json` (danh sách rỗng là không tìm thấy). Đó là bản sao để '
+        'đo và so: không sửa, dời hay xoá bản gốc.',
+        f'- Nguồn để sửa là spec flat-text của design (`{ab}/flat-text/<spec>/spec.json`, luật trong '
+        f'`{ab}/flat-text/<CODE>-RULES.md`) hoặc mục thư viện của design, không phải tấm in đã flatten. Render lại dòng này '
+        'từ nguồn sao cho lý do giữ hết, theo luật của design (ví dụ thu tên cho vừa khung của nó). Không ghi đè spec hay '
+        'thư viện dùng chung: render từ bản sao trong thư mục job, và nói trong `unchanged` spec hay thư viện nên đổi gì.',
+        '- Giao đủ file in cho mọi vùng in của template của dòng (kind `PRINT`, `printArea` đúng tên template), cộng một '
+        'mockup theo mục "Mockup rule" của skill `processing-litzzy-orders`.',
+    ])
+
+
+def held_qa_text() -> str:
+    return '\n'.join([
+        '## Dòng AUTO bị giữ', '',
+        'Dòng này bị auto render hằng giờ giữ lại trước khi đẩy lên (lý do trong `requestText`), nên chấm như job make: '
+        'không có file hiện tại, thông số so với template. Bản render bị giữ ở `{{JOB_DIR}}/current/held/` chỉ để đối chiếu; '
+        'mục 2 là lý do giữ đã thật sự hết (đo gì, ở đâu, được số nào).',
+    ])
 
 
 def _posix(p) -> str:
@@ -643,14 +701,21 @@ def run_job(job: dict, deps: Deps, stop: threading.Event) -> str:
     job_dir = prepare_job_dir(cfg, job, codex, datetime.now())
     log.line(f'job {jid} ({job["kind"]} {key}) lần {job.get("attempts")}: {job_dir}')
     try:
-        fetch_current_files(api, job, job_dir)
+        index = fetch_current_files(api, job, job_dir)
     except AuthError:
         _set_state(job_dir, finished=True, outcome='AUTH')
         return 'AUTH'
     except ApiError as exc:
         return _fail(deps, jid, f'không tải được file hiện tại của task (HTTP {exc.status or "mạng"})', False,
                      'FAILED', job_dir)
-    prompt = render_prompt(cfg, job, job_dir, codex)
+    held = is_held_make(job, index)
+    if held:
+        try:
+            copied = copy_held_render(cfg, job, job_dir)
+            log.line(f'job {jid}: dòng AUTO bị giữ, chưa có file in; làm như job MAKE, đã chép {len(copied)} file render bị giữ')
+        except OSError as exc:
+            log.line(f'job {jid}: dòng AUTO bị giữ; không chép được bản render bị giữ ({type(exc).__name__})')
+    prompt = render_prompt(cfg, {**job, 'kind': 'MAKE'} if held else job, job_dir, codex)
     try:
         if not api.heartbeat(jid, read_stage(job_dir), read_rounds(job_dir)):
             log.line(f'job {jid}: server không còn giữ job (409), không mở phiên')
@@ -662,7 +727,7 @@ def run_job(job: dict, deps: Deps, stop: threading.Event) -> str:
     except ApiError:
         log.line(f'job {jid}: chưa gửi được nhịp đầu')
     if job['kind'] in ROUND_KINDS:
-        return _run_rounds(job, deps, stop, job_dir, codex)
+        return _run_rounds(job, deps, stop, job_dir, codex, held=held)
     return _run_single(job, deps, stop, job_dir, prompt)
 
 
@@ -851,9 +916,14 @@ def delivery_error(what: str, exc: ApiError, pushed: list) -> str:
     return text
 
 
-def _run_rounds(job: dict, deps: Deps, stop: threading.Event, job_dir: Path, codex: str) -> str:
-    """FIX, MAKE, MOCKUP: maker session, then a fresh QA session, up to MAX_ROUNDS; the runner delivers on PASS."""
-    cfg, jid, kind = deps.cfg, job['id'], job['kind']
+def _run_rounds(job: dict, deps: Deps, stop: threading.Event, job_dir: Path, codex: str, held: bool = False) -> str:
+    """FIX, MAKE, MOCKUP: maker session, then a fresh QA session, up to MAX_ROUNDS; the runner delivers on PASS.
+    A held AUTO line (FIX from AUTO_HOLD with no print files) gets MAKE prompts; delivery stays the FIX path."""
+    cfg, jid = deps.cfg, job['id']
+    pjob = {**job, 'kind': 'MAKE'} if held else job
+    kind = pjob['kind']
+    maker_head = held_make_text(job['task']['key']) + '\n\n' if held else ''
+    qa_head = held_qa_text() + '\n\n' if held else ''
     total = deps.timeout_s if deps.timeout_s is not None else cfg.job_timeout_s
     deadline = deps.clock.monotonic() + total
     ctx = {'round': 0, 'stage': 'khởi động', 'live': False}
@@ -870,19 +940,19 @@ def _run_rounds(job: dict, deps: Deps, stop: threading.Event, job_dir: Path, cod
             return 'timeout', 0.0
         cwd = None
         if role == 'maker' and use_codex:
-            text = render_prompt(cfg, job, job_dir, codex, name=CODEX_PROMPT, left_s=left, extra=maker_round_text(n),
+            text = render_prompt(cfg, pjob, job_dir, codex, name=CODEX_PROMPT, left_s=left, extra=maker_head + maker_round_text(n),
                                  out_name=f'prompt-round-{n}-maker.md')
             (job_dir / f'round-{n}').mkdir(exist_ok=True)
             argv = build_codex_argv(cfg, text, job_dir, n, deps.codex_cmd or [codex])
             env, cwd = codex_env(cfg, job_dir, n), job_dir
         else:
             if role == 'maker':
-                text = render_prompt(cfg, job, job_dir, codex, left_s=left, extra=maker_round_text(n),
+                text = render_prompt(cfg, pjob, job_dir, codex, left_s=left, extra=maker_head + maker_round_text(n),
                                      out_name=f'prompt-round-{n}-maker.md')
                 model = cfg.model
             else:
-                text = render_prompt(cfg, job, job_dir, codex, name=QA_PROMPT, left_s=left,
-                                     extra=qa_round_text(n, kind), out_name=f'prompt-round-{n}-qa.md')
+                text = render_prompt(cfg, pjob, job_dir, codex, name=QA_PROMPT, left_s=left,
+                                     extra=qa_head + qa_round_text(n, kind), out_name=f'prompt-round-{n}-qa.md')
                 model = cfg.qa_model
             argv = build_argv(cfg, text, job_dir, deps.claude_cmd, model=model)
             env = child_env(cfg, job_dir, phase=role, round_n=n)
