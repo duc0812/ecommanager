@@ -310,6 +310,7 @@ class ProcessResult:
     shared_spec: Path | None
     flat: dict | None
     flat_spec: Path | None
+    step_errors: list = field(default_factory=list)
 
 
 def _kill_tree(pid: int) -> None:
@@ -342,6 +343,9 @@ def _has_groups(p: Path) -> bool:
         return False
 
 
+SIDE_STEP_FAILED = re.compile(r'^(flat_text_batch|qa sheet|cm_export|lib_mock|mockup)[\w ]* lỗi')
+
+
 def run_process_new_orders(cfg: Config, since: str, out_dir: Path, log: RunLog, timeout_s: float = PROCESS_TIMEOUT_S) -> ProcessResult:
     import math
     cmd = cfg.node + ['scripts/process-new-orders.mjs', '--since', since, '--url', cfg.local_url, '--out', str(out_dir)]
@@ -349,10 +353,13 @@ def run_process_new_orders(cfg: Config, since: str, out_dir: Path, log: RunLog, 
     code, out = _run(cmd, cfg.tool_worktree, timeout_s)
     log.block('process', out)
     snap = None
+    step_errors = []
     for line in out.splitlines():
         line = line.strip()
         if line.startswith('snapshot '):
             snap = Path(line[len('snapshot '):].strip())
+        elif SIDE_STEP_FAILED.match(line):
+            step_errors.append(line[:600])
     if code is None or code != 0:
         e = StageError('process', f'process-new-orders quá {math.ceil(timeout_s / 60)} phút' if code is None else f'process-new-orders thoát mã {code}')
         e.snapshot = snap  # printed by this run's own freshSnapshot(): ours to drop
@@ -368,7 +375,7 @@ def run_process_new_orders(cfg: Config, since: str, out_dir: Path, log: RunLog, 
         except ValueError:
             raise StageError('process', 'flat-text.json của lần chạy lỗi')
     flat_spec = Path(flat['spec']) if flat and flat.get('spec') and _has_groups(Path(flat['spec'])) else None
-    return ProcessResult(snap, Path(out_dir), shared if _has_groups(shared) else None, flat, flat_spec)
+    return ProcessResult(snap, Path(out_dir), shared if _has_groups(shared) else None, flat, flat_spec, step_errors)
 
 
 def since_date(now: datetime, days: int) -> str:
@@ -991,6 +998,9 @@ def run_stages(cfg: Config, log: RunLog, summary: dict, args) -> int:
         pr = run_process_new_orders(cfg, since, out_dir, log, timeout_s=min(PROCESS_TIMEOUT_S, max(60, left() - 600)))
         snapshot = pr.snapshot
         summary['snapshot'] = str(snapshot)
+        for msg in pr.step_errors:
+            log.line(f'bước phụ của process-new-orders lỗi: {msg[:300]}')
+            summary['errors'].append({'stage': 'process', 'message': msg})
         plan = build_plan(cfg, pr, since, h / 'tmp' / f'{now:%Y%m%d-%H%M%S}', log)
         auto = {l.key for l in plan.lines if l.readiness == 'AUTO'}
         summary['rendered'] = sorted(l.key for l in plan.lines)
@@ -1127,7 +1137,7 @@ def main(argv: list[str] | None = None) -> int:
         return finish(EXIT_CONFIG)
     log.secrets.append(cfg.design_agent_token)
     log.secrets = [s for s in log.secrets if s]
-    handle = acquire_mutex()
+    handle = acquire_mutex(MUTEX_NAME)
     if handle is None:
         log.line('lần chạy trước chưa xong — bỏ qua lần này')
         return EXIT_OK

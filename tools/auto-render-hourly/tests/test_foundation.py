@@ -31,7 +31,7 @@ def test_main_exit_codes(cfg_file, monkeypatch, tmp_path):
     assert ar.main(['--config', str(tmp_path / 'none.env')]) == ar.EXIT_CONFIG
     monkeypatch.setattr(ar, 'disk_free_gb', lambda *a, **k: 12.4)
     assert ar.main(['--config', str(cfg_file())]) == ar.EXIT_DISK
-    held = ar.acquire_mutex(); monkeypatch.setattr(ar, 'disk_free_gb', lambda *a, **k: 200.0)
+    held = ar.acquire_mutex(ar.MUTEX_NAME); monkeypatch.setattr(ar, 'disk_free_gb', lambda *a, **k: 200.0)
     try: assert ar.main(['--config', str(cfg_file())]) == ar.EXIT_OK
     finally: ar.release_mutex(held)
     log = next((ar.home() / 'logs').glob('*.log')).read_text(encoding='utf-8')

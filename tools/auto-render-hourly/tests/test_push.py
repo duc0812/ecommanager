@@ -140,3 +140,12 @@ def test_hold_answered_without_a_job_is_sent_again_until_a_job_comes_back(world)
     assert len(w.agent.holds) == 3 and w.summary()['held'][0]['jobId'] == 'job-9'
     w.rerun(); ar.main(['--config', str(w.config)])
     assert len(w.agent.holds) == 3
+
+
+def test_a_failed_flat_text_step_fails_the_run_but_still_pushes_the_rest(world):
+    w = world(lines=[dict(key='LIT1_1', readiness='AUTO', ink=(210, 110, 390, 150))],
+              process_print=["flat_text_batch lỗi: Command failed: python flat_text_batch.py ... KeyError: 'texts'"])
+    assert ar.main(['--config', str(w.config)]) == 1
+    s = w.summary()
+    assert s['pushed'] == ['LIT1_1']
+    assert any(e['stage'] == 'process' and 'flat_text_batch lỗi' in e['message'] for e in s['errors'])

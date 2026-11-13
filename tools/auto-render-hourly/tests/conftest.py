@@ -1,4 +1,5 @@
 import json
+import uuid
 import os
 import shutil
 import subprocess
@@ -160,6 +161,8 @@ def _isolated_home(tmp_path, monkeypatch):
     monkeypatch.setenv('ARTWORK_WORKER_CACHE', str(tmp_path / 'worker-cache'))
     monkeypatch.delenv('DESIGN_STORAGE_DIR', raising=False)
     monkeypatch.setenv('PYTHONDONTWRITEBYTECODE', '1')
+    import auto_render as _ar
+    monkeypatch.setattr(_ar, 'MUTEX_NAME', r'Local\EcomManagerAutoRenderHourlyTest-' + uuid.uuid4().hex)
 
 
 def _touch(p: Path):
@@ -525,7 +528,7 @@ def world(tmp_path, cfg_file, fake_node, local_tool, agent_server, monkeypatch):
     monkeypatch.setattr(ar, 'load_config', load)
     monkeypatch.setattr(ar, 'disk_free_gb', lambda *a, **k: 200.0)
 
-    def make(lines=None, flat=None, hold=False, token='dag_test', push=None):
+    def make(lines=None, flat=None, hold=False, token='dag_test', push=None, process_print=None):
         w = World()
         w.tool = local_tool()
         w.agent = agent_server(token='dag_test', job_id='job-1')
@@ -542,6 +545,8 @@ def world(tmp_path, cfg_file, fake_node, local_tool, agent_server, monkeypatch):
         def setup():
             build_dbs(c, template, state['lines'] + [{'sku': 'TN1-M-15X14INCH', 'supplierSku': 'M-15', **f} for f in state['flat']])
             proc = {'snapshot': str(w.snapshot), 'snapshotFrom': str(template)}
+            if process_print:
+                proc['print'] = list(process_print)
             if state['flat']:
                 proc['flat'], _ = build_flat(c, None, state['flat'])
             fake_node.plan(process=proc, push=push or {})

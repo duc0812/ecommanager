@@ -68,3 +68,16 @@ def test_only_the_runs_own_snapshot_is_deleted(cfg):
 
 def test_since_date():
     assert ar.since_date(datetime(2026, 11, 12, 9, 0), 14) == '2026-10-29'
+
+
+def test_a_failed_side_step_of_process_new_orders_is_reported(cfg, fake_node, tmp_path):
+    snap = cfg.main_checkout / 'db-backups' / 'prod-snap-20261113-0700.db'
+    fake_node.plan(process={'snapshot': str(snap), 'print': [
+        "flat_text_batch lỗi: Command failed: python flat_text_batch.py ... KeyError: 'texts'",
+        'qa sheet lỗi: boom',
+        'render 1 · dùng chung 15 · cm-builder 0 · flat-text 0 · còn lại 191']})
+    pr = ar.run_process_new_orders(cfg, '2026-10-30', tmp_path / 'out', log)
+    assert pr.snapshot == snap
+    assert len(pr.step_errors) == 2
+    assert pr.step_errors[0].startswith('flat_text_batch lỗi') and "KeyError: 'texts'" in pr.step_errors[0]
+    assert pr.step_errors[1] == 'qa sheet lỗi: boom'
