@@ -795,7 +795,7 @@ describe('nightly Merchize tracking pull', () => {
   it('runs in the shared nightly sync beside Bondre and Printway', async () => {
     const { o } = await pushedOrder()
     const results = await syncApiSupplierTracking()
-    expect(results.map(r => r.name)).toEqual(['Bondre', 'Printway', 'Merchize', 'Gỗ 3D (VNEpacket)'])
+    expect(results.map(r => r.name)).toEqual(['Bondre', 'Printway', 'Merchize', 'VNEpacket (Gỗ 3D, In House)'])
     expect(results.find(r => r.name === 'Merchize')).toMatchObject({ pushes: expect.any(Number) })
     expect(await prisma.shipment.findFirstOrThrow({ where: { orderId: o.id } })).toMatchObject({ trackingNumber: '9400111' })
   })

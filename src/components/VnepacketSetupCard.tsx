@@ -59,7 +59,7 @@ async function readSync(body: unknown): Promise<{ ok: boolean; error: string; da
 
 const usDate = (iso: string) => new Date(iso).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' })
 
-/** The VNEpacket account Gỗ 3D ships our parcels with: the tool reads each line's tracking from it. */
+/** The VNEpacket account Gỗ 3D and In House ship our parcels with: the tool reads each line's tracking from it. */
 export default function VnepacketSetupCard() {
   const { user, loading } = useCurrentUser()
   const isSuper = user?.role === 'SUPERADMIN'
@@ -117,11 +117,11 @@ export default function VnepacketSetupCard() {
     if (d.skipped) { setBanner({ ok: false, text: `Không chạy: ${d.skipped}` }); return }
     setLines(d.lines ?? [])
     const failed = d.errors?.length ? ` · ${d.errors.length} dòng lỗi: ${d.errors.slice(0, 3).join('; ')}` : ''
-    setBanner({ ok: !d.errors?.length, text: `Đã tra ${d.pushes} dòng Gỗ 3D: ${d.found} có trên VNEpacket, ghi ${d.shipments} tracking${failed}` })
+    setBanner({ ok: !d.errors?.length, text: `Đã tra ${d.pushes} dòng Gỗ 3D / In House: ${d.found} có trên VNEpacket, ghi ${d.shipments} tracking${failed}` })
   }
 
   async function remove() {
-    if (!window.confirm('Gỡ tài khoản VNEpacket? Tool sẽ ngừng lấy tracking Gỗ 3D.')) return
+    if (!window.confirm('Gỡ tài khoản VNEpacket? Tool sẽ ngừng lấy tracking Gỗ 3D và In House.')) return
     setBusy('remove')
     setBanner(null)
     const r = await send('/api/fulfillment/vnepacket/settings', 'PUT', { username: null, password: null })
@@ -140,7 +140,7 @@ export default function VnepacketSetupCard() {
     <div className="bg-surface-container-lowest rounded-xl shadow-card border border-outline-variant/20 mb-lg">
       <div className="flex items-center gap-sm px-lg py-md border-b border-outline-variant/20">
         <span className="material-symbols-outlined text-on-surface-variant">local_shipping</span>
-        <h2 className="text-title-md">Gỗ 3D — tracking qua VNEpacket</h2>
+        <h2 className="text-title-md">Gỗ 3D + In House — tracking qua VNEpacket</h2>
         {connected && <span className="ml-auto bg-on-tertiary-container/15 text-on-tertiary-container px-sm py-xs rounded-full text-label-sm">✓ Đã lưu tài khoản</span>}
       </div>
       <div className="p-lg space-y-md">
@@ -150,7 +150,7 @@ export default function VnepacketSetupCard() {
           </div>
         )}
         <p className="text-label-sm text-on-surface-variant">
-          Gỗ 3D tạo vận đơn trên VNEpacket. Mỗi ngày (cùng lượt Auto Fulfilled) tool tra từng dòng đã xuất cho Gỗ 3D theo mã dòng (LIT5166_1, rồi mã đơn nếu đơn chỉ có 1 dòng Gỗ 3D) và ghi tracking, trạng thái, hành trình vào Shipment.
+          Gỗ 3D và Litzzy In House tạo vận đơn trên VNEpacket. Mỗi ngày (cùng lượt Auto Fulfilled) tool tra từng dòng đã xuất cho hai xưởng này theo mã dòng (#LIT5166_1), không có thì theo mã đơn (#LIT4986, cho cả đơn), ghi tracking, trạng thái, hành trình vào Shipment; dòng nào kho HPW đã nhận hàng thì Auto Fulfilled đẩy lên Shopify.
           {view?.tokenExpiresAt && <> Token hiện tại hết hạn {usDate(view.tokenExpiresAt)}.</>}
         </p>
         <div className="grid gap-sm md:grid-cols-2 max-w-2xl">
@@ -191,7 +191,7 @@ export default function VnepacketSetupCard() {
               )}
             </div>
             <div className="space-y-sm">
-              <label className="text-label-sm text-on-surface-variant block">Đồng bộ ngay (để trống = mọi dòng Gỗ 3D chưa giao)
+              <label className="text-label-sm text-on-surface-variant block">Đồng bộ ngay (để trống = mọi dòng Gỗ 3D / In House chưa giao)
                 <div className="flex gap-sm">
                   <input value={orderNumber} onChange={e => setOrderNumber(e.target.value)} placeholder="LIT5166" className={input} />
                   <button type="button" className={`${outline} mt-xs whitespace-nowrap`} disabled={!!busy} onClick={sync}>{busy === 'sync' ? 'Đang đồng bộ…' : 'Đồng bộ'}</button>

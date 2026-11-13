@@ -9,7 +9,7 @@ const SYNCS = [
   { name: 'Bondre', run: syncBondreTracking },
   { name: 'Printway', run: syncPrintwayTracking },
   { name: 'Merchize', run: syncMerchizeTracking },
-  { name: 'Gỗ 3D (VNEpacket)', run: () => syncVnepacketTracking() },
+  { name: 'VNEpacket (Gỗ 3D, In House)', run: () => syncVnepacketTracking() },
 ]
 
 /** Every supplier whose tracking is read one order at a time. One failing does not stop the others. */

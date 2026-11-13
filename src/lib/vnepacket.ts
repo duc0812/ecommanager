@@ -162,13 +162,13 @@ export function shipmentStatusOf(t: Pick<VnepacketTracking, 'status' | 'events' 
   return t.trackingNumber ? 'INFO_RECEIVED' : 'PENDING'
 }
 
-/**
- * The references a Gỗ 3D parcel may be under, most likely first: Gỗ 3D creates shipments under "#" + the code its sheet
- * shows ("#LIT5166_1", "#LIT5202"), and the bare order number only stands for a line when the order has no other line at
- * this supplier (one parcel, one line).
- */
-export function referenceCandidates(lineKey: string, orderNumber: string, onlyLineAtSupplier: boolean): string[] {
+/** Shipments are created under "#" + the code the supplier writes ("#LIT5166_1"); the bare code is tried after. */
+export function lineReferences(lineKey: string): string[] {
+  return [`#${lineKey}`, lineKey]
+}
+
+/** A parcel that holds the whole order is under its order number ("#LIT4986"). */
+export function orderReferences(orderNumber: string): string[] {
   const order = orderNumber.replace(/^#/, '')
-  const bases = [lineKey, ...(onlyLineAtSupplier ? [order] : [])]
-  return Array.from(new Set(bases.flatMap(b => [`#${b}`, b])))
+  return [`#${order}`, order]
 }

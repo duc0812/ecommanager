@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { VnepacketError, getTracking, login, parseTracking, referenceCandidates, shipmentStatusOf, tokenExpiry, type VnepacketSession } from '@/lib/vnepacket'
+import { VnepacketError, getTracking, lineReferences, login, orderReferences, parseTracking, shipmentStatusOf, tokenExpiry, type VnepacketSession } from '@/lib/vnepacket'
 
 const BASE = 'https://api.vnepacket.com.vn'
 
@@ -115,9 +115,9 @@ describe('shipmentStatusOf', () => {
   })
 })
 
-describe('referenceCandidates', () => {
-  it('tries the line key first and the bare order only for a lone line at the supplier', () => {
-    expect(referenceCandidates('LIT5166_1', '#LIT5166', true)).toEqual(['#LIT5166_1', 'LIT5166_1', '#LIT5166', 'LIT5166'])
-    expect(referenceCandidates('LIT5166_2', '#LIT5166', false)).toEqual(['#LIT5166_2', 'LIT5166_2'])
+describe('references', () => {
+  it('tries the code with "#" first, as the suppliers create shipments', () => {
+    expect(lineReferences('LIT5166_1')).toEqual(['#LIT5166_1', 'LIT5166_1'])
+    expect(orderReferences('#LIT4986')).toEqual(['#LIT4986', 'LIT4986'])
   })
 })

@@ -131,7 +131,7 @@ export async function runAutoFulfill(opts: {
   const sheetErrorRows = read.errorRows
   for (const sheet of read.sheets) mergeSheetGroups(byOrder, sheet.groups, sheet.name)
   const pushed = await pushedShipmentRows(opts.storeId)
-  // Gỗ 3D has no push: its parcels come from VNEpacket once the HPW warehouse checked them in, and count as pushed rows.
+  // Gỗ 3D and In House have no push: its parcels come from VNEpacket once the HPW warehouse checked them in, and count as pushed rows.
   for (const [base, rows] of Array.from(await vnepacketShipmentRows(opts.storeId))) pushed.set(base, [...(pushed.get(base) ?? []), ...rows])
   mergeSheetGroups(byOrder, new Map(Array.from(pushed, ([base, rows]) => [base, rows.map(r => ({ ...r, pushed: true }))])))
   const minAgeFor = (base: string) => (pushed.has(base) ? 0 : opts.minAgeDays)

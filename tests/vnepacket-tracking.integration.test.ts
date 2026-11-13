@@ -7,6 +7,7 @@ const SHOP = 'vnep-store.myshopify.com'
 const PROJECT = 'proj_vnep'
 const GO3D = 'sup_vnep_go3d'
 const OTHER = 'sup_vnep_other'
+const INHOUSE = 'sup_vnep_inhouse'
 let storeId = ''
 
 const lineId = (order: number, n: number) => `gid://shopify/LineItem/vnep-${order}-${n}`
@@ -42,10 +43,11 @@ const asked: string[] = []
 beforeAll(async () => {
   await prisma.shopifyStore.deleteMany({ where: { shop: SHOP } })
   await prisma.project.deleteMany({ where: { id: PROJECT } })
-  await prisma.supplier.deleteMany({ where: { id: { in: [GO3D, OTHER] } } })
+  await prisma.supplier.deleteMany({ where: { id: { in: [GO3D, OTHER, INHOUSE] } } })
   await prisma.project.create({ data: { id: PROJECT, name: 'VNEP', startDate: new Date('2026-05-01') } })
   await prisma.supplier.create({ data: { id: GO3D, name: 'Gỗ 3D test', code: 'VNEP-GO3D', apiType: 'vnepacket' } })
   await prisma.supplier.create({ data: { id: OTHER, name: 'Other', code: 'VNEP-OTHER' } })
+  await prisma.supplier.create({ data: { id: INHOUSE, name: 'Inhouse test', code: 'VNEP-IH', apiType: 'vnepacket' } })
   storeId = (await prisma.shopifyStore.create({ data: { shop: SHOP, orderPrefix: 'LIT' } })).id
   await saveVnepacketSettings({ username: 'shop@test', password: 'pw' })
 })
@@ -69,7 +71,7 @@ afterAll(async () => {
   await prisma.order.deleteMany({ where: { storeId } })
   await prisma.shopifyStore.deleteMany({ where: { shop: SHOP } })
   await prisma.project.deleteMany({ where: { id: PROJECT } })
-  await prisma.supplier.deleteMany({ where: { id: { in: [GO3D, OTHER] } } })
+  await prisma.supplier.deleteMany({ where: { id: { in: [GO3D, OTHER, INHOUSE] } } })
   await prisma.appSetting.deleteMany({ where: { key: { in: Object.values(VNEPACKET_KEYS) } } })
 })
 
@@ -110,6 +112,26 @@ describe('syncVnepacketTracking', () => {
 
     expect(asked).not.toContain('LIT7003')
     expect((await rowsOf(order.id)).map(r => [r.lineKey, r.trackingNumber])).toEqual([['LIT7003_2', '92000000000000000000002']])
+  })
+
+  it('puts a whole-order parcel (In House) on every line of the one supplier when no line has its own', async () => {
+    const order = await makeOrder(7201, [{ supplier: INHOUSE, exported: true }, { supplier: INHOUSE, exported: true }])
+    known['#LIT7201'] = tracking('UUS6BB0000001', ['DEPARTED FACILITY'], '_in_transit')
+
+    expect(await syncVnepacketTracking()).toMatchObject({ pushes: 2, found: 2, shipments: 2 })
+    expect(asked).toEqual(['#LIT7201_1', 'LIT7201_1', '#LIT7201_2', 'LIT7201_2', '#LIT7201'])
+    expect((await rowsOf(order.id)).map(r => [r.lineKey, r.trackingNumber, r.supplierId, r.status])).toEqual([
+      ['LIT7201_1', 'UUS6BB0000001', INHOUSE, 'IN_TRANSIT'], ['LIT7201_2', 'UUS6BB0000001', INHOUSE, 'IN_TRANSIT'],
+    ])
+  })
+
+  it('never shares a whole-order parcel between two suppliers lines', async () => {
+    const order = await makeOrder(7202, [{ supplier: GO3D, exported: true }, { supplier: INHOUSE, exported: true }])
+    known['#LIT7202'] = tracking('UUS6BB0000002', ['DEPARTED FACILITY'])
+
+    expect(await syncVnepacketTracking()).toMatchObject({ pushes: 2, found: 0, shipments: 0 })
+    expect(asked).not.toContain('#LIT7202')
+    expect(await rowsOf(order.id)).toEqual([])
   })
 
   it('skips lines not exported to Gỗ 3D, and delivered ones on the daily run', async () => {
