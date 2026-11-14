@@ -75,8 +75,9 @@ export async function ensurePublicToken(artworkId: string): Promise<string> {
   return again.publicToken
 }
 
-/** A line is cleared for production once its design link is set and, when a design task exists, that task is DONE. */
-export function isLineApproved(line: { designDriveLink: string | null }, task: { status: string } | null | undefined): boolean {
+/** A line is cleared for production once its design link is set and, when a design task exists, that task is DONE. A dropship line has no design to approve. */
+export function isLineApproved(line: { designDriveLink: string | null; dropship?: boolean | null }, task: { status: string } | null | undefined): boolean {
+  if (line.dropship) return true
   return !!line.designDriveLink && (!task || task.status === 'DONE')
 }
 

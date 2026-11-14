@@ -30,6 +30,11 @@ export function isNonProductLine(line: LineForClassification): boolean {
   return ADD_ON_TITLES.includes(title)
 }
 
+/** A product line with a supplier needs a print file, unless its product is dropship (bought ready-made). */
+export function needsDesign(line: LineForClassification & { resolvedSupplierId: string | null; dropship?: boolean | null }): boolean {
+  return !isNonProductLine(line) && !!line.resolvedSupplierId && !line.dropship
+}
+
 export function productLinesOnly<T extends LineForClassification>(lines: T[]): T[] {
   return lines.filter(l => !isNonProductLine(l))
 }

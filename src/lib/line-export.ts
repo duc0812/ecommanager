@@ -124,7 +124,7 @@ export function exportProgress(order: ExportTrackedOrder): ExportProgress {
 /** Orders whose finished lines may go to their supplier. Design-rejected and unmapped orders wait whole. */
 const SEND_STATUSES = ['READY_TO_PRODUCTION', 'PENDING_DESIGN']
 
-type DesignGateLine = { shopifyLineId: string; designDriveLink: string | null }
+type DesignGateLine = { shopifyLineId: string; designDriveLink: string | null; dropship?: boolean | null }
 type LivePush = { supplierId: string; status: string; exportMarked: boolean; prevExportJson: string | null }
 export type SendGateOrder<L> = {
   pipelineStatus: string; financialStatus: string | null; fulfillmentStatus: string | null; designReady: boolean; supplierHandoffAt: Date | null
@@ -139,6 +139,7 @@ export type LineHold = 'DESIGN' | 'SAVED' | 'PUSHED'
 
 /** The line's task is not DONE. A line with no task, or a cancelled one, goes by its design link or the order's approval. */
 export function isDesignOpen(order: { designReady: boolean; designTasks: { shopifyLineId: string; status: string }[] }, line: DesignGateLine): boolean {
+  if (line.dropship) return false
   const task = order.designTasks.find(t => t.shopifyLineId === line.shopifyLineId)
   if (task && task.status !== 'CANCELLED') return task.status !== 'DONE' || !line.designDriveLink
   return !line.designDriveLink && !order.designReady

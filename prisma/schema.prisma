@@ -487,8 +487,10 @@ model OrderLine {
   imageIsVariant          Boolean?
   designNote              String?
   shopifyProductId        String?
+  dropship                Boolean   @default(false)
   exportedAt              DateTime?
   exportedToSupplierId    String?
+  @@index([dropship])
   @@index([sku])
   @@index([shopifyProductId])
   @@index([exportedToSupplierId])
@@ -563,6 +565,7 @@ model ProductProfile {
   layerMap          String           @default("[]")
   artworkSplits     String           @default("[]")
   notes             String?
+  dropship          Boolean          @default(false)
   createdAt         DateTime         @default(now())
   updatedAt         DateTime         @updatedAt
   @@unique([storeId, shopifyProductId])
