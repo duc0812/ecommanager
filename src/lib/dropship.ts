@@ -47,7 +47,7 @@ export async function applyDropship(storeId: string, shopifyProductId: string, o
 }
 
 export type DropshipRow = {
-  lineId: string; orderId: string; orderNumber: string; store: string; placedAt: string
+  lineId: string; orderId: string; orderNumber: string; storeId: string; store: string; placedAt: string
   productTitle: string; variantTitle: string | null; qty: number; sku: string | null; imageUrl: string | null
   shopifyVariantId: string | null; shopifyProductId: string | null
   supplier: { id: string; name: string } | null; supplierSku: string | null
@@ -64,7 +64,7 @@ export async function listDropshipLines(opts: { q?: string } = {}): Promise<{ un
     select: {
       id: true, orderId: true, productTitle: true, variantTitle: true, qty: true, sku: true, imageUrl: true, shopifyVariantId: true, shopifyProductId: true,
       resolvedSupplierId: true, resolvedSupplierSku: true,
-      order: { select: { shopifyOrderNumber: true, placedAt: true, pipelineStatus: true, financialStatus: true, fulfillmentStatus: true, store: { select: { shop: true } } } },
+      order: { select: { storeId: true, shopifyOrderNumber: true, placedAt: true, pipelineStatus: true, financialStatus: true, fulfillmentStatus: true, store: { select: { shop: true } } } },
     },
     orderBy: { order: { placedAt: 'asc' } },
     take: 500,
@@ -74,7 +74,7 @@ export async function listDropshipLines(opts: { q?: string } = {}): Promise<{ un
   const suppliers = supplierIds.length ? await prisma.supplier.findMany({ where: { id: { in: supplierIds } }, select: { id: true, name: true } }) : []
   const nameById = new Map(suppliers.map(s => [s.id, s.name]))
   const rows: DropshipRow[] = open.map(l => ({
-    lineId: l.id, orderId: l.orderId, orderNumber: l.order.shopifyOrderNumber, store: l.order.store?.shop.replace(/\.myshopify\.com$/, '') ?? '',
+    lineId: l.id, orderId: l.orderId, orderNumber: l.order.shopifyOrderNumber, storeId: l.order.storeId, store: l.order.store?.shop.replace(/\.myshopify\.com$/, '') ?? '',
     placedAt: l.order.placedAt.toISOString(), productTitle: l.productTitle, variantTitle: l.variantTitle, qty: l.qty, sku: l.sku,
     imageUrl: l.imageUrl, shopifyVariantId: l.shopifyVariantId, shopifyProductId: l.shopifyProductId,
     supplier: l.resolvedSupplierId ? { id: l.resolvedSupplierId, name: nameById.get(l.resolvedSupplierId) ?? '—' } : null,

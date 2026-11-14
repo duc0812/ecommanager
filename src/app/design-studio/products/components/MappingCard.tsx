@@ -7,7 +7,7 @@ import type { OverrideRow, ProductDetail, SaveResponse, SupplierProductOption } 
 import { groupBySupplier, overrideRowsToPayload, referencedSupplierIds, supplierProductLabel, toOverrideRows } from './profile-form'
 import { SHIP_TO_KEY } from '@/lib/product-mapping'
 
-type Form = { supplierProductId: string; overrides: OverrideRow[]; printTemplateId: string; notes: string }
+type Form = { supplierProductId: string; overrides: OverrideRow[]; printTemplateId: string; notes: string; dropship: boolean }
 
 function initForm(d: ProductDetail): Form {
   const p = d.profile
@@ -16,6 +16,7 @@ function initForm(d: ProductDetail): Form {
     overrides: toOverrideRows(p?.overrides ?? []),
     printTemplateId: p?.printTemplateId ?? '',
     notes: p?.notes ?? '',
+    dropship: p?.dropship ?? false,
   }
 }
 
@@ -110,10 +111,12 @@ export default function MappingCard({ detail, canEdit, onSaved }: {
       overrides: overrides.overrides,
       printTemplateId: form.printTemplateId || null,
       notes: form.notes,
+      dropship: form.dropship,
     })
     if (!r.ok) { setSaving(false); setError(r.error); return }
     const { ordersUpdated, tasksTouched, errors } = r.data.reevaluation
-    setMessage(`Đã lưu mapping · cập nhật ${ordersUpdated} đơn · ${tasksTouched} task`)
+    const ds = r.data.dropship
+    setMessage(`Đã lưu mapping · cập nhật ${ordersUpdated} đơn · ${tasksTouched} task${ds ? ` · dropship: ${ds.lines} dòng đổi, ${ds.tasks} task ${form.dropship ? 'huỷ' : 'mở lại'}` : ''}`)
     if (errors.length > 0) setError(`Đồng bộ task lỗi: ${errors.join('; ')}`)
     const fresh = await onSaved()
     if (fresh) {
@@ -138,6 +141,13 @@ export default function MappingCard({ detail, canEdit, onSaved }: {
           <Note tone="idle" icon="info">Sản phẩm chưa có mapping riêng — đang dùng Product Mapping. Chọn rồi bấm Lưu mapping để ghi đè.</Note>
         )}
         <fieldset disabled={!canEdit} className="grid grid-cols-1 xl:grid-cols-2 gap-lg min-w-0 border-0 p-0 m-0">
+          <label className="xl:col-span-2 flex items-start gap-sm rounded-lg border border-outline-variant/40 px-md py-sm cursor-pointer">
+            <input type="checkbox" className="mt-[3px]" checked={form.dropship} onChange={e => set('dropship', e.target.checked)} />
+            <span className="flex flex-col gap-[2px]">
+              <span className="text-body-sm font-semibold text-on-surface inline-flex items-center gap-xs"><Icon name="local_shipping" className="text-[18px] text-secondary" />Dropship — không cần design</span>
+              <span className="text-label-sm text-on-surface-variant">Hàng mua sẵn từ xưởng: không tạo task design, không cần file in / mockup. Dòng hiện ở tab Dropship để map xưởng rồi gửi (CSV hoặc API Bondre). Lưu xong, task design đang mở của sản phẩm này tự huỷ; bỏ chọn thì mở lại.</span>
+            </span>
+          </label>
           <Section icon="factory" title="Xưởng mặc định">
             <Field label="Lọc sản phẩm xưởng">
               <input type="search" className={input} value={spFilter} onChange={e => setSpFilter(e.target.value)} placeholder="SKU, tên, xưởng…" />

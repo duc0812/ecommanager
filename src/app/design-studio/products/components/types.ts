@@ -2,7 +2,7 @@ export type ProfileOverride = { combo: Record<string, string>; supplierProductId
 
 export type SavedProfile = {
   id: string; title: string; imageUrl: string | null; supplierProductId: string | null; overrides: ProfileOverride[]
-  printTemplateId: string | null; masterArtworkUrl: string | null; notes: string | null; updatedAt: string
+  printTemplateId: string | null; masterArtworkUrl: string | null; notes: string | null; dropship: boolean; updatedAt: string
 }
 
 export type SupplierProductOption = {
@@ -30,6 +30,7 @@ export type ProductDetail = {
 export type SaveResponse = {
   profile: SavedProfile
   reevaluation: { ordersUpdated: number; tasksTouched: number; errors: string[] }
+  dropship: { lines: number; tasks: number } | null
 }
 
 export type OverrideRow = { option: string; value: string; extra: Record<string, string>; supplierProductId: string }

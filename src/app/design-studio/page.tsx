@@ -23,12 +23,13 @@ import ReviewToolbar from './components/ReviewToolbar'
 import HandoffGrid from './components/HandoffGrid'
 import SentGrid from './components/SentGrid'
 import SentLinePanel from './components/SentLinePanel'
+import DropshipGrid from './components/DropshipGrid'
 import DriveHealthBanner from './components/DriveHealthBanner'
 import { ToastProvider, useToast } from './components/overlay'
 import { useShopifyRefresh } from './components/useShopifyRefresh'
 import { ErrorBanner, Icon, READY_META, card, fmtDate, fmtDateTime } from './components/ui'
 
-type Mode = 'work' | 'review' | 'handoff' | 'sent'
+type Mode = 'work' | 'review' | 'handoff' | 'sent' | 'dropship'
 
 const DRIVE_BADGE_POLL_MS = [4000, 8000, 15000, 30000, 60000, 120000]
 const DRIVE_BADGE_WINDOW_MS = 15 * 60 * 1000
@@ -97,6 +98,7 @@ function DesignTasks() {
   const [selLine, setSelLine] = useState<string | null>(null)
   const [, setMe] = useState<Me | null>(null)
   const [handoffCount, setHandoffCount] = useState(0)
+  const [dropshipCount, setDropshipCount] = useState<number | undefined>(undefined)
   const [listLoading, setListLoading] = useState(false)
   const [listError, setListError] = useState('')
   const [retrying, setRetrying] = useState(false)
@@ -106,6 +108,10 @@ function DesignTasks() {
   const storeFiltered = mode === 'work' || mode === 'review'
   const listStoreId = storeFiltered ? storeFilter.storeId : null
   const [reviewVersion, setReviewVersion] = useState(0)
+  useEffect(() => {
+    if (readOnly || mode === 'dropship') return
+    requestJson<{ unmapped: unknown[]; mapped: unknown[] }>('/api/design-studio/dropship').then(r => { if (r.ok) setDropshipCount(r.data.unmapped.length + r.data.mapped.length) })
+  }, [readOnly, mode, reviewVersion])
   const [sel, setSel] = useState<string | null>(paramTask)
   const [reviewSel, setReviewSel] = useState<string | null>(null)
   const [filter, setFilter] = useState<QueueFilter>('ALL')
@@ -291,6 +297,7 @@ function DesignTasks() {
     { mode: 'review', label: 'Duyệt mẫu', count: reviewCount, hot: reviewCount > 0, tip: 'Xem và duyệt các mẫu đang chờ duyệt' },
     { mode: 'handoff', label: 'Duyệt sản xuất', count: handoffCount, hot: handoffCount > 0, tip: 'Các đơn đã duyệt hết design, chờ gửi xưởng (API hoặc lưu chờ xuất CSV)' },
     { mode: 'sent', label: 'Đã chuyển xưởng', tip: 'Các đơn đã gửi xưởng: chờ xuất CSV, đã xuất, đã gửi API, đã có tracking' },
+    { mode: 'dropship', label: 'Dropship', count: dropshipCount, hot: !!dropshipCount, tip: 'Hàng dropship mua sẵn: không cần design, chỉ map xưởng rồi gửi' },
   ]
   // The supplier hand-off lists are closed to a seller by the API, so their tabs are not offered.
   const shownTabs = readOnly ? tabs.filter(t => t.mode === 'work' || t.mode === 'review') : tabs
@@ -330,8 +337,8 @@ function DesignTasks() {
       {syncError && <div className="mb-md"><ErrorBanner msg={syncError} onClose={() => setSyncError('')} /></div>}
       <DriveHealthBanner version={driveVersion} />
 
-      <div className={`grid ${mode === 'sent' ? 'grid-cols-1' : 'grid-cols-[290px_minmax(0,1fr)]'} gap-md items-start`}>
-        {mode !== 'sent' && <Queue tasks={mode === 'review' ? reviewTasks : visible} sel={mode === 'work' ? sel : mode === 'review' ? reviewSel : null} onSelect={mode === 'review' ? setReviewSel : selectTask}
+      <div className={`grid ${mode === 'sent' || mode === 'dropship' ? 'grid-cols-1' : 'grid-cols-[290px_minmax(0,1fr)]'} gap-md items-start`}>
+        {mode !== 'sent' && mode !== 'dropship' && <Queue tasks={mode === 'review' ? reviewTasks : visible} sel={mode === 'work' ? sel : mode === 'review' ? reviewSel : null} onSelect={mode === 'review' ? setReviewSel : selectTask}
           q={q} onQ={setQ} loading={listLoading} error={listError} retrying={retrying} showStore={storeFilter.stores.length > 1}
           emptyText={filtered ? emptyText : 'Không có task'} onClearFilters={filtered ? clearFilters : null}
           filter={filter} onFilter={setFilter} counts={counts} mine={mine} onMine={setMine} autoLabel={mode === 'review' ? 'Auto' : READY_META.AUTO.label} artworkWaiting={mode === 'review' ? undefined : artwork.waiting}
@@ -350,6 +357,8 @@ function DesignTasks() {
           </div>
         ) : mode === 'handoff' ? (
           <HandoffGrid q={debouncedQ} version={reviewVersion} onOpenTask={selectTask} onChanged={reload} />
+        ) : mode === 'dropship' ? (
+          <DropshipGrid q="" version={reviewVersion} onCount={setDropshipCount} onSend={orderNumber => { setQ(orderNumber); setMode('handoff') }} />
         ) : mode === 'sent' ? (
           <SentGrid q={debouncedQ} rawQ={q} onQ={setQ} version={reviewVersion} showStore={storeFilter.stores.length > 1} onOpenTask={selectTask} onChanged={reload} />
         ) : currentLine ? (
