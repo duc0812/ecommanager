@@ -55,7 +55,7 @@ const MAX_CARDS = 60
 export function pendingHandoffWhere() {
   return {
     pipelineStatus: { in: ['READY_TO_PRODUCTION', 'PENDING_DESIGN'] },
-    designTasks: { some: { status: 'DONE' } },
+    OR: [{ designTasks: { some: { status: 'DONE' } } }, { lines: { some: { dropship: true, resolvedSupplierId: { not: null } } } }],
     AND: [NOT_FULFILLED, { financialStatus: { notIn: [...CLOSED_FINANCIAL, ...CLOSED_FINANCIAL.map(s => s.toLowerCase())] } }],
   }
 }

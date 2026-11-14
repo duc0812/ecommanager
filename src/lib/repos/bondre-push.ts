@@ -5,8 +5,8 @@ import { isNonProductLine } from '@/lib/order-lines'
 import { isLineApproved } from '@/lib/public-artwork'
 import { PushError, hashPayload } from '@/lib/repos/pgprints-push'
 import {
-  ACTIVE_STATUSES, CLOSED_PIPELINE, UNKNOWN_RESULT_GRACE_MS, activeKeyFor, checkOrderForPush, closeCancelledPush, collectLineFiles,
-  isActive, isUniqueViolation, latestPush, loadOrderForPush, reservePush, toPushViews, upsertLineTracking, viewOf, type PushRow,
+  ACTIVE_STATUSES, CLOSED_PIPELINE, UNKNOWN_RESULT_GRACE_MS, activeKeyFor, checkOrderForPush, closeCancelledPush, collectLineFiles, httpsUrl,
+  isActive, isUniqueViolation, latestPush, loadOrderForPush, reservePush, toPushViews, upsertLineTracking, viewOf, type LineFiles, type PushRow,
 } from '@/lib/repos/supplier-push-core'
 import {
   BondreError, cancelOrder, createOrder, deletePreview, findOrder, findPendingPreview, isBondreSupplier, packageForLine, quoteOrder, shippingTypeOf,
@@ -96,9 +96,14 @@ export async function buildBondrePush(orderId: string, opts: { quote?: boolean }
       error('SHIP_COUNTRY', `${refId}: SKU ${apiSku ?? l.resolvedSupplierSku ?? '—'} chỉ giao tới: ${shipCountries.join(', ')} — đơn này giao ${countryCode ?? order.shippingCountry ?? 'không rõ'}`, refId)
     }
 
-    const found = await collectLineFiles(l, order.artworks, { refId, approved, baseUrl, supplierName: NAME }, { error, warning })
+    const image = l.dropship ? httpsUrl(l.imageUrl) : null
+    const found = l.dropship
+      ? { prints: [], image, files: [], templateName: null, mockupUrl: image } satisfies LineFiles
+      : await collectLineFiles(l, order.artworks, { refId, approved, baseUrl, supplierName: NAME }, { error, warning })
     if (found.prints.length > MAX_DESIGNS) error('TOO_MANY_PARTS', `${refId}: có ${found.prints.length} file in, Bondre nhận tối đa ${MAX_DESIGNS} file một dòng`, refId)
-    if (!found.image) error('NO_MOCKUP', `${refId}: Bondre bắt buộc có ảnh mockup (https) — dòng này không có`, refId)
+    if (!found.image) error('NO_MOCKUP', l.dropship
+      ? `${refId}: Bondre bắt buộc có ảnh mockup (https) — dòng dropship lấy ảnh sản phẩm Shopify, dòng này không có ảnh`
+      : `${refId}: Bondre bắt buộc có ảnh mockup (https) — dòng này không có`, refId)
     if (l.qty <= 0 || l.qty > 1000) error('BAD_QUANTITY', `${refId}: số lượng phải từ 1 đến 1000`, refId)
     // The note on a line is the CS team's own; it stays out of what the factory receives.
     const note = l.designNote?.trim() || null

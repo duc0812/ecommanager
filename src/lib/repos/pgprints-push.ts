@@ -1,4 +1,5 @@
 import { createHash } from 'crypto'
+import { DROPSHIP_PUSH_REFUSAL } from '@/lib/dropship'
 import { prisma } from '@/lib/db'
 import { isNonProductLine, lineKeysOf } from '@/lib/order-lines'
 import { requiredSlotsFor, templateForLine } from '@/lib/design-tasks'
@@ -192,6 +193,7 @@ export async function buildPush(orderId: string, opts: { withBalance?: boolean }
 
   for (const l of pushLines) {
     const refId = keyOf(l)
+    if (l.dropship) { error('DROPSHIP', `${refId}: ${DROPSHIP_PUSH_REFUSAL}`, refId); continue }
     const task = order.designTasks.find(t => t.shopifyLineId === l.shopifyLineId) ?? null
     const approved = isLineApproved(l, task)
     if (!approved) error('NOT_APPROVED', `${refId}: thiết kế chưa được duyệt (task phải ở trạng thái Xong)`, refId)

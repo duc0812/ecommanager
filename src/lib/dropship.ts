@@ -5,3 +5,5 @@ export async function dropshipProductIds(storeId: string): Promise<Set<string>> 
   const rows = await prisma.productProfile.findMany({ where: { storeId, dropship: true }, select: { shopifyProductId: true } })
   return new Set(rows.map(r => r.shopifyProductId))
 }
+
+export const DROPSHIP_PUSH_REFUSAL = 'Dropship — gửi bằng CSV hoặc Bondre'

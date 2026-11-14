@@ -114,7 +114,7 @@ const push = async (orderId: string, payloadHash: string) =>
 const cancel = async (orderId: string) => postCancel(await req(`${base(orderId)}/cancel`, adminToken, post({ confirm: true })), { params: { orderId } })
 const refresh = async (orderId: string) => postRefresh(await req(`${base(orderId)}/refresh`, adminToken, post({})), { params: { orderId } })
 
-async function makeOrder(opts: { approved?: boolean; supplierSku?: string; note?: string } = {}) {
+async function makeOrder(opts: { approved?: boolean; supplierSku?: string; note?: string; dropship?: boolean; imageUrl?: string | null } = {}) {
   seq++
   const id = `gid://test/Order/bd-${seq}`
   const number = `#BD${1000 + seq}`
@@ -130,12 +130,14 @@ async function makeOrder(opts: { approved?: boolean; supplierSku?: string; note?
       lines: { create: [{
         shopifyLineId: lineId, productTitle: 'Secret Family Cauldron', variantTitle: '11.5oz', qty: 2, linePosition: 1, unitPrice: 24.95,
         resolvedSupplierId: SUP, resolvedSupplierSku: opts.supplierSku ?? SKU, customized: false,
-        imageUrl: 'https://cdn.shopify.com/s/files/mug.jpg', designNote: opts.note ?? null,
-        designDriveLink: opts.approved === false ? null : '/api/design-studio/file/placeholder',
+        imageUrl: opts.imageUrl !== undefined ? opts.imageUrl : 'https://cdn.shopify.com/s/files/mug.jpg', designNote: opts.note ?? null,
+        designDriveLink: opts.approved === false || opts.dropship ? null : '/api/design-studio/file/placeholder',
+        dropship: !!opts.dropship,
       }] },
-      designTasks: { create: [{ shopifyLineId: lineId, taskKey: `BD${1000 + seq}_1`, status: opts.approved === false ? 'NEW' : 'DONE' }] },
+      designTasks: { create: [{ shopifyLineId: lineId, taskKey: `BD${1000 + seq}_1`, status: opts.dropship ? 'CANCELLED' : opts.approved === false ? 'NEW' : 'DONE' }] },
     },
   })
+  if (opts.dropship) return { id, number: number.replace('#', '') }
   const rel = `design/bd-${seq}/print.png`
   fs.mkdirSync(path.dirname(path.join(tmp, rel)), { recursive: true })
   fs.writeFileSync(path.join(tmp, rel), PNG)
@@ -751,5 +753,21 @@ describe('Bondre: lines approved at different times', () => {
     expect(p).toMatchObject({ laterSend: false, canPush: false })
     expect(p.issues.map((i: any) => i.code)).toContain('ACTIVE_PUSH')
     expect((await push(o.id, p.payloadHash ?? 'x')).status).toBe(409)
+  })
+})
+
+describe('Bondre dropship lines', () => {
+  it('sends a dropship line with no design file and the Shopify image as the mockup', async () => {
+    const o = await makeOrder({ dropship: true })
+    const p = await (await preview(o.id)).json()
+    expect(p.issues.filter((i: any) => i.level === 'error')).toEqual([])
+    expect(p.canPush).toBe(true)
+    expect(p.payload.packages[0].items).toEqual([{ skuName: API_SKU, quantity: 2, design1: '', mockup1: 'https://cdn.shopify.com/s/files/mug.jpg' }])
+  })
+  it('refuses a dropship line that has no https Shopify image', async () => {
+    const o = await makeOrder({ dropship: true, imageUrl: null })
+    const p = await (await preview(o.id)).json()
+    expect(p.canPush).toBe(false)
+    expect(p.issues.find((i: any) => i.code === 'NO_MOCKUP')?.message).toMatch(/dropship/)
   })
 })

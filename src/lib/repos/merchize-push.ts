@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/db'
+import { DROPSHIP_PUSH_REFUSAL } from '@/lib/dropship'
 import { isNonProductLine, lineKeysOf } from '@/lib/order-lines'
 import { requiredSlotsFor, templateForLine } from '@/lib/design-tasks'
 import { artworkUrl } from '@/lib/design-studio'
@@ -184,6 +185,7 @@ export async function buildMerchizePush(orderId: string): Promise<BuiltMerchizeP
 
   for (const l of pushLines) {
     const refId = keyOf(l)
+    if (l.dropship) { error('DROPSHIP', `${refId}: ${DROPSHIP_PUSH_REFUSAL}`, refId); continue }
     const task = order.designTasks.find(t => t.shopifyLineId === l.shopifyLineId) ?? null
     const approved = isLineApproved(l, task)
     if (!approved) error('NOT_APPROVED', `${refId}: thiết kế chưa được duyệt (task phải ở trạng thái Xong)`, refId)

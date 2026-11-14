@@ -800,3 +800,13 @@ describe('nightly Merchize tracking pull', () => {
     expect(await prisma.shipment.findFirstOrThrow({ where: { orderId: o.id } })).toMatchObject({ trackingNumber: '9400111' })
   })
 })
+
+describe('Merchize dropship lines', () => {
+  it('refuses a dropship line: it goes by CSV or Bondre', async () => {
+    const o = await makeOrder()
+    await prisma.orderLine.updateMany({ where: { orderId: o.id }, data: { dropship: true } })
+    const p = await (await preview(o.id)).json()
+    expect(p.canPush).toBe(false)
+    expect(p.issues.find((i: any) => i.code === 'DROPSHIP')?.message).toMatch(/Dropship — gửi bằng CSV hoặc Bondre/)
+  })
+})

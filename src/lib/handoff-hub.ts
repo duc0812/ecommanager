@@ -38,7 +38,7 @@ export function hubView(card: HandoffCard, tabId: string): HubView {
     const out: HubWarning[] = []
     if (l.wrongSizeAreas.length > 0) out.push({ code: 'WRONG_SIZE', lineKey: l.lineKey })
     if (l.mappingNow) out.push({ code: 'MAPPING', lineKey: l.lineKey })
-    if (l.line.supplier && !hasMockup(l)) out.push({ code: 'NO_MOCKUP', lineKey: l.lineKey })
+    if (l.line.supplier && !l.line.dropship && !hasMockup(l)) out.push({ code: 'NO_MOCKUP', lineKey: l.lineKey })
     return out
   })
   return {

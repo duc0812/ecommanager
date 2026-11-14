@@ -32,6 +32,8 @@ export type WorkspaceLine = {
   productionEdit?: ProductionOverride | null
   id: string; shopifyLineId: string; linePosition: number; sku: string | null; productTitle: string; variantTitle: string | null
   qty: number; isNonProduct: boolean; customized: boolean
+  /** Bought ready-made from the supplier: no print file, only a mapping. */
+  dropship: boolean
   variantOptions: Record<string, string>
   attributesLoaded: boolean
   personalization: PersonalizationField[]
@@ -243,6 +245,7 @@ export async function loadWorkspace(orderId: string): Promise<Workspace | null> 
       qty: l.qty,
       isNonProduct,
       customized: l.customized,
+      dropship: !!l.dropship,
       variantOptions: parseVariantOptions(l.variantOptions),
       attributesLoaded: l.customAttributesJson != null,
       personalization: linePersonalization(l),

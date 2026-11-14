@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/db'
+import { DROPSHIP_PUSH_REFUSAL } from '@/lib/dropship'
 import { logHandoffEvent, markPushExported, nextExternalOrderId, planPushLines } from '@/lib/repos/push-export'
 import { countryCodeOf, countryNameOf, resolveStateCode, splitPersonName } from '@/lib/shipping-address'
 import { isNonProductLine } from '@/lib/order-lines'
@@ -74,6 +75,7 @@ export async function buildPrintwayPush(orderId: string, opts: { quote?: boolean
 
   for (const l of pushLines) {
     const refId = keyOf(l)
+    if (l.dropship) { error('DROPSHIP', `${refId}: ${DROPSHIP_PUSH_REFUSAL}`, refId); continue }
     const task = order.designTasks.find(t => t.shopifyLineId === l.shopifyLineId) ?? null
     const approved = isLineApproved(l, task)
     if (!approved) error('NOT_APPROVED', `${refId}: thiết kế chưa được duyệt (task phải ở trạng thái Xong)`, refId)
