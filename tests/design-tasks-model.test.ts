@@ -152,7 +152,7 @@ describe('Auto - Not Render', () => {
 })
 
 describe('Cần làm artwork', () => {
-  const t = (over: Record<string, unknown>) => ({ taskKey: 'A_1', readiness: 'MANUAL', status: 'NEW', hasPrint: false, fromLibrary: false, unmapped: false, productKey: 'p1', dueAt: '2026-11-06', ...over }) as any
+  const t = (over: Record<string, unknown>) => ({ taskKey: 'A_1', readiness: 'MANUAL', status: 'NEW', hasPrint: false, fromLibrary: false, unmapped: false, mapping: 'READY', productKey: 'p1', dueAt: '2026-11-06', ...over }) as any
 
   it('takes a manual line with nothing to print, mapped and not waiting on the library', () => {
     expect(needsArtwork(t({}))).toBe(true)
@@ -160,7 +160,7 @@ describe('Cần làm artwork', () => {
   })
 
   it('leaves out auto, files in hand, library lines, unmapped lines and finished work', () => {
-    for (const over of [{ readiness: 'AUTO' }, { readiness: 'LOW' }, { hasPrint: true }, { fromLibrary: true }, { unmapped: true }, { status: 'REVIEW' }, { status: 'DONE' }, { status: 'CANCELLED' }]) {
+    for (const over of [{ readiness: 'AUTO' }, { readiness: 'LOW' }, { hasPrint: true }, { fromLibrary: true }, { unmapped: true }, { mapping: 'NO_TEMPLATE' }, { status: 'REVIEW' }, { status: 'DONE' }, { status: 'CANCELLED' }]) {
       expect(needsArtwork(t(over))).toBe(false)
     }
   })
