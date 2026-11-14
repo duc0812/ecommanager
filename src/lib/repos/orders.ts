@@ -170,6 +170,7 @@ export type UpsertOrderInput = {
     customAttributesJson?: string | null
     imageUrl?: string | null
     shopifyProductId?: string | null
+    dropship?: boolean
   }>
 }
 
@@ -198,6 +199,7 @@ export async function upsertOrderWithLines(input: UpsertOrderInput) {
         productionOverrideJson: true,
         imageUrl: true,
         shopifyProductId: true,
+        dropship: true,
         designNote: true,
         exportedAt: true,
         exportedToSupplierId: true,
@@ -307,6 +309,7 @@ export async function upsertOrderWithLines(input: UpsertOrderInput) {
           productionOverrideJson: snap?.productionOverrideJson ?? null,
           imageUrl: l.imageUrl !== undefined ? l.imageUrl : (snap?.imageUrl ?? null),
           shopifyProductId: l.shopifyProductId !== undefined ? l.shopifyProductId : (snap?.shopifyProductId ?? null),
+          dropship: l.dropship !== undefined ? l.dropship : (snap?.dropship ?? false),
           designNote: snap?.designNote ?? null,
           exportedAt: snap?.exportedAt ?? null,
           exportedToSupplierId: snap?.exportedToSupplierId ?? null,

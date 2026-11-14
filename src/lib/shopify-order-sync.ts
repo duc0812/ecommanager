@@ -17,6 +17,7 @@ import { resolveOrderDesignByParent, type DesignLineInputV2 } from '@/lib/design
 import { loadReadyDesignEntries, upsertTaskEntry, loadMasterArtworkBySku } from '@/lib/repos/design-library'
 import { matchDesignEntry, type DesignEntry } from '@/lib/design-parent'
 import { syncDesignTasks } from '@/lib/design-tasks'
+import { dropshipProductIds } from '@/lib/dropship'
 import { fillCustomallFields } from '@/lib/customall-fields'
 
 type ResolvedSupplierProduct = SupplierInput & {
@@ -114,6 +115,7 @@ export async function syncStoreOrders(storeId: string, opts: { fromOrderName?: s
   const legacyTypes = await loadLegacyTypesForResolver(store.id)
   const manualMappings = await loadVariantManualMappingsForResolver()
   const productProfiles = await loadProductProfilesForResolver(store.id)
+  const dropshipIds = await dropshipProductIds(store.id)
   const supplierProducts = await prisma.supplierProduct.findMany({
     include: { supplier: true },
   })
@@ -291,7 +293,7 @@ export async function syncStoreOrders(storeId: string, opts: { fromOrderName?: s
           index: idx,
           sku: r.line.sku,
           isNonProduct: isNonProductLine({ sku: r.line.sku, productTitle: r.line.title, shopifyProductType: r.line.productType }),
-          requiresDesign: !!sp?.supplierId,
+          requiresDesign: !!sp?.supplierId && !(r.line.productId && dropshipIds.has(r.line.productId)),
           resolvedSupplierId: sp?.supplierId ?? null,
           supplierSku: sp?.sku ?? null,
           existingDesignLink: existingLineLinks.get(r.line.id) ?? null,
@@ -386,6 +388,7 @@ export async function syncStoreOrders(storeId: string, opts: { fromOrderName?: s
             imageUrl: l.imageUrl ?? null,
             imageIsVariant: l.imageUrl ? !!l.imageIsVariant : null,
             shopifyProductId: l.productId ?? null,
+            dropship: !!l.productId && dropshipIds.has(l.productId),
             customAttributesJson: (l.customAttributes.length > 0 || l.productUrl)
               ? JSON.stringify(l.productUrl ? [...l.customAttributes, { key: '_product_url', value: l.productUrl }] : l.customAttributes)
               : null,

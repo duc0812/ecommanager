@@ -1,14 +1,14 @@
 import { matchSizedDesignEntry, type DesignEntry } from '@/lib/design-parent'
 import { productLinesOnly } from '@/lib/order-lines'
 
-type ReadyCheckLine = { sku: string | null; productTitle: string; shopifyProductType: string | null; resolvedSupplierId: string | null; designDriveLink: string | null }
+type ReadyCheckLine = { sku: string | null; productTitle: string; shopifyProductType: string | null; resolvedSupplierId: string | null; designDriveLink: string | null; dropship?: boolean | null }
 
 /** Whether a stored designReady still holds once lines change supplier: a Trello card, or a design link on every product
  *  line (with or without a SKU). A flag stored while a line was unmapped has neither, and must not skip the design step after the mapping. */
 export function designReadyHolds(order: { designReady: boolean; trelloCardId: string | null; lines: ReadyCheckLine[] }): boolean {
   if (!order.designReady) return false
   if (order.trelloCardId) return true
-  return productLinesOnly(order.lines).every(l => l.resolvedSupplierId && l.designDriveLink)
+  return productLinesOnly(order.lines).filter(l => !l.dropship).every(l => l.resolvedSupplierId && l.designDriveLink)
 }
 
 export function designKey(sku: string, supplierId: string): string {

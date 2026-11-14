@@ -8,7 +8,7 @@ import {
   type TypeAliases,
   buildTypeAliases,
 } from '@/lib/product-mapping'
-import { hasUnresolvedProductLine, isNonProductLine, productLinesOnly } from '@/lib/order-lines'
+import { hasUnresolvedProductLine, isNonProductLine, needsDesign, productLinesOnly } from '@/lib/order-lines'
 import { designReadyHolds } from '@/lib/design-library'
 import { autoDetectStatus, isValidPipelineStatus, type PipelineStatus } from '@/lib/pipeline-status'
 
@@ -301,7 +301,7 @@ export async function saveManualMapping(input: SaveManualMappingInput) {
           hasUnmappedSku: unresolved,
           hasPendingMapping: unresolved,
           hasCustomDesignLine: order.orderType === 'CUSTOM',
-          hasDesignLine: productLinesOnly(order.lines).some(l => l.resolvedSupplierId),
+          hasDesignLine: order.lines.some(needsDesign),
           hasDesignReady: designReady,
           currentStatus,
         })

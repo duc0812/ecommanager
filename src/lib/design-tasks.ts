@@ -59,6 +59,7 @@ const TOLD_VISIBLE_DAYS = 14
 function lineFixReopen(fix: LineFix) {
   return { status: 'REJECTED', rejectReasons: JSON.stringify([fix.reason]), rejectNote: fix.note, prevStatus: null, fromLibrary: false }
 }
+export const DROPSHIP_TASK_MESSAGE = 'Dropship — không cần design'
 export const APPROVE_MESSAGE = 'Duyệt design'
 
 export function isLeader(role: string): boolean {
@@ -287,6 +288,13 @@ export async function syncDesignTasks(orderId: string): Promise<SyncResult> {
   for (const line of order.lines) {
     if (isNonProductLine(line)) continue
     const existing = order.designTasks.find(t => t.shopifyLineId === line.shopifyLineId)
+    if (line.dropship) {
+      if (existing && existing.status !== 'CANCELLED' && existing.status !== 'DONE') {
+        await prisma.designTask.update({ where: { id: existing.id }, data: { status: 'CANCELLED', events: { create: { type: 'SYSTEM', message: DROPSHIP_TASK_MESSAGE } } } })
+        cancelled++
+      }
+      continue
+    }
     if (!line.resolvedSupplierId && !existing && (!everyLine || line.exportedAt)) continue
     if (orderClosed || orderShipped) {
       if (existing && existing.status !== 'CANCELLED' && existing.status !== 'DONE') {

@@ -3,7 +3,7 @@ import { productionFields, productionOverride, type ProductionOverride } from '@
 import { countryCodeOf, countryNameOf } from '@/lib/shipping-address'
 import { visibleCustomAttributes, customerDesignLink, addOnSummaries, type AddOnSummary } from '@/lib/order-classify'
 import { extractPreviewCdnUrl } from '@/lib/order-line-assets'
-import { isNonProductLine } from '@/lib/order-lines'
+import { isNonProductLine, needsDesign } from '@/lib/order-lines'
 import { lineDesignStatus, type LineDesignStatus } from '@/lib/design-status'
 import { loadReadyDesignEntries } from '@/lib/repos/design-library'
 import { matchDesignEntry } from '@/lib/design-parent'
@@ -326,7 +326,7 @@ async function recomputeOrderDesign(orderId: string, markedDone: boolean, reoffe
   // A line sent back on its own (the order was not set to Design Rejected) goes out again alone; its siblings stay sent.
   const reoffer = markedDone && !!reofferLineId && order.pipelineStatus !== 'DESIGN_REJECTED' && !isOrderClosed(order)
   const productLines = order.lines.filter(l => !isNonProductLine(l))
-  const designLines = productLines.filter(l => !!l.resolvedSupplierId)
+  const designLines = productLines.filter(needsDesign)
   const designReady = designLines.length > 0 && designLines.every(l => !!l.designDriveLink)
   const currentStatus = (markedDone && designReady && order.pipelineStatus === 'DESIGN_REJECTED'
     ? 'PENDING_DESIGN'

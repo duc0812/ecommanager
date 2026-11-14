@@ -3,7 +3,7 @@ import { productionOverride } from '@/lib/production-override'
 import { autoDetectStatus, isValidPipelineStatus, type PipelineStatus } from '@/lib/pipeline-status'
 import { profileKey, resolveByProductBase, supplierParentKey, swapToSizeSibling } from '@/lib/product-mapping'
 import { loadProductBasesForResolver, loadLegacyTypesForResolver, loadProductProfilesForResolver, loadTypeAliasesForResolver, loadVariantManualMappingsForResolver } from '@/lib/repos/mapping'
-import { hasUnresolvedProductLine, isNonProductLine, productLinesOnly } from '@/lib/order-lines'
+import { hasUnresolvedProductLine, isNonProductLine, needsDesign, productLinesOnly } from '@/lib/order-lines'
 import { designReadyHolds } from '@/lib/design-library'
 
 // A line counts as mapped here once it has a supplier and the cost refresh has priced it.
@@ -229,7 +229,7 @@ export async function recalculateMissingOrderLineCosts(filter: {
       qtyBySupplier.set(line.resolvedSupplierId, (qtyBySupplier.get(line.resolvedSupplierId) ?? 0) + line.qty)
     }
     const defaultSupplierId = Array.from(qtyBySupplier.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null
-    const hasDesignLine = productLinesOnly(order.lines).some(l => l.resolvedSupplierId)
+    const hasDesignLine = order.lines.some(needsDesign)
     const hasPendingMapping = hasUnresolvedProductLine(order.lines, isSupplierAndCostResolved)
     const currentStatus = isValidPipelineStatus(order.pipelineStatus)
       ? order.pipelineStatus as PipelineStatus

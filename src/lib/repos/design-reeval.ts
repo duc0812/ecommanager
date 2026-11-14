@@ -44,7 +44,7 @@ function linesOfOrders(orderIds: string[]) {
     orderBy: { linePosition: 'asc' },
     select: {
       orderId: true, id: true, sku: true, resolvedSupplierId: true, resolvedSupplierSku: true, productTitle: true,
-      shopifyProductType: true, previewCdnUrl: true, designDriveLink: true, customized: true,
+      shopifyProductType: true, previewCdnUrl: true, designDriveLink: true, customized: true, dropship: true,
     },
   })
 }
@@ -69,7 +69,7 @@ export async function reevaluateOrdersForDesignEntry(entry: DesignEntryRef): Pro
       index: idx,
       sku: l.sku,
       isNonProduct: isNonProductLine({ sku: l.sku, productTitle: l.productTitle, shopifyProductType: l.shopifyProductType }),
-      requiresDesign: !!l.resolvedSupplierId,
+      requiresDesign: !!l.resolvedSupplierId && !l.dropship,
       resolvedSupplierId: l.resolvedSupplierId,
       supplierSku: l.resolvedSupplierSku,
       existingDesignLink: l.designDriveLink,
