@@ -1,6 +1,6 @@
 'use client'
 import { useState } from 'react'
-import type { Readiness, SentLineRow, TaskRow, TaskStatus } from './types'
+import type { SentLineRow, TaskRow, TaskStatus } from './types'
 import { MAPPING_FILTER_LABEL, readyLabel, timeLeft, type QueueFilter } from './model'
 import { Avatar, ErrorBanner, Icon, Note, Pill, READY_META, TEXT_TONE, btn, card, fmtDate } from './ui'
 import { StoreLabel } from '@/components/StoreFilter'
