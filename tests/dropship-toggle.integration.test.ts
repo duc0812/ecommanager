@@ -73,4 +73,11 @@ describe('dropship toggle on a product', () => {
     }
     expect((await taskOf(SHIPPED)).status).toBe('CANCELLED')
   })
+  it('a line already sent gets no task back when the flag goes off', async () => {
+    await saveProfile(toRouteKey(storeId, ROBE), { dropship: true })
+    await prisma.orderLine.updateMany({ where: { orderId: OPEN }, data: { exportedAt: new Date() } })
+    await saveProfile(toRouteKey(storeId, ROBE), { dropship: false })
+    expect((await taskOf(OPEN)).status).toBe('CANCELLED')
+    expect((await taskOf(UNMAPPED)).status).toBe('NEW')
+  })
 })

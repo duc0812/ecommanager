@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db'
 import { DROPSHIP_TASK_MESSAGE, syncDesignTasks } from '@/lib/design-tasks'
 import { readyLines } from '@/lib/line-export'
 import { designReadyHolds } from '@/lib/design-library'
+import { handoffStateFor } from '@/lib/supplier-handoff'
 
 const ORDER_ID = 'gid://test/Order/dropship-1'
 const SHOP = 'dropship-tasks.myshopify.com'
@@ -42,6 +43,21 @@ describe('dropship lines and design tasks', () => {
     const order = await prisma.order.findUniqueOrThrow({ where: { id: ORDER_ID }, include: { lines: true, designTasks: true } })
     const ready = readyLines({ ...order, supplierPushes: [] })
     expect(ready.map(l => l.shopifyLineId)).toEqual(['d1'])
+  })
+  it('the hand-off sees the mapped dropship line as ready while the POD design is open', async () => {
+    const state = await handoffStateFor(ORDER_ID)
+    expect(state?.pending).toBe(true)
+  })
+  it('after a CSV save the dropship line mapped before it is saved, one mapped after it is not', async () => {
+    const savedAt = new Date('2026-11-10T00:00:00Z')
+    await prisma.order.update({ where: { id: ORDER_ID }, data: { supplierHandoffAt: savedAt } })
+    await prisma.orderLine.updateMany({ where: { orderId: ORDER_ID, shopifyLineId: 'd1' }, data: { costSnapshotAt: new Date('2026-11-09T00:00:00Z') } })
+    let order = await prisma.order.findUniqueOrThrow({ where: { id: ORDER_ID }, include: { lines: true, designTasks: true } })
+    expect(readyLines({ ...order, supplierPushes: [] }).map(l => l.shopifyLineId)).toEqual([])
+    await prisma.orderLine.updateMany({ where: { orderId: ORDER_ID, shopifyLineId: 'd1' }, data: { costSnapshotAt: new Date('2026-11-11T00:00:00Z') } })
+    order = await prisma.order.findUniqueOrThrow({ where: { id: ORDER_ID }, include: { lines: true, designTasks: true } })
+    expect(readyLines({ ...order, supplierPushes: [] }).map(l => l.shopifyLineId)).toEqual(['d1'])
+    await prisma.order.update({ where: { id: ORDER_ID }, data: { supplierHandoffAt: null } })
   })
   it('a dropship line without a link does not break a stored design-ready flag', () => {
     const base = { sku: 'X', shopifyProductType: null, resolvedSupplierId: SUP }

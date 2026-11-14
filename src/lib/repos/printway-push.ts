@@ -53,7 +53,7 @@ export async function buildPrintwayPush(orderId: string, opts: { quote?: boolean
   const pushes: PushRow[] = supplier
     ? await prisma.supplierOrderPush.findMany({ where: { orderId, supplierId: supplier.id }, orderBy: { createdAt: 'desc' } })
     : []
-  const plan = planPushLines(order, order.lines.filter(l => !isNonProductLine(l) && !!supplier && l.resolvedSupplierId === supplier.id), pushes)
+  const plan = planPushLines(order, order.lines.filter(l => !isNonProductLine(l) && !l.dropship && !!supplier && l.resolvedSupplierId === supplier.id), pushes)
   const active = plan.later ? null : pushes.find(p => isActive(p.status)) ?? null
   // A cancelled order keeps its name on their side, so a re-send after a cancel needs a fresh one.
   const externalOrderId = await nextExternalOrderId(orderNo, { orderId, supplierId: supplier?.id ?? null, later: plan.later })
@@ -73,9 +73,11 @@ export async function buildPrintwayPush(orderId: string, opts: { quote?: boolean
   const items: PrintwayOrderItem[] = []
   const services = new Set<string>()
 
+  for (const l of order.lines) {
+    if (l.dropship && !l.exportedAt && !!supplier && l.resolvedSupplierId === supplier.id) warning('DROPSHIP', `${keyOf(l)}: ${DROPSHIP_PUSH_REFUSAL} — dòng này không gửi qua API`, keyOf(l))
+  }
   for (const l of pushLines) {
     const refId = keyOf(l)
-    if (l.dropship) { error('DROPSHIP', `${refId}: ${DROPSHIP_PUSH_REFUSAL}`, refId); continue }
     const task = order.designTasks.find(t => t.shopifyLineId === l.shopifyLineId) ?? null
     const approved = isLineApproved(l, task)
     if (!approved) error('NOT_APPROVED', `${refId}: thiết kế chưa được duyệt (task phải ở trạng thái Xong)`, refId)

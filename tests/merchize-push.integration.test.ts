@@ -802,11 +802,13 @@ describe('nightly Merchize tracking pull', () => {
 })
 
 describe('Merchize dropship lines', () => {
-  it('refuses a dropship line: it goes by CSV or Bondre', async () => {
+  it('leaves a dropship line out of the push and says it goes by CSV or Bondre', async () => {
     const o = await makeOrder()
     await prisma.orderLine.updateMany({ where: { orderId: o.id }, data: { dropship: true } })
     const p = await (await preview(o.id)).json()
     expect(p.canPush).toBe(false)
-    expect(p.issues.find((i: any) => i.code === 'DROPSHIP')?.message).toMatch(/Dropship — gửi bằng CSV hoặc Bondre/)
+    const issue = p.issues.find((i: any) => i.code === 'DROPSHIP')
+    expect(issue?.level).toBe('warning')
+    expect(issue?.message).toMatch(/Dropship — gửi bằng CSV hoặc Bondre/)
   })
 })

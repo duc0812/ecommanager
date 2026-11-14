@@ -151,10 +151,12 @@ export function isOrderClosed(order: { pipelineStatus: string; financialStatus: 
     || (order.fulfillmentStatus ?? '').toUpperCase() === 'FULFILLED'
 }
 
-export function lineHold(order: Omit<SendGateOrder<unknown>, 'lines' | 'pipelineStatus' | 'financialStatus' | 'fulfillmentStatus'>, line: DesignGateLine & { resolvedSupplierId: string | null }): LineHold | null {
+export function lineHold(order: Omit<SendGateOrder<unknown>, 'lines' | 'pipelineStatus' | 'financialStatus' | 'fulfillmentStatus'>, line: DesignGateLine & { resolvedSupplierId: string | null; costSnapshotAt?: Date | null }): LineHold | null {
   if (isDesignOpen(order, line)) return 'DESIGN'
   if (order.supplierPushes.some(p => p.supplierId === line.resolvedSupplierId && p.status === 'CREATED' && !p.exportMarked)) return 'PUSHED'
   if (!order.supplierHandoffAt) return null
+  // A dropship line has no task: the save covered it when it was already mapped (the cost snapshot is stamped when a supplier is mapped).
+  if (line.dropship) return line.costSnapshotAt && line.costSnapshotAt <= order.supplierHandoffAt ? 'SAVED' : null
   // A CSV save covers the lines approved by then; one approved later still has to be handed over.
   const task = order.designTasks.find(t => t.shopifyLineId === line.shopifyLineId && t.status === 'DONE')
   return !task || task.updatedAt <= order.supplierHandoffAt ? 'SAVED' : null

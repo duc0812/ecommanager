@@ -89,7 +89,7 @@ async function ordersWithReadyLines(where: object, supplierId?: string) {
     where, orderBy: { placedAt: 'asc' },
     select: {
       id: true, pipelineStatus: true, financialStatus: true, fulfillmentStatus: true, designReady: true, supplierHandoffAt: true,
-      lines: { select: { id: true, shopifyLineId: true, sku: true, productTitle: true, shopifyProductType: true, resolvedSupplierId: true, designDriveLink: true, exportedAt: true, exportedToSupplierId: true, qty: true, manualBaseCost: true, resolvedBaseCost: true } },
+      lines: { select: { id: true, shopifyLineId: true, sku: true, productTitle: true, shopifyProductType: true, resolvedSupplierId: true, designDriveLink: true, dropship: true, costSnapshotAt: true, exportedAt: true, exportedToSupplierId: true, qty: true, manualBaseCost: true, resolvedBaseCost: true } },
       designTasks: TASK_GATE,
       supplierPushes: LIVE_PUSHES,
     },
@@ -120,7 +120,7 @@ function blockedReason(o: StateOrder, openTasks: number): string {
 }
 
 const STATE_INCLUDE = {
-  lines: { select: { id: true, shopifyLineId: true, sku: true, productTitle: true, shopifyProductType: true, resolvedSupplierId: true, resolvedSupplierSku: true, designDriveLink: true, exportedAt: true, exportedToSupplierId: true } },
+  lines: { select: { id: true, shopifyLineId: true, sku: true, productTitle: true, shopifyProductType: true, resolvedSupplierId: true, resolvedSupplierSku: true, designDriveLink: true, dropship: true, costSnapshotAt: true, exportedAt: true, exportedToSupplierId: true } },
   designTasks: TASK_GATE,
   supplierPushes: LIVE_PUSHES,
 } as const
@@ -282,7 +282,7 @@ async function buildCards(where: any, orderBy: any, opts: { checks?: boolean; se
   const lineRows = await prisma.orderLine.findMany({
     where: { orderId: { in: orders.map(o => o.id) } },
     select: {
-      id: true, orderId: true, shopifyLineId: true, resolvedSupplierId: true, resolvedSupplierSku: true, shopifyProductId: true, customAttributesJson: true,
+      id: true, orderId: true, shopifyLineId: true, resolvedSupplierId: true, resolvedSupplierSku: true, shopifyProductId: true, customAttributesJson: true, costSnapshotAt: true,
       sku: true, productTitle: true, shopifyProductType: true, linePosition: true, exportedAt: true, exportedToSupplierId: true,
       qty: true, manualBaseCost: true, resolvedBaseCost: true,
     },
@@ -354,7 +354,7 @@ async function buildCards(where: any, orderBy: any, opts: { checks?: boolean; se
         driveFolderUrl: task?.driveFolderUrl ?? null,
         apiSku: line.supplier && line.supplierSku ? (apiSkuByKey.get(`${line.supplier.id}::${line.supplierSku}`) ?? null) : null,
         exportedTo: sentTo ? (supplierNameById.get(sentTo) ?? 'xưởng không rõ') : null,
-        waiting: sentTo || !line.supplier ? null : lineHold(o, { shopifyLineId: line.shopifyLineId, designDriveLink: line.designDriveLink, resolvedSupplierId: line.supplier.id }),
+        waiting: sentTo || !line.supplier ? null : lineHold(o, { shopifyLineId: line.shopifyLineId, designDriveLink: line.designDriveLink, resolvedSupplierId: line.supplier.id, dropship: line.dropship, costSnapshotAt: row?.costSnapshotAt ?? null }),
       })
     }
     const progress = exportProgress(exportOrder)
@@ -424,7 +424,7 @@ async function recentSupplierActivity(): Promise<{ active: Set<string>; design: 
       where: { pipelineStatus: 'PENDING_DESIGN', placedAt: { gte: since }, AND: [NOT_FULFILLED] },
       select: {
         id: true, designReady: true, designTasks: { select: { shopifyLineId: true, status: true } },
-        lines: { select: { shopifyLineId: true, designDriveLink: true, productTitle: true, shopifyProductType: true, resolvedSupplierId: true, exportedAt: true } },
+        lines: { select: { shopifyLineId: true, designDriveLink: true, dropship: true, productTitle: true, shopifyProductType: true, resolvedSupplierId: true, exportedAt: true } },
       },
     }),
   ])

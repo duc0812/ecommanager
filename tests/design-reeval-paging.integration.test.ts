@@ -51,7 +51,7 @@ const oldQuery = (entry: { sku: string; supplierId: string; matchMode: string })
         orderBy: { linePosition: 'asc' },
         select: {
           id: true, sku: true, resolvedSupplierId: true, resolvedSupplierSku: true, productTitle: true,
-          shopifyProductType: true, previewCdnUrl: true, designDriveLink: true, customized: true,
+          shopifyProductType: true, previewCdnUrl: true, designDriveLink: true, customized: true, dropship: true,
         },
       },
     },
