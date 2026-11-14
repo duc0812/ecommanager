@@ -216,6 +216,7 @@ export async function recalculateMissingOrderLineCosts(filter: {
             resolvedBaseCost: true,
             qty: true,
             designDriveLink: true,
+            dropship: true,
           },
         },
       },

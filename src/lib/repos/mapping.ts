@@ -287,6 +287,7 @@ export async function saveManualMapping(input: SaveManualMappingInput) {
               resolvedSupplierId: true,
               shopifyVariantId: true,
               designDriveLink: true,
+              dropship: true,
             },
           },
         },

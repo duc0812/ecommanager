@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/db'
+import { applyDropship } from '@/lib/dropship'
 import { isNonProductLine } from '@/lib/order-lines'
 import { safeHttpUrl } from '@/lib/design-studio'
 import { syncDesignTasksCounted } from '@/lib/design-tasks'
@@ -17,7 +18,7 @@ function serializeProfile(p: ProfileRow) {
   return {
     id: p.id, title: p.title, imageUrl: p.imageUrl, supplierProductId: p.supplierProductId,
     overrides: parseProfileOverrides(p.overrides), printTemplateId: p.printTemplateId,
-    masterArtworkUrl: safeHttpUrl(p.masterArtworkUrl), notes: p.notes, updatedAt: p.updatedAt.toISOString(),
+    masterArtworkUrl: safeHttpUrl(p.masterArtworkUrl), notes: p.notes, dropship: p.dropship, updatedAt: p.updatedAt.toISOString(),
   }
 }
 
@@ -104,7 +105,7 @@ export async function loadProduct(key: string, opts: { includeCost?: boolean } =
 }
 
 export type SaveProfileInput = {
-  supplierProductId?: unknown; overrides?: unknown; printTemplateId?: unknown; notes?: unknown
+  supplierProductId?: unknown; overrides?: unknown; printTemplateId?: unknown; notes?: unknown; dropship?: unknown
 }
 
 function optionalId(v: unknown, name: string): string | null | undefined {
@@ -150,6 +151,8 @@ export async function saveProfile(key: string, input: SaveProfileInput) {
   const overridesIn = validateOverrides(input.overrides)
   const printTemplateIdIn = optionalId(input.printTemplateId, 'printTemplateId')
   const notesIn = validateNotes(input.notes)
+  if (input.dropship !== undefined && typeof input.dropship !== 'boolean') throw new ValidationError('dropship phải là true/false')
+  const dropshipIn = input.dropship as boolean | undefined
 
   const [store, existing, newestLine] = await Promise.all([
     prisma.shopifyStore.findUnique({ where: { id: storeId }, select: { id: true } }),
@@ -194,16 +197,19 @@ export async function saveProfile(key: string, input: SaveProfileInput) {
     overrides: JSON.stringify(overrides),
     printTemplateId,
     notes: notesIn !== undefined ? notesIn : (existing?.notes ?? null),
+    dropship: dropshipIn ?? existing?.dropship ?? false,
   }
+  const dropshipChanged = data.dropship !== (existing?.dropship ?? false)
   const profile = await prisma.productProfile.upsert({
     where: { storeId_shopifyProductId: { storeId, shopifyProductId } },
     create: { storeId, shopifyProductId, ...data },
     update: data,
   })
-  const reevaluation = supplierChanged
+  const dropship = dropshipChanged ? await applyDropship(storeId, shopifyProductId, data.dropship) : null
+  const reevaluation = supplierChanged || dropshipChanged
     ? await reevaluateProduct(storeId, shopifyProductId)
     : { ordersUpdated: 0, tasksTouched: 0, errors: [] }
-  return { profile: serializeProfile(profile), reevaluation }
+  return { profile: serializeProfile(profile), reevaluation, dropship }
 }
 
 export async function reevaluateProduct(storeId: string, shopifyProductId: string): Promise<{ ordersUpdated: number; tasksTouched: number; errors: string[] }> {
