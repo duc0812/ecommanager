@@ -1,13 +1,13 @@
 'use client'
 import { useState } from 'react'
 import type { Readiness, SentLineRow, TaskRow, TaskStatus } from './types'
-import { readyLabel, timeLeft } from './model'
+import { MAPPING_FILTER_LABEL, readyLabel, timeLeft, type QueueFilter } from './model'
 import { Avatar, ErrorBanner, Icon, Note, Pill, READY_META, TEXT_TONE, btn, card, fmtDate } from './ui'
 import { StoreLabel } from '@/components/StoreFilter'
 
 const SENT_SECTION = 'Đã gửi xưởng — chưa có task'
 
-export type QueueFilter = 'ALL' | Readiness | 'NEEDS_ARTWORK'
+export type { QueueFilter }
 
 const SECTIONS: { title: string; statuses: TaskStatus[]; tone?: string }[] = [
   { title: 'Bị trả lại — sửa trước', statuses: ['REJECTED'], tone: 'text-error' },
@@ -53,11 +53,13 @@ function QueueRow({ t, selected, onSelect, waiting, showStore }: { t: TaskRow; s
         </span>
         <span className="text-label-sm text-on-surface-variant truncate">{t.productTitle}{t.variantTitle ? ` · ${t.variantTitle}` : ''}</span>
         {showStore && <span className="flex"><StoreLabel name={t.storeName} /></span>}
+        {t.mapping === 'UNMAPPED' && t.mappingHint && <span className="text-label-sm text-on-surface-variant truncate">Gợi ý: {t.mappingHint}</span>}
         <span className="flex items-center gap-xs flex-wrap">
           <Pill tone={ready.tone} icon={ready.icon}>{readyLabel(t, ready.label)}</Pill>
           {t.fromLibrary && (t.status === 'NEW' || t.status === 'ASSIGNED') && <Pill tone="brand" icon="inventory_2">Thư viện</Pill>}
           {t.agent && <Pill tone="brand" icon="smart_toy" title={t.agent === 'RUNNING' ? 'Agent đang sửa' : 'Agent đang chờ'}>Agent</Pill>}
-          {t.unmapped && <Pill tone="bad" icon="account_tree">Chưa mapping</Pill>}
+          {t.mapping === 'UNMAPPED' && <Pill tone="bad" icon="account_tree" title={t.mappingHint ? `Gợi ý: ${t.mappingHint}` : undefined}>Chưa mapping</Pill>}
+          {t.mapping === 'NO_TEMPLATE' && <Pill tone="warn" icon="grid_off" title={t.unmapped ? 'Chưa có xưởng nào có template cho loại hàng này' : 'SKU xưởng chưa có template in'}>Thiếu template</Pill>}
           {waiting !== undefined && <Pill tone="brand" icon="layers">{waiting} đơn chờ</Pill>}
           {t.assigneeName && <span className="ml-auto"><Avatar name={t.assigneeName} /></span>}
         </span>
@@ -127,9 +129,9 @@ export default function Queue({ tasks, sel, onSelect, q, onQ, loading, error, re
           </button>
         </div>
         <div className="flex flex-wrap gap-xs">
-          {(['ALL', 'AUTO', 'LOW', 'MANUAL', ...(artworkWaiting ? ['NEEDS_ARTWORK'] : [])] as QueueFilter[]).map(f => (
+          {(['ALL', 'AUTO', 'LOW', 'MANUAL', ...(artworkWaiting ? ['UNMAPPED', 'NO_TEMPLATE', 'NEEDS_ARTWORK'] : [])] as QueueFilter[]).map(f => (
             <button key={f} type="button" aria-pressed={filter === f} onClick={() => onFilter(f)} className={chipCls(filter === f)}>
-              {f === 'ALL' ? 'Tất cả' : f === 'AUTO' ? autoLabel : f === 'NEEDS_ARTWORK' ? 'Cần làm artwork' : READY_META[f].label}<span className="opacity-75 font-normal">{counts[f]}</span>
+              {f === 'ALL' ? 'Tất cả' : f === 'AUTO' ? autoLabel : f === 'NEEDS_ARTWORK' ? 'Cần làm artwork' : f === 'UNMAPPED' || f === 'NO_TEMPLATE' ? MAPPING_FILTER_LABEL[f] : READY_META[f].label}<span className="opacity-75 font-normal">{counts[f]}</span>
             </button>
           ))}
         </div>

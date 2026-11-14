@@ -30,8 +30,8 @@ export function isAutoNotRendered(t: Pick<TaskRow, 'readiness' | 'status' | 'has
  * A line whose product has nothing to print from: not in the library, no file yet, already mapped so its template is known.
  * Making this artwork is what feeds the library for later orders.
  */
-export function needsArtwork(t: Pick<TaskRow, 'readiness' | 'status' | 'hasPrint' | 'fromLibrary' | 'unmapped'>): boolean {
-  return t.readiness === 'MANUAL' && !t.hasPrint && !t.fromLibrary && !t.unmapped && (t.status === 'NEW' || t.status === 'ASSIGNED' || t.status === 'DOING')
+export function needsArtwork(t: Pick<TaskRow, 'readiness' | 'status' | 'hasPrint' | 'fromLibrary' | 'unmapped' | 'mapping'>): boolean {
+  return t.readiness === 'MANUAL' && !t.hasPrint && !t.fromLibrary && !t.unmapped && t.mapping === 'READY' && (t.status === 'NEW' || t.status === 'ASSIGNED' || t.status === 'DOING')
 }
 
 /** One task per product that needs artwork, the first by due date, and how many open lines wait on each product. */
@@ -45,6 +45,23 @@ export function artworkProducts(tasks: TaskRow[]): { rows: TaskRow[]; waiting: M
   }
   return { rows: Array.from(first.values()), waiting }
 }
+
+export type QueueFilter = 'ALL' | 'AUTO' | 'LOW' | 'MANUAL' | 'UNMAPPED' | 'NO_TEMPLATE' | 'NEEDS_ARTWORK'
+
+/**
+ * Which chip a task answers to in the work queue. A line without a supplier, or whose supplier SKU has no print template,
+ * counts only under Chưa mapping / Thiếu template: Auto, Cần chỉnh and Làm tay hold lines a designer can work on now.
+ * In Duyệt mẫu the readiness chips keep their old meaning (the print is already there).
+ */
+export function matchesQueueFilter(t: Pick<TaskRow, 'readiness' | 'status' | 'hasPrint' | 'mapping'>, filter: QueueFilter, review: boolean): boolean {
+  if (filter === 'ALL' || filter === 'NEEDS_ARTWORK') return true
+  if (filter === 'UNMAPPED' || filter === 'NO_TEMPLATE') return t.mapping === filter
+  if (review) return t.readiness === filter
+  if (t.mapping !== 'READY') return false
+  return filter === 'AUTO' ? isAutoNotRendered(t) : t.readiness === filter
+}
+
+export const MAPPING_FILTER_LABEL: Record<'UNMAPPED' | 'NO_TEMPLATE', string> = { UNMAPPED: 'Chưa mapping', NO_TEMPLATE: 'Thiếu template' }
 
 /** The readiness label of one task: an AUTO line says whether it was rendered. */
 export function readyLabel(t: Pick<TaskRow, 'readiness' | 'hasPrint'>, base: string): string {

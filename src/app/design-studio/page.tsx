@@ -6,7 +6,7 @@ import StoreFilter from '@/components/StoreFilter'
 import { useSellerReadOnly } from '@/components/RoleGate'
 import { useStoreFilter } from '@/lib/use-store-filter'
 import type { Me, SentLineRow, TaskDetail, TaskRow, TaskStatus } from './components/types'
-import { artworkProducts, emptyQueueText, isAutoNotRendered, isRetryable, postJson, requestJson, retryDelay, taskImages, taskUrl } from './components/model'
+import { MAPPING_FILTER_LABEL, artworkProducts, emptyQueueText, isRetryable, matchesQueueFilter, postJson, requestJson, retryDelay, taskImages, taskUrl } from './components/model'
 import { machineQa } from './components/ai-qa'
 import { LightboxProvider } from './components/Lightbox'
 import Queue, { byDue, type QueueFilter } from './components/Queue'
@@ -197,10 +197,7 @@ function DesignTasks() {
 
   const artwork = useMemo(() => artworkProducts(tasks), [tasks])
   const visible = useMemo(() => filter === 'NEEDS_ARTWORK' && mode !== 'review' ? artwork.rows : tasks.filter(t => {
-    if (filter === 'ALL' || filter === 'NEEDS_ARTWORK') return true
-    // In Duyệt mẫu an AUTO line is already rendered; elsewhere the chip means the auto work still to do.
-    if (filter === 'AUTO' && mode !== 'review') return isAutoNotRendered(t)
-    return t.readiness === filter
+    return matchesQueueFilter(t, filter, mode === 'review')
   }), [tasks, filter, mode, artwork])
 
   useEffect(() => {
@@ -240,9 +237,11 @@ function DesignTasks() {
     const open = tasks.filter(t => t.status !== 'DONE')
     return {
       ALL: open.length,
-      AUTO: mode === 'review' ? open.filter(t => t.readiness === 'AUTO' && t.status === 'REVIEW').length : open.filter(isAutoNotRendered).length,
-      LOW: open.filter(t => t.readiness === 'LOW').length,
-      MANUAL: open.filter(t => t.readiness === 'MANUAL').length,
+      AUTO: mode === 'review' ? open.filter(t => t.readiness === 'AUTO' && t.status === 'REVIEW').length : open.filter(t => matchesQueueFilter(t, 'AUTO', false)).length,
+      LOW: open.filter(t => matchesQueueFilter(t, 'LOW', mode === 'review')).length,
+      MANUAL: open.filter(t => matchesQueueFilter(t, 'MANUAL', mode === 'review')).length,
+      UNMAPPED: open.filter(t => t.mapping === 'UNMAPPED').length,
+      NO_TEMPLATE: open.filter(t => t.mapping === 'NO_TEMPLATE').length,
       NEEDS_ARTWORK: artwork.rows.length,
     } as Record<QueueFilter, number>
   }, [tasks, mode, artwork])
@@ -262,7 +261,7 @@ function DesignTasks() {
     setReviewVersion(v => v + 1)
   }, [reviewTasks, reviewSel, reload])
   const filtered = filter !== 'ALL' || mine || !!debouncedQ
-  const emptyText = emptyQueueText({ readinessLabel: filter === 'ALL' ? null : filter === 'NEEDS_ARTWORK' ? 'Cần làm artwork' : READY_META[filter].label, mine, q: debouncedQ })
+  const emptyText = emptyQueueText({ readinessLabel: filter === 'ALL' ? null : filter === 'NEEDS_ARTWORK' ? 'Cần làm artwork' : filter === 'UNMAPPED' || filter === 'NO_TEMPLATE' ? MAPPING_FILTER_LABEL[filter] : READY_META[filter].label, mine, q: debouncedQ })
   const clearFilters = useCallback(() => { setFilter('ALL'); setMine(false); setQ('') }, [])
 
   const holdCount = useMemo(() => {

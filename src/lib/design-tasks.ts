@@ -1,4 +1,5 @@
 import { printCutCheck } from '@/lib/print-cut'
+import { mappingStates, type MappingState, type MappingStateLine } from '@/lib/mapping-state'
 import { prisma } from '@/lib/db'
 import { rejectReasonsError } from '@/lib/reject-reasons'
 import { isNonProductLine, lineKeysOf, planTaskKeys, type KeyedTask, type TaskKeyMove } from '@/lib/order-lines'
@@ -416,6 +417,10 @@ export type TaskRow = {
   fromLibrary: boolean
   /** No supplier yet: mapping comes first. */
   unmapped: boolean
+  /** Supplier set-up of the line: READY (supplier + template), UNMAPPED (a templated supplier is known for its type), NO_TEMPLATE. */
+  mapping: MappingState
+  /** For an UNMAPPED line: the supplier product its type usually goes to. */
+  mappingHint: string | null
   /** A print file is on the task: an AUTO line has been rendered, or someone uploaded one. */
   hasPrint: boolean
   /** Lines of one product share this: its artwork, once made, serves them all. */
@@ -1166,6 +1171,7 @@ export async function listTasks(f: { statuses?: TaskStatus[]; readiness?: Readin
 
   const q = f.q?.trim().toLowerCase()
   const rows: TaskRow[] = []
+  const stateLines: MappingStateLine[] = []
   for (const task of tasks) {
     const line = task.order.lines.find(l => l.shopifyLineId === task.shopifyLineId)
     if (!line) continue
@@ -1183,11 +1189,17 @@ export async function listTasks(f: { statuses?: TaskStatus[]; readiness?: Readin
       shopifyLineId: task.shopifyLineId, linePosition: line.linePosition, sku: line.sku, productTitle: line.productTitle,
       variantTitle: line.variantTitle, previewUrl: line.previewCdnUrl, imageUrl: safeHttpUrl(line.imageUrl), supplierName: task.supplierSnapshot,
       customized: line.customized, storeName: task.order.store.project?.name ?? task.order.store.shop,
-      fromLibrary: task.fromLibrary, unmapped: !line.resolvedSupplierId,
+      fromLibrary: task.fromLibrary, unmapped: !line.resolvedSupplierId, mapping: 'READY', mappingHint: null,
       hasPrint: printedLines.has(`${task.orderId}\u0000${task.shopifyLineId}`),
       productKey: line.shopifyProductId ?? line.productTitle,
       agent: agentByTask.get(task.id) ?? null,
     })
+    stateLines.push({ key: task.id, storeId: task.order.storeId, orderId: task.orderId, resolvedSupplierId: line.resolvedSupplierId, resolvedSupplierSku: line.resolvedSupplierSku, shopifyProductId: line.shopifyProductId, shopifyProductType: line.shopifyProductType })
+  }
+  const verdicts = await mappingStates(stateLines)
+  for (const r of rows) {
+    const v = verdicts.get(r.id)
+    if (v) { r.mapping = v.state; r.mappingHint = v.hint }
   }
 
   rows.sort((a, b) => {
