@@ -3,8 +3,8 @@ set -euo pipefail
 
 DB=/home/podmanager/dev.db
 DIR=/root/db-backups
-MIN_FREE=$((2 * 1024 * 1024 * 1024))
-KEEP=30
+MIN_FREE=$(( ${MIN_FREE_GB:-2} * 1024 * 1024 * 1024 ))
+KEEP="${KEEP:-30}"
 
 mkdir -p "$DIR"
 free=$(df --output=avail -B1 "$DIR" | tail -n 1 | tr -d ' ')
