@@ -2,14 +2,14 @@ import { prisma } from '@/lib/db'
 import { AUTO_REVIEW_FROM, requiredSlotsFor, requiredSlotsForLine, submitAutoRenderForReview, templateForLine } from '@/lib/design-tasks'
 import { isOrderOpen } from '@/lib/design-agent/order-open'
 import { driveFileViewUrl } from '@/lib/google-drive'
-import { templateViewFor, type TemplateRow } from '@/lib/print-template-resolve'
+import { allSlotNames, templateViewFor, type TemplateRow } from '@/lib/print-template-resolve'
 import { isUniqueViolation } from '@/lib/sqlite-busy'
-import { driveFileName, missingPrintAreas } from '@/lib/task-files'
+import { driveFileName, missingPrintAreas, sameLabel } from '@/lib/task-files'
 import type { DeliveryDrive } from '@/lib/delivery/drive'
 import { DeliveryLineMissingError, deliveryTaskState } from '@/lib/delivery/task-state'
 import type { CommitError, CommitInput, CommitResult, DeliveryFile, TaskState } from '@/lib/delivery/types'
 import {
-  driveFileError, inputError, isAlreadyApplied, isStale, layoutCheck, refuse, sameIds, staleRefusal,
+  driveFileError, duplicateFileError, inputError, isAlreadyApplied, isStale, layoutCheck, refuse, sameIds, staleRefusal,
 } from '@/lib/delivery/commit-checks'
 import { pushEventMessage } from '@/lib/delivery/commit-text'
 
@@ -22,6 +22,7 @@ type Ctx = {
   orderId: string
   shopifyLineId: string
   input: CommitInput
+  files: DeliveryFile[]
   state: TaskState
   template: TemplateRow | null
   now: Date
@@ -35,13 +36,25 @@ const RESUBMIT_FROM = ['NEW', 'ASSIGNED']
 
 const LINE_TEMPLATE_FIELDS = { orderId: true, resolvedSupplierId: true, resolvedSupplierSku: true, shopifyProductId: true, shopifyProductType: true } as const
 
+function nextVersionFor(state: TaskState, kind: string, area: string): number {
+  let next = 1
+  for (const [key, n] of Object.entries(state.nextVersion)) {
+    const cut = key.indexOf('/')
+    if (key.slice(0, cut) === kind && sameLabel(key.slice(cut + 1), area)) next = Math.max(next, n)
+  }
+  return next
+}
+
 function planPush(ctx: Ctx): CommitError | Plan {
-  const { state, input } = ctx
+  const { state, input, files } = ctx
   if (!AUTO_REVIEW_FROM.includes(state.status as any)) {
     return refuse(409, 'wrong_state', `Task đang ${state.status} — push chỉ nhận task NEW, ASSIGNED, DOING hoặc REJECTED`, state)
   }
-  if (state.artworks.some(a => a.kind === 'PRINT')) return refuse(409, 'wrong_state', 'Dòng đã có file in — dùng replace', state)
-  const inserts = input.files.map(f => ({ ...f, version: state.nextVersion[`${f.kind}/${f.printArea}`] ?? 1 }))
+  const taken = files.filter(f => state.artworks.some(a => a.kind === f.kind && sameLabel(a.printArea, f.printArea)))
+  if (taken.length) {
+    return refuse(409, 'wrong_state', `Đã có file cho ${taken.map(f => `${f.kind === 'MOCKUP' ? 'mockup ' : ''}${f.printArea}`).join(', ')} — dùng replace`, state)
+  }
+  const inserts = files.map(f => ({ ...f, version: nextVersionFor(state, f.kind, f.printArea) }))
   return { inserts, event: { type: 'ARTWORK', message: pushEventMessage(inserts, input.eventMessage?.trim() ? input.eventMessage : undefined) } }
 }
 
@@ -130,6 +143,9 @@ export async function commitDelivery(taskKey: string, input: CommitInput, drive:
   if (!(await isOrderOpen(orderId))) return refuse(409, 'closed', 'Đơn đã giao hoặc đã đóng — không nhận file nữa')
   const line = await prisma.orderLine.findFirst({ where: { orderId, shopifyLineId }, select: LINE_TEMPLATE_FIELDS })
   if (!line) return refuse(409, 'line_syncing', new DeliveryLineMissingError().message)
+  const template = await templateForLine(line)
+  const slots = allSlotNames(template)
+  const files = input.files.map(f => ({ ...f, printArea: slots.find(s => sameLabel(s, f.printArea)) ?? f.printArea }))
 
   const rows = await prisma.designArtwork.findMany({
     where: { orderId, shopifyLineId }, select: { id: true, kind: true, printArea: true, driveFileId: true, removedAt: true },
@@ -158,23 +174,26 @@ export async function commitDelivery(taskKey: string, input: CommitInput, drive:
   if (!state) return refuse(404, 'not_found', 'Không tìm thấy task')
   if (isStale(state, input.expected)) return staleRefusal(state)
 
-  const ctx: Ctx = { taskId: task.id, orderId, shopifyLineId, input, state, template: await templateForLine(line), now: new Date() }
+  const duplicate = duplicateFileError(state, files)
+  if (duplicate) return duplicate
+
+  const ctx: Ctx = { taskId: task.id, orderId, shopifyLineId, input, files, state, template, now: new Date() }
   const action = ACTIONS[input.action]
   if (!action) return refuse(400, 'unsupported_action', `Action ${input.action} chưa hỗ trợ`)
   const planned = action.plan(ctx)
   if ('ok' in planned) return planned
 
-  const driveError = await driveFileError(input.files, state, task, drive)
+  const driveError = await driveFileError(files, state, task, drive)
   if (driveError) return driveError
-  const view = templateViewFor(ctx.template, [...state.artworks, ...input.files])
-  const layout = layoutCheck(view, input.files, ctx.now)
+  const view = templateViewFor(template, [...state.artworks, ...files])
+  const layout = layoutCheck(template, view, files, ctx.now)
   if (layout.error) return layout.error
   const warnings = [...layout.warnings]
 
   if (input.dryRun) {
     const wouldBe: Artwork[] = [
       ...state.artworks.map(a => ({ id: a.id, kind: a.kind, printArea: a.printArea, version: a.version, driveFileId: a.driveFileId })),
-      ...planned.inserts.map(f => ({ id: '', kind: f.kind, printArea: f.printArea, version: f.version, driveFileId: f.driveFileId })),
+      ...planned.inserts.map(f => ({ id: null, kind: f.kind, printArea: f.printArea, version: f.version, driveFileId: f.driveFileId })),
     ]
     return { ok: true, status: state.status, artworks: wouldBe, retired: [], missing: missingFor(ctx.template, wouldBe), warnings, alreadyApplied: false }
   }

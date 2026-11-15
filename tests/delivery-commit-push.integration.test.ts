@@ -1,5 +1,17 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest'
 import { prisma } from '@/lib/db'
+
+const hooks = vi.hoisted(() => ({ submitThrows: false }))
+vi.mock('@/lib/design-tasks', async importOriginal => {
+  const real = await importOriginal<typeof import('@/lib/design-tasks')>()
+  return {
+    ...real,
+    submitAutoRenderForReview: async (orderId: string, shopifyLineId: string) => {
+      if (hooks.submitThrows) throw new Error('db gone')
+      return real.submitAutoRenderForReview(orderId, shopifyLineId)
+    },
+  }
+})
 import { AUTO_REVIEW_MESSAGE } from '@/lib/design-tasks'
 import { commitDelivery } from '@/lib/delivery/commit'
 import type { CommitInput, DeliveryFile } from '@/lib/delivery/types'
@@ -9,6 +21,8 @@ import { fakeDrive } from './helpers/delivery-fake-drive'
 const fx = agentFixture('DLC')
 const TPL_SKU = 'DLC-FB'
 const OLD_SKU = 'DLC-OLD'
+const PIECES_OLD_SKU = 'DLC-PCS'
+const PIECES_SKU = 'DLC-PCS2'
 let n = 0
 
 async function line(opts: { sku?: string; taskStatus?: string; pipelineStatus?: string } = {}) {
@@ -53,7 +67,19 @@ beforeAll(async () => {
       areas: [{ name: 'Front', x: 0, y: 0, w: 900, h: 900 }, { name: 'Back', x: 900, y: 0, w: 900, h: 900 }],
     }]),
   } })
+  const pieces = (filesUntil?: string) => JSON.stringify([{
+    label: 'Bộ mảnh', widthPx: 1600, heightPx: 800, ...(filesUntil ? { filesUntil } : {}),
+    areas: [{ name: 'Back Left', x: 0, y: 0, w: 400, h: 800 }, { name: 'Back Right', x: 400, y: 0, w: 400, h: 800 }, { name: 'Front', x: 800, y: 0, w: 800, h: 800 }],
+  }])
+  await prisma.printTemplate.create({ data: {
+    supplierId: fx.supplierId, supplierSku: PIECES_OLD_SKU, name: 'DLC expired pieces', widthPx: 2000, heightPx: 1000, areas, altAreas: pieces('2026-11-01'),
+  } })
+  await prisma.printTemplate.create({ data: {
+    supplierId: fx.supplierId, supplierSku: PIECES_SKU, name: 'DLC pieces', widthPx: 2000, heightPx: 1000, areas, altAreas: pieces(),
+  } })
 })
+
+afterEach(() => { hooks.submitThrows = false })
 
 afterAll(async () => {
   await prisma.printTemplate.deleteMany({ where: { supplierId: fx.supplierId } })
@@ -267,7 +293,10 @@ describe('commitDelivery push', () => {
     const drive = driveWith(l.taskKey, files)
     const r = await commitDelivery(l.taskKey, input(files, { dryRun: true }), drive)
     expect(r).toMatchObject({ ok: true, alreadyApplied: false, status: 'NEW', missing: [] })
-    if (r.ok) expect(r.artworks.map(a => `${a.printArea} v${a.version}`).sort()).toEqual(['Back v1', 'Front v3'])
+    if (r.ok) {
+      expect(r.artworks.map(a => `${a.printArea} v${a.version}`).sort()).toEqual(['Back v1', 'Front v3'])
+      expect(r.artworks.filter(a => a.id === null)).toHaveLength(2)
+    }
     expect(await rowsOf(l.orderId)).toHaveLength(1)
     expect((await eventsOf(l.taskKey)).filter(e => e.type === 'ARTWORK')).toHaveLength(0)
     expect((await taskOf(l.taskKey)).status).toBe('NEW')
@@ -310,15 +339,34 @@ describe('commitDelivery push', () => {
     expect(drive.calls.filter(c => c.startsWith('createShortcut:'))).toEqual([])
   })
 
-  it('push on a line that already has a live print is 409 wrong_state', async () => {
+  it('push is additive: Front then Back completes the line, re-sending Front is 409 wrong_state', async () => {
     const l = await line()
-    const live = await prisma.designArtwork.create({ data: {
-      orderId: l.orderId, shopifyLineId: 'l1', kind: 'PRINT', printArea: 'Front', version: 1, fileName: 'f.png', size: 1, mimeType: 'image/png', storagePath: 'x/f',
-    } })
-    const files = [file({ printArea: 'Back', driveFileId: 'dlc-b13' })]
-    const r = await commitDelivery(l.taskKey, input(files, { expected: { status: 'NEW', liveIds: [live.id] } }), driveWith(l.taskKey, files))
-    expect(r).toMatchObject({ ok: false, code: 'wrong_state', httpStatus: 409 })
-    expect(await rowsOf(l.orderId)).toHaveLength(1)
+    const front = [file({ printArea: 'Front', driveFileId: 'dlc-add-f' })]
+    const drive = driveWith(l.taskKey, front)
+    expect(await commitDelivery(l.taskKey, input(front), drive)).toMatchObject({ ok: true, status: 'NEW', missing: ['Back'] })
+    const frontId = (await rowsOf(l.orderId))[0].id
+
+    const back = [file({ printArea: 'Back', driveFileId: 'dlc-add-b' })]
+    drive.addFile({ id: 'dlc-add-b', parent: `incoming-${l.taskKey}`, size: 100 })
+    const r = await commitDelivery(l.taskKey, input(back, { expected: { status: 'NEW', liveIds: [frontId] } }), drive)
+    expect(r).toMatchObject({ ok: true, status: 'REVIEW', missing: [] })
+    expect((await eventsOf(l.taskKey)).filter(e => e.type === 'ARTWORK').map(e => e.message)).toEqual([
+      'Render tự động (máy local 25/10) · Front v1 · 1000×1000 px',
+      'Render tự động (máy local 25/10) · Back v1 · 1000×1000 px',
+    ])
+    expect((await eventsOf(l.taskKey)).filter(e => e.message === AUTO_REVIEW_MESSAGE)).toHaveLength(1)
+
+    const l2 = await line()
+    const first = [file({ printArea: 'Front', driveFileId: 'dlc-add-f2' })]
+    const drive2 = driveWith(l2.taskKey, first)
+    await commitDelivery(l2.taskKey, input(first), drive2)
+    const liveIds = (await rowsOf(l2.orderId)).map(x => x.id)
+    const again = [file({ printArea: 'front', driveFileId: 'dlc-add-f3' })]
+    drive2.addFile({ id: 'dlc-add-f3', parent: `incoming-${l2.taskKey}`, size: 100 })
+    const refused = await commitDelivery(l2.taskKey, input(again, { expected: { status: 'NEW', liveIds } }), drive2)
+    expect(refused).toMatchObject({ ok: false, code: 'wrong_state', httpStatus: 409 })
+    if (!refused.ok) expect(refused.error).toContain('replace')
+    expect(await rowsOf(l2.orderId)).toHaveLength(1)
   })
 
   it('push on a task in REVIEW is 409 wrong_state', async () => {
@@ -382,6 +430,100 @@ describe('commitDelivery push', () => {
     expect(Array.from(drive.files.values()).filter(f => f.target === 'dlc-shared2')).toHaveLength(0)
     expect(drive.files.has('dlc-shared2')).toBe(true)
     await expectNothingWritten(l.orderId, l.taskKey, 'DOING')
+  })
+
+  it('a print set leaning to an expired piece layout is 400 old_layout', async () => {
+    const l = await line({ sku: PIECES_OLD_SKU })
+    const files = [
+      file({ printArea: 'Back Left', driveFileId: 'dlc-pc-l', widthPx: 400, heightPx: 800 }),
+      file({ printArea: 'Back Right', driveFileId: 'dlc-pc-r', widthPx: 400, heightPx: 800 }),
+    ]
+    const r = await commitDelivery(l.taskKey, input(files), driveWith(l.taskKey, files))
+    expect(r).toMatchObject({ ok: false, code: 'old_layout', httpStatus: 400 })
+    await expectNothingWritten(l.orderId, l.taskKey)
+  })
+
+  it('the same piece set without filesUntil is accepted', async () => {
+    const l = await line({ sku: PIECES_SKU })
+    const files = [
+      file({ printArea: 'Back Left', driveFileId: 'dlc-pc2-l', widthPx: 400, heightPx: 800 }),
+      file({ printArea: 'Back Right', driveFileId: 'dlc-pc2-r', widthPx: 400, heightPx: 800 }),
+    ]
+    const r = await commitDelivery(l.taskKey, input(files), driveWith(l.taskKey, files))
+    expect(r).toMatchObject({ ok: true, warnings: [] })
+  })
+
+  it('a driveFileId already live on this line is 400 duplicate_file', async () => {
+    const l = await line()
+    const mock = await prisma.designArtwork.create({ data: {
+      orderId: l.orderId, shopifyLineId: 'l1', kind: 'MOCKUP', printArea: 'Main', version: 1, fileName: 'm.jpg', size: 100, mimeType: 'image/jpeg',
+      storage: 'DRIVE', driveFileId: 'dlc-dup',
+    } })
+    const files = [file({ printArea: 'Front', driveFileId: 'dlc-dup' })]
+    const r = await commitDelivery(l.taskKey, input(files, { expected: { status: 'NEW', liveIds: [mock.id] } }), driveWith(l.taskKey, files))
+    expect(r).toMatchObject({ ok: false, code: 'duplicate_file', httpStatus: 400 })
+    const twice = [file({ printArea: 'Front', driveFileId: 'dlc-dup2' }), file({ printArea: 'Back', driveFileId: 'dlc-dup2' })]
+    expect(await commitDelivery(l.taskKey, input(twice, { expected: { status: 'NEW', liveIds: [mock.id] } }), fakeDrive()))
+      .toMatchObject({ ok: false, code: 'duplicate_file', httpStatus: 400 })
+    expect(await rowsOf(l.orderId)).toHaveLength(1)
+  })
+
+  it('part names match case-insensitively and are stored with the template label', async () => {
+    const l = await line()
+    await prisma.designArtwork.create({ data: {
+      orderId: l.orderId, shopifyLineId: 'l1', kind: 'PRINT', printArea: 'FRONT', version: 2, fileName: 'f.png', size: 1, mimeType: 'image/png',
+      storagePath: 'x/old2', removedAt: new Date('2026-11-02'),
+    } })
+    const files = [file({ printArea: 'front', driveFileId: 'dlc-ci-f' }), file({ printArea: 'BACK', driveFileId: 'dlc-ci-b' })]
+    const drive = driveWith(l.taskKey, files)
+    const r = await commitDelivery(l.taskKey, input(files), drive)
+    expect(r).toMatchObject({ ok: true, status: 'REVIEW' })
+    const live = (await rowsOf(l.orderId)).filter(x => !x.removedAt).map(x => `${x.printArea} v${x.version}`).sort()
+    expect(live).toEqual(['Back v1', 'Front v3'])
+    const again = await commitDelivery(l.taskKey, input([file({ printArea: 'FRONT', driveFileId: 'dlc-ci-f' })]), drive)
+    expect(again).toMatchObject({ ok: true, alreadyApplied: true })
+
+    const dup = [file({ printArea: 'Front', driveFileId: 'a1' }), file({ printArea: 'front', driveFileId: 'a2' })]
+    expect(await commitDelivery(l.taskKey, input(dup), fakeDrive())).toMatchObject({ ok: false, code: 'bad_request' })
+  })
+
+  it('wrongly typed fields are 400 bad_request', async () => {
+    const l = await line()
+    const cases: any[] = [
+      input([{ ...file({ printArea: 'Front', driveFileId: 't1' }), widthPx: '1000' } as any]),
+      input([{ ...file({ printArea: 'Front', driveFileId: 't2' }), heightPx: -1 } as any]),
+      input([{ ...file({ printArea: 'Front', driveFileId: 't3' }), shortcutOf: 5 } as any]),
+      { ...input([file({ printArea: 'Front', driveFileId: 't4' })]), eventMessage: 5 },
+    ]
+    for (const c of cases) expect(await commitDelivery(l.taskKey, c, fakeDrive())).toMatchObject({ ok: false, code: 'bad_request', httpStatus: 400 })
+    await expectNothingWritten(l.orderId, l.taskKey)
+  })
+
+  it('shortcutOf on a mockup is 400 bad_shortcut', async () => {
+    const l = await line()
+    const files = [file({ kind: 'MOCKUP', printArea: 'Main', driveFileId: 'dlc-sm', shortcutOf: 'dlc-sm' })]
+    expect(await commitDelivery(l.taskKey, input(files), fakeDrive())).toMatchObject({ ok: false, code: 'bad_shortcut', httpStatus: 400 })
+  })
+
+  it('a throw from the review move after the commit is a warning and the rows stay', async () => {
+    const l = await line()
+    const files = [file({ printArea: 'Front', driveFileId: 'dlc-th-f' }), file({ printArea: 'Back', driveFileId: 'dlc-th-b' })]
+    hooks.submitThrows = true
+    const r = await commitDelivery(l.taskKey, input(files), driveWith(l.taskKey, files))
+    expect(r).toMatchObject({ ok: true, status: 'NEW', missing: [] })
+    if (r.ok) expect(r.warnings.join('\n')).toContain('Chưa gửi duyệt: db gone')
+    expect(await rowsOf(l.orderId)).toHaveLength(2)
+  })
+
+  it('a tidy failure is a warning and the commit stands', async () => {
+    const l = await line()
+    const files = [file({ printArea: 'Front', driveFileId: 'dlc-td-f' })]
+    const drive = driveWith(l.taskKey, files)
+    drive.tidy = async () => { throw new Error('drive down') }
+    const r = await commitDelivery(l.taskKey, input(files), drive)
+    expect(r).toMatchObject({ ok: true })
+    if (r.ok) expect(r.warnings.join('\n')).toContain('Chưa xếp được file vào thư mục task: drive down')
+    expect(await rowsOf(l.orderId)).toHaveLength(1)
   })
 
   it('replace, retire and revert are not supported yet', async () => {

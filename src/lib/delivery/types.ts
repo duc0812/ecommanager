@@ -49,7 +49,8 @@ export type CommitInput = {
 export type CommitResult = {
   ok: true
   status: string
-  artworks: { id: string; kind: string; printArea: string; version: number; driveFileId: string | null }[]
+  /** `id` is null on a dryRun row that would be inserted. */
+  artworks: { id: string | null; kind: string; printArea: string; version: number; driveFileId: string | null }[]
   retired: string[]
   missing: string[]
   warnings: string[]
