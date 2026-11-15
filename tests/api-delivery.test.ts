@@ -401,6 +401,44 @@ describe('runApiDelivery', () => {
     expect(r.results[0]).toMatchObject({ ok: false, status: 404, outcome: 'skipped', body: { code: 'not_found' } })
   })
 
+  it('a file with a knownDriveFileId is committed with that id, without an upload', async () => {
+    const f = fakes()
+    const r = await run(f, [line({ files: [{ kind: 'PRINT', printArea: 'Front', path: localFile('known.png', 33), fileName: 'known.png', mimeType: 'image/png', knownDriveFileId: 'KNOWN1' }] })])
+    expect(r.applied).toBe(1)
+    expect(f.uploads).toHaveLength(0)
+    expect(f.commits[0].body.files[0]).toMatchObject({ driveFileId: 'KNOWN1', size: 33 })
+    expect(f.commits[0].body.files[0].shortcutOf).toBeUndefined()
+  })
+
+  it('a known id without a local copy takes its size from the spec', async () => {
+    const f = fakes()
+    await run(f, [line({ files: [{ kind: 'PRINT', printArea: 'Front', fileName: 'front.png', mimeType: 'image/png', size: 777, knownDriveFileId: 'KNOWN1' }] })])
+    expect(f.uploads).toHaveLength(0)
+    expect(f.commits[0].body.files[0]).toMatchObject({ driveFileId: 'KNOWN1', size: 777 })
+  })
+
+  it.each(['wrong_folder', 'drive_missing'])('after %s on a known id the next run uploads from the local path', async code => {
+    const l = line({ files: [{ kind: 'PRINT', printArea: 'Front', path: localFile('front.png'), fileName: 'front.png', mimeType: 'image/png', knownDriveFileId: 'KNOWN1' }] })
+    const bad = fakes({ commit: () => ({ ok: false, status: 400, body: { ok: false, code, error: 'x' } }) })
+    expect(await run(bad, [l])).toMatchObject({ skipped: 1 })
+    expect(bad.uploads).toHaveLength(0)
+    const again = fakes()
+    expect(await run(again, [l])).toMatchObject({ applied: 1 })
+    expect(again.uploads.map(u => u.name)).toEqual(['front.png'])
+    expect(again.commits[0].body.files[0].driveFileId).toBe('D-front.png')
+  })
+
+  it('a known id refused with wrong_folder and no local path fails the next run with a clear message', async () => {
+    const l = line({ files: [{ kind: 'PRINT', printArea: 'Front', fileName: 'front.png', mimeType: 'image/png', size: 777, knownDriveFileId: 'KNOWN1' }] })
+    await run(fakes({ commit: () => ({ ok: false, status: 400, body: { ok: false, code: 'wrong_folder', error: 'x' } }) }), [l])
+    const again = fakes()
+    const r = await run(again, [l])
+    expect(r.failed).toBe(1)
+    expect(again.uploads).toHaveLength(0)
+    expect(again.commits).toHaveLength(0)
+    expect(r.results[0].body.error).toMatch(/KNOWN1.*không có bản local/)
+  })
+
   it('never sends a DELETE or a trashed body when run with the real uploader', async () => {
     const requests: { method: string; url: string; body: any }[] = []
     const fetchImpl: any = async (url: any, init: any = {}) => {

@@ -62,8 +62,20 @@ describe('planLinesToApi', () => {
     expect(lines[0].files.map((f: any) => f.printArea)).toEqual(['Front'])
   })
 
-  it('a line with a file that lives only on Drive is skipped: the API only takes files from the incoming or task folder', () => {
-    const { lines, skipped } = planLinesToApi({ lines: [planLine({ files: [file(), file({ printArea: 'Back', storagePath: null, storage: 'DRIVE', driveFileId: 'DX', transfer: 'reuse' })] })] }, { storageRoot })
+  it('a reuse file the local push already put on Drive goes with its known id, plus its local path when there is one', () => {
+    const { lines, skipped } = planLinesToApi({ lines: [planLine({ files: [
+      file({ storage: 'DRIVE', driveFileId: 'DF', transfer: 'reuse' }),
+      file({ printArea: 'Back', storagePath: null, storage: 'DRIVE', driveFileId: 'DX', transfer: 'reuse', size: 999 }),
+    ] })] }, { storageRoot })
+    expect(skipped).toEqual([])
+    expect(lines[0].files).toEqual([
+      { kind: 'PRINT', printArea: 'Front', path: path.join(storageRoot, 'design/o1/front-v2.png'), fileName: 'front-v2.png', mimeType: 'image/png', widthPx: 4200, heightPx: 4800, knownDriveFileId: 'DF', size: 1234 },
+      { kind: 'PRINT', printArea: 'Back', fileName: 'front-v2.png', mimeType: 'image/png', widthPx: 4200, heightPx: 4800, knownDriveFileId: 'DX', size: 999 },
+    ])
+  })
+
+  it('a file with neither a local copy nor a Drive id skips the line', () => {
+    const { lines, skipped } = planLinesToApi({ lines: [planLine({ files: [file(), file({ printArea: 'Back', storagePath: null })] })] }, { storageRoot })
     expect(lines).toEqual([])
     expect(skipped).toEqual([{ taskKey: 'LIT6001_1', reason: NO_LOCAL_COPY }])
     expect(NO_LOCAL_COPY).toBe('không có bản local để upload')

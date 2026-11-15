@@ -3,9 +3,9 @@ import { readLedger, runApiDelivery } from './api-delivery.mjs'
 import { DeliveryGaveUp, DeliveryStopped } from './delivery-client.mjs'
 
 // Turns the plan of push-local-renders / push-shared-prints (buildPlan lines) into Artwork Delivery API lines, and runs them.
-// The API only takes files uploaded into the task's incoming folder (or already in its task folder), so a part that exists only
-// on Drive cannot go; a no-custom print several lines share goes as a shortcut to the one file (owner rule: one link, never a
-// copy per order).
+// A part the local push already put on Drive goes with that id (knownDriveFileId) so no second copy appears; the local path
+// rides along for the re-upload when the server refuses the id. A no-custom print several lines share goes as a shortcut to
+// the one file (owner rule: one link, never a copy per order).
 
 export const API_ACTIONS = ['push', 'replace', 'revert']
 export const NO_LOCAL_COPY = 'không có bản local để upload'
@@ -36,8 +36,10 @@ export function planLinesToApi(plan, { storageRoot, sharedIds = null }) {
         stop = { reason: `dùng chung file của ${f.sharedFrom} — chờ ${f.sharedFrom} ghi xong rồi chạy lại`, waitingFor: f.sharedFrom }
         break
       }
+      const local = f.storagePath ? { path: path.resolve(storageRoot, f.storagePath) } : {}
+      if (f.transfer === 'reuse' && f.driveFileId) { files.push({ ...base, ...local, ...meta, knownDriveFileId: f.driveFileId, size: Number(f.size) }); continue }
       if (!f.storagePath) { stop = { reason: NO_LOCAL_COPY }; break }
-      files.push({ ...base, path: path.resolve(storageRoot, f.storagePath), ...meta })
+      files.push({ ...base, ...local, ...meta })
     }
     if (stop) { skipped.push({ taskKey: l.taskKey, ...stop }); continue }
     const retire = l.action === 'replace' ? (l.replaces ?? []).map(r => r.id) : []

@@ -10,7 +10,8 @@ import { DeliveryGaveUp, DeliveryStopped } from './delivery-client.mjs'
 
 const PREVIEW_MIN_BYTES = 30 * 1024 * 1024
 const DROP_PREVIEW_STATUSES = new Set([400, 404, 409, 413])
-// The server no longer sees the uploaded file where it should be: the next run uploads it again.
+// The server no longer sees the uploaded file where it should be: the next run uploads it again. A knownDriveFileId (a copy
+// already on Drive) is committed without an upload; once refused this way it is never offered again for that delivery.
 const REUPLOAD_CODES = new Set(['drive_missing', 'wrong_folder'])
 
 const sleepSync = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
@@ -119,7 +120,7 @@ function takeLock(ledgerPath, log) {
 
 /**
  * @param {{
- *   lines: { taskKey: string, action: 'push'|'replace'|'retire'|'revert', files: { kind: string, printArea: string, path: string, fileName: string, mimeType: string, widthPx?: number|null, heightPx?: number|null, shortcutOf?: string|null, size?: number }[], retire: string[], eventMessage?: string, retireSources?: string[], allowFinished?: boolean, revertReadiness?: string }[],
+ *   lines: { taskKey: string, action: 'push'|'replace'|'retire'|'revert', files: { kind: string, printArea: string, path?: string, fileName: string, mimeType: string, widthPx?: number|null, heightPx?: number|null, shortcutOf?: string|null, knownDriveFileId?: string|null, size?: number }[], retire: string[], eventMessage?: string, retireSources?: string[], allowFinished?: boolean, revertReadiness?: string }[],
  *   client: { taskState: Function, commit: Function, putPreview: Function },
  *   uploader: { upload: (f: { path: string, name: string, mimeType: string, parentId: string }) => Promise<{ id: string, size: number }> },
  *   ledgerPath: string,
@@ -206,6 +207,22 @@ async function run({ lines, client, uploader, ledgerPath, log, uploads, previewO
       if (!size) throw new Error(`${key}: không biết dung lượng của lối tắt ${f.fileName} (thiếu size và không có file local)`)
       sizes.set(fileKey(f), size)
     }
+    const refused = new Set(led.refusedKnown ?? [])
+    const seed = new Map()
+    for (const f of files) {
+      if (f.shortcutOf || led.files[fileKey(f)]?.driveFileId) continue
+      if (f.knownDriveFileId && !refused.has(f.knownDriveFileId)) {
+        const size = Number.isInteger(f.size) && f.size > 0 ? f.size : statOf(f.path)?.size
+        if (!size) throw new Error(`${key}: không biết dung lượng của ${f.fileName} (file Drive ${f.knownDriveFileId}, thiếu size và không có file local)`)
+        seed.set(fileKey(f), { driveFileId: f.knownDriveFileId, size, known: true, path: f.path ?? null, fileName: f.fileName })
+        continue
+      }
+      if (!f.path) {
+        throw new Error(f.knownDriveFileId
+          ? `${key}: server không nhận file Drive ${f.knownDriveFileId} (${f.fileName}) và không có bản local để upload lại`
+          : `${key}: ${f.fileName} không có bản local để upload`)
+      }
+    }
 
     const st = await client.taskState(key)
     if (!st.ok) return skipOnProd(line, led, st)
@@ -214,6 +231,7 @@ async function run({ lines, client, uploader, ledgerPath, log, uploads, previewO
     const todo = []
     for (const f of files) {
       if (f.shortcutOf) { led.files[fileKey(f)] = { driveFileId: f.shortcutOf, shortcutOf: f.shortcutOf, size: sizes.get(fileKey(f)) }; continue }
+      if (seed.has(fileKey(f))) { led.files[fileKey(f)] = seed.get(fileKey(f)); continue }
       if (!led.files[fileKey(f)]?.driveFileId) todo.push(f)
     }
     save()
@@ -282,6 +300,8 @@ async function run({ lines, client, uploader, ledgerPath, log, uploads, previewO
       if (again.ok) log(`${key}: trạng thái hiện tại ${again.body?.status}`)
     }
     if (REUPLOAD_CODES.has(res.body?.code)) {
+      const known = Object.values(led.files).filter(e => e?.known).map(e => e.driveFileId)
+      if (known.length) led.refusedKnown = [...new Set([...(led.refusedKnown ?? []), ...known])]
       led.files = {}
       log(`${key}: server báo ${res.body.code} — bỏ mã file đã upload, lần chạy sau upload lại`)
     }
