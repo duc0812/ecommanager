@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
+import { spawn } from 'child_process'
 import { openQueue } from '../scripts/review-queue/store.mjs'
 
 const H3 = 10_800_000
@@ -231,5 +232,82 @@ describe('openQueue', () => {
     const q2 = await openQueue({ root: nested, now })
     expect((await q2.get(r.itemId))?.taskKey).toBe('LIT1_1')
     await q2.close()
+  })
+})
+
+describe('concurrency and integrity', () => {
+  it('a write from a second connection waits for a writer in another process instead of failing busy', async () => {
+    const q2 = await openQueue({ root, now })
+    try {
+      await q2.addOrUpdate(base({ taskKey: 'W0', groupKey: 'W0' }))
+      const dbUrl = 'file:' + path.join(root, 'queue.db').split(path.sep).join('/')
+      const script = `
+        const { createClient } = require('@libsql/client');
+        const c = createClient({ url: ${JSON.stringify(dbUrl)} });
+        (async () => {
+          await c.execute('PRAGMA busy_timeout = 5000');
+          const tx = await c.transaction('write');
+          await tx.execute("INSERT INTO events (itemId, type, message, createdAt) VALUES ('x','hold','hold','t')");
+          console.log('ready');
+          await new Promise(r => setTimeout(r, 800));
+          await tx.commit();
+          process.exit(0);
+        })();`
+      const child = spawn(process.execPath, ['-e', script], { cwd: process.cwd(), stdio: ['ignore', 'pipe', 'inherit'] })
+      await new Promise<void>(res => child.stdout.on('data', d => String(d).includes('ready') && res()))
+      const t0 = Date.now()
+      const r = await q2.addOrUpdate(base({ taskKey: 'W1', groupKey: 'W1' }))
+      expect(r.created).toBe(true)
+      expect(Date.now() - t0).toBeGreaterThan(300)
+      await new Promise(res => child.on('exit', res))
+    } finally {
+      await q2.close()
+    }
+  })
+
+  it('the database refuses a second active item for a group', async () => {
+    const a = await q.addOrUpdate(base())
+    await q.setStatus(a.itemId, 'approved')
+    const b = await q.addOrUpdate(base())
+    await expect(q.setStatus(a.itemId, 'waiting')).rejects.toMatchObject({ code: 'group_active' })
+    expect((await q.get(a.itemId)).status).toBe('approved')
+    await q.setStatus(b.itemId, 'rejected')
+    expect((await q.get(b.itemId)).status).toBe('rejected')
+  })
+
+  it('the unique index backs the rule even for raw inserts', async () => {
+    await q.addOrUpdate(base())
+    const { createClient } = await import('@libsql/client')
+    const c = createClient({ url: 'file:' + path.join(root, 'queue.db').split(path.sep).join('/') })
+    await expect(
+      c.execute({
+        sql: `INSERT INTO items (id, taskKey, groupKey, kind, status, version, enteredAt, createdAt, updatedAt, apiLines, meta, qa)
+              VALUES ('dup','LIT1_1','LIT1_1','line','waiting',1,'t','t','t','null','null','null')`,
+        args: [],
+      }),
+    ).rejects.toThrow(/UNIQUE/)
+    c.close()
+  })
+
+  it('setStatus rejects an unknown status; expired accepts Date, epoch ms and ISO string', async () => {
+    const a = await q.addOrUpdate(base())
+    await expect(q.setStatus(a.itemId, 'bogus')).rejects.toThrow(/không hợp lệ/)
+    const at = clock + H3
+    expect(await q.expired(at)).toHaveLength(1)
+    expect(await q.expired(new Date(at).toISOString())).toHaveLength(1)
+    expect(await q.expired(new Date(at - 1))).toHaveLength(0)
+  })
+
+  it('a lock is released by its own token, not by pid alone', async () => {
+    const a = await q.addOrUpdate(base())
+    const dead = await openQueue({ root, now, isAlive: () => false })
+    try {
+      await q.withLock(a.itemId, async () => {
+        await dead.withLock(a.itemId, async () => {})
+      })
+      await expect(q.withLock(a.itemId, async () => 1)).resolves.toBe(1)
+    } finally {
+      await dead.close()
+    }
   })
 })

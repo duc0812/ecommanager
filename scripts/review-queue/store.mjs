@@ -7,6 +7,8 @@ export const COUNTDOWN_MS = 10_800_000
 export const LOCK_STALE_MS = 15 * 60_000
 export const ACTIVE_STATUSES = ['waiting', 'rejected', 'fixing', 'qa_failed', 'needs_look']
 const COUNTING_STATUSES = ['waiting', 'qa_failed']
+export const ALL_STATUSES = [...ACTIVE_STATUSES, 'approved', 'cloud', 'held', 'removed']
+const BUSY_TIMEOUT_MS = 5000
 
 /**
  * @typedef {'waiting'|'rejected'|'fixing'|'qa_failed'|'needs_look'|'approved'|'cloud'|'held'|'removed'} ItemStatus
@@ -40,6 +42,8 @@ const SCHEMA = [
   )`,
   `CREATE INDEX IF NOT EXISTS items_group ON items (groupKey)`,
   `CREATE INDEX IF NOT EXISTS items_task ON items (taskKey)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS items_one_active_per_group ON items (groupKey)
+    WHERE status IN ('waiting','rejected','fixing','qa_failed','needs_look')`,
   `CREATE TABLE IF NOT EXISTS versions (
     itemId TEXT NOT NULL,
     n INTEGER NOT NULL,
@@ -60,6 +64,7 @@ const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS locks (
     itemId TEXT PRIMARY KEY,
     pid INTEGER NOT NULL,
+    token TEXT NOT NULL,
     takenAt TEXT NOT NULL
   )`,
 ]
@@ -113,7 +118,16 @@ export async function openQueue({ root, now = () => new Date(), isAlive = pidAli
   fs.mkdirSync(root, { recursive: true })
   const dbPath = path.resolve(root, 'queue.db').replace(/\\/g, '/')
   const db = createClient({ url: `file:${dbPath}` })
-  await db.execute('PRAGMA busy_timeout = 5000')
+  // @libsql/client's local driver hands its connection to a transaction and opens a fresh one on the next call,
+  // so the per-connection busy_timeout is re-applied right after every transaction() and at open.
+  const setBusy = () => db.execute(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`)
+  const begin = async () => {
+    const tx = await db.transaction('write')
+    await setBusy()
+    return tx
+  }
+  await setBusy()
+  await db.execute('PRAGMA journal_mode = WAL')
   for (const sql of SCHEMA) await db.execute(sql)
 
   const iso = () => now().toISOString()
@@ -130,7 +144,7 @@ export async function openQueue({ root, now = () => new Date(), isAlive = pidAli
 
     /** @returns {Promise<{ itemId: string, version: number, created: boolean, changed: boolean }>} */
     async addOrUpdate({ taskKey, groupKey, kind, apiLines, files, meta, qa }) {
-      const tx = await db.transaction('write')
+      const tx = await begin()
       try {
         const t = iso()
         const status = qa?.verdict === 'fail' ? 'qa_failed' : 'waiting'
@@ -219,20 +233,38 @@ export async function openQueue({ root, now = () => new Date(), isAlive = pidAli
       return rowToItem(r.rows[0])
     },
 
-    /** Moving to `fixing` remembers the status it came from in `prevStatus`. */
+    /** Moving to `fixing` remembers the status it came from in `prevStatus`. Moving into an active status fails (code group_active) when the group already has another active item. */
     async setStatus(itemId, status, { reason } = {}) {
-      const t = iso()
-      const cur = await getItem(db, itemId)
-      if (!cur) throw new Error(`Không có dòng ${itemId}`)
-      const prev = status === 'fixing' && cur.status !== 'fixing' ? cur.status : status === 'fixing' ? cur.prevStatus : null
-      await db.execute({
-        sql: 'UPDATE items SET status = ?, statusReason = ?, prevStatus = ?, updatedAt = ? WHERE id = ?',
-        args: [status, reason ?? null, prev, t, itemId],
-      })
-      await db.execute({
-        sql: 'INSERT INTO events (itemId, type, message, createdAt) VALUES (?, ?, ?, ?)',
-        args: [itemId, 'status', reason ? `${status}: ${reason}` : status, t],
-      })
+      if (!ALL_STATUSES.includes(status)) throw new Error(`Trạng thái không hợp lệ: ${status}`)
+      const tx = await begin()
+      try {
+        const t = iso()
+        const cur = await getItem(tx, itemId)
+        if (!cur) throw new Error(`Không có dòng ${itemId}`)
+        if (ACTIVE_STATUSES.includes(status)) {
+          const other = await tx.execute({
+            sql: `SELECT id FROM items WHERE groupKey = ? AND id != ? AND status IN (${activeMarks}) LIMIT 1`,
+            args: [cur.groupKey, itemId, ...ACTIVE_STATUSES],
+          })
+          if (other.rows[0]) {
+            const err = new Error(`Nhóm ${cur.groupKey} đã có dòng đang hoạt động (${other.rows[0].id})`)
+            err.code = 'group_active'
+            throw err
+          }
+        }
+        const prev = status === 'fixing' && cur.status !== 'fixing' ? cur.status : status === 'fixing' ? cur.prevStatus : null
+        await tx.execute({
+          sql: 'UPDATE items SET status = ?, statusReason = ?, prevStatus = ?, updatedAt = ? WHERE id = ?',
+          args: [status, reason ?? null, prev, t, itemId],
+        })
+        await tx.execute({
+          sql: 'INSERT INTO events (itemId, type, message, createdAt) VALUES (?, ?, ?, ?)',
+          args: [itemId, 'status', reason ? `${status}: ${reason}` : status, t],
+        })
+        await tx.commit()
+      } finally {
+        tx.close()
+      }
     },
 
     async addEvent(itemId, type, message) {
@@ -261,9 +293,9 @@ export async function openQueue({ root, now = () => new Date(), isAlive = pidAli
       }))
     },
 
-    /** waiting / qa_failed items whose current version entered at least 3 hours before `at`. */
+    /** waiting / qa_failed items whose current version entered at least 3 hours before `at` (Date, epoch ms or ISO string). */
     async expired(at = now()) {
-      const cutoff = new Date(at.getTime() - COUNTDOWN_MS).toISOString()
+      const cutoff = new Date(new Date(at).getTime() - COUNTDOWN_MS).toISOString()
       const r = await db.execute({
         sql: `SELECT * FROM items WHERE status IN (${COUNTING_STATUSES.map(() => '?').join(',')}) AND enteredAt <= ? ORDER BY enteredAt ASC`,
         args: [...COUNTING_STATUSES, cutoff],
@@ -273,7 +305,8 @@ export async function openQueue({ root, now = () => new Date(), isAlive = pidAli
 
     /** Process-safe: one holder per item; a lock older than 15 min or owned by a dead pid is taken over. */
     async withLock(itemId, fn) {
-      const tx = await db.transaction('write')
+      const token = crypto.randomBytes(8).toString('hex')
+      const tx = await begin()
       try {
         const r = await tx.execute({ sql: 'SELECT pid, takenAt FROM locks WHERE itemId = ?', args: [itemId] })
         const held = r.rows[0]
@@ -284,8 +317,8 @@ export async function openQueue({ root, now = () => new Date(), isAlive = pidAli
           await tx.execute({ sql: 'DELETE FROM locks WHERE itemId = ?', args: [itemId] })
         }
         await tx.execute({
-          sql: 'INSERT INTO locks (itemId, pid, takenAt) VALUES (?, ?, ?)',
-          args: [itemId, process.pid, iso()],
+          sql: 'INSERT INTO locks (itemId, pid, token, takenAt) VALUES (?, ?, ?, ?)',
+          args: [itemId, process.pid, token, iso()],
         })
         await tx.commit()
       } finally {
@@ -294,7 +327,7 @@ export async function openQueue({ root, now = () => new Date(), isAlive = pidAli
       try {
         return await fn()
       } finally {
-        await db.execute({ sql: 'DELETE FROM locks WHERE itemId = ? AND pid = ?', args: [itemId, process.pid] })
+        await db.execute({ sql: 'DELETE FROM locks WHERE itemId = ? AND token = ?', args: [itemId, token] })
       }
     },
 
