@@ -28,6 +28,7 @@ export class DeliveryStopped extends Error {
 }
 
 const STOP_CODES = new Set(['disabled', 'drive_not_connected'])
+const RETRY_STATUSES = new Set([429, 502, 503, 504])
 
 /**
  * @param {{ baseUrl?: string, token?: string, fetchImpl?: typeof fetch, sleep?: (ms: number) => Promise<void>, budgetMs?: number, now?: () => number }} [opts]
@@ -69,7 +70,7 @@ export function createDeliveryClient({
           try { parsed = text ? JSON.parse(text) : null } catch { parsed = { error: text.slice(0, 300) } }
           if (status === 401) throw new DeliveryStopped(`${method} ${route}: không được phép (401), kiểm tra DESIGN_WORKER_TOKEN`, { status, code: parsed?.code ?? null })
           if (status === 503 && STOP_CODES.has(parsed?.code)) throw new DeliveryStopped(`${method} ${route}: server báo ${parsed.code}`, { status, code: parsed.code })
-          if (status !== 429 && status !== 503) return { ok: res.ok, status, body: parsed }
+          if (!RETRY_STATUSES.has(status)) return { ok: res.ok, status, body: parsed }
         }
         const ra = Number(res.headers.get('retry-after'))
         if (Number.isFinite(ra) && ra > 0) retryAfterMs = ra * 1000

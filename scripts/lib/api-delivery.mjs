@@ -10,6 +10,8 @@ import { DeliveryGaveUp, DeliveryStopped } from './delivery-client.mjs'
 
 const PREVIEW_MIN_BYTES = 30 * 1024 * 1024
 const DROP_PREVIEW_STATUSES = new Set([400, 404, 409, 413])
+// The server no longer sees the uploaded file where it should be: the next run uploads it again.
+const REUPLOAD_CODES = new Set(['drive_missing', 'wrong_folder'])
 
 const sleepSync = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
 
@@ -70,17 +72,45 @@ function deliveryKey(line) {
   return `${line.taskKey}#${crypto.createHash('sha1').update(JSON.stringify(payload)).digest('hex')}`
 }
 
-function takeLock(ledgerPath) {
+function lockOwner(lock) {
+  try {
+    const text = fs.readFileSync(lock, 'utf8').trim()
+    return /^\d+$/.test(text) ? Number(text) : null
+  } catch {
+    return null
+  }
+}
+
+function isRunning(pid) {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (e) {
+    return e?.code === 'EPERM'
+  }
+}
+
+function takeLock(ledgerPath, log) {
   fs.mkdirSync(path.dirname(ledgerPath), { recursive: true })
   const lock = `${ledgerPath}.lock`
+  const busy = () => new Error(`Đang có lần chạy khác dùng ledger này (${lock}). Nếu chắc chắn không còn, xóa file khóa rồi chạy lại.`)
   let fd
   try {
     fd = fs.openSync(lock, 'wx')
   } catch (e) {
-    if (e?.code === 'EEXIST') throw new Error(`Đang có lần chạy khác dùng ledger này (${lock}). Nếu chắc chắn không còn, xóa file khóa rồi chạy lại.`)
-    throw e
+    if (e?.code !== 'EEXIST') throw e
+    const pid = lockOwner(lock)
+    if (pid === null || isRunning(pid)) throw busy()
+    log(`Lấy lại khóa ${lock}: tiến trình ${pid} giữ khóa đã không còn chạy`)
+    fs.unlinkSync(lock)
+    try {
+      fd = fs.openSync(lock, 'wx')
+    } catch (again) {
+      if (again?.code === 'EEXIST') throw busy()
+      throw again
+    }
   }
-  try { fs.writeSync(fd, String(process.pid)) } catch { /* the lock exists; its content is only a hint */ }
+  try { fs.writeSync(fd, String(process.pid)) } catch { /* the lock exists; without a pid in it nobody takes it over */ }
   return () => {
     try { fs.closeSync(fd) } catch { /* already closed */ }
     try { fs.unlinkSync(lock) } catch { /* already gone */ }
@@ -99,7 +129,7 @@ function takeLock(ledgerPath) {
  * }} opts
  */
 export async function runApiDelivery({ lines, client, uploader, ledgerPath, log = console.log, uploads = 3, previewOf = null }) {
-  const release = takeLock(ledgerPath)
+  const release = takeLock(ledgerPath, log)
   try {
     return await run({ lines, client, uploader, ledgerPath, log, uploads, previewOf })
   } finally {
@@ -231,6 +261,10 @@ async function run({ lines, client, uploader, ledgerPath, log, uploads, previewO
     if (res.status === 409) {
       const again = await client.taskState(key)
       if (again.ok) log(`${key}: trạng thái hiện tại ${again.body?.status}`)
+    }
+    if (REUPLOAD_CODES.has(res.body?.code)) {
+      led.files = {}
+      log(`${key}: server báo ${res.body.code} — bỏ mã file đã upload, lần chạy sau upload lại`)
     }
     return skipOnProd(key, led, res)
   }

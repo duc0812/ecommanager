@@ -201,7 +201,7 @@ describe('runApiDelivery', () => {
   })
 
   it('refuses to run while the lock exists and removes its own lock afterwards', async () => {
-    fs.writeFileSync(`${ledgerPath}.lock`, '123')
+    fs.writeFileSync(`${ledgerPath}.lock`, String(process.pid))
     await expect(run(fakes(), [line()])).rejects.toThrow(/khác/)
     expect(fs.existsSync(`${ledgerPath}.lock`)).toBe(true)
     fs.rmSync(`${ledgerPath}.lock`)
@@ -210,6 +210,42 @@ describe('runApiDelivery', () => {
     const crashing = fakes({ commit: () => { throw new DeliveryGaveUp('down', { status: 503 }) } })
     await expect(run(crashing, [line({ taskKey: 'Z' })])).rejects.toBeInstanceOf(DeliveryGaveUp)
     expect(fs.existsSync(`${ledgerPath}.lock`)).toBe(false)
+  })
+
+  it('takes over a lock whose process is gone, and says so', async () => {
+    const dead = 2 ** 22 + 12345
+    expect(() => process.kill(dead, 0)).toThrow()
+    fs.writeFileSync(`${ledgerPath}.lock`, String(dead))
+    const logs: string[] = []
+    const r = await run(fakes(), [line()], { log: (m: string) => logs.push(m) })
+    expect(r).toMatchObject({ applied: 1 })
+    expect(logs.some(m => m.includes(String(dead)) && m.includes('khóa'))).toBe(true)
+    expect(fs.existsSync(`${ledgerPath}.lock`)).toBe(false)
+  })
+
+  it('refuses a lock without a readable pid, as before', async () => {
+    fs.writeFileSync(`${ledgerPath}.lock`, 'garbage')
+    await expect(run(fakes(), [line()])).rejects.toThrow(/khác/)
+    expect(fs.existsSync(`${ledgerPath}.lock`)).toBe(true)
+  })
+
+  it.each(['drive_missing', 'wrong_folder'])('a commit answered %s drops the cached file ids so the next run uploads again', async code => {
+    const l = line()
+    const bad = fakes({ commit: () => ({ ok: false, status: 400, body: { ok: false, code, error: 'x' } }) })
+    expect(await run(bad, [l])).toMatchObject({ skipped: 1 })
+    expect(bad.uploads).toHaveLength(2)
+    expect(Object.values(entry().files).some((e: any) => e?.driveFileId)).toBe(false)
+    const again = fakes()
+    expect(await run(again, [l])).toMatchObject({ applied: 1 })
+    expect(again.uploads).toHaveLength(2)
+  })
+
+  it('another refusal keeps the cached file ids, so the next run does not upload again', async () => {
+    const l = line()
+    await run(fakes({ commit: () => ({ ok: false, status: 400, body: { ok: false, code: 'size_mismatch', error: 'x' } }) }), [l])
+    const again = fakes()
+    await run(again, [l])
+    expect(again.uploads).toHaveLength(0)
   })
 
   it('retries the ledger rename on EPERM', async () => {

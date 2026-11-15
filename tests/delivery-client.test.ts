@@ -70,6 +70,19 @@ describe('delivery client', () => {
     expect(h.calls.length).toBeLessThan(200)
   })
 
+  it('retries a 502 and a 504 like a 503', async () => {
+    const h = harness([json({}, 502), json({}, 504, { 'Retry-After': '3' }), json({ ok: 1 })])
+    const r = await make(h).commit('K', {})
+    expect(r).toEqual({ ok: true, status: 200, body: { ok: 1 } })
+    expect(h.waits).toEqual([5000, 3000])
+  })
+
+  it('returns a 500 as { ok: false } without retrying', async () => {
+    const h = harness([json({ error: 'boom' }, 500)])
+    expect(await make(h).commit('K', {})).toEqual({ ok: false, status: 500, body: { error: 'boom' } })
+    expect(h.waits).toEqual([])
+  })
+
   it('returns non-2xx other than 429/503 as { ok: false } without throwing', async () => {
     const h = harness([json({ error: 'stale', code: 'stale_state' }, 409)])
     expect(await make(h).commit('K', {})).toEqual({ ok: false, status: 409, body: { error: 'stale', code: 'stale_state' } })
