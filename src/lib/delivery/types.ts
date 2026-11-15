@@ -1,0 +1,65 @@
+export type DeliveryAction = 'push' | 'replace' | 'retire' | 'revert'
+
+export type DeliveryFile = {
+  kind: 'PRINT' | 'MOCKUP'
+  printArea: string
+  fileName: string
+  driveFileId: string
+  shortcutOf?: string | null
+  size: number
+  mimeType: string
+  widthPx?: number | null
+  heightPx?: number | null
+}
+
+export type TaskState = {
+  taskKey: string
+  status: string
+  readiness: string
+  orderOpen: boolean
+  sent: boolean
+  folder: { id: string; url: string }
+  incomingFolder: { id: string }
+  artworks: {
+    id: string
+    kind: string
+    printArea: string
+    version: number
+    source: string
+    uploadedById: string | null
+    driveFileId: string | null
+    sharedWith: number
+  }[]
+  nextVersion: Record<string, number>
+  required: string[]
+}
+
+export type CommitInput = {
+  action: DeliveryAction
+  expected: { status: string; liveIds: string[] }
+  files: DeliveryFile[]
+  retire: string[]
+  retireSources?: ('AUTO' | 'MANUAL')[]
+  allowFinished?: boolean
+  revertReadiness?: 'MANUAL' | 'LOW'
+  eventMessage?: string
+  dryRun?: boolean
+}
+
+export type CommitResult = {
+  ok: true
+  status: string
+  artworks: { id: string; kind: string; printArea: string; version: number }[]
+  retired: string[]
+  missing: string[]
+  warnings: string[]
+  alreadyApplied: boolean
+}
+
+export type CommitError = {
+  ok: false
+  error: string
+  code: string
+  httpStatus: 400 | 404 | 409 | 503
+  current?: TaskState
+}
