@@ -8,6 +8,7 @@ export type DriveFileInfo = { id: string; size: number; parents: string[]; trash
 export type DeliveryDrive = {
   fileInfo(id: string): Promise<DriveFileInfo | null>
   taskFolder(orderId: string, shopifyLineId: string): Promise<{ id: string; url: string }>
+  incomingRoot(): Promise<string>
   incomingFolder(taskKey: string): Promise<string>
   oldFolder(orderId: string, shopifyLineId: string): Promise<string>
   createShortcut(targetId: string, parentId: string, name: string): Promise<string>
@@ -25,6 +26,7 @@ export const realDeliveryDrive: DeliveryDrive = {
     const f = await ensureTaskFolder(orderId, shopifyLineId)
     return { id: f.id, url: f.url }
   },
+  incomingRoot: () => folderForPath(['_incoming']),
   incomingFolder: taskKey => folderForPath(['_incoming', taskKey]),
   oldFolder: (orderId, shopifyLineId) => oldFolderFor(orderId, shopifyLineId),
   createShortcut: (targetId, parentId, name) => createShortcut(targetId, parentId, name),

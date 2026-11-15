@@ -6,6 +6,8 @@ import { RECONNECT_WARNING, pushArtworkToDrive } from '@/lib/design-drive-push'
 import { getGoogleConfig, isDriveConfigured } from '@/lib/google-oauth'
 import { refreshDriveQuota } from '@/lib/google-drive'
 import { linesNeedingTidy, tidyTaskFolder } from '@/lib/task-folder'
+import { getDeliveryDrive } from '@/lib/delivery/drive'
+import { cleanupIncoming } from '@/lib/delivery/incoming'
 
 export const DRIVE_PUSH_JOB = 'drive-push'
 export const DRIVE_PUSH_RESULT_KEY = 'last_drive_push_result'
@@ -226,6 +228,13 @@ export async function runDrivePushJob(trigger: PushTrigger, opts: { limit: numbe
       let quotaError: string | null = null
       if (summary.stopped !== 'not_connected' && summary.stopped !== 'needs_reconnect') {
         await refreshDriveQuota().catch(err => { quotaError = err?.message ?? String(err) })
+      }
+      if (trigger === 'schedule' && summary.stopped !== 'not_connected' && summary.stopped !== 'needs_reconnect') {
+        try {
+          await cleanupIncoming(getDeliveryDrive())
+        } catch (err: any) {
+          console.error('[delivery incoming]', err?.message ?? String(err))
+        }
       }
       const finishedAt = new Date().toISOString()
       s.run = { ...summary, running: false, trigger, startedAt, finishedAt }

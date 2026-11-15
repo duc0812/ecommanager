@@ -1,4 +1,4 @@
-// calls records each invocation as "<method>:<first arg>", e.g. "moveFile:abc", "tidy:<orderId>", "taskFolder:<orderId>".
+// calls records each invocation as "<method>:<first arg>", e.g. "moveFile:abc", "tidy:<orderId>", "taskFolder:<orderId>", "incomingRoot:", "incomingFolder:<taskKey>".
 import type { DeliveryDrive, DriveFileInfo } from '@/lib/delivery/drive'
 
 type FakeFile = DriveFileInfo & { name: string; createdTime: string; target?: string }
@@ -37,9 +37,20 @@ export function fakeDrive() {
       const id = `task-${orderId}-${shopifyLineId}`
       return { id, url: `https://drive.google.com/drive/folders/${id}` }
     },
+    async incomingRoot() {
+      calls.push('incomingRoot:')
+      return 'incoming-root'
+    },
     async incomingFolder(taskKey) {
       calls.push(`incomingFolder:${taskKey}`)
-      return `incoming-${taskKey}`
+      const id = `incoming-${taskKey}`
+      if (!files.has(id)) {
+        files.set(id, {
+          id, size: 0, parents: ['incoming-root'], trashed: false, name: taskKey,
+          mimeType: 'application/vnd.google-apps.folder', createdTime: new Date().toISOString(),
+        })
+      }
+      return id
     },
     async oldFolder(orderId, shopifyLineId) {
       calls.push(`oldFolder:${orderId}`)
