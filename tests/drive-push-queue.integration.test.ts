@@ -7,6 +7,9 @@ import { NextRequest } from 'next/server'
 const schedule = vi.fn()
 vi.mock('node-cron', () => ({ default: { schedule: (...args: unknown[]) => schedule(...args) } }))
 
+const incomingMock = vi.hoisted(() => ({ cleanup: vi.fn(async () => ({ deletedFiles: 0, removedFolders: 0, kept: 0 })) }))
+vi.mock('@/lib/delivery/incoming', () => ({ cleanupIncoming: incomingMock.cleanup }))
+
 import { prisma } from '@/lib/db'
 import { AUTH_COOKIE, signToken } from '@/lib/auth'
 import { canCallApi } from '@/lib/api-access'
@@ -360,6 +363,25 @@ describe('scheduler', () => {
     expect(typeof last.ranAt).toBe('string')
     expect(JSON.parse((await setting(GOOGLE_KEYS.quota))!)).toMatchObject({ limit: 15 * GB, usage: 14 * GB })
     expect(await getDrivePushStatus()).toMatchObject({ pending: 0, running: false, pushed: 2, failed: 0, lastError: null, trigger: 'schedule' })
+  })
+
+  it('a scheduled run calls the incoming cleanup; a manual run does not; a throwing cleanup does not fail the job', async () => {
+    await connect()
+    driveMock()
+    incomingMock.cleanup.mockClear()
+    await runDrivePushJob('manual', { limit: 5 })
+    expect(incomingMock.cleanup).not.toHaveBeenCalled()
+    await runDrivePushJob('schedule', { limit: 5 })
+    expect(incomingMock.cleanup).toHaveBeenCalledTimes(1)
+    incomingMock.cleanup.mockRejectedValueOnce(new Error('drive down'))
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const done = await runDrivePushJob('schedule', { limit: 5 })
+    expect(done.skipped).toBe(false)
+    expect(err).toHaveBeenCalledWith('[delivery incoming]', 'drive down')
+    err.mockRestore()
+    const last = JSON.parse((await setting(DRIVE_PUSH_RESULT_KEY))!)
+    expect(last.error).toBeUndefined()
+    expect(last.trigger).toBe('schedule')
   })
 
   it('a scheduled run is silent while Drive is not connected', async () => {

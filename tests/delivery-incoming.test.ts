@@ -6,6 +6,7 @@ import { fakeDrive } from './helpers/delivery-fake-drive'
 
 const fx = agentFixture('DLI')
 const NOW = new Date('2026-11-15T12:00:00Z')
+const hoursAgo = (h: number) => new Date(NOW.getTime() - h * 3600000).toISOString()
 const daysAgo = (d: number) => new Date(NOW.getTime() - d * 86400000).toISOString()
 
 beforeAll(async () => {
@@ -36,6 +37,8 @@ describe('cleanupIncoming', () => {
     const drive = fakeDrive()
     const empty = await drive.incomingFolder('T-empty')
     const emptied = await drive.incomingFolder('T-emptied')
+    drive.files.get(empty)!.createdTime = daysAgo(2)
+    drive.files.get(emptied)!.createdTime = daysAgo(2)
     drive.addFile({ id: 'old2', parent: emptied, size: 1, createdTime: daysAgo(9) })
     const r = await cleanupIncoming(drive, NOW)
     expect(r).toEqual({ deletedFiles: 1, removedFolders: 2, kept: 0 })
@@ -78,6 +81,7 @@ describe('cleanupIncoming', () => {
     drive.addFile({ id: 'stray', parent: 'incoming-root', size: 1, createdTime: daysAgo(30) })
     drive.addFile({ id: 'elsewhere', parent: 'task-folder', size: 1, createdTime: daysAgo(30) })
     const folder = await drive.incomingFolder('T-4')
+    drive.files.get(folder)!.createdTime = daysAgo(2)
     drive.addFile({ id: 'inside', parent: folder, size: 1, createdTime: daysAgo(30) })
     await cleanupIncoming(drive, NOW)
     expect(drive.files.has('stray')).toBe(true)
@@ -85,5 +89,51 @@ describe('cleanupIncoming', () => {
     expect(drive.files.has('inside')).toBe(false)
     expect(drive.calls.filter(c => c.startsWith('listChildren:')).every(c => c === 'listChildren:incoming-root' || c === `listChildren:${folder}`)).toBe(true)
     expect(drive.calls.filter(c => c.startsWith('deleteFile:'))).toEqual(['deleteFile:inside', `deleteFile:${folder}`])
+  })
+
+  it('empty folder: 2 hours old stays, 2 days old goes, unparsable createdTime stays', async () => {
+    const drive = fakeDrive()
+    const young = await drive.incomingFolder('T-young')
+    const aged = await drive.incomingFolder('T-aged')
+    const odd = await drive.incomingFolder('T-odd')
+    drive.files.get(young)!.createdTime = hoursAgo(2)
+    drive.files.get(aged)!.createdTime = daysAgo(2)
+    drive.files.get(odd)!.createdTime = 'not-a-date'
+    const r = await cleanupIncoming(drive, NOW)
+    expect(r).toEqual({ deletedFiles: 0, removedFolders: 1, kept: 0 })
+    expect(drive.files.has(young)).toBe(true)
+    expect(drive.files.has(aged)).toBe(false)
+    expect(drive.files.has(odd)).toBe(true)
+  })
+
+  it('never deletes a folder or shortcut-folder child of a task folder, counts it kept, and keeps the parent', async () => {
+    const drive = fakeDrive()
+    const folder = await drive.incomingFolder('T-5')
+    drive.files.get(folder)!.createdTime = daysAgo(30)
+    drive.addFile({ id: 'sub', parent: folder, size: 0, mimeType: 'application/vnd.google-apps.folder', createdTime: daysAgo(30) })
+    drive.addFile({ id: 'oldfile', parent: folder, size: 1, createdTime: daysAgo(30) })
+    const r = await cleanupIncoming(drive, NOW)
+    expect(r).toEqual({ deletedFiles: 1, removedFolders: 0, kept: 1 })
+    expect(drive.files.has('sub')).toBe(true)
+    expect(drive.files.has(folder)).toBe(true)
+  })
+
+  it('keeps a file with an unparsable createdTime', async () => {
+    const drive = fakeDrive()
+    const folder = await drive.incomingFolder('T-6')
+    drive.addFile({ id: 'weird', parent: folder, size: 1, createdTime: '' })
+    const r = await cleanupIncoming(drive, NOW)
+    expect(r.deletedFiles).toBe(0)
+    expect(drive.files.has('weird')).toBe(true)
+  })
+
+  it('a Drive failure does not set the throttle, so the next call retries', async () => {
+    const drive = fakeDrive()
+    await drive.incomingFolder('T-7')
+    const boom = { ...drive, listChildren: async () => { throw new Error('drive down') } }
+    await expect(cleanupIncoming(boom as any, NOW)).rejects.toThrow('drive down')
+    drive.calls.length = 0
+    await cleanupIncoming(drive, NOW)
+    expect(drive.calls.length).toBeGreaterThan(0)
   })
 })
