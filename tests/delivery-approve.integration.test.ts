@@ -235,6 +235,36 @@ describe('commit with approve', () => {
     expect((await eventsOf(l.taskKey)).filter(e => e.message === LOCAL_APPROVE_EVENT)).toHaveLength(1)
   })
 
+  it('an already applied resend with approve does not approve a file added on prod since', async () => {
+    for (const kind of ['MOCKUP', 'PRINT'] as const) {
+      const l = await line()
+      const body = push(l, [file('Front', `lrq-ch-${kind}-f`), file('Back', `lrq-ch-${kind}-b`)])
+      expect(await (await commit(l.taskKey, body, {})).json()).toMatchObject({ ok: true, status: 'REVIEW' })
+      await prisma.designArtwork.create({ data: {
+        orderId: l.orderId, shopifyLineId: 'l1', kind, printArea: kind === 'PRINT' ? 'Sleeve' : 'Front', version: 1, fileName: 'extra.png',
+        storage: 'DRIVE', driveFileId: `lrq-ch-${kind}-extra`, drivePlace: 'TASK', size: 100, mimeType: 'image/png', widthPx: 1000, heightPx: 1000, source: 'MANUAL',
+      } })
+      const dry = await commit(l.taskKey, { ...body, approve: true, dryRun: true })
+      expect(await dry.json()).toMatchObject({ ok: true, alreadyApplied: true, wouldApprove: false })
+      const res = await commit(l.taskKey, { ...body, approve: true })
+      expect(res.status).toBe(200)
+      const out = await res.json()
+      expect(out).toMatchObject({ ok: true, status: 'REVIEW', alreadyApplied: true })
+      expect(out.warnings).toEqual(['Không duyệt được: prod đã thay đổi'])
+      expect((await taskOf(l.taskKey)).status).toBe('REVIEW')
+      expect((await eventsOf(l.taskKey)).some(e => e.message === LOCAL_APPROVE_EVENT)).toBe(false)
+    }
+  })
+
+  it('an already applied replace resend with approve approves when the kept files are unchanged', async () => {
+    const l = await line({ status: 'REJECTED', arts: ['Front', 'Back'] })
+    const files = upload(l, [file('Back', 'lrq-rr-b2')])
+    const body = { action: 'replace', expected: { status: 'REJECTED', liveIds: Object.values(l.ids) }, files, retire: [l.ids.Back] }
+    expect(await (await commit(l.taskKey, body, {})).json()).toMatchObject({ ok: true, status: 'REVIEW' })
+    const res = await commit(l.taskKey, { ...body, approve: true })
+    expect(await res.json()).toMatchObject({ ok: true, status: 'DONE', alreadyApplied: true, warnings: [] })
+  })
+
   it('an already applied resend with approve and without a token is still 403', async () => {
     const l = await line()
     const body = push(l, [file('Front', 'lrq-r2-f'), file('Back', 'lrq-r2-b')])

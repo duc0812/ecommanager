@@ -271,6 +271,16 @@ async function approveWritten(taskKey: string, status: string, missing: string[]
   return (await approveDelivered(taskKey)).warning ?? null
 }
 
+const APPROVE_CHANGED_WARNING = 'Không duyệt được: prod đã thay đổi'
+
+/** A resend may approve only the set the local PC reviewed: the sent files plus what it expected to keep, and nothing added on prod since. */
+function liveIsWhatWasSent(live: { id: string; kind: string; printArea: string; driveFileId: string | null }[], input: CommitInput): boolean {
+  const retire = new Set(input.retire ?? [])
+  const sent = live.filter(a => input.files.some(f => f.driveFileId === a.driveFileId && f.kind === a.kind && sameLabel(f.printArea, a.printArea))).map(a => a.id)
+  const kept = input.expected.liveIds.filter(id => !retire.has(id))
+  return sameIds(live.map(a => a.id), Array.from(new Set([...sent, ...kept])))
+}
+
 const ACTIONS: Record<CommitInput['action'], ActionSpec> = {
   push: { plan: planPush, after: afterPush, applied: isAlreadyApplied, resend: resubmitLandedPush },
   replace: { plan: planReplace, after: afterReplace, applied: isAlreadyApplied },
@@ -306,11 +316,14 @@ export async function commitDelivery(taskKey: string, input: CommitInput, drive:
     const missing = status === 'REVIEW' ? [] : missingPrintAreas(live, await requiredSlotsForLine(orderId, shopifyLineId))
     const out: CommitResult = { ok: true, status, artworks: live, retired, warnings: [], alreadyApplied: true, missing }
     if (!input.approve) return out
+    const unchanged = liveIsWhatWasSent(live, input)
     if (input.dryRun) {
       const resent = !!action.resend && RESUBMIT_FROM.includes(status) && reachesReview(input.action, status, live, missing)
-      return { ...out, wouldApprove: open && (status === 'REVIEW' || resent) }
+      return { ...out, wouldApprove: unchanged && open && (status === 'REVIEW' || resent) }
     }
-    const warning = open ? await approveWritten(taskKey, status, missing) : (status === 'DONE' ? null : 'Không duyệt được: đơn đã đóng')
+    const warning = status === 'DONE' ? null
+      : !unchanged ? APPROVE_CHANGED_WARNING
+        : open ? await approveWritten(taskKey, status, missing) : 'Không duyệt được: đơn đã đóng'
     const final = (await prisma.designTask.findUniqueOrThrow({ where: { id: task.id }, select: { status: true } })).status
     return { ...out, status: final, warnings: warning ? [warning] : [] }
   }
