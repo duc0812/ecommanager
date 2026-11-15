@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireDeliveryWorker } from '@/lib/delivery/guard'
 import { getDeliveryDrive } from '@/lib/delivery/drive'
 import { commitDelivery } from '@/lib/delivery/commit'
+import { DRIVE_RETRY_AFTER_SEC, driveFailureResponse } from '@/lib/delivery/errors'
 import { runSerial, memoryPressure } from '@/lib/delivery/queue'
 import type { CommitError, CommitResult } from '@/lib/delivery/types'
 
@@ -36,13 +37,15 @@ export async function POST(req: NextRequest, { params }: { params: { key: string
     out = await runSerial(async () => (memoryPressure() ? 'busy' : commitDelivery(key, body, getDeliveryDrive())))
   } catch (e) {
     console.error('[delivery commit]', key, e instanceof Error ? e.message : String(e))
+    const drive = driveFailureResponse(e)
+    if (drive) return drive
     throw e
   }
   if (out === 'busy') return busy()
   if (!out.ok) {
     return NextResponse.json(
       { error: out.error, code: out.code, ...(out.current ? { current: out.current } : {}) },
-      { status: out.httpStatus },
+      { status: out.httpStatus, ...(out.code === 'busy' ? { headers: { 'Retry-After': String(DRIVE_RETRY_AFTER_SEC) } } : {}) },
     )
   }
   return NextResponse.json(out)

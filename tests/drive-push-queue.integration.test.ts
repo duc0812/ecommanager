@@ -7,7 +7,7 @@ import { NextRequest } from 'next/server'
 const schedule = vi.fn()
 vi.mock('node-cron', () => ({ default: { schedule: (...args: unknown[]) => schedule(...args) } }))
 
-const incomingMock = vi.hoisted(() => ({ cleanup: vi.fn(async () => ({ deletedFiles: 0, removedFolders: 0, kept: 0 })) }))
+const incomingMock = vi.hoisted(() => ({ cleanup: vi.fn(async () => ({ deletedFiles: 0, kept: 0 })) }))
 vi.mock('@/lib/delivery/incoming', () => ({ cleanupIncoming: incomingMock.cleanup }))
 
 import { prisma } from '@/lib/db'

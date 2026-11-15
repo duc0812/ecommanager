@@ -79,6 +79,7 @@ describe('POST delivery drive-token', () => {
   it('503 drive_not_connected when Drive is not connected', async () => {
     const res = await tokenReq()
     expect(res.status).toBe(503)
+    expect(res.headers.get('Cache-Control')).toBe('no-store')
     expect(await res.json()).toEqual({ error: 'Google Drive chưa kết nối', code: 'drive_not_connected' })
   })
 
@@ -93,6 +94,7 @@ describe('POST delivery drive-token', () => {
     primeAccessToken('at-primed', 3600, '1//refresh')
     const res = await tokenReq()
     expect(res.status).toBe(200)
+    expect(res.headers.get('Cache-Control')).toBe('no-store')
     const body = await res.json()
     expect(body.accessToken).toBe('at-primed')
     expect(new Date(body.expiresAt).toISOString()).toBe(body.expiresAt)

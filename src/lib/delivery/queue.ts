@@ -1,3 +1,4 @@
+import fs from 'fs'
 import os from 'os'
 
 type QueueState = { tail: Promise<unknown>; lastEnd: number }
@@ -33,7 +34,23 @@ export function runSerial<T>(fn: () => Promise<T>, opts: { gapMs?: number } = {}
   return next
 }
 
-export function memoryPressure(sample?: { rss: number; free: number }): { retryAfterSec: number } | null {
-  const { rss, free } = sample ?? { rss: process.memoryUsage().rss, free: os.freemem() }
+type MeminfoReader = () => string | null
+
+const readProcMeminfo: MeminfoReader = () => fs.readFileSync('/proc/meminfo', 'utf8')
+
+// os.freemem() is MemFree on older Node, which leaves out page cache the kernel would hand back; MemAvailable counts it.
+export function freeMemory(readMeminfo: MeminfoReader = readProcMeminfo): number {
+  let text: string | null = null
+  try {
+    text = readMeminfo()
+  } catch {
+    text = null
+  }
+  const kb = text ? /^MemAvailable:\s+(\d+)\s*kB/m.exec(text)?.[1] : undefined
+  return kb ? Number(kb) * 1024 : os.freemem()
+}
+
+export function memoryPressure(sample?: { rss: number; free: number }, readMeminfo?: MeminfoReader): { retryAfterSec: number } | null {
+  const { rss, free } = sample ?? { rss: process.memoryUsage().rss, free: freeMemory(readMeminfo) }
   return rss > RSS_LIMIT || free < FREE_LIMIT ? { retryAfterSec: 60 } : null
 }

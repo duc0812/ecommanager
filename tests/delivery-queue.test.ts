@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { runSerial, memoryPressure } from '@/lib/delivery/queue'
+import os from 'os'
+import { runSerial, memoryPressure, freeMemory } from '@/lib/delivery/queue'
 
-afterEach(() => { vi.useRealTimers(); globalThis.__deliveryQueue = undefined })
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); globalThis.__deliveryQueue = undefined })
 
 describe('runSerial', () => {
   it('runs three jobs in order with at least the gap between the end of one and the start of the next', async () => {
@@ -37,4 +38,24 @@ describe('memoryPressure', () => {
   it('flags high rss', () => expect(memoryPressure({ rss: 1200e6, free: 2e9 })).toEqual({ retryAfterSec: 60 }))
   it('flags low free memory', () => expect(memoryPressure({ rss: 500e6, free: 500e6 })).not.toBeNull())
   it('is null when both are healthy', () => expect(memoryPressure({ rss: 500e6, free: 2e9 })).toBeNull())
+})
+
+describe('freeMemory', () => {
+  const MEMINFO = 'MemTotal:        3900000 kB\nMemFree:          100000 kB\nMemAvailable:    1500000 kB\nBuffers:           20000 kB\n'
+
+  it('reads MemAvailable from /proc/meminfo, not MemFree', () => {
+    expect(freeMemory(() => MEMINFO)).toBe(1500000 * 1024)
+  })
+
+  it('falls back to os.freemem() when meminfo is unreadable or has no MemAvailable', () => {
+    vi.spyOn(os, 'freemem').mockReturnValue(4242)
+    expect(freeMemory(() => null)).toBe(4242)
+    expect(freeMemory(() => { throw new Error('ENOENT') })).toBe(4242)
+    expect(freeMemory(() => 'MemTotal: 1 kB\nMemFree: 2 kB\n')).toBe(4242)
+  })
+
+  it('memoryPressure without a sample uses the injected reader', () => {
+    expect(memoryPressure(undefined, () => 'MemAvailable: 100000 kB\n')).not.toBeNull()
+    expect(memoryPressure(undefined, () => 'MemAvailable: 9000000 kB\n')).toBeNull()
+  })
 })

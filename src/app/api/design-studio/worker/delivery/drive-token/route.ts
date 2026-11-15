@@ -4,8 +4,10 @@ import { DriveAuthError, getAccessTokenInfo, isDriveConnected } from '@/lib/goog
 
 export const dynamic = 'force-dynamic'
 
+const NO_STORE = { 'Cache-Control': 'no-store' }
+
 const notConnected = () =>
-  NextResponse.json({ error: 'Google Drive chưa kết nối', code: 'drive_not_connected' }, { status: 503 })
+  NextResponse.json({ error: 'Google Drive chưa kết nối', code: 'drive_not_connected' }, { status: 503, headers: NO_STORE })
 
 export async function POST(req: NextRequest) {
   const denied = await requireDeliveryWorker(req)
@@ -13,7 +15,7 @@ export async function POST(req: NextRequest) {
 
   if (!(await isDriveConnected())) return notConnected()
   try {
-    return NextResponse.json(await getAccessTokenInfo())
+    return NextResponse.json(await getAccessTokenInfo(), { headers: NO_STORE })
   } catch (e) {
     if (e instanceof DriveAuthError) return notConnected()
     throw e

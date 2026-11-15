@@ -27,23 +27,24 @@ describe('cleanupIncoming', () => {
     drive.addFile({ id: 'old', parent: folder, size: 1, createdTime: daysAgo(8) })
     drive.addFile({ id: 'fresh', parent: folder, size: 1, createdTime: daysAgo(1) })
     const r = await cleanupIncoming(drive, NOW)
-    expect(r).toEqual({ deletedFiles: 1, removedFolders: 0, kept: 0 })
+    expect(r).toEqual({ deletedFiles: 1, kept: 0 })
     expect(drive.files.has('old')).toBe(false)
     expect(drive.files.has('fresh')).toBe(true)
     expect(drive.files.has(folder)).toBe(true)
   })
 
-  it('removes an empty folder, and one emptied by the same pass', async () => {
+  it('keeps an empty folder and one emptied by the same pass: the path cache would hand out a deleted folder id', async () => {
     const drive = fakeDrive()
     const empty = await drive.incomingFolder('T-empty')
     const emptied = await drive.incomingFolder('T-emptied')
-    drive.files.get(empty)!.createdTime = daysAgo(2)
-    drive.files.get(emptied)!.createdTime = daysAgo(2)
+    drive.files.get(empty)!.createdTime = daysAgo(30)
+    drive.files.get(emptied)!.createdTime = daysAgo(30)
     drive.addFile({ id: 'old2', parent: emptied, size: 1, createdTime: daysAgo(9) })
     const r = await cleanupIncoming(drive, NOW)
-    expect(r).toEqual({ deletedFiles: 1, removedFolders: 2, kept: 0 })
-    expect(drive.files.has(empty)).toBe(false)
-    expect(drive.files.has(emptied)).toBe(false)
+    expect(r).toEqual({ deletedFiles: 1, kept: 0 })
+    expect(drive.files.has(empty)).toBe(true)
+    expect(drive.files.has(emptied)).toBe(true)
+    expect(drive.calls.filter(c => c.startsWith('deleteFile:'))).toEqual(['deleteFile:old2'])
   })
 
   it('a second call within the hour makes no Drive calls; force overrides', async () => {
@@ -52,7 +53,7 @@ describe('cleanupIncoming', () => {
     await cleanupIncoming(drive, NOW)
     drive.calls.length = 0
     const again = await cleanupIncoming(drive, new Date(NOW.getTime() + 30 * 60000))
-    expect(again).toEqual({ deletedFiles: 0, removedFolders: 0, kept: 0 })
+    expect(again).toEqual({ deletedFiles: 0, kept: 0 })
     expect(drive.calls).toEqual([])
     await cleanupIncoming(drive, new Date(NOW.getTime() + 30 * 60000), { force: true })
     expect(drive.calls.length).toBeGreaterThan(0)
@@ -69,7 +70,7 @@ describe('cleanupIncoming', () => {
     await prisma.designArtwork.create({ data: { ...base, printArea: 'Front', version: 1, driveFileId: 'dli-live' } })
     await prisma.designArtwork.create({ data: { ...base, printArea: 'Back', version: 1, driveFileId: 'dli-removed', removedAt: new Date() } })
     const r = await cleanupIncoming(drive, NOW)
-    expect(r).toEqual({ deletedFiles: 1, removedFolders: 0, kept: 2 })
+    expect(r).toEqual({ deletedFiles: 1, kept: 2 })
     expect(drive.files.has('dli-live')).toBe(true)
     expect(drive.files.has('dli-removed')).toBe(true)
     expect(drive.files.has('dli-orphan')).toBe(false)
@@ -88,22 +89,22 @@ describe('cleanupIncoming', () => {
     expect(drive.files.has('elsewhere')).toBe(true)
     expect(drive.files.has('inside')).toBe(false)
     expect(drive.calls.filter(c => c.startsWith('listChildren:')).every(c => c === 'listChildren:incoming-root' || c === `listChildren:${folder}`)).toBe(true)
-    expect(drive.calls.filter(c => c.startsWith('deleteFile:'))).toEqual(['deleteFile:inside', `deleteFile:${folder}`])
+    expect(drive.calls.filter(c => c.startsWith('deleteFile:'))).toEqual(['deleteFile:inside'])
+    expect(drive.files.has(folder)).toBe(true)
   })
 
-  it('empty folder: 2 hours old stays, 2 days old goes, unparsable createdTime stays', async () => {
+  it('never deletes an incoming folder, whatever its age', async () => {
     const drive = fakeDrive()
     const young = await drive.incomingFolder('T-young')
     const aged = await drive.incomingFolder('T-aged')
     const odd = await drive.incomingFolder('T-odd')
     drive.files.get(young)!.createdTime = hoursAgo(2)
-    drive.files.get(aged)!.createdTime = daysAgo(2)
+    drive.files.get(aged)!.createdTime = daysAgo(60)
     drive.files.get(odd)!.createdTime = 'not-a-date'
     const r = await cleanupIncoming(drive, NOW)
-    expect(r).toEqual({ deletedFiles: 0, removedFolders: 1, kept: 0 })
-    expect(drive.files.has(young)).toBe(true)
-    expect(drive.files.has(aged)).toBe(false)
-    expect(drive.files.has(odd)).toBe(true)
+    expect(r).toEqual({ deletedFiles: 0, kept: 0 })
+    for (const id of [young, aged, odd]) expect(drive.files.has(id)).toBe(true)
+    expect(drive.calls.filter(c => c.startsWith('deleteFile:'))).toEqual([])
   })
 
   it('never deletes a folder or shortcut-folder child of a task folder, counts it kept, and keeps the parent', async () => {
@@ -113,7 +114,7 @@ describe('cleanupIncoming', () => {
     drive.addFile({ id: 'sub', parent: folder, size: 0, mimeType: 'application/vnd.google-apps.folder', createdTime: daysAgo(30) })
     drive.addFile({ id: 'oldfile', parent: folder, size: 1, createdTime: daysAgo(30) })
     const r = await cleanupIncoming(drive, NOW)
-    expect(r).toEqual({ deletedFiles: 1, removedFolders: 0, kept: 1 })
+    expect(r).toEqual({ deletedFiles: 1, kept: 1 })
     expect(drive.files.has('sub')).toBe(true)
     expect(drive.files.has(folder)).toBe(true)
   })

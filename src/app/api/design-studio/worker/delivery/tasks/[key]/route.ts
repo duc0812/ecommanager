@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireDeliveryWorker } from '@/lib/delivery/guard'
 import { getDeliveryDrive } from '@/lib/delivery/drive'
+import { driveFailureResponse } from '@/lib/delivery/errors'
 import { deliveryTaskState, DeliveryLineMissingError } from '@/lib/delivery/task-state'
 
 export const dynamic = 'force-dynamic'
@@ -14,6 +15,11 @@ export async function GET(req: NextRequest, { params }: { params: { key: string 
     return NextResponse.json(state)
   } catch (e) {
     if (e instanceof DeliveryLineMissingError) return NextResponse.json({ error: e.message }, { status: 409 })
+    const drive = driveFailureResponse(e)
+    if (drive) {
+      console.error('[delivery task state]', params.key, e instanceof Error ? e.message : String(e))
+      return drive
+    }
     throw e
   }
 }
