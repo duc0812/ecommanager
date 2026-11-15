@@ -118,6 +118,42 @@ describe('commitDelivery push', () => {
     expect((await eventsOf(l.taskKey)).length).toBe(eventsBefore)
   })
 
+  async function landedWithoutSubmit(taskStatus?: string) {
+    const l = await line({ taskStatus })
+    const files = [file({ printArea: 'Front', driveFileId: `dlc-r${n}f` }), file({ printArea: 'Back', driveFileId: `dlc-r${n}b` })]
+    for (const f of files) {
+      await prisma.designArtwork.create({ data: {
+        orderId: l.orderId, shopifyLineId: 'l1', kind: f.kind, printArea: f.printArea, version: 1, fileName: f.fileName, storage: 'DRIVE',
+        driveFileId: f.driveFileId, size: f.size, mimeType: f.mimeType, widthPx: 1000, heightPx: 1000, source: 'AUTO',
+      } })
+    }
+    return { l, files, drive: driveWith(l.taskKey, files) }
+  }
+
+  it('a resend after rows landed but the task was never submitted moves a NEW task to REVIEW', async () => {
+    const { l, files, drive } = await landedWithoutSubmit()
+    const r = await commitDelivery(l.taskKey, input(files), drive)
+    expect(r).toMatchObject({ ok: true, alreadyApplied: true, status: 'REVIEW', missing: [] })
+    expect(await taskOf(l.taskKey)).toMatchObject({ status: 'REVIEW', readiness: 'AUTO' })
+    expect((await eventsOf(l.taskKey)).filter(e => e.message === AUTO_REVIEW_MESSAGE)).toHaveLength(1)
+    expect(await rowsOf(l.orderId)).toHaveLength(2)
+  })
+
+  it('a resend leaves a task a person moved since (REJECTED) where it is', async () => {
+    const { l, files, drive } = await landedWithoutSubmit('REJECTED')
+    const r = await commitDelivery(l.taskKey, input(files), drive)
+    expect(r).toMatchObject({ ok: true, alreadyApplied: true, status: 'REJECTED' })
+    expect((await taskOf(l.taskKey)).status).toBe('REJECTED')
+    expect((await eventsOf(l.taskKey)).filter(e => e.message === AUTO_REVIEW_MESSAGE)).toHaveLength(0)
+  })
+
+  it('a dryRun resend never moves the task', async () => {
+    const { l, files, drive } = await landedWithoutSubmit()
+    const r = await commitDelivery(l.taskKey, input(files, { dryRun: true }), drive)
+    expect(r).toMatchObject({ ok: true, alreadyApplied: true, status: 'NEW' })
+    expect((await taskOf(l.taskKey)).status).toBe('NEW')
+  })
+
   it('a status that moved since the read is 409 stale with the current state', async () => {
     const l = await line({ taskStatus: 'DOING' })
     const files = [file({ printArea: 'Front', driveFileId: 'dlc-f4' })]

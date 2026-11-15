@@ -31,6 +31,8 @@ type Artwork = CommitResult['artworks'][number]
 
 class StaleWrite extends Error {}
 
+const RESUBMIT_FROM = ['NEW', 'ASSIGNED']
+
 const LINE_TEMPLATE_FIELDS = { orderId: true, resolvedSupplierId: true, resolvedSupplierSku: true, shopifyProductId: true, shopifyProductType: true } as const
 
 function planPush(ctx: Ctx): CommitError | Plan {
@@ -133,10 +135,16 @@ export async function commitDelivery(taskKey: string, input: CommitInput, drive:
     where: { orderId, shopifyLineId }, select: { id: true, kind: true, printArea: true, driveFileId: true, removedAt: true },
   })
   if (isAlreadyApplied(rows, input)) {
+    let status = task.status
+    // A push whose process died after the rows landed left the task NEW/ASSIGNED; DOING and later mean a person acted since.
+    if (input.action === 'push' && !input.dryRun && RESUBMIT_FROM.includes(task.status)) {
+      await submitAutoRenderForReview(orderId, shopifyLineId).catch(err => console.error('delivery: resubmit failed', taskKey, err))
+      status = (await prisma.designTask.findUniqueOrThrow({ where: { id: task.id }, select: { status: true } })).status
+    }
     const live = await liveArtworks(orderId, shopifyLineId)
     return {
-      ok: true, status: task.status, artworks: live, retired: retire, warnings: [], alreadyApplied: true,
-      missing: missingPrintAreas(live, await requiredSlotsForLine(orderId, shopifyLineId)),
+      ok: true, status, artworks: live, retired: retire, warnings: [], alreadyApplied: true,
+      missing: status === 'REVIEW' ? [] : missingPrintAreas(live, await requiredSlotsForLine(orderId, shopifyLineId)),
     }
   }
 
