@@ -128,13 +128,23 @@ export async function promoteFolderLink(orderId: string, shopifyLineId: string):
   if (!folderUrl) return false
   const files = await prisma.designArtwork.findMany({
     where: { orderId, shopifyLineId },
-    select: { id: true, kind: true, printArea: true, version: true, storage: true, drivePlace: true, removedAt: true, driveWebViewLink: true, publicToken: true },
+    select: {
+      id: true, kind: true, printArea: true, version: true, storage: true, drivePlace: true, removedAt: true, driveWebViewLink: true, publicToken: true, driveFileId: true,
+    },
   })
   if (!folderHoldsPrintFiles(files)) return false
+
+  // A file another line holds too (a shortcut row stores the original's id and URL) is not this line's to relink: its links
+  // in the library and on other orders point at the original, and must not become this folder.
+  const fileIds = Array.from(new Set(files.map(f => f.driveFileId).filter((x): x is string => !!x)))
+  const shared = new Set(fileIds.length === 0 ? [] : (await prisma.designArtwork.findMany({
+    where: { driveFileId: { in: fileIds }, NOT: { orderId, shopifyLineId } }, select: { driveFileId: true }, distinct: ['driveFileId'],
+  })).map(r => r.driveFileId))
 
   const exact = new Set<string>()
   const markers: string[] = []
   for (const f of files) {
+    if (f.driveFileId && shared.has(f.driveFileId)) continue
     exact.add(artworkUrl(f.id))
     if (f.driveWebViewLink) { exact.add(f.driveWebViewLink); markers.push(f.driveWebViewLink) }
     if (f.publicToken) markers.push(`/api/public/artwork/${f.publicToken}/`)
