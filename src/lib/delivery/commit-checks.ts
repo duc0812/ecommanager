@@ -5,8 +5,6 @@ import { partKey, sameLabel } from '@/lib/task-files'
 import type { DeliveryDrive } from '@/lib/delivery/drive'
 import type { CommitError, CommitInput, DeliveryFile, TaskState } from '@/lib/delivery/types'
 
-export const SUPPORTED_ACTIONS: CommitInput['action'][] = ['push']
-
 export function refuse(httpStatus: CommitError['httpStatus'], code: string, error: string, current?: TaskState): CommitError {
   return { ok: false, error, code, httpStatus, ...(current ? { current } : {}) }
 }
@@ -22,12 +20,17 @@ export function inputError(input: CommitInput): CommitError | null {
   const bad = (msg: string) => refuse(400, 'bad_request', msg)
   if (!input || typeof input !== 'object') return bad('Thiếu nội dung yêu cầu')
   if (!['push', 'replace', 'retire', 'revert'].includes(input.action)) return bad(`Action không hợp lệ: ${String(input.action)}`)
-  if (!SUPPORTED_ACTIONS.includes(input.action)) return refuse(400, 'unsupported_action', `Action ${input.action} chưa hỗ trợ`)
   if (!input.expected || typeof input.expected.status !== 'string' || !Array.isArray(input.expected.liveIds)
     || !input.expected.liveIds.every(id => typeof id === 'string')) return bad('Thiếu expected { status, liveIds }')
   if (!Array.isArray(input.files) || !Array.isArray(input.retire ?? [])) return bad('files và retire phải là danh sách')
   if (!isOptional(input.eventMessage, x => typeof x === 'string')) return bad('eventMessage phải là chuỗi')
   if (!isOptional(input.dryRun, x => typeof x === 'boolean')) return bad('dryRun phải là true/false')
+  if (!isOptional(input.allowFinished, x => typeof x === 'boolean')) return bad('allowFinished phải là true/false')
+  if (!isOptional(input.retireSources, x => Array.isArray(x) && x.every(s => s === 'AUTO' || s === 'MANUAL'))) return bad('retireSources chỉ nhận AUTO, MANUAL')
+  if (!isOptional(input.revertReadiness, x => x === 'MANUAL' || x === 'LOW')) return bad('revertReadiness chỉ nhận MANUAL hoặc LOW')
+  const retire = input.retire ?? []
+  if (!retire.every(id => isText(id))) return bad('retire phải là danh sách mã file')
+  if (new Set(retire).size !== retire.length) return bad('retire có mã file lặp lại')
   const parts = new Set<string>()
   const ids = new Set<string>()
   for (const f of input.files) {
@@ -43,10 +46,20 @@ export function inputError(input: CommitInput): CommitError | null {
     if (ids.has(f.driveFileId)) return refuse(400, 'duplicate_file', `File ${f.driveFileId} được gửi hai lần`)
     ids.add(f.driveFileId)
   }
+  const files = input.files.length
   if (input.action === 'push') {
-    if (input.files.length === 0) return bad('push cần ít nhất một file')
-    if ((input.retire ?? []).length > 0) return bad('push không gỡ file — dùng replace')
+    if (files === 0) return bad('push cần ít nhất một file')
+    if (retire.length > 0) return bad('push không gỡ file — dùng replace')
   }
+  if (input.action === 'replace') {
+    if (files === 0) return bad('replace cần ít nhất một file — chỉ gỡ thì dùng retire')
+    if (retire.length === 0) return bad('replace cần retire — thêm phần mới thì dùng push')
+  }
+  if (input.action === 'retire') {
+    if (files > 0) return bad('retire không nhận file — thay file thì dùng replace')
+    if (retire.length === 0) return bad('retire cần ít nhất một mã file')
+  }
+  if (input.action === 'revert' && (files > 0 || retire.length > 0)) return bad('revert tự gỡ mọi file tự động — không gửi files hay retire')
   return null
 }
 

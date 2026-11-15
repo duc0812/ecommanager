@@ -526,14 +526,6 @@ describe('commitDelivery push', () => {
     expect(await rowsOf(l.orderId)).toHaveLength(1)
   })
 
-  it('replace, retire and revert are not supported yet', async () => {
-    const l = await line()
-    for (const action of ['replace', 'retire', 'revert'] as const) {
-      expect(await commitDelivery(l.taskKey, input([], { action }), fakeDrive()))
-        .toMatchObject({ ok: false, code: 'unsupported_action', httpStatus: 400 })
-    }
-  })
-
   it('a push with no files or two files for one part is 400 bad_request', async () => {
     const l = await line()
     expect(await commitDelivery(l.taskKey, input([]), fakeDrive())).toMatchObject({ ok: false, code: 'bad_request', httpStatus: 400 })

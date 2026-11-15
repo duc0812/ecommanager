@@ -22,3 +22,27 @@ export function madeText(files: MadeFile[]): string {
 export function pushEventMessage(files: MadeFile[], eventMessage?: string): string {
   return eventMessage ?? `${PUSH_EVENT_PREFIX} · ${madeText(files)}${hasNoNameFile(files) ? NO_NAME_SUFFIX : ''}`
 }
+
+export const REPLACE_EVENT_PREFIX = 'Render lại (máy local 26/10)'
+export const REVERT_EVENT_PREFIX = 'Gỡ file in tự động (máy local 26/10)'
+export const RESUBMIT_EVENT = 'Gửi duyệt lại'
+
+/** Retired rows as the timeline names them: prints first, `<area> v<n>`, mockups as `mockup <area> v<n>`. */
+export function goneText(rows: { kind: string; printArea: string; version: number }[]): string {
+  const ordered = [...rows.filter(r => r.kind === 'PRINT'), ...rows.filter(r => r.kind !== 'PRINT')]
+  return ordered.map(r => `${r.kind === 'PRINT' ? '' : 'mockup '}${r.printArea} v${r.version}`).join(', ')
+}
+
+export function replaceEventMessage(files: MadeFile[], gone: string, eventMessage?: string): string {
+  return eventMessage
+    ? `${eventMessage} · thay ${gone}`
+    : `${REPLACE_EVENT_PREFIX} · ${madeText(files)} · thay ${gone}${hasNoNameFile(files) ? NO_NAME_SUFFIX : ''}`
+}
+
+export function retireEventMessage(gone: string, eventMessage?: string): string {
+  return `${eventMessage ?? 'Gỡ file'} · gỡ ${gone}`
+}
+
+export function revertEventMessage(gone: string, eventMessage?: string): string {
+  return `${REVERT_EVENT_PREFIX}: gỡ ${gone} — ${eventMessage ?? 'rút qua API'}`
+}
