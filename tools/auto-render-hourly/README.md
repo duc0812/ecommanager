@@ -31,7 +31,7 @@ Tạo file `%USERPROFILE%\.auto-render\config.env`, mỗi dòng `KEY=VALUE` (dò
 | `DESIGN_AGENT_TOKEN` | không | token `dag_…` của Design Agent (không bao giờ ghi vào log) |
 | `SINCE_DAYS` | không | mặc định 14 |
 | `NAME_BOX_TOLERANCE_PX` | không | dung sai khung tên, mặc định 3 |
-| `PUSH_VIA` | không | `ssh` (mặc định: `--apply/--prove/--push` dưới `.push-lock`) hoặc `api` (`--via api`, không khoá). Với `api` cần `ECOM_URL` và `DESIGN_WORKER_TOKEN`: lấy từ file này, thiếu thì đọc `%USERPROFILE%\.artwork-worker\prod.env`; vẫn thiếu thì dừng mã 2 |
+| `PUSH_VIA` | không | `ssh` (mặc định: `--apply/--prove/--push` dưới `.push-lock`) hoặc `api` (`--via api`, không khoá). Với `api` cần `ECOM_URL` và `DESIGN_WORKER_TOKEN`: lấy từ file này, thiếu thì đọc `%USERPROFILE%\.artwork-worker\prod.env`; vẫn thiếu thì dừng mã 2. `ECOM_URL` lấy từ `prod.env` cũng là địa chỉ báo `/hold`: có thêm `DESIGN_AGENT_TOKEN` trong file này thì dòng bị giữ được báo `/hold` |
 | `DESIGN_WORKER_TOKEN` | không | worker token cho `PUSH_VIA=api` (không bao giờ ghi vào log) |
 
 Thiếu file, thiếu khoá bắt buộc hay thiếu một script thì lần chạy dừng ngay với mã 2.
@@ -51,7 +51,7 @@ Lần đầu chạy tay: `powershell -ExecutionPolicy Bypass -File run.ps1 -DryR
 |---|---|
 | `startedAt`, `finishedAt`, `dryRun`, `exitCode`, `since`, `snapshot` | thông tin lần chạy |
 | `rendered` | mọi dòng ứng viên (prod NEW, chưa có file in) mà lần chạy có file để kiểm |
-| `pushed` | dòng đã lên prod — chỉ khi ledger của script (`ledger.json`, hay `api-ledger.json` với `PUSH_VIA=api`) ghi `applied` sau lúc bắt đầu chạy. Với `api`, dòng prod bỏ qua hoặc kế hoạch cũ (stale) là lỗi bước `push` |
+| `pushed` | dòng đã lên prod — chỉ khi ledger của script (`ledger.json`, hay `api-ledger.json` với `PUSH_VIA=api`) ghi `applied` sau lúc bắt đầu chạy. Với `api`, dòng prod bỏ qua, kế hoạch cũ (stale) hay đã đẩy ở lần trước vào `skipped`; chỉ dòng không có trong `api-ledger.json` là lỗi bước `push` |
 | `held` | dòng AUTO bị giữ: `taskKey, source, guard, reason, reported, jobId` |
 | `notAuto` | dòng prod không phải AUTO (vẫn render ở máy, không bao giờ đẩy) |
 | `unchecked` | dòng được đẩy nhưng không kiểm được safe zone, kèm lý do |

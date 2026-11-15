@@ -897,21 +897,26 @@ def _outcome(ledger: dict, key: str, started: datetime) -> str | None:
 
 
 def api_outcome(ledger: dict, key: str, started: datetime) -> str:
-    """push-*.mjs --via api ledger: entries are keyed per delivery (taskKey#hash); applying one clears `applied` on the task's
-    other entries, so an entry of this task applied after `started` is the newest delivery."""
+    """push-*.mjs --via api ledger: entries are keyed per delivery (taskKey#hash) and sit in the order they were first written
+    (skippedOnProd has no timestamp); applying one clears `applied` on the task's other entries. 'pushed' = an entry applied
+    after `started`; otherwise the newest entry in file order that records an outcome gives 'skipped: <reason>' like the ssh
+    ledger. Only a task with no such entry raises."""
     st = started if started.tzinfo else started.astimezone()
     entries = [e for e in (ledger.get('lines') or {}).values() if isinstance(e, dict) and e.get('taskKey') == key]
     for e in entries:
         at = _aware(e.get('applied'))
         if at and at >= st and 'result' in e:
             return 'pushed'
-    skipped = [e['skippedOnProd'] for e in entries if e.get('skippedOnProd')]
-    if skipped:
-        r = skipped[-1]
-        if isinstance(r, dict) and r.get('code') == 'stale':
-            raise StageError('push', f"kế hoạch cũ so với prod (stale): {r.get('error') or ''}".strip(), key)
-        what = ' '.join(str(r.get(k)) for k in ('status', 'code', 'error') if r.get(k)) if isinstance(r, dict) else str(r)
-        raise StageError('push', f'bỏ qua trên prod: {what}'.strip(), key)
+    for e in reversed(entries):
+        r = e.get('skippedOnProd')
+        if r:
+            if isinstance(r, dict) and r.get('code') == 'stale':
+                return f"skipped: kế hoạch cũ so với prod (stale): {r.get('error') or ''}".strip()
+            what = ' '.join(str(r.get(k)) for k in ('status', 'code', 'error') if r.get(k)) if isinstance(r, dict) else str(r)
+            return f'skipped: {what or "prod bỏ qua"}'
+        at = _aware(e.get('applied'))
+        if at and at < st:
+            return f"skipped: đã đẩy ở lần trước ({e['applied']})"
     raise StageError('push', 'giao qua API xong nhưng api-ledger không ghi nhận dòng', key)
 
 
