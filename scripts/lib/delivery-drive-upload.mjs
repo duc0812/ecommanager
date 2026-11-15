@@ -30,12 +30,15 @@ export function cachedDriveToken(client, { now = () => Date.now() } = {}) {
 }
 
 /**
- * @param {{ accessToken: (force?: boolean) => Promise<string>, fetchImpl?: typeof fetch }} opts
+ * @param {{ accessToken: (force?: boolean) => Promise<string>, fetchImpl?: typeof fetch, sleep?: (ms: number) => Promise<void> }} opts
  */
-export function createUploader({ accessToken, fetchImpl = fetch }) {
+export function createUploader({ accessToken, fetchImpl = fetch, sleep = ms => new Promise(r => setTimeout(r, ms)) }) {
+  const backoff = n => sleep(Math.min(30_000, 2000 * 2 ** n))
   async function startSession({ name, mimeType, size, parentId }) {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const token = await accessToken(attempt > 0)
+    let refreshed = false
+    let failures = 0
+    for (;;) {
+      const token = await accessToken(refreshed)
       const res = await fetchImpl(UPLOAD_URL, {
         method: 'POST',
         headers: {
@@ -46,7 +49,8 @@ export function createUploader({ accessToken, fetchImpl = fetch }) {
         },
         body: JSON.stringify({ name, mimeType, parents: [parentId] }),
       })
-      if (res.status === 401 && attempt === 0) { await res.body?.cancel?.().catch(() => {}); continue }
+      if (res.status === 401 && !refreshed) { await res.body?.cancel?.().catch(() => {}); refreshed = true; continue }
+      if (res.status >= 500 && failures < MAX_CHUNK_RETRIES) { await res.body?.cancel?.().catch(() => {}); await backoff(failures++); continue }
       if (!res.ok) {
         const data = await res.json().catch(() => null)
         throw new DriveUploadError(`Google Drive: ${data?.error?.message || res.statusText || 'lỗi'} (HTTP ${res.status})`, res.status)
@@ -57,7 +61,6 @@ export function createUploader({ accessToken, fetchImpl = fetch }) {
       if (url.protocol !== 'https:' || url.hostname !== 'www.googleapis.com') throw new DriveUploadError(`Upload session phải ở www.googleapis.com, nhận ${url.hostname}`)
       return session
     }
-    throw new DriveUploadError('Google Drive từ chối token (401).', 401)
   }
 
   /**
@@ -88,7 +91,10 @@ export function createUploader({ accessToken, fetchImpl = fetch }) {
           })
         } catch (e) {
           if (++failures > MAX_CHUNK_RETRIES) throw new DriveUploadError(`Mất kết nối khi upload: ${e instanceof Error ? e.message : e}`)
-          offset = await resumeOffset(session, size)
+          await backoff(failures - 1)
+          const r = await resumeOffset(session, size)
+          if (r.done) return { id: r.id, size }
+          offset = r.offset
           continue
         }
         if (res.status === 308) {
@@ -104,7 +110,10 @@ export function createUploader({ accessToken, fetchImpl = fetch }) {
         }
         if (res.status >= 500 && ++failures <= MAX_CHUNK_RETRIES) {
           await res.body?.cancel?.().catch(() => {})
-          offset = await resumeOffset(session, size)
+          await backoff(failures - 1)
+          const r = await resumeOffset(session, size)
+          if (r.done) return { id: r.id, size }
+          offset = r.offset
           continue
         }
         const data = await res.json().catch(() => null)
@@ -118,10 +127,15 @@ export function createUploader({ accessToken, fetchImpl = fetch }) {
 
   async function resumeOffset(session, size) {
     const res = await fetchImpl(session, { method: 'PUT', redirect: 'manual', headers: { 'Content-Length': '0', 'Content-Range': `bytes */${size}` } })
+    if (res.status === 200 || res.status === 201) {
+      const file = await res.json().catch(() => null)
+      if (typeof file?.id !== 'string') throw new DriveUploadError('Google Drive không trả về id file.')
+      return { done: true, id: file.id, offset: size }
+    }
     await res.body?.cancel?.().catch(() => {})
-    if (res.status !== 308) return 0
+    if (res.status !== 308) return { done: false, offset: 0 }
     const m = /bytes=0-(\d+)/.exec(res.headers.get('range') ?? '')
-    return m ? Number(m[1]) + 1 : 0
+    return { done: false, offset: m ? Number(m[1]) + 1 : 0 }
   }
 
   return { upload }

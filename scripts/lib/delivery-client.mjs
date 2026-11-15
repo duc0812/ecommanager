@@ -17,6 +17,18 @@ export class DeliveryGaveUp extends Error {
   }
 }
 
+export class DeliveryStopped extends Error {
+  /** @param {string} message @param {{ status?: number | null, code?: string | null }} [info] */
+  constructor(message, { status = null, code = null } = {}) {
+    super(message)
+    this.name = 'DeliveryStopped'
+    this.status = status
+    this.code = code
+  }
+}
+
+const STOP_CODES = new Set(['disabled', 'drive_not_connected'])
+
 /**
  * @param {{ baseUrl?: string, token?: string, fetchImpl?: typeof fetch, sleep?: (ms: number) => Promise<void>, budgetMs?: number, now?: () => number }} [opts]
  */
@@ -51,16 +63,18 @@ export function createDeliveryClient({
       try {
         const res = await fetchImpl(`${root}${route}`, { method, headers, body })
         status = res.status
-        if (status !== 429 && status !== 503) {
+        {
           const text = await res.text()
           let parsed = null
           try { parsed = text ? JSON.parse(text) : null } catch { parsed = { error: text.slice(0, 300) } }
-          return { ok: res.ok, status, body: parsed }
+          if (status === 401) throw new DeliveryStopped(`${method} ${route}: không được phép (401), kiểm tra DESIGN_WORKER_TOKEN`, { status, code: parsed?.code ?? null })
+          if (status === 503 && STOP_CODES.has(parsed?.code)) throw new DeliveryStopped(`${method} ${route}: server báo ${parsed.code}`, { status, code: parsed.code })
+          if (status !== 429 && status !== 503) return { ok: res.ok, status, body: parsed }
         }
-        await res.body?.cancel?.().catch(() => {})
         const ra = Number(res.headers.get('retry-after'))
         if (Number.isFinite(ra) && ra > 0) retryAfterMs = ra * 1000
       } catch (e) {
+        if (e instanceof DeliveryStopped) throw e
         lastError = e instanceof Error ? new Error(e.message) : new Error(String(e))
       }
       const wait = retryAfterMs ?? Math.min(MAX_WAIT_MS, FIRST_WAIT_MS * 2 ** attempt)

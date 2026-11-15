@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import { runApiDelivery } from '../scripts/lib/api-delivery.mjs'
-import { DeliveryGaveUp } from '../scripts/lib/delivery-client.mjs'
+import { createUploader } from '../scripts/lib/delivery-drive-upload.mjs'
+import { DeliveryGaveUp, DeliveryStopped } from '../scripts/lib/delivery-client.mjs'
 
 let dir: string
 let ledgerPath: string
@@ -31,7 +32,7 @@ function fakes(opts: { commit?: (key: string, body: any) => any; state?: any } =
       if (opts.commit) return opts.commit(key, body)
       return {
         ok: true, status: 200,
-        body: { ok: true, status: 'REVIEW', artworks: body.files.map((f: any, i: number) => ({ id: `n${i}`, kind: f.kind, printArea: f.printArea })), alreadyApplied: false },
+        body: { ok: true, status: 'REVIEW', artworks: body.files.map((f: any, i: number) => ({ id: `n${i}`, kind: f.kind, printArea: f.printArea, driveFileId: f.driveFileId })), alreadyApplied: false },
       }
     },
     putPreview: async (id: string) => { events.push(`preview ${id}`); return { ok: true, status: 200, body: {} } },
@@ -53,6 +54,8 @@ const line = (extra: any = {}) => ({
 const run = (f: ReturnType<typeof fakes>, lines: any[], extra: any = {}) =>
   runApiDelivery({ lines, client: f.client, uploader: f.uploader, ledgerPath, log: () => {}, ...extra })
 const ledger = () => JSON.parse(fs.readFileSync(ledgerPath, 'utf8'))
+const entries = (task = 'LIT1_1') => Object.entries(ledger().lines).filter(([k]) => k.startsWith(`${task}#`)).map(([, v]) => v as any)
+const entry = (task = 'LIT1_1') => entries(task)[0]
 
 describe('runApiDelivery', () => {
   it('uploads into the incoming folder, commits with expected state, files sorted case-insensitively, unknown sizes null', async () => {
@@ -65,7 +68,7 @@ describe('runApiDelivery', () => {
     expect(body.files.map((x: any) => x.printArea)).toEqual(['back', 'Front'])
     expect(body.files[0]).toMatchObject({ widthPx: null, heightPx: null, driveFileId: 'D-back.png' })
     expect(body.files[1]).toMatchObject({ widthPx: 100, heightPx: 200 })
-    expect(ledger().lines.LIT1_1.applied).toBeTruthy()
+    expect(entry().applied).toBeTruthy()
   })
 
   it('skips an applied line on a second run: no upload, no commit, not even a state read', async () => {
@@ -82,7 +85,7 @@ describe('runApiDelivery', () => {
     const l = line()
     await expect(run(crashing, [l])).rejects.toBeInstanceOf(DeliveryGaveUp)
     expect(crashing.uploads).toHaveLength(2)
-    const led = ledger().lines.LIT1_1
+    const led = entry()
     expect(led.applied).toBeFalsy()
     expect(Object.values(led.files).map((x: any) => x.driveFileId).sort()).toEqual(['D-back.png', 'D-front.png'])
     const second = fakes()
@@ -96,19 +99,19 @@ describe('runApiDelivery', () => {
     let snapshot: any = null
     const f = fakes({ commit: () => { snapshot = ledger(); return { ok: true, status: 200, body: { ok: true, artworks: [], alreadyApplied: false } } } })
     await run(f, [line()])
-    expect(Object.keys(snapshot.lines.LIT1_1.files)).toHaveLength(2)
-    expect(snapshot.lines.LIT1_1.applied).toBeFalsy()
+    expect(Object.keys((Object.values(snapshot.lines)[0] as any).files)).toHaveLength(2)
+    expect((Object.values(snapshot.lines)[0] as any).applied).toBeFalsy()
     expect(fs.existsSync(`${ledgerPath}.tmp`)).toBe(false)
   })
 
-  it('re-uploads a file whose local copy changed since the ledger entry, leaving the old one on Drive', async () => {
+  it('a changed local file is a new delivery: everything is uploaded again, the old copy stays on Drive', async () => {
     const crashing = fakes({ commit: () => { throw new DeliveryGaveUp('down', { status: 503 }) } })
     const l = line()
     await expect(run(crashing, [l])).rejects.toBeInstanceOf(DeliveryGaveUp)
     fs.writeFileSync(l.files[0].path, Buffer.alloc(55, 9))
     const second = fakes()
     await run(second, [l])
-    expect(second.uploads.map(u => u.name)).toEqual(['front.png'])
+    expect(second.uploads.map(u => u.name).sort()).toEqual(['back.png', 'front.png'])
   })
 
   it('on a 409 re-reads state, records skippedOnProd, and never deletes on Drive', async () => {
@@ -116,9 +119,8 @@ describe('runApiDelivery', () => {
     const r = await run(f, [line()])
     expect(r).toMatchObject({ applied: 0, skipped: 1 })
     expect(f.events.filter(e => e === 'state LIT1_1')).toHaveLength(2)
-    expect(ledger().lines.LIT1_1.skippedOnProd).toEqual({ code: 'stale_state', error: 'đã đổi', status: 409 })
-    expect(ledger().lines.LIT1_1.applied).toBeFalsy()
-    expect(Object.keys(f.uploader)).toEqual(['upload'])
+    expect(entry().skippedOnProd).toEqual({ code: 'stale_state', error: 'đã đổi', status: 409 })
+    expect(entry().applied).toBeFalsy()
   })
 
   it('records 400 and 404 as skippedOnProd too', async () => {
@@ -127,7 +129,7 @@ describe('runApiDelivery', () => {
       const f = fakes({ commit: () => ({ ok: false, status, body: { error: 'nope', code: 'bad' } }) })
       const r = await run(f, [line()])
       expect(r.skipped).toBe(1)
-      expect(ledger().lines.LIT1_1.skippedOnProd.status).toBe(status)
+      expect(entry().skippedOnProd.status).toBe(status)
     }
   })
 
@@ -164,5 +166,159 @@ describe('runApiDelivery', () => {
     ] })], { previewOf })
     expect(r.applied).toBe(1)
     expect(f.events.filter(e => e.startsWith('preview'))).toHaveLength(1)
+    expect(entry().pendingPreviews).toHaveLength(1)
+  })
+
+  it('keys the ledger per delivery: a replace after a push on the same task is sent, the same push rerun is skipped', async () => {
+    const f = fakes()
+    const push = line()
+    await run(f, [push])
+    const replaceLine = { ...push, action: 'replace', retire: ['a1'] }
+    const g = fakes()
+    const r = await run(g, [replaceLine])
+    expect(r.applied).toBe(1)
+    expect(g.commits[0].body.action).toBe('replace')
+    const h = fakes()
+    const again = await run(h, [push, replaceLine])
+    expect(again).toMatchObject({ applied: 0, alreadyApplied: 2 })
+    expect(h.events).toEqual([])
+    expect(entries()).toHaveLength(2)
+  })
+
+  it('stops before any upload when the ledger is corrupt, and leaves the file untouched', async () => {
+    fs.writeFileSync(ledgerPath, '{"lines": {"LIT1_1#x": {"files": {')
+    const before = fs.readFileSync(ledgerPath, 'utf8')
+    const f = fakes()
+    await expect(run(f, [line()])).rejects.toThrow(/hỏng/)
+    expect(f.events).toEqual([])
+    expect(fs.readFileSync(ledgerPath, 'utf8')).toBe(before)
+    expect(fs.existsSync(`${ledgerPath}.lock`)).toBe(false)
+  })
+
+  it('treats only a missing ledger as empty; an unreadable path is an error', async () => {
+    fs.mkdirSync(ledgerPath)
+    await expect(run(fakes(), [line()])).rejects.toThrow()
+  })
+
+  it('refuses to run while the lock exists and removes its own lock afterwards', async () => {
+    fs.writeFileSync(`${ledgerPath}.lock`, '123')
+    await expect(run(fakes(), [line()])).rejects.toThrow(/khác/)
+    expect(fs.existsSync(`${ledgerPath}.lock`)).toBe(true)
+    fs.rmSync(`${ledgerPath}.lock`)
+    await run(fakes(), [line()])
+    expect(fs.existsSync(`${ledgerPath}.lock`)).toBe(false)
+    const crashing = fakes({ commit: () => { throw new DeliveryGaveUp('down', { status: 503 }) } })
+    await expect(run(crashing, [line({ taskKey: 'Z' })])).rejects.toBeInstanceOf(DeliveryGaveUp)
+    expect(fs.existsSync(`${ledgerPath}.lock`)).toBe(false)
+  })
+
+  it('retries the ledger rename on EPERM', async () => {
+    const real = fs.renameSync
+    let failures = 2
+    const spy = vi.spyOn(fs, 'renameSync').mockImplementation((a: any, b: any) => {
+      if (failures-- > 0) throw Object.assign(new Error('locked'), { code: 'EPERM' })
+      return real(a, b)
+    })
+    try {
+      await run(fakes(), [line()])
+    } finally {
+      spy.mockRestore()
+    }
+    expect(entry().applied).toBeTruthy()
+  })
+
+  it('fsyncs the temporary ledger before renaming it', async () => {
+    const order: string[] = []
+    const fsync = vi.spyOn(fs, 'fsyncSync').mockImplementation(() => { order.push('fsync') })
+    const real = fs.renameSync
+    const rename = vi.spyOn(fs, 'renameSync').mockImplementation((a: any, b: any) => { order.push('rename'); return real(a, b) })
+    try {
+      await run(fakes(), [line({ files: [], action: 'retire', retire: ['a1'] })])
+    } finally {
+      fsync.mockRestore()
+      rename.mockRestore()
+    }
+    expect(order.indexOf('fsync')).toBeGreaterThanOrEqual(0)
+    expect(order.indexOf('fsync')).toBeLessThan(order.indexOf('rename'))
+  })
+
+  it('waits for every running upload before the line ends when one fails', async () => {
+    const f = fakes()
+    let slowDone = false
+    f.uploader.upload = async (a: any) => {
+      if (a.name === 'back.png') throw new Error('disk gone')
+      await new Promise(r => setTimeout(r, 30))
+      slowDone = true
+      return { id: `D-${a.name}`, size: 10 }
+    }
+    const r = await run(f, [line()])
+    expect(r.failed).toBe(1)
+    expect(slowDone).toBe(true)
+    expect(f.commits).toHaveLength(0)
+    expect(Object.keys(entry().files)).toEqual(['PRINT/Front'])
+  })
+
+  it('sends only positive integer sizes, otherwise null', async () => {
+    const f = fakes()
+    await run(f, [line({ files: [
+      { kind: 'PRINT', printArea: 'A', path: localFile('a.png'), fileName: 'a.png', mimeType: 'image/png', widthPx: 1.5, heightPx: -3 },
+      { kind: 'PRINT', printArea: 'B', path: localFile('b.png'), fileName: 'b.png', mimeType: 'image/png', widthPx: 640, heightPx: 480 },
+    ] })])
+    expect(f.commits[0].body.files.map((x: any) => [x.widthPx, x.heightPx])).toEqual([[null, null], [640, 480]])
+  })
+
+  it('takes a shortcut size from the file spec, else the local file, else fails the line', async () => {
+    const f = fakes()
+    await run(f, [line({ files: [{ kind: 'PRINT', printArea: 'Front', path: path.join(dir, 'gone.png'), fileName: 'g.png', mimeType: 'image/png', shortcutOf: 'T', size: 4321 }] })])
+    expect(f.commits[0].body.files[0].size).toBe(4321)
+    const g = fakes()
+    const r = await run(g, [line({ taskKey: 'S2', files: [{ kind: 'PRINT', printArea: 'Front', path: path.join(dir, 'gone.png'), fileName: 'g.png', mimeType: 'image/png', shortcutOf: 'T' }] })])
+    expect(r.failed).toBe(1)
+    expect(g.commits).toHaveLength(0)
+  })
+
+  it('matches previews by driveFileId and drops the entry on 404 but keeps it on 500', async () => {
+    const big = localFile('huge.png', 30 * 1024 * 1024)
+    const mk = (status: number) => {
+      const f = fakes({ commit: (_k, body) => ({ ok: true, status: 200, body: { ok: true, alreadyApplied: false, artworks: [
+        { id: 'WRONG', kind: 'PRINT', printArea: 'Front', driveFileId: 'someone-else' },
+        { id: 'RIGHT', kind: 'PRINT', printArea: 'renamed-by-server', driveFileId: body.files[0].driveFileId },
+      ] } }) })
+      f.client.putPreview = async (id: string) => { f.events.push(`preview ${id}`); return { ok: false, status, body: {} } }
+      return f
+    }
+    const l = line({ files: [{ kind: 'PRINT', printArea: 'Front', path: big, fileName: 'huge.png', mimeType: 'image/png', widthPx: 1, heightPx: 1 }] })
+    const previewOf = async () => Buffer.from([0xff, 0xd8, 0xff])
+    const f404 = mk(404)
+    await run(f404, [l], { previewOf })
+    expect(f404.events.filter(e => e.startsWith('preview'))).toEqual(['preview RIGHT'])
+    expect(entry().pendingPreviews).toEqual([])
+    fs.rmSync(ledgerPath)
+    const f500 = mk(500)
+    await run(f500, [l], { previewOf })
+    expect(entry().pendingPreviews).toHaveLength(1)
+  })
+
+  it('stops the whole run on DeliveryStopped', async () => {
+    const f = fakes()
+    f.client.taskState = async () => { throw new DeliveryStopped('401', { status: 401 }) }
+    await expect(run(f, [line({ taskKey: 'A' }), line({ taskKey: 'B' })])).rejects.toBeInstanceOf(DeliveryStopped)
+  })
+
+  it('never sends a DELETE or a trashed body when run with the real uploader', async () => {
+    const requests: { method: string; url: string; body: any }[] = []
+    const fetchImpl: any = async (url: any, init: any = {}) => {
+      requests.push({ method: init.method ?? 'GET', url: String(url), body: typeof init.body === 'string' ? init.body : null })
+      if (String(url).includes('uploadType=resumable')) return new Response('', { status: 200, headers: { location: 'https://www.googleapis.com/upload/s1' } })
+      return new Response(JSON.stringify({ id: `F${requests.length}` }), { status: 200 })
+    }
+    const uploader = createUploader({ accessToken: async () => 't', fetchImpl })
+    const f = fakes()
+    const r = await runApiDelivery({ lines: [line()], client: f.client, uploader, ledgerPath, log: () => {} })
+    expect(r.applied).toBe(1)
+    expect(requests.length).toBeGreaterThan(0)
+    expect(requests.some(x => x.method === 'DELETE')).toBe(false)
+    expect(requests.some(x => /trashed/.test(x.body ?? ''))).toBe(false)
+    expect(requests.every(x => /^https:\/\/www\.googleapis\.com\//.test(x.url))).toBe(true)
   })
 })

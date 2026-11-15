@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
-import { createDeliveryClient, DeliveryGaveUp } from '../scripts/lib/delivery-client.mjs'
+import { createDeliveryClient, DeliveryGaveUp, DeliveryStopped } from '../scripts/lib/delivery-client.mjs'
 import { createUploader, cachedDriveToken } from '../scripts/lib/delivery-drive-upload.mjs'
 
 const json = (body: unknown, status = 200, headers: Record<string, string> = {}) =>
@@ -149,5 +149,64 @@ describe('uploader', () => {
     const up = createUploader({ accessToken: async (force?: boolean) => { tokens.push(!!force); return 't' }, fetchImpl })
     expect((await up.upload({ path: file, name: 'a.png', mimeType: 'image/png', parentId: 'P' })).id).toBe('F2')
     expect(tokens).toEqual([false, true])
+  })
+})
+
+describe('delivery client stops', () => {
+  it('stops at once on a 401', async () => {
+    const h = harness([json({ error: 'no' }, 401)])
+    let err: any
+    try { await make(h).taskState('K') } catch (e) { err = e }
+    expect(err).toBeInstanceOf(DeliveryStopped)
+    expect(err.status).toBe(401)
+    expect(h.waits).toEqual([])
+    expect(h.calls).toHaveLength(1)
+  })
+
+  it.each(['disabled', 'drive_not_connected'])('stops at once on a 503 with code %s', async code => {
+    const h = harness([json({ error: 'x', code }, 503)])
+    let err: any
+    try { await make(h).driveToken() } catch (e) { err = e }
+    expect(err).toBeInstanceOf(DeliveryStopped)
+    expect(err.code).toBe(code)
+    expect(h.waits).toEqual([])
+  })
+
+  it('still retries a plain 503 (code busy)', async () => {
+    const h = harness([json({ error: 'x', code: 'busy' }, 503, { 'Retry-After': '2' }), json({ ok: 1 })])
+    expect((await make(h).taskState('K')).ok).toBe(true)
+    expect(h.waits).toEqual([2000])
+  })
+})
+
+describe('uploader recovery', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'deliv-up2-'))
+  const file = path.join(tmp, 'a.png')
+  fs.writeFileSync(file, Buffer.alloc(100, 1))
+  const session = () => new Response('', { status: 200, headers: { location: 'https://www.googleapis.com/upload/s1' } })
+
+  it('takes the id from a 200 answer to the status query after a dropped connection', async () => {
+    let puts = 0
+    const fetchImpl: any = async (url: any, init: any = {}) => {
+      if (String(url).includes('uploadType=resumable')) return session()
+      puts++
+      if (puts === 1) throw new Error('socket hang up')
+      expect(init.headers['Content-Range']).toBe('bytes */100')
+      return json({ id: 'DONE' })
+    }
+    const up = createUploader({ accessToken: async () => 't', fetchImpl, sleep: async () => {} })
+    expect(await up.upload({ path: file, name: 'a.png', mimeType: 'image/png', parentId: 'P' })).toEqual({ id: 'DONE', size: 100 })
+  })
+
+  it('retries a 5xx when starting the session', async () => {
+    let starts = 0
+    const waits: number[] = []
+    const fetchImpl: any = async (url: any) => {
+      if (String(url).includes('uploadType=resumable')) return ++starts < 3 ? json({ error: { message: 'down' } }, 503) : session()
+      return json({ id: 'OK' })
+    }
+    const up = createUploader({ accessToken: async () => 't', fetchImpl, sleep: async (ms: number) => { waits.push(ms) } })
+    expect((await up.upload({ path: file, name: 'a.png', mimeType: 'image/png', parentId: 'P' })).id).toBe('OK')
+    expect(waits).toEqual([2000, 4000])
   })
 })
