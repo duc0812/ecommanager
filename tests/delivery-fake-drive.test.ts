@@ -22,7 +22,8 @@ describe('fakeDrive', () => {
     await d.moveFile('f1', 'b', 'n')
     await d.tidy('o1', 'l1')
     await d.taskFolder('o1', 'l1')
-    expect(d.calls).toEqual(['fileInfo:f1', 'moveFile:f1', 'tidy:o1', 'taskFolder:o1'])
+    await d.shareAnyoneReader('f1')
+    expect(d.calls).toEqual(['fileInfo:f1', 'moveFile:f1', 'tidy:o1', 'taskFolder:o1', 'shareAnyoneReader:f1'])
   })
 
   it('shortcuts are findable and children list by parent', async () => {

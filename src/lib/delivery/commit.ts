@@ -18,14 +18,24 @@ type Artwork = CommitResult['artworks'][number]
 
 type LineRow = { id: string; kind: string; printArea: string; driveFileId: string | null; removedAt: Date | null; removedById: string | null; source: string }
 
-type SharedRetired = { kind: string; printArea: string; version: number; fileName: string; driveFileId: string }
+type RetiredRow = { kind: string; printArea: string; version: number; fileName: string; driveFileId: string }
+
+/** What the commit left to do on Drive for the rows it retired. */
+type RetiredDrive = {
+  shortcuts: (RetiredRow & { shortcutId: string })[]
+  stays: RetiredRow[]
+  lookupFailed: (RetiredRow & { error: string })[]
+  toShare: RetiredRow[]
+}
+
+type ShortcutLookup = { shortcutId: string | null; failed: string | null }
 
 type Task = { id: string; taskKey: string; status: string; orderId: string; shopifyLineId: string }
 
 type ActionSpec = {
   plan: (ctx: Ctx) => CommitError | Plan
   after: (ctx: Ctx, warnings: string[]) => Promise<string[]>
-  applied: (rows: LineRow[], input: CommitInput) => boolean
+  applied: (rows: LineRow[], input: CommitInput, taskStatus: string) => boolean
   /** Runs on an already-applied resend that is not a dryRun; returns the task status afterwards. */
   resend?: (task: Task) => Promise<string>
 }
@@ -35,6 +45,8 @@ class StaleWrite extends Error {}
 const RESUBMIT_FROM = ['NEW', 'ASSIGNED']
 const RESUBMIT_AFTER_REPLACE = ['DOING', 'REJECTED']
 const SHARED_STAYS_WARNING = 'File dùng chung vẫn nằm trong thư mục task'
+const sharedStaysEvent = (r: RetiredRow) => `File dùng chung ${r.printArea} v${r.version} vẫn nằm trong thư mục task — cần dọn tay khi các dòng khác xong`
+const shortcutStuckEvent = (r: RetiredRow) => `Không dời được lối tắt file cũ ${r.printArea} v${r.version} — cần dọn tay`
 
 const LINE_TEMPLATE_FIELDS = { orderId: true, resolvedSupplierId: true, resolvedSupplierSku: true, shopifyProductId: true, shopifyProductType: true } as const
 
@@ -66,20 +78,42 @@ async function removeShortcuts(ids: string[], drive: DeliveryDrive) {
 }
 
 /**
- * Shortcuts first (their rows say TASK), then one transaction that re-checks the task it planned against, so a second writer gets
- * `stale`. A retired row gets drivePlace NULL so tidy (now or the periodic pass) moves its file to `_old`; a row whose file other
- * lines still print from gets 'OLD' so tidy never moves that file, and only this line's shortcut moves, after the commit.
+ * A retired file that another line ever used (live or removed) may be a shortcut here or the original other lines point at, so
+ * this task folder is asked for a shortcut to it before the transaction decides where the row lives.
  */
-async function writePlan(ctx: Ctx, plan: Plan, drive: DeliveryDrive): Promise<{ error: CommitError } | { shared: SharedRetired[] }> {
+async function lookupShortcuts(ctx: Ctx, plan: Plan, drive: DeliveryDrive): Promise<Map<string, ShortcutLookup>> {
+  const { orderId, shopifyLineId, state } = ctx
+  const found = new Map<string, ShortcutLookup>()
+  for (const r of plan.retire) {
+    if (!r.driveFileId) continue
+    const elsewhere = await prisma.designArtwork.findFirst({ where: { driveFileId: r.driveFileId, NOT: { orderId, shopifyLineId } }, select: { id: true } })
+    if (!elsewhere) continue
+    try {
+      found.set(r.id, { shortcutId: await drive.findShortcut(state.folder.id, r.driveFileId), failed: null })
+    } catch (err: any) {
+      found.set(r.id, { shortcutId: null, failed: err?.message ?? String(err) })
+    }
+  }
+  return found
+}
+
+/**
+ * Shortcuts first (their rows say TASK), then one transaction that re-checks the task it planned against, so a second writer gets
+ * `stale`. A retired row goes to drivePlace NULL so tidy (now or the periodic pass) moves its own file to `_old`, unless the file
+ * may belong to other lines: a shortcut here (moved after the commit), an original other lines still print from, or a lookup
+ * that failed all get 'OLD' so tidy never moves the original.
+ */
+async function writePlan(ctx: Ctx, plan: Plan, drive: DeliveryDrive): Promise<{ error: CommitError } | { retired: RetiredDrive }> {
   const { orderId, shopifyLineId, state, now } = ctx
   const created: string[] = []
-  let shared: SharedRetired[] = []
+  let retired: RetiredDrive = { shortcuts: [], stays: [], lookupFailed: [], toShare: [] }
   try {
     for (const f of plan.inserts.filter(x => x.shortcutOf)) {
       const existing = await drive.findShortcut(state.folder.id, f.shortcutOf as string)
       if (!existing) created.push(await drive.createShortcut(f.shortcutOf as string, state.folder.id, driveFileName(f)))
     }
-    shared = await prisma.$transaction(async tx => {
+    const lookups = await lookupShortcuts(ctx, plan, drive)
+    retired = await prisma.$transaction(async tx => {
       const guard = await tx.designTask.updateMany({
         where: { id: ctx.taskId, status: state.status, ...(plan.guardReadiness ? { readiness: plan.guardReadiness } : {}) },
         data: { updatedAt: now, ...(plan.task ?? {}) },
@@ -87,20 +121,35 @@ async function writePlan(ctx: Ctx, plan: Plan, drive: DeliveryDrive): Promise<{ 
       if (guard.count === 0) throw new StaleWrite()
       const live = await tx.designArtwork.findMany({ where: { orderId, shopifyLineId, removedAt: null }, select: { id: true } })
       if (!sameIds(live.map(r => r.id), state.artworks.map(a => a.id))) throw new StaleWrite()
-      const sharedRows: SharedRetired[] = []
+      const out: RetiredDrive = { shortcuts: [], stays: [], lookupFailed: [], toShare: [] }
+      const notes: string[] = []
       for (const r of plan.retire) {
-        const row = await tx.designArtwork.findUniqueOrThrow({
-          where: { id: r.id }, select: { kind: true, printArea: true, version: true, fileName: true, driveFileId: true },
+        const row = await tx.designArtwork.findUnique({
+          where: { id: r.id }, select: { kind: true, printArea: true, version: true, fileName: true, driveFileId: true, storage: true },
         })
-        const others = row.driveFileId
-          ? await tx.designArtwork.count({ where: { driveFileId: row.driveFileId, removedAt: null, NOT: { orderId, shopifyLineId } } })
-          : 0
+        if (!row) throw new StaleWrite()
+        const look = lookups.get(r.id)
+        const file = { ...row, driveFileId: row.driveFileId as string }
+        let place: 'OLD' | null = null
+        if (look?.shortcutId) {
+          place = 'OLD'
+          out.shortcuts.push({ ...file, shortcutId: look.shortcutId })
+        } else if (look?.failed) {
+          place = 'OLD'
+          out.lookupFailed.push({ ...file, error: look.failed })
+          notes.push(shortcutStuckEvent(file))
+        } else if (look && await tx.designArtwork.count({ where: { driveFileId: row.driveFileId, removedAt: null, NOT: { orderId, shopifyLineId } } }) > 0) {
+          place = 'OLD'
+          out.stays.push(file)
+          notes.push(sharedStaysEvent(file))
+        } else if (row.storage === 'DRIVE' && row.driveFileId) {
+          out.toShare.push(file)
+        }
         const done = await tx.designArtwork.updateMany({
           where: { id: r.id, orderId, shopifyLineId, removedAt: null },
-          data: { removedAt: now, removedById: null, drivePlace: others > 0 ? 'OLD' : null },
+          data: { removedAt: now, removedById: null, drivePlace: place },
         })
         if (done.count !== 1) throw new StaleWrite()
-        if (others > 0) sharedRows.push({ ...row, driveFileId: row.driveFileId as string })
       }
       for (const f of plan.inserts) {
         await tx.designArtwork.create({
@@ -113,7 +162,8 @@ async function writePlan(ctx: Ctx, plan: Plan, drive: DeliveryDrive): Promise<{ 
         })
       }
       await tx.designTaskEvent.create({ data: { taskId: ctx.taskId, type: plan.event.type, message: plan.event.message, actorId: null, createdAt: now } })
-      return sharedRows
+      for (const message of notes) await tx.designTaskEvent.create({ data: { taskId: ctx.taskId, type: 'SYSTEM', message, actorId: null, createdAt: now } })
+      return out
     })
   } catch (err) {
     await removeShortcuts(created, drive)
@@ -123,24 +173,30 @@ async function writePlan(ctx: Ctx, plan: Plan, drive: DeliveryDrive): Promise<{ 
     }
     throw err
   }
-  return { shared }
+  return { retired }
 }
 
-/** After the commit: a retired shared file stays where it is; only the shortcut in this task folder goes to `_old`. */
-async function moveRetiredShortcuts(ctx: Ctx, rows: SharedRetired[], drive: DeliveryDrive, warnings: string[]) {
+/**
+ * After the commit, before tidy: this line's shortcuts go to `_old`; each file tidy will move to the unshared `_old` gets its own
+ * "anyone, reader" first so a factory's per-file link keeps working. Drive failures are warnings (and a task event for a shortcut).
+ */
+async function finishRetiredOnDrive(ctx: Ctx, retired: RetiredDrive, drive: DeliveryDrive, warnings: string[]) {
   let oldFolder: string | null = null
-  for (const r of rows) {
+  for (const r of retired.shortcuts) {
     try {
-      const shortcut = await drive.findShortcut(ctx.state.folder.id, r.driveFileId)
-      if (!shortcut) {
-        warnings.push(SHARED_STAYS_WARNING)
-        continue
-      }
       oldFolder ??= await drive.oldFolder(ctx.orderId, ctx.shopifyLineId)
-      await drive.moveFile(shortcut, oldFolder, driveOldFileName(r))
+      await drive.moveFile(r.shortcutId, oldFolder, driveOldFileName(r))
     } catch (err: any) {
       warnings.push(`${r.printArea} v${r.version}: chưa dời được lối tắt sang _old: ${err?.message ?? err}`)
+      await prisma.designTaskEvent.create({ data: { taskId: ctx.taskId, type: 'SYSTEM', message: shortcutStuckEvent(r), actorId: null } })
+        .catch(e => console.error('delivery: shortcut event failed', ctx.state.taskKey, e))
     }
+  }
+  if (retired.stays.length) warnings.push(SHARED_STAYS_WARNING)
+  for (const r of retired.lookupFailed) warnings.push(`${r.printArea} v${r.version}: không hỏi được Drive về lối tắt (${r.error}) — giữ nguyên file, cần dọn tay`)
+  for (const r of retired.toShare) {
+    await drive.shareAnyoneReader(r.driveFileId)
+      .catch((err: any) => { warnings.push(`${r.printArea} v${r.version}: chưa chia sẻ được file cũ trước khi dời sang _old: ${err?.message ?? err}`) })
   }
 }
 
@@ -215,7 +271,7 @@ export async function commitDelivery(taskKey: string, input: CommitInput, drive:
     where: { orderId, shopifyLineId },
     select: { id: true, kind: true, printArea: true, driveFileId: true, removedAt: true, removedById: true, source: true },
   })
-  if (action.applied(rows, input)) {
+  if (action.applied(rows, input, task.status)) {
     const status = action.resend && !input.dryRun ? await action.resend(task) : task.status
     const live = await liveArtworks(orderId, shopifyLineId)
     const retired = input.action === 'revert'
@@ -258,13 +314,13 @@ export async function commitDelivery(taskKey: string, input: CommitInput, drive:
       ...remaining.map(a => ({ id: a.id, kind: a.kind, printArea: a.printArea, version: a.version, driveFileId: a.driveFileId })),
       ...planned.inserts.map(f => ({ id: null, kind: f.kind, printArea: f.printArea, version: f.version, driveFileId: f.driveFileId })),
     ]
-    return { ok: true, status: state.status, artworks: wouldBe, retired: retiredIds, missing: missingFor(ctx.template, wouldBe), warnings, alreadyApplied: false }
+    return { ok: true, status: planned.task?.status ?? state.status, artworks: wouldBe, retired: retiredIds, missing: missingFor(ctx.template, wouldBe), warnings, alreadyApplied: false }
   }
 
   const written = await writePlan(ctx, planned, drive)
   if ('error' in written) return written.error
 
-  await moveRetiredShortcuts(ctx, written.shared, drive, warnings)
+  await finishRetiredOnDrive(ctx, written.retired, drive, warnings)
   const missing = await action.after(ctx, warnings)
   try {
     await drive.tidy(orderId, shopifyLineId)

@@ -121,12 +121,13 @@ export function planRevert(ctx: Ctx): CommitError | Plan {
 type LineRow = { id: string; kind: string; source: string; removedAt: Date | null; removedById: string | null }
 
 /**
- * A revert re-sent after its answer was lost: the AUTO rows the machine saw (`expected.liveIds`) are all gone, removed by
- * no person, and the line holds no live AUTO print — a replace since then would have put one back.
+ * A revert re-sent after its answer was lost: the task is NEW, the AUTO rows the machine saw (`expected.liveIds`) are all gone,
+ * removed by no person, and the line holds no live AUTO print — a replace since then would have put one back.
  */
-export function isRevertApplied(rows: LineRow[], input: CommitInput): boolean {
+export function isRevertApplied(rows: LineRow[], input: CommitInput, taskStatus: string): boolean {
   const seen = rows.filter(r => input.expected.liveIds.includes(r.id) && r.source === 'AUTO')
-  return seen.length > 0
+  return taskStatus === 'NEW'
+    && seen.length > 0
     && seen.every(r => !!r.removedAt && r.removedById === null)
     && !rows.some(r => !r.removedAt && r.kind === 'PRINT' && r.source === 'AUTO')
 }

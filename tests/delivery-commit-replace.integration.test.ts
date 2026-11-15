@@ -24,11 +24,11 @@ let n = 0
 
 type Seed = { kind?: 'PRINT' | 'MOCKUP'; printArea: string; version?: number; source?: string; driveFileId?: string; fileName?: string; drivePlace?: string | null }
 
-async function line(opts: { status?: string; readiness?: string; arts?: Seed[] } = {}) {
+async function line(opts: { status?: string; readiness?: string; arts?: Seed[]; drive?: ReturnType<typeof fakeDrive> } = {}) {
   const o = await fx.order(++n, { supplierSku: TPL_SKU, taskStatus: opts.status })
   if (opts.readiness) await prisma.designTask.updateMany({ where: { orderId: o.orderId }, data: { readiness: opts.readiness } })
   const taskFolder = `task-${o.orderId}-l1`
-  const drive = fakeDrive()
+  const drive = opts.drive ?? fakeDrive()
   const ids: Record<string, string> = {}
   for (const a of opts.arts ?? []) {
     const kind = a.kind ?? 'PRINT'
@@ -154,6 +154,11 @@ describe('commitDelivery replace', () => {
 
     const r = await commitDelivery(l.taskKey, req(l, 'replace', { files, retire: [l.ids['Front v1']], allowFinished: true }), l.drive)
     expect(r).toMatchObject({ ok: true, status: 'DONE' })
+    const oldFile = (await rowsOf(l.orderId)).find(x => x.id === l.ids['Front v1'])!.driveFileId
+    const shared = l.drive.calls.indexOf(`shareAnyoneReader:${oldFile}`)
+    expect(shared).toBeGreaterThan(-1)
+    expect(shared).toBeLessThan(l.drive.calls.indexOf(`tidy:${l.orderId}`))
+    expect(l.drive.calls).not.toContain('shareAnyoneReader:dlr-done-f')
     expect(await liveOf(l.orderId)).toEqual(['Back v1', 'Front v2'])
     expect((await taskOf(l.taskKey)).status).toBe('DONE')
     expect((await eventsOf(l.taskKey)).map(e => e.message)).toEqual(['Render lại (máy local 26/10) · Front v2 · 1000×1000 px · thay Front v1'])
@@ -222,7 +227,10 @@ describe('commitDelivery replace', () => {
     if (r.ok) expect(r.warnings).toContain('File dùng chung vẫn nằm trong thư mục task')
     expect(l.drive.calls.filter(c => c.startsWith('moveFile:'))).toEqual([])
     expect(l.drive.files.get('dlr-shared-own')!.parents).toEqual([l.taskFolder])
+    expect(l.drive.calls).not.toContain('shareAnyoneReader:dlr-shared-own')
     expect((await rowsOf(l.orderId)).find(x => x.id === l.ids['Front v1'])).toMatchObject({ drivePlace: 'OLD' })
+    expect((await eventsOf(l.taskKey)).filter(e => e.type === 'SYSTEM').map(e => e.message))
+      .toEqual(['File dùng chung Front v1 vẫn nằm trong thư mục task — cần dọn tay khi các dòng khác xong'])
   })
 
   it('a failed shortcut move after the commit is a warning and the retire stands', async () => {
@@ -236,6 +244,58 @@ describe('commitDelivery replace', () => {
     if (r.ok) expect(r.warnings.join('\n')).toContain('drive 500')
     expect(await liveOf(l.orderId)).toEqual(['Back v1'])
     expect((await rowsOf(l.orderId)).find(x => x.id === l.ids['Front v1'])).toMatchObject({ drivePlace: 'OLD' })
+    expect((await eventsOf(l.taskKey)).filter(e => e.type === 'SYSTEM').map(e => e.message))
+      .toEqual(['Không dời được lối tắt file cũ Front v1 — cần dọn tay'])
+  })
+
+  it('owner retired first, then the shortcut line retires: the original never moves, the shortcut does', async () => {
+    const drive = fakeDrive()
+    const owner = await line({ status: 'REVIEW', drive, arts: [{ printArea: 'Front', driveFileId: 'dlr-chain' }, { printArea: 'Back' }] })
+    const sc = await line({ status: 'REVIEW', drive, arts: [{ printArea: 'Front', driveFileId: 'dlr-chain' }, { printArea: 'Back' }] })
+    const shortcutId = await drive.createShortcut('dlr-chain', sc.taskFolder, 'Front.png')
+    expect(drive.files.get('dlr-chain')!.parents).toEqual([owner.taskFolder])
+
+    const first = await commitDelivery(owner.taskKey, req(owner, 'retire', { retire: [owner.ids['Front v1']] }), drive)
+    expect(first).toMatchObject({ ok: true })
+    if (first.ok) expect(first.warnings).toContain('File dùng chung vẫn nằm trong thư mục task')
+    expect((await rowsOf(owner.orderId)).find(x => x.id === owner.ids['Front v1'])).toMatchObject({ drivePlace: 'OLD' })
+
+    drive.calls.length = 0
+    const second = await commitDelivery(sc.taskKey, req(sc, 'retire', { retire: [sc.ids['Front v1']] }), drive)
+    expect(second).toMatchObject({ ok: true, warnings: [] })
+    expect((await rowsOf(sc.orderId)).find(x => x.id === sc.ids['Front v1'])).toMatchObject({ drivePlace: 'OLD' })
+    expect(drive.calls).toContain(`moveFile:${shortcutId}`)
+    expect(drive.calls).not.toContain('moveFile:dlr-chain')
+    expect(drive.calls).not.toContain('shareAnyoneReader:dlr-chain')
+    expect(drive.files.get('dlr-chain')!.parents).toEqual([owner.taskFolder])
+    expect(drive.files.get(shortcutId)!.parents).toEqual([`old-${sc.orderId}-l1`])
+  })
+
+  it('a shortcut lookup that fails keeps the row OLD, moves nothing and leaves a task event', async () => {
+    const drive = fakeDrive()
+    await line({ status: 'REVIEW', drive, arts: [{ printArea: 'Front', driveFileId: 'dlr-look' }] })
+    const l = await line({ status: 'REVIEW', drive, arts: [{ printArea: 'Front', driveFileId: 'dlr-look' }, { printArea: 'Back' }] })
+    drive.findShortcut = async () => { throw new Error('drive 503') }
+    const r = await commitDelivery(l.taskKey, req(l, 'retire', { retire: [l.ids['Front v1']] }), drive)
+    expect(r).toMatchObject({ ok: true })
+    if (r.ok) expect(r.warnings.join('\n')).toContain('drive 503')
+    expect((await rowsOf(l.orderId)).find(x => x.id === l.ids['Front v1'])).toMatchObject({ drivePlace: 'OLD' })
+    expect(drive.calls.filter(c => c.startsWith('moveFile:') || c.startsWith('shareAnyoneReader:'))).toEqual([])
+    expect((await eventsOf(l.taskKey)).filter(e => e.type === 'SYSTEM').map(e => e.message))
+      .toEqual(['Không dời được lối tắt file cũ Front v1 — cần dọn tay'])
+  })
+
+  it('a file once used by another line that nobody prints from any more is left to tidy (drivePlace NULL) and shared first', async () => {
+    const drive = fakeDrive()
+    const gone = await line({ status: 'REVIEW', drive, arts: [{ printArea: 'Front', driveFileId: 'dlr-ever' }] })
+    await prisma.designArtwork.updateMany({ where: { orderId: gone.orderId }, data: { removedAt: new Date('2026-11-10') } })
+    const l = await line({ status: 'REVIEW', drive, arts: [{ printArea: 'Front', driveFileId: 'dlr-ever' }, { printArea: 'Back' }] })
+    drive.calls.length = 0
+    const r = await commitDelivery(l.taskKey, req(l, 'retire', { retire: [l.ids['Front v1']] }), drive)
+    expect(r).toMatchObject({ ok: true, warnings: [] })
+    expect((await rowsOf(l.orderId)).find(x => x.id === l.ids['Front v1'])).toMatchObject({ drivePlace: null })
+    expect(drive.calls.indexOf('shareAnyoneReader:dlr-ever')).toBeGreaterThan(-1)
+    expect(drive.calls.indexOf('shareAnyoneReader:dlr-ever')).toBeLessThan(drive.calls.indexOf(`tidy:${l.orderId}`))
   })
 
   it('replacing the file the factory holds as designDriveLink never deletes it', async () => {
@@ -383,6 +443,21 @@ describe('commitDelivery revert', () => {
     const again = await commitDelivery(l.taskKey, body, l.drive)
     expect(again).toMatchObject({ ok: true, alreadyApplied: true, status: 'NEW', retired: [l.ids['Front v1']] })
     expect(await eventsOf(l.taskKey)).toHaveLength(1)
+  })
+
+  it('a revert dryRun reports status NEW and writes nothing', async () => {
+    const l = await line({ status: 'REVIEW', readiness: 'AUTO', arts: [{ printArea: 'Front' }] })
+    const r = await commitDelivery(l.taskKey, req(l, 'revert', { dryRun: true }), l.drive)
+    expect(r).toMatchObject({ ok: true, status: 'NEW', retired: [l.ids['Front v1']], artworks: [], alreadyApplied: false })
+    await expectUntouched(l, ['Front v1'])
+  })
+
+  it('a revert resend after a person moved the task on is not already applied', async () => {
+    const l = await line({ status: 'REVIEW', readiness: 'AUTO', arts: [{ printArea: 'Front' }] })
+    const body = req(l, 'revert')
+    await commitDelivery(l.taskKey, body, l.drive)
+    await prisma.designTask.update({ where: { taskKey: l.taskKey }, data: { status: 'DOING' } })
+    expect(await commitDelivery(l.taskKey, body, l.drive)).toMatchObject({ ok: false, code: 'stale', httpStatus: 409 })
   })
 
   it('readiness changed by a person after the checks makes revert 409 stale', async () => {

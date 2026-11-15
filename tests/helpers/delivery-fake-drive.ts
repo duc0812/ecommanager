@@ -68,6 +68,9 @@ export function fakeDrive() {
       f.parents = [folderId]
       f.name = name
     },
+    async shareAnyoneReader(id) {
+      calls.push(`shareAnyoneReader:${id}`)
+    },
     async tidy(orderId) {
       calls.push(`tidy:${orderId}`)
     },
