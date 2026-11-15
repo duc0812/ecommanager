@@ -15,6 +15,7 @@ import {
 } from '@/lib/delivery/commit-checks'
 import { RESUBMIT_EVENT, pushEventMessage } from '@/lib/delivery/commit-text'
 import { isRevertApplied, nextVersionFor, planReplace, planRetire, planRevert, type Ctx, type Plan } from '@/lib/delivery/commit-replace'
+import { APPROVE_MISSING_WARNING, approveDelivered, localApprover } from '@/lib/delivery/approve'
 
 type Artwork = CommitResult['artworks'][number]
 
@@ -255,6 +256,21 @@ async function resubmitLandedPush(task: Task): Promise<string> {
   return (await prisma.designTask.findUniqueOrThrow({ where: { id: task.id }, select: { status: true } })).status
 }
 
+/** Whether the task this commit leaves behind (before the approval) reaches REVIEW: the after-step of push/replace in advance. */
+function reachesReview(action: CommitInput['action'], status: string, artworks: { kind: string }[], missing: string[]): boolean {
+  if (missing.length > 0 || !artworks.some(a => a.kind === 'PRINT')) return false
+  if (status === 'REVIEW') return true
+  if (action === 'push') return AUTO_REVIEW_FROM.includes(status as any)
+  return action === 'replace' && RESUBMIT_AFTER_REPLACE.includes(status)
+}
+
+/** Runs after every write and after tidy, so the approval sees the task folder holding the files; returns the warning to report, if any. */
+async function approveWritten(taskKey: string, status: string, missing: string[]): Promise<string | null> {
+  if (status === 'DONE') return null
+  if (status !== 'REVIEW') return missing.length > 0 ? APPROVE_MISSING_WARNING : `Không duyệt được: task đang ${status}`
+  return (await approveDelivered(taskKey)).warning ?? null
+}
+
 const ACTIONS: Record<CommitInput['action'], ActionSpec> = {
   push: { plan: planPush, after: afterPush, applied: isAlreadyApplied, resend: resubmitLandedPush },
   replace: { plan: planReplace, after: afterReplace, applied: isAlreadyApplied },
@@ -270,6 +286,10 @@ export async function commitDelivery(taskKey: string, input: CommitInput, drive:
 
   const task = await prisma.designTask.findUnique({ where: { taskKey } })
   if (!task) return refuse(404, 'not_found', 'Không tìm thấy task')
+  if (input.approve) {
+    const approver = await localApprover()
+    if ('error' in approver) return refuse(409, 'approve_not_allowed', `Không duyệt ở máy local được: ${approver.error}`)
+  }
   const { orderId, shopifyLineId } = task
   const rows: LineRow[] = await prisma.designArtwork.findMany({
     where: { orderId, shopifyLineId },
@@ -283,10 +303,16 @@ export async function commitDelivery(taskKey: string, input: CommitInput, drive:
     const retired = input.action === 'revert'
       ? rows.filter(r => input.expected.liveIds.includes(r.id) && r.source === 'AUTO').map(r => r.id)
       : retire
-    return {
-      ok: true, status, artworks: live, retired, warnings: [], alreadyApplied: true,
-      missing: status === 'REVIEW' ? [] : missingPrintAreas(live, await requiredSlotsForLine(orderId, shopifyLineId)),
+    const missing = status === 'REVIEW' ? [] : missingPrintAreas(live, await requiredSlotsForLine(orderId, shopifyLineId))
+    const out: CommitResult = { ok: true, status, artworks: live, retired, warnings: [], alreadyApplied: true, missing }
+    if (!input.approve) return out
+    if (input.dryRun) {
+      const resent = !!action.resend && RESUBMIT_FROM.includes(status) && reachesReview(input.action, status, live, missing)
+      return { ...out, wouldApprove: open && (status === 'REVIEW' || resent) }
     }
+    const warning = open ? await approveWritten(taskKey, status, missing) : (status === 'DONE' ? null : 'Không duyệt được: đơn đã đóng')
+    const final = (await prisma.designTask.findUniqueOrThrow({ where: { id: task.id }, select: { status: true } })).status
+    return { ...out, status: final, warnings: warning ? [warning] : [] }
   }
 
   if (task.status === 'CANCELLED') return refuse(409, 'closed', 'Task đã huỷ — không nhận file nữa')
@@ -335,7 +361,10 @@ export async function commitDelivery(taskKey: string, input: CommitInput, drive:
       ...remaining.map(a => ({ id: a.id, kind: a.kind, printArea: a.printArea, version: a.version, driveFileId: a.driveFileId })),
       ...planned.inserts.map(f => ({ id: null, kind: f.kind, printArea: f.printArea, version: f.version, driveFileId: f.driveFileId })),
     ]
-    return { ok: true, status: planned.task?.status ?? state.status, artworks: wouldBe, retired: retiredIds, missing: missingFor(ctx.template, wouldBe), warnings, alreadyApplied: false }
+    const status = planned.task?.status ?? state.status
+    const missing = missingFor(ctx.template, wouldBe)
+    const result: CommitResult = { ok: true, status, artworks: wouldBe, retired: retiredIds, missing, warnings, alreadyApplied: false }
+    return input.approve ? { ...result, wouldApprove: reachesReview(input.action, status, wouldBe, missing) } : result
   }
 
   const written = await writePlan(ctx, planned, drive)
@@ -347,6 +376,11 @@ export async function commitDelivery(taskKey: string, input: CommitInput, drive:
     warnings.push(...tidyWarnings(await drive.tidy(orderId, shopifyLineId)))
   } catch (err: any) {
     warnings.push(`Chưa xếp được file vào thư mục task: ${err?.message ?? err} — lượt dọn định kỳ làm lại`)
+  }
+  if (input.approve) {
+    const status = (await prisma.designTask.findUniqueOrThrow({ where: { id: task.id }, select: { status: true } })).status
+    const warning = await approveWritten(taskKey, status, missing)
+    if (warning) warnings.push(warning)
   }
   const after = await prisma.designTask.findUniqueOrThrow({ where: { id: task.id }, select: { status: true } })
   return { ok: true, status: after.status, artworks: await liveArtworks(orderId, shopifyLineId), retired: retiredIds, missing, warnings, alreadyApplied: false }

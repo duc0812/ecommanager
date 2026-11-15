@@ -44,6 +44,8 @@ export type CommitInput = {
   revertReadiness?: 'MANUAL' | 'LOW'
   eventMessage?: string
   dryRun?: boolean
+  /** push/replace only: once the task reaches REVIEW it is approved as `delivery.localApprover`; needs the X-Delivery-Approve token. */
+  approve?: boolean
 }
 
 export type CommitResult = {
@@ -55,6 +57,8 @@ export type CommitResult = {
   missing: string[]
   warnings: string[]
   alreadyApplied: boolean
+  /** dryRun with approve: the commit would take the task to REVIEW and the approval would follow. */
+  wouldApprove?: boolean
 }
 
 export type CommitError = {

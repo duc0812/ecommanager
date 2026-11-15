@@ -28,6 +28,8 @@ export function inputError(input: CommitInput): CommitError | null {
   if (!isOptional(input.eventMessage, x => typeof x === 'string')) return bad('eventMessage phải là chuỗi')
   if (!isOptional(input.dryRun, x => typeof x === 'boolean')) return bad('dryRun phải là true/false')
   if (!isOptional(input.allowFinished, x => typeof x === 'boolean')) return bad('allowFinished phải là true/false')
+  if (!isOptional(input.approve, x => typeof x === 'boolean')) return bad('approve phải là true/false')
+  if (input.approve && input.action !== 'push' && input.action !== 'replace') return bad('approve chỉ dùng với push hoặc replace')
   if (!isOptional(input.retireSources, x => Array.isArray(x) && x.every(s => s === 'AUTO' || s === 'MANUAL'))) return bad('retireSources chỉ nhận AUTO, MANUAL')
   if (!isOptional(input.revertReadiness, x => x === 'MANUAL' || x === 'LOW')) return bad('revertReadiness chỉ nhận MANUAL hoặc LOW')
   const retire = input.retire ?? []

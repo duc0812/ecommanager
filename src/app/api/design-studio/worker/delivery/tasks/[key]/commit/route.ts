@@ -4,6 +4,7 @@ import { getDeliveryDrive } from '@/lib/delivery/drive'
 import { commitDelivery } from '@/lib/delivery/commit'
 import { DRIVE_RETRY_AFTER_SEC, driveFailureResponse } from '@/lib/delivery/errors'
 import { runSerial, memoryPressure } from '@/lib/delivery/queue'
+import { verifyApproveToken } from '@/lib/delivery/approve'
 import type { CommitError, CommitResult } from '@/lib/delivery/types'
 
 export const dynamic = 'force-dynamic'
@@ -27,6 +28,10 @@ export async function POST(req: NextRequest, { params }: { params: { key: string
   }
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
     return NextResponse.json({ error: 'Body không hợp lệ', code: 'bad_request' }, { status: 400 })
+  }
+
+  if (body.approve === true && !(await verifyApproveToken(req.headers.get('x-delivery-approve')))) {
+    return NextResponse.json({ error: 'Duyệt cần token duyệt riêng (X-Delivery-Approve)', code: 'approve_token' }, { status: 403 })
   }
 
   if (memoryPressure()) return busy()
