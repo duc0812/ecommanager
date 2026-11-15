@@ -9,7 +9,7 @@ KEEP=30
 mkdir -p "$DIR"
 free=$(df --output=avail -B1 "$DIR" | tail -n 1 | tr -d ' ')
 if [ "$free" -lt "$MIN_FREE" ]; then
-  echo "hourly-backup: less than 2 GiB free in $DIR ($free bytes), not starting" >&2
+  echo "hourly-backup: less than ${MIN_FREE_GB:-2} GiB free in $DIR ($free bytes), not starting" >&2
   exit 1
 fi
 
