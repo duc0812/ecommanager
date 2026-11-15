@@ -360,3 +360,71 @@ export function driveFileViewUrl(id: string) {
 export function driveFolderUrl(id: string) {
   return `https://drive.google.com/drive/folders/${id}`
 }
+
+export async function getAccessTokenInfo(): Promise<{ accessToken: string; expiresAt: string }> {
+  const accessToken = await getAccessToken()
+  const expiresAt = global.__driveTokenCache?.expiresAt ?? Date.now() + 30 * 60_000
+  return { accessToken, expiresAt: new Date(expiresAt).toISOString() }
+}
+
+const SHORTCUT_MIME = 'application/vnd.google-apps.shortcut'
+
+export async function createShortcut(targetId: string, parentId: string, name: string): Promise<string> {
+  const res = await driveFetch(`${FILES_URL}?fields=id&supportsAllDrives=true`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json; charset=UTF-8' },
+    body: JSON.stringify({ name, mimeType: SHORTCUT_MIME, parents: [parentId], shortcutDetails: { targetId } }),
+  })
+  const data: any = await res.json()
+  if (typeof data?.id !== 'string' || !data.id) throw new DriveError('Google Drive: shortcut không trả về id.')
+  return data.id
+}
+
+export async function findShortcut(parentId: string, targetId: string): Promise<string | null> {
+  let pageToken: string | undefined
+  do {
+    const q = `'${escapeDriveQuery(parentId)}' in parents and mimeType='${SHORTCUT_MIME}' and trashed=false`
+    const search = new URLSearchParams({ q, fields: 'nextPageToken,files(id,shortcutDetails)', pageSize: '100', spaces: 'drive' })
+    if (pageToken) search.set('pageToken', pageToken)
+    const data: any = await (await driveFetch(`${FILES_URL}?${search}`)).json()
+    const hit = (data?.files ?? []).find((f: any) => f?.shortcutDetails?.targetId === targetId)
+    if (hit && typeof hit.id === 'string') return hit.id
+    pageToken = typeof data?.nextPageToken === 'string' ? data.nextPageToken : undefined
+  } while (pageToken)
+  return null
+}
+
+export type DriveChild = { id: string; name: string; mimeType: string; createdTime: string }
+
+export async function listChildren(parentId: string): Promise<DriveChild[]> {
+  const out: DriveChild[] = []
+  let pageToken: string | undefined
+  do {
+    const q = `'${escapeDriveQuery(parentId)}' in parents and trashed=false`
+    const search = new URLSearchParams({ q, fields: 'nextPageToken,files(id,name,mimeType,createdTime)', pageSize: '100', spaces: 'drive' })
+    if (pageToken) search.set('pageToken', pageToken)
+    const data: any = await (await driveFetch(`${FILES_URL}?${search}`)).json()
+    for (const f of data?.files ?? []) {
+      out.push({ id: f.id, name: f.name ?? '', mimeType: f.mimeType ?? '', createdTime: f.createdTime ?? '' })
+    }
+    pageToken = typeof data?.nextPageToken === 'string' ? data.nextPageToken : undefined
+  } while (pageToken)
+  return out
+}
+
+export async function getFileInfo(id: string): Promise<{ id: string; size: number; parents: string[]; trashed: boolean; mimeType: string } | null> {
+  try {
+    const res = await driveFetch(`${FILES_URL}/${encodeURIComponent(id)}?fields=id,size,parents,trashed,mimeType&supportsAllDrives=true`)
+    const d: any = await res.json()
+    return {
+      id: d.id,
+      size: Number(d.size) || 0,
+      parents: Array.isArray(d.parents) ? d.parents.filter((p: unknown): p is string => typeof p === 'string') : [],
+      trashed: Boolean(d.trashed),
+      mimeType: d.mimeType ?? '',
+    }
+  } catch (err) {
+    if (err instanceof DriveError && err.status === 404) return null
+    throw err
+  }
+}

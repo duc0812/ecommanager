@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from 'vites
 import { prisma } from '@/lib/db'
 import { GOOGLE_KEYS } from '@/lib/google-oauth'
 import {
-  DriveAuthError, ensureFolder, folderForTask, getAccessToken, isDriveConnected, primeAccessToken,
+  DriveAuthError, createShortcut, ensureFolder, findShortcut, getAccessTokenInfo, listChildren, folderForTask, getAccessToken, isDriveConnected, primeAccessToken,
   resetDriveCache, shareAnyoneReader, startResumableUpload, uploadChunk,
 } from '@/lib/google-drive'
 
@@ -210,5 +210,53 @@ describe('D2 hardening', () => {
     let id = 0
     mockFetch((url, init) => (init.method === 'POST' ? json({ id: `g${++id}` }) : json({ files: [] })))
     expect(await folderForTask(input)).toBe('g4')
+  })
+})
+
+describe('delivery helpers', () => {
+  it('createShortcut posts the shortcut mime type and target', async () => {
+    await connect()
+    primeAccessToken('tok', 3600, '1//refresh')
+    mockFetch(() => json({ id: 'sc1' }))
+    expect(await createShortcut('target1', 'parent1', 'a.psd')).toBe('sc1')
+    const body = JSON.parse(String(calls[0].init.body))
+    expect(calls[0].init.method).toBe('POST')
+    expect(body.mimeType).toBe('application/vnd.google-apps.shortcut')
+    expect(body.shortcutDetails.targetId).toBe('target1')
+    expect(body.parents).toEqual(['parent1'])
+    expect(body.name).toBe('a.psd')
+  })
+
+  it('findShortcut matches by target id', async () => {
+    await connect()
+    primeAccessToken('tok', 3600, '1//refresh')
+    mockFetch(() => json({ files: [
+      { id: 's1', shortcutDetails: { targetId: 'other' } },
+      { id: 's2', shortcutDetails: { targetId: 'want' } },
+    ] }))
+    expect(await findShortcut('p', 'want')).toBe('s2')
+    expect(await findShortcut('p', 'missing')).toBeNull()
+  })
+
+  it('listChildren follows nextPageToken', async () => {
+    await connect()
+    primeAccessToken('tok', 3600, '1//refresh')
+    mockFetch(url => url.includes('pageToken=t2')
+      ? json({ files: [{ id: 'b', name: 'b', mimeType: 'x', createdTime: '2026-01-02T00:00:00Z' }] })
+      : json({ files: [{ id: 'a', name: 'a', mimeType: 'x', createdTime: '2026-01-01T00:00:00Z' }], nextPageToken: 't2' }))
+    const kids = await listChildren('p')
+    expect(kids.map(k => k.id)).toEqual(['a', 'b'])
+    expect(calls).toHaveLength(2)
+  })
+
+  it('getAccessTokenInfo returns the cached token with an ISO expiry', async () => {
+    await connect()
+    primeAccessToken('tok', 3600, '1//refresh')
+    mockFetch(() => json({}))
+    const info = await getAccessTokenInfo()
+    expect(info.accessToken).toBe('tok')
+    expect(new Date(info.expiresAt).toISOString()).toBe(info.expiresAt)
+    expect(new Date(info.expiresAt).getTime()).toBeGreaterThan(Date.now())
+    expect(calls).toHaveLength(0)
   })
 })
