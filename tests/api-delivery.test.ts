@@ -135,6 +135,7 @@ describe('runApiDelivery', () => {
   })
 
   const state = (status: string, artworks: any[] = []) => ({ status, incomingFolder: { id: 'INC' }, artworks })
+  const auto = (...ids: string[]) => ids.map(id => ({ id, kind: 'PRINT', printArea: id, source: 'AUTO', driveFileId: `D-${id}` }))
 
   it('skips a line as stale before any upload or commit when the task is not in the expected status', async () => {
     const f = fakes({ state: state('DOING') })
@@ -167,7 +168,7 @@ describe('runApiDelivery', () => {
     const push = line({ expectedStatus: 'NEW' })
     const revert = { taskKey: 'LIT1_1', action: 'revert', files: [], retire: [], revertReadiness: 'LOW', expectedStatus: 'REVIEW', planIds: ['n0', 'n1'] }
     await run(fakes({ state: state('NEW') }), [push])
-    expect((await run(fakes({ state: state('REVIEW') }), [revert])).applied).toBe(1)
+    expect((await run(fakes({ state: state('REVIEW', auto('n0', 'n1')) }), [revert])).applied).toBe(1)
     const f = fakes({ state: state('NEW') })
     expect(await run(f, [push])).toMatchObject({ applied: 1, alreadyApplied: 0 })
     expect(f.uploads).toHaveLength(2)
@@ -178,16 +179,84 @@ describe('runApiDelivery', () => {
     const push = line({ expectedStatus: 'NEW' })
     const revert = { taskKey: 'LIT1_1', action: 'revert', files: [], retire: [], revertReadiness: 'LOW', expectedStatus: 'REVIEW', planIds: ['n0'] }
     await run(fakes({ state: state('NEW') }), [push])
-    await run(fakes({ state: state('REVIEW') }), [revert])
+    await run(fakes({ state: state('REVIEW', auto('n0')) }), [revert])
     await run(fakes({ state: state('NEW') }), [push])
-    const f = fakes({ state: state('REVIEW') })
+    const f = fakes({ state: state('REVIEW', auto('n0')) })
     expect(await run(f, [revert])).toMatchObject({ applied: 1, alreadyApplied: 0 })
     expect(f.commits.map(c => c.body.action)).toEqual(['revert'])
   })
 
+  function server(start: { status: string; artworks: any[] }) {
+    const db = { status: start.status, artworks: [...start.artworks] }
+    const f = fakes()
+    f.client.taskState = async (key: string) => { f.events.push(`state ${key}`); return { ok: true, status: 200, body: state(db.status, db.artworks.map(a => ({ ...a }))) } }
+    f.client.commit = async (key: string, body: any) => {
+      f.events.push(`commit ${key}`)
+      f.commits.push({ key, body })
+      if (body.action === 'revert') {
+        db.artworks = db.artworks.filter(a => a.source !== 'AUTO')
+        db.status = 'NEW'
+      } else {
+        db.artworks = db.artworks.filter(a => !(body.retire ?? []).includes(a.id))
+        db.artworks.push(...body.files.map((x: any) => ({ id: `art-${x.driveFileId}`, kind: x.kind, printArea: x.printArea, source: 'AUTO', driveFileId: x.driveFileId })))
+        db.status = 'REVIEW'
+      }
+      return { ok: true, status: 200, body: { ok: true, status: db.status, artworks: db.artworks, alreadyApplied: false } }
+    }
+    return { f, db }
+  }
+
+  it('P1, revert V1, P2, then V1 again: the re-sent revert is stale and P2 stays live', async () => {
+    const { f, db } = server({ status: 'NEW', artworks: [] })
+    const go = (l: any) => runApiDelivery({ lines: [l], client: f.client, uploader: f.uploader, ledgerPath, log: () => {} })
+    const p1 = line({ expectedStatus: 'NEW' })
+    expect((await go(p1)).applied).toBe(1)
+    const v1 = { taskKey: 'LIT1_1', action: 'revert', files: [], retire: [], revertReadiness: 'LOW', expectedStatus: 'REVIEW', planIds: db.artworks.map(a => a.id) }
+    expect((await go(v1)).applied).toBe(1)
+    expect(db).toMatchObject({ status: 'NEW', artworks: [] })
+    const p2 = line({ expectedStatus: 'NEW', files: [{ kind: 'PRINT', printArea: 'Front', path: localFile('p2.png'), fileName: 'p2.png', mimeType: 'image/png' }] })
+    expect((await go(p2)).applied).toBe(1)
+    const live = db.artworks.map(a => a.id)
+    expect(live).toEqual(['art-D-p2.png'])
+    const commitsBefore = f.commits.length
+    const r = await go(v1)
+    expect(r).toMatchObject({ skipped: 1, applied: 0, alreadyApplied: 0 })
+    expect(r.results[0].body).toMatchObject({ code: 'stale' })
+    expect(r.results[0].body.error).toMatch(/kế hoạch cũ — lập lại kế hoạch từ snapshot mới/)
+    expect(f.commits).toHaveLength(commitsBefore)
+    expect(db).toMatchObject({ status: 'REVIEW' })
+    expect(db.artworks.map(a => a.id)).toEqual(live)
+  })
+
+  it('a replace re-sent after a later replace uploads nothing and is skipped as stale', async () => {
+    const { f, db } = server({ status: 'REVIEW', artworks: auto('a1') })
+    const go = (l: any) => runApiDelivery({ lines: [l], client: f.client, uploader: f.uploader, ledgerPath, log: () => {} })
+    const r1 = { taskKey: 'LIT1_1', action: 'replace', expectedStatus: 'REVIEW', retire: ['a1'], planIds: ['a1'],
+      files: [{ kind: 'PRINT', printArea: 'a1', path: localFile('r1.png'), fileName: 'r1.png', mimeType: 'image/png' }] }
+    expect((await go(r1)).applied).toBe(1)
+    const r2 = { taskKey: 'LIT1_1', action: 'replace', expectedStatus: 'REVIEW', retire: ['art-D-r1.png'], planIds: ['art-D-r1.png'],
+      files: [{ kind: 'PRINT', printArea: 'a1', path: localFile('r2.png'), fileName: 'r2.png', mimeType: 'image/png' }] }
+    expect((await go(r2)).applied).toBe(1)
+    const uploadsBefore = f.uploads.length
+    const commitsBefore = f.commits.length
+    const r = await go(r1)
+    expect(r).toMatchObject({ skipped: 1, applied: 0 })
+    expect(r.results[0].body.code).toBe('stale')
+    expect(f.uploads).toHaveLength(uploadsBefore)
+    expect(f.commits).toHaveLength(commitsBefore)
+    expect(db.artworks.map(a => a.id)).toEqual(['art-D-r2.png'])
+  })
+
+  it('a retire whose ids are no longer live is stale', async () => {
+    const f = fakes({ state: state('REVIEW', auto('x1')) })
+    const r = await run(f, [{ taskKey: 'T', action: 'retire', files: [], retire: ['gone'], expectedStatus: 'REVIEW' }])
+    expect(r.skipped).toBe(1)
+    expect(f.commits).toHaveLength(0)
+  })
+
   it('the delivery key covers the expected status and the plan ids', async () => {
-    await run(fakes({ state: state('REVIEW') }), [{ taskKey: 'V', action: 'revert', files: [], retire: [], expectedStatus: 'REVIEW', planIds: ['a'] }])
-    const f = fakes({ state: state('REVIEW') })
+    await run(fakes({ state: state('REVIEW', auto('a')) }), [{ taskKey: 'V', action: 'revert', files: [], retire: [], expectedStatus: 'REVIEW', planIds: ['a'] }])
+    const f = fakes({ state: state('REVIEW', auto('b')) })
     await run(f, [{ taskKey: 'V', action: 'revert', files: [], retire: [], expectedStatus: 'REVIEW', planIds: ['b'] }])
     expect(f.commits).toHaveLength(1)
     expect(entries('V')).toHaveLength(2)

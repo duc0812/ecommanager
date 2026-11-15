@@ -8,7 +8,7 @@ import { DeliveryGaveUp, DeliveryStopped } from './delivery-client.mjs'
 // point resumes without a second upload; a commit the server already applied answers alreadyApplied. Ledger entries are
 // keyed per delivery (task + a hash of what is delivered), never per task alone. Nothing here deletes on Drive.
 // A line with expectedStatus (the status its plan saw) is skipped as stale before any upload when the live task is elsewhere,
-// unless its files are already live there (a lost commit response). Applying a delivery clears `applied` on the task's other
+// or when its plan ids are no longer the live prints (planIsOld), unless its files are already live there (a lost response). Applying a delivery clears `applied` on the task's other
 // entries, so a later re-push or a second revert of the same task is sent instead of answered from the ledger.
 
 const PREVIEW_MIN_BYTES = 30 * 1024 * 1024
@@ -76,6 +76,21 @@ function looksApplied(state, line, led) {
     const id = led.files[fileKey(f)]?.driveFileId
     return !!id && live.some(a => a.driveFileId === id && a.kind === f.kind && sameArea(a.printArea, f.printArea))
   }) && (line.retire ?? []).every(id => !live.some(a => a.id === id))
+}
+
+/** The plan was made against prints that are no longer the live ones: a revert must see exactly its AUTO prints, a replace/retire its retire ids. */
+function planIsOld(state, line) {
+  const live = state.artworks ?? []
+  if (line.action === 'revert' && Array.isArray(line.planIds)) {
+    const auto = new Set(live.filter(a => a.kind === 'PRINT' && a.source === 'AUTO').map(a => a.id))
+    const plan = new Set(line.planIds)
+    return auto.size !== plan.size || [...plan].some(id => !auto.has(id))
+  }
+  if (line.action === 'replace' || line.action === 'retire') {
+    const ids = new Set(live.map(a => a.id))
+    return (line.retire ?? []).some(id => !ids.has(id))
+  }
+  return false
 }
 
 function deliveryKey(line) {
@@ -258,8 +273,10 @@ async function run({ lines, client, uploader, ledgerPath, log, uploads, previewO
     if (!st.ok) return skipOnProd(line, led, st)
     const state = st.body
     const want = expectedOf(line)
-    if (want && !want.includes(state.status) && !looksApplied(state, line, led)) {
-      return skipOnProd(line, led, { ok: false, status: null, body: { code: 'stale', error: `task trên prod đang ${state.status}, kế hoạch cần ${want.join('|')} — lập lại kế hoạch từ snapshot mới` } })
+    const stale = error => skipOnProd(line, led, { ok: false, status: null, body: { code: 'stale', error } })
+    if (!looksApplied(state, line, led)) {
+      if (want && !want.includes(state.status)) return stale(`task trên prod đang ${state.status}, kế hoạch cần ${want.join('|')} — lập lại kế hoạch từ snapshot mới`)
+      if (planIsOld(state, line)) return stale(`kế hoạch cũ — lập lại kế hoạch từ snapshot mới (file sống trên prod: ${(state.artworks ?? []).map(a => a.id).join(', ') || 'không có'})`)
     }
 
     const todo = []
