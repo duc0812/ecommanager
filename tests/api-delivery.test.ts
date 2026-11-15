@@ -123,14 +123,74 @@ describe('runApiDelivery', () => {
     expect(entry().applied).toBeFalsy()
   })
 
-  it('records 400 and 404 as skippedOnProd too', async () => {
-    for (const status of [400, 404]) {
+  it('records 400 and 404 in the ledger; a 400 counts as failed, a 404 as skipped', async () => {
+    for (const [status, counted, outcome] of [[400, 'failed', 'failed'], [404, 'skipped', 'skipped']] as const) {
       fs.rmSync(ledgerPath, { force: true })
       const f = fakes({ commit: () => ({ ok: false, status, body: { error: 'nope', code: 'bad' } }) })
-      const r = await run(f, [line()])
-      expect(r.skipped).toBe(1)
+      const r: any = await run(f, [line()])
+      expect(r[counted]).toBe(1)
+      expect(r.results[0]).toMatchObject({ outcome, status })
       expect(entry().skippedOnProd.status).toBe(status)
     }
+  })
+
+  const state = (status: string, artworks: any[] = []) => ({ status, incomingFolder: { id: 'INC' }, artworks })
+
+  it('skips a line as stale before any upload or commit when the task is not in the expected status', async () => {
+    const f = fakes({ state: state('DOING') })
+    const r = await run(f, [line({ expectedStatus: 'NEW' })])
+    expect(r).toMatchObject({ skipped: 1, applied: 0, failed: 0 })
+    expect(f.uploads).toHaveLength(0)
+    expect(f.commits).toHaveLength(0)
+    expect(r.results[0]).toMatchObject({ outcome: 'skipped', ok: false, body: { code: 'stale' } })
+    expect(r.results[0].body.error).toMatch(/DOING.*NEW/)
+    expect(entry().skippedOnProd).toMatchObject({ code: 'stale' })
+    expect(entry().applied).toBeFalsy()
+  })
+
+  it('takes a list of expected statuses', async () => {
+    const f = fakes({ state: state('DOING') })
+    expect(await run(f, [line({ expectedStatus: ['REVIEW', 'DOING'] })])).toMatchObject({ applied: 1 })
+  })
+
+  it('still sends a commit whose files are already live after a lost response, whatever the status', async () => {
+    const l = line({ expectedStatus: 'NEW' })
+    await expect(run(fakes({ state: state('NEW'), commit: () => { throw new DeliveryGaveUp('lost', { status: 504 }) } }), [l])).rejects.toBeInstanceOf(DeliveryGaveUp)
+    const live = [{ id: 'n1', kind: 'PRINT', printArea: 'Front', driveFileId: 'D-front.png' }, { id: 'n2', kind: 'PRINT', printArea: 'back', driveFileId: 'D-back.png' }]
+    const f = fakes({ state: state('REVIEW', live), commit: () => ({ ok: true, status: 200, body: { ok: true, status: 'REVIEW', artworks: live, alreadyApplied: true } }) })
+    expect(await run(f, [l])).toMatchObject({ applied: 1 })
+    expect(f.uploads).toHaveLength(0)
+    expect(f.commits).toHaveLength(1)
+  })
+
+  it('push, then revert, then the same push again: the second push is sent', async () => {
+    const push = line({ expectedStatus: 'NEW' })
+    const revert = { taskKey: 'LIT1_1', action: 'revert', files: [], retire: [], revertReadiness: 'LOW', expectedStatus: 'REVIEW', planIds: ['n0', 'n1'] }
+    await run(fakes({ state: state('NEW') }), [push])
+    expect((await run(fakes({ state: state('REVIEW') }), [revert])).applied).toBe(1)
+    const f = fakes({ state: state('NEW') })
+    expect(await run(f, [push])).toMatchObject({ applied: 1, alreadyApplied: 0 })
+    expect(f.uploads).toHaveLength(2)
+    expect(f.commits[0].body.action).toBe('push')
+  })
+
+  it('two reverts at different times are both sent, even with the same plan ids', async () => {
+    const push = line({ expectedStatus: 'NEW' })
+    const revert = { taskKey: 'LIT1_1', action: 'revert', files: [], retire: [], revertReadiness: 'LOW', expectedStatus: 'REVIEW', planIds: ['n0'] }
+    await run(fakes({ state: state('NEW') }), [push])
+    await run(fakes({ state: state('REVIEW') }), [revert])
+    await run(fakes({ state: state('NEW') }), [push])
+    const f = fakes({ state: state('REVIEW') })
+    expect(await run(f, [revert])).toMatchObject({ applied: 1, alreadyApplied: 0 })
+    expect(f.commits.map(c => c.body.action)).toEqual(['revert'])
+  })
+
+  it('the delivery key covers the expected status and the plan ids', async () => {
+    await run(fakes({ state: state('REVIEW') }), [{ taskKey: 'V', action: 'revert', files: [], retire: [], expectedStatus: 'REVIEW', planIds: ['a'] }])
+    const f = fakes({ state: state('REVIEW') })
+    await run(f, [{ taskKey: 'V', action: 'revert', files: [], retire: [], expectedStatus: 'REVIEW', planIds: ['b'] }])
+    expect(f.commits).toHaveLength(1)
+    expect(entries('V')).toHaveLength(2)
   })
 
   it('stops the whole run on DeliveryGaveUp', async () => {
@@ -169,19 +229,20 @@ describe('runApiDelivery', () => {
     expect(entry().pendingPreviews).toHaveLength(1)
   })
 
-  it('keys the ledger per delivery: a replace after a push on the same task is sent, the same push rerun is skipped', async () => {
-    const f = fakes()
-    const push = line()
-    await run(f, [push])
-    const replaceLine = { ...push, action: 'replace', retire: ['a1'] }
-    const g = fakes()
+  it('keys the ledger per delivery: a replace after a push is sent; rerun, the replace is done and the old push is stale', async () => {
+    const st = (status: string) => ({ status, incomingFolder: { id: 'INC' }, artworks: [{ id: 'a1' }] })
+    const push = line({ expectedStatus: 'NEW' })
+    await run(fakes({ state: st('NEW') }), [push])
+    const replaceLine = { ...push, action: 'replace', retire: ['a1'], expectedStatus: 'REVIEW' }
+    const g = fakes({ state: st('REVIEW') })
     const r = await run(g, [replaceLine])
     expect(r.applied).toBe(1)
     expect(g.commits[0].body.action).toBe('replace')
-    const h = fakes()
+    const h = fakes({ state: st('REVIEW') })
     const again = await run(h, [push, replaceLine])
-    expect(again).toMatchObject({ applied: 0, alreadyApplied: 2 })
-    expect(h.events).toEqual([])
+    expect(again).toMatchObject({ applied: 0, alreadyApplied: 1, skipped: 1 })
+    expect(h.uploads).toHaveLength(0)
+    expect(h.commits).toHaveLength(0)
     expect(entries()).toHaveLength(2)
   })
 
@@ -229,10 +290,10 @@ describe('runApiDelivery', () => {
     expect(fs.existsSync(`${ledgerPath}.lock`)).toBe(true)
   })
 
-  it.each(['drive_missing', 'wrong_folder'])('a commit answered %s drops the cached file ids so the next run uploads again', async code => {
+  it.each(['drive_missing', 'wrong_folder', 'size_mismatch'])('a commit answered %s drops the cached file ids so the next run uploads again', async code => {
     const l = line()
     const bad = fakes({ commit: () => ({ ok: false, status: 400, body: { ok: false, code, error: 'x' } }) })
-    expect(await run(bad, [l])).toMatchObject({ skipped: 1 })
+    expect(await run(bad, [l])).toMatchObject({ failed: 1 })
     expect(bad.uploads).toHaveLength(2)
     expect(Object.values(entry().files).some((e: any) => e?.driveFileId)).toBe(false)
     const again = fakes()
@@ -242,7 +303,7 @@ describe('runApiDelivery', () => {
 
   it('another refusal keeps the cached file ids, so the next run does not upload again', async () => {
     const l = line()
-    await run(fakes({ commit: () => ({ ok: false, status: 400, body: { ok: false, code: 'size_mismatch', error: 'x' } }) }), [l])
+    await run(fakes({ commit: () => ({ ok: false, status: 400, body: { ok: false, code: 'old_layout', error: 'x' } }) }), [l])
     const again = fakes()
     await run(again, [l])
     expect(again.uploads).toHaveLength(0)
@@ -420,7 +481,7 @@ describe('runApiDelivery', () => {
   it.each(['wrong_folder', 'drive_missing'])('after %s on a known id the next run uploads from the local path', async code => {
     const l = line({ files: [{ kind: 'PRINT', printArea: 'Front', path: localFile('front.png'), fileName: 'front.png', mimeType: 'image/png', knownDriveFileId: 'KNOWN1' }] })
     const bad = fakes({ commit: () => ({ ok: false, status: 400, body: { ok: false, code, error: 'x' } }) })
-    expect(await run(bad, [l])).toMatchObject({ skipped: 1 })
+    expect(await run(bad, [l])).toMatchObject({ failed: 1 })
     expect(bad.uploads).toHaveLength(0)
     const again = fakes()
     expect(await run(again, [l])).toMatchObject({ applied: 1 })
@@ -437,6 +498,19 @@ describe('runApiDelivery', () => {
     expect(again.uploads).toHaveLength(0)
     expect(again.commits).toHaveLength(0)
     expect(r.results[0].body.error).toMatch(/KNOWN1.*không có bản local/)
+  })
+
+  it('says so when a refusal also drops a known id the server did not name', async () => {
+    const l = line({ files: [
+      { kind: 'PRINT', printArea: 'Front', fileName: 'front.png', mimeType: 'image/png', size: 7, knownDriveFileId: 'KNOWN1' },
+      { kind: 'PRINT', printArea: 'Back', fileName: 'back.png', mimeType: 'image/png', size: 7, knownDriveFileId: 'KNOWN2' },
+    ] })
+    const logs: string[] = []
+    await run(fakes({ commit: () => ({ ok: false, status: 400, body: { ok: false, code: 'wrong_folder', error: 'File KNOWN1 không nằm trong thư mục chờ' } }) }), [l], { log: (m: string) => logs.push(m) })
+    const msg = logs.find(m => m.includes('wrong_folder')) ?? ''
+    expect(msg).toMatch(/KNOWN2/)
+    expect(msg).toMatch(/chưa kiểm/)
+    expect(entry().refusedKnown.sort()).toEqual(['KNOWN1', 'KNOWN2'])
   })
 
   it('never sends a DELETE or a trashed body when run with the real uploader', async () => {

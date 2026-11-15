@@ -7,12 +7,15 @@ import { DeliveryGaveUp, DeliveryStopped } from './delivery-client.mjs'
 // then commit. The ledger is written (atomically, fsynced) right after every upload and before the commit, so a crash at any
 // point resumes without a second upload; a commit the server already applied answers alreadyApplied. Ledger entries are
 // keyed per delivery (task + a hash of what is delivered), never per task alone. Nothing here deletes on Drive.
+// A line with expectedStatus (the status its plan saw) is skipped as stale before any upload when the live task is elsewhere,
+// unless its files are already live there (a lost commit response). Applying a delivery clears `applied` on the task's other
+// entries, so a later re-push or a second revert of the same task is sent instead of answered from the ledger.
 
 const PREVIEW_MIN_BYTES = 30 * 1024 * 1024
 const DROP_PREVIEW_STATUSES = new Set([400, 404, 409, 413])
 // The server no longer sees the uploaded file where it should be: the next run uploads it again. A knownDriveFileId (a copy
 // already on Drive) is committed without an upload; once refused this way it is never offered again for that delivery.
-const REUPLOAD_CODES = new Set(['drive_missing', 'wrong_folder'])
+const REUPLOAD_CODES = new Set(['drive_missing', 'wrong_folder', 'size_mismatch'])
 
 const sleepSync = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
 
@@ -62,6 +65,19 @@ const sizeOrNull = n => (Number.isInteger(n) && n > 0 ? n : null)
 const statOf = p => { try { const s = fs.statSync(p); return { size: s.size, mtimeMs: s.mtimeMs } } catch { return null } }
 const fatal = e => e instanceof DeliveryGaveUp || e instanceof DeliveryStopped
 
+const expectedOf = line => (line.expectedStatus == null ? null : [].concat(line.expectedStatus).map(String))
+const sameArea = (a, b) => String(a).toLowerCase() === String(b).toLowerCase()
+
+/** After a lost commit response the task has moved on: its files already live there means the server will answer alreadyApplied. */
+function looksApplied(state, line, led) {
+  const live = state.artworks ?? []
+  if (!line.files.length) return false
+  return line.files.every(f => {
+    const id = led.files[fileKey(f)]?.driveFileId
+    return !!id && live.some(a => a.driveFileId === id && a.kind === f.kind && sameArea(a.printArea, f.printArea))
+  }) && (line.retire ?? []).every(id => !live.some(a => a.id === id))
+}
+
 function deliveryKey(line) {
   const files = [...line.files]
     .sort((a, b) => bySortedArea(a, b) || String(a.kind).localeCompare(String(b.kind)))
@@ -70,6 +86,8 @@ function deliveryKey(line) {
       return { kind: f.kind, printArea: f.printArea, fileName: f.fileName, size: Number.isInteger(f.size) ? f.size : st?.size ?? null, mtimeMs: st?.mtimeMs ?? null, shortcutOf: f.shortcutOf ?? null }
     })
   const payload = { action: line.action, retire: [...(line.retire ?? [])].sort(), files }
+  if (line.expectedStatus != null) payload.expectedStatus = expectedOf(line).sort()
+  if (line.planIds?.length) payload.planIds = [...line.planIds].sort()
   return `${line.taskKey}#${crypto.createHash('sha1').update(JSON.stringify(payload)).digest('hex')}`
 }
 
@@ -120,7 +138,7 @@ function takeLock(ledgerPath, log) {
 
 /**
  * @param {{
- *   lines: { taskKey: string, action: 'push'|'replace'|'retire'|'revert', files: { kind: string, printArea: string, path?: string, fileName: string, mimeType: string, widthPx?: number|null, heightPx?: number|null, shortcutOf?: string|null, knownDriveFileId?: string|null, size?: number }[], retire: string[], eventMessage?: string, retireSources?: string[], allowFinished?: boolean, revertReadiness?: string }[],
+ *   lines: { taskKey: string, action: 'push'|'replace'|'retire'|'revert', files: { kind: string, printArea: string, path?: string, fileName: string, mimeType: string, widthPx?: number|null, heightPx?: number|null, shortcutOf?: string|null, knownDriveFileId?: string|null, size?: number }[], retire: string[], eventMessage?: string, retireSources?: string[], allowFinished?: boolean, revertReadiness?: string, expectedStatus?: string|string[], planIds?: string[] }[],
  *   client: { taskState: Function, commit: Function, putPreview: Function },
  *   uploader: { upload: (f: { path: string, name: string, mimeType: string, parentId: string }) => Promise<{ id: string, size: number }> },
  *   ledgerPath: string,
@@ -179,12 +197,24 @@ async function run({ lines, client, uploader, ledgerPath, log, uploads, previewO
 
   function skipOnProd(line, led, res) {
     const key = line.taskKey
-    const reason = { code: res.body?.code ?? null, error: res.body?.error ?? null, status: res.status }
+    const reason = { code: res.body?.code ?? null, error: res.body?.error ?? null, status: res.status ?? null }
     led.skippedOnProd = reason
     save()
-    log(`${key}: bỏ qua trên prod (${reason.status} ${reason.code ?? ''} ${reason.error ?? ''})`)
-    counts.skipped++
-    result(line, 'skipped', res)
+    const refused = res.status === 400
+    log(`${key}: ${refused ? 'prod từ chối' : 'bỏ qua trên prod'} (${reason.status ?? '-'} ${reason.code ?? ''} ${reason.error ?? ''})`)
+    if (refused) counts.failed++
+    else counts.skipped++
+    result(line, refused ? 'failed' : 'skipped', res)
+  }
+
+  function supersede(key, ledgerKey) {
+    for (const [k, e] of Object.entries(ledger.lines)) {
+      if (k === ledgerKey || e?.taskKey !== key || !e.applied) continue
+      e.supersededAt = new Date().toISOString()
+      e.supersededBy = ledgerKey
+      delete e.applied
+      e.files = {}
+    }
   }
 
   async function deliver(line) {
@@ -227,6 +257,10 @@ async function run({ lines, client, uploader, ledgerPath, log, uploads, previewO
     const st = await client.taskState(key)
     if (!st.ok) return skipOnProd(line, led, st)
     const state = st.body
+    const want = expectedOf(line)
+    if (want && !want.includes(state.status) && !looksApplied(state, line, led)) {
+      return skipOnProd(line, led, { ok: false, status: null, body: { code: 'stale', error: `task trên prod đang ${state.status}, kế hoạch cần ${want.join('|')} — lập lại kế hoạch từ snapshot mới` } })
+    }
 
     const todo = []
     for (const f of files) {
@@ -277,6 +311,7 @@ async function run({ lines, client, uploader, ledgerPath, log, uploads, previewO
       return
     }
     if (res.ok) {
+      supersede(key, ledgerKey)
       led.applied = new Date().toISOString()
       led.result = res.body
       delete led.skippedOnProd
@@ -303,7 +338,9 @@ async function run({ lines, client, uploader, ledgerPath, log, uploads, previewO
       const known = Object.values(led.files).filter(e => e?.known).map(e => e.driveFileId)
       if (known.length) led.refusedKnown = [...new Set([...(led.refusedKnown ?? []), ...known])]
       led.files = {}
-      log(`${key}: server báo ${res.body.code} — bỏ mã file đã upload, lần chạy sau upload lại`)
+      const said = JSON.stringify(res.body ?? {})
+      const unchecked = known.filter(id => !said.includes(id))
+      log(`${key}: server báo ${res.body.code} — bỏ mã file đã upload, lần chạy sau upload lại${unchecked.length ? `; bỏ luôn file Drive có sẵn ${unchecked.join(', ')} dù server chưa kiểm (lần sau upload từ bản local)` : ''}`)
     }
     return skipOnProd(line, led, res)
   }

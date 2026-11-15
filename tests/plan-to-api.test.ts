@@ -32,9 +32,44 @@ describe('planLinesToApi', () => {
     const { lines, skipped } = planLinesToApi({ lines: [planLine()] }, { storageRoot })
     expect(skipped).toEqual([])
     expect(lines).toEqual([{
-      taskKey: 'LIT6001_1', action: 'push', retire: [],
+      taskKey: 'LIT6001_1', action: 'push', retire: [], expectedStatus: 'NEW',
       files: [{ kind: 'PRINT', printArea: 'Front', path: path.join(storageRoot, 'design/o1/front-v2.png'), fileName: 'front-v2.png', mimeType: 'image/png', widthPx: 4200, heightPx: 4800 }],
     }])
+  })
+
+  it('carries the plan status as expectedStatus; an explicit expectedStatus wins; replace ids go in planIds', () => {
+    const { lines } = planLinesToApi({ lines: [
+      planLine({ taskKey: 'A', action: 'replace', prodStatus: 'REVIEW', replaces: [{ id: 'r2' }, { id: 'r1' }] }),
+      planLine({ taskKey: 'B', action: 'replace', prodStatus: 'DOING', expectedStatus: ['DOING', 'REVIEW'], replaces: [{ id: 'r3' }] }),
+      planLine({ taskKey: 'C', prodStatus: null }),
+    ] }, { storageRoot })
+    expect(lines[0]).toMatchObject({ expectedStatus: 'REVIEW', planIds: ['r2', 'r1'], retire: ['r2', 'r1'] })
+    expect(lines[1].expectedStatus).toEqual(['DOING', 'REVIEW'])
+    expect(lines[2].expectedStatus).toBeUndefined()
+    expect(lines[2].planIds).toBeUndefined()
+  })
+
+  it('a Drive file several lines reuse goes as the first line\'s known id, later lines wait and then shortcut to it', () => {
+    const reuse = (extra: any = {}) => file({ storage: 'DRIVE', driveFileId: 'SHARED1', transfer: 'reuse', ...extra })
+    const plan = { lines: [planLine({ taskKey: 'A', files: [reuse()] }), planLine({ taskKey: 'B', files: [reuse({ localId: 'c2', printArea: 'Print' })] })] }
+    const before = planLinesToApi(plan, { storageRoot })
+    expect(before.lines.map((l: any) => l.taskKey)).toEqual(['A'])
+    expect(before.lines[0].files[0]).toMatchObject({ knownDriveFileId: 'SHARED1' })
+    expect(before.skipped).toEqual([{ taskKey: 'B', reason: expect.stringMatching(/SHARED1.*A/), waitingFor: 'A' }])
+    const after = planLinesToApi(plan, { storageRoot, sharedIds: (task: string, part: string) => (task === 'A' && part === 'PRINT/Front' ? 'SHARED1' : null) })
+    expect(after.lines.map((l: any) => l.taskKey)).toEqual(['A', 'B'])
+    expect(after.lines[1].files[0]).toMatchObject({ printArea: 'Print', shortcutOf: 'SHARED1', size: 1234 })
+    expect(after.lines[1].files[0].knownDriveFileId).toBeUndefined()
+  })
+
+  it('a later user of a shared Drive file waits for the first line that is actually sent', () => {
+    const reuse = (extra: any = {}) => file({ storage: 'DRIVE', driveFileId: 'SHARED1', transfer: 'reuse', ...extra })
+    const { lines } = planLinesToApi({ lines: [
+      planLine({ taskKey: 'A', files: [reuse(), file({ printArea: 'Back', storagePath: null })] }),
+      planLine({ taskKey: 'B', files: [reuse({ localId: 'c2' })] }),
+    ] }, { storageRoot })
+    expect(lines.map((l: any) => l.taskKey)).toEqual(['B'])
+    expect(lines[0].files[0]).toMatchObject({ knownDriveFileId: 'SHARED1' })
   })
 
   it('defaults kind to PRINT and keeps MOCKUP', () => {
@@ -85,7 +120,7 @@ describe('planLinesToApi', () => {
     const revert = { taskKey: 'LIT6002_1', action: 'revert', skipReason: null, files: [], replaces: [{ id: 'a1', printArea: 'Front', version: 1, driveFileId: 'D1' }],
       prodTaskId: 't2', prodStatus: 'REVIEW', productTitle: 'Tee', readiness: 'LOW', reason: 'designer làm tay', folderCreated: false }
     const { lines } = planLinesToApi({ lines: [revert] }, { storageRoot })
-    expect(lines).toEqual([{ taskKey: 'LIT6002_1', action: 'revert', files: [], retire: [], revertReadiness: 'LOW', eventMessage: 'designer làm tay' }])
+    expect(lines).toEqual([{ taskKey: 'LIT6002_1', action: 'revert', files: [], retire: [], revertReadiness: 'LOW', eventMessage: 'designer làm tay', expectedStatus: 'REVIEW', planIds: ['a1'] }])
   })
 
   it('passes eventMessage, retireSources and allowFinished through when set', () => {
@@ -100,6 +135,25 @@ describe('planLinesToApi', () => {
 
   describe('push-shared-prints groups', () => {
     const shared = (extra: any = {}) => file({ localId: 'cs1', printArea: 'front', version: 1, fileName: 'front.jpg', driveName: 'front.jpg', mimeType: 'image/jpeg', size: 5555, widthPx: 4500, heightPx: 5400, storage: 'DRIVE', ...extra })
+
+    it('a MOCKUP is never a shortcut: it is uploaded per line from its path', () => {
+      const mock = (extra: any) => shared({ kind: 'MOCKUP', printArea: 'Mockup', ...extra })
+      const { lines } = planLinesToApi({ lines: [
+        planLine({ taskKey: 'M1', files: [mock({ storagePath: 'dl/m.jpg', driveFileId: 'OLDM', transfer: 'reuse', shared: true })] }),
+        planLine({ taskKey: 'M2', files: [mock({ storagePath: 'dl/m.jpg', driveFileId: null, transfer: 'reuse', shared: true, sharedFrom: 'M1' })] }),
+      ] }, { storageRoot: dir })
+      expect(lines.map((l: any) => l.taskKey)).toEqual(['M1', 'M2'])
+      for (const l of lines) {
+        expect(l.files[0]).toMatchObject({ kind: 'MOCKUP', path: path.join(dir, 'dl/m.jpg') })
+        expect(l.files[0].shortcutOf).toBeUndefined()
+      }
+    })
+
+    it('a shared MOCKUP without a local copy skips the line with a clear reason', () => {
+      const { lines, skipped } = planLinesToApi({ lines: [planLine({ taskKey: 'M1', files: [shared({ kind: 'MOCKUP', printArea: 'Mockup', storagePath: null, driveFileId: 'OLDM', transfer: 'reuse', shared: true })] })] }, { storageRoot: dir })
+      expect(lines).toEqual([])
+      expect(skipped[0].reason).toMatch(/mockup.*lối tắt/i)
+    })
 
     it('a file of an old order (driveFileId) is a shortcut with its size, never an upload', () => {
       const { lines } = planLinesToApi({ lines: [planLine({ taskKey: 'LIT5614_1', files: [shared({ storagePath: null, driveFileId: 'OLD1', transfer: 'reuse', shared: true, sharedFrom: null })] })] }, { storageRoot })
@@ -185,6 +239,41 @@ describe('deliverPlanViaApi', () => {
     const text = r.logs.join('\n')
     expect(text).toMatch(/OK .*đã ghi/)
     expect(text).toMatch(/NO .*409.*stale_state/)
+  })
+
+  it('a task that moved since the snapshot is reported stale and does not fail the run', async () => {
+    const rel = realFile('design/o1/a.png')
+    const f = fakes()
+    const deps = f.makeDeps()
+    deps.client.taskState = async () => ({ ok: true, status: 200, body: { status: 'DOING', incomingFolder: { id: 'INC' }, artworks: [] } })
+    const r = await go({ lines: [planLine({ files: [file({ storagePath: rel })] })] }, f)
+    expect(r.exitCode).toBe(0)
+    expect(f.calls.filter(c => c.startsWith('upload') || c.startsWith('commit'))).toEqual([])
+    expect(r.logs.join('\n')).toMatch(/LIT6001_1 .*stale.*DOING/)
+  })
+
+  it('a 400 answer fails the run (exit 1)', async () => {
+    const rel = realFile('design/o1/a.png')
+    const f = fakes(() => ({ ok: false, status: 400, body: { error: 'khổ cũ', code: 'old_layout' } }))
+    const r = await go({ lines: [planLine({ files: [file({ storagePath: rel })] })] }, f)
+    expect(r.exitCode).toBe(1)
+    expect(r.logs.join('\n')).toMatch(/LIT6001_1 .*400.*old_layout/)
+  })
+
+  it('push-local-renders lines sharing one Drive file: the first commits it, the later one shortcuts to it in the same run', async () => {
+    const rel = realFile('design/o1/a.png')
+    const f = fakes()
+    const commits: any[] = []
+    const base = f.makeDeps().client.commit
+    f.makeDeps().client.commit = async (key: string, body: any) => { commits.push({ key, body }); return base(key, body) }
+    const reuse = (extra: any = {}) => file({ storage: 'DRIVE', driveFileId: 'SHARED1', transfer: 'reuse', storagePath: rel, size: 20, ...extra })
+    const r = await go({ lines: [planLine({ taskKey: 'A', files: [reuse()] }), planLine({ taskKey: 'B', files: [reuse({ localId: 'c2' })] })] }, f)
+    expect(r.exitCode).toBe(0)
+    expect(f.calls.filter(c => c.startsWith('upload'))).toEqual([])
+    expect(commits.map(c => c.key)).toEqual(['A', 'B'])
+    expect(commits[0].body.files[0]).toMatchObject({ driveFileId: 'SHARED1' })
+    expect(commits[0].body.files[0].shortcutOf).toBeUndefined()
+    expect(commits[1].body.files[0]).toMatchObject({ driveFileId: 'SHARED1', shortcutOf: 'SHARED1' })
   })
 
   it('exits 1 when a line failed', async () => {

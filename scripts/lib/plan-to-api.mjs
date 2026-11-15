@@ -20,31 +20,61 @@ const fileKey = f => `${f.kind ?? 'PRINT'}/${f.printArea}`
 export function planLinesToApi(plan, { storageRoot, sharedIds = null }) {
   const lines = []
   const skipped = []
+  // a Drive file several lines reuse: the first line sent commits it, every later one gets a shortcut once that is on prod
+  const owners = new Map()
   for (const l of plan.lines ?? []) {
     if (!API_ACTIONS.includes(l.action)) { skipped.push({ taskKey: l.taskKey, reason: l.skipReason ?? `action ${l.action}` }); continue }
     const files = []
+    const claims = []
     let stop = null
     for (const f of l.action === 'revert' ? [] : l.files ?? []) {
       if (f.keep) continue
       const base = { kind: f.kind ?? 'PRINT', printArea: f.printArea }
       const meta = { fileName: f.fileName, mimeType: f.mimeType, widthPx: f.widthPx, heightPx: f.heightPx }
-      const shortcut = id => ({ ...base, ...meta, shortcutOf: id, size: Number(f.size) })
-      if (f.shared && f.driveFileId) { files.push(shortcut(f.driveFileId)); continue }
-      if (f.sharedFrom && !f.driveFileId) {
-        const id = sharedIds?.(f.sharedFrom, fileKey(f)) ?? null
-        if (id) { files.push(shortcut(id)); continue }
-        stop = { reason: `dùng chung file của ${f.sharedFrom} — chờ ${f.sharedFrom} ghi xong rồi chạy lại`, waitingFor: f.sharedFrom }
+      const local = f.storagePath ? { path: path.resolve(storageRoot, f.storagePath) } : {}
+      const isPrint = base.kind === 'PRINT'
+      const ownUpload = () => {
+        if (f.storagePath) { files.push({ ...base, ...local, ...meta }); return true }
+        stop = { reason: `mockup ${f.printArea} dùng chung mà ${NO_LOCAL_COPY} (lối tắt chỉ dùng cho file in)` }
+        return false
+      }
+      const shortcutTo = (from, key, what) => {
+        const id = sharedIds?.(from, key) ?? null
+        if (id) { files.push({ ...base, ...meta, shortcutOf: id, size: Number(f.size) }); return true }
+        stop = { reason: `dùng chung ${what} với ${from} — chờ ${from} ghi xong rồi chạy lại`, waitingFor: from }
+        return false
+      }
+      if (f.shared && f.driveFileId) {
+        if (isPrint) { files.push({ ...base, ...meta, shortcutOf: f.driveFileId, size: Number(f.size) }); continue }
+        if (ownUpload()) continue
         break
       }
-      const local = f.storagePath ? { path: path.resolve(storageRoot, f.storagePath) } : {}
-      if (f.transfer === 'reuse' && f.driveFileId) { files.push({ ...base, ...local, ...meta, knownDriveFileId: f.driveFileId, size: Number(f.size) }); continue }
+      if (f.sharedFrom && !f.driveFileId) {
+        if (isPrint ? shortcutTo(f.sharedFrom, fileKey(f), 'file') : ownUpload()) continue
+        break
+      }
+      if (f.transfer === 'reuse' && f.driveFileId) {
+        const owner = owners.get(f.driveFileId)
+        if (owner && owner.taskKey !== l.taskKey) {
+          if (isPrint ? shortcutTo(owner.taskKey, owner.key, `file Drive ${f.driveFileId}`) : ownUpload()) continue
+          break
+        }
+        files.push({ ...base, ...local, ...meta, knownDriveFileId: f.driveFileId, size: Number(f.size) })
+        claims.push([f.driveFileId, { taskKey: l.taskKey, key: fileKey(f) }])
+        continue
+      }
       if (!f.storagePath) { stop = { reason: NO_LOCAL_COPY }; break }
       files.push({ ...base, ...local, ...meta })
     }
     if (stop) { skipped.push({ taskKey: l.taskKey, ...stop }); continue }
+    for (const [id, owner] of claims) if (!owners.has(id)) owners.set(id, owner)
     const retire = l.action === 'replace' ? (l.replaces ?? []).map(r => r.id) : []
     const action = l.action === 'replace' && !files.length ? 'retire' : l.action
     const out = { taskKey: l.taskKey, action, files, retire }
+    const expectedStatus = l.expectedStatus ?? l.prodStatus
+    if (expectedStatus != null) out.expectedStatus = expectedStatus
+    const planIds = (l.action === 'replace' || l.action === 'revert') ? (l.replaces ?? []).map(r => r.id) : []
+    if (planIds.length) out.planIds = planIds
     if (l.action === 'revert') {
       out.revertReadiness = l.readiness
       out.eventMessage = l.eventMessage ?? l.reason
@@ -69,7 +99,8 @@ function describe(r) {
   if (r.outcome === 'applied') return `đã ghi${b.status ? ` (${b.status})` : ''}${b.alreadyApplied ? ', server báo đã có' : ''}${extra}`
   if (r.outcome === 'alreadyApplied') return 'đã ghi từ lần chạy trước'
   if (r.outcome === 'dryRun') return `dry run OK, sẽ là ${b.status ?? '?'}${extra}`
-  if (r.outcome === 'skipped') return `bỏ qua trên prod: ${r.status} ${b.code ?? ''} ${b.error ?? ''}`.trim()
+  if (r.outcome === 'skipped') return `bỏ qua trên prod: ${r.status ?? ''} ${b.code ?? ''} ${b.error ?? ''}`.replace(/\s+/g, ' ').trim()
+  if (r.outcome === 'failed' && r.status) return `prod từ chối: ${r.status} ${b.code ?? ''} ${b.error ?? ''}`.trim()
   return `lỗi: ${b.error ?? '?'}`
 }
 
@@ -92,9 +123,9 @@ export async function deliverPlanViaApi({ plan, storageRoot, ledgerPath, makeDep
         results.push(...r.results)
         const waiting = new Set(skipped.filter(s => s.waitingFor).map(s => s.taskKey))
         if (dryRun || !waiting.size || !r.applied) break
-        const again = planLinesToApi({ lines: (plan.lines ?? []).filter(l => waiting.has(l.taskKey)) }, { storageRoot, sharedIds: sharedIdsFromLedger(ledgerPath) })
-        skipped = [...skipped.filter(s => !waiting.has(s.taskKey)), ...again.skipped]
-        lines = again.lines
+        const again = planLinesToApi(plan, { storageRoot, sharedIds: sharedIdsFromLedger(ledgerPath) })
+        skipped = [...skipped.filter(s => !waiting.has(s.taskKey)), ...again.skipped.filter(s => waiting.has(s.taskKey))]
+        lines = again.lines.filter(l => waiting.has(l.taskKey))
       }
     } catch (e) {
       if (!(e instanceof DeliveryGaveUp || e instanceof DeliveryStopped)) throw e
