@@ -6,10 +6,16 @@ import { DELIVERY_SWITCH_KEY } from '@/lib/delivery/guard'
 import { setDeliveryDriveForTests } from '@/lib/delivery/drive'
 import type { DeliveryFile } from '@/lib/delivery/types'
 
-const hooks = vi.hoisted(() => ({ pressure: false }))
+const hooks = vi.hoisted(() => ({ pressure: false, pressureOnCall: 0, calls: 0 }))
 vi.mock('@/lib/delivery/queue', async importOriginal => {
   const real = await importOriginal<typeof import('@/lib/delivery/queue')>()
-  return { ...real, memoryPressure: (s?: any) => (hooks.pressure ? { retryAfterSec: 60 } : real.memoryPressure(s)) }
+  return {
+    ...real,
+    memoryPressure: () => {
+      hooks.calls++
+      return hooks.pressure || hooks.calls === hooks.pressureOnCall ? { retryAfterSec: 60 } : null
+    },
+  }
 })
 import { POST } from '@/app/api/design-studio/worker/delivery/tasks/[key]/commit/route'
 import { agentFixture } from './helpers/design-agent-fixture'
@@ -43,7 +49,7 @@ beforeAll(async () => {
   await prisma.appSetting.upsert({ where: { key: DELIVERY_SWITCH_KEY }, update: { value: 'true' }, create: { key: DELIVERY_SWITCH_KEY, value: 'true' } })
 })
 
-afterEach(() => { hooks.pressure = false })
+afterEach(() => { hooks.pressure = false; hooks.pressureOnCall = 0; hooks.calls = 0; vi.restoreAllMocks() })
 
 afterAll(async () => {
   setDeliveryDriveForTests(null)
@@ -74,21 +80,51 @@ describe('POST delivery commit', () => {
     expect((await res.json()).code).toBe('busy')
   })
 
-  it('404 for an unknown task, as the CommitError status and shape', async () => {
+  it('404 not_found for a valid body sent to an unknown task', async () => {
     setDeliveryDriveForTests(fakeDrive())
-    const res = await post('NOPE-ZZZ', { action: 'push', expected: { status: 'NEW', liveIds: [] }, files: [], retire: [] })
-    expect([400, 404]).toContain(res.status)
-    expect(typeof (await res.json()).code).toBe('string')
+    const res = await post('NOPE-ZZZ', { action: 'push', expected: { status: 'NEW', liveIds: [] }, files: [file('Front', 'dlr-nope')], retire: [] })
+    expect(res.status).toBe(404)
+    expect((await res.json()).code).toBe('not_found')
+  })
+
+  async function pushFixture(n: number) {
+    const o = await fx.order(n, { supplierSku: TPL_SKU })
+    const taskKey = o.taskKeys[0]
+    const files = [file('Front', `dlr-f${n}`), file('Back', `dlr-b${n}`)]
+    const drive = fakeDrive()
+    for (const f of files) drive.addFile({ id: f.driveFileId, parent: `incoming-${taskKey}`, size: f.size, mimeType: f.mimeType })
+    return { o, taskKey, drive, body: { action: 'push', expected: { status: 'NEW', liveIds: [] }, files, retire: [] } }
+  }
+
+  it('503 busy when pressure appears only once the queued job starts, and nothing is written', async () => {
+    const f = await pushFixture(2)
+    setDeliveryDriveForTests(f.drive)
+    hooks.pressureOnCall = 2
+    const res = await post(f.taskKey, f.body)
+    expect(hooks.calls).toBe(2)
+    expect(res.status).toBe(503)
+    expect(res.headers.get('Retry-After')).toBe('60')
+    expect((await res.json()).code).toBe('busy')
+    expect(await prisma.designArtwork.count({ where: { orderId: f.o.orderId } })).toBe(0)
+  })
+
+  it('an unexpected throw is logged and rethrown, and the queue still serves the next request', async () => {
+    const f = await pushFixture(3)
+    const boom = async () => { throw new Error('drive down') }
+    setDeliveryDriveForTests({ ...f.drive, fileInfo: boom, incomingFolder: boom, listChildren: boom } as any)
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+    await expect(post(f.taskKey, f.body)).rejects.toThrow('drive down')
+    expect(err).toHaveBeenCalledWith('[delivery commit]', f.taskKey, 'drive down')
+
+    setDeliveryDriveForTests(f.drive)
+    const ok = await post(f.taskKey, f.body)
+    expect(ok.status).toBe(200)
+    expect((await ok.json()).status).toBe('REVIEW')
   })
 
   it('two concurrent identical pushes: one applies, the other is already applied or stale, one row per part', async () => {
-    const o = await fx.order(1, { supplierSku: TPL_SKU })
-    const taskKey = o.taskKeys[0]
-    const files = [file('Front', 'dlr-f1'), file('Back', 'dlr-b1')]
-    const drive = fakeDrive()
-    for (const f of files) drive.addFile({ id: f.driveFileId, parent: `incoming-${taskKey}`, size: f.size, mimeType: f.mimeType })
+    const { o, taskKey, drive, body } = await pushFixture(1)
     setDeliveryDriveForTests(drive)
-    const body = { action: 'push', expected: { status: 'NEW', liveIds: [] }, files, retire: [] }
 
     const [a, b] = await Promise.all([post(taskKey, body), post(taskKey, body)])
     const results = [a, b]

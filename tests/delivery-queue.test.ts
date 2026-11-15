@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { runSerial, memoryPressure } from '@/lib/delivery/queue'
 
-afterEach(() => { vi.useRealTimers() })
+afterEach(() => { vi.useRealTimers(); globalThis.__deliveryQueue = undefined })
 
 describe('runSerial', () => {
   it('runs three jobs in order with at least the gap between the end of one and the start of the next', async () => {
