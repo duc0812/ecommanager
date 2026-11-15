@@ -108,6 +108,14 @@ describe('addOrUpdate', () => {
     expect(b.itemId).not.toBe(a.itemId)
     expect((await q.activeByTaskKey('LIT1_1'))?.id).toBe(b.itemId)
   })
+
+  it('a new item takes the id the caller picked (files are copied under it first); an existing one keeps its own', async () => {
+    const a = await q.addOrUpdate(base({ id: 'rq_picked01' }))
+    expect(a).toMatchObject({ itemId: 'rq_picked01', created: true })
+    const b = await q.addOrUpdate(base({ id: 'rq_other02', files: [file('front', 'zzz')] }))
+    expect(b).toMatchObject({ itemId: 'rq_picked01', version: 2, created: false })
+    await expect(q.addOrUpdate(base({ id: 'bad id/..', groupKey: 'G9', taskKey: 'K9' }))).rejects.toThrow(/id/)
+  })
 })
 
 describe('reads', () => {

@@ -9,6 +9,8 @@ export const ACTIVE_STATUSES = ['waiting', 'rejected', 'fixing', 'qa_failed', 'n
 const COUNTING_STATUSES = ['waiting', 'qa_failed']
 export const ALL_STATUSES = [...ACTIVE_STATUSES, 'approved', 'cloud', 'held', 'removed']
 const BUSY_TIMEOUT_MS = 5000
+const ITEM_ID = /^rq_[A-Za-z0-9]{1,40}$/
+export const newItemId = () => `rq_${crypto.randomBytes(8).toString('hex')}`
 
 /**
  * @typedef {'waiting'|'rejected'|'fixing'|'qa_failed'|'needs_look'|'approved'|'cloud'|'held'|'removed'} ItemStatus
@@ -143,7 +145,9 @@ export async function openQueue({ root, now = () => new Date(), isAlive = pidAli
     root,
 
     /** @returns {Promise<{ itemId: string, version: number, created: boolean, changed: boolean }>} */
-    async addOrUpdate({ taskKey, groupKey, kind, apiLines, files, meta, qa }) {
+    /** `id` (optional) is used only when a new item is created, so the caller can copy its files under items/<id> first. */
+    async addOrUpdate({ id: wantedId, taskKey, groupKey, kind, apiLines, files, meta, qa }) {
+      if (wantedId != null && !ITEM_ID.test(wantedId)) throw new Error(`id không hợp lệ: ${wantedId}`)
       const tx = await begin()
       try {
         const t = iso()
@@ -154,7 +158,7 @@ export async function openQueue({ root, now = () => new Date(), isAlive = pidAli
         })
         const cur = rowToItem(found.rows[0])
         if (!cur) {
-          const id = `rq_${crypto.randomBytes(8).toString('hex')}`
+          const id = wantedId ?? newItemId()
           await tx.execute({
             sql: `INSERT INTO items (id, taskKey, groupKey, kind, status, statusReason, prevStatus, version, enteredAt, createdAt, updatedAt, apiLines, meta, qa)
                   VALUES (?, ?, ?, ?, ?, NULL, NULL, 1, ?, ?, ?, ?, ?, ?)`,

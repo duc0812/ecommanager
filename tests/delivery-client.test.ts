@@ -53,6 +53,19 @@ describe('delivery client', () => {
     expect(h.calls[3].init.headers['Content-Type']).toBe('image/jpeg')
   })
 
+  it('posts a note to the task note route with the same token and retries', async () => {
+    const h = harness([json({ error: 'busy' }, 503), json({ ok: true })])
+    const r = await make(h).note('LIT 1/a', 'Đang chờ chủ shop duyệt ở máy local (tối đa 3 giờ)')
+    expect(r).toEqual({ ok: true, status: 200, body: { ok: true } })
+    expect(h.calls.map(x => `${x.init.method} ${x.url}`)).toEqual([
+      'POST https://x.test/api/design-studio/worker/delivery/tasks/LIT%201%2Fa/note',
+      'POST https://x.test/api/design-studio/worker/delivery/tasks/LIT%201%2Fa/note',
+    ])
+    expect(h.calls[1].init.headers.Authorization).toBe('Bearer sekret')
+    expect(JSON.parse(h.calls[1].init.body)).toEqual({ message: 'Đang chờ chủ shop duyệt ở máy local (tối đa 3 giờ)' })
+    expect(h.waits).toEqual([5000])
+  })
+
   it('backs off 5s, 10s, 20s... capped at 60s without Retry-After, also on 429 and network errors', async () => {
     const h = harness([json({}, 429), new Error('ECONNRESET'), json({}, 503), json({}, 503), json({}, 503), json({}, 503), json({ ok: 1 })])
     const r = await make(h).taskState('K')

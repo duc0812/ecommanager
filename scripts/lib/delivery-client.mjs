@@ -91,5 +91,6 @@ export function createDeliveryClient({
     taskState: key => call('GET', `${BASE}/tasks/${encodeURIComponent(key)}`),
     commit: (key, body) => call('POST', `${BASE}/tasks/${encodeURIComponent(key)}/commit`, { json: body }),
     putPreview: (artworkId, jpegBuffer) => call('PUT', `${BASE}/artworks/${encodeURIComponent(artworkId)}/preview`, { body: jpegBuffer, contentType: 'image/jpeg' }),
+    note: (key, message) => call('POST', `${BASE}/tasks/${encodeURIComponent(key)}/note`, { json: { message } }),
   }
 }
