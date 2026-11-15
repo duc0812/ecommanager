@@ -12,6 +12,8 @@ export function refuse(httpStatus: CommitError['httpStatus'], code: string, erro
 export const staleRefusal = (current: TaskState) =>
   refuse(409, 'stale', 'Task đã đổi từ lúc máy đọc trạng thái — đọc lại rồi gửi lại', current)
 
+export const driveBusyRefusal = (err: Error) => refuse(503, 'busy', `Google Drive đang chậm hoặc quá tải — thử lại sau: ${err.message}`)
+
 const isText = (v: unknown): v is string => typeof v === 'string' && v.trim().length > 0
 const isPx = (v: unknown) => v === undefined || v === null || (typeof v === 'number' && Number.isInteger(v) && v > 0)
 const isOptional = (v: unknown, ok: (x: unknown) => boolean) => v === undefined || v === null || ok(v)
@@ -53,7 +55,6 @@ export function inputError(input: CommitInput): CommitError | null {
   }
   if (input.action === 'replace') {
     if (files === 0) return bad('replace cần ít nhất một file — chỉ gỡ thì dùng retire')
-    if (retire.length === 0) return bad('replace cần retire — thêm phần mới thì dùng push')
   }
   if (input.action === 'retire') {
     if (files > 0) return bad('retire không nhận file — thay file thì dùng replace')
@@ -89,15 +90,42 @@ export function duplicateFileError(state: TaskState, files: DeliveryFile[]): Com
   return hit ? refuse(400, 'duplicate_file', `${hit.printArea}: file ${hit.driveFileId} đã là file đang dùng của dòng này`) : null
 }
 
-/** Every file must be on Drive, not trashed, the size the machine sent, and in the incoming or task folder; a shortcut points at another line's live print. */
+const DRIVE_ID_CHAR = /[A-Za-z0-9_-]/
+
+/** The Drive id appears in a stored link as a whole id, not as part of a longer one. */
+export function linkHoldsFileId(link: string, id: string): boolean {
+  for (let at = link.indexOf(id); at >= 0; at = link.indexOf(id, at + 1)) {
+    const before = link[at - 1]
+    const after = link[at + id.length]
+    if ((!before || !DRIVE_ID_CHAR.test(before)) && (!after || !DRIVE_ID_CHAR.test(after))) return true
+  }
+  return false
+}
+
+/** A file the design library links to (SkuSupplierDesign.designLink), whether or not any order line has a row for it. */
+export async function inDesignLibrary(driveFileId: string): Promise<boolean> {
+  const rows = await prisma.skuSupplierDesign.findMany({ where: { designLink: { contains: driveFileId } }, select: { designLink: true } })
+  return rows.some(r => !!r.designLink && linkHoldsFileId(r.designLink, driveFileId))
+}
+
+async function isShortcutTarget(driveFileId: string, line: { orderId: string; shopifyLineId: string }): Promise<boolean> {
+  const live = await prisma.designArtwork.findFirst({
+    where: { driveFileId, kind: 'PRINT', removedAt: null, NOT: { orderId: line.orderId, shopifyLineId: line.shopifyLineId } }, select: { id: true },
+  })
+  return !!live || inDesignLibrary(driveFileId)
+}
+
+/**
+ * Every file must be on Drive, not trashed, the size the machine sent, and in the incoming or task folder; a shortcut points at
+ * another line's live print or at a file of the design library.
+ */
 export async function driveFileError(files: DeliveryFile[], state: TaskState, line: { orderId: string; shopifyLineId: string }, drive: DeliveryDrive): Promise<CommitError | null> {
   for (const f of files) {
     if (f.shortcutOf) {
       if (f.driveFileId !== f.shortcutOf) return refuse(400, 'bad_shortcut', `${f.printArea}: driveFileId phải trùng shortcutOf`)
-      const target = await prisma.designArtwork.findFirst({
-        where: { driveFileId: f.shortcutOf, kind: 'PRINT', removedAt: null, NOT: { orderId: line.orderId, shopifyLineId: line.shopifyLineId } }, select: { id: true },
-      })
-      if (!target) return refuse(400, 'bad_shortcut', `${f.printArea}: file gốc ${f.shortcutOf} không phải file in đang dùng của dòng đơn khác`)
+      if (!(await isShortcutTarget(f.shortcutOf, line))) {
+        return refuse(400, 'bad_shortcut', `${f.printArea}: file gốc ${f.shortcutOf} không phải file in đang dùng của dòng đơn khác hay file của thư viện design`)
+      }
     }
     const info = await drive.fileInfo(f.driveFileId)
     if (!info || info.trashed) return refuse(400, 'drive_missing', `${f.printArea}: không thấy file ${f.driveFileId} trên Drive hoặc file đã vào thùng rác`)
@@ -107,6 +135,12 @@ export async function driveFileError(files: DeliveryFile[], state: TaskState, li
     }
   }
   return null
+}
+
+/** A print whose part names no slot of the line's template is written anyway, with a warning. */
+export function slotWarnings(template: TemplateRow | null, slots: string[], files: DeliveryFile[]): string[] {
+  if (!template) return []
+  return files.filter(f => f.kind === 'PRINT' && !slots.some(s => sameLabel(s, f.printArea))).map(f => `Phần ${f.printArea} không có trong template`)
 }
 
 function usDate(iso: string): string {

@@ -534,3 +534,85 @@ describe('commitDelivery push', () => {
     await expectNothingWritten(l.orderId, l.taskKey)
   })
 })
+
+describe('final review fixes', () => {
+  const libLink = (id: string) => `https://drive.google.com/file/d/${id}/view?usp=drivesdk`
+
+  it('shortcutOf a file only the design library links to is accepted and leaves the original where it is', async () => {
+    await prisma.skuSupplierDesign.create({ data: { sku: `DLC-LIB-${++n}`, supplierId: fx.supplierId, designLink: `https://x.test/a | ${libLink('dlc-lib1')}`, ready: true } })
+    const l = await line()
+    const front = file({ printArea: 'Front', driveFileId: 'dlc-lib1', shortcutOf: 'dlc-lib1' })
+    const back = file({ printArea: 'Back', driveFileId: 'dlc-lib1-b' })
+    const drive = driveWith(l.taskKey, [back])
+    drive.addFile({ id: 'dlc-lib1', parent: 'library-folder', size: 100 })
+    const r = await commitDelivery(l.taskKey, input([front, back]), drive)
+    expect(r).toMatchObject({ ok: true, status: 'REVIEW' })
+    expect((await rowsOf(l.orderId)).find(x => x.printArea === 'Front')).toMatchObject({ driveFileId: 'dlc-lib1', drivePlace: 'TASK' })
+    expect(drive.calls.filter(c => c.startsWith('createShortcut:'))).toEqual(['createShortcut:dlc-lib1'])
+    expect(drive.files.get('dlc-lib1')!.parents).toEqual(['library-folder'])
+  })
+
+  it('a library shortcut target must be on Drive, not trashed, and the size sent', async () => {
+    await prisma.skuSupplierDesign.create({ data: { sku: `DLC-LIB-${++n}`, supplierId: fx.supplierId, designLink: libLink('dlc-lib2'), ready: true } })
+    const l = await line()
+    const files = [file({ printArea: 'Front', driveFileId: 'dlc-lib2', shortcutOf: 'dlc-lib2' })]
+    expect(await commitDelivery(l.taskKey, input(files), fakeDrive())).toMatchObject({ ok: false, code: 'drive_missing' })
+    const trashed = fakeDrive()
+    trashed.addFile({ id: 'dlc-lib2', parent: 'library-folder', size: 100, trashed: true })
+    expect(await commitDelivery(l.taskKey, input(files), trashed)).toMatchObject({ ok: false, code: 'drive_missing' })
+    const other = fakeDrive()
+    other.addFile({ id: 'dlc-lib2', parent: 'library-folder', size: 99 })
+    expect(await commitDelivery(l.taskKey, input(files), other)).toMatchObject({ ok: false, code: 'size_mismatch' })
+    await expectNothingWritten(l.orderId, l.taskKey)
+  })
+
+  it('an id that is only part of a longer id in a library link is not a library file', async () => {
+    await prisma.skuSupplierDesign.create({ data: { sku: `DLC-LIB-${++n}`, supplierId: fx.supplierId, designLink: libLink('dlc-lib3-longer'), ready: true } })
+    const l = await line()
+    const drive = fakeDrive()
+    drive.addFile({ id: 'dlc-lib3', parent: 'library-folder', size: 100 })
+    const files = [file({ printArea: 'Front', driveFileId: 'dlc-lib3', shortcutOf: 'dlc-lib3' })]
+    expect(await commitDelivery(l.taskKey, input(files), drive)).toMatchObject({ ok: false, code: 'bad_shortcut', httpStatus: 400 })
+  })
+
+  it('a resend after the order closed is already applied, not 409 closed, and does not move the task', async () => {
+    const l = await line()
+    const files = [file({ printArea: 'Front', driveFileId: 'dlc-cl-f' }), file({ printArea: 'Back', driveFileId: 'dlc-cl-b' })]
+    const drive = driveWith(l.taskKey, files)
+    expect(await commitDelivery(l.taskKey, input(files), drive)).toMatchObject({ ok: true, status: 'REVIEW' })
+    await prisma.order.update({ where: { id: l.orderId }, data: { pipelineStatus: 'FULFILLED' } })
+    expect(await commitDelivery(l.taskKey, input(files), drive)).toMatchObject({ ok: true, alreadyApplied: true, status: 'REVIEW' })
+
+    const landed = await line()
+    for (const f of files) {
+      await prisma.designArtwork.create({ data: {
+        orderId: landed.orderId, shopifyLineId: 'l1', kind: 'PRINT', printArea: f.printArea, version: 1, fileName: f.fileName, storage: 'DRIVE',
+        driveFileId: `${f.driveFileId}-2`, size: 100, mimeType: 'image/png', source: 'AUTO',
+      } })
+    }
+    await prisma.order.update({ where: { id: landed.orderId }, data: { pipelineStatus: 'FULFILLED' } })
+    const resend = files.map(f => ({ ...f, driveFileId: `${f.driveFileId}-2` }))
+    expect(await commitDelivery(landed.taskKey, input(resend), fakeDrive())).toMatchObject({ ok: true, alreadyApplied: true, status: 'NEW' })
+    expect((await taskOf(landed.taskKey)).status).toBe('NEW')
+  })
+
+  it('a print whose part is no slot of the template warns and is written; a mockup does not warn', async () => {
+    const l = await line()
+    const files = [
+      file({ printArea: 'Front', driveFileId: 'dlc-sl-f' }), file({ printArea: 'Back', driveFileId: 'dlc-sl-b' }),
+      file({ printArea: 'Sleeve', driveFileId: 'dlc-sl-s' }), file({ kind: 'MOCKUP', printArea: 'Main', driveFileId: 'dlc-sl-m' }),
+    ]
+    const r = await commitDelivery(l.taskKey, input(files), driveWith(l.taskKey, files))
+    expect(r).toMatchObject({ ok: true })
+    if (r.ok) expect(r.warnings.filter(w => w.includes('không có trong template'))).toEqual(['Phần Sleeve không có trong template'])
+    expect((await rowsOf(l.orderId)).map(x => x.printArea).sort()).toEqual(['Back', 'Front', 'Main', 'Sleeve'])
+  })
+
+  it('a line without a template gets no slot warning', async () => {
+    const l = await line({ sku: 'DLC-NO-TEMPLATE' })
+    const files = [file({ printArea: 'Anything', driveFileId: 'dlc-nt-a' })]
+    const r = await commitDelivery(l.taskKey, input(files, { dryRun: true }), driveWith(l.taskKey, files))
+    expect(r).toMatchObject({ ok: true })
+    if (r.ok) expect(r.warnings.filter(w => w.includes('không có trong template'))).toEqual([])
+  })
+})

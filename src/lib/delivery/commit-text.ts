@@ -33,10 +33,12 @@ export function goneText(rows: { kind: string; printArea: string; version: numbe
   return ordered.map(r => `${r.kind === 'PRINT' ? '' : 'mockup '}${r.printArea} v${r.version}`).join(', ')
 }
 
+/** `gone` is empty when the replace only added parts that had no live file. */
 export function replaceEventMessage(files: MadeFile[], gone: string, eventMessage?: string): string {
+  const swapped = gone ? ` · thay ${gone}` : ''
   return eventMessage
-    ? `${eventMessage} · thay ${gone}`
-    : `${REPLACE_EVENT_PREFIX} · ${madeText(files)} · thay ${gone}${hasNoNameFile(files) ? NO_NAME_SUFFIX : ''}`
+    ? `${eventMessage}${swapped}`
+    : `${REPLACE_EVENT_PREFIX} · ${madeText(files)}${swapped}${hasNoNameFile(files) ? NO_NAME_SUFFIX : ''}`
 }
 
 export function retireEventMessage(gone: string, eventMessage?: string): string {

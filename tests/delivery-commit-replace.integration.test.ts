@@ -531,3 +531,79 @@ describe('parity with the local push script', () => {
     ])
   })
 })
+
+describe('final review fixes', () => {
+  it('replace with an empty retire adds a mockup to a REVIEW line, keeps REVIEW and names no retired file in the event', async () => {
+    const l = await line({ status: 'REVIEW', readiness: 'AUTO', arts: FRONT_BACK })
+    const files = upload(l, [file({ kind: 'MOCKUP', printArea: 'Main', driveFileId: 'dlr-addm', fileName: 'main.jpg', mimeType: 'image/jpeg' })])
+    const r = await commitDelivery(l.taskKey, req(l, 'replace', { files }), l.drive)
+    expect(r).toMatchObject({ ok: true, status: 'REVIEW', retired: [], alreadyApplied: false })
+    expect(await liveOf(l.orderId)).toEqual(['mockup Main v1', 'Back v1', 'Front v1'])
+    expect((await eventsOf(l.taskKey)).map(e => e.message)).toEqual(['Render lại (máy local 26/10) · 1 mockup'])
+    expect((await taskOf(l.taskKey)).status).toBe('REVIEW')
+
+    const again = await commitDelivery(l.taskKey, req(l, 'replace', { files }), l.drive)
+    expect(again).toMatchObject({ ok: true, alreadyApplied: true })
+  })
+
+  it('replace with an empty retire on DONE needs allowFinished and keeps DONE; eventMessage gets no " · thay"', async () => {
+    const l = await line({ status: 'DONE', arts: FRONT_BACK })
+    const files = upload(l, [file({ kind: 'MOCKUP', printArea: 'Main', driveFileId: 'dlr-addm-done' })])
+    expect(await commitDelivery(l.taskKey, req(l, 'replace', { files }), l.drive)).toMatchObject({ ok: false, code: 'wrong_state', httpStatus: 409 })
+    const r = await commitDelivery(l.taskKey, req(l, 'replace', { files, allowFinished: true, eventMessage: 'Thêm mockup' }), l.drive)
+    expect(r).toMatchObject({ ok: true, status: 'DONE' })
+    expect((await eventsOf(l.taskKey)).map(e => e.message)).toEqual(['Thêm mockup'])
+  })
+
+  it('replace with an empty retire that fills the missing part of a REJECTED line sends it back to review', async () => {
+    const l = await line({ status: 'REJECTED', arts: [{ printArea: 'Front' }] })
+    const files = upload(l, [file({ printArea: 'Back', driveFileId: 'dlr-addb' })])
+    const r = await commitDelivery(l.taskKey, req(l, 'replace', { files }), l.drive)
+    expect(r).toMatchObject({ ok: true, status: 'REVIEW', missing: [] })
+    expect((await eventsOf(l.taskKey)).map(e => e.message)).toEqual([
+      'Render lại (máy local 26/10) · Back v1 · 1000×1000 px', AUTO_REVIEW, 'Gửi duyệt lại',
+    ])
+  })
+
+  it('replace with an empty retire for a part that still has a live file is 400 bad_request', async () => {
+    const l = await line({ status: 'REVIEW', arts: FRONT_BACK })
+    const files = upload(l, [file({ printArea: 'Front', driveFileId: 'dlr-addf-taken' })])
+    expect(await commitDelivery(l.taskKey, req(l, 'replace', { files }), l.drive)).toMatchObject({ ok: false, code: 'bad_request', httpStatus: 400 })
+    await expectUntouched(l, ['Back v1', 'Front v1'])
+  })
+
+  it('a sharer row written after the lookup (old SSH path) is still counted: the retired row stays OLD and nothing moves', async () => {
+    const l = await line({ status: 'REVIEW', arts: [{ printArea: 'Front', driveFileId: 'dlr-late-share' }, { printArea: 'Back' }] })
+    const other = await fx.order(++n, { supplierSku: TPL_SKU })
+    const realTx = prisma.$transaction.bind(prisma)
+    const spy = vi.spyOn(prisma, '$transaction').mockImplementationOnce((async (fn: any) => {
+      await prisma.designArtwork.create({ data: {
+        orderId: other.orderId, shopifyLineId: 'l1', kind: 'PRINT', printArea: 'Front', version: 1, fileName: 'front.png', storage: 'DRIVE',
+        driveFileId: 'dlr-late-share', drivePlace: 'TASK', size: 100, mimeType: 'image/png', source: 'MANUAL',
+      } })
+      return realTx(fn)
+    }) as any)
+    const r = await commitDelivery(l.taskKey, req(l, 'retire', { retire: [l.ids['Front v1']] }), l.drive)
+    spy.mockRestore()
+    expect(r).toMatchObject({ ok: true })
+    if (r.ok) expect(r.warnings).toContain('File dùng chung vẫn nằm trong thư mục task')
+    expect((await rowsOf(l.orderId)).find(x => x.id === l.ids['Front v1'])).toMatchObject({ drivePlace: 'OLD' })
+    expect(l.drive.calls).not.toContain('shareAnyoneReader:dlr-late-share')
+  })
+
+  it('retiring a shortcut row to a library-only file moves only the shortcut, never the library original', async () => {
+    const sku = `DLR-LIB-${++n}`
+    await prisma.skuSupplierDesign.create({ data: { sku, supplierId: fx.supplierId, designLink: 'https://drive.google.com/file/d/dlr-libfile/view?usp=drivesdk', ready: true } })
+    const l = await line({ status: 'REVIEW', arts: [{ printArea: 'Front', driveFileId: 'dlr-libfile' }, { printArea: 'Back' }] })
+    l.drive.files.get('dlr-libfile')!.parents = ['library-folder']
+    const shortcutId = await l.drive.createShortcut('dlr-libfile', l.taskFolder, 'Front.png')
+    l.drive.calls.length = 0
+    const r = await commitDelivery(l.taskKey, req(l, 'retire', { retire: [l.ids['Front v1']] }), l.drive)
+    expect(r).toMatchObject({ ok: true, warnings: [] })
+    expect(l.drive.calls).toContain(`moveFile:${shortcutId}`)
+    expect(l.drive.calls).not.toContain('moveFile:dlr-libfile')
+    expect(l.drive.calls).not.toContain('shareAnyoneReader:dlr-libfile')
+    expect(l.drive.files.get('dlr-libfile')!.parents).toEqual(['library-folder'])
+    expect((await rowsOf(l.orderId)).find(x => x.id === l.ids['Front v1'])).toMatchObject({ drivePlace: 'OLD' })
+  })
+})

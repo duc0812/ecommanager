@@ -3,13 +3,15 @@ import { AUTO_REVIEW_FROM, requiredSlotsFor, requiredSlotsForLine, submitAutoRen
 import { isOrderOpen } from '@/lib/design-agent/order-open'
 import { driveFileViewUrl } from '@/lib/google-drive'
 import { allSlotNames, templateViewFor, type TemplateRow } from '@/lib/print-template-resolve'
+import type { TidyResult } from '@/lib/task-folder'
 import { isUniqueViolation } from '@/lib/sqlite-busy'
 import { driveFileName, driveOldFileName, missingPrintAreas, sameLabel } from '@/lib/task-files'
-import type { DeliveryDrive } from '@/lib/delivery/drive'
+import { DriveTimeoutError, type DeliveryDrive } from '@/lib/delivery/drive'
 import { DeliveryLineMissingError, deliveryTaskState } from '@/lib/delivery/task-state'
 import type { CommitError, CommitInput, CommitResult, TaskState } from '@/lib/delivery/types'
 import {
-  driveFileError, duplicateFileError, inputError, isAlreadyApplied, isStale, layoutCheck, refuse, sameIds, staleRefusal,
+  driveBusyRefusal, driveFileError, duplicateFileError, inDesignLibrary, inputError, isAlreadyApplied, isStale, layoutCheck, refuse, sameIds, slotWarnings,
+  staleRefusal,
 } from '@/lib/delivery/commit-checks'
 import { RESUBMIT_EVENT, pushEventMessage } from '@/lib/delivery/commit-text'
 import { isRevertApplied, nextVersionFor, planReplace, planRetire, planRevert, type Ctx, type Plan } from '@/lib/delivery/commit-replace'
@@ -87,10 +89,11 @@ async function lookupShortcuts(ctx: Ctx, plan: Plan, drive: DeliveryDrive): Prom
   for (const r of plan.retire) {
     if (!r.driveFileId) continue
     const elsewhere = await prisma.designArtwork.findFirst({ where: { driveFileId: r.driveFileId, NOT: { orderId, shopifyLineId } }, select: { id: true } })
-    if (!elsewhere) continue
+    if (!elsewhere && !(await inDesignLibrary(r.driveFileId))) continue
     try {
       found.set(r.id, { shortcutId: await drive.findShortcut(state.folder.id, r.driveFileId), failed: null })
     } catch (err: any) {
+      if (err instanceof DriveTimeoutError) throw err
       found.set(r.id, { shortcutId: null, failed: err?.message ?? String(err) })
     }
   }
@@ -138,7 +141,7 @@ async function writePlan(ctx: Ctx, plan: Plan, drive: DeliveryDrive): Promise<{ 
           place = 'OLD'
           out.lookupFailed.push({ ...file, error: look.failed })
           notes.push(shortcutStuckEvent(file))
-        } else if (look && await tx.designArtwork.count({ where: { driveFileId: row.driveFileId, removedAt: null, NOT: { orderId, shopifyLineId } } }) > 0) {
+        } else if (await tx.designArtwork.count({ where: { driveFileId: row.driveFileId, removedAt: null, NOT: { orderId, shopifyLineId } } }) > 0) {
           place = 'OLD'
           out.stays.push(file)
           notes.push(sharedStaysEvent(file))
@@ -167,6 +170,7 @@ async function writePlan(ctx: Ctx, plan: Plan, drive: DeliveryDrive): Promise<{ 
     })
   } catch (err) {
     await removeShortcuts(created, drive)
+    if (err instanceof DriveTimeoutError) return { error: driveBusyRefusal(err) }
     if (err instanceof StaleWrite || isUniqueViolation(err)) {
       const current = await deliveryTaskState(state.taskKey, drive).catch(() => null)
       return { error: current ? staleRefusal(current) : refuse(409, 'stale', 'Task đã đổi từ lúc máy đọc trạng thái — đọc lại rồi gửi lại') }
@@ -198,6 +202,14 @@ async function finishRetiredOnDrive(ctx: Ctx, retired: RetiredDrive, drive: Deli
     await drive.shareAnyoneReader(r.driveFileId)
       .catch((err: any) => { warnings.push(`${r.printArea} v${r.version}: chưa chia sẻ được file cũ trước khi dời sang _old: ${err?.message ?? err}`) })
   }
+}
+
+function tidyWarnings(r: TidyResult | void): string[] {
+  if (!r) return []
+  const out: string[] = []
+  if (r.failed > 0) out.push(`Chưa xếp được ${r.failed} file vào thư mục task${r.lastError ? `: ${r.lastError}` : ''} — lượt dọn định kỳ làm lại`)
+  if (r.stuck > 0) out.push(`${r.stuck} file Drive không cho chuyển (403/404) — giữ nguyên chỗ cũ, cần xem tay`)
+  return out
 }
 
 async function currentMissing(ctx: Ctx): Promise<string[]> {
@@ -259,20 +271,14 @@ export async function commitDelivery(taskKey: string, input: CommitInput, drive:
   const task = await prisma.designTask.findUnique({ where: { taskKey } })
   if (!task) return refuse(404, 'not_found', 'Không tìm thấy task')
   const { orderId, shopifyLineId } = task
-  if (task.status === 'CANCELLED') return refuse(409, 'closed', 'Task đã huỷ — không nhận file nữa')
-  if (!(await isOrderOpen(orderId))) return refuse(409, 'closed', 'Đơn đã giao hoặc đã đóng — không nhận file nữa')
-  const line = await prisma.orderLine.findFirst({ where: { orderId, shopifyLineId }, select: LINE_TEMPLATE_FIELDS })
-  if (!line) return refuse(409, 'line_syncing', new DeliveryLineMissingError().message)
-  const template = await templateForLine(line)
-  const slots = allSlotNames(template)
-  const files = input.files.map(f => ({ ...f, printArea: slots.find(s => sameLabel(s, f.printArea)) ?? f.printArea }))
-
   const rows: LineRow[] = await prisma.designArtwork.findMany({
     where: { orderId, shopifyLineId },
     select: { id: true, kind: true, printArea: true, driveFileId: true, removedAt: true, removedById: true, source: true },
   })
   if (action.applied(rows, input, task.status)) {
-    const status = action.resend && !input.dryRun ? await action.resend(task) : task.status
+    // A resend may land after the order closed: it is still answered as applied, but a closed line is never resubmitted.
+    const open = task.status !== 'CANCELLED' && await isOrderOpen(orderId)
+    const status = action.resend && !input.dryRun && open ? await action.resend(task) : task.status
     const live = await liveArtworks(orderId, shopifyLineId)
     const retired = input.action === 'revert'
       ? rows.filter(r => input.expected.liveIds.includes(r.id) && r.source === 'AUTO').map(r => r.id)
@@ -283,11 +289,20 @@ export async function commitDelivery(taskKey: string, input: CommitInput, drive:
     }
   }
 
+  if (task.status === 'CANCELLED') return refuse(409, 'closed', 'Task đã huỷ — không nhận file nữa')
+  if (!(await isOrderOpen(orderId))) return refuse(409, 'closed', 'Đơn đã giao hoặc đã đóng — không nhận file nữa')
+  const line = await prisma.orderLine.findFirst({ where: { orderId, shopifyLineId }, select: LINE_TEMPLATE_FIELDS })
+  if (!line) return refuse(409, 'line_syncing', new DeliveryLineMissingError().message)
+  const template = await templateForLine(line)
+  const slots = allSlotNames(template)
+  const files = input.files.map(f => ({ ...f, printArea: slots.find(s => sameLabel(s, f.printArea)) ?? f.printArea }))
+
   let state: TaskState | null
   try {
     state = await deliveryTaskState(taskKey, drive)
   } catch (err) {
     if (err instanceof DeliveryLineMissingError) return refuse(409, 'line_syncing', err.message)
+    if (err instanceof DriveTimeoutError) return driveBusyRefusal(err)
     throw err
   }
   if (!state) return refuse(404, 'not_found', 'Không tìm thấy task')
@@ -302,12 +317,18 @@ export async function commitDelivery(taskKey: string, input: CommitInput, drive:
   const retiredIds = planned.retire.map(r => r.id)
   const remaining = state.artworks.filter(a => !retiredIds.includes(a.id))
 
-  const driveError = await driveFileError(files, state, task, drive)
+  let driveError: CommitError | null
+  try {
+    driveError = await driveFileError(files, state, task, drive)
+  } catch (err) {
+    if (err instanceof DriveTimeoutError) return driveBusyRefusal(err)
+    throw err
+  }
   if (driveError) return driveError
   const view = templateViewFor(template, [...remaining, ...files])
   const layout = layoutCheck(template, view, files, ctx.now)
   if (layout.error) return layout.error
-  const warnings = [...layout.warnings]
+  const warnings = [...slotWarnings(template, slots, files), ...layout.warnings]
 
   if (input.dryRun) {
     const wouldBe: Artwork[] = [
@@ -323,7 +344,7 @@ export async function commitDelivery(taskKey: string, input: CommitInput, drive:
   await finishRetiredOnDrive(ctx, written.retired, drive, warnings)
   const missing = await action.after(ctx, warnings)
   try {
-    await drive.tidy(orderId, shopifyLineId)
+    warnings.push(...tidyWarnings(await drive.tidy(orderId, shopifyLineId)))
   } catch (err: any) {
     warnings.push(`Chưa xếp được file vào thư mục task: ${err?.message ?? err} — lượt dọn định kỳ làm lại`)
   }
