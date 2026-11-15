@@ -66,6 +66,34 @@ elif script.endswith('push-local-renders.mjs') or script.endswith('push-shared-p
     else:
         keys = [k for g in json.loads(Path(opt('--spec')).read_text(encoding='utf-8'))['groups'] for k in g['lines']]
     outcomes = {k: plan.get('push', {}).get(k, 'applied') for k in keys}
+    if opt('--via') == 'api':
+        with open(D / 'api-env.jsonl', 'a', encoding='utf-8') as fh:
+            fh.write(json.dumps({k: os.environ.get(k) for k in ('ECOM_URL', 'DESIGN_WORKER_TOKEN')}) + '\n')
+        print(f'{name} --via api {",".join(keys)} auth={os.environ.get("DESIGN_WORKER_TOKEN")}', flush=True)
+        if 'exit1' in outcomes.values():
+            sys.exit(1)
+        out = Path(opt('--out')) if opt('--out') else Path(os.environ['FAKE_MAIN_CHECKOUT']) / 'db-backups' / name
+        out.mkdir(parents=True, exist_ok=True)
+        ledger_path = out / 'api-ledger.json'
+        ledger = json.loads(ledger_path.read_text(encoding='utf-8')) if ledger_path.exists() else {'lines': {}}
+        at = datetime.now(timezone.utc).isoformat(timespec='milliseconds')
+        for k, o in outcomes.items():
+            entry = {'taskKey': k, 'action': 'push', 'files': {}}
+            if o == 'applied':
+                entry.update(applied=at, result={'status': 'REVIEW'})
+            elif o == 'old':
+                entry.update(applied='2020-01-01T00:00:00.000Z', result={'status': 'REVIEW'})
+            elif o == 'skipped':
+                entry['skippedOnProd'] = {'code': 'not_found', 'error': 'task không có trên prod', 'status': 404}
+            elif o == 'stale':
+                entry['skippedOnProd'] = {'code': 'stale', 'error': 'task trên prod đang REVIEW, kế hoạch cần NEW', 'status': None}
+            elif o == 'stop':
+                print('DỪNG: GET /tasks: không được phép (401) — ledger giữ nguyên', flush=True)
+                sys.exit(1)
+            if o != 'noledger':
+                ledger['lines'][f'{k}#{o}'] = entry
+        ledger_path.write_text(json.dumps(ledger), encoding='utf-8')
+        sys.exit(0)
     print(f'{name} {stage} {",".join(keys)}', flush=True)
     if stage == '--apply' and 'exit1' in outcomes.values():
         sys.exit(1)

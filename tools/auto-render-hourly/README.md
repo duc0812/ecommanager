@@ -11,7 +11,7 @@ Một lần chạy (`run.ps1` → `auto_render.py`):
 3. Tool local (`LOCAL_URL`, mặc định `http://localhost:3013`): không trả lời thì bật `next dev` trong `TOOL_WORKTREE` và chờ tối đa 120 giây; đăng nhập bằng `local-login.txt`, mở thử một task. Lỗi (không phải 2xx) thì dừng với "tool local lỗi <mã>" — đây là bẫy "render 0" im lặng.
 4. Chạy `process-new-orders.mjs --since <hôm nay − 14 ngày>` **không** `--push` (tối đa 30 phút).
 5. Kiểm tên trong file in (`safe_zone.py`): khách chọn "No" thì file không được có tên; tên nằm trong khung thiết kế (dung sai 3 px); khung và tên nằm trong vùng in trừ mép an toàn.
-6. Dòng đạt và prod đang **AUTO** được đẩy lên prod dưới khoá `artwork-builder\.push-lock` (chờ tối đa 30 phút, không bao giờ phá khoá của người khác): render local từng dòng qua `push-local-renders.mjs --line`, dòng dùng chung file cũ và flat-text qua `push-shared-prints.mjs` với bản spec đã lọc (`*.auto.json`). Task dừng ở REVIEW / AUTO như hiện nay.
+6. Dòng đạt và prod đang **AUTO** được đẩy lên prod dưới khoá `artwork-builder\.push-lock` (chờ tối đa 30 phút, không bao giờ phá khoá của người khác): render local từng dòng qua `push-local-renders.mjs --line`, dòng dùng chung file cũ và flat-text qua `push-shared-prints.mjs` với bản spec đã lọc (`*.auto.json`). Task dừng ở REVIEW / AUTO như hiện nay. Với `PUSH_VIA=api` mỗi script chạy một lần với `--via api` (giao qua Artwork Delivery API, không SSH, không lấy `.push-lock`) thay cho `--apply/--prove/--push`; kết quả đọc từ `api-ledger.json` của script.
 7. Dòng bị giữ: có cấu hình `/hold` thì báo `POST /api/design-agent/runner/hold` (mỗi dòng một lần cho mỗi lý do); không có thì chỉ ghi log.
 8. Ghi log và summary JSON, giữ 30 ngày; xoá snapshot prod mà lần chạy tự tạo (~180 MB).
 
@@ -31,6 +31,8 @@ Tạo file `%USERPROFILE%\.auto-render\config.env`, mỗi dòng `KEY=VALUE` (dò
 | `DESIGN_AGENT_TOKEN` | không | token `dag_…` của Design Agent (không bao giờ ghi vào log) |
 | `SINCE_DAYS` | không | mặc định 14 |
 | `NAME_BOX_TOLERANCE_PX` | không | dung sai khung tên, mặc định 3 |
+| `PUSH_VIA` | không | `ssh` (mặc định: `--apply/--prove/--push` dưới `.push-lock`) hoặc `api` (`--via api`, không khoá). Với `api` cần `ECOM_URL` và `DESIGN_WORKER_TOKEN`: lấy từ file này, thiếu thì đọc `%USERPROFILE%\.artwork-worker\prod.env`; vẫn thiếu thì dừng mã 2 |
+| `DESIGN_WORKER_TOKEN` | không | worker token cho `PUSH_VIA=api` (không bao giờ ghi vào log) |
 
 Thiếu file, thiếu khoá bắt buộc hay thiếu một script thì lần chạy dừng ngay với mã 2.
 
@@ -49,7 +51,7 @@ Lần đầu chạy tay: `powershell -ExecutionPolicy Bypass -File run.ps1 -DryR
 |---|---|
 | `startedAt`, `finishedAt`, `dryRun`, `exitCode`, `since`, `snapshot` | thông tin lần chạy |
 | `rendered` | mọi dòng ứng viên (prod NEW, chưa có file in) mà lần chạy có file để kiểm |
-| `pushed` | dòng đã lên prod — chỉ khi ledger của script ghi `applied` sau lúc bắt đầu chạy |
+| `pushed` | dòng đã lên prod — chỉ khi ledger của script (`ledger.json`, hay `api-ledger.json` với `PUSH_VIA=api`) ghi `applied` sau lúc bắt đầu chạy. Với `api`, dòng prod bỏ qua hoặc kế hoạch cũ (stale) là lỗi bước `push` |
 | `held` | dòng AUTO bị giữ: `taskKey, source, guard, reason, reported, jobId` |
 | `notAuto` | dòng prod không phải AUTO (vẫn render ở máy, không bao giờ đẩy) |
 | `unchecked` | dòng được đẩy nhưng không kiểm được safe zone, kèm lý do |

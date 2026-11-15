@@ -525,13 +525,14 @@ def world(tmp_path, cfg_file, fake_node, local_tool, agent_server, monkeypatch):
     monkeypatch.setattr(ar, 'load_config', load)
     monkeypatch.setattr(ar, 'disk_free_gb', lambda *a, **k: 200.0)
 
-    def make(lines=None, flat=None, hold=False, token='dag_test', push=None):
+    def make(lines=None, flat=None, hold=False, token='dag_test', push=None, extra=None):
         w = World()
         w.tool = local_tool()
         w.agent = agent_server(token='dag_test', job_id='job-1')
         keys = {'LOCAL_URL': w.tool.url}
         if hold:
             keys.update(ECOM_URL=w.agent.url, DESIGN_AGENT_TOKEN=token)
+        keys.update(extra or {})
         w.config = cfg_file(**keys)
         c = load(w.config)
         w.home, w.node, w.artwork_builder = Path(os.environ['AUTO_RENDER_HOME']), fake_node, c.artwork_builder

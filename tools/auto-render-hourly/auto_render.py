@@ -1,12 +1,14 @@
 """Hourly auto render on the shop PC.
 
 One run: mutex -> disk -> local tool -> process-new-orders.mjs (never --push) -> name guards (safe_zone.py) -> push the
-passing AUTO lines under artwork-builder/.push-lock -> /hold for the rest -> log + JSON summary. The existing scripts are
-only called; what they produced is read back from their own files. Paths come from %USERPROFILE%\\.auto-render\\config.env.
+passing AUTO lines under artwork-builder/.push-lock (PUSH_VIA=api: through the Artwork Delivery API, no lock) -> /hold for
+the rest -> log + JSON summary. The existing scripts are only called; what they produced is read back from their own files.
+Paths come from %USERPROFILE%\\.auto-render\\config.env.
 """
 from __future__ import annotations
 
 import argparse
+import contextlib
 import ctypes
 import json
 import os
@@ -53,6 +55,8 @@ class Config:
     design_agent_token: str = ''
     since_days: int = 14
     box_tolerance_px: float = 3
+    push_via: str = 'ssh'
+    worker_token: str = ''
     node: list[str] = field(default_factory=lambda: ['node'])
     python: str = sys.executable
 
@@ -69,6 +73,13 @@ def _read_env(path: Path) -> dict[str, str]:
             v = v[1:-1]
         out[k.strip()] = v
     return out
+
+
+PUSH_VIA_VALUES = ('ssh', 'api')
+
+
+def worker_prod_env() -> Path:
+    return Path(os.environ.get('USERPROFILE') or Path.home()) / '.artwork-worker' / 'prod.env'
 
 
 def load_config(path: Path) -> Config:
@@ -90,6 +101,21 @@ def load_config(path: Path) -> Config:
             cfg.box_tolerance_px = float(env['NAME_BOX_TOLERANCE_PX'])
     except ValueError as e:
         raise ConfigError(f'giá trị số sai trong {path}: {e}')
+    cfg.push_via = (env.get('PUSH_VIA') or 'ssh').strip().lower()
+    if cfg.push_via not in PUSH_VIA_VALUES:
+        raise ConfigError(f'PUSH_VIA phải là ssh hoặc api trong {path}')
+    if cfg.push_via == 'api':
+        cfg.worker_token = env.get('DESIGN_WORKER_TOKEN') or ''
+        if not (cfg.worker_token and cfg.ecom_url):
+            prod = worker_prod_env()
+            try:
+                penv = _read_env(prod)
+            except OSError:
+                penv = {}
+            cfg.worker_token = cfg.worker_token or penv.get('DESIGN_WORKER_TOKEN') or ''
+            cfg.ecom_url = cfg.ecom_url or (penv.get('ECOM_URL') or '').rstrip('/')
+        if not (cfg.worker_token and cfg.ecom_url):
+            raise ConfigError(f'PUSH_VIA=api cần ECOM_URL và DESIGN_WORKER_TOKEN (trong {path} hoặc {worker_prod_env()})')
     if cfg.ecom_url and not re.match(r'^(https://|http://localhost[:/]|http://127\.0\.0\.1[:/])', cfg.ecom_url + '/'):
         raise ConfigError(f'ECOM_URL phải là https://… (hoặc http://localhost) trong {path}')
     required = [cfg.tool_worktree / 'scripts' / 'process-new-orders.mjs', cfg.tool_worktree / 'scripts' / 'push-local-renders.mjs',
@@ -748,6 +774,8 @@ RUN_DEADLINE_S = 50 * 60
 LOCK_WAIT_S = 1800
 PUSH_MIN_LEFT_S = 180
 STAGES = ('--apply', '--prove', '--push')
+API_STAGE = '--via api'
+API_LEDGER = 'api-ledger.json'
 
 
 class LockBusy(Exception):
@@ -868,8 +896,32 @@ def _outcome(ledger: dict, key: str, started: datetime) -> str | None:
     return None
 
 
-def _push_stage(cfg: Config, script: str, args: list[str], stage: str, key: str | None, log: RunLog, timeout_s: float):
-    code, out = _run(cfg.node + [f'scripts/{script}.mjs', *args, stage], cfg.tool_worktree, timeout_s)
+def api_outcome(ledger: dict, key: str, started: datetime) -> str:
+    """push-*.mjs --via api ledger: entries are keyed per delivery (taskKey#hash); applying one clears `applied` on the task's
+    other entries, so an entry of this task applied after `started` is the newest delivery."""
+    st = started if started.tzinfo else started.astimezone()
+    entries = [e for e in (ledger.get('lines') or {}).values() if isinstance(e, dict) and e.get('taskKey') == key]
+    for e in entries:
+        at = _aware(e.get('applied'))
+        if at and at >= st and 'result' in e:
+            return 'pushed'
+    skipped = [e['skippedOnProd'] for e in entries if e.get('skippedOnProd')]
+    if skipped:
+        r = skipped[-1]
+        if isinstance(r, dict) and r.get('code') == 'stale':
+            raise StageError('push', f"kế hoạch cũ so với prod (stale): {r.get('error') or ''}".strip(), key)
+        what = ' '.join(str(r.get(k)) for k in ('status', 'code', 'error') if r.get(k)) if isinstance(r, dict) else str(r)
+        raise StageError('push', f'bỏ qua trên prod: {what}'.strip(), key)
+    raise StageError('push', 'giao qua API xong nhưng api-ledger không ghi nhận dòng', key)
+
+
+def _api_env(cfg: Config) -> dict:
+    return {'ECOM_URL': cfg.ecom_url, 'DESIGN_WORKER_TOKEN': cfg.worker_token}
+
+
+def _push_stage(cfg: Config, script: str, args: list[str], stage: str, key: str | None, log: RunLog, timeout_s: float,
+                env_extra: dict | None = None):
+    code, out = _run(cfg.node + [f'scripts/{script}.mjs', *args, *stage.split(' ')], cfg.tool_worktree, timeout_s, env_extra)
     log.block(script, out)
     if code is None:
         raise StageError('push', f'{script} {stage} quá giờ của lần chạy', key)
@@ -882,6 +934,9 @@ def _push_stage(cfg: Config, script: str, args: list[str], stage: str, key: str 
 
 def push_local_line(cfg: Config, snapshot: Path, since: str, key: str, started: datetime, log: RunLog, timeout_s: float = 1800) -> str:
     args = ['--snapshot', str(snapshot), '--since', since, '--line', key]
+    if cfg.push_via == 'api':
+        _push_stage(cfg, 'push-local-renders', args, API_STAGE, key, log, timeout_s, _api_env(cfg))
+        return api_outcome(_read_ledger(cfg.main_checkout / 'db-backups' / 'push-local-renders' / API_LEDGER), key, started)
     for st in STAGES:
         _push_stage(cfg, 'push-local-renders', args, st, key, log, timeout_s)
     ledger = _read_ledger(cfg.main_checkout / 'db-backups' / 'push-local-renders' / 'ledger.json')
@@ -895,6 +950,10 @@ def push_spec(cfg: Config, spec: Path, snapshot: Path, ledger_dir: Path | None, 
               timeout_s: float = 1800) -> dict[str, str]:
     args = ['--spec', str(spec), '--snapshot', str(snapshot), *(['--out', str(ledger_dir)] if ledger_dir else [])]
     first = keys[0] if keys else None
+    if cfg.push_via == 'api':
+        _push_stage(cfg, 'push-shared-prints', args, API_STAGE, first, log, timeout_s, _api_env(cfg))
+        ledger = _read_ledger((Path(ledger_dir) if ledger_dir else cfg.main_checkout / 'db-backups' / 'push-shared-prints') / API_LEDGER)
+        return {k: api_outcome(ledger, k, started) for k in keys}
     for st in STAGES:
         _push_stage(cfg, 'push-shared-prints', args, st, first, log, timeout_s)
     ledger = _read_ledger((Path(ledger_dir) if ledger_dir else cfg.main_checkout / 'db-backups' / 'push-shared-prints') / 'ledger.json')
@@ -1048,9 +1107,9 @@ def _push_phase(cfg, log, summary, plan, snapshot, since, started, left):
             summary['skipped'].append({'taskKey': key, 'reason': reason})
             log.line(f'{key} bị bỏ qua trên prod: {reason}')
 
-    lock = PushLock(cfg.artwork_builder / '.push-lock', log.home, wait_s=wait)
+    lock = PushLock(cfg.artwork_builder / '.push-lock', log.home, wait_s=wait) if cfg.push_via != 'api' else None
     try:
-        with lock:
+        with lock or contextlib.nullcontext():
             for key in plan.push_local:
                 note(key, push_local_line(cfg, snapshot, since, key, started, log, timeout_s=budget()))
             for spec, ledger in ((plan.shared_spec, None), (plan.flat_spec, log.home / 'flat-ledger')):
@@ -1065,7 +1124,7 @@ def _push_phase(cfg, log, summary, plan, snapshot, since, started, left):
     except StageError as e:
         log.line(f'dừng đẩy: {e.message}{f" ({e.task_key})" if e.task_key else ""}')
         summary['errors'].append(_err(e))
-    if lock.release_error:
+    if lock and lock.release_error:
         msg = f'KHÔNG nhả được khoá .push-lock của lần chạy này ({lock.release_error}) — cần xoá tay thư mục {lock.lock_dir}'
         log.line(msg)
         summary['errors'].append({'stage': 'lock', 'message': msg})
@@ -1126,6 +1185,7 @@ def main(argv: list[str] | None = None) -> int:
         summary['errors'].append({'stage': 'config', 'message': e.message})
         return finish(EXIT_CONFIG)
     log.secrets.append(cfg.design_agent_token)
+    log.secrets.append(cfg.worker_token)
     log.secrets = [s for s in log.secrets if s]
     handle = acquire_mutex()
     if handle is None:
