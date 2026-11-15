@@ -49,7 +49,7 @@ export type CommitInput = {
 export type CommitResult = {
   ok: true
   status: string
-  artworks: { id: string; kind: string; printArea: string; version: number }[]
+  artworks: { id: string; kind: string; printArea: string; version: number; driveFileId: string | null }[]
   retired: string[]
   missing: string[]
   warnings: string[]
