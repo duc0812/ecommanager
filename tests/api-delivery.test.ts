@@ -341,6 +341,66 @@ describe('runApiDelivery', () => {
     await expect(run(f, [line({ taskKey: 'A' }), line({ taskKey: 'B' })])).rejects.toBeInstanceOf(DeliveryStopped)
   })
 
+  it('dryRun uploads and records the ids, sends the commit with dryRun, never marks applied nor sends a preview', async () => {
+    const big = localFile('huge.png', 30 * 1024 * 1024)
+    const l = line({ files: [{ kind: 'PRINT', printArea: 'Front', path: big, fileName: 'huge.png', mimeType: 'image/png', widthPx: 1, heightPx: 1 }] })
+    const f = fakes()
+    const previewOf = async () => Buffer.from([0xff, 0xd8, 0xff])
+    const r = await run(f, [l], { dryRun: true, previewOf })
+    expect(r).toMatchObject({ applied: 0, dryRun: 1, skipped: 0, failed: 0 })
+    expect(f.uploads).toHaveLength(1)
+    expect(f.commits[0].body.dryRun).toBe(true)
+    expect(f.events.some(e => e.startsWith('preview'))).toBe(false)
+    expect(entry().applied).toBeFalsy()
+    expect(entry().files['PRINT/Front'].driveFileId).toBe('D-huge.png')
+    expect(r.results).toEqual([expect.objectContaining({ taskKey: 'LIT1_1', ok: true, status: 200, outcome: 'dryRun' })])
+    expect(r.results[0].key).toMatch(/^LIT1_1#/)
+    const real = fakes()
+    const again = await run(real, [l], { previewOf })
+    expect(real.uploads).toHaveLength(0)
+    expect(real.commits[0].body.dryRun).toBeUndefined()
+    expect(again).toMatchObject({ applied: 1, dryRun: 0 })
+    expect(entry().applied).toBeTruthy()
+  })
+
+  it('dryRun on an applied line reports alreadyApplied and sends no pending preview', async () => {
+    const big = localFile('huge.png', 30 * 1024 * 1024)
+    const l = line({ files: [{ kind: 'PRINT', printArea: 'Front', path: big, fileName: 'huge.png', mimeType: 'image/png', widthPx: 1, heightPx: 1 }] })
+    const first = fakes()
+    first.client.putPreview = async () => ({ ok: false, status: 500, body: {} })
+    await run(first, [l], { previewOf: async () => Buffer.from([1]) })
+    expect(entry().pendingPreviews).toHaveLength(1)
+    const dry = fakes()
+    const r = await run(dry, [l], { dryRun: true, previewOf: async () => Buffer.from([1]) })
+    expect(r).toMatchObject({ alreadyApplied: 1 })
+    expect(r.results[0]).toMatchObject({ taskKey: 'LIT1_1', ok: true, outcome: 'alreadyApplied' })
+    expect(dry.events).toEqual([])
+    expect(entry().pendingPreviews).toHaveLength(1)
+  })
+
+  it('returns one result per line: applied, refused on prod, failed', async () => {
+    const f = fakes({ commit: (key) => key === 'NO'
+      ? { ok: false, status: 409, body: { error: 'đã đổi', code: 'stale_state' } }
+      : { ok: true, status: 200, body: { ok: true, status: 'REVIEW', artworks: [], alreadyApplied: false } } })
+    const broken = line({ taskKey: 'BAD', files: [{ kind: 'PRINT', printArea: 'Front', path: path.join(dir, 'gone.png'), fileName: 'g.png', mimeType: 'image/png', shortcutOf: 'T' }] })
+    const r = await run(f, [line({ taskKey: 'OK' }), line({ taskKey: 'NO' }), broken])
+    expect(r).toMatchObject({ applied: 1, skipped: 1, failed: 1 })
+    expect(r.results.map((x: any) => [x.taskKey, x.ok, x.status, x.outcome])).toEqual([
+      ['OK', true, 200, 'applied'],
+      ['NO', false, 409, 'skipped'],
+      ['BAD', false, null, 'failed'],
+    ])
+    expect(r.results[1].body).toMatchObject({ code: 'stale_state' })
+    expect(r.results[2].body.error).toMatch(/dung lượng/)
+  })
+
+  it('a refused task state is a skipped result with its status', async () => {
+    const f = fakes()
+    f.client.taskState = async () => ({ ok: false, status: 404, body: { error: 'không có', code: 'not_found' } })
+    const r = await run(f, [line()])
+    expect(r.results[0]).toMatchObject({ ok: false, status: 404, outcome: 'skipped', body: { code: 'not_found' } })
+  })
+
   it('never sends a DELETE or a trashed body when run with the real uploader', async () => {
     const requests: { method: string; url: string; body: any }[] = []
     const fetchImpl: any = async (url: any, init: any = {}) => {

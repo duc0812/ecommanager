@@ -126,25 +126,31 @@ function takeLock(ledgerPath, log) {
  *   log?: (msg: string) => void,
  *   uploads?: number,
  *   previewOf?: (path: string) => Promise<Buffer|null>|Buffer|null,
+ *   dryRun?: boolean,
  * }} opts
+ * With `dryRun` the files are still uploaded and recorded (the real run reuses them) and each commit goes out with
+ * `dryRun: true`; nothing is marked applied and no preview is sent.
  */
-export async function runApiDelivery({ lines, client, uploader, ledgerPath, log = console.log, uploads = 3, previewOf = null }) {
+export async function runApiDelivery({ lines, client, uploader, ledgerPath, log = console.log, uploads = 3, previewOf = null, dryRun = false }) {
   const release = takeLock(ledgerPath, log)
   try {
-    return await run({ lines, client, uploader, ledgerPath, log, uploads, previewOf })
+    return await run({ lines, client, uploader, ledgerPath, log, uploads, previewOf, dryRun })
   } finally {
     release()
   }
 }
 
-async function run({ lines, client, uploader, ledgerPath, log, uploads, previewOf }) {
+async function run({ lines, client, uploader, ledgerPath, log, uploads, previewOf, dryRun }) {
   const ledger = readLedger(ledgerPath)
   ledger.lines ??= {}
   const save = () => writeLedger(ledgerPath, ledger)
-  const counts = { applied: 0, skipped: 0, alreadyApplied: 0, failed: 0 }
+  const counts = { applied: 0, skipped: 0, alreadyApplied: 0, failed: 0, dryRun: 0 }
+  const results = []
+  const keyOf = line => { try { return deliveryKey(line) } catch { return null } }
+  const result = (line, outcome, r) => results.push({ key: keyOf(line), taskKey: line.taskKey, outcome, ok: r.ok, status: r.status ?? null, body: r.body ?? null })
 
   async function sendPreviews(led) {
-    if (!previewOf || !led.pendingPreviews?.length) return
+    if (dryRun || !previewOf || !led.pendingPreviews?.length) return
     const pending = led.pendingPreviews
     const left = []
     try {
@@ -170,12 +176,14 @@ async function run({ lines, client, uploader, ledgerPath, log, uploads, previewO
     }
   }
 
-  function skipOnProd(key, led, res) {
+  function skipOnProd(line, led, res) {
+    const key = line.taskKey
     const reason = { code: res.body?.code ?? null, error: res.body?.error ?? null, status: res.status }
     led.skippedOnProd = reason
     save()
     log(`${key}: bỏ qua trên prod (${reason.status} ${reason.code ?? ''} ${reason.error ?? ''})`)
     counts.skipped++
+    result(line, 'skipped', res)
   }
 
   async function deliver(line) {
@@ -185,6 +193,7 @@ async function run({ lines, client, uploader, ledgerPath, log, uploads, previewO
     led.files ??= {}
     if (led.applied) {
       counts.alreadyApplied++
+      result(line, 'alreadyApplied', { ok: true, status: null, body: led.result ?? null })
       await sendPreviews(led)
       return
     }
@@ -199,7 +208,7 @@ async function run({ lines, client, uploader, ledgerPath, log, uploads, previewO
     }
 
     const st = await client.taskState(key)
-    if (!st.ok) return skipOnProd(key, led, st)
+    if (!st.ok) return skipOnProd(line, led, st)
     const state = st.body
 
     const todo = []
@@ -238,8 +247,17 @@ async function run({ lines, client, uploader, ledgerPath, log, uploads, previewO
       retire: line.retire ?? [],
     }
     for (const k of ['retireSources', 'eventMessage', 'allowFinished', 'revertReadiness']) if (line[k] !== undefined) body[k] = line[k]
+    if (dryRun) body.dryRun = true
 
     const res = await client.commit(key, body)
+    if (res.ok && dryRun) {
+      delete led.skippedOnProd
+      save()
+      counts.dryRun++
+      result(line, 'dryRun', res)
+      log(`${key}: dry run OK — trạng thái sẽ là ${res.body?.status ?? '?'}${res.body?.missing?.length ? `, thiếu ${res.body.missing.join(', ')}` : ''}${res.body?.warnings?.length ? `, cảnh báo: ${res.body.warnings.join(' | ')}` : ''}`)
+      return
+    }
     if (res.ok) {
       led.applied = new Date().toISOString()
       led.result = res.body
@@ -254,6 +272,7 @@ async function run({ lines, client, uploader, ledgerPath, log, uploads, previewO
       }
       save()
       counts.applied++
+      result(line, 'applied', res)
       log(`${key}: đã áp dụng${res.body?.alreadyApplied ? ' (server báo đã có)' : ''}`)
       await sendPreviews(led)
       return
@@ -266,7 +285,7 @@ async function run({ lines, client, uploader, ledgerPath, log, uploads, previewO
       led.files = {}
       log(`${key}: server báo ${res.body.code} — bỏ mã file đã upload, lần chạy sau upload lại`)
     }
-    return skipOnProd(key, led, res)
+    return skipOnProd(line, led, res)
   }
 
   for (const line of lines) {
@@ -275,8 +294,10 @@ async function run({ lines, client, uploader, ledgerPath, log, uploads, previewO
     } catch (e) {
       if (fatal(e)) { save(); throw e }
       counts.failed++
-      log(`${line.taskKey}: lỗi ${e instanceof Error ? e.message : e}`)
+      const message = e instanceof Error ? e.message : String(e)
+      result(line, 'failed', { ok: false, status: null, body: { error: message } })
+      log(`${line.taskKey}: lỗi ${message}`)
     }
   }
-  return counts
+  return { ...counts, results }
 }
