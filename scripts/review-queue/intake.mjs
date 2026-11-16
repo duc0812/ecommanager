@@ -11,6 +11,9 @@ import { ACTIVE_STATUSES, newItemId, openQueue } from './store.mjs'
 // Drive has nothing new to look at and is delivered by the caller as today.
 
 export const QUEUE_NOTE = 'Đang chờ chủ shop duyệt ở máy local (tối đa 3 giờ)'
+export const HOLDING_NOTE = 'Chủ shop đang giữ lại ở máy local — chưa có hạn'
+const HOLDING_STATUSES = ['rejected', 'fixing', 'needs_look']
+const COUNTING_STATUSES = ['waiting', 'qa_failed']
 export const DEFAULT_QUEUE_ROOT = 'D:\\Ecom manager\\review-queue'
 export const PREVIEW_MAX_PX = 1600
 const DOWNLOAD_TIMEOUT_MS = 15_000
@@ -30,6 +33,41 @@ const errText = e => (e instanceof Error ? e.message : String(e))
 export function makeNoteClient(opts = {}) {
   return createDeliveryClient({ budgetMs: NOTE_BUDGET_MS, timeoutMs: NOTE_TIMEOUT_MS, ...opts })
 }
+
+/**
+ * Tells prod when an item stops counting down (rejected, fixing, needs_look → HOLDING_NOTE) and when it counts again after that
+ * (waiting, qa_failed → QUEUE_NOTE). One note per member key and change, remembered as a `note_state` event whose message is the
+ * note; intake's first QUEUE_NOTE counts as the starting state. A failure is a warning line and a `note_failed` event, never an error.
+ * @returns {Promise<string|null>} the note sent, or null
+ */
+export async function noteQueueState(queue, itemId, client, log = console.log) {
+  if (!client) return null
+  let message = null
+  try {
+    const item = await queue.get(itemId)
+    message = HOLDING_STATUSES.includes(item?.status) ? HOLDING_NOTE : COUNTING_STATUSES.includes(item?.status) ? QUEUE_NOTE : null
+    if (!message) return null
+    const last = (await queue.events(itemId)).filter(e => e.type === 'note_state').pop()?.message ?? QUEUE_NOTE
+    if (last === message) return null
+    const keys = await queue.memberKeys(itemId)
+    for (const k of keys.length ? keys : [item.taskKey]) {
+      const r = await client.note(k, message)
+      if (r && r.ok === false) throw new Error(`HTTP ${r.status} ${r.body?.code ?? ''} ${r.body?.error ?? ''}`.trim())
+    }
+    await queue.addEvent(itemId, 'note_state', message)
+    return message
+  } catch (e) {
+    log(`CẢNH BÁO: ${itemId}: không ghi được ghi chú lên prod (${errText(e)})`)
+    try { await queue.addEvent(itemId, 'note_failed', `Không ghi được ghi chú "${message ?? '?'}" lên prod: ${errText(e)}`) } catch { /* the warning line is enough */ }
+    return null
+  }
+}
+
+const lineShape = l => JSON.stringify([
+  l.taskKey, l.action ?? null, l.expectedStatus ?? null, [...(l.planIds ?? [])].map(String).sort(), [...(l.retire ?? [])].map(String).sort(),
+])
+/** The api lines would do something else on prod (action, expected status, planned ids, retired ids). */
+const apiLinesDiffer = (stored, fresh) => (stored ?? []).map(lineShape).sort().join('|') !== (fresh ?? []).map(lineShape).sort().join('|')
 
 /**
  * planLinesToApi for the queue: a later line of a shared group whose first line has no Drive file yet carries a pending
@@ -218,6 +256,7 @@ export async function enqueuePlan({
 }) {
   const out = { enqueued: [], unchanged: [], bypassed: [], refused: [], reasons: {}, unnoted: [] }
   const toNote = []
+  const updated = []
   const planByKey = new Map((plan?.lines ?? []).map(l => [l.taskKey, l]))
   const refuse = (keys, reason) => { for (const k of keys) out.refused.push({ taskKey: k, reason }) }
 
@@ -254,12 +293,16 @@ export async function enqueuePlan({
       }
       out.enqueued.push(...keys)
       if (r.created) toNote.push({ itemId: r.itemId, keys: lines.map(l => l.taskKey) })
-      else if (r.addedKeys?.length) toNote.push({ itemId: r.itemId, keys: r.addedKeys })
+      else {
+        if (r.addedKeys?.length) toNote.push({ itemId: r.itemId, keys: r.addedKeys })
+        updated.push(r.itemId)
+      }
     } catch (e) {
       refuse(keys, e?.code === 'key_held' ? `đã có trong hàng chờ ${e.itemId}` : `lỗi khi đưa vào hàng chờ: ${errText(e)}`)
     }
   }
   await notifyProd()
+  for (const id of updated) await noteQueueState(queue, id, client, log)
   return out
 
   async function notifyProd() {
@@ -300,12 +343,15 @@ export async function enqueuePlan({
     const active = (await queue.list({ statuses: ACTIVE_STATUSES })).find(i => i.groupKey === groupKey) ?? null
     let prevDir = null
     let prevKeys = []
+    let refresh = false
     if (active) {
       if (active.status === 'fixing') return { outcome: 'unchanged', itemId: active.id, reason: 'agent đang sửa' }
       const cur = (await queue.versions(active.id)).find(v => v.n === active.version)
       prevKeys = await queue.memberKeys(active.id)
       const sameKeys = prevKeys.join('|') === taskKeys.join('|')
-      if (cur && sameKeys && (cur.files ?? []).map(f => f.sha256).sort().join('|') === shaKey) return { outcome: 'unchanged', itemId: active.id }
+      // a needs_look item, or api lines that now mean something else on prod, is re-recorded even with the same bytes
+      refresh = active.status === 'needs_look' || apiLinesDiffer(active.apiLines, lines)
+      if (cur && sameKeys && !refresh && (cur.files ?? []).map(f => f.sha256).sort().join('|') === shaKey) return { outcome: 'unchanged', itemId: active.id }
       prevDir = path.join(queue.root, 'items', active.id, `v${active.version}`)
     }
     const itemId = active?.id ?? newItemId()
@@ -368,7 +414,7 @@ export async function enqueuePlan({
       if (lines.length > 1) meta.lines = infos
       const r = await queue.addOrUpdate({
         id: itemId, taskKey: groupKey, taskKeys, groupKey, kind: lines.length > 1 ? 'group' : 'line',
-        apiLines: storedLines, files, meta, qa: combineQa(lines.map(l => l.taskKey), qaByKey),
+        apiLines: storedLines, files, meta, qa: combineQa(lines.map(l => l.taskKey), qaByKey), refresh,
       })
       recorded = r.changed
       if (!r.changed) return { outcome: 'unchanged', itemId: r.itemId }

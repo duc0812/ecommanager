@@ -4,7 +4,7 @@ import os from 'os'
 import path from 'path'
 import http from 'http'
 import { openQueue } from '../scripts/review-queue/store.mjs'
-import { createReviewServer } from '../scripts/review-queue/server.mjs'
+import { createReviewServer, main as serverMain } from '../scripts/review-queue/server.mjs'
 
 const H = 3_600_000
 let tmp: string
@@ -271,7 +271,7 @@ describe('actions', () => {
     await post('/api/items/rq_a1/cloud', { version: 1 })
     await post('/api/items/rq_a1/remove', { version: 1 })
     expect(calls.map(c => [c.name, c.args[1], ...c.args.slice(2).filter(a => a !== deps)])).toEqual([
-      ['rejectItem', 'rq_a1', 'màu tên', { version: 1 }],
+      ['rejectItem', 'rq_a1', 'màu tên', { version: 1, noter: null, log: expect.any(Function) }],
       ['sendToCloud', 'rq_a1', { force: false, version: 1 }],
       ['removeItem', 'rq_a1', { version: 1 }],
     ])
@@ -311,6 +311,45 @@ describe('actions', () => {
   })
 })
 
+describe('main', () => {
+  async function fixingItem() {
+    const id = await addItem('rq_fix1', 'LIT7_1')
+    await q.setStatus(id, 'fixing', { reason: 'Agent codex đang sửa (job 1)' })
+    const dir = path.join(root, 'items', id, 'jobs', '1')
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(path.join(dir, 'job.json'), JSON.stringify({ id: `${id}-1`, itemId: id, n: 1, agent: 'codex', status: 'running', pid: 5151, startedAt: new Date(clock).toISOString() }))
+    return id
+  }
+
+  it('a second server on a port in use stops with a clear message and touches no fix job', async () => {
+    const id = await fixingItem()
+    const out: string[] = []
+    const asked: number[] = []
+    const env: any = { USERPROFILE: tmp, REVIEW_QUEUE_ROOT: root, REVIEW_QUEUE_PORT: String(port) }
+    const r = await serverMain({ env, log: (m: string) => { out.push(m) }, deps: {}, fixDeps: {}, recover: { processImage: async (pid: number) => { asked.push(pid); return 'codex.exe' } } })
+    expect(r).toBeNull()
+    expect(out.join('\n')).toMatch(new RegExp(`cổng 127\\.0\\.0\\.1:${port} đang có tiến trình khác dùng .*không gỡ job nào`))
+    expect(asked).toEqual([])
+    expect((await q.get(id)).status).toBe('fixing')
+    expect(JSON.parse(fs.readFileSync(path.join(root, 'items', id, 'jobs', '1', 'job.json'), 'utf8')).status).toBe('running')
+  })
+
+  it('a server that got its port recovers the fix jobs an earlier process left', async () => {
+    const id = await fixingItem()
+    const out: string[] = []
+    const env: any = { USERPROFILE: tmp, REVIEW_QUEUE_ROOT: root, REVIEW_QUEUE_PORT: '0' }
+    const r: any = await serverMain({ env, log: (m: string) => { out.push(m) }, deps: {}, fixDeps: {}, recover: { processImage: async () => null } })
+    try {
+      expect(r.server.listening).toBe(true)
+      expect((await q.get(id)).status).toBe('rejected')
+      expect(out.join('\n')).toMatch(/Đã gỡ 1 job agent bị gián đoạn/)
+    } finally {
+      await new Promise(res => r.server.close(() => res(undefined)))
+      await r.queue.close()
+    }
+  })
+})
+
 describe('static page', () => {
   it('serves the page and its assets', async () => {
     const page = await fetch(`${base}/`)
@@ -318,7 +357,13 @@ describe('static page', () => {
     expect(page.headers.get('content-security-policy')).toBe("default-src 'self'; img-src 'self' https: data:; style-src 'self' 'unsafe-inline'")
     expect(page.headers.get('content-type')).toMatch(/text\/html/)
     expect(await page.text()).toContain('Duyệt local')
-    expect((await fetch(`${base}/app.js`)).headers.get('content-type')).toMatch(/javascript/)
+    const js = await fetch(`${base}/app.js`)
+    expect(js.headers.get('content-type')).toMatch(/javascript/)
+    const code = await js.text()
+    expect(code).toContain('<div class="menu"><button data-agent="codex">Codex</button><button data-agent="claude">Claude</button></div>')
+    expect(code).toContain("function onFix(agent = 'codex')")
+    expect(code).toMatch(/e\.key === 'D'\) && !S\.busy && Date\.now\(\) - \(S\.versionChangedAt \?\? 0\) >= D_QUIET_MS/)
+    expect(code).toContain('const D_QUIET_MS = 2_000')
     expect((await fetch(`${base}/app.css`)).headers.get('content-type')).toMatch(/text\/css/)
     expect((await raw('GET', '/../server.mjs')).status).toBe(404)
   })

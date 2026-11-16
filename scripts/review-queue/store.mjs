@@ -4,7 +4,7 @@ import crypto from 'crypto'
 import { createClient } from '@libsql/client'
 
 export const COUNTDOWN_MS = 10_800_000
-export const LOCK_STALE_MS = 15 * 60_000
+export const LOCK_STALE_MS = 60 * 60_000
 export const ACTIVE_STATUSES = ['waiting', 'rejected', 'fixing', 'qa_failed', 'needs_look']
 const COUNTING_STATUSES = ['waiting', 'qa_failed']
 export const ALL_STATUSES = [...ACTIVE_STATUSES, 'approved', 'cloud', 'held', 'removed']
@@ -192,8 +192,9 @@ export async function openQueue({ root, now = () => new Date(), isAlive = pidAli
      * `id` (optional) is used only when a new item is created, so the caller can copy its files under items/<id> first.
      * `taskKeys` are the item's member keys (default: taskKey alone); a different member set is a new version like different files.
      * A member key held by an active item of another group fails with code `key_held` (`err.itemId`, `err.taskKey`), nothing written.
+     * `refresh` records a new version even when files and members are the same (new api lines from a fresh snapshot, a needs_look item).
      */
-    async addOrUpdate({ id: wantedId, taskKey, taskKeys, groupKey, kind, apiLines, files, meta, qa }) {
+    async addOrUpdate({ id: wantedId, taskKey, taskKeys, groupKey, kind, apiLines, files, meta, qa, refresh = false }) {
       if (wantedId != null && !ITEM_ID.test(wantedId)) throw new Error(`id không hợp lệ: ${wantedId}`)
       const tx = await begin()
       try {
@@ -242,7 +243,7 @@ export async function openQueue({ root, now = () => new Date(), isAlive = pidAli
         })
         const curFiles = parse(curVer.rows[0]?.files) ?? []
         const curKeys = await readKeys(tx, cur.id)
-        if (shaKey(curFiles) === shaKey(files) && curKeys.join('|') === keys.join('|')) {
+        if (!refresh && shaKey(curFiles) === shaKey(files) && curKeys.join('|') === keys.join('|')) {
           await tx.commit()
           return { itemId: cur.id, version: cur.version, created: false, changed: false }
         }
@@ -376,7 +377,7 @@ export async function openQueue({ root, now = () => new Date(), isAlive = pidAli
       return r.rows.map(rowToItem)
     },
 
-    /** Process-safe: one holder per item; a lock older than 15 min or owned by a dead pid is taken over. */
+    /** Process-safe: one holder per item; a lock older than 60 min (longer than a fix job) or owned by a dead pid is taken over. */
     async withLock(itemId, fn) {
       const token = crypto.randomBytes(8).toString('hex')
       await exclusive(async () => {
@@ -402,7 +403,7 @@ export async function openQueue({ root, now = () => new Date(), isAlive = pidAli
       try {
         return await fn()
       } finally {
-        // a failed release must not replace fn's result: the row stays until it is stale (15 min) or its pid is gone
+        // a failed release must not replace fn's result: the row stays until it is stale (60 min) or its pid is gone
         await exclusive(() => write({ sql: 'DELETE FROM locks WHERE itemId = ? AND token = ?', args: [itemId, token] }))
           .catch(e => console.error(`hàng chờ: không nhả được khoá ${itemId}: ${e instanceof Error ? e.message : e}`))
       }

@@ -59,6 +59,22 @@ describe('addOrUpdate', () => {
     expect(await q.versions(a.itemId)).toHaveLength(1)
   })
 
+  it('refresh records a new version with the same files and moves the item back to waiting (qa_failed per qa)', async () => {
+    const a = await q.addOrUpdate(base())
+    await q.setStatus(a.itemId, 'needs_look', { reason: 'prod đổi' })
+    clock += 3_600_000
+    const lines = [{ taskKey: 'LIT1_1', action: 'replace', planIds: ['p1'] }]
+    const b = await q.addOrUpdate(base({ apiLines: lines, refresh: true }))
+    expect(b).toEqual({ itemId: a.itemId, version: 2, created: false, changed: true })
+    const it = await q.get(a.itemId)
+    expect(it).toMatchObject({ status: 'waiting', statusReason: null, version: 2, apiLines: lines, enteredAt: '2026-11-15T11:00:00.000Z' })
+    expect((await q.versions(a.itemId))[1].apiLines).toEqual(lines)
+    const c = await q.addOrUpdate(base({ apiLines: lines, refresh: true, qa: { verdict: 'fail', items: ['x'] } }))
+    expect(c.version).toBe(3)
+    expect((await q.get(a.itemId)).status).toBe('qa_failed')
+    expect(await q.addOrUpdate(base({ apiLines: lines }))).toMatchObject({ version: 3, changed: false })
+  })
+
   it('a new sha creates v2 and resets the clock', async () => {
     const a = await q.addOrUpdate(base())
     clock += 3_600_000
@@ -257,11 +273,11 @@ describe('withLock', () => {
     }
   })
 
-  it('recovers a lock older than 15 minutes', async () => {
+  it('recovers a lock older than 60 minutes (a fix job may hold one that long)', async () => {
     const a = await q.addOrUpdate(base())
     let stolen = false
     await q.withLock(a.itemId, async () => {
-      clock += 15 * 60_000
+      clock += 60 * 60_000
       await q.withLock(a.itemId, async () => { stolen = true })
     })
     expect(stolen).toBe(true)
@@ -270,7 +286,7 @@ describe('withLock', () => {
   it('does not steal a young lock of a live pid', async () => {
     const a = await q.addOrUpdate(base())
     await q.withLock(a.itemId, async () => {
-      clock += 14 * 60_000
+      clock += 59 * 60_000
       await expect(q.withLock(a.itemId, async () => 1)).rejects.toMatchObject({ code: 'locked' })
     })
   })

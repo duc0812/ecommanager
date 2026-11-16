@@ -5,13 +5,13 @@ import { fileURLToPath } from 'url'
 import { openQueue, COUNTDOWN_MS, ALL_STATUSES } from './store.mjs'
 import { DEFAULT_QUEUE_ROOT } from './intake.mjs'
 import {
-  TICK_BUDGET_MS, approveItem, rejectItem, sendToCloud, removeItem, loadEnvFiles, makeLiveDeps, queueEnvFiles,
+  TICK_BUDGET_MS, approveItem, rejectItem, sendToCloud, removeItem, loadQueueEnv, makeLiveDeps,
 } from './actions.mjs'
 import { startFix, runFixJob, recoverFixJobs, listJobs, makeFixDeps } from './fix-job.mjs'
 
 // The local review page (spec 7.3, 12.5, 13): http://127.0.0.1:3020, reads previews straight from the queue folder.
 //   node scripts/review-queue/server.mjs
-// Env as tick.mjs (prod.env, approve.env, auto render's config.env); REVIEW_QUEUE_ROOT, REVIEW_QUEUE_PORT (default 3020).
+// Env as tick.mjs (prod.env, auto render's config.env, approve.dpapi / approve.env); REVIEW_QUEUE_ROOT, REVIEW_QUEUE_PORT (default 3020).
 // Listens on 127.0.0.1 only. Every request must name this server in Host (DNS rebinding) and every POST must carry
 // `X-Review-Queue: 1` (a page on another site cannot add it without a CORS preflight this server never answers).
 
@@ -252,7 +252,7 @@ export function createHandler({ queue, deps, fixDeps = {}, ops = {}, now = () =>
       case 'cloud':
         return act.sendToCloud(queue, id, deps, { force: body.force === true, version: Number.isInteger(version) ? version : null })
       case 'reject':
-        return act.rejectItem(queue, id, typeof body.reason === 'string' ? body.reason : '', { version: Number.isInteger(version) ? version : null })
+        return act.rejectItem(queue, id, typeof body.reason === 'string' ? body.reason : '', { version: Number.isInteger(version) ? version : null, noter: deps?.noter ?? null, log })
       case 'remove':
         return act.removeItem(queue, id, { version: Number.isInteger(version) ? version : null })
       case 'fix': {
@@ -330,25 +330,32 @@ export function createReviewServer(opts) {
 }
 
 /**
- * Entry: env files like the tick, one queue object for the process, fix jobs left by an earlier run recovered once, then listen.
- * @param {{ env?: Record<string, string|undefined>, log?: (m: string) => void, deps?: any, fixDeps?: any, ops?: any }} [opts]
+ * Entry: env files like the tick, one queue object for the process, listen, then fix jobs left by an earlier run recovered once.
+ * The port is taken first: a second server (port in use) stops without touching any job — returns null (exit code 1).
+ * @param {{ env?: Record<string, string|undefined>, log?: (m: string) => void, deps?: any, fixDeps?: any, ops?: any, decrypt?: (file: string) => string, recover?: any }} [opts]
  */
-export async function main({ env = process.env, log = console.log, deps = null, fixDeps = null, ops = {} } = {}) {
-  loadEnvFiles(queueEnvFiles(env), env)
+export async function main({ env = process.env, log = console.log, deps = null, fixDeps = null, ops = {}, decrypt, recover = {} } = /** @type {any} */ ({})) {
+  loadQueueEnv(env, { log, ...(decrypt ? { decrypt } : {}) })
   const root = env.REVIEW_QUEUE_ROOT || DEFAULT_QUEUE_ROOT
   const port = Number(env.REVIEW_QUEUE_PORT || DEFAULT_PORT)
   const queue = await openQueue({ root })
-  const recovered = await recoverFixJobs(queue, { log })
+  const liveDeps = deps ?? makeLiveDeps({ env, log, budgetMs: TICK_BUDGET_MS })
+  const liveFix = fixDeps ?? makeFixDeps({ env, log })
+  const server = createReviewServer({ queue, ops, log, deps: liveDeps, fixDeps: liveFix })
+  try {
+    await new Promise((resolve, reject) => {
+      server.once('error', reject)
+      server.listen(port, HOST, () => { server.off('error', reject); resolve(undefined) })
+    })
+  } catch (e) {
+    await queue.close().catch(() => {})
+    if (e?.code === 'EADDRINUSE') {
+      log(`LỖI: cổng ${HOST}:${port} đang có tiến trình khác dùng (server hàng chờ đang chạy?) — không mở server thứ hai, không gỡ job nào`)
+    } else log(`LỖI: không mở được cổng ${HOST}:${port}: ${errText(e)} — không gỡ job nào`)
+    return null
+  }
+  const recovered = await recoverFixJobs(queue, { log, noter: liveFix.noter ?? null, ...recover })
   if (recovered.length) log(`Đã gỡ ${recovered.length} job agent bị gián đoạn`)
-  const server = createReviewServer({
-    queue, ops, log,
-    deps: deps ?? makeLiveDeps({ env, log, budgetMs: TICK_BUDGET_MS }),
-    fixDeps: fixDeps ?? makeFixDeps({ env, log }),
-  })
-  await new Promise((resolve, reject) => {
-    server.once('error', reject)
-    server.listen(port, HOST, () => resolve(undefined))
-  })
   log(`Duyệt local: http://${HOST}:${port}  (hàng chờ ${root})`)
   const stop = () => server.close(() => queue.close().finally(() => process.exit(0)))
   process.once('SIGINT', stop)
@@ -357,7 +364,7 @@ export async function main({ env = process.env, log = console.log, deps = null, 
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  main().catch(e => {
+  main().then(r => { if (!r) process.exit(1) }).catch(e => {
     console.error(`LỖI: ${errText(e)}`)
     process.exit(1)
   })

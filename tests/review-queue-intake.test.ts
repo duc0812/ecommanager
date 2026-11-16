@@ -6,7 +6,7 @@ import crypto from 'crypto'
 import sharp from 'sharp'
 import { createClient } from '@libsql/client'
 import { openQueue } from '../scripts/review-queue/store.mjs'
-import { enqueuePlan, queueApiLines, resolveShared, makePreview, runQueueIntake, makeNoteClient, QUEUE_NOTE } from '../scripts/review-queue/intake.mjs'
+import { enqueuePlan, queueApiLines, resolveShared, makePreview, runQueueIntake, makeNoteClient, noteQueueState, QUEUE_NOTE, HOLDING_NOTE } from '../scripts/review-queue/intake.mjs'
 import { DeliveryGaveUp } from '../scripts/lib/delivery-client.mjs'
 
 const NOTE = 'Đang chờ chủ shop duyệt ở máy local (tối đa 3 giờ)'
@@ -162,6 +162,73 @@ describe('enqueuePlan', () => {
     expect(v2.meta.customerPreview).toBe(path.join(v2dir, 'customer.jpg'))
     expect(fs.existsSync(path.join(v2dir, 'customer.jpg'))).toBe(true)
     expect(notes).toHaveLength(1)
+  })
+
+  it('a needs_look item from the same bytes is re-recorded as a new version and counts down again', async () => {
+    put('r/LIT1_1/front.png', 'FRONT-ART')
+    const plan = { lines: [planLine()] }
+    await enqueue(plan)
+    const item = await q.activeByTaskKey('LIT1_1')
+    await q.setStatus(item.id, 'needs_look', { reason: 'prod đã thay đổi' })
+    await new Promise(r => setTimeout(r, 5))
+    const r = await enqueue(plan)
+    expect(r).toMatchObject({ enqueued: ['LIT1_1'], unchanged: [] })
+    const v2 = await q.get(item.id)
+    expect(v2).toMatchObject({ version: 2, status: 'waiting', statusReason: null })
+    expect(v2.enteredAt > item.enteredAt).toBe(true)
+    expect(fs.readFileSync(path.join(queueRoot, 'items', item.id, 'v2', 'PRINT_front.png'), 'utf8')).toBe('FRONT-ART')
+    expect((await enqueue(plan)).unchanged).toEqual(['LIT1_1'])
+    await q.setStatus(item.id, 'needs_look', { reason: 'lại đổi' })
+    const failed = await enqueue(plan, { qaByKey: { LIT1_1: { verdict: 'fail', items: ['tên vượt khung'] } } })
+    expect(failed.enqueued).toEqual(['LIT1_1'])
+    expect(await q.get(item.id)).toMatchObject({ version: 3, status: 'qa_failed' })
+  })
+
+  it('api lines that now mean something else on prod make a new version even with identical bytes', async () => {
+    put('r/LIT1_1/front.png', 'FRONT-ART')
+    await enqueue({ lines: [planLine()] })
+    const item = await q.activeByTaskKey('LIT1_1')
+    await q.setStatus(item.id, 'rejected', { reason: 'tên lệch' })
+    const changes = [
+      planLine({ prodStatus: 'REVIEW' }),
+      planLine({ prodStatus: 'REVIEW', action: 'replace', replaces: [{ id: 'art1' }] }),
+      planLine({ prodStatus: 'REVIEW', action: 'replace', replaces: [{ id: 'art1' }, { id: 'art2' }] }),
+    ]
+    for (let i = 0; i < changes.length; i++) {
+      const line = changes[i]
+      const r = await enqueue({ lines: [line] })
+      expect(r.enqueued).toEqual(['LIT1_1'])
+      const cur = await q.get(item.id)
+      expect(cur).toMatchObject({ version: i + 2, status: 'waiting' })
+      expect(cur.apiLines[0]).toMatchObject({ action: line.action, expectedStatus: 'REVIEW' })
+    }
+    expect((await q.get(item.id)).apiLines[0]).toMatchObject({ planIds: ['art1', 'art2'], retire: ['art1', 'art2'] })
+    expect((await enqueue({ lines: [changes[2]] })).unchanged).toEqual(['LIT1_1'])
+    expect(notes).toHaveLength(1)
+  })
+
+  it('prod hears once when an item stops counting down and once when it counts again', async () => {
+    put('r/LIT1_1/front.png', 'FRONT-ART')
+    await enqueue({ lines: [planLine()] })
+    const item = await q.activeByTaskKey('LIT1_1')
+    notes = []
+    expect(await noteQueueState(q, item.id, client, log)).toBeNull()
+    await q.setStatus(item.id, 'rejected', { reason: 'x' })
+    expect(await noteQueueState(q, item.id, client, log)).toBe(HOLDING_NOTE)
+    await q.setStatus(item.id, 'fixing', { reason: 'agent' })
+    expect(await noteQueueState(q, item.id, client, log)).toBeNull()
+    expect(notes).toEqual([['LIT1_1', HOLDING_NOTE]])
+    await q.setStatus(item.id, 'rejected', { reason: 'agent không sửa được' })
+    put('r/LIT1_1/front.png', 'FRONT-ART-FIXED')
+    expect((await enqueue({ lines: [planLine()] })).enqueued).toEqual(['LIT1_1'])
+    expect(notes).toEqual([['LIT1_1', HOLDING_NOTE], ['LIT1_1', QUEUE_NOTE]])
+    await q.setStatus(item.id, 'needs_look', { reason: 'prod đổi' })
+    const bad = { note: async () => ({ ok: false, status: 503, body: { error: 'down' } }) }
+    expect(await noteQueueState(q, item.id, bad, log)).toBeNull()
+    expect(logs.some(l => l.includes('không ghi được ghi chú lên prod') && l.includes('503'))).toBe(true)
+    expect((await q.events(item.id)).some((e: any) => e.type === 'note_failed')).toBe(true)
+    expect(await noteQueueState(q, item.id, client, log)).toBe(HOLDING_NOTE)
+    expect(await noteQueueState(q, item.id, null, log)).toBeNull()
   })
 
   it('a group that only reuses a file already on Drive is bypassed (delivered by the caller as today)', async () => {

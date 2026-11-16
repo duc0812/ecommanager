@@ -3,7 +3,9 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import { openQueue } from '../scripts/review-queue/store.mjs'
-import { approveItem, rejectItem, sendToCloud, removeItem, tickQueue, makeHold, loadEnvFiles, makeLiveDeps, TICK_BUDGET_MS } from '../scripts/review-queue/actions.mjs'
+import { approveItem, rejectItem, sendToCloud, removeItem, tickQueue, makeHold, loadEnvFiles, loadApproveToken, dpapiDecrypt, makeLiveDeps, TICK_BUDGET_MS } from '../scripts/review-queue/actions.mjs'
+import { HOLDING_NOTE } from '../scripts/review-queue/intake.mjs'
+import { execFileSync } from 'child_process'
 import { createDeliveryClient, DeliveryGaveUp } from '../scripts/lib/delivery-client.mjs'
 import { main as tickMain } from '../scripts/review-queue/tick.mjs'
 
@@ -414,7 +416,127 @@ describe('loadEnvFiles', () => {
   })
 })
 
+describe('loadApproveToken', () => {
+  const home = () => path.join(tmp, 'home')
+  const put = (name: string, body: string) => {
+    fs.mkdirSync(path.join(home(), '.review-queue'), { recursive: true })
+    fs.writeFileSync(path.join(home(), '.review-queue', name), body)
+  }
+
+  it('decrypts approve.dpapi once and never falls back to approve.env while it exists', () => {
+    put('approve.dpapi', 'CIPHERTEXT')
+    put('approve.env', 'DELIVERY_APPROVE_TOKEN=plain-token\n')
+    const asked: string[] = []
+    const env: any = { USERPROFILE: home() }
+    expect(loadApproveToken(env, { decrypt: f => { asked.push(f); return 'sealed-token\r\n' }, log: m => logs.push(m) })).toBe('dpapi')
+    expect(env.DELIVERY_APPROVE_TOKEN).toBe('sealed-token')
+    expect(asked).toEqual([path.join(home(), '.review-queue', 'approve.dpapi')])
+    const env2: any = { USERPROFILE: home() }
+    expect(loadApproveToken(env2, { decrypt: () => 'DELIVERY_APPROVE_TOKEN="sealed-2"\n', log: m => logs.push(m) })).toBe('dpapi')
+    expect(env2.DELIVERY_APPROVE_TOKEN).toBe('sealed-2')
+    const env3: any = { USERPROFILE: home() }
+    expect(loadApproveToken(env3, { decrypt: () => { throw new Error('Key not valid for use in specified state.\r\nat line 1') }, log: m => logs.push(m) })).toBe('error')
+    expect(env3.DELIVERY_APPROVE_TOKEN).toBeUndefined()
+    expect(logs.at(-1)).toMatch(/không giải mã được .*approve\.dpapi \(Key not valid for use in specified state\.\)/)
+    expect(logs.join('\n')).not.toMatch(/sealed|plain-token/)
+    const set: any = { USERPROFILE: home(), DELIVERY_APPROVE_TOKEN: 'from-env' }
+    expect(loadApproveToken(set, { decrypt: () => { throw new Error('must not decrypt') } })).toBe('env')
+    expect(set.DELIVERY_APPROVE_TOKEN).toBe('from-env')
+  })
+
+  it('only without approve.dpapi: approve.env with a warning; neither file → no token', () => {
+    const none: any = { USERPROFILE: home() }
+    expect(loadApproveToken(none, { decrypt: () => { throw new Error('no') }, log: m => logs.push(m) })).toBe('none')
+    expect(none.DELIVERY_APPROVE_TOKEN).toBeUndefined()
+    put('approve.env', 'DELIVERY_APPROVE_TOKEN=plain-token\n')
+    const env: any = { USERPROFILE: home() }
+    expect(loadApproveToken(env, { decrypt: () => { throw new Error('no') }, log: m => logs.push(m) })).toBe('plain')
+    expect(env.DELIVERY_APPROVE_TOKEN).toBe('plain-token')
+    expect(logs.at(-1)).toMatch(/CẢNH BÁO: token duyệt đọc từ .*approve\.env \(chưa mã hoá\)/)
+    expect(logs.join('\n')).not.toContain('plain-token')
+  })
+
+  it.runIf(process.platform === 'win32')('the real decryptor reads a ConvertFrom-SecureString file of this user', () => {
+    const f = path.join(tmp, 'approve.dpapi')
+    const sealed = execFileSync('powershell', ['-NoProfile', '-NonInteractive', '-Command',
+      "ConvertTo-SecureString 'rq-test-not-a-real-token' -AsPlainText -Force | ConvertFrom-SecureString"], { encoding: 'utf8', windowsHide: true })
+    fs.writeFileSync(f, sealed)
+    expect(fs.readFileSync(f, 'utf8')).not.toContain('rq-test')
+    expect(dpapiDecrypt(f).trim()).toBe('rq-test-not-a-real-token')
+    put('approve.dpapi', sealed)
+    const env: any = { USERPROFILE: home() }
+    expect(loadApproveToken(env, { log: m => logs.push(m) })).toBe('dpapi')
+    expect(env.DELIVERY_APPROVE_TOKEN).toBe('rq-test-not-a-real-token')
+  }, 60_000)
+})
+
+describe('prod notes when an item stops counting down', () => {
+  const noter = () => {
+    const sent: [string, string][] = []
+    return { sent, note: async (k: string, m: string) => { sent.push([k, m]); return { ok: true, status: 200, body: { ok: true } } } }
+  }
+
+  it('Trả lại tells prod once that the line is held with no deadline', async () => {
+    const n = noter()
+    const id = await addItem('LIT1_1')
+    expect(await rejectItem(q, id, 'màu tên', { version: 1, noter: n, log: m => logs.push(m) })).toMatchObject({ ok: true, status: 'rejected' })
+    expect(n.sent).toEqual([['LIT1_1', HOLDING_NOTE]])
+    expect(await rejectItem(q, id, 'màu tên lần 2', { version: 1, noter: n, log: m => logs.push(m) })).toMatchObject({ ok: true })
+    expect(n.sent).toHaveLength(1)
+    expect(await rejectItem(q, id, '', { noter: n })).toMatchObject({ ok: false, code: 'bad_request' })
+    expect(n.sent).toHaveLength(1)
+  })
+
+  it('a delivery that ends in needs_look tells prod; a delivered item does not', async () => {
+    const n = noter()
+    prod.tasks.LIT1_1.status = 'DOING'
+    const id = await addItem('LIT1_1')
+    expect(await approve(id, {}, { ...deps, noter: n })).toMatchObject({ ok: false, status: 'needs_look' })
+    expect(n.sent).toEqual([['LIT1_1', HOLDING_NOTE]])
+    prod.tasks.LIT2_1 = { status: 'NEW', artworks: [] }
+    const ok = await addItem('LIT2_1')
+    expect(await approve(ok, {}, { ...deps, noter: n })).toMatchObject({ ok: true, status: 'approved' })
+    expect(n.sent).toHaveLength(1)
+  })
+
+  it('the live deps build a short-budget note client only with a safe URL and a worker token', () => {
+    expect(makeLiveDeps({ env: { ECOM_URL: 'https://prod.test', DESIGN_WORKER_TOKEN: 'w' } }).noter).toBeTruthy()
+    expect(makeLiveDeps({ env: { ECOM_URL: 'http://evil.test', DESIGN_WORKER_TOKEN: 'w' } }).noter).toBeNull()
+    expect(makeLiveDeps({ env: { ECOM_URL: 'https://prod.test' } }).noter).toBeNull()
+  })
+})
+
 describe('tick.mjs main', () => {
+  it('recovers a fix job still running 70 minutes after its start, leaves a younger or queued one', async () => {
+    const job = async (taskKey: string, status: string, startedMinAgo: number) => {
+      const id = await addItem(taskKey)
+      await q.setStatus(id, 'fixing', { reason: 'agent' })
+      const dir = path.join(tmp, 'queue', 'items', id, 'jobs', '1')
+      fs.mkdirSync(dir, { recursive: true })
+      const at = new Date(clock - startedMinAgo * 60_000).toISOString()
+      fs.writeFileSync(path.join(dir, 'job.json'), JSON.stringify({ id: `${id}-1`, itemId: id, n: 1, agent: 'codex', status, createdAt: at, ...(status === 'running' ? { startedAt: at, pid: 4242 } : {}) }))
+      return id
+    }
+    const old = await job('LIT1_1', 'running', 71)
+    const young = await job('LIT2_1', 'running', 50)
+    const waiting = await job('LIT3_1', 'queued', 200)
+    const out: string[] = []
+    const asked: number[] = []
+    const env: any = { USERPROFILE: path.join(tmp, 'home'), REVIEW_QUEUE_ROOT: path.join(tmp, 'queue') }
+    const code = await tickMain({
+      env, log: (m: string) => { out.push(m) }, now: () => new Date(clock), deps,
+      recover: { processImage: async (pid: number) => { asked.push(pid); return null } },
+    })
+    expect(code).toBe(0)
+    expect(await statusOf(old)).toBe('rejected')
+    expect(await statusOf(young)).toBe('fixing')
+    expect(await statusOf(waiting)).toBe('fixing')
+    expect(asked).toEqual([4242])
+    expect(await messages(old)).toMatch(/agent không sửa được: job chạy quá 70 phút/)
+    expect(out.join('\n')).toMatch(/Đã gỡ 1 job agent chạy quá 70 phút/)
+  })
+
+
   it('loads the env files without overriding, ticks the queue at REVIEW_QUEUE_ROOT, prints one line per action, exit 0', async () => {
     const home = path.join(tmp, 'home')
     fs.mkdirSync(path.join(home, '.auto-render'), { recursive: true })

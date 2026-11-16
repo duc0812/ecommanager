@@ -15,6 +15,8 @@ const CHIP = {
 }
 const REFRESH_MS = 15_000
 const SOON_MS = 30 * 60_000
+// a D pressed right after the shown version changed was meant for the old one
+const D_QUIET_MS = 2_000
 
 const S = {
   tab: 'waiting', items: [], counts: {}, approvedToday: 0, selected: null, detail: null,
@@ -100,6 +102,7 @@ async function loadDetail() {
   if (!r.item) { S.detail = null; return }
   const before = S.detail?.item?.id === r.item.id ? S.detail.item.version : null
   if (before != null && before !== r.item.version) {
+    S.versionChangedAt = Date.now()
     S.notice = { kind: '', text: `Đã có bản mới v${r.item.version} — xem lại trước khi duyệt` }
     S.viewVersion = null
     S.part = 0
@@ -254,8 +257,8 @@ function renderBar() {
   const dis = S.busy ? ' disabled' : ''
   const keys = '<span class="sp"></span><span class="keys">← → chuyển dòng · D duyệt · T trả lại</span>'
   const busy = S.busy ? `<span class="msg">${esc(S.busy)}</span>` : ''
-  const menu = S.menu ? '<div class="menu"><button data-agent="claude">Claude</button><button data-agent="codex">Codex</button></div>' : ''
-  const fixBtn = `<span class="menuwrap"><button class="btn ai" data-act="menu"${dis}>Gọi Agent sửa ▾ <small>Claude | Codex</small></button>${menu}</span>`
+  const menu = S.menu ? '<div class="menu"><button data-agent="codex">Codex</button><button data-agent="claude">Claude</button></div>' : ''
+  const fixBtn = `<span class="menuwrap"><button class="btn ai" data-act="menu"${dis}>Gọi Agent sửa ▾ <small>Codex | Claude</small></button>${menu}</span>`
   if (['waiting', 'rejected', 'qa_failed'].includes(it.status)) {
     const approve = needsForce(it)
       ? `<button class="btn warn" data-act="approve"${dis}>Duyệt dù có lỗi <small>D</small></button>`
@@ -319,6 +322,7 @@ async function act(action, body, { okText } = {}) {
     return
   }
   if (r.code === 'version_changed') {
+    S.versionChangedAt = Date.now()
     await loadDetail()
     S.notice = { kind: '', text: `Đã có bản mới v${r.version ?? S.detail?.item?.version} — xem lại trước khi duyệt` }
     S.viewVersion = null
@@ -363,22 +367,22 @@ function onReject() {
   })
 }
 
-function onFix(agent) {
+function onFix(agent = 'codex') {
   const it = S.detail?.item
   if (!it) return
   S.menu = false
   renderBar()
   const hasQa = (it.qa?.items ?? []).length > 0
   modal(`<h2>Gọi Agent sửa ${esc(it.taskKey)} (v${it.version})</h2>
-    <div class="agents"><label><input type="radio" name="agent" value="claude"${agent === 'claude' ? ' checked' : ''}> Claude</label>
-    <label><input type="radio" name="agent" value="codex"${agent === 'codex' ? ' checked' : ''}> Codex</label></div>
+    <div class="agents"><label><input type="radio" name="agent" value="codex"${agent !== 'claude' ? ' checked' : ''}> Codex</label>
+    <label><input type="radio" name="agent" value="claude"${agent === 'claude' ? ' checked' : ''}> Claude</label></div>
     ${hasQa ? `<p>Đề xuất sửa của kiểm tra máy (gửi kèm):</p>${qaList(it)}` : ''}
     <textarea id="reason" placeholder="Cần sửa gì${hasQa ? ' (có thể để trống, agent làm theo đề xuất ở trên)' : ' (bắt buộc)'}"></textarea>
     <p>Agent chạy nền, tối đa 60 phút; xong thì thành bản mới và đếm lại 3 giờ.</p>
     <div class="acts"><button class="btn" data-m="cancel">Huỷ</button><button class="btn ai" data-m="ok">Gọi agent</button></div>`,
   bg => {
     const reason = bg.querySelector('#reason').value.trim()
-    const picked = bg.querySelector('input[name="agent"]:checked')?.value ?? agent
+    const picked = bg.querySelector('input[name="agent"]:checked')?.value ?? 'codex'
     if (!reason && !hasQa) { bg.querySelector('#reason').focus(); return false }
     act('fix', { version: it.version, agent: picked, reason }, { okText: `đã gọi ${picked === 'codex' ? 'Codex' : 'Claude'}` })
   })
@@ -446,7 +450,7 @@ document.addEventListener('keydown', e => {
   if (e.ctrlKey || e.metaKey || e.altKey || /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName ?? '')) return
   if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); move(-1) }
   else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); move(1) }
-  else if ((e.key === 'd' || e.key === 'D') && !S.busy) onApprove()
+  else if ((e.key === 'd' || e.key === 'D') && !S.busy && Date.now() - (S.versionChangedAt ?? 0) >= D_QUIET_MS) onApprove()
   else if ((e.key === 't' || e.key === 'T') && !S.busy) { e.preventDefault(); onReject() }
   else if (e.key === 'Escape' && S.menu) { S.menu = false; renderBar() }
 })

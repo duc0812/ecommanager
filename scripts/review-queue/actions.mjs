@@ -1,4 +1,5 @@
 import fs from 'fs'
+import { execFileSync } from 'child_process'
 import os from 'os'
 import path from 'path'
 import { runApiDelivery } from '../lib/api-delivery.mjs'
@@ -6,7 +7,7 @@ import { sharedIdsFromLedger } from '../lib/plan-to-api.mjs'
 import { createDeliveryClient } from '../lib/delivery-client.mjs'
 import { cachedDriveToken, createUploader } from '../lib/delivery-drive-upload.mjs'
 import { COUNTDOWN_MS } from './store.mjs'
-import { intakeLockKey, resolveShared } from './intake.mjs'
+import { intakeLockKey, makeNoteClient, noteQueueState, resolveShared } from './intake.mjs'
 
 // Queue actions (spec 7.3, 7.6, 12.3, 12.5, 13): Duyệt delivers a reviewed item with `approve` (prod DONE), Cho lên cloud and
 // the 3-hour tick deliver it plainly (prod REVIEW), an expired QA-failed item is reported to /hold. Every delivery of an item
@@ -195,7 +196,13 @@ const versionError = (itemId, item, version) =>
     ? fail(itemId, 'version_changed', `Dòng đã có bản mới v${item.version} (trang đang xem v${version}) — xem lại rồi bấm lại`, { status: item.status, version: item.version })
     : null
 
-async function deliverAction(queue, itemId, deps, { approve, auto = false, force = false, at = null, version = null }) {
+async function deliverAction(queue, itemId, deps, opts) {
+  const r = await deliverLocked(queue, itemId, deps, opts)
+  if (r?.status === 'needs_look') await noteQueueState(queue, itemId, deps.noter ?? null, deps.log)
+  return r
+}
+
+async function deliverLocked(queue, itemId, deps, { approve, auto = false, force = false, at = null, version = null }) {
   return underLocks(queue, itemId, async () => {
     const item = await queue.get(itemId)
     if (at != null) {
@@ -232,12 +239,13 @@ export async function sendToCloud(queue, itemId, deps, { force = false, version 
 
 /**
  * Trả lại: the item stays in the queue as rejected (no countdown) until a new version or Cho lên cloud. A given `version` must still be current.
- * @param {any} queue @param {string} itemId @param {string} reason @param {{ version?: number|null }} [opts]
+ * `noter` (the short-budget note client) tells prod the line no longer counts down.
+ * @param {any} queue @param {string} itemId @param {string} reason @param {{ version?: number|null, noter?: any, log?: (m: string) => void }} [opts]
  */
-export async function rejectItem(queue, itemId, reason, { version = null } = {}) {
+export async function rejectItem(queue, itemId, reason, { version = null, noter = null, log = console.log } = {}) {
   const why = typeof reason === 'string' ? reason.trim() : ''
   if (!why) return fail(itemId, 'bad_request', 'Cần lý do trả lại')
-  return underLocks(queue, itemId, async () => {
+  const r = await underLocks(queue, itemId, async () => {
     const item = await queue.get(itemId)
     const changed = versionError(itemId, item, version)
     if (changed) return changed
@@ -245,6 +253,8 @@ export async function rejectItem(queue, itemId, reason, { version = null } = {})
     await queue.setStatus(itemId, 'rejected', { reason: why })
     return { ok: true, itemId, status: 'rejected', message: why }
   })
+  if (r?.ok) await noteQueueState(queue, itemId, noter, log)
+  return r
 }
 
 /**
@@ -371,14 +381,64 @@ export function loadEnvFiles(specs, env = process.env) {
   return env
 }
 
-/** prod.env of the artwork worker (URL + worker token), the approve token, auto render's config.env (design agent token). */
+/** prod.env of the artwork worker (URL + worker token), auto render's config.env (design agent token). The approve token: loadApproveToken. */
 export function queueEnvFiles(env = process.env) {
   const home = env.USERPROFILE || os.homedir()
   return [
     { file: path.join(home, '.artwork-worker', 'prod.env'), keys: ['ECOM_URL', 'DESIGN_WORKER_TOKEN'] },
-    { file: path.join(home, '.review-queue', 'approve.env'), keys: ['DELIVERY_APPROVE_TOKEN'] },
     { file: path.join(env.AUTO_RENDER_HOME || path.join(home, '.auto-render'), 'config.env'), keys: ['ECOM_URL', 'DESIGN_AGENT_TOKEN'] },
   ]
+}
+
+const psQuote = s => `'${String(s).replace(/'/g, "''")}'`
+
+/** Plain text of a DPAPI (user scope) file written by `ConvertFrom-SecureString`, through PowerShell's ConvertTo-SecureString. */
+export function dpapiDecrypt(file) {
+  const script = `$s = (Get-Content -Raw -LiteralPath ${psQuote(file)}).Trim() | ConvertTo-SecureString; `
+    + '[Runtime.InteropServices.Marshal]::PtrToStringBSTR([Runtime.InteropServices.Marshal]::SecureStringToBSTR($s))'
+  return execFileSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', script], { encoding: 'utf8', windowsHide: true, timeout: 60_000, stdio: ['ignore', 'pipe', 'pipe'] })
+}
+
+/**
+ * DELIVERY_APPROVE_TOKEN from %USERPROFILE%\.review-queue\approve.dpapi (DPAPI, decrypted once with `decrypt`); only when that file is
+ * absent, from approve.env with a warning. A variable already set wins. The token is never logged.
+ * @param {Record<string, string|undefined>} [env] @param {{ decrypt?: (file: string) => string, log?: (m: string) => void }} [opts]
+ * @returns {'env'|'dpapi'|'plain'|'none'|'error'} where the token came from
+ */
+export function loadApproveToken(env = process.env, { decrypt = dpapiDecrypt, log = console.log } = {}) {
+  if (env.DELIVERY_APPROVE_TOKEN) return 'env'
+  const dir = path.join(env.USERPROFILE || os.homedir(), '.review-queue')
+  const sealed = path.join(dir, 'approve.dpapi')
+  if (fs.existsSync(sealed)) {
+    let text
+    try {
+      text = String(decrypt(sealed) ?? '')
+    } catch (e) {
+      log(`LỖI: không giải mã được ${sealed} (${e instanceof Error ? e.message.split(/\r?\n/)[0] : 'lỗi'}) — Duyệt sẽ không có token duyệt`)
+      return 'error'
+    }
+    const m = /^\s*DELIVERY_APPROVE_TOKEN\s*=\s*(.*?)\s*$/m.exec(text)
+    const token = (m ? m[1] : text).trim().replace(/^(["'])(.*)\1$/, '$2')
+    if (!token) {
+      log(`LỖI: ${sealed} giải mã ra rỗng — Duyệt sẽ không có token duyệt`)
+      return 'error'
+    }
+    env.DELIVERY_APPROVE_TOKEN = token
+    return 'dpapi'
+  }
+  const plain = path.join(dir, 'approve.env')
+  if (!fs.existsSync(plain)) return 'none'
+  loadEnvFiles([{ file: plain, keys: ['DELIVERY_APPROVE_TOKEN'] }], env)
+  if (!env.DELIVERY_APPROVE_TOKEN) return 'none'
+  log(`CẢNH BÁO: token duyệt đọc từ ${plain} (chưa mã hoá) — tạo approve.dpapi bằng scripts/review-queue/mint-approve-token.mjs rồi xoá approve.env`)
+  return 'plain'
+}
+
+/** The env files of queueEnvFiles, then the approve token (loadApproveToken). Server and tick call it once at start. */
+export function loadQueueEnv(env = process.env, opts = {}) {
+  loadEnvFiles(queueEnvFiles(env), env)
+  loadApproveToken(env, opts)
+  return env
 }
 
 /**
@@ -390,8 +450,15 @@ export function makeLiveDeps({ env = process.env, log = console.log, fetchImpl =
   const url = (env.ECOM_URL ?? '').replace(/\/+$/, '')
   let client = null
   let uploader = null
+  let noter
   const deps = {
     log,
+    get noter() {
+      if (noter === undefined) {
+        noter = url && SAFE_URL.test(`${url}/`) && env.DESIGN_WORKER_TOKEN ? makeNoteClient({ baseUrl: url, token: env.DESIGN_WORKER_TOKEN, fetchImpl }) : null
+      }
+      return noter
+    },
     get client() {
       if (!client) {
         if (!url || !SAFE_URL.test(`${url}/`)) throw new Error('ECOM_URL chưa đặt hoặc không phải https://… (hoặc http://localhost)')
