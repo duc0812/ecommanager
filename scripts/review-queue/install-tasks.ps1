@@ -10,6 +10,8 @@ param(
   [switch]$Uninstall
 )
 $ErrorActionPreference = 'Stop'
+$AppDir = $AppDir.TrimEnd('')
+$QueueRoot = $QueueRoot.TrimEnd('')
 $tickName = 'EcomManager Review Queue Tick'
 $serverName = 'EcomManager Review Queue Server'
 
@@ -64,7 +66,7 @@ function New-QueueAction([string]$What) {
   return New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $argLine -WorkingDirectory $AppDir
 }
 
-$tickTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 10)
+$tickTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 10) -RepetitionDuration (New-TimeSpan -Days 3650)
 $tickSettings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 30) -MultipleInstances IgnoreNew -StartWhenAvailable `
   -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
 Register-ScheduledTask -TaskName $tickName -Action (New-QueueAction 'tick') -Trigger $tickTrigger -Settings $tickSettings -Principal $principal `
@@ -76,6 +78,8 @@ $serverSettings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::
 Register-ScheduledTask -TaskName $serverName -Action (New-QueueAction 'server') -Trigger $serverTrigger -Settings $serverSettings -Principal $principal `
   -Description 'Local review queue server (scripts\review-queue\server.mjs)' -Force | Out-Null
 
+$rep = (Get-ScheduledTask -TaskName $tickName).Triggers[0].Repetition
+Write-Host ('Tick repetition read back: Interval {0}, Duration {1}' -f $rep.Interval, $rep.Duration)
 Write-Host ('Registered "{0}": every 10 minutes from {1:HH:mm}, 30-minute limit, IgnoreNew, StartWhenAvailable' -f $tickName, (Get-Date).AddMinutes(1))
 Write-Host ('Registered "{0}": at logon of {1}, restart 3 times / 1 minute, no time limit, IgnoreNew' -f $serverName, $user)
 Write-Host ('  node {0}  app {1}  queue {2}' -f $Node, $AppDir, $QueueRoot)

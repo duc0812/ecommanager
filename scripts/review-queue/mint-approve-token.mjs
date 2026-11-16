@@ -29,21 +29,25 @@ export async function main({ env = process.env, argv = process.argv.slice(2), ou
     return 1
   }
   const { token, hash } = mintApproveToken()
+  const tmp = `${file}.tmp`
   let back
   try {
     fs.mkdirSync(dir, { recursive: true })
-    fs.writeFileSync(file, String(encrypt(token)).trim() + '\n', 'utf8')
-    back = String(decrypt(file) ?? '').trim()
+    fs.writeFileSync(tmp, String(encrypt(token)).trim() + '
+', 'utf8')
+    back = String(decrypt(tmp) ?? '').trim()
   } catch (e) {
-    fs.rmSync(file, { force: true })
-    err(`LỖI: không mã hoá được token (${e instanceof Error ? e.message.split(/\r?\n/)[0] : 'lỗi'})`)
+    fs.rmSync(tmp, { force: true })
+    err(`LỖI: không mã hoá được token (${e instanceof Error ? e.message.split(/?
+/)[0] : 'lỗi'})`)
     return 1
   }
   if (back !== token) {
-    fs.rmSync(file, { force: true })
-    err('LỖI: giải mã lại không khớp token vừa tạo — đã xoá approve.dpapi')
+    fs.rmSync(tmp, { force: true })
+    err('LỖI: giải mã lại không khớp token vừa tạo — approve.dpapi giữ nguyên')
     return 1
   }
+  fs.renameSync(tmp, file)
   out(hash)
   return 0
 }

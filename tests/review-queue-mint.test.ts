@@ -60,6 +60,17 @@ describe('mint-approve-token', () => {
     expect(fs.existsSync(path.join(home, '.review-queue', 'approve.dpapi'))).toBe(false)
   })
 
+  it('a failed --force run keeps the old token file', async () => {
+    const f = fakes()
+    await main({ env: { USERPROFILE: home }, argv: [], out: () => {}, err: () => {}, encrypt: f.encrypt, decrypt: f.decrypt })
+    const file = path.join(home, '.review-queue', 'approve.dpapi')
+    const before = fs.readFileSync(file, 'utf8')
+    const code = await main({ env: { USERPROFILE: home }, argv: ['--force'], out: () => {}, err: () => {}, encrypt: f.encrypt, decrypt: () => 'nope' })
+    expect(code).toBe(1)
+    expect(fs.readFileSync(file, 'utf8')).toBe(before)
+    expect(fs.existsSync(file + '.tmp')).toBe(false)
+  })
+
   it('mintApproveToken returns a fresh token each time', () => {
     const a = mintApproveToken(); const b = mintApproveToken()
     expect(a.token).not.toBe(b.token)
