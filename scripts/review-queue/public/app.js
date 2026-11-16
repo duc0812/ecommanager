@@ -181,6 +181,71 @@ function imgCard({ title, right, href, src: rawSrc, cls = '', footer = '', empty
   return `<div class="card ${cls}"><h3>${esc(title)} <span>${esc(right ?? '')}</span></h3>${body}${footer}</div>`
 }
 
+// Template canvas (like Design Studio's): every piece of the template at its place, the file of each area fitted inside, guides on top.
+const CANVAS_KEY = 'rq.canvas'
+const CANVAS_W = 1200
+function canvasPrefs() {
+  if (!S.canvas) {
+    let saved = null
+    try { saved = JSON.parse(localStorage.getItem(CANVAS_KEY) || 'null') } catch { saved = null }
+    S.canvas = { bg: 'checker', areas: true, safe: true, bleed: true, guide: true, opacity: 50, ...(saved && typeof saved === 'object' ? saved : {}) }
+  }
+  return S.canvas
+}
+function saveCanvas() { try { localStorage.setItem(CANVAS_KEY, JSON.stringify(S.canvas)) } catch { /* private mode */ } }
+const areaKey = s => String(s ?? '').toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '')
+const partKey = f => areaKey(f.printArea) || areaKey(String(f.part ?? '').replace(/^PRINT_/i, ''))
+function fileForArea(prints, name) {
+  const k = areaKey(name)
+  return prints.find(f => partKey(f) === k) ?? null
+}
+
+function canvasCard(files, t) {
+  const p = canvasPrefs()
+  const k = CANVAS_W / t.widthPx, H = Math.round(t.heightPx * k), W = CANVAS_W
+  const vb = { x: -30, y: -22, w: W + 60, h: H + 50 }
+  const bleed = t.bleedIn * t.dpi * k, safe = t.safeIn * t.dpi * k
+  const prints = files.filter(f => f.kind !== 'MOCKUP')
+  const used = new Set()
+  const n = v => Number(v).toFixed(1)
+  const areas = t.areas.map(a => {
+    const f = fileForArea(prints, a.name)
+    if (f) used.add(f)
+    const x = a.x * k, y = a.y * k, w = a.w * k, h = a.h * k
+    const src = f ? safeUrl(f.previewUrl) : null
+    const href = f ? safeUrl(f.url) ?? src : null
+    const title = f ? `${a.name} · ${f.fileName}${f.width ? ` · ${f.width}×${f.height} px` : ''} — bấm để xem gốc` : `${a.name} · chưa có file`
+    const img = src ? `<a href="${esc(href)}" target="_blank" rel="noopener"><title>${esc(title)}</title><image href="${esc(src)}" x="${n(x)}" y="${n(y)}" width="${n(w)}" height="${n(h)}" preserveAspectRatio="xMidYMid meet"/></a>` : ''
+    const rect = p.areas ? `<rect class="area${f ? '' : ' empty'}" x="${n(x)}" y="${n(y)}" width="${n(w)}" height="${n(h)}"><title>${esc(title)}</title></rect>` : ''
+    const bl = p.bleed && t.bleedIn > 0 ? `<rect class="bleed" x="${n(x + bleed)}" y="${n(y + bleed)}" width="${n(Math.max(0, w - 2 * bleed))}" height="${n(Math.max(0, h - 2 * bleed))}"/>` : ''
+    const sf = p.safe ? `<rect class="safe" x="${n(x + safe)}" y="${n(y + safe)}" width="${n(Math.max(0, w - 2 * safe))}" height="${n(Math.max(0, h - 2 * safe))}"/>` : ''
+    const lbl = p.areas ? `<text class="lbl${f ? '' : ' miss'}" x="${n(x + 6)}" y="${n(y + 14)}">${esc(a.name)} · ${a.w}×${a.h}${f ? '' : ' · chưa có file'}</text>` : ''
+    return `<g>${rect}${img}${bl}${sf}${lbl}</g>`
+  }).join('')
+  const extra = prints.filter(f => !used.has(f))
+  const guideSrc = p.guide && t.guideUrl ? safeUrl(t.guideUrl) : null
+  const guide = guideSrc ? `<image id="cguide" href="${esc(guideSrc)}" x="0" y="0" width="${W}" height="${H}" preserveAspectRatio="none" opacity="${p.opacity / 100}" pointer-events="none"/>` : ''
+  const bgFill = p.bg === 'checker' ? 'url(#ck)' : p.bg === 'black' ? '#000' : '#fff'
+  const svg = `<svg class="canvas" viewBox="${vb.x} ${vb.y} ${vb.w} ${vb.h}" role="img" aria-label="Template ${esc(t.name)}">
+    <defs><pattern id="ck" width="18" height="18" patternUnits="userSpaceOnUse"><rect width="18" height="18" fill="#fff"/><rect width="9" height="9" fill="#e5e7eb"/><rect x="9" y="9" width="9" height="9" fill="#e5e7eb"/></pattern></defs>
+    <rect width="${W}" height="${H}" fill="${bgFill}"/>${areas}${guide}
+    <rect class="frame" width="${W}" height="${H}"/>
+    <line class="ax" x1="0" y1="${H + 12}" x2="${W}" y2="${H + 12}"/><text class="dim" x="${W / 2}" y="${H + 26}" text-anchor="middle">${t.widthPx} px</text>
+    <line class="ax" x1="-12" y1="0" x2="-12" y2="${H}"/><text class="dim" x="-16" y="${H / 2}" text-anchor="middle" transform="rotate(-90 -16 ${H / 2})">${t.heightPx} px</text>
+  </svg>`
+  const sw = ['checker', 'white', 'black'].map(b => `<button class="sw ${b}${p.bg === b ? ' on' : ''}" data-cbg="${b}" title="Nền ${b === 'checker' ? 'ô cờ' : b === 'white' ? 'trắng' : 'đen'}" aria-label="Nền ${b}"></button>`).join('')
+  const tg = [['areas', 'Vùng in'], ['safe', 'An toàn'], ['bleed', 'Bleed'], ...(t.guideUrl ? [['guide', 'Artguide']] : [])]
+    .map(([key, label]) => `<button class="tg${p[key] ? ' on' : ''}" data-cg="${key}" aria-pressed="${!!p[key]}">${label}</button>`).join('')
+  const op = t.guideUrl && p.guide ? `<label>Độ mờ <input type="range" id="cop" min="0" max="100" value="${p.opacity}" aria-label="Độ mờ artguide"> <span id="copv">${p.opacity}%</span></label>` : ''
+  const tools = `<div class="ctools"><span>Nền${sw}</span>${tg}${op}<span class="sp"></span><span>${used.size}/${t.areas.length} mảnh có file</span></div>`
+  const legend = `<div class="legend">${p.bleed && t.bleedIn > 0 ? `<span class="bleed"><i></i>bleed ${t.bleedIn}″</span>` : ''}${p.safe ? `<span class="safe"><i></i>an toàn ${t.safeIn}″</span>` : ''}${p.areas ? '<span>xám = mảnh phải phủ kín · đỏ = chưa có file</span>' : ''}${t.mirror ? '<span>mirror</span>' : ''}${t.guideUrl && p.guide ? '<span>artguide: bấm Artguide để tắt</span>' : ''}</div>`
+  const partLinks = [...t.areas.map(a => {
+    const f = fileForArea(prints, a.name)
+    return f ? `<a href="${esc(safeUrl(f.url) ?? safeUrl(f.previewUrl) ?? '#')}" target="_blank" rel="noopener" title="${esc(f.fileName)}${f.width ? ` · ${f.width}×${f.height} px` : ''}${f.bytes ? ` · ${fmtBytes(f.bytes)}` : ''}">${esc(f.part)}</a>` : `<span class="miss">${esc(a.name)} · chưa có file</span>`
+  }), ...extra.map(f => `<a class="miss" href="${esc(safeUrl(f.url) ?? '#')}" target="_blank" rel="noopener" title="Không khớp vùng nào của template">${esc(f.part)} · ngoài template</a>`)].join('')
+  return `<div class="card canvas-card"><h3>File in · ${esc(t.name)} <span>${t.widthPx}×${t.heightPx} px · ${t.dpi} dpi · bấm vào mảnh để xem gốc</span></h3>${tools}<div class="cwrap">${svg}</div>${legend}<div class="parts">${partLinks}</div></div>`
+}
+
 function renderDetail() {
   const d = S.detail
   if (!d) { $('detail').innerHTML = '<div class="empty">Chọn một dòng bên trái.</div>'; return }
@@ -215,6 +280,7 @@ function renderDetail() {
   if (it.status === 'needs_look') notices.push(`<div class="notice">Prod đã thay đổi — cần xem: ${esc(it.statusReason ?? '')}</div>`)
   if (tabOf(it.status) === 'done' && it.statusReason) notices.push(`<div class="notice info">${esc((CHIP[it.status] ?? [it.status])[0])}: ${esc(it.statusReason)}</div>`)
 
+  const tpl = d.template && Array.isArray(d.template.areas) && d.template.areas.length && d.template.widthPx > 0 && d.template.heightPx > 0 ? d.template : null
   const partInfo = part ? [part.width && part.height ? `${part.width}×${part.height} px` : null, fmtBytes(part.bytes), 'bấm để xem gốc'].filter(Boolean).join(' · ') : ''
   const partTabs = files.length > 1 ? `<div class="parts">${files.map((f, i) => `<button data-part="${i}" class="${f === part ? 'on' : ''}">${esc(f.part)}</button>`).join('')}</div>` : ''
   const sides = [['customer', 'Khách đặt'], ['store', 'Store']].filter(([k]) => d.images[k])
@@ -236,8 +302,8 @@ function renderDetail() {
   $('detail').innerHTML = `
   <div class="top"><div><h1>${esc(it.taskKey)}${m.productTitle ? ` · ${esc(m.productTitle)}` : ''}</h1><div class="sub">${esc(sub)}</div></div><span class="sp"></span>${clock}</div>
   ${notices.join('')}
-  <div class="grid">
-    ${imgCard({ title: `File in · ${part?.part ?? ''}`, right: partInfo, href: part?.url, src: part?.previewUrl ?? null, footer: partTabs, empty: part ? 'Không có ảnh xem trước' : 'Bản này không có file' })}
+  <div class="grid${tpl ? ' canvas-grid' : ''}">
+    ${tpl ? canvasCard(files, tpl) : imgCard({ title: `File in · ${part?.part ?? ''}`, right: partInfo, href: part?.url, src: part?.previewUrl ?? null, footer: partTabs, empty: part ? 'Không có ảnh xem trước' : 'Bản này không có file' })}
     ${imgCard({ title: 'Mockup từ file in', right: mock?.fileName ?? '', href: mock?.url, src: mock?.previewUrl ?? null, cls: 'small', empty: 'Chưa có mockup' })}
     ${imgCard({ title: 'Ảnh khách đặt / mockup store', right: sideImg ? (sideImg.url.startsWith('/files/') ? 'từ ổ đĩa' : 'link') : '', href: sideImg?.original, src: sideImg?.url ?? null, cls: 'small', footer: sideTabs, empty: 'Không có ảnh khách đặt' })}
   </div>
@@ -418,8 +484,10 @@ function onRerun() {
 }
 
 document.addEventListener('click', e => {
-  const t = e.target.closest('[data-tab],[data-id],[data-act],[data-agent],[data-part],[data-side],[data-ver]')
+  const t = e.target.closest('[data-tab],[data-id],[data-act],[data-agent],[data-part],[data-side],[data-ver],[data-cbg],[data-cg]')
   if (!t) { if (S.menu) { S.menu = false; renderBar() } return }
+  if (t.dataset.cbg) { canvasPrefs().bg = t.dataset.cbg; saveCanvas(); renderDetail(); return }
+  if (t.dataset.cg) { const p = canvasPrefs(); p[t.dataset.cg] = !p[t.dataset.cg]; saveCanvas(); renderDetail(); return }
   if (S.busy) return
   if (t.dataset.tab) {
     S.tab = t.dataset.tab
@@ -440,6 +508,17 @@ document.addEventListener('click', e => {
     else if (a === 'remove') onRemove()
     else if (a === 'rerun') onRerun()
   }
+})
+
+document.addEventListener('input', e => {
+  if (e.target.id !== 'cop') return
+  const p = canvasPrefs()
+  p.opacity = Math.max(0, Math.min(100, Number(e.target.value) || 0))
+  saveCanvas()
+  const g = $('cguide')
+  if (g) g.setAttribute('opacity', String(p.opacity / 100))
+  const l = $('copv')
+  if (l) l.textContent = `${p.opacity}%`
 })
 
 document.addEventListener('keydown', e => {

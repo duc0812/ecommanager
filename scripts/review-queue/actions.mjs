@@ -386,7 +386,7 @@ export function queueEnvFiles(env = process.env) {
   const home = env.USERPROFILE || os.homedir()
   return [
     { file: path.join(home, '.artwork-worker', 'prod.env'), keys: ['ECOM_URL', 'DESIGN_WORKER_TOKEN'] },
-    { file: path.join(env.AUTO_RENDER_HOME || path.join(home, '.auto-render'), 'config.env'), keys: ['ECOM_URL', 'DESIGN_AGENT_TOKEN'] },
+    { file: path.join(env.AUTO_RENDER_HOME || path.join(home, '.auto-render'), 'config.env'), keys: ['ECOM_URL', 'DESIGN_AGENT_TOKEN', 'MAIN_CHECKOUT'] },
   ]
 }
 

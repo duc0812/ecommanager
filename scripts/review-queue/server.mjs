@@ -8,6 +8,7 @@ import {
   TICK_BUDGET_MS, approveItem, rejectItem, sendToCloud, removeItem, loadQueueEnv, makeLiveDeps,
 } from './actions.mjs'
 import { startFix, runFixJob, recoverFixJobs, listJobs, makeFixDeps } from './fix-job.mjs'
+import { DEFAULT_MAIN_CHECKOUT, newestSnapshot, resolveTemplate } from './template.mjs'
 
 // The local review page (spec 7.3, 12.5, 13): http://127.0.0.1:3020, reads previews straight from the queue folder.
 //   node scripts/review-queue/server.mjs
@@ -121,13 +122,83 @@ async function imageSize(p) {
   }
 }
 
+const GUIDE_EXT = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg' }
+
+/** Prod's guide image through the delivery API (worker token), null when the template has none; null fetcher when no URL/token. */
+export function liveGuideFetch(env = process.env) {
+  const url = (env.ECOM_URL ?? '').replace(/\/+$/, '')
+  const token = env.DESIGN_WORKER_TOKEN
+  if (!url || !token) return null
+  return async templateId => {
+    const r = await fetch(`${url}/api/design-studio/worker/delivery/templates/${encodeURIComponent(templateId)}/guide`, { headers: { authorization: `Bearer ${token}` } })
+    if (r.status === 404) return null
+    if (!r.ok) throw new Error(`HTTP ${r.status}`)
+    return Buffer.from(await r.arrayBuffer())
+  }
+}
+
 /**
  * The review server's request handler. `ops` replaces the queue actions (tests); `deps` go to approve/cloud, `fixDeps` to fix jobs.
- * @param {{ queue: any, deps: any, fixDeps?: any, ops?: Record<string, Function>, now?: () => Date, log?: (m: string) => void, publicDir?: string }} opts
+ * `guides`: where template guide images come from — the main checkout's storage, then `fetchGuide(templateId)` (prod) cached under
+ * <root>/guides; `mainCheckout` also holds the prod snapshots an older item's template is read from.
+ * @param {{ queue: any, deps: any, fixDeps?: any, ops?: Record<string, Function>, now?: () => Date, log?: (m: string) => void, publicDir?: string, guides?: { mainCheckout?: string, fetchGuide?: ((id: string) => Promise<Buffer|null>) | null } }} opts
  */
-export function createHandler({ queue, deps, fixDeps = {}, ops = {}, now = () => new Date(), log = console.log, publicDir = PUBLIC_DIR }) {
+export function createHandler({ queue, deps, fixDeps = {}, ops = {}, now = () => new Date(), log = console.log, publicDir = PUBLIC_DIR, guides = {} }) {
   const act = { approveItem, rejectItem, sendToCloud, removeItem, startFix, runFixJob, ...ops }
   const root = queue.root
+  const mainCheckout = guides.mainCheckout ?? DEFAULT_MAIN_CHECKOUT
+  const fetchGuide = guides.fetchGuide ?? null
+
+  const templateCache = new Map()
+  /** meta.template written at intake, else (items queued before 11/17) the newest prod snapshot of the main checkout, once per version. */
+  async function templateOf(item) {
+    const m = item.meta ?? {}
+    let t = m.template ?? null
+    if (!t) {
+      const key = `${item.id}#${item.version}`
+      if (templateCache.has(key)) t = templateCache.get(key)
+      else {
+        const file = newestSnapshot(mainCheckout)
+        if (file) {
+          const { createClient } = await import('@libsql/client')
+          const client = createClient({ url: `file:${file.replace(/\\/g, '/')}` })
+          try { t = await resolveTemplate(client, item.taskKey, log) } finally { try { client.close() } catch { /* already closed */ } }
+        }
+        templateCache.set(key, t ?? null)
+      }
+    }
+    if (!t) return null
+    return { ...t, guideUrl: t.guideImagePath ? `/guide/${item.id}` : null }
+  }
+
+  /** The guide image file for an item's template: queue cache, the main checkout's storage, prod (then cached); null when none. */
+  async function guideFile(item) {
+    const t = await templateOf(item)
+    if (!t?.guideImagePath || !t.id) return null
+    const ext = path.extname(t.guideImagePath).toLowerCase()
+    if (!GUIDE_EXT[ext] || !/^[A-Za-z0-9._-]+$/.test(t.id)) return null
+    const cached = path.join(root, 'guides', `${t.id}${ext}`)
+    if (fs.existsSync(cached)) return cached
+    const storageRoot = path.resolve(mainCheckout, 'storage')
+    const local = path.resolve(storageRoot, t.guideImagePath)
+    if (local.startsWith(storageRoot + path.sep) && fs.existsSync(local)) return local
+    if (fetchGuide) {
+      let buf = null
+      try { buf = await fetchGuide(t.id) } catch (e) { log(`guide ${t.id}: ${errText(e)}`) }
+      if (buf) {
+        fs.mkdirSync(path.dirname(cached), { recursive: true })
+        fs.writeFileSync(cached, buf)
+        return cached
+      }
+    }
+    return null
+  }
+
+  function sendGuide(res, file) {
+    const buf = fs.readFileSync(file)
+    res.writeHead(200, { 'Content-Type': GUIDE_EXT[path.extname(file).toLowerCase()] ?? 'application/octet-stream', 'Content-Length': buf.length, 'Cache-Control': 'private, max-age=3600', ...SECURITY_HEADERS })
+    res.end(buf)
+  }
 
   async function summary(item) {
     const cur = (await queue.versions(item.id)).find(v => v.n === item.version)
@@ -191,6 +262,7 @@ export function createHandler({ queue, deps, fixDeps = {}, ops = {}, now = () =>
       item: { ...(await summary(item)), meta: m, qa: item.qa, prevStatus: item.prevStatus, createdAt: item.createdAt },
       memberKeys: await queue.memberKeys(item.id),
       versions: vs,
+      template: await templateOf(item),
       images: { customer: image('customer.jpg', m.customerPreviewUrl ?? null), store: image('store.jpg', m.storeImageUrl ?? null) },
       events: await queue.events(item.id),
       jobs,
@@ -283,6 +355,11 @@ export function createHandler({ queue, deps, fixDeps = {}, ops = {}, now = () =>
       if (req.method === 'GET' || req.method === 'HEAD') {
         if (STATIC[rawPath]) return serveStatic(res, STATIC[rawPath])
         if (parts[0] === 'files') return serveFile(res, parts.slice(1))
+        if (parts[0] === 'guide' && parts.length === 2) {
+          const item = ITEM_ID.test(parts[1]) ? await queue.get(parts[1]) : null
+          const file = item ? await guideFile(item) : null
+          return file ? sendGuide(res, file) : fail(res, 404, 'Không có artguide')
+        }
         if (rawPath === '/api/items') {
           const r = await listItems(url)
           return send(res, r.status, r.body)
@@ -341,7 +418,8 @@ export async function main({ env = process.env, log = console.log, deps = null, 
   const queue = await openQueue({ root })
   const liveDeps = deps ?? makeLiveDeps({ env, log, budgetMs: TICK_BUDGET_MS })
   const liveFix = fixDeps ?? makeFixDeps({ env, log })
-  const server = createReviewServer({ queue, ops, log, deps: liveDeps, fixDeps: liveFix })
+  const guides = { mainCheckout: env.MAIN_CHECKOUT || DEFAULT_MAIN_CHECKOUT, fetchGuide: liveGuideFetch(env) }
+  const server = createReviewServer({ queue, ops, log, deps: liveDeps, fixDeps: liveFix, guides })
   try {
     await new Promise((resolve, reject) => {
       server.once('error', reject)

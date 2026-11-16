@@ -45,18 +45,20 @@ const planLine = (over: any = {}) => ({ taskKey: 'LIT1_1', action: 'push', prodS
 async function makeSnapshot(dir: string) {
   const db = createClient({ url: `file:${path.join(dir, 'snap.db').replace(/\\/g, '/')}` })
   await db.execute('CREATE TABLE DesignTask (taskKey TEXT, orderId TEXT, shopifyLineId TEXT)')
-  await db.execute('CREATE TABLE OrderLine (orderId TEXT, shopifyLineId TEXT, productTitle TEXT, variantTitle TEXT, sku TEXT, resolvedSupplierSku TEXT, customAttributesJson TEXT, customallFieldsJson TEXT, previewCdnUrl TEXT, imageUrl TEXT)')
-  await db.execute('CREATE TABLE "Order" (id TEXT, shopifyOrderNumber TEXT, placedAt TEXT)')
+  await db.execute('CREATE TABLE OrderLine (orderId TEXT, shopifyLineId TEXT, productTitle TEXT, variantTitle TEXT, sku TEXT, resolvedSupplierSku TEXT, customAttributesJson TEXT, customallFieldsJson TEXT, previewCdnUrl TEXT, imageUrl TEXT, resolvedSupplierId TEXT, shopifyProductId TEXT)')
+  await db.execute('CREATE TABLE "Order" (id TEXT, shopifyOrderNumber TEXT, placedAt TEXT, storeId TEXT)')
+  await db.execute('CREATE TABLE PrintTemplate (id TEXT, name TEXT, supplierId TEXT, supplierSku TEXT, widthPx INTEGER, heightPx INTEGER, dpi INTEGER, bleedIn REAL, safeIn REAL, mirror INTEGER, areas TEXT, guideImagePath TEXT)')
+  await db.execute({ sql: 'INSERT INTO PrintTemplate VALUES (?,?,?,?,?,?,?,?,?,?,?,?)', args: ['tplA', 'Hoodie 1', 'sup1', 'MWHD-1', 1000, 500, 200, 0.125, 0.2, 0, '[{"name":"FRONT","x":0,"y":0,"w":500,"h":500},{"name":"BACK","x":500,"y":0,"w":500,"h":500}]', 'templates/tplA/guide.png'] })
   const line = async (taskKey: string, n: number, over: any = {}) => {
     await db.execute({ sql: 'INSERT INTO DesignTask VALUES (?, ?, ?)', args: [taskKey, `o${n}`, `sl${n}`] })
-    await db.execute({ sql: 'INSERT INTO "Order" VALUES (?, ?, ?)', args: [`o${n}`, `LIT${n}`, '2026-11-14T08:00:00.000Z'] })
+    await db.execute({ sql: 'INSERT INTO "Order" VALUES (?, ?, ?, ?)', args: [`o${n}`, `LIT${n}`, '2026-11-14T08:00:00.000Z', 'store1'] })
     await db.execute({
-      sql: 'INSERT INTO OrderLine VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      sql: 'INSERT INTO OrderLine VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       args: [`o${n}`, `sl${n}`, over.productTitle ?? `Custom Hoodie ${n}`, 'Black / L', `TN${n}-BL-L`, `MWHD-${n}`,
         JSON.stringify([{ key: 'Name', value: 'Anna' }, { key: '_customall_preview', value: 'https://cdn.x/attr.png' }]),
         JSON.stringify([{ key: 'Font', value: 'Script' }]),
         over.previewCdnUrl === undefined ? `https://cdn.x/preview-${n}.png` : over.previewCdnUrl,
-        over.imageUrl === undefined ? `https://cdn.x/store-${n}.jpg` : over.imageUrl],
+        over.imageUrl === undefined ? `https://cdn.x/store-${n}.jpg` : over.imageUrl, 'sup1', `gid://shopify/Product/${n}`],
     })
   }
   await line('LIT1_1', 1)
@@ -119,6 +121,8 @@ describe('enqueuePlan', () => {
       storeImage: path.join(v1, 'store.jpg'), storeImageUrl: 'https://cdn.x/store-1.jpg',
       sourceCli: 'push-local-renders', ledgerPath, out: outDir,
     })
+    expect(item.meta.template).toMatchObject({ id: 'tplA', name: 'Hoodie 1', widthPx: 1000, heightPx: 500, guideImagePath: 'templates/tplA/guide.png' })
+    expect(item.meta.template.areas.map((a: any) => a.name)).toEqual(['FRONT', 'BACK'])
     expect(fs.readFileSync(path.join(v1, 'customer.jpg'), 'utf8')).toBe('jpeg:img:https://cdn.x/preview-1.png')
     expect(notes).toEqual([['LIT1_1', NOTE]])
     expect(QUEUE_NOTE).toBe(NOTE)

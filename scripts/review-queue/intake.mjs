@@ -4,6 +4,7 @@ import crypto from 'crypto'
 import { createDeliveryClient } from '../lib/delivery-client.mjs'
 import { deliverPlanViaApi, planLinesToApi, sharedIdsFromLedger } from '../lib/plan-to-api.mjs'
 import { ACTIVE_STATUSES, newItemId, openQueue } from './store.mjs'
+import { resolveTemplate } from './template.mjs'
 
 // Intake of the local review queue (spec 7.2, 12.1, 12.2, 12.4): the push CLIs run with `--via api --to-queue` hand their API
 // lines here instead of delivering them. Each line (or shared group) is copied into items/<id>/v<n>/, gets a JPEG preview per
@@ -213,6 +214,8 @@ async function lineInfo({ snapshot, taskKey, planLine, log }) {
     custom,
     customerPreviewUrl: row?.previewCdnUrl || attrPreview || null,
     storeImageUrl: row?.imageUrl || null,
+    // the print template the page lays every piece on (null = draw the files one by one)
+    template: await resolveTemplate(snapshot, taskKey, log),
   }
 }
 
