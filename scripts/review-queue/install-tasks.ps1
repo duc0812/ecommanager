@@ -10,8 +10,8 @@ param(
   [switch]$Uninstall
 )
 $ErrorActionPreference = 'Stop'
-$AppDir = $AppDir.TrimEnd('')
-$QueueRoot = $QueueRoot.TrimEnd('')
+$AppDir = $AppDir.TrimEnd('\')
+$QueueRoot = $QueueRoot.TrimEnd('\')
 $tickName = 'EcomManager Review Queue Tick'
 $serverName = 'EcomManager Review Queue Server'
 
