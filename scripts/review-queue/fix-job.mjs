@@ -123,8 +123,11 @@ export function codexConfigModel(env = process.env) {
 
 /**
  * The command line of one agent run in `jobDir`.
- * Codex: exec --ignore-user-config [-m <model>] -C <job> --skip-git-repo-check --sandbox workspace-write -o <job>\last-message.txt <prompt>
+ * Codex: exec --ignore-user-config [-m <model>] -C <job> --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox -o <job>\last-message.txt <prompt>
  * (the owner's config.toml carries MCP servers, plugins and hooks; only its model is kept, `deps.codexModel` overrides).
+ * No sandbox: with --ignore-user-config the Windows sandbox comes up read-only and rejects every PowerShell command
+ * ("blocked by policy", seen 11/16 on LIT6918_1), so Codex runs as the owner's own config does (danger-full-access); the job's
+ * guards are the clean env (no tokens), the job folder as cwd and the outside-write check.
  * Claude: -p <prompt> --output-format json --permission-mode dontAsk --allowedTools … --disallowedTools WebFetch WebSearch --add-dir <job>
  * [--strict-mcp-config], no --mcp-config.
  */
@@ -135,7 +138,7 @@ export async function agentCommand(agent, jobDir, deps = {}) {
     const model = 'codexModel' in deps ? deps.codexModel : codexConfigModel(deps.env ?? process.env)
     return {
       cmd: exe,
-      args: ['exec', '--ignore-user-config', ...(model ? ['-m', model] : []), '-C', jobDir, '--skip-git-repo-check', '--sandbox', 'workspace-write', '-o', path.join(jobDir, 'last-message.txt'), FIX_PROMPT],
+      args: ['exec', '--ignore-user-config', ...(model ? ['-m', model] : []), '-C', jobDir, '--skip-git-repo-check', '--dangerously-bypass-approvals-and-sandbox', '-o', path.join(jobDir, 'last-message.txt'), FIX_PROMPT],
     }
   }
   if (agent !== 'claude') throw new Error(`agent không hợp lệ: ${agent}`)

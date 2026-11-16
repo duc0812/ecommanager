@@ -219,7 +219,7 @@ describe('runFixJob', () => {
     const job = path.join(q.root, 'items', id, 'jobs', '1')
     expect(calls).toHaveLength(1)
     expect(calls[0].cmd).toBe('C:\\fake\\codex.exe')
-    expect(calls[0].args).toEqual(['exec', '--ignore-user-config', '-m', 'gpt-test', '-C', job, '--skip-git-repo-check', '--sandbox', 'workspace-write', '-o', path.join(job, 'last-message.txt'), FIX_PROMPT])
+    expect(calls[0].args).toEqual(['exec', '--ignore-user-config', '-m', 'gpt-test', '-C', job, '--skip-git-repo-check', '--dangerously-bypass-approvals-and-sandbox', '-o', path.join(job, 'last-message.txt'), FIX_PROMPT])
     expect(calls[0].opts.cwd).toBe(job)
     const env = calls[0].opts.env
     expect(Object.keys(env).sort()).toEqual(['DISABLE_AUTOUPDATER', 'LOCALAPPDATA', 'PATH', 'PYTHONIOENCODING', 'PYTHONUTF8', 'SYSTEMROOT', 'TEMP', 'USERPROFILE'])
@@ -551,7 +551,7 @@ describe('environment and executables', () => {
     expect(codexConfigModel({ USERPROFILE: home })).toBeNull()
     const job = path.join(tmp, 'job')
     const fromCfg = await agentCommand('codex', job, { codexExe: 'C:\\c.exe', env: { USERPROFILE: home } })
-    expect(fromCfg.args).toEqual(['exec', '--ignore-user-config', '-C', job, '--skip-git-repo-check', '--sandbox', 'workspace-write', '-o', path.join(job, 'last-message.txt'), FIX_PROMPT])
+    expect(fromCfg.args).toEqual(['exec', '--ignore-user-config', '-C', job, '--skip-git-repo-check', '--dangerously-bypass-approvals-and-sandbox', '-o', path.join(job, 'last-message.txt'), FIX_PROMPT])
     fs.writeFileSync(cfg, "model = 'gpt-x'\n")
     expect((await agentCommand('codex', job, { codexExe: 'C:\\c.exe', env: { USERPROFILE: home } })).args.slice(0, 4)).toEqual(['exec', '--ignore-user-config', '-m', 'gpt-x'])
   })
