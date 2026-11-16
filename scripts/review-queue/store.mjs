@@ -139,11 +139,8 @@ export async function openQueue({ root, now = () => new Date(), isAlive = pidAli
   fs.mkdirSync(root, { recursive: true })
   const dbPath = path.resolve(root, 'queue.db').replace(/\\/g, '/')
   const db = createClient({ url: `file:${dbPath}` })
-  // @libsql/client's local driver hands its connection to a transaction and opens a fresh one on the next call,
-  // so the per-connection busy_timeout is re-applied right after every transaction() and at open.
   const setBusy = () => db.execute(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`)
-  // A second transaction() in this process while one is open starts on a fresh connection that has no busy_timeout yet, so its
-  // BEGIN fails at once with SQLITE_BUSY: wait and retry (up to the busy timeout) like another process would.
+  // Another process holding the write lock past the busy timeout surfaces as SQLITE_BUSY: wait and retry once more.
   const isBusy = e => /SQLITE_BUSY/.test(`${e?.code ?? ''} ${e?.message ?? ''}`)
   const retryBusy = async fn => {
     const started = Date.now()
@@ -157,14 +154,27 @@ export async function openQueue({ root, now = () => new Date(), isAlive = pidAli
       }
     }
   }
-  const begin = () => retryBusy(async () => {
-    const tx = await db.transaction('write')
-    await setBusy()
-    return tx
-  })
+  // db.transaction() of @libsql/client 0.17 (local driver) segfaults node after a few hundred transactions (repro on Windows,
+  // node 24: transaction + commit + close in a loop, exit 139), so transactions are BEGIN IMMEDIATE / COMMIT on the client's
+  // single connection. Safe only because every database step below runs one at a time (exclusive).
+  const begin = async () => {
+    await retryBusy(() => db.execute('BEGIN IMMEDIATE'))
+    let open = true
+    return {
+      execute: stmt => db.execute(stmt),
+      async commit() {
+        await db.execute('COMMIT')
+        open = false
+      },
+      async close() {
+        if (!open) return
+        open = false
+        await db.execute('ROLLBACK').catch(() => {})
+      },
+    }
+  }
   const write = stmt => retryBusy(() => db.execute(stmt))
-  // @libsql/client is not safe for overlapping transactions on one client (two transaction() calls can share one connection),
-  // so every database step of this queue object runs one at a time; withLock's own fn runs outside.
+  // One connection, one transaction at a time: every database step of this queue object runs in turn; withLock's own fn runs outside.
   let tail = Promise.resolve()
   const exclusive = fn => {
     const run = tail.then(() => fn())
@@ -270,7 +280,7 @@ export async function openQueue({ root, now = () => new Date(), isAlive = pidAli
         await tx.commit()
         return { itemId: cur.id, version: n, created: false, changed: true }
       } finally {
-        tx.close()
+        await tx.close()
       }
     },
 
@@ -337,7 +347,7 @@ export async function openQueue({ root, now = () => new Date(), isAlive = pidAli
         })
         await tx.commit()
       } finally {
-        tx.close()
+        await tx.close()
       }
     },
 
@@ -397,7 +407,7 @@ export async function openQueue({ root, now = () => new Date(), isAlive = pidAli
           })
           await tx.commit()
         } finally {
-          tx.close()
+          await tx.close()
         }
       })
       try {

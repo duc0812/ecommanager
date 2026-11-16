@@ -395,3 +395,33 @@ describe('concurrency and integrity', () => {
     }
   })
 })
+
+describe('libsql stability', () => {
+  it('hundreds of queue transactions in one process exit cleanly (db.transaction() of @libsql/client segfaulted, exit 139)', async () => {
+    const storeUrl = new URL('../scripts/review-queue/store.mjs', import.meta.url).href
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), 'rq-stab-'))
+    const script = `
+      import path from 'node:path'
+      import { openQueue } from ${JSON.stringify(storeUrl)}
+      for (let r = 0; r < 120; r++) {
+        const q = await openQueue({ root: path.join(${JSON.stringify(base)}, 'q' + r) })
+        for (let i = 0; i < 8; i++) {
+          const a = await q.addOrUpdate({ taskKey: 'LIT1_1', groupKey: 'LIT1_1', taskKeys: ['LIT1_1'], kind: 'line', apiLines: [{ taskKey: 'LIT1_1', files: [] }], files: [{ part: 'PRINT_Front', kind: 'PRINT', path: 'x' + i, sha256: 's' + i }], meta: {}, qa: { verdict: 'pass', items: [] } })
+          await q.withLock(a.itemId, async () => { await q.get(a.itemId) })
+          await q.setStatus(a.itemId, 'removed')
+        }
+        await q.close()
+      }
+      console.log('done')`
+    try {
+      const child = spawn(process.execPath, ['--input-type=module', '-e', script], { cwd: process.cwd(), stdio: ['ignore', 'pipe', 'pipe'] })
+      let out = ''
+      child.stdout.on('data', d => { out += d })
+      child.stderr.on('data', d => { out += d })
+      const code = await new Promise(res => child.on('exit', (c, sig) => res(c ?? sig)))
+      expect({ code, out: out.trim() }).toEqual({ code: 0, out: 'done' })
+    } finally {
+      try { fs.rmSync(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) } catch {}
+    }
+  }, 120_000)
+})
