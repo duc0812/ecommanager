@@ -134,6 +134,31 @@ describe('addOrUpdate', () => {
     await q.setStatus(a.itemId, 'approved')
     expect(await q.activeByTaskKey('B_1')).toBeNull()
   })
+
+  it('refuses (key_held) a member key another active item of a different group holds, inside the write; writes nothing', async () => {
+    const a = await q.addOrUpdate(base({ taskKey: 'A_1', groupKey: 'A_1', kind: 'group', taskKeys: ['A_1', 'B_1'] }))
+    const err: any = await q.addOrUpdate(base({ taskKey: 'B_1', groupKey: 'B_1' })).catch((e: any) => e)
+    expect(err.code).toBe('key_held')
+    expect(err.itemId).toBe(a.itemId)
+    expect(err.taskKey).toBe('B_1')
+    expect(await q.list({})).toHaveLength(1)
+    const c = await q.addOrUpdate(base({ taskKey: 'C_1', groupKey: 'C_1', taskKeys: ['C_1', 'A_1'] })).catch((e: any) => e)
+    expect(c.code).toBe('key_held')
+    await q.setStatus(a.itemId, 'cloud')
+    expect((await q.addOrUpdate(base({ taskKey: 'B_1', groupKey: 'B_1' }))).created).toBe(true)
+  })
+})
+
+describe('in-process concurrency', () => {
+  it('two withLock calls at once in one process: one runs, the other gets code locked (never SQLITE_BUSY)', async () => {
+    const r = await q.addOrUpdate(base())
+    const slow = () => new Promise(res => setTimeout(() => res('done'), 50))
+    const out = await Promise.allSettled([q.withLock(r.itemId, slow), q.withLock(r.itemId, slow)])
+    const codes = out.map(o => (o.status === 'fulfilled' ? o.value : (o as any).reason.code)).sort()
+    expect(codes).toEqual(['done', 'locked'])
+    const both = await Promise.all([q.addEvent(r.itemId, 'x', 'a'), q.setStatus(r.itemId, 'rejected', { reason: 'r' }), q.addEvent(r.itemId, 'x', 'b')])
+    expect(both).toHaveLength(3)
+  })
 })
 
 describe('reads', () => {

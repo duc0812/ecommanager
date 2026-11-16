@@ -342,6 +342,18 @@ describe('fix round 1', () => {
     expect(await q.list()).toHaveLength(1)
   })
 
+  it('a key_held refusal from the store (an intake racing past the key check) reads "đã có trong hàng chờ" and leaves no files', async () => {
+    put('spec/dl/x.png', 'SHARED-ART')
+    await enqueue({ lines: [lead(), later()] })
+    const item = await q.activeByTaskKey('LIT2_1')
+    put('r/LIT3_1/front.png', 'OWN-ART')
+    const racing = { ...q, activeByTaskKey: async () => null }
+    const r = await enqueue({ lines: [planLine({ taskKey: 'LIT3_1', files: [printFile({ storagePath: 'r/LIT3_1/front.png' })] })] }, { queue: racing })
+    expect(r.refused).toEqual([{ taskKey: 'LIT3_1', reason: `đã có trong hàng chờ ${item.id}` }])
+    expect(await q.list()).toHaveLength(1)
+    expect(fs.readdirSync(path.join(queueRoot, 'items'))).toEqual([item.id])
+  })
+
   it('a group that gains a member with byte-identical files is a new version holding the new member', async () => {
     put('spec/dl/x.png', 'SHARED-ART')
     await enqueue({ lines: [lead()] })
@@ -353,7 +365,9 @@ describe('fix round 1', () => {
     expect(item).toMatchObject({ version: 2, kind: 'group' })
     expect(item.apiLines.map((l: any) => l.taskKey)).toEqual(['LIT2_1', 'LIT3_1'])
     expect((await q.activeByTaskKey('LIT3_1'))?.id).toBe(first.id)
-    expect(notes.map(n => n[0])).toEqual(['LIT2_1'])
+    expect(notes.map(n => n[0])).toEqual(['LIT2_1', 'LIT3_1'])
+    await enqueue({ lines: [lead(), later()] })
+    expect(notes.map(n => n[0])).toEqual(['LIT2_1', 'LIT3_1'])
   })
 
   it('a copied file loses knownDriveFileId so delivery uploads exactly the reviewed copy', async () => {

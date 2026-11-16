@@ -493,6 +493,32 @@ describe('runApiDelivery', () => {
     expect(entry().applied).toBeTruthy()
   })
 
+  it('passes the approve flag of a line into the commit body (dryRun too), keeps the same ledger entry, and surfaces wouldApprove and warnings', async () => {
+    const f = fakes({ commit: (_key, body) => ({
+      ok: true, status: 200,
+      body: body.dryRun
+        ? { ok: true, status: 'REVIEW', artworks: [], missing: [], warnings: [], alreadyApplied: false, wouldApprove: true }
+        : { ok: true, status: 'REVIEW', artworks: [], missing: [], warnings: ['Không duyệt được: cắt in'], alreadyApplied: false },
+    }) })
+    const l = line({ approve: true })
+    const dry = await run(f, [l], { dryRun: true })
+    expect(f.commits[0].body).toMatchObject({ approve: true, dryRun: true })
+    expect(dry.results[0]).toMatchObject({ outcome: 'dryRun', wouldApprove: true, warnings: [] })
+    const real = await run(f, [{ ...l }])
+    expect(f.uploads).toHaveLength(2)
+    expect(f.commits[1].body.approve).toBe(true)
+    expect(real.results[0]).toMatchObject({ outcome: 'applied', warnings: ['Không duyệt được: cắt in'] })
+    expect(real.results[0].wouldApprove).toBeUndefined()
+    const plain = await run(fakes(), [{ ...l, approve: undefined }])
+    expect(plain).toMatchObject({ alreadyApplied: 1 })
+  })
+
+  it('a line without approve sends no approve key', async () => {
+    const f = fakes()
+    await run(f, [line()])
+    expect('approve' in f.commits[0].body).toBe(false)
+  })
+
   it('dryRun on an applied line reports alreadyApplied and sends no pending preview', async () => {
     const big = localFile('huge.png', 30 * 1024 * 1024)
     const l = line({ files: [{ kind: 'PRINT', printArea: 'Front', path: big, fileName: 'huge.png', mimeType: 'image/png', widthPx: 1, heightPx: 1 }] })

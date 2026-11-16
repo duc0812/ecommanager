@@ -142,10 +142,34 @@ export async function openQueue({ root, now = () => new Date(), isAlive = pidAli
   // @libsql/client's local driver hands its connection to a transaction and opens a fresh one on the next call,
   // so the per-connection busy_timeout is re-applied right after every transaction() and at open.
   const setBusy = () => db.execute(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`)
-  const begin = async () => {
+  // A second transaction() in this process while one is open starts on a fresh connection that has no busy_timeout yet, so its
+  // BEGIN fails at once with SQLITE_BUSY: wait and retry (up to the busy timeout) like another process would.
+  const isBusy = e => /SQLITE_BUSY/.test(`${e?.code ?? ''} ${e?.message ?? ''}`)
+  const retryBusy = async fn => {
+    const started = Date.now()
+    for (;;) {
+      try {
+        return await fn()
+      } catch (e) {
+        if (!isBusy(e) || Date.now() - started > BUSY_TIMEOUT_MS) throw e
+        await setBusy().catch(() => {})
+        await new Promise(r => setTimeout(r, 15))
+      }
+    }
+  }
+  const begin = () => retryBusy(async () => {
     const tx = await db.transaction('write')
     await setBusy()
     return tx
+  })
+  const write = stmt => retryBusy(() => db.execute(stmt))
+  // @libsql/client is not safe for overlapping transactions on one client (two transaction() calls can share one connection),
+  // so every database step of this queue object runs one at a time; withLock's own fn runs outside.
+  let tail = Promise.resolve()
+  const exclusive = fn => {
+    const run = tail.then(() => fn())
+    tail = run.catch(() => {})
+    return run
   }
   await setBusy()
   await db.execute('PRAGMA journal_mode = WAL')
@@ -160,13 +184,14 @@ export async function openQueue({ root, now = () => new Date(), isAlive = pidAli
 
   const activeMarks = ACTIVE_STATUSES.map(() => '?').join(',')
 
-  return {
+  const api = {
     root,
 
     /** @returns {Promise<{ itemId: string, version: number, created: boolean, changed: boolean }>} */
     /**
      * `id` (optional) is used only when a new item is created, so the caller can copy its files under items/<id> first.
      * `taskKeys` are the item's member keys (default: taskKey alone); a different member set is a new version like different files.
+     * A member key held by an active item of another group fails with code `key_held` (`err.itemId`, `err.taskKey`), nothing written.
      */
     async addOrUpdate({ id: wantedId, taskKey, taskKeys, groupKey, kind, apiLines, files, meta, qa }) {
       if (wantedId != null && !ITEM_ID.test(wantedId)) throw new Error(`id không hợp lệ: ${wantedId}`)
@@ -174,6 +199,18 @@ export async function openQueue({ root, now = () => new Date(), isAlive = pidAli
       try {
         const t = iso()
         const keys = memberSet(taskKey, taskKeys)
+        const held = await tx.execute({
+          sql: `SELECT i.id, k.taskKey FROM items i JOIN item_keys k ON k.itemId = i.id
+                 WHERE k.taskKey IN (${keys.map(() => '?').join(',')}) AND i.groupKey != ? AND i.status IN (${activeMarks}) LIMIT 1`,
+          args: [...keys, groupKey, ...ACTIVE_STATUSES],
+        })
+        if (held.rows[0]) {
+          const err = new Error(`${held.rows[0].taskKey} đã có trong hàng chờ ${held.rows[0].id}`)
+          err.code = 'key_held'
+          err.itemId = held.rows[0].id
+          err.taskKey = held.rows[0].taskKey
+          throw err
+        }
         const status = qa?.verdict === 'fail' ? 'qa_failed' : 'waiting'
         const found = await tx.execute({
           sql: `SELECT * FROM items WHERE groupKey = ? AND status IN (${activeMarks}) ORDER BY createdAt DESC LIMIT 1`,
@@ -304,7 +341,7 @@ export async function openQueue({ root, now = () => new Date(), isAlive = pidAli
     },
 
     async addEvent(itemId, type, message) {
-      await db.execute({
+      await write({
         sql: 'INSERT INTO events (itemId, type, message, createdAt) VALUES (?, ?, ?, ?)',
         args: [itemId, type, message, iso()],
       })
@@ -342,33 +379,41 @@ export async function openQueue({ root, now = () => new Date(), isAlive = pidAli
     /** Process-safe: one holder per item; a lock older than 15 min or owned by a dead pid is taken over. */
     async withLock(itemId, fn) {
       const token = crypto.randomBytes(8).toString('hex')
-      const tx = await begin()
-      try {
-        const r = await tx.execute({ sql: 'SELECT pid, takenAt FROM locks WHERE itemId = ?', args: [itemId] })
-        const held = r.rows[0]
-        if (held) {
-          const age = now().getTime() - Date.parse(held.takenAt)
-          const stale = age >= LOCK_STALE_MS || !isAlive(Number(held.pid))
-          if (!stale) throw lockedError(itemId)
-          await tx.execute({ sql: 'DELETE FROM locks WHERE itemId = ?', args: [itemId] })
+      await exclusive(async () => {
+        const tx = await begin()
+        try {
+          const r = await tx.execute({ sql: 'SELECT pid, takenAt FROM locks WHERE itemId = ?', args: [itemId] })
+          const held = r.rows[0]
+          if (held) {
+            const age = now().getTime() - Date.parse(held.takenAt)
+            const stale = age >= LOCK_STALE_MS || !isAlive(Number(held.pid))
+            if (!stale) throw lockedError(itemId)
+            await tx.execute({ sql: 'DELETE FROM locks WHERE itemId = ?', args: [itemId] })
+          }
+          await tx.execute({
+            sql: 'INSERT INTO locks (itemId, pid, token, takenAt) VALUES (?, ?, ?, ?)',
+            args: [itemId, process.pid, token, iso()],
+          })
+          await tx.commit()
+        } finally {
+          tx.close()
         }
-        await tx.execute({
-          sql: 'INSERT INTO locks (itemId, pid, token, takenAt) VALUES (?, ?, ?, ?)',
-          args: [itemId, process.pid, token, iso()],
-        })
-        await tx.commit()
-      } finally {
-        tx.close()
-      }
+      })
       try {
         return await fn()
       } finally {
-        await db.execute({ sql: 'DELETE FROM locks WHERE itemId = ? AND token = ?', args: [itemId, token] })
+        await exclusive(() => write({ sql: 'DELETE FROM locks WHERE itemId = ? AND token = ?', args: [itemId, token] }))
       }
     },
 
     async close() {
-      db.close()
+      await exclusive(() => db.close())
     },
   }
+  for (const name of Object.keys(api)) {
+    const f = api[name]
+    if (typeof f !== 'function' || name === 'withLock' || name === 'close') continue
+    api[name] = (...args) => exclusive(() => f.apply(api, args))
+  }
+  return api
 }

@@ -153,7 +153,7 @@ function takeLock(ledgerPath, log) {
 
 /**
  * @param {{
- *   lines: { taskKey: string, action: 'push'|'replace'|'retire'|'revert', files: { kind: string, printArea: string, path?: string, fileName: string, mimeType: string, widthPx?: number|null, heightPx?: number|null, shortcutOf?: string|null, knownDriveFileId?: string|null, size?: number }[], retire: string[], eventMessage?: string, retireSources?: string[], allowFinished?: boolean, revertReadiness?: string, expectedStatus?: string|string[], planIds?: string[] }[],
+ *   lines: { taskKey: string, action: 'push'|'replace'|'retire'|'revert', approve?: boolean, files: { kind: string, printArea: string, path?: string, fileName: string, mimeType: string, widthPx?: number|null, heightPx?: number|null, shortcutOf?: string|null, knownDriveFileId?: string|null, size?: number }[], retire: string[], eventMessage?: string, retireSources?: string[], allowFinished?: boolean, revertReadiness?: string, expectedStatus?: string|string[], planIds?: string[] }[],
  *   client: { taskState: Function, commit: Function, putPreview: Function },
  *   uploader: { upload: (f: { path: string, name: string, mimeType: string, parentId: string }) => Promise<{ id: string, size: number }> },
  *   ledgerPath: string,
@@ -164,6 +164,8 @@ function takeLock(ledgerPath, log) {
  * }} opts
  * With `dryRun` the files are still uploaded and recorded (the real run reuses them) and each commit goes out with
  * `dryRun: true`; nothing is marked applied and no preview is sent.
+ * A line's `approve` rides in the commit body (not in the ledger key: the approved and the plain delivery of the same files
+ * are one delivery). Results carry the server's `wouldApprove` (dryRun with approve) and `warnings` when it sent them.
  */
 export async function runApiDelivery({ lines, client, uploader, ledgerPath, log = console.log, uploads = 3, previewOf = null, dryRun = false }) {
   const release = takeLock(ledgerPath, log)
@@ -181,7 +183,12 @@ async function run({ lines, client, uploader, ledgerPath, log, uploads, previewO
   const counts = { applied: 0, skipped: 0, alreadyApplied: 0, failed: 0, dryRun: 0 }
   const results = []
   const keyOf = line => { try { return deliveryKey(line) } catch { return null } }
-  const result = (line, outcome, r) => results.push({ key: keyOf(line), taskKey: line.taskKey, outcome, ok: r.ok, status: r.status ?? null, body: r.body ?? null })
+  const result = (line, outcome, r) => {
+    const out = { key: keyOf(line), taskKey: line.taskKey, outcome, ok: r.ok, status: r.status ?? null, body: r.body ?? null }
+    if (typeof r.body?.wouldApprove === 'boolean') out.wouldApprove = r.body.wouldApprove
+    if (Array.isArray(r.body?.warnings)) out.warnings = r.body.warnings
+    results.push(out)
+  }
 
   async function sendPreviews(led) {
     if (dryRun || !previewOf || !led.pendingPreviews?.length) return
@@ -315,7 +322,7 @@ async function run({ lines, client, uploader, ledgerPath, log, uploads, previewO
       }),
       retire: line.retire ?? [],
     }
-    for (const k of ['retireSources', 'eventMessage', 'allowFinished', 'revertReadiness']) if (line[k] !== undefined) body[k] = line[k]
+    for (const k of ['retireSources', 'eventMessage', 'allowFinished', 'revertReadiness', 'approve']) if (line[k] !== undefined) body[k] = line[k]
     if (dryRun) body.dryRun = true
 
     const res = await client.commit(key, body)

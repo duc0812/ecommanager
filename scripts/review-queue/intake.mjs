@@ -200,7 +200,8 @@ const partBase = f => `${f.kind ?? 'PRINT'}_${f.printArea}`.replace(/[^A-Za-z0-9
  *   previewer?: (input: string|Buffer, dst: string) => Promise<any>, download?: (url: string, opts?: any) => Promise<Buffer>,
  *   source?: { cli?: string, spec?: string|null, out?: string, ledgerPath?: string }, log?: (m: string) => void,
  * }} opts
- * Notes to prod go out after every group is in the queue; the first failure stops them (one warning line, keys in `unnoted`).
+ * Notes to prod go out after every group is in the queue (a new item: every key; a new version: the keys it added); the first
+ * failure stops them (one warning line, keys in `unnoted`).
  * @returns {Promise<{ enqueued: string[], unchanged: string[], bypassed: string[], refused: { taskKey: string, reason: string }[], reasons: Record<string, string>, unnoted: string[] }>}
  */
 export async function enqueuePlan({
@@ -245,8 +246,9 @@ export async function enqueuePlan({
       }
       out.enqueued.push(...keys)
       if (r.created) toNote.push({ itemId: r.itemId, keys: lines.map(l => l.taskKey) })
+      else if (r.addedKeys?.length) toNote.push({ itemId: r.itemId, keys: r.addedKeys })
     } catch (e) {
-      refuse(keys, `lỗi khi đưa vào hàng chờ: ${errText(e)}`)
+      refuse(keys, e?.code === 'key_held' ? `đã có trong hàng chờ ${e.itemId}` : `lỗi khi đưa vào hàng chờ: ${errText(e)}`)
     }
   }
   await notifyProd()
@@ -289,10 +291,12 @@ export async function enqueuePlan({
     const taskKeys = [...new Set(lines.map(l => l.taskKey))].sort()
     const active = (await queue.list({ statuses: ACTIVE_STATUSES })).find(i => i.groupKey === groupKey) ?? null
     let prevDir = null
+    let prevKeys = []
     if (active) {
       if (active.status === 'fixing') return { outcome: 'unchanged', itemId: active.id, reason: 'agent đang sửa' }
       const cur = (await queue.versions(active.id)).find(v => v.n === active.version)
-      const sameKeys = (await queue.memberKeys(active.id)).join('|') === taskKeys.join('|')
+      prevKeys = await queue.memberKeys(active.id)
+      const sameKeys = prevKeys.join('|') === taskKeys.join('|')
       if (cur && sameKeys && (cur.files ?? []).map(f => f.sha256).sort().join('|') === shaKey) return { outcome: 'unchanged', itemId: active.id }
       prevDir = path.join(queue.root, 'items', active.id, `v${active.version}`)
     }
@@ -361,9 +365,9 @@ export async function enqueuePlan({
       recorded = r.changed
       if (!r.changed) return { outcome: 'unchanged', itemId: r.itemId }
       if (r.itemId !== itemId || r.version !== n) log(`${groupKey}: hàng chờ ghi bản v${r.version} của ${r.itemId}, khác dự kiến v${n} của ${itemId} — kiểm tra thư mục ${vdir}`)
-      return { outcome: 'enqueued', itemId: r.itemId, version: r.version, created: r.created }
+      return { outcome: 'enqueued', itemId: r.itemId, version: r.version, created: r.created, addedKeys: r.created ? [] : taskKeys.filter(k => !prevKeys.includes(k)) }
     } finally {
-      if (!recorded) fs.rmSync(vdir, { recursive: true, force: true })
+      if (!recorded) fs.rmSync(active ? vdir : path.dirname(vdir), { recursive: true, force: true })
     }
   }
 }

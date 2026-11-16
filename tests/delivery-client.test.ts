@@ -251,3 +251,26 @@ describe('uploader recovery', () => {
     expect(waits).toEqual([2000, 4000])
   })
 })
+
+describe('delivery client approve token', () => {
+  it('sends X-Delivery-Approve only on commits whose body has approve: true, never on other calls', async () => {
+    const h = harness([json({}), json({}), json({}), json({}), json({}), json({})])
+    const c = make(h, { approveToken: 'APPROVE-SECRET' })
+    await c.commit('K', { action: 'push', approve: true })
+    await c.commit('K', { action: 'push', approve: true, dryRun: true })
+    await c.commit('K', { action: 'push' })
+    await c.commit('K', { action: 'push', approve: 'yes' })
+    await c.taskState('K')
+    await c.note('K', 'hi')
+    const header = (i: number) => h.calls[i].init.headers['X-Delivery-Approve']
+    expect([0, 1, 2, 3, 4, 5].map(header)).toEqual(['APPROVE-SECRET', 'APPROVE-SECRET', undefined, undefined, undefined, undefined])
+    expect(h.calls.every(x => x.init.headers.Authorization === 'Bearer sekret')).toBe(true)
+  })
+
+  it('without an approve token an approve commit goes without the header (the server answers 403)', async () => {
+    const h = harness([json({ code: 'approve_token' }, 403)])
+    const r = await make(h).commit('K', { action: 'push', approve: true })
+    expect(r).toMatchObject({ ok: false, status: 403 })
+    expect(h.calls[0].init.headers['X-Delivery-Approve']).toBeUndefined()
+  })
+})

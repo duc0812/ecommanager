@@ -32,11 +32,13 @@ const RETRY_STATUSES = new Set([429, 502, 503, 504])
 
 /**
  * `timeoutMs` (optional) aborts each single request after that long; the abort counts as a network error (retried within the budget).
- * @param {{ baseUrl?: string, token?: string, fetchImpl?: typeof fetch, sleep?: (ms: number) => Promise<void>, budgetMs?: number, now?: () => number, timeoutMs?: number|null }} [opts]
+ * `approveToken` (optional) goes as X-Delivery-Approve only on commits whose body has `approve: true`; it is never logged.
+ * @param {{ baseUrl?: string, token?: string, approveToken?: string|null, fetchImpl?: typeof fetch, sleep?: (ms: number) => Promise<void>, budgetMs?: number, now?: () => number, timeoutMs?: number|null }} [opts]
  */
 export function createDeliveryClient({
   baseUrl = process.env.ECOM_URL,
   token = process.env.DESIGN_WORKER_TOKEN,
+  approveToken = null,
   fetchImpl = fetch,
   sleep = ms => new Promise(r => setTimeout(r, ms)),
   budgetMs = 30 * 60 * 1000,
@@ -50,12 +52,13 @@ export function createDeliveryClient({
   /**
    * @param {string} method
    * @param {string} route
-   * @param {{ json?: unknown, body?: Buffer, contentType?: string }} [payload]
+   * @param {{ json?: unknown, body?: Buffer, contentType?: string, approve?: boolean }} [payload]
    * @returns {Promise<{ ok: boolean, status: number, body: any }>}
    */
   async function call(method, route, payload = {}) {
     const started = now()
     const headers = { Authorization: `Bearer ${token}` }
+    if (payload.approve && approveToken) headers['X-Delivery-Approve'] = approveToken
     let body
     if (payload.json !== undefined) { headers['Content-Type'] = 'application/json'; body = JSON.stringify(payload.json) }
     else if (payload.body) { headers['Content-Type'] = payload.contentType ?? 'application/octet-stream'; body = payload.body }
@@ -93,7 +96,7 @@ export function createDeliveryClient({
   return {
     driveToken: () => call('POST', `${BASE}/drive-token`),
     taskState: key => call('GET', `${BASE}/tasks/${encodeURIComponent(key)}`),
-    commit: (key, body) => call('POST', `${BASE}/tasks/${encodeURIComponent(key)}/commit`, { json: body }),
+    commit: (key, body) => call('POST', `${BASE}/tasks/${encodeURIComponent(key)}/commit`, { json: body, approve: body?.approve === true }),
     putPreview: (artworkId, jpegBuffer) => call('PUT', `${BASE}/artworks/${encodeURIComponent(artworkId)}/preview`, { body: jpegBuffer, contentType: 'image/jpeg' }),
     note: (key, message) => call('POST', `${BASE}/tasks/${encodeURIComponent(key)}/note`, { json: { message } }),
   }
