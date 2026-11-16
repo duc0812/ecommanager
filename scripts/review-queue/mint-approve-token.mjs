@@ -38,8 +38,7 @@ export async function main({ env = process.env, argv = process.argv.slice(2), ou
     back = String(decrypt(tmp) ?? '').trim()
   } catch (e) {
     fs.rmSync(tmp, { force: true })
-    err(`LỖI: không mã hoá được token (${e instanceof Error ? e.message.split(/?
-/)[0] : 'lỗi'})`)
+    err(`LỖI: không mã hoá được token (${e instanceof Error ? e.message.split(/\r?\n/)[0] : 'lỗi'})`)
     return 1
   }
   if (back !== token) {
