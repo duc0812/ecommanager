@@ -100,15 +100,36 @@ function claudeHasStrictMcp(exe, help) {
 }
 
 /**
+ * The top-level `model = "…"` of %USERPROFILE%\.codex\config.toml (lines before the first [table]), or null.
+ * @param {Record<string, string|undefined>} [env]
+ */
+export function codexConfigModel(env = process.env) {
+  const file = env.USERPROFILE ? path.join(env.USERPROFILE, '.codex', 'config.toml') : null
+  if (!file || !isFile(file)) return null
+  for (const raw of fs.readFileSync(file, 'utf8').replace(/^﻿/, '').split(/\r?\n/)) {
+    const line = raw.trim()
+    if (line.startsWith('[')) break
+    const m = /^model\s*=\s*(?:"([^"]*)"|'([^']*)')\s*(?:#.*)?$/.exec(line)
+    if (m) return (m[1] ?? m[2]) || null
+  }
+  return null
+}
+
+/**
  * The command line of one agent run in `jobDir`.
- * Codex: exec -C <job> --skip-git-repo-check --sandbox workspace-write -o <job>\last-message.txt <prompt>.
+ * Codex: exec --ignore-user-config [-m <model>] -C <job> --skip-git-repo-check --sandbox workspace-write -o <job>\last-message.txt <prompt>
+ * (the owner's config.toml carries MCP servers, plugins and hooks; only its model is kept, `deps.codexModel` overrides).
  * Claude: -p <prompt> --output-format json --permission-mode dontAsk --allowedTools … --add-dir <job> [--strict-mcp-config], no --mcp-config.
  */
 export async function agentCommand(agent, jobDir, deps = {}) {
   if (agent === 'codex') {
     const exe = deps.codexExe ?? findCodexExe(deps.env ?? process.env)
     if (!exe) throw new Error('không thấy codex.exe trong %LOCALAPPDATA%\\OpenAI\\Codex\\bin')
-    return { cmd: exe, args: ['exec', '-C', jobDir, '--skip-git-repo-check', '--sandbox', 'workspace-write', '-o', path.join(jobDir, 'last-message.txt'), FIX_PROMPT] }
+    const model = 'codexModel' in deps ? deps.codexModel : codexConfigModel(deps.env ?? process.env)
+    return {
+      cmd: exe,
+      args: ['exec', '--ignore-user-config', ...(model ? ['-m', model] : []), '-C', jobDir, '--skip-git-repo-check', '--sandbox', 'workspace-write', '-o', path.join(jobDir, 'last-message.txt'), FIX_PROMPT],
+    }
   }
   if (agent !== 'claude') throw new Error(`agent không hợp lệ: ${agent}`)
   const exe = deps.claudeExe ?? findClaudeExe(deps.env ?? process.env)
@@ -270,7 +291,13 @@ export async function startFix(queue, itemId, { agent, reason, version } = /** @
       return fail(itemId, 'error', `Không tạo được job: ${errText(e)}`, { status: item.status })
     }
     ownJobs.add(jobId)
-    await queue.setStatus(itemId, 'fixing', { reason: `Agent ${agent} đang sửa (job ${n})` })
+    try {
+      await queue.setStatus(itemId, 'fixing', { reason: `Agent ${agent} đang sửa (job ${n})` })
+    } catch (e) {
+      ownJobs.delete(jobId)
+      fs.rmSync(dir, { recursive: true, force: true })
+      return fail(itemId, 'error', `Không chuyển được sang đang sửa: ${errText(e)}`, { status: item.status })
+    }
     await queue.addEvent(itemId, 'fix', `Gọi Agent sửa: ${agent} (job ${n}, bản v${item.version}) — ${why || 'theo lỗi QA'}`)
     return { ok: true, itemId, jobId, jobDir: dir, status: 'fixing' }
   })
@@ -384,8 +411,11 @@ function lastMessage(agent, dir, run) {
     if (r != null) fs.writeFileSync(file, r)
   }
   const txt = isFile(file) ? fs.readFileSync(file, 'utf8').trim() : ''
-  return txt || run.stderr.trim() || (run.exitCode != null ? `thoát mã ${run.exitCode}` : '')
+  const streams = agent === 'codex' ? [run.stdout, run.stderr] : [run.stderr, run.stdout]
+  return txt || streams.map(x => tail(String(x ?? '').trim())).find(Boolean) || (run.exitCode != null ? `thoát mã ${run.exitCode}` : '')
 }
+
+const tail = (s, n = MESSAGE_MAX) => (s.length > n ? s.slice(-n) : s)
 
 async function checkOut(dir, parts, imageSize) {
   const problems = []
@@ -413,10 +443,12 @@ function normQa(qa) {
 /** A failed fix never counts down (spec 7.5): the item goes to rejected whatever it was before. */
 async function failJob(queue, item, dir, job, problems, last, deps, extra = {}) {
   const now = deps.now ?? (() => new Date())
-  const message = `${FIX_FAILED}: ${clip(last || problems.join('; '))}`
+  const notesFile = path.join(dir, 'out', 'NOTES.md')
+  const notes = isFile(notesFile) ? fs.readFileSync(notesFile, 'utf8').trim() : ''
+  const message = `${FIX_FAILED}: ${clip(notes || last || problems.join('; '))}`
   writeJob(dir, { ...job, ...extra, status: 'failed', finishedAt: now().toISOString(), message, problems })
   const cur = await queue.get(item.id)
-  if (last && problems.length) await queue.addEvent(item.id, 'fix_check', `Job ${job.n}: ${problems.join('; ')}`)
+  if ((notes || last) && problems.length) await queue.addEvent(item.id, 'fix_check', `Job ${job.n}: ${problems.join('; ')}`)
   if (cur?.status === 'fixing') await queue.setStatus(item.id, FAILED_STATUS, { reason: message })
   await queue.addEvent(item.id, 'fix_failed', message)
   return fail(item.id, 'fix_failed', message, { status: cur?.status === 'fixing' ? FAILED_STATUS : cur?.status, problems, jobId: job.id })
@@ -431,10 +463,38 @@ async function withLocksRetry(queue, itemId, fn, deps) {
   }
 }
 
-/** Copies out\ into v<n+1> under the item and intake locks and records it with addOrUpdate (same path as intake). */
+/**
+ * Stages out\ in the job folder with previews and machine QA outside the locks (QA can be slow), then under the item and intake
+ * locks copies the staged files into v<n+1> and records them with addOrUpdate (same path as intake).
+ */
 async function recordVersion(queue, itemId, dir, job, last, deps) {
   const previewer = deps.previewer ?? makePreview
   const qaItem = deps.qaItem ?? defaultQa
+  const baseFiles = (await queue.versions(itemId)).find(v => v.n === job.version)?.files ?? []
+  const stage = path.join(dir, 'stage')
+  fs.rmSync(stage, { recursive: true, force: true })
+  fs.mkdirSync(path.join(stage, 'preview'), { recursive: true })
+  const staged = new Map()
+  for (const f of baseFiles) {
+    if (!f.path) continue
+    const name = path.basename(f.path)
+    const dst = path.join(stage, name)
+    fs.copyFileSync(path.join(dir, 'out', name), dst)
+    let preview = path.join(stage, 'preview', `${f.part ?? path.parse(name).name}.jpg`)
+    try {
+      await previewer(dst, preview)
+    } catch (e) {
+      deps.log?.(`${itemId}: không làm được ảnh xem trước ${name}: ${errText(e)}`)
+      preview = null
+    }
+    staged.set(name, { path: dst, sha256: await sha256File(dst), preview })
+  }
+  let qa
+  try {
+    qa = normQa(await qaItem(stage))
+  } catch (e) {
+    qa = { verdict: 'unchecked', items: [`không chạy được kiểm tra máy: ${errText(e)}`] }
+  }
   return withLocksRetry(queue, itemId, async () => {
     const item = await queue.get(itemId)
     if (item.status !== 'fixing' || item.version !== job.version) return { failed: `dòng đã đổi trong lúc sửa (đang ${item.status}, v${item.version})` }
@@ -451,20 +511,18 @@ async function recordVersion(queue, itemId, dir, job, last, deps) {
       for (const f of cur.files ?? []) {
         if (!f.path) { files.push(f); continue }
         const name = path.basename(f.path)
-        const src = path.join(dir, 'out', name)
+        const st = staged.get(name)
+        if (!st) throw new Error(`thiếu ${name} trong bản chuẩn bị (stage\\)`)
         const dst = path.join(vdir, name)
-        fs.copyFileSync(src, dst)
+        fs.copyFileSync(st.path, dst)
         const sha256 = await sha256File(dst)
-        if (sha256 !== await sha256File(src)) throw new Error(`out\\${name} đổi trong lúc chép`)
-        const part = f.part ?? path.parse(name).name
-        let preview = path.join(vdir, 'preview', `${part}.jpg`)
-        try {
-          await previewer(dst, preview)
-        } catch (e) {
-          deps.log?.(`${item.taskKey}: không làm được ảnh xem trước ${name}: ${errText(e)}`)
-          preview = null
+        if (sha256 !== st.sha256) throw new Error(`${name} đổi trong lúc chép`)
+        let preview = null
+        if (st.preview && isFile(st.preview)) {
+          preview = path.join(vdir, 'preview', path.basename(st.preview))
+          fs.copyFileSync(st.preview, preview)
         }
-        files.push({ ...f, path: dst, sha256, preview, source: src })
+        files.push({ ...f, path: dst, sha256, preview, source: path.join(dir, 'out', name) })
         copyOf.set(path.resolve(f.path), dst)
       }
       const meta = { ...item.meta }
@@ -484,12 +542,6 @@ async function recordVersion(queue, itemId, dir, job, last, deps) {
           return { ...rest, path: copyOf.get(path.resolve(f.path)) }
         }),
       }))
-      let qa
-      try {
-        qa = normQa(await qaItem(vdir))
-      } catch (e) {
-        qa = { verdict: 'unchecked', items: [`không chạy được kiểm tra máy: ${errText(e)}`] }
-      }
       const r = await queue.addOrUpdate({
         id: itemId, taskKey: item.taskKey, taskKeys: await queue.memberKeys(itemId), groupKey: item.groupKey, kind: item.kind,
         apiLines, files, meta, qa,
@@ -509,6 +561,14 @@ async function recordVersion(queue, itemId, dir, job, last, deps) {
 }
 
 async function runNow(queue, jobId, deps) {
+  try {
+    return await runJob(queue, jobId, deps)
+  } finally {
+    ownJobs.delete(jobId)
+  }
+}
+
+async function runJob(queue, jobId, deps) {
   const now = deps.now ?? (() => new Date())
   const ref = parseJobId(jobId)
   const job = ref && readJob(queue, jobId)
@@ -547,8 +607,6 @@ async function runNow(queue, jobId, deps) {
     return await failJob(queue, item, dir, running, [why], last, deps, ran)
   } catch (e) {
     return failJob(queue, item, dir, running, [errText(e)], '', deps)
-  } finally {
-    ownJobs.delete(jobId)
   }
 }
 
@@ -556,7 +614,7 @@ let chain = Promise.resolve()
 
 /**
  * Runs a job made by startFix; jobs of this process run one at a time (a later call waits, its job.json stays `queued`).
- * deps: { spawn?, codexExe?, claudeExe?, claudeHelp?, qaItem?(versionDir), previewer?, imageSize?, now?, env?, limitMs?, killTree?, sleep?, log? }
+ * deps: { spawn?, codexExe?, codexModel?, claudeExe?, claudeHelp?, qaItem?(versionDir), previewer?, imageSize?, now?, env?, limitMs?, killTree?, sleep?, log? }
  * @returns {Promise<any>} { ok:true, itemId, jobId, version, status:'waiting'|'qa_failed' } or { ok:false, itemId, code, error, status?, jobId? }
  */
 export function runFixJob(queue, jobId, deps = {}) {
@@ -581,18 +639,32 @@ function killPid(pid) {
   return new Promise(resolve => execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, timeout: 15_000 }, () => resolve(undefined)))
 }
 
+/** Command line of a live pid (Win32_Process via PowerShell), or null. */
+export function processCommandLine(pid) {
+  if (process.platform !== 'win32' || !Number.isInteger(pid)) return Promise.resolve(null)
+  const script = `(Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}').CommandLine`
+  return new Promise(resolve => {
+    execFile('powershell', ['-NoProfile', '-Command', script], { windowsHide: true, timeout: 30_000, maxBuffer: 1 << 20 }, (e, stdout) => {
+      resolve(e ? null : String(stdout).trim() || null)
+    })
+  })
+}
+
 const AGENT_IMAGES = new Set(['claude.exe', 'codex.exe'])
+const pathKey = p => String(p).replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase()
 
 /**
  * At server start: an item left `fixing` by an earlier process goes to rejected with an event; its open jobs are marked failed.
- * A job's recorded pid that still runs as claude.exe / codex.exe is killed first (another image = a reused pid, left alone).
+ * A job's recorded pid is killed first only when it still runs as claude.exe / codex.exe AND its command line names the job
+ * folder (many unrelated Claude/Codex processes run on this PC; a reused pid is left alone, with an event).
  * Jobs started by this process are left alone.
  * @param {any} queue
- * @param {{ log?: (m: string) => void, now?: () => Date, ownJobs?: Set<string>, processImage?: (pid: number) => Promise<string|null>, killPid?: (pid: number) => Promise<any> }} [opts]
+ * @param {{ log?: (m: string) => void, now?: () => Date, ownJobs?: Set<string>, processImage?: (pid: number) => Promise<string|null>, processCommandLine?: (pid: number) => Promise<string|null>, killPid?: (pid: number) => Promise<any> }} [opts]
  * @returns {Promise<string[]>} recovered item ids
  */
 export async function recoverFixJobs(queue, {
-  log = console.log, now = () => new Date(), ownJobs: mine = ownJobs, processImage: imageOf = processImage, killPid: kill = killPid,
+  log = console.log, now = () => new Date(), ownJobs: mine = ownJobs, processImage: imageOf = processImage,
+  processCommandLine: cmdlineOf = processCommandLine, killPid: kill = killPid,
 } = {}) {
   const recovered = []
   for (const item of await queue.list({ statuses: ['fixing'] })) {
@@ -602,15 +674,25 @@ export async function recoverFixJobs(queue, {
     for (const j of jobs) {
       if (j.status !== 'queued' && j.status !== 'running') continue
       let killed = null
+      let spared = null
       if (Number.isInteger(j.pid) && j.pid > 0) {
         const image = await imageOf(j.pid).catch(() => null)
         if (image && AGENT_IMAGES.has(image.toLowerCase())) {
-          await kill(j.pid)
-          killed = j.pid
-          log(`${item.taskKey}: đã dừng agent còn chạy (${image}, pid ${j.pid})`)
+          const cmdline = await cmdlineOf(j.pid).catch(() => null)
+          if (cmdline && pathKey(cmdline).includes(pathKey(jobDirOf(queue, j.id)))) {
+            await kill(j.pid)
+            killed = j.pid
+            await queue.addEvent(item.id, 'fix_kill', `Job ${j.n}: đã dừng agent còn chạy (${image}, pid ${j.pid})`)
+          } else {
+            spared = j.pid
+            await queue.addEvent(item.id, 'fix_kill', `Job ${j.n}: pid ${j.pid} (${image}) không chạy thư mục job này — không dừng`)
+          }
         }
       }
-      writeJob(jobDirOf(queue, j.id), { ...j, status: 'failed', finishedAt: now().toISOString(), message: text, ...(killed ? { killedPid: killed } : {}) })
+      writeJob(jobDirOf(queue, j.id), {
+        ...j, status: 'failed', finishedAt: now().toISOString(), message: text,
+        ...(killed ? { killedPid: killed } : {}), ...(spared ? { sparedPid: spared } : {}),
+      })
     }
     await queue.setStatus(item.id, FAILED_STATUS, { reason: text })
     await queue.addEvent(item.id, 'fix_failed', text)
@@ -622,5 +704,5 @@ export async function recoverFixJobs(queue, {
 
 /** Real deps for the server: the installed Claude / Codex, the process environment (filtered per job), QA unchecked until wired. */
 export function makeFixDeps({ env = process.env, log = console.log, qaItem = defaultQa } = {}) {
-  return { spawn: nodeSpawn, codexExe: findCodexExe(env), claudeExe: findClaudeExe(env), qaItem, env, log, killTree }
+  return { spawn: nodeSpawn, codexExe: findCodexExe(env), codexModel: codexConfigModel(env), claudeExe: findClaudeExe(env), qaItem, env, log, killTree }
 }

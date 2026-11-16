@@ -9,7 +9,7 @@ import sharp from 'sharp'
 import { openQueue, newItemId } from '../scripts/review-queue/store.mjs'
 import {
   startFix, runFixJob, recoverFixJobs, readJob, listJobs, childEnv, findCodexExe, findClaudeExe, agentCommand,
-  FIX_PROMPT, FIX_LIMIT_MS, CHILD_ENV_KEYS,
+  FIX_PROMPT, FIX_LIMIT_MS, CHILD_ENV_KEYS, codexConfigModel,
 } from '../scripts/review-queue/fix-job.mjs'
 
 let tmp: string
@@ -163,12 +163,23 @@ describe('runFixJob', () => {
       exit(child)
     })
     clock += 30 * 60_000
-    const r = await runFixJob(q, jobId, deps(spawn))
+    const locksFreeDuringQa: boolean[] = []
+    const qaItem = async (dir: string) => {
+      qaCalls.push(dir)
+      try {
+        await q.withLock(id, async () => q.withLock('intake:LIT1_1', async () => {}))
+        locksFreeDuringQa.push(true)
+      } catch {
+        locksFreeDuringQa.push(false)
+      }
+      return { verdict: 'pass', items: [] }
+    }
+    const r = await runFixJob(q, jobId, deps(spawn, { codexModel: 'gpt-test', qaItem }))
     expect(r).toMatchObject({ ok: true, itemId: id, status: 'waiting', version: 2 })
     const job = path.join(q.root, 'items', id, 'jobs', '1')
     expect(calls).toHaveLength(1)
     expect(calls[0].cmd).toBe('C:\\fake\\codex.exe')
-    expect(calls[0].args).toEqual(['exec', '-C', job, '--skip-git-repo-check', '--sandbox', 'workspace-write', '-o', path.join(job, 'last-message.txt'), FIX_PROMPT])
+    expect(calls[0].args).toEqual(['exec', '--ignore-user-config', '-m', 'gpt-test', '-C', job, '--skip-git-repo-check', '--sandbox', 'workspace-write', '-o', path.join(job, 'last-message.txt'), FIX_PROMPT])
     expect(calls[0].opts.cwd).toBe(job)
     const env = calls[0].opts.env
     expect(Object.keys(env).sort()).toEqual(['DISABLE_AUTOUPDATER', 'LOCALAPPDATA', 'PATH', 'PYTHONIOENCODING', 'PYTHONUTF8', 'SYSTEMROOT', 'TEMP', 'USERPROFILE'])
@@ -184,7 +195,9 @@ describe('runFixJob', () => {
     expect(fs.readFileSync(path.join(q.root, 'items', id, 'v1', 'PRINT_Front.png'), 'utf8')).toBe('ART-v1-LIT1_1')
     const v = (await q.versions(id)).find((x: any) => x.n === 2)
     expect(v.files[0]).toMatchObject({ part: 'PRINT_Front', path: path.join(v2, 'PRINT_Front.png'), sha256: sha(path.join(v2, 'PRINT_Front.png')) })
-    expect(qaCalls).toEqual([v2])
+    expect(qaCalls).toEqual([path.join(job, 'stage')])
+    expect(locksFreeDuringQa).toEqual([true])
+    expect(fs.readFileSync(path.join(job, 'stage', 'PRINT_Front.png'), 'utf8')).toBe('ART-fixed')
     expect(readJob(q, jobId)).toMatchObject({ status: 'done', resultVersion: 2 })
     expect(await messages(id)).toMatch(/sửa xong.*v2.*Dời tên vào giữa/)
   })
@@ -238,6 +251,49 @@ describe('runFixJob', () => {
     expect(await q.expired(clock + 10 * 3_600_000)).toEqual([])
     expect(fs.existsSync(path.join(q.root, 'items', id, 'v2'))).toBe(false)
     expect(readJob(q, jobId)).toMatchObject({ status: 'failed' })
+  })
+
+  it('failure message: out\\NOTES.md first 500 chars wins; without a last message Codex stdout tail beats stderr', async () => {
+    const notesItem = await makeItem('LIT1_1')
+    const notes = 'N'.repeat(450) + 'GIỮA' + 'M'.repeat(200)
+    const a = await start(notesItem)
+    const sa = fakeSpawn(({ child, job }) => {
+      writeOut(job, 'NOTES.md', notes)
+      fs.writeFileSync(path.join(job, 'last-message.txt'), 'tin nhắn cuối')
+      exit(child, 1)
+    })
+    await runFixJob(q, a.jobId, deps(sa.spawn))
+    expect((await q.get(notesItem)).statusReason).toBe(`agent không sửa được: ${notes.slice(0, 500)}`)
+
+    const streamItem = await makeItem('LIT2_1')
+    const b = await start(streamItem)
+    const out = 'HEAD-' + 's'.repeat(600) + '-STDOUT-END'
+    const sb = fakeSpawn(({ child }) => {
+      child.stdout.write(out)
+      child.stderr.write('stderr text')
+      exit(child, 1)
+    })
+    await runFixJob(q, b.jobId, deps(sb.spawn))
+    expect((await q.get(streamItem)).statusReason).toBe(`agent không sửa được: ${out.slice(-500)}`)
+  })
+
+  it('an early refusal in runFixJob does not keep the job marked as this process’s (recovery can take it)', async () => {
+    const id = await makeItem('LIT1_1')
+    const { jobId } = await start(id)
+    const file = path.join(q.root, 'items', id, 'jobs', '1', 'job.json')
+    fs.writeFileSync(file, JSON.stringify({ ...readJob(q, jobId), status: 'running' }))
+    expect(await runFixJob(q, jobId, deps(fakeSpawn(() => {}).spawn))).toMatchObject({ ok: false, code: 'not_queued' })
+    expect(await recoverFixJobs(q, { log: () => {}, processImage: async () => null })).toEqual([id])
+  })
+
+  it('startFix: a failing setStatus removes the job folder and leaves no job behind', async () => {
+    const id = await makeItem('LIT1_1')
+    const broken = Object.create(q)
+    broken.setStatus = async () => { throw new Error('db busy') }
+    const r = await startFix(broken, id, { agent: 'codex', reason: 'x', version: 1 })
+    expect(r).toMatchObject({ ok: false, code: 'error' })
+    expect(fs.existsSync(path.join(q.root, 'items', id, 'jobs', '1'))).toBe(false)
+    expect((await q.get(id)).status).toBe('waiting')
   })
 
   it('agent writes outside its job folder (the item version, in\\, another item): fail, no new version', async () => {
@@ -349,8 +405,15 @@ describe('runFixJob', () => {
 })
 
 describe('recoverFixJobs', () => {
-  it('after a restart: a still-running claude.exe/codex.exe pid is killed, other images are not, the item goes to rejected', async () => {
-    const cases: [string, string | null, boolean][] = [['claude', 'claude.exe', true], ['codex', 'CODEX.EXE', true], ['reused', 'notepad.exe', false], ['gone', null, false]]
+  it('after a restart: only a claude.exe/codex.exe pid whose command line names the job folder is killed; the item goes to rejected', async () => {
+    const cases: [string, string | null, boolean][] = [
+      ['claude', 'claude.exe', true], ['codex', 'CODEX.EXE', true], ['otherclaude', 'claude.exe', false], ['reused', 'notepad.exe', false], ['gone', null, false],
+    ]
+    const cmdlines: Record<string, (job: string) => string> = {
+      claude: job => `"C:\\Users\\x\\.local\\bin\\claude.exe" -p "Đọc BRIEF.md" --add-dir ${job.replace(/\\/g, '/').toUpperCase()} --strict-mcp-config`,
+      codex: job => `C:\\l\\codex.exe exec --ignore-user-config -C "${job}\\" --skip-git-repo-check`,
+      otherclaude: () => 'C:\\Users\\x\\.local\\bin\\claude.exe --resume abc',
+    }
     const ids: Record<string, string> = {}
     const pids: Record<string, number> = {}
     for (let i = 0; i < cases.length; i++) {
@@ -362,13 +425,20 @@ describe('recoverFixJobs', () => {
       ids[name] = id
     }
     const images = new Map(cases.map(([name, image]) => [pids[name], image]))
+    const byPid = new Map(cases.map(([name]) => [pids[name], name]))
     const asked: number[] = []
+    const askedCmd: number[] = []
     const killed: number[] = []
     const q2 = await openQueue({ root: q.root, now: () => new Date(clock) })
     try {
       const r = await recoverFixJobs(q2, {
         log: (m: string) => logs.push(m), ownJobs: new Set(),
         processImage: async (pid: number) => { asked.push(pid); return images.get(pid) ?? null },
+        processCommandLine: async (pid: number) => {
+          askedCmd.push(pid)
+          const name = byPid.get(pid) as string
+          return cmdlines[name]?.(path.join(q.root, 'items', ids[name], 'jobs', '1')) ?? null
+        },
         killPid: async (pid: number) => { killed.push(pid) },
       })
       expect(r.sort()).toEqual(Object.values(ids).sort())
@@ -376,6 +446,7 @@ describe('recoverFixJobs', () => {
       await q2.close()
     }
     expect(asked.sort()).toEqual(Object.values(pids).sort())
+    expect(askedCmd.sort()).toEqual([pids.claude, pids.codex, pids.otherclaude].sort())
     expect(killed.sort()).toEqual([pids.claude, pids.codex].sort())
     for (const [name, , kill] of cases) {
       const id = ids[name]
@@ -385,6 +456,9 @@ describe('recoverFixJobs', () => {
       expect(job.killedPid, name).toBe(kill ? pids[name] : undefined)
       expect(await messages(id), name).toMatch(/agent không sửa được: .*gián đoạn/)
     }
+    expect(readJob(q, `${ids.otherclaude}-1`).sparedPid).toBe(pids.otherclaude)
+    expect(await messages(ids.otherclaude)).toMatch(/pid \d+ \(claude\.exe\) không chạy thư mục job này — không dừng/)
+    expect(await messages(ids.claude)).toMatch(/đã dừng agent còn chạy/)
   })
 
   it('leaves a job started by this process alone', async () => {
@@ -422,5 +496,21 @@ describe('environment and executables', () => {
     fs.mkdirSync(path.dirname(claude), { recursive: true })
     fs.writeFileSync(claude, 'x')
     expect(findClaudeExe({ USERPROFILE: home })).toBe(claude)
+  })
+
+  it('codexConfigModel reads only the top-level model; codex argv drops -m when there is none', async () => {
+    const home = path.join(tmp, 'home')
+    fs.mkdirSync(path.join(home, '.codex'), { recursive: true })
+    const cfg = path.join(home, '.codex', 'config.toml')
+    expect(codexConfigModel({ USERPROFILE: home })).toBeNull()
+    fs.writeFileSync(cfg, '\uFEFFapproval_policy = "never"\r\nmodel = "gpt-6.1-sol"  # main\r\n[profiles.fast]\r\nmodel = "gpt-mini"\r\n')
+    expect(codexConfigModel({ USERPROFILE: home })).toBe('gpt-6.1-sol')
+    fs.writeFileSync(cfg, 'sandbox_mode = "danger-full-access"\n[profiles.fast]\nmodel = "gpt-mini"\n')
+    expect(codexConfigModel({ USERPROFILE: home })).toBeNull()
+    const job = path.join(tmp, 'job')
+    const fromCfg = await agentCommand('codex', job, { codexExe: 'C:\\c.exe', env: { USERPROFILE: home } })
+    expect(fromCfg.args).toEqual(['exec', '--ignore-user-config', '-C', job, '--skip-git-repo-check', '--sandbox', 'workspace-write', '-o', path.join(job, 'last-message.txt'), FIX_PROMPT])
+    fs.writeFileSync(cfg, "model = 'gpt-x'\n")
+    expect((await agentCommand('codex', job, { codexExe: 'C:\\c.exe', env: { USERPROFILE: home } })).args.slice(0, 4)).toEqual(['exec', '--ignore-user-config', '-m', 'gpt-x'])
   })
 })
