@@ -31,7 +31,8 @@ const STOP_CODES = new Set(['disabled', 'drive_not_connected'])
 const RETRY_STATUSES = new Set([429, 502, 503, 504])
 
 /**
- * @param {{ baseUrl?: string, token?: string, fetchImpl?: typeof fetch, sleep?: (ms: number) => Promise<void>, budgetMs?: number, now?: () => number }} [opts]
+ * `timeoutMs` (optional) aborts each single request after that long; the abort counts as a network error (retried within the budget).
+ * @param {{ baseUrl?: string, token?: string, fetchImpl?: typeof fetch, sleep?: (ms: number) => Promise<void>, budgetMs?: number, now?: () => number, timeoutMs?: number|null }} [opts]
  */
 export function createDeliveryClient({
   baseUrl = process.env.ECOM_URL,
@@ -40,6 +41,7 @@ export function createDeliveryClient({
   sleep = ms => new Promise(r => setTimeout(r, ms)),
   budgetMs = 30 * 60 * 1000,
   now = () => Date.now(),
+  timeoutMs = null,
 } = {}) {
   if (!baseUrl) throw new Error('ECOM_URL chưa được đặt')
   if (!token) throw new Error('DESIGN_WORKER_TOKEN chưa được đặt')
@@ -62,7 +64,9 @@ export function createDeliveryClient({
       let retryAfterMs = null
       let lastError = null
       try {
-        const res = await fetchImpl(`${root}${route}`, { method, headers, body })
+        const init = { method, headers, body }
+        if (timeoutMs) init.signal = AbortSignal.timeout(timeoutMs)
+        const res = await fetchImpl(`${root}${route}`, init)
         status = res.status
         {
           const text = await res.text()

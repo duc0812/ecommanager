@@ -116,6 +116,24 @@ describe('addOrUpdate', () => {
     expect(b).toMatchObject({ itemId: 'rq_picked01', version: 2, created: false })
     await expect(q.addOrUpdate(base({ id: 'bad id/..', groupKey: 'G9', taskKey: 'K9' }))).rejects.toThrow(/id/)
   })
+
+  it('member keys: activeByTaskKey finds a group item by any member; a changed member set is a new version even with the same files', async () => {
+    const a = await q.addOrUpdate(base({ taskKey: 'A_1', groupKey: 'A_1' }))
+    expect(await q.memberKeys(a.itemId)).toEqual(['A_1'])
+    expect(await q.activeByTaskKey('B_1')).toBeNull()
+    clock += 60_000
+    const b = await q.addOrUpdate(base({ taskKey: 'A_1', groupKey: 'A_1', kind: 'group', taskKeys: ['A_1', 'B_1'] }))
+    expect(b).toMatchObject({ itemId: a.itemId, version: 2, changed: true })
+    const it = await q.get(a.itemId)
+    expect(it.kind).toBe('group')
+    expect(it.enteredAt).toBe('2026-11-15T10:01:00.000Z')
+    expect(await q.memberKeys(a.itemId)).toEqual(['A_1', 'B_1'])
+    expect((await q.activeByTaskKey('B_1'))?.id).toBe(a.itemId)
+    const c = await q.addOrUpdate(base({ taskKey: 'A_1', groupKey: 'A_1', kind: 'group', taskKeys: ['B_1', 'A_1'] }))
+    expect(c.changed).toBe(false)
+    await q.setStatus(a.itemId, 'approved')
+    expect(await q.activeByTaskKey('B_1')).toBeNull()
+  })
 })
 
 describe('reads', () => {

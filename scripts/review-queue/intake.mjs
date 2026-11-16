@@ -1,6 +1,7 @@
 import fs from 'fs'
 import path from 'path'
 import crypto from 'crypto'
+import { createDeliveryClient } from '../lib/delivery-client.mjs'
 import { deliverPlanViaApi, planLinesToApi, sharedIdsFromLedger } from '../lib/plan-to-api.mjs'
 import { ACTIVE_STATUSES, newItemId, openQueue } from './store.mjs'
 
@@ -15,6 +16,8 @@ export const PREVIEW_MAX_PX = 1600
 const DOWNLOAD_TIMEOUT_MS = 15_000
 const DOWNLOAD_MAX_BYTES = 40 * 1024 * 1024
 const PENDING = 'rq-pending:'
+const NOTE_BUDGET_MS = 30_000
+const NOTE_TIMEOUT_MS = 10_000
 const QA_VERDICTS = ['pass', 'fail', 'unchecked']
 
 export const queueRootFromEnv = () => process.env.REVIEW_QUEUE_ROOT || DEFAULT_QUEUE_ROOT
@@ -22,6 +25,11 @@ export const queueRootFromEnv = () => process.env.REVIEW_QUEUE_ROOT || DEFAULT_Q
 export const intakeLockKey = groupKey => `intake:${groupKey}`
 
 const errText = e => (e instanceof Error ? e.message : String(e))
+
+/** Client for the prod notes only: a short budget and a per-request abort, so a slow prod never holds the run for long. */
+export function makeNoteClient(opts = {}) {
+  return createDeliveryClient({ budgetMs: NOTE_BUDGET_MS, timeoutMs: NOTE_TIMEOUT_MS, ...opts })
+}
 
 /**
  * planLinesToApi for the queue: a later line of a shared group whose first line has no Drive file yet carries a pending
@@ -187,24 +195,31 @@ const partBase = f => `${f.kind ?? 'PRINT'}_${f.printArea}`.replace(/[^A-Za-z0-9
 
 /**
  * @param {{
- *   plan: { lines: any[] }, apiLines: any[], queue: any, storageRoot: string, snapshot: any,
+ *   plan: { lines: any[] }, apiLines: any[], queue: any, snapshot: any,
  *   qaByKey?: Record<string, { verdict: string, items: string[] }>, client?: { note: (key: string, message: string) => Promise<any> } | null,
  *   previewer?: (input: string|Buffer, dst: string) => Promise<any>, download?: (url: string, opts?: any) => Promise<Buffer>,
  *   source?: { cli?: string, spec?: string|null, out?: string, ledgerPath?: string }, log?: (m: string) => void,
  * }} opts
- * @returns {Promise<{ enqueued: string[], unchanged: string[], bypassed: string[], refused: { taskKey: string, reason: string }[] }>}
+ * Notes to prod go out after every group is in the queue; the first failure stops them (one warning line, keys in `unnoted`).
+ * @returns {Promise<{ enqueued: string[], unchanged: string[], bypassed: string[], refused: { taskKey: string, reason: string }[], reasons: Record<string, string>, unnoted: string[] }>}
  */
 export async function enqueuePlan({
-  plan, apiLines, queue, storageRoot, snapshot, qaByKey = {}, client = null, previewer = makePreview, download = downloadImage,
+  plan, apiLines, queue, snapshot, qaByKey = {}, client = null, previewer = makePreview, download = downloadImage,
   source = {}, log = console.log,
 }) {
-  void storageRoot
-  const out = { enqueued: [], unchanged: [], bypassed: [], refused: [] }
+  const out = { enqueued: [], unchanged: [], bypassed: [], refused: [], reasons: {}, unnoted: [] }
+  const toNote = []
   const planByKey = new Map((plan?.lines ?? []).map(l => [l.taskKey, l]))
   const refuse = (keys, reason) => { for (const k of keys) out.refused.push({ taskKey: k, reason }) }
 
   for (const [groupKey, lines] of groupLines(apiLines ?? [])) {
     const keys = lines.map(l => l.taskKey)
+    let elsewhere = null
+    for (const k of keys) {
+      const held = await queue.activeByTaskKey(k)
+      if (held && held.groupKey !== groupKey) { elsewhere = held; break }
+    }
+    if (elsewhere) { refuse(keys, `đã có trong hàng chờ ${elsewhere.id}`); continue }
     if (!keys.includes(groupKey)) {
       refuse(keys, `dùng chung file với ${groupKey} nhưng ${groupKey} không có trong lần chạy này — giao hoặc đưa ${groupKey} vào hàng chờ trước`)
       continue
@@ -223,25 +238,37 @@ export async function enqueuePlan({
     if (!locals.length) { out.bypassed.push(...keys); continue }
     try {
       const r = await queue.withLock(intakeLockKey(groupKey), () => enqueueGroup({ groupKey, lines, locals }))
-      if (r.outcome === 'unchanged') { out.unchanged.push(...keys); continue }
+      if (r.outcome === 'unchanged') {
+        out.unchanged.push(...keys)
+        if (r.reason) for (const k of keys) out.reasons[k] = r.reason
+        continue
+      }
       out.enqueued.push(...keys)
-      if (r.created) await notifyProd(r.itemId, keys)
+      if (r.created) toNote.push({ itemId: r.itemId, keys: lines.map(l => l.taskKey) })
     } catch (e) {
       refuse(keys, `lỗi khi đưa vào hàng chờ: ${errText(e)}`)
     }
   }
+  await notifyProd()
   return out
 
-  async function notifyProd(itemId, keys) {
-    for (const k of keys) {
+  async function notifyProd() {
+    const pending = toNote.flatMap(n => n.keys.map(k => ({ itemId: n.itemId, key: k })))
+    for (let i = 0; i < pending.length; i++) {
+      const { itemId, key } = pending[i]
       try {
         if (!client) throw new Error('không có client')
-        const r = await client.note(k, QUEUE_NOTE)
+        const r = await client.note(key, QUEUE_NOTE)
         if (r && r.ok === false) throw new Error(`HTTP ${r.status} ${r.body?.code ?? ''} ${r.body?.error ?? ''}`.trim())
-        await queue.addEvent(itemId, 'note', `Đã ghi chú lên prod: ${k}`)
+        await queue.addEvent(itemId, 'note', `Đã ghi chú lên prod: ${key}`)
       } catch (e) {
-        log(`${k}: không ghi được ghi chú lên prod (${errText(e)}) — dòng vẫn ở hàng chờ`)
-        try { await queue.addEvent(itemId, 'note_failed', `Không ghi được ghi chú lên prod cho ${k}: ${errText(e)}`) } catch { /* the log line above is enough */ }
+        const left = pending.slice(i)
+        out.unnoted = left.map(p => p.key)
+        log(`CẢNH BÁO: không ghi được ghi chú lên prod (${errText(e)}) — dừng gửi ghi chú; ${left.length} dòng vẫn ở hàng chờ nhưng prod chưa biết: ${out.unnoted.join(', ')}`)
+        for (const p of left) {
+          try { await queue.addEvent(p.itemId, 'note_failed', `Không ghi được ghi chú lên prod cho ${p.key}: ${errText(e)}`) } catch { /* the warning line is enough */ }
+        }
+        return
       }
     }
   }
@@ -259,11 +286,14 @@ export async function enqueuePlan({
       sources.set(src, { sha: await sha256File(src), part, ext: path.extname(src).toLowerCase(), file, line })
     }
     const shaKey = [...sources.values()].map(s => s.sha).sort().join('|')
+    const taskKeys = [...new Set(lines.map(l => l.taskKey))].sort()
     const active = (await queue.list({ statuses: ACTIVE_STATUSES })).find(i => i.groupKey === groupKey) ?? null
     let prevDir = null
     if (active) {
+      if (active.status === 'fixing') return { outcome: 'unchanged', itemId: active.id, reason: 'agent đang sửa' }
       const cur = (await queue.versions(active.id)).find(v => v.n === active.version)
-      if (cur && (cur.files ?? []).map(f => f.sha256).sort().join('|') === shaKey) return { outcome: 'unchanged', itemId: active.id }
+      const sameKeys = (await queue.memberKeys(active.id)).join('|') === taskKeys.join('|')
+      if (cur && sameKeys && (cur.files ?? []).map(f => f.sha256).sort().join('|') === shaKey) return { outcome: 'unchanged', itemId: active.id }
       prevDir = path.join(queue.root, 'items', active.id, `v${active.version}`)
     }
     const itemId = active?.id ?? newItemId()
@@ -290,7 +320,14 @@ export async function enqueuePlan({
         files.push({ part: s.part, kind: s.file.kind, printArea: s.file.printArea, taskKey: s.line.taskKey, fileName: s.file.fileName, path: dst, sha256, preview, source: src })
         copyOf.set(src, dst)
       }
-      const storedLines = lines.map(l => ({ ...l, files: l.files.map(f => (f.path ? { ...f, path: copyOf.get(path.resolve(f.path)) } : f)) }))
+      const storedLines = lines.map(l => ({
+        ...l,
+        files: l.files.map(f => {
+          if (!f.path) return f
+          const { knownDriveFileId: _known, ...rest } = f
+          return { ...rest, path: copyOf.get(path.resolve(f.path)) }
+        }),
+      }))
       const infos = []
       for (const l of lines) infos.push(await lineInfo({ snapshot, taskKey: l.taskKey, planLine: planByKey.get(l.taskKey), log }))
       const lead = infos[0]
@@ -318,7 +355,7 @@ export async function enqueuePlan({
       }
       if (lines.length > 1) meta.lines = infos
       const r = await queue.addOrUpdate({
-        id: itemId, taskKey: groupKey, groupKey, kind: lines.length > 1 ? 'group' : 'line',
+        id: itemId, taskKey: groupKey, taskKeys, groupKey, kind: lines.length > 1 ? 'group' : 'line',
         apiLines: storedLines, files, meta, qa: combineQa(lines.map(l => l.taskKey), qaByKey),
       })
       recorded = r.changed
@@ -347,7 +384,7 @@ function readQaJson(file) {
  * deliver the bypassed lines through the normal API path. `makeDeps` (client + uploader) is only called when needed.
  * @param {{
  *   plan: { lines: any[] }, storageRoot: string, outDir: string, snapshot: any, queueRoot?: string, sourceCli: string,
- *   spec?: string|null, qaJson?: string|null, makeDeps: () => { client: any, uploader: any },
+ *   spec?: string|null, qaJson?: string|null, makeDeps: () => { client: any, uploader: any }, makeNoteClient?: () => { note: Function },
  *   previewOf?: ((p: string) => Promise<Buffer|null>) | null, previewer?: (input: string|Buffer, dst: string) => Promise<any>,
  *   download?: (url: string, opts?: any) => Promise<Buffer>, log?: (m: string) => void,
  * }} opts
@@ -355,7 +392,7 @@ function readQaJson(file) {
  */
 export async function runQueueIntake({
   plan, storageRoot, outDir, snapshot, queueRoot = queueRootFromEnv(), sourceCli, spec = null, qaJson = null,
-  makeDeps, previewOf = null, previewer = makePreview, download = downloadImage, log = console.log,
+  makeDeps, makeNoteClient: makeNotes = () => makeNoteClient(), previewOf = null, previewer = makePreview, download = downloadImage, log = console.log,
 }) {
   const ledgerPath = path.join(outDir, 'api-ledger.json')
   const qaByKey = qaJson ? readQaJson(qaJson) : {}
@@ -363,13 +400,14 @@ export async function runQueueIntake({
   log(`\n== Hàng chờ duyệt local (${queueRoot}): ${lines.length} dòng ==`)
   let deps = null
   const getDeps = () => (deps ??= makeDeps())
-  let result = { enqueued: [], unchanged: [], bypassed: [], refused: [] }
+  let notes = null
+  let result = { enqueued: [], unchanged: [], bypassed: [], refused: [], reasons: {}, unnoted: [] }
   if (lines.length) {
     const queue = await openQueue({ root: queueRoot })
     try {
       result = await enqueuePlan({
-        plan, apiLines: lines, queue, storageRoot, snapshot, qaByKey, previewer, download, log,
-        client: { note: (k, m) => getDeps().client.note(k, m) },
+        plan, apiLines: lines, queue, snapshot, qaByKey, previewer, download, log,
+        client: { note: (k, m) => (notes ??= makeNotes()).note(k, m) },
         source: { cli: sourceCli, spec, out: outDir, ledgerPath },
       })
     } finally {
@@ -378,7 +416,7 @@ export async function runQueueIntake({
   }
   const said = new Map()
   for (const k of result.enqueued) said.set(k, 'vào hàng chờ')
-  for (const k of result.unchanged) said.set(k, 'không đổi (đã có trong hàng chờ)')
+  for (const k of result.unchanged) said.set(k, `không đổi (${result.reasons[k] ?? 'đã có trong hàng chờ'})`)
   for (const k of result.bypassed) said.set(k, 'giao thẳng (chỉ dùng lại file đã có trên Drive)')
   for (const r of result.refused) said.set(r.taskKey, `không vào hàng chờ: ${r.reason}`)
   for (const l of lines) if (said.has(l.taskKey)) { log(`  ${l.taskKey}  ${said.get(l.taskKey)}`); said.delete(l.taskKey) }

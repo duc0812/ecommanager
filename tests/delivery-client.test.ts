@@ -66,6 +66,21 @@ describe('delivery client', () => {
     expect(h.waits).toEqual([5000])
   })
 
+  it('with timeoutMs aborts a hanging request and retries within the budget', async () => {
+    const h = harness([])
+    const signals: any[] = []
+    const fetchImpl = (url: any, init: any) => {
+      h.calls.push({ url, init })
+      signals.push(init.signal)
+      return new Promise<Response>((_, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason)))
+    }
+    const c = make(h, { fetchImpl, timeoutMs: 20, budgetMs: 30_000 })
+    await expect(c.note('K', 'm')).rejects.toBeInstanceOf(DeliveryGaveUp)
+    expect(h.calls).toHaveLength(3)
+    expect(h.waits).toEqual([5000, 10000])
+    expect(signals.every(s => s && s.aborted)).toBe(true)
+  })
+
   it('backs off 5s, 10s, 20s... capped at 60s without Retry-After, also on 429 and network errors', async () => {
     const h = harness([json({}, 429), new Error('ECONNRESET'), json({}, 503), json({}, 503), json({}, 503), json({}, 503), json({ ok: 1 })])
     const r = await make(h).taskState('K')

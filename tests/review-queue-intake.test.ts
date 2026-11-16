@@ -6,7 +6,8 @@ import crypto from 'crypto'
 import sharp from 'sharp'
 import { createClient } from '@libsql/client'
 import { openQueue } from '../scripts/review-queue/store.mjs'
-import { enqueuePlan, queueApiLines, resolveShared, makePreview, runQueueIntake, QUEUE_NOTE } from '../scripts/review-queue/intake.mjs'
+import { enqueuePlan, queueApiLines, resolveShared, makePreview, runQueueIntake, makeNoteClient, QUEUE_NOTE } from '../scripts/review-queue/intake.mjs'
+import { DeliveryGaveUp } from '../scripts/lib/delivery-client.mjs'
 
 const NOTE = 'Đang chờ chủ shop duyệt ở máy local (tối đa 3 giờ)'
 let tmp: string
@@ -67,7 +68,7 @@ async function makeSnapshot(dir: string) {
 const source = () => ({ cli: 'push-local-renders', out: outDir, ledgerPath })
 const enqueue = async (plan: any, over: any = {}) => {
   const { lines } = queueApiLines(plan, { storageRoot, ledgerPath })
-  return enqueuePlan({ plan, apiLines: lines, queue: q, storageRoot, snapshot, client, previewer, download, source: source(), log, ...over })
+  return enqueuePlan({ plan, apiLines: lines, queue: q, snapshot, client, previewer, download, source: source(), log, ...over })
 }
 
 beforeEach(async () => {
@@ -94,7 +95,7 @@ describe('enqueuePlan', () => {
     put('r/LIT1_1/back.png', 'BACK-ART')
     const plan = { lines: [planLine({ files: [printFile(), printFile({ localId: 'a2', printArea: 'back', fileName: 'back.png', storagePath: 'r/LIT1_1/back.png' })] })] }
     const r = await enqueue(plan)
-    expect(r).toEqual({ enqueued: ['LIT1_1'], unchanged: [], bypassed: [], refused: [] })
+    expect(r).toMatchObject({ enqueued: ['LIT1_1'], unchanged: [], bypassed: [], refused: [] })
     const item = await q.activeByTaskKey('LIT1_1')
     expect(item).toMatchObject({ kind: 'line', groupKey: 'LIT1_1', status: 'waiting', version: 1, qa: { verdict: 'unchecked', items: [] } })
     const v1 = path.join(queueRoot, 'items', item.id, 'v1')
@@ -130,7 +131,7 @@ describe('enqueuePlan', () => {
     const before = await q.activeByTaskKey('LIT1_1')
     downloads = []
     const r = await enqueue(plan)
-    expect(r).toEqual({ enqueued: [], unchanged: ['LIT1_1'], bypassed: [], refused: [] })
+    expect(r).toMatchObject({ enqueued: [], unchanged: ['LIT1_1'], bypassed: [], refused: [] })
     const after = await q.get(before.id)
     expect(after.version).toBe(1)
     expect(after.enteredAt).toBe(before.enteredAt)
@@ -167,7 +168,7 @@ describe('enqueuePlan', () => {
     const shared = (taskKey: string) => planLine({ taskKey, files: [printFile({ storagePath: null, transfer: 'reuse', shared: true, driveFileId: 'DRV_OLD', size: 99 })] })
     const plan = { lines: [shared('LIT2_1'), shared('LIT3_1'), { taskKey: 'LIT9_9', action: 'revert', files: [], replaces: [{ id: 'art9' }], readiness: 'LOW', reason: 'tay' }] }
     const r = await enqueue(plan)
-    expect(r).toEqual({ enqueued: [], unchanged: [], bypassed: ['LIT2_1', 'LIT3_1', 'LIT9_9'], refused: [] })
+    expect(r).toMatchObject({ enqueued: [], unchanged: [], bypassed: ['LIT2_1', 'LIT3_1', 'LIT9_9'], refused: [] })
     expect(await q.list()).toEqual([])
     expect(notes).toEqual([])
   })
@@ -177,7 +178,7 @@ describe('enqueuePlan', () => {
     const lead = planLine({ taskKey: 'LIT2_1', files: [printFile({ storagePath: 'spec/dl/x.png', fileName: 'front.png' })] })
     const later = planLine({ taskKey: 'LIT3_1', files: [printFile({ storagePath: 'spec/dl/x.png', transfer: 'reuse', shared: true, sharedFrom: 'LIT2_1', driveFileId: null })] })
     const r = await enqueue({ lines: [lead, later] })
-    expect(r).toEqual({ enqueued: ['LIT2_1', 'LIT3_1'], unchanged: [], bypassed: [], refused: [] })
+    expect(r).toMatchObject({ enqueued: ['LIT2_1', 'LIT3_1'], unchanged: [], bypassed: [], refused: [] })
     const items = await q.list()
     expect(items).toHaveLength(1)
     const item = items[0]
@@ -191,6 +192,7 @@ describe('enqueuePlan', () => {
     expect(item.meta.lines.map((m: any) => m.taskKey)).toEqual(['LIT2_1', 'LIT3_1'])
     expect(item.meta.productTitle).toBe('Custom Hoodie 2')
     expect(notes.map(n => n[0])).toEqual(['LIT2_1', 'LIT3_1'])
+    expect((await q.activeByTaskKey('LIT3_1'))?.id).toBe(item.id)
 
     const waiting = resolveShared(item.apiLines, () => null)
     expect(waiting.waiting).toEqual(['LIT3_1'])
@@ -236,6 +238,8 @@ describe('enqueuePlan', () => {
       download: async () => { throw new Error('timeout') },
     })
     expect(r.enqueued).toEqual(['LIT1_1'])
+    expect(r.unnoted).toEqual(['LIT1_1'])
+    expect(logs.filter(l => l.includes('CẢNH BÁO'))).toHaveLength(1)
     const item = await q.activeByTaskKey('LIT1_1')
     expect(item).toMatchObject({ status: 'qa_failed', qa: { verdict: 'fail', items: ['tên tràn khung'] } })
     expect(item.meta.customerPreview).toBeNull()
@@ -292,10 +296,12 @@ describe('runQueueIntake', () => {
       plan: { lines: [planLine(), shared, { taskKey: 'LIT5_5', action: 'skip', skipReason: 'Task trên prod đang DONE', files: [] }] },
       storageRoot, outDir, snapshot, queueRoot, sourceCli: 'push-local-renders', qaJson: qaFile,
       makeDeps: () => ({ client: fakeClient, uploader: { upload: async () => { throw new Error('no upload expected') } } }),
+      makeNoteClient: () => client,
       previewer, download, log: (m: string) => out.push(m),
     })
     expect(code).toBe(0)
     expect(commits).toEqual(['LIT2_1'])
+    expect(notes).toEqual([['LIT1_1', NOTE]])
     const text = out.join('\n')
     expect(text).toMatch(/LIT1_1\s+vào hàng chờ/)
     expect(text).toMatch(/LIT2_1\s+giao thẳng/)
@@ -310,10 +316,96 @@ describe('runQueueIntake', () => {
     const emptyRoot = path.join(tmp, 'never')
     const code = await runQueueIntake({
       plan: { lines: [] }, storageRoot, outDir, snapshot, queueRoot: emptyRoot, sourceCli: 'push-local-renders',
-      makeDeps: () => { throw new Error('no client expected') }, previewer, download, log: (m: string) => out.push(m),
+      makeDeps: () => { throw new Error('no client expected') }, makeNoteClient: () => { throw new Error('no note client expected') }, previewer, download, log: (m: string) => out.push(m),
     })
     expect(code).toBe(0)
     expect(out.join('\n')).toMatch(/0 dòng/)
     expect(fs.existsSync(emptyRoot)).toBe(false)
+  })
+})
+
+describe('fix round 1', () => {
+  const lead = () => planLine({ taskKey: 'LIT2_1', files: [printFile({ storagePath: 'spec/dl/x.png' })] })
+  const later = () => planLine({ taskKey: 'LIT3_1', files: [printFile({ storagePath: 'spec/dl/x.png', transfer: 'reuse', shared: true, sharedFrom: 'LIT2_1', driveFileId: null })] })
+
+  it('a key already in another active item is refused, never queued twice or bypassed (A with B queued, then --line B)', async () => {
+    put('spec/dl/x.png', 'SHARED-ART')
+    await enqueue({ lines: [lead(), later()] })
+    const item = await q.activeByTaskKey('LIT2_1')
+    put('r/LIT3_1/front.png', 'OWN-ART')
+    const own = await enqueue({ lines: [planLine({ taskKey: 'LIT3_1', files: [printFile({ storagePath: 'r/LIT3_1/front.png' })] })] })
+    expect(own.enqueued).toEqual([])
+    expect(own.refused).toEqual([{ taskKey: 'LIT3_1', reason: `đã có trong hàng chờ ${item.id}` }])
+    const shortcut = await enqueue({ lines: [planLine({ taskKey: 'LIT3_1', files: [printFile({ storagePath: null, transfer: 'reuse', shared: true, driveFileId: 'DRV_OLD', size: 9 })] })] })
+    expect(shortcut.bypassed).toEqual([])
+    expect(shortcut.refused).toEqual([{ taskKey: 'LIT3_1', reason: `đã có trong hàng chờ ${item.id}` }])
+    expect(await q.list()).toHaveLength(1)
+  })
+
+  it('a group that gains a member with byte-identical files is a new version holding the new member', async () => {
+    put('spec/dl/x.png', 'SHARED-ART')
+    await enqueue({ lines: [lead()] })
+    const first = await q.activeByTaskKey('LIT2_1')
+    expect(first.kind).toBe('line')
+    const r = await enqueue({ lines: [lead(), later()] })
+    expect(r.enqueued).toEqual(['LIT2_1', 'LIT3_1'])
+    const item = await q.get(first.id)
+    expect(item).toMatchObject({ version: 2, kind: 'group' })
+    expect(item.apiLines.map((l: any) => l.taskKey)).toEqual(['LIT2_1', 'LIT3_1'])
+    expect((await q.activeByTaskKey('LIT3_1'))?.id).toBe(first.id)
+    expect(notes.map(n => n[0])).toEqual(['LIT2_1'])
+  })
+
+  it('a copied file loses knownDriveFileId so delivery uploads exactly the reviewed copy', async () => {
+    put('r/LIT1_1/front.png', 'FRONT-ART')
+    await enqueue({ lines: [planLine({ files: [printFile({ transfer: 'reuse', driveFileId: 'DRV_LOCALPUSH', size: 9 })] })] })
+    const item = await q.activeByTaskKey('LIT1_1')
+    const f = item.apiLines[0].files[0]
+    expect(f.knownDriveFileId).toBeUndefined()
+    expect(f.path).toBe(path.join(queueRoot, 'items', item.id, 'v1', 'PRINT_front.png'))
+  })
+
+  it('an item the agent is fixing is left alone: unchanged with reason, nothing written', async () => {
+    put('r/LIT1_1/front.png', 'FRONT-ART')
+    await enqueue({ lines: [planLine()] })
+    const item = await q.activeByTaskKey('LIT1_1')
+    await q.setStatus(item.id, 'fixing', { reason: 'Codex' })
+    put('r/LIT1_1/front.png', 'NEW-ART')
+    const r = await enqueue({ lines: [planLine()] })
+    expect(r.unchanged).toEqual(['LIT1_1'])
+    expect(r.reasons).toEqual({ LIT1_1: 'agent đang sửa' })
+    expect(await q.get(item.id)).toMatchObject({ version: 1, status: 'fixing' })
+    expect(fs.existsSync(path.join(queueRoot, 'items', item.id, 'v2'))).toBe(false)
+  })
+
+  it('notes go out after the enqueue loop, and the first failure stops them with one warning line', async () => {
+    put('r/LIT1_1/front.png', 'A')
+    put('r/LIT3_1/front.png', 'B')
+    const seen: number[] = []
+    let calls = 0
+    const failing = { note: async () => { calls++; seen.push((await q.list()).length); throw new Error('prod chậm') } }
+    const r = await enqueue({ lines: [planLine(), planLine({ taskKey: 'LIT3_1', files: [printFile({ storagePath: 'r/LIT3_1/front.png' })] })] }, { client: failing })
+    expect(r.enqueued).toEqual(['LIT1_1', 'LIT3_1'])
+    expect(calls).toBe(1)
+    expect(seen).toEqual([2])
+    expect(r.unnoted).toEqual(['LIT1_1', 'LIT3_1'])
+    const warn = logs.filter(l => l.includes('CẢNH BÁO'))
+    expect(warn).toHaveLength(1)
+    expect(warn[0]).toContain('prod chậm')
+    expect(warn[0]).toContain('LIT3_1')
+  })
+
+  it('the note client has its own 30 s budget and a per-request abort', async () => {
+    const waits: number[] = []
+    const inits: any[] = []
+    let t = 0
+    const c = makeNoteClient({
+      baseUrl: 'https://x.test', token: 't',
+      fetchImpl: async (_u: any, init: any) => { inits.push(init); throw new Error('down') },
+      sleep: async (ms: number) => { waits.push(ms); t += ms }, now: () => t,
+    })
+    await expect(c.note('K', 'm')).rejects.toBeInstanceOf(DeliveryGaveUp)
+    expect(waits).toEqual([5000, 10000])
+    expect(inits.every(i => i.signal)).toBe(true)
   })
 })

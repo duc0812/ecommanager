@@ -63,6 +63,13 @@ const SCHEMA = [
     createdAt TEXT NOT NULL
   )`,
   `CREATE INDEX IF NOT EXISTS events_item ON events (itemId)`,
+  `CREATE TABLE IF NOT EXISTS item_keys (
+    itemId TEXT NOT NULL,
+    taskKey TEXT NOT NULL,
+    PRIMARY KEY (itemId, taskKey)
+  )`,
+  `CREATE INDEX IF NOT EXISTS item_keys_task ON item_keys (taskKey)`,
+  `INSERT OR IGNORE INTO item_keys (itemId, taskKey) SELECT id, taskKey FROM items`,
   `CREATE TABLE IF NOT EXISTS locks (
     itemId TEXT PRIMARY KEY,
     pid INTEGER NOT NULL,
@@ -107,6 +114,18 @@ function shaKey(files) {
   return (files ?? []).map(f => f.sha256).sort().join('|')
 }
 
+const memberSet = (taskKey, taskKeys) => [...new Set([taskKey, ...(taskKeys ?? [])].filter(Boolean))].sort()
+
+async function readKeys(executor, itemId) {
+  const r = await executor.execute({ sql: 'SELECT taskKey FROM item_keys WHERE itemId = ? ORDER BY taskKey', args: [itemId] })
+  return r.rows.map(x => x.taskKey)
+}
+
+async function writeKeys(executor, itemId, keys) {
+  await executor.execute({ sql: 'DELETE FROM item_keys WHERE itemId = ?', args: [itemId] })
+  for (const k of keys) await executor.execute({ sql: 'INSERT INTO item_keys (itemId, taskKey) VALUES (?, ?)', args: [itemId, k] })
+}
+
 function lockedError(itemId) {
   const err = new Error(`Dòng ${itemId} đang được xử lý bởi tiến trình khác`)
   err.code = 'locked'
@@ -145,12 +164,16 @@ export async function openQueue({ root, now = () => new Date(), isAlive = pidAli
     root,
 
     /** @returns {Promise<{ itemId: string, version: number, created: boolean, changed: boolean }>} */
-    /** `id` (optional) is used only when a new item is created, so the caller can copy its files under items/<id> first. */
-    async addOrUpdate({ id: wantedId, taskKey, groupKey, kind, apiLines, files, meta, qa }) {
+    /**
+     * `id` (optional) is used only when a new item is created, so the caller can copy its files under items/<id> first.
+     * `taskKeys` are the item's member keys (default: taskKey alone); a different member set is a new version like different files.
+     */
+    async addOrUpdate({ id: wantedId, taskKey, taskKeys, groupKey, kind, apiLines, files, meta, qa }) {
       if (wantedId != null && !ITEM_ID.test(wantedId)) throw new Error(`id không hợp lệ: ${wantedId}`)
       const tx = await begin()
       try {
         const t = iso()
+        const keys = memberSet(taskKey, taskKeys)
         const status = qa?.verdict === 'fail' ? 'qa_failed' : 'waiting'
         const found = await tx.execute({
           sql: `SELECT * FROM items WHERE groupKey = ? AND status IN (${activeMarks}) ORDER BY createdAt DESC LIMIT 1`,
@@ -168,6 +191,7 @@ export async function openQueue({ root, now = () => new Date(), isAlive = pidAli
             sql: 'INSERT INTO versions (itemId, n, files, apiLines, qa, createdAt) VALUES (?, 1, ?, ?, ?, ?)',
             args: [id, json(files), json(apiLines), json(qa), t],
           })
+          await writeKeys(tx, id, keys)
           await tx.execute({
             sql: 'INSERT INTO events (itemId, type, message, createdAt) VALUES (?, ?, ?, ?)',
             args: [id, 'created', `Vào hàng chờ (v1, ${status})`, t],
@@ -180,7 +204,8 @@ export async function openQueue({ root, now = () => new Date(), isAlive = pidAli
           args: [cur.id, cur.version],
         })
         const curFiles = parse(curVer.rows[0]?.files) ?? []
-        if (shaKey(curFiles) === shaKey(files)) {
+        const curKeys = await readKeys(tx, cur.id)
+        if (shaKey(curFiles) === shaKey(files) && curKeys.join('|') === keys.join('|')) {
           await tx.commit()
           return { itemId: cur.id, version: cur.version, created: false, changed: false }
         }
@@ -192,13 +217,14 @@ export async function openQueue({ root, now = () => new Date(), isAlive = pidAli
           args: [cur.id, n, json(files), json(apiLines), json(qa), t],
         })
         await tx.execute({
-          sql: `UPDATE items SET version = ?, enteredAt = ?, updatedAt = ?, apiLines = ?, qa = ?, meta = ?, taskKey = ?,
+          sql: `UPDATE items SET version = ?, enteredAt = ?, updatedAt = ?, apiLines = ?, qa = ?, meta = ?, taskKey = ?, kind = ?,
                 status = ?, statusReason = ? WHERE id = ?`,
           args: [
-            n, t, t, json(apiLines), json(qa), json(meta ?? cur.meta), taskKey ?? cur.taskKey,
+            n, t, t, json(apiLines), json(qa), json(meta ?? cur.meta), taskKey ?? cur.taskKey, kind ?? cur.kind,
             nextStatus, nextStatus === 'fixing' ? cur.statusReason : null, cur.id,
           ],
         })
+        await writeKeys(tx, cur.id, keys)
         await tx.execute({
           sql: 'INSERT INTO events (itemId, type, message, createdAt) VALUES (?, ?, ?, ?)',
           args: [cur.id, 'version', `Bản mới v${n} (${nextStatus})`, t],
@@ -228,13 +254,19 @@ export async function openQueue({ root, now = () => new Date(), isAlive = pidAli
       return r.rows.map(rowToItem)
     },
 
-    /** @returns {Promise<QueueItem|null>} */
+    /** The active item that holds `taskKey` as any member (a group item is found by every line of the group). @returns {Promise<QueueItem|null>} */
     async activeByTaskKey(taskKey) {
       const r = await db.execute({
-        sql: `SELECT * FROM items WHERE taskKey = ? AND status IN (${activeMarks}) ORDER BY createdAt DESC LIMIT 1`,
+        sql: `SELECT i.* FROM items i JOIN item_keys k ON k.itemId = i.id
+               WHERE k.taskKey = ? AND i.status IN (${activeMarks}) ORDER BY i.createdAt DESC LIMIT 1`,
         args: [taskKey, ...ACTIVE_STATUSES],
       })
       return rowToItem(r.rows[0])
+    },
+
+    /** @returns {Promise<string[]>} sorted member keys of an item */
+    async memberKeys(itemId) {
+      return readKeys(db, itemId)
     },
 
     /** Moving to `fixing` remembers the status it came from in `prevStatus`. Moving into an active status fails (code group_active) when the group already has another active item. */
