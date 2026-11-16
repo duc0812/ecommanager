@@ -33,8 +33,7 @@ export async function main({ env = process.env, argv = process.argv.slice(2), ou
   let back
   try {
     fs.mkdirSync(dir, { recursive: true })
-    fs.writeFileSync(tmp, String(encrypt(token)).trim() + '
-', 'utf8')
+    fs.writeFileSync(tmp, String(encrypt(token)).trim() + '\n', 'utf8')
     back = String(decrypt(tmp) ?? '').trim()
   } catch (e) {
     fs.rmSync(tmp, { force: true })
