@@ -55,6 +55,8 @@ elif script.endswith('process-new-orders.mjs'):
         (out / 'spec-shared.json').write_text(json.dumps(p['shared']), encoding='utf-8')
     if 'flat' in p:
         (out / 'flat-text.json').write_text(json.dumps(p['flat']), encoding='utf-8')
+    for line in p.get('print', []):
+        print(line, flush=True)
     print('Chưa đẩy gì lên prod.', flush=True)
     sys.exit(p.get('exit', 0))
 

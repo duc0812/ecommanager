@@ -338,6 +338,7 @@ class ProcessResult:
     shared_spec: Path | None
     flat: dict | None
     flat_spec: Path | None
+    step_errors: list = field(default_factory=list)
 
 
 def _kill_tree(pid: int) -> None:
@@ -370,6 +371,53 @@ def _has_groups(p: Path) -> bool:
         return False
 
 
+SIDE_STEP_FAILED = re.compile(r'^(flat_text_batch|qa sheet|cm_export|lib_mock|mockup)[\w ]* lỗi')
+
+
+def worker_drain_cmd(cfg: Config) -> list[str]:
+    py = cfg.main_checkout / 'tools' / 'artwork-worker' / '.venv' / 'Scripts' / 'python.exe'
+    return [str(py), str(cfg.tool_worktree / 'tools' / 'artwork-worker' / 'worker.py'), '--drain']
+
+
+def _worker_env(cfg: Config) -> dict:
+    env = {}
+    f = Path(os.environ.get('USERPROFILE') or Path.home()) / '.artwork-worker' / 'local.env'
+    try:
+        for raw in f.read_text(encoding='utf-8-sig').splitlines():
+            k, sep, v = raw.partition('=')
+            if sep and not raw.lstrip().startswith('#'):
+                env[k.strip()] = v.strip().strip('"')
+    except OSError:
+        pass
+    env.update(ECOM_URL=cfg.local_url, PSD_TOOLS_MAX_ALLOC_BYTES='12884901888')
+    return env
+
+
+def drain_leftover_renders(cfg: Config, log: 'RunLog', local_db: Path, timeout_s: float) -> str | None:
+    """Render jobs an earlier run queued but never drained block their lines forever: process-new-orders refuses a line
+    that already has a RENDER_LINE job and only drains when it queued something itself (seen 11/13 after a stopped run)."""
+    import sqlite3
+    try:
+        c = sqlite3.connect(f'file:{Path(local_db).as_posix()}?mode=ro', uri=True)
+        try:
+            n = c.execute("SELECT COUNT(*) FROM ArtworkJob WHERE kind = 'RENDER_LINE' AND status IN ('QUEUED', 'RUNNING')").fetchone()[0]
+        finally:
+            c.close()
+    except sqlite3.Error:
+        return None
+    if not n:
+        return None
+    cmd = worker_drain_cmd(cfg)
+    log.line(f'còn {n} việc render đang chờ từ lần trước — chạy worker --drain')
+    code, out = _run(cmd, Path(cmd[1]).parent, timeout_s, _worker_env(cfg))
+    log.block('worker', out)
+    if code is None:
+        return f'worker --drain quá {round(timeout_s / 60)} phút (việc render còn lại từ lần trước)'
+    if code != 0:
+        return f'worker --drain thoát mã {code} (việc render còn lại từ lần trước)'
+    return None
+
+
 def run_process_new_orders(cfg: Config, since: str, out_dir: Path, log: RunLog, timeout_s: float = PROCESS_TIMEOUT_S) -> ProcessResult:
     import math
     cmd = cfg.node + ['scripts/process-new-orders.mjs', '--since', since, '--url', cfg.local_url, '--out', str(out_dir)]
@@ -377,10 +425,13 @@ def run_process_new_orders(cfg: Config, since: str, out_dir: Path, log: RunLog, 
     code, out = _run(cmd, cfg.tool_worktree, timeout_s)
     log.block('process', out)
     snap = None
+    step_errors = []
     for line in out.splitlines():
         line = line.strip()
         if line.startswith('snapshot '):
             snap = Path(line[len('snapshot '):].strip())
+        elif SIDE_STEP_FAILED.match(line):
+            step_errors.append(line[:600])
     if code is None or code != 0:
         e = StageError('process', f'process-new-orders quá {math.ceil(timeout_s / 60)} phút' if code is None else f'process-new-orders thoát mã {code}')
         e.snapshot = snap  # printed by this run's own freshSnapshot(): ours to drop
@@ -396,7 +447,7 @@ def run_process_new_orders(cfg: Config, since: str, out_dir: Path, log: RunLog, 
         except ValueError:
             raise StageError('process', 'flat-text.json của lần chạy lỗi')
     flat_spec = Path(flat['spec']) if flat and flat.get('spec') and _has_groups(Path(flat['spec'])) else None
-    return ProcessResult(snap, Path(out_dir), shared if _has_groups(shared) else None, flat, flat_spec)
+    return ProcessResult(snap, Path(out_dir), shared if _has_groups(shared) else None, flat, flat_spec, step_errors)
 
 
 def since_date(now: datetime, days: int) -> str:
@@ -677,6 +728,18 @@ def _image_size(p: Path) -> tuple[int, int] | None:
         return None
 
 
+def spec_sheet_size(spec: dict, spec_dir: Path, area: dict) -> tuple[int, int] | None:
+    ps = spec.get('photoshop')
+    if isinstance(ps, dict) and ps.get('width') and ps.get('height'):
+        return int(ps['width']), int(ps['height'])
+    if area.get('base'):
+        size = _image_size(Path(spec_dir) / area['base'])
+        if size:
+            return size
+    nn = next((f for f in spec.get('noNameFiles') or [] if f.get('printArea') == area['printArea'] and f.get('widthPx')), None)
+    return (int(nn['widthPx']), int(nn['heightPx'])) if nn else None
+
+
 QA_VERDICT = {'PASS': 'pass', 'UNCHECKED': 'unchecked', 'HOLD': 'fail', 'ERROR': 'fail'}
 QUEUE_ACTIVE = ('waiting', 'rejected', 'fixing', 'qa_failed', 'needs_look')
 
@@ -868,7 +931,8 @@ def build_plan(cfg: Config, pr: ProcessResult, since: str, tmp_dir: Path, log: R
                     if not f or not f.get('path'):
                         continue
                     size = (f.get('widthPx'), f.get('heightPx')) if f.get('widthPx') else _image_size(files_root / f['path'])
-                    if size and tuple(size) != _image_size(spec_path.parent / a['base']):
+                    want = spec_sheet_size(spec, spec_path.parent, a)
+                    if size and want and tuple(size) != want:
                         mismatch = True
                 if mismatch:
                     add(key, 'flat-text', sz.GuardResult('ERROR', None, 'spec flat-text không khớp khổ file', {'spec': str(spec_path)}),
@@ -912,6 +976,7 @@ PUSH_MIN_LEFT_S = 180
 STAGES = ('--apply', '--prove', '--push')
 API_STAGE = '--via api'
 API_LEDGER = 'api-ledger.json'
+API_SUMMARY = re.compile(r'^\d+ dòng gửi qua API · ', re.M)
 QUEUE_STAGE = '--via api --to-queue'
 QUEUE_HEADER = re.compile(r'^== Hàng chờ duyệt local \(.*\): \d+ dòng ==$')
 QUEUE_SUMMARY = re.compile(r'^\d+ dòng · vào hàng chờ \d+')
@@ -1060,6 +1125,30 @@ def api_outcome(ledger: dict, key: str, started: datetime) -> str:
     raise StageError('push', 'giao qua API xong nhưng api-ledger không ghi nhận dòng', key)
 
 
+def _api_push(cfg: Config, script: str, args: list[str], first: str | None, keys: list[str], log: RunLog, timeout_s: float,
+              started: datetime, ledger_path: Path) -> dict[str, str]:
+    """Exit 1 after the summary line = lines refused or failed one by one: the delivery API spec (7.5) says log them and go
+    on. A stop prints DỪNG (still raised by _push_stage); a crash never reaches the summary line."""
+    per_line = []
+
+    def accept(code, out):
+        if code == 1 and API_SUMMARY.search(out):
+            per_line.append(True)
+            return True
+        return False
+    _push_stage(cfg, script, args, API_STAGE, first, log, timeout_s, _api_env(cfg), accept=accept)
+    ledger = _read_ledger(ledger_path)
+    out = {}
+    for k in keys:
+        try:
+            out[k] = api_outcome(ledger, k, started)
+        except StageError:
+            if not per_line:
+                raise
+            out[k] = f'skipped: lỗi khi giao qua API (xem log {script})'
+    return out
+
+
 def _api_env(cfg: Config) -> dict:
     env = {'ECOM_URL': cfg.ecom_url, 'DESIGN_WORKER_TOKEN': cfg.worker_token}
     if cfg.push_via == 'queue':
@@ -1135,8 +1224,8 @@ def push_local_line(cfg: Config, snapshot: Path, since: str, key: str, started: 
         said = _queue_stage(cfg, 'push-local-renders', args, key, [key], qa or {}, log, timeout_s)
         return queue_outcome(said, key, lambda: _read_ledger(cfg.main_checkout / 'db-backups' / 'push-local-renders' / API_LEDGER), started)
     if cfg.push_via == 'api':
-        _push_stage(cfg, 'push-local-renders', args, API_STAGE, key, log, timeout_s, _api_env(cfg))
-        return api_outcome(_read_ledger(cfg.main_checkout / 'db-backups' / 'push-local-renders' / API_LEDGER), key, started)
+        return _api_push(cfg, 'push-local-renders', args, key, [key], log, timeout_s, started,
+                         cfg.main_checkout / 'db-backups' / 'push-local-renders' / API_LEDGER)[key]
     for st in STAGES:
         _push_stage(cfg, 'push-local-renders', args, st, key, log, timeout_s)
     ledger = _read_ledger(cfg.main_checkout / 'db-backups' / 'push-local-renders' / 'ledger.json')
@@ -1155,9 +1244,8 @@ def push_spec(cfg: Config, spec: Path, snapshot: Path, ledger_dir: Path | None, 
         ledger = lambda: _read_ledger((Path(ledger_dir) if ledger_dir else cfg.main_checkout / 'db-backups' / 'push-shared-prints') / API_LEDGER)
         return {k: queue_outcome(said, k, ledger, started) for k in keys}
     if cfg.push_via == 'api':
-        _push_stage(cfg, 'push-shared-prints', args, API_STAGE, first, log, timeout_s, _api_env(cfg))
-        ledger = _read_ledger((Path(ledger_dir) if ledger_dir else cfg.main_checkout / 'db-backups' / 'push-shared-prints') / API_LEDGER)
-        return {k: api_outcome(ledger, k, started) for k in keys}
+        return _api_push(cfg, 'push-shared-prints', args, first, keys, log, timeout_s, started,
+                         (Path(ledger_dir) if ledger_dir else cfg.main_checkout / 'db-backups' / 'push-shared-prints') / API_LEDGER)
     for st in STAGES:
         _push_stage(cfg, 'push-shared-prints', args, st, first, log, timeout_s)
     ledger = _read_ledger((Path(ledger_dir) if ledger_dir else cfg.main_checkout / 'db-backups' / 'push-shared-prints') / 'ledger.json')
@@ -1253,10 +1341,17 @@ def run_stages(cfg: Config, log: RunLog, summary: dict, args) -> int:
         summary['queued'] = []
     try:
         ensure_tool(cfg, log, cfg.main_checkout / 'dev.db')
+        drained = drain_leftover_renders(cfg, log, cfg.main_checkout / 'dev.db', timeout_s=min(1200, max(60, left() - 1500)))
+        if drained:
+            log.line(drained)
+            summary['errors'].append({'stage': 'worker', 'message': drained})
         out_dir = cfg.main_checkout / 'db-backups' / 'process-new-orders' / f'auto-{now:%Y%m%d-%H%M%S}'
         pr = run_process_new_orders(cfg, since, out_dir, log, timeout_s=min(PROCESS_TIMEOUT_S, max(60, left() - 600)))
         snapshot = pr.snapshot
         summary['snapshot'] = str(snapshot)
+        for msg in pr.step_errors:
+            log.line(f'bước phụ của process-new-orders lỗi: {msg[:300]}')
+            summary['errors'].append({'stage': 'process', 'message': msg})
         queued = queued_keys(cfg.review_queue_root) if queue_mode else None
         plan = build_plan(cfg, pr, since, h / 'tmp' / f'{now:%Y%m%d-%H%M%S}', log, queued=queued)
         auto = {l.key for l in plan.lines if l.readiness == 'AUTO'}
@@ -1485,7 +1580,7 @@ def main(argv: list[str] | None = None) -> int:
     log.secrets.append(cfg.design_agent_token)
     log.secrets.append(cfg.worker_token)
     log.secrets = [s for s in log.secrets if s]
-    handle = acquire_mutex()
+    handle = acquire_mutex(MUTEX_NAME)
     if handle is None:
         log.line('lần chạy trước chưa xong — bỏ qua lần này')
         return EXIT_OK

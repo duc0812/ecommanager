@@ -82,3 +82,25 @@ def test_lone_no_is_checked_even_without_a_library_entry(cfg, make_dbs, tmp_path
     held = next(l for l in plan.lines if l.key == 'LIT12_1').result
     assert (held.verdict, held.guard, held.reason) == ('HOLD', 'NO', 'khách chọn No nhưng file in có tên')
     assert keys(plan, 'UNCHECKED') == ['LIT13_1'] and plan.push_local == ['LIT13_1']
+
+
+def test_photoshop_spec_without_a_base_file_is_not_a_size_error(cfg, flat_run, tmp_path):   # 11/13: LIT6681_1 / LIT6693_1, PK28041053-TBEJ
+    ps = dict(design='TN1', supplierSku='M-15', noTextOk=True, photoshop={'psd': 'master.psd', 'width': 1000, 'height': 800},
+              noNameFiles=[{'printArea': 'FRONT', 'driveFileId': 'shared1', 'widthPx': 1000, 'heightPx': 800}])
+    no = [('Custom Name: Yes Or No?', 'No')]
+    pr = flat_run(specs={'TN1-M': ps}, done=[dict(key='LIT14_1', readiness='AUTO', sku='TN1-M-15X14INCH', supplierSku='M-15', values={'Custom Name': 'Anna'}),
+                                             dict(key='LIT15_1', readiness='AUTO', sku='TN1-M-15X14INCH', supplierSku='M-15', pairs=no)])
+    (cfg.artwork_builder / 'flat-text' / 'TN1-M' / 'base_FRONT.png').unlink()       # the Photoshop master is the base, no base file on disk
+    plan = ar.build_plan(cfg, pr, '2026-10-29', tmp_path / 'tmp', log)
+    assert plan.errors == []
+    by = {l.key: l.result for l in plan.lines}
+    assert (by['LIT14_1'].verdict, by['LIT14_1'].reason) == ('UNCHECKED', 'không kiểm được safe zone (spec Photoshop)')
+    assert by['LIT15_1'].verdict == 'UNCHECKED' and 'file không tên dùng chung' in by['LIT15_1'].reason
+    assert {'LIT14_1', 'LIT15_1'} <= plan.pushable
+
+
+def test_photoshop_sheet_size_still_catches_a_wrong_file(cfg, flat_run, tmp_path):
+    ps = dict(design='TN1', supplierSku='M-15', photoshop={'psd': 'master.psd', 'width': 1200, 'height': 800})
+    pr = flat_run(specs={'TN1-M': ps}, done=[dict(key='LIT16_1', readiness='AUTO', sku='TN1-M-15X14INCH', supplierSku='M-15', values={'Custom Name': 'Anna'})])
+    plan = ar.build_plan(cfg, pr, '2026-10-29', tmp_path / 'tmp', log)
+    assert [e['message'] for e in plan.errors] == ['spec flat-text không khớp khổ file'] and 'LIT16_1' not in plan.pushable
