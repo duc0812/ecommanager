@@ -402,7 +402,9 @@ export async function openQueue({ root, now = () => new Date(), isAlive = pidAli
       try {
         return await fn()
       } finally {
+        // a failed release must not replace fn's result: the row stays until it is stale (15 min) or its pid is gone
         await exclusive(() => write({ sql: 'DELETE FROM locks WHERE itemId = ? AND token = ?', args: [itemId, token] }))
+          .catch(e => console.error(`hàng chờ: không nhả được khoá ${itemId}: ${e instanceof Error ? e.message : e}`))
       }
     },
 

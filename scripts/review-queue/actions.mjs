@@ -17,6 +17,9 @@ export const APPROVE_FAILED = 'Không duyệt được'
 export const APPROVE_EVENT = 'Duyệt ở máy local'
 const NEEDS_LOOK_CODES = new Set(['stale', 'not_found', 'closed', 'wrong_state'])
 const TRANSIENT_CODES = new Set(['line_syncing', 'busy'])
+// the server could not see an uploaded file: api-delivery forgets it and uploads again on the next run
+const REUPLOAD_CODES = new Set(['drive_missing', 'wrong_folder', 'size_mismatch'])
+export const TICK_BUDGET_MS = 300_000
 const DELIVERABLE = ['waiting', 'rejected', 'qa_failed']
 const REJECTABLE = ['waiting', 'rejected', 'qa_failed', 'needs_look']
 const REMOVABLE = ['waiting', 'rejected', 'qa_failed', 'needs_look']
@@ -57,7 +60,8 @@ function say(r) {
 function problemOf(r, line, auto) {
   const code = r?.body?.code ?? null
   const message = `${line.taskKey}: ${say(r)}`
-  const kind = NEEDS_LOOK_CODES.has(code) || (auto && r?.status && !TRANSIENT_CODES.has(code)) ? 'needs_look' : 'refused'
+  const transient = TRANSIENT_CODES.has(code) || REUPLOAD_CODES.has(code) || (r?.status ?? 0) >= 500
+  const kind = NEEDS_LOOK_CODES.has(code) || (auto && r?.status && !transient) ? 'needs_look' : 'refused'
   return { taskKey: line.taskKey, kind, code, message }
 }
 
@@ -105,6 +109,7 @@ async function deliverItem(queue, item, deps, { approve, auto }) {
   const run = (lines, dryRun) => runApiDelivery({ lines, client: deps.client, uploader: deps.uploader, ledgerPath, log, previewOf, dryRun })
   const waitsOnShared = l => (l.files ?? []).some(f => f.sharedFrom && !f.shortcutOf)
   const all = item.apiLines ?? []
+  if (!all.length) return { delivered, problems, error: new Error('dòng không có gì để giao (apiLines rỗng)') }
 
   async function phase(lines) {
     let send = lines
@@ -155,7 +160,13 @@ async function settle(queue, item, out, { approve, auto }) {
   for (const p of problems) await queue.addEvent(item.id, 'delivery', p.message)
   if (error) {
     const msg = errText(error)
-    await queue.addEvent(item.id, 'error', `Chưa giao xong: ${msg} — trạng thái giữ nguyên, lần sau giao tiếp (ledger giữ phần đã giao)`)
+    if (delivered.length) {
+      const reason = `đã giao một phần: ${delivered.map(d => d.taskKey).join(', ')} — rồi lỗi: ${msg}`
+      await queue.addEvent(item.id, 'error', reason)
+      await queue.setStatus(item.id, 'needs_look', { reason })
+      return fail(item.id, 'needs_look', reason, { status: 'needs_look', results })
+    }
+    await queue.addEvent(item.id, 'error', `Chưa giao: ${msg} — trạng thái giữ nguyên, thử lại sau`)
     return fail(item.id, 'error', msg, { status: item.status, results })
   }
   if (!problems.length) {
@@ -179,12 +190,19 @@ async function settle(queue, item, out, { approve, auto }) {
   return fail(item.id, code, problems.map(p => p.message).join(' | '), { status: item.status, results })
 }
 
-async function deliverAction(queue, itemId, deps, { approve, auto = false, force = false, at = null }) {
+const versionError = (itemId, item, version) =>
+  version != null && item.version !== version
+    ? fail(itemId, 'version_changed', `Dòng đã có bản mới v${item.version} (trang đang xem v${version}) — xem lại rồi bấm lại`, { status: item.status, version: item.version })
+    : null
+
+async function deliverAction(queue, itemId, deps, { approve, auto = false, force = false, at = null, version = null }) {
   return underLocks(queue, itemId, async () => {
     const item = await queue.get(itemId)
     if (at != null) {
-      if (item.status !== 'waiting' || qaFailed(item) || Date.parse(item.enteredAt) + COUNTDOWN_MS > at) return { skip: true }
+      if (item.status !== 'waiting' || qaFailed(item) || item.version !== version || Date.parse(item.enteredAt) + COUNTDOWN_MS > at) return { skip: true }
     } else {
+      const changed = versionError(itemId, item, version)
+      if (changed) return changed
       if (!DELIVERABLE.includes(item.status)) return fail(itemId, 'not_deliverable', `Dòng đang ${item.status} — không giao được`, { status: item.status })
       if (qaFailed(item) && !force) return fail(itemId, 'qa_failed', 'Dòng có lỗi QA — cần xác nhận lần hai (force) để giao', { status: item.status })
     }
@@ -194,22 +212,35 @@ async function deliverAction(queue, itemId, deps, { approve, auto = false, force
   })
 }
 
-/** Duyệt: dry run with approve, then the real delivery with approve (prod DONE). `force` is needed for an item whose QA failed. */
-export async function approveItem(queue, itemId, deps, { force = false } = {}) {
-  return deliverAction(queue, itemId, deps, { approve: true, force })
+/**
+ * Duyệt: dry run with approve, then the real delivery with approve (prod DONE). `version` is the version the owner looked at
+ * (required; a newer one → version_changed). `force` is needed for an item whose QA failed.
+ * @param {any} queue @param {string} itemId @param {any} deps @param {{ force?: boolean, version?: number }} [opts]
+ */
+export async function approveItem(queue, itemId, deps, { force = false, version } = {}) {
+  if (!Number.isInteger(version)) return fail(itemId, 'version_required', 'Duyệt cần số bản đang xem (version)')
+  return deliverAction(queue, itemId, deps, { approve: true, force, version })
 }
 
-/** Cho lên cloud ngay: plain delivery (prod REVIEW), as when the 3 hours are over. */
-export async function sendToCloud(queue, itemId, deps, { force = false } = {}) {
-  return deliverAction(queue, itemId, deps, { approve: false, force })
+/**
+ * Cho lên cloud ngay: plain delivery (prod REVIEW), as when the 3 hours are over. A given `version` must still be current.
+ * @param {any} queue @param {string} itemId @param {any} deps @param {{ force?: boolean, version?: number|null }} [opts]
+ */
+export async function sendToCloud(queue, itemId, deps, { force = false, version = null } = {}) {
+  return deliverAction(queue, itemId, deps, { approve: false, force, version })
 }
 
-/** Trả lại: the item stays in the queue as rejected (no countdown) until a new version or Cho lên cloud. */
-export async function rejectItem(queue, itemId, reason) {
+/**
+ * Trả lại: the item stays in the queue as rejected (no countdown) until a new version or Cho lên cloud. A given `version` must still be current.
+ * @param {any} queue @param {string} itemId @param {string} reason @param {{ version?: number|null }} [opts]
+ */
+export async function rejectItem(queue, itemId, reason, { version = null } = {}) {
   const why = typeof reason === 'string' ? reason.trim() : ''
   if (!why) return fail(itemId, 'bad_request', 'Cần lý do trả lại')
   return underLocks(queue, itemId, async () => {
     const item = await queue.get(itemId)
+    const changed = versionError(itemId, item, version)
+    if (changed) return changed
     if (!REJECTABLE.includes(item.status)) return fail(itemId, 'not_active', `Dòng đang ${item.status} — không trả lại được`, { status: item.status })
     await queue.setStatus(itemId, 'rejected', { reason: why })
     return { ok: true, itemId, status: 'rejected', message: why }
@@ -236,11 +267,17 @@ async function holdExpired(queue, itemId, deps, at) {
     const keys = (await queue.memberKeys(itemId)).length ? await queue.memberKeys(itemId) : [item.taskKey]
     const reason = holdReason(item)
     const log = deps.log ?? (() => {})
+    const mark = k => `v${item.version}:${k}`
+    const done = new Set((await queue.events(itemId)).filter(e => e.type === 'hold_reported').map(e => e.message))
     let reported = 0
     for (const k of keys) {
+      if (done.has(mark(k))) { reported++; continue }
       try {
         const r = deps.hold ? await deps.hold(k, reason) : (log(`giữ lại ${k}: ${reason} (${HOLD_UNCONFIGURED})`), { reported: false })
-        if (r?.reported !== false) reported++
+        if (r?.reported !== false) {
+          reported++
+          await queue.addEvent(itemId, 'hold_reported', mark(k))
+        }
       } catch (e) {
         await queue.addEvent(itemId, 'hold_failed', `${k}: không báo được /hold (${errText(e)}) — lần tick sau báo lại`)
         return fail(itemId, 'hold_failed', errText(e), { status: item.status })
@@ -265,7 +302,7 @@ export async function tickQueue(queue, deps, now = new Date()) {
     const action = qaFailed(item) ? 'hold' : 'cloud'
     let r
     try {
-      r = action === 'hold' ? await holdExpired(queue, item.id, deps, at) : await deliverAction(queue, item.id, deps, { approve: false, auto: true, at })
+      r = action === 'hold' ? await holdExpired(queue, item.id, deps, at) : await deliverAction(queue, item.id, deps, { approve: false, auto: true, at, version: item.version })
     } catch (e) {
       r = fail(item.id, 'error', errText(e))
     }
@@ -339,8 +376,12 @@ export function queueEnvFiles(env = process.env) {
   ]
 }
 
-/** Real deps from the environment; the client and uploader are built on first use, so a tick with nothing to send needs no token. */
-export function makeLiveDeps({ env = process.env, log = console.log, fetchImpl = fetch } = {}) {
+/**
+ * Real deps from the environment; the client and uploader are built on first use, so a tick with nothing to send needs no token.
+ * `budgetMs` (optional) caps the client's retries (the tick uses TICK_BUDGET_MS so one run never waits 30 minutes).
+ * @param {{ env?: Record<string, string|undefined>, log?: (m: string) => void, fetchImpl?: typeof fetch, budgetMs?: number, sleep?: (ms: number) => Promise<void>, now?: () => number }} [opts]
+ */
+export function makeLiveDeps({ env = process.env, log = console.log, fetchImpl = fetch, budgetMs, sleep, now } = {}) {
   const url = (env.ECOM_URL ?? '').replace(/\/+$/, '')
   let client = null
   let uploader = null
@@ -349,7 +390,8 @@ export function makeLiveDeps({ env = process.env, log = console.log, fetchImpl =
     get client() {
       if (!client) {
         if (!url || !SAFE_URL.test(`${url}/`)) throw new Error('ECOM_URL chưa đặt hoặc không phải https://… (hoặc http://localhost)')
-        client = createDeliveryClient({ baseUrl: url, token: env.DESIGN_WORKER_TOKEN, approveToken: env.DELIVERY_APPROVE_TOKEN || null, fetchImpl })
+        const timing = Object.fromEntries(Object.entries({ budgetMs, sleep, now }).filter(([, v]) => v !== undefined))
+        client = createDeliveryClient({ baseUrl: url, token: env.DESIGN_WORKER_TOKEN, approveToken: env.DELIVERY_APPROVE_TOKEN || null, fetchImpl, ...timing })
       }
       return client
     },

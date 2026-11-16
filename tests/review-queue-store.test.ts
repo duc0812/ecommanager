@@ -3,6 +3,7 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import { spawn } from 'child_process'
+import { createClient } from '@libsql/client'
 import { openQueue } from '../scripts/review-queue/store.mjs'
 
 const H3 = 10_800_000
@@ -150,6 +151,22 @@ describe('addOrUpdate', () => {
 })
 
 describe('in-process concurrency', () => {
+  it('a lock release that fails is logged, never replaces the result of fn', async () => {
+    const r = await q.addOrUpdate(base())
+    const other = createClient({ url: `file:${path.join(root, 'queue.db').replace(/\\/g, '/')}` })
+    const err = console.error
+    const said: string[] = []
+    console.error = (m: string) => { said.push(m) }
+    try {
+      const out = await q.withLock(r.itemId, async () => { await other.execute('DROP TABLE locks'); return 'result' })
+      expect(out).toBe('result')
+      expect(said.join(' ')).toMatch(/không nhả được khoá/)
+    } finally {
+      console.error = err
+      other.close()
+    }
+  })
+
   it('two withLock calls at once in one process: one runs, the other gets code locked (never SQLITE_BUSY)', async () => {
     const r = await q.addOrUpdate(base())
     const slow = () => new Promise(res => setTimeout(() => res('done'), 50))

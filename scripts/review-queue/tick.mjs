@@ -2,7 +2,7 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import { openQueue } from './store.mjs'
 import { DEFAULT_QUEUE_ROOT } from './intake.mjs'
-import { loadEnvFiles, makeLiveDeps, queueEnvFiles, tickQueue } from './actions.mjs'
+import { TICK_BUDGET_MS, loadEnvFiles, makeLiveDeps, queueEnvFiles, tickQueue } from './actions.mjs'
 
 // The 3-hour tick (spec 7.6), run every 10 minutes by the Windows task "EcomManager Review Queue Tick":
 //   node scripts/review-queue/tick.mjs
@@ -28,7 +28,7 @@ export async function main({ env = process.env, log = console.log, now = () => n
   }
   try {
     const at = now()
-    const { actions } = await tickQueue(queue, deps ?? makeLiveDeps({ env, log }), at)
+    const { actions } = await tickQueue(queue, deps ?? makeLiveDeps({ env, log, budgetMs: TICK_BUDGET_MS }), at)
     for (const a of actions) log(describe(a))
     log(`tick ${at.toISOString()} · ${actions.length} việc · lên cloud ${actions.filter(a => a.ok && a.action === 'cloud').length} · báo /hold ${actions.filter(a => a.ok && a.action === 'hold').length} · chưa xong ${actions.filter(a => !a.ok).length}`)
     return 0

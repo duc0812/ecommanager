@@ -3,8 +3,8 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import { openQueue } from '../scripts/review-queue/store.mjs'
-import { approveItem, rejectItem, sendToCloud, removeItem, tickQueue, makeHold, loadEnvFiles } from '../scripts/review-queue/actions.mjs'
-import { createDeliveryClient } from '../scripts/lib/delivery-client.mjs'
+import { approveItem, rejectItem, sendToCloud, removeItem, tickQueue, makeHold, loadEnvFiles, makeLiveDeps, TICK_BUDGET_MS } from '../scripts/review-queue/actions.mjs'
+import { createDeliveryClient, DeliveryGaveUp } from '../scripts/lib/delivery-client.mjs'
 import { main as tickMain } from '../scripts/review-queue/tick.mjs'
 
 const H = 3_600_000
@@ -106,6 +106,7 @@ async function addItem(taskKey: string, over: any = {}) {
 }
 const statusOf = async (id: string) => (await q.get(id)).status
 const messages = async (id: string) => (await q.events(id)).map((e: any) => e.message).join('\n')
+const approve = async (id: string, extra: any = {}, d: any = deps) => approveItem(q, id, d, { version: (await q.get(id))?.version ?? 1, ...extra })
 
 beforeEach(async () => {
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'rq-actions-'))
@@ -128,7 +129,7 @@ afterEach(async () => {
 describe('approveItem', () => {
   it('happy path: dry run with approve, then the real commit with approve → prod DONE, item approved', async () => {
     const id = await addItem('LIT1_1')
-    const r = await approveItem(q, id, deps)
+    const r = await approve(id)
     expect(r).toMatchObject({ ok: true, status: 'approved' })
     expect(prod.tasks.LIT1_1.status).toBe('DONE')
     expect(prod.commits.map(c => [c.body.dryRun === true, c.body.approve, c.header])).toEqual([[true, true, APPROVE], [false, true, APPROVE]])
@@ -140,7 +141,7 @@ describe('approveItem', () => {
   it('stale on prod (RF 5): needs_look, zero uploads, zero commits', async () => {
     prod.tasks.LIT1_1.status = 'DOING'
     const id = await addItem('LIT1_1')
-    const r = await approveItem(q, id, deps)
+    const r = await approve(id)
     expect(r).toMatchObject({ ok: false, status: 'needs_look' })
     expect(prod.uploads).toHaveLength(0)
     expect(prod.commits).toHaveLength(0)
@@ -150,17 +151,17 @@ describe('approveItem', () => {
 
   it('a task that no longer exists or a closed order is needs_look, nothing written on prod', async () => {
     const gone = await addItem('LIT9_1')
-    expect((await approveItem(q, gone, deps)).status).toBe('needs_look')
+    expect((await approve(gone)).status).toBe('needs_look')
     prod.tasks.LIT1_1.closed = true
     const closed = await addItem('LIT1_1')
-    expect((await approveItem(q, closed, deps)).status).toBe('needs_look')
+    expect((await approve(closed)).status).toBe('needs_look')
     expect(prod.real()).toHaveLength(0)
   })
 
   it('missing parts: nothing committed for real, item stays waiting with the reason', async () => {
     prod.tasks.LIT1_1.required = ['Front', 'Back']
     const id = await addItem('LIT1_1')
-    const r = await approveItem(q, id, deps)
+    const r = await approve(id)
     expect(r).toMatchObject({ ok: false, code: 'cannot_approve', status: 'waiting' })
     expect(r.error).toMatch(/thiếu Back/)
     expect(prod.real()).toHaveLength(0)
@@ -172,7 +173,7 @@ describe('approveItem', () => {
   it('the app refuses the approval after the write: item cloud with the warning (it is on prod in REVIEW)', async () => {
     prod.tasks.LIT1_1.refuseApprove = 'kiểm tra cắt in'
     const id = await addItem('LIT1_1')
-    const r = await approveItem(q, id, deps)
+    const r = await approve(id)
     expect(r).toMatchObject({ ok: true, status: 'cloud' })
     expect(prod.tasks.LIT1_1.status).toBe('REVIEW')
     expect(await messages(id)).toMatch(/Không duyệt được: kiểm tra cắt in/)
@@ -181,7 +182,7 @@ describe('approveItem', () => {
   it('a replace on a DONE line (wouldApprove false by design) goes without approve and ends approved', async () => {
     prod.tasks.LIT1_1 = { status: 'DONE', artworks: [{ id: 'old1', kind: 'PRINT', printArea: 'Front', driveFileId: 'D-old', source: 'AUTO' }] }
     const id = await addItem('LIT1_1', { line: { action: 'replace', retire: ['old1'], planIds: ['old1'], expectedStatus: 'DONE', allowFinished: true } })
-    const r = await approveItem(q, id, deps)
+    const r = await approve(id)
     expect(r).toMatchObject({ ok: true, status: 'approved' })
     const real = prod.real()
     expect(real).toHaveLength(1)
@@ -192,15 +193,15 @@ describe('approveItem', () => {
 
   it('double approve and approve during the tick (RF 1): one delivery', async () => {
     const id = await addItem('LIT1_1')
-    const [a, b] = await Promise.all([approveItem(q, id, deps), approveItem(q, id, deps)])
+    const [a, b] = await Promise.all([approve(id), approve(id)])
     expect([a.ok, b.ok].sort()).toEqual([false, true])
     expect([a, b].find(x => !x.ok)?.code).toBe('locked')
-    expect(await approveItem(q, id, deps)).toMatchObject({ ok: false, code: 'not_deliverable' })
+    expect(await approve(id)).toMatchObject({ ok: false, code: 'not_deliverable' })
     expect(prod.real()).toHaveLength(1)
 
     prod.tasks.LIT2_1 = { status: 'NEW', artworks: [] }
     const id2 = await addItem('LIT2_1')
-    const [ap, tick] = await Promise.all([approveItem(q, id2, deps), tickQueue(q, deps, new Date(clock + 4 * H))])
+    const [ap, tick] = await Promise.all([approve(id2), tickQueue(q, deps, new Date(clock + 4 * H))])
     expect(prod.real().filter(c => c.key === 'LIT2_1')).toHaveLength(1)
     const again = await tickQueue(q, deps, new Date(clock + 5 * H))
     expect(prod.real().filter(c => c.key === 'LIT2_1')).toHaveLength(1)
@@ -211,10 +212,10 @@ describe('approveItem', () => {
 
   it('a line already delivered by an earlier run (ledger) is not sent again: status from the ledger', async () => {
     const id = await addItem('LIT1_1')
-    await approveItem(q, id, deps)
+    await approve(id)
     await q.setStatus(id, 'waiting')
     const before = prod.commits.length
-    const r = await approveItem(q, id, deps)
+    const r = await approve(id)
     expect(r).toMatchObject({ ok: true, status: 'approved' })
     expect(prod.commits.length).toBe(before)
   })
@@ -222,26 +223,26 @@ describe('approveItem', () => {
   it('qa_failed (or a rejected item whose QA failed) refuses approve unless force', async () => {
     const id = await addItem('LIT1_1', { qa: { verdict: 'fail', items: ['tên tràn khung'] } })
     expect(await statusOf(id)).toBe('qa_failed')
-    expect(await approveItem(q, id, deps)).toMatchObject({ ok: false, code: 'qa_failed' })
+    expect(await approve(id)).toMatchObject({ ok: false, code: 'qa_failed' })
     expect(prod.commits).toHaveLength(0)
     await rejectItem(q, id, 'xem lại')
-    expect(await approveItem(q, id, deps)).toMatchObject({ ok: false, code: 'qa_failed' })
-    expect(await approveItem(q, id, deps, { force: true })).toMatchObject({ ok: true, status: 'approved' })
+    expect(await approve(id)).toMatchObject({ ok: false, code: 'qa_failed' })
+    expect(await approve(id, { force: true })).toMatchObject({ ok: true, status: 'approved' })
     expect(await messages(id)).toMatch(/dù có lỗi QA/)
   })
 
   it('a fixing item cannot be approved; an unknown id says not_found', async () => {
     const id = await addItem('LIT1_1')
     await q.setStatus(id, 'fixing')
-    expect(await approveItem(q, id, deps)).toMatchObject({ ok: false, code: 'not_deliverable' })
-    expect(await approveItem(q, 'rq_nope', deps)).toMatchObject({ ok: false, code: 'not_found' })
+    expect(await approve(id)).toMatchObject({ ok: false, code: 'not_deliverable' })
+    expect(await approve('rq_nope')).toMatchObject({ ok: false, code: 'not_found' })
     expect(prod.commits).toHaveLength(0)
   })
 
   it('a prod that cannot be reached leaves the item as it was, with an event', async () => {
     const id = await addItem('LIT1_1')
     const down = createDeliveryClient({ baseUrl: 'https://prod.test', token: 'w', approveToken: APPROVE, fetchImpl: (async () => { throw new Error('ECONNREFUSED') }) as any, sleep: async () => {}, budgetMs: 0 })
-    const r = await approveItem(q, id, { ...deps, client: down })
+    const r = await approve(id, {}, { ...deps, client: down })
     expect(r).toMatchObject({ ok: false, code: 'error' })
     expect(await statusOf(id)).toBe('waiting')
     expect(await messages(id)).toMatch(/không kết nối được/)
@@ -258,7 +259,7 @@ describe('groups', () => {
   it('approves the first line, then the later line as a shortcut to the first line\'s Drive file, as one item', async () => {
     prod.tasks.LIT2_1 = { status: 'NEW', artworks: [] }
     const id = await addItem('LIT1_1', { apiLines: groupLines() })
-    const r = await approveItem(q, id, deps)
+    const r = await approve(id)
     expect(r).toMatchObject({ ok: true, status: 'approved' })
     expect(prod.uploads).toHaveLength(1)
     const later = prod.real().find(c => c.key === 'LIT2_1')
@@ -269,7 +270,7 @@ describe('groups', () => {
   it('partial success → needs_look with the per-line results in an event', async () => {
     prod.tasks.LIT2_1 = { status: 'DOING', artworks: [] }
     const id = await addItem('LIT1_1', { apiLines: groupLines() })
-    const r = await approveItem(q, id, deps)
+    const r = await approve(id)
     expect(r).toMatchObject({ ok: false, status: 'needs_look' })
     expect(prod.tasks.LIT1_1.status).toBe('DONE')
     expect(prod.real().filter(c => c.key === 'LIT2_1')).toHaveLength(0)
@@ -426,5 +427,87 @@ describe('tick.mjs main', () => {
     const out: string[] = []
     expect(await tickMain({ env: { USERPROFILE: tmp, REVIEW_QUEUE_ROOT: notDir } as any, log: (m: string) => { out.push(m) }, deps })).toBe(1)
     expect(out.join(' ')).toMatch(/không mở được hàng chờ/)
+  })
+})
+
+describe('fix round 1', () => {
+  const newVersion = (id: string) => q.get(id).then((it: any) => q.addOrUpdate({
+    taskKey: it.taskKey, groupKey: it.groupKey, kind: it.kind, apiLines: it.apiLines,
+    files: [{ part: 'PRINT_Front', kind: 'PRINT', path: it.apiLines[0].files[0].path, sha256: `new-${it.version}` }], meta: it.meta, qa: it.qa,
+  }))
+
+  it('approve needs the version the owner saw; a newer version refuses approve, cloud and reject (version_changed), nothing sent', async () => {
+    const id = await addItem('LIT1_1')
+    expect(await approveItem(q, id, deps)).toMatchObject({ ok: false, code: 'version_required' })
+    await newVersion(id)
+    expect(await approveItem(q, id, deps, { version: 1 })).toMatchObject({ ok: false, code: 'version_changed', version: 2 })
+    expect(await sendToCloud(q, id, deps, { version: 1 })).toMatchObject({ ok: false, code: 'version_changed' })
+    expect(await rejectItem(q, id, 'x', { version: 1 })).toMatchObject({ ok: false, code: 'version_changed' })
+    expect(prod.commits).toHaveLength(0)
+    expect(await statusOf(id)).toBe('waiting')
+    expect(await rejectItem(q, id, 'x', { version: 2 })).toMatchObject({ ok: true, status: 'rejected' })
+    expect(await approveItem(q, id, deps, { version: 2 })).toMatchObject({ ok: true, status: 'approved' })
+  })
+
+  it('tick: a 5xx answer or drive_missing / wrong_folder / size_mismatch keeps the item waiting for the next tick', async () => {
+    for (const answer of [
+      { ok: false, status: 500, body: { error: 'boom' } },
+      { ok: false, status: 400, body: { code: 'drive_missing', error: 'không thấy file' } },
+      { ok: false, status: 400, body: { code: 'wrong_folder', error: 'sai thư mục' } },
+      { ok: false, status: 400, body: { code: 'size_mismatch', error: 'sai dung lượng' } },
+    ]) {
+      const id = await addItem('LIT1_1')
+      const r = await tickQueue(q, { ...deps, client: { ...prod.client, commit: async () => answer } }, new Date(clock + 4 * H))
+      expect(r.actions).toEqual([expect.objectContaining({ itemId: id, ok: false, code: 'refused' })])
+      expect(await statusOf(id)).toBe('waiting')
+      await q.setStatus(id, 'removed')
+    }
+    const id = await addItem('LIT1_1', { line: { files: [{ kind: 'PRINT', printArea: 'Front', path: file('again.png'), fileName: 'again.png', mimeType: 'image/png' }] } })
+    await tickQueue(q, deps, new Date(clock + 4 * H))
+    expect(await statusOf(id)).toBe('cloud')
+  })
+
+  it('an error after part of a group was delivered → needs_look "đã giao một phần"', async () => {
+    prod.tasks.LIT2_1 = { status: 'NEW', artworks: [] }
+    const later = apiLine('LIT2_1', { files: [{ kind: 'PRINT', printArea: 'Front', fileName: 'LIT1_1-front.png', mimeType: 'image/png', sharedFrom: 'LIT1_1', sharedKey: 'PRINT/Front', size: 18 }] })
+    const id = await addItem('LIT1_1', { apiLines: [apiLine('LIT1_1'), later] })
+    const broken = { ...prod.client, commit: (k: string, b: any) => (k === 'LIT2_1' ? Promise.reject(new DeliveryGaveUp('prod không trả lời')) : prod.client.commit(k, b)) }
+    const r = await approve(id, {}, { ...deps, client: broken })
+    expect(r).toMatchObject({ ok: false, code: 'needs_look', status: 'needs_look' })
+    expect(prod.tasks.LIT1_1.status).toBe('DONE')
+    expect(await statusOf(id)).toBe('needs_look')
+    expect(await messages(id)).toMatch(/đã giao một phần: LIT1_1/)
+  })
+
+  it('an item with no api lines is never approved', async () => {
+    const r0 = await q.addOrUpdate({ taskKey: 'LIT1_1', groupKey: 'LIT1_1', kind: 'line', apiLines: [], files: [], meta: { ledgerPath }, qa: { verdict: 'pass', items: [] } })
+    const r = await approve(r0.itemId)
+    expect(r).toMatchObject({ ok: false, code: 'error' })
+    expect(await statusOf(r0.itemId)).toBe('waiting')
+    expect(prod.commits).toHaveLength(0)
+  })
+
+  it('a retry after a partial /hold failure reports only the keys not reported yet', async () => {
+    const id = await addItem('LIT1_1', { qa: { verdict: 'fail', items: ['x'] }, apiLines: [apiLine('LIT1_1'), apiLine('LIT2_1')] })
+    const flaky = { ...deps, hold: async (k: string, reason: string) => { if (k === 'LIT2_1') throw new Error('/hold trả 502'); holds.push([k, reason]); return { reported: true, jobId: null } } }
+    expect((await tickQueue(q, flaky, new Date(clock + 4 * H))).actions[0]).toMatchObject({ ok: false, code: 'hold_failed' })
+    await tickQueue(q, deps, new Date(clock + 4 * H))
+    expect(holds.map(h => h[0])).toEqual(['LIT1_1', 'LIT2_1'])
+    expect(await statusOf(id)).toBe('held')
+  })
+
+  it('live deps pass the retry budget to the client; the tick uses 5 minutes', async () => {
+    expect(TICK_BUDGET_MS).toBe(300_000)
+    let t = 0
+    const waits: number[] = []
+    const live = makeLiveDeps({
+      env: { ECOM_URL: 'https://prod.test', DESIGN_WORKER_TOKEN: 'w' } as any, log: () => {},
+      fetchImpl: (async () => { throw new Error('ECONNREFUSED') }) as any,
+      budgetMs: TICK_BUDGET_MS, sleep: async (ms: number) => { waits.push(ms); t += ms }, now: () => t,
+    })
+    await expect(live.client.taskState('K')).rejects.toBeInstanceOf(DeliveryGaveUp)
+    const total = waits.reduce((a, b) => a + b, 0)
+    expect(total).toBeLessThanOrEqual(300_000)
+    expect(total).toBeGreaterThan(200_000)
   })
 })
