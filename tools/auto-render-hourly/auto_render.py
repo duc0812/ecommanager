@@ -813,7 +813,8 @@ def _sha256_file(p: Path) -> str:
 
 def queued_keys(root: Path, sleep=time.sleep) -> dict[str, dict]:
     """taskKey → {itemId, status} of the local review queue (read-only); no queue.db yet → {}. An active item wins; otherwise the
-    newest item (updatedAt) of the key counts, and a held / removed one carries `shas`, the PRINT sha256 set of its last version.
+    newest item (updatedAt) of the key counts, and a held / removed one carries `shas`, the PRINT sha256 set of EVERY version
+    (an agent fix as last version must not bring the original render back each hour).
     A locked/busy db (a writer mid-transaction) is retried QUEUE_DB_RETRIES times, 1 s apart."""
     import sqlite3
     db = Path(root) / 'queue.db'
@@ -824,7 +825,7 @@ def queued_keys(root: Path, sleep=time.sleep) -> dict[str, dict]:
             c = _ro(db)
             try:
                 rows = c.execute('SELECT k.taskKey, i.id, i.status, i.updatedAt, v.files FROM item_keys k JOIN items i ON i.id = k.itemId '
-                                 'LEFT JOIN versions v ON v.itemId = i.id AND v.n = i.version').fetchall()
+                                 'LEFT JOIN versions v ON v.itemId = i.id').fetchall()
             finally:
                 c.close()
             out: dict[str, dict] = {}
@@ -833,13 +834,17 @@ def queued_keys(root: Path, sleep=time.sleep) -> dict[str, dict]:
                 k, i, s = row[0], row[1], row[2]
                 at, files = (row[3], row[4]) if len(row) > 4 else ('', None)
                 have = out.get(k)
+                if have and have['itemId'] == i:
+                    if 'shas' in have:
+                        have['shas'].add(_version_print_shas(files, k))
+                    continue
                 if have and have['status'] in QUEUE_ACTIVE:
                     continue
                 if s in QUEUE_ACTIVE or have is None or str(at or '') > newest[k]:
                     out[k] = {'itemId': i, 'status': s}
                     newest[k] = str(at or '')
                     if s in QUEUE_PARKED:
-                        out[k]['shas'] = _version_print_shas(files, k)
+                        out[k]['shas'] = {_version_print_shas(files, k)}
             return out
         except sqlite3.OperationalError as e:
             if attempt < QUEUE_DB_RETRIES and any(w in str(e).lower() for w in ('locked', 'busy')):
@@ -875,7 +880,7 @@ def build_plan(cfg: Config, pr: ProcessResult, since: str, tmp_dir: Path, log: R
                 now = frozenset(_sha256_file(Path(p)) for p in (paths() if paths else []))
             except OSError:
                 now = frozenset()
-            if now and now != q.get('shas', frozenset()):
+            if now and now not in q.get('shas', set()):
                 log.line(f'{key}: file render khác bản cuối của {q["itemId"]} ({q["status"]}) — đưa lại vào hàng chờ')
                 return False
             what = 'giữ lại' if q['status'] == 'held' else 'bỏ'

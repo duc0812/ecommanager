@@ -2,14 +2,14 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import { openQueue } from './store.mjs'
 import { DEFAULT_QUEUE_ROOT } from './intake.mjs'
-import { TICK_BUDGET_MS, loadQueueEnv, makeLiveDeps, tickQueue } from './actions.mjs'
+import { TICK_BUDGET_MS, loadEnvFiles, makeLiveDeps, queueEnvFiles, tickQueue } from './actions.mjs'
 import { STALE_JOB_MS, recoverFixJobs } from './fix-job.mjs'
 
 // The 3-hour tick (spec 7.6), run every 10 minutes by the Windows task "EcomManager Review Queue Tick":
 //   node scripts/review-queue/tick.mjs
-// Env comes from %USERPROFILE%\.artwork-worker\prod.env, auto render's config.env and the approve token (approve.dpapi, else
-// approve.env); a variable already set wins. Exit 0 unless the queue cannot be opened (a failed item is retried on the next tick).
-// A fix job still `running` 70 minutes after its start (its server is gone) is recovered like at server start.
+// Env comes from %USERPROFILE%\.artwork-worker\prod.env and auto render's config.env; a variable already set wins. The tick never
+// approves, so it never reads the approve token. Exit 0 unless the queue cannot be opened (a failed item is retried on the next tick).
+// A fix job still `running` 90 minutes after its start (its server is gone) is recovered like at server start.
 
 function describe(a) {
   const what = a.action === 'hold' ? 'báo /hold' : 'lên cloud'
@@ -18,8 +18,8 @@ function describe(a) {
   return `${a.taskKey} (${a.itemId}): ${what} chưa được [${a.code}${a.status ? `, ${a.status}` : ''}] ${a.error ?? ''}`.trim()
 }
 
-export async function main({ env = process.env, log = console.log, now = () => new Date(), deps = null, decrypt, recover = {} } = /** @type {any} */ ({})) {
-  loadQueueEnv(env, { log, ...(decrypt ? { decrypt } : {}) })
+export async function main({ env = process.env, log = console.log, now = () => new Date(), deps = null, recover = {} } = /** @type {any} */ ({})) {
+  loadEnvFiles(queueEnvFiles(env), env)
   const root = env.REVIEW_QUEUE_ROOT || DEFAULT_QUEUE_ROOT
   let queue
   try {

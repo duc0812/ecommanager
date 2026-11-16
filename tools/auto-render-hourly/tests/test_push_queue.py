@@ -41,7 +41,7 @@ def queue_root(tmp_path, monkeypatch):
 
 
 def make_queue_db(root: Path, items: list[tuple]):
-    """queue.db as the store writes it (WAL, closed): items (id, status, keys[, updatedAt[, version files]]) with their member keys."""
+    """queue.db as the store writes it (WAL, closed): items (id, status, keys[, updatedAt[, v2 files[, v1 files]]]) with their member keys."""
     root.mkdir(parents=True, exist_ok=True)
     c = sqlite3.connect(root / 'queue.db')
     c.execute('PRAGMA journal_mode = WAL')
@@ -57,7 +57,8 @@ def make_queue_db(root: Path, items: list[tuple]):
         at = item[3] if len(item) > 3 else 't'
         files = item[4] if len(item) > 4 else []
         c.execute("INSERT INTO items VALUES (?, ?, ?, 'line', ?, NULL, NULL, 2, 't', 't', ?, '[]', '{}', '{}')", (item_id, keys[0], keys[0], status, at))
-        c.execute("INSERT INTO versions VALUES (?, 1, '[]', '[]', '{}', 't')", (item_id,))
+        first = item[5] if len(item) > 5 else []
+        c.execute("INSERT INTO versions VALUES (?, 1, ?, '[]', '{}', 't')", (item_id, json.dumps(first)))
         c.execute("INSERT INTO versions VALUES (?, 2, ?, '[]', '{}', 't')", (item_id, json.dumps(files)))
         for k in keys:
             c.execute('INSERT INTO item_keys VALUES (?, ?)', (item_id, k))
@@ -171,6 +172,18 @@ def test_held_and_removed_lines_with_the_same_render_are_not_queued_again(world,
     assert ar.main(['--config', str(w.config)]) == 0
     s = w.summary()
     assert s['queued'] == [] and _queue_calls(w) == [] and w.agent.holds == []
+    assert {'taskKey': 'LIT1_1', 'reason': 'hàng chờ local đã giữ lại (rq_h1, held), file render không đổi'} in s['skipped']
+    assert {'taskKey': 'LIT3_1', 'reason': 'hàng chờ local đã bỏ (rq_r3, removed), file render không đổi'} in s['skipped']
+
+
+def test_a_parked_agent_fix_does_not_bring_back_the_original_render(world, prod_env, queue_root):
+    w = _queue_world(world, prod_env, queue_root, lines=[dict(key='LIT1_1', readiness='AUTO', ink=GOOD), dict(key='LIT3_1', readiness='AUTO', ink=GOOD)])
+    s1, s3 = _render_sha(w, 'LIT1_1'), _render_sha(w, 'LIT3_1')
+    make_queue_db(queue_root, [('rq_h1', 'held', ['LIT1_1'], '2026-11-15T10:00:00.000Z', [_vfile('LIT1_1', 'agent-fix')], [_vfile('LIT1_1', s1)]),
+                               ('rq_r3', 'removed', ['LIT3_1'], '2026-11-15T10:00:00.000Z', [_vfile('LIT3_1', 'agent-fix')], [_vfile('LIT3_1', s3)])])
+    assert ar.main(['--config', str(w.config)]) == 0
+    s = w.summary()
+    assert s['queued'] == [] and _queue_calls(w) == []
     assert {'taskKey': 'LIT1_1', 'reason': 'hàng chờ local đã giữ lại (rq_h1, held), file render không đổi'} in s['skipped']
     assert {'taskKey': 'LIT3_1', 'reason': 'hàng chờ local đã bỏ (rq_r3, removed), file render không đổi'} in s['skipped']
 

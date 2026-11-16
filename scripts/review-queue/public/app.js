@@ -409,7 +409,7 @@ function onRemove() {
 function onRerun() {
   const d = S.detail
   if (!d?.rerun) return
-  modal(`<h2>Lập lại từ snapshot mới</h2><p>Lấy snapshot prod mới, rồi chạy lệnh này trong thư mục của script đẩy. File không đổi thì hàng chờ giữ nguyên dòng này — khi đó bấm "Bỏ khỏi hàng chờ" trước rồi chạy lại.</p>
+  modal(`<h2>Lập lại từ snapshot mới</h2><p>Lấy snapshot prod mới, rồi chạy lệnh này trong thư mục của script đẩy. Dòng được ghi lại thành bản mới từ snapshot đó và quay về Chờ duyệt (tính lại 3 giờ), kể cả khi file không đổi.</p>
     <pre id="cmd">${esc(d.rerun)}</pre>
     <div class="acts"><button class="btn" data-m="cancel">Đóng</button><button class="btn" data-m="ok">Chép lệnh</button></div>`,
   async () => {

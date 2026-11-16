@@ -507,7 +507,17 @@ describe('prod notes when an item stops counting down', () => {
 })
 
 describe('tick.mjs main', () => {
-  it('recovers a fix job still running 70 minutes after its start, leaves a younger or queued one', async () => {
+  it('never decrypts the approve token (the tick never approves)', async () => {
+    const home = path.join(tmp, 'home')
+    fs.mkdirSync(path.join(home, '.review-queue'), { recursive: true })
+    fs.writeFileSync(path.join(home, '.review-queue', 'approve.dpapi'), 'CIPHERTEXT')
+    fs.writeFileSync(path.join(home, '.review-queue', 'approve.env'), 'DELIVERY_APPROVE_TOKEN=plain\n')
+    const env: any = { USERPROFILE: home, REVIEW_QUEUE_ROOT: path.join(tmp, 'queue') }
+    expect(await tickMain({ env, log: () => {}, now: () => new Date(clock), deps })).toBe(0)
+    expect(env.DELIVERY_APPROVE_TOKEN).toBeUndefined()
+  })
+
+  it('recovers a fix job still running 90 minutes after its start, leaves a younger or queued one', async () => {
     const job = async (taskKey: string, status: string, startedMinAgo: number) => {
       const id = await addItem(taskKey)
       await q.setStatus(id, 'fixing', { reason: 'agent' })
@@ -517,8 +527,8 @@ describe('tick.mjs main', () => {
       fs.writeFileSync(path.join(dir, 'job.json'), JSON.stringify({ id: `${id}-1`, itemId: id, n: 1, agent: 'codex', status, createdAt: at, ...(status === 'running' ? { startedAt: at, pid: 4242 } : {}) }))
       return id
     }
-    const old = await job('LIT1_1', 'running', 71)
-    const young = await job('LIT2_1', 'running', 50)
+    const old = await job('LIT1_1', 'running', 91)
+    const young = await job('LIT2_1', 'running', 80)
     const waiting = await job('LIT3_1', 'queued', 200)
     const out: string[] = []
     const asked: number[] = []
@@ -532,8 +542,8 @@ describe('tick.mjs main', () => {
     expect(await statusOf(young)).toBe('fixing')
     expect(await statusOf(waiting)).toBe('fixing')
     expect(asked).toEqual([4242])
-    expect(await messages(old)).toMatch(/agent không sửa được: job chạy quá 70 phút/)
-    expect(out.join('\n')).toMatch(/Đã gỡ 1 job agent chạy quá 70 phút/)
+    expect(await messages(old)).toMatch(/agent không sửa được: job chạy quá 90 phút/)
+    expect(out.join('\n')).toMatch(/Đã gỡ 1 job agent chạy quá 90 phút/)
   })
 
 
