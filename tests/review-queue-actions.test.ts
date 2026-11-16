@@ -302,6 +302,15 @@ describe('reject, send to cloud, remove', () => {
     expect(await removeItem(q, id)).toMatchObject({ ok: false, code: 'not_active' })
     expect(prod.commits).toHaveLength(0)
   })
+
+  it('remove with an older version than the current one is refused (version_changed), the item stays', async () => {
+    const id = await addItem('LIT1_1')
+    await addItem('LIT1_1', { line: { files: [{ kind: 'PRINT', printArea: 'Front', path: file('LIT1_1-front-v2.png', 'NEW'), fileName: 'LIT1_1-front-v2.png', mimeType: 'image/png' }] } })
+    expect((await q.get(id)).version).toBe(2)
+    expect(await removeItem(q, id, { version: 1 })).toMatchObject({ ok: false, code: 'version_changed', version: 2 })
+    expect(await statusOf(id)).toBe('waiting')
+    expect(await removeItem(q, id, { version: 2 })).toMatchObject({ ok: true, status: 'removed' })
+  })
 })
 
 describe('tickQueue', () => {

@@ -31,12 +31,14 @@ const MIME = {
   '.json': 'application/json; charset=utf-8', '.txt': 'text/plain; charset=utf-8', '.md': 'text/plain; charset=utf-8',
 }
 const STATUS_OF_CODE = { not_found: 404, bad_request: 400, version_required: 400 }
+const CSP = "default-src 'self'; img-src 'self' https: data:; style-src 'self' 'unsafe-inline'"
+const SECURITY_HEADERS = { 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': CSP }
 
 const errText = e => (e instanceof Error ? e.message : String(e))
 
 function send(res, status, body, headers = {}) {
   const buf = Buffer.from(JSON.stringify(body))
-  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': buf.length, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', ...headers })
+  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': buf.length, 'Cache-Control': 'no-store', ...SECURITY_HEADERS, ...headers })
   res.end(buf)
 }
 const fail = (res, status, error, extra = {}) => send(res, status, { ok: false, error, ...extra })
@@ -58,16 +60,20 @@ function readBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = []
     let size = 0
+    let tooBig = false
     req.on('data', c => {
+      if (tooBig) return
       size += c.length
       if (size > BODY_MAX) {
+        tooBig = true
+        chunks.length = 0
         reject(Object.assign(new Error('body quá lớn'), { status: 413 }))
-        req.destroy()
         return
       }
       chunks.push(c)
     })
     req.on('end', () => {
+      if (tooBig) return
       const text = Buffer.concat(chunks).toString('utf8').trim()
       if (!text) return resolve({})
       try {
@@ -202,22 +208,27 @@ export function createHandler({ queue, deps, fixDeps = {}, ops = {}, now = () =>
     } catch {
       return fail(res, 400, 'Đường dẫn không hợp lệ')
     }
-    if (segs.some(s => !s || s === '.' || s === '..' || /[\\/:\0]/.test(s))) return fail(res, 403, 'Đường dẫn ngoài thư mục dòng')
+    if (segs.some(s => /^[\s.]*$/.test(s) || /[\\/:\0]/.test(s))) return fail(res, 403, 'Đường dẫn ngoài thư mục dòng')
     const dir = versionDir(root, id, Number(n))
     const target = path.resolve(dir, ...segs)
     if (!target.startsWith(dir + path.sep)) return fail(res, 403, 'Đường dẫn ngoài thư mục dòng')
+    let real
+    let realDir
     let st
     try {
-      st = fs.statSync(target)
+      real = fs.realpathSync(target)
+      realDir = fs.realpathSync(dir)
+      st = fs.statSync(real)
     } catch {
       return fail(res, 404, 'Không có file')
     }
+    if (!real.startsWith(realDir + path.sep)) return fail(res, 403, 'Đường dẫn ngoài thư mục dòng')
     if (!st.isFile()) return fail(res, 404, 'Không có file')
     res.writeHead(200, {
       'Content-Type': MIME[path.extname(target).toLowerCase()] ?? 'application/octet-stream',
-      'Content-Length': st.size, 'Cache-Control': 'private, max-age=300', 'X-Content-Type-Options': 'nosniff',
+      'Content-Length': st.size, 'Cache-Control': 'private, max-age=300', ...SECURITY_HEADERS,
     })
-    fs.createReadStream(target).on('error', () => res.destroy()).pipe(res)
+    fs.createReadStream(real).on('error', () => res.destroy()).pipe(res)
   }
 
   function serveStatic(res, name) {
@@ -228,7 +239,7 @@ export function createHandler({ queue, deps, fixDeps = {}, ops = {}, now = () =>
     } catch {
       return fail(res, 404, 'Không có trang')
     }
-    res.writeHead(200, { 'Content-Type': MIME[path.extname(p)], 'Content-Length': buf.length, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' })
+    res.writeHead(200, { 'Content-Type': MIME[path.extname(p)], 'Content-Length': buf.length, 'Cache-Control': 'no-store', ...SECURITY_HEADERS })
     res.end(buf)
   }
 
@@ -243,7 +254,7 @@ export function createHandler({ queue, deps, fixDeps = {}, ops = {}, now = () =>
       case 'reject':
         return act.rejectItem(queue, id, typeof body.reason === 'string' ? body.reason : '', { version: Number.isInteger(version) ? version : null })
       case 'remove':
-        return act.removeItem(queue, id)
+        return act.removeItem(queue, id, { version: Number.isInteger(version) ? version : null })
       case 'fix': {
         const r = await act.startFix(queue, id, { agent: body.agent, reason: typeof body.reason === 'string' ? body.reason : '', version }, fixDeps)
         if (r?.ok && r.jobId) {

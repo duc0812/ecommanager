@@ -247,10 +247,15 @@ export async function rejectItem(queue, itemId, reason, { version = null } = {})
   })
 }
 
-/** Bỏ khỏi hàng chờ: nothing is sent; a fixing item must finish (or fail) first. */
-export async function removeItem(queue, itemId) {
+/**
+ * Bỏ khỏi hàng chờ: nothing is sent; a fixing item must finish (or fail) first. A given `version` must still be current.
+ * @param {any} queue @param {string} itemId @param {{ version?: number|null }} [opts]
+ */
+export async function removeItem(queue, itemId, { version = null } = {}) {
   return underLocks(queue, itemId, async () => {
     const item = await queue.get(itemId)
+    const changed = versionError(itemId, item, version)
+    if (changed) return changed
     if (item.status === 'fixing') return fail(itemId, 'fixing', 'Agent đang sửa dòng này — chờ xong rồi bỏ', { status: item.status })
     if (!REMOVABLE.includes(item.status)) return fail(itemId, 'not_active', `Dòng đang ${item.status} — không còn trong hàng chờ`, { status: item.status })
     await queue.setStatus(itemId, 'removed', { reason: 'Bỏ khỏi hàng chờ' })

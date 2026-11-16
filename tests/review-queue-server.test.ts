@@ -173,6 +173,20 @@ describe('GET /files', () => {
     expect(await pv.text()).toBe('PREVIEW:PRINT_Front:v1')
   })
 
+  it('refuses dot-only and blank segments, and a link out of the folder', async () => {
+    await addItem('rq_a1', 'LIT1_1')
+    for (const t of ['/files/rq_a1/v/1/...', '/files/rq_a1/v/1/%20..', '/files/rq_a1/v/1/.%20.', '/files/rq_a1/v/1/%20']) {
+      expect([400, 403], t).toContain((await raw('GET', t)).status)
+    }
+    const outside = path.join(tmp, 'outside')
+    fs.mkdirSync(outside)
+    fs.writeFileSync(path.join(outside, 'secret.txt'), 'SECRET')
+    fs.symlinkSync(outside, path.join(root, 'items', 'rq_a1', 'v1', 'linked'), 'junction')
+    const r = await raw('GET', '/files/rq_a1/v/1/linked/secret.txt')
+    expect(r.status).toBe(403)
+    expect(r.body).not.toContain('SECRET')
+  })
+
   it('refuses anything outside the item version folder', async () => {
     await addItem('rq_a1', 'LIT1_1')
     fs.writeFileSync(path.join(root, 'secret.txt'), 'SECRET')
@@ -255,11 +269,11 @@ describe('actions', () => {
     await addItem('rq_a1', 'LIT1_1')
     await post('/api/items/rq_a1/reject', { version: 1, reason: 'màu tên' })
     await post('/api/items/rq_a1/cloud', { version: 1 })
-    await post('/api/items/rq_a1/remove', {})
+    await post('/api/items/rq_a1/remove', { version: 1 })
     expect(calls.map(c => [c.name, c.args[1], ...c.args.slice(2).filter(a => a !== deps)])).toEqual([
       ['rejectItem', 'rq_a1', 'màu tên', { version: 1 }],
       ['sendToCloud', 'rq_a1', { force: false, version: 1 }],
-      ['removeItem', 'rq_a1'],
+      ['removeItem', 'rq_a1', { version: 1 }],
     ])
   })
 
@@ -281,6 +295,13 @@ describe('actions', () => {
     expect(await r.json()).toMatchObject({ ok: false, code: 'fixing', error: 'Agent đang sửa dòng này' })
   })
 
+  it('a body over 64 KB gets a 413 answer', async () => {
+    await addItem('rq_a1', 'LIT1_1')
+    const r = await raw('POST', '/api/items/rq_a1/reject', { 'X-Review-Queue': '1', 'Content-Type': 'application/json' }, JSON.stringify({ version: 1, reason: 'x'.repeat(70_000) }))
+    expect(r.status).toBe(413)
+    expect(calls).toHaveLength(0)
+  })
+
   it('unknown item → 404 without calling the action; bad JSON → 400', async () => {
     expect((await post('/api/items/rq_zz/approve', { version: 1 })).status).toBe(404)
     await addItem('rq_a1', 'LIT1_1')
@@ -294,6 +315,7 @@ describe('static page', () => {
   it('serves the page and its assets', async () => {
     const page = await fetch(`${base}/`)
     expect(page.status).toBe(200)
+    expect(page.headers.get('content-security-policy')).toBe("default-src 'self'; img-src 'self' https: data:; style-src 'self' 'unsafe-inline'")
     expect(page.headers.get('content-type')).toMatch(/text\/html/)
     expect(await page.text()).toContain('Duyệt local')
     expect((await fetch(`${base}/app.js`)).headers.get('content-type')).toMatch(/javascript/)

@@ -29,6 +29,16 @@ const fmtTime = iso => { const d = new Date(iso); return isNaN(d) ? '' : `${pad(
 const fmtDateTime = iso => `${fmtDate(iso)} ${fmtTime(iso)}`
 const fmtBytes = b => (b == null ? '' : b >= 1048576 ? `${(b / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`)
 const tabOf = status => TABS.find(t => t.statuses.includes(status))?.key ?? 'done'
+const safeUrl = u => {
+  if (typeof u !== 'string' || !u) return null
+  if (u.startsWith('/files/')) return u
+  try {
+    const x = new URL(u)
+    return x.protocol === 'https:' || x.protocol === 'http:' ? u : null
+  } catch {
+    return null
+  }
+}
 const needsForce = item => item.status === 'qa_failed' || item.qa?.verdict === 'fail'
 
 function left(deadline, withSeconds) {
@@ -139,7 +149,8 @@ function renderList() {
   if (!S.items.length) { $('list').innerHTML = '<div class="empty">Không có dòng nào ở mục này.</div>'; return }
   $('list').innerHTML = S.items.map(i => {
     const soon = i.deadline && Date.parse(i.deadline) - Date.now() < SOON_MS
-    const img = i.thumb ? `<img src="${esc(i.thumb)}" alt="" loading="lazy">` : '<div class="noimg"></div>'
+    const thumb = safeUrl(i.thumb)
+    const img = thumb ? `<img src="${esc(thumb)}" alt="" loading="lazy">` : '<div class="noimg"></div>'
     const sub = [i.title, i.variant].filter(Boolean).join(' · ')
     const extra = i.qa?.count && i.status !== 'qa_failed' ? `<span class="cd">${i.qa.count} đề xuất sửa</span>` : ''
     const done = tabOf(i.status) === 'done' ? `<span class="cd">${esc(fmtDateTime(i.updatedAt))}</span>` : ''
@@ -157,10 +168,13 @@ function viewed() {
   return d.versions.find(v => v.n === n) ?? d.versions[d.versions.length - 1] ?? { n, files: [], qa: null }
 }
 
-function imgCard({ title, right, href, src, cls = '', footer = '', empty }) {
-  const body = src
-    ? `<a class="img" href="${esc(href ?? src)}" target="_blank" rel="noopener" title="Bấm để xem gốc"><img class="big" src="${esc(src)}" alt=""></a>`
-    : `<div class="noimg big">${esc(empty ?? 'Không có ảnh')}</div>`
+function imgCard({ title, right, href, src: rawSrc, cls = '', footer = '', empty }) {
+  const src = safeUrl(rawSrc)
+  const link = safeUrl(href ?? rawSrc)
+  const img = src ? `<img class="big" src="${esc(src)}" alt="">` : ''
+  const body = !src
+    ? `<div class="noimg big">${esc(empty ?? 'Không có ảnh')}</div>`
+    : link ? `<a class="img" href="${esc(link)}" target="_blank" rel="noopener" title="Bấm để xem gốc">${img}</a>` : img
   return `<div class="card ${cls}"><h3>${esc(title)} <span>${esc(right ?? '')}</span></h3>${body}${footer}</div>`
 }
 
@@ -385,7 +399,7 @@ function onRemove() {
   if (!it) return
   modal(`<h2>Bỏ ${esc(it.taskKey)} khỏi hàng chờ?</h2><p>Không giao gì lên prod. Task trên prod giữ nguyên trạng thái hiện tại.</p>
     <div class="acts"><button class="btn" data-m="cancel">Huỷ</button><button class="btn bad" data-m="ok">Bỏ khỏi hàng chờ</button></div>`,
-  () => { act('remove', {}, { okText: 'đã bỏ khỏi hàng chờ' }) })
+  () => { act('remove', { version: it.version }, { okText: 'đã bỏ khỏi hàng chờ' }) })
 }
 
 function onRerun() {
@@ -402,6 +416,7 @@ function onRerun() {
 document.addEventListener('click', e => {
   const t = e.target.closest('[data-tab],[data-id],[data-act],[data-agent],[data-part],[data-side],[data-ver]')
   if (!t) { if (S.menu) { S.menu = false; renderBar() } return }
+  if (S.busy) return
   if (t.dataset.tab) {
     S.tab = t.dataset.tab
     S.selected = null
