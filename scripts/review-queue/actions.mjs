@@ -32,7 +32,7 @@ const qaFailed = item => item.status === 'qa_failed' || item.qa?.verdict === 'fa
 const fail = (itemId, code, error, extra = {}) => ({ ok: false, itemId, code, error, ...extra })
 
 /** Item lock, then the group's intake lock; a lock someone else holds → { ok:false, code:'locked' } and nothing done. */
-async function underLocks(queue, itemId, fn) {
+export async function underLocks(queue, itemId, fn) {
   const item = await queue.get(itemId)
   if (!item) return fail(itemId, 'not_found', `Không có dòng ${itemId} trong hàng chờ`)
   let entered = false
