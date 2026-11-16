@@ -140,7 +140,7 @@ export async function openQueue({ root, now = () => new Date(), isAlive = pidAli
   const dbPath = path.resolve(root, 'queue.db').replace(/\\/g, '/')
   const db = createClient({ url: `file:${dbPath}` })
   const setBusy = () => db.execute(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`)
-  // Another process holding the write lock past the busy timeout surfaces as SQLITE_BUSY: wait and retry once more.
+  // SQLite itself waits busy_timeout for another process's write lock; this retry only covers a BUSY returned without that wait.
   const isBusy = e => /SQLITE_BUSY/.test(`${e?.code ?? ''} ${e?.message ?? ''}`)
   const retryBusy = async fn => {
     const started = Date.now()

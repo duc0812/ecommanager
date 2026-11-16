@@ -13,6 +13,8 @@ $log = Join-Path $logDir ('{0}-{1:yyyy-MM-dd}.log' -f $What, (Get-Date))
 $env:REVIEW_QUEUE_ROOT = $QueueRoot
 Set-Location -LiteralPath $appDir
 $script = Join-Path $appDir ('scripts\review-queue\{0}.mjs' -f $What)
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 $ErrorActionPreference = 'Continue'
 & $Node $script 2>&1 | ForEach-Object { "$_" } | Out-File -Append -Encoding utf8 -LiteralPath $log
+if ($null -eq $LASTEXITCODE) { exit 1 }
 exit $LASTEXITCODE
