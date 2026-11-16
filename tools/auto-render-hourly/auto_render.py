@@ -726,10 +726,31 @@ def flat_guard(inputs: dict, files: list[dict], files_root: Path, tmp_dir: Path,
 
 
 QUEUE_DB_RETRIES = 3
+QUEUE_PARKED = ('held', 'removed')
+
+
+def _version_print_shas(files_json, key: str) -> frozenset:
+    """sha256 set of the PRINT files of a version: the key's own files, or the whole version when the key only shares the lead's."""
+    try:
+        files = [f for f in (json.loads(files_json) if files_json else []) or [] if isinstance(f, dict) and (f.get('kind') or 'PRINT') == 'PRINT']
+    except (ValueError, TypeError):
+        return frozenset()
+    own = [f for f in files if f.get('taskKey') == key]
+    return frozenset(str(f.get('sha256')) for f in (own or files) if f.get('sha256'))
+
+
+def _sha256_file(p: Path) -> str:
+    import hashlib
+    h = hashlib.sha256()
+    with open(p, 'rb') as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b''):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def queued_keys(root: Path, sleep=time.sleep) -> dict[str, dict]:
-    """taskKey → {itemId, status} of every active item of the local review queue (read-only); no queue.db yet → {}.
+    """taskKey → {itemId, status} of the local review queue (read-only); no queue.db yet → {}. An active item wins; otherwise the
+    newest item (updatedAt) of the key counts, and a held / removed one carries `shas`, the PRINT sha256 set of its last version.
     A locked/busy db (a writer mid-transaction) is retried QUEUE_DB_RETRIES times, 1 s apart."""
     import sqlite3
     db = Path(root) / 'queue.db'
@@ -739,11 +760,24 @@ def queued_keys(root: Path, sleep=time.sleep) -> dict[str, dict]:
         try:
             c = _ro(db)
             try:
-                rows = c.execute(f'SELECT k.taskKey, i.id, i.status FROM item_keys k JOIN items i ON i.id = k.itemId '
-                                 f'WHERE i.status IN ({", ".join("?" * len(QUEUE_ACTIVE))})', QUEUE_ACTIVE).fetchall()
+                rows = c.execute('SELECT k.taskKey, i.id, i.status, i.updatedAt, v.files FROM item_keys k JOIN items i ON i.id = k.itemId '
+                                 'LEFT JOIN versions v ON v.itemId = i.id AND v.n = i.version').fetchall()
             finally:
                 c.close()
-            return {k: {'itemId': i, 'status': s} for k, i, s in rows}
+            out: dict[str, dict] = {}
+            newest: dict[str, str] = {}
+            for row in rows:
+                k, i, s = row[0], row[1], row[2]
+                at, files = (row[3], row[4]) if len(row) > 4 else ('', None)
+                have = out.get(k)
+                if have and have['status'] in QUEUE_ACTIVE:
+                    continue
+                if s in QUEUE_ACTIVE or have is None or str(at or '') > newest[k]:
+                    out[k] = {'itemId': i, 'status': s}
+                    newest[k] = str(at or '')
+                    if s in QUEUE_PARKED:
+                        out[k]['shas'] = _version_print_shas(files, k)
+            return out
         except sqlite3.OperationalError as e:
             if attempt < QUEUE_DB_RETRIES and any(w in str(e).lower() for w in ('locked', 'busy')):
                 sleep(1)
@@ -769,17 +803,30 @@ def build_plan(cfg: Config, pr: ProcessResult, since: str, tmp_dir: Path, log: R
         p = prod.get(key, {})
         lines.append(Line(key, source, p.get('status'), p.get('readiness'), result, qa_items(result, results), inputs))
 
-    def in_queue(key) -> bool:
+    def in_queue(key, paths=None) -> bool:
         if key not in queued or key in seen:
             return False
         q = queued[key]
-        skipped.append({'taskKey': key, 'reason': f'đã có trong hàng chờ local ({q["itemId"]}, {q["status"]})'})
+        if q['status'] in QUEUE_PARKED:
+            try:
+                now = frozenset(_sha256_file(Path(p)) for p in (paths() if paths else []))
+            except OSError:
+                now = frozenset()
+            if now and now != q.get('shas', frozenset()):
+                log.line(f'{key}: file render khác bản cuối của {q["itemId"]} ({q["status"]}) — đưa lại vào hàng chờ')
+                return False
+            what = 'giữ lại' if q['status'] == 'held' else 'bỏ'
+            skipped.append({'taskKey': key, 'reason': f'hàng chờ local đã {what} ({q["itemId"]}, {q["status"]}), file render không đổi'})
+        elif q['status'] in QUEUE_ACTIVE:
+            skipped.append({'taskKey': key, 'reason': f'đã có trong hàng chờ local ({q["itemId"]}, {q["status"]})'})
+        else:
+            return False
         seen.add(key)
         return True
 
     rules = load_photoshop_rules(cfg.artwork_builder)
     for key, rows in sorted(local_render_files(local_db, since).items()):
-        if key not in cands or in_queue(key):
+        if key not in cands or in_queue(key, lambda: [root / r['storagePath'] for r in rows]):
             continue
         inputs = None
         try:
@@ -800,8 +847,9 @@ def build_plan(cfg: Config, pr: ProcessResult, since: str, tmp_dir: Path, log: R
         tools_dir = cfg.artwork_builder / 'g5' / 'tools'
         files_root = Path(pr.flat_spec).parent
         for g in flat.get('groups', []):
+            prints = [files_root / f['path'] for f in g.get('files', []) if f.get('path') and (f.get('kind') or 'PRINT') == 'PRINT']
             for key in g.get('lines', []):
-                if key not in cands or key in seen or in_queue(key):
+                if key not in cands or key in seen or in_queue(key, lambda: prints):
                     continue
                 p = prod[key]
                 try:

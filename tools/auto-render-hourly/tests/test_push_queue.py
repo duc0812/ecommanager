@@ -40,8 +40,8 @@ def queue_root(tmp_path, monkeypatch):
     return root
 
 
-def make_queue_db(root: Path, items: list[tuple[str, str, list[str]]]):
-    """queue.db as the store writes it (WAL, closed): items (id, status) with their member keys."""
+def make_queue_db(root: Path, items: list[tuple]):
+    """queue.db as the store writes it (WAL, closed): items (id, status, keys[, updatedAt[, version files]]) with their member keys."""
     root.mkdir(parents=True, exist_ok=True)
     c = sqlite3.connect(root / 'queue.db')
     c.execute('PRAGMA journal_mode = WAL')
@@ -49,13 +49,29 @@ def make_queue_db(root: Path, items: list[tuple[str, str, list[str]]]):
       CREATE TABLE items (id TEXT PRIMARY KEY, taskKey TEXT NOT NULL, groupKey TEXT NOT NULL, kind TEXT NOT NULL, status TEXT NOT NULL,
         statusReason TEXT, prevStatus TEXT, version INTEGER NOT NULL, enteredAt TEXT NOT NULL, createdAt TEXT NOT NULL, updatedAt TEXT NOT NULL,
         apiLines TEXT NOT NULL, meta TEXT, qa TEXT NOT NULL);
+      CREATE TABLE versions (itemId TEXT NOT NULL, n INTEGER NOT NULL, files TEXT NOT NULL, apiLines TEXT NOT NULL, qa TEXT NOT NULL,
+        createdAt TEXT NOT NULL, PRIMARY KEY (itemId, n));
       CREATE TABLE item_keys (itemId TEXT NOT NULL, taskKey TEXT NOT NULL, PRIMARY KEY (itemId, taskKey));''')
-    for item_id, status, keys in items:
-        c.execute("INSERT INTO items VALUES (?, ?, ?, 'line', ?, NULL, NULL, 1, 't', 't', 't', '[]', '{}', '{}')", (item_id, keys[0], keys[0], status))
+    for item in items:
+        item_id, status, keys = item[:3]
+        at = item[3] if len(item) > 3 else 't'
+        files = item[4] if len(item) > 4 else []
+        c.execute("INSERT INTO items VALUES (?, ?, ?, 'line', ?, NULL, NULL, 2, 't', 't', ?, '[]', '{}', '{}')", (item_id, keys[0], keys[0], status, at))
+        c.execute("INSERT INTO versions VALUES (?, 1, '[]', '[]', '{}', 't')", (item_id,))
+        c.execute("INSERT INTO versions VALUES (?, 2, ?, '[]', '{}', 't')", (item_id, json.dumps(files)))
         for k in keys:
             c.execute('INSERT INTO item_keys VALUES (?, ?)', (item_id, k))
     c.commit()
     c.close()
+
+
+def _render_sha(w, key):
+    import hashlib
+    return hashlib.sha256((ar.storage_root(ar.load_config(w.config)) / 'design' / key / 'Print' / 'v1.png').read_bytes()).hexdigest()
+
+
+def _vfile(key, sha, kind='PRINT'):
+    return {'part': f'{kind}_Print', 'kind': kind, 'printArea': 'Print', 'taskKey': key, 'sha256': sha}
 
 
 def _queue_world(world, prod_env, queue_root, **kw):
@@ -145,6 +161,42 @@ def test_queued_keys_are_skipped_before_the_guard(world, prod_env, queue_root):
     assert {'taskKey': 'LIT1_1', 'reason': 'đã có trong hàng chờ local (rq_a1, rejected)'} in s['skipped']
     assert {'taskKey': 'LIT3_1', 'reason': 'đã có trong hàng chờ local (rq_c3, qa_failed)'} in s['skipped']
     assert [c['keys'] for c in _queue_calls(w)] == [['LIT4_1']]
+
+
+def test_held_and_removed_lines_with_the_same_render_are_not_queued_again(world, prod_env, queue_root):
+    w = _queue_world(world, prod_env, queue_root, lines=[dict(key='LIT1_1', readiness='AUTO', ink=GOOD), dict(key='LIT3_1', readiness='AUTO', ink=WIDE)])
+    s1, s3 = _render_sha(w, 'LIT1_1'), _render_sha(w, 'LIT3_1')
+    make_queue_db(queue_root, [('rq_h1', 'held', ['LIT1_1'], '2026-11-15T10:00:00.000Z', [_vfile('LIT1_1', s1), _vfile('LIT1_1', 'mock', 'MOCKUP')]),
+                               ('rq_r3', 'removed', ['LIT3_1'], '2026-11-15T10:00:00.000Z', [_vfile('LIT3_1', s3)])])
+    assert ar.main(['--config', str(w.config)]) == 0
+    s = w.summary()
+    assert s['queued'] == [] and _queue_calls(w) == [] and w.agent.holds == []
+    assert {'taskKey': 'LIT1_1', 'reason': 'hàng chờ local đã giữ lại (rq_h1, held), file render không đổi'} in s['skipped']
+    assert {'taskKey': 'LIT3_1', 'reason': 'hàng chờ local đã bỏ (rq_r3, removed), file render không đổi'} in s['skipped']
+
+
+def test_a_held_line_with_a_new_render_is_queued_again(world, prod_env, queue_root):
+    w = _queue_world(world, prod_env, queue_root, lines=[dict(key='LIT1_1', readiness='AUTO', ink=GOOD)],
+                     flat=[dict(key='LIT7_1', readiness='AUTO', values={'Custom Name': 'Anna'})])
+    make_queue_db(queue_root, [('rq_h1', 'held', ['LIT1_1'], '2026-11-15T10:00:00.000Z', [_vfile('LIT1_1', 'old-sha')]),
+                               ('rq_h7', 'removed', ['LIT7_1'], '2026-11-15T10:00:00.000Z', [_vfile('LIT7_1', 'old-sha')])])
+    assert ar.main(['--config', str(w.config)]) == 0
+    s = w.summary()
+    assert [(q['taskKey'], q['state']) for q in s['queued']] == [('LIT1_1', 'vào hàng chờ'), ('LIT7_1', 'vào hàng chờ')]
+    assert 'LIT1_1: file render khác bản cuối của rq_h1 (held)' in w.log()
+
+
+def test_the_newest_item_of_a_key_decides_and_an_active_one_always_wins(world, prod_env, queue_root):
+    w = _queue_world(world, prod_env, queue_root, lines=[dict(key='LIT1_1', readiness='AUTO', ink=GOOD), dict(key='LIT3_1', readiness='AUTO', ink=GOOD)])
+    s1, s3 = _render_sha(w, 'LIT1_1'), _render_sha(w, 'LIT3_1')
+    make_queue_db(queue_root, [('rq_h1', 'held', ['LIT1_1'], '2026-11-15T10:00:00.000Z', [_vfile('LIT1_1', s1)]),
+                               ('rq_c1', 'cloud', ['LIT1_1'], '2026-11-15T11:00:00.000Z', [_vfile('LIT1_1', s1)]),
+                               ('rq_w3', 'waiting', ['LIT3_1'], '2026-11-15T09:00:00.000Z', [_vfile('LIT3_1', 'other')]),
+                               ('rq_h3', 'held', ['LIT3_1', 'LIT9_1'], '2026-11-15T12:00:00.000Z', [_vfile('LIT3_1', s3)])])
+    assert ar.main(['--config', str(w.config)]) == 0
+    s = w.summary()
+    assert [q['taskKey'] for q in s['queued']] == ['LIT1_1']
+    assert {'taskKey': 'LIT3_1', 'reason': 'đã có trong hàng chờ local (rq_w3, waiting)'} in s['skipped']
 
 
 def test_no_queue_db_means_nothing_is_queued_yet(world, prod_env, queue_root):
