@@ -9,7 +9,8 @@ import sharp from 'sharp'
 import { openQueue, newItemId } from '../scripts/review-queue/store.mjs'
 import {
   startFix, runFixJob, recoverFixJobs, readJob, listJobs, childEnv, findCodexExe, findClaudeExe, agentCommand,
-  FIX_PROMPT, FIX_LIMIT_MS, CHILD_ENV_KEYS, codexConfigModel,
+  FIX_PROMPT, FIX_LIMIT_MS, CHILD_ENV_KEYS, codexConfigModel, makeQaItem, makeFixDeps, QA_TIMEOUT_MS,
+  DEFAULT_AUTO_RENDER_PY, DEFAULT_AUTO_RENDER_SCRIPT,
 } from '../scripts/review-queue/fix-job.mjs'
 
 let tmp: string
@@ -512,5 +513,87 @@ describe('environment and executables', () => {
     expect(fromCfg.args).toEqual(['exec', '--ignore-user-config', '-C', job, '--skip-git-repo-check', '--sandbox', 'workspace-write', '-o', path.join(job, 'last-message.txt'), FIX_PROMPT])
     fs.writeFileSync(cfg, "model = 'gpt-x'\n")
     expect((await agentCommand('codex', job, { codexExe: 'C:\\c.exe', env: { USERPROFILE: home } })).args.slice(0, 4)).toEqual(['exec', '--ignore-user-config', '-m', 'gpt-x'])
+  })
+})
+
+describe('machine QA of a fix (auto_render.py --qa-item)', () => {
+  const INPUTS = { source: 'local-render', taskKey: 'LIT1_1', noName: false, tolerance: 3, pieces: [{ printArea: 'Front', part: 'PRINT_Front' }] }
+
+  it('runFixJob hands the item\'s saved inputs to qaItem and the new version keeps them', async () => {
+    const id = await makeItem('LIT1_1', { qa: { verdict: 'fail', items: ['tên vượt khung 15 px'], inputs: INPUTS }, status: 'qa_failed' })
+    const { jobId } = await start(id)
+    const { spawn } = fakeSpawn(({ child, job }) => { writeOut(job, 'PRINT_Front.png', 'ART-fixed'); exit(child) })
+    const seen: any[] = []
+    const r = await runFixJob(q, jobId, deps(spawn, { qaItem: async (dir: string, ctx: any) => { seen.push([dir, ctx]); return { verdict: 'pass', items: [] } } }))
+    const job = path.join(q.root, 'items', id, 'jobs', '1')
+    expect(r).toMatchObject({ ok: true, status: 'waiting', version: 2 })
+    expect(seen).toEqual([[path.join(job, 'stage'), { inputs: INPUTS, jobDir: job }]])
+    expect((await q.get(id)).qa).toEqual({ verdict: 'pass', items: [], inputs: INPUTS })
+    expect((await q.versions(id)).find((v: any) => v.n === 2).qa.inputs).toEqual(INPUTS)
+  })
+
+  it('spawns python auto_render.py --qa-item <stage> --qa-inputs <job>\\qa-inputs.json and reads the JSON verdict', async () => {
+    const job = path.join(tmp, 'job')
+    fs.mkdirSync(path.join(job, 'stage'), { recursive: true })
+    const { spawn, calls } = fakeSpawn(({ child }) => {
+      child.stdout.write('some warning\n{"verdict": "fail", "items": ["t\u00ean v\u01b0\u1ee3t khung 15 px"]}\n')
+      exit(child)
+    })
+    const qa = makeQaItem({ env: { Path: 'C:\\Windows', DESIGN_WORKER_TOKEN: 'w', AUTO_RENDER_PY: 'C:\\py\\python.exe', AUTO_RENDER_SCRIPT: 'C:\\ar\\auto_render.py' }, spawn })
+    expect(await qa(path.join(job, 'stage'), { inputs: INPUTS, jobDir: job })).toEqual({ verdict: 'fail', items: ['tên vượt khung 15 px'] })
+    expect(calls[0].cmd).toBe('C:\\py\\python.exe')
+    expect(calls[0].args).toEqual(['C:\\ar\\auto_render.py', '--qa-item', path.join(job, 'stage'), '--qa-inputs', path.join(job, 'qa-inputs.json')])
+    expect(calls[0].opts).toMatchObject({ windowsHide: true, cwd: job })
+    expect(calls[0].opts.env.DESIGN_WORKER_TOKEN).toBeUndefined()
+    expect(calls[0].opts.env).toMatchObject({ PATH: 'C:\\Windows', PYTHONIOENCODING: 'utf-8' })
+    expect(JSON.parse(fs.readFileSync(path.join(job, 'qa-inputs.json'), 'utf8'))).toEqual(INPUTS)
+    expect([DEFAULT_AUTO_RENDER_PY, DEFAULT_AUTO_RENDER_SCRIPT]).toEqual(['C:\\Program Files\\Python312\\python.exe', 'D:\\Ecom manager\\wt-designer-agent\\tools\\auto-render-hourly\\auto_render.py'])
+    const d = makeQaItem({ env: {}, spawn })
+    await d(path.join(job, 'stage'), { inputs: INPUTS, jobDir: job })
+    expect([calls[1].cmd, calls[1].args[0]]).toEqual([DEFAULT_AUTO_RENDER_PY, DEFAULT_AUTO_RENDER_SCRIPT])
+  })
+
+  it('no saved inputs → unchecked without running anything; any failure → unchecked with the reason', async () => {
+    const job = path.join(tmp, 'job')
+    fs.mkdirSync(path.join(job, 'stage'), { recursive: true })
+    const none = fakeSpawn(() => { throw new Error('must not spawn') })
+    expect(await makeQaItem({ env: {}, spawn: none.spawn })(path.join(job, 'stage'), { inputs: null, jobDir: job })).toEqual({ verdict: 'unchecked', items: [] })
+    expect(none.calls).toEqual([])
+    const cases: [string, (c: any) => void][] = [
+      ['thoát mã 2', c => { c.stderr.write('--qa-item: không thấy thư mục'); exit(c, 2) }],
+      ['kết quả', c => { c.stdout.write('not json at all\n'); exit(c) }],
+      ['kết quả', c => { c.stdout.write('{"verdict": "maybe", "items": []}\n'); exit(c) }],
+      ['ENOENT', c => setImmediate(() => c.emit('error', Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' })))],
+    ]
+    for (const [text, behave] of cases) {
+      const { spawn } = fakeSpawn(({ child }) => behave(child))
+      const r = await makeQaItem({ env: {}, spawn })(path.join(job, 'stage'), { inputs: INPUTS, jobDir: job })
+      expect(r.verdict).toBe('unchecked')
+      expect(r.items).toHaveLength(1)
+      expect(r.items[0]).toMatch(/^không chạy được kiểm tra máy: /)
+      expect(r.items[0]).toContain(text)
+    }
+  })
+
+  it('a check that hangs is killed after 5 minutes', async () => {
+    vi.useFakeTimers()
+    const job = path.join(tmp, 'job')
+    fs.mkdirSync(path.join(job, 'stage'), { recursive: true })
+    const killed: number[] = []
+    const { spawn, calls } = fakeSpawn(() => {})
+    const p = makeQaItem({ env: {}, spawn, killTree: (c: any) => { killed.push(c.pid); c.kill() } })(path.join(job, 'stage'), { inputs: INPUTS, jobDir: job })
+    await vi.advanceTimersByTimeAsync(QA_TIMEOUT_MS - 1000)
+    expect(killed).toEqual([])
+    await vi.advanceTimersByTimeAsync(2000)
+    vi.useRealTimers()
+    const r = await p
+    expect(calls).toHaveLength(1)
+    expect(killed).toEqual([999_999])
+    expect(r).toEqual({ verdict: 'unchecked', items: ['không chạy được kiểm tra máy: quá 5 phút'] })
+    expect(QA_TIMEOUT_MS).toBe(5 * 60_000)
+  })
+
+  it('makeFixDeps wires the real check by default', () => {
+    expect(makeFixDeps({ env: {} }).qaItem.name).toBe('qaItemViaAutoRender')
   })
 })

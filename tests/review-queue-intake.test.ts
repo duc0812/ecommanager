@@ -248,6 +248,27 @@ describe('enqueuePlan', () => {
     expect(logs.some(l => l.includes('LIT1_1') && l.includes('mạng hỏng'))).toBe(true)
   })
 
+  it('keeps the auto render QA inputs with the version (one line: as given; a group: byKey) so --qa-item can re-run the check', async () => {
+    put('r/LIT1_1/front.png', 'FRONT-ART')
+    const inputs = { source: 'local-render', taskKey: 'LIT1_1', noName: false, tolerance: 3, pieces: [{ printArea: 'front', part: 'PRINT_front' }] }
+    await enqueue({ lines: [planLine()] }, { qaByKey: { LIT1_1: { verdict: 'fail', items: ['tên vượt khung 15 px'], inputs } } })
+    const item = await q.activeByTaskKey('LIT1_1')
+    expect(item.qa).toEqual({ verdict: 'fail', items: ['tên vượt khung 15 px'], inputs })
+    expect((await q.versions(item.id))[0].qa.inputs).toEqual(inputs)
+
+    put('spec/dl/x.png', 'SHARED-ART')
+    const lead = planLine({ taskKey: 'LIT2_1', files: [printFile({ storagePath: 'spec/dl/x.png' })] })
+    const later = planLine({ taskKey: 'LIT3_1', files: [printFile({ storagePath: 'spec/dl/x.png', transfer: 'reuse', shared: true, sharedFrom: 'LIT2_1', driveFileId: null })] })
+    await enqueue({ lines: [lead, later] }, { qaByKey: { LIT2_1: { verdict: 'pass', items: [], inputs: { source: 'flat-text', taskKey: 'LIT2_1' } }, LIT3_1: { verdict: 'pass', items: [] } } })
+    expect((await q.activeByTaskKey('LIT2_1')).qa).toEqual({ verdict: 'pass', items: [], inputs: { byKey: { LIT2_1: { source: 'flat-text', taskKey: 'LIT2_1' } } } })
+  })
+
+  it('a line without QA inputs stores no inputs key', async () => {
+    put('r/LIT1_1/front.png', 'FRONT-ART')
+    await enqueue({ lines: [planLine()] }, { qaByKey: { LIT1_1: { verdict: 'pass', items: [], inputs: 'not an object' } } })
+    expect((await q.activeByTaskKey('LIT1_1')).qa).toEqual({ verdict: 'pass', items: [] })
+  })
+
   it('falls back to the _customall_preview attribute when the line has no previewCdnUrl', async () => {
     put('r/LIT3_1/front.png', 'ART3')
     await enqueue({ lines: [planLine({ taskKey: 'LIT3_1', files: [printFile({ storagePath: 'r/LIT3_1/front.png' })] })] })

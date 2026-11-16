@@ -66,6 +66,34 @@ elif script.endswith('push-local-renders.mjs') or script.endswith('push-shared-p
     else:
         keys = [k for g in json.loads(Path(opt('--spec')).read_text(encoding='utf-8'))['groups'] for k in g['lines']]
     outcomes = {k: plan.get('push', {}).get(k, 'applied') for k in keys}
+    if '--to-queue' in args:
+        qa = json.loads(Path(opt('--qa-json')).read_text(encoding='utf-8')) if opt('--qa-json') else None
+        with open(D / 'queue-calls.jsonl', 'a', encoding='utf-8') as fh:
+            fh.write(json.dumps({'script': name, 'keys': keys, 'qa': qa, 'root': os.environ.get('REVIEW_QUEUE_ROOT'),
+                                 'token': os.environ.get('DESIGN_WORKER_TOKEN')}) + '\n')
+        said = {'enqueued': 'vào hàng chờ', 'unchanged': 'không đổi (đã có trong hàng chờ)', 'fixing': 'không đổi (agent đang sửa)',
+                'bypassed': 'giao thẳng (chỉ dùng lại file đã có trên Drive)', 'refused': 'không vào hàng chờ: đã có trong hàng chờ rq_other',
+                'waiting': 'chờ: dòng đầu chưa có trên Drive'}
+        q = {k: plan.get('queue', {}).get(k, 'enqueued') for k in keys}
+        if 'crash' in q.values():
+            print('Error: intake crashed', flush=True)
+            sys.exit(1)
+        print(f'\n== Hàng chờ duyệt local ({os.environ.get("REVIEW_QUEUE_ROOT")}): {len(keys)} dòng ==', flush=True)
+        for k in keys:
+            if q[k] != 'missing':
+                print(f'  {k}  {said[q[k]]}', flush=True)
+        print(f'{len(keys)} dòng · vào hàng chờ {sum(v == "enqueued" for v in q.values())} · không đổi 0 · giao thẳng 0', flush=True)
+        bypassed = [k for k in keys if q[k] == 'bypassed']
+        if bypassed:
+            out = Path(opt('--out')) if opt('--out') else Path(os.environ['FAKE_MAIN_CHECKOUT']) / 'db-backups' / name
+            out.mkdir(parents=True, exist_ok=True)
+            ledger_path = out / 'api-ledger.json'
+            ledger = json.loads(ledger_path.read_text(encoding='utf-8')) if ledger_path.exists() else {'lines': {}}
+            at = datetime.now(timezone.utc).isoformat(timespec='milliseconds')
+            for k in bypassed:
+                ledger['lines'][f'{k}#q'] = {'taskKey': k, 'action': 'push', 'files': {}, 'applied': at, 'result': {'status': 'REVIEW'}}
+            ledger_path.write_text(json.dumps(ledger), encoding='utf-8')
+        sys.exit(1 if 'refused' in q.values() else 0)
     if opt('--via') == 'api':
         with open(D / 'api-env.jsonl', 'a', encoding='utf-8') as fh:
             fh.write(json.dumps({k: os.environ.get(k) for k in ('ECOM_URL', 'DESIGN_WORKER_TOKEN')}) + '\n')

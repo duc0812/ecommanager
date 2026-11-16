@@ -35,7 +35,9 @@ const fail = (itemId, code, error, extra = {}) => ({ ok: false, itemId, code, er
 const clip = (s, n = MESSAGE_MAX) => (s.length > n ? s.slice(0, n) : s)
 const isFile = p => { try { return fs.statSync(p).isFile() } catch { return false } }
 const readdir = d => { try { return fs.readdirSync(d, { withFileTypes: true }) } catch { return [] } }
-const defaultQa = async () => ({ verdict: 'unchecked', items: [] })
+export const QA_TIMEOUT_MS = 5 * 60_000
+export const DEFAULT_AUTO_RENDER_PY = 'C:\\Program Files\\Python312\\python.exe'
+export const DEFAULT_AUTO_RENDER_SCRIPT = 'D:\\Ecom manager\\wt-designer-agent\\tools\\auto-render-hourly\\auto_render.py'
 const ownJobs = new Set()
 
 /**
@@ -469,8 +471,10 @@ async function withLocksRetry(queue, itemId, fn, deps) {
  */
 async function recordVersion(queue, itemId, dir, job, last, deps) {
   const previewer = deps.previewer ?? makePreview
-  const qaItem = deps.qaItem ?? defaultQa
-  const baseFiles = (await queue.versions(itemId)).find(v => v.n === job.version)?.files ?? []
+  const qaItem = deps.qaItem ?? makeQaItem({ env: deps.env ?? process.env })
+  const base = (await queue.versions(itemId)).find(v => v.n === job.version)
+  const baseFiles = base?.files ?? []
+  const inputs = base?.qa?.inputs ?? null
   const stage = path.join(dir, 'stage')
   fs.rmSync(stage, { recursive: true, force: true })
   fs.mkdirSync(path.join(stage, 'preview'), { recursive: true })
@@ -491,10 +495,11 @@ async function recordVersion(queue, itemId, dir, job, last, deps) {
   }
   let qa
   try {
-    qa = normQa(await qaItem(stage))
+    qa = normQa(await qaItem(stage, { inputs, jobDir: dir }))
   } catch (e) {
     qa = { verdict: 'unchecked', items: [`không chạy được kiểm tra máy: ${errText(e)}`] }
   }
+  if (inputs) qa.inputs = inputs
   return withLocksRetry(queue, itemId, async () => {
     const item = await queue.get(itemId)
     if (item.status !== 'fixing' || item.version !== job.version) return { failed: `dòng đã đổi trong lúc sửa (đang ${item.status}, v${item.version})` }
@@ -702,7 +707,74 @@ export async function recoverFixJobs(queue, {
   return recovered
 }
 
-/** Real deps for the server: the installed Claude / Codex, the process environment (filtered per job), QA unchecked until wired. */
-export function makeFixDeps({ env = process.env, log = console.log, qaItem = defaultQa } = {}) {
+function runCheck(spawn, cmd, args, { cwd, env, timeoutMs, kill }) {
+  return new Promise(resolve => {
+    let stdout = ''
+    let stderr = ''
+    let done = false
+    let timer = null
+    const finish = r => {
+      if (done) return
+      done = true
+      clearTimeout(timer)
+      resolve({ stdout, stderr, ...r })
+    }
+    let child
+    try {
+      child = spawn(cmd, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
+    } catch (e) {
+      finish({ error: errText(e) })
+      return
+    }
+    child.stdout?.on('data', d => { stdout = (stdout + d).slice(-(1 << 20)) })
+    child.stderr?.on('data', d => { stderr = (stderr + d).slice(-4000) })
+    child.on('error', e => finish({ error: errText(e) }))
+    child.on('close', code => finish({ code }))
+    timer = setTimeout(() => {
+      try { kill(child) } catch { /* already gone */ }
+      finish({ timedOut: true })
+    }, timeoutMs)
+  })
+}
+
+/**
+ * The machine QA of a fixed version (spec 13): the item's saved auto render inputs go to `<job>\qa-inputs.json` and
+ * `python auto_render.py --qa-item <stage> --qa-inputs <file>` (AUTO_RENDER_PY / AUTO_RENDER_SCRIPT) re-runs the same check.
+ * No saved inputs (a manual line) → unchecked without running anything; any failure → unchecked with the reason.
+ * @param {{ env?: Record<string, string|undefined>, spawn?: any, timeoutMs?: number, killTree?: ((child: any) => void) | null }} [opts]
+ * @returns {(stageDir: string, ctx?: { inputs?: any, jobDir?: string|null }) => Promise<{ verdict: string, items: string[] }>}
+ */
+export function makeQaItem({ env = process.env, spawn = null, timeoutMs = QA_TIMEOUT_MS, killTree: kill = null } = {}) {
+  const run = spawn ?? nodeSpawn
+  const stop = kill ?? (spawn ? c => c.kill() : killTree)
+  const python = env.AUTO_RENDER_PY || DEFAULT_AUTO_RENDER_PY
+  const script = env.AUTO_RENDER_SCRIPT || DEFAULT_AUTO_RENDER_SCRIPT
+  const qaItemViaAutoRender = async (stageDir, { inputs = null, jobDir = null } = {}) => {
+    if (!inputs || typeof inputs !== 'object') return { verdict: 'unchecked', items: [] }
+    try {
+      const dir = jobDir ?? path.dirname(stageDir)
+      const file = path.join(dir, 'qa-inputs.json')
+      fs.writeFileSync(file, JSON.stringify(inputs, null, 1))
+      const r = await runCheck(run, python, [script, '--qa-item', stageDir, '--qa-inputs', file], { cwd: dir, env: childEnv(env), timeoutMs, kill: stop })
+      if (r.timedOut) throw new Error(`quá ${Math.round(timeoutMs / 60_000)} phút`)
+      if (r.error) throw new Error(r.error)
+      if (r.code !== 0) throw new Error(`auto_render.py --qa-item thoát mã ${r.code}${r.stderr.trim() ? `: ${tail(r.stderr.trim(), 300)}` : ''}`)
+      const line = r.stdout.split(/\r?\n/).map(l => l.trim()).filter(l => l.startsWith('{')).pop()
+      let parsed
+      try { parsed = JSON.parse(line ?? '') } catch { throw new Error(`kết quả --qa-item không phải JSON: ${tail(r.stdout.trim(), 200)}`) }
+      if (!['pass', 'fail', 'unchecked'].includes(parsed?.verdict)) throw new Error('kết quả --qa-item sai dạng')
+      return { verdict: parsed.verdict, items: Array.isArray(parsed.items) ? parsed.items.map(String) : [] }
+    } catch (e) {
+      return { verdict: 'unchecked', items: [`không chạy được kiểm tra máy: ${errText(e)}`] }
+    }
+  }
+  return qaItemViaAutoRender
+}
+
+/**
+ * Real deps for the server: the installed Claude / Codex, the process environment (filtered per job), QA via auto_render.py --qa-item.
+ * @param {{ env?: Record<string, string|undefined>, log?: (m: string) => void, qaItem?: any }} [opts]
+ */
+export function makeFixDeps({ env = process.env, log = console.log, qaItem = makeQaItem({ env }) } = {}) {
   return { spawn: nodeSpawn, codexExe: findCodexExe(env), codexModel: codexConfigModel(env), claudeExe: findClaudeExe(env), qaItem, env, log, killTree }
 }

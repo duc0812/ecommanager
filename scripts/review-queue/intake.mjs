@@ -178,17 +178,25 @@ async function lineInfo({ snapshot, taskKey, planLine, log }) {
   }
 }
 
+const isObject = v => !!v && typeof v === 'object' && !Array.isArray(v)
+
 function normQa(qa) {
   return {
     verdict: QA_VERDICTS.includes(qa?.verdict) ? qa.verdict : 'unchecked',
     items: Array.isArray(qa?.items) ? qa.items.map(String) : [],
+    ...(isObject(qa?.inputs) ? { inputs: qa.inputs } : {}),
   }
 }
 
+/** `inputs` (auto render's check data, re-run by `auto_render.py --qa-item`): one line keeps its own, a group keeps `{ byKey }`. */
 function combineQa(keys, qaByKey) {
   const list = keys.map(k => [k, normQa(qaByKey?.[k])])
   const verdict = list.some(([, q]) => q.verdict === 'fail') ? 'fail' : list.every(([, q]) => q.verdict === 'pass') ? 'pass' : 'unchecked'
-  return { verdict, items: list.flatMap(([k, q]) => q.items.map(i => (keys.length > 1 ? `${k}: ${i}` : i))) }
+  const out = { verdict, items: list.flatMap(([k, q]) => q.items.map(i => (keys.length > 1 ? `${k}: ${i}` : i))) }
+  const withInputs = list.filter(([, q]) => q.inputs)
+  if (keys.length === 1 && withInputs.length) out.inputs = withInputs[0][1].inputs
+  else if (withInputs.length) out.inputs = { byKey: Object.fromEntries(withInputs.map(([k, q]) => [k, q.inputs])) }
+  return out
 }
 
 const partBase = f => `${f.kind ?? 'PRINT'}_${f.printArea}`.replace(/[^A-Za-z0-9._-]+/g, '_')

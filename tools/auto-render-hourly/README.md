@@ -11,8 +11,8 @@ Một lần chạy (`run.ps1` → `auto_render.py`):
 3. Tool local (`LOCAL_URL`, mặc định `http://localhost:3013`): không trả lời thì bật `next dev` trong `TOOL_WORKTREE` và chờ tối đa 120 giây; đăng nhập bằng `local-login.txt`, mở thử một task. Lỗi (không phải 2xx) thì dừng với "tool local lỗi <mã>" — đây là bẫy "render 0" im lặng.
 4. Chạy `process-new-orders.mjs --since <hôm nay − 14 ngày>` **không** `--push` (tối đa 30 phút).
 5. Kiểm tên trong file in (`safe_zone.py`): khách chọn "No" thì file không được có tên; tên nằm trong khung thiết kế (dung sai 3 px); khung và tên nằm trong vùng in trừ mép an toàn.
-6. Dòng đạt và prod đang **AUTO** được đẩy lên prod dưới khoá `artwork-builder\.push-lock` (chờ tối đa 30 phút, không bao giờ phá khoá của người khác): render local từng dòng qua `push-local-renders.mjs --line`, dòng dùng chung file cũ và flat-text qua `push-shared-prints.mjs` với bản spec đã lọc (`*.auto.json`). Task dừng ở REVIEW / AUTO như hiện nay. Với `PUSH_VIA=api` mỗi script chạy một lần với `--via api` (giao qua Artwork Delivery API, không SSH, không lấy `.push-lock`) thay cho `--apply/--prove/--push`; kết quả đọc từ `api-ledger.json` của script.
-7. Dòng bị giữ: có cấu hình `/hold` thì báo `POST /api/design-agent/runner/hold` (mỗi dòng một lần cho mỗi lý do); không có thì chỉ ghi log.
+6. Dòng đạt và prod đang **AUTO** được đẩy lên prod dưới khoá `artwork-builder\.push-lock` (chờ tối đa 30 phút, không bao giờ phá khoá của người khác): render local từng dòng qua `push-local-renders.mjs --line`, dòng dùng chung file cũ và flat-text qua `push-shared-prints.mjs` với bản spec đã lọc (`*.auto.json`). Task dừng ở REVIEW / AUTO như hiện nay. Với `PUSH_VIA=api` mỗi script chạy một lần với `--via api` (giao qua Artwork Delivery API, không SSH, không lấy `.push-lock`) thay cho `--apply/--prove/--push`; kết quả đọc từ `api-ledger.json` của script. Với `PUSH_VIA=queue` các script chạy `--via api --to-queue --qa-json <file>`: dòng vào **hàng chờ duyệt local** (`scripts/review-queue/`) thay vì lên prod, kể cả dòng bị kiểm tra báo lỗi (xem "Hàng chờ duyệt local" bên dưới).
+7. Dòng bị giữ: có cấu hình `/hold` thì báo `POST /api/design-agent/runner/hold` (mỗi dòng một lần cho mỗi lý do); không có thì chỉ ghi log. Với `PUSH_VIA=queue` không báo `/hold` (tick của hàng chờ báo sau 3 giờ).
 8. Ghi log và summary JSON, giữ 30 ngày; xoá snapshot prod mà lần chạy tự tạo (~180 MB).
 
 Không có AI trong lần chạy; không duyệt, không đụng xưởng, không email khách.
@@ -31,8 +31,9 @@ Tạo file `%USERPROFILE%\.auto-render\config.env`, mỗi dòng `KEY=VALUE` (dò
 | `DESIGN_AGENT_TOKEN` | không | token `dag_…` của Design Agent (không bao giờ ghi vào log) |
 | `SINCE_DAYS` | không | mặc định 14 |
 | `NAME_BOX_TOLERANCE_PX` | không | dung sai khung tên, mặc định 3 |
-| `PUSH_VIA` | không | `ssh` (mặc định: `--apply/--prove/--push` dưới `.push-lock`) hoặc `api` (`--via api`, không khoá). Với `api` cần `ECOM_URL` và `DESIGN_WORKER_TOKEN`: lấy từ file này, thiếu thì đọc `%USERPROFILE%\.artwork-worker\prod.env`; vẫn thiếu thì dừng mã 2. `ECOM_URL` lấy từ `prod.env` cũng là địa chỉ báo `/hold`: có thêm `DESIGN_AGENT_TOKEN` trong file này thì dòng bị giữ được báo `/hold` |
-| `DESIGN_WORKER_TOKEN` | không | worker token cho `PUSH_VIA=api` (không bao giờ ghi vào log) |
+| `PUSH_VIA` | không | `ssh` (mặc định: `--apply/--prove/--push` dưới `.push-lock`), `api` (`--via api`, không khoá) hoặc `queue` (`--via api --to-queue`, không khoá; cần token như `api`). Với `api` cần `ECOM_URL` và `DESIGN_WORKER_TOKEN`: lấy từ file này, thiếu thì đọc `%USERPROFILE%\.artwork-worker\prod.env`; vẫn thiếu thì dừng mã 2. `ECOM_URL` lấy từ `prod.env` cũng là địa chỉ báo `/hold`: có thêm `DESIGN_AGENT_TOKEN` trong file này thì dòng bị giữ được báo `/hold` |
+| `DESIGN_WORKER_TOKEN` | không | worker token cho `PUSH_VIA=api` / `queue` (không bao giờ ghi vào log) |
+| `REVIEW_QUEUE_ROOT` | không | thư mục hàng chờ duyệt local cho `PUSH_VIA=queue`, mặc định `D:\Ecom manager\review-queue`; biến môi trường cùng tên thắng |
 
 Thiếu file, thiếu khoá bắt buộc hay thiếu một script thì lần chạy dừng ngay với mã 2.
 
@@ -55,6 +56,7 @@ Lần đầu chạy tay: `powershell -ExecutionPolicy Bypass -File run.ps1 -DryR
 | `held` | dòng AUTO bị giữ: `taskKey, source, guard, reason, reported, jobId` |
 | `notAuto` | dòng prod không phải AUTO (vẫn render ở máy, không bao giờ đẩy) |
 | `unchecked` | dòng được đẩy nhưng không kiểm được safe zone, kèm lý do |
+| `queued` | chỉ có với `PUSH_VIA=queue`: dòng đã vào hàng chờ local `{taskKey, source, verdict: pass/unchecked/fail, items, state}` (`state` = `vào hàng chờ` hoặc `không đổi (…)`) |
 | `skipped` | dòng không thuộc lần chạy (cm-builder) hoặc prod bỏ qua lúc đẩy |
 | `errors` | `{stage, taskKey?, message}` của mọi bước không làm được |
 
@@ -78,6 +80,13 @@ Ba kiểm tra, theo thứ tự:
 Không có hình học để kiểm (không template, thiếu artwork gốc trên máy, spec Photoshop) thì dòng **vẫn được đẩy**, summary ghi `không kiểm được safe zone (…)`. Đo hỏng thì dòng không được đẩy và lần chạy thoát 1 (`không đo được khung tên: …`).
 
 Dòng bị giữ thì giữ lại chứ không tự thu nhỏ tên. Có `/hold` (và công tắc `agent.autoFixOnReject` bật trên app) thì dòng thành một việc cho Design Agent; mỗi dòng chỉ báo một lần cho mỗi lý do (`holds.json`), lý do đổi thì báo lại. Dòng bị giữ vẫn hiện trong summary mỗi giờ.
+
+## Hàng chờ duyệt local (`PUSH_VIA=queue`)
+
+- Trước khi kiểm, lần chạy đọc `<REVIEW_QUEUE_ROOT>\queue.db` (chỉ đọc): dòng đã có trong một mục đang chờ (chờ duyệt, bị trả lại, agent đang sửa, lỗi QA, cần xem) thì bỏ qua, ghi ở `skipped` (`đã có trong hàng chờ local (<id>, <trạng thái>)`). Chưa có `queue.db` thì coi như hàng chờ trống; đọc lỗi thì lần chạy dừng (mã 1), không gửi gì.
+- Mọi dòng AUTO có file (đạt, không kiểm được, bị giữ, đo lỗi) đi qua script đẩy với `--via api --to-queue`. `--qa-json` là file tạm map `taskKey → { verdict, items, inputs }`: `pass` / `unchecked` (lý do trong `items`) / `fail` (lý do bị giữ hay đo lỗi). `inputs` là dữ liệu kiểm tra của dòng; intake lưu cùng bản để kiểm lại sau.
+- Kết quả đọc từ dòng in của intake: `vào hàng chờ` và `không đổi (…)` vào `queued`; `giao thẳng` (nhóm chỉ dùng lại file trên Drive) đọc `api-ledger.json` như `api`; từ chối / chờ vào `skipped`. Lỗi đo của dòng AUTO không tính là lỗi lần chạy (dòng nằm ở hàng chờ với nhãn Lỗi QA).
+- `python auto_render.py --qa-item <thư mục bản> --qa-inputs <file json>` chạy lại đúng kiểm tra đó trên file của một bản (`PRINT_<vùng in>.<đuôi>`, tên intake đặt) với `inputs` đã lưu và in `{"verdict": "...", "items": [...]}`; mã 0, input sai thì mã 2. Không lấy mutex, không ghi log. Job "Gọi Agent sửa" của hàng chờ gọi lệnh này (`AUTO_RENDER_PY`, `AUTO_RENDER_SCRIPT`).
 
 ## Giới hạn đã biết
 

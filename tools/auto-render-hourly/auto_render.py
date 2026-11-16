@@ -57,6 +57,7 @@ class Config:
     box_tolerance_px: float = 3
     push_via: str = 'ssh'
     worker_token: str = ''
+    review_queue_root: Path = Path(r'D:\Ecom manager\review-queue')
     node: list[str] = field(default_factory=lambda: ['node'])
     python: str = sys.executable
 
@@ -75,7 +76,7 @@ def _read_env(path: Path) -> dict[str, str]:
     return out
 
 
-PUSH_VIA_VALUES = ('ssh', 'api')
+PUSH_VIA_VALUES = ('ssh', 'api', 'queue')
 
 
 def worker_prod_env() -> Path:
@@ -103,8 +104,9 @@ def load_config(path: Path) -> Config:
         raise ConfigError(f'giá trị số sai trong {path}: {e}')
     cfg.push_via = (env.get('PUSH_VIA') or 'ssh').strip().lower()
     if cfg.push_via not in PUSH_VIA_VALUES:
-        raise ConfigError(f'PUSH_VIA phải là ssh hoặc api trong {path}')
-    if cfg.push_via == 'api':
+        raise ConfigError(f'PUSH_VIA phải là ssh hoặc api (hoặc queue) trong {path}')
+    cfg.review_queue_root = Path(os.environ.get('REVIEW_QUEUE_ROOT') or env.get('REVIEW_QUEUE_ROOT') or cfg.review_queue_root)
+    if cfg.push_via in ('api', 'queue'):
         cfg.worker_token = env.get('DESIGN_WORKER_TOKEN') or ''
         if not (cfg.worker_token and cfg.ecom_url):
             prod = worker_prod_env()
@@ -115,7 +117,7 @@ def load_config(path: Path) -> Config:
             cfg.worker_token = cfg.worker_token or penv.get('DESIGN_WORKER_TOKEN') or ''
             cfg.ecom_url = cfg.ecom_url or (penv.get('ECOM_URL') or '').rstrip('/')
         if not (cfg.worker_token and cfg.ecom_url):
-            raise ConfigError(f'PUSH_VIA=api cần ECOM_URL và DESIGN_WORKER_TOKEN (trong {path} hoặc {worker_prod_env()})')
+            raise ConfigError(f'PUSH_VIA={cfg.push_via} cần ECOM_URL và DESIGN_WORKER_TOKEN (trong {path} hoặc {worker_prod_env()})')
     if cfg.ecom_url and not re.match(r'^(https://|http://localhost[:/]|http://127\.0\.0\.1[:/])', cfg.ecom_url + '/'):
         raise ConfigError(f'ECOM_URL phải là https://… (hoặc http://localhost) trong {path}')
     required = [cfg.tool_worktree / 'scripts' / 'process-new-orders.mjs', cfg.tool_worktree / 'scripts' / 'push-local-renders.mjs',
@@ -427,6 +429,8 @@ class Line:
     status: str | None
     readiness: str | None
     result: sz.GuardResult
+    items: list[str] = field(default_factory=list)
+    inputs: dict | None = None
 
 
 @dataclass
@@ -673,7 +677,73 @@ def _image_size(p: Path) -> tuple[int, int] | None:
         return None
 
 
-def build_plan(cfg: Config, pr: ProcessResult, since: str, tmp_dir: Path, log: RunLog) -> Plan:
+QA_VERDICT = {'PASS': 'pass', 'UNCHECKED': 'unchecked', 'HOLD': 'fail', 'ERROR': 'fail'}
+QUEUE_ACTIVE = ('waiting', 'rejected', 'fixing', 'qa_failed', 'needs_look')
+
+
+def part_name(kind: str | None, area: str) -> str:
+    """The file name (without extension) review-queue intake gives a part in v<n>\\ (partBase in scripts/review-queue/intake.mjs)."""
+    return re.sub(r'[^A-Za-z0-9._-]+', '_', f'{kind or "PRINT"}_{area}')
+
+
+def qa_items(result: sz.GuardResult, results: list[sz.GuardResult] | None = None) -> list[str]:
+    want = ('HOLD', 'ERROR') if QA_VERDICT[result.verdict] == 'fail' else ('UNCHECKED',) if result.verdict == 'UNCHECKED' else ()
+    items = []
+    for r in results or [result]:
+        if r.verdict in want and r.reason and r.reason not in items:
+            items.append(r.reason)
+    return items
+
+
+def _piece_input(row: dict, ins: dict) -> dict:
+    base = ins['base_path']
+    return {'printArea': row['printArea'], 'part': part_name('PRINT', row['printArea']), 'fileName': row['fileName'],
+            'storagePath': row['storagePath'], 'fields': ins['fields'], 'basePath': str(base) if base else None, 'safeIn': ins['safe_in'],
+            'dpi': ins['dpi'], 'area': [float(v) for v in ins['area']], 'photoshopRule': ins['photoshop_rule']}
+
+
+def local_guard(inputs: dict, path_of) -> list[sz.GuardResult]:
+    """The worker-render guard of one line from its saved inputs; `path_of(piece)` gives the file to measure."""
+    no, tol = bool(inputs.get('noName')), float(inputs.get('tolerance', sz.TOLERANCE_PX))
+    results = []
+    for p in inputs['pieces']:
+        if p['fields'] is None:
+            if no and '-noname.' not in p['fileName']:
+                results.append(sz.GuardResult('HOLD', 'NO', 'khách chọn No nhưng file in có tên', {'file': p['fileName']}))
+                continue
+            results.append(sz.GuardResult('UNCHECKED', None, 'không kiểm được safe zone (không có entry thư viện)', {}))
+            continue
+        inset = sz.safe_inset_px(p['safeIn'], p['dpi'], None)
+        results.append(sz.check_worker_piece(path_of(p), Path(p['basePath']) if p.get('basePath') else None, p['fields'], p['fileName'], no,
+                                             tuple(float(v) for v in p['area']), inset, p.get('photoshopRule'), tol))
+    return results
+
+
+def flat_guard(inputs: dict, files: list[dict], files_root: Path, tmp_dir: Path, python: str) -> sz.GuardResult:
+    return sz.check_flat_line(inputs['taskKey'], Path(inputs['specPath']), inputs.get('values') or {}, bool(inputs.get('saidNo')), files,
+                              Path(files_root), inputs.get('safeIn'), Path(inputs['toolsDir']), python, Path(tmp_dir),
+                              float(inputs.get('tolerance', sz.TOLERANCE_PX)))
+
+
+def queued_keys(root: Path) -> dict[str, dict]:
+    """taskKey → {itemId, status} of every active item of the local review queue (read-only); no queue.db yet → {}."""
+    import sqlite3
+    db = Path(root) / 'queue.db'
+    if not db.exists():
+        return {}
+    try:
+        c = _ro(db)
+        try:
+            rows = c.execute(f'SELECT k.taskKey, i.id, i.status FROM item_keys k JOIN items i ON i.id = k.itemId '
+                             f'WHERE i.status IN ({", ".join("?" * len(QUEUE_ACTIVE))})', QUEUE_ACTIVE).fetchall()
+        finally:
+            c.close()
+    except sqlite3.Error as e:
+        raise StageError('queue', f'không đọc được hàng chờ local {db}: {e}')
+    return {k: {'itemId': i, 'status': s} for k, i, s in rows}
+
+
+def build_plan(cfg: Config, pr: ProcessResult, since: str, tmp_dir: Path, log: RunLog, queued: dict | None = None) -> Plan:
     prod = read_prod(pr.snapshot)
     cands = {k for k, v in prod.items() if v['status'] == 'NEW' and v['prints'] == 0}
     local_db = cfg.main_checkout / 'dev.db'
@@ -681,34 +751,36 @@ def build_plan(cfg: Config, pr: ProcessResult, since: str, tmp_dir: Path, log: R
     lines: list[Line] = []
     skipped: list[dict] = []
     seen: set[str] = set()
+    queued = queued or {}
 
-    def add(key, source, result):
+    def add(key, source, result, inputs=None, results=None):
         seen.add(key)
         p = prod.get(key, {})
-        lines.append(Line(key, source, p.get('status'), p.get('readiness'), result))
+        lines.append(Line(key, source, p.get('status'), p.get('readiness'), result, qa_items(result, results), inputs))
+
+    def in_queue(key) -> bool:
+        if key not in queued or key in seen:
+            return False
+        q = queued[key]
+        skipped.append({'taskKey': key, 'reason': f'đã có trong hàng chờ local ({q["itemId"]}, {q["status"]})'})
+        seen.add(key)
+        return True
 
     rules = load_photoshop_rules(cfg.artwork_builder)
     for key, rows in sorted(local_render_files(local_db, since).items()):
-        if key not in cands:
+        if key not in cands or in_queue(key):
             continue
+        inputs = None
         try:
             ins = [worker_inputs(local_db, r, root, rules) for r in rows]
             names = tuple(str(f.get('field')) for i in ins for f in (i['fields'] or []) if isinstance(f, dict) and f.get('field'))
-            no = sz.lone_no(prod[key]['pairs'], names)
-            results = []
-            for r, i in zip(rows, ins):
-                if i['fields'] is None:
-                    if no and '-noname.' not in r['fileName']:
-                        results.append(sz.GuardResult('HOLD', 'NO', 'khách chọn No nhưng file in có tên', {'file': r['fileName']}))
-                        continue
-                    results.append(sz.GuardResult('UNCHECKED', None, 'không kiểm được safe zone (không có entry thư viện)', {}))
-                    continue
-                inset = sz.safe_inset_px(i['safe_in'], i['dpi'], None)
-                results.append(sz.check_worker_piece(root / r['storagePath'], i['base_path'], i['fields'], r['fileName'], no, i['area'],
-                                                     inset, i['photoshop_rule'], cfg.box_tolerance_px))
-            add(key, 'local-render', _combine(results))
+            inputs = {'source': 'local-render', 'taskKey': key, 'noName': sz.lone_no(prod[key]['pairs'], names), 'tolerance': cfg.box_tolerance_px,
+                      'pieces': [_piece_input(r, i) for r, i in zip(rows, ins)]}
+            results = local_guard(inputs, lambda p: root / p['storagePath'])
+            add(key, 'local-render', _combine(results), inputs, results)
         except (OSError, ValueError, KeyError) as e:
-            add(key, 'local-render', sz.GuardResult('ERROR', None, f'không đo được khung tên: {type(e).__name__}: {e}', {}))
+            reason = f'không đo được khung tên: {type(e).__name__}: {e}'
+            add(key, 'local-render', sz.GuardResult('ERROR', None, reason, {}), inputs or {'source': 'local-render', 'taskKey': key, 'error': reason})
 
     if pr.flat_spec:
         flat = json.loads(Path(pr.flat_spec).read_text(encoding='utf-8-sig'))
@@ -718,13 +790,14 @@ def build_plan(cfg: Config, pr: ProcessResult, since: str, tmp_dir: Path, log: R
         files_root = Path(pr.flat_spec).parent
         for g in flat.get('groups', []):
             for key in g.get('lines', []):
-                if key not in cands or key in seen:
+                if key not in cands or key in seen or in_queue(key):
                     continue
                 p = prod[key]
                 try:
                     spec_path = resolve_flat_spec(flat_root, key, p)
                 except SpecUnresolved as e:
-                    add(key, 'flat-text', sz.GuardResult('ERROR', None, f'không xác định được spec flat-text ({e.count} spec khớp)', {}))
+                    reason = f'không xác định được spec flat-text ({e.count} spec khớp)'
+                    add(key, 'flat-text', sz.GuardResult('ERROR', None, reason, {}), {'source': 'flat-text', 'taskKey': key, 'error': reason})
                     continue
                 spec = json.loads(spec_path.read_text(encoding='utf-8-sig'))
                 text_areas = {t['area'] for t in spec.get('texts', [])}
@@ -739,27 +812,31 @@ def build_plan(cfg: Config, pr: ProcessResult, since: str, tmp_dir: Path, log: R
                     if size and tuple(size) != _image_size(spec_path.parent / a['base']):
                         mismatch = True
                 if mismatch:
-                    add(key, 'flat-text', sz.GuardResult('ERROR', None, 'spec flat-text không khớp khổ file', {'spec': str(spec_path)}))
+                    add(key, 'flat-text', sz.GuardResult('ERROR', None, 'spec flat-text không khớp khổ file', {'spec': str(spec_path)}),
+                        {'source': 'flat-text', 'taskKey': key, 'error': 'spec flat-text không khớp khổ file'})
                     continue
                 safe_in = template_safe_in(pr.snapshot, p.get('resolvedSupplierId'), p.get('resolvedSupplierSku'))
-                res = sz.check_flat_line(key, spec_path, values_of.get(key, {}), sz.lone_no(p['pairs']), g.get('files', []), files_root,
-                                         safe_in, tools_dir, cfg.python, Path(tmp_dir) / key, cfg.box_tolerance_px)
-                add(key, 'flat-text', res)
+                files = g.get('files', [])
+                inputs = {'source': 'flat-text', 'taskKey': key, 'specPath': str(spec_path), 'values': values_of.get(key, {}),
+                          'saidNo': sz.lone_no(p['pairs']), 'safeIn': safe_in, 'toolsDir': str(tools_dir), 'tolerance': cfg.box_tolerance_px,
+                          'files': [{'printArea': f.get('printArea'), 'kind': f.get('kind') or 'PRINT', 'part': part_name(f.get('kind'), f.get('printArea')),
+                                     'widthPx': f.get('widthPx'), 'heightPx': f.get('heightPx')} for f in files if f.get('path')]}
+                add(key, 'flat-text', flat_guard(inputs, files, files_root, Path(tmp_dir) / key, cfg.python), inputs)
 
     if pr.shared_spec:
         shared = json.loads(Path(pr.shared_spec).read_text(encoding='utf-8-sig'))
         for g in shared.get('groups', []):
             cm = any(f.get('path') for f in g.get('files', []))
             for key in g.get('lines', []):
-                if key not in cands or key in seen:
+                if key not in cands or key in seen or in_queue(key):
                     continue
                 if cm:
                     skipped.append({'taskKey': key, 'reason': 'cm-builder: không thuộc auto render hàng giờ'})
                     seen.add(key)
                 else:
-                    add(key, 'reuse', sz.GuardResult('PASS', None, '', {'files': 'drive'}))
+                    add(key, 'reuse', sz.GuardResult('PASS', None, '', {'files': 'drive'}), {'source': 'reuse', 'taskKey': key})
 
-    pushable = {l.key for l in lines if l.readiness == 'AUTO' and l.result.verdict in ('PASS', 'UNCHECKED')}
+    pushable = {l.key for l in lines if l.readiness == 'AUTO' and (cfg.push_via == 'queue' or l.result.verdict in ('PASS', 'UNCHECKED'))}
     push_local = sorted(l.key for l in lines if l.source == 'local-render' and l.key in pushable)
     reuse_keep = {l.key for l in lines if l.source == 'reuse' and l.key in pushable}
     flat_keep = {l.key for l in lines if l.source == 'flat-text' and l.key in pushable}
@@ -776,6 +853,10 @@ PUSH_MIN_LEFT_S = 180
 STAGES = ('--apply', '--prove', '--push')
 API_STAGE = '--via api'
 API_LEDGER = 'api-ledger.json'
+QUEUE_STAGE = '--via api --to-queue'
+QUEUE_HEADER = re.compile(r'^== Hàng chờ duyệt local \(.*\): \d+ dòng ==$')
+QUEUE_SUMMARY = re.compile(r'^\d+ dòng · vào hàng chờ \d+')
+QUEUE_LINE = re.compile(r'^  (\S+)  (.+)$')
 
 
 class LockBusy(Exception):
@@ -921,24 +1002,79 @@ def api_outcome(ledger: dict, key: str, started: datetime) -> str:
 
 
 def _api_env(cfg: Config) -> dict:
-    return {'ECOM_URL': cfg.ecom_url, 'DESIGN_WORKER_TOKEN': cfg.worker_token}
+    env = {'ECOM_URL': cfg.ecom_url, 'DESIGN_WORKER_TOKEN': cfg.worker_token}
+    if cfg.push_via == 'queue':
+        env['REVIEW_QUEUE_ROOT'] = str(cfg.review_queue_root)
+    return env
 
 
 def _push_stage(cfg: Config, script: str, args: list[str], stage: str, key: str | None, log: RunLog, timeout_s: float,
-                env_extra: dict | None = None):
+                env_extra: dict | None = None, accept=None) -> str:
     code, out = _run(cfg.node + [f'scripts/{script}.mjs', *args, *stage.split(' ')], cfg.tool_worktree, timeout_s, env_extra)
     log.block(script, out)
     if code is None:
         raise StageError('push', f'{script} {stage} quá giờ của lần chạy', key)
-    if code != 0:
+    if code != 0 and not (accept and accept(code, out)):
         raise StageError('push', f'{script} {stage} thoát mã {code}', key)
     for line in out.splitlines():
         if 'DỪNG:' in line:
             raise StageError('push', line.split('DỪNG:', 1)[1].strip(), key)
+    return out
 
 
-def push_local_line(cfg: Config, snapshot: Path, since: str, key: str, started: datetime, log: RunLog, timeout_s: float = 1800) -> str:
+def queue_said(out: str) -> dict[str, str] | None:
+    """What intake (scripts/review-queue/intake.mjs runQueueIntake) printed per key, or None when its summary line is missing."""
+    said = None
+    for raw in out.splitlines():
+        line = raw.rstrip()
+        if QUEUE_HEADER.match(line.strip()):
+            said = {}
+        elif said is not None:
+            m = QUEUE_LINE.match(line)
+            if m:
+                said.setdefault(m.group(1), m.group(2).strip())
+            elif QUEUE_SUMMARY.match(line):
+                return said
+    return None
+
+
+def queue_outcome(said: dict[str, str], key: str, ledger, started: datetime) -> str:
+    """'queued' / 'queued: không đổi (…)' for a line in the queue, the api ledger outcome for one delivered directly, else 'skipped: …'."""
+    s = said.get(key)
+    if s is None:
+        raise StageError('push', 'đưa vào hàng chờ xong nhưng không thấy dòng trong kết quả hàng chờ', key)
+    if s == 'vào hàng chờ':
+        return 'queued'
+    if s.startswith('không đổi'):
+        return f'queued: {s}'
+    if s.startswith('giao thẳng'):
+        return api_outcome(ledger(), key, started)
+    return f'skipped: {s}'
+
+
+def _queue_stage(cfg: Config, script: str, args: list[str], key: str | None, keys: list[str], qa: dict, log: RunLog, timeout_s: float) -> dict:
+    import uuid
+    qa_dir = log.home / 'tmp' / 'queue-qa'
+    qa_dir.mkdir(parents=True, exist_ok=True)
+    qa_file = qa_dir / f'{script}-{uuid.uuid4().hex}.json'
+    qa_file.write_text(json.dumps({k: qa[k] for k in keys if k in qa}, ensure_ascii=False), encoding='utf-8')
+    try:
+        out = _push_stage(cfg, script, [*args, '--qa-json', str(qa_file)], QUEUE_STAGE, key, log, timeout_s, _api_env(cfg),
+                          accept=lambda code, text: code == 1 and queue_said(text) is not None)
+    finally:
+        qa_file.unlink(missing_ok=True)
+    said = queue_said(out)
+    if said is None:
+        raise StageError('push', f'{script} {QUEUE_STAGE} không in kết quả hàng chờ', key)
+    return said
+
+
+def push_local_line(cfg: Config, snapshot: Path, since: str, key: str, started: datetime, log: RunLog, timeout_s: float = 1800,
+                    qa: dict | None = None) -> str:
     args = ['--snapshot', str(snapshot), '--since', since, '--line', key]
+    if cfg.push_via == 'queue':
+        said = _queue_stage(cfg, 'push-local-renders', args, key, [key], qa or {}, log, timeout_s)
+        return queue_outcome(said, key, lambda: _read_ledger(cfg.main_checkout / 'db-backups' / 'push-local-renders' / API_LEDGER), started)
     if cfg.push_via == 'api':
         _push_stage(cfg, 'push-local-renders', args, API_STAGE, key, log, timeout_s, _api_env(cfg))
         return api_outcome(_read_ledger(cfg.main_checkout / 'db-backups' / 'push-local-renders' / API_LEDGER), key, started)
@@ -952,9 +1088,13 @@ def push_local_line(cfg: Config, snapshot: Path, since: str, key: str, started: 
 
 
 def push_spec(cfg: Config, spec: Path, snapshot: Path, ledger_dir: Path | None, keys: list[str], started: datetime, log: RunLog,
-              timeout_s: float = 1800) -> dict[str, str]:
+              timeout_s: float = 1800, qa: dict | None = None) -> dict[str, str]:
     args = ['--spec', str(spec), '--snapshot', str(snapshot), *(['--out', str(ledger_dir)] if ledger_dir else [])]
     first = keys[0] if keys else None
+    if cfg.push_via == 'queue':
+        said = _queue_stage(cfg, 'push-shared-prints', args, first, keys, qa or {}, log, timeout_s)
+        ledger = lambda: _read_ledger((Path(ledger_dir) if ledger_dir else cfg.main_checkout / 'db-backups' / 'push-shared-prints') / API_LEDGER)
+        return {k: queue_outcome(said, k, ledger, started) for k in keys}
     if cfg.push_via == 'api':
         _push_stage(cfg, 'push-shared-prints', args, API_STAGE, first, log, timeout_s, _api_env(cfg))
         ledger = _read_ledger((Path(ledger_dir) if ledger_dir else cfg.main_checkout / 'db-backups' / 'push-shared-prints') / API_LEDGER)
@@ -1049,23 +1189,29 @@ def run_stages(cfg: Config, log: RunLog, summary: dict, args) -> int:
     summary['since'] = since
     h = log.home
     snapshot = None
+    queue_mode = cfg.push_via == 'queue'
+    if queue_mode:
+        summary['queued'] = []
     try:
         ensure_tool(cfg, log, cfg.main_checkout / 'dev.db')
         out_dir = cfg.main_checkout / 'db-backups' / 'process-new-orders' / f'auto-{now:%Y%m%d-%H%M%S}'
         pr = run_process_new_orders(cfg, since, out_dir, log, timeout_s=min(PROCESS_TIMEOUT_S, max(60, left() - 600)))
         snapshot = pr.snapshot
         summary['snapshot'] = str(snapshot)
-        plan = build_plan(cfg, pr, since, h / 'tmp' / f'{now:%Y%m%d-%H%M%S}', log)
+        queued = queued_keys(cfg.review_queue_root) if queue_mode else None
+        plan = build_plan(cfg, pr, since, h / 'tmp' / f'{now:%Y%m%d-%H%M%S}', log, queued=queued)
         auto = {l.key for l in plan.lines if l.readiness == 'AUTO'}
         summary['rendered'] = sorted(l.key for l in plan.lines)
         summary['notAuto'] = sorted(l.key for l in plan.lines if l.readiness != 'AUTO')
         summary['held'] = [{'taskKey': l.key, 'source': l.source, 'guard': l.result.guard, 'reason': l.result.reason, 'reported': False, 'jobId': None}
-                           for l in sorted(plan.lines, key=lambda l: l.key) if l.key in auto and l.result.verdict == 'HOLD']
+                           for l in sorted(plan.lines, key=lambda l: l.key) if l.key in auto and l.result.verdict == 'HOLD' and not queue_mode]
         summary['unchecked'] = [{'taskKey': l.key, 'reason': l.result.reason} for l in sorted(plan.lines, key=lambda l: l.key)
                                 if l.key in auto and l.result.verdict == 'UNCHECKED']
         summary['skipped'] += plan.skipped
         for e in plan.errors:
-            if e['taskKey'] in auto:
+            if e['taskKey'] in auto and queue_mode:
+                log.line(f'{e["taskKey"]}: {e["message"]} (vào hàng chờ local với lỗi QA)')
+            elif e['taskKey'] in auto:
                 summary['errors'].append(e)
             else:
                 log.line(f'dòng không AUTO {e["taskKey"]}: {e["message"]} (không đẩy, không tính lỗi)')
@@ -1075,10 +1221,13 @@ def run_stages(cfg: Config, log: RunLog, summary: dict, args) -> int:
         log.line(f'kế hoạch: {len(plan.lines)} dòng, đẩy được {len(plan.pushable)}, giữ {len(summary["held"])}, '
                  f'không AUTO {len(summary["notAuto"])}, lỗi đo {len(plan.errors)}')
         if args.dry_run:
-            log.line(f'[chạy thử] sẽ đẩy: {", ".join(sorted(plan.pushable)) or "không có"}')
+            log.line(f'[chạy thử] sẽ {"đưa vào hàng chờ" if queue_mode else "đẩy"}: {", ".join(sorted(plan.pushable)) or "không có"}')
         else:
             _push_phase(cfg, log, summary, plan, snapshot, since, started, left)
-        _hold_phase(cfg, log, summary, args.dry_run)
+        if queue_mode:
+            log.line('PUSH_VIA=queue: không báo /hold — dòng lỗi QA nằm ở hàng chờ local')
+        else:
+            _hold_phase(cfg, log, summary, args.dry_run)
     except StageError as e:
         log.line(f'dừng ở bước {e.stage}: {e.message}')
         summary['errors'].append(_err(e))
@@ -1103,23 +1252,31 @@ def _push_phase(cfg, log, summary, plan, snapshot, since, started, left):
             raise StageError('push', 'hết giờ của lần chạy — phần còn lại để lần sau')
         return max(60.0, left() - 60)
 
+    by_key = {l.key: l for l in plan.lines}
+    qa = {l.key: {'verdict': QA_VERDICT[l.result.verdict], 'items': l.items, 'inputs': l.inputs} for l in plan.lines}
+
     def note(key, outcome):
         if outcome == 'pushed':
             summary['pushed'].append(key)
             log.line(f'đã đẩy {key} lên prod (REVIEW)')
+        elif outcome == 'queued' or outcome.startswith('queued: '):
+            state = outcome.split(': ', 1)[1] if ': ' in outcome else 'vào hàng chờ'
+            l, q = by_key.get(key), qa.get(key) or {'verdict': 'unchecked', 'items': []}
+            summary['queued'].append({'taskKey': key, 'source': l.source if l else None, 'verdict': q['verdict'], 'items': q['items'], 'state': state})
+            log.line(f'{key} vào hàng chờ local ({state}) · QA {q["verdict"]}{": " + "; ".join(q["items"]) if q["items"] else ""}')
         else:
             reason = outcome.split(': ', 1)[1] if ': ' in outcome else outcome
             summary['skipped'].append({'taskKey': key, 'reason': reason})
             log.line(f'{key} bị bỏ qua trên prod: {reason}')
 
-    lock = PushLock(cfg.artwork_builder / '.push-lock', log.home, wait_s=wait) if cfg.push_via != 'api' else None
+    lock = PushLock(cfg.artwork_builder / '.push-lock', log.home, wait_s=wait) if cfg.push_via not in ('api', 'queue') else None
     try:
         with lock or contextlib.nullcontext():
             for key in plan.push_local:
-                note(key, push_local_line(cfg, snapshot, since, key, started, log, timeout_s=budget()))
+                note(key, push_local_line(cfg, snapshot, since, key, started, log, timeout_s=budget(), qa=qa))
             for spec, ledger in ((plan.shared_spec, None), (plan.flat_spec, log.home / 'flat-ledger')):
                 if spec:
-                    res = push_spec(cfg, spec, snapshot, ledger, _spec_keys(spec), started, log, timeout_s=budget())
+                    res = push_spec(cfg, spec, snapshot, ledger, _spec_keys(spec), started, log, timeout_s=budget(), qa=qa)
                     for key, outcome in res.items():
                         note(key, outcome)
     except LockBusy:
@@ -1164,12 +1321,89 @@ def _hold_phase(cfg, log, summary, dry_run):
         state.forget(item['taskKey'] for item in held)
 
 
+# ---------------------------------------------------------------- --qa-item: the same guard on one version of the local review queue
+
+def _find_part(version_dir: Path, part: str, key: str | None) -> Path | None:
+    stems = [part] + ([re.sub(r'[^A-Za-z0-9._-]+', '_', f'{part}_{key}')] if key else [])
+    for stem in stems:
+        hits = sorted(p for p in Path(version_dir).iterdir() if p.is_file() and p.stem == stem)
+        if hits:
+            return hits[0]
+    return None
+
+
+def qa_item(version_dir: Path, inputs: dict, tmp_dir: Path, python: str = sys.executable) -> dict:
+    """{verdict: pass|fail|unchecked, items} of the guard the run used, on the files of `version_dir` named by part."""
+    if isinstance(inputs.get('byKey'), dict):
+        got = [(k, qa_item(version_dir, v, Path(tmp_dir) / str(k), python)) for k, v in inputs['byKey'].items() if isinstance(v, dict)]
+        verdicts = [q['verdict'] for _, q in got]
+        verdict = 'fail' if 'fail' in verdicts else 'pass' if verdicts and all(v == 'pass' for v in verdicts) else 'unchecked'
+        return {'verdict': verdict, 'items': [f'{k}: {i}' for k, q in got for i in q['items']]}
+    if inputs.get('error'):
+        return {'verdict': 'fail', 'items': [str(inputs['error'])]}
+    key = inputs.get('taskKey')
+    try:
+        if inputs.get('source') == 'local-render':
+            def path_of(piece):
+                f = _find_part(version_dir, piece.get('part') or part_name('PRINT', piece['printArea']), key)
+                if f is None:
+                    raise FileNotFoundError(f'không thấy file {piece.get("part") or piece["printArea"]} trong {version_dir}')
+                return f
+            results = local_guard(inputs, path_of)
+            res = _combine(results)
+        elif inputs.get('source') == 'flat-text':
+            files, results = [], None
+            for f in inputs.get('files') or []:
+                if (f.get('kind') or 'PRINT') == 'MOCKUP':
+                    continue
+                found = _find_part(version_dir, f.get('part') or part_name(f.get('kind'), f['printArea']), key)
+                if found is None:
+                    raise FileNotFoundError(f'không thấy file {f.get("part") or f["printArea"]} trong {version_dir}')
+                size = _image_size(found)
+                if f.get('widthPx') and size and tuple(size) != (f['widthPx'], f['heightPx']):
+                    return {'verdict': 'fail', 'items': ['spec flat-text không khớp khổ file']}
+                files.append({'printArea': f['printArea'], 'kind': f.get('kind') or 'PRINT', 'path': found.name,
+                              'widthPx': size[0] if size else None, 'heightPx': size[1] if size else None})
+            res = flat_guard(inputs, files, Path(version_dir), Path(tmp_dir) / str(key), python)
+        else:
+            return {'verdict': 'unchecked', 'items': []}
+    except Exception as e:
+        return {'verdict': 'fail', 'items': [f'không đo được khung tên: {type(e).__name__}: {e}']}
+    return {'verdict': QA_VERDICT[res.verdict], 'items': qa_items(res, results)}
+
+
+def qa_item_main(version_dir: str, inputs_path: str | None) -> int:
+    import tempfile
+    d = Path(version_dir)
+    try:
+        if not d.is_dir():
+            raise ValueError(f'không thấy thư mục {d}')
+        if not inputs_path:
+            raise ValueError('thiếu --qa-inputs <file json>')
+        inputs = json.loads(Path(inputs_path).read_text(encoding='utf-8-sig'))
+        if isinstance(inputs, dict) and 'source' not in inputs and 'byKey' not in inputs and isinstance(inputs.get('inputs'), dict):
+            inputs = inputs['inputs']
+        if not isinstance(inputs, dict):
+            raise ValueError('--qa-inputs phải là object')
+    except (OSError, ValueError) as e:
+        print(f'--qa-item: {e}', file=sys.stderr)
+        return EXIT_CONFIG
+    with tempfile.TemporaryDirectory(prefix='qa-item-') as tmp:
+        r = qa_item(d, inputs, Path(tmp))
+    print(json.dumps(r, ensure_ascii=True), flush=True)
+    return EXIT_OK
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description='Auto render hàng giờ')
     ap.add_argument('--dry-run', action='store_true')
     ap.add_argument('--keep-snapshot', action='store_true')
     ap.add_argument('--config', default=None)
+    ap.add_argument('--qa-item', default=None, help='thư mục một bản của hàng chờ duyệt local: chạy lại kiểm tra tên, in JSON')
+    ap.add_argument('--qa-inputs', default=None, help='file JSON dữ liệu kiểm tra đã lưu lúc vào hàng chờ (qa.inputs)')
     args = ap.parse_args(argv)
+    if args.qa_item is not None:
+        return qa_item_main(args.qa_item, args.qa_inputs)
     h = home()
     now = datetime.now()
     log = RunLog(h, now)
