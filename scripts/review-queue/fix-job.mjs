@@ -12,6 +12,7 @@ import { underLocks } from './actions.mjs'
 export const FIX_LIMIT_MS = 60 * 60_000
 export const FIX_PROMPT = 'Đọc BRIEF.md và làm đúng như trong đó.'
 export const FIX_FAILED = 'agent không sửa được'
+const FAILED_STATUS = 'rejected'
 export const FIXABLE_STATUSES = ['waiting', 'rejected', 'qa_failed', 'needs_look']
 export const AGENTS = ['claude', 'codex']
 export const CHILD_ENV_KEYS = [
@@ -111,6 +112,7 @@ export async function agentCommand(agent, jobDir, deps = {}) {
   }
   if (agent !== 'claude') throw new Error(`agent không hợp lệ: ${agent}`)
   const exe = deps.claudeExe ?? findClaudeExe(deps.env ?? process.env)
+  // Bash stays allowed because image fixes need python; it is not confined to the job folder (accepted risk, controller ruling 11/16)
   const args = ['-p', FIX_PROMPT, '--output-format', 'json', '--permission-mode', 'dontAsk', '--allowedTools', ...CLAUDE_TOOLS, '--add-dir', jobDir]
   if (await claudeHasStrictMcp(exe, deps.claudeHelp ?? claudeHelpText)) args.push('--strict-mcp-config')
   return { cmd: exe, args }
@@ -408,18 +410,17 @@ function normQa(qa) {
   }
 }
 
-async function failJob(queue, item, dir, job, text, deps, extra = {}) {
+/** A failed fix never counts down (spec 7.5): the item goes to rejected whatever it was before. */
+async function failJob(queue, item, dir, job, problems, last, deps, extra = {}) {
   const now = deps.now ?? (() => new Date())
-  const message = clip(text, MESSAGE_MAX + 200)
-  writeJob(dir, { ...job, ...extra, status: 'failed', finishedAt: now().toISOString(), message })
-  const back = item.prevStatus && item.prevStatus !== 'fixing' ? item.prevStatus : 'waiting'
+  const message = `${FIX_FAILED}: ${clip(last || problems.join('; '))}`
+  writeJob(dir, { ...job, ...extra, status: 'failed', finishedAt: now().toISOString(), message, problems })
   const cur = await queue.get(item.id)
-  if (cur?.status === 'fixing') await queue.setStatus(item.id, back, { reason: message })
+  if (last && problems.length) await queue.addEvent(item.id, 'fix_check', `Job ${job.n}: ${problems.join('; ')}`)
+  if (cur?.status === 'fixing') await queue.setStatus(item.id, FAILED_STATUS, { reason: message })
   await queue.addEvent(item.id, 'fix_failed', message)
-  return fail(item.id, 'fix_failed', message, { status: cur?.status === 'fixing' ? back : cur?.status, jobId: job.id })
+  return fail(item.id, 'fix_failed', message, { status: cur?.status === 'fixing' ? FAILED_STATUS : cur?.status, problems, jobId: job.id })
 }
-
-const failureText = (problems, last) => `${FIX_FAILED}: ${problems.join('; ')}${last ? ` — ${clip(last)}` : ''}`
 
 async function withLocksRetry(queue, itemId, fn, deps) {
   const sleep = deps.sleep ?? (ms => new Promise(r => setTimeout(r, ms)))
@@ -536,16 +537,16 @@ async function runNow(queue, jobId, deps) {
     const outside = changedSince(before, snapshot(queue, item.id, dir), queue.root)
     if (outside.length) problems.push(`agent ghi ra ngoài thư mục out\\: ${outside.slice(0, 5).join(', ')}${outside.length > 5 ? ` (+${outside.length - 5})` : ''}`)
     if (!problems.length) problems.push(...await checkOut(dir, job.parts ?? [], deps.imageSize ?? readImageSize))
-    if (problems.length) return await failJob(queue, item, dir, running, failureText(problems, last), deps, ran)
+    if (problems.length) return await failJob(queue, item, dir, running, problems, last, deps, ran)
     const r = await recordVersion(queue, item.id, dir, running, last, deps)
     if (r?.ok) {
       writeJob(dir, { ...running, ...ran, status: 'done', finishedAt: now().toISOString(), resultVersion: r.version })
       return { ...r, jobId }
     }
     const why = r?.failed ?? (r?.code === 'locked' ? 'không ghi được bản mới: dòng đang bị khoá' : r?.error ?? 'không ghi được bản mới')
-    return await failJob(queue, item, dir, running, failureText([why], last), deps, ran)
+    return await failJob(queue, item, dir, running, [why], last, deps, ran)
   } catch (e) {
-    return failJob(queue, item, dir, running, failureText([errText(e)], ''), deps)
+    return failJob(queue, item, dir, running, [errText(e)], '', deps)
   } finally {
     ownJobs.delete(jobId)
   }
@@ -565,24 +566,55 @@ export function runFixJob(queue, jobId, deps = {}) {
   return run
 }
 
+/** Image name of a live pid (`tasklist /FI "PID eq <pid>" /FO CSV /NH`), or null when no such process runs. */
+export function processImage(pid) {
+  if (process.platform !== 'win32') return Promise.resolve(null)
+  return new Promise(resolve => {
+    execFile('tasklist', ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'], { windowsHide: true, timeout: 15_000 }, (e, stdout) => {
+      const m = !e && /^"([^"]+)","(\d+)"/m.exec(String(stdout))
+      resolve(m && Number(m[2]) === Number(pid) ? m[1] : null)
+    })
+  })
+}
+
+function killPid(pid) {
+  return new Promise(resolve => execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, timeout: 15_000 }, () => resolve(undefined)))
+}
+
+const AGENT_IMAGES = new Set(['claude.exe', 'codex.exe'])
+
 /**
- * At server start: an item left `fixing` by an earlier process (its job queued or running when the process stopped) goes back
- * to the status it had, with an event; its open jobs are marked failed. Jobs started by this process are left alone.
+ * At server start: an item left `fixing` by an earlier process goes to rejected with an event; its open jobs are marked failed.
+ * A job's recorded pid that still runs as claude.exe / codex.exe is killed first (another image = a reused pid, left alone).
+ * Jobs started by this process are left alone.
+ * @param {any} queue
+ * @param {{ log?: (m: string) => void, now?: () => Date, ownJobs?: Set<string>, processImage?: (pid: number) => Promise<string|null>, killPid?: (pid: number) => Promise<any> }} [opts]
  * @returns {Promise<string[]>} recovered item ids
  */
-export async function recoverFixJobs(queue, { log = console.log, now = () => new Date(), ownJobs: mine = ownJobs } = {}) {
+export async function recoverFixJobs(queue, {
+  log = console.log, now = () => new Date(), ownJobs: mine = ownJobs, processImage: imageOf = processImage, killPid: kill = killPid,
+} = {}) {
   const recovered = []
   for (const item of await queue.list({ statuses: ['fixing'] })) {
     const jobs = listJobs(queue, item.id)
     if (jobs.some(j => mine.has(j.id))) continue
     const text = `${FIX_FAILED}: job bị gián đoạn (server hàng chờ hoặc PC khởi động lại)`
     for (const j of jobs) {
-      if (j.status === 'queued' || j.status === 'running') writeJob(jobDirOf(queue, j.id), { ...j, status: 'failed', finishedAt: now().toISOString(), message: text })
+      if (j.status !== 'queued' && j.status !== 'running') continue
+      let killed = null
+      if (Number.isInteger(j.pid) && j.pid > 0) {
+        const image = await imageOf(j.pid).catch(() => null)
+        if (image && AGENT_IMAGES.has(image.toLowerCase())) {
+          await kill(j.pid)
+          killed = j.pid
+          log(`${item.taskKey}: đã dừng agent còn chạy (${image}, pid ${j.pid})`)
+        }
+      }
+      writeJob(jobDirOf(queue, j.id), { ...j, status: 'failed', finishedAt: now().toISOString(), message: text, ...(killed ? { killedPid: killed } : {}) })
     }
-    const back = item.prevStatus && item.prevStatus !== 'fixing' ? item.prevStatus : 'waiting'
-    await queue.setStatus(item.id, back, { reason: text })
+    await queue.setStatus(item.id, FAILED_STATUS, { reason: text })
     await queue.addEvent(item.id, 'fix_failed', text)
-    log(`${item.taskKey}: ${text} → ${back}`)
+    log(`${item.taskKey}: ${text} → ${FAILED_STATUS}`)
     recovered.push(item.id)
   }
   return recovered

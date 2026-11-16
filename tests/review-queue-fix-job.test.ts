@@ -219,8 +219,8 @@ describe('runFixJob', () => {
     expect(helps).toBe(1)
   })
 
-  it('agent writes nothing: status back to the previous one, event with the last message cut to 500 chars, no new version', async () => {
-    const id = await makeItem('LIT1_1', { status: 'rejected' })
+  it('agent writes nothing: a waiting item goes to rejected (no countdown), reason = the last message cut to 500 chars, no new version', async () => {
+    const id = await makeItem('LIT1_1')
     const { jobId } = await start(id)
     const long = 'x'.repeat(480) + 'KẾT-THÚC' + 'y'.repeat(300)
     const { spawn } = fakeSpawn(({ child, job }) => {
@@ -232,10 +232,10 @@ describe('runFixJob', () => {
     const item = await q.get(id)
     expect(item).toMatchObject({ status: 'rejected', version: 1 })
     const ev = (await q.events(id)).find((e: any) => e.type === 'fix_failed')
-    expect(ev.message).toMatch(/^agent không sửa được: /)
-    expect(ev.message).toContain(long.slice(0, 500))
-    expect(ev.message).not.toContain(long.slice(0, 501))
-    expect(item.statusReason).toMatch(/^agent không sửa được/)
+    expect(ev.message).toBe(`agent không sửa được: ${long.slice(0, 500)}`)
+    expect(item.statusReason).toBe(ev.message)
+    expect(await messages(id)).toContain('Job 1: thiếu out\\PRINT_Front.png')
+    expect(await q.expired(clock + 10 * 3_600_000)).toEqual([])
     expect(fs.existsSync(path.join(q.root, 'items', id, 'v2'))).toBe(false)
     expect(readJob(q, jobId)).toMatchObject({ status: 'failed' })
   })
@@ -256,7 +256,7 @@ describe('runFixJob', () => {
         exit(child)
       })
       const r = await runFixJob(q, jobId, deps(spawn))
-      expect(r, name).toMatchObject({ ok: false, code: 'fix_failed', status: 'waiting' })
+      expect(r, name).toMatchObject({ ok: false, code: 'fix_failed', status: 'rejected' })
       expect((await q.get(id)).version, name).toBe(1)
       expect(await messages(id), name).toMatch(/ngoài thư mục/)
     }
@@ -277,16 +277,16 @@ describe('runFixJob', () => {
       const { jobId } = await start(id)
       const { spawn } = fakeSpawn(({ child, job }) => { outs[id](job).then(() => exit(child)) })
       const r = await runFixJob(q, jobId, deps(spawn))
-      expect(r).toMatchObject({ ok: false, code: 'fix_failed', status: 'waiting' })
+      expect(r).toMatchObject({ ok: false, code: 'fix_failed', status: 'rejected' })
       expect((await q.get(id)).version).toBe(1)
       expect(await messages(id)).toMatch(why[id])
       expect(fs.existsSync(path.join(q.root, 'items', id, 'v2'))).toBe(false)
     }
   })
 
-  it('a hanging agent is killed at the 60-minute limit (RF 3): previous status back, nothing recorded', async () => {
+  it('a hanging agent is killed at the 60-minute limit (RF 3): qa_failed item goes to rejected, nothing recorded', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
-    const id = await makeItem('LIT1_1', { status: 'rejected' })
+    const id = await makeItem('LIT1_1', { qa: { verdict: 'fail', items: ['lệch khổ'] } })
     const { jobId } = await start(id)
     const { spawn, calls } = fakeSpawn(({ job }) => { writeOut(job, 'PRINT_Front.png', 'HALF') })
     const p = runFixJob(q, jobId, deps(spawn))
@@ -317,7 +317,7 @@ describe('runFixJob', () => {
     const pb = runFixJob(q, jb, d)
     await new Promise(r => setTimeout(r, 150))
     expect(calls).toHaveLength(1)
-    expect(readJob(q, ja).status).toBe('running')
+    expect(readJob(q, ja)).toMatchObject({ status: 'running', pid: 999_999 })
     expect(readJob(q, jb).status).toBe('queued')
     releaseA()
     expect(await pa).toMatchObject({ ok: true })
@@ -349,21 +349,42 @@ describe('runFixJob', () => {
 })
 
 describe('recoverFixJobs', () => {
-  it('after a restart, a fixing item whose job was queued or running goes back to its previous status', async () => {
-    const id = await makeItem('LIT1_1', { status: 'rejected' })
-    const { jobId } = await start(id)
-    const file = path.join(q.root, 'items', id, 'jobs', '1', 'job.json')
-    fs.writeFileSync(file, JSON.stringify({ ...readJob(q, jobId), status: 'running' }))
+  it('after a restart: a still-running claude.exe/codex.exe pid is killed, other images are not, the item goes to rejected', async () => {
+    const cases: [string, string | null, boolean][] = [['claude', 'claude.exe', true], ['codex', 'CODEX.EXE', true], ['reused', 'notepad.exe', false], ['gone', null, false]]
+    const ids: Record<string, string> = {}
+    const pids: Record<string, number> = {}
+    for (let i = 0; i < cases.length; i++) {
+      const name = cases[i][0]
+      const id = await makeItem(`LIT_${name}`)
+      const { jobId } = await start(id)
+      pids[name] = 4000 + i
+      fs.writeFileSync(path.join(q.root, 'items', id, 'jobs', '1', 'job.json'), JSON.stringify({ ...readJob(q, jobId), status: 'running', pid: pids[name] }))
+      ids[name] = id
+    }
+    const images = new Map(cases.map(([name, image]) => [pids[name], image]))
+    const asked: number[] = []
+    const killed: number[] = []
     const q2 = await openQueue({ root: q.root, now: () => new Date(clock) })
     try {
-      const r = await recoverFixJobs(q2, { log: (m: string) => logs.push(m), ownJobs: new Set() })
-      expect(r).toEqual([id])
+      const r = await recoverFixJobs(q2, {
+        log: (m: string) => logs.push(m), ownJobs: new Set(),
+        processImage: async (pid: number) => { asked.push(pid); return images.get(pid) ?? null },
+        killPid: async (pid: number) => { killed.push(pid) },
+      })
+      expect(r.sort()).toEqual(Object.values(ids).sort())
     } finally {
       await q2.close()
     }
-    expect((await q.get(id)).status).toBe('rejected')
-    expect(readJob(q, jobId).status).toBe('failed')
-    expect(await messages(id)).toMatch(/agent không sửa được: .*gián đoạn/)
+    expect(asked.sort()).toEqual(Object.values(pids).sort())
+    expect(killed.sort()).toEqual([pids.claude, pids.codex].sort())
+    for (const [name, , kill] of cases) {
+      const id = ids[name]
+      expect((await q.get(id)).status, name).toBe('rejected')
+      const job = readJob(q, `${id}-1`)
+      expect(job.status, name).toBe('failed')
+      expect(job.killedPid, name).toBe(kill ? pids[name] : undefined)
+      expect(await messages(id), name).toMatch(/agent không sửa được: .*gián đoạn/)
+    }
   })
 
   it('leaves a job started by this process alone', async () => {
