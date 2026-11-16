@@ -300,6 +300,37 @@ describe('makePreview', () => {
 })
 
 describe('runQueueIntake', () => {
+  it('pins the output lines auto_render.py queue_said/queue_outcome parse (header, "  <key>  <phrase>", summary)', async () => {
+    put('r/LIT1_1/front.png', 'FRONT-ART')
+    const shared = planLine({ taskKey: 'LIT2_1', files: [printFile({ storagePath: null, transfer: 'reuse', shared: true, driveFileId: 'DRV_OLD', size: 99 })] })
+    const fakeClient = {
+      note: client.note,
+      taskState: async () => ({ ok: true, status: 200, body: { status: 'NEW', artworks: [], incomingFolder: { id: 'IN' } } }),
+      commit: async () => ({ ok: true, status: 200, body: { status: 'REVIEW', artworks: [] } }),
+      putPreview: async () => ({ ok: true, status: 200, body: {} }),
+    }
+    const run = async () => {
+      const out: string[] = []
+      await runQueueIntake({
+        plan: { lines: [planLine(), shared] }, storageRoot, outDir, snapshot, queueRoot, sourceCli: 'push-local-renders',
+        makeDeps: () => ({ client: fakeClient, uploader: { upload: async () => { throw new Error('no upload expected') } } }),
+        makeNoteClient: () => client, previewer, download, log: (m: string) => out.push(m),
+      })
+      return out.join('\n').split('\n')
+    }
+    const header = /^== Hàng chờ duyệt local \(.*\): \d+ dòng ==$/
+    const summary = /^\d+ dòng · vào hàng chờ \d+/
+    const first = await run()
+    expect(first.filter(l => header.test(l.trim()))).toEqual([`== Hàng chờ duyệt local (${queueRoot}): 2 dòng ==`])
+    expect(first).toContain('  LIT1_1  vào hàng chờ')
+    expect(first.find(l => l.startsWith('  LIT2_1  '))).toMatch(/^ {2}LIT2_1 {2}giao thẳng/)
+    const sumAt = first.findIndex(l => summary.test(l))
+    expect(sumAt).toBeGreaterThan(first.indexOf('  LIT1_1  vào hàng chờ'))
+    const second = await run()
+    expect(second.find(l => l.startsWith('  LIT1_1  '))).toMatch(/^ {2}LIT1_1 {2}không đổi/)
+    expect(second.some(l => summary.test(l))).toBe(true)
+  })
+
   it('prints one line per key and sends only the bypassed lines through the normal API delivery', async () => {
     put('r/LIT1_1/front.png', 'FRONT-ART')
     const shared = planLine({ taskKey: 'LIT2_1', files: [printFile({ storagePath: null, transfer: 'reuse', shared: true, driveFileId: 'DRV_OLD', size: 99 })] })

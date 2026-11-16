@@ -725,22 +725,33 @@ def flat_guard(inputs: dict, files: list[dict], files_root: Path, tmp_dir: Path,
                               float(inputs.get('tolerance', sz.TOLERANCE_PX)))
 
 
-def queued_keys(root: Path) -> dict[str, dict]:
-    """taskKey → {itemId, status} of every active item of the local review queue (read-only); no queue.db yet → {}."""
+QUEUE_DB_RETRIES = 3
+
+
+def queued_keys(root: Path, sleep=time.sleep) -> dict[str, dict]:
+    """taskKey → {itemId, status} of every active item of the local review queue (read-only); no queue.db yet → {}.
+    A locked/busy db (a writer mid-transaction) is retried QUEUE_DB_RETRIES times, 1 s apart."""
     import sqlite3
     db = Path(root) / 'queue.db'
     if not db.exists():
         return {}
-    try:
-        c = _ro(db)
+    for attempt in range(QUEUE_DB_RETRIES + 1):
         try:
-            rows = c.execute(f'SELECT k.taskKey, i.id, i.status FROM item_keys k JOIN items i ON i.id = k.itemId '
-                             f'WHERE i.status IN ({", ".join("?" * len(QUEUE_ACTIVE))})', QUEUE_ACTIVE).fetchall()
-        finally:
-            c.close()
-    except sqlite3.Error as e:
-        raise StageError('queue', f'không đọc được hàng chờ local {db}: {e}')
-    return {k: {'itemId': i, 'status': s} for k, i, s in rows}
+            c = _ro(db)
+            try:
+                rows = c.execute(f'SELECT k.taskKey, i.id, i.status FROM item_keys k JOIN items i ON i.id = k.itemId '
+                                 f'WHERE i.status IN ({", ".join("?" * len(QUEUE_ACTIVE))})', QUEUE_ACTIVE).fetchall()
+            finally:
+                c.close()
+            return {k: {'itemId': i, 'status': s} for k, i, s in rows}
+        except sqlite3.OperationalError as e:
+            if attempt < QUEUE_DB_RETRIES and any(w in str(e).lower() for w in ('locked', 'busy')):
+                sleep(1)
+                continue
+            raise StageError('queue', f'không đọc được hàng chờ local {db}: {e}')
+        except sqlite3.Error as e:
+            raise StageError('queue', f'không đọc được hàng chờ local {db}: {e}')
+    raise StageError('queue', f'không đọc được hàng chờ local {db}')
 
 
 def build_plan(cfg: Config, pr: ProcessResult, since: str, tmp_dir: Path, log: RunLog, queued: dict | None = None) -> Plan:
@@ -778,7 +789,7 @@ def build_plan(cfg: Config, pr: ProcessResult, since: str, tmp_dir: Path, log: R
                       'pieces': [_piece_input(r, i) for r, i in zip(rows, ins)]}
             results = local_guard(inputs, lambda p: root / p['storagePath'])
             add(key, 'local-render', _combine(results), inputs, results)
-        except (OSError, ValueError, KeyError) as e:
+        except (OSError, ValueError, KeyError, TypeError) as e:
             reason = f'không đo được khung tên: {type(e).__name__}: {e}'
             add(key, 'local-render', sz.GuardResult('ERROR', None, reason, {}), inputs or {'source': 'local-render', 'taskKey': key, 'error': reason})
 

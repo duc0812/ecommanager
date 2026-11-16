@@ -280,3 +280,56 @@ def test_qa_item_bad_input_exits_2(tmp_path, capsys):
     f.write_text('[1, 2]', encoding='utf-8')
     assert ar.main(['--qa-item', str(d), '--qa-inputs', str(f)]) == 2
     assert capsys.readouterr().out == ''
+
+
+# ---------------------------------------------------------------- live-safety fixes
+
+def test_a_type_error_while_building_inputs_never_breaks_an_ssh_run(cfg, make_dbs, tmp_path, monkeypatch):
+    from datetime import datetime
+    real = ar.worker_inputs
+
+    def bad_area(*a, **k):
+        i = real(*a, **k)
+        return {**i, 'area': (0.0, None, 600.0, 400.0)}
+    monkeypatch.setattr(ar, 'worker_inputs', bad_area)
+    pr = make_dbs(tmp_path, [dict(key='LIT1_1', readiness='AUTO', ink=GOOD)])
+    plan = ar.build_plan(cfg, pr, '2026-10-29', tmp_path / 'tmp', ar.RunLog(tmp_path / 'home', datetime.now()))
+    line = next(l for l in plan.lines if l.key == 'LIT1_1')
+    assert line.result.verdict == 'ERROR' and 'TypeError' in line.result.reason and plan.push_local == []
+    assert line.inputs == {'source': 'local-render', 'taskKey': 'LIT1_1', 'error': line.result.reason}
+    assert plan.errors == [{'stage': 'guard', 'taskKey': 'LIT1_1', 'message': line.result.reason}]
+
+
+class _LockedConn:
+    def __init__(self, errors):
+        self.errors = errors
+
+    def execute(self, *a):
+        if self.errors:
+            raise self.errors.pop(0)
+        return self
+
+    def fetchall(self):
+        return [('LIT1_1', 'rq_a1', 'waiting')]
+
+    def close(self):
+        pass
+
+
+@pytest.mark.parametrize('errors, slept, ok', [
+    (['database is locked', 'database is busy'], [1, 1], True),
+    (['database is locked'] * 4, [1, 1, 1], False),
+    (['no such table: item_keys'], [], False),
+])
+def test_queued_keys_retries_a_locked_or_busy_queue_db(tmp_path, monkeypatch, errors, slept, ok):
+    (tmp_path / 'queue.db').write_bytes(b'')
+    conn = _LockedConn([sqlite3.OperationalError(e) for e in errors])
+    monkeypatch.setattr(ar, '_ro', lambda db: conn)
+    naps = []
+    if ok:
+        assert ar.queued_keys(tmp_path, sleep=naps.append) == {'LIT1_1': {'itemId': 'rq_a1', 'status': 'waiting'}}
+    else:
+        with pytest.raises(ar.StageError) as e:
+            ar.queued_keys(tmp_path, sleep=naps.append)
+        assert e.value.stage == 'queue' and errors[-1] in e.value.message
+    assert naps == slept
