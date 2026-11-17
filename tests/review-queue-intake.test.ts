@@ -395,6 +395,20 @@ describe('mockup per line (owner 11/04: every line; 11/17: builder lines get the
     expect(again.meta.mockup.state).toBe('hapo')
   })
 
+  it('an item queued before the mockup check (no state) gets a new version when the check now says missing, with the same bytes', async () => {
+    put('r/LIT4_1/front.png', 'ART4')
+    const plan = { lines: [planLine({ taskKey: 'LIT4_1', files: [printFile({ storagePath: 'r/LIT4_1/front.png' })] })] }
+    await enqueue(plan, { mockup: async () => ({ state: 'present', note: 'x' }) })
+    const v1 = await q.activeByTaskKey('LIT4_1')
+    expect(v1).toMatchObject({ version: 1, status: 'waiting' })
+    await enqueue(plan, { mockup: noFile })
+    const v2 = await q.activeByTaskKey('LIT4_1')
+    expect(v2).toMatchObject({ id: v1.id, version: 2, status: 'qa_failed', meta: { mockup: { state: 'missing' } } })
+    expect(v2.qa.items[0]).toMatch(/^Thiếu mockup:/)
+    const r = await enqueue(plan, { mockup: noFile })
+    expect(r.unchanged).toEqual(['LIT4_1'])
+  })
+
   it('a group: each line gets its own mockup; one missing line fails the group with its key in the item', async () => {
     put('spec/dl/x.png', 'SHARED')
     const first = planLine({ taskKey: 'LIT4_1', files: [printFile({ storagePath: 'spec/dl/x.png', transfer: 'upload', shared: true })] })

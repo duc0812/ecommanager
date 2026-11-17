@@ -404,7 +404,10 @@ export async function enqueuePlan({
       prevKeys = await queue.memberKeys(active.id)
       const sameKeys = prevKeys.join('|') === taskKeys.join('|')
       // a needs_look item, or api lines that now mean something else on prod, is re-recorded even with the same bytes
-      refresh = active.status === 'needs_look' || apiLinesDiffer(active.apiLines, lines)
+      // a mockup state that changed (built now, or now known to be missing) is re-recorded too, so the QA verdict follows it
+      const prevStates = JSON.stringify(lines.length > 1 ? (active.meta?.lines ?? []).map(x => x.mockup?.state ?? null) : [active.meta?.mockup?.state ?? null])
+      const nextStates = JSON.stringify(mockups.map(m => m.state))
+      refresh = active.status === 'needs_look' || apiLinesDiffer(active.apiLines, lines) || prevStates !== nextStates
       if (cur && sameKeys && !refresh && (cur.files ?? []).map(f => f.sha256).sort().join('|') === shaKey) return { outcome: 'unchanged', itemId: active.id }
       prevDir = path.join(queue.root, 'items', active.id, `v${active.version}`)
     }
