@@ -105,12 +105,14 @@ export async function openJobForTask(taskId: string): Promise<DesignAgentJob | n
 export async function openJobStatusByTask(taskIds: string[]): Promise<Map<string, 'QUEUED' | 'RUNNING'>> {
   const out = new Map<string, 'QUEUED' | 'RUNNING'>()
   if (taskIds.length === 0) return out
+  // Open jobs are few; the task list can be every task on prod (3000+), and an `in` that long exceeds SQLite's parameter limit (P2029, 11/17/2026).
+  const wanted = new Set(taskIds)
   const rows = await prisma.designAgentJob.findMany({
-    where: { taskId: { in: taskIds }, status: { in: OPEN }, kind: { not: 'LIBRARY_APPLY' } },
+    where: { taskId: { not: null }, status: { in: OPEN }, kind: { not: 'LIBRARY_APPLY' } },
     orderBy: { createdAt: 'asc' },
   })
   for (const r of rows) {
-    if (r.taskId && !out.has(r.taskId)) out.set(r.taskId, r.status as 'QUEUED' | 'RUNNING')
+    if (r.taskId && wanted.has(r.taskId) && !out.has(r.taskId)) out.set(r.taskId, r.status as 'QUEUED' | 'RUNNING')
   }
   return out
 }
