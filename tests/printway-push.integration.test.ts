@@ -97,7 +97,7 @@ const push = async (orderId: string, payloadHash: string) =>
 const cancel = async (orderId: string) => postCancel(await req(`${base(orderId)}/cancel`, adminToken, post({ confirm: true })), { params: { orderId } })
 const refresh = async (orderId: string) => postRefresh(await req(`${base(orderId)}/refresh`, adminToken, post({})), { params: { orderId } })
 
-async function makeOrder(opts: { approved?: boolean; supplierSku?: string; note?: string; phone?: string; country?: string; state?: string; address1?: string; address2?: string | null } = {}) {
+async function makeOrder(opts: { approved?: boolean; supplierSku?: string; note?: string; phone?: string; country?: string; state?: string; address1?: string; address2?: string | null; email?: string | null } = {}) {
   seq++
   const id = `gid://test/Order/pw-${seq}`
   const number = `#PW${1000 + seq}`
@@ -107,7 +107,7 @@ async function makeOrder(opts: { approved?: boolean; supplierSku?: string; note?
       id, projectId: PROJECT, storeId, shopifyOrderNumber: number, financialStatus: 'PAID', currency: 'USD',
       grossAmount: 29.45, expectedPayout: 28.3, totalFees: 1.15, refundedAmount: 0, placedAt: new Date('2026-10-15T19:28:06Z'),
       pipelineStatus: 'READY_TO_PRODUCTION', orderType: 'NON_CUSTOM', designReady: opts.approved !== false,
-      customerEmail: 'sal@example.com', customerName: 'Sal Paint',
+      customerEmail: opts.email === undefined ? 'sal@example.com' : opts.email, customerName: 'Sal Paint',
       shippingName: 'Sal Van Paint', shippingAddress1: opts.address1 ?? '12 Main St', shippingAddress2: opts.address2 === undefined ? 'Apt 4' : opts.address2, shippingCity: 'Leeds',
       shippingZip: 'LS1 1AA', shippingPhone: opts.phone ?? '07700 900123', shippingCountry: opts.country ?? 'GB', shippingState: opts.state ?? 'England', shippingStateCode: 'ENG',
       lines: { create: [{
@@ -220,8 +220,21 @@ describe('Printway preview', () => {
     expect(p.canPush).toBe(false)
   })
 
-  it('sends no product title, shop domain, shopper email or CS note', async () => {
-    const o = await makeOrder({ note: 'Customer is angry, refund next' })
+  it('sends the shopper email outside the US, where Printway requires it (LIT4214)', async () => {
+    const o = await makeOrder()
+    const p = await (await preview(o.id)).json()
+    expect(p.payload.shipping_email).toBe('sal@example.com')
+  })
+
+  it('blocks an order outside the US with no valid email', async () => {
+    const o = await makeOrder({ email: null })
+    const p = await (await preview(o.id)).json()
+    expect(p.issues.find((i: any) => i.code === 'ADDRESS_EMAIL')).toMatchObject({ level: 'error' })
+    expect(p.canPush).toBe(false)
+  })
+
+  it('sends no product title, shop domain, shopper email or CS note on a US order', async () => {
+    const o = await makeOrder({ note: 'Customer is angry, refund next', country: 'US', state: 'Texas' })
     const p = await (await preview(o.id)).json()
     const sent = JSON.stringify(p.payload)
     expect(sent).not.toContain('Secret Family')

@@ -122,6 +122,10 @@ export async function buildPrintwayPush(orderId: string, opts: { quote?: boolean
   const state = order.shippingState?.trim() || ''
   const name = splitPersonName(order.shippingName ?? order.customerName)
   const phone = e164Phone(order.shippingPhone, countryCode)
+  // Printway takes US orders without an email but refuses the others without one (LIT4214, 11/17); the shopper's email goes only where it is required.
+  const shopperEmail = order.customerEmail?.trim() ?? ''
+  const email = countryCode && countryCode !== 'US' ? shopperEmail : ''
+  if (countryCode && countryCode !== 'US' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(shopperEmail)) error('ADDRESS_EMAIL', 'Đơn ngoài Mỹ cần email khách hợp lệ — Printway không nhận đơn quốc tế thiếu email')
   if (!name.first) error('ADDRESS_NAME', 'Thiếu tên người nhận')
   const street = printwayAddressLines(order.shippingAddress1, order.shippingAddress2)
   if (!order.shippingAddress1?.trim()) error('ADDRESS_LINE', 'Thiếu địa chỉ giao hàng (address1)')
@@ -144,6 +148,7 @@ export async function buildPrintwayPush(orderId: string, opts: { quote?: boolean
       order_id: externalOrderId,
       firstName: name.first,
       lastName: name.last,
+      ...(email ? { shipping_email: email } : {}),
       ...(phone ? { shipping_phone: phone } : {}),
       shipping_address1: street.address1,
       ...(address2 ? { shipping_address2: address2 } : {}),

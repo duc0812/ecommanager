@@ -34,6 +34,7 @@ export type PrintwayOrderPayload = {
   order_id: string
   firstName: string
   lastName: string
+  shipping_email?: string
   shipping_phone?: string
   shipping_address1: string
   shipping_address2?: string
