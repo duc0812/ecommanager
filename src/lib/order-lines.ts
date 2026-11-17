@@ -22,11 +22,15 @@ function normalize(value: string | null | undefined): string {
   return (value ?? '').toLowerCase().trim()
 }
 
+// A name charge staff add by an order edit is a custom item "Custom Name: Pamela" (#LIT6451): no SKU and no product type.
+const EDITED_FEE_TITLE_PREFIXES = ['custom name:']
+
 export function isNonProductLine(line: LineForClassification): boolean {
   const title = normalize(line.productTitle)
   const productType = normalize(line.shopifyProductType)
   if (DIGITAL_PRODUCT_TYPES.includes(productType) || GIFT_PRODUCT_TYPES.includes(productType)) return true
   if (DIGITAL_PRODUCT_TITLES.includes(title)) return true
+  if (!normalize(line.sku) && !productType && EDITED_FEE_TITLE_PREFIXES.some(p => title.startsWith(p))) return true
   return ADD_ON_TITLES.includes(title)
 }
 

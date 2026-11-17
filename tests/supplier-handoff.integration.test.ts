@@ -695,13 +695,14 @@ describe('hub tabs by supplier', () => {
     expect(hub.selected).toBe(CSV_SUP)
   })
 
-  it('lists an order waiting for mapping under the unmapped tab only', async () => {
+  // Owner 11/17/2026 (#LIT6467): the approved, mapped line goes to its supplier; the unmapped one waits for mapping on its own.
+  it('lists an order waiting for mapping under the unmapped tab for its unmapped line, and under its supplier for the approved one', async () => {
     const o = await makeOrder({ lines: 2 })
     const [first] = await prisma.orderLine.findMany({ where: { orderId: o.id }, orderBy: { linePosition: 'asc' } })
     await prisma.orderLine.update({ where: { id: first.id }, data: { resolvedSupplierId: null, resolvedSupplierSku: null } })
     await prisma.order.update({ where: { id: o.id }, data: { pipelineStatus: 'PENDING_MAPPING' } })
-    const hub = await listHandoffHub({ q: o.number })
-    expect(hub.tabs.map(t => t.id)).toEqual([UNMAPPED_TAB])
+    const hub = await listHandoffHub({ q: o.number, supplier: UNMAPPED_TAB })
+    expect(hub.tabs.map(t => t.id)).toEqual([CSV_SUP, UNMAPPED_TAB])
     expect(hub.pending.map(c => c.order.id)).toEqual([o.id])
   })
 
@@ -827,8 +828,8 @@ describe('lines go to their supplier one by one', () => {
     expect((await handoffStateFor(o.id))!.readyLineIds).toEqual([other.id])
   })
 
-  it('keeps a rejected, a closed and an unmapped order out of the supplier tabs', async () => {
-    for (const data of [{ pipelineStatus: 'DESIGN_REJECTED' }, { pipelineStatus: 'PENDING_MAPPING' }, { financialStatus: 'REFUNDED' }, { financialStatus: 'voided' }, { fulfillmentStatus: 'FULFILLED' }, { pipelineStatus: 'CANCELLED' }]) {
+  it('keeps a rejected and a closed order out of the supplier tabs', async () => {
+    for (const data of [{ pipelineStatus: 'DESIGN_REJECTED' }, { financialStatus: 'REFUNDED' }, { financialStatus: 'voided' }, { fulfillmentStatus: 'FULFILLED' }, { pipelineStatus: 'CANCELLED' }]) {
       const o = await lit6102()
       await prisma.order.update({ where: { id: o.id }, data })
       expect((await listHandoffHub({ q: o.number, supplier: CSV_SUP })).pending.some(c => c.order.id === o.id)).toBe(false)
@@ -910,4 +911,73 @@ describe('lines go to their supplier one by one', () => {
   })
 
   const markSent = (id: string) => prisma.orderLine.update({ where: { id }, data: { exportedAt: new Date(), exportedToSupplierId: CSV_SUP } })
+})
+
+// Owner 11/17/2026: #LIT6467_3 (Jomall, approved) sat in no supplier tab because #LIT6467_2 had no supplier yet.
+// Rule of 11/05/2026 ("handoff by key line"): a finished line goes to its supplier without waiting for its siblings.
+describe('an unmapped sibling does not hold an approved line', () => {
+  const linesOf = (id: string) => prisma.orderLine.findMany({ where: { orderId: id }, orderBy: { linePosition: 'asc' } })
+
+  /** The #LIT6467 shape: _1 at the CSV supplier approved, _2 with no supplier still NEW, and a "Custom Name: …" fee line added by an order edit. */
+  const lit6467 = async () => {
+    const o = await makeOrder({ lines: 2, approve: false })
+    const [mapped, unmapped] = await linesOf(o.id)
+    await prisma.orderLine.update({ where: { id: mapped.id }, data: { resolvedBaseCost: 6 } })
+    await prisma.orderLine.update({ where: { id: unmapped.id }, data: { resolvedSupplierId: null, resolvedSupplierSku: null, sku: 'TN2605261638-T-SHIRT-L' } })
+    await prisma.orderLine.create({ data: { orderId: o.id, shopifyLineId: `${mapped.shopifyLineId}-name`, sku: null, productTitle: 'Custom Name: Pamela', qty: 1, linePosition: 3, unitPrice: 3.54 } })
+    await transitionTask(o.keys[0], DES, { to: 'DONE' })
+    await prisma.designTask.update({ where: { taskKey: o.keys[1] }, data: { status: 'NEW' } })
+    await prisma.order.update({ where: { id: o.id }, data: { pipelineStatus: 'PENDING_MAPPING' } })
+    return { ...o, mapped, unmapped }
+  }
+
+  it('#LIT6467: the approved line is counted and carded in its supplier\'s tab', async () => {
+    const before = await countPendingHandoff()
+    const o = await lit6467()
+    expect(await countPendingHandoff()).toBe(before + 1)
+    const hub = await listHandoffHub({ q: o.number, supplier: CSV_SUP })
+    expect(hub.selected).toBe(CSV_SUP)
+    expect(hub.tabs.find(t => t.id === CSV_SUP)).toMatchObject({ orderCount: 1, baseCostTotal: 6 })
+    const card = hub.pending.find(c => c.order.id === o.id)!
+    expect(card).toBeTruthy()
+    const view = hubView(card, CSV_SUP)
+    expect(view.lines.map(l => l.taskKey)).toEqual([o.keys[0]])
+    expect(view.sendableLines.map(l => l.taskKey)).toEqual([o.keys[0]])
+    expect(card.state).toMatchObject({ pending: true, blocked: null, readyLineIds: [o.mapped.id], mode: 'CSV' })
+    expect((await listHandoffCards()).pending.some(c => c.order.id === o.id)).toBe(true)
+  })
+
+  it('the unmapped line still waits in "Chưa map xưởng", and the fee line is not a line to map', async () => {
+    const o = await lit6467()
+    const hub = await listHandoffHub({ q: o.number, supplier: UNMAPPED_TAB })
+    expect(hub.selected).toBe(UNMAPPED_TAB)
+    expect(hub.tabs.find(t => t.id === UNMAPPED_TAB)).toMatchObject({ orderCount: 1 })
+    const card = hub.pending.find(c => c.order.id === o.id)!
+    expect(hubView(card, UNMAPPED_TAB).lines.map(l => l.taskKey)).toEqual([o.keys[1]])
+    expect(card.lines.some(l => l.line.productTitle === 'Custom Name: Pamela')).toBe(false)
+  })
+
+  it('a CSV save and export send the approved line only; the order keeps waiting for mapping, not Exported', async () => {
+    const o = await lit6467()
+    expect((await saveCsv(o.id, exportToken)).status).toBe(200)
+    expect(await handoffStateFor(o.id)).toMatchObject({ pending: false, handedOff: { mode: 'CSV' } })
+    await exportCsv({ markExported: true })
+    const [sent, waiting] = await linesOf(o.id)
+    expect(sent.exportedToSupplierId).toBe(CSV_SUP)
+    expect(waiting.exportedAt).toBeNull()
+    expect(await order(o.id)).toMatchObject({ pipelineStatus: 'PENDING_MAPPING', exportedAt: null })
+    const hub = await listHandoffHub({ q: o.number })
+    expect(hub.tabs.map(t => t.id)).toEqual([UNMAPPED_TAB])
+    expect(hubView(hub.pending[0], UNMAPPED_TAB).lines.map(l => l.taskKey)).toEqual([o.keys[1]])
+  })
+
+  it('a sheet or API send of a supplier\'s lines marks them on a PENDING_MAPPING order too', async () => {
+    const o = await lit6467()
+    const { markOrdersExported } = await import('@/lib/repos/orders')
+    const r = await markOrdersExported([o.id], CSV_SUP, new Date(), { mode: 'SHEET', byId: null }, { lineIds: [o.mapped.id] })
+    expect(r).toMatchObject({ count: 1, lines: 1, completed: [] })
+    expect((await linesOf(o.id))[0].exportedToSupplierId).toBe(CSV_SUP)
+    expect((await order(o.id)).pipelineStatus).toBe('PENDING_MAPPING')
+    expect((await handoffStateFor(o.id))!.pending).toBe(false)
+  })
 })

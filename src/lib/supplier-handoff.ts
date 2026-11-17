@@ -22,7 +22,7 @@ import { loadLineResolver, recalculateMissingOrderLineCosts } from '@/lib/repos/
 import { printCutCheck } from '@/lib/print-cut'
 import { printFileFit } from '@/lib/print-file-fit'
 import { currentFiles, sameLabel } from '@/lib/task-files'
-import { canSendBeside, exportProgress, exportProgressLabel, exportedSupplierOf, isDesignOpen, lineHold, readyLines } from '@/lib/line-export'
+import { SEND_STATUSES, canSendBeside, exportProgress, exportProgressLabel, exportedSupplierOf, isDesignOpen, lineHold, readyLines } from '@/lib/line-export'
 
 export class HandoffError extends Error {
   constructor(message: string, readonly status: number, readonly code: string) {
@@ -54,7 +54,7 @@ const MAX_CARDS = 60
  */
 export function pendingHandoffWhere() {
   return {
-    pipelineStatus: { in: ['READY_TO_PRODUCTION', 'PENDING_DESIGN'] },
+    pipelineStatus: { in: SEND_STATUSES },
     OR: [{ designTasks: { some: { status: 'DONE' } } }, { lines: { some: { dropship: true, resolvedSupplierId: { not: null } } } }],
     AND: [NOT_FULFILLED, { financialStatus: { notIn: [...CLOSED_FINANCIAL, ...CLOSED_FINANCIAL.map(s => s.toLowerCase())] } }],
   }
@@ -443,7 +443,7 @@ async function recentSupplierActivity(): Promise<{ active: Set<string>; design: 
 export async function listHandoffTabs(f: { q?: string } = {}): Promise<HubTab[]> {
   const q = f.q?.trim()
   const searched = (where: object) => (q ? { AND: [where, hubSearchWhere(q)] } : where)
-  // An order waiting for mapping counts in the unmapped tab only: it cannot go to any supplier yet.
+  // An order waiting for mapping counts in the unmapped tab for its unmapped lines, and in its suppliers' tabs for the lines ready to go.
   const [orders, unmapped] = await Promise.all([
     ordersWithReadyLines(searched(pendingHandoffWhere())),
     prisma.order.findMany({
@@ -617,7 +617,7 @@ async function sentInfo(orders: SentOrder[], lineExports: { orderId: string; exp
     if (o.pipelineStatus === 'FULFILLED' || (o.fulfillmentStatus ?? '').toUpperCase() === 'FULFILLED') stage = 'FULFILLED'
     else if (tracking.length > 0) stage = 'TRACKING'
     else if (push) stage = push.status === 'SENDING' ? 'API_SENDING' : cooling ? 'API_COOLING' : 'API_SENT'
-    else if (!exportedAt && o.supplierHandoffMode === 'CSV' && ['READY_TO_PRODUCTION', 'PENDING_DESIGN'].includes(o.pipelineStatus)) stage = 'CSV_WAITING'
+    else if (!exportedAt && o.supplierHandoffMode === 'CSV' && SEND_STATUSES.includes(o.pipelineStatus)) stage = 'CSV_WAITING'
     else if (o.supplierHandoffMode === 'SHEET') stage = 'SHEET_SENT'
     else stage = 'CSV_EXPORTED'
     const byId = push?.pushedById ?? o.supplierHandoffById

@@ -18,7 +18,8 @@ import type { PreviewFile, PushStatus, PushView } from '@/lib/pgprints-shared'
 export const ACTIVE_STATUSES: PushStatus[] = ['SENDING', 'CREATED']
 export const CLOSED_PIPELINE = ['CANCELLED', 'REFUNDED']
 export const CLOSED_FINANCIAL = ['REFUNDED', 'VOIDED']
-export const EXPORT_READY = ['READY_TO_PRODUCTION', 'PENDING_DESIGN', 'EXPORTED']
+// A PENDING_MAPPING order sends its mapped, approved lines; its unmapped line keeps it from Exported.
+export const EXPORT_READY = ['READY_TO_PRODUCTION', 'PENDING_DESIGN', 'PENDING_MAPPING', 'EXPORTED']
 export const UNKNOWN_RESULT_GRACE_MS = 2 * 60_000
 
 export type PushRow = Awaited<ReturnType<typeof prisma.supplierOrderPush.findUniqueOrThrow>>

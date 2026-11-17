@@ -28,7 +28,7 @@ import {
 const ACTIVE_STATUSES: PushStatus[] = ['SENDING', 'CREATED']
 const CLOSED_PIPELINE = ['CANCELLED', 'REFUNDED']
 const CLOSED_FINANCIAL = ['REFUNDED', 'VOIDED']
-const EXPORT_READY = ['READY_TO_PRODUCTION', 'PENDING_DESIGN', 'EXPORTED']
+const EXPORT_READY = ['READY_TO_PRODUCTION', 'PENDING_DESIGN', 'PENDING_MAPPING', 'EXPORTED']
 const UNKNOWN_RESULT_GRACE_MS = 2 * 60_000
 const DUPLICATE_MESSAGE = 'Đơn này đã có một lần gửi PGprints đang hiệu lực — không gửi trùng'
 export const TRACKING_RECEIVED = 'tracking-received'

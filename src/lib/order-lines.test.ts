@@ -186,3 +186,18 @@ describe('planTaskKeys', () => {
     expect(planTaskKeys(new Map([['p1', 'O1_1']]), new Set(['p1']), [{ id: 'a', shopifyLineId: 'p1', taskKey: 'O1_1', untouched: true }])).toEqual({ remove: [], moves: [] })
   })
 })
+
+// #LIT6451 (11/09/2026): staff added the name charge by an order edit, as custom items "Custom Name: Pamela" with no product.
+describe('isNonProductLine: a name charge added by an order edit', () => {
+  it('treats a "Custom Name: <name>" custom item (no SKU, no product type) as non-product', () => {
+    expect(isNonProductLine({ sku: null, productTitle: 'Custom Name: Pamela', shopifyProductType: null })).toBe(true)
+    expect(isNonProductLine({ sku: null, productTitle: ' custom name:Sylwia', shopifyProductType: '' })).toBe(true)
+    expect(hasUnresolvedProductLine([{ sku: null, productTitle: 'Custom Name: Pamea', shopifyProductType: null, resolvedSupplierId: null }])).toBe(false)
+  })
+
+  it('leaves a real product alone: one with a SKU or a product type, or a title that only contains the words', () => {
+    expect(isNonProductLine({ sku: 'TN1-M', productTitle: 'Custom Name: Varsity Jacket', shopifyProductType: null })).toBe(false)
+    expect(isNonProductLine({ sku: null, productTitle: 'Custom Name: Varsity Jacket', shopifyProductType: 'Varsity Jacket' })).toBe(false)
+    expect(isNonProductLine({ sku: null, productTitle: 'Personalized Custom Name: Mug', shopifyProductType: null })).toBe(false)
+  })
+})

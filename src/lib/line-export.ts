@@ -121,8 +121,11 @@ export function exportProgress(order: ExportTrackedOrder): ExportProgress {
   }
 }
 
-/** Orders whose finished lines may go to their supplier. Design-rejected and unmapped orders wait whole. */
-const SEND_STATUSES = ['READY_TO_PRODUCTION', 'PENDING_DESIGN']
+/**
+ * Orders whose finished lines may go to their supplier. A line with no supplier keeps its order in PENDING_MAPPING but holds
+ * none of its mapped siblings (owner 11/17/2026, #LIT6467). Design-rejected orders still wait whole: the factory's rejection reopens the order.
+ */
+export const SEND_STATUSES = ['READY_TO_PRODUCTION', 'PENDING_DESIGN', 'PENDING_MAPPING']
 
 type DesignGateLine = { shopifyLineId: string; designDriveLink: string | null; dropship?: boolean | null }
 type LivePush = { supplierId: string; status: string; exportMarked: boolean; prevExportJson: string | null }

@@ -4,6 +4,7 @@ import { applyProductionOverride, productionOverride } from '@/lib/production-ov
 import { PIPELINE_STATUSES, TERMINAL_PIPELINE_STATUSES, type PipelineStatus } from '@/lib/pipeline-status'
 import { WARNING_TYPES, type WarningType } from '@/lib/order-warnings'
 import { isLineExported, legacyMarks, supplierLines, type ExportTrackedLine, type ExportTrackedOrder } from '@/lib/line-export'
+import { hasUnresolvedProductLine } from '@/lib/order-lines'
 
 export type OrderFilter = {
   ids?: string[]
@@ -355,7 +356,8 @@ export async function markOrdersExported(
   const result: MarkExportedResult = { count: 0, lines: 0, completed: [] }
   if (orderIds.length === 0) return result
   const only = opts.lineIds ? new Set(opts.lineIds) : null
-  const statuses: PipelineStatus[] = only ? [...EXPORTABLE_PIPELINE_STATUSES, 'PENDING_DESIGN'] : EXPORTABLE_PIPELINE_STATUSES
+  // A send by line also marks the lines of an order still in design or waiting for mapping (its other lines wait on their own).
+  const statuses: PipelineStatus[] = only ? [...EXPORTABLE_PIPELINE_STATUSES, 'PENDING_DESIGN', 'PENDING_MAPPING'] : EXPORTABLE_PIPELINE_STATUSES
   const orders = await prisma.order.findMany({
     where: { id: { in: orderIds }, pipelineStatus: { in: statuses } },
     select: { id: true, pipelineStatus: true, exportedAt: true, exportedToSupplierId: true, lines: { select: EXPORT_LINE_SELECT } },
@@ -368,7 +370,8 @@ export async function markOrdersExported(
     const legacyIds = new Set(legacy.map(m => m.line.id))
     const targets = own.filter(l => !isLineExported(o, l) && (!only || only.has(l.id)))
     const sent = new Set([...Array.from(legacyIds), ...targets.map(l => l.id), ...lines.filter(l => l.exportedAt != null).map(l => l.id)])
-    const full = lines.every(l => sent.has(l.id))
+    // A product line with no supplier has not gone anywhere: the order is not Exported until it is mapped and sent too.
+    const full = lines.every(l => sent.has(l.id)) && !hasUnresolvedProductLine(o.lines)
     if (targets.length === 0 && !full) continue
 
     const ops: any[] = []
