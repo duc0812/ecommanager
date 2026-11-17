@@ -29,6 +29,10 @@ export type SheetChannel = {
   defaultColor?: string
   /** By base SKU. */
   products?: Record<string, SheetProductRule>
+  /** The column that says a row is a real order ("Order number"): a sheet whose formulas fill rows ahead ends where this column ends. Without it, any cell counts. */
+  anchorHeader?: string
+  /** false: no coloured row between days (a sheet that is not laid out by day). Default true. */
+  daySeparator?: boolean
 }
 
 export function parseSheetChannels(json: string | null | undefined): SheetChannel[] {
@@ -139,16 +143,19 @@ export function buildRow(indexes: number[], values: string[]): string[] {
   return row
 }
 
-export function sameRow(sent: string[], got: string[] | undefined): boolean {
-  return sent.every((v, i) => v.trim() === String(got?.[i] ?? '').trim())
+/** Did the sheet take the row as sent? With `mapped`, only those columns count: the others were left alone and may hold the sheet's own formulas. */
+export function sameRow(sent: string[], got: string[] | undefined, mapped?: Set<number>): boolean {
+  return sent.every((v, i) => (mapped ? !mapped.has(i) : false) || v.trim() === String(got?.[i] ?? '').trim())
 }
 
 /** The sheet's own row marking a new day. */
 export const DAY_SEPARATOR_COLOR = { red: 0, green: 1, blue: 0 }
 
-export function lastDataRow(rows: string[][]): number {
+/** The last row with data; with `col`, the last row whose cell in that column holds a value. */
+export function lastDataRow(rows: string[][], col?: number): number {
   for (let i = rows.length - 1; i >= 0; i--) {
-    if (rows[i].some(c => String(c ?? '').trim())) return i + 1
+    const filled = col == null ? rows[i].some(c => String(c ?? '').trim()) : Boolean(String(rows[i][col] ?? '').trim())
+    if (filled) return i + 1
   }
   return 0
 }

@@ -8,10 +8,11 @@ import { SHEET_CHANNELS_KEY, getSheetChannels, tabNameFor, type SheetChannel } f
 import { isCsvLocked, setCsvLocked } from '@/lib/csv-lock'
 import jomallChannel from '../../../../../scripts/data/sheet-channel-jomall.json'
 import mangoChannel from '../../../../../scripts/data/sheet-channel-mango.json'
+import go3dChannel from '../../../../../scripts/data/sheet-channel-go3d.json'
 
 export const dynamic = 'force-dynamic'
 
-const KNOWN_CHANNELS = [jomallChannel, mangoChannel] as SheetChannel[]
+const KNOWN_CHANNELS = [jomallChannel, mangoChannel, go3dChannel] as SheetChannel[]
 
 /** The saved channels, and the known ones not switched on yet. */
 async function allChannels(): Promise<SheetChannel[]> {
@@ -27,13 +28,14 @@ async function saveChannels(list: SheetChannel[]) {
 export async function GET(req: NextRequest) {
   const auth = await requireSuperadmin(req)
   if ('error' in auth) return auth.error
-  const [cfg, connection, channels, csvLocked] = await Promise.all([getGoogleConfig(), getSheetsConnection(), allChannels(), isCsvLocked()])
+  const [cfg, connection, channels, csvLocked, suppliers] = await Promise.all([getGoogleConfig(), getSheetsConnection(), allChannels(), isCsvLocked(), prisma.supplier.findMany({ select: { code: true, name: true } })])
+  const nameOf = (code: string) => suppliers.find(s => s.code.trim().toLowerCase() === code.trim().toLowerCase())?.name ?? code
   return NextResponse.json({
     configured: Boolean(cfg.clientId && cfg.clientSecret),
     ...connection,
     csvLocked,
     channels: channels.map(c => ({
-      supplierCode: c.supplierCode, enabled: c.enabled, spreadsheetId: c.spreadsheetId, tabPattern: c.tabPattern,
+      supplierCode: c.supplierCode, name: nameOf(c.supplierCode), enabled: c.enabled, spreadsheetId: c.spreadsheetId, tabPattern: c.tabPattern,
       url: `https://docs.google.com/spreadsheets/d/${c.spreadsheetId}/edit`,
     })),
   })

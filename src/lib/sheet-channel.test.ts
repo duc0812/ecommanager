@@ -147,4 +147,17 @@ describe('where a send goes', () => {
     expect(lastDataRow([['h'], ['a'], [], ['b'], ['  ', ''], []])).toBe(4)
     expect(lastDataRow([])).toBe(0)
   })
+
+  it('reads back only the mapped columns when the others hold formulas', () => {
+    expect(sameRow(['', '', '17/11/2026', 'x'], ['', '#N/A', '17/11/2026', 'x'])).toBe(false)
+    expect(sameRow(['', '', '17/11/2026', 'x'], ['', '#N/A', '17/11/2026', 'x'], new Set([2, 3]))).toBe(true)
+    expect(sameRow(['', '', '17/11/2026', 'x'], ['', '#N/A', '17/11/2026', 'y'], new Set([2, 3]))).toBe(false)
+  })
+
+  it('ends where the anchor column ends, past rows that only formulas fill', () => {
+    const rows = [['Dự kiến', 'Ngày giao', 'Ngày đặt', 'Sản phẩm', 'Order number'], ['', '#N/A', '16/11/2026', 'Topper', '#REMI1124'], ['', '#N/A', '', '', ''], ['', '#N/A', '', '', '']]
+    expect(lastDataRow(rows, 4)).toBe(2)
+    expect(lastDataRow(rows)).toBe(4)
+    expect(lastDataRow([['h'], ['x']], 4)).toBe(0)
+  })
 })

@@ -46,7 +46,9 @@ async function openTab(channel: SheetChannel, at: Date) {
   const [headers = []] = await readRange(channel.spreadsheetId, tabName, '1:1')
   const { indexes, missing } = mapColumns(headers, channel.columns)
   if (missing.length > 0) throw new SheetPushError(`Tab "${tabName}" thiếu cột: ${missing.join(', ')} — sheet đã đổi cấu trúc, không ghi`, 'COLUMNS')
-  return { tabName, tabs, headers, indexes }
+  const anchor = channel.anchorHeader ? headers.findIndex(h => h.trim().toLowerCase() === channel.anchorHeader!.trim().toLowerCase()) : undefined
+  if (anchor === -1) throw new SheetPushError(`Tab "${tabName}" không có cột neo "${channel.anchorHeader}" — không tìm được hàng trống, không ghi`, 'COLUMNS')
+  return { tabName, tabs, headers, indexes, anchor }
 }
 
 async function existingKeys(channel: SheetChannel, tabs: string[], at: Date): Promise<SheetKeys> {
@@ -58,9 +60,10 @@ async function existingKeys(channel: SheetChannel, tabs: string[], at: Date): Pr
     const rows = await readRange(channel.spreadsheetId, tab, '1:100000')
     const heads = (rows[0] ?? []).map(h => h.trim().toLowerCase())
     const number = heads.indexOf('order number')
+    // The vendor column is the second place a line key can sit; a sheet without one keys its rows by Order Number alone.
     const vendor = heads.indexOf('order vendor')
-    if (number < 0 || vendor < 0) throw new SheetPushError(`Tab "${tab}" không có cột Order Number và Order Vendor — không kiểm tra được trùng`, 'COLUMNS')
-    collectKeys(rows.slice(1).map(r => ({ orderNumber: r[number] ?? '', vendor: r[vendor] ?? '' })), keys)
+    if (number < 0) throw new SheetPushError(`Tab "${tab}" không có cột Order Number — không kiểm tra được trùng`, 'COLUMNS')
+    collectKeys(rows.slice(1).map(r => ({ orderNumber: r[number] ?? '', vendor: vendor < 0 ? '' : r[vendor] ?? '' })), keys)
   }
   return keys
 }
@@ -85,7 +88,7 @@ export async function previewSheetPush(supplierId: string, orderIds?: string[]):
 
 async function run(supplierId: string, orderIds: string[] | undefined, userId: string | null, at: Date): Promise<SheetPushResult> {
   const { channel } = await channelOf(supplierId)
-  const { tabName, tabs, indexes } = await openTab(channel, at)
+  const { tabName, tabs, indexes, anchor } = await openTab(channel, at)
   const keys = await existingKeys(channel, tabs, at)
   const cards = await pendingCardsForSupplier(supplierId, orderIds)
 
@@ -208,19 +211,20 @@ async function run(supplierId: string, orderIds: string[] | undefined, userId: s
 
   let range: string
   let firstRow: number
+  const mapped = new Set(indexes)
   try {
     // Read last, so a row someone pasted a moment ago is not written over.
     const rows = await readRange(channel.spreadsheetId, tabName, '1:100000')
-    const lastRow = lastDataRow(rows)
+    const lastRow = lastDataRow(rows, anchor)
     if (lastRow < 1) throw new SheetPushError(`Tab "${tabName}" không có hàng tiêu đề — không ghi`, 'COLUMNS')
     const { sheetId, rowCount } = await tabProperties(channel.spreadsheetId, tabName)
-    const colors = lastRow < rowCount ? await rowColors(channel.spreadsheetId, tabName, lastRow + 1, Math.min(lastRow + 3, rowCount)) : []
-    const plan = planRows({ lastRow, lastDate: rows[lastRow - 1]?.[0] ?? '', today: date, colors })
+    const separated = channel.daySeparator !== false
+    const colors = separated && lastRow < rowCount ? await rowColors(channel.spreadsheetId, tabName, lastRow + 1, Math.min(lastRow + 3, rowCount)) : []
+    const plan = separated ? planRows({ lastRow, lastDate: rows[lastRow - 1]?.[0] ?? '', today: date, colors }) : { separatorRow: null, startRow: lastRow + 1 }
     firstRow = plan.startRow
     const lastWritten = firstRow + outgoing.length - 1
     if (lastWritten > rowCount) await addGridRows(channel.spreadsheetId, sheetId, lastWritten - rowCount)
     if (plan.separatorRow) await paintRow(channel.spreadsheetId, sheetId, plan.separatorRow, DAY_SEPARATOR_COLOR)
-    const mapped = new Set(indexes)
     // Quantity stays a number, or the sheet's own sums skip it. Everything else is text: a zip keeps its leading zero.
     const numeric = new Set(indexes.filter((_, i) => channel.columns[i].source === 'line.qty'))
     range = await writeRows(channel.spreadsheetId, tabName, firstRow, outgoing.map(o => o.row.map((v, col) => (!mapped.has(col) ? null : numeric.has(col) && /^\d+$/.test(v) ? Number(v) : v))))
@@ -239,7 +243,7 @@ async function run(supplierId: string, orderIds: string[] | undefined, userId: s
   const good = new Map<string, string[]>()
   for (let i = 0; i < outgoing.length; i++) {
     const o = outgoing[i]
-    const ok = sameRow(o.row, written[i])
+    const ok = sameRow(o.row, written[i], mapped)
     const rowNumber = firstRow + i
     await prisma.supplierSheetWrite.update({
       where: { id: logged[i].id },

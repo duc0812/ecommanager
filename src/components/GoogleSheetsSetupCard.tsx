@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useCurrentUser } from '@/components/RoleGate'
 
-type Channel = { supplierCode: string; enabled: boolean; spreadsheetId: string; tabPattern: string; url: string }
+type Channel = { supplierCode: string; name?: string; enabled: boolean; spreadsheetId: string; tabPattern: string; url: string }
 type Status = { configured: boolean; connected: boolean; email: string; needsReconnect: boolean; csvLocked: boolean; channels: Channel[] }
 
 const REASON_TEXT: Record<string, string> = {
@@ -52,12 +52,12 @@ export default function GoogleSheetsSetupCard() {
   }, [isSuper, load])
 
   async function toggle(c: Channel) {
-    if (!c.enabled && !window.confirm(`Bật ghi sheet cho ${c.supplierCode}? Từ lúc này xưởng này không xuất CSV được nữa, đơn gửi ở Duyệt sản xuất.`)) return
+    if (!c.enabled && !window.confirm(`Bật ghi sheet cho ${c.name ?? c.supplierCode}? Từ lúc này xưởng này không xuất CSV được nữa, đơn gửi ở Duyệt sản xuất.`)) return
     setBusy(c.supplierCode)
     setBanner(null)
     const r = await send('PUT', { supplierCode: c.supplierCode, enabled: !c.enabled })
     setBusy('')
-    setBanner(r.ok ? { ok: true, text: `${c.supplierCode}: đã ${c.enabled ? 'tắt' : 'bật'} kênh ghi sheet.` } : { ok: false, text: r.error })
+    setBanner(r.ok ? { ok: true, text: `${c.name ?? c.supplierCode}: đã ${c.enabled ? 'tắt' : 'bật'} kênh ghi sheet.` } : { ok: false, text: r.error })
     void load()
   }
 
@@ -129,7 +129,7 @@ export default function GoogleSheetsSetupCard() {
             <h3 className="text-label-sm text-on-surface-variant">Xưởng ghi đơn vào sheet</h3>
             {status.channels.map(c => (
               <div key={c.supplierCode} className="flex flex-wrap items-center gap-sm text-body-sm">
-                <b className="text-on-surface">{c.supplierCode}</b>
+                <b className="text-on-surface">{c.name ?? c.supplierCode}</b>
                 <a href={c.url} target="_blank" rel="noopener noreferrer" className="text-secondary hover:underline">Mở sheet ↗</a>
                 <span className="text-label-sm text-on-surface-variant">tab {c.tabPattern} · mọi store đang bật</span>
                 <span className={`px-sm py-xs rounded-full text-label-sm ${c.enabled ? 'bg-on-tertiary-container/15 text-on-tertiary-container' : 'bg-surface-container text-on-surface-variant'}`}>{c.enabled ? 'Đang bật' : 'Đang tắt'}</span>
