@@ -48,6 +48,7 @@ async function makeSnapshot(dir: string) {
   await db.execute('CREATE TABLE OrderLine (orderId TEXT, shopifyLineId TEXT, productTitle TEXT, variantTitle TEXT, sku TEXT, resolvedSupplierSku TEXT, customAttributesJson TEXT, customallFieldsJson TEXT, previewCdnUrl TEXT, imageUrl TEXT, resolvedSupplierId TEXT, shopifyProductId TEXT)')
   await db.execute('CREATE TABLE "Order" (id TEXT, shopifyOrderNumber TEXT, placedAt TEXT, storeId TEXT)')
   await db.execute('CREATE TABLE PrintTemplate (id TEXT, name TEXT, supplierId TEXT, supplierSku TEXT, widthPx INTEGER, heightPx INTEGER, dpi INTEGER, bleedIn REAL, safeIn REAL, mirror INTEGER, areas TEXT, guideImagePath TEXT)')
+  await db.execute('CREATE TABLE DesignArtwork (orderId TEXT, shopifyLineId TEXT, kind TEXT, removedAt TEXT)')
   await db.execute({ sql: 'INSERT INTO PrintTemplate VALUES (?,?,?,?,?,?,?,?,?,?,?,?)', args: ['tplA', 'Hoodie 1', 'sup1', 'MWHD-1', 1000, 500, 200, 0.125, 0.2, 0, '[{"name":"FRONT","x":0,"y":0,"w":500,"h":500},{"name":"BACK","x":500,"y":0,"w":500,"h":500}]', 'templates/tplA/guide.png'] })
   const line = async (taskKey: string, n: number, over: any = {}) => {
     await db.execute({ sql: 'INSERT INTO DesignTask VALUES (?, ?, ?)', args: [taskKey, `o${n}`, `sl${n}`] })
@@ -55,8 +56,8 @@ async function makeSnapshot(dir: string) {
     await db.execute({
       sql: 'INSERT INTO OrderLine VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       args: [`o${n}`, `sl${n}`, over.productTitle ?? `Custom Hoodie ${n}`, 'Black / L', `TN${n}-BL-L`, `MWHD-${n}`,
-        JSON.stringify([{ key: 'Name', value: 'Anna' }, { key: '_customall_preview', value: 'https://cdn.x/attr.png' }]),
-        JSON.stringify([{ key: 'Font', value: 'Script' }]),
+        JSON.stringify(over.attrs ?? [{ key: 'Name', value: 'Anna' }, { key: '_customall_preview', value: 'https://cdn.x/attr.png' }]),
+        JSON.stringify(over.cmFields ?? [{ key: 'Font', value: 'Script' }]),
         over.previewCdnUrl === undefined ? `https://cdn.x/preview-${n}.png` : over.previewCdnUrl,
         over.imageUrl === undefined ? `https://cdn.x/store-${n}.jpg` : over.imageUrl, 'sup1', `gid://shopify/Product/${n}`],
     })
@@ -64,6 +65,11 @@ async function makeSnapshot(dir: string) {
   await line('LIT1_1', 1)
   await line('LIT2_1', 2)
   await line('LIT3_1', 3, { previewCdnUrl: null })
+  // LIT4_1: a HaPo tumbler through the _pers builder, no preview anywhere; LIT5_1: no custom at all, no preview; LIT6_1: prod already holds a mockup
+  await line('LIT4_1', 4, { previewCdnUrl: null, attrs: [{ key: 'Custom Name', value: 'Kate' }, { key: '_pers', value: 'mw4midg6kthh' }] })
+  await line('LIT5_1', 5, { previewCdnUrl: null, attrs: [{ key: 'Custom Name Yes or No', value: 'No' }], cmFields: [] })
+  await line('LIT6_1', 6, { previewCdnUrl: null, attrs: [{ key: 'Custom Name', value: 'Mia' }, { key: '_pers', value: 'abc' }] })
+  await db.execute({ sql: 'INSERT INTO DesignArtwork VALUES (?, ?, ?, ?)', args: ['o6', 'sl6', 'MOCKUP', null] })
   return db
 }
 
@@ -345,6 +351,78 @@ describe('enqueuePlan', () => {
     await enqueue({ lines: [planLine({ taskKey: 'LIT3_1', files: [printFile({ storagePath: 'r/LIT3_1/front.png' })] })] })
     const item = await q.activeByTaskKey('LIT3_1')
     expect(item.meta.customerPreviewUrl).toBe('https://cdn.x/attr.png')
+  })
+})
+
+describe('mockup per line (owner 11/04: every line; 11/17: builder lines get their preview rebuilt)', () => {
+  const madeFile = (name: string) => async ({ info, outDir }: any) => {
+    fs.mkdirSync(outDir, { recursive: true })
+    const p = path.join(outDir, `MOCKUP_${info.taskKey}.jpg`)
+    fs.writeFileSync(p, `MOCK-${name}`)
+    return { state: 'hapo', note: 'dựng lại preview builder', file: { kind: 'MOCKUP', printArea: `Preview ${name}`, fileName: `${info.taskKey}_Preview_${name}.jpg`, mimeType: 'image/jpeg', path: p, widthPx: 10, heightPx: 10 } }
+  }
+  const noFile = async ({ info }: any) => ({ state: 'missing', note: `builder ${info.builder}`, reason: `dòng qua builder (${info.builder}) nhưng TN4 chưa có công thức` })
+
+  it('a built mockup is copied into the version, listed with the files and sent with the api line; meta says how it was made', async () => {
+    put('r/LIT4_1/front.png', 'ART4')
+    const seen: any[] = []
+    const r = await enqueue({ lines: [planLine({ taskKey: 'LIT4_1', files: [printFile({ storagePath: 'r/LIT4_1/front.png' })] })] }, { mockup: async (a: any) => { seen.push(a); return madeFile('Kate')(a) }, artworkBuilder: 'X:/ab' })
+    expect(r.enqueued).toEqual(['LIT4_1'])
+    expect(seen[0]).toMatchObject({ hasMockupFile: false, root: 'X:/ab', info: { taskKey: 'LIT4_1', builder: 'pers', prodMockup: false, customerPreviewUrl: null, custom: [{ name: 'Custom Name', value: 'Kate' }, { name: 'Font', value: 'Script' }] } })
+    const item = await q.activeByTaskKey('LIT4_1')
+    expect(item.status).toBe('waiting')
+    expect(item.meta.mockup).toEqual({ state: 'hapo', note: 'dựng lại preview builder' })
+    const v1 = path.join(queueRoot, 'items', item.id, 'v1')
+    const [ver] = await q.versions(item.id)
+    const mock = ver.files.find((f: any) => f.kind === 'MOCKUP')
+    expect(mock).toMatchObject({ part: 'MOCKUP_Preview_Kate', printArea: 'Preview Kate', taskKey: 'LIT4_1', path: path.join(v1, 'MOCKUP_Preview_Kate.jpg'), preview: path.join(v1, 'preview', 'MOCKUP_Preview_Kate.jpg') })
+    expect(fs.readFileSync(mock.path, 'utf8')).toBe('MOCK-Kate')
+    expect(item.apiLines[0].files.map((f: any) => [f.kind, f.printArea, f.path])).toEqual([['PRINT', 'front', path.join(v1, 'PRINT_front.png')], ['MOCKUP', 'Preview Kate', path.join(v1, 'MOCKUP_Preview_Kate.jpg')]])
+    expect(fs.existsSync(path.join(queueRoot, 'tmp')) ? fs.readdirSync(path.join(queueRoot, 'tmp')) : []).toEqual([])
+  })
+
+  it('no mockup possible → the item fails QA with "Thiếu mockup" and the reason; a later run that builds one makes a new waiting version', async () => {
+    put('r/LIT4_1/front.png', 'ART4')
+    const plan = { lines: [planLine({ taskKey: 'LIT4_1', files: [printFile({ storagePath: 'r/LIT4_1/front.png' })] })] }
+    await enqueue(plan, { mockup: noFile })
+    const item = await q.activeByTaskKey('LIT4_1')
+    expect(item).toMatchObject({ status: 'qa_failed', version: 1, qa: { verdict: 'fail', items: ['Thiếu mockup: dòng qua builder (pers) nhưng TN4 chưa có công thức'] } })
+    expect(item.meta.mockup).toMatchObject({ state: 'missing', reason: expect.stringContaining('TN4') })
+    const r = await enqueue(plan, { mockup: madeFile('Kate') })
+    expect(r.enqueued).toEqual(['LIT4_1'])
+    const again = await q.activeByTaskKey('LIT4_1')
+    expect(again).toMatchObject({ id: item.id, status: 'waiting', version: 2, qa: { verdict: 'unchecked', items: [] } })
+    expect(again.meta.mockup.state).toBe('hapo')
+  })
+
+  it('a group: each line gets its own mockup; one missing line fails the group with its key in the item', async () => {
+    put('spec/dl/x.png', 'SHARED')
+    const first = planLine({ taskKey: 'LIT4_1', files: [printFile({ storagePath: 'spec/dl/x.png', transfer: 'upload', shared: true })] })
+    const later = planLine({ taskKey: 'LIT5_1', files: [printFile({ storagePath: 'spec/dl/x.png', transfer: 'reuse', shared: true, sharedFrom: 'LIT4_1', driveFileId: null })] })
+    const byKey: any = { LIT4_1: madeFile('Kate'), LIT5_1: noFile }
+    await enqueue({ lines: [first, later] }, { mockup: async (a: any) => byKey[a.info.taskKey](a) })
+    const item = await q.activeByTaskKey('LIT4_1')
+    expect(item).toMatchObject({ kind: 'group', status: 'qa_failed', qa: { verdict: 'fail', items: ['LIT5_1: Thiếu mockup: dòng qua builder (null) nhưng TN4 chưa có công thức'] } })
+    expect(item.meta.lines.map((m: any) => [m.taskKey, m.mockup.state])).toEqual([['LIT4_1', 'hapo'], ['LIT5_1', 'missing']])
+    expect(item.apiLines.find((l: any) => l.taskKey === 'LIT4_1').files.some((f: any) => f.kind === 'MOCKUP')).toBe(true)
+    expect(item.apiLines.find((l: any) => l.taskKey === 'LIT5_1').files.some((f: any) => f.kind === 'MOCKUP')).toBe(false)
+  })
+
+  it('with the real resolver: a shopper preview or a prod mockup needs no file; no custom at all takes the store photo', async () => {
+    for (const k of ['LIT1_1', 'LIT5_1', 'LIT6_1']) put(`r/${k}/front.png`, `ART-${k}`)
+    const lines = ['LIT1_1', 'LIT5_1', 'LIT6_1'].map(k => planLine({ taskKey: k, files: [printFile({ storagePath: `r/${k}/front.png` })] }))
+    const r = await enqueue({ lines }, { artworkBuilder: path.join(tmp, 'no-such-builder') })
+    expect(r.enqueued).toEqual(['LIT1_1', 'LIT5_1', 'LIT6_1'])
+    expect((await q.activeByTaskKey('LIT1_1')).meta.mockup.state).toBe('preview')
+    expect((await q.activeByTaskKey('LIT6_1')).meta.mockup).toMatchObject({ state: 'prod' })
+    const store = await q.activeByTaskKey('LIT5_1')
+    expect(store.status).toBe('waiting')
+    expect(store.meta.mockup).toMatchObject({ state: 'store' })
+    const [ver] = await q.versions(store.id)
+    const mock = ver.files.find((f: any) => f.kind === 'MOCKUP')
+    expect(mock).toMatchObject({ part: 'MOCKUP_Preview_no-name', printArea: 'Preview no-name' })
+    expect(fs.readFileSync(mock.path, 'utf8')).toBe('jpeg:img:https://cdn.x/store-5.jpg')
+    expect(downloads.filter(u => u === 'https://cdn.x/store-5.jpg').length).toBeGreaterThanOrEqual(1)
   })
 })
 

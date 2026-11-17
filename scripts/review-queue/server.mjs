@@ -210,6 +210,7 @@ export function createHandler({ queue, deps, fixDeps = {}, ops = {}, now = () =>
       version: item.version, enteredAt: item.enteredAt, updatedAt: item.updatedAt, deadline: deadlineOf(item),
       qa: { verdict: item.qa?.verdict ?? 'unchecked', count: item.qa?.items?.length ?? 0, ...(item.qa?.items?.length ? { items: item.qa.items } : {}) },
       title: m.productTitle ?? '', variant: m.variantTitle ?? null, orderNumber: m.orderNumber ?? null,
+      mockup: m.mockup?.state ?? null,
       thumb: thumbFile ? fileUrl(root, item.id, item.version, thumbFile.preview) : null,
     }
   }

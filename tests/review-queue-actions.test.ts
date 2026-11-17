@@ -172,6 +172,18 @@ describe('approveItem', () => {
     expect(await messages(id)).toMatch(/thiếu Back/)
   })
 
+  it('a plain delivery that prod takes but keeps before REVIEW (a part or the mockup still missing there) → needs_look', async () => {
+    prod.tasks.LIT1_1.required = ['Front', 'Back']
+    const id = await addItem('LIT1_1')
+    const r = await sendToCloud(q, id, deps, { version: 1 })
+    expect(r).toMatchObject({ ok: false, code: 'needs_look', status: 'needs_look' })
+    expect(r.error).toMatch(/LIT1_1: prod nhận file nhưng giữ dòng ở NEW/)
+    expect(prod.tasks.LIT1_1.status).toBe('NEW')
+    expect(prod.real()).toHaveLength(1)
+    expect(await statusOf(id)).toBe('needs_look')
+    expect(await messages(id)).toMatch(/giữ dòng ở NEW/)
+  })
+
   it('the app refuses the approval after the write: item cloud with the warning (it is on prod in REVIEW)', async () => {
     prod.tasks.LIT1_1.refuseApprove = 'kiểm tra cắt in'
     const id = await addItem('LIT1_1')

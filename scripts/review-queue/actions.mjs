@@ -22,6 +22,7 @@ const TRANSIENT_CODES = new Set(['line_syncing', 'busy'])
 const REUPLOAD_CODES = new Set(['drive_missing', 'wrong_folder', 'size_mismatch'])
 export const TICK_BUDGET_MS = 300_000
 const DELIVERABLE = ['waiting', 'rejected', 'qa_failed']
+const REVIEWED = ['REVIEW', 'DONE']
 const REJECTABLE = ['waiting', 'rejected', 'qa_failed', 'needs_look']
 const REMOVABLE = ['waiting', 'rejected', 'qa_failed', 'needs_look']
 const HOLD_TIMEOUT_MS = 60_000
@@ -129,7 +130,12 @@ async function deliverItem(queue, item, deps, { approve, auto }) {
     for (const [i, l] of send.entries()) {
       const r = pick(real.results, l, i)
       if (r?.ok && (r.outcome === 'applied' || r.outcome === 'alreadyApplied')) {
-        delivered.push({ taskKey: l.taskKey, outcome: r.outcome, status: r.body?.status ?? null, warnings: r.warnings ?? r.body?.warnings ?? [] })
+        const status = r.body?.status ?? null
+        const warnings = r.warnings ?? r.body?.warnings ?? []
+        // prod took the files but kept the task before REVIEW (a part or the mockup still missing there): the owner must look
+        if (!approve && r.outcome === 'applied' && status && !REVIEWED.includes(status)) {
+          problems.push({ taskKey: l.taskKey, kind: 'needs_look', code: 'not_review', message: `${l.taskKey}: prod nhận file nhưng giữ dòng ở ${status}${warnings.length ? ` — ${warnings.join(' | ')}` : ''}` })
+        } else delivered.push({ taskKey: l.taskKey, outcome: r.outcome, status, warnings })
       } else problems.push(problemOf(r, l, auto))
     }
   }

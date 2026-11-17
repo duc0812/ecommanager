@@ -5,6 +5,7 @@ import { createDeliveryClient } from '../lib/delivery-client.mjs'
 import { deliverPlanViaApi, planLinesToApi, sharedIdsFromLedger } from '../lib/plan-to-api.mjs'
 import { ACTIVE_STATUSES, newItemId, openQueue } from './store.mjs'
 import { resolveTemplate } from './template.mjs'
+import { DEFAULT_ARTWORK_BUILDER, MOCKUP_MISSING, builderOf, customValues, resolveMockup } from './mockup.mjs'
 
 // Intake of the local review queue (spec 7.2, 12.1, 12.2, 12.4): the push CLIs run with `--via api --to-queue` hand their API
 // lines here instead of delivering them. Each line (or shared group) is copied into items/<id>/v<n>/, gets a JPEG preview per
@@ -190,15 +191,21 @@ const META_SQL = `SELECT ol.productTitle, ol.variantTitle, ol.sku, ol.resolvedSu
   LEFT JOIN OrderLine ol ON ol.orderId = t.orderId AND ol.shopifyLineId = t.shopifyLineId
   LEFT JOIN "Order" o ON o.id = t.orderId
  WHERE t.taskKey = ? LIMIT 1`
+const PROD_MOCKUP_SQL = `SELECT COUNT(*) AS n FROM DesignArtwork a JOIN DesignTask t ON t.orderId = a.orderId AND t.shopifyLineId = a.shopifyLineId
+ WHERE t.taskKey = ? AND a.kind = 'MOCKUP' AND a.removedAt IS NULL`
 
 async function lineInfo({ snapshot, taskKey, planLine, log }) {
   let row = null
+  let prodMockup = false
   if (snapshot) {
     try {
       row = (await snapshot.execute({ sql: META_SQL, args: [taskKey] })).rows[0] ?? null
     } catch (e) {
       log(`${taskKey}: không đọc được thông tin dòng từ snapshot: ${errText(e)}`)
     }
+    try {
+      prodMockup = Number((await snapshot.execute({ sql: PROD_MOCKUP_SQL, args: [taskKey] })).rows[0]?.n ?? 0) > 0
+    } catch { /* an older snapshot without DesignArtwork: prod has no known mockup */ }
   }
   const attrs = parseFields(row?.customAttributesJson)
   const custom = [...attrs.filter(f => !f.key.startsWith('_')), ...parseFields(row?.customallFieldsJson)].map(f => ({ name: f.key, value: f.value }))
@@ -214,6 +221,9 @@ async function lineInfo({ snapshot, taskKey, planLine, log }) {
     custom,
     customerPreviewUrl: row?.previewCdnUrl || attrPreview || null,
     storeImageUrl: row?.imageUrl || null,
+    // the builder the shopper used (its preview is redrawn, owner 11/17/2026) and whether prod already holds a live MOCKUP row
+    builder: builderOf(attrs),
+    prodMockup,
     // the print template the page lays every piece on (null = draw the files one by one)
     template: await resolveTemplate(snapshot, taskKey, log),
   }
@@ -255,7 +265,7 @@ const partBase = f => `${f.kind ?? 'PRINT'}_${f.printArea}`.replace(/[^A-Za-z0-9
  */
 export async function enqueuePlan({
   plan, apiLines, queue, snapshot, qaByKey = {}, client = null, previewer = makePreview, download = downloadImage,
-  source = {}, log = console.log,
+  source = {}, log = console.log, mockup = resolveMockup, artworkBuilder = DEFAULT_ARTWORK_BUILDER,
 }) {
   const out = { enqueued: [], unchanged: [], bypassed: [], refused: [], reasons: {}, unnoted: [] }
   const toNote = []
@@ -330,6 +340,45 @@ export async function enqueuePlan({
   }
 
   async function enqueueGroup({ groupKey, lines, locals }) {
+    const infos = []
+    for (const l of lines) infos.push(await lineInfo({ snapshot, taskKey: l.taskKey, planLine: planByKey.get(l.taskKey), log }))
+    // the mockup of every line (built into a work folder, copied into the version like any other file; a missing one fails QA)
+    const work = path.join(queue.root, 'tmp', `${groupKey}-${process.pid}-${Date.now()}`.replace(/[^A-Za-z0-9._-]+/g, '_'))
+    const mockups = []
+    try {
+      for (const [i, l] of lines.entries()) {
+        const info = infos[i]
+        const hasMockupFile = (l.files ?? []).some(f => f.kind === 'MOCKUP')
+        let storeImage = null
+        if (!hasMockupFile && !info.prodMockup && !info.customerPreviewUrl && !info.builder && !customValues(info.custom).length && info.storeImageUrl) {
+          try {
+            fs.mkdirSync(work, { recursive: true })
+            const dst = path.join(work, `store-${i}.jpg`)
+            await previewer(await download(info.storeImageUrl, { timeoutMs: DOWNLOAD_TIMEOUT_MS }), dst)
+            storeImage = dst
+          } catch (e) {
+            log(`${l.taskKey}: không tải được ảnh biến thể ${info.storeImageUrl} cho mockup (${errText(e)})`)
+          }
+        }
+        let m
+        try {
+          m = await mockup({ info: { ...info, storeImage }, hasMockupFile, outDir: path.join(work, String(i)), root: artworkBuilder, log })
+        } catch (e) {
+          m = { state: 'missing', note: `lỗi dựng mockup: ${errText(e)}`, reason: `lỗi dựng mockup: ${errText(e)}` }
+          log(`${l.taskKey}: ${MOCKUP_MISSING} — ${m.reason}`)
+        }
+        mockups.push({ state: m.state, note: m.note ?? '', ...(m.reason ? { reason: m.reason } : {}) })
+        if (m.file) {
+          l.files = [...(l.files ?? []), m.file]
+          locals.push({ line: l, file: m.file })
+        }
+      }
+      return await record()
+    } finally {
+      fs.rmSync(work, { recursive: true, force: true })
+    }
+
+    async function record() {
     const sources = new Map()
     const used = new Set()
     for (const { line, file } of locals) {
@@ -389,8 +438,6 @@ export async function enqueuePlan({
           return { ...rest, path: copyOf.get(path.resolve(f.path)) }
         }),
       }))
-      const infos = []
-      for (const l of lines) infos.push(await lineInfo({ snapshot, taskKey: l.taskKey, planLine: planByKey.get(l.taskKey), log }))
       const lead = infos[0]
       const image = async (url, name, prevUrl) => {
         if (!url) return null
@@ -413,11 +460,18 @@ export async function enqueuePlan({
         spec: source.spec ?? null,
         ledgerPath: source.ledgerPath ?? null,
         out: source.out ?? null,
+        mockup: mockups[0] ?? null,
       }
-      if (lines.length > 1) meta.lines = infos
+      if (lines.length > 1) meta.lines = infos.map((x, i) => ({ ...x, mockup: mockups[i] ?? null }))
+      const qa = combineQa(lines.map(l => l.taskKey), qaByKey)
+      for (const [i, m] of mockups.entries()) {
+        if (m.state !== 'missing') continue
+        qa.verdict = 'fail'
+        qa.items.push(`${lines.length > 1 ? `${lines[i].taskKey}: ` : ''}${MOCKUP_MISSING}: ${m.reason}`)
+      }
       const r = await queue.addOrUpdate({
         id: itemId, taskKey: groupKey, taskKeys, groupKey, kind: lines.length > 1 ? 'group' : 'line',
-        apiLines: storedLines, files, meta, qa: combineQa(lines.map(l => l.taskKey), qaByKey), refresh,
+        apiLines: storedLines, files, meta, qa, refresh,
       })
       recorded = r.changed
       if (!r.changed) return { outcome: 'unchanged', itemId: r.itemId }
@@ -425,6 +479,7 @@ export async function enqueuePlan({
       return { outcome: 'enqueued', itemId: r.itemId, version: r.version, created: r.created, addedKeys: r.created ? [] : taskKeys.filter(k => !prevKeys.includes(k)) }
     } finally {
       if (!recorded) fs.rmSync(active ? vdir : path.dirname(vdir), { recursive: true, force: true })
+    }
     }
   }
 }
@@ -454,6 +509,7 @@ function readQaJson(file) {
 export async function runQueueIntake({
   plan, storageRoot, outDir, snapshot, queueRoot = queueRootFromEnv(), sourceCli, spec = null, qaJson = null,
   makeDeps, makeNoteClient: makeNotes = () => makeNoteClient(), previewOf = null, previewer = makePreview, download = downloadImage, log = console.log,
+  mockup = resolveMockup, artworkBuilder = process.env.ARTWORK_BUILDER || DEFAULT_ARTWORK_BUILDER,
 }) {
   const ledgerPath = path.join(outDir, 'api-ledger.json')
   const qaByKey = qaJson ? readQaJson(qaJson) : {}
@@ -467,7 +523,7 @@ export async function runQueueIntake({
     const queue = await openQueue({ root: queueRoot })
     try {
       result = await enqueuePlan({
-        plan, apiLines: lines, queue, snapshot, qaByKey, previewer, download, log,
+        plan, apiLines: lines, queue, snapshot, qaByKey, previewer, download, log, mockup, artworkBuilder,
         client: { note: (k, m) => (notes ??= makeNotes()).note(k, m) },
         source: { cli: sourceCli, spec, out: outDir, ledgerPath },
       })

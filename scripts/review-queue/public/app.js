@@ -13,6 +13,10 @@ const CHIP = {
   needs_look: ['Prod đã thay đổi', 'look'], approved: ['Đã duyệt', 'ok'], cloud: ['Lên cloud', 'cloud'], held: ['Đã báo /hold', 'held'],
   removed: ['Đã bỏ', 'gone'],
 }
+const MOCK_LABEL = {
+  present: 'kèm trong lần đẩy', prod: 'đã có trên prod', preview: 'preview của khách', hapo: 'dựng lại từ builder',
+  library: 'thư viện mockup', store: 'ảnh biến thể (không custom)', missing: 'THIẾU',
+}
 const REFRESH_MS = 15_000
 const SOON_MS = 30 * 60_000
 // a D pressed right after the shown version changed was meant for the old one
@@ -155,7 +159,8 @@ function renderList() {
     const thumb = safeUrl(i.thumb)
     const img = thumb ? `<img src="${esc(thumb)}" alt="" loading="lazy">` : '<div class="noimg"></div>'
     const sub = [i.title, i.variant].filter(Boolean).join(' · ')
-    const extra = i.qa?.count && i.status !== 'qa_failed' ? `<span class="cd">${i.qa.count} đề xuất sửa</span>` : ''
+    const extra = (i.mockup === 'missing' ? '<span class="chip rej">thiếu mockup</span>' : '')
+      + (i.qa?.count && i.status !== 'qa_failed' ? `<span class="cd">${i.qa.count} đề xuất sửa</span>` : '')
     const done = tabOf(i.status) === 'done' ? `<span class="cd">${esc(fmtDateTime(i.updatedAt))}</span>` : ''
     return `<div class="it${i.id === S.selected ? ' on' : ''}" data-id="${esc(i.id)}">${img}<div>
       <div class="k">${esc(i.taskKey)}${i.kind === 'group' ? ' <span class="cd">(nhóm)</span>' : ''}</div>
@@ -278,6 +283,8 @@ function renderDetail() {
     notices.push(`<div class="notice info">Agent đang sửa${job ? ` (${esc(job.agent)}, job ${job.n}, ${job.status === 'queued' ? 'đang chờ lượt' : 'đang chạy'})` : ''}: ${esc(job?.reason || it.statusReason || '')}</div>`)
   }
   if (it.status === 'needs_look') notices.push(`<div class="notice">Prod đã thay đổi — cần xem: ${esc(it.statusReason ?? '')}</div>`)
+  const mk = m.mockup ?? null
+  if (mk?.state === 'missing') notices.push(`<div class="notice bad">Thiếu mockup: ${esc(mk.reason ?? mk.note ?? '')} — dòng không tự lên cloud; làm mockup rồi đẩy lại, hoặc duyệt với xác nhận lần hai.</div>`)
   if (tabOf(it.status) === 'done' && it.statusReason) notices.push(`<div class="notice info">${esc((CHIP[it.status] ?? [it.status])[0])}: ${esc(it.statusReason)}</div>`)
 
   const tpl = d.template && Array.isArray(d.template.areas) && d.template.areas.length && d.template.widthPx > 0 && d.template.heightPx > 0 ? d.template : null
@@ -304,7 +311,7 @@ function renderDetail() {
   ${notices.join('')}
   <div class="grid${tpl ? ' canvas-grid' : ''}">
     ${tpl ? canvasCard(files, tpl) : imgCard({ title: `File in · ${part?.part ?? ''}`, right: partInfo, href: part?.url, src: part?.previewUrl ?? null, footer: partTabs, empty: part ? 'Không có ảnh xem trước' : 'Bản này không có file' })}
-    ${imgCard({ title: 'Mockup từ file in', right: mock?.fileName ?? '', href: mock?.url, src: mock?.previewUrl ?? null, cls: 'small', empty: 'Chưa có mockup' })}
+    ${imgCard({ title: 'Mockup', right: MOCK_LABEL[mk?.state] ?? mock?.fileName ?? '', href: mock?.url ?? (mk && (mk.state === 'preview' || mk.state === 'prod') ? d.images.customer?.original : null), src: mock?.previewUrl ?? (mk && (mk.state === 'preview' || mk.state === 'prod') ? d.images.customer?.url ?? null : null), cls: 'small', footer: mk?.note && mk.state !== 'missing' ? `<div class="legend">${esc(mk.note)}</div>` : '', empty: mk?.state === 'missing' ? 'THIẾU MOCKUP' : mk?.state === 'prod' ? 'Đã có trên prod (không tải về)' : 'Chưa có mockup' })}
     ${imgCard({ title: 'Ảnh khách đặt / mockup store', right: sideImg ? (sideImg.url.startsWith('/files/') ? 'từ ổ đĩa' : 'link') : '', href: sideImg?.original, src: sideImg?.url ?? null, cls: 'small', footer: sideTabs, empty: 'Không có ảnh khách đặt' })}
   </div>
   <div class="info">
