@@ -27,7 +27,8 @@ export default function OrderRedirectPage() {
       if (!alive) return
       const tasks = r.ok ? r.data.tasks : []
       const mine = tasks
-        .filter(t => (ws.ok ? t.orderId === ws.data.order.id : t.orderNumber.replace(/^#/, '') === number) && t.status !== 'CANCELLED')
+        // a cancelled task is skipped, except a dropship line's (it opens and reads "Dropship")
+        .filter(t => (ws.ok ? t.orderId === ws.data.order.id : t.orderNumber.replace(/^#/, '') === number) && (t.status !== 'CANCELLED' || t.dropship))
         .sort((a, b) => a.linePosition - b.linePosition)
       if (mine[0]) { router.replace(`/design-studio?task=${encodeURIComponent(mine[0].taskKey)}`); return }
       const failure = !r.ok ? r.error : !ws.ok ? ws.error : ''
