@@ -484,6 +484,13 @@ Migration `20261014104355_line_export` (two `ADD COLUMN` + one index, no rebuild
 - **Not handled.** Profile re-resolve and order sync may re-map a sent line; it stays sent (to `exportedToSupplierId`). A hand-set reopen reopens every supplier — use `--reopen` for one order's other suppliers.
 - **Rollout.** `npx prisma migrate deploy`, restart, then `DATABASE_URL=file:<db> node scripts/backfill-line-export.mjs` (dry run, read the "Cần kiểm tra" list), `--apply`, then for orders whose other-supplier lines were really never sent: `node scripts/backfill-line-export.mjs --apply --reopen LIT4628,LIT4528,…` and export those suppliers.
 
+## An unmapped sibling holds no approved line (2026-11-18, branch `fix/handoff-key-line-pending-mapping`)
+
+Owner 11/17/2026 (#LIT6467_3 at Jomall, DONE, invisible because LIT6467_2 had no supplier). Rule of 11/05: a finished line goes to its supplier without waiting for its siblings.
+- `SEND_STATUSES` (`src/lib/line-export.ts`, used by `readyLines` and `pendingHandoffWhere`) = `READY_TO_PRODUCTION`, `PENDING_DESIGN`, `PENDING_MAPPING`. A `PENDING_MAPPING` order shows its mapped approved lines in their supplier's tab (count + card) and its unmapped lines in "Chưa map xưởng". `DESIGN_REJECTED` orders still wait whole.
+- `markOrdersExported` with `lineIds` also marks lines of a `PENDING_MAPPING` order, and never sets `EXPORTED` while a product line has no supplier (`hasUnresolvedProductLine`): the order stays `PENDING_MAPPING` until the last line is mapped and sent.
+- `isNonProductLine`: a custom item titled `Custom Name: <name>` with no SKU and no product type (added by an order edit, #LIT6451) is a fee line. This shifts LIT6451's key: the Jomall line `LIT6451_5` becomes `LIT6451_2` (the next sync moves its task, the Drive folder keeps the old name).
+
 ## Customall typed text in Design Studio (2026-10-16, branch `feat/line-export`)
 
 Customall-app orders (vendor `customall`) carry no readable text, only `_customallcustomid` + an 800×800 mockup in `_customall_print_file`; designers read names off the picture (#LIT4156: "IANETTA" read as L). Migration `20261016143942_order_line_customall_fields` adds `OrderLine.customallFieldsJson` (`null` = not read yet, `[]` = nothing typed); `SCHEMA_VERSION` `v69`. New deps `lz-string`, `jsonpack` (deploy needs `npm install`).
