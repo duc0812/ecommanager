@@ -2,14 +2,17 @@
 import { useState } from 'react'
 import type { SentLineRow, TaskRow, TaskStatus } from './types'
 import { MAPPING_FILTER_LABEL, readyLabel, timeLeft, type QueueFilter } from './model'
-import { Avatar, ErrorBanner, Icon, Note, Pill, READY_META, TEXT_TONE, btn, card, fmtDate } from './ui'
+import { Avatar, DROPSHIP_META, ErrorBanner, Icon, Note, Pill, READY_META, TEXT_TONE, btn, card, fmtDate } from './ui'
 import { StoreLabel } from '@/components/StoreFilter'
 
 const SENT_SECTION = 'Đã gửi xưởng — chưa có task'
 
 export type { QueueFilter }
 
-const SECTIONS: { title: string; statuses: TaskStatus[]; tone?: string }[] = [
+type Section = { title: string; statuses: TaskStatus[]; tone?: string; dropship?: boolean }
+const inSection = (s: Section, t: TaskRow) => s.statuses.includes(t.status) && (s.dropship ?? false) === !!(t.dropship && t.status === 'CANCELLED')
+
+const SECTIONS: Section[] = [
   { title: 'Bị trả lại — sửa trước', statuses: ['REJECTED'], tone: 'text-error' },
   { title: 'Đang hỏi khách', statuses: ['ASK_CUSTOMER'], tone: 'text-amber-900' },
   { title: 'Mới / Đã giao', statuses: ['NEW', 'ASSIGNED'] },
@@ -19,9 +22,10 @@ const SECTIONS: { title: string; statuses: TaskStatus[]; tone?: string }[] = [
 ]
 
 // A search reaches every task, so finished ones are not only today's and cancelled ones show too.
-const SEARCH_SECTIONS: { title: string; statuses: TaskStatus[]; tone?: string }[] = [
+const SEARCH_SECTIONS: Section[] = [
   ...SECTIONS.slice(0, -1),
   { title: 'Đã duyệt', statuses: ['DONE'] },
+  { title: 'Dropship — không cần design', statuses: ['CANCELLED'], dropship: true },
   { title: 'Đã huỷ', statuses: ['CANCELLED'] },
 ]
 
@@ -56,6 +60,7 @@ function QueueRow({ t, selected, onSelect, waiting, showStore }: { t: TaskRow; s
         {t.mapping === 'UNMAPPED' && t.mappingHint && <span className="text-label-sm text-on-surface-variant truncate">Gợi ý: {t.mappingHint}</span>}
         <span className="flex items-center gap-xs flex-wrap">
           <Pill tone={ready.tone} icon={ready.icon}>{readyLabel(t, ready.label)}</Pill>
+          {t.dropship && <Pill tone={DROPSHIP_META.tone} icon={DROPSHIP_META.icon} title="Hàng dropship mua sẵn — không cần design">{DROPSHIP_META.label}</Pill>}
           {t.fromLibrary && (t.status === 'NEW' || t.status === 'ASSIGNED') && <Pill tone="brand" icon="inventory_2">Thư viện</Pill>}
           {t.agent && <Pill tone="brand" icon="smart_toy" title={t.agent === 'RUNNING' ? 'Agent đang sửa' : 'Agent đang chờ'}>Agent</Pill>}
           {t.mapping === 'UNMAPPED' && <Pill tone="bad" icon="account_tree" title={t.mappingHint ? `Gợi ý: ${t.mappingHint}` : undefined}>Chưa mapping</Pill>}
@@ -109,7 +114,7 @@ export default function Queue({ tasks, sel, onSelect, q, onQ, loading, error, re
   mine: boolean; onMine: (v: boolean) => void
 }) {
   const [closed, setClosed] = useState<Record<string, boolean>>({})
-  const groups = (q.trim() ? SEARCH_SECTIONS : SECTIONS).map(s => ({ ...s, rows: tasks.filter(t => s.statuses.includes(t.status)).sort(byDue) })).filter(g => g.rows.length > 0)
+  const groups = (q.trim() ? SEARCH_SECTIONS : SECTIONS).map(s => ({ ...s, rows: tasks.filter(t => inSection(s, t)).sort(byDue) })).filter(g => g.rows.length > 0)
   const sent = q.trim() && onSelectLine ? sentLines : []
   const sentOpen = !closed[SENT_SECTION]
   const chipCls = (on: boolean) => `inline-flex items-center gap-xs h-7 px-sm rounded-full border text-label-sm ${on ? 'bg-secondary/10 text-secondary border-transparent font-semibold' : 'bg-surface-container-lowest border-outline-variant text-on-surface-variant'}`

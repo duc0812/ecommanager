@@ -16,7 +16,7 @@ import LineFixForm from './LineFixForm'
 import RejectDialog from './RejectDialog'
 import { PopoverHead, useDismiss, useToast } from './overlay'
 import {
-  Avatar, Icon, Pill, READY_META, STATUS_META, btnMd, btnPrimaryMd, field, fieldLabel, fmtDate, fmtDateTime, iconBtn, menuItem, popover,
+  Avatar, Icon, Pill, READY_META, statusMeta, btnMd, btnPrimaryMd, field, fieldLabel, fmtDate, fmtDateTime, iconBtn, menuItem, popover,
 } from './ui'
 
 type Panel = 'none' | 'reject' | 'ask' | 'assign' | 'menu' | 'reopen'
@@ -99,7 +99,7 @@ export default function TaskHeader({ detail, qa, holdCount, refreshing, onRefres
   const can = (to: TransitionBody['to']) => canMove(detail, to)
   const filled = allSlotsFilled(detail)
   const ready = READY_META[task.readiness]
-  const status = STATUS_META[task.status]
+  const status = statusMeta(task)
   const left = timeLeft(task)
   const checklist = buildChecklist(detail)
 
@@ -217,7 +217,7 @@ export default function TaskHeader({ detail, qa, holdCount, refreshing, onRefres
           <div className="flex flex-wrap items-center gap-sm">
             <h2 className="font-mono text-[22px] leading-7 font-bold tracking-tight text-on-surface">{task.taskKey}</h2>
             <button type="button" onClick={() => copy(task.taskKey)} aria-label="Copy Task ID" title="Copy Task ID" className={`${iconBtn} w-7 h-7`}><Icon name="content_copy" className="text-[16px]" /></button>
-            <Pill tone={status.tone} size="md">{status.label}</Pill>
+            <Pill tone={status.tone} icon={status.icon} size="md">{status.label}</Pill>
             <Pill tone={ready.tone} icon={ready.icon} size="md"
               title={detail.profile?.status === 'READY' ? 'Hồ sơ đủ: mapping, template và artwork gốc đã đủ cho mọi biến thể' : 'Độ sẵn sàng của task'}>
               {readyLabel({ readiness: task.readiness, hasPrint: task.hasPrint }, ready.label)}{detail.profile?.status === 'READY' ? ' · hồ sơ đủ' : ''}

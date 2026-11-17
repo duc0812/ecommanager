@@ -28,6 +28,7 @@ export type TaskRow = {
   orderId: string; orderNumber: string; placedAt: string; shopifyLineId: string; linePosition: number
   sku: string | null; productTitle: string; variantTitle: string | null; previewUrl: string | null; imageUrl: string | null
   supplierName: string | null; customized: boolean; storeName: string
+  dropship: boolean
   fromLibrary: boolean; unmapped: boolean; hasPrint: boolean; productKey: string
   mapping: 'READY' | 'UNMAPPED' | 'NO_TEMPLATE'; mappingHint: string | null
   agent: 'QUEUED' | 'RUNNING' | null

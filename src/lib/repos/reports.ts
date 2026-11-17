@@ -113,6 +113,7 @@ export async function ordersWithComputedPL(filter: OrderFilter): Promise<Enriche
           designDriveLink: l.designDriveLink,
           hasLibraryDesign: !!matchDesignEntry(l.sku, l.resolvedSupplierId, designEntries),
           customized: l.customized,
+          dropship: !!(l as any).dropship,
         }),
       })),
       computed: {

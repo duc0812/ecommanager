@@ -160,7 +160,7 @@ function submitItem(input: ChecklistInput, filesDone: boolean): CheckItem {
   const title = 'Gửi duyệt / trạng thái'
   switch (task.status) {
     case 'DONE': return { key: 'submit', title, state: 'done', reason: 'Đã duyệt design', action: null }
-    case 'CANCELLED': return { key: 'submit', title, state: 'na', reason: 'Task đã huỷ', action: null }
+    case 'CANCELLED': return { key: 'submit', title, state: 'na', reason: task.dropship ? 'Dropship — hàng mua sẵn, không cần design' : 'Task đã huỷ', action: null }
     case 'ASK_CUSTOMER': return { key: 'submit', title, state: 'blocked', reason: 'Đang hỏi khách — chờ trả lời rồi tiếp tục', action: null }
     case 'REVIEW':
       return me.canApprove

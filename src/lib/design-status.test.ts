@@ -20,6 +20,11 @@ describe('lineDesignStatus', () => {
     expect(lineDesignStatus({ ...base, previewCdnUrl: 'http://p', hasLibraryDesign: true })).toBe('PENDING')
   })
 
+  it('dropship line → DROPSHIP, even with a preview or a library entry', () => {
+    expect(lineDesignStatus({ ...base, dropship: true, previewCdnUrl: 'http://p', hasLibraryDesign: true })).toBe('DROPSHIP')
+    expect(lineDesignStatus({ ...base, dropship: true, designDriveLink: 'http://d' })).toBe('DROPSHIP')
+  })
+
   it('nothing → NONE', () => {
     expect(lineDesignStatus(base)).toBe('NONE')
   })

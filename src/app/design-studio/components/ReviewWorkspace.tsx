@@ -17,7 +17,7 @@ import RejectDialog from './RejectDialog'
 import AgentStrip from './AgentStrip'
 import { useShopifyRefresh } from './useShopifyRefresh'
 import { useDismiss, useToast } from './overlay'
-import { Avatar, ErrorBanner, Icon, Pill, STATUS_META, btnMd, btnPrimaryMd, card, fmtDate, fmtDateTime, iconBtn, menuItem, popover } from './ui'
+import { Avatar, ErrorBanner, Icon, Pill, statusMeta, btnMd, btnPrimaryMd, card, fmtDate, fmtDateTime, iconBtn, menuItem, popover } from './ui'
 
 type Panel = 'none' | 'reject' | 'menu'
 
@@ -84,7 +84,7 @@ function ReviewHeader({ detail, verdict, position, busy, refreshing, onApprove, 
   const close = () => setPanel('none')
   useDismiss(ref, panel !== 'none', close)
   const left = timeLeft(task)
-  const status = STATUS_META[task.status]
+  const status = statusMeta(task)
   const inReview = task.status === 'REVIEW'
   const canApprove = inReview && canMove(detail, 'DONE')
   const canReject = inReview && canMove(detail, 'REJECTED')
@@ -105,7 +105,7 @@ function ReviewHeader({ detail, verdict, position, busy, refreshing, onApprove, 
           <div className="flex flex-wrap items-center gap-sm">
             <h2 className="font-mono text-[22px] leading-7 font-bold tracking-tight text-on-surface">{task.taskKey}</h2>
             <button type="button" onClick={() => copy(task.taskKey)} aria-label="Copy Task ID" title="Copy Task ID" className={`${iconBtn} w-7 h-7`}><Icon name="content_copy" className="text-[16px]" /></button>
-            {!inReview && <Pill tone={status.tone} size="md">{status.label}</Pill>}
+            {!inReview && <Pill tone={status.tone} icon={status.icon} size="md">{status.label}</Pill>}
             <Pill tone={left.tone} icon={left.icon} size="md" title={`Hạn: ${task.dueAt ? fmtDateTime(task.dueAt) : 'chưa đặt'} · đặt ${fmtDate(task.placedAt)}`}>{left.label}</Pill>
             {line.artworks.some(a => a.source === 'AUTO') && <Pill tone="brand" icon="auto_awesome" size="md">Tự động</Pill>}
             <span className="w-px h-5 bg-outline-variant mx-xs" />

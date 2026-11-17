@@ -3,12 +3,13 @@
 // an accurate status. `previewCdnUrl` presence marks a line the customer actually
 // customized (→ Trello flow); otherwise a ready Design Library entry covers it.
 
-export type LineDesignStatus = 'DONE' | 'PENDING' | 'LIBRARY' | 'NONE'
+export type LineDesignStatus = 'DONE' | 'PENDING' | 'LIBRARY' | 'DROPSHIP' | 'NONE'
 
 export const DESIGN_STATUS_META: Record<LineDesignStatus, { label: string; tone: string }> = {
   DONE: { label: 'Done', tone: 'bg-tertiary/15 text-tertiary' },
   PENDING: { label: 'Chờ design', tone: 'bg-amber-100 text-amber-900' },
   LIBRARY: { label: 'Design Library', tone: 'bg-secondary/10 text-secondary' },
+  DROPSHIP: { label: 'Dropship', tone: 'bg-secondary/10 text-secondary' },
   NONE: { label: '—', tone: 'text-on-surface-variant' },
 }
 
@@ -18,8 +19,10 @@ export function lineDesignStatus(input: {
   designDriveLink?: string | null
   hasLibraryDesign: boolean
   customized?: boolean
+  dropship?: boolean | null
 }): LineDesignStatus {
   if (input.isNonProduct) return 'NONE'
+  if (input.dropship) return 'DROPSHIP'
   if (input.designDriveLink) return 'DONE'
   const isCustomized = input.customized ?? !!input.previewCdnUrl
   if (isCustomized) return 'PENDING'

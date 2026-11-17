@@ -9,7 +9,7 @@ import StoreFilter, { StoreLabel } from '@/components/StoreFilter'
 import { useSellerReadOnly } from '@/components/RoleGate'
 import { useStoreFilter } from '@/lib/use-store-filter'
 
-const DESIGN_STATUS_ORDER: LineDesignStatus[] = ['PENDING', 'LIBRARY', 'DONE']
+const DESIGN_STATUS_ORDER: LineDesignStatus[] = ['PENDING', 'LIBRARY', 'DROPSHIP', 'DONE']
 
 const TAB_STATUSES = PIPELINE_STATUSES.filter(s => s !== 'WARNING')
 

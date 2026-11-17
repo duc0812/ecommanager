@@ -413,6 +413,8 @@ export type TaskRow = {
   orderId: string; orderNumber: string; placedAt: string; shopifyLineId: string; linePosition: number
   sku: string | null; productTitle: string; variantTitle: string | null; previewUrl: string | null; imageUrl: string | null
   supplierName: string | null; customized: boolean; storeName: string
+  /** Dropship line (bought ready-made): its task is CANCELLED by the sync and shown as "Dropship", not as cancelled. */
+  dropship: boolean
   /** Waiting for the local scan of the NAS library to attach its print. */
   fromLibrary: boolean
   /** No supplier yet: mapping comes first. */
@@ -1188,7 +1190,7 @@ export async function listTasks(f: { statuses?: TaskStatus[]; readiness?: Readin
       orderId: task.orderId, orderNumber: task.order.shopifyOrderNumber, placedAt: task.order.placedAt.toISOString(),
       shopifyLineId: task.shopifyLineId, linePosition: line.linePosition, sku: line.sku, productTitle: line.productTitle,
       variantTitle: line.variantTitle, previewUrl: line.previewCdnUrl, imageUrl: safeHttpUrl(line.imageUrl), supplierName: task.supplierSnapshot,
-      customized: line.customized, storeName: task.order.store.project?.name ?? task.order.store.shop,
+      customized: line.customized, storeName: task.order.store.project?.name ?? task.order.store.shop, dropship: !!line.dropship,
       fromLibrary: task.fromLibrary, unmapped: !line.resolvedSupplierId, mapping: 'READY', mappingHint: null,
       hasPrint: printedLines.has(`${task.orderId}\u0000${task.shopifyLineId}`),
       productKey: line.shopifyProductId ?? line.productTitle,

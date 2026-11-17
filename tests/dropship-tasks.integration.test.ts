@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { prisma } from '@/lib/db'
-import { DROPSHIP_TASK_MESSAGE, syncDesignTasks } from '@/lib/design-tasks'
+import { DROPSHIP_TASK_MESSAGE, listTasks, syncDesignTasks } from '@/lib/design-tasks'
 import { readyLines } from '@/lib/line-export'
 import { designReadyHolds } from '@/lib/design-library'
 import { handoffStateFor } from '@/lib/supplier-handoff'
@@ -38,6 +38,9 @@ describe('dropship lines and design tasks', () => {
     expect(tasks.map(t => [t.shopifyLineId, t.status])).toEqual([['p1', 'NEW'], ['d1', 'CANCELLED']])
     expect(tasks[1].events.map(e => e.message)).toContain(DROPSHIP_TASK_MESSAGE)
     expect(await syncDesignTasks(ORDER_ID)).toMatchObject({ created: 0, cancelled: 0 })
+    // the task rows carry the flag, so the studio shows the cancelled dropship task as "Dropship", not "Đã huỷ" (owner 11/17/2026)
+    const rows = await listTasks({ statuses: ['NEW', 'CANCELLED'] })
+    expect(rows.filter(t => t.orderId === ORDER_ID).map(t => [t.shopifyLineId, t.status, t.dropship])).toEqual([['p1', 'NEW', false], ['d1', 'CANCELLED', true]])
   })
   it('a mapped dropship line is ready to send while its POD sibling waits for design', async () => {
     const order = await prisma.order.findUniqueOrThrow({ where: { id: ORDER_ID }, include: { lines: true, designTasks: true } })

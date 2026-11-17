@@ -54,6 +54,13 @@ export const STATUS_META: Record<TaskStatus, { label: string; tone: Tone }> = {
   CANCELLED: { label: 'Đã huỷ', tone: 'idle' },
 }
 
+export const DROPSHIP_META = { label: 'Dropship', tone: 'brand' as Tone, icon: 'local_shipping' }
+
+/** The status pill of a task: a dropship line's cancelled task reads "Dropship" (owner 11/17/2026), never "Đã huỷ". */
+export function statusMeta(task: { status: TaskStatus; dropship?: boolean | null }): { label: string; tone: Tone; icon?: string } {
+  return task.dropship && task.status === 'CANCELLED' ? DROPSHIP_META : STATUS_META[task.status]
+}
+
 export function Icon({ name, className = '' }: { name: string; className?: string }) {
   return <span className={`material-symbols-outlined align-middle ${className}`} aria-hidden="true">{name}</span>
 }

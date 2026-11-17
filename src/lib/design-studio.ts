@@ -265,7 +265,7 @@ export async function loadWorkspace(orderId: string): Promise<Workspace | null> 
       libraryDesignLink: safeHttpUrl(entry?.designLink),
       designStatus: lineDesignStatus({
         isNonProduct, previewCdnUrl: l.previewCdnUrl, designDriveLink: l.designDriveLink,
-        hasLibraryDesign: !!entry, customized: l.customized,
+        hasLibraryDesign: !!entry, customized: l.customized, dropship: !!l.dropship,
       }),
       designDriveLink: l.designDriveLink,
       designNote: l.designNote,
