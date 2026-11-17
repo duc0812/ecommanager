@@ -408,6 +408,19 @@ describe('mockup per line (owner 11/04: every line; 11/17: builder lines get the
     expect(item.apiLines.find((l: any) => l.taskKey === 'LIT5_1').files.some((f: any) => f.kind === 'MOCKUP')).toBe(false)
   })
 
+  it('a group that only reuses a Drive print still enters the queue when its mockup is a new file (no-custom line: store photo)', async () => {
+    const reuse = planLine({ taskKey: 'LIT5_1', files: [printFile({ storagePath: 'spec/dl/x.png', transfer: 'reuse', driveFileId: 'drv1' })] })
+    const r = await enqueue({ lines: [reuse] }, { artworkBuilder: path.join(tmp, 'no-such-builder') })
+    expect(r).toMatchObject({ enqueued: ['LIT5_1'], bypassed: [] })
+    const item = await q.activeByTaskKey('LIT5_1')
+    expect(item.meta.mockup.state).toBe('store')
+    expect(item.apiLines[0].files.map((f: any) => [f.kind, f.knownDriveFileId ?? null, !!f.path])).toEqual([['PRINT', 'drv1', false], ['MOCKUP', null, true]])
+    const [ver] = await q.versions(item.id)
+    expect(ver.files.map((f: any) => f.kind)).toEqual(['MOCKUP'])
+    const r2 = await enqueue({ lines: [planLine({ taskKey: 'LIT1_1', files: [printFile({ storagePath: 'spec/dl/y.png', transfer: 'reuse', driveFileId: 'drv2' })] })] })
+    expect(r2).toMatchObject({ enqueued: [], bypassed: ['LIT1_1'] })
+  })
+
   it('with the real resolver: a shopper preview or a prod mockup needs no file; no custom at all takes the store photo', async () => {
     for (const k of ['LIT1_1', 'LIT5_1', 'LIT6_1']) put(`r/${k}/front.png`, `ART-${k}`)
     const lines = ['LIT1_1', 'LIT5_1', 'LIT6_1'].map(k => planLine({ taskKey: k, files: [printFile({ storagePath: `r/${k}/front.png` })] }))

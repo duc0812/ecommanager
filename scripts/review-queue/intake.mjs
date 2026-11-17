@@ -296,9 +296,14 @@ export async function enqueuePlan({
       }
     }
     if (problems.length) { refuse(keys, problems.join('; ')); continue }
-    if (!locals.length) { out.bypassed.push(...keys); continue }
+    // the mockup of every line comes first: a group that only reuses Drive prints still enters the queue when its mockup is a new file
+    const infos = []
+    for (const l of lines) infos.push(await lineInfo({ snapshot, taskKey: l.taskKey, planLine: planByKey.get(l.taskKey), log }))
+    const work = path.join(queue.root, 'tmp', `${groupKey}-${process.pid}-${Date.now()}`.replace(/[^A-Za-z0-9._-]+/g, '_'))
     try {
-      const r = await queue.withLock(intakeLockKey(groupKey), () => enqueueGroup({ groupKey, lines, locals }))
+      const mockups = await mockupsFor({ lines, infos, locals, work })
+      if (!locals.length) { out.bypassed.push(...keys); continue }
+      const r = await queue.withLock(intakeLockKey(groupKey), () => enqueueGroup({ groupKey, lines, locals, infos, mockups }))
       if (r.outcome === 'unchanged') {
         out.unchanged.push(...keys)
         if (r.reason) for (const k of keys) out.reasons[k] = r.reason
@@ -312,6 +317,9 @@ export async function enqueuePlan({
       }
     } catch (e) {
       refuse(keys, e?.code === 'key_held' ? `đã có trong hàng chờ ${e.itemId}` : `lỗi khi đưa vào hàng chờ: ${errText(e)}`)
+    } finally {
+      fs.rmSync(work, { recursive: true, force: true })
+      try { fs.rmdirSync(path.dirname(work)) } catch { /* other work folders, or already gone */ }
     }
   }
   await notifyProd()
@@ -339,14 +347,10 @@ export async function enqueuePlan({
     }
   }
 
-  async function enqueueGroup({ groupKey, lines, locals }) {
-    const infos = []
-    for (const l of lines) infos.push(await lineInfo({ snapshot, taskKey: l.taskKey, planLine: planByKey.get(l.taskKey), log }))
-    // the mockup of every line (built into a work folder, copied into the version like any other file; a missing one fails QA)
-    const work = path.join(queue.root, 'tmp', `${groupKey}-${process.pid}-${Date.now()}`.replace(/[^A-Za-z0-9._-]+/g, '_'))
+  /** The mockup of every line (built into `work`, copied into the version like any other file; a missing one fails QA). */
+  async function mockupsFor({ lines, infos, locals, work }) {
     const mockups = []
-    try {
-      for (const [i, l] of lines.entries()) {
+    for (const [i, l] of lines.entries()) {
         const info = infos[i]
         const hasMockupFile = (l.files ?? []).some(f => f.kind === 'MOCKUP')
         let storeImage = null
@@ -372,13 +376,11 @@ export async function enqueuePlan({
           l.files = [...(l.files ?? []), m.file]
           locals.push({ line: l, file: m.file })
         }
-      }
-      return await record()
-    } finally {
-      fs.rmSync(work, { recursive: true, force: true })
     }
+    return mockups
+  }
 
-    async function record() {
+  async function enqueueGroup({ groupKey, lines, locals, infos, mockups }) {
     const sources = new Map()
     const used = new Set()
     for (const { line, file } of locals) {
@@ -479,7 +481,6 @@ export async function enqueuePlan({
       return { outcome: 'enqueued', itemId: r.itemId, version: r.version, created: r.created, addedKeys: r.created ? [] : taskKeys.filter(k => !prevKeys.includes(k)) }
     } finally {
       if (!recorded) fs.rmSync(active ? vdir : path.dirname(vdir), { recursive: true, force: true })
-    }
     }
   }
 }

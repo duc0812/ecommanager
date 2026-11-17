@@ -258,7 +258,8 @@ function renderDetail() {
   const m = it.meta ?? {}
   const v = viewed()
   const files = v.files ?? []
-  const part = files[Math.min(S.part, Math.max(0, files.length - 1))]
+  const prints = files.filter(f => f.kind !== 'MOCKUP')
+  const part = prints[Math.min(S.part, Math.max(0, prints.length - 1))]
   const mock = files.find(f => f.kind === 'MOCKUP')
   const sub = [
     m.orderNumber, m.placedAt ? fmtDate(m.placedAt) : null, m.variantTitle, m.sku ? `SKU ${m.sku}` : null,
@@ -289,7 +290,7 @@ function renderDetail() {
 
   const tpl = d.template && Array.isArray(d.template.areas) && d.template.areas.length && d.template.widthPx > 0 && d.template.heightPx > 0 ? d.template : null
   const partInfo = part ? [part.width && part.height ? `${part.width}×${part.height} px` : null, fmtBytes(part.bytes), 'bấm để xem gốc'].filter(Boolean).join(' · ') : ''
-  const partTabs = files.length > 1 ? `<div class="parts">${files.map((f, i) => `<button data-part="${i}" class="${f === part ? 'on' : ''}">${esc(f.part)}</button>`).join('')}</div>` : ''
+  const partTabs = prints.length > 1 ? `<div class="parts">${prints.map((f, i) => `<button data-part="${i}" class="${f === part ? 'on' : ''}">${esc(f.part)}</button>`).join('')}</div>` : ''
   const sides = [['customer', 'Khách đặt'], ['store', 'Store']].filter(([k]) => d.images[k])
   const sideImg = d.images[S.side] ?? d.images.customer ?? d.images.store
   const sideTabs = sides.length > 1 ? `<div class="parts">${sides.map(([k, l]) => `<button data-side="${k}" class="${d.images[S.side] === d.images[k] ? 'on' : ''}">${l}</button>`).join('')}</div>` : ''
@@ -310,7 +311,7 @@ function renderDetail() {
   <div class="top"><div><h1>${esc(it.taskKey)}${m.productTitle ? ` · ${esc(m.productTitle)}` : ''}</h1><div class="sub">${esc(sub)}</div></div><span class="sp"></span>${clock}</div>
   ${notices.join('')}
   <div class="grid${tpl ? ' canvas-grid' : ''}">
-    ${tpl ? canvasCard(files, tpl) : imgCard({ title: `File in · ${part?.part ?? ''}`, right: partInfo, href: part?.url, src: part?.previewUrl ?? null, footer: partTabs, empty: part ? 'Không có ảnh xem trước' : 'Bản này không có file' })}
+    ${tpl ? canvasCard(files, tpl) : imgCard({ title: `File in · ${part?.part ?? ''}`, right: partInfo, href: part?.url, src: part?.previewUrl ?? null, footer: partTabs, empty: part ? 'Không có ảnh xem trước' : mock ? 'File in dùng lại từ Drive (không có bản local) — bản này chỉ thêm mockup' : 'Bản này không có file' })}
     ${imgCard({ title: 'Mockup', right: MOCK_LABEL[mk?.state] ?? mock?.fileName ?? '', href: mock?.url ?? (mk && (mk.state === 'preview' || mk.state === 'prod') ? d.images.customer?.original : null), src: mock?.previewUrl ?? (mk && (mk.state === 'preview' || mk.state === 'prod') ? d.images.customer?.url ?? null : null), cls: 'small', footer: mk?.note && mk.state !== 'missing' ? `<div class="legend">${esc(mk.note)}</div>` : '', empty: mk?.state === 'missing' ? 'THIẾU MOCKUP' : mk?.state === 'prod' ? 'Đã có trên prod (không tải về)' : 'Chưa có mockup' })}
     ${imgCard({ title: 'Ảnh khách đặt / mockup store', right: sideImg ? (sideImg.url.startsWith('/files/') ? 'từ ổ đĩa' : 'link') : '', href: sideImg?.original, src: sideImg?.url ?? null, cls: 'small', footer: sideTabs, empty: 'Không có ảnh khách đặt' })}
   </div>
