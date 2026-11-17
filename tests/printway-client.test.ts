@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import {
-  PrintwayError, cancelOrder, createOrder, e164Phone, findOrder, isPrintwaySupplier, listAllSkus, payOrder, printwayAreaFor, quoteOrder, trackingForLine, type PrintwayTracking,
+  PrintwayError, cancelOrder, createOrder, e164Phone, findOrder, isPrintwaySupplier, listAllSkus, payOrder, printwayAddressLines, printwayAreaFor, quoteOrder, trackingForLine, type PrintwayTracking,
 } from '@/lib/printway'
 
 const BASE = 'https://apis.printway.io/v3'
@@ -248,5 +248,29 @@ describe('printwayAreaFor', () => {
 
   it('knows no side for an unnamed part of a many-part line', () => {
     expect(printwayAreaFor('Sheet', ['Sheet', 'Other'])).toBeNull()
+  })
+})
+
+describe('printwayAddressLines', () => {
+  it('joins a house number alone on line 1 with the street (LIT4214)', () => {
+    expect(printwayAddressLines('55', 'Southwark Park Road')).toEqual({ address1: '55 Southwark Park Road', address2: '' })
+  })
+  it('keeps a normal address as typed', () => {
+    expect(printwayAddressLines(' 12 Main St ', 'Apt 4')).toEqual({ address1: '12 Main St', address2: 'Apt 4' })
+  })
+  it('leaves a short line 1 with nothing to join, for the builder to refuse', () => {
+    expect(printwayAddressLines('55', null)).toEqual({ address1: '55', address2: '' })
+  })
+  it('moves what passes 40 characters to line 2 at a word break', () => {
+    const r = printwayAddressLines('Flat 12, Riverside Court Apartments, Kingsway North', 'Apt 4')
+    expect(r.address1.length).toBeLessThanOrEqual(40)
+    expect(r.address1).toBe('Flat 12, Riverside Court Apartments')
+    expect(r.address2).toBe('Kingsway North, Apt 4')
+  })
+  it('splits a joined line that grows past 40 characters', () => {
+    const r = printwayAddressLines('7', 'Upper Montagu Street Marylebone Village West')
+    expect(r.address1.length).toBeGreaterThanOrEqual(5)
+    expect(r.address1.length).toBeLessThanOrEqual(40)
+    expect(`${r.address1} ${r.address2}`).toBe('7 Upper Montagu Street Marylebone Village West')
   })
 })

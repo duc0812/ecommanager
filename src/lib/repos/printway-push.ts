@@ -10,7 +10,7 @@ import {
   isActive, isUniqueViolation, latestPush, loadOrderForPush, reservePush, toPushViews, upsertLineTracking, viewOf, type PushRow,
 } from '@/lib/repos/supplier-push-core'
 import {
-  PrintwayError, cancelOrder, createOrder, e164Phone, findOrder, isPrintwaySupplier, payOrder, printwayAreaFor, quoteOrder, trackingForLine,
+  ADDRESS1_MAX, ADDRESS1_MIN, PrintwayError, cancelOrder, createOrder, e164Phone, findOrder, isPrintwaySupplier, payOrder, printwayAddressLines, printwayAreaFor, quoteOrder, trackingForLine,
   type PrintwayOrderItem, type PrintwayOrderPayload, type PrintwayRemoteOrder,
 } from '@/lib/printway'
 import { getPrintwaySettings } from '@/lib/printway-settings'
@@ -123,7 +123,13 @@ export async function buildPrintwayPush(orderId: string, opts: { quote?: boolean
   const name = splitPersonName(order.shippingName ?? order.customerName)
   const phone = e164Phone(order.shippingPhone, countryCode)
   if (!name.first) error('ADDRESS_NAME', 'Thiếu tên người nhận')
+  const street = printwayAddressLines(order.shippingAddress1, order.shippingAddress2)
   if (!order.shippingAddress1?.trim()) error('ADDRESS_LINE', 'Thiếu địa chỉ giao hàng (address1)')
+  else if (street.address1.length < ADDRESS1_MIN || street.address1.length > ADDRESS1_MAX) {
+    error('ADDRESS_LINE', `Địa chỉ dòng 1 "${street.address1}" phải dài ${ADDRESS1_MIN}-${ADDRESS1_MAX} ký tự — Printway không nhận, sửa địa chỉ đơn trên Shopify`)
+  } else if (street.address1 !== (order.shippingAddress1?.trim() ?? '')) {
+    warning('ADDRESS_MERGED', `Địa chỉ gửi Printway: "${street.address1}"${street.address2 ? ` / "${street.address2}"` : ''} (Printway cần dòng 1 dài ${ADDRESS1_MIN}-${ADDRESS1_MAX} ký tự)`)
+  }
   if (!order.shippingCity?.trim()) error('ADDRESS_CITY', 'Thiếu thành phố giao hàng')
   if (!countryCode) error('ADDRESS_COUNTRY', `Không xác định được mã quốc gia từ "${order.shippingCountry ?? ''}"`)
   if (!order.shippingZip?.trim()) error('ADDRESS_ZIP', 'Thiếu mã bưu chính (zip)')
@@ -132,14 +138,14 @@ export async function buildPrintwayPush(orderId: string, opts: { quote?: boolean
 
   let payload: PrintwayOrderPayload | null = null
   if (supplier && baseUrl && pushLines.length > 0) {
-    const address2 = order.shippingAddress2?.trim()
+    const address2 = street.address2
     const service = Array.from(services)[0]
     payload = {
       order_id: externalOrderId,
       firstName: name.first,
       lastName: name.last,
       ...(phone ? { shipping_phone: phone } : {}),
-      shipping_address1: order.shippingAddress1?.trim() ?? '',
+      shipping_address1: street.address1,
       ...(address2 ? { shipping_address2: address2 } : {}),
       shipping_city: order.shippingCity?.trim() ?? '',
       shipping_province: state || (stateCode ?? ''),

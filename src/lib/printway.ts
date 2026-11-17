@@ -227,6 +227,32 @@ export function e164Phone(raw: string | null | undefined, countryCode: string | 
   return E164.test(local) ? local : null
 }
 
+export const ADDRESS1_MIN = 5
+export const ADDRESS1_MAX = 40
+
+function cutAt(text: string, max: number): [string, string] {
+  if (text.length <= max) return [text, '']
+  const space = text.lastIndexOf(' ', max)
+  const at = space >= ADDRESS1_MIN ? space : max
+  return [text.slice(0, at).trim().replace(/,$/, ''), text.slice(at).trim().replace(/^,\s*/, '')]
+}
+
+/** Printway wants address1 of 5-40 characters. UK and EU customers often type the house number alone on line 1 ("55" + "Southwark Park Road"). */
+export function printwayAddressLines(address1: string | null | undefined, address2: string | null | undefined): { address1: string; address2: string } {
+  let one = (address1 ?? '').replace(/\s+/g, ' ').trim()
+  let two = (address2 ?? '').replace(/\s+/g, ' ').trim()
+  if (one.length < ADDRESS1_MIN && two) {
+    one = `${one} ${two}`.trim()
+    two = ''
+  }
+  if (one.length > ADDRESS1_MAX) {
+    const [head, rest] = cutAt(one, ADDRESS1_MAX)
+    one = head
+    two = [rest, two].filter(Boolean).join(', ')
+  }
+  return { address1: one, address2: two }
+}
+
 const SIDES: Array<{ area: PrintwayArea; match: RegExp }> = [
   { area: 'artwork_back', match: /back|mặt sau/i },
   { area: 'artwork_hood', match: /hood|mũ/i },

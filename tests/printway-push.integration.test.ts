@@ -97,7 +97,7 @@ const push = async (orderId: string, payloadHash: string) =>
 const cancel = async (orderId: string) => postCancel(await req(`${base(orderId)}/cancel`, adminToken, post({ confirm: true })), { params: { orderId } })
 const refresh = async (orderId: string) => postRefresh(await req(`${base(orderId)}/refresh`, adminToken, post({})), { params: { orderId } })
 
-async function makeOrder(opts: { approved?: boolean; supplierSku?: string; note?: string; phone?: string; country?: string; state?: string } = {}) {
+async function makeOrder(opts: { approved?: boolean; supplierSku?: string; note?: string; phone?: string; country?: string; state?: string; address1?: string; address2?: string | null } = {}) {
   seq++
   const id = `gid://test/Order/pw-${seq}`
   const number = `#PW${1000 + seq}`
@@ -108,7 +108,7 @@ async function makeOrder(opts: { approved?: boolean; supplierSku?: string; note?
       grossAmount: 29.45, expectedPayout: 28.3, totalFees: 1.15, refundedAmount: 0, placedAt: new Date('2026-10-15T19:28:06Z'),
       pipelineStatus: 'READY_TO_PRODUCTION', orderType: 'NON_CUSTOM', designReady: opts.approved !== false,
       customerEmail: 'sal@example.com', customerName: 'Sal Paint',
-      shippingName: 'Sal Van Paint', shippingAddress1: '12 Main St', shippingAddress2: 'Apt 4', shippingCity: 'Leeds',
+      shippingName: 'Sal Van Paint', shippingAddress1: opts.address1 ?? '12 Main St', shippingAddress2: opts.address2 === undefined ? 'Apt 4' : opts.address2, shippingCity: 'Leeds',
       shippingZip: 'LS1 1AA', shippingPhone: opts.phone ?? '07700 900123', shippingCountry: opts.country ?? 'GB', shippingState: opts.state ?? 'England', shippingStateCode: 'ENG',
       lines: { create: [{
         shopifyLineId: lineId, productTitle: 'Secret Family Ornament', variantTitle: '4.5 inches', qty: 2, linePosition: 1, unitPrice: 24.95,
@@ -202,6 +202,22 @@ describe('Printway preview', () => {
       order_items: [{ item_sku: API_SKU, quantity: 2, mockup_url: 'https://cdn.shopify.com/s/files/orn.jpg' }],
     })
     expect(p.payload.order_items[0].artwork_front).toMatch(new RegExp(`^${APP_URL}/api/public/artwork/`))
+  })
+
+  it('joins a house number typed alone on line 1 with the street (LIT4214)', async () => {
+    const o = await makeOrder({ address1: '55', address2: 'Southwark Park Road' })
+    const p = await (await preview(o.id)).json()
+    expect(p.issues.filter((i: any) => i.level === 'error')).toEqual([])
+    expect(p.payload.shipping_address1).toBe('55 Southwark Park Road')
+    expect(p.payload).not.toHaveProperty('shipping_address2')
+    expect(p.issues.find((i: any) => i.code === 'ADDRESS_MERGED')).toMatchObject({ level: 'warning' })
+  })
+
+  it('blocks a line 1 Printway will refuse when nothing can be joined to it', async () => {
+    const o = await makeOrder({ address1: '55', address2: null })
+    const p = await (await preview(o.id)).json()
+    expect(p.issues.find((i: any) => i.code === 'ADDRESS_LINE')).toMatchObject({ level: 'error' })
+    expect(p.canPush).toBe(false)
   })
 
   it('sends no product title, shop domain, shopper email or CS note', async () => {
