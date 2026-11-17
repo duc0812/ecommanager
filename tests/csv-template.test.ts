@@ -32,6 +32,12 @@ describe('renderCsv', () => {
     expect(rows).toHaveLength(3)
   })
 
+  it('falls back to the next source when the first is empty', () => {
+    const order: OrderForCsv = { ...sampleOrder, lines: [{ sku: null, supplierSku: 'TREE-TOPPER-6IN', qty: 1, productTitle: 'Topper', variantTitle: '6in' }, ...sampleOrder.lines.slice(0, 1)] }
+    const csv = renderCsv({ rowMode: 'PER_LINE', columns: [{ header: 'SKU', source: 'line.sku|line.supplierSku' }] }, [order])
+    expect(csv.split('\n')).toEqual(['SKU', 'TREE-TOPPER-6IN', 'TSHIRT-RED-M'])
+  })
+
   it('renders PER_ORDER with one row per order', () => {
     const tmpl: CsvTemplate = {
       rowMode: 'PER_ORDER',

@@ -7,16 +7,49 @@
   "anchorHeader": "Order number",
   "daySeparator": false,
   "columns": [
-    { "header": "Ngày đặt", "source": "order.sentDate" },
-    { "header": "Sản phẩm", "source": "line.itemName" },
-    { "header": "Order number", "source": "line.lineRef" },
-    { "header": "Size", "source": "line.sizeLabel" },
-    { "header": "Màu sắc", "source": "line.supplierVariant2Value" },
-    { "header": "SL", "source": "line.qty" },
-    { "header": "Custom 1", "source": "line.customName" },
-    { "header": "Ghi chú", "source": "line.designNote" },
-    { "header": "SKU", "source": "line.supplierSku" },
-    { "header": "Mockup", "source": "line.mockupLink" },
-    { "header": "Design", "source": "line.designDriveLink" }
+    {
+      "header": "Ngày đặt",
+      "source": "order.sentDate"
+    },
+    {
+      "header": "Sản phẩm",
+      "source": "line.sku|line.supplierSku"
+    },
+    {
+      "header": "Order number",
+      "source": "line.lineRef"
+    },
+    {
+      "header": "Size",
+      "source": "line.sizeLabel"
+    },
+    {
+      "header": "Màu sắc",
+      "source": "line.supplierVariant2Value"
+    },
+    {
+      "header": "SL",
+      "source": "line.qty"
+    },
+    {
+      "header": "Custom 1",
+      "source": "line.customName"
+    },
+    {
+      "header": "Ghi chú",
+      "source": "line.designNote"
+    },
+    {
+      "header": "SKU",
+      "source": "line.supplierSku"
+    },
+    {
+      "header": "Mockup",
+      "source": "line.mockupLink"
+    },
+    {
+      "header": "Custom 2",
+      "source": "line.designDriveLink"
+    }
   ]
 }

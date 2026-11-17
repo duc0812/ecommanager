@@ -78,6 +78,14 @@ export type OrderForCsv = {
 }
 
 function resolveSource(source: string, ctx: { order: OrderForCsv; line: OrderLineForCsv | null }): string {
+  // "line.sku|line.supplierSku": the first source that gives a value.
+  if (source.includes('|') && !source.startsWith('literal:')) {
+    for (const part of source.split('|')) {
+      const value = resolveSource(part.trim(), ctx)
+      if (value.trim()) return value
+    }
+    return ''
+  }
   if (source.startsWith('literal:')) return source.slice('literal:'.length)
   if (source === 'order.placedDate') return ctx.order.placedAt.toISOString().slice(0, 10)
   if (source === 'order.shippingAddressFull') {
