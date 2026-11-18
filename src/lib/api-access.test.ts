@@ -103,7 +103,17 @@ describe('PGprints API access', () => {
     expect(canCallApi('SUPPORT', DEFAULT_ROLE_PERMISSIONS.SUPPORT, `/api/fulfillment/${supplier}/sku-map`, 'GET')).toBe('forbidden')
   })
 
-  it.each(['pgprints', 'merchize', 'bondre', 'printway'])('%s: order readers may preview; admins and CSV Export holders may push; only admins cancel or refresh', supplier => {
+  it('catkissfish: only a superadmin saves the key, an admin may read the masked view and test it', () => {
+    const path = '/api/fulfillment/catkissfish/settings'
+    expect(canCallApi('ADMIN', [], path, 'PUT')).toBe('forbidden')
+    expect(canCallApi('SUPERADMIN', [], path, 'PUT')).toBe('ok')
+    expect(canCallApi('ADMIN', [], path, 'GET')).toBe('ok')
+    expect(canCallApi('SUPPORT', DEFAULT_ROLE_PERMISSIONS.SUPPORT, path, 'GET')).toBe('forbidden')
+    expect(canCallApi('ADMIN', [], `${path}/test`, 'POST')).toBe('ok')
+    expect(canCallApi('SUPPORT', DEFAULT_ROLE_PERMISSIONS.SUPPORT, `${path}/test`, 'POST')).toBe('forbidden')
+  })
+
+  it.each(['pgprints', 'merchize', 'bondre', 'printway', 'catkissfish'])('%s: order readers may preview; admins and CSV Export holders may push; only admins cancel or refresh', supplier => {
     const path = `/api/fulfillment/${supplier}/orders/o1`
     expect(canCallApi('SUPPORT', ['fulfillment_orders'], `${path}/preview`, 'GET')).toBe('ok')
     expect(canCallApi('SUPPORT', ['fulfillment_export'], `${path}/preview`, 'GET')).toBe('ok')

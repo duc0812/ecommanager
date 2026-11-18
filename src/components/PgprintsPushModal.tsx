@@ -13,6 +13,7 @@ type Payload = {
   shipping_address?: Record<string, string>
   shipping_info?: Record<string, string>
   packages?: Array<Record<string, any>>
+  shippingAddress?: Record<string, string>
   firstName?: string
   lastName?: string
   shipping_phone?: string
@@ -44,6 +45,10 @@ const SUPPLIERS: Record<SupplierApiKind, SupplierCopy> = {
   printway: {
     name: 'Printway', settingsHint: 'Chưa lưu token Printway ở Setup › Fulfill', credentialsHint: 'Chưa lưu token Printway ở Setup › Fulfill',
     methodLabel: 'Ship', noMethod: 'Printway tự chọn', chargeNote: 'Printway tạo đơn và trừ tiền ngay trong tài khoản Printway',
+  },
+  catkissfish: {
+    name: 'CatKissFish', settingsHint: 'Chưa lưu client_id / client_secret CatKissFish ở Setup › Fulfill', credentialsHint: 'Chưa lưu client_id / client_secret CatKissFish ở Setup › Fulfill',
+    methodLabel: 'Ship', noMethod: null, chargeNote: 'CatKissFish tạo đơn, tool không tự trả tiền: đơn "Chưa thanh toán" phải trả trên catkissfish.com mới vào sản xuất',
   },
 }
 
@@ -235,18 +240,22 @@ export default function PgprintsPushModal({ orderId, supplier = 'pgprints', onCl
   const payload = preview?.payload as Payload | null | undefined
   const shipInfo = payload?.shipping_info
   const pack = payload?.packages?.[0]
+  const ckf = payload?.shippingAddress
   const flat = payload?.shipping_address1 ? {
     name: `${payload.firstName ?? ''} ${payload.lastName ?? ''}`.trim(), address1: payload.shipping_address1, address2: payload.shipping_address2, city: payload.shipping_city,
     province_code: payload.shipping_province_code, zip: payload.shipping_zip, country: payload.shipping_country, country_code: payload.shipping_country_code, phone: payload.shipping_phone,
   } as Record<string, string> : undefined
-  const address = flat ?? payload?.shipping_address ?? (pack ? {
+  const address = flat ?? payload?.shipping_address ?? (ckf ? {
+    name: ckf.userName, address1: ckf.detailAddress, city: ckf.city, province_code: ckf.province,
+    zip: ckf.postalCode, country: ckf.countryAbbreviation, country_code: ckf.countryAbbreviation, phone: ckf.phone,
+  } as Record<string, string> : undefined) ?? (pack ? {
     name: pack.recipientName, address1: pack.streetAddress, city: pack.city, province_code: pack.stateCode,
     zip: pack.postcode, country: pack.countryCode, country_code: pack.countryCode, phone: pack.phoneNumber,
   } as Record<string, string> : undefined) ?? (shipInfo ? {
     name: shipInfo.full_name, address1: shipInfo.address_1, address2: shipInfo.address_2, city: shipInfo.city, province_code: shipInfo.state,
     zip: shipInfo.postcode, country: shipInfo.country, country_code: shipInfo.country, phone: shipInfo.phone, email: shipInfo.email,
   } as Record<string, string> : undefined)
-  const email = payload?.email ?? shipInfo?.email
+  const email = payload?.email ?? shipInfo?.email ?? ckf?.email
   const errors = preview?.issues.filter(i => i.level === 'error') ?? []
   const active = preview?.activePush ?? null
   // A line approved after the live push went out: the push stays shown, and the new line can still go.
