@@ -63,12 +63,13 @@ function defaultHandler(call: Call): Reply {
     return ok({ total: o ? 1 : 0, records: o ? [{ id: o.id, shopOrderId: wanted, state: o.state }] : [] })
   }
   if (p === '/order/create/auto/design/order') {
-    remoteOrders.set(JSON.parse(String(call.body)).platformOrderId, { id: String(nextId++), state: 1, tracking: [] })
-    return ok({})
+    const id = String(nextId++)
+    remoteOrders.set(JSON.parse(String(call.body)).platformOrderId, { id, state: 1, tracking: [] })
+    return ok([id])
   }
   if (p === '/order/detail') {
     const o = byId(call.query.get('id'))
-    return o ? ok({ id: o.id, state: o.state }) : refused(404, 'order not found')
+    return o ? ok({ shopOrderId: 'any', pyShopOrderId: o.id, state: o.state }) : refused(404, 'order not found')
   }
   if (p === '/order/cancel') {
     const o = byId(call.query.get('id'))
@@ -425,15 +426,15 @@ describe('CatKissFish push', () => {
     expect(await (await refresh(o.id)).json()).toMatchObject({ found: false, push: { status: 'FAILED' } })
   })
 
-  it('still counts the order as sent when the lookup after the create fails, and gets the id on refresh', async () => {
+  it('keeps the id the create answered with when the lookup after it fails, and gets the state on refresh', async () => {
     const o = await makeOrder()
     const { payloadHash } = await previewJson(o.id)
     let lists = 0
     handler = c => c.path.endsWith('/order/list') && ++lists > 1 ? 'network-error' : defaultHandler(c)
     const body = await (await push(o.id, payloadHash)).json()
-    expect(body.push).toMatchObject({ status: 'CREATED', supplierOrderCode: null })
+    expect(body.push).toMatchObject({ status: 'CREATED', supplierOrderCode: remoteOrders.get(o.number)!.id, remoteStatus: null })
     handler = defaultHandler
-    expect((await (await refresh(o.id)).json()).push.supplierOrderCode).toBe(remoteOrders.get(o.number)!.id)
+    expect((await (await refresh(o.id)).json()).push.remoteStatus).toBe('Chưa thanh toán')
   })
 })
 

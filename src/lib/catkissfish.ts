@@ -222,7 +222,7 @@ export async function getProductDetail(session: CatkissfishSession, styleCode: s
   }
 }
 
-/** Never retried by us past an auth refusal: pass the exact reviewed body. The answer holds no order id; `findOrder` gets it. */
+/** Never retried by us past an auth refusal: pass the exact reviewed body. The live answer is `data: ["<order id>"]`. */
 export async function createAutoDesignOrder(session: CatkissfishSession, rawBody: string): Promise<unknown> {
   return call(session, 'POST', '/order/create/auto/design/order', { body: rawBody, timeoutMs: CREATE_TIMEOUT_MS })
 }
@@ -245,8 +245,15 @@ export async function findOrder(session: CatkissfishSession, platformOrderId: st
   return orders.find(o => !isClosedState(o.state)) ?? orders[0] ?? null
 }
 
+/** The order a create answered with, its state still unknown. */
+export function createdOrderOf(data: unknown): CkfRemoteOrder | null {
+  return remoteOrderOf({ id: list(data)[0] })
+}
+
 export async function getOrder(session: CatkissfishSession, id: string): Promise<CkfRemoteOrder | null> {
-  return remoteOrderOf(await call(session, 'GET', '/order/detail', { query: { id } }))
+  const d = await call(session, 'GET', '/order/detail', { query: { id } })
+  // The live detail has no `id` field, so the id asked for is the order's.
+  return d && (d.state !== undefined || d.shopOrderId !== undefined) ? remoteOrderOf({ ...d, id: d.id ?? id }) : null
 }
 
 export async function cancelOrder(session: CatkissfishSession, id: string): Promise<void> {

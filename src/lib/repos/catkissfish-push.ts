@@ -10,7 +10,7 @@ import {
   isActive, isUniqueViolation, latestPush, loadOrderForPush, reservePush, toPushViews, upsertLineTracking, viewOf, type PushRow,
 } from '@/lib/repos/supplier-push-core'
 import {
-  CKF_UNPAID_LABEL, CatkissfishError, cancelOrder, createAutoDesignOrder, designListFor, findOrder, formatAccepted, getOrder, getProductDetail,
+  CKF_UNPAID_LABEL, CatkissfishError, cancelOrder, createAutoDesignOrder, createdOrderOf, designListFor, findOrder, formatAccepted, getOrder, getProductDetail,
   getTrackingNumbers, hasLeftFactory, isCatkissfishSupplier, isClosedState, phoneParts, pickVariant, shippingOf, singleTracking, styleCodeOf,
   type CatkissfishSession, type CkfDesignInfo, type CkfOrderPayload, type CkfProduct, type CkfRemoteOrder,
 } from '@/lib/catkissfish'
@@ -295,9 +295,9 @@ export async function pushCatkissfishOrder(orderId: string, input: { payloadHash
     throw new PushError(`CatKissFish từ chối đơn: ${message}${hint}`, 502, 'CREATE_FAILED')
   }
 
-  // The create answers with no order id. If this lookup fails the id arrives with the next refresh or tracking sync.
+  // The lookup also gives the state; if it fails the create's own answer still names the order.
   const remote = await findOrder(session, built.externalOrderId).catch(() => null)
-  return finish(remote, response)
+  return finish(remote ?? createdOrderOf(response), response)
 }
 
 async function remoteOf(session: CatkissfishSession, push: PushRow): Promise<CkfRemoteOrder | null> {

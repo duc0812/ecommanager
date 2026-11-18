@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
-  CatkissfishError, cancelOrder, createAutoDesignOrder, designListFor, findOrder, formatAccepted, getOrder, getProductDetail, getTrackingNumbers, hasLeftFactory,
+  CatkissfishError, cancelOrder, createAutoDesignOrder, createdOrderOf, designListFor, findOrder, formatAccepted, getOrder, getProductDetail, getTrackingNumbers, hasLeftFactory,
   isCatkissfishSupplier, issueToken, phoneParts, pickVariant, shippingOf, singleTracking, styleCodeOf,
   type CatkissfishSession, type CkfProduct,
 } from '@/lib/catkissfish'
@@ -103,6 +103,21 @@ describe('answers', () => {
     expect(headerOf(seen[0], 'access-token')).toBe('tok-1')
     expect(seen[0].url.pathname).toBe('/website/open/api/order/detail')
     expect(seen[0].url.searchParams.get('id')).toBe('9')
+  })
+
+  it('reads an order detail that has no id field, as the live API sends it', async () => {
+    replies = [ok({ shopOrderId: 'REMI1', pyShopOrderId: '2026', state: 1 })]
+    expect(await getOrder(session(), '2026')).toEqual({ id: '2026', platformOrderId: 'REMI1', state: 1, stateLabel: 'Chưa thanh toán' })
+  })
+
+  it('finds no order in an empty detail', async () => {
+    replies = [ok(null)]
+    expect(await getOrder(session(), '2026')).toBeNull()
+  })
+
+  it('reads the order id out of the create answer', () => {
+    expect(createdOrderOf(['2026'])?.id).toBe('2026')
+    expect(createdOrderOf({})).toBeNull()
   })
 
   it('counts a non-zero code as a refusal, with a known outcome', async () => {
