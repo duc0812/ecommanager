@@ -67,6 +67,11 @@ describe('issueToken', () => {
     expect(new Date(t.expiresAt).getTime()).toBeGreaterThanOrEqual(before + 7200_000)
   })
 
+  it('reads the answer the live API gives: code 200 and client_token', async () => {
+    replies = [{ json: { code: 200, msg: 'ok', data: { client_token: 'live-token', expires_in: 7200, client_id: 'id' } } }]
+    expect((await issueToken('id', 'secret')).token).toBe('live-token')
+  })
+
   it('also reads a token at the top level and assumes the documented 2 hours', async () => {
     replies = [{ json: { access_token: 'top' } }]
     const t = await issueToken('id', 'secret')
@@ -123,6 +128,7 @@ describe('answers', () => {
   it.each<[string, Reply]>([
     ['a 401', { status: 401, json: { code: 401, message: 'unauthorized' } }],
     ['the no-permission code', { json: { code: 10000, message: 'denied' } }],
+    ['the live bad-token answer', { json: { code: 6007, message: 'You do not have permission to access.' } }],
     ['a message about the token', { json: { code: 4001, message: 'access-token expired' } }],
   ])('gets a new token once after %s', async (_name, reply) => {
     replies = [reply, ok({})]
@@ -131,6 +137,16 @@ describe('answers', () => {
     expect(s.renewed).toBe(1)
     expect(seen.map(c => headerOf(c, 'access-token'))).toEqual(['tok-1', 'tok-2'])
     expect(seen[1].init.body).toBe('{"a":1}')
+  })
+
+  it('names the code of a refusal that carries no message', async () => {
+    replies = [{ json: { code: 1000 } }]
+    await expect(getProductDetail(session(), 'NO-STYLE')).rejects.toThrow('CatKissFish báo lỗi mã 1000')
+  })
+
+  it('still treats code 200 as a refusal outside the token call', async () => {
+    replies = [{ json: { code: 200, msg: 'ok', data: {} } }]
+    await expect(createAutoDesignOrder(session(), '{}')).rejects.toMatchObject({ code: 200, unknownOutcome: false })
   })
 
   it('does not ask for a new token after an ordinary refusal', async () => {

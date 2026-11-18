@@ -49,12 +49,12 @@ const byId = (id: string | null) => Array.from(remoteOrders.values()).find(o => 
 function defaultHandler(call: Call): Reply {
   if (call.path === '/website/oauth2/client_token') {
     tokensIssued++
-    return ok({ access_token: `tok-${tokensIssued}`, expires_in: 7200 })
+    return { status: 200, json: { code: 200, msg: 'ok', data: { client_token: `tok-${tokensIssued}`, expires_in: 7200, client_id: CLIENT_ID } } }
   }
   const p = call.path.replace(API, '')
   if (p === '/products/detail') {
     if (call.query.get('styleCode') !== STYLE) return refused(404, 'style not found')
-    return ok({ name: 'Custom Unisex Knit Scarf', styleCode: STYLE, colorSizeInfoList: [{ color: 'White', size: 'One Size', saleState: true }], dimensions })
+    return ok({ name: 'Custom Unisex Knit Scarf', styleCode: STYLE, sizeNameList: ['Unisize'], colorInfoList: [{ colorEnName: 'white' }], colorSizeInfoList: [{ color: 'white', size: 'Unisize', saleState: true }], dimensions: dimensions.length ? dimensions : null })
   }
   if (p === '/order/list') {
     const wanted = JSON.parse(String(call.body)).platformOrderId
@@ -201,7 +201,7 @@ describe('CatKissFish preview', () => {
     expect(p.payload.platformOrderId).toBe(o.number)
     expect(p.payload.shippingId).toBe('90JFKFC')
     const [info] = p.payload.designInfos
-    expect(info).toMatchObject({ styleCode: STYLE, customSku: `${o.number}_1`, customerSku: `${o.number}_1`, color: 'White', size: 'One Size', quantity: 1 })
+    expect(info).toMatchObject({ styleCode: STYLE, customSku: `${o.number}_1`, customerSku: `${o.number}_1`, color: 'white', size: 'Unisize', quantity: 1 })
     expect(info.designList).toEqual([{ imageUrl: expect.stringMatching(`^${APP_URL}/api/public/artwork/.+`) }])
     expect(info.mockupList).toEqual([{ imageUrl: expect.stringMatching(`^${APP_URL}/api/public/artwork/.+`) }])
     expect(p.payload.shippingAddress).toEqual({
@@ -553,7 +553,7 @@ describe('CatKissFish settings', () => {
     await setting(CATKISSFISH_KEYS.tokenExpiresAt, new Date(Date.now() + 3600_000).toISOString())
     const res = await check()
     expect(res.status).toBe(200)
-    expect(await res.json()).toMatchObject({ ok: true, styles: [{ styleCode: STYLE, name: 'Custom Unisex Knit Scarf', colors: ['White'], sizes: ['One Size'], error: null }] })
+    expect(await res.json()).toMatchObject({ ok: true, styles: [{ styleCode: STYLE, name: 'Custom Unisex Knit Scarf', colors: ['white'], sizes: ['Unisize'], error: null }] })
     expect(tokensIssued).toBe(1)
     expect(creates()).toHaveLength(0)
   })

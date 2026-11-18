@@ -9,6 +9,9 @@ const DEFAULT_TIMEOUT_MS = 30_000
 const CREATE_TIMEOUT_MS = 45_000
 const TOKEN_LIFETIME_S = 2 * 3600
 const NO_PERMISSION_CODE = 10000
+const BAD_TOKEN_CODE = 6007
+// The token call answers code 200 where every other call answers 0 (seen live 11/18/2026; the docs show neither).
+const TOKEN_OK_CODES = [0, 200]
 
 export const CATKISSFISH_SUPPLIER_KEY = 'catkissfish'
 
@@ -132,7 +135,11 @@ async function exchange(url: string, init: RequestInit, timeoutMs: number): Prom
 
 function refusalMessage(code: number | null, json: any, text: string, status: number): string {
   if (code === NO_PERMISSION_CODE) return 'CatKissFish báo tài khoản chưa có quyền dùng Open API (mã 10000)'
-  return str(json?.message) ?? str(json?.msg) ?? (text.trim() && !text.trim().startsWith('<') ? text.trim().slice(0, 500) : `CatKissFish trả về HTTP ${status}`)
+  const said = str(json?.message) ?? str(json?.msg)
+  if (said) return said
+  // Some refusals are only a code, such as {"code":1000} for an unknown style.
+  if (code !== null) return `CatKissFish báo lỗi mã ${code}`
+  return text.trim() && !text.trim().startsWith('<') ? text.trim().slice(0, 500) : `CatKissFish trả về HTTP ${status}`
 }
 
 type RequestOptions = { query?: Record<string, string>; body?: string; timeoutMs?: number }
@@ -154,9 +161,9 @@ async function request(method: 'GET' | 'POST', path: string, token: string, opts
   return json.data
 }
 
-// The docs name no code for an expired token, so its wording counts too. Each of these means nothing was processed.
+// A bad token gets code 6007 from the live API. Its wording counts too. Each of these means nothing was processed.
 function isAuthRefusal(e: CatkissfishError): boolean {
-  return !e.unknownOutcome && (e.status === 401 || e.code === 401 || e.code === NO_PERMISSION_CODE || /token/i.test(e.message))
+  return !e.unknownOutcome && (e.status === 401 || e.code === 401 || e.code === BAD_TOKEN_CODE || e.code === NO_PERMISSION_CODE || /token/i.test(e.message))
 }
 
 async function call(session: CatkissfishSession, method: 'GET' | 'POST', path: string, opts: RequestOptions = {}): Promise<any> {
@@ -174,11 +181,11 @@ export async function issueToken(clientId: string, clientSecret: string): Promis
   form.set('client_id', clientId)
   form.set('client_secret', clientSecret)
   const { status, json } = await exchange(`${BASE_URL}/oauth2/client_token`, { method: 'POST', headers: { Accept: 'application/json' }, body: form }, DEFAULT_TIMEOUT_MS)
-  // The docs do not show this answer, so the usual places for the token are all read.
+  // Live answer: {code:200, msg:"ok", data:{client_token, expires_in, client_id}}. The other names are kept in case it changes.
   const data = json?.data ?? json
-  const token = (typeof data === 'string' ? str(data) : null) ?? str(data?.access_token) ?? str(data?.accessToken) ?? str(data?.['access-token']) ?? str(data?.token)
+  const token = (typeof data === 'string' ? str(data) : null) ?? str(data?.client_token) ?? str(data?.access_token) ?? str(data?.accessToken) ?? str(data?.['access-token']) ?? str(data?.token)
   const code = num(json?.code)
-  const accepted = status >= 200 && status < 300 && (code === null || code === 0)
+  const accepted = status >= 200 && status < 300 && (code === null || TOKEN_OK_CODES.includes(code))
   if (!accepted || !token) {
     // Only the short message is kept, without the key, since this text reaches screens and logs.
     const said = code === NO_PERMISSION_CODE ? refusalMessage(code, json, '', status) : str(json?.message) ?? str(json?.msg)
