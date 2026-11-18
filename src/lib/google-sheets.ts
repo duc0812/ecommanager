@@ -41,6 +41,7 @@ async function accessToken(): Promise<string> {
   if (cached && cached.refreshToken === refreshToken && cached.expiresAt - REFRESH_MARGIN_MS > Date.now()) return cached.token
   const res = await fetch(GOOGLE_TOKEN_URL, {
     method: 'POST',
+    cache: 'no-store',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ client_id: cfg.clientId, client_secret: cfg.clientSecret, refresh_token: refreshToken, grant_type: 'refresh_token' }),
     signal: AbortSignal.timeout(TIMEOUT_MS),
@@ -62,7 +63,7 @@ async function call(path: string, init?: RequestInit): Promise<any> {
   const token = await accessToken()
   let res: Response
   try {
-    res = await fetch(`${API}/${path}`, { ...init, headers: { ...init?.headers, Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(TIMEOUT_MS) })
+    res = await fetch(`${API}/${path}`, { cache: 'no-store', ...init, headers: { ...init?.headers, Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(TIMEOUT_MS) })
   } catch (e: any) {
     throw new SheetsError(`Không gọi được Google Sheets: ${e?.message ?? e}`, 'NETWORK')
   }

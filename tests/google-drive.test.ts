@@ -3,7 +3,7 @@ import { prisma } from '@/lib/db'
 import { GOOGLE_KEYS } from '@/lib/google-oauth'
 import {
   DriveAuthError, createShortcut, ensureFolder, findShortcut, getAccessTokenInfo, listChildren, folderForTask, getAccessToken, isDriveConnected, primeAccessToken,
-  resetDriveCache, shareAnyoneReader, startResumableUpload, uploadChunk,
+  resetDriveCache, shareAnyoneReader, startResumableUpload, streamFile, uploadChunk,
 } from '@/lib/google-drive'
 
 type Call = { url: string; init: RequestInit }
@@ -49,6 +49,15 @@ afterEach(() => {
 
 afterAll(async () => {
   await prisma.appSetting.deleteMany({ where: { key: { in: KEYS } } })
+})
+
+describe('nothing from Google is kept in the Next fetch cache', () => {
+  it('asks for a real token and reads the real file, so a restart cannot bring back an expired token', async () => {
+    await connect()
+    mockFetch(url => url.includes('oauth2') ? json({ access_token: 'fresh', expires_in: 3600 }) : new Response('file'))
+    await streamFile('file-1')
+    expect(calls.map(c => c.init.cache)).toEqual(['no-store', 'no-store'])
+  })
 })
 
 describe('getAccessToken', () => {

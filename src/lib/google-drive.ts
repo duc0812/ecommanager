@@ -83,8 +83,10 @@ export async function getAccessToken(): Promise<string> {
     return cached.token
   }
 
+  // Next keeps fetch answers on disk across restarts: a stored token answer would be an expired token.
   const res = await fetch(GOOGLE_TOKEN_URL, {
     method: 'POST',
+    cache: 'no-store',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
       client_id: cfg.clientId,
@@ -116,7 +118,7 @@ async function driveFetch(url: string, init: RequestInit = {}, accessToken?: str
   const send = async () => {
     const headers = new Headers(init.headers)
     headers.set('Authorization', `Bearer ${accessToken ?? await getAccessToken()}`)
-    return fetch(url, { ...init, headers })
+    return fetch(url, { cache: 'no-store', ...init, headers })
   }
   let res = await send()
   if (res.status === 401 && !accessToken) {
@@ -265,6 +267,7 @@ export async function uploadChunk(sessionUrl: string, chunk: Buffer, start: numb
   const end = start + chunk.length - 1
   const res = await fetch(sessionUrl, {
     method: 'PUT',
+    cache: 'no-store',
     redirect: 'manual',
     headers: {
       'Content-Length': String(chunk.length),
@@ -330,7 +333,7 @@ export async function streamThumbnail(id: string, sizePx = 480): Promise<Respons
   const link = typeof meta?.thumbnailLink === 'string' ? meta.thumbnailLink : null
   if (!link || !/^https:\/\/[a-z0-9.-]+\.googleusercontent\.com\//i.test(link)) return null
   const sized = /=s\d+$/.test(link) ? link.replace(/=s\d+$/, `=s${sizePx}`) : link
-  const res = await fetch(sized, { headers: { Authorization: `Bearer ${await getAccessToken()}` } })
+  const res = await fetch(sized, { cache: 'no-store', headers: { Authorization: `Bearer ${await getAccessToken()}` } })
   if (!res.ok || !res.body) { await res.body?.cancel(); return null }
   return res
 }

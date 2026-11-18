@@ -136,6 +136,7 @@ export class GoogleOAuthError extends Error {
 export async function exchangeGoogleCode(code: string, clientId: string, clientSecret: string): Promise<GoogleTokenResponse> {
   const res = await fetch(GOOGLE_TOKEN_URL, {
     method: 'POST',
+    cache: 'no-store',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
       code,
@@ -153,7 +154,7 @@ export async function exchangeGoogleCode(code: string, clientId: string, clientS
 }
 
 export async function fetchGoogleEmail(accessToken: string): Promise<string> {
-  const res = await fetch(GOOGLE_USERINFO_URL, { headers: { Authorization: `Bearer ${accessToken}` } })
+  const res = await fetch(GOOGLE_USERINFO_URL, { cache: 'no-store', headers: { Authorization: `Bearer ${accessToken}` } })
   if (!res.ok) return ''
   const data: any = await res.json().catch(() => ({}))
   return typeof data.email === 'string' ? data.email : ''

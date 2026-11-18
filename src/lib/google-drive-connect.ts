@@ -98,6 +98,7 @@ export async function validateDriveCredential(cred: DriveCredential): Promise<Va
   try {
     res = await fetch(GOOGLE_TOKEN_URL, {
       method: 'POST',
+      cache: 'no-store',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
         client_id: cred.clientId,
