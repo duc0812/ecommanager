@@ -10,3 +10,6 @@ export const CKF_SHIPPING = [
 ] as const
 
 export const CKF_DEFAULT_US_SHIPPING = '90JFKFC'
+
+/** Saved instead of a carrier: the order goes without `shippingId`, which the API does not require. */
+export const CKF_AUTO_SHIPPING = 'AUTO'

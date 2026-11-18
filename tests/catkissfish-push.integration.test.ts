@@ -54,8 +54,9 @@ function defaultHandler(call: Call): Reply {
   const p = call.path.replace(API, '')
   if (p === '/products/detail') {
     if (call.query.get('styleCode') !== STYLE) return refused(404, 'style not found')
-    return ok({ name: 'Custom Unisex Knit Scarf', styleCode: STYLE, sizeNameList: ['Unisize'], colorInfoList: [{ colorEnName: 'white' }], colorSizeInfoList: [{ color: 'white', size: 'Unisize', saleState: true }], dimensions: dimensions.length ? dimensions : null })
+    return ok({ name: 'Custom Unisex Knit Scarf', styleCode: STYLE, sizeNameList: ['Unisize'], colorInfoList: [{ colorEnName: 'white' }], colorSizeInfoList: [{ color: 'white', size: 'Unisize', saleState: true }], dimensions: null })
   }
+  if (p === '/products/auto/design/list') return ok({ total: 1, records: [{ styleCode: STYLE, dimensions }] })
   if (p === '/order/list') {
     const wanted = JSON.parse(String(call.body)).platformOrderId
     const o = remoteOrders.get(wanted)
@@ -223,6 +224,20 @@ describe('CatKissFish preview', () => {
     expect(p.payload.designInfos[0].designList[0].printableDesignArea).toBe('Design_1')
   })
 
+  it('sends the scarf file on the area the live API names "1"', async () => {
+    dimensions = [{ type: 1, supportUploadFormat: '0,1', name: 'Scarf', fieldName: '1' }]
+    const p = await previewJson((await makeOrder()).id)
+    expect(p.payload.designInfos[0].designList).toEqual([{ printableDesignArea: '1', imageUrl: expect.stringContaining('/api/public/artwork/') }])
+  })
+
+  it('leaves the carrier to CatKissFish when set to choose itself', async () => {
+    await setting(CATKISSFISH_KEYS.shippingId, 'AUTO')
+    const p = await previewJson((await makeOrder()).id)
+    expect(p.canPush).toBe(true)
+    expect(p.payload).not.toHaveProperty('shippingId')
+    expect(p.lines[0].shipClass).toBe('CatKissFish tự chọn')
+  })
+
   it('warns when the design area does not name the format of the file', async () => {
     dimensions = [{ fieldName: 'Design_1', name: 'Scarf', supportUploadFormat: '0' }]
     const p = await previewJson((await makeOrder()).id)
@@ -293,7 +308,7 @@ describe('CatKissFish push', () => {
     const o = await makeOrder()
     await pushFresh(o.id)
     const paths = Array.from(new Set(calls.map(c => c.path.replace(API, ''))))
-    expect(paths.sort()).toEqual(['/order/create/auto/design/order', '/order/list', '/products/detail', '/website/oauth2/client_token'].sort())
+    expect(paths.sort()).toEqual(['/order/create/auto/design/order', '/order/list', '/products/auto/design/list', '/products/detail', '/website/oauth2/client_token'].sort())
   })
 
   it('reuses the token for the 2 hours it lasts', async () => {
@@ -363,6 +378,19 @@ describe('CatKissFish push', () => {
     handler = defaultHandler
     const retried = await (await push(o.id, payloadHash)).json()
     expect(retried.push).toMatchObject({ status: 'CREATED', externalOrderId: o.number })
+  })
+
+  it('says a carrier refusal created nothing, and a retry after changing the carrier goes out', async () => {
+    const o = await makeOrder()
+    handler = c => c.path.endsWith('/order/create/auto/design/order') && JSON.parse(String(c.body)).shippingId === '90JFKFC'
+      ? refused(1000, 'The selected logistics ID does not support all required logistics channels') : defaultHandler(c)
+    const res = await pushFresh(o.id)
+    expect(res.status).toBe(502)
+    expect((await res.json()).error).toContain('Đổi cách ship')
+    await setting(CATKISSFISH_KEYS.shippingId, 'AUTO')
+    const body = await (await pushFresh(o.id)).json()
+    expect(body.push).toMatchObject({ status: 'CREATED', externalOrderId: o.number })
+    expect(remoteOrders.size).toBe(1)
   })
 
   it('on no answer holds the send, and a refresh finds the order that did land', async () => {
@@ -542,6 +570,11 @@ describe('CatKissFish settings', () => {
     expect(await getCatkissfishSettings()).toMatchObject({ clientId: CLIENT_ID, clientSecret: SECRET, accessToken: 'old-token', shippingIdIntl: '60VQCAA' })
     await put(superToken, { clientSecret: 'new-secret' })
     expect(await getCatkissfishSettings()).toMatchObject({ clientSecret: 'new-secret', accessToken: null })
+  })
+
+  it('accepts letting CatKissFish choose the carrier', async () => {
+    expect((await put(superToken, { shippingId: 'AUTO' })).status).toBe(200)
+    expect((await getCatkissfishSettings()).shippingId).toBe('AUTO')
   })
 
   it('refuses a carrier CatKissFish does not have', async () => {

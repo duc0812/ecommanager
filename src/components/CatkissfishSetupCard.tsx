@@ -1,7 +1,7 @@
 'use client'
 import { useCallback, useEffect, useState } from 'react'
 import { useCurrentUser } from '@/components/RoleGate'
-import { CKF_SHIPPING } from '@/lib/catkissfish-shipping'
+import { CKF_AUTO_SHIPPING, CKF_SHIPPING } from '@/lib/catkissfish-shipping'
 
 type View = {
   hasClientId: boolean; clientIdMasked: string | null; hasClientSecret: boolean; tokenExpiresAt: string | null
@@ -128,12 +128,14 @@ export default function CatkissfishSetupCard() {
           </label>
           <label className="text-label-sm text-on-surface-variant">Cách ship đơn Mỹ
             <select value={shippingId} onChange={e => setShippingId(e.target.value)} className={field}>
+              <option value={CKF_AUTO_SHIPPING}>CatKissFish tự chọn</option>
               {CKF_SHIPPING.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
           </label>
           <label className="text-label-sm text-on-surface-variant">Cách ship đơn ngoài Mỹ
             <select value={shippingIdIntl} onChange={e => setShippingIdIntl(e.target.value)} className={field}>
               <option value="">Chưa chọn (đơn ngoài Mỹ chưa gửi được)</option>
+              <option value={CKF_AUTO_SHIPPING}>CatKissFish tự chọn</option>
               {CKF_SHIPPING.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
           </label>

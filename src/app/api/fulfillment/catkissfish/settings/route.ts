@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireApiAccess, requireSuperadmin } from '@/lib/api-auth'
 import { shippingOf } from '@/lib/catkissfish'
+import { CKF_AUTO_SHIPPING } from '@/lib/catkissfish-shipping'
 import { getCatkissfishSettings, saveCatkissfishSettings, toCatkissfishSettingsView, type CatkissfishSettings, type CatkissfishSettingsPatch } from '@/lib/catkissfish-settings'
 import { catkissfishSetupInfo } from '@/lib/repos/catkissfish-push'
 
@@ -23,6 +24,7 @@ function optionalText(value: unknown, field: string, max: number): string | null
 function carrier(value: unknown, field: string): string | null | undefined {
   const text = optionalText(value, field, 40)
   if (!text) return text === '' ? null : text
+  if (text.toUpperCase() === CKF_AUTO_SHIPPING) return CKF_AUTO_SHIPPING
   const method = shippingOf(text)
   if (!method) throw new Error(`${field}: CatKissFish không có cách ship "${text}"`)
   return method.id

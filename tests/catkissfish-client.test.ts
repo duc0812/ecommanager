@@ -201,6 +201,17 @@ describe('product, cancel and tracking', () => {
     expect(p?.dimensions).toEqual([{ fieldName: 'Design_1', name: 'Body', supportUploadFormat: '0,1' }])
   })
 
+  it('takes the design areas from the API product list when the detail leaves them out, as the live API does', async () => {
+    replies = [
+      ok({ name: 'Knit Scarf', styleCode: 'S1', dimensions: null }),
+      ok({ records: [{ styleCode: 'OTHER', dimensions: [{ fieldName: '9' }] }, { styleCode: 'S1', dimensions: [{ type: 1, supportUploadFormat: '0,1', name: 'Scarf', fieldName: '1' }] }] }),
+    ]
+    const p = await getProductDetail(session(), 'S1')
+    expect(p?.dimensions).toEqual([{ fieldName: '1', name: 'Scarf', supportUploadFormat: '0,1' }])
+    expect(seen[1].url.pathname).toBe('/website/open/api/products/auto/design/list')
+    expect(JSON.parse(String(seen[1].init.body))).toMatchObject({ styleCode: 'S1' })
+  })
+
   it('cancels by order id', async () => {
     await cancelOrder(session(), '77')
     expect(seen[0].url.pathname).toBe('/website/open/api/order/cancel')

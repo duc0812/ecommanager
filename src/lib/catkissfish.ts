@@ -89,7 +89,7 @@ export type CkfShippingAddress = {
   detailAddress: string; postalCode: string; email?: string; countryCode?: string; phone?: string
 }
 
-export type CkfOrderPayload = { platformOrderId: string; shippingId: string; designInfos: CkfDesignInfo[]; shippingAddress: CkfShippingAddress }
+export type CkfOrderPayload = { platformOrderId: string; shippingId?: string; designInfos: CkfDesignInfo[]; shippingAddress: CkfShippingAddress }
 
 export type CkfDimension = { fieldName: string; name: string | null; supportUploadFormat: string | null }
 export type CkfVariant = { color: string | null; size: string | null; saleState: boolean | null }
@@ -196,16 +196,26 @@ export async function issueToken(clientId: string, clientSecret: string): Promis
   return { token, expiresAt: new Date(Date.now() + lifetime * 1000).toISOString() }
 }
 
+function dimensionsOf(v: unknown): CkfDimension[] {
+  return list(v).flatMap(x => {
+    const fieldName = str(x?.fieldName)
+    return fieldName ? [{ fieldName, name: str(x?.name), supportUploadFormat: str(x?.supportUploadFormat) }] : []
+  })
+}
+
 export async function getProductDetail(session: CatkissfishSession, styleCode: string): Promise<CkfProduct | null> {
   const d = await call(session, 'GET', '/products/detail', { query: { styleCode } })
   if (!d || typeof d !== 'object') return null
+  let dimensions = dimensionsOf(d.dimensions)
+  if (dimensions.length === 0) {
+    // The live detail leaves the design areas out; the API product list carries them (the scarf has one, named "1").
+    const page = await call(session, 'POST', '/products/auto/design/list', { body: JSON.stringify({ pageNum: 1, pageSize: 20, styleCode }) })
+    dimensions = dimensionsOf(list(page?.records).find(r => str(r?.styleCode) === styleCode)?.dimensions)
+  }
   const variants: CkfVariant[] = list(d.colorSizeInfoList).map(v => ({ color: str(v?.color), size: str(v?.size), saleState: typeof v?.saleState === 'boolean' ? v.saleState : null }))
   return {
     name: str(d.name), styleCode: str(d.styleCode),
-    dimensions: list(d.dimensions).flatMap(x => {
-      const fieldName = str(x?.fieldName)
-      return fieldName ? [{ fieldName, name: str(x?.name), supportUploadFormat: str(x?.supportUploadFormat) }] : []
-    }),
+    dimensions,
     variants,
     colors: uniq([...variants.map(v => v.color), ...list(d.colorInfoList).map(c => str(c?.colorEnName))]),
     sizes: uniq([...variants.map(v => v.size), ...list(d.sizeNameList).map(str)]),

@@ -14,6 +14,7 @@ import {
   getTrackingNumbers, hasLeftFactory, isCatkissfishSupplier, isClosedState, phoneParts, pickVariant, shippingOf, singleTracking, styleCodeOf,
   type CatkissfishSession, type CkfDesignInfo, type CkfOrderPayload, type CkfProduct, type CkfRemoteOrder,
 } from '@/lib/catkissfish'
+import { CKF_AUTO_SHIPPING } from '@/lib/catkissfish-shipping'
 import { catkissfishSession, getCatkissfishSettings, hasCatkissfishAccount, type CatkissfishSettings } from '@/lib/catkissfish-settings'
 import { parseShipCountries, type PreviewIssue, type PreviewLine, type PushPreview, type PushView } from '@/lib/pgprints-shared'
 
@@ -51,9 +52,9 @@ function blankOf(p: ProductRow | undefined): { color: string | null; size: strin
 
 function shippingFor(product: ProductRow | undefined, settings: CatkissfishSettings, countryCode: string | null) {
   const own = product?.apiShipClass?.trim()
-  if (own) return { method: shippingOf(own), source: 'product' as const, wanted: own }
-  const wanted = countryCode === 'US' ? settings.shippingId : settings.shippingIdIntl
-  return { method: shippingOf(wanted), source: 'default' as const, wanted }
+  const wanted = own || (countryCode === 'US' ? settings.shippingId : settings.shippingIdIntl)
+  const method = wanted?.toUpperCase() === CKF_AUTO_SHIPPING ? { id: CKF_AUTO_SHIPPING, name: 'CatKissFish tự chọn' } : shippingOf(wanted)
+  return { method, source: own ? 'product' as const : 'default' as const, wanted }
 }
 
 export type BuiltCatkissfishPush = { preview: PushPreview; rawBody: string | null; externalOrderId: string; supplierId: string | null }
@@ -187,9 +188,10 @@ export async function buildCatkissfishPush(orderId: string): Promise<BuiltCatkis
 
   let payload: CkfOrderPayload | null = null
   if (supplier && baseUrl && pushLines.length > 0) {
+    const carrier = Array.from(carriers.keys())[0] ?? ''
     payload = {
       platformOrderId: externalOrderId,
-      shippingId: Array.from(carriers.keys())[0] ?? '',
+      ...(carrier === CKF_AUTO_SHIPPING ? {} : { shippingId: carrier }),
       designInfos,
       shippingAddress: {
         userName, country: countryCode ?? '', countryAbbreviation: countryCode ?? '', province, city, detailAddress, postalCode,
@@ -289,7 +291,8 @@ export async function pushCatkissfishOrder(orderId: string, input: { payloadHash
       throw new PushError(text, 504, 'UNKNOWN_RESULT')
     }
     await refuse(message, e instanceof CatkissfishError ? e.body : null)
-    throw new PushError(`CatKissFish từ chối đơn: ${message}`, 502, 'CREATE_FAILED')
+    const hint = /logistic/i.test(message) ? ' — chưa có đơn nào được tạo. Đổi cách ship ở Setup › Fulfill rồi gửi lại' : ''
+    throw new PushError(`CatKissFish từ chối đơn: ${message}${hint}`, 502, 'CREATE_FAILED')
   }
 
   // The create answers with no order id. If this lookup fails the id arrives with the next refresh or tracking sync.
