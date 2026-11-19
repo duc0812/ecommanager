@@ -20,6 +20,7 @@ DEFAULT_QUEUE_DB = r'D:\Ecom manager\review-queue\queue.db'
 BOARD_PUBLISH_S = 120
 COUNTDOWN_S = 3600
 QUEUE_DOWN_WAIT_S = 300
+QUEUE_RETRY_S = 1
 STREAM_TTL_S = 172800
 MAX_DETAIL = 300
 MAX_ENTRIES = 5000
@@ -78,17 +79,27 @@ def _open(queue_db: Path) -> sqlite3.Connection:
     return sqlite3.connect(Path(queue_db).as_uri() + '?mode=ro', uri=True, timeout=5)
 
 
-def queue_ready(deps, state: dict) -> bool:
-    """True when the review queue can be read right now. A change either way is logged once per `state`. Never raises."""
+def _probe(queue_db: Path) -> None:
+    conn = _open(queue_db)
     try:
-        conn = _open(deps.cfg.review_queue_db)
+        conn.execute('SELECT k.taskKey, i.status, i.enteredAt FROM item_keys k JOIN items i ON i.id = k.itemId LIMIT 1').fetchall()
+    finally:
+        conn.close()
+
+
+def queue_ready(deps, state: dict) -> bool:
+    """True when the review queue can be read right now (one retry after a second, for a brief lock). A change either way
+    is logged once per `state`. Never raises."""
+    problem = None
+    for attempt in (1, 2):
         try:
-            conn.execute('SELECT k.taskKey, i.status, i.enteredAt FROM item_keys k JOIN items i ON i.id = k.itemId LIMIT 1').fetchall()
-        finally:
-            conn.close()
-        problem = None
-    except Exception as exc:
-        problem = type(exc).__name__
+            _probe(deps.cfg.review_queue_db)
+            problem = None
+            break
+        except Exception as exc:
+            problem = type(exc).__name__
+            if attempt == 1:
+                time.sleep(QUEUE_RETRY_S)
     try:
         if problem and not state.get('down'):
             deps.log.line(f'{QUEUE_UNREADABLE} ({problem}): tạm ngừng nhận job, {QUEUE_DOWN_WAIT_S // 60} phút kiểm lại một lần')
@@ -175,7 +186,12 @@ def _changed_at(folder: Path, list_file: str | None, n: int) -> float:
 
 
 def _folder_streams(folder: Path, now: float, ttl_s: int) -> tuple[list[tuple], tuple | None]:
-    """One `_streams-*` folder: (claims of its valid streams as (key, rank, n, detail), its REJECTED owner as (rank, n))."""
+    """One `_streams-*` folder: (claims of its valid streams as (key, rank, n, detail), its REJECTED owner as (rank, n)).
+
+    Only a valid stream claims a key, so a stale list never hides a live one; several valid streams may claim the same
+    key and `stream_entries` ranks them. A `handoff.md` row is that folder's decision for its key: only the target stream
+    claims it there.
+    """
     readme = folder / 'README.md'
     if not readme.is_file():
         return [], None
@@ -195,12 +211,7 @@ def _folder_streams(folder: Path, now: float, ttl_s: int) -> tuple[list[tuple], 
         if not files.get(rejected):
             files[rejected] = Path(named.group(1)).name if named else None
 
-    holder: dict[str, tuple[int, str]] = {}
-    for n in sorted(files, key=lambda s: (s == rejected, s)):
-        name = files[n]
-        if name and (folder / name).is_file():
-            for key in _list_keys(folder / name):
-                holder[key] = (n, name)
+    moved: dict[str, tuple[int, str]] = {}
     handoff = folder / 'handoff.md'
     if handoff.is_file():
         for line in _read(handoff).splitlines():
@@ -211,20 +222,29 @@ def _folder_streams(folder: Path, now: float, ttl_s: int) -> tuple[list[tuple], 
             if not target:
                 continue
             files.setdefault(int(target.group()), None)
-            moved = f'Luồng {int(source.group())} → ' if source else ''
-            holder[cells[0]] = (int(target.group()), f'handoff.md: {moved}Luồng {int(target.group())}')
+            from_text = f'Luồng {int(source.group())} → ' if source else ''
+            moved[cells[0]] = (int(target.group()), f'handoff.md: {from_text}Luồng {int(target.group())}')
 
     changed = {n: _changed_at(folder, files[n], n) for n in files}
     valid = {n for n in files if changed[n] >= now - ttl_s}
-    claims = [(key, (changed[n], n == rejected, folder.name, n), n, f'{folder.name}/{detail}')
-              for key, (n, detail) in holder.items() if n in valid]
+
+    def rank(n: int) -> tuple:
+        return (changed[n], n == rejected, folder.name, n)
+
+    claims = []
+    for n in valid:
+        name = files[n]
+        if name and (folder / name).is_file():
+            claims += [(key, rank(n), n, f'{folder.name}/{name}') for key in _list_keys(folder / name) if key not in moved]
+    claims += [(key, rank(n), n, f'{folder.name}/{detail}') for key, (n, detail) in moved.items() if n in valid]
     return claims, ((changed[rejected], folder.name, rejected), rejected) if rejected in valid else None
 
 
 def stream_entries(builder_dir: Path, now: float, ttl_s: int = STREAM_TTL_S) -> tuple[list[dict], str | None]:
     """(entries of every valid stream in every `_streams-*` folder, the worker that owns all REJECTED lines or None).
 
-    A key that several valid streams list goes to the stream whose files changed last. Raises OSError when the builder
+    A key that several valid streams list, in one folder or across folders, goes to the stream whose files changed
+    last; on a tie the REJECTED owner, then the later folder name, then the higher stream number. Raises OSError when the builder
     folder itself cannot be listed, so that a missing folder is never read as "no stream holds anything".
     """
     best: dict[str, tuple] = {}

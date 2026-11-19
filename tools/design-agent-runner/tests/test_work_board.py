@@ -214,6 +214,32 @@ def test_stream_past_48_h_is_dropped(tmp_path):
     assert [e['taskKey'] for e in work_board.stream_entries(builder, NOW, ttl_s=50 * HOUR)[0]] == ['LIT1_1', 'LIT2_1', 'LIT3_1']
 
 
+def test_invalid_stream_never_hides_a_valid_streams_key_same_folder(tmp_path):
+    builder = streams(tmp_path, tra__lai_md=(rows('LIT6242_1', 'LIT6243_1'), 60), lam__tay_md=rows('LIT6242_1', 'LIT6900_1'))
+    entries, owner = work_board.stream_entries(builder, NOW)
+    assert {e['taskKey']: e['worker'] for e in entries} == {'LIT6242_1': 'Luồng 3', 'LIT6900_1': 'Luồng 3'} and owner is None
+    mirror = streams(tmp_path / 'b', tra__lai_md=rows('LIT6242_1'), lam__tay_md=(rows('LIT6242_1', 'LIT6900_1'), 60))
+    entries, owner = work_board.stream_entries(mirror, NOW)
+    assert {e['taskKey']: e['worker'] for e in entries} == {'LIT6242_1': 'Luồng 7'} and owner == 'Luồng 7'
+    third = streams(tmp_path / 'c', auto__not__render_md=(rows('LIT1_1'), 60), can__chinh_md=rows('LIT1_1'),
+                    handoff_md='LIT1_1 | luồng 2 | luồng 1 | sang luồng đã hết hạn | 11/19\n')
+    assert work_board.stream_entries(third, NOW)[0] == []                        # the folder's handoff still decides there
+
+
+def test_same_folder_two_valid_streams_the_more_recently_changed_one_holds_the_key(tmp_path):
+    builder = streams(tmp_path, tra__lai_md=(rows('LIT6242_1'), 5), lam__tay_md=(rows('LIT6242_1'), 1),
+                      auto__not__render_md=(rows('LIT5_1'), 2), can__chinh_md=(rows('LIT5_1'), 2))
+    got = by_key(work_board.stream_entries(builder, NOW)[0])
+    assert got['LIT6242_1']['worker'] == 'Luồng 3' and got['LIT6242_1']['detail'] == '_streams-1118/lam-tay.md'
+    assert got['LIT5_1']['worker'] == 'Luồng 2'                                   # same time, neither owns REJECTED: higher number
+    assert work_board.stream_entries(builder, NOW)[1] == 'Luồng 7'                # the owner stays even when it lost the key
+    progress = builder / '_streams-1118' / 'progress-luong7.md'; progress.write_text('x', encoding='utf-8')
+    os.utime(progress, (NOW - HOUR / 2, NOW - HOUR / 2))
+    assert by_key(work_board.stream_entries(builder, NOW)[0])['LIT6242_1']['worker'] == 'Luồng 7'
+    os.utime(progress, (NOW - HOUR, NOW - HOUR))                                  # a tie goes to the REJECTED owner
+    assert by_key(work_board.stream_entries(builder, NOW)[0])['LIT6242_1']['worker'] == 'Luồng 7'
+
+
 def test_rejected_owner_read_from_readme(tmp_path):
     builder = streams(tmp_path, tra__lai_md=rows('LIT6242_1'), lam__tay_md=rows('LIT6242_1', 'LIT6900_1'))
     entries, owner = work_board.stream_entries(builder, NOW)
@@ -368,6 +394,24 @@ def test_unreadable_queue_pauses_claiming_for_300_s(server, deps, job, tmp_path)
     assert log_text().count('tạm ngừng nhận job') == 1 and not calls(server, '/fail')
 
 
+def test_a_brief_lock_does_not_pause_claiming(server, deps, monkeypatch):
+    d = deps(server, 'done'); real = work_board._open; fails = []; opened = []
+
+    def flaky(path):
+        if fails:
+            fails.pop()
+            raise sqlite3.OperationalError('database is locked')
+        opened.append(path)
+        return real(path)
+    monkeypatch.setattr(work_board, '_open', flaky)
+    fails[:] = [1]; state: dict = {}; t0 = time.monotonic()
+    assert work_board.queue_ready(d, state) is True and time.monotonic() - t0 >= 1 and len(opened) == 1
+    assert state == {'down': False} and 'tạm ngừng' not in log_text()
+    fails[:] = [1, 1]; t0 = time.monotonic()
+    assert work_board.queue_ready(d, state) is False and time.monotonic() - t0 >= 1 and len(opened) == 1
+    assert log_text().count('tạm ngừng nhận job') == 1 and 'OperationalError' in log_text()
+
+
 def test_once_run_with_an_unreadable_queue_claims_nothing(server, deps, job, tmp_path):
     server.jobs = [job(id='j1')]
     assert runner.serve(deps(server, 'done', REVIEW_QUEUE_DB=str(tmp_path / 'none.db')), once=True) == runner.EXIT_OK
@@ -379,7 +423,7 @@ def test_claiming_resumes_when_the_queue_is_readable_again(server, deps, job, tm
     stop, t = serving(deps(server, 'done', REVIEW_QUEUE_DB=str(broken), clock=clock))
     try:
         wait_until(lambda: 'tạm ngừng nhận job' in log_text())
-        clock.now += 301; time.sleep(1.5)
+        clock.now += 301; time.sleep(3)
         assert not calls(server, '/claim') and log_text().count('tạm ngừng nhận job') == 1   # checked again, still down, one line
         broken.unlink(); make_queue(broken, ('rq_w', ['LIT7_1'], 'waiting', T0))
         server.jobs = [job(id='j1'), job(id='j2', key='LIT7_1')]
