@@ -1,7 +1,7 @@
 """The work board: what this PC knows about who holds a line, published to the server for the Lark bot.
 
-Two local sources, both only ever read: the review queue (`queue.db`) and the newest `_streams-*` worklist folder under
-the artwork builder. Nothing here writes to either, and nothing here imports the runner.
+Two local sources, both only ever read: the review queue (`queue.db`) and the `_streams-*` worklist folders under the
+artwork builder. Nothing here writes to either, and nothing here imports the runner.
 """
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ from agent_api import ApiError
 DEFAULT_QUEUE_DB = r'D:\Ecom manager\review-queue\queue.db'
 BOARD_PUBLISH_S = 120
 COUNTDOWN_S = 3600
+QUEUE_DOWN_WAIT_S = 300
 STREAM_TTL_S = 172800
 MAX_DETAIL = 300
 MAX_ENTRIES = 5000
@@ -73,9 +74,35 @@ def _queue_detail(reason, qa_json) -> str:
     return detail[:MAX_DETAIL].strip()
 
 
+def _open(queue_db: Path) -> sqlite3.Connection:
+    return sqlite3.connect(Path(queue_db).as_uri() + '?mode=ro', uri=True, timeout=5)
+
+
+def queue_ready(deps, state: dict) -> bool:
+    """True when the review queue can be read right now. A change either way is logged once per `state`. Never raises."""
+    try:
+        conn = _open(deps.cfg.review_queue_db)
+        try:
+            conn.execute('SELECT k.taskKey, i.status, i.enteredAt FROM item_keys k JOIN items i ON i.id = k.itemId LIMIT 1').fetchall()
+        finally:
+            conn.close()
+        problem = None
+    except Exception as exc:
+        problem = type(exc).__name__
+    try:
+        if problem and not state.get('down'):
+            deps.log.line(f'{QUEUE_UNREADABLE} ({problem}): tạm ngừng nhận job, {QUEUE_DOWN_WAIT_S // 60} phút kiểm lại một lần')
+        elif not problem and state.get('down'):
+            deps.log.line('đọc lại được hàng duyệt local: nhận job trở lại')
+    except Exception:
+        pass
+    state['down'] = bool(problem)
+    return not problem
+
+
 def queue_entries(queue_db: Path, countdown_s: int = COUNTDOWN_S) -> list[dict]:
     """One entry per task key whose newest queue item is still open. Raises when the queue cannot be read."""
-    conn = sqlite3.connect(Path(queue_db).as_uri() + '?mode=ro', uri=True, timeout=5)
+    conn = _open(queue_db)
     try:
         found = conn.execute(
             'SELECT k.taskKey, i.status, i.statusReason, i.version, i.enteredAt, i.createdAt, i.updatedAt, i.qa, i.rowid '
@@ -130,14 +157,6 @@ def _read(path: Path) -> str:
     return unicodedata.normalize('NFC', path.read_text(encoding='utf-8-sig', errors='replace'))
 
 
-def _newest_stream_dir(builder_dir: Path) -> Path | None:
-    try:
-        folders = [(p.stat().st_mtime, p.name, p) for p in Path(builder_dir).glob('_streams-*') if p.is_dir()]
-    except OSError:
-        return None
-    return max(folders)[2] if folders else None
-
-
 def _list_keys(path: Path) -> list[str]:
     keys = []
     for line in _read(path).splitlines():
@@ -155,11 +174,10 @@ def _changed_at(folder: Path, list_file: str | None, n: int) -> float:
     return max((p.stat().st_mtime for p in paths if p.is_file()), default=0.0)
 
 
-def stream_entries(builder_dir: Path, now: float, ttl_s: int = STREAM_TTL_S) -> tuple[list[dict], str | None]:
-    """(entries of every stream still valid, the worker that owns all REJECTED lines or None)."""
-    folder = _newest_stream_dir(builder_dir)
-    readme = folder / 'README.md' if folder else None
-    if not readme or not readme.is_file():
+def _folder_streams(folder: Path, now: float, ttl_s: int) -> tuple[list[tuple], tuple | None]:
+    """One `_streams-*` folder: (claims of its valid streams as (key, rank, n, detail), its REJECTED owner as (rank, n))."""
+    readme = folder / 'README.md'
+    if not readme.is_file():
         return [], None
     text = _read(readme)
     files: dict[int, str | None] = {}
@@ -196,10 +214,31 @@ def stream_entries(builder_dir: Path, now: float, ttl_s: int = STREAM_TTL_S) -> 
             moved = f'Luồng {int(source.group())} → ' if source else ''
             holder[cells[0]] = (int(target.group()), f'handoff.md: {moved}Luồng {int(target.group())}')
 
-    valid = {n for n in files if _changed_at(folder, files[n], n) >= now - ttl_s}
+    changed = {n: _changed_at(folder, files[n], n) for n in files}
+    valid = {n for n in files if changed[n] >= now - ttl_s}
+    claims = [(key, (changed[n], n == rejected, folder.name, n), n, f'{folder.name}/{detail}')
+              for key, (n, detail) in holder.items() if n in valid]
+    return claims, ((changed[rejected], folder.name, rejected), rejected) if rejected in valid else None
+
+
+def stream_entries(builder_dir: Path, now: float, ttl_s: int = STREAM_TTL_S) -> tuple[list[dict], str | None]:
+    """(entries of every valid stream in every `_streams-*` folder, the worker that owns all REJECTED lines or None).
+
+    A key that several valid streams list goes to the stream whose files changed last. Raises OSError when the builder
+    folder itself cannot be listed, so that a missing folder is never read as "no stream holds anything".
+    """
+    best: dict[str, tuple] = {}
+    owners = []
+    for folder in sorted(p for p in Path(builder_dir).iterdir() if p.name.startswith('_streams-') and p.is_dir()):
+        claims, owner = _folder_streams(folder, now, ttl_s)
+        if owner:
+            owners.append(owner)
+        for key, rank, n, detail in claims:
+            if key not in best or rank > best[key][0]:
+                best[key] = (rank, n, detail)
     entries = [{'taskKey': key, 'source': 'STREAM', 'worker': f'Luồng {n}', 'state': STREAM_STATE, 'detail': detail[:MAX_DETAIL]}
-               for key, (n, detail) in sorted(holder.items()) if n in valid]
-    return entries, (f'Luồng {rejected}' if rejected in valid else None)
+               for key, (_, n, detail) in sorted(best.items())]
+    return entries, (f'Luồng {max(owners)[1]}' if owners else None)
 
 
 def _publish(deps) -> str | None:

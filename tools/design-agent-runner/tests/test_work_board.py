@@ -135,18 +135,55 @@ def test_stream_rows_parsed_from_markdown(tmp_path):
     entries, owner = work_board.stream_entries(builder, NOW)
     got = by_key(entries)
     assert sorted(got) == ['LIT6242_1', 'LIT6262_1', 'LIT6691_1', 'LIT6900_1', 'LIT7034_2', 'REMI1017_3']
-    assert got['LIT6691_1'] == {'taskKey': 'LIT6691_1', 'source': 'STREAM', 'worker': 'Luồng 1', 'state': 'listed', 'detail': 'auto-not-render.md'}
+    assert got['LIT6691_1'] == {'taskKey': 'LIT6691_1', 'source': 'STREAM', 'worker': 'Luồng 1', 'state': 'listed', 'detail': '_streams-1118/auto-not-render.md'}
     assert got['REMI1017_3']['worker'] == 'Luồng 2' and got['LIT6900_1']['worker'] == 'Luồng 3' and got['LIT6242_1']['worker'] == 'Luồng 7'
     assert owner == 'Luồng 7'
 
 
-def test_newest_stream_folder_is_used_and_none_is_empty(tmp_path):
-    assert work_board.stream_entries(tmp_path / 'artwork builder', NOW) == ([], None)
-    streams(tmp_path, name='_streams-1117', auto__not__render_md=rows('LIT1_1'))
-    builder = streams(tmp_path, name='_streams-1118', auto__not__render_md=rows('LIT2_1'))
-    os.utime(builder / '_streams-1117', (NOW - 30 * HOUR, NOW - 30 * HOUR)); os.utime(builder / '_streams-1118', (NOW - HOUR, NOW - HOUR))
-    (builder / '_streams-file').write_text('x')
-    assert [e['taskKey'] for e in work_board.stream_entries(builder, NOW)[0]] == ['LIT2_1']
+def test_two_stream_folders_both_publish(tmp_path):
+    two = README.replace('luồng 7', 'luồng 9').replace('Luồng 7', 'Luồng 9')
+    streams(tmp_path, name='_streams-1118', age_h=5, auto__not__render_md=rows('LIT1_1', 'LIT5_1'), can__chinh_md=rows('LIT6_1'),
+            lam__tay_md=(rows('LIT7_1'), 1), tra__lai_md=(rows('LIT3_1'), 30))
+    builder = streams(tmp_path, name='_streams-1120', readme=two, age_h=2, auto__not__render_md=rows('LIT2_1', 'LIT5_1', 'LIT7_1'),
+                      can__chinh_md=(rows('LIT6_1'), 60), tra__lai_md=(rows('LIT4_1'), 10))
+    (builder / '_streams-file').write_text('x'); (builder / '_streams-empty').mkdir(); (builder / 'LIT1_1-agent-j1').mkdir()
+    entries, owner = work_board.stream_entries(builder, NOW)
+    got = by_key(entries)
+    assert {k: (e['worker'], e['detail']) for k, e in got.items()} == {
+        'LIT1_1': ('Luồng 1', '_streams-1118/auto-not-render.md'), 'LIT2_1': ('Luồng 1', '_streams-1120/auto-not-render.md'),
+        'LIT3_1': ('Luồng 7', '_streams-1118/tra-lai.md'), 'LIT4_1': ('Luồng 9', '_streams-1120/tra-lai.md'),
+        'LIT5_1': ('Luồng 1', '_streams-1120/auto-not-render.md'),               # both list it: files changed 2 h ago beat 5 h ago
+        'LIT6_1': ('Luồng 2', '_streams-1118/can-chinh.md'),                     # the newer folder's stream 2 is no longer valid
+        'LIT7_1': ('Luồng 3', '_streams-1118/lam-tay.md')}                       # 1 h ago in the older folder beats 2 h ago
+    assert len(entries) == 7 and owner == 'Luồng 9'                               # two README name an owner: the fresher stream
+    assert work_board.stream_entries(builder, NOW, ttl_s=20 * HOUR)[1] == 'Luồng 9'
+    assert work_board.stream_entries(builder, NOW, ttl_s=4 * HOUR) == (
+        [{'taskKey': k, 'source': 'STREAM', 'worker': w, 'state': 'listed', 'detail': d} for k, w, d in (
+            ('LIT2_1', 'Luồng 1', '_streams-1120/auto-not-render.md'), ('LIT5_1', 'Luồng 1', '_streams-1120/auto-not-render.md'),
+            ('LIT7_1', 'Luồng 3', '_streams-1118/lam-tay.md'))], None)
+
+
+def test_adding_a_file_to_an_old_folder_does_not_hide_the_newer_folders_lines(tmp_path):
+    streams(tmp_path, name='_streams-1118', age_h=1, auto__not__render_md=rows('LIT2_1'), tra__lai_md=rows('LIT3_1'))
+    builder = streams(tmp_path, name='_streams-1101', age_h=400, auto__not__render_md=rows('LIT1_1', 'LIT2_1'), tra__lai_md=rows('LIT9_1'))
+    (builder / '_streams-1101' / 'QA-moi.jpg').write_bytes(b'x'); (builder / '_streams-1101' / 'questions-luong1.md').write_text('x')
+    assert (builder / '_streams-1101').stat().st_mtime > (builder / '_streams-1118').stat().st_mtime
+    entries, owner = work_board.stream_entries(builder, NOW)
+    assert {e['taskKey']: e['detail'] for e in entries} == {'LIT2_1': '_streams-1118/auto-not-render.md', 'LIT3_1': '_streams-1118/tra-lai.md'}
+    assert owner == 'Luồng 7'
+
+
+def test_missing_artwork_builder_publishes_nothing(server, deps, tmp_path):
+    d = deps(server, 'done')
+    queue_item(d.cfg.review_queue_db, 'rq_w', ['LIT7291_1'], 'waiting', T0)
+    assert work_board.publish_once(d) is True and [e['taskKey'] for e in calls(server, '/board')[-1]['entries']] == ['LIT7291_1']
+    assert work_board.stream_entries(d.cfg.artwork_builder, NOW) == ([], None)    # the folder is there, with no _streams-*
+    d.cfg.artwork_builder.rmdir(); n = len(calls(server, '/board')); state: dict = {}
+    assert work_board.publish_once(d, state) is False and work_board.publish_once(d, state) is False
+    assert len(calls(server, '/board')) == n and log_text().count('không đọc được danh sách luồng') == 1
+    with pytest.raises(OSError): work_board.stream_entries(d.cfg.artwork_builder, NOW)
+    (tmp_path / 'a file').write_text('x')
+    with pytest.raises(OSError): work_board.stream_entries(tmp_path / 'a file', NOW)
 
 
 def test_handoff_moves_a_key(tmp_path):
@@ -159,7 +196,7 @@ def test_handoff_moves_a_key(tmp_path):
     got = by_key(work_board.stream_entries(builder, NOW)[0])
     assert {k: e['worker'] for k, e in got.items()} == {
         'LIT7002_1': 'Luồng 2', 'LIT7003_1': 'Luồng 1', 'LIT6900_1': 'Luồng 7', 'LIT6242_1': 'Luồng 7', 'LIT8000_1': 'Luồng 3'}
-    assert got['LIT7002_1']['detail'] == 'handoff.md: Luồng 1 → Luồng 2'
+    assert got['LIT7002_1']['detail'] == '_streams-1118/handoff.md: Luồng 1 → Luồng 2'
 
 
 def test_recent_progress_file_keeps_an_old_list_valid(tmp_path):
@@ -281,20 +318,76 @@ def test_job_on_a_queued_line_calls_busy_and_never_starts(server, deps, job):
         '/api/design-agent/runner/jobs/j2/result', '/api/design-agent/runner/jobs/j3/result']   # free line and held line still run
 
 
-def test_library_apply_is_not_checked_against_the_queue(server, deps, job, tmp_path):
+def test_library_apply_is_not_checked_against_the_queue(server, deps, job):
     server.jobs = [job(id='j1', kind='LIBRARY_APPLY')]
-    d = deps(server, 'done', REVIEW_QUEUE_DB=str(tmp_path / 'gone.db'))
+    d = deps(server, 'done')
+    queue_item(d.cfg.review_queue_db, 'rq_w', ['LIT6262_1'], 'waiting', T0)
     runner.serve(d, once=True)
     assert not calls(server, '/busy') and (d.cfg.artwork_builder / 'LIT6262_1-agent-j1').exists()
 
 
-def test_unreadable_queue_fails_the_job_without_starting_it(server, deps, job, tmp_path):
+def test_unreadable_queue_fails_the_job_without_starting_it(server, deps, job, monkeypatch):
     server.jobs = [job(id='j1')]
-    d = deps(server, 'done', REVIEW_QUEUE_DB=str(tmp_path / 'gone' / 'queue.db'))
+    d = deps(server, 'done')
+
+    def gone(*a):
+        raise sqlite3.OperationalError('unable to open database file')
+    monkeypatch.setattr(work_board, 'local_queue_holder', gone)                   # readable at the claim, gone right after it
     assert runner.serve(d, once=True) == runner.EXIT_OK
     assert calls(server, '/jobs/j1/fail') == [{'error': 'không đọc được hàng duyệt local', 'permanent': False}]
     assert not calls(server, '/heartbeat') and not calls(server, '/result') and not calls(server, '/busy')
     assert not (d.cfg.artwork_builder / 'LIT6262_1-agent-j1').exists()
+
+
+class Clock:
+    """A monotonic clock the test moves by hand; sleeps are short and real."""
+    def __init__(self): self.now = 1000.0
+    def monotonic(self): return self.now
+    def time(self): return time.time()
+    def sleep(self, seconds): time.sleep(min(seconds, 0.05))
+
+
+def serving(d):
+    stop = threading.Event(); t = threading.Thread(target=runner.serve, args=(d,), kwargs={'stop': stop}); t.start()
+    return stop, t
+
+
+def test_unreadable_queue_pauses_claiming_for_300_s(server, deps, job, tmp_path):
+    assert work_board.QUEUE_DOWN_WAIT_S == 300
+    gone = tmp_path / 'gone' / 'queue.db'; clock = Clock(); server.jobs = [job(id='j1')]
+    stop, t = serving(deps(server, 'done', REVIEW_QUEUE_DB=str(gone), clock=clock))
+    try:
+        wait_until(lambda: 'tạm ngừng nhận job' in log_text()); time.sleep(1.5)
+        assert not calls(server, '/claim') and len(server.jobs) == 1
+        make_queue(gone); clock.now += 299; time.sleep(1.5)
+        assert not calls(server, '/claim')                                        # readable again, but the pause is 300 s
+        clock.now += 2
+        wait_until(lambda: calls(server, '/jobs/j1/result'))
+    finally:
+        stop.set(); t.join(10)
+    assert log_text().count('tạm ngừng nhận job') == 1 and not calls(server, '/fail')
+
+
+def test_once_run_with_an_unreadable_queue_claims_nothing(server, deps, job, tmp_path):
+    server.jobs = [job(id='j1')]
+    assert runner.serve(deps(server, 'done', REVIEW_QUEUE_DB=str(tmp_path / 'none.db')), once=True) == runner.EXIT_OK
+    assert not calls(server, '/claim') and len(server.jobs) == 1 and not calls(server, '/fail')
+
+
+def test_claiming_resumes_when_the_queue_is_readable_again(server, deps, job, tmp_path):
+    broken = tmp_path / 'queue.db'; broken.write_bytes(b'not a database' * 300); clock = Clock()
+    stop, t = serving(deps(server, 'done', REVIEW_QUEUE_DB=str(broken), clock=clock))
+    try:
+        wait_until(lambda: 'tạm ngừng nhận job' in log_text())
+        clock.now += 301; time.sleep(1.5)
+        assert not calls(server, '/claim') and log_text().count('tạm ngừng nhận job') == 1   # checked again, still down, one line
+        broken.unlink(); make_queue(broken, ('rq_w', ['LIT7_1'], 'waiting', T0))
+        server.jobs = [job(id='j1'), job(id='j2', key='LIT7_1')]
+        clock.now += 301
+        wait_until(lambda: calls(server, '/jobs/j1/result') and calls(server, '/jobs/j2/busy'))
+    finally:
+        stop.set(); t.join(10)
+    assert 'đọc lại được hàng duyệt local' in log_text() and not calls(server, '/fail')
 
 
 def test_busy_that_the_server_refuses_still_does_not_start_the_job(server, deps, job):

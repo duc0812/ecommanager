@@ -1175,6 +1175,7 @@ def serve(deps: Deps, once: bool = False, stop: threading.Event | None = None, d
     claimed = False
     exit_code = EXIT_OK
     board = work_board.start_publisher(deps, stop)
+    queue_state: dict = {}
 
     def start(job: dict) -> None:
         if work_board.skip_job(job, deps):
@@ -1232,6 +1233,11 @@ def serve(deps: Deps, once: bool = False, stop: threading.Event | None = None, d
                 if once:
                     break
                 _pause(deps, stop, LOW_DISK_WAIT_S)
+                continue
+            if not work_board.queue_ready(deps, queue_state):
+                if once:
+                    break
+                paused_until = deps.clock.monotonic() + work_board.QUEUE_DOWN_WAIT_S
                 continue
             try:
                 jobs = deps.api.claim(free, CLAIM_WAIT_S)
