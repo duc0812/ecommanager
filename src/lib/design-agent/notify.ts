@@ -20,3 +20,15 @@ export async function notifyNeedsOwner(notice: OwnerNotice, deps: { lark?: LarkA
     console.error('[lark] chưa báo được chủ shop', (e as Error)?.message ?? String(e))
   }
 }
+
+/** A line for the whole group, nobody mentioned. Never throws. */
+export async function notifyGroup(text: string, deps: { lark?: LarkApi } = {}): Promise<void> {
+  try {
+    const config = await getLarkConfig()
+    if (!config.enabled || !isLarkConfigured(config)) return
+    const lark = deps.lark ?? larkApi(config)
+    await lark.sendToChat(config.chatId, text)
+  } catch (e) {
+    console.error('[lark] chưa báo được vào group', (e as Error)?.message ?? String(e))
+  }
+}

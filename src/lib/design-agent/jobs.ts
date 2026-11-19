@@ -3,6 +3,9 @@ import type { DesignAgentJob } from '@/generated/prisma/client'
 import { designOf } from '@/lib/flat-text-coverage'
 import { getDesignSettings } from '@/lib/design-settings'
 import type { AffectedRow } from '@/lib/design-agent/affected'
+import { ensureAgentUser } from '@/lib/design-agent/agent-user'
+import { agentTaskState } from '@/lib/design-agent/delivery'
+import { workHolder, workStateFor, type WorkState } from '@/lib/design-agent/work-state'
 
 export type AgentJobKind = 'FIX' | 'MAKE' | 'MOCKUP' | 'LIBRARY_APPLY'
 export type AgentJobSource = 'REJECT' | 'LINE_REOPEN' | 'LARK' | 'LIBRARY' | 'AUTO_HOLD' | 'BACKFILL'
@@ -11,6 +14,18 @@ export type AgentJobStatus = 'QUEUED' | 'RUNNING' | 'DONE' | 'NEEDS_OWNER' | 'FA
 export class AgentJobError extends Error {
   constructor(message: string, readonly status: number) {
     super(message)
+  }
+}
+
+const BOARD_UNKNOWN = 'Chưa xác định được bên nào đang giữ dòng này — bảng việc chưa cập nhật, thử lại sau vài phút'
+const LINE_SYNCING = 'Dòng đơn của task đang được đồng bộ lại — thử lại sau vài giây'
+
+export const REFUSAL_NOTE_PREFIX = 'Agent không nhận: '
+
+export class AgentJobBusy extends AgentJobError {
+  constructor(readonly state: WorkState) {
+    const holder = workHolder(state)
+    super(holder ? `${holder} đang giữ dòng này` : BOARD_UNKNOWN, 409)
   }
 }
 
@@ -49,6 +64,7 @@ export async function enqueueAgentJob(input: EnqueueInput): Promise<{ job: Desig
       }
       return { job: open, created: false, appended: false }
     }
+    await refuseHeldLine(input.taskKey, input.source)
   }
   const line = task.order.lines.find(l => l.shopifyLineId === task.shopifyLineId)
   const job = await prisma.designAgentJob.create({
@@ -67,6 +83,30 @@ export async function enqueueAgentJob(input: EnqueueInput): Promise<{ job: Desig
   })
   notifyAgentQueue()
   return { job, created: true, appended: false }
+}
+
+async function refuseHeldLine(taskKey: string, source: AgentJobSource): Promise<void> {
+  const task = await agentTaskState(taskKey)
+  if (!task) {
+    if (source === 'LARK') throw new AgentJobError(LINE_SYNCING, 409)
+    return
+  }
+  const state = await workStateFor(task)
+  const held = state.kind === 'QUEUE' || state.kind === 'STREAM' || state.kind === 'PERSON'
+    || (state.kind === 'AUTO' && source !== 'AUTO_HOLD')
+    || (state.kind === 'UNKNOWN' && source === 'LARK')
+  if (held) throw new AgentJobBusy(state)
+}
+
+/** The note an automatic source leaves when another worker keeps the line; not repeated while it is still the task's latest event. */
+export async function noteAgentRefusal(taskKey: string, busy: AgentJobBusy): Promise<void> {
+  const task = await prisma.designTask.findUnique({ where: { taskKey }, select: { id: true } })
+  if (!task) return
+  const message = `${REFUSAL_NOTE_PREFIX}${busy.message}`
+  const last = await prisma.designTaskEvent.findFirst({ where: { taskId: task.id }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], select: { type: true, message: true } })
+  if (last?.type === 'NOTE' && last.message === message) return
+  const agent = await ensureAgentUser()
+  await prisma.designTaskEvent.create({ data: { taskId: task.id, type: 'NOTE', message, actorId: agent.id } })
 }
 
 export async function enqueueFixOnReject(input: {
@@ -90,6 +130,10 @@ export async function enqueueFixOnReject(input: {
     })
     return job
   } catch (e) {
+    if (e instanceof AgentJobBusy) {
+      await noteAgentRefusal(input.taskKey, e).catch(n => console.error(`[design agent] chưa ghi được ghi chú cho ${input.taskKey}:`, (n as Error)?.message ?? n))
+      return null
+    }
     console.error(`[design agent] không xếp được job cho ${input.taskKey}:`, (e as Error)?.message ?? e)
     return null
   }
@@ -249,7 +293,9 @@ export async function backfillRejected(opts: {
       })
       if (created) queued++
     } catch (e) {
-      console.error(`[design agent] backfill không xếp được ${t.taskKey}:`, (e as Error)?.message ?? e)
+      if (e instanceof AgentJobBusy) {
+        await noteAgentRefusal(t.taskKey, e).catch(n => console.error(`[design agent] chưa ghi được ghi chú cho ${t.taskKey}:`, (n as Error)?.message ?? n))
+      } else console.error(`[design agent] backfill không xếp được ${t.taskKey}:`, (e as Error)?.message ?? e)
     }
   }
   return { dryRun: false, count: taskKeys.length, taskKeys, queued }

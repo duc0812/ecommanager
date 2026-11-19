@@ -4,6 +4,7 @@ import { prisma } from '@/lib/db'
 import { generateAgentRunnerToken, revokeAgentRunnerToken } from '@/lib/design-agent/runner'
 import { readWorkBoard, replaceWorkBoard, BOARD_STALE_MS } from '@/lib/design-agent/work-board'
 import { PUT } from '@/app/api/design-agent/runner/board/route'
+import { dropWorkBoard } from './helpers/work-board'
 
 const entry = (n: number, over: Record<string, unknown> = {}) => ({ taskKey: `WB${n}`, source: 'STREAM' as const, worker: 'A', state: 'DOING', ...over })
 const put = (body: unknown, token?: string) =>
@@ -20,7 +21,7 @@ beforeEach(async () => {
 
 afterAll(async () => {
   await revokeAgentRunnerToken()
-  await prisma.workBoardEntry.deleteMany({})
+  await dropWorkBoard()
 })
 
 describe('work board', () => {

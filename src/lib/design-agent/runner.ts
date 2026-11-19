@@ -8,11 +8,11 @@ import { linePersonalization, safeHttpUrl } from '@/lib/design-studio'
 import { currentFiles, type FileKind } from '@/lib/task-files'
 import { AGENT_SUBMIT_MESSAGE, SENT_BACK_REASONS, isSentLineOfOpenOrder, templateForLine, type Readiness, type TaskStatus } from '@/lib/design-tasks'
 import {
-  enqueueFixOnReject, notifyAgentQueue, waitForAgentQueue, type AgentJobKind, type AgentJobSource, type AgentJobStatus,
+  AgentJobError, enqueueFixOnReject, notifyAgentQueue, waitForAgentQueue, type AgentJobKind, type AgentJobSource, type AgentJobStatus,
 } from '@/lib/design-agent/jobs'
 import { affectedForTask, type AffectedRow } from '@/lib/design-agent/affected'
 import { ensureAgentUser } from '@/lib/design-agent/agent-user'
-import { notifyNeedsOwner, type OwnerNotice } from '@/lib/design-agent/notify'
+import { notifyGroup, notifyNeedsOwner, type OwnerNotice } from '@/lib/design-agent/notify'
 import { ORDER_CLOSED, isOrderOpen } from '@/lib/design-agent/order-open'
 
 export const DESIGN_AGENT_TOKEN_KEY = 'design.agent.tokenHash'
@@ -33,6 +33,9 @@ const LINE_GONE = 'Không tìm thấy dòng của task'
 const NO_ERROR_TEXT = 'Runner không gửi lý do'
 const MAX_SUMMARY = 4000
 const MAX_RESULT = 20000
+const OTHER_WORKER = 'Đã có bên khác làm: '
+const MAX_WORKER = 100
+const MAX_BUSY_DETAIL = 300
 const NOT_SUBMITTED = '\n(Agent báo xong nhưng task chưa được gửi duyệt.)'
 
 declare global {
@@ -45,14 +48,22 @@ function pendingNotices(): Set<Promise<void>> {
   return globalThis.__designAgentOwnerNotices
 }
 
-// Fire-and-forget: a slow or failing Lark must never delay or fail the runner's /result or /fail.
-function tellOwner(notice: OwnerNotice): void {
+// Fire-and-forget: a slow or failing Lark must never delay or fail the runner's /result, /fail or /busy.
+function sendAside(send: () => Promise<void>, failed: string): void {
   let sent: Promise<void>
-  try { sent = Promise.resolve(notifyNeedsOwner(notice)) } catch (e) { sent = Promise.reject(e) }
+  try { sent = Promise.resolve(send()) } catch (e) { sent = Promise.reject(e) }
   const tracked = sent
-    .catch(e => { console.error(`[design agent] không báo được chủ shop cho job ${notice.jobId}:`, (e as Error)?.message ?? e) })
+    .catch(e => { console.error(failed, (e as Error)?.message ?? e) })
     .finally(() => { pendingNotices().delete(tracked) })
   pendingNotices().add(tracked)
+}
+
+function tellOwner(notice: OwnerNotice): void {
+  sendAside(() => notifyNeedsOwner(notice), `[design agent] không báo được chủ shop cho job ${notice.jobId}:`)
+}
+
+function tellGroup(text: string, jobId: string): void {
+  sendAside(() => notifyGroup(text), `[design agent] không báo được vào group cho job ${jobId}:`)
 }
 
 /** Waits for the owner notices already started (tests). */
@@ -295,6 +306,29 @@ export async function failAgentJob(id: string, input: { error: unknown; permanen
   await noteOnTask(job.taskId, `Agent: không chạy được — ${error.slice(0, MAX_NOTE_ERROR)}`)
   tellOwner({ jobId: job.id, taskKey: job.taskKey, kind: job.kind as AgentJobKind, reason: 'FAILED', summary: error })
   return { status: 'FAILED', attempts: job.attempts }
+}
+
+/**
+ * The runner found another worker on the line just before starting: the job is cancelled, which is neither a failure nor an
+ * owner matter. A repeat of the same call finds the job already cancelled this way and changes nothing.
+ */
+export async function yieldAgentJob(id: string, input: { worker: unknown; detail?: unknown }): Promise<{ status: 'CANCELLED' } | null> {
+  const worker = typeof input.worker === 'string' ? input.worker.trim().slice(0, MAX_WORKER) : ''
+  if (!worker) throw new AgentJobError('Thiếu worker', 400)
+  const job = await prisma.designAgentJob.findUnique({ where: { id } })
+  if (!job) return null
+  if (job.status === 'CANCELLED' && job.error?.startsWith(OTHER_WORKER)) return { status: 'CANCELLED' }
+  if (job.status !== 'RUNNING') return null
+  const error = `${OTHER_WORKER}${worker}`
+  const r = await prisma.designAgentJob.updateMany({
+    where: { id, status: 'RUNNING', attempts: job.attempts }, data: { status: 'CANCELLED', error, finishedAt: new Date(), lockedAt: null },
+  })
+  if (r.count === 0) return null
+  const detail = typeof input.detail === 'string' ? input.detail.trim().slice(0, MAX_BUSY_DETAIL) : ''
+  const text = detail ? `${error} — ${detail}` : error
+  await noteOnTask(job.taskId, text)
+  tellGroup(`${job.taskKey ?? `job ${job.id}`}: ${text}`, job.id)
+  return { status: 'CANCELLED' }
 }
 
 function rejectReasonsOf(json: string | null): string[] {

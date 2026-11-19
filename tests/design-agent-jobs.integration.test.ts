@@ -5,6 +5,7 @@ import {
   buildRequestText, enqueueAgentJob, enqueueFixOnReject, cancelQueuedJobsForTask, openJobForTask, openJobStatusByTask, waitForAgentQueue,
 } from '@/lib/design-agent/jobs'
 import { agentFixture } from './helpers/design-agent-fixture'
+import { dropWorkBoard, publishBoard } from './helpers/work-board'
 
 const fx = agentFixture('daj')
 let taskIds: string[] = []
@@ -12,6 +13,7 @@ let taskIds: string[] = []
 beforeAll(async () => {
   await fx.cleanup()
   await fx.seed()
+  await publishBoard()
   for (const n of [1, 2, 3, 4]) await fx.order(n)
   taskIds = (await prisma.designTask.findMany({ where: { taskKey: { startsWith: 'DAJ' } }, orderBy: { taskKey: 'asc' } })).map(t => t.id)
 })
@@ -19,6 +21,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await prisma.designAgentJob.deleteMany({ where: { taskKey: { startsWith: 'DAJ' } } })
   await prisma.appSetting.deleteMany({ where: { key: 'design.settings' } })
+  await dropWorkBoard()
   await fx.cleanup()
 })
 

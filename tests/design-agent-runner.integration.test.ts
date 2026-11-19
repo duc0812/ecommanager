@@ -12,6 +12,7 @@ import {
   revokeAgentRunnerToken, verifyAgentRunnerRequest,
 } from '@/lib/design-agent/runner'
 import { agentFixture } from './helpers/design-agent-fixture'
+import { dropWorkBoard, publishBoard } from './helpers/work-board'
 
 const fx = agentFixture('dar')
 const sha256 = (s: string) => crypto.createHash('sha256').update(s, 'utf8').digest('hex')
@@ -35,6 +36,7 @@ const waiterCount = () => globalThis.__designAgentQueueWaiters?.size ?? 0
 beforeAll(async () => {
   await prisma.designAgentJob.deleteMany({ where: { taskKey: { startsWith: 'DAR' } } })
   await fx.cleanup()
+  await publishBoard()
   await fx.seed()
   await fx.order(1, { taskStatus: 'REJECTED', withPrint: true })
   await fx.order(2, { taskStatus: 'DONE', exported: true, withPrint: true })
@@ -61,6 +63,7 @@ afterAll(async () => {
   await prisma.designAgentJob.deleteMany({ where: { taskKey: { startsWith: 'DAR' } } })
   await prisma.appSetting.deleteMany({ where: { key: { in: ['design.settings', 'design.agent.tokenHash', 'design.agent.lastSeenAt', 'clone.worker.tokenHash'] } } })
   await prisma.appUser.deleteMany({ where: { email: AGENT_USER_EMAIL } })
+  await dropWorkBoard()
   await fx.cleanup()
 })
 

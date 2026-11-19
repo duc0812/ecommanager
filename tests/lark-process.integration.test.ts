@@ -33,6 +33,7 @@ import type { LarkIntent } from '@/lib/lark/intent'
 import { processLarkMessage } from '@/lib/lark/process'
 import { REPLY_FAILED, REPLY_NOT_READ, REPLY_OTHER, REPLY_SENT } from '@/lib/lark/replies'
 import { agentFixture } from './helpers/design-agent-fixture'
+import { dropWorkBoard, publishBoard } from './helpers/work-board'
 
 const fx = agentFixture('lip')
 const fakeLlm = (output: unknown) => ({ complete: vi.fn(async () => ({ output, tokensIn: 1, tokensOut: 1 })) }) as unknown as Llm
@@ -74,6 +75,7 @@ beforeAll(async () => {
   await prisma.appSetting.deleteMany({ where: { key: 'design.settings' } })
   await fx.cleanup()
   await fx.seed()
+  await publishBoard()
   const statuses: Record<number, { taskStatus?: string; exported?: boolean; skus?: string[]; pipelineStatus?: string }> = {
     1: { taskStatus: 'REJECTED' }, 2: { taskStatus: 'REVIEW' }, 3: { taskStatus: 'DONE' }, 4: { taskStatus: 'DONE', exported: true },
     5: {}, 6: { taskStatus: 'DOING' }, 7: { taskStatus: 'DONE' }, 8: { taskStatus: 'ASK_CUSTOMER' }, 9: { taskStatus: 'REJECTED' },
@@ -89,6 +91,7 @@ afterAll(async () => {
   await prisma.designAgentJob.deleteMany({ where: { taskKey: { startsWith: 'LIP' } } })
   await prisma.larkEvent.deleteMany({ where: { eventId: { startsWith: 'lip-' } } })
   await prisma.appSetting.deleteMany({ where: { key: 'design.settings' } })
+  await dropWorkBoard()
   await fx.cleanup()
 })
 

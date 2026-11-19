@@ -5,7 +5,7 @@ import type { FileKind } from '@/lib/task-files'
 import {
   LineFixError, isSentLineOfOpenOrder, rejectReviewAsAgent, reopenLineForFix, submitAgentForReview, transitionTask, type TaskStatus,
 } from '@/lib/design-tasks'
-import { AgentJobError, enqueueAgentJob } from '@/lib/design-agent/jobs'
+import { AgentJobBusy, AgentJobError, REFUSAL_NOTE_PREFIX, enqueueAgentJob, noteAgentRefusal } from '@/lib/design-agent/jobs'
 import { findLineByKey } from '@/lib/design-agent/affected'
 import { ensureAgentUser } from '@/lib/design-agent/agent-user'
 import { ORDER_CLOSED, isOrderOpen } from '@/lib/design-agent/order-open'
@@ -112,7 +112,11 @@ async function writeAgentNote(taskKey: string, message: string, skipRepeat = fal
   const task = await prisma.designTask.findUnique({ where: { taskKey }, select: { id: true } })
   if (!task) throw new AgentJobError(NO_TASK, 404)
   if (skipRepeat) {
-    const last = await prisma.designTaskEvent.findFirst({ where: { taskId: task.id, type: 'NOTE' }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], select: { message: true } })
+    // A refusal note written after a hold must not make the next identical hold look new.
+    const last = await prisma.designTaskEvent.findFirst({
+      where: { taskId: task.id, type: 'NOTE', NOT: { message: { startsWith: REFUSAL_NOTE_PREFIX } } },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], select: { message: true },
+    })
     if (last?.message === message) return
   }
   const agent = await ensureAgentUser()
@@ -131,6 +135,12 @@ export async function agentHold(taskKey: string, reason: string): Promise<{ jobI
   const text = `${HOLD_NOTE_PREFIX}${why}`
   await writeAgentNote(taskKey, text, true)
   if (!(await getDesignSettings()).agent.autoFixOnReject) return { jobId: null }
-  const { job } = await enqueueAgentJob({ kind: 'FIX', source: 'AUTO_HOLD', taskKey, requestText: text, requestedBy: 'Auto render' })
-  return { jobId: job.id }
+  try {
+    const { job } = await enqueueAgentJob({ kind: 'FIX', source: 'AUTO_HOLD', taskKey, requestText: text, requestedBy: 'Auto render' })
+    return { jobId: job.id }
+  } catch (e) {
+    if (!(e instanceof AgentJobBusy)) throw e
+    await noteAgentRefusal(taskKey, e)
+    return { jobId: null }
+  }
 }
