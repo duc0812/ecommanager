@@ -6,7 +6,7 @@ import { spawn } from 'child_process'
 import { createClient } from '@libsql/client'
 import { openQueue } from '../scripts/review-queue/store.mjs'
 
-const H3 = 10_800_000
+const H1 = 3_600_000
 let root: string
 let clock: number
 let q: any
@@ -218,7 +218,7 @@ describe('reads', () => {
 })
 
 describe('expired', () => {
-  it('only waiting and qa_failed count down, at exactly 3h', async () => {
+  it('only waiting and qa_failed count down, at exactly 1h', async () => {
     const w = await q.addOrUpdate(base())
     const f = await q.addOrUpdate(base({ taskKey: 'B', groupKey: 'B', qa: { verdict: 'fail', items: ['x'] } }))
     const r = await q.addOrUpdate(base({ taskKey: 'C', groupKey: 'C' }))
@@ -227,8 +227,8 @@ describe('expired', () => {
     await q.setStatus(r.itemId, 'rejected')
     await q.setStatus(x.itemId, 'fixing')
     await q.setStatus(n.itemId, 'needs_look')
-    expect(await q.expired(new Date(clock + H3 - 1))).toEqual([])
-    const ids = (await q.expired(new Date(clock + H3))).map((i: any) => i.id).sort()
+    expect(await q.expired(new Date(clock + H1 - 1))).toEqual([])
+    const ids = (await q.expired(new Date(clock + H1))).map((i: any) => i.id).sort()
     expect(ids).toEqual([w.itemId, f.itemId].sort())
   })
 
@@ -236,8 +236,8 @@ describe('expired', () => {
     await q.addOrUpdate(base())
     clock += 7_200_000
     await q.addOrUpdate(base({ files: [file('front', 'v2')] }))
-    expect(await q.expired(new Date(clock + H3 - 1))).toEqual([])
-    expect(await q.expired(new Date(clock + H3))).toHaveLength(1)
+    expect(await q.expired(new Date(clock + H1 - 1))).toEqual([])
+    expect(await q.expired(new Date(clock + H1))).toHaveLength(1)
   })
 })
 
@@ -376,7 +376,7 @@ describe('concurrency and integrity', () => {
   it('setStatus rejects an unknown status; expired accepts Date, epoch ms and ISO string', async () => {
     const a = await q.addOrUpdate(base())
     await expect(q.setStatus(a.itemId, 'bogus')).rejects.toThrow(/không hợp lệ/)
-    const at = clock + H3
+    const at = clock + H1
     expect(await q.expired(at)).toHaveLength(1)
     expect(await q.expired(new Date(at).toISOString())).toHaveLength(1)
     expect(await q.expired(new Date(at - 1))).toHaveLength(0)

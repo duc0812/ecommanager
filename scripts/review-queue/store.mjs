@@ -3,7 +3,7 @@ import path from 'path'
 import crypto from 'crypto'
 import { createClient } from '@libsql/client'
 
-export const COUNTDOWN_MS = 10_800_000
+export const COUNTDOWN_MS = 3_600_000
 export const LOCK_STALE_MS = 60 * 60_000
 export const ACTIVE_STATUSES = ['waiting', 'rejected', 'fixing', 'qa_failed', 'needs_look']
 const COUNTING_STATUSES = ['waiting', 'qa_failed']

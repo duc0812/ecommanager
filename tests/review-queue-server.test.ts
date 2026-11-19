@@ -112,7 +112,7 @@ describe('GET /api/items', () => {
     expect(body.items.map((i: any) => [i.id, i.status])).toEqual([['rq_a1', 'waiting'], ['rq_b2', 'qa_failed']])
     const a = body.items[0]
     expect(a).toMatchObject({ taskKey: 'LIT1_1', version: 1, title: 'Tote LIT1_1', qa: { verdict: 'pass', count: 0 } })
-    expect(a.deadline).toBe(new Date(Date.parse('2026-11-16T01:00:00Z') + 3 * H).toISOString())
+    expect(a.deadline).toBe(new Date(Date.parse('2026-11-16T01:00:00Z') + H).toISOString())
     expect(a.thumb).toBe('/files/rq_a1/v/1/preview/PRINT_Front.jpg')
     expect(body.items[1].qa).toEqual({ verdict: 'fail', count: 1, items: ['tên vượt khung 5 px'] })
     expect(body.counts).toMatchObject({ waiting: 1, qa_failed: 1, rejected: 0 })

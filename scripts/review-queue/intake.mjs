@@ -12,7 +12,7 @@ import { DEFAULT_ARTWORK_BUILDER, MOCKUP_MISSING, builderOf, customValues, resol
 // file, the customer's own preview and the store photo, and waits for the owner. A group that only reuses a file already on
 // Drive has nothing new to look at and is delivered by the caller as today.
 
-export const QUEUE_NOTE = 'Đang chờ chủ shop duyệt ở máy local (tối đa 3 giờ)'
+export const QUEUE_NOTE = 'Đang chờ chủ shop duyệt ở máy local (tối đa 1 giờ)'
 export const HOLDING_NOTE = 'Chủ shop đang giữ lại ở máy local — chưa có hạn'
 const HOLDING_STATUSES = ['rejected', 'fixing', 'needs_look']
 const COUNTING_STATUSES = ['waiting', 'qa_failed']

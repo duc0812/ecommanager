@@ -9,7 +9,7 @@ import { openQueue } from '../scripts/review-queue/store.mjs'
 import { enqueuePlan, queueApiLines, resolveShared, makePreview, runQueueIntake, makeNoteClient, noteQueueState, QUEUE_NOTE, HOLDING_NOTE } from '../scripts/review-queue/intake.mjs'
 import { DeliveryGaveUp } from '../scripts/lib/delivery-client.mjs'
 
-const NOTE = 'Đang chờ chủ shop duyệt ở máy local (tối đa 3 giờ)'
+const NOTE = 'Đang chờ chủ shop duyệt ở máy local (tối đa 1 giờ)'
 let tmp: string
 let storageRoot: string
 let queueRoot: string

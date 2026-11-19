@@ -169,7 +169,7 @@ describe('startFix', () => {
     const r = await start(id, {}, { noter, log: (m: string) => logs.push(m) })
     expect(sent).toEqual([['LIT1_1', 'Chủ shop đang giữ lại ở máy local — chưa có hạn']])
     expect(await runFixJob(q, r.jobId, deps(spawn, { noter }))).toMatchObject({ ok: true, status: 'waiting' })
-    expect(sent.map(s => s[1])).toEqual(['Chủ shop đang giữ lại ở máy local — chưa có hạn', 'Đang chờ chủ shop duyệt ở máy local (tối đa 3 giờ)'])
+    expect(sent.map(s => s[1])).toEqual(['Chủ shop đang giữ lại ở máy local — chưa có hạn', 'Đang chờ chủ shop duyệt ở máy local (tối đa 1 giờ)'])
     const failing = await makeItem('LIT3_1')
     const { spawn: noOut } = fakeSpawn(({ child }) => exit(child, 1))
     const f = await start(failing, {}, { noter })

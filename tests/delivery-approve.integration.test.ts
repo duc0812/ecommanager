@@ -344,12 +344,12 @@ describe('commit with approve', () => {
 describe('POST delivery note', () => {
   it('writes one SYSTEM event with no actor and leaves the task as it is', async () => {
     const l = await line()
-    const res = await note(l.taskKey, { message: 'Đang chờ chủ shop duyệt ở máy local (tối đa 3 giờ)' })
+    const res = await note(l.taskKey, { message: 'Đang chờ chủ shop duyệt ở máy local (tối đa 1 giờ)' })
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ ok: true })
     const events = await eventsOf(l.taskKey)
     expect(events).toHaveLength(1)
-    expect(events[0]).toMatchObject({ type: 'SYSTEM', message: 'Đang chờ chủ shop duyệt ở máy local (tối đa 3 giờ)', actorId: null })
+    expect(events[0]).toMatchObject({ type: 'SYSTEM', message: 'Đang chờ chủ shop duyệt ở máy local (tối đa 1 giờ)', actorId: null })
     expect((await taskOf(l.taskKey)).status).toBe('NEW')
   })
 

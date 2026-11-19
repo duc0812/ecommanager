@@ -55,14 +55,14 @@ describe('delivery client', () => {
 
   it('posts a note to the task note route with the same token and retries', async () => {
     const h = harness([json({ error: 'busy' }, 503), json({ ok: true })])
-    const r = await make(h).note('LIT 1/a', 'Đang chờ chủ shop duyệt ở máy local (tối đa 3 giờ)')
+    const r = await make(h).note('LIT 1/a', 'Đang chờ chủ shop duyệt ở máy local (tối đa 1 giờ)')
     expect(r).toEqual({ ok: true, status: 200, body: { ok: true } })
     expect(h.calls.map(x => `${x.init.method} ${x.url}`)).toEqual([
       'POST https://x.test/api/design-studio/worker/delivery/tasks/LIT%201%2Fa/note',
       'POST https://x.test/api/design-studio/worker/delivery/tasks/LIT%201%2Fa/note',
     ])
     expect(h.calls[1].init.headers.Authorization).toBe('Bearer sekret')
-    expect(JSON.parse(h.calls[1].init.body)).toEqual({ message: 'Đang chờ chủ shop duyệt ở máy local (tối đa 3 giờ)' })
+    expect(JSON.parse(h.calls[1].init.body)).toEqual({ message: 'Đang chờ chủ shop duyệt ở máy local (tối đa 1 giờ)' })
     expect(h.waits).toEqual([5000])
   })
 

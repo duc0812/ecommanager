@@ -182,7 +182,7 @@ async function settle(queue, item, out, { approve, auto }) {
     const refusedApproval = delivered.flatMap(d => d.warnings.filter(w => String(w).startsWith(APPROVE_FAILED)))
     const reason = status === 'approved' ? APPROVE_EVENT
       : approve ? (refusedApproval.join(' | ') || `${APPROVE_FAILED}: prod chưa duyệt — dòng ở Chờ duyệt`)
-        : auto ? 'Quá 3 giờ — đã lên cloud (Chờ duyệt)' : 'Cho lên cloud (Chờ duyệt)'
+        : auto ? 'Quá 1 giờ — đã lên cloud (Chờ duyệt)' : 'Cho lên cloud (Chờ duyệt)'
     await queue.setStatus(item.id, status, { reason })
     return { ok: true, itemId: item.id, status, message: reason, results }
   }
@@ -279,7 +279,7 @@ export async function removeItem(queue, itemId, { version = null } = {}) {
   })
 }
 
-const holdReason = item => `Lỗi QA ở hàng chờ local, quá 3 giờ không ai xử lý: ${(item.qa?.items ?? []).join('; ') || 'không rõ lỗi'}`
+const holdReason = item => `Lỗi QA ở hàng chờ local, quá 1 giờ không ai xử lý: ${(item.qa?.items ?? []).join('; ') || 'không rõ lỗi'}`
 
 async function holdExpired(queue, itemId, deps, at) {
   return underLocks(queue, itemId, async () => {

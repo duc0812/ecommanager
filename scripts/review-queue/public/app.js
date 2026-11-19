@@ -452,7 +452,7 @@ function onFix(agent = 'codex') {
     <label><input type="radio" name="agent" value="claude"${agent === 'claude' ? ' checked' : ''}> Claude</label></div>
     ${hasQa ? `<p>Đề xuất sửa của kiểm tra máy (gửi kèm):</p>${qaList(it)}` : ''}
     <textarea id="reason" placeholder="Cần sửa gì${hasQa ? ' (có thể để trống, agent làm theo đề xuất ở trên)' : ' (bắt buộc)'}"></textarea>
-    <p>Agent chạy nền, tối đa 60 phút; xong thì thành bản mới và đếm lại 3 giờ.</p>
+    <p>Agent chạy nền, tối đa 60 phút; xong thì thành bản mới và đếm lại 1 giờ.</p>
     <div class="acts"><button class="btn" data-m="cancel">Huỷ</button><button class="btn ai" data-m="ok">Gọi agent</button></div>`,
   bg => {
     const reason = bg.querySelector('#reason').value.trim()
@@ -466,7 +466,7 @@ function onCloud() {
   const it = S.detail?.item
   if (!it) return
   const force = needsForce(it)
-  modal(`<h2>Cho lên cloud ngay?</h2><p>${esc(it.taskKey)} v${it.version} lên prod ở <b>Chờ duyệt</b> (như khi hết 3 giờ).</p>
+  modal(`<h2>Cho lên cloud ngay?</h2><p>${esc(it.taskKey)} v${it.version} lên prod ở <b>Chờ duyệt</b> (như khi hết 1 giờ).</p>
     ${force ? `<p><b>Dòng có lỗi QA:</b></p>${qaList(it)}` : ''}
     <div class="acts"><button class="btn" data-m="cancel">Huỷ</button><button class="btn ${force ? 'warn' : 'ok'}" data-m="ok">${force ? 'Vẫn cho lên cloud' : 'Cho lên cloud'}</button></div>`,
   () => { act('cloud', { version: it.version, ...(force ? { force: true } : {}) }) })
@@ -483,7 +483,7 @@ function onRemove() {
 function onRerun() {
   const d = S.detail
   if (!d?.rerun) return
-  modal(`<h2>Lập lại từ snapshot mới</h2><p>Lấy snapshot prod mới, rồi chạy lệnh này trong thư mục của script đẩy. Dòng được ghi lại thành bản mới từ snapshot đó và quay về Chờ duyệt (tính lại 3 giờ), kể cả khi file không đổi.</p>
+  modal(`<h2>Lập lại từ snapshot mới</h2><p>Lấy snapshot prod mới, rồi chạy lệnh này trong thư mục của script đẩy. Dòng được ghi lại thành bản mới từ snapshot đó và quay về Chờ duyệt (tính lại 1 giờ), kể cả khi file không đổi.</p>
     <pre id="cmd">${esc(d.rerun)}</pre>
     <div class="acts"><button class="btn" data-m="cancel">Đóng</button><button class="btn" data-m="ok">Chép lệnh</button></div>`,
   async () => {
