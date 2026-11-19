@@ -1766,3 +1766,32 @@ model LarkEvent {
 
   @@index([createdAt])
 }
+
+model WorkBoardEntry {
+  id          String    @id @default(cuid())
+  taskKey     String
+  source      String // LOCAL_QUEUE STREAM
+  worker      String
+  state       String
+  detail      String?
+  version     Int?
+  etaAt       DateTime?
+  publishedAt DateTime
+
+  @@index([taskKey])
+}
+
+model BotMappingChange {
+  id                     String    @id @default(cuid())
+  taskKey                String
+  profileKey             String
+  comboJson              String
+  beforeOverridesJson    String
+  afterSupplierProductId String
+  lineSnapshotJson       String
+  requestedBy            String
+  createdAt              DateTime  @default(now())
+  undoneAt               DateTime?
+
+  @@index([taskKey, createdAt])
+}
