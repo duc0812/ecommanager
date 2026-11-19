@@ -446,13 +446,21 @@ describe('CatKissFish tracking', () => {
   }
   const shipments = (orderId: string) => prisma.shipment.findMany({ where: { orderId } })
 
-  it('does not read tracking before the parcel leaves', async () => {
+  it('does not read tracking on an unpaid order', async () => {
     const o = await sent()
-    o.remote.state = 3
+    o.remote.state = 1
     o.remote.tracking = [tracking('9400')]
-    expect(await (await refresh(o.id)).json()).toMatchObject({ found: true, shipments: 0, push: { remoteStatus: 'Đang sản xuất' } })
+    expect(await (await refresh(o.id)).json()).toMatchObject({ found: true, shipments: 0, push: { remoteStatus: 'Chưa thanh toán' } })
     expect(callsTo('/tracking/number')).toHaveLength(0)
     expect(await shipments(o.id)).toHaveLength(0)
+  })
+
+  it('writes the number a parcel gets while the order is still in production, naming the carrier in Latin letters', async () => {
+    const o = await sent()
+    o.remote.state = 3
+    o.remote.tracking = [{ logisticName: '燕文物流', logisticKey: '190012', logisticNumber: 'UL729554915YP' }]
+    expect(await (await refresh(o.id)).json()).toMatchObject({ shipments: 1, push: { remoteStatus: 'Đang sản xuất' } })
+    expect(await shipments(o.id)).toEqual([expect.objectContaining({ lineKey: `${o.number}_1`, trackingNumber: 'UL729554915YP', carrier: 'Yanwen', supplierId: SUP })])
   })
 
   it('writes the tracking on the line, where Auto Fulfilled takes it from', async () => {

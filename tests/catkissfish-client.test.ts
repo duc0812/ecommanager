@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
-  CatkissfishError, cancelOrder, createAutoDesignOrder, createdOrderOf, designListFor, findOrder, formatAccepted, getOrder, getProductDetail, getTrackingNumbers, hasLeftFactory,
-  isCatkissfishSupplier, issueToken, phoneParts, pickVariant, shippingOf, singleTracking, styleCodeOf,
+  CatkissfishError, cancelOrder, createAutoDesignOrder, createdOrderOf, designListFor, findOrder, formatAccepted, getOrder, getProductDetail, getTrackingNumbers,
+  isCatkissfishSupplier, carrierNameOf, mayCarryTracking, issueToken, phoneParts, pickVariant, shippingOf, singleTracking, styleCodeOf,
   type CatkissfishSession, type CkfProduct,
 } from '@/lib/catkissfish'
 
@@ -246,9 +246,17 @@ describe('product, cancel and tracking', () => {
     expect(singleTracking([])).toBeNull()
   })
 
-  it('reads tracking only once the parcel left, or when the state is missing', () => {
-    expect([1, 2, 3, 7].map(hasLeftFactory)).toEqual([false, false, false, false])
-    expect([4, 5, null].map(hasLeftFactory)).toEqual([true, true, true])
+  it('reads tracking on every paid order still open, since the number comes before the parcel leaves', () => {
+    expect([2, 3, 4, 5, 7, null].map(mayCarryTracking)).toEqual([true, true, true, true, true, true])
+    expect([1, 6, 8, 9].map(mayCarryTracking)).toEqual([false, false, false, false])
+  })
+
+  it('names the carrier in Latin letters, as the live API names it in Chinese', () => {
+    expect(carrierNameOf({ name: '燕文物流', key: '190012' })).toBe('Yanwen')
+    expect(carrierNameOf({ name: 'USPS', key: 'usps' })).toBe('USPS')
+    expect(carrierNameOf({ name: '云途', key: null })).toBe('YunExpress')
+    expect(carrierNameOf({ name: 'Some Courier', key: null })).toBe('Some Courier')
+    expect(carrierNameOf({ name: null, key: '1' })).toBeNull()
   })
 })
 

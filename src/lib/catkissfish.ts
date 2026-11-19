@@ -50,8 +50,13 @@ export function stateLabelOf(state: number | null): string | null {
 
 export const isClosedState = (state: number | null) => state === CKF_STATE.CANCELLED || state === CKF_STATE.REFUNDED
 
-/** A tracking number before the parcel left would tell the shopper it is on its way. A missing state cannot rule that out. */
-export const hasLeftFactory = (state: number | null) => state === null || state === CKF_STATE.SHIPPED || state === CKF_STATE.FINISHED
+/**
+ * CatKissFish gives a parcel its number while the order still says "in production" (seen 11/20/2026: Yanwen UL…YP at state 3,
+ * the day after payment), so the number is read on every paid order that is still open. An unpaid order has none, and a
+ * cancelled or refunded one must not reach the shopper. A missing state cannot rule a number out.
+ */
+export const mayCarryTracking = (state: number | null) =>
+  state === null || !(state === CKF_STATE.UNPAID || state === CKF_STATE.REFUND_REQUESTED || isClosedState(state))
 
 export class CatkissfishError extends Error {
   constructor(
@@ -96,6 +101,19 @@ export type CkfVariant = { color: string | null; size: string | null; saleState:
 export type CkfProduct = { name: string | null; styleCode: string | null; dimensions: CkfDimension[]; variants: CkfVariant[]; colors: string[]; sizes: string[] }
 export type CkfRemoteOrder = { id: string; platformOrderId: string | null; state: number | null; stateLabel: string | null }
 export type CkfTracking = { name: string | null; key: string | null; number: string }
+
+// The live API names carriers in Chinese ("燕文物流", key 190012, is Yanwen); the tool and Shopify want the Latin name.
+const CARRIER_NAMES: Array<[RegExp, string]> = [
+  [/燕文|yanwen/i, 'Yanwen'], [/云途|yuntu|yun\s*express/i, 'YunExpress'], [/递四方|4px/i, '4PX'], [/usps/i, 'USPS'],
+  [/ups/i, 'UPS'], [/dhl/i, 'DHL'], [/fedex/i, 'FedEx'], [/ubi/i, 'UBI'], [/顺丰|sf\s*express/i, 'SF Express'],
+]
+
+/** The carrier's Latin name, else the name as CatKissFish gives it. */
+export function carrierNameOf(t: { name: string | null; key?: string | null }): string | null {
+  const name = t.name
+  if (!name) return null
+  return CARRIER_NAMES.find(([re]) => re.test(name))?.[1] ?? name
+}
 
 function str(v: unknown): string | null {
   if (typeof v === 'number' && Number.isFinite(v)) return String(v)

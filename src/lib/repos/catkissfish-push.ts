@@ -10,8 +10,8 @@ import {
   isActive, isUniqueViolation, latestPush, loadOrderForPush, reservePush, toPushViews, upsertLineTracking, viewOf, type PushRow,
 } from '@/lib/repos/supplier-push-core'
 import {
-  CKF_UNPAID_LABEL, CatkissfishError, cancelOrder, createAutoDesignOrder, createdOrderOf, designListFor, findOrder, formatAccepted, getOrder, getProductDetail,
-  getTrackingNumbers, hasLeftFactory, isCatkissfishSupplier, isClosedState, phoneParts, pickVariant, shippingOf, singleTracking, styleCodeOf,
+  CKF_UNPAID_LABEL, CatkissfishError, cancelOrder, carrierNameOf, createAutoDesignOrder, createdOrderOf, designListFor, findOrder, formatAccepted, getOrder, getProductDetail,
+  getTrackingNumbers, isCatkissfishSupplier, isClosedState, mayCarryTracking, phoneParts, pickVariant, shippingOf, singleTracking, styleCodeOf,
   type CatkissfishSession, type CkfDesignInfo, type CkfOrderPayload, type CkfProduct, type CkfRemoteOrder,
 } from '@/lib/catkissfish'
 import { CKF_AUTO_SHIPPING } from '@/lib/catkissfish-shipping'
@@ -328,7 +328,7 @@ async function applyTracking(session: CatkissfishSession, push: PushRow, remote:
   if (rows.length === 0) return { shipments: 0, note: null }
   const one = singleTracking(rows)
   if (!one) return { shipments: 0, note: `CatKissFish trả ${rows.length} mã tracking cho đơn này (${rows.map(r => r.number).join(', ')}) — không tự gán được, nhập tay đúng dòng` }
-  return { shipments: await upsertLineTracking(push, () => ({ number: one.number, company: one.name })), note: null }
+  return { shipments: await upsertLineTracking(push, () => ({ number: one.number, company: carrierNameOf(one) })), note: null }
 }
 
 /** One push against CatKissFish: the order found lands it and brings its state and tracking; none found after the grace time means the send failed. */
@@ -366,7 +366,7 @@ async function refreshOne(session: CatkissfishSession, push: PushRow): Promise<{
     throw e
   }
   if (landed) await markPushExported(push)
-  if (!live || closed || !hasLeftFactory(remote.state)) return { found: true, shipments: 0 }
+  if (!live || closed || !mayCarryTracking(remote.state)) return { found: true, shipments: 0 }
   const tracking = await applyTracking(session, push, remote)
   if (tracking.note) await prisma.supplierOrderPush.update({ where: { id: push.id }, data: { error: tracking.note } })
   return { found: true, shipments: tracking.shipments }
