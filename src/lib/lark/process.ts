@@ -10,6 +10,7 @@ import {
 } from '@/lib/lark/replies'
 import { describeWorkState, larkTaskStatus } from '@/lib/lark/status'
 import { larkUnassignedReport } from '@/lib/lark/unassigned'
+import { REPLY_ONE_LINE_ONLY, changeSupplierFromLark, undoSupplierFromLark } from '@/lib/lark/supplier-change'
 import { AgentJobError, enqueueAgentJob, type AgentJobKind } from '@/lib/design-agent/jobs'
 import { agentAddNote, agentRejectReview, agentReopenTask, type AgentTaskState } from '@/lib/design-agent/delivery'
 import { workStateFor, type WorkState } from '@/lib/design-agent/work-state'
@@ -116,12 +117,26 @@ async function decide(text: string, sender: string, llm: LarkLlm | null, now?: D
   }
   if (intent.scope === 'OUT_OF_SCOPE') return replied(REPLY_OUT_OF_SCOPE)
   if (intent.scope === 'UNCLEAR') return replied(REPLY_UNCLEAR)
-  if (intent.kind === 'OTHER' || intent.kind === 'SUPPLIER_CHANGE' || intent.kind === 'SUPPLIER_UNDO') return replied(REPLY_OTHER)
+  if (intent.kind === 'OTHER') return replied(REPLY_OTHER)
   const at = now ?? new Date()
   if (intent.kind === 'UNASSIGNED_REPORT') return replied(await larkUnassignedReport(at))
 
   const refs = await resolveTaskRefs(intent.lineKeys, text)
   if (refs.tasks.length === 0 && refs.ambiguous.length === 0) return replied(REPLY_UNCLEAR)
+  if (intent.kind === 'SUPPLIER_CHANGE' || intent.kind === 'SUPPLIER_UNDO') {
+    // One line per message, and only when every code in it was understood: a supplier write is never a guess.
+    if (refs.tasks.length + refs.ambiguous.length + refs.unknown.length > 1) return replied(REPLY_ONE_LINE_ONLY)
+    if (refs.ambiguous.length) return replied(replyAmbiguous(refs.ambiguous[0].ref, refs.ambiguous[0].candidates))
+    const task = refs.tasks[0]
+    try {
+      const r: { reply: string; error?: string } = intent.kind === 'SUPPLIER_CHANGE'
+        ? await changeSupplierFromLark({ task, supplierName: intent.supplierName, supplierSku: intent.supplierSku, instruction: intent.instruction, sender }, at)
+        : await undoSupplierFromLark({ task, sender })
+      return { outcome: 'REPLIED', jobIds: [], lines: [r.reply], error: r.error ?? null }
+    } catch (e) {
+      return { outcome: 'REPLIED', jobIds: [], lines: [`${task.taskKey}: Lỗi máy chủ, thử lại sau.`], error: `${task.taskKey}: ${errText(e)}` }
+    }
+  }
   const lines = refs.ambiguous.map(a => replyAmbiguous(a.ref, a.candidates))
   if (intent.kind === 'STATUS') {
     for (const task of refs.tasks) lines.push(await larkTaskStatus(task, at))

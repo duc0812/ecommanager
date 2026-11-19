@@ -372,10 +372,10 @@ describe('Lark requests on a line someone else holds', () => {
     expect(await jobsOf('LIP27_1')).toEqual([]); expect((await loadTask('LIP27_1'))!.task.status).toBe('DONE')
   })
 
-  it('a supplier change or undo gets the help text for now', async () => {
-    const change = await runAt('LIP30_1 đổi qua Jomall', { ...fix('SUPPLIER_CHANGE', ['LIP30_1'], 'đổi qua Jomall'), supplierName: 'Jomall', supplierSku: 'JM-1' })
-    expect(change).toMatchObject({ outcome: 'REPLIED', reply: REPLY_OTHER, jobIds: [] })
-    expect((await runAt('LIP30_1 hoàn tác đổi xưởng', fix('SUPPLIER_UNDO', ['LIP30_1']))).reply).toBe(REPLY_OTHER)
+  it('a supplier change or undo is answered by the supplier-change path, never with a job', async () => {
+    const change = await runAt('LIP30_1 đổi qua Xưởng Không Có', { ...fix('SUPPLIER_CHANGE', ['LIP30_1'], 'đổi qua Xưởng Không Có'), supplierName: 'Xưởng Không Có', supplierSku: 'JM-1' })
+    expect(change).toMatchObject({ outcome: 'REPLIED', reply: 'LIP30_1: không tìm thấy xưởng "Xưởng Không Có".', jobIds: [] })
+    expect((await runAt('LIP30_1 hoàn tác đổi xưởng', fix('SUPPLIER_UNDO', ['LIP30_1']))).reply).toBe('LIP30_1: chưa có lần chuyển xưởng nào qua Lark để hoàn tác.')
     expect(await jobsOf('LIP30_1')).toEqual([])
   })
 
