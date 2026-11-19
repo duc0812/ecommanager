@@ -73,14 +73,13 @@ export async function workStatesFor(tasks: AgentTaskState[], now: Date = new Dat
   if (idle.length === 0) return out
 
   const board = await readWorkBoard(idle.length > CHUNK ? null : idle.map(t => t.taskKey), now)
-  if (!board.fresh) {
-    for (const t of idle) out.set(t.taskKey, { kind: 'UNKNOWN' })
-    return out
-  }
   const rowsOf = new Map<string, WorkBoardEntry[]>()
-  for (const e of board.entries) rowsOf.set(e.taskKey, [...(rowsOf.get(e.taskKey) ?? []), e])
+  if (board.fresh) for (const e of board.entries) rowsOf.set(e.taskKey, [...(rowsOf.get(e.taskKey) ?? []), e])
+  // A row left behind on an approved task holds nothing: the board only counts while the task is not DONE.
+  const boardCounts = (t: AgentTaskState) => board.fresh && t.status !== 'DONE'
 
   const unheld = idle.filter(t => {
+    if (!boardCounts(t)) return true
     const rows = rowsOf.get(t.taskKey) ?? []
     const queued = rows.find(r => r.source === 'LOCAL_QUEUE' && r.state !== 'held')
     const stream = rows.find(r => r.source === 'STREAM')
@@ -103,8 +102,9 @@ export async function workStatesFor(tasks: AgentTaskState[], now: Date = new Dat
     const assigneeId = assigned(t)
     if (assigneeId) out.set(t.taskKey, { kind: 'PERSON', name: nameOf.get(assigneeId)?.trim() || UNNAMED_ASSIGNEE })
     else if (t.status === 'NEW' && rowOf.get(t.taskId)?.readiness === 'AUTO') out.set(t.taskKey, { kind: 'AUTO' })
+    else if (!board.fresh) out.set(t.taskKey, { kind: 'UNKNOWN' })
     else {
-      const held = (rowsOf.get(t.taskKey) ?? []).find(r => r.source === 'LOCAL_QUEUE' && r.state === 'held')
+      const held = boardCounts(t) ? (rowsOf.get(t.taskKey) ?? []).find(r => r.source === 'LOCAL_QUEUE' && r.state === 'held') : undefined
       out.set(t.taskKey, { kind: 'FREE', heldReason: held?.detail ?? null })
     }
   }

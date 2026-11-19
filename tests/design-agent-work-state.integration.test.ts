@@ -61,7 +61,7 @@ beforeAll(async () => {
     9: { taskStatus: 'NEW' }, 10: { taskStatus: 'NEW' }, 11: { taskStatus: 'REJECTED', pipelineStatus: 'FULFILLED' },
     12: { taskStatus: 'ASK_CUSTOMER' }, 13: { taskStatus: 'DONE', exported: true }, 14: { taskStatus: 'ASSIGNED' },
     15: { taskStatus: 'REJECTED' }, 16: { taskStatus: 'REJECTED' }, 17: { taskStatus: 'REJECTED' }, 18: { taskStatus: 'NEW' },
-    19: { taskStatus: 'REJECTED', exported: true }, 20: { taskStatus: 'DOING' },
+    19: { taskStatus: 'REJECTED', exported: true }, 20: { taskStatus: 'DOING' }, 21: { taskStatus: 'DONE' }, 22: { taskStatus: 'REVIEW' },
   }
   for (const [n, o] of Object.entries(orders)) await fx.order(Number(n), { ...o, withPrint: true })
   await prisma.designTask.update({ where: { taskKey: 'DAW8_1' }, data: { assigneeId: DES.id } })
@@ -109,13 +109,59 @@ describe('workStateFor priority order', () => {
   it('stale board is UNKNOWN', async () => {
     await dropWorkBoard()
     expect(await stateOf('DAW3_1')).toEqual({ kind: 'UNKNOWN' })
-    expect(await stateOf('DAW8_1')).toEqual({ kind: 'UNKNOWN' })
-    expect(await stateOf('DAW9_1')).toEqual({ kind: 'UNKNOWN' })
+    expect(await stateOf('DAW5_1')).toEqual({ kind: 'UNKNOWN' })
+    expect(await stateOf('DAW21_1')).toEqual({ kind: 'UNKNOWN' })
     const at = new Date('2026-11-19T10:00:00Z')
     await publishBoard([queue('DAW3_1', 'waiting')], null, at)
     expect(await stateOf('DAW3_1', new Date(at.getTime() + 600_000))).toMatchObject({ kind: 'QUEUE' })
     expect(await stateOf('DAW3_1', new Date(at.getTime() + 600_001))).toEqual({ kind: 'UNKNOWN' })
     expect(await stateOf('DAW10_1', new Date(at.getTime() + 600_001))).toEqual({ kind: 'UNKNOWN' })
+  })
+
+  it('stale board still reports PERSON', async () => {
+    await dropWorkBoard()
+    expect(await stateOf('DAW8_1')).toEqual({ kind: 'PERSON', name: 'Hoa' })
+    expect(await stateOf('DAW14_1')).toEqual({ kind: 'PERSON', name: 'nhân sự được giao' })
+    const at = new Date('2026-11-19T10:00:00Z')
+    await publishBoard([stream('DAW8_1', 'Luồng 3')], null, at)
+    expect(await stateOf('DAW8_1', new Date(at.getTime() + 600_001))).toEqual({ kind: 'PERSON', name: 'Hoa' })
+    expect(await stateOf('DAW8_1', new Date(at.getTime() + 600_000))).toEqual({ kind: 'STREAM', worker: 'Luồng 3' })
+    await dropWorkBoard()
+    await expect(enqueueAgentJob({ kind: 'FIX', source: 'BACKFILL', taskKey: 'DAW8_1', requestText: 'x' })).rejects.toMatchObject({ state: { kind: 'PERSON', name: 'Hoa' } })
+  })
+
+  it('stale board still reports AUTO', async () => {
+    await dropWorkBoard()
+    expect(await stateOf('DAW9_1')).toEqual({ kind: 'AUTO' })
+    expect(await stateOf('DAW10_1')).toEqual({ kind: 'UNKNOWN' })
+    const at = new Date('2026-11-19T10:00:00Z')
+    await publishBoard([queue('DAW9_1', 'waiting')], null, at)
+    expect(await stateOf('DAW9_1', new Date(at.getTime() + 600_001))).toEqual({ kind: 'AUTO' })
+    expect(await stateOf('DAW9_1', new Date(at.getTime() + 600_000))).toMatchObject({ kind: 'QUEUE' })
+    await dropWorkBoard()
+    await expect(larkJob('DAW9_1')).rejects.toMatchObject({ state: { kind: 'AUTO' } })
+    expect(await jobsOf('DAW9_1')).toEqual([])
+  })
+
+  it('a leftover queue row on a DONE task is ignored', async () => {
+    await publishBoard([queue('DAW21_1', 'waiting', { version: 2, etaAt: ETA })])
+    expect(await stateOf('DAW21_1')).toEqual({ kind: 'FREE', heldReason: null })
+    await publishBoard([stream('DAW21_1'), queue('DAW21_1', 'held', { detail: 'giữ' })], 'Luồng 7')
+    expect(await stateOf('DAW21_1')).toEqual({ kind: 'FREE', heldReason: null })
+    await prisma.designTask.update({ where: { taskKey: 'DAW21_1' }, data: { status: 'REJECTED' } })
+    expect(await stateOf('DAW21_1')).toEqual({ kind: 'STREAM', worker: 'Luồng 7' })
+    await publishBoard([], 'Luồng 7')
+    expect(await stateOf('DAW21_1')).toEqual({ kind: 'STREAM', worker: 'Luồng 7' })
+    await prisma.designTask.update({ where: { taskKey: 'DAW21_1' }, data: { status: 'DONE' } })
+    expect(await stateOf('DAW21_1')).toEqual({ kind: 'FREE', heldReason: null })
+  })
+
+  it('a REVIEW task with a waiting row stays QUEUE', async () => {
+    await publishBoard([queue('DAW22_1', 'waiting', { version: 4, etaAt: ETA, detail: 'chờ lên cloud' })])
+    expect(await stateOf('DAW22_1')).toEqual({ kind: 'QUEUE', state: 'waiting', version: 4, etaAt: new Date(ETA), detail: 'chờ lên cloud' })
+    await publishBoard([stream('DAW22_1', 'Luồng 5')])
+    expect(await stateOf('DAW22_1')).toEqual({ kind: 'STREAM', worker: 'Luồng 5' })
+    await expect(larkJob('DAW22_1')).rejects.toMatchObject({ state: { kind: 'STREAM', worker: 'Luồng 5' } })
   })
 
   it('waiting queue row', async () => {
@@ -265,8 +311,8 @@ describe('one worker per line when a job is created', () => {
     const job = await enqueueFixOnReject({ taskKey: 'DAW3_1', reasons: ['Sai chi tiết'], note: null, by: LEAD, source: 'REJECT', factory: false })
     expect(job).toMatchObject({ source: 'REJECT', status: 'QUEUED' })
     expect(await prisma.designAgentJob.count({ where: { taskKey: 'DAW3_1' } })).toBe(1)
-    expect(await enqueueAgentJob({ kind: 'FIX', source: 'BACKFILL', taskKey: 'DAW8_1', requestText: 'x' })).toMatchObject({ created: true })
-    expect(await enqueueAgentJob({ kind: 'FIX', source: 'BACKFILL', taskKey: 'DAW9_1', requestText: 'x' })).toMatchObject({ created: false })
+    expect(await enqueueAgentJob({ kind: 'FIX', source: 'BACKFILL', taskKey: 'DAW5_1', requestText: 'x' })).toMatchObject({ created: true })
+    await expect(enqueueAgentJob({ kind: 'FIX', source: 'BACKFILL', taskKey: 'DAW8_1', requestText: 'x' })).rejects.toMatchObject({ state: { kind: 'PERSON', name: 'Hoa' } })
   })
 
   it('busy endpoint cancels the job, notes the task, is idempotent', async () => {
