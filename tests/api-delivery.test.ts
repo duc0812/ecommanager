@@ -284,18 +284,48 @@ describe('runApiDelivery', () => {
     expect(f.commits[1].body).toMatchObject({ action: 'revert', revertReadiness: 'LOW' })
   })
 
-  it('puts a preview for committed PRINT files of 30 MB or more; a failure is not fatal', async () => {
-    const big = localFile('huge.png', 30 * 1024 * 1024)
+  it('keeps a preview that failed for the next run; the failure is not fatal and a file without a preview is dropped', async () => {
+    const withPreview = localFile('front.png')
     const f = fakes()
     f.client.putPreview = async (id: string) => { f.events.push(`preview ${id}`); return { ok: false, status: 500, body: {} } }
-    const previewOf = async (p: string) => (p === big ? Buffer.from([0xff, 0xd8, 0xff]) : null)
+    const previewOf = async (p: string) => (p === withPreview ? Buffer.from([0xff, 0xd8, 0xff]) : null)
     const r = await run(f, [line({ files: [
-      { kind: 'PRINT', printArea: 'Front', path: big, fileName: 'huge.png', mimeType: 'image/png', widthPx: 1, heightPx: 1 },
-      { kind: 'PRINT', printArea: 'Back', path: localFile('small.png'), fileName: 'small.png', mimeType: 'image/png', widthPx: 1, heightPx: 1 },
+      { kind: 'PRINT', printArea: 'Front', path: withPreview, fileName: 'front.png', mimeType: 'image/png', widthPx: 1, heightPx: 1 },
+      { kind: 'PRINT', printArea: 'Back', path: localFile('back.png'), fileName: 'back.png', mimeType: 'image/png', widthPx: 1, heightPx: 1 },
     ] })], { previewOf })
     expect(r.applied).toBe(1)
     expect(f.events.filter(e => e.startsWith('preview'))).toHaveLength(1)
     expect(entry().pendingPreviews).toHaveLength(1)
+  })
+
+  it('puts a preview for every committed print and mockup, however small', async () => {
+    const print = localFile('print.png')
+    const mockup = localFile('mockup.jpg')
+    const f = fakes()
+    const asked: string[] = []
+    const previewOf = async (p: string) => { asked.push(p); return Buffer.from([0xff, 0xd8, 0xff]) }
+    await run(f, [line({ files: [
+      { kind: 'PRINT', printArea: 'Front', path: print, fileName: 'print.png', mimeType: 'image/png', widthPx: 1, heightPx: 1 },
+      { kind: 'MOCKUP', printArea: 'Preview', path: mockup, fileName: 'mockup.jpg', mimeType: 'image/jpeg', widthPx: 1, heightPx: 1 },
+    ] })], { previewOf })
+    expect(asked.sort()).toEqual([mockup, print].sort())
+    expect(f.events.filter(e => e.startsWith('preview'))).toHaveLength(2)
+    expect(entry().pendingPreviews).toEqual([])
+  })
+
+  it('gives a shortcut line the preview of the file it points to', async () => {
+    const source = localFile('shared.png')
+    const f = fakes()
+    const asked: string[] = []
+    const previewOf = async (p: string) => { asked.push(p); return Buffer.from([0xff, 0xd8, 0xff]) }
+    await run(f, [line({ taskKey: 'LIT1_1', files: [
+      { kind: 'PRINT', printArea: 'Front', path: source, fileName: 'shared.png', mimeType: 'image/png', widthPx: 1, heightPx: 1 },
+    ] })], { previewOf })
+    await run(f, [line({ taskKey: 'LIT2_1', files: [
+      { kind: 'PRINT', printArea: 'Front', shortcutOf: 'D-shared.png', size: 10, fileName: 'shared.png', mimeType: 'image/png', widthPx: 1, heightPx: 1 },
+    ] })], { previewOf })
+    expect(asked).toEqual([source, source])
+    expect(f.events.filter(e => e.startsWith('preview'))).toHaveLength(2)
   })
 
   it('keys the ledger per delivery: a replace after a push is sent; rerun, the replace is done and the old push is stale', async () => {

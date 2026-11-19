@@ -11,7 +11,6 @@ import { DeliveryGaveUp, DeliveryStopped } from './delivery-client.mjs'
 // or when its plan ids are no longer the live prints (planIsOld), unless its files are already live there (a lost response). Applying a delivery clears `applied` on the task's other
 // entries, so a later re-push or a second revert of the same task is sent instead of answered from the ledger.
 
-const PREVIEW_MIN_BYTES = 30 * 1024 * 1024
 const DROP_PREVIEW_STATUSES = new Set([400, 404, 409, 413])
 // The server no longer sees the uploaded file where it should be: the next run uploads it again. A knownDriveFileId (a copy
 // already on Drive) is committed without an upload; once refused this way it is never offered again for that delivery.
@@ -341,10 +340,13 @@ async function run({ lines, client, uploader, ledgerPath, log, uploads, previewO
       delete led.skippedOnProd
       led.pendingPreviews = []
       if (previewOf) {
+        // Every new file gets one: Drive's own thumbnail can be slow or not exist yet. A shortcut has no local file, so it uses its source's.
+        const localPathOf = id => Object.values(ledger.lines).flatMap(e => Object.values(e?.files ?? {})).find(v => v?.driveFileId === id && v.path)?.path
         for (const a of res.body?.artworks ?? []) {
-          if (!a?.id || a.kind !== 'PRINT' || !a.driveFileId) continue
-          const f = files.find(x => x.kind === 'PRINT' && !x.shortcutOf && led.files[fileKey(x)]?.driveFileId === a.driveFileId)
-          if (f && (statOf(f.path)?.size ?? 0) >= PREVIEW_MIN_BYTES) led.pendingPreviews.push({ artworkId: a.id, path: f.path })
+          if (!a?.id || !a.driveFileId) continue
+          const f = files.find(x => x.kind === a.kind && led.files[fileKey(x)]?.driveFileId === a.driveFileId)
+          const local = f && (f.path ?? localPathOf(a.driveFileId))
+          if (local) led.pendingPreviews.push({ artworkId: a.id, path: local })
         }
       }
       save()

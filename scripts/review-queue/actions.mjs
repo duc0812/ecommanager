@@ -84,12 +84,14 @@ function dryVerdict(r, line) {
 
 const pick = (results, line, i) => (results[i]?.taskKey === line.taskKey ? results[i] : results.find(x => x.taskKey === line.taskKey))
 
-async function previewLookup(queue, item) {
+export async function previewLookup(queue, item) {
   const v = (await queue.versions(item.id)).find(x => x.n === item.version)
   const byPath = new Map((v?.files ?? []).filter(f => f.path && f.preview).map(f => [path.resolve(f.path), f.preview]))
   return async p => {
-    const pv = byPath.get(path.resolve(p))
-    return pv && fs.existsSync(pv) ? fs.readFileSync(pv) : null
+    const abs = path.resolve(p)
+    // A shared print's file sits in the first line's queue item, with its preview beside it.
+    const pv = byPath.get(abs) ?? path.join(path.dirname(abs), 'preview', `${path.parse(abs).name}.jpg`)
+    return fs.existsSync(pv) ? fs.readFileSync(pv) : null
   }
 }
 

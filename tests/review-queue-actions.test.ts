@@ -3,7 +3,7 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import { openQueue } from '../scripts/review-queue/store.mjs'
-import { approveItem, rejectItem, sendToCloud, removeItem, tickQueue, makeHold, loadEnvFiles, loadApproveToken, dpapiDecrypt, makeLiveDeps, TICK_BUDGET_MS } from '../scripts/review-queue/actions.mjs'
+import { approveItem, rejectItem, sendToCloud, removeItem, tickQueue, makeHold, loadEnvFiles, loadApproveToken, dpapiDecrypt, makeLiveDeps, previewLookup, TICK_BUDGET_MS } from '../scripts/review-queue/actions.mjs'
 import { HOLDING_NOTE } from '../scripts/review-queue/intake.mjs'
 import { execFileSync } from 'child_process'
 import { createDeliveryClient, DeliveryGaveUp } from '../scripts/lib/delivery-client.mjs'
@@ -324,6 +324,21 @@ describe('reject, send to cloud, remove', () => {
     expect(await removeItem(q, id, { version: 1 })).toMatchObject({ ok: false, code: 'version_changed', version: 2 })
     expect(await statusOf(id)).toBe('waiting')
     expect(await removeItem(q, id, { version: 2 })).toMatchObject({ ok: true, status: 'removed' })
+  })
+})
+
+describe('previewLookup', () => {
+  it('finds the preview of this item, and of a file another queue item holds (a shared print)', async () => {
+    const write = (p: string, text: string) => { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, text); return p }
+    const own = path.join(tmp, 'items', 'a', 'v1', 'PRINT_Front.png')
+    const ownPreview = write(path.join(tmp, 'items', 'a', 'v1', 'preview', 'PRINT_Front.jpg'), 'own')
+    const lead = path.join(tmp, 'items', 'b', 'v2', 'PRINT_Print.jpg')
+    write(path.join(tmp, 'items', 'b', 'v2', 'preview', 'PRINT_Print.jpg'), 'lead')
+    const queue = { versions: async () => [{ n: 1, files: [{ path: own, preview: ownPreview }] }] }
+    const previewOf = await previewLookup(queue, { id: 'a', version: 1 })
+    expect(String(await previewOf(own))).toBe('own')
+    expect(String(await previewOf(lead))).toBe('lead')
+    expect(await previewOf(path.join(tmp, 'items', 'c', 'v1', 'PRINT_None.png'))).toBeNull()
   })
 })
 
