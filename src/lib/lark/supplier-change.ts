@@ -5,21 +5,24 @@ import { agentTaskState, type AgentTaskState } from '@/lib/design-agent/delivery
 import { workStatesFor, type WorkState } from '@/lib/design-agent/work-state'
 import { describeWorkState } from '@/lib/lark/status'
 import { lineKeysOf } from '@/lib/order-lines'
+import { loadTemplateContext, pickTemplate } from '@/lib/print-template-resolve'
 import { parseProfileOverrides, profileKey, type ProductProfileOverride } from '@/lib/product-mapping'
 import { productionOverride } from '@/lib/production-override'
-import { recalculateMissingOrderLineCosts } from '@/lib/repos/order-costs'
+import { loadLineResolver, recalculateMissingOrderLineCosts } from '@/lib/repos/order-costs'
 import { FROZEN_PIPELINE_STATUSES } from '@/lib/repos/product-profiles'
 
 export const REPLY_ONE_LINE_ONLY = 'Mỗi lần chỉ chuyển xưởng một dòng.'
 
 const MAX_CANDIDATES = 5
 const MIN_PARTIAL_NAME = 3
+const MIN_SURE_WORDS = 2
 const NO_SUPPLIER = 'chưa có xưởng'
 const NO_SKU = 'chưa có'
 const CLOSED_TASK_STATUSES = ['DONE', 'CANCELLED']
 
 type Combo = Record<string, string>
 type ChangeResult = { changed: boolean; reply: string; error?: string }
+type LineRef = { orderId: string; shopifyLineId: string }
 type LineSnapshot = {
   lineId: string; orderId: string; shopifyLineId: string; key: string
   resolvedSupplierId: string | null; resolvedSupplierSku: string | null; resolvedBaseCost: number | null
@@ -36,6 +39,8 @@ function plain(text: string): string {
 const wordsOf = (text: string) => plain(text).split(/[^a-z0-9]+/).filter(Boolean)
 const bySku = (a: { sku: string }, b: { sku: string }) => a.sku.localeCompare(b.sku, 'en', { numeric: true })
 const errText = (e: unknown) => String((e as Error)?.message ?? e).slice(0, 500)
+const sameLine = (a: LineRef, b: LineRef) => a.orderId === b.orderId && a.shopifyLineId === b.shopifyLineId
+const listed = (keys: string[]) => `${keys.slice(0, MAX_CANDIDATES).join(', ')}${keys.length > MAX_CANDIDATES ? '…' : ''}`
 
 function comboOf(json: string | null): Combo {
   if (!json) return {}
@@ -59,6 +64,16 @@ function withOverride(overrides: ProductProfileOverride[], combo: Combo, supplie
   return [{ combo, supplierProductId }, ...overrides.filter(o => comboSignature(o.combo) !== signature)]
 }
 
+/** Overrides as they were before the change; when the profile was edited since, only this combo is put back. */
+function withoutOverride(current: ProductProfileOverride[], before: ProductProfileOverride[], combo: Combo, movedTo: string): ProductProfileOverride[] {
+  if (JSON.stringify(current) === JSON.stringify(withOverride(before, combo, movedTo))) return before
+  const signature = comboSignature(combo)
+  const same = (o: ProductProfileOverride) => comboSignature(o.combo) === signature
+  const kept = current.filter(o => !(same(o) && o.supplierProductId === movedTo))
+  const prior = before.find(same)
+  return prior && !kept.some(same) ? [prior, ...kept] : kept
+}
+
 async function findSupplier(name: string) {
   const want = plain(name)
   const suppliers = await prisma.supplier.findMany({ where: { isActive: true }, select: { id: true, name: true, code: true }, orderBy: { code: 'asc' } })
@@ -67,7 +82,7 @@ async function findSupplier(name: string) {
   return suppliers.filter(s => plain(s.name).includes(want) || plain(s.code).includes(want))
 }
 
-type Product = { id: string; sku: string; productName: string | null; productType: string | null; variant1Value: string | null; variant2Value: string | null; printTemplate: { name: string } | null }
+type Product = { id: string; sku: string; productName: string | null; productType: string | null; variant1Value: string | null; variant2Value: string | null; printTemplateId: string | null }
 
 /** The one product the message names, or the SKUs to offer when it names none or several. */
 function findProduct(products: Product[], supplierSku: string, instruction: string): { product: Product | null; candidates: Product[] } {
@@ -82,18 +97,36 @@ function findProduct(products: Product[], supplierSku: string, instruction: stri
   const asked = Array.from(new Set(wordsOf(instruction))).filter(w => stock.some(s => s.words.has(w)))
   if (asked.length === 0) return { product: null, candidates: [] }
   const fits = stock.filter(s => asked.every(w => s.words.has(w))).map(s => s.p).sort(bySku)
-  if (fits.length === 1) return { product: fits[0], candidates: [] }
+  if (fits.length === 1) {
+    // One stray word that happens to sit in a single product name is not a choice: it takes two words, the SKU or the whole name.
+    const said = plain(instruction).split(' ')
+    const only = fits[0]
+    const sure = asked.length >= MIN_SURE_WORDS || said.includes(plain(only.sku)) || (!!only.productName && said.includes(plain(only.productName)))
+    return sure ? { product: only, candidates: [] } : { product: null, candidates: fits }
+  }
   if (fits.length > 1) return { product: null, candidates: fits }
   const score = (s: { words: Set<string> }) => asked.filter(w => s.words.has(w)).length
   return { product: null, candidates: stock.filter(s => score(s) > 0).sort((a, b) => score(b) - score(a) || bySku(a.p, b.p)).map(s => s.p) }
 }
 
-/** A template of the supplier's own for this SKU. The supplier's default (no SKU) fits no product in particular. */
-async function realTemplateName(supplierId: string, product: Product): Promise<string | null> {
-  if (product.printTemplate) return product.printTemplate.name
-  const templates = await prisma.printTemplate.findMany({ where: { supplierId, supplierSku: { not: null } }, select: { name: true, supplierSku: true } })
-  const sku = product.sku.trim().toLowerCase()
-  return templates.find(t => (t.supplierSku as string).trim().toLowerCase() === sku)?.name ?? null
+type TemplateAfter = { name: string | null; real: boolean; fallback: boolean; pinned: boolean }
+
+/**
+ * The template the tool will show for the line once it sits on the new supplier and SKU, found with the tool's own picker.
+ * It is real when it belongs to that supplier, carries a SKU of its own, and is either linked to the product or named after
+ * its SKU. The supplier's default (no SKU) and a product pin made for another SKU fit no product in particular.
+ */
+async function templateAfterChange(
+  line: { orderId: string; shopifyProductId: string; shopifyProductType: string | null }, profile: { printTemplateId: string | null } | null, supplierId: string, product: Product,
+): Promise<TemplateAfter> {
+  const lookup = { ...line, resolvedSupplierId: supplierId, resolvedSupplierSku: product.sku }
+  const picked = pickTemplate(lookup, profile, await loadTemplateContext([lookup], [profile?.printTemplateId]))
+  if (!picked) return { name: null, real: false, fallback: true, pinned: false }
+  const row = await prisma.printTemplate.findUnique({ where: { id: picked.id }, select: { supplierId: true, supplierSku: true } })
+  const ownSku = row?.supplierSku ?? null
+  const real = !!row && row.supplierId === supplierId && ownSku !== null
+    && (picked.id === product.printTemplateId || ownSku.trim().toLowerCase() === product.sku.trim().toLowerCase())
+  return { name: picked.name, real, fallback: !!row && ownSku === null, pinned: !!profile?.printTemplateId && picked.id === profile.printTemplateId }
 }
 
 async function groupOf(storeId: string, shopifyProductId: string, signature: string) {
@@ -118,7 +151,7 @@ async function keysOf(group: GroupLine[]): Promise<{ keyOf: Map<string, string>;
   const keyOf = new Map<string, string>()
   const taskKeyOf = new Map<string, string>()
   for (const l of group) {
-    const task = tasks.find(t => t.orderId === l.orderId && t.shopifyLineId === l.shopifyLineId)
+    const task = tasks.find(t => sameLine(t, l))
     if (task) taskKeyOf.set(l.id, task.taskKey)
     const fromPosition = lineKeysOf(l.order.shopifyOrderNumber, siblings.filter(s => s.orderId === l.orderId)).get(l.shopifyLineId)
     keyOf.set(l.id, task?.taskKey ?? fromPosition ?? `${l.order.shopifyOrderNumber.replace(/^#/, '')} (${l.productTitle})`)
@@ -137,35 +170,74 @@ async function supplierNames(ids: Array<string | null>): Promise<Map<string, str
   return new Map((await prisma.supplier.findMany({ where: { id: { in: wanted } }, select: { id: true, name: true } })).map(s => [s.id, s.name]))
 }
 
-/** Costs, task rows and the supplier shown on each task, for the orders of the changed lines only. */
-async function settle(lines: Array<{ orderId: string; shopifyLineId: string }>, eventFor: (line: { orderId: string; shopifyLineId: string }) => string | null): Promise<string[]> {
-  const orderIds = Array.from(new Set(lines.map(l => l.orderId)))
+/** Costs and task rows, for the orders of the changed lines only. */
+async function settleOrders(orderIds: string[]): Promise<string[]> {
   const errors: string[] = []
   await recalculateMissingOrderLineCosts({ orderIds }).catch(e => { errors.push(`tính giá vốn: ${errText(e)}`) })
   await syncDesignTasksCounted(orderIds).then(r => errors.push(...r.errors), e => { errors.push(`đồng bộ task: ${errText(e)}`) })
+  return errors
+}
+
+/** The supplier shown on each task and the event that says why it changed. */
+async function noteOnTasks(lines: LineRef[], eventFor: (line: LineRef) => string): Promise<string[]> {
+  if (lines.length === 0) return []
   try {
+    const orderIds = Array.from(new Set(lines.map(l => l.orderId)))
     const [current, tasks] = await Promise.all([
       prisma.orderLine.findMany({ where: { orderId: { in: orderIds } }, select: { orderId: true, shopifyLineId: true, resolvedSupplierId: true } }),
       prisma.designTask.findMany({ where: { orderId: { in: orderIds } }, select: { id: true, orderId: true, shopifyLineId: true, status: true, supplierSnapshot: true } }),
     ])
     const names = await supplierNames(current.map(l => l.resolvedSupplierId))
     for (const line of lines) {
-      const task = tasks.find(t => t.orderId === line.orderId && t.shopifyLineId === line.shopifyLineId)
+      const task = tasks.find(t => sameLine(t, line))
       if (!task) continue
-      const supplierId = current.find(l => l.orderId === line.orderId && l.shopifyLineId === line.shopifyLineId)?.resolvedSupplierId
+      const supplierId = current.find(l => sameLine(l, line))?.resolvedSupplierId
       const name = supplierId ? names.get(supplierId) ?? null : null
-      const message = eventFor(line)
       const open = !CLOSED_TASK_STATUSES.includes(task.status)
       await prisma.designTask.update({
         where: { id: task.id },
         data: {
           ...(open && name && name !== task.supplierSnapshot ? { supplierSnapshot: name } : {}),
-          ...(message ? { events: { create: { type: 'SYSTEM', message } } } : {}),
+          events: { create: { type: 'SYSTEM', message: eventFor(line) } },
         },
       })
     }
-  } catch (e) { errors.push(`ghi sự kiện: ${errText(e)}`) }
-  return errors
+    return []
+  } catch (e) { return [`ghi sự kiện: ${errText(e)}`] }
+}
+
+/**
+ * The first group line that did not land where the message asked: today's mapping must give it the named product by
+ * itself, and the cost refresh must have priced it there. The values written before the refresh prove nothing.
+ */
+async function firstNotLanded(group: GroupLine[], supplierId: string, product: Product): Promise<{ line: GroupLine; resolvedSku: string | null; mapped: boolean } | null> {
+  const [resolveLine, current] = await Promise.all([
+    loadLineResolver(),
+    prisma.orderLine.findMany({
+      where: { id: { in: group.map(l => l.id) } },
+      select: {
+        id: true, productionOverrideJson: true, shopifyVariantId: true, shopifyProductType: true, variantOptions: true, shopifyProductId: true,
+        resolvedSupplierId: true, resolvedSupplierSku: true, resolvedBaseCost: true, order: { select: { storeId: true, shippingCountry: true } },
+      },
+    }),
+  ])
+  for (const line of group) {
+    const now = current.find(c => c.id === line.id)
+    const resolved = now ? resolveLine(now) : null
+    const mapped = resolved?.id === product.id
+    if (!now || !mapped || now.resolvedSupplierId !== supplierId || now.resolvedSupplierSku !== product.sku || now.resolvedBaseCost == null) {
+      return { line, resolvedSku: resolved?.sku ?? null, mapped }
+    }
+  }
+  return null
+}
+
+function restoreData(s: LineSnapshot) {
+  return {
+    resolvedSupplierId: s.resolvedSupplierId, resolvedSupplierSku: s.resolvedSupplierSku, resolvedBaseCost: s.resolvedBaseCost,
+    resolvedShipFirst: s.resolvedShipFirst, resolvedShipAdditional: s.resolvedShipAdditional, resolvedImportTax: s.resolvedImportTax,
+    costSnapshotAt: s.costSnapshotAt ? new Date(s.costSnapshotAt) : null,
+  }
 }
 
 const SETTLE_FAILED = ' Lưu ý: chưa tính lại xong giá vốn hoặc task của các dòng này — hãy bấm đồng bộ lại trên tool.'
@@ -187,17 +259,12 @@ export async function changeSupplierFromLark(
 
   const products = await prisma.supplierProduct.findMany({
     where: { supplierId: supplier.id },
-    select: { id: true, sku: true, productName: true, productType: true, variant1Value: true, variant2Value: true, printTemplate: { select: { name: true } } },
+    select: { id: true, sku: true, productName: true, productType: true, variant1Value: true, variant2Value: true, printTemplateId: true },
   })
   const { product, candidates } = findProduct(products, input.supplierSku, input.instruction)
   if (!product) {
     const offer = candidates.slice(0, MAX_CANDIDATES).map(p => p.sku)
     return refuse(`chưa xác định được sản phẩm của ${supplier.name}. Hãy ghi đúng SKU xưởng.${offer.length ? ` Gợi ý: ${offer.join(', ')}` : ' Không có SKU nào gần giống.'}`)
-  }
-
-  const templateName = await realTemplateName(supplier.id, product)
-  if (!templateName) {
-    return refuse(`SKU ${product.sku} của ${supplier.name} chưa có template in riêng (template mặc định của xưởng không được tính). Hãy tạo template cho SKU này trên tool rồi nhắn lại.`)
   }
 
   const named = await prisma.orderLine.findUnique({
@@ -213,6 +280,18 @@ export async function changeSupplierFromLark(
 
   const { storeId } = named.order
   const shopifyProductId = named.shopifyProductId
+  const profileWhere = { storeId_shopifyProductId: { storeId, shopifyProductId } }
+  const pin = await prisma.productProfile.findUnique({ where: profileWhere, select: { printTemplateId: true } })
+  const template = await templateAfterChange({ orderId: named.orderId, shopifyProductId, shopifyProductType: named.shopifyProductType }, pin, supplier.id, product)
+  if (!template.real) {
+    if (!template.name || template.fallback) {
+      return refuse(`SKU ${product.sku} của ${supplier.name} chưa có template in riêng (template mặc định của xưởng không được tính). Hãy tạo template cho SKU này trên tool rồi nhắn lại.`)
+    }
+    return refuse(template.pinned
+      ? `SKU ${product.sku} của ${supplier.name} sẽ dùng template "${template.name}" đang ghim ở sản phẩm, không phải template riêng của SKU này. Hãy sửa template của sản phẩm trên tool rồi nhắn lại.`
+      : `SKU ${product.sku} của ${supplier.name} sẽ dùng template "${template.name}", không phải template riêng của SKU này. Hãy gắn template cho SKU này trên tool rồi nhắn lại.`)
+  }
+
   const found = await groupOf(storeId, shopifyProductId, comboSignature(combo))
   const { keyOf, taskKeyOf } = await keysOf(found)
   const name = (l: { id: string }) => keyOf.get(l.id) as string
@@ -231,11 +310,12 @@ export async function changeSupplierFromLark(
     if (state?.kind !== 'FREE') return refuse(`không chuyển được vì dòng cùng biến thể chưa rảnh — ${notFree(name(l), state, now)}`)
   }
 
+  const orderIds = Array.from(new Set(group.map(l => l.orderId)))
   const prints = await prisma.designArtwork.findMany({
-    where: { orderId: { in: Array.from(new Set(group.map(l => l.orderId))) }, kind: 'PRINT', removedAt: null },
+    where: { orderId: { in: orderIds }, kind: 'PRINT', removedAt: null },
     select: { orderId: true, shopifyLineId: true },
   })
-  const printed = group.find(l => prints.some(p => p.orderId === l.orderId && p.shopifyLineId === l.shopifyLineId))
+  const printed = group.find(l => prints.some(p => sameLine(p, l)))
   if (printed) return refuse(`không chuyển được — dòng ${name(printed)} cùng biến thể đang có file in. Gỡ file in của xưởng cũ trên tool rồi nhắn lại.`)
 
   // A line edited by hand, or a variant mapped by hand, is resolved before the product profile: the override would not move it.
@@ -252,51 +332,69 @@ export async function changeSupplierFromLark(
     resolvedShipFirst: l.resolvedShipFirst, resolvedShipAdditional: l.resolvedShipAdditional, resolvedImportTax: l.resolvedImportTax,
     costSnapshotAt: l.costSnapshotAt ? l.costSnapshotAt.toISOString() : null,
   }))
+  let written: { changeId: string; before: ProductProfileOverride[]; createdProfileId: string | null }
   try {
-    await prisma.$transaction(async tx => {
-      const where = { storeId_shopifyProductId: { storeId, shopifyProductId } }
-      const profile = await tx.productProfile.findUnique({ where })
+    written = await prisma.$transaction(async tx => {
+      const profile = await tx.productProfile.findUnique({ where: profileWhere })
       const before = parseProfileOverrides(profile?.overrides)
       const overrides = JSON.stringify(withOverride(before, combo, product.id))
-      if (profile) await tx.productProfile.update({ where, data: { overrides } })
-      else await tx.productProfile.create({ data: { storeId, shopifyProductId, title: named.productTitle, imageUrl: safeHttpUrl(named.imageUrl), overrides } })
+      let createdProfileId: string | null = null
+      if (profile) await tx.productProfile.update({ where: profileWhere, data: { overrides } })
+      else createdProfileId = (await tx.productProfile.create({ data: { storeId, shopifyProductId, title: named.productTitle, imageUrl: safeHttpUrl(named.imageUrl), overrides } })).id
       const moved = await tx.orderLine.updateMany({
         where: { id: { in: group.map(l => l.id) }, exportedAt: null },
         data: { resolvedSupplierId: supplier.id, resolvedSupplierSku: product.sku, resolvedBaseCost: null },
       })
       // A line exported between the check and the write takes the whole change back.
       if (moved.count !== group.length) throw new LineMoved()
-      await tx.botMappingChange.create({
+      const row = await tx.botMappingChange.create({
         data: {
           taskKey: key, profileKey: profileKey(storeId, shopifyProductId), comboJson: JSON.stringify(combo),
           beforeOverridesJson: JSON.stringify(before), afterSupplierProductId: product.id,
           lineSnapshotJson: JSON.stringify(snapshot), requestedBy: input.sender, createdAt: now,
         },
       })
+      return { changeId: row.id, before, createdProfileId }
     })
   } catch (e) {
     if (e instanceof LineMoved) return refuse('không chuyển được — có dòng cùng biến thể vừa được xuất xưởng. Chưa đổi gì.')
     throw e
   }
 
+  const errors = await settleOrders(orderIds)
+  const stray = await firstNotLanded(group, supplier.id, product)
+  if (stray) {
+    await prisma.$transaction(async tx => {
+      if (written.createdProfileId) await tx.productProfile.deleteMany({ where: { id: written.createdProfileId } })
+      else {
+        const profile = await tx.productProfile.findUnique({ where: profileWhere })
+        if (profile) {
+          const overrides = withoutOverride(parseProfileOverrides(profile.overrides), written.before, combo, product.id)
+          await tx.productProfile.update({ where: profileWhere, data: { overrides: JSON.stringify(overrides) } })
+        }
+      }
+      for (const s of snapshot) await tx.orderLine.updateMany({ where: { id: s.lineId }, data: restoreData(s) })
+      await tx.botMappingChange.deleteMany({ where: { id: written.changeId } })
+    })
+    const undoErrors = await settleOrders(orderIds)
+    const why = stray.mapped
+      ? `chưa tính được giá vốn theo SKU ${product.sku}`
+      : stray.resolvedSku
+        ? `mapping của ${supplier.name} đưa dòng này về SKU ${stray.resolvedSku}, không phải ${product.sku}`
+        : `mapping của ${supplier.name} không tìm được SKU đúng kích cỡ, màu của dòng này khi dùng ${product.sku}`
+    const failed = [...errors, ...undoErrors]
+    return { ...refuse(`không chuyển được — dòng ${name(stray.line)}: ${why}. Chưa đổi gì.`), ...(failed.length ? { error: failed.join('; ') } : {}) }
+  }
+
   const oldNames = await supplierNames(snapshot.map(s => s.resolvedSupplierId))
-  const errors = await settle(group, line => {
-    const prior = snapshot.find(s => s.orderId === line.orderId && s.shopifyLineId === line.shopifyLineId)
+  errors.push(...await noteOnTasks(group, line => {
+    const prior = snapshot.find(s => sameLine(s, line))
     const old = prior?.resolvedSupplierId ? oldNames.get(prior.resolvedSupplierId) ?? NO_SUPPLIER : NO_SUPPLIER
     return `Chuyển xưởng theo yêu cầu của ${input.sender} trên Lark: ${old} sang ${supplier.name} (${product.sku})`
-  })
-
-  const after = await prisma.orderLine.findMany({ where: { id: { in: group.map(l => l.id) } }, select: { id: true, resolvedSupplierId: true, resolvedSupplierSku: true } })
-  const elsewhere = group.filter(l => {
-    const current = after.find(a => a.id === l.id)
-    return !current || current.resolvedSupplierId !== supplier.id || current.resolvedSupplierSku !== product.sku
-  })
-  const drift = elsewhere.length
-    ? ` Lưu ý: ${elsewhere.slice(0, MAX_CANDIDATES).map(name).join(', ')} đang ở SKU khác theo mapping kích cỡ, màu của xưởng — hãy kiểm tra trên tool.`
-    : ''
+  }))
   return {
     changed: true,
-    reply: `${key}: đã chuyển sang ${supplier.name}, SKU ${product.sku}, template ${templateName}. Đã đổi ${group.length} dòng cùng biến thể.${drift}${errors.length ? SETTLE_FAILED : ''}`,
+    reply: `${key}: đã chuyển sang ${supplier.name}, SKU ${product.sku}, template ${template.name}. Đã đổi ${group.length} dòng cùng biến thể.${errors.length ? SETTLE_FAILED : ''}`,
     ...(errors.length ? { error: errors.join('; ') } : {}),
   }
 }
@@ -308,16 +406,6 @@ function parseSnapshot(json: string): LineSnapshot[] {
   } catch { return [] }
 }
 
-/** Overrides as they were before the change; when the profile was edited since, only this combo is put back. */
-function overridesAfterUndo(current: ProductProfileOverride[], before: ProductProfileOverride[], combo: Combo, movedTo: string): ProductProfileOverride[] {
-  if (JSON.stringify(current) === JSON.stringify(withOverride(before, combo, movedTo))) return before
-  const signature = comboSignature(combo)
-  const same = (o: ProductProfileOverride) => comboSignature(o.combo) === signature
-  const kept = current.filter(o => !(same(o) && o.supplierProductId === movedTo))
-  const prior = before.find(same)
-  return prior && !kept.some(same) ? [prior, ...kept] : kept
-}
-
 export async function undoSupplierFromLark(input: { task: AgentTaskState; sender: string }): Promise<{ changed: boolean; reply: string; error?: string }> {
   const key = input.task.taskKey
   const refuse = (text: string) => ({ changed: false, reply: `${key}: ${text}` })
@@ -327,67 +415,91 @@ export async function undoSupplierFromLark(input: { task: AgentTaskState; sender
   const combo = comboOf(change.comboJson)
   const signature = comboSignature(combo)
   const later = (await prisma.botMappingChange.findMany({
-    where: { profileKey: change.profileKey, undoneAt: null, createdAt: { gte: change.createdAt }, id: { not: change.id } }, orderBy: { createdAt: 'desc' },
-  })).find(c => c.createdAt > change.createdAt && comboSignature(comboOf(c.comboJson)) === signature)
+    where: { profileKey: change.profileKey, undoneAt: null, createdAt: { gt: change.createdAt }, id: { not: change.id } }, orderBy: { createdAt: 'desc' },
+  })).find(c => comboSignature(comboOf(c.comboJson)) === signature)
   if (later) return refuse(`không hoàn tác được — biến thể này đã được chuyển xưởng lần nữa qua ${later.taskKey}. Hãy hoàn tác lần đó trước.`)
+
+  const movedTo = await prisma.supplierProduct.findUnique({
+    where: { id: change.afterSupplierProductId }, select: { sku: true, supplierId: true, supplier: { select: { name: true } } },
+  })
+  if (!movedTo) return refuse('không hoàn tác được — sản phẩm xưởng của lần chuyển không còn trong hệ thống. Hãy sửa mapping trên tool.')
+
+  const [storeId, ...rest] = change.profileKey.split('|')
+  const shopifyProductId = rest.join('|')
+  const profileWhere = { storeId_shopifyProductId: { storeId, shopifyProductId } }
+  const sameCombo = (o: ProductProfileOverride) => comboSignature(o.combo) === signature
+  const pointsTo = parseProfileOverrides((await prisma.productProfile.findUnique({ where: profileWhere, select: { overrides: true } }))?.overrides).find(sameCombo)
+  if (pointsTo && pointsTo.supplierProductId !== change.afterSupplierProductId) {
+    const other = await prisma.supplierProduct.findUnique({ where: { id: pointsTo.supplierProductId }, select: { sku: true, supplier: { select: { name: true } } } })
+    return refuse(`không hoàn tác được — mapping của biến thể này đã được sửa sau lần chuyển, hiện trỏ tới ${other ? `SKU ${other.sku} của ${other.supplier.name}` : 'một sản phẩm xưởng khác'}. Hãy sửa trên tool.`)
+  }
 
   const snapshot = parseSnapshot(change.lineSnapshotJson)
   const lines = await prisma.orderLine.findMany({
     where: { id: { in: snapshot.map(s => s.lineId) } },
-    select: { id: true, orderId: true, shopifyLineId: true, exportedAt: true, order: { select: { pipelineStatus: true } } },
+    select: { id: true, exportedAt: true, resolvedSupplierId: true, resolvedSupplierSku: true, order: { select: { pipelineStatus: true } } },
   })
-  const present = snapshot.filter(s => lines.some(l => l.id === s.lineId))
-  const exported = present.find(s => lines.find(l => l.id === s.lineId)?.exportedAt)
+  const lineOf = (s: LineSnapshot) => lines.find(l => l.id === s.lineId)
+  const present = snapshot.filter(s => lineOf(s))
+  const exported = present.find(s => lineOf(s)?.exportedAt)
   if (exported) return refuse(`không hoàn tác được — dòng ${exported.key} đã xuất xưởng sau lần chuyển.`)
   const prints = await prisma.designArtwork.findMany({
     where: { orderId: { in: Array.from(new Set(present.map(s => s.orderId))) }, kind: 'PRINT', removedAt: null, createdAt: { gt: change.createdAt } },
     select: { orderId: true, shopifyLineId: true },
   })
-  const printed = present.find(s => prints.some(p => p.orderId === s.orderId && p.shopifyLineId === s.shopifyLineId))
+  const printed = present.find(s => prints.some(p => sameLine(p, s)))
   if (printed) return refuse(`không hoàn tác được — dòng ${printed.key} đã có file in làm sau lần chuyển.`)
 
   // A line whose order was closed since stays as it is: closed orders are never re-mapped.
-  const restore = present.filter(s => !FROZEN_PIPELINE_STATUSES.includes(lines.find(l => l.id === s.lineId)?.order.pipelineStatus ?? ''))
-  const [storeId, ...rest] = change.profileKey.split('|')
-  const shopifyProductId = rest.join('|')
+  const open = present.filter(s => !FROZEN_PIPELINE_STATUSES.includes(lineOf(s)?.order.pipelineStatus ?? ''))
+  const onTarget = { resolvedSupplierId: movedTo.supplierId, resolvedSupplierSku: movedTo.sku }
+  const stillThere = (s: LineSnapshot) => lineOf(s)?.resolvedSupplierId === onTarget.resolvedSupplierId && lineOf(s)?.resolvedSupplierSku === onTarget.resolvedSupplierSku
+  // A line somebody moved again since the change is theirs now: putting the old supplier back would undo their work.
+  const restore = open.filter(stillThere)
+  const leftAlone = open.filter(s => !stillThere(s))
   try {
     await prisma.$transaction(async tx => {
-      const where = { storeId_shopifyProductId: { storeId, shopifyProductId } }
-      const profile = await tx.productProfile.findUnique({ where })
+      const profile = await tx.productProfile.findUnique({ where: profileWhere })
       if (profile) {
-        const overrides = overridesAfterUndo(parseProfileOverrides(profile.overrides), parseProfileOverrides(change.beforeOverridesJson), combo, change.afterSupplierProductId)
-        await tx.productProfile.update({ where, data: { overrides: JSON.stringify(overrides) } })
+        const current = parseProfileOverrides(profile.overrides)
+        const edited = current.find(sameCombo)
+        if (edited && edited.supplierProductId !== change.afterSupplierProductId) throw new LineMoved()
+        const overrides = withoutOverride(current, parseProfileOverrides(change.beforeOverridesJson), combo, change.afterSupplierProductId)
+        await tx.productProfile.update({ where: profileWhere, data: { overrides: JSON.stringify(overrides) } })
       }
       for (const s of restore) {
-        const back = await tx.orderLine.updateMany({
-          where: { id: s.lineId, exportedAt: null },
-          data: {
-            resolvedSupplierId: s.resolvedSupplierId, resolvedSupplierSku: s.resolvedSupplierSku, resolvedBaseCost: s.resolvedBaseCost,
-            resolvedShipFirst: s.resolvedShipFirst, resolvedShipAdditional: s.resolvedShipAdditional, resolvedImportTax: s.resolvedImportTax,
-            costSnapshotAt: s.costSnapshotAt ? new Date(s.costSnapshotAt) : null,
-          },
-        })
+        const back = await tx.orderLine.updateMany({ where: { id: s.lineId, exportedAt: null, ...onTarget }, data: restoreData(s) })
         if (back.count !== 1) throw new LineMoved()
       }
       const marked = await tx.botMappingChange.updateMany({ where: { id: change.id, undoneAt: null }, data: { undoneAt: new Date() } })
       if (marked.count !== 1) throw new LineMoved()
     })
   } catch (e) {
-    if (e instanceof LineMoved) return refuse('không hoàn tác được — có dòng vừa được xuất xưởng hoặc lần chuyển này vừa được hoàn tác. Chưa đổi gì.')
+    if (e instanceof LineMoved) return refuse('không hoàn tác được — có dòng hoặc mapping của biến thể vừa thay đổi. Chưa đổi gì, hãy thử lại.')
     throw e
   }
 
-  const moved = await prisma.supplierProduct.findUnique({ where: { id: change.afterSupplierProductId }, select: { supplier: { select: { name: true } } } })
   const names = await supplierNames(snapshot.map(s => s.resolvedSupplierId))
   const oldName = (s: LineSnapshot | undefined) => (s?.resolvedSupplierId ? names.get(s.resolvedSupplierId) ?? NO_SUPPLIER : NO_SUPPLIER)
-  const errors = await settle(restore, line => {
-    const prior = restore.find(s => s.orderId === line.orderId && s.shopifyLineId === line.shopifyLineId)
-    return `Hoàn tác chuyển xưởng theo yêu cầu của ${input.sender} trên Lark: ${moved?.supplier.name ?? NO_SUPPLIER} về ${oldName(prior)} (${prior?.resolvedSupplierSku ?? NO_SKU})`
-  })
+  const errors = await settleOrders(Array.from(new Set(restore.map(s => s.orderId))))
+  errors.push(...await noteOnTasks(restore, line => {
+    const prior = restore.find(s => sameLine(s, line))
+    return `Hoàn tác chuyển xưởng theo yêu cầu của ${input.sender} trên Lark: ${movedTo.supplier.name} về ${oldName(prior)} (${prior?.resolvedSupplierSku ?? NO_SKU})`
+  }))
+
+  // Orders of the same variant that came in after the change were mapped by the override and are in no snapshot.
+  const known = new Set(snapshot.map(s => s.lineId))
+  const newer = (await groupOf(storeId, shopifyProductId, signature))
+    .filter(l => !known.has(l.id) && l.resolvedSupplierId === onTarget.resolvedSupplierId && l.resolvedSupplierSku === onTarget.resolvedSupplierSku)
+  const newerKeys = newer.length ? (await keysOf(newer)).keyOf : new Map<string, string>()
+  const newerNames = newer.map(l => newerKeys.get(l.id) as string).sort((a, b) => a.localeCompare(b, 'en', { numeric: true }))
+
   const own = snapshot.find(s => s.lineId === input.task.lineId) ?? snapshot[0]
+  const kept = leftAlone.length ? ` Giữ nguyên ${listed(leftAlone.map(s => s.key))} vì đã được đổi xưởng sau lần chuyển.` : ''
+  const after = newer.length ? ` Còn ${newer.length} dòng cùng biến thể đến sau lần chuyển vẫn ở ${movedTo.supplier.name}: ${listed(newerNames)}. Hãy kiểm tra trên tool.` : ''
   return {
     changed: true,
-    reply: `${key}: đã hoàn tác, trả về ${oldName(own)}, SKU ${own?.resolvedSupplierSku ?? NO_SKU}. Đã đổi lại ${restore.length} dòng cùng biến thể.${errors.length ? SETTLE_FAILED : ''}`,
+    reply: `${key}: đã hoàn tác, trả về ${oldName(own)}, SKU ${own?.resolvedSupplierSku ?? NO_SKU}. Đã đổi lại ${restore.length} dòng cùng biến thể.${kept}${after}${errors.length ? SETTLE_FAILED : ''}`,
     ...(errors.length ? { error: errors.join('; ') } : {}),
   }
 }

@@ -19,6 +19,7 @@ const M = { Type: 'Hoodie', Size: 'M' }
 const L = { Type: 'Hoodie', Size: 'L' }
 
 let newSupplierId = ''
+let pinnedTemplateId = ''
 const sp: Record<string, string> = {}
 
 type LineSpec = { product: string | null; options: Record<string, string> | null }
@@ -74,19 +75,25 @@ beforeAll(async () => {
   await fx.seed()
   await publishBoard()
   newSupplierId = (await prisma.supplier.create({ data: { name: NEW_NAME, code: NEW_CODE } })).id
-  await prisma.supplier.create({ data: { name: 'LSC Twin', code: 'LSCTWIN1' } })
+  const twin = await prisma.supplier.create({ data: { name: 'LSC Twin', code: 'LSCTWIN1' } })
   await prisma.supplier.create({ data: { name: 'lsc twin', code: 'LSCTWIN2' } })
   const tpl = (name: string, supplierSku: string | null) => prisma.printTemplate.create({ data: { supplierId: newSupplierId, supplierSku, name, widthPx: 100, heightPx: 100, areas: '[]' } })
   const direct = await tpl('LSC Hoodie M', 'ANOTHER-KEY')
-  await tpl('LSC Hoodie L', 'new-hd-l')
-  await tpl('LSC mặc định', null)
-  const product = async (sku: string, extra: { printTemplateId?: string; productName?: string } = {}) => {
-    sp[sku] = (await prisma.supplierProduct.create({ data: { supplierId: newSupplierId, sku, baseCost: 7, productName: extra.productName ?? 'Hoodie', printTemplateId: extra.printTemplateId } })).id
+  pinnedTemplateId = (await tpl('LSC Hoodie L', 'new-hd-l')).id
+  const fallback = await tpl('LSC mặc định', null)
+  await tpl('LSC ColTee', 'COL-M-RED')
+  const foreign = await prisma.printTemplate.create({ data: { supplierId: twin.id, supplierSku: 'TW-1', name: 'Twin riêng', widthPx: 100, heightPx: 100, areas: '[]' } })
+  const product = async (sku: string, extra: { printTemplateId?: string; productName?: string; variant1Name?: string; variant1Value?: string; variant2Name?: string; variant2Value?: string } = {}) => {
+    sp[sku] = (await prisma.supplierProduct.create({ data: { supplierId: newSupplierId, sku, baseCost: 7, ...extra, productName: extra.productName ?? 'Hoodie' } })).id
   }
   await product('NEW-HD-M', { printTemplateId: direct.id })
   await product('NEW-HD-L')
   await product('NEW-NOTPL', { productName: 'Mug' })
   for (let i = 1; i <= 7; i++) await product(`AMB-${i}`, { productName: 'Tee amb' })
+  await product('NEW-DEF', { printTemplateId: fallback.id })
+  await product('NEW-OTHER', { printTemplateId: foreign.id })
+  await product('COL-M-RED', { productName: 'ColTee', variant1Name: 'Size', variant1Value: 'M', variant2Name: 'Color', variant2Value: 'Red' })
+  await product('WB-9', { productName: 'Windbreaker jacket' })
 
   await order(1, [{ product: 'P1', options: M }, { product: 'P1', options: L }])
   await order(2, [{ product: 'P1', options: { Size: 'M', Type: 'Hoodie' } }])
@@ -110,6 +117,12 @@ beforeAll(async () => {
   await order(24, [{ product: 'PNOTASK', options: M }])
   await order(25, [{ product: 'PNOTASK', options: M }])
   await order(26, [{ product: 'PPIN', options: M }])
+  await order(27, [{ product: 'PPINTPL', options: M }])
+  await order(28, [{ product: 'PCOL', options: { Size: 'M', Color: 'Blue' } }])
+  await order(29, [{ product: 'PUNDO4', options: M }])
+  await order(30, [{ product: 'PUNDO4', options: M }])
+  await order(31, [{ product: 'PUNDO5', options: M }])
+  await order(32, [{ product: 'PUNDO6', options: M }])
 })
 
 afterAll(async () => {
@@ -308,6 +321,86 @@ describe('supplier change from Lark', () => {
     const r = await undo('LSC22_1')
     expect(r).toEqual({ changed: false, reply: 'LSC22_1: không hoàn tác được — dòng LSC22_1 đã có file in làm sau lần chuyển.' })
     expect(await lineOf(22)).toMatchObject({ resolvedSupplierId: newSupplierId })
+  })
+
+  it('linked default template refuses', async () => {
+    const r = await change('LSC16_1', { supplierSku: 'NEW-DEF' })
+    expect(r).toEqual({ changed: false, reply: 'LSC16_1: SKU NEW-DEF của LSC Xưởng Mới chưa có template in riêng (template mặc định của xưởng không được tính). Hãy tạo template cho SKU này trên tool rồi nhắn lại.' })
+    await expectUntouched(16)
+    expect(await profileOf('PMISC')).toBeNull()
+  })
+
+  it('linked template of another supplier refuses', async () => {
+    const r = await change('LSC16_1', { supplierSku: 'NEW-OTHER' })
+    expect(r).toEqual({ changed: false, reply: 'LSC16_1: SKU NEW-OTHER của LSC Xưởng Mới chưa có template in riêng (template mặc định của xưởng không được tính). Hãy tạo template cho SKU này trên tool rồi nhắn lại.' })
+    await expectUntouched(16)
+    expect(await profileOf('PMISC')).toBeNull()
+  })
+
+  it('profile pin of the target supplier is the one named', async () => {
+    await prisma.productProfile.create({ data: { storeId: fx.storeId, shopifyProductId: 'PPINTPL', title: 'Hoodie', printTemplateId: pinnedTemplateId } })
+    const refused = await change('LSC27_1', { supplierSku: 'NEW-HD-M' })
+    expect(refused).toEqual({ changed: false, reply: 'LSC27_1: SKU NEW-HD-M của LSC Xưởng Mới sẽ dùng template "LSC Hoodie L" đang ghim ở sản phẩm, không phải template riêng của SKU này. Hãy sửa template của sản phẩm trên tool rồi nhắn lại.' })
+    await expectUntouched(27)
+    expect((await profileOf('PPINTPL'))!.overrides).toBe('[]')
+    expect(await changesOf('LSC27_1')).toHaveLength(0)
+    const ok = await change('LSC27_1', { supplierSku: 'NEW-HD-L' })
+    expect(ok.reply).toBe('LSC27_1: đã chuyển sang LSC Xưởng Mới, SKU NEW-HD-L, template LSC Hoodie L. Đã đổi 1 dòng cùng biến thể.')
+  })
+
+  it('colour-keyed supplier with no matching sibling rolls back and refuses', async () => {
+    const snapshotBefore = (await prisma.designTask.findUniqueOrThrow({ where: { taskKey: 'LSC28_1' } })).supplierSnapshot
+    const r = await change('LSC28_1', { supplierSku: 'COL-M-RED' })
+    expect(r.changed).toBe(false)
+    expect(r.reply).toBe('LSC28_1: không chuyển được — dòng LSC28_1: mapping của LSC Xưởng Mới không tìm được SKU đúng kích cỡ, màu của dòng này khi dùng COL-M-RED. Chưa đổi gì.')
+    await expectUntouched(28)
+    expect(await profileOf('PCOL')).toBeNull()
+    expect(await changesOf('LSC28_1')).toHaveLength(0)
+    expect((await eventsOf('LSC28_1')).filter(m => m.startsWith('Chuyển xưởng'))).toEqual([])
+    expect((await prisma.designTask.findUniqueOrThrow({ where: { taskKey: 'LSC28_1' } })).supplierSnapshot).toBe(snapshotBefore)
+  })
+
+  it('undo leaves a re-mapped line alone', async () => {
+    expect((await change('LSC29_1')).changed).toBe(true)
+    await prisma.orderLine.updateMany({ where: { orderId: 'gid://test/Order/lsc-30' }, data: { resolvedSupplierId: fx.supplierId, resolvedSupplierSku: 'HAND-SKU', resolvedBaseCost: 3 } })
+    const r = await undo('LSC29_1')
+    expect(r).toEqual({ changed: true, reply: 'LSC29_1: đã hoàn tác, trả về LSC Supplier, SKU OLD-SKU. Đã đổi lại 1 dòng cùng biến thể. Giữ nguyên LSC30_1 vì đã được đổi xưởng sau lần chuyển.' })
+    await expectUntouched(29)
+    expect(await lineOf(30)).toMatchObject({ resolvedSupplierId: fx.supplierId, resolvedSupplierSku: 'HAND-SKU', resolvedBaseCost: 3 })
+    expect(await eventsOf('LSC30_1')).not.toContain('Hoàn tác chuyển xưởng theo yêu cầu của Lan trên Lark: LSC Xưởng Mới về LSC Supplier (OLD-SKU)')
+  })
+
+  it('undo refuses when the override was edited since', async () => {
+    expect((await change('LSC31_1')).changed).toBe(true)
+    const profile = (await profileOf('PUNDO5'))!
+    const edited = JSON.stringify([{ combo: M, supplierProductId: sp['NEW-HD-L'] }])
+    await prisma.productProfile.update({ where: { id: profile.id }, data: { overrides: edited } })
+    const r = await undo('LSC31_1')
+    expect(r).toEqual({ changed: false, reply: 'LSC31_1: không hoàn tác được — mapping của biến thể này đã được sửa sau lần chuyển, hiện trỏ tới SKU NEW-HD-L của LSC Xưởng Mới. Hãy sửa trên tool.' })
+    expect((await profileOf('PUNDO5'))!.overrides).toBe(edited)
+    expect(await lineOf(31)).toMatchObject({ resolvedSupplierId: newSupplierId, resolvedSupplierSku: 'NEW-HD-M' })
+    expect((await changesOf('LSC31_1'))[0].undoneAt).toBeNull()
+  })
+
+  it('undo names newer orders that keep the new supplier', async () => {
+    expect((await change('LSC32_1')).changed).toBe(true)
+    await order(33, [{ product: 'PUNDO6', options: M }])
+    await prisma.orderLine.updateMany({ where: { orderId: 'gid://test/Order/lsc-33' }, data: { resolvedSupplierId: newSupplierId, resolvedSupplierSku: 'NEW-HD-M', resolvedBaseCost: 7 } })
+    const r = await undo('LSC32_1')
+    expect(r).toEqual({ changed: true, reply: 'LSC32_1: đã hoàn tác, trả về LSC Supplier, SKU OLD-SKU. Đã đổi lại 1 dòng cùng biến thể. Còn 1 dòng cùng biến thể đến sau lần chuyển vẫn ở LSC Xưởng Mới: LSC33_1. Hãy kiểm tra trên tool.' })
+    await expectUntouched(32)
+    expect(await lineOf(33)).toMatchObject({ resolvedSupplierId: newSupplierId, resolvedSupplierSku: 'NEW-HD-M', resolvedBaseCost: 7 })
+  })
+
+  it('single incidental word does not pick a product', async () => {
+    const r = await change('LSC16_1', { supplierSku: '', instruction: 'chuyển sang loại jacket' })
+    expect(r).toEqual({ changed: false, reply: 'LSC16_1: chưa xác định được sản phẩm của LSC Xưởng Mới. Hãy ghi đúng SKU xưởng. Gợi ý: WB-9' })
+    const twoWords = await change('LSC16_1', { supplierSku: '', instruction: 'chuyển sang windbreaker jacket' })
+    expect(twoWords.reply).toContain('SKU WB-9 của LSC Xưởng Mới chưa có template in riêng')
+    const bySkuWord = await change('LSC16_1', { supplierSku: '', instruction: 'chuyển sang wb-9' })
+    expect(bySkuWord.reply).toContain('SKU WB-9 của LSC Xưởng Mới chưa có template in riêng')
+    await expectUntouched(16)
+    expect(await profileOf('PMISC')).toBeNull()
   })
 })
 
