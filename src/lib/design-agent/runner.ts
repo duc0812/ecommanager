@@ -14,6 +14,7 @@ import { affectedForTask, type AffectedRow } from '@/lib/design-agent/affected'
 import { ensureAgentUser } from '@/lib/design-agent/agent-user'
 import { busyNoticeText, doneNoticeText, noticeKey, notifyGroup, notifyNeedsOwner, type OwnerNotice } from '@/lib/design-agent/notify'
 import { ORDER_CLOSED, isOrderOpen } from '@/lib/design-agent/order-open'
+import { cutLine } from '@/lib/lark/replies'
 
 export const DESIGN_AGENT_TOKEN_KEY = 'design.agent.tokenHash'
 export const DESIGN_AGENT_SEEN_KEY = 'design.agent.lastSeenAt'
@@ -36,6 +37,7 @@ const MAX_RESULT = 20000
 const OTHER_WORKER = 'Đã có bên khác làm: '
 const MAX_WORKER = 100
 const MAX_BUSY_DETAIL = 300
+const MAX_UNDONE_REQUEST = 300
 const NOT_SUBMITTED = '\n(Agent báo xong nhưng task chưa được gửi duyệt.)'
 
 declare global {
@@ -325,7 +327,8 @@ export async function yieldAgentJob(id: string, input: { worker: unknown; detail
   })
   if (r.count === 0) return null
   const detail = typeof input.detail === 'string' ? input.detail.trim().slice(0, MAX_BUSY_DETAIL) : ''
-  const text = detail ? `${error} — ${detail}` : error
+  const undone = cutLine(job.requestText, MAX_UNDONE_REQUEST)
+  const text = `Agent: ${detail ? `${error} — ${detail}` : error}${undone ? ` Yêu cầu chưa làm: ${undone}` : ''}`
   await noteOnTask(job.taskId, text)
   tellGroup(busyNoticeText(noticeKey(job), worker), job.id)
   return { status: 'CANCELLED' }

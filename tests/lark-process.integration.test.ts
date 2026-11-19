@@ -34,7 +34,7 @@ import type { LarkIntent } from '@/lib/lark/intent'
 import { processLarkMessage } from '@/lib/lark/process'
 import { LARK_DAILY_CALL_CAP } from '@/lib/lark/intent'
 import { LlmCapReached } from '@/lib/llm/cap'
-import { REPLY_BOARD_STALE_REPORT, REPLY_FAILED, REPLY_LIST_CAP, REPLY_NOT_READ, REPLY_OTHER, REPLY_OUT_OF_SCOPE, REPLY_SENT } from '@/lib/lark/replies'
+import { REPLY_BOARD_STALE_REPORT, REPLY_FAILED, REPLY_LIST_CAP, REPLY_MOCKUP_SENT, REPLY_NOT_READ, REPLY_OTHER, REPLY_OUT_OF_SCOPE, REPLY_SENT } from '@/lib/lark/replies'
 import { agentFixture } from './helpers/design-agent-fixture'
 import { dropWorkBoard, publishBoard } from './helpers/work-board'
 
@@ -92,11 +92,12 @@ beforeAll(async () => {
     21: { taskStatus: 'REVIEW' }, 22: { taskStatus: 'DONE' }, 23: { taskStatus: 'REJECTED' }, 24: { taskStatus: 'DOING' },
     25: { taskStatus: 'NEW' }, 26: { taskStatus: 'REJECTED' }, 27: { taskStatus: 'DONE', exported: true }, 28: { taskStatus: 'REJECTED' },
     29: { taskStatus: 'REVIEW' }, 30: { taskStatus: 'REJECTED' }, 46: { taskStatus: 'REVIEW' }, 47: { taskStatus: 'REVIEW' },
+    50: { taskStatus: 'REVIEW' }, 51: { taskStatus: 'DONE' }, 52: { taskStatus: 'REVIEW' }, 53: { taskStatus: 'REVIEW' },
   }
   for (const n of [31, ...LIST_ORDERS, 48, 49]) statuses[n] = { taskStatus: 'REJECTED' }
   for (const [n, o] of Object.entries(statuses)) await fx.order(Number(n), { ...o, withPrint: true })
   const hoa = await fx.user('Hoa', 'SUPPORT', ['design_tasks'])
-  await prisma.designTask.update({ where: { taskKey: 'LIP24_1' }, data: { assigneeId: hoa.actor.id } })
+  await prisma.designTask.updateMany({ where: { taskKey: { in: ['LIP24_1', 'LIP51_1'] } }, data: { assigneeId: hoa.actor.id } })
   await prisma.designTask.update({ where: { taskKey: 'LIP25_1' }, data: { readiness: 'AUTO' } })
 })
 
@@ -368,13 +369,62 @@ describe('Lark requests on a line someone else holds', () => {
   it('a free line that was held before is accepted, with the old reason', async () => {
     await publishBoard([waiting('LIP26_1', { state: 'held', detail: 'Thiếu mockup' })])
     const r = await runAt('LIP26_1 sửa chữ', fix('FIX', ['LIP26_1'], 'sửa chữ'), new Date())
-    expect(r).toMatchObject({ outcome: 'JOB', reply: 'LIP26_1: đã nhận, Agent đang làm. Kết quả xem trên tool. Dòng này từng bị giữ: Thiếu mockup' })
+    expect(r).toMatchObject({ outcome: 'JOB', reply: 'LIP26_1: đã nhận, Agent đang làm. Kết quả xem trên tool. Dòng này đang bị giữ ở hàng duyệt local: Thiếu mockup' })
     expect(await jobsOf('LIP26_1')).toMatchObject([{ kind: 'FIX', source: 'LARK' }])
   })
 
-  it('a sent line answers the same for every kind, mockup included', async () => {
-    for (const kind of ['FIX', 'NEW_DESIGN', 'MOCKUP'] as const) expect((await runAt('LIP27_1 làm lại', fix(kind, ['LIP27_1'], 'làm lại'))).reply).toBe(REPLY_SENT)
+  it('a sent line refuses a fix or a new design; a mockup on it is made on the tool, no reopen', async () => {
+    for (const kind of ['FIX', 'NEW_DESIGN'] as const) expect((await runAt('LIP27_1 làm lại', fix(kind, ['LIP27_1'], 'làm lại'))).reply).toBe(REPLY_SENT)
+    const mockup = await runAt('LIP27_1 làm mockup', fix('MOCKUP', ['LIP27_1'], 'làm mockup'))
+    expect(REPLY_MOCKUP_SENT).toBe('Đơn đã gửi xưởng — mockup làm trên tool, không cần mở lại.')
+    expect(mockup).toMatchObject({ outcome: 'REPLIED', jobIds: [], reply: REPLY_MOCKUP_SENT })
     expect(await jobsOf('LIP27_1')).toEqual([]); expect((await loadTask('LIP27_1'))!.task.status).toBe('DONE')
+  })
+
+  it('fix on a REVIEW line while Luồng 7 owns rejected lines: no status change, note written, holder named', async () => {
+    await publishBoard([], 'Luồng 7', NOW)
+    const before = await eventCount('LIP50_1')
+    const r = await runAt('LIP50_1 sai màu nền', fix('FIX', ['LIP50_1'], 'sai màu nền'))
+    expect(r).toMatchObject({ outcome: 'REPLIED', jobIds: [], reply: `LIP50_1: Luồng 7 đang giữ dòng này.${NOTED}` })
+    expect((await loadTask('LIP50_1'))!.task).toMatchObject({ status: 'REVIEW', rejectReasons: [] })
+    expect(await jobsOf('LIP50_1')).toEqual([])
+    expect(await notesOf('LIP50_1')).toEqual(['Agent: Lark – Lan: sai màu nền'])
+    expect(await eventCount('LIP50_1')).toBe(before + 1)
+
+    const listed = await runAt('LIP50_1 LIP52_1 sai màu nền', fix('FIX', ['LIP50_1', 'LIP52_1'], 'sai màu nền'))
+    expect(listed.reply).toBe('Đang có bên giữ: LIP50_1 (Luồng 7), LIP52_1 (Luồng 7).')
+    expect((await loadTask('LIP52_1'))!.task.status).toBe('REVIEW'); expect(await jobsOf('LIP52_1')).toEqual([])
+  })
+
+  it('fix on a DONE line with an assignee: not reopened, holder named', async () => {
+    await publishBoard([], null, NOW)
+    const r = await runAt('LIP51_1 sửa chữ', fix('FIX', ['LIP51_1'], 'sửa chữ'))
+    expect(r).toMatchObject({ outcome: 'REPLIED', jobIds: [], reply: `LIP51_1: Hoa đang làm dòng này.${NOTED}` })
+    expect((await loadTask('LIP51_1'))!.task.status).toBe('DONE')
+    expect(await jobsOf('LIP51_1')).toEqual([])
+    expect(await notesOf('LIP51_1')).toEqual(['Agent: Lark – Lan: sửa chữ'])
+  })
+
+  it('fix on a REVIEW line with no rejectedOwner still rejects and queues', async () => {
+    const now = new Date()
+    await publishBoard([], null, now)
+    const r = await runAt('LIP52_1 sai màu nền', fix('FIX', ['LIP52_1'], 'sai màu nền'), now)
+    expect(r).toMatchObject({ outcome: 'JOB', reply: 'LIP52_1: đã nhận, Agent đang làm. Kết quả xem trên tool.' })
+    expect((await loadTask('LIP52_1'))!.task).toMatchObject({ status: 'REJECTED', rejectReasons: ['Khác: sai màu nền'] })
+    expect(await openJobsOf('LIP52_1')).toMatchObject([{ kind: 'FIX', source: 'LARK' }])
+  })
+
+  it('status for a list: three full blocks, the rest named in one line', async () => {
+    await publishBoard([], null, NOW)
+    const r = await runAt('LIP9_1 LIP10_1 LIP11_1 LIP13_1 sao rồi', fix('STATUS', ['LIP9_1', 'LIP10_1', 'LIP11_1', 'LIP13_1']))
+    expect(r.outcome).toBe('REPLIED'); expect(r.jobIds).toEqual([])
+    const text = r.reply as string
+    for (const key of ['LIP9_1', 'LIP10_1', 'LIP11_1']) expect(text).toContain(`${key} — Bị trả lại`)
+    expect(text).not.toContain('LIP13_1 — ')
+    expect(text.split('\n').at(-1)).toBe('Hỏi tối đa 3 dòng mỗi lần, xem các dòng còn lại trên tool: LIP13_1')
+    expect(text.split('\n').filter(l => l.startsWith('Hỏi tối đa'))).toHaveLength(1)
+    const three = await runAt('LIP9_1 LIP10_1 LIP11_1 sao rồi', fix('STATUS', ['LIP9_1', 'LIP10_1', 'LIP11_1']))
+    expect(three.reply).not.toContain('Hỏi tối đa')
   })
 
   it('a supplier change or undo is answered by the supplier-change path, never with a job', async () => {
@@ -432,12 +482,12 @@ describe('Lark line lists and short replies', () => {
     const now = new Date()
     const queued = (key: string, minutes: number): BoardEntryInput =>
       ({ taskKey: key, source: 'LOCAL_QUEUE', worker: 'Hàng duyệt local', state: 'waiting', version: 2, etaAt: new Date(now.getTime() + minutes * 60_000).toISOString() })
-    await publishBoard([queued('LIP46_1', 7), queued('LIP47_1', -1)], null, now)
-    const keys = ['LIP49_1', 'LIP46_1', 'LIP47_1', 'LIP24_1', 'LIP25_1', 'LIP1_1', 'LIP27_1', 'LIP19_1', 'LIP8_1', 'LIP16_1', 'LIP9999_1', 'LIP12']
+    await publishBoard([queued('LIP46_1', 7), queued('LIP47_1', -1), { ...queued('LIP53_1', 5), state: 'qa_failed', detail: 'Thiếu mockup' }], null, now)
+    const keys = ['LIP49_1', 'LIP46_1', 'LIP47_1', 'LIP53_1', 'LIP24_1', 'LIP25_1', 'LIP1_1', 'LIP27_1', 'LIP19_1', 'LIP8_1', 'LIP16_1', 'LIP9999_1', 'LIP12']
     const r = await runAt(`${keys.join(' ')} sửa viền cổ`, fix('FIX', keys, 'sửa viền cổ'), now)
     expect(r.reply).toBe([
       'Đã nhận 1 dòng, Agent làm lần lượt: LIP49_1.',
-      'Đang có bên giữ: LIP46_1 (Hàng duyệt local, còn khoảng 7 phút), LIP47_1 (Hàng duyệt local), LIP24_1 (Hoa), LIP25_1 (Auto render), LIP1_1 (Agent).',
+      'Đang có bên giữ: LIP46_1 (Hàng duyệt local, còn khoảng 7 phút), LIP47_1 (Hàng duyệt local), LIP53_1 (Hàng duyệt local, lỗi QA, giữ lại sau 5 phút), LIP24_1 (Hoa), LIP25_1 (Auto render), LIP1_1 (Agent).',
       'Không làm: LIP27_1 (đã gửi xưởng), LIP19_1 (đơn đã đóng), LIP8_1 (đang hỏi khách), LIP16_1 (đã huỷ).',
       'Không tìm thấy: LIP9999_1.',
       'Trùng nhiều đơn, gửi lại kèm số dòng: LIP12 (LIP12_1, LIP12_2).',
@@ -445,8 +495,8 @@ describe('Lark line lists and short replies', () => {
     ].join('\n'))
     expect(r.outcome).toBe('JOB'); expect(r.jobIds).toHaveLength(1); expect(lark.reply).toHaveBeenCalledTimes(1)
     expect(await jobsOf('LIP49_1')).toMatchObject([{ kind: 'FIX', source: 'LARK', status: 'QUEUED' }])
-    expect(await prisma.designAgentJob.count({ where: { taskKey: { in: ['LIP46_1', 'LIP47_1', 'LIP24_1', 'LIP25_1', 'LIP27_1', 'LIP19_1', 'LIP8_1', 'LIP16_1'] } } })).toBe(0)
-    expect((await loadTask('LIP46_1'))!.task.status).toBe('REVIEW')
+    expect(await prisma.designAgentJob.count({ where: { taskKey: { in: ['LIP46_1', 'LIP47_1', 'LIP53_1', 'LIP24_1', 'LIP25_1', 'LIP27_1', 'LIP19_1', 'LIP8_1', 'LIP16_1'] } } })).toBe(0)
+    expect((await loadTask('LIP46_1'))!.task.status).toBe('REVIEW'); expect((await loadTask('LIP53_1'))!.task.status).toBe('REVIEW')
   })
 
   it('a list on a stale board or without an instruction makes no job and promises no result', async () => {

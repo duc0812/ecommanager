@@ -5,6 +5,9 @@ import { getSettings } from '@/lib/token-store'
 
 export const BOARD_STALE_MS = 600_000
 export const MAX_BOARD_ENTRIES = 5000
+export const MAX_BOARD_WORKER = 100
+export const MAX_BOARD_STATE = 40
+export const MAX_BOARD_DETAIL = 300
 const MAX_INT32 = 2_147_483_647
 const PUBLISHED_AT_KEY = 'design.board.publishedAt'
 const REJECTED_OWNER_KEY = 'design.board.rejectedOwner'
@@ -28,8 +31,11 @@ function rowProblem(row: unknown): string | null {
   if (!filled(r.taskKey)) return 'thiếu taskKey'
   if (!BOARD_SOURCES.includes(r.source as BoardEntryInput['source'])) return 'source không hợp lệ'
   if (!filled(r.worker)) return 'thiếu worker'
+  if (r.worker.length > MAX_BOARD_WORKER) return `worker dài quá ${MAX_BOARD_WORKER} ký tự`
   if (!filled(r.state)) return 'thiếu state'
+  if (r.state.length > MAX_BOARD_STATE) return `state dài quá ${MAX_BOARD_STATE} ký tự`
   if (r.detail != null && typeof r.detail !== 'string') return 'detail không hợp lệ'
+  if (typeof r.detail === 'string' && r.detail.length > MAX_BOARD_DETAIL) return `detail dài quá ${MAX_BOARD_DETAIL} ký tự`
   if (r.version != null && !(Number.isInteger(r.version) && (r.version as number) >= 0 && (r.version as number) <= MAX_INT32)) return 'version không hợp lệ'
   if (r.etaAt != null && (typeof r.etaAt !== 'string' || Number.isNaN(Date.parse(r.etaAt)))) return 'etaAt không hợp lệ'
   return null
@@ -43,6 +49,13 @@ export function parseBoardEntries(value: unknown): BoardEntryInput[] {
     if (problem) throw new AgentJobError(`Dòng ${i + 1}: ${problem}.`, 400)
   })
   return value as BoardEntryInput[]
+}
+
+export function parseRejectedOwner(value: unknown): string | null {
+  if (value == null) return null
+  if (typeof value !== 'string') throw new AgentJobError('rejectedOwner không hợp lệ.', 400)
+  if (value.length > MAX_BOARD_WORKER) throw new AgentJobError(`rejectedOwner dài quá ${MAX_BOARD_WORKER} ký tự.`, 400)
+  return value
 }
 
 const setting = (key: string, value: string) =>

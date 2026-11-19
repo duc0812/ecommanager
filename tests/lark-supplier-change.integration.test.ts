@@ -123,6 +123,8 @@ beforeAll(async () => {
   await order(30, [{ product: 'PUNDO4', options: M }])
   await order(31, [{ product: 'PUNDO5', options: M }])
   await order(32, [{ product: 'PUNDO6', options: M }])
+  await order(34, [{ product: 'PAUTO', options: M }])
+  await prisma.designTask.update({ where: { taskKey: 'LSC34_1' }, data: { status: 'NEW', readiness: 'AUTO' } })
 })
 
 afterAll(async () => {
@@ -257,6 +259,16 @@ describe('supplier change from Lark', () => {
     expect(r.reply).toBe('LSC17_1: dòng này không có thông tin biến thể nên không chuyển riêng được. Hãy đổi mapping của sản phẩm trên tool.')
     await expectUntouched(17)
     expect(await profileOf('PEMPTY')).toBeNull()
+  })
+
+  it('change on a NEW AUTO line succeeds', async () => {
+    await publishBoard()
+    expect(await prisma.designTask.findUniqueOrThrow({ where: { taskKey: 'LSC34_1' } })).toMatchObject({ status: 'NEW', readiness: 'AUTO' })
+    const r = await change('LSC34_1')
+    expect(r.changed).toBe(true)
+    expect(r.reply).toContain('LSC34_1: đã chuyển sang LSC Xưởng Mới, SKU NEW-HD-M, template LSC Hoodie M.')
+    expect(await lineOf(34)).toMatchObject({ resolvedSupplierId: newSupplierId, resolvedSupplierSku: 'NEW-HD-M' })
+    expect(await changesOf('LSC34_1')).toHaveLength(1)
   })
 
   it('a sibling without a design task passes the holder check', async () => {

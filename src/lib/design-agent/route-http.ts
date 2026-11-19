@@ -2,9 +2,10 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { AgentJobError } from '@/lib/design-agent/jobs'
 import { markAgentRunnerSeen, verifyAgentRunnerRequest } from '@/lib/design-agent/runner'
 
-export async function requireRunner(req: NextRequest): Promise<NextResponse | null> {
+/** `seen: false` for calls that are not the runner working (the board publisher), so they never make a lost runner look online. */
+export async function requireRunner(req: NextRequest, opts: { seen?: boolean } = {}): Promise<NextResponse | null> {
   if (!(await verifyAgentRunnerRequest(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  await markAgentRunnerSeen()
+  if (opts.seen !== false) await markAgentRunnerSeen()
   return null
 }
 

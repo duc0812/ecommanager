@@ -149,8 +149,12 @@ describe('larkTaskStatus', () => {
     expect(text).toContain('File in: 1 · Mockup: 0')
     expect(text).toContain('LST1_1: chưa có ai giữ dòng này.')
     expect(text).toContain('Việc Agent gần nhất: chưa có')
-    expect(text).not.toContain('Hoạt động gần đây:\n\n')
     expect(text.length).toBeLessThanOrEqual(1500)
+
+    await prisma.designTaskEvent.deleteMany({ where: { taskId: (await taskOf('LST1_1')).id } })
+    const noEvents = await larkTaskStatus(await stateOf('LST1_1'), NOW)
+    expect(noEvents).not.toContain('Hoạt động gần đây')
+    expect(noEvents.split('\n').at(-1)).toBe('Việc Agent gần nhất: chưa có')
 
     const viaBot = await ask('LST1_1 sao rồi', { kind: 'STATUS', lineKeys: ['LST1_1'] })
     expect(viaBot.outcome).toBe('REPLIED'); expect(viaBot.jobIds).toEqual([])

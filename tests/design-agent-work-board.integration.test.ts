@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterAll } from 'vitest'
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/db'
-import { generateAgentRunnerToken, revokeAgentRunnerToken } from '@/lib/design-agent/runner'
+import { agentRunnerInfo, generateAgentRunnerToken, revokeAgentRunnerToken } from '@/lib/design-agent/runner'
 import { readWorkBoard, replaceWorkBoard, BOARD_STALE_MS } from '@/lib/design-agent/work-board'
 import { PUT } from '@/app/api/design-agent/runner/board/route'
 import { dropWorkBoard } from './helpers/work-board'
@@ -14,9 +14,11 @@ const put = (body: unknown, token?: string) =>
     body: JSON.stringify(body),
   }))
 
+const SEEN_KEY = 'design.agent.lastSeenAt'
+
 beforeEach(async () => {
   await prisma.workBoardEntry.deleteMany({})
-  await prisma.appSetting.deleteMany({ where: { key: { in: ['design.board.publishedAt', 'design.board.rejectedOwner', 'design.agent.tokenHash'] } } })
+  await prisma.appSetting.deleteMany({ where: { key: { in: ['design.board.publishedAt', 'design.board.rejectedOwner', 'design.agent.tokenHash', SEEN_KEY] } } })
 })
 
 afterAll(async () => {
@@ -74,12 +76,34 @@ describe('work board', () => {
       { entries: [entry(3), null] },
       {},
       { entries: Array.from({ length: 5001 }, (_, i) => entry(i)) },
+      { entries: [entry(3), entry(4, { worker: 'w'.repeat(101) })] },
+      { entries: [entry(3), entry(4, { state: 's'.repeat(41) })] },
+      { entries: [entry(3), entry(4, { detail: 'd'.repeat(301) })] },
+      { entries: [entry(3)], rejectedOwner: 'o'.repeat(101) },
+      { entries: [entry(3)], rejectedOwner: 7 },
     ]) {
       const r = await put(bad, token)
       expect(r.status).toBe(400)
       expect(typeof (await r.json()).error).toBe('string')
     }
     expect((await prisma.workBoardEntry.findMany()).map(r => r.taskKey).sort()).toEqual(['WB1', 'WB2'])
+    expect((await readWorkBoard(null)).rejectedOwner).toBeNull()
+  })
+
+  it('accepts worker, state, detail and rejectedOwner at their caps', async () => {
+    const token = await generateAgentRunnerToken()
+    const r = await put({ entries: [entry(5, { worker: 'w'.repeat(100), state: 's'.repeat(40), detail: 'd'.repeat(300) })], rejectedOwner: 'o'.repeat(100) }, token)
+    expect(r.status).toBe(200)
+    const board = await readWorkBoard(null)
+    expect(board.rejectedOwner).toBe('o'.repeat(100))
+    expect(board.entries[0]).toMatchObject({ worker: 'w'.repeat(100), state: 's'.repeat(40), detail: 'd'.repeat(300) })
+  })
+
+  it('publishing the board does not update design.agent.lastSeenAt', async () => {
+    const token = await generateAgentRunnerToken()
+    expect((await put({ entries: [entry(1)] }, token)).status).toBe(200)
+    expect(await prisma.appSetting.findUnique({ where: { key: SEEN_KEY } })).toBeNull()
+    expect((await agentRunnerInfo()).online).toBe(false)
   })
 
   it('accepts the 5000-row limit and an empty board', async () => {

@@ -307,7 +307,8 @@ export async function changeSupplierFromLark(
   const work = await workStatesFor(Array.from(states.values()).filter((s): s is AgentTaskState => !!s), now)
   for (const l of withTask) {
     const state = work.get(taskKeyOf.get(l.id) as string)
-    if (state?.kind !== 'FREE') return refuse(`không chuyển được vì dòng cùng biến thể chưa rảnh — ${notFree(name(l), state, now)}`)
+    // Auto render has not started anything: a line waiting for its hourly pass moves like a free one.
+    if (state?.kind !== 'FREE' && state?.kind !== 'AUTO') return refuse(`không chuyển được vì dòng cùng biến thể chưa rảnh — ${notFree(name(l), state, now)}`)
   }
 
   const orderIds = Array.from(new Set(group.map(l => l.orderId)))

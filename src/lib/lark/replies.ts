@@ -15,6 +15,10 @@ export const replyRunning = (taskKey: string) =>
 
 export const REPLY_SENT = "Đơn đã gửi xưởng — hãy bấm 'Mở lại để sửa' trên tool và chọn lý do"
 
+export const REPLY_MOCKUP_SENT = 'Đơn đã gửi xưởng — mockup làm trên tool, không cần mở lại.'
+
+export const replyStatusCap = (rest: string[]) => `Hỏi tối đa 3 dòng mỗi lần, xem các dòng còn lại trên tool: ${rest.join(', ')}`
+
 export const replyAskCustomer = (taskKey: string) => `${taskKey} đang chờ khách trả lời — bấm Tiếp tục trên tool rồi nhắn lại.`
 
 export const replyCancelled = (taskKey: string) => `${taskKey} đã huỷ, không nhận yêu cầu.`
@@ -39,7 +43,7 @@ export const REPLY_FAILED = 'Bot không xử lý được yêu cầu, thử lạ
 
 export const REPLY_NOTED = ' Yêu cầu của bạn đã được ghi vào task.'
 
-export const replyHeldBefore = (reason: string) => ` Dòng này từng bị giữ: ${reason.replace(/\s+/g, ' ').trim().slice(0, 300)}`
+export const replyHeldBefore = (reason: string) => ` Dòng này đang bị giữ ở hàng duyệt local: ${reason.replace(/\s+/g, ' ').trim().slice(0, 300)}`
 
 export const REPLY_BOARD_STALE_REPORT = 'Chưa có dữ liệu tin cậy từ máy local, chưa báo được việc chưa có người làm.'
 
@@ -59,10 +63,15 @@ const MAX_CANDIDATES = 5
 
 export type GroupedLines = {
   accepted: string[]
-  held: { key: string; holder: string; minutes?: number | null }[]
+  held: { key: string; holder: string; minutes?: number | null; qaFailed?: boolean }[]
   refused: { key: string; why: string }[]
   unknown: string[]
   ambiguous: { ref: string; candidates: string[] }[]
+}
+
+function heldTiming(h: GroupedLines['held'][number]): string {
+  if (h.qaFailed) return h.minutes ? `, lỗi QA, giữ lại sau ${h.minutes} phút` : ', lỗi QA'
+  return h.minutes ? `, còn khoảng ${h.minutes} phút` : ''
 }
 
 /** One reply for a message that names several lines; a group with nothing in it is left out. */
@@ -70,7 +79,7 @@ export function replyGrouped(g: GroupedLines): string {
   const out: string[] = []
   if (g.accepted.length) out.push(`Đã nhận ${g.accepted.length} dòng, Agent làm lần lượt: ${g.accepted.join(', ')}.`)
   if (g.held.length) {
-    const held = g.held.map(h => `${h.key} (${cutLine(h.holder, MAX_HOLDER)}${h.minutes ? `, còn khoảng ${h.minutes} phút` : ''})`)
+    const held = g.held.map(h => `${h.key} (${cutLine(h.holder, MAX_HOLDER)}${heldTiming(h)})`)
     out.push(`Đang có bên giữ: ${held.join(', ')}.`)
   }
   if (g.refused.length) out.push(`Không làm: ${g.refused.map(r => `${r.key} (${cutLine(r.why, MAX_REASON)})`).join(', ')}.`)

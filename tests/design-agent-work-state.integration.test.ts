@@ -329,7 +329,7 @@ describe('one worker per line when a job is created', () => {
     const row = await prisma.designAgentJob.findUniqueOrThrow({ where: { id: job.id } })
     expect(row).toMatchObject({ status: 'CANCELLED', error: 'Đã có bên khác làm: Hàng duyệt local', lockedAt: null })
     expect(row.finishedAt).toBeInstanceOf(Date)
-    expect(await notesOf('DAW20_1')).toEqual(['Đã có bên khác làm: Hàng duyệt local — bản v2 đang chờ duyệt'])
+    expect(await notesOf('DAW20_1')).toEqual(['Agent: Đã có bên khác làm: Hàng duyệt local — bản v2 đang chờ duyệt Yêu cầu chưa làm: x'])
     await settleOwnerNotices()
     expect(lark.sendToChat.mock.calls).toEqual([['oc_group', 'DAW20_1: Agent dừng việc này vì Hàng duyệt local đang làm.']])
 
@@ -356,7 +356,7 @@ describe('one worker per line when a job is created', () => {
     await settleOwnerNotices()
     expect(lark.sendToChat).toHaveBeenCalledTimes(1)
     expect((await prisma.designAgentJob.findUniqueOrThrow({ where: { id: failing.id } })).error).toBe('Đã có bên khác làm: Luồng 7')
-    expect((await notesOf('DAW20_1')).at(-1)).toBe('Đã có bên khác làm: Luồng 7')
+    expect((await notesOf('DAW20_1')).at(-1)).toBe('Agent: Đã có bên khác làm: Luồng 7 Yêu cầu chưa làm: x')
 
     await saveLarkConfig({ enabled: false })
     lark.sendToChat.mockClear()
