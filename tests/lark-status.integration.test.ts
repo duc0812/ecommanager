@@ -106,6 +106,7 @@ beforeAll(async () => {
   await fx.order(1, { taskStatus: 'REJECTED', withPrint: true })
   await fx.order(2, { taskStatus: 'REJECTED', withPrint: true })
   await fx.order(3, { taskStatus: 'REVIEW', withPrint: true })
+  await fx.order(4, { taskStatus: 'ASK_CUSTOMER', withPrint: true })
 
   const templated = await prisma.supplier.create({ data: { name: 'Xưởng Có Template', code: 'LSTTPL' } })
   const template = await prisma.printTemplate.create({ data: { supplierId: templated.id, supplierSku: 'HD-1', name: 'Hoodie 2 mặt', widthPx: 100, heightPx: 100, areas: '[]' } })
@@ -114,7 +115,9 @@ beforeAll(async () => {
 
   await prisma.orderLine.updateMany({ where: { orderId: 'gid://test/Order/lst-3' }, data: ready })
   await prisma.designArtwork.create({ data: { orderId: 'gid://test/Order/lst-3', shopifyLineId: 'l1', kind: 'MOCKUP', printArea: 'MOCKUP', version: 1, fileName: 'm.jpg', storagePath: 'x/lst-m.jpg', size: 1, mimeType: 'image/jpeg', createdAt: new Date('2026-11-18T05:00:00Z') } })
-  await prisma.designArtwork.updateMany({ where: { orderId: 'gid://test/Order/lst-3', kind: 'PRINT' }, data: { createdAt: new Date('2026-11-17T05:00:00Z') } })
+  await prisma.designArtwork.updateMany({ where: { orderId: 'gid://test/Order/lst-3', kind: 'PRINT' }, data: { createdAt: new Date('2026-11-19T05:00:00Z') } })
+  await prisma.designArtwork.create({ data: { orderId: 'gid://test/Order/lst-3', shopifyLineId: 'l1', kind: 'PRINT', printArea: 'PRINT', version: 2, fileName: 'b.png', storagePath: 'x/lst-3-v2.png', size: 1, mimeType: 'image/png', createdAt: new Date('2026-11-17T05:00:00Z') } })
+  await prisma.designArtwork.create({ data: { orderId: 'gid://test/Order/lst-3', shopifyLineId: 'l1', kind: 'MOCKUP', printArea: 'CŨ', version: 1, fileName: 'old.jpg', storagePath: 'x/lst-3-old.jpg', size: 1, mimeType: 'image/jpeg', createdAt: new Date('2026-11-19T06:00:00Z'), removedAt: new Date('2026-11-19T07:00:00Z') } })
 
   const all = [GROUP_ORDERS.noTemplate, GROUP_ORDERS.unmapped, GROUP_ORDERS.manual, GROUP_ORDERS.artwork]
   for (const [from, to] of all) for (let n = from; n <= to; n++) await fx.order(n, { taskStatus: 'REJECTED' })
@@ -139,18 +142,19 @@ describe('larkTaskStatus', () => {
   it('status question works without a job', async () => {
     await publishBoard([], null, NOW)
     const text = await larkTaskStatus(await stateOf('LST1_1'), NOW)
-    expect(text).toContain('LST1_1 — Trả lại sửa')
+    expect(text).toContain('LST1_1 — Bị trả lại')
     expect(text).toContain('Xưởng: LST Supplier')
     expect(text).toContain('SKU xưởng: chưa có')
     expect(text).toContain('Template: chưa có')
     expect(text).toContain('File in: 1 · Mockup: 0')
     expect(text).toContain('LST1_1: chưa có ai giữ dòng này.')
-    expect(text).toContain('Agent: chưa có việc nào')
+    expect(text).toContain('Việc Agent gần nhất: chưa có')
+    expect(text).not.toContain('Hoạt động gần đây:\n\n')
     expect(text.length).toBeLessThanOrEqual(1500)
 
     const viaBot = await ask('LST1_1 sao rồi', { kind: 'STATUS', lineKeys: ['LST1_1'] })
     expect(viaBot.outcome).toBe('REPLIED'); expect(viaBot.jobIds).toEqual([])
-    expect(viaBot.reply).toContain('LST1_1 — Trả lại sửa')
+    expect(viaBot.reply).toContain('LST1_1 — Bị trả lại')
     expect(await prisma.designAgentJob.count({ where: { taskKey: 'LST1_1' } })).toBe(0)
     expect((await taskOf('LST1_1')).status).toBe('REJECTED')
   })
@@ -164,15 +168,22 @@ describe('larkTaskStatus', () => {
     expect(text).toContain('LST3_1 — Chờ duyệt')
     expect(text).toContain('Xưởng: Xưởng Có Template · SKU xưởng: HD-1 · Template: Hoodie 2 mặt')
     expect(text).toContain('File in: 1 · Mockup: 1 · file mới nhất 11/18/2026')
+    expect(text).toContain('Hoạt động gần đây:')
+    expect(text).not.toContain('Sự kiện gần nhất')
     expect(text).toContain('LST3_1: đã có bản sửa v2 ở hàng duyệt local, khoảng 2 phút nữa tự lên cloud.')
-    expect(text).toContain('Agent: lỗi, bước RENDER — Photoshop treo')
+    expect(text).toContain('Việc Agent gần nhất: 11/19/2026 · lỗi, bước RENDER — Photoshop treo')
     expect(text).not.toContain('Đã sửa màu nền')
+  })
+
+  it('a task waiting on the customer reads Đang hỏi khách', async () => {
+    await publishBoard([], null, NOW)
+    expect(await larkTaskStatus(await stateOf('LST4_1'), NOW)).toContain('LST4_1 — Đang hỏi khách')
   })
 
   it('answers with a stale board, using the unknown sentence', async () => {
     await dropWorkBoard()
     const text = await larkTaskStatus(await stateOf('LST1_1'), NOW)
-    expect(text).toContain('LST1_1 — Trả lại sửa')
+    expect(text).toContain('LST1_1 — Bị trả lại')
     expect(text).toContain(`LST1_1: ${UNKNOWN}`)
     expect(text).not.toContain('chưa có ai giữ')
     await publishBoard([], null, at(-601_000))
@@ -199,7 +210,8 @@ describe('larkTaskStatus', () => {
     expect(text).toContain('sự kiện hai'); expect(text).toContain('sự kiện một')
     expect(text).not.toContain('cũ nhất'); expect(text).not.toContain('yyyyyyyyyy'.repeat(13))
     expect(text.split('\n').some(l => l.startsWith('Đã nhận'))).toBe(false)
-    expect(text.startsWith('LST2_1 — Trả lại sửa')).toBe(true)
+    expect(text.startsWith('LST2_1 — Bị trả lại')).toBe(true)
+    expect(text.split('\n')).toContain('Hoạt động gần đây:')
     expect(await prisma.designAgentJob.count()).toBe(jobsBefore)
     expect((await taskOf('LST2_1')).status).toBe('REJECTED')
   })
@@ -231,6 +243,12 @@ describe('larkUnassignedReport', () => {
     const viaBot = await ask('việc nào chưa có người làm', { kind: 'UNASSIGNED_REPORT' })
     expect(viaBot.outcome).toBe('REPLIED'); expect(viaBot.jobIds).toEqual([])
     expect((viaBot.reply as string).split('\n')[0]).toBe('Việc chưa có người làm: 29 dòng.')
+  })
+
+  it('nothing free reads Hiện không còn việc nào chưa có người làm', async () => {
+    const waiting = await prisma.designTask.findMany({ where: { status: { in: ['NEW', 'ASSIGNED', 'DOING', 'REJECTED'] } }, select: { taskKey: true } })
+    await publishBoard(waiting.map(t => ({ taskKey: t.taskKey, source: 'STREAM' as const, worker: 'Luồng 7', state: 'DOING' })), null, NOW)
+    expect(await larkUnassignedReport(NOW)).toBe('Hiện không còn việc nào chưa có người làm.')
   })
 
   it('report refuses a stale board', async () => {

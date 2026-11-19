@@ -18,13 +18,15 @@ export const replyOrderClosed = (taskKey: string) => `${taskKey}: đơn đã gia
 
 export const replyWhatToFix = (taskKey: string) => `Cần sửa gì ở ${taskKey}? Hãy ghi rõ chỗ sai.`
 
-export const REPLY_OTHER = 'Bot làm được: sửa mẫu, làm mẫu, làm mockup cho một đơn cụ thể. Hãy nhắn kèm mã đơn, ví dụ: LIT6262_1 sửa sao trên mũ bị lệch.'
+const HELP_ASK = "Bạn cũng có thể hỏi tiến độ một dòng (ví dụ: LIT6262_1 sao rồi) hoặc hỏi 'việc nào chưa có người làm'."
+
+export const REPLY_OTHER = `Bot làm được: sửa mẫu, làm mẫu, làm mockup cho một đơn cụ thể. Hãy nhắn kèm mã đơn, ví dụ: LIT6262_1 sửa sao trên mũ bị lệch. ${HELP_ASK}`
 
 export const REPLY_UNCLEAR = 'Chưa rõ đơn nào. Hãy gửi mã đơn và dòng, ví dụ: LIT6262_1.'
 
 export const replyAmbiguous = (ref: string, candidates: string[]) => `${ref} có nhiều dòng: ${candidates.join(', ')}. Hãy ghi rõ dòng cần làm.`
 
-export const REPLY_OUT_OF_SCOPE = 'Bot chỉ nhận việc của Design Studio (sửa mẫu, làm mẫu, mockup).'
+export const REPLY_OUT_OF_SCOPE = `Bot chỉ nhận việc của Design Studio (sửa mẫu, làm mẫu, mockup). ${HELP_ASK}`
 
 export const REPLY_NOT_READ = 'Bot chưa đọc được yêu cầu (lỗi AI). Thử lại sau, hoặc trả lại task trên tool.'
 

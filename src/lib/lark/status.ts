@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/db'
 import { templateForLine, type TaskStatus } from '@/lib/design-tasks'
-import { currentFiles } from '@/lib/task-files'
+import { FILE_KINDS, currentFiles } from '@/lib/task-files'
 import type { AgentTaskState } from '@/lib/design-agent/delivery'
 import { workStateFor, type WorkState } from '@/lib/design-agent/work-state'
 import { replyHeldBefore } from '@/lib/lark/replies'
@@ -15,8 +15,8 @@ const NEXT_TICK = 'lượt quét tới (tối đa 10 phút)'
 const NONE = 'chưa có'
 
 const STATUS_LABEL: Record<TaskStatus, string> = {
-  NEW: 'Mới', ASSIGNED: 'Đã giao', DOING: 'Đang làm', REVIEW: 'Chờ duyệt', ASK_CUSTOMER: 'Hỏi khách',
-  REJECTED: 'Trả lại sửa', DONE: 'Xong', CANCELLED: 'Đã huỷ',
+  NEW: 'Mới', ASSIGNED: 'Đã giao', DOING: 'Đang làm', REVIEW: 'Chờ duyệt', ASK_CUSTOMER: 'Đang hỏi khách',
+  REJECTED: 'Bị trả lại', DONE: 'Xong', CANCELLED: 'Đã huỷ',
 }
 const JOB_LABEL: Record<string, string> = {
   QUEUED: 'đang chờ', RUNNING: 'đang chạy', DONE: 'xong', NEEDS_OWNER: 'cần chủ shop xem', FAILED: 'lỗi', CANCELLED: 'đã huỷ',
@@ -84,30 +84,32 @@ export async function larkTaskStatus(task: AgentTaskState, now: Date = new Date(
   const template = line ? await templateForLine(line) : null
   const files = line
     ? await prisma.designArtwork.findMany({
-      where: { orderId: line.orderId, shopifyLineId: line.shopifyLineId, removedAt: null },
+      where: { orderId: line.orderId, shopifyLineId: line.shopifyLineId, removedAt: null, kind: { in: FILE_KINDS } },
       select: { kind: true, printArea: true, version: true, createdAt: true },
     })
     : []
-  const newestFile = files.reduce<Date | null>((max, f) => (!max || f.createdAt > max ? f.createdAt : max), null)
+  const prints = currentFiles(files, 'PRINT')
+  const mockups = currentFiles(files, 'MOCKUP')
+  const newestFile = [...prints, ...mockups].reduce<Date | null>((max, f) => (!max || f.createdAt > max ? f.createdAt : max), null)
   const events = await prisma.designTaskEvent.findMany({
     where: { taskId: task.taskId }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: EVENTS_SHOWN, select: { message: true, createdAt: true },
   })
   const job = await prisma.designAgentJob.findFirst({
-    where: { taskId: task.taskId }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], select: { status: true, stage: true, summary: true },
+    where: { taskId: task.taskId }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], select: { status: true, stage: true, summary: true, createdAt: true },
   })
   const state = await workStateFor(task, now)
 
   const named = (text: string | null | undefined) => cutLine(text, MAX_NAME) || NONE
   const jobText = job
-    ? `${JOB_LABEL[job.status] ?? cutLine(job.status, MAX_NAME)}${job.stage ? `, bước ${cutLine(job.stage, MAX_NAME)}` : ''}${job.summary?.trim() ? ` — ${cutLine(job.summary, MAX_SUMMARY)}` : ''}`
-    : 'chưa có việc nào'
+    ? `${usDate(job.createdAt)} · ${JOB_LABEL[job.status] ?? cutLine(job.status, MAX_NAME)}${job.stage ? `, bước ${cutLine(job.stage, MAX_NAME)}` : ''}${job.summary?.trim() ? ` — ${cutLine(job.summary, MAX_SUMMARY)}` : ''}`
+    : NONE
   const out = [
     `${task.taskKey} — ${STATUS_LABEL[task.status] ?? task.status}`,
     `Xưởng: ${named(supplier?.name)} · SKU xưởng: ${named(line?.resolvedSupplierSku)} · Template: ${named(template?.name)}`,
-    `File in: ${currentFiles(files, 'PRINT').length} · Mockup: ${currentFiles(files, 'MOCKUP').length}${newestFile ? ` · file mới nhất ${usDate(newestFile)}` : ''}`,
+    `File in: ${prints.length} · Mockup: ${mockups.length}${newestFile ? ` · file mới nhất ${usDate(newestFile)}` : ''}`,
     describeWorkState(task.taskKey, state, now),
-    `Agent: ${jobText}`,
+    `Việc Agent gần nhất: ${jobText}`,
   ]
-  if (events.length) out.push('Sự kiện gần nhất:', ...events.map(e => `- ${usDate(e.createdAt)}: ${cutLine(e.message, MAX_EVENT)}`))
+  if (events.length) out.push('Hoạt động gần đây:', ...events.map(e => `- ${usDate(e.createdAt)}: ${cutLine(e.message, MAX_EVENT)}`))
   return out.join('\n').slice(0, MAX_STATUS_REPLY)
 }

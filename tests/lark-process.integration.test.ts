@@ -32,7 +32,9 @@ import type { BoardEntryInput } from '@/lib/design-agent/work-board'
 import type { AcceptedLarkMessage } from '@/lib/lark/events'
 import type { LarkIntent } from '@/lib/lark/intent'
 import { processLarkMessage } from '@/lib/lark/process'
-import { REPLY_BOARD_STALE_REPORT, REPLY_FAILED, REPLY_NOT_READ, REPLY_OTHER, REPLY_SENT } from '@/lib/lark/replies'
+import { LARK_DAILY_CALL_CAP } from '@/lib/lark/intent'
+import { LlmCapReached } from '@/lib/llm/cap'
+import { REPLY_BOARD_STALE_REPORT, REPLY_FAILED, REPLY_NOT_READ, REPLY_OTHER, REPLY_OUT_OF_SCOPE, REPLY_SENT } from '@/lib/lark/replies'
 import { agentFixture } from './helpers/design-agent-fixture'
 import { dropWorkBoard, publishBoard } from './helpers/work-board'
 
@@ -109,7 +111,7 @@ beforeEach(() => {
 
 describe('Lark message processing', () => {
   it('out of scope, unclear, other: a one-line reply and no job', async () => {
-    expect((await run('doanh thu hôm nay?', { ...fix('OTHER', []), scope: 'OUT_OF_SCOPE' })).reply).toBe('Bot chỉ nhận việc của Design Studio (sửa mẫu, làm mẫu, mockup).')
+    expect((await run('doanh thu hôm nay?', { ...fix('OTHER', []), scope: 'OUT_OF_SCOPE' })).reply).toBe(REPLY_OUT_OF_SCOPE)
     expect((await run('sửa giúp cái đơn kia', { ...fix('FIX', []), scope: 'UNCLEAR' })).reply).toBe('Chưa rõ đơn nào. Hãy gửi mã đơn và dòng, ví dụ: LIT6262_1.')
     const other = await run('LIP1_1 là gì', fix('OTHER', ['LIP1_1']))
     expect(other).toMatchObject({ outcome: 'REPLIED', reply: REPLY_OTHER, jobIds: [] })
@@ -381,7 +383,7 @@ describe('Lark requests on a line someone else holds', () => {
     await publishBoard([], 'Luồng 7', NOW)
     const r = await runAt('LIP30_1 sao rồi', fix('STATUS', ['LIP30_1']))
     expect(r.outcome).toBe('REPLIED'); expect(r.jobIds).toEqual([])
-    expect(r.reply).toContain('LIP30_1 — Trả lại sửa'); expect(r.reply).toContain('LIP30_1: Luồng 7 đang giữ dòng này.')
+    expect(r.reply).toContain('LIP30_1 — Bị trả lại'); expect(r.reply).toContain('LIP30_1: Luồng 7 đang giữ dòng này.')
     expect(await jobsOf('LIP30_1')).toEqual([])
     expect((await runAt('sao rồi', fix('STATUS', []))).reply).toBe('Chưa rõ đơn nào. Hãy gửi mã đơn và dòng, ví dụ: LIT6262_1.')
   })
@@ -390,7 +392,53 @@ describe('Lark requests on a line someone else holds', () => {
     await publishBoard([], null, NOW)
     const r = await runAt('việc nào chưa có người làm', fix('UNASSIGNED_REPORT', []))
     expect(r.outcome).toBe('REPLIED'); expect(r.jobIds).toEqual([])
-    expect(r.reply!.split('\n')[0]).toMatch(/^(Việc chưa có người làm: \d+ dòng\.|Hiện không có dòng nào chưa có người làm\.)$/)
+    expect(r.reply!.split('\n')[0]).toMatch(/^(Việc chưa có người làm: \d+ dòng\.|Hiện không còn việc nào chưa có người làm\.)$/)
   })
 })
 
+describe('Lark help text and the bot call cap', () => {
+  const day = () => new Date(Date.now() + 7 * 3600_000).toISOString().slice(0, 10)
+  const setCount = (key: string, value: number) => prisma.appSetting.upsert({ where: { key }, create: { key, value: String(value) }, update: { value: String(value) } })
+  const countOf = async (key: string) => Number((await prisma.appSetting.findUnique({ where: { key } }))?.value ?? 0)
+
+  it('the help texts name the status question and the unassigned report', () => {
+    for (const text of [REPLY_OTHER, REPLY_OUT_OF_SCOPE]) {
+      expect(text).toContain('LIT6262_1 sao rồi'); expect(text).toContain('việc nào chưa có người làm')
+    }
+    expect(REPLY_OTHER).toContain('LIT6262_1 sửa sao trên mũ bị lệch')
+    expect(REPLY_OUT_OF_SCOPE.startsWith('Bot chỉ nhận việc của Design Studio (sửa mẫu, làm mẫu, mockup).')).toBe(true)
+  })
+
+  it('bot cap 300 reached refuses with the existing not-read reply', async () => {
+    expect(LARK_DAILY_CALL_CAP).toBe(300)
+    const key = `lark.llmCalls.${day()}`
+    const before = await countOf(key)
+    await setCount(key, 300)
+    try {
+      const llm = fakeLlm(fix('FIX', ['LIP13_1'], 'sửa viền'))
+      const m = await insert(msg('LIP13_1 sửa viền'))
+      const r = await processLarkMessage(m, { lark, llm: { llm, model: 'm', cap: LARK_DAILY_CALL_CAP } })
+      expect(r).toMatchObject({ outcome: 'ERROR', reply: REPLY_NOT_READ, jobIds: [] })
+      expect(llm.complete).not.toHaveBeenCalled()
+      expect((await eventOf(m)).error).toBe(new LlmCapReached(300).message)
+      expect(await countOf(key)).toBe(300)
+      expect(await jobsOf('LIP13_1')).toEqual([])
+    } finally {
+      await setCount(key, before)
+    }
+  })
+
+  it('CS cap reached does not stop the bot', async () => {
+    const csKey = `cs.llmCalls.${day()}`
+    const before = await prisma.appSetting.findUnique({ where: { key: csKey } })
+    await setCount(csKey, 500)
+    try {
+      const r = await run('LIP1_1 là gì', fix('OTHER', ['LIP1_1']))
+      expect(r).toMatchObject({ outcome: 'REPLIED', reply: REPLY_OTHER })
+      expect(await countOf(csKey)).toBe(500)
+    } finally {
+      if (before) await setCount(csKey, Number(before.value))
+      else await prisma.appSetting.deleteMany({ where: { key: csKey } })
+    }
+  })
+})

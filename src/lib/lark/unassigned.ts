@@ -48,7 +48,7 @@ export async function larkUnassignedReport(now: Date = new Date()): Promise<stri
   // A line whose holder cannot be told (the board went stale meanwhile) is never reported as free.
   if (Array.from(states.values()).some(s => s.kind === 'UNKNOWN')) return REPLY_BOARD_STALE_REPORT
   const free = open.filter(({ task }) => states.get(task.taskKey)?.kind === 'FREE')
-  if (free.length === 0) return 'Hiện không có dòng nào chưa có người làm.'
+  if (free.length === 0) return 'Hiện không còn việc nào chưa có người làm.'
 
   const verdicts = await mappingStates(free.map(({ task, line }): MappingStateLine => ({
     key: task.id, storeId: task.order.storeId, orderId: task.orderId, resolvedSupplierId: line.resolvedSupplierId,
