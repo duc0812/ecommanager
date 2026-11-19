@@ -29,3 +29,9 @@ export const REPLY_OUT_OF_SCOPE = 'Bot chỉ nhận việc của Design Studio (
 export const REPLY_NOT_READ = 'Bot chưa đọc được yêu cầu (lỗi AI). Thử lại sau, hoặc trả lại task trên tool.'
 
 export const REPLY_FAILED = 'Bot không xử lý được yêu cầu, thử lại sau.'
+
+export const REPLY_NOTED = ' Yêu cầu của bạn đã được ghi vào task.'
+
+export const replyHeldBefore = (reason: string) => ` Dòng này từng bị giữ: ${reason.replace(/\s+/g, ' ').trim().slice(0, 300)}`
+
+export const REPLY_BOARD_STALE_REPORT = 'Chưa có dữ liệu tin cậy từ máy local, chưa báo được việc chưa có người làm.'

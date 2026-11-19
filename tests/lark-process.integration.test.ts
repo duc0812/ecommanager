@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, afterEach, beforeEach, vi } from 'vitest'
 
 const failEnqueue = vi.hoisted(() => ({ on: false }))
 const failResolve = vi.hoisted(() => ({ on: false }))
@@ -28,16 +28,17 @@ import { loadTask } from '@/lib/design-tasks'
 import { saveAgentSettings } from '@/lib/design-settings'
 import { LlmError, type Llm } from '@/lib/llm/types'
 import { LarkApiError } from '@/lib/lark/api'
+import type { BoardEntryInput } from '@/lib/design-agent/work-board'
 import type { AcceptedLarkMessage } from '@/lib/lark/events'
 import type { LarkIntent } from '@/lib/lark/intent'
 import { processLarkMessage } from '@/lib/lark/process'
-import { REPLY_FAILED, REPLY_NOT_READ, REPLY_OTHER, REPLY_SENT } from '@/lib/lark/replies'
+import { REPLY_BOARD_STALE_REPORT, REPLY_FAILED, REPLY_NOT_READ, REPLY_OTHER, REPLY_SENT } from '@/lib/lark/replies'
 import { agentFixture } from './helpers/design-agent-fixture'
 import { dropWorkBoard, publishBoard } from './helpers/work-board'
 
 const fx = agentFixture('lip')
 const fakeLlm = (output: unknown) => ({ complete: vi.fn(async () => ({ output, tokensIn: 1, tokensOut: 1 })) }) as unknown as Llm
-const fix = (kind: LarkIntent['kind'], lineKeys: string[], instruction = ''): LarkIntent => ({ scope: 'DESIGN_STUDIO', kind, lineKeys, instruction })
+const fix = (kind: LarkIntent['kind'], lineKeys: string[], instruction = ''): LarkIntent => ({ scope: 'DESIGN_STUDIO', kind, lineKeys, instruction, supplierName: '', supplierSku: '' })
 
 const lark = {
   reply: vi.fn<(id: string, text: string) => Promise<void>>(async () => {}),
@@ -83,8 +84,14 @@ beforeAll(async () => {
     13: { taskStatus: 'REJECTED' }, 14: { taskStatus: 'REJECTED' }, 15: { taskStatus: 'REVIEW' }, 16: { taskStatus: 'CANCELLED' },
     17: { taskStatus: 'REVIEW' }, 18: { taskStatus: 'DONE' },
     19: { taskStatus: 'REJECTED', pipelineStatus: 'FULFILLED' }, 20: { taskStatus: 'DONE', pipelineStatus: 'CANCELLED' },
+    21: { taskStatus: 'REVIEW' }, 22: { taskStatus: 'DONE' }, 23: { taskStatus: 'REJECTED' }, 24: { taskStatus: 'DOING' },
+    25: { taskStatus: 'NEW' }, 26: { taskStatus: 'REJECTED' }, 27: { taskStatus: 'DONE', exported: true }, 28: { taskStatus: 'REJECTED' },
+    29: { taskStatus: 'REVIEW' }, 30: { taskStatus: 'REJECTED' },
   }
   for (const [n, o] of Object.entries(statuses)) await fx.order(Number(n), { ...o, withPrint: true })
+  const hoa = await fx.user('Hoa', 'SUPPORT', ['design_tasks'])
+  await prisma.designTask.update({ where: { taskKey: 'LIP24_1' }, data: { assigneeId: hoa.actor.id } })
+  await prisma.designTask.update({ where: { taskKey: 'LIP25_1' }, data: { readiness: 'AUTO' } })
 })
 
 afterAll(async () => {
@@ -102,8 +109,8 @@ beforeEach(() => {
 
 describe('Lark message processing', () => {
   it('out of scope, unclear, other: a one-line reply and no job', async () => {
-    expect((await run('doanh thu hôm nay?', { scope: 'OUT_OF_SCOPE', kind: 'OTHER', lineKeys: [], instruction: '' })).reply).toBe('Bot chỉ nhận việc của Design Studio (sửa mẫu, làm mẫu, mockup).')
-    expect((await run('sửa giúp cái đơn kia', { scope: 'UNCLEAR', kind: 'FIX', lineKeys: [], instruction: '' })).reply).toBe('Chưa rõ đơn nào. Hãy gửi mã đơn và dòng, ví dụ: LIT6262_1.')
+    expect((await run('doanh thu hôm nay?', { ...fix('OTHER', []), scope: 'OUT_OF_SCOPE' })).reply).toBe('Bot chỉ nhận việc của Design Studio (sửa mẫu, làm mẫu, mockup).')
+    expect((await run('sửa giúp cái đơn kia', { ...fix('FIX', []), scope: 'UNCLEAR' })).reply).toBe('Chưa rõ đơn nào. Hãy gửi mã đơn và dòng, ví dụ: LIT6262_1.')
     const other = await run('LIP1_1 là gì', fix('OTHER', ['LIP1_1']))
     expect(other).toMatchObject({ outcome: 'REPLIED', reply: REPLY_OTHER, jobIds: [] })
     expect(await prisma.designAgentJob.count({ where: { taskKey: { startsWith: 'LIP' } } })).toBe(0)
@@ -216,7 +223,7 @@ describe('Lark message processing', () => {
     const capped = await insert(msg('LIP13_1 sửa'))
     expect((await processLarkMessage(capped, { lark, llm: { llm: fakeLlm(fix('FIX', ['LIP13_1'], 'sửa')), model: 'm', cap: 0 } })).outcome).toBe('ERROR')
     const junk = await insert(msg('LIP13_1 sửa'))
-    expect((await processLarkMessage(junk, { lark, llm: { llm: fakeLlm({ scope: 'RUN_SHELL', kind: 'FIX', lineKeys: ['LIP13_1'], instruction: 'x' }), model: 'm', cap: 100000 } })).outcome).toBe('ERROR')
+    expect((await processLarkMessage(junk, { lark, llm: { llm: fakeLlm({ ...fix('FIX', ['LIP13_1'], 'x'), scope: 'RUN_SHELL' }), model: 'm', cap: 100000 } })).outcome).toBe('ERROR')
     expect(await jobsOf('LIP13_1')).toEqual([])
   })
 
@@ -278,3 +285,112 @@ describe('Lark message processing', () => {
     }
   })
 })
+
+describe('Lark requests on a line someone else holds', () => {
+  const NOW = new Date('2026-11-19T10:00:00.000Z')
+  const NOTED = ' Yêu cầu của bạn đã được ghi vào task.'
+  const UNKNOWN = 'chưa xác định được ai đang giữ vì dữ liệu từ máy local chưa cập nhật. Bot chưa tạo việc.'
+  const waiting = (key: string, over: Partial<BoardEntryInput> = {}): BoardEntryInput =>
+    ({ taskKey: key, source: 'LOCAL_QUEUE', worker: 'Hàng duyệt local', state: 'waiting', version: 2, etaAt: new Date(NOW.getTime() + 7 * 60_000).toISOString(), ...over })
+  const notesOf = async (key: string) => {
+    const t = await prisma.designTask.findUniqueOrThrow({ where: { taskKey: key } })
+    return (await prisma.designTaskEvent.findMany({ where: { taskId: t.id, type: 'NOTE' }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] })).map(e => e.message)
+  }
+  const eventCount = async (key: string) => {
+    const t = await prisma.designTask.findUniqueOrThrow({ where: { taskKey: key } })
+    return prisma.designTaskEvent.count({ where: { taskId: t.id } })
+  }
+  async function runAt(text: string, intent: LarkIntent, now = NOW) {
+    const m = await insert(msg(text))
+    return processLarkMessage(m, { lark, llm: { llm: fakeLlm(intent), model: 'm', cap: 100000 }, now })
+  }
+
+  afterEach(async () => { await publishBoard() })
+
+  it('busy line gets the local-fix reply, one note, no job and no status change', async () => {
+    await publishBoard([waiting('LIP21_1')], null, NOW)
+    const before = await eventCount('LIP21_1')
+    const review = await runAt('LIP21_1 sai màu nền', fix('FIX', ['LIP21_1'], 'sai màu nền'))
+    expect(review).toMatchObject({ outcome: 'REPLIED', jobIds: [], reply: `LIP21_1: đã có bản sửa v2 ở hàng duyệt local, khoảng 7 phút nữa tự lên cloud.${NOTED}` })
+    expect((await loadTask('LIP21_1'))!.task).toMatchObject({ status: 'REVIEW', rejectReasons: [] })
+    expect(await jobsOf('LIP21_1')).toEqual([])
+    expect(await notesOf('LIP21_1')).toEqual(['Agent: Lark – Lan: sai màu nền'])
+    expect(await eventCount('LIP21_1')).toBe(before + 1)
+
+    await dropWorkBoard()
+    const done = await runAt('LIP22_1 sửa chữ', fix('FIX', ['LIP22_1'], 'sửa chữ'))
+    expect(done).toMatchObject({ outcome: 'REPLIED', jobIds: [], reply: `LIP22_1: ${UNKNOWN}${NOTED}` })
+    expect((await loadTask('LIP22_1'))!.task.status).toBe('DONE')
+    expect(await jobsOf('LIP22_1')).toEqual([])
+    expect(await notesOf('LIP22_1')).toEqual(['Agent: Lark – Lan: sửa chữ'])
+  })
+
+  it('a queue line past its deadline says lượt quét tới and is still not taken', async () => {
+    await publishBoard([waiting('LIP29_1', { etaAt: new Date(NOW.getTime() - 60_000).toISOString() })], null, NOW)
+    const r = await runAt('LIP29_1 sai màu nền', fix('FIX', ['LIP29_1'], 'sai màu nền'))
+    expect(r.reply).toBe(`LIP29_1: đã có bản sửa v2 ở hàng duyệt local, sẽ lên cloud ở lượt quét tới (tối đa 10 phút).${NOTED}`)
+    expect((await loadTask('LIP29_1'))!.task.status).toBe('REVIEW'); expect(await jobsOf('LIP29_1')).toEqual([])
+  })
+
+  it('a stream, a designer and auto render each keep their line; no job is made', async () => {
+    await publishBoard([], 'Luồng 7', NOW)
+    expect((await runAt('LIP23_1 sửa viền', fix('FIX', ['LIP23_1'], 'sửa viền'))).reply).toBe(`LIP23_1: Luồng 7 đang giữ dòng này.${NOTED}`)
+    expect((await runAt('LIP24_1 sửa viền', fix('NEW_DESIGN', ['LIP24_1'], 'sửa viền'))).reply).toBe(`LIP24_1: Hoa đang làm dòng này.${NOTED}`)
+    expect((await runAt('LIP25_1 làm mẫu', fix('NEW_DESIGN', ['LIP25_1'], 'làm mẫu'))).reply).toBe(`LIP25_1: auto render sẽ xử lý ở lượt hằng giờ.${NOTED}`)
+    expect(await prisma.designAgentJob.count({ where: { taskKey: { in: ['LIP23_1', 'LIP24_1', 'LIP25_1'] } } })).toBe(0)
+    expect((await loadTask('LIP23_1'))!.task.status).toBe('REJECTED'); expect((await loadTask('LIP24_1'))!.task.status).toBe('DOING'); expect((await loadTask('LIP25_1'))!.task.status).toBe('NEW')
+  })
+
+  it('a busy line with nothing to note gets the state alone', async () => {
+    await publishBoard([], 'Luồng 7', NOW)
+    const notes = await notesOf('LIP23_1')
+    expect((await runAt('LIP23_1 làm mockup', fix('MOCKUP', ['LIP23_1']))).reply).toBe('LIP23_1: Luồng 7 đang giữ dòng này.')
+    expect(await notesOf('LIP23_1')).toEqual(notes); expect(await jobsOf('LIP23_1')).toEqual([])
+  })
+
+  it('a stale or never-published board makes no job and never says the line is free', async () => {
+    await publishBoard([], null, new Date(NOW.getTime() - 601_000))
+    const stale = await runAt('LIP28_1 sửa viền', fix('FIX', ['LIP28_1'], 'sửa viền'))
+    expect(stale).toMatchObject({ outcome: 'REPLIED', jobIds: [], reply: `LIP28_1: ${UNKNOWN}${NOTED}` })
+    await dropWorkBoard()
+    expect((await runAt('LIP28_1 làm mockup', fix('MOCKUP', ['LIP28_1']))).reply).toBe(`LIP28_1: ${UNKNOWN}`)
+    expect((await runAt('việc nào chưa có người làm', fix('UNASSIGNED_REPORT', []))).reply).toBe(REPLY_BOARD_STALE_REPORT)
+    expect(await jobsOf('LIP28_1')).toEqual([]); expect((await loadTask('LIP28_1'))!.task.status).toBe('REJECTED')
+  })
+
+  it('a free line that was held before is accepted, with the old reason', async () => {
+    await publishBoard([waiting('LIP26_1', { state: 'held', detail: 'Thiếu mockup' })])
+    const r = await runAt('LIP26_1 sửa chữ', fix('FIX', ['LIP26_1'], 'sửa chữ'), new Date())
+    expect(r).toMatchObject({ outcome: 'JOB', reply: 'Đã nhận: LIP26_1 — sửa chữ. Kết quả xem trên tool. Dòng này từng bị giữ: Thiếu mockup' })
+    expect(await jobsOf('LIP26_1')).toMatchObject([{ kind: 'FIX', source: 'LARK' }])
+  })
+
+  it('a sent line answers the same for every kind, mockup included', async () => {
+    for (const kind of ['FIX', 'NEW_DESIGN', 'MOCKUP'] as const) expect((await runAt('LIP27_1 làm lại', fix(kind, ['LIP27_1'], 'làm lại'))).reply).toBe(REPLY_SENT)
+    expect(await jobsOf('LIP27_1')).toEqual([]); expect((await loadTask('LIP27_1'))!.task.status).toBe('DONE')
+  })
+
+  it('a supplier change or undo gets the help text for now', async () => {
+    const change = await runAt('LIP30_1 đổi qua Jomall', { ...fix('SUPPLIER_CHANGE', ['LIP30_1'], 'đổi qua Jomall'), supplierName: 'Jomall', supplierSku: 'JM-1' })
+    expect(change).toMatchObject({ outcome: 'REPLIED', reply: REPLY_OTHER, jobIds: [] })
+    expect((await runAt('LIP30_1 hoàn tác đổi xưởng', fix('SUPPLIER_UNDO', ['LIP30_1']))).reply).toBe(REPLY_OTHER)
+    expect(await jobsOf('LIP30_1')).toEqual([])
+  })
+
+  it('a status question answers for the line and makes no job', async () => {
+    await publishBoard([], 'Luồng 7', NOW)
+    const r = await runAt('LIP30_1 sao rồi', fix('STATUS', ['LIP30_1']))
+    expect(r.outcome).toBe('REPLIED'); expect(r.jobIds).toEqual([])
+    expect(r.reply).toContain('LIP30_1 — Trả lại sửa'); expect(r.reply).toContain('LIP30_1: Luồng 7 đang giữ dòng này.')
+    expect(await jobsOf('LIP30_1')).toEqual([])
+    expect((await runAt('sao rồi', fix('STATUS', []))).reply).toBe('Chưa rõ đơn nào. Hãy gửi mã đơn và dòng, ví dụ: LIT6262_1.')
+  })
+
+  it('the unassigned report needs no line', async () => {
+    await publishBoard([], null, NOW)
+    const r = await runAt('việc nào chưa có người làm', fix('UNASSIGNED_REPORT', []))
+    expect(r.outcome).toBe('REPLIED'); expect(r.jobIds).toEqual([])
+    expect(r.reply!.split('\n')[0]).toMatch(/^(Việc chưa có người làm: \d+ dòng\.|Hiện không có dòng nào chưa có người làm\.)$/)
+  })
+})
+
