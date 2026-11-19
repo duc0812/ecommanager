@@ -81,7 +81,7 @@ describe('Setup card', () => {
     const res = await GET(req('GET', superToken))
     const text = await res.text()
     expect(text).not.toContain('sheets-token')
-    expect(JSON.parse(text)).toMatchObject({ configured: true, connected: true, channels: [{ supplierCode: 'jomall', enabled: false }, { supplierCode: 'MANGOSHAO', enabled: false }] })
+    expect(JSON.parse(text)).toMatchObject({ configured: true, connected: true, channels: [{ supplierCode: 'jomall', enabled: false }, { supplierCode: 'MANGOSHAO', enabled: false }, { supplierCode: '3', enabled: false }] })
   })
 
   it('will not switch on without a connection', async () => {
