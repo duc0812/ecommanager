@@ -147,7 +147,7 @@ def test_two_stream_folders_both_publish(tmp_path):
     builder = streams(tmp_path, name='_streams-1120', readme=two, age_h=2, auto__not__render_md=rows('LIT2_1', 'LIT5_1', 'LIT7_1'),
                       can__chinh_md=(rows('LIT6_1'), 60), tra__lai_md=(rows('LIT4_1'), 10))
     (builder / '_streams-file').write_text('x'); (builder / '_streams-empty').mkdir(); (builder / 'LIT1_1-agent-j1').mkdir()
-    entries, owner = work_board.stream_entries(builder, NOW)
+    entries, owner = work_board.stream_entries(builder, NOW, ttl_s=48 * HOUR)
     got = by_key(entries)
     assert {k: (e['worker'], e['detail']) for k, e in got.items()} == {
         'LIT1_1': ('Luồng 1', '_streams-1118/auto-not-render.md'), 'LIT2_1': ('Luồng 1', '_streams-1120/auto-not-render.md'),
@@ -202,7 +202,7 @@ def test_handoff_moves_a_key(tmp_path):
 def test_recent_progress_file_keeps_an_old_list_valid(tmp_path):
     builder = streams(tmp_path, age_h=72, auto__not__render_md=rows('LIT1_1'), can__chinh_md=rows('LIT2_1'),
                       progress__luong2__B_md=('KEY | ghi chú\n', 47), progress__luong20_md=('x', 1))
-    assert {e['taskKey']: e['worker'] for e in work_board.stream_entries(builder, NOW)[0]} == {'LIT2_1': 'Luồng 2'}
+    assert {e['taskKey']: e['worker'] for e in work_board.stream_entries(builder, NOW, ttl_s=48 * HOUR)[0]} == {'LIT2_1': 'Luồng 2'}
 
 
 def test_stream_past_48_h_is_dropped(tmp_path):
@@ -229,15 +229,15 @@ def test_invalid_stream_never_hides_a_valid_streams_key_same_folder(tmp_path):
 def test_same_folder_two_valid_streams_the_more_recently_changed_one_holds_the_key(tmp_path):
     builder = streams(tmp_path, tra__lai_md=(rows('LIT6242_1'), 5), lam__tay_md=(rows('LIT6242_1'), 1),
                       auto__not__render_md=(rows('LIT5_1'), 2), can__chinh_md=(rows('LIT5_1'), 2))
-    got = by_key(work_board.stream_entries(builder, NOW)[0])
+    got = by_key(work_board.stream_entries(builder, NOW, ttl_s=48 * HOUR)[0])
     assert got['LIT6242_1']['worker'] == 'Luồng 3' and got['LIT6242_1']['detail'] == '_streams-1118/lam-tay.md'
     assert got['LIT5_1']['worker'] == 'Luồng 2'                                   # same time, neither owns REJECTED: higher number
-    assert work_board.stream_entries(builder, NOW)[1] == 'Luồng 7'                # the owner stays even when it lost the key
+    assert work_board.stream_entries(builder, NOW, ttl_s=48 * HOUR)[1] == 'Luồng 7'                # the owner stays even when it lost the key
     progress = builder / '_streams-1118' / 'progress-luong7.md'; progress.write_text('x', encoding='utf-8')
     os.utime(progress, (NOW - HOUR / 2, NOW - HOUR / 2))
-    assert by_key(work_board.stream_entries(builder, NOW)[0])['LIT6242_1']['worker'] == 'Luồng 7'
+    assert by_key(work_board.stream_entries(builder, NOW, ttl_s=48 * HOUR)[0])['LIT6242_1']['worker'] == 'Luồng 7'
     os.utime(progress, (NOW - HOUR, NOW - HOUR))                                  # a tie goes to the REJECTED owner
-    assert by_key(work_board.stream_entries(builder, NOW)[0])['LIT6242_1']['worker'] == 'Luồng 7'
+    assert by_key(work_board.stream_entries(builder, NOW, ttl_s=48 * HOUR)[0])['LIT6242_1']['worker'] == 'Luồng 7'
 
 
 def test_rejected_owner_read_from_readme(tmp_path):
@@ -441,3 +441,10 @@ def test_busy_that_the_server_refuses_still_does_not_start_the_job(server, deps,
     assert runner.serve(d, once=True) == runner.EXIT_OK
     assert len(calls(server, '/busy')) == 1 and not calls(server, '/heartbeat') and not calls(server, '/result')
     assert not (d.cfg.artwork_builder / 'LIT6262_1-agent-j1').exists()
+
+
+def test_default_window_is_two_hours(tmp_path):
+    builder = streams(tmp_path, age_h=3, auto__not__render_md=rows('LIT1_1'), can__chinh_md=(rows('LIT2_1'), 1))
+    assert work_board.STREAM_TTL_S == 2 * HOUR
+    assert {e['taskKey']: e['worker'] for e in work_board.stream_entries(builder, NOW)[0]} == {'LIT2_1': 'Luồng 2'}
+    assert work_board.stream_entries(builder, NOW)[1] is None                       # Luồng 7's README sentence counts only while it writes
