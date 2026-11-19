@@ -55,7 +55,7 @@ Số vòng N được cho ở cuối, mục "Vòng này".
 a) File cho QA. Đặt mọi file sẽ thành phiên bản mới vào `{{JOB_DIR}}/round-N/deliver/` (`.jpg`, `.jpeg` hay `.png`; tấm in giữ đúng kích thước pixel, chế độ màu, DPI và ICC profile của file hiện tại của vùng đó, hoặc của template), rồi ghi `{{JOB_DIR}}/round-N/READY.json` sau cùng, UTF-8, một object:
    `{ "round": N, "files": [ { "kind": "PRINT" | "MOCKUP", "printArea": "<tên vùng đúng như trong files của job.json / template>", "file": "round-N/deliver/<tên>" } ], "changed": "…", "unchanged": "…" }`
    `changed` bằng tiếng Việt cho designer: đã đổi gì và đổi thế nào (sửa ở nguồn nào, hay "không có nguồn"). `unchanged` cũng bằng tiếng Việt: những gì cố ý để yên. Không đường dẫn file, không tên công cụ trong hai trường này. Liệt kê mọi file giao vòng này, kể cả mảnh mang sang từ vòng trước của job; vùng không đổi thì không liệt kê. Rồi dừng.
-b) Không làm được. Ghi `{{JOB_DIR}}/result.json`, UTF-8: `{ "outcome": "NEEDS_OWNER", "summary": "…" }`. `summary` bằng tiếng Việt, 2 đến 5 câu cho designer: đã thấy gì, đã thử gì, còn thiếu gì (không có nguồn, không có template, yêu cầu không rõ, model ảnh từ chối, ổ đĩa đầy, hết giờ). Rồi dừng.
+b) Không làm được. Ghi `{{JOB_DIR}}/result.json`, UTF-8: `{ "outcome": "NEEDS_OWNER", "summary": "…", "ask": "…" }`. `summary` bằng tiếng Việt, 2 đến 5 câu cho designer: đã thấy gì, đã thử gì, còn thiếu gì (không có nguồn, không có template, yêu cầu không rõ, model ảnh từ chối, ổ đĩa đầy, hết giờ). `ask` là MỘT câu tiếng Việt ngắn, tối đa 160 ký tự, chỉ nói chủ shop cần đưa gì hoặc quyết định gì (ví dụ: "Thiếu file nguồn có layer chữ của quần; cần chủ shop gửi PSD hoặc cho dựng bằng AI."); đây là dòng duy nhất gửi vào nhóm chat của shop, nên không đường dẫn file, không tên tool, không kể đã thử gì. Rồi dừng.
 
 Khác đi là job thất bại: không có READY.json, READY.json sai dạng, file được liệt kê bị thiếu, rỗng, nằm ngoài `round-N/deliver/` hay không phải `.jpg`/`.jpeg`/`.png`. Không bao giờ ghi cả hai file, và không bao giờ ghi `"outcome": "DONE"`: chỉ runner mới báo một job là xong.
 
@@ -87,7 +87,7 @@ Một phiên QA độc lập, chưa làm file nào, sẽ đo kết quả của b
 - Bạn có {{JOB_MINUTES}} phút cho cả job, gồm mọi vòng sửa, mọi vòng QA và việc tải lên; phiên này còn {{LEFT_MINUTES}} phút. Hết giờ runner dừng phiên (diệt cả cây tiến trình) và job bị ghi là thất bại.
 - Mỗi lệnh phải xong trong {{CMD_MINUTES}} phút; lệnh nào cần lâu hơn thì phải thiết kế lại, không chờ nó.
 - Đo và tìm kiếm trên bản thu nhỏ (cạnh dài nhất tối đa 2000 px), chọn phép biến đổi rồi áp dụng đúng một lần lên file kích thước đầy đủ; không bao giờ chạy tìm kiếm lưới, vòng lặp từng điểm ảnh bằng Python hay các phép toán lặp lại trên cả tấm in ở độ phân giải gốc.
-- Khi đã qua hai phần ba thời gian của phiên này ({{LIMIT_MINUTES}} phút) mà chưa có file giao thì dừng: ghi `result.json` với `outcome` là `NEEDS_OWNER` và `summary` nói đã tìm thấy gì, đã thử gì, còn lại gì, rồi kết thúc. Phần thời gian còn lại là của phiên QA và việc tải lên.
+- Khi đã qua hai phần ba thời gian của phiên này ({{LIMIT_MINUTES}} phút) mà chưa có file giao thì dừng: ghi `result.json` với `outcome` là `NEEDS_OWNER` và `summary` nói đã tìm thấy gì, đã thử gì, còn lại gì, kèm `ask` (một câu, tối đa 160 ký tự: chủ shop cần đưa gì hoặc quyết định gì), rồi kết thúc. Phần thời gian còn lại là của phiên QA và việc tải lên.
 
 ## Việc của job này
 

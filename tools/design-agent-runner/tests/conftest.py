@@ -22,7 +22,7 @@ def _home(tmp_path, monkeypatch):
     home.mkdir()
     monkeypatch.setenv('DESIGN_AGENT_HOME', str(home))
     for name in ('DESIGN_AGENT_ENV', 'DESIGN_AGENT_JOB_DIR', 'DESIGN_AGENT_TOKEN', 'DESIGN_AGENT_PHASE', 'DESIGN_AGENT_ROUND',
-                 'FAKE_CLAUDE_MODE', 'FAKE_CLAUDE_SLEEP', 'FAKE_CLAUDE_PLAN', 'FAKE_CLAUDE_NAP',
+                 'FAKE_CLAUDE_MODE', 'FAKE_CLAUDE_SLEEP', 'FAKE_CLAUDE_PLAN', 'FAKE_CLAUDE_NAP', 'FAKE_CLAUDE_ASK',
                  'FAKE_CODEX_MODE', 'FAKE_CODEX_PLAN', 'FAKE_CODEX_SLEEP', 'FAKE_CODEX_ECHO_FILE'):
         monkeypatch.delenv(name, raising=False)
     return home
@@ -130,6 +130,38 @@ def fake_pid(d, folder):
     return json.loads(p.read_text(encoding='utf-8'))['pid']
 
 
+QUEUE_SCHEMA = """
+CREATE TABLE items (id TEXT PRIMARY KEY, taskKey TEXT NOT NULL, groupKey TEXT NOT NULL, kind TEXT NOT NULL, status TEXT NOT NULL,
+  statusReason TEXT, prevStatus TEXT, version INTEGER NOT NULL, enteredAt TEXT NOT NULL, createdAt TEXT NOT NULL,
+  updatedAt TEXT NOT NULL, apiLines TEXT NOT NULL, meta TEXT NOT NULL, qa TEXT NOT NULL);
+CREATE TABLE item_keys (itemId TEXT NOT NULL, taskKey TEXT NOT NULL, PRIMARY KEY (itemId, taskKey));
+"""
+
+
+def make_queue(path, *items):
+    """A review queue like the real one. Each item: (id, [task keys], status, enteredAt) plus reason / version / qa by keyword."""
+    import sqlite3
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    db = sqlite3.connect(str(path))
+    db.executescript(QUEUE_SCHEMA)
+    db.close()
+    for item in items:
+        queue_item(path, *item)
+    return path
+
+
+def queue_item(path, item_id, keys, status, entered, reason=None, version=1, qa=None):
+    import sqlite3
+    db = sqlite3.connect(str(path))
+    db.execute('INSERT INTO items VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+               (item_id, keys[0], keys[0], 'group' if len(keys) > 1 else 'line', status, reason, None, version, entered, entered,
+                entered, '[]', '{}', json.dumps(qa if qa is not None else {'verdict': 'pass', 'items': []}, ensure_ascii=False)))
+    db.executemany('INSERT INTO item_keys VALUES (?,?)', [(item_id, k) for k in keys])
+    db.commit()
+    db.close()
+
+
 @pytest.fixture(name='job')
 def _job_factory():
     def job(kind='FIX', key='LIT6262_1', id='job1', attempts=1, files=None, **over):
@@ -155,9 +187,12 @@ def _job_factory():
 def env_file(tmp_path, monkeypatch, _home):
     def make(server, **over):
         project, builder, codex = tmp_path / 'project', tmp_path / 'builder', tmp_path / 'codex.exe'
+        queue = tmp_path / 'review queue' / 'queue.db'
         values = {'ECOM_URL': server.url, 'DESIGN_AGENT_TOKEN': server.token, 'PROJECT_DIR': str(project),
-                  'ARTWORK_BUILDER': str(builder), 'CODEX_BIN': str(codex)}
+                  'ARTWORK_BUILDER': str(builder), 'CODEX_BIN': str(codex), 'REVIEW_QUEUE_DB': str(queue)}
         values.update(over)
+        if values.get('REVIEW_QUEUE_DB') == str(queue) and not queue.exists():
+            make_queue(queue)
         if values.get('PROJECT_DIR') == str(project):
             project.mkdir(exist_ok=True)
             (project / 'CLAUDE.md').write_text('# test project\n', encoding='utf-8')

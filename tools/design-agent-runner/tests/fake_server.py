@@ -26,6 +26,7 @@ class FakeServer:
         self.times: list[tuple] = []
         self.lock = threading.Lock()
         self.upload_n = 1
+        self.board_status = 200
         outer = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -56,7 +57,7 @@ class FakeServer:
                 parts = urlsplit(self.path)
                 path = parts.path
                 data = self._read()
-                if self.command == 'PUT':
+                if self.command == 'PUT' and not path.endswith('/board'):
                     query = {k: v[0] for k, v in parse_qs(parts.query).items()}
                     body = {'query': query, 'bytes': len(data)}
                 else:
@@ -90,7 +91,20 @@ class FakeServer:
                     if not out:
                         time.sleep(0.2)
                     return self._send(200, {'jobs': out})
+                if self.command == 'PUT' and rel == '/board':
+                    rows = body.get('entries')
+                    bad = not isinstance(rows, list) or len(rows) > 5000 or any(
+                        not isinstance(r, dict) or r.get('source') not in ('LOCAL_QUEUE', 'STREAM')
+                        or not all(isinstance(r.get(k), str) and r[k].strip() for k in ('taskKey', 'worker', 'state'))
+                        for r in rows)
+                    if bad or outer.board_status != 200:
+                        return self._send(400 if bad else outer.board_status, {'error': 'forced'})
+                    return self._send(200, {'ok': True, 'count': len(rows)})
                 if self.command == 'POST' and len(seg) == 3 and seg[0] == 'jobs':
+                    if seg[2] == 'busy':
+                        if not str(body.get('worker') or '').strip():
+                            return self._send(400, {'error': 'Thiếu worker'})
+                        return self._send(200, {'ok': True, 'status': 'CANCELLED'})
                     if seg[2] == 'heartbeat':
                         outer.heartbeats += 1
                         if outer.heartbeats <= outer.heartbeat_ok_first:

@@ -132,3 +132,11 @@ def test_every_prompt_states_time_discipline_with_the_configured_numbers(cfg, jo
     qa = _rendered(cfg, job, 'FIX', name='qa.md', left_s=30 * 60)
     assert 'phiên QA này còn 30 phút' in qa and '(20 phút)' in qa and 'chưa kiểm được' in qa
     assert 'QA vòng N' in _rendered(cfg, job, 'LIBRARY_APPLY')
+
+
+def test_cannot_do_it_result_carries_a_short_ask_for_the_owner():
+    for n in ('fix.md', 'make.md', 'mockup.md', 'codex-maker.md'):
+        s = text(n)
+        assert '{ "outcome": "NEEDS_OWNER", "summary": "…", "ask": "…" }' in s, n
+        assert '160' in s and 'Thiếu file nguồn có layer chữ của quần; cần chủ shop gửi PSD hoặc cho dựng bằng AI.' in s, n
+        assert s.count('`ask`') >= 2, n                                           # the b) ending and the out-of-time rule

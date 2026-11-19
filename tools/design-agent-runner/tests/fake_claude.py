@@ -118,7 +118,8 @@ elif action == 'qa-bad':
     (job_dir / 'QA-claude' / f'round-{round_n}-result.json').write_text('{"verdict": "MAYBE"}', encoding='utf-8')
 elif action == 'needs-owner':
     write_result({'outcome': 'NEEDS_OWNER', 'summary': 'Sau 3 vòng tay áo vẫn lệch đường may.', 'rounds': 3,
-                  'pushed': [], 'problems': ['tay áo']})
+                  'pushed': [], 'problems': ['tay áo'],
+                  **({'ask': json.loads(os.environ['FAKE_CLAUDE_ASK'])} if os.environ.get('FAKE_CLAUDE_ASK') else {})})
 elif action == 'stream-then-hang':
     print(json.dumps({'type': 'assistant', 'note': 'EVENT-BEFORE-KILL'}), flush=True)
     time.sleep(120)

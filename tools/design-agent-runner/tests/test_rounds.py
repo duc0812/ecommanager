@@ -323,3 +323,25 @@ def test_rejected_line_without_files_is_not_treated_as_held(server, run, cfg):
     assert run(server, 'done', job=dict(files=[])) == 'DONE'
     d = jdir(cfg)
     assert HELD not in (d / 'prompt-round-1-maker.md').read_text(encoding='utf-8') and not (d / 'current' / 'held').exists()
+
+
+def test_ask_from_result_json_reaches_the_result_payload_trimmed_and_cut(server, run, tmp_path):
+    ask = '  Thiếu file nguồn có layer chữ của quần;\r\n cần chủ shop gửi PSD\n\nhoặc cho dựng bằng AI. ' + 'ă' * 200 + '  '
+    assert run(server, 'needs-owner', env={'FAKE_CLAUDE_ASK': json.dumps(ask)}) == 'NEEDS_OWNER'
+    body = calls(server, '/jobs/job1/result')[0]
+    sent = body['result']['ask']
+    assert sent.startswith('Thiếu file nguồn có layer chữ của quần; cần chủ shop gửi PSD hoặc cho dựng bằng AI. ăă')
+    assert len(sent) == 160 and '\n' not in sent and '\r' not in sent and sent == sent.strip()
+    assert body['summary'] == 'Sau 3 vòng tay áo vẫn lệch đường may.' and body['result']['problems'] == ['tay áo']
+    for bad in ('   \n ', 7, None, ['x']):
+        (tmp_path / 'result.json').write_text(json.dumps({'outcome': 'NEEDS_OWNER', 'summary': 'Thiếu nguồn.', 'ask': bad}), encoding='utf-8')
+        assert 'ask' not in runner.read_result(tmp_path)[0]['result']
+    (tmp_path / 'result.json').write_text(json.dumps({'outcome': 'DONE', 'summary': 'Xong.', 'ask': ' Cần duyệt màu. '}), encoding='utf-8')
+    assert runner.read_result(tmp_path)[0]['result'] == {'ask': 'Cần duyệt màu.'}
+
+
+def test_runner_made_results_and_failures_send_no_ask(server, run):
+    assert run(server, 'done', env=plan(qa=['fail'])) == 'NEEDS_OWNER'            # QA failed three rounds: the runner writes this one
+    assert 'ask' not in calls(server, '/jobs/job1/result')[0]['result']
+    assert run(server, 'nothing', job={'id': 'job2'}, cli_down_window_s=0) == 'FAILED'
+    assert all('ask' not in b for b in calls(server, '/jobs/job2/fail'))

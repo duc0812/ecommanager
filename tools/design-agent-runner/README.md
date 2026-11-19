@@ -14,6 +14,7 @@ Runner báo nhịp tim mỗi 60 giây, giới hạn 90 phút cho cả job, rồi
 |---|---|
 | `agent_api.py` | hợp đồng với máy chủ: lớp `AgentApi` (runner dùng để giao file) và CLI (`upload`, `submit`, `reopen`, `note`, `download`) cho phiên `library-apply` và cho người |
 | `runner.py` | cấu hình, log, tìm Codex, thư mục job, prompt, dòng lệnh, vòng sửa/QA, kiểm `READY.json` và kết quả QA, giao file, vòng nhận job, khóa, `main` |
+| `work_board.py` | bảng việc: đọc hàng duyệt local và danh sách luồng (chỉ đọc), đăng lên máy chủ mỗi 2 phút, kiểm lại hàng duyệt trước khi chạy một job |
 | `prompts/fix.md`, `make.md`, `mockup.md` | phiên sửa Claude: chỉ làm file, kết thúc bằng `READY.json` hoặc `result.json` NEEDS_OWNER |
 | `prompts/codex-maker.md` | phiên sửa Codex (FIX, MAKE, MOCKUP; runner chỉ giữ đoạn `<!-- kind:… -->` của loại job): đọc SKILL.md và luật của design, sửa ở nguồn dựng lớp trước, cùng hợp đồng `READY.json` / NEEDS_OWNER |
 | `prompts/qa.md` | phiên QA độc lập: danh sách kiểm tra 8 mục, ghi `QA-claude/round-N-result.json` |
@@ -38,6 +39,7 @@ Runner báo nhịp tim mỗi 60 giây, giới hạn 90 phút cho cả job, rồi
 | `CODEX_MODEL` | (chỉ khi `codex`) thêm `-m <model>`; trống = model trong `~/.codex/config.toml` của chủ shop | trống |
 | `CODEX_EXTRA_ARGS` | (chỉ khi `codex`) cờ thêm cho `codex exec`, tách như shell (dùng `/` trong đường dẫn), ví dụ `-c model_reasoning_effort=high` | trống |
 | `ARTWORK_BUILDER` | thư mục gốc chứa thư mục job | `D:\Ecom manager\artwork-builder` |
+| `REVIEW_QUEUE_DB` | file `queue.db` của hàng duyệt local (runner chỉ đọc) | `D:\Ecom manager\review-queue\queue.db` |
 | `CLAUDE_ALLOWED_TOOLS` | các tool phiên được dùng | `Bash,Read,Write,Edit,Glob,Grep,Skill` |
 | `CLAUDE_DISALLOWED_TOOLS` | lệnh phiên bị cấm (cách nhau bằng dấu phẩy; `none` = không cấm) | các script push thẳng DB (`push-local-renders`, `push-shared-prints`, `push_s2n`, `apply_chunk`, `process-new-orders`), `ssh`, `scp`, và mọi lệnh Bash nhắc tới `runner.env`, `.design-agent`, `agent_api` hay đường dẫn `design-agent/runner` của máy chủ, cộng `Read(~/.design-agent/**)` (xem "Rào chắn") |
 | `CLAUDE_PERMISSION_MODE` | chế độ quyền | `dontAsk` |
@@ -65,7 +67,7 @@ Thư mục job: `<ARTWORK_BUILDER>\<MÃ TASK>-agent-<id job>\`. Tên có dạng 
 | `round-N\work\` | phiên sửa | brief cho Codex, bản nháp, log Codex |
 | `round-N\codex-last-message.txt` | Codex (`-o`) | tin nhắn cuối của phiên sửa Codex; chỉ để đọc, không bao giờ là kết quả |
 | `QA-claude\round-N-result.json` | phiên QA | `{ "verdict": "PASS" \| "FAIL", "summary": "…", "findings": [ { "piece", "problem", "fix", "passCondition" } ] }` |
-| `result.json` | phiên sửa (chỉ `NEEDS_OWNER`) hoặc phiên thư viện | `{ "outcome", "summary", … }` |
+| `result.json` | phiên sửa (chỉ `NEEDS_OWNER`) hoặc phiên thư viện | `{ "outcome", "summary", "ask", … }`; `ask` = một câu ngắn cho chủ shop (cần đưa gì / quyết định gì) |
 | `session.log` / `session-round-N-maker.log` / `session-round-N-qa.log` | runner | mọi sự kiện stream-json của phiên Claude (với Codex: stdout + stderr của `codex exec`), ghi ngay khi xảy ra, token được che; kết quả không bao giờ lấy từ log |
 | `stage.txt` | phiên | bước đang làm (runner xoá trước mỗi phiên) |
 | `api-calls.jsonl` | `agent_api.py` | mọi lần phiên thư viện gọi CLI |
@@ -79,7 +81,7 @@ Mỗi vòng N (1 đến 3), trong cùng một đồng hồ của job (`JOB_TIMEO
 
 1. **Phiên sửa** (`CLAUDE_MODEL`, hoặc Codex khi `MAKER_ENGINE=codex`). Vòng 2 và 3 được dặn đọc `QA-claude/round-<N-1>-result.json` và chỉ sửa các mảnh trong `findings`, bắt đầu từ file của chính nó ở vòng trước. Phiên phải kết thúc bằng đúng một trong hai:
    - `round-N/READY.json` + file trong `round-N/deliver/`. Runner kiểm: đúng `round`, có file, mỗi file nằm trong `round-N/deliver/`, tồn tại, không rỗng, đuôi `.jpg`/`.jpeg`/`.png`, không trùng vùng, có `changed` và `unchanged`; job FIX: vùng in `PRINT` phải có trong file hiện tại của task; job MOCKUP: chỉ file `MOCKUP`.
-   - `result.json` với `outcome: "NEEDS_OWNER"`: báo nguyên văn lên máy chủ, không chạy QA.
+   - `result.json` với `outcome: "NEEDS_OWNER"`: báo nguyên văn lên máy chủ, không chạy QA. Trường `ask` của phiên (một câu, chỉ nói chủ shop cần đưa gì hoặc quyết định gì) được gửi kèm trong `result.ask`, đã bỏ xuống dòng, cắt còn 160 ký tự; đó là dòng ngắn dành cho nhóm Lark. Kết quả do runner tự viết (QA chưa đạt sau 3 vòng, các lỗi `fail`) không có `ask`.
    - Khác đi (không có gì, file sai dạng, cả hai cùng lúc, `DONE` do phiên tự ghi): `fail` tạm, có lý do tiếng Việt.
 2. **Phiên QA** (`CLAUDE_QA_MODEL`), một phiên mới chưa làm file nào. Trước khi nó chạy, runner lưu sha256 của `READY.json` và mọi file trong `round-N/deliver/`; sau đó file nào khác đi là `fail` tạm. Thiếu hoặc sai dạng `QA-claude/round-N-result.json`: `fail` tạm.
 3. QA `PASS`: **runner** tải từng file trong `READY.json` lên (`AgentApi.upload`, đúng vùng và loại), rồi `submit` (FIX, MAKE; MOCKUP chỉ tải lên), rồi báo `result` `DONE` với `rounds: N`, `summary` = `changed` của phiên sửa + `summary` của QA, `result: { "pushed": [...], "qa": "PASS", "rounds": N }`. Lỗi khi tải lên hay gửi duyệt: `fail` với mã và lời máy chủ (ví dụ `tải lên FRONT thất bại: máy chủ trả 413 (file quá lớn)`), vĩnh viễn với 4xx, tạm với 5xx và lỗi mạng; không phiên nào được bảo giao lại.
@@ -114,6 +116,17 @@ Dòng lệnh (cwd = thư mục job, stdin đóng, stdout + stderr nối vào `se
 - Môi trường của Codex: như phiên Claude (không `DESIGN_AGENT_TOKEN`), và bỏ thêm mọi biến `CLAUDE*`, `ANTHROPIC*`, `MCP_*`, `DESIGN_AGENT_ENV`, `DESIGN_AGENT_HOME`. Môi trường của phiên Claude không đổi.
 - Codex không có skill của Claude: prompt bảo nó đọc `%USERPROFILE%\.claude\skills\processing-litzzy-orders\SKILL.md` và luật của design (`flat-text/<CODE>-RULES.md`, `design-rules/<CODE>.*`) trước, và **sửa ở nguồn dựng lớp** (PSD / TIF trong `//TMTEAM/TEMPLATE/LIBRARY/products/<CODE>` hay `//TMTEAM/TEMPLATE/2026/…`, build script / spec trong `artwork-builder`) thay vì cắt vá tấm in phẳng; không có nguồn thì phải nói trong `changed`.
 - Codex thoát trong 90 giây mà không để lại gì, hoặc không khởi động được: `fail` tạm `Codex không chạy được (…)` và ngừng nhận job 30 phút, như với Claude.
+
+### Bảng việc và kiểm tra trước khi chạy (`work_board.py`)
+
+Để bot Lark không giao cho Agent một dòng đã có người làm, runner đăng **toàn bộ bảng việc** của máy này lên máy chủ (`PUT /api/design-agent/runner/board`) ngay khi khởi động và sau đó mỗi 120 giây, trên một luồng riêng; luồng này không bao giờ làm dừng vòng nhận job. Hai nguồn, đều **chỉ đọc**:
+
+- **Hàng duyệt local** (`REVIEW_QUEUE_DB`, mở bằng `file:…?mode=ro`): với mỗi mã dòng trong `item_keys` (một mục nhóm có nhiều mã thì đăng đủ mọi mã), chỉ xét **mục mới nhất** (theo `enteredAt`). Mục đó đang `waiting`, `qa_failed`, `needs_look`, `held`, `rejected`, `fixing` thì đăng một dòng `LOCAL_QUEUE`, worker `Hàng duyệt local`; mục mới nhất đã `cloud` / `approved` / `removed` thì mã đó không còn trên bảng. `etaAt` = `enteredAt` + 1 giờ cho `waiting` và `qa_failed`. `detail` = `statusReason`, không có thì các dòng QA, cắt còn 300 ký tự.
+- **Danh sách luồng**: thư mục `ARTWORK_BUILDER\_streams-*` mới nhất (theo giờ sửa thư mục). Bảng luồng trong `README.md` (`| số | file.md | …`) cho biết file danh sách của từng luồng; mã dòng là ô đầu của các dòng có dạng `LIT123_1`. Mỗi dòng `KEY | luồng a | luồng b | …` trong `handoff.md` chuyển mã đó sang luồng b. Luồng còn hiệu lực khi file danh sách hoặc một file `progress-luong{n}*.md` được sửa trong 48 giờ qua; luồng hết hiệu lực thì không đăng dòng nào của nó. Khi `README.md` ghi "mọi dòng REJECTED … thuộc luồng n" và luồng n còn hiệu lực, runner gửi `rejectedOwner: "Luồng n"` (danh sách của luồng đó thắng khi một mã nằm ở hai file).
+
+Không đọc được `queue.db` (hoặc danh sách luồng, hoặc bảng vượt 5000 dòng): **không đăng gì**, ghi một dòng log; bảng trên máy chủ tự thành cũ sau 10 phút và bot sẽ không kết luận "chưa ai làm". Lỗi lặp lại chỉ ghi log một lần cho tới khi đổi hoặc hết.
+
+Ngay trước khi chạy một job vừa nhận (mọi loại trừ `LIBRARY_APPLY`), runner đọc lại hàng duyệt: mục mới nhất của dòng đó đang mở và **không phải `held`** thì runner gọi `POST …/jobs/{id}/busy` (`worker: "Hàng duyệt local"`, `detail` = trạng thái, bản, lý do) và không tạo thư mục job, không mở phiên. Mục `held` được đăng (để bot nêu lý do) nhưng không chặn job. Không đọc được hàng duyệt: không chạy, báo `fail` tạm `không đọc được hàng duyệt local`.
 
 ### Các trường hợp khác
 

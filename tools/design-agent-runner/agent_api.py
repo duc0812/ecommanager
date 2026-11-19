@@ -144,6 +144,12 @@ class AgentApi:
     def fail(self, job_id: str, error: str, permanent: bool) -> dict:
         return self._json('POST', f'/jobs/{_seg(job_id)}/fail', {'error': error, 'permanent': permanent})
 
+    def busy(self, job_id: str, worker: str, detail: str) -> dict:
+        return self._json('POST', f'/jobs/{_seg(job_id)}/busy', {'worker': worker, 'detail': detail})
+
+    def publish_board(self, entries: list[dict], rejected_owner: str | None) -> dict:
+        return self._json('PUT', '/board', {'entries': entries, 'rejectedOwner': rejected_owner})
+
     def note(self, task_key: str, message: str) -> dict:
         return self._json('POST', '/notes', {'taskKey': task_key, 'message': message})
 

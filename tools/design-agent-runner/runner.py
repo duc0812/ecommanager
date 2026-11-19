@@ -25,6 +25,7 @@ from datetime import datetime
 from pathlib import Path
 
 import agent_api
+import work_board
 from agent_api import AgentApi, ApiError, AuthError, read_env
 
 HERE = Path(__file__).resolve().parent
@@ -42,6 +43,7 @@ ENGINES = ('claude', 'codex')
 CODEX_SCRUB_PREFIXES = ('CLAUDE', 'ANTHROPIC', 'MCP_')
 CODEX_SCRUB_NAMES = ('DESIGN_AGENT_ENV', 'DESIGN_AGENT_HOME')
 MAX_ROUNDS = 3
+MAX_ASK = 160
 HELD_SOURCE = 'AUTO_HOLD'
 HELD_IMAGE_EXT = ('.jpg', '.jpeg', '.png', '.tif', '.tiff')
 DELIVER_EXT = ('.jpg', '.jpeg', '.png')
@@ -82,6 +84,7 @@ class Config:
     maker_engine: str = 'claude'
     codex_model: str = ''
     codex_extra_args: tuple = ()
+    review_queue_db: Path = Path(work_board.DEFAULT_QUEUE_DB)
 
 
 def _number(values: dict, key: str, default, cast, path: Path):
@@ -144,7 +147,8 @@ def load_config(path: Path) -> Config:
         allowed_tools=tools, disallowed_tools=deny, permission_mode=values.get('CLAUDE_PERMISSION_MODE', '').strip() or 'dontAsk',
         model=model, qa_model=values.get('CLAUDE_QA_MODEL', '').strip() or model, job_timeout_s=minutes * 60,
         bash_timeout_ms=_number(values, 'BASH_TIMEOUT_MS', DEFAULT_BASH_TIMEOUT_MS, int, path),
-        maker_engine=engine, codex_model=values.get('CODEX_MODEL', '').strip(), codex_extra_args=codex_extra)
+        maker_engine=engine, codex_model=values.get('CODEX_MODEL', '').strip(), codex_extra_args=codex_extra,
+        review_queue_db=Path(values.get('REVIEW_QUEUE_DB', '').strip() or work_board.DEFAULT_QUEUE_DB))
 
 
 def resolve_codex(configured: str, local_appdata: str | None = None) -> str:
@@ -494,7 +498,10 @@ def read_result(job_dir: Path) -> tuple[dict | None, str | None]:
     if garbled(summary):
         last = _last_message(job_dir)
         summary = last if last and not garbled(last) else GARBLED_TEXT
-    rest = {k: v for k, v in data.items() if k not in ('outcome', 'summary', 'rounds')}
+    rest = {k: v for k, v in data.items() if k not in ('outcome', 'summary', 'rounds', 'ask')}
+    ask = ' '.join(data['ask'].split())[:MAX_ASK].strip() if isinstance(data.get('ask'), str) else ''
+    if ask:
+        rest['ask'] = ask
     return {'outcome': data['outcome'], 'summary': summary[:4000], 'rounds': rounds, 'result': rest}, None
 
 
@@ -1167,8 +1174,11 @@ def serve(deps: Deps, once: bool = False, stop: threading.Event | None = None, d
     backoff = 0
     claimed = False
     exit_code = EXIT_OK
+    board = work_board.start_publisher(deps, stop)
 
     def start(job: dict) -> None:
+        if work_board.skip_job(job, deps):
+            return
         holder: list = []
 
         def target():
@@ -1245,6 +1255,7 @@ def serve(deps: Deps, once: bool = False, stop: threading.Event | None = None, d
     finally:
         if 'AUTH' in outcomes or stop.is_set():
             stop.set()
+        board.set()
         for thread, _ in list(running):
             thread.join(120)
         collect()
