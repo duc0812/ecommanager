@@ -315,7 +315,7 @@ describe('one worker per line when a job is created', () => {
     await expect(enqueueAgentJob({ kind: 'FIX', source: 'BACKFILL', taskKey: 'DAW8_1', requestText: 'x' })).rejects.toMatchObject({ state: { kind: 'PERSON', name: 'Hoa' } })
   })
 
-  it('busy endpoint cancels the job, notes the task, is idempotent', async () => {
+  it('busy-cancel notice names the holder; the endpoint cancels the job, notes the task, is idempotent', async () => {
     await saveLarkConfig({ ...LARK_TEST_CONFIG, enabled: true })
     const job = await openJob('DAW20_1', 'RUNNING', { attempts: 1, lockedAt: new Date(), startedAt: new Date() })
     expect((await busy(job.id, { worker: 'x' }, 'dag_wrong')).status).toBe(401)
@@ -331,7 +331,7 @@ describe('one worker per line when a job is created', () => {
     expect(row.finishedAt).toBeInstanceOf(Date)
     expect(await notesOf('DAW20_1')).toEqual(['Đã có bên khác làm: Hàng duyệt local — bản v2 đang chờ duyệt'])
     await settleOwnerNotices()
-    expect(lark.sendToChat.mock.calls).toEqual([['oc_group', 'DAW20_1: Đã có bên khác làm: Hàng duyệt local — bản v2 đang chờ duyệt']])
+    expect(lark.sendToChat.mock.calls).toEqual([['oc_group', 'DAW20_1: Agent dừng việc này vì Hàng duyệt local đang làm.']])
 
     const again = await busy(job.id, { worker: 'Hàng duyệt local' })
     expect(again.status).toBe(200)

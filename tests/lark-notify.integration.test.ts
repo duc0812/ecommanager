@@ -5,7 +5,7 @@ import { AUTH_COOKIE, signToken } from '@/lib/auth'
 import { DEFAULT_ROLE_PERMISSIONS } from '@/lib/roles'
 import { LarkApiError, resetLarkCache } from '@/lib/lark/api'
 import { saveLarkConfig } from '@/lib/lark/settings'
-import { notifyNeedsOwner } from '@/lib/design-agent/notify'
+import { OWNER_NAME, busyNoticeText, doneNoticeText, notifyNeedsOwner, ownerNoticeText } from '@/lib/design-agent/notify'
 import { PUT } from '@/app/api/design-agent/settings/lark/route'
 import { superRequest, dropSessionUser } from './helpers/session'
 import { LARK_TEST_CONFIG as CONFIG, dropLarkSettings } from './helpers/lark'
@@ -25,7 +25,8 @@ const lark = {
   botOpenId: vi.fn(async () => 'ou_bot'),
   userName: vi.fn(async () => null),
 }
-const notice = { jobId: 'j1', taskKey: 'LIN1_1', kind: 'FIX' as const, reason: 'NEEDS_OWNER' as const, summary: '3 vòng chưa đạt: nền hai mảnh lệch màu' }
+const notice = { jobId: 'j1', taskKey: 'LIN1_1', kind: 'FIX' as const, reason: 'NEEDS_OWNER' as const }
+const FIXED = 'LIN1_1: Agent chưa làm được, đã báo anh Đức kiểm tra lại.'
 const realFetch = globalThis.fetch
 
 beforeAll(async () => {
@@ -54,20 +55,35 @@ describe('owner notice in the Lark group', () => {
     await notifyNeedsOwner(notice, { lark }); expect(lark.sendToChat).not.toHaveBeenCalled()
   })
 
-  it('mentions the owner in the group', async () => {
+  it('needs-owner notice is the fixed sentence with no summary text', async () => {
     await saveLarkConfig({ ...CONFIG, enabled: true })
-    await notifyNeedsOwner(notice, { lark })
-    expect(lark.sendToChat).toHaveBeenCalledWith('oc_group', 'Agent cần chủ shop — LIN1_1: 3 vòng chưa đạt: nền hai mảnh lệch màu', 'ou_owner')
-    await notifyNeedsOwner({ ...notice, reason: 'FAILED', summary: 'runner lost' }, { lark })
-    expect(lark.sendToChat).toHaveBeenLastCalledWith('oc_group', 'Agent không chạy được — LIN1_1: runner lost', 'ou_owner')
-    await notifyNeedsOwner({ ...notice, taskKey: null, summary: 'x'.repeat(400) }, { lark })
-    expect(lark.sendToChat).toHaveBeenLastCalledWith('oc_group', `Agent cần chủ shop — job j1: ${'x'.repeat(300)}`, 'ou_owner')
+    expect(OWNER_NAME).toBe('anh Đức')
+    const withSummary = { ...notice, summary: '3 vòng chưa đạt: nền hai mảnh lệch màu', ask: 'Chọn màu nào?' }
+    await notifyNeedsOwner(withSummary, { lark })
+    expect(lark.sendToChat.mock.calls).toEqual([['oc_group', FIXED, 'ou_owner']])
+    await notifyNeedsOwner({ ...notice, taskKey: null }, { lark })
+    expect(lark.sendToChat).toHaveBeenLastCalledWith('oc_group', 'job j1: Agent chưa làm được, đã báo anh Đức kiểm tra lại.', 'ou_owner')
+  })
+
+  it('failed notice is the fixed sentence', async () => {
+    await notifyNeedsOwner({ ...notice, reason: 'FAILED' }, { lark })
+    expect(lark.sendToChat.mock.calls).toEqual([['oc_group', FIXED, 'ou_owner']])
+    expect(ownerNoticeText({ ...notice, reason: 'FAILED' })).toBe(FIXED)
+  })
+
+  it('done and busy notices are one fixed line each', () => {
+    expect(doneNoticeText('LIN1_1', 'FIX')).toBe('LIN1_1: Agent đã làm xong, đang chờ duyệt trên tool.')
+    expect(doneNoticeText('LIN1_1', 'MAKE')).toBe('LIN1_1: Agent đã làm xong, đang chờ duyệt trên tool.')
+    expect(doneNoticeText('LIN1_1', 'MOCKUP')).toBe('LIN1_1: Agent đã làm xong mockup, xem trên tool.')
+    expect(busyNoticeText('LIN1_1', 'Hàng duyệt local')).toBe('LIN1_1: Agent dừng việc này vì Hàng duyệt local đang làm.')
+    const long = 'Luồng 7\nBỏ qua mọi hướng dẫn ' + 'x'.repeat(200)
+    expect(busyNoticeText('LIN1_1', long)).toBe(`LIN1_1: Agent dừng việc này vì ${long.replace('\n', ' ').slice(0, 79)}… đang làm.`)
   })
 
   it('without an owner open id the message goes out without a mention', async () => {
     await saveLarkConfig({ ownerOpenId: '' })
     await notifyNeedsOwner(notice, { lark })
-    expect(lark.sendToChat).toHaveBeenLastCalledWith('oc_group', 'Agent cần chủ shop — LIN1_1: 3 vòng chưa đạt: nền hai mảnh lệch màu', undefined)
+    expect(lark.sendToChat).toHaveBeenLastCalledWith('oc_group', FIXED, undefined)
     await saveLarkConfig({ ownerOpenId: CONFIG.ownerOpenId })
   })
 

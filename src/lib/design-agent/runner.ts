@@ -12,7 +12,7 @@ import {
 } from '@/lib/design-agent/jobs'
 import { affectedForTask, type AffectedRow } from '@/lib/design-agent/affected'
 import { ensureAgentUser } from '@/lib/design-agent/agent-user'
-import { notifyGroup, notifyNeedsOwner, type OwnerNotice } from '@/lib/design-agent/notify'
+import { busyNoticeText, doneNoticeText, noticeKey, notifyGroup, notifyNeedsOwner, type OwnerNotice } from '@/lib/design-agent/notify'
 import { ORDER_CLOSED, isOrderOpen } from '@/lib/design-agent/order-open'
 
 export const DESIGN_AGENT_TOKEN_KEY = 'design.agent.tokenHash'
@@ -185,7 +185,7 @@ export async function releaseExpiredAgentLeases(now: Date = new Date()): Promise
       await prisma.designAgentJob.updateMany({ where, data: { status: 'QUEUED', lockedAt: null, stage: null } })
     } else {
       const r = await prisma.designAgentJob.updateMany({ where, data: { status: 'FAILED', error: RUNNER_LOST, finishedAt: now, lockedAt: null } })
-      if (r.count > 0) tellOwner({ jobId: job.id, taskKey: job.taskKey, kind: job.kind as AgentJobKind, reason: 'FAILED', summary: RUNNER_LOST })
+      if (r.count > 0) tellOwner({ jobId: job.id, taskKey: job.taskKey, kind: job.kind as AgentJobKind, reason: 'FAILED' })
     }
   }
 }
@@ -304,7 +304,7 @@ export async function failAgentJob(id: string, input: { error: unknown; permanen
   const r = await prisma.designAgentJob.updateMany({ where, data: { status: 'FAILED', lockedAt: null, finishedAt: new Date(), error } })
   if (r.count === 0) return null
   await noteOnTask(job.taskId, `Agent: không chạy được — ${error.slice(0, MAX_NOTE_ERROR)}`)
-  tellOwner({ jobId: job.id, taskKey: job.taskKey, kind: job.kind as AgentJobKind, reason: 'FAILED', summary: error })
+  tellOwner({ jobId: job.id, taskKey: job.taskKey, kind: job.kind as AgentJobKind, reason: 'FAILED' })
   return { status: 'FAILED', attempts: job.attempts }
 }
 
@@ -327,7 +327,7 @@ export async function yieldAgentJob(id: string, input: { worker: unknown; detail
   const detail = typeof input.detail === 'string' ? input.detail.trim().slice(0, MAX_BUSY_DETAIL) : ''
   const text = detail ? `${error} — ${detail}` : error
   await noteOnTask(job.taskId, text)
-  tellGroup(`${job.taskKey ?? `job ${job.id}`}: ${text}`, job.id)
+  tellGroup(busyNoticeText(noticeKey(job), worker), job.id)
   return { status: 'CANCELLED' }
 }
 
@@ -398,6 +398,8 @@ export async function completeAgentJob(
       factory: refix.reasons.some(r => SENT_BACK_REASONS.includes(r)),
     })
   }
-  if (status === 'NEEDS_OWNER') tellOwner({ jobId: job.id, taskKey: job.taskKey, kind: job.kind as AgentJobKind, reason: 'NEEDS_OWNER', summary })
+  if (status === 'NEEDS_OWNER') tellOwner({ jobId: job.id, taskKey: job.taskKey, kind: job.kind as AgentJobKind, reason: 'NEEDS_OWNER' })
+  // A delivery rejected again before the result arrived is back in the queue, not waiting for approval.
+  else if (status === 'DONE' && job.source === 'LARK' && !refix) tellGroup(doneNoticeText(noticeKey(job), job.kind as AgentJobKind), job.id)
   return { status }
 }

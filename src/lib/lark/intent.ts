@@ -3,15 +3,22 @@ import { llmFor, pickLlmKey, type Llm } from '@/lib/llm/anthropic'
 import { withCap } from '@/lib/llm/cap'
 import { getCsSecrets, getCsSettings } from '@/lib/cs/settings'
 
+export const MAX_LINE_KEYS = 30
+const MAX_READ_KEYS = 100
+
 export const LarkIntentSchema = z.object({
   scope: z.enum(['DESIGN_STUDIO', 'OUT_OF_SCOPE', 'UNCLEAR']),
   kind: z.enum(['FIX', 'NEW_DESIGN', 'MOCKUP', 'STATUS', 'SUPPLIER_CHANGE', 'SUPPLIER_UNDO', 'UNASSIGNED_REPORT', 'OTHER']),
-  lineKeys: z.array(z.string().max(40)).max(5),
+  lineKeys: z.array(z.string().max(40)).max(MAX_LINE_KEYS),
   instruction: z.string().max(500),
   supplierName: z.string().max(100),
   supplierSku: z.string().max(100),
 })
 export type LarkIntent = z.infer<typeof LarkIntentSchema>
+
+// The LLM clients refuse an answer that does not fit the schema they are given, so a list of 31 codes would come back
+// as "not read". The model is asked with this wider shape and the list is cut to MAX_LINE_KEYS here.
+export const LarkIntentReadSchema = LarkIntentSchema.extend({ lineKeys: z.array(z.string().max(40)).max(MAX_READ_KEYS) })
 
 export type LarkLlm = { llm: Llm; model: string; cap: number }
 
@@ -36,8 +43,10 @@ always with empty lineKeys;
 OTHER = a Design Studio question that is none of these.
 lineKeys: every order line the message names, copied from the message, written ORDER_LINE (examples: "LIT6262_1",
 "#LIT6262 dòng 2" -> "LIT6262_2", "đơn 6262 dòng 1" -> "6262_1"). When no line is given write the order alone
-("LIT6262"). Never invent a code that is not in the message. Empty when none is named.
-instruction: what has to be done, in Vietnamese, one or two sentences, without the order codes. Empty when none.
+("LIT6262"). Never invent a code that is not in the message. Empty when none is named. A message may list many lines:
+keep them all, in the order written, each once, at most ${MAX_READ_KEYS}.
+instruction: what has to be done, in Vietnamese, one or two sentences, without the order codes: one shared instruction
+for all the lines named, never one per line. Empty when none.
 supplierName: for SUPPLIER_CHANGE, the supplier the message names, copied from the message. Empty string otherwise.
 supplierSku: for SUPPLIER_CHANGE, the supplier SKU the message names, copied from the message. Empty string otherwise.`
 
@@ -48,12 +57,19 @@ export async function larkLlm(): Promise<LarkLlm | null> {
   return { llm: llmFor(settings.llmProvider, settings.model, key), model: settings.model, cap: LARK_DAILY_CALL_CAP }
 }
 
-export async function parseLarkIntent(text: string, deps: LarkLlm & { now?: Date }): Promise<LarkIntent> {
+/** `over`: the message named more lines than one message may carry; `intent` holds the first MAX_LINE_KEYS. */
+export async function readLarkIntent(text: string, deps: LarkLlm & { now?: Date }): Promise<{ intent: LarkIntent; over: boolean }> {
   const res = await withCap(
     deps.cap,
-    () => deps.llm.complete({ system: LARK_INTENT_SYSTEM, user: text, model: deps.model, schema: LarkIntentSchema, schemaName: 'lark_intent' }),
+    () => deps.llm.complete({ system: LARK_INTENT_SYSTEM, user: text, model: deps.model, schema: LarkIntentReadSchema, schemaName: 'lark_intent' }),
     deps.now,
     LARK_CALLS_PREFIX,
   )
-  return LarkIntentSchema.parse(res.output)
+  const read = LarkIntentReadSchema.parse(res.output)
+  const keys = Array.from(new Set(read.lineKeys))
+  return { intent: LarkIntentSchema.parse({ ...read, lineKeys: keys.slice(0, MAX_LINE_KEYS) }), over: keys.length > MAX_LINE_KEYS }
+}
+
+export async function parseLarkIntent(text: string, deps: LarkLlm & { now?: Date }): Promise<LarkIntent> {
+  return (await readLarkIntent(text, deps)).intent
 }

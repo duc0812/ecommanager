@@ -1,9 +1,14 @@
-export function replyAccepted(taskKey: string, instruction: string): string {
-  const text = instruction.trim().slice(0, 120)
-  return text ? `Đã nhận: ${taskKey} — ${text}. Kết quả xem trên tool.` : `Đã nhận: ${taskKey}. Kết quả xem trên tool.`
+/** Text that came from a task, a queue or a job is shown as data: one line, cut to length. */
+export function cutLine(text: string | null | undefined, max: number): string {
+  const line = (text ?? '').replace(/\s+/g, ' ').trim()
+  return line.length > max ? `${line.slice(0, max - 1)}…` : line
 }
 
-export const replyAppended = (taskKey: string) => `Đã thêm vào yêu cầu đang chờ của ${taskKey}. Kết quả xem trên tool.`
+const RESULT_ON_TOOL = 'Kết quả xem trên tool.'
+
+export const replyAccepted = (taskKey: string) => `${taskKey}: đã nhận, Agent đang làm. ${RESULT_ON_TOOL}`
+
+export const replyAppended = (taskKey: string) => `${taskKey}: đã thêm vào yêu cầu đang chờ.`
 
 export const replyRunning = (taskKey: string) =>
   `Agent đang làm ${taskKey}. Đã ghi yêu cầu vào ghi chú của task; nếu kết quả chưa đúng hãy trả lại trên tool.`
@@ -37,3 +42,43 @@ export const REPLY_NOTED = ' Yêu cầu của bạn đã được ghi vào task.
 export const replyHeldBefore = (reason: string) => ` Dòng này từng bị giữ: ${reason.replace(/\s+/g, ' ').trim().slice(0, 300)}`
 
 export const REPLY_BOARD_STALE_REPORT = 'Chưa có dữ liệu tin cậy từ máy local, chưa báo được việc chưa có người làm.'
+
+export const REPLY_LIST_CAP = 'Chỉ nhận 30 dòng mỗi tin, gửi phần còn lại ở tin sau.'
+
+export const SHORT_REASON = {
+  SENT: 'đã gửi xưởng', ORDER_CLOSED: 'đơn đã đóng', ASK_CUSTOMER: 'đang hỏi khách', CANCELLED: 'đã huỷ',
+  WHAT_TO_FIX: 'cần ghi rõ sửa gì', HOLDER_UNKNOWN: 'chưa rõ ai đang giữ', NOT_QUEUED: 'chưa xếp được việc, xếp lại trên tool',
+  SERVER_ERROR: 'lỗi máy chủ, thử lại sau',
+} as const
+
+export const AGENT_HOLDER = 'Agent'
+
+const MAX_HOLDER = 40
+const MAX_REASON = 80
+const MAX_CANDIDATES = 5
+
+export type GroupedLines = {
+  accepted: string[]
+  held: { key: string; holder: string; minutes?: number | null }[]
+  refused: { key: string; why: string }[]
+  unknown: string[]
+  ambiguous: { ref: string; candidates: string[] }[]
+}
+
+/** One reply for a message that names several lines; a group with nothing in it is left out. */
+export function replyGrouped(g: GroupedLines): string {
+  const out: string[] = []
+  if (g.accepted.length) out.push(`Đã nhận ${g.accepted.length} dòng, Agent làm lần lượt: ${g.accepted.join(', ')}.`)
+  if (g.held.length) {
+    const held = g.held.map(h => `${h.key} (${cutLine(h.holder, MAX_HOLDER)}${h.minutes ? `, còn khoảng ${h.minutes} phút` : ''})`)
+    out.push(`Đang có bên giữ: ${held.join(', ')}.`)
+  }
+  if (g.refused.length) out.push(`Không làm: ${g.refused.map(r => `${r.key} (${cutLine(r.why, MAX_REASON)})`).join(', ')}.`)
+  if (g.unknown.length) out.push(`Không tìm thấy: ${g.unknown.join(', ')}.`)
+  if (g.ambiguous.length) {
+    const asked = g.ambiguous.map(a => `${a.ref} (${a.candidates.slice(0, MAX_CANDIDATES).join(', ')}${a.candidates.length > MAX_CANDIDATES ? ', …' : ''})`)
+    out.push(`Trùng nhiều đơn, gửi lại kèm số dòng: ${asked.join(', ')}.`)
+  }
+  if (g.accepted.length) out.push(RESULT_ON_TOOL)
+  return out.join('\n')
+}

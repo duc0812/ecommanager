@@ -3,7 +3,9 @@ import { templateForLine, type TaskStatus } from '@/lib/design-tasks'
 import { FILE_KINDS, currentFiles } from '@/lib/task-files'
 import type { AgentTaskState } from '@/lib/design-agent/delivery'
 import { workStateFor, type WorkState } from '@/lib/design-agent/work-state'
-import { replyHeldBefore } from '@/lib/lark/replies'
+import { cutLine, replyHeldBefore } from '@/lib/lark/replies'
+
+export { cutLine }
 
 export const MAX_STATUS_REPLY = 1500
 const MAX_DETAIL = 300
@@ -25,18 +27,12 @@ const CLOSED_LABEL: Record<Extract<WorkState, { kind: 'CLOSED' }>['reason'], str
   CANCELLED: 'task đã huỷ.', ORDER_CLOSED: 'đơn đã giao hoặc đã đóng.', ASK_CUSTOMER: 'đang chờ khách trả lời.', SENT: 'đơn đã gửi xưởng.',
 }
 
-/** Text that came from a task, a queue or a job is shown as data: one line, cut to length. */
-export function cutLine(text: string | null | undefined, max: number): string {
-  const line = (text ?? '').replace(/\s+/g, ' ').trim()
-  return line.length > max ? `${line.slice(0, max - 1)}…` : line
-}
-
 const sentence = (text: string | null, max: number) => cutLine(text, max).replace(/[.\s]+$/, '')
 
 const usDate = (d: Date) => d.toLocaleDateString('en-US', { timeZone: 'Asia/Ho_Chi_Minh', month: '2-digit', day: '2-digit', year: 'numeric' })
 
 /** Whole minutes left, rounded up; null once the moment has passed, so a reply never shows zero or a negative count. */
-function minutesLeft(etaAt: Date | null, now: Date): number | null {
+export function minutesLeft(etaAt: Date | null, now: Date): number | null {
   if (!etaAt) return null
   const ms = etaAt.getTime() - now.getTime()
   return ms > 0 ? Math.ceil(ms / 60_000) : null

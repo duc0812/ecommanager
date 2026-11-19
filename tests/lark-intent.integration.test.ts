@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import { prisma } from '@/lib/db'
 import type { Llm } from '@/lib/llm/anthropic'
 import { LlmCapReached, takeLlmCall } from '@/lib/llm/cap'
-import { LARK_DAILY_CALL_CAP, LARK_INTENT_SYSTEM, LarkIntentSchema, larkLlm, parseLarkIntent } from '@/lib/lark/intent'
+import { LARK_DAILY_CALL_CAP, LARK_INTENT_SYSTEM, LarkIntentReadSchema, LarkIntentSchema, larkLlm, parseLarkIntent, readLarkIntent } from '@/lib/lark/intent'
 import { resolveTaskRefs } from '@/lib/lark/resolve'
 import { agentFixture } from './helpers/design-agent-fixture'
 
@@ -40,7 +40,7 @@ describe('Lark intent', () => {
     const llm = fakeLlm({ scope: 'DESIGN_STUDIO', kind: 'FIX', lineKeys: ['LIT6262_1'], instruction: 'sao trên mũ bị lệch', supplierName: '', supplierSku: '' })
     const intent = await parseLarkIntent('LIT6262_1 sửa sao trên mũ bị lệch', { llm, model: 'claude-opus-5-5', cap: 500 })
     expect(intent).toEqual({ scope: 'DESIGN_STUDIO', kind: 'FIX', lineKeys: ['LIT6262_1'], instruction: 'sao trên mũ bị lệch', supplierName: '', supplierSku: '' })
-    expect((llm.complete as any).mock.calls[0][0]).toMatchObject({ system: LARK_INTENT_SYSTEM, user: 'LIT6262_1 sửa sao trên mũ bị lệch', model: 'claude-opus-5-5', schema: LarkIntentSchema, schemaName: 'lark_intent' })
+    expect((llm.complete as any).mock.calls[0][0]).toMatchObject({ system: LARK_INTENT_SYSTEM, user: 'LIT6262_1 sửa sao trên mũ bị lệch', model: 'claude-opus-5-5', schema: LarkIntentReadSchema, schemaName: 'lark_intent' })
   })
 
   it('the schema only lets the listed values through', () => {
@@ -48,7 +48,24 @@ describe('Lark intent', () => {
     expect(LarkIntentSchema.safeParse(base).success).toBe(true)
     expect(LarkIntentSchema.safeParse({ ...base, scope: 'SHELL' }).success).toBe(false)
     expect(LarkIntentSchema.safeParse({ ...base, kind: 'APPROVE' }).success).toBe(false)
-    expect(LarkIntentSchema.safeParse({ ...base, lineKeys: ['A', 'B', 'C', 'D', 'E', 'F'] }).success).toBe(false)
+  })
+
+  it('schema accepts 30 keys and refuses 31', () => {
+    const base = { scope: 'DESIGN_STUDIO', kind: 'FIX', instruction: '', supplierName: '', supplierSku: '' }
+    const keys = (n: number) => Array.from({ length: n }, (_, i) => `LIT${7000 + i}_1`)
+    expect(LarkIntentSchema.safeParse({ ...base, lineKeys: keys(30) }).success).toBe(true)
+    expect(LarkIntentSchema.safeParse({ ...base, lineKeys: keys(31) }).success).toBe(false)
+  })
+
+  it('a longer list is read, cut to 30 and flagged', async () => {
+    const keys = Array.from({ length: 31 }, (_, i) => `LIT${7000 + i}_1`)
+    const llm = fakeLlm({ scope: 'DESIGN_STUDIO', kind: 'FIX', lineKeys: keys, instruction: 'sửa viền', supplierName: '', supplierSku: '' })
+    const read = await readLarkIntent(keys.join(' ') + ' sửa viền', { llm, model: 'm', cap: 500 })
+    expect(read.over).toBe(true); expect(read.intent.lineKeys).toEqual(keys.slice(0, 30))
+    expect((llm.complete as any).mock.calls[0][0].schema.safeParse({ ...read.intent, lineKeys: keys }).success).toBe(true)
+    const short = await readLarkIntent('LIT7000_1 sửa viền', { llm: fakeLlm({ ...read.intent, lineKeys: ['LIT7000_1'] }), model: 'm', cap: 500 })
+    expect(short).toEqual({ over: false, intent: { ...read.intent, lineKeys: ['LIT7000_1'] } })
+    expect(LARK_INTENT_SYSTEM).toContain('one shared instruction')
   })
 
   it('the schema accepts the new kinds and the supplier fields', () => {

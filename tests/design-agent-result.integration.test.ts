@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 
 const notify = vi.hoisted(() => vi.fn<(notice: unknown) => Promise<void>>(async () => {}))
-vi.mock('@/lib/design-agent/notify', () => ({ notifyNeedsOwner: notify }))
+const group = vi.hoisted(() => vi.fn<(text: string) => Promise<void>>(async () => {}))
+vi.mock('@/lib/design-agent/notify', async original => ({ ...(await original<typeof import('@/lib/design-agent/notify')>()), notifyNeedsOwner: notify, notifyGroup: group }))
 
 import { prisma } from '@/lib/db'
 import { saveAgentSettings } from '@/lib/design-settings'
@@ -9,7 +10,7 @@ import { transitionTask, type Actor } from '@/lib/design-tasks'
 import { openJobForTask } from '@/lib/design-agent/jobs'
 import { AGENT_USER_EMAIL } from '@/lib/design-agent/agent-user'
 import { agentSubmit } from '@/lib/design-agent/delivery'
-import { completeAgentJob, failAgentJob, settleOwnerNotices } from '@/lib/design-agent/runner'
+import { completeAgentJob, failAgentJob, releaseExpiredAgentLeases, settleOwnerNotices } from '@/lib/design-agent/runner'
 import { agentFixture } from './helpers/design-agent-fixture'
 
 const fx = agentFixture('das')
@@ -42,7 +43,7 @@ beforeAll(async () => {
   LEAD = (await fx.user('Lead', 'ADMIN')).actor
   await fx.order(1, { taskStatus: 'REJECTED', withPrint: true })
   await fx.order(2, { taskStatus: 'NEW' })
-  for (const n of [3, 4, 5, 6, 7, 8, 9]) await fx.order(n, { skus: [`DS${n}-Hoodie`], taskStatus: 'REJECTED', withPrint: true })
+  for (const n of [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]) await fx.order(n, { skus: [`DS${n}-Hoodie`], taskStatus: 'REJECTED', withPrint: true })
   ids.j1 = await running('DAS1_1')
   ids.j3 = await running('DAS3_1')
   ids.j4 = await running('DAS4_1')
@@ -103,7 +104,7 @@ describe('result of an agent job', () => {
     expect(await completeAgentJob(ids.j5, { outcome: 'NEEDS_OWNER', summary: '3 vòng chưa đạt' })).toEqual({ status: 'NEEDS_OWNER' })
     await settleOwnerNotices()
     expect(notify).toHaveBeenCalledTimes(1)
-    expect(notify).toHaveBeenCalledWith({ jobId: ids.j5, taskKey: 'DAS5_1', kind: 'FIX', reason: 'NEEDS_OWNER', summary: '3 vòng chưa đạt' })
+    expect(notify).toHaveBeenCalledWith({ jobId: ids.j5, taskKey: 'DAS5_1', kind: 'FIX', reason: 'NEEDS_OWNER' })
     expect(await rowOf(ids.j5)).toMatchObject({ status: 'NEEDS_OWNER', summary: '3 vòng chưa đạt' })
   })
 
@@ -119,7 +120,48 @@ describe('result of an agent job', () => {
     notify.mockClear()
     expect(await failAgentJob(ids.failing, { error: 'no result.json', permanent: true })).toEqual({ status: 'FAILED', attempts: 1 })
     await settleOwnerNotices()
-    expect(notify).toHaveBeenCalledWith(expect.objectContaining({ jobId: ids.failing, reason: 'FAILED', summary: 'no result.json' }))
+    expect(notify).toHaveBeenCalledWith({ jobId: ids.failing, taskKey: 'DAS9_1', kind: 'FIX', reason: 'FAILED' })
+  })
+
+  it('done notice for a Lark job', async () => {
+    notify.mockClear(); group.mockClear()
+    const fixJob = await running('DAS10_1', { source: 'LARK' })
+    await agentSubmit('DAS10_1')
+    const result = { pushed: ['FRONT'], ask: 'Anh xem giúp màu nền có đúng không?' }
+    expect(await completeAgentJob(fixJob, { outcome: 'DONE', summary: 'Đã sửa nền, 2 vòng QA, chi tiết dài', result })).toEqual({ status: 'DONE' })
+    const mockup = await running('DAS11_1', { source: 'LARK', kind: 'MOCKUP' })
+    expect(await completeAgentJob(mockup, { outcome: 'DONE', summary: 'Đã dựng mockup từ file in' })).toEqual({ status: 'DONE' })
+    await settleOwnerNotices()
+    expect(group.mock.calls).toEqual([
+      ['DAS10_1: Agent đã làm xong, đang chờ duyệt trên tool.'],
+      ['DAS11_1: Agent đã làm xong mockup, xem trên tool.'],
+    ])
+    expect(notify).not.toHaveBeenCalled()
+    const row = await rowOf(fixJob)
+    expect(row.summary).toBe('Đã sửa nền, 2 vòng QA, chi tiết dài'); expect(JSON.parse(row.resultJson!)).toEqual(result)
+    expect((await lastEvent('DAS10_1')).message).toBe('Agent: Đã sửa nền, 2 vòng QA, chi tiết dài')
+  })
+
+  it('no done notice for a non-Lark job', async () => {
+    notify.mockClear(); group.mockClear()
+    const reject = await running('DAS12_1')
+    await agentSubmit('DAS12_1')
+    expect(await completeAgentJob(reject, { outcome: 'DONE', summary: 'xong' })).toEqual({ status: 'DONE' })
+    const unsent = await running('DAS13_1', { source: 'LARK' })
+    expect(await completeAgentJob(unsent, { outcome: 'DONE', summary: 'xong', result: { ask: 'Cần file gốc' } })).toEqual({ status: 'NEEDS_OWNER' })
+    await settleOwnerNotices()
+    expect(group).not.toHaveBeenCalled()
+    expect(notify.mock.calls).toEqual([[{ jobId: unsent, taskKey: 'DAS13_1', kind: 'FIX', reason: 'NEEDS_OWNER' }]])
+  })
+
+  it('a lost lease that is requeued says nothing', async () => {
+    notify.mockClear(); group.mockClear()
+    const lost = await running('DAS13_1', { source: 'LARK', lockedAt: new Date(Date.now() - 24 * 3600_000) })
+    await releaseExpiredAgentLeases()
+    await settleOwnerNotices()
+    expect(await rowOf(lost)).toMatchObject({ status: 'QUEUED', lockedAt: null })
+    expect(notify).not.toHaveBeenCalled(); expect(group).not.toHaveBeenCalled()
+    await prisma.designAgentJob.delete({ where: { id: lost } })
   })
 
   it('a Lark notice that never answers does not hold up the result or the failure', async () => {
