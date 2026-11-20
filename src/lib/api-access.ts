@@ -88,6 +88,7 @@ export const API_ACCESS_RULES: ApiRule[] = [
   { prefix: '/api/design-agent/jobs/', access: ['design_tasks'] },
   { prefix: '/api/design-studio/worker/', access: 'PUBLIC' },
   { prefix: '/api/design-studio/tasks/restore-unsent', access: 'SUPERADMIN' },
+  { prefix: '/api/design-studio/tasks/', suffix: '/move-supplier', access: 'SUPERADMIN' },
   { prefix: '/api/design-studio/tasks/', suffix: '/production', access: 'ADMIN' },
   { prefix: '/api/design-studio/handoff/sheet', access: { adminOr: ['fulfillment_export'] } },
   { prefix: '/api/design-studio/orders/', suffix: '/handoff', methods: WRITE, access: { adminOr: ['fulfillment_export'] } },
