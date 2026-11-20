@@ -11,6 +11,7 @@ import {
 } from '@/lib/lark/replies'
 import { describeWorkState, larkTaskStatus, minutesLeft } from '@/lib/lark/status'
 import { larkUnassignedReport } from '@/lib/lark/unassigned'
+import { larkNoticeReply, parseNoticeCommand } from '@/lib/lark/notice'
 import { REPLY_ONE_LINE_ONLY, changeSupplierFromLark, undoSupplierFromLark } from '@/lib/lark/supplier-change'
 import { AgentJobBusy, AgentJobError, enqueueAgentJob, type AgentJobKind } from '@/lib/design-agent/jobs'
 import { agentAddNote, agentRejectReview, agentReopenTask, type AgentTaskState } from '@/lib/design-agent/delivery'
@@ -145,6 +146,8 @@ const replied = (line: string): Decided => ({ outcome: 'REPLIED', jobIds: [], li
 
 async function decide(text: string, sender: string, llm: LarkLlm | null, now?: Date): Promise<Decided> {
   if (!text) return replied(REPLY_OTHER)
+  const noticeKeys = parseNoticeCommand(text)
+  if (noticeKeys) return { outcome: 'REPLIED', jobIds: [], lines: await larkNoticeReply(noticeKeys, text), error: null }
   if (!llm) return { outcome: 'ERROR', jobIds: [], lines: [REPLY_NOT_READ], error: NO_KEY }
   let read
   try {

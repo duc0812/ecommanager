@@ -451,6 +451,37 @@ describe('Lark requests on a line someone else holds', () => {
   })
 })
 
+describe('"noti <mã>": the owner\'s own supplier notice (11/20/2026)', () => {
+  const NOTICE = (key: string) => `Đơn ${key} đã gửi xưởng LIP Supplier được update design mới, check design và báo xưởng nhé.`
+  async function runNoAi(text: string) {
+    const m = await insert(msg(text))
+    const r = await processLarkMessage(m, { lark, llm: null })
+    return { ...r, eventId: m.eventId }
+  }
+
+  it('posts the fixed line for a sent line, reads no AI, moves nothing', async () => {
+    const before = (await loadTask('LIP4_1'))!.task.status
+    const r = await runNoAi('noti LIP4_1')
+    expect(r).toMatchObject({ outcome: 'REPLIED', jobIds: [], reply: NOTICE('LIP4_1') })
+    expect(lark.reply).toHaveBeenLastCalledWith(r.eventId.replace('ev', 'om'), NOTICE('LIP4_1'))
+    expect((await loadTask('LIP4_1'))!.task.status).toBe(before)
+    expect(await jobsOf('LIP4_1')).toEqual([])
+    expect((await eventOf(r)).outcome).toBe('REPLIED')
+  })
+
+  it('several codes, a line not sent and an unknown one: one line each; other spellings count', async () => {
+    const r = await runNoAi('Báo noti: #LIP4_1, LIP3_1 và LIP999_1')
+    expect(r.reply).toBe([NOTICE('LIP4_1'), 'LIP3_1: dòng chưa gửi xưởng, không báo.', 'LIP999_1: không tìm thấy dòng này trên tool.'].join('\n'))
+    expect((await runNoAi('notify LIP4_1')).reply).toBe(NOTICE('LIP4_1'))
+    expect((await runNoAi('noti')).reply).toBe('Nhắn kèm mã đơn cần báo, ví dụ: noti LIT6262_1.')
+  })
+
+  it('a message that only contains the word elsewhere still goes to the AI', async () => {
+    const r = await run('LIP4_1 nhớ gửi noti cho khách', fix('OTHER', []))
+    expect(r.reply).toBe(REPLY_OTHER)
+  })
+})
+
 describe('Lark line lists and short replies', () => {
   const HOLDER_UNKNOWN = 'chưa rõ ai đang giữ'
   async function runAt(text: string, intent: LarkIntent, now: Date) {
