@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { prisma } from '@/lib/db'
-import { listTasks, releaseLibraryTask, syncDesignTasks } from '@/lib/design-tasks'
+import { CANCELLED_REOPEN_NOTE, REOPEN_KEPT_CLOSED, REOPEN_KEPT_SHIPPED, RESHIP_NOTE, listTasks, releaseLibraryTask, reopenLineForFix, syncDesignTasks, transitionTask, type Actor } from '@/lib/design-tasks'
+import { LINE_FIX_REASONS } from '@/lib/line-fix'
 import { listHandoffHub } from '@/lib/supplier-handoff'
 
 const ORDER_ID = 'gid://test/Order/dt-sync-1'
@@ -143,6 +144,87 @@ describe('syncDesignTasks — factory rejection and status changes', () => {
     expect((await res.json()).designTaskErrors).toBeUndefined()
     expect((await prisma.designTask.findUnique({ where: { taskKey: 'DTS4_1' } }))?.status).toBe('CANCELLED')
     await dropSessionUser()
+  })
+})
+
+const KEEP_IDS = { shipped: 'gid://test/Order/dt-sync-keep-1', cancelledTask: 'gid://test/Order/dt-sync-keep-2', closed: 'gid://test/Order/dt-sync-keep-3', dropship: 'gid://test/Order/dt-sync-keep-4' }
+
+describe('a task a person reopened is never cancelled by the sync (owner 11/20/2026, LIT5121_1 / LIT5641_1)', () => {
+  const LEAD: Actor = { id: 'u_dt_sync_lead', name: 'Lead', role: 'ADMIN' }
+  const reason = LINE_FIX_REASONS[3]
+  const taskOf = (key: string) => prisma.designTask.findUniqueOrThrow({ where: { taskKey: key }, include: { events: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] } } })
+  const lineOf = async (orderId: string) => (await prisma.orderLine.findFirstOrThrow({ where: { orderId } })).id
+  const kept = (events: { type: string; message: string }[], note: string) => events.filter(e => e.type === 'SYSTEM' && e.message === note)
+
+  beforeAll(async () => {
+    const storeId = (await prisma.shopifyStore.findUniqueOrThrow({ where: { shop: SHOP } })).id
+    await prisma.supplier.upsert({ where: { code: 'DTSYNC' }, create: { id: SUP, name: 'DT Sync Supplier', code: 'DTSYNC' }, update: {} })
+    const sentAt = new Date('2026-10-20T08:00:00Z')
+    let n = 0
+    for (const id of Object.values(KEEP_IDS)) {
+      n++
+      const sl = `keep${n}`
+      await prisma.order.create({ data: {
+        id, projectId: 'proj_dt_sync', storeId, shopifyOrderNumber: `#DTK${n}`, financialStatus: 'PAID', currency: 'USD', grossAmount: 1, expectedPayout: 1, totalFees: 0,
+        refundedAmount: 0, placedAt: new Date('2026-10-18'), pipelineStatus: 'EXPORTED', orderType: 'NON_CUSTOM', exportedAt: sentAt, exportedToSupplierId: SUP, designReady: true,
+        lines: { create: [{ shopifyLineId: sl, sku: 'HOODIE', productTitle: 'Hoodie', qty: 1, linePosition: 1, unitPrice: 1, resolvedSupplierId: SUP, designDriveLink: 'https://drive.example/keep', exportedAt: sentAt, exportedToSupplierId: SUP }] },
+      } })
+      await prisma.designArtwork.create({ data: { orderId: id, shopifyLineId: sl, printArea: 'PRINT', version: 1, fileName: 'a.png', storagePath: 'x/a.png', size: 1, mimeType: 'image/png' } })
+      await prisma.designTask.create({ data: { orderId: id, shopifyLineId: sl, taskKey: `DTK${n}_1`, status: 'DONE' } })
+    }
+  })
+  afterAll(async () => { await prisma.order.deleteMany({ where: { id: { in: Object.values(KEEP_IDS) } } }) })
+
+  it('"Mở lại để sửa" then the order ships: the task stays open with one note, and later syncs add nothing', async () => {
+    await reopenLineForFix(await lineOf(KEEP_IDS.shipped), LEAD, { reason, note: 'khách nhận áo in lệch — ship lại' })
+    await prisma.order.update({ where: { id: KEEP_IDS.shipped }, data: { pipelineStatus: 'FULFILLED', fulfillmentStatus: 'fulfilled' } })
+    expect(await syncDesignTasks(KEEP_IDS.shipped)).toEqual({ created: 0, cancelled: 0, completed: 0, reopened: 0 })
+    let t = await taskOf('DTK1_1')
+    expect(t.status).toBe('REJECTED')
+    expect(JSON.parse(t.rejectReasons!)).toEqual([reason])
+    expect(kept(t.events, REOPEN_KEPT_SHIPPED)).toHaveLength(1)
+    await syncDesignTasks(KEEP_IDS.shipped)
+    await syncDesignTasks(KEEP_IDS.shipped)
+    t = await taskOf('DTK1_1')
+    expect(t.status).toBe('REJECTED')
+    expect(kept(t.events, REOPEN_KEPT_SHIPPED)).toHaveLength(1)
+  })
+
+  it('a task the sync cancelled (as before) is reopened by a person and stays open on the next sync', async () => {
+    await prisma.designTask.update({ where: { taskKey: 'DTK2_1' }, data: { status: 'DOING' } })
+    await prisma.order.update({ where: { id: KEEP_IDS.cancelledTask }, data: { pipelineStatus: 'FULFILLED' } })
+    expect((await syncDesignTasks(KEEP_IDS.cancelledTask)).cancelled).toBe(1)
+    expect((await taskOf('DTK2_1')).status).toBe('CANCELLED')
+
+    const r = await reopenLineForFix(await lineOf(KEEP_IDS.cancelledTask), LEAD, { reason, note: 'hàng thất lạc — ship lại' })
+    expect(r).toMatchObject({ changed: true, task: { status: 'REJECTED', rejectReasons: [reason] } })
+    expect((await taskOf('DTK2_1')).events.map(e => e.type)).toEqual(['SYSTEM', 'REJECT', 'SYSTEM', 'SYSTEM', 'SYSTEM'])
+    expect(kept((await taskOf('DTK2_1')).events, CANCELLED_REOPEN_NOTE)).toHaveLength(1)
+    expect(kept((await taskOf('DTK2_1')).events, RESHIP_NOTE)).toHaveLength(1)
+
+    expect((await syncDesignTasks(KEEP_IDS.cancelledTask)).cancelled).toBe(0)
+    expect((await taskOf('DTK2_1')).status).toBe('REJECTED')
+    expect(kept((await taskOf('DTK2_1')).events, REOPEN_KEPT_SHIPPED)).toHaveLength(1)
+  })
+
+  it('a cancelled or refunded order does not cancel a task a person reopened either; only a leader cancels it', async () => {
+    await reopenLineForFix(await lineOf(KEEP_IDS.closed), LEAD, { reason: LINE_FIX_REASONS[1], note: 'khách muốn đổi tên' })
+    await prisma.order.update({ where: { id: KEEP_IDS.closed }, data: { pipelineStatus: 'REFUNDED' } })
+    expect((await syncDesignTasks(KEEP_IDS.closed)).cancelled).toBe(0)
+    let t = await taskOf('DTK3_1')
+    expect(t.status).toBe('REJECTED')
+    expect(kept(t.events, REOPEN_KEPT_CLOSED)).toHaveLength(1)
+    await transitionTask('DTK3_1', LEAD, { to: 'CANCELLED' })
+    t = await taskOf('DTK3_1')
+    expect(t.status).toBe('CANCELLED')
+    expect((await syncDesignTasks(KEEP_IDS.closed)).cancelled).toBe(0)
+  })
+
+  it('a dropship mark does not cancel a reopened task either', async () => {
+    await reopenLineForFix(await lineOf(KEEP_IDS.dropship), LEAD, { reason, note: 'ship lại' })
+    await prisma.orderLine.updateMany({ where: { orderId: KEEP_IDS.dropship }, data: { dropship: true } })
+    expect((await syncDesignTasks(KEEP_IDS.dropship)).cancelled).toBe(0)
+    expect((await taskOf('DTK4_1')).status).toBe('REJECTED')
   })
 })
 

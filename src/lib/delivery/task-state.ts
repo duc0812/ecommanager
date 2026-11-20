@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/db'
-import { isSentLineOfOpenOrder, requiredSlotsForLine } from '@/lib/design-tasks'
+import { isSentLineOfOpenOrder, requiredSlotsForLine, taskKeptByPerson } from '@/lib/design-tasks'
 import { isOrderOpen } from '@/lib/design-agent/order-open'
 import type { DeliveryDrive } from '@/lib/delivery/drive'
 import type { TaskState } from '@/lib/delivery/types'
@@ -17,12 +17,15 @@ export async function deliveryTaskState(taskKey: string, drive: DeliveryDrive): 
   const line = await prisma.orderLine.findFirst({ where: { orderId, shopifyLineId }, select: { id: true } })
   if (!line) throw new DeliveryLineMissingError()
 
-  const [rows, orderOpen, sent, required] = await Promise.all([
+  // orderOpen: the line still takes files — its order is open, or a person reopened the task to ship the line again (owner 11/20/2026).
+  const [rows, open, kept, sent, required] = await Promise.all([
     prisma.designArtwork.findMany({ where: { orderId, shopifyLineId }, orderBy: [{ kind: 'asc' }, { printArea: 'asc' }, { version: 'asc' }] }),
     isOrderOpen(orderId),
+    taskKeptByPerson(task.id),
     isSentLineOfOpenOrder(line.id),
     requiredSlotsForLine(orderId, shopifyLineId),
   ])
+  const orderOpen = open || kept
   const folder = await drive.taskFolder(orderId, shopifyLineId)
   const incoming = await drive.incomingFolder(taskKey)
 

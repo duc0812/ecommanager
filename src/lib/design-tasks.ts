@@ -29,6 +29,7 @@ import { APP_FILE_PREFIX, DESIGN_LINK_SEPARATOR, isAppFileLink } from '@/lib/des
 import { saveStudioDesignToLibrary } from '@/lib/studio-library'
 import { MISSING_AREAS_PREFIX, missingPrintAreas, outdatedParts, printFilesReady } from '@/lib/task-files'
 import { exportedSupplierOf, isLineExported } from '@/lib/line-export'
+import { AGENT_USER_EMAIL } from '@/lib/design-agent/agent-user'
 import { isUniqueViolation, retryOnBusy } from '@/lib/sqlite-busy'
 import {
   LINE_FIX_EVENT_PREFIX, LINE_FIX_REASONS, FIX_NOT_IN_FOLDER_MESSAGE, heldLinkMessage, lineFixMessage, parseLineFix, readHeldLinkMessage, readLineFixMessage, readSupplierLinkKind,
@@ -63,6 +64,19 @@ function lineFixReopen(fix: LineFix) {
 }
 export const DROPSHIP_TASK_MESSAGE = 'Dropship — không cần design'
 export const APPROVE_MESSAGE = 'Duyệt design'
+/**
+ * Owner 11/20/2026 (LIT5121_1, LIT5641_1): the sync cancels an open task of a fulfilled / closed order, but never one a person
+ * reopened after that — a reopen on such an order is the ship-lại of its line. The sync says so once; only a leader cancels it.
+ */
+export const AUTO_CANCEL_SHIPPED = 'Đơn đã fulfilled — task tự huỷ'
+export const AUTO_CANCEL_CLOSED = 'Đơn huỷ — task tự huỷ'
+const AUTO_CANCEL_MESSAGES = [AUTO_CANCEL_SHIPPED, AUTO_CANCEL_CLOSED, DROPSHIP_TASK_MESSAGE]
+export const REOPEN_KEPT_SHIPPED = 'Đơn đã fulfilled trên Shopify — task do người mở lại nên giữ nguyên (chỉ leader huỷ)'
+export const REOPEN_KEPT_CLOSED = 'Đơn đã huỷ / hoàn tiền — task do người mở lại nên giữ nguyên (chỉ leader huỷ)'
+export const REOPEN_KEPT_DROPSHIP = 'Dòng đánh dấu dropship — task do người mở lại nên giữ nguyên (chỉ leader huỷ)'
+export const RESHIP_NOTE = 'Đơn đã giao — mở lại để ship lại dòng này; sync không tự huỷ task'
+export const CANCELLED_REOPEN_NOTE = 'Task đã huỷ được mở lại — sync không tự huỷ lại'
+export const CANCELLED_REOPEN_MESSAGE = 'Mở lại task đã huỷ'
 
 export function isLeader(role: string): boolean {
   return isLeaderRole(role)
@@ -71,7 +85,7 @@ export function isLeader(role: string): boolean {
 /** canApprove is the REVIEW → DONE / REJECTED capability; it defaults to leader-only. Nothing reaches DONE except from REVIEW. */
 export function canTransition(from: TaskStatus, to: TaskStatus, actor: ActorRole, canApprove: boolean = actor === 'LEADER'): boolean {
   if (from === to) return false
-  if (from === 'CANCELLED') return false
+  if (from === 'CANCELLED') return actor === 'LEADER' && to === 'DOING'
   if (to === 'ASK_CUSTOMER') return OPEN.includes(from)
   if (to === 'CANCELLED') return actor === 'LEADER' && [...OPEN, 'ASK_CUSTOMER'].includes(from)
   switch (to) {
@@ -129,6 +143,51 @@ const STUDIO_MOVED: TaskStatus[] = ['DOING', 'REVIEW', 'REJECTED', 'DONE']
 /** Orders not sent yet. Only these get a task for a library or unmapped line, so turning that on does not add tasks to old orders. */
 const TASK_FOR_EVERY_LINE: string[] = ['PENDING_DESIGN', 'PENDING_MAPPING', 'READY_TO_PRODUCTION']
 const HUMAN_MOVE_EVENTS = ['STATUS', 'REJECT']
+
+/** A reopen made by a person: "Mở lại để sửa" with its reason, the old control's STATUS line, or a cancelled task opened again. The Agent's own reopens do not count. */
+function isPersonReopen(e: { type: string; message: string; actorId: string | null }, agentId: string | null): boolean {
+  if (!e.actorId || e.actorId === agentId) return false
+  if (e.type === 'REJECT') return e.message.startsWith(LINE_FIX_EVENT_PREFIX)
+  return e.type === 'STATUS' && (e.message === OLD_REOPEN_MESSAGE || e.message === CANCELLED_REOPEN_MESSAGE)
+}
+
+function isAutoCancel(e: { type: string; message: string; actorId: string | null }): boolean {
+  return e.type === 'SYSTEM' && !e.actorId && AUTO_CANCEL_MESSAGES.includes(e.message)
+}
+
+/** True when a person reopened the task and no automatic cancel came after it: the task is theirs, the sync leaves it alone. */
+export function reopenedByPerson(events: TaskEvent[], agentId: string | null): boolean {
+  const sorted = inOrder(events)
+  let reopenAt = -1, cancelAt = -1
+  sorted.forEach((e, i) => {
+    if (isPersonReopen(e, agentId)) reopenAt = i
+    if (isAutoCancel(e)) cancelAt = i
+  })
+  return reopenAt >= 0 && cancelAt < reopenAt
+}
+
+async function agentUserId(): Promise<string | null> {
+  return (await prisma.appUser.findUnique({ where: { email: AGENT_USER_EMAIL }, select: { id: true } }))?.id ?? null
+}
+
+/** The task is open after a person's reopen (its line is being made again), whatever its order says. */
+export async function taskKeptByPerson(taskId: string): Promise<boolean> {
+  const task = await prisma.designTask.findUnique({ where: { id: taskId }, select: { status: true, events: { select: TASK_EVENT_SELECT } } })
+  if (!task || task.status === 'CANCELLED') return false
+  return reopenedByPerson(task.events, await agentUserId())
+}
+
+/** When the sync would cancel a task a person reopened: it is left as it is, and told why once (after that reopen). */
+async function keptAfterReopen(task: { id: string }, note: string, agentId: string | null): Promise<boolean> {
+  const events = inOrder(await prisma.designTaskEvent.findMany({ where: { taskId: task.id }, select: TASK_EVENT_SELECT }))
+  if (!reopenedByPerson(events, agentId)) return false
+  let reopenAt = -1
+  events.forEach((e, i) => { if (isPersonReopen(e, agentId)) reopenAt = i })
+  if (!events.slice(reopenAt + 1).some(e => e.type === 'SYSTEM' && e.message === note)) {
+    await prisma.designTaskEvent.create({ data: { taskId: task.id, type: 'SYSTEM', message: note } })
+  }
+  return true
+}
 
 async function linesWithArtwork(orderId: string): Promise<Set<string>> {
   // A mockup the system filled in says nothing about who made the design.
@@ -286,12 +345,14 @@ export async function syncDesignTasks(orderId: string): Promise<SyncResult> {
   const factoryEvent = { type: 'SYSTEM', message: FACTORY_REOPEN_MESSAGE }
 
   const everyLine = TASK_FOR_EVERY_LINE.includes(order.pipelineStatus)
+  const agentId = await agentUserId()
 
   for (const line of order.lines) {
     if (isNonProductLine(line)) continue
     const existing = order.designTasks.find(t => t.shopifyLineId === line.shopifyLineId)
+    const stillOpen = !!existing && existing.status !== 'CANCELLED' && existing.status !== 'DONE'
     if (line.dropship) {
-      if (existing && existing.status !== 'CANCELLED' && existing.status !== 'DONE') {
+      if (existing && stillOpen && !(await keptAfterReopen(existing, REOPEN_KEPT_DROPSHIP, agentId))) {
         await prisma.designTask.update({ where: { id: existing.id }, data: { status: 'CANCELLED', events: { create: { type: 'SYSTEM', message: DROPSHIP_TASK_MESSAGE } } } })
         cancelled++
       }
@@ -299,7 +360,9 @@ export async function syncDesignTasks(orderId: string): Promise<SyncResult> {
     }
     if (!line.resolvedSupplierId && !existing && (!everyLine || line.exportedAt)) continue
     if (orderClosed || orderShipped) {
-      if (existing && existing.status !== 'CANCELLED' && existing.status !== 'DONE') {
+      if (existing && stillOpen) {
+        // A person's reopen on a shipped or closed order is the ship-lại of this line: the sync never takes it back.
+        if (await keptAfterReopen(existing, orderClosed ? REOPEN_KEPT_CLOSED : REOPEN_KEPT_SHIPPED, agentId)) continue
         // A fulfilled order does not prove this line was made: one supplier's tracking can close the whole order. An export mark without a file proves nothing either (LIT4981).
         const hasFile = withArtwork.has(line.shopifyLineId) || !!line.designDriveLink || !!order.trelloCardUrl
         if (!orderClosed && !hasFile) {
@@ -309,7 +372,7 @@ export async function syncDesignTasks(orderId: string): Promise<SyncResult> {
           }
           continue
         }
-        const message = orderClosed ? 'Đơn huỷ — task tự huỷ' : 'Đơn đã fulfilled — task tự huỷ'
+        const message = orderClosed ? AUTO_CANCEL_CLOSED : AUTO_CANCEL_SHIPPED
         await prisma.designTask.update({ where: { id: existing.id }, data: { status: 'CANCELLED', events: { create: { type: 'SYSTEM', message } } } })
         cancelled++
       }
@@ -500,22 +563,27 @@ const SENT_CHECK_SELECT = {
 } as const
 
 /**
- * The line went to its supplier (its own mark, or its order's export from before lines were tracked) and its order is still
- * open: "Sửa & gửi lại" on its DONE task then asks why and reopens this line alone. A READY_TO_PRODUCTION order whose line has
- * no mark has not sent it, so that control works there as it always did.
+ * The line went to its supplier (its own mark, or its order's export from before lines were tracked) and its order is not
+ * cancelled or refunded: "Sửa & gửi lại" on its DONE (or cancelled) task then asks why and reopens this line alone. A shipped
+ * order counts as sent whatever the line's marks say (owner 11/20/2026: that reopen is the ship-lại of the line). A
+ * READY_TO_PRODUCTION order whose line has no mark has not sent it, so that control works there as it always did.
  */
 export async function isSentLineOfOpenOrder(lineId: string): Promise<boolean> {
   const row = await prisma.orderLine.findUnique({ where: { id: lineId }, select: { order: { select: SENT_CHECK_SELECT } } })
   const order = row?.order
   const line = order?.lines.find(l => l.id === lineId)
-  return !!order && !!line && !isNonProductLine(line) && !isClosedOrder(order) && !isShippedOrder(order) && isLineExported(order, line)
+  return !!order && !!line && !isNonProductLine(line) && !isClosedOrder(order) && (isShippedOrder(order) || isLineExported(order, line))
 }
 
-/** The reopen's events: who and why, then the link the line carried, the one its supplier holds (read back by lastFixCycle). */
-function lineFixEvents(fix: LineFix, actor: Actor, heldLink: string | null) {
+type ReopenContext = { shipped: boolean; fromCancelled?: boolean }
+
+/** The reopen's events: who and why, then the link the line carried, the one its supplier holds (read back by lastFixCycle); then what makes this reopen special. */
+function lineFixEvents(fix: LineFix, actor: Actor, heldLink: string | null, ctx: ReopenContext) {
   return [
     { type: 'REJECT', message: lineFixMessage(fix), actorId: actor.id },
     { type: 'SYSTEM', message: heldLinkMessage(heldLink), actorId: null },
+    ...(ctx.fromCancelled ? [{ type: 'SYSTEM', message: CANCELLED_REOPEN_NOTE, actorId: null }] : []),
+    ...(ctx.shipped ? [{ type: 'SYSTEM', message: RESHIP_NOTE, actorId: null }] : []),
   ]
 }
 
@@ -531,12 +599,14 @@ async function heldLinkAtReopen(taskId: string, lineLink: string | null): Promis
   return cycle.held?.link ?? null
 }
 
-async function reopenTaskOfLine(task: { id: string; taskKey: string; status: string }, actor: Actor, fix: LineFix, heldLink: string | null): Promise<{ task: TaskRow; changed: boolean }> {
-  if (task.status === 'CANCELLED') throw new LineFixError(`Task ${task.taskKey} của dòng này đã huỷ — task đã huỷ không mở lại được`, 409)
-  const changed = task.status === 'DONE' && await retryOnBusy(() => prisma.$transaction(async tx => {
-    const r = await tx.designTask.updateMany({ where: { id: task.id, status: 'DONE' }, data: lineFixReopen(fix) })
+/** A DONE task goes back to design; a cancelled one too, by a leader (owner 11/20/2026), and the sync then never cancels it again. */
+async function reopenTaskOfLine(task: { id: string; taskKey: string; status: string }, actor: Actor, fix: LineFix, heldLink: string | null, ctx: ReopenContext): Promise<{ task: TaskRow; changed: boolean }> {
+  const from = task.status
+  if (from === 'CANCELLED' && actorRole(actor) !== 'LEADER') throw new LineFixError(`Task ${task.taskKey} của dòng này đã huỷ — chỉ leader mở lại được`, 403)
+  const changed = (from === 'DONE' || from === 'CANCELLED') && await retryOnBusy(() => prisma.$transaction(async tx => {
+    const r = await tx.designTask.updateMany({ where: { id: task.id, status: from }, data: lineFixReopen(fix) })
     if (r.count === 0) return false
-    for (const e of lineFixEvents(fix, actor, heldLink)) await tx.designTaskEvent.create({ data: { taskId: task.id, ...e } })
+    for (const e of lineFixEvents(fix, actor, heldLink, { ...ctx, fromCancelled: from === 'CANCELLED' })) await tx.designTaskEvent.create({ data: { taskId: task.id, ...e } })
     return true
   }))
   const row = await rowFor(task.taskKey)
@@ -574,12 +644,13 @@ async function reopenSentLine(lineId: string, actor: Actor, input: { reason?: un
   })
   if (isNonProductLine(line)) throw new LineFixError('Dòng này không phải sản phẩm (add-on, phí…) — không có design để sửa', 409)
   if (isClosedOrder(order)) throw new LineFixError('Đơn đã huỷ hoặc hoàn tiền — không mở lại dòng để sửa', 409)
-  if (isShippedOrder(order)) throw new LineFixError('Đơn đã giao (fulfilled) — không mở lại dòng để sửa', 409)
-  if (!isSentLine(order, line)) throw new LineFixError('Dòng chưa gửi xưởng — sửa design ngay trên task, không cần mở lại', 409)
+  // A shipped order: the parcel left, so the line is at (or past) its supplier whatever its marks say; this reopen is its ship-lại.
+  const ctx: ReopenContext = { shipped: isShippedOrder(order) }
+  if (!ctx.shipped && !isSentLine(order, line)) throw new LineFixError('Dòng chưa gửi xưởng — sửa design ngay trên task, không cần mở lại', 409)
 
   const ofLine = { orderId_shopifyLineId: { orderId: order.id, shopifyLineId: line.shopifyLineId } }
   const existing = await prisma.designTask.findUnique({ where: ofLine })
-  if (existing) return reopenTaskOfLine(existing, actor, fix, await heldLinkAtReopen(existing.id, line.designDriveLink))
+  if (existing) return reopenTaskOfLine(existing, actor, fix, await heldLinkAtReopen(existing.id, line.designDriveLink), ctx)
   const taskKey = lineKeysOf(order.shopifyOrderNumber, order.lines).get(line.shopifyLineId)!
   const keyTaken = `Mã ${taskKey} đang thuộc một task khác — bấm Đồng bộ task rồi thử lại`
   if (await prisma.designTask.findUnique({ where: { taskKey }, select: { id: true } })) throw new LineFixError(keyTaken, 409)
@@ -592,13 +663,13 @@ async function reopenSentLine(lineId: string, actor: Actor, input: { reason?: un
     await retryOnBusy(() => prisma.designTask.create({ data: {
       orderId: order.id, shopifyLineId: line.shopifyLineId, taskKey, readiness, kpi: kpiForProductType(settings, line.shopifyProductType),
       slaHours, dueAt: dueForNewTask(order.placedAt, slaHours), supplierSnapshot: supplier?.name ?? null, ...lineFixReopen(fix),
-      events: { create: lineFixEvents(fix, actor, line.designDriveLink) },
+      events: { create: lineFixEvents(fix, actor, line.designDriveLink, ctx) },
     } }))
   } catch (e: any) {
     if (!isUniqueViolation(e)) throw e
     const raced = await prisma.designTask.findUnique({ where: ofLine })
     if (!raced) throw new LineFixError(keyTaken, 409)
-    return reopenTaskOfLine(raced, actor, fix, line.designDriveLink)
+    return reopenTaskOfLine(raced, actor, fix, line.designDriveLink, ctx)
   }
   const row = await rowFor(taskKey)
   if (!row) throw new Error('Task row not found after create')
@@ -658,7 +729,7 @@ function supplierLinkKind(held: FixCycle['held'], taskFolder: string | null): Su
   return !!held?.link && !!taskFolder && held.link === taskFolder ? 'SAME_FOLDER' : 'NEW_LINK'
 }
 
-type FixDelivery = { kind: 'API'; supplierName: string } | { kind: 'LINK'; supplierName: string; held: FixCycle['held'] }
+type FixDelivery = { kind: 'API'; supplierName: string; reship?: false } | { kind: 'LINK'; supplierName: string; held: FixCycle['held']; reship?: boolean }
 
 /**
  * How the approved fix of a line reopened after it went to its supplier reaches that supplier (owner 11/06/2026, #LIT5105).
@@ -676,10 +747,14 @@ async function fixDelivery(taskId: string, lineId: string): Promise<FixDelivery 
   })
   const order = row?.order
   const line = order?.lines.find(l => l.id === lineId)
-  if (!order || !line || isClosedOrder(order) || isShippedOrder(order) || !isLineExported(order, line)) return null
-  const supplierId = exportedSupplierOf(order, line)
+  if (!order || !line || isClosedOrder(order)) return null
+  const shipped = isShippedOrder(order)
+  if (!shipped && !isLineExported(order, line)) return null
+  const supplierId = exportedSupplierOf(order, line) ?? line.resolvedSupplierId
   const supplier = supplierId ? await prisma.supplier.findUnique({ where: { id: supplierId }, select: { name: true } }) : null
   const supplierName = supplier?.name ?? 'xưởng'
+  // The parcel already left: the old push (if any) is done, so the new design goes to the supplier by hand as a new order — never re-pushed over the old one.
+  if (shipped) return { kind: 'LINK', supplierName, held: cycle.held, reship: true }
   for (const push of order.supplierPushes) {
     const carried = await carriedShopifyLineIds(push, order.lines)
     if (carried ? carried.includes(line.shopifyLineId) : push.supplierId === supplierId) return { kind: 'API', supplierName }
@@ -701,12 +776,13 @@ export async function transitionTask(taskKey: string, actor: Actor, input: Trans
   const canApprove = canApproveDesign(actor.role, actor.permissions, (await getDesignSettings()).designerCanApprove)
   if (!(input.continue && from === 'ASK_CUSTOMER' && input.to === (task.prevStatus ?? 'NEW')) && !canTransition(from, input.to, role, canApprove)) {
     const leaderOnly = from === 'REVIEW' && (input.to === 'DONE' || input.to === 'REJECTED')
-    throw new Error(`Chuyển ${from} → ${input.to} không được phép với vai trò ${role}${leaderOnly ? ' — chỉ leader duyệt hoặc trả lại mẫu (cài đặt "Designer được duyệt design" đang tắt, hoặc bạn không có quyền Design Tasks)' : ''}`)
+    const cancelledOnly = from === 'CANCELLED' ? ' — task đã huỷ chỉ leader mở lại được' : ''
+    throw new Error(`Chuyển ${from} → ${input.to} không được phép với vai trò ${role}${leaderOnly ? ' — chỉ leader duyệt hoặc trả lại mẫu (cài đặt "Designer được duyệt design" đang tắt, hoặc bạn không có quyền Design Tasks)' : cancelledOnly}`)
   }
   const line = await prisma.orderLine.findFirst({ where: { orderId: task.orderId, shopifyLineId: task.shopifyLineId } })
   if (!line) throw new Error('Line not found')
-  // "Sửa & gửi lại" on a line its supplier already has is "Mở lại để sửa" of that line, open to whoever may press that.
-  if (from === 'DONE' && input.to === 'DOING' && await isSentLineOfOpenOrder(line.id)) {
+  // "Sửa & gửi lại" on a line its supplier already has is "Mở lại để sửa" of that line, open to whoever may press that; a cancelled task of such a line goes the same way (leaders only).
+  if ((from === 'DONE' || from === 'CANCELLED') && input.to === 'DOING' && await isSentLineOfOpenOrder(line.id)) {
     return { task: (await reopenLineForFix(line.id, actor, { reason: input.reasons?.[0], note: input.note }, opts)).task, order: null }
   }
   if (!opts.agent && role !== 'LEADER' && task.assigneeId && task.assigneeId !== actor.id && OWNED_MOVES.includes(input.to)) {
@@ -738,7 +814,8 @@ export async function transitionTask(taskKey: string, actor: Actor, input: Trans
   } else if (input.to === 'DOING') {
     if (!task.assigneeId && !opts.agent) data.assigneeId = actor.id
     if (!task.dueAt) data.dueAt = new Date(Date.now() + task.slaHours * 3600_000)
-    say('STATUS', from === 'ASK_CUSTOMER' ? 'Tiếp tục làm' : from === 'DONE' ? OLD_REOPEN_MESSAGE : 'Nhận việc')
+    say('STATUS', from === 'ASK_CUSTOMER' ? 'Tiếp tục làm' : from === 'DONE' ? OLD_REOPEN_MESSAGE : from === 'CANCELLED' ? CANCELLED_REOPEN_MESSAGE : 'Nhận việc')
+    if (from === 'CANCELLED') events.push({ type: 'SYSTEM', message: CANCELLED_REOPEN_NOTE, actorId: null })
   } else if (input.to === 'REVIEW') {
     if (!input.continue) {
       const missing = await missingPrintFiles(line)
@@ -787,7 +864,7 @@ export async function transitionTask(taskKey: string, actor: Actor, input: Trans
         notice = supplierLinkMessage(supplierLinkKind(delivery.held, task.driveFolderUrl), delivery.supplierName)
         events.push({ type: SUPPLIER_RECHECK, message: notice, actorId: null })
       }
-      if (delivery) groupNotice = supplierFixNoticeText(task.taskKey, delivery.supplierName, delivery.kind)
+      if (delivery) groupNotice = supplierFixNoticeText(task.taskKey, delivery.supplierName, delivery.kind, delivery.reship === true)
       data.rejectReasons = null; data.rejectNote = null
       if (accepted) {
         events.push({ type: 'SYSTEM', message: `Duyệt khi chưa có file cho vùng: ${missing.join(', ')} — không lưu vào Design Library`, actorId: actor.id })
@@ -990,8 +1067,14 @@ export type SupplierFixList = {
   suppliers: { id: string; name: string }[]
 }
 
-/** A fulfilled, cancelled or refunded order needs no supplier told (Shopify's own "fulfilled" is checked on the rows). */
-const OPEN_ORDER_STATUS = { pipelineStatus: { notIn: ['FULFILLED', 'CANCELLED', 'REFUNDED'] } }
+/** A cancelled or refunded order needs no supplier told. A fulfilled one only for a ship-lại (checked on the rows, with Shopify's own "fulfilled"). */
+const OPEN_ORDER_STATUS = { pipelineStatus: { notIn: ['CANCELLED', 'REFUNDED'] } }
+
+/** The reopen of this cycle was made on a shipped order: the line is being made again (RESHIP_NOTE follows the reopen). */
+function isReshipCycle(events: TaskEvent[], cycle: FixCycle): boolean {
+  const at = cycle.reopen.createdAt.getTime()
+  return events.some(e => e.type === 'SYSTEM' && e.message === RESHIP_NOTE && e.createdAt.getTime() >= at && (!cycle.recheck || e.createdAt.getTime() <= cycle.recheck.createdAt.getTime()))
+}
 
 type SupplierFixFilter = {
   storeIds?: string[] | null; reason?: LineFixReason | 'none' | null; supplierId?: string | null; kind?: SupplierLinkKind | null; now?: Date
@@ -1039,7 +1122,7 @@ export async function listSupplierFixes(f: SupplierFixFilter = {}): Promise<Supp
   for (const t of tasks) {
     const line = t.order.lines.find(l => l.shopifyLineId === t.shopifyLineId)
     const cycle = lastFixCycle(t.events)
-    if (!line || !cycle || isShippedOrder(t.order)) continue
+    if (!line || !cycle || (isShippedOrder(t.order) && !isReshipCycle(t.events, cycle))) continue
     let list: Built['list']
     if (t.status === 'DONE') {
       if (!cycle.recheck) continue

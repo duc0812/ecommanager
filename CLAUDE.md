@@ -6,7 +6,7 @@ This file tells AI coding agents (Claude Code, Codex, etc.) how to work on this 
 1. `SPEC.md` — architecture, DB schema, design tokens, API conventions
 2. `PLAN.md` — what's done, what's next, known issues
 3. `NOTES.md` — current state, active data, critical implementation quirks
-4. `docs/superpowers/specs/` — active feature specs (in-progress designs). **Phase 13 Fulfillment & POD module is built** (PLAN.md, Phase 13.x DONE) — its design is `docs/superpowers/specs/2026-05-19-fulfillment-pod-design.md`; read it before touching any fulfillment/supplier/order code. Customer Service agent (Freshdesk + Claude): `docs/superpowers/specs/2026-10-23-customer-service-agent-design.md` — read before touching `src/lib/cs/*` or `/cs` pages.
+4. `docs/superpowers/specs/` — active feature specs (in-progress designs). **Phase 13 Fulfillment & POD module is built** (PLAN.md, Phase 13.x DONE) — its design is `docs/superpowers/specs/2026-05-19-fulfillment-pod-design.md`; read it before touching any fulfillment/supplier/order code. Customer Service agent (Freshdesk + Claude): `docs/superpowers/specs/2026-10-23-customer-service-agent-design.md` — read before touching `src/lib/cs/*` or `/cs` pages. **Reopened tasks / ship lại (11/20/2026):** a task a person reopened is never auto-cancelled and a fulfilled order's line reopens as its ship-lại — NOTES.md "Reopened tasks are never auto-cancelled"; never reopen a task with SQL, use the line reopen route. Several shipments per line: spec `docs/superpowers/specs/2026-11-20-reship-tracking-design.md` (awaiting the owner).
 
 ---
 

@@ -7,7 +7,7 @@ import { prisma } from '@/lib/db'
 import { AUTH_COOKIE, signToken } from '@/lib/auth'
 import { DEFAULT_ROLE_PERMISSIONS, type FeaturePermission } from '@/lib/roles'
 import { LINE_FIX_REASONS } from '@/lib/line-fix'
-import { SUPPLIER_RECHECK, SUPPLIER_TOLD, listSupplierFixes, loadTask, syncDesignTasks, transitionTask, type Actor } from '@/lib/design-tasks'
+import { CANCELLED_REOPEN_NOTE, REOPEN_KEPT_SHIPPED, RESHIP_NOTE, SUPPLIER_RECHECK, SUPPLIER_TOLD, listSupplierFixes, loadTask, syncDesignTasks, transitionTask, type Actor } from '@/lib/design-tasks'
 import { markOrdersExported, updateOrderStatus } from '@/lib/repos/orders'
 import { markPushExported } from '@/lib/repos/push-export'
 import { closeCancelledPush, reservePush } from '@/lib/repos/supplier-push-core'
@@ -26,7 +26,7 @@ const STORE_B = `${P}-store-b`
 const SUP = `${P}-sup`
 const SENT_AT = new Date('2026-11-02T08:00:00Z')
 const LINK = 'https://drive.google.com/drive/folders/t22r-sent'
-const [FACTORY_ASKS, CUSTOMER_ASKS, WE_FOUND] = LINE_FIX_REASONS
+const [FACTORY_ASKS, CUSTOMER_ASKS, WE_FOUND, RESHIP] = LINE_FIX_REASONS
 const NOTE = 'chỗ cái dao bị lệch'
 // The fixtures' lines carry a folder that is not their task's (a library / outside link), so their fix needs a new link.
 const RECHECK = 'Gửi T22R Factory LINK MỚI — link cũ không có file đã sửa'
@@ -711,10 +711,103 @@ describe('"Sửa & gửi lại" on a task whose line was not sent', () => {
   })
 })
 
+describe('a shipped order: "Mở lại để sửa" is the ship-lại of that line (owner 11/20/2026, LIT5121_1 / LIT5641_1)', () => {
+  const RESHIP_FIX = fix(RESHIP, 'khách nhận áo in lệch tay, ship lại')
+  const RESHIP_GROUP = (key: string) => `Đơn ${key} đã giao cho khách, có design mới để ship lại — check design rồi gửi xưởng T22R Factory làm lại nhé.`
+
+  it.each([
+    ['fulfilled on the tool', { status: 'FULFILLED' }],
+    ['fulfilled on Shopify', { fulfillmentStatus: 'FULFILLED' }],
+  ] as const)('%s: the line reopens with its reason, the sync keeps it open, and nothing else moves', async (_name, opts: OrderOpts) => {
+    const o = await sentOrder(opts)
+    const before = await marks(o.id)
+    const res = await press(o.line2, 'lead', RESHIP_FIX)
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({ changed: true, task: { taskKey: o.key2, status: 'REJECTED', rejectReasons: [RESHIP], rejectNote: RESHIP_FIX.note } })
+    expect((await lineTask(o.id, o.sl2))!.events.map(e => [e.type, e.message, e.actorId])).toEqual([
+      ['REJECT', `Mở lại để sửa (đã gửi xưởng) — ${RESHIP}: ${RESHIP_FIX.note}`, users.lead.id],
+      ['SYSTEM', `Link xưởng đang giữ khi mở lại: ${LINK}`, null],
+      ['SYSTEM', RESHIP_NOTE, null],
+    ])
+    await syncDesignTasks(o.id)
+    await syncDesignTasks(o.id)
+    const task = await lineTask(o.id, o.sl2)
+    expect(task!.status).toBe('REJECTED')
+    expect(task!.events.filter(e => e.message === REOPEN_KEPT_SHIPPED)).toHaveLength(1)
+    expect(await marks(o.id)).toEqual(before)
+    expect((await lineTask(o.id, o.sl1))!.status).toBe('DONE')
+    expect((await prisma.order.findUniqueOrThrow({ where: { id: o.id } })).pipelineStatus).toBe(opts.status ?? 'EXPORTED')
+  })
+
+  it('a line of a fulfilled order that never got its own export mark (LIT5121_1) reopens too', async () => {
+    const o = await sentOrder({ status: 'FULFILLED', exported: false })
+    const res = await press(o.line2, 'lead', RESHIP_FIX)
+    expect(res.status).toBe(200)
+    expect((await lineTask(o.id, o.sl2))!.status).toBe('REJECTED')
+  })
+
+  it('a DONE task on a fulfilled order: "Sửa & gửi lại" asks why, goes the same way, and the next sync does not cancel it', async () => {
+    const o = await sentOrder({ status: 'FULFILLED', task2: 'DONE' })
+    expect((await loadTask(o.key2))!.reopensSentLine).toBe(true)
+    const r = await transitionReq(o.key2, 'des', { to: 'DOING', reasons: [WE_FOUND], note: NOTE })
+    expect(r.status).toBe(200)
+    expect((await r.json()).task).toMatchObject({ taskKey: o.key2, status: 'REJECTED', rejectReasons: [WE_FOUND], rejectNote: NOTE })
+    await syncDesignTasks(o.id)
+    expect((await lineTask(o.id, o.sl2))!.status).toBe('REJECTED')
+  })
+
+  it('a task the sync cancelled opens again with a reason, through the route or the control, and stays open', async () => {
+    const o = await sentOrder({ status: 'FULFILLED', task2: 'CANCELLED' })
+    const res = await press(o.line2, 'lead', RESHIP_FIX)
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({ changed: true, task: { taskKey: o.key2, status: 'REJECTED', rejectReasons: [RESHIP] } })
+    expect((await lineTask(o.id, o.sl2))!.events.map(e => [e.type, e.message])).toEqual([
+      ['REJECT', `Mở lại để sửa (đã gửi xưởng) — ${RESHIP}: ${RESHIP_FIX.note}`],
+      ['SYSTEM', `Link xưởng đang giữ khi mở lại: ${LINK}`],
+      ['SYSTEM', CANCELLED_REOPEN_NOTE],
+      ['SYSTEM', RESHIP_NOTE],
+    ])
+    await syncDesignTasks(o.id)
+    expect((await lineTask(o.id, o.sl2))!.status).toBe('REJECTED')
+
+    const viaControl = await sentOrder({ status: 'FULFILLED', task2: 'CANCELLED' })
+    expect((await loadTask(viaControl.key2))!.reopensSentLine).toBe(true)
+    const r = await transitionReq(viaControl.key2, 'lead', { to: 'DOING', reasons: [RESHIP], note: RESHIP_FIX.note })
+    expect(r.status).toBe(200)
+    expect((await r.json()).task).toMatchObject({ status: 'REJECTED', rejectReasons: [RESHIP] })
+    await syncDesignTasks(viaControl.id)
+    expect((await lineTask(viaControl.id, viaControl.sl2))!.status).toBe('REJECTED')
+  })
+
+  it('a designer may not reopen a cancelled task; the agent may not reopen a line of a fulfilled order', async () => {
+    const o = await sentOrder({ status: 'FULFILLED', task2: 'CANCELLED' })
+    const r = await transitionReq(o.key2, 'des', { to: 'DOING', reasons: [RESHIP], note: RESHIP_FIX.note })
+    expect(r.status).toBe(400)
+    expect((await lineTask(o.id, o.sl2))!.status).toBe('CANCELLED')
+    const byRoute = await press(o.line2, 'des', RESHIP_FIX)
+    expect(byRoute.status).toBe(403)
+    expect((await lineTask(o.id, o.sl2))!.status).toBe('CANCELLED')
+  })
+
+  it('approval of the fix tells staff to send the supplier the new link, and the group hears it is a ship-lại', async () => {
+    const o = await sentOrder({ status: 'FULFILLED', sheet: true })
+    const before = await marks(o.id)
+    await press(o.line2, 'lead', RESHIP_FIX)
+    const r = await fixAndApprove(o.id, o.sl2, o.key2)
+    expect(r).toMatchObject({ task: { status: 'DONE' }, notice: RECHECK })
+    expect(group).toHaveBeenCalledTimes(1)
+    expect(group).toHaveBeenCalledWith(RESHIP_GROUP(o.key2))
+    expect(await marks(o.id)).toEqual(before)
+    expect((await prisma.order.findUniqueOrThrow({ where: { id: o.id } })).pipelineStatus).toBe('FULFILLED')
+    expect(await recheckEvents(o.id, o.sl2)).toEqual([{ type: SUPPLIER_RECHECK, actorId: null }])
+    expect(keysOf((await fixes('lead')).waiting)).toContain(o.key2)
+    await syncDesignTasks(o.id)
+    expect((await lineTask(o.id, o.sl2))!.status).toBe('DONE')
+  })
+})
+
 describe('refusals', () => {
   it.each([
-    ['a fulfilled order', { status: 'FULFILLED' }, /fulfilled/],
-    ['an order Shopify reports fulfilled', { fulfillmentStatus: 'FULFILLED' }, /fulfilled/],
     ['a cancelled order', { status: 'CANCELLED' }, /huỷ hoặc hoàn tiền/],
     ['a refunded order', { status: 'REFUNDED' }, /huỷ hoặc hoàn tiền/],
     ['a line not sent yet', { status: 'PENDING_DESIGN', exported: false }, /chưa gửi xưởng/],
@@ -735,14 +828,6 @@ describe('refusals', () => {
     expect(res.status).toBe(409)
     expect((await res.json()).error).toMatch(/không phải sản phẩm/)
     expect(await prisma.designTask.count({ where: { orderId: o.id } })).toBe(1)
-  })
-
-  it('refuses a line whose task was cancelled: a cancelled task never opens again', async () => {
-    const o = await sentOrder({ task2: 'CANCELLED' })
-    const res = await press(o.line2, 'des')
-    expect(res.status).toBe(409)
-    expect((await res.json()).error).toMatch(/đã huỷ — task đã huỷ không mở lại được/)
-    expect((await lineTask(o.id, o.sl2))!.status).toBe('CANCELLED')
   })
 
   it('refuses an unknown line with a 404', async () => {

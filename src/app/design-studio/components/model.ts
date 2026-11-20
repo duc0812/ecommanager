@@ -7,7 +7,8 @@ export const OPEN_STATUSES: TaskStatus[] = ['NEW', 'ASSIGNED', 'DOING', 'REVIEW'
 export const OWNED_MOVES: TaskStatus[] = ['DOING', 'NEW', 'REVIEW', 'ASK_CUSTOMER']
 
 export function canTransition(from: TaskStatus, to: TaskStatus, isLeader: boolean, canApprove: boolean = isLeader): boolean {
-  if (from === to || from === 'CANCELLED') return false
+  if (from === to) return false
+  if (from === 'CANCELLED') return isLeader && to === 'DOING'
   if (to === 'ASK_CUSTOMER') return OPEN_STATUSES.includes(from)
   if (to === 'CANCELLED') return isLeader && (OPEN_STATUSES.includes(from) || from === 'ASK_CUSTOMER')
   switch (to) {

@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/db'
-import { AUTO_REVIEW_FROM, requiredSlotsFor, requiredSlotsForLine, submitAutoRenderForReview, templateForLine } from '@/lib/design-tasks'
+import { AUTO_REVIEW_FROM, requiredSlotsFor, requiredSlotsForLine, submitAutoRenderForReview, taskKeptByPerson, templateForLine } from '@/lib/design-tasks'
 import { isOrderOpen } from '@/lib/design-agent/order-open'
 import { driveFileViewUrl } from '@/lib/google-drive'
 import { allSlotNames, templateViewFor, type TemplateRow } from '@/lib/print-template-resolve'
@@ -288,6 +288,12 @@ const ACTIONS: Record<CommitInput['action'], ActionSpec> = {
   revert: { plan: planRevert, after: currentMissing, applied: isRevertApplied },
 }
 
+/** Files land on an open order, or on a line a person reopened to ship again after its order closed (owner 11/20/2026). */
+async function lineTakesFiles(task: { id: string; orderId: string; status: string }): Promise<boolean> {
+  if (task.status === 'CANCELLED') return false
+  return (await isOrderOpen(task.orderId)) || taskKeptByPerson(task.id)
+}
+
 export async function commitDelivery(taskKey: string, input: CommitInput, drive: DeliveryDrive): Promise<CommitResult | CommitError> {
   const invalid = inputError(input)
   if (invalid) return invalid
@@ -307,7 +313,7 @@ export async function commitDelivery(taskKey: string, input: CommitInput, drive:
   })
   if (action.applied(rows, input, task.status)) {
     // A resend may land after the order closed: it is still answered as applied, but a closed line is never resubmitted.
-    const open = task.status !== 'CANCELLED' && await isOrderOpen(orderId)
+    const open = await lineTakesFiles(task)
     const status = action.resend && !input.dryRun && open ? await action.resend(task) : task.status
     const live = await liveArtworks(orderId, shopifyLineId)
     const retired = input.action === 'revert'
@@ -329,7 +335,7 @@ export async function commitDelivery(taskKey: string, input: CommitInput, drive:
   }
 
   if (task.status === 'CANCELLED') return refuse(409, 'closed', 'Task đã huỷ — không nhận file nữa')
-  if (!(await isOrderOpen(orderId))) return refuse(409, 'closed', 'Đơn đã giao hoặc đã đóng — không nhận file nữa')
+  if (!(await lineTakesFiles(task))) return refuse(409, 'closed', 'Đơn đã giao hoặc đã đóng — không nhận file nữa')
   const line = await prisma.orderLine.findFirst({ where: { orderId, shopifyLineId }, select: LINE_TEMPLATE_FIELDS })
   if (!line) return refuse(409, 'line_syncing', new DeliveryLineMissingError().message)
   const template = await templateForLine(line)
