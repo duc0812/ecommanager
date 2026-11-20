@@ -14,6 +14,8 @@ import { isPrintwaySupplier } from '@/lib/printway'
 import { getPrintwaySettings } from '@/lib/printway-settings'
 import { isCatkissfishSupplier } from '@/lib/catkissfish'
 import { getCatkissfishSettings, hasCatkissfishAccount } from '@/lib/catkissfish-settings'
+import { isLenfulSupplier } from '@/lib/lenful'
+import { getLenfulSettings, hasLenfulKey } from '@/lib/lenful-settings'
 import { ACTIVE_PUSH_STATUSES, activePushByOrder, logHandoffEvent } from '@/lib/repos/push-export'
 import { COOLING_OFF_HOURS, SUPPLIER_API_NAMES, UNMAPPED_TAB, type HandoffCard, type HandoffLine, type HandoffSent, type HandoffState, type HubChannel, type HubTab, type SentStage, type SupplierApiKind } from '@/lib/handoff-shared'
 import { effectiveBaseCost } from '@/lib/order-profit'
@@ -38,11 +40,12 @@ const KEYED_API_SUPPLIERS = [
   { kind: 'bondre' as const, matches: isBondreSupplier },
   { kind: 'printway' as const, matches: isPrintwaySupplier },
   { kind: 'catkissfish' as const, matches: isCatkissfishSupplier },
+  { kind: 'lenful' as const, matches: isLenfulSupplier },
 ]
 
-async function liveApiKeys(): Promise<Record<'bondre' | 'printway' | 'catkissfish', boolean>> {
-  const [bondre, printway, catkissfish] = await Promise.all([getBondreSettings(), getPrintwaySettings(), getCatkissfishSettings()])
-  return { bondre: hasBondreAccount(bondre), printway: !!printway.token, catkissfish: hasCatkissfishAccount(catkissfish) }
+async function liveApiKeys(): Promise<Record<'bondre' | 'printway' | 'catkissfish' | 'lenful', boolean>> {
+  const [bondre, printway, catkissfish, lenful] = await Promise.all([getBondreSettings(), getPrintwaySettings(), getCatkissfishSettings(), getLenfulSettings()])
+  return { bondre: hasBondreAccount(bondre), printway: !!printway.token, catkissfish: hasCatkissfishAccount(catkissfish), lenful: hasLenfulKey(lenful) }
 }
 
 const OPEN_TASK = { status: { notIn: ['DONE', 'CANCELLED'] } }

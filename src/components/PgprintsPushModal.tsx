@@ -6,7 +6,8 @@ import type { LightboxImage, Tone } from '@/app/design-studio/components/model'
 import type { PreviewFile, PreviewIssue, PushPreview, PushStatus, PushView } from '@/lib/pgprints-shared'
 import type { SupplierApiKind } from '@/lib/handoff-shared'
 
-type Preview = PushPreview & { canAct: boolean; canSend?: boolean }
+type Estimate = { goods: number | null; wallet: number | null; note: string }
+type Preview = PushPreview & { canAct: boolean; canSend?: boolean; estimate?: Estimate | null }
 type Payload = {
   order_id: string
   email?: string
@@ -49,6 +50,10 @@ const SUPPLIERS: Record<SupplierApiKind, SupplierCopy> = {
   catkissfish: {
     name: 'CatKissFish', settingsHint: 'Chưa lưu client_id / client_secret CatKissFish ở Setup › Fulfill', credentialsHint: 'Chưa lưu client_id / client_secret CatKissFish ở Setup › Fulfill',
     methodLabel: 'Ship', noMethod: null, chargeNote: 'CatKissFish tạo đơn, tool không tự trả tiền: đơn "Chưa thanh toán" phải trả trên catkissfish.com mới vào sản xuất',
+  },
+  lenful: {
+    name: 'Lenful', settingsHint: 'Chưa lưu API key Lenful ở Setup › Fulfill', credentialsHint: 'Chưa lưu API key Lenful ở Setup › Fulfill',
+    methodLabel: 'Mã ship', noMethod: 'Lenful mặc định', chargeNote: 'Lenful tạo đơn và tự trừ tiền ví Lenful (ví thiếu thì đơn chờ thanh toán, tự trừ khi nạp)',
   },
 }
 
@@ -241,11 +246,15 @@ export default function PgprintsPushModal({ orderId, supplier = 'pgprints', onCl
   const shipInfo = payload?.shipping_info
   const pack = payload?.packages?.[0]
   const ckf = payload?.shippingAddress
+  const lf = supplier === 'lenful' ? payload?.shipping_address : undefined
   const flat = payload?.shipping_address1 ? {
     name: `${payload.firstName ?? ''} ${payload.lastName ?? ''}`.trim(), address1: payload.shipping_address1, address2: payload.shipping_address2, city: payload.shipping_city,
     province_code: payload.shipping_province_code, zip: payload.shipping_zip, country: payload.shipping_country, country_code: payload.shipping_country_code, phone: payload.shipping_phone,
   } as Record<string, string> : undefined
-  const address = flat ?? payload?.shipping_address ?? (ckf ? {
+  const address = (lf ? {
+    name: lf.name, address1: lf.line1, address2: lf.line2, city: lf.city, province_code: lf.state_code,
+    zip: lf.postal, country: lf.country_code, country_code: lf.country_code, phone: lf.phone,
+  } as Record<string, string> : undefined) ?? flat ?? payload?.shipping_address ?? (ckf ? {
     name: ckf.userName, address1: ckf.detailAddress, city: ckf.city, province_code: ckf.province,
     zip: ckf.postalCode, country: ckf.countryAbbreviation, country_code: ckf.countryAbbreviation, phone: ckf.phone,
   } as Record<string, string> : undefined) ?? (pack ? {
@@ -374,6 +383,15 @@ export default function PgprintsPushModal({ orderId, supplier = 'pgprints', onCl
                     </div>
                   ) : <p className="text-body-sm text-on-surface-variant">Chưa dựng được nội dung gửi — xem lỗi phía trên.</p>}
                 </section>
+
+                {preview.estimate && <section className="rounded-xl border border-outline-variant/20 px-md py-sm">
+                  <h3 className="flex items-center gap-xs text-body-sm font-semibold mb-xs"><Icon name="account_balance_wallet" className="text-on-surface-variant text-[18px]" />Tiền ước tính</h3>
+                  <dl className="text-body-sm space-y-[2px]">
+                    <div className="flex justify-between"><dt className="text-on-surface-variant">Phôi (giá catalog)</dt><dd className="font-semibold">{usd(preview.estimate.goods)}</dd></div>
+                    <div className="flex justify-between"><dt className="text-on-surface-variant">Ví {name}</dt><dd>{usd(preview.estimate.wallet)}</dd></div>
+                  </dl>
+                  <p className="mt-xs text-label-sm text-on-surface-variant">{preview.estimate.note}</p>
+                </section>}
 
                 {supplier === 'pgprints' && <section className="rounded-xl border border-outline-variant/20 px-md py-sm">
                   <h3 className="flex items-center gap-xs text-body-sm font-semibold mb-xs"><Icon name="account_balance_wallet" className="text-on-surface-variant text-[18px]" />Số dư PGprints</h3>
