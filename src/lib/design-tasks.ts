@@ -75,6 +75,8 @@ export const REOPEN_KEPT_SHIPPED = 'Đơn đã fulfilled trên Shopify — task 
 export const REOPEN_KEPT_CLOSED = 'Đơn đã huỷ / hoàn tiền — task do người mở lại nên giữ nguyên (chỉ leader huỷ)'
 export const REOPEN_KEPT_DROPSHIP = 'Dòng đánh dấu dropship — task do người mở lại nên giữ nguyên (chỉ leader huỷ)'
 export const RESHIP_NOTE = 'Đơn đã giao — mở lại để ship lại dòng này; sync không tự huỷ task'
+/** Owner 11/20/2026: a line no supplier ever got keeps its task whatever Shopify says about the order; a parcel of another line is not this line's. */
+export const UNSENT_KEPT = 'Đơn đã fulfilled trên Shopify nhưng dòng chưa gửi xưởng nào — giữ task'
 export const CANCELLED_REOPEN_NOTE = 'Task đã huỷ được mở lại — sync không tự huỷ lại'
 export const CANCELLED_REOPEN_MESSAGE = 'Mở lại task đã huỷ'
 
@@ -247,6 +249,15 @@ function isSentLine(o: { pipelineStatus: string }, line: { exportedAt: Date | nu
   return !!line.exportedAt || SENT_ORDER_STATUSES.includes(o.pipelineStatus)
 }
 
+/** A supplier got the line: its own export mark, the order's legacy export, or a row written on a supplier sheet. */
+export async function lineWentToSupplier(
+  order: { pipelineStatus: string; exportedAt: Date | null; exportedToSupplierId: string | null; lines: Array<{ exportedAt: Date | null }> },
+  line: { id: string; exportedAt: Date | null; exportedToSupplierId: string | null; resolvedSupplierId: string | null; productTitle: string; shopifyProductType: string | null; sku: string | null },
+): Promise<boolean> {
+  if (isLineExported(order, line)) return true
+  return !!(await prisma.supplierSheetWrite.findFirst({ where: { orderLineId: line.id, status: 'WRITTEN' }, select: { id: true } }))
+}
+
 function reopenedByFactory(task: { rejectReasons: string | null }): boolean {
   return parseRejectReasons(task.rejectReasons).some(r => SENT_BACK_REASONS.includes(r))
 }
@@ -369,6 +380,13 @@ export async function syncDesignTasks(orderId: string): Promise<SyncResult> {
           if (existing.status !== 'REJECTED') {
             await prisma.designTask.update({ where: { id: existing.id }, data: { status: 'REJECTED', rejectReasons: JSON.stringify([SHIPPED_WITHOUT_FILE_REASON]), rejectNote: SHIPPED_WITHOUT_FILE_NOTE, events: { create: { type: 'SYSTEM', message: `${SHIPPED_WITHOUT_FILE_REASON} — giữ task mở` } } } })
             reopened++
+          }
+          continue
+        }
+        // Owner 11/20/2026: a line no supplier got (no mark, no sheet row) is never cancelled by a fulfilled order — it still has to be made. Said once.
+        if (!orderClosed && !(await lineWentToSupplier(order, line))) {
+          if (!(await prisma.designTaskEvent.findFirst({ where: { taskId: existing.id, type: 'SYSTEM', message: UNSENT_KEPT }, select: { id: true } }))) {
+            await prisma.designTaskEvent.create({ data: { taskId: existing.id, type: 'SYSTEM', message: UNSENT_KEPT } })
           }
           continue
         }

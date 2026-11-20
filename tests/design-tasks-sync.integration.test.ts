@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { prisma } from '@/lib/db'
-import { CANCELLED_REOPEN_NOTE, REOPEN_KEPT_CLOSED, REOPEN_KEPT_SHIPPED, RESHIP_NOTE, listTasks, releaseLibraryTask, reopenLineForFix, syncDesignTasks, transitionTask, type Actor } from '@/lib/design-tasks'
+import { CANCELLED_REOPEN_NOTE, REOPEN_KEPT_CLOSED, REOPEN_KEPT_SHIPPED, RESHIP_NOTE, UNSENT_KEPT, listTasks, releaseLibraryTask, reopenLineForFix, syncDesignTasks, transitionTask, type Actor } from '@/lib/design-tasks'
 import { LINE_FIX_REASONS } from '@/lib/line-fix'
 import { listHandoffHub } from '@/lib/supplier-handoff'
 
@@ -144,6 +144,54 @@ describe('syncDesignTasks — factory rejection and status changes', () => {
     expect((await res.json()).designTaskErrors).toBeUndefined()
     expect((await prisma.designTask.findUnique({ where: { taskKey: 'DTS4_1' } }))?.status).toBe('CANCELLED')
     await dropSessionUser()
+  })
+})
+
+const UNSENT_ID = 'gid://test/Order/dt-sync-unsent'
+
+describe('a line no supplier got keeps its task when the order is fulfilled (owner 11/20/2026)', () => {
+  const taskOf = (key: string) => prisma.designTask.findUniqueOrThrow({ where: { taskKey: key }, include: { events: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] } } })
+  beforeAll(async () => {
+    const storeId = (await prisma.shopifyStore.findUniqueOrThrow({ where: { shop: SHOP } })).id
+    const sentAt = new Date('2026-10-20T08:00:00Z')
+    const line = (n: number, extra: object) => ({ shopifyLineId: `u${n}`, sku: `U${n}`, productTitle: 'Hoodie', qty: 1, linePosition: n, unitPrice: 1, resolvedSupplierId: SUP, designDriveLink: 'https://drive.example/u', ...extra })
+    await prisma.order.create({ data: {
+      id: UNSENT_ID, projectId: 'proj_dt_sync', storeId, shopifyOrderNumber: '#DTU1', financialStatus: 'PAID', currency: 'USD', grossAmount: 1, expectedPayout: 1, totalFees: 0,
+      refundedAmount: 0, placedAt: new Date('2026-10-18'), pipelineStatus: 'FULFILLED', fulfillmentStatus: 'fulfilled', orderType: 'NON_CUSTOM', designReady: true,
+      lines: { create: [
+        line(1, {}),
+        line(2, { exportedAt: sentAt, exportedToSupplierId: SUP }),
+        line(3, {}),
+      ] },
+    } })
+    for (const n of [1, 2, 3]) {
+      await prisma.designTask.create({ data: { orderId: UNSENT_ID, shopifyLineId: `u${n}`, taskKey: `DTU1_${n}`, status: 'DOING', events: { create: { type: 'SYSTEM', message: 'Đơn vào từ Shopify — tạo task' } } } })
+    }
+    const l3 = await prisma.orderLine.findFirstOrThrow({ where: { orderId: UNSENT_ID, shopifyLineId: 'u3' } })
+    await prisma.supplierSheetWrite.create({ data: { supplierId: SUP, orderId: UNSENT_ID, orderLineId: l3.id, lineKey: 'DTU1_3', spreadsheetId: 'sheet-u', tabName: 'ORDER 10-2026', status: 'WRITTEN' } })
+  })
+  afterAll(async () => {
+    await prisma.supplierSheetWrite.deleteMany({ where: { orderId: UNSENT_ID } })
+    await prisma.order.deleteMany({ where: { id: UNSENT_ID } })
+  })
+
+  it('an unsent line with a file stays open with one note; a line marked exported or written on a sheet is cancelled as before', async () => {
+    const r = await syncDesignTasks(UNSENT_ID)
+    expect(r.cancelled).toBe(2)
+    const kept = await taskOf('DTU1_1')
+    expect(kept.status).toBe('DOING')
+    expect(kept.events.filter(e => e.type === 'SYSTEM' && e.message === UNSENT_KEPT)).toHaveLength(1)
+    expect((await taskOf('DTU1_2')).status).toBe('CANCELLED')
+    expect((await taskOf('DTU1_3')).status).toBe('CANCELLED')
+    await syncDesignTasks(UNSENT_ID)
+    expect((await taskOf('DTU1_1')).events.filter(e => e.message === UNSENT_KEPT)).toHaveLength(1)
+  })
+
+  it('an unsent line without a file is flagged REJECTED "chưa có file" and kept, as before', async () => {
+    await prisma.orderLine.updateMany({ where: { orderId: UNSENT_ID, shopifyLineId: 'u1' }, data: { designDriveLink: null } })
+    await prisma.designTask.update({ where: { taskKey: 'DTU1_1' }, data: { status: 'DOING' } })
+    expect((await syncDesignTasks(UNSENT_ID)).reopened).toBe(1)
+    expect((await taskOf('DTU1_1')).status).toBe('REJECTED')
   })
 })
 
