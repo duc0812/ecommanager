@@ -1,121 +1,111 @@
-# Ship lại một dòng đơn — nhiều lần giao, tracking riêng từng lần
+# Gửi lần đầu một dòng chưa đi trên đơn Shopify đã fulfilled
 
-- **Ngày:** 11/20/2026
-- **Trạng thái:** Đề xuất — chờ chủ shop duyệt trước khi đổi schema / sheet
-- **Khu vực:** Fulfillment / Tracking / Design Studio
+- **Ngày:** 11/20/2026, viết lại 11/21/2026 theo ý chủ shop ("các đơn bị hủy task là đang chưa ship mà")
+- **Trạng thái:** Đề xuất — chờ chủ shop duyệt. Chưa sửa code cho phần này.
+- **Khu vực:** Fulfillment / Tracking / Design Studio / Chuyển xưởng
 - **Nguồn:** chủ shop 11/20/2026 (LIT5121_1): "Xử lý lại logic hủy task, logic shipping lại… Nếu cần thì thay đổi hoàn toàn sheet tracking của các bên theo logic mới."
-- **Liên quan:** `docs/superpowers/specs/2026-09-05-auto-fulfill-tracking-design.md` (Auto Fulfilled từ sheet), `docs/superpowers/specs/2026-05-19-fulfillment-pod-design.md`, NOTES.md "Design Studio → Task sync" và "Line-level export".
+- **Liên quan:** `docs/superpowers/specs/2026-09-05-auto-fulfill-tracking-design.md` (Auto Fulfilled từ sheet), NOTES.md "Reopened tasks are never auto-cancelled" (PR 13, prod 11/20/2026), NOTES.md "Line-level export".
 
-## 1. Vấn đề
+## 0. Bản trước viết sai bài toán
 
-Hôm nay tool chỉ biết **một lần giao cho mỗi dòng**:
+Bản 11/20 gọi trường hợp này là **"ship lại"** và đề xuất `Shipment.attempt`, mã xưởng `LIT5121_1_R2`, 3 cột sheet mới. Đó là bài toán **hàng đã giao bị lỗi / thất lạc, phải làm và gửi lần hai** — một bài toán khác, chủ shop chưa yêu cầu. Phần đó dời xuống §6 "Để sau".
 
-| Chỗ | Hôm nay | Hệ quả khi ship lại |
+Bài toán thật, kiểm tra trên prod 11/21/2026:
+
+- `#LIT5121` có 2 dòng. Dòng 2 (hoodie Mango) đi một kiện `UL624708308YP`. Ngày 10/25 kiện đó được fulfill cho **cả đơn** trên Shopify (trước khi có luật "chỉ fulfill dòng đã export", 11/06), nên dòng 1 (hoodie Merchize) cũng mang tracking Mango dù **chưa từng gửi xưởng nào**: không export, không dòng sheet, không push.
+- Task LIT5121_1 bị sync huỷ 10/25, mở lại 11/04 lại bị huỷ, mở lại 11/06 → duyệt → DONE. Hôm 11/20 11:40 UTC có Sleeve v2 tải lên. Dòng vẫn chưa đi Merchize.
+- 36 task khôi phục ngày 11/20 (route `restore-unsent`) đều cùng dạng: đơn fulfilled, dòng không có dấu gửi xưởng nào.
+
+Tức là: **không có lần giao thứ hai nào cả. Đây là lần giao đầu tiên của một dòng, trên một đơn mà Shopify đã coi là giao xong.**
+
+## 1. Vấn đề — tool chặn ở đâu
+
+Trên prod (đơn từ 10/01/2026) có **42 dòng** như vậy: đơn fulfilled, dòng không export / không sheet WRITTEN / không push CREATED, task còn mở hoặc DONE — 30 REJECTED (hầu hết REMI10xx Bondre đặt tay), 8 DONE, 4 NEW. Phần lớn thực ra đã được gửi **ngoài tool** (đặt tay Bondre, Mango cùng kiện); tool không biết. Chỉ người làm đơn biết dòng nào thật sự chưa đi, nên mọi bước dưới đây đều do người bấm, không tự động.
+
+| Chỗ | Hôm nay | Hệ quả |
 |---|---|---|
-| `Shipment` | 1 dòng / (order, lineKey) — unique `orderId_lineKey` | tracking mới **ghi đè** tracking cũ (sheet, sync Shopify) hoặc **bị bỏ** (`upsertLineTracking` bỏ qua khi dòng đã có fulfillment + tracking) |
-| Auto Fulfilled (sheet đọc về) | đơn đã FULFILLED → `already_fulfilled`, bỏ qua dòng | tracking ship lại trên sheet **không bao giờ** lên Shopify, khách không biết |
-| Shopify | 1 line item chỉ fulfill được 1 lần | chỉ còn cách **cập nhật tracking** trên fulfillment cũ (`fulfillmentTrackingInfoUpdate`, có sẵn trong `push-lastmile.ts`) |
-| Push API (Merchize, Bondre, CatKissFish, Printway, Pgprints) | 1 push sống / (order × supplier); gửi lại = `<order>-R2` nhưng **chỉ khi push cũ đã huỷ** | push cũ đã giao nên không huỷ được → không gửi lại qua API |
-| Task design | task mở lại trên đơn FULFILLED bị sync **tự huỷ sau ≤ 15 phút** | đã sửa trong nhánh `feat/reship-task-cancel` (xem §2) |
-| Sheet ghi cho xưởng (Jomall, Mango qua sheet-channel) | mã dòng `LIT5121_1` | ghi lại cùng mã → xưởng không biết là lần 2, tool không phân biệt được |
+| Chuyển xưởng — `readyLines` (`src/lib/line-export.ts`, `isOrderClosed`) và các `where` của hub (`src/lib/supplier-handoff.ts`, `NOT_FULFILLED`, `SEND_STATUSES`) | đơn `pipelineStatus` FULFILLED hoặc `fulfillmentStatus` fulfilled = đơn đóng → không có dòng nào "sẵn sàng" | dòng LIT5121_1 dù DONE **không hiện** trong "Chờ chuyển xưởng", không export CSV, không ghi sheet Jomall/Mango, không push API được |
+| Trang đơn / CS agent (`src/lib/cs/order-context.ts` `orderItemsOf`) | dòng lấy tracking theo `Shipment` của chính nó; `Shipment` được dựng từ fulfillment Shopify (`build-shipments.ts`: fulfillment phủ line item nào thì dòng đó mang tracking) | dòng 1 hiện "đã giao UL624708308YP"; chỉ có cảnh báo "không tìm được thông tin gửi xưởng" cho CS |
+| Auto Fulfilled (`src/lib/fulfillment/auto-fulfill.ts` `settleFromDb`, `build-fulfill-plan.ts`) | đơn FULFILLED → `already_fulfilled`, bỏ qua mọi dòng sheet của đơn | khi Merchize ghi `#LIT5121_1` + tracking mới vào sheet, tool **không ghi nhận**, Shopify không có số mới, khách không nhận email |
+| Shopify | line item đã fulfill không fulfill lần hai được | chỉ còn cách **thêm tracking vào fulfillment cũ** (`fulfillmentTrackingInfoUpdate`, helper `updateFulfillmentTracking` trong `src/lib/shopify-orders.ts`, đang dùng cho last-mile) |
+| Task design | task mở lại trên đơn FULFILLED bị sync huỷ | **đã sửa**, prod 11/20/2026 (PR 13 + c751845): task do người mở lại không bao giờ tự huỷ; dòng chưa gửi xưởng giữ task kể cả đơn fulfilled |
 
-LIT5121_1 là ví dụ: dòng 2 (Mango) giao → cả đơn FULFILLED trên Shopify → task dòng 1 bị huỷ dù chưa sản xuất; khi mở lại thì 2 phút sau bị huỷ tiếp.
+Không cần: mã `_R2`, cột sheet mới, `Shipment.attempt`. Mã dòng vẫn là `LIT5121_1` vì xưởng chưa từng thấy nó.
 
-## 2. Đã làm (nhánh `feat/reship-task-cancel`, không đổi schema)
+## 2. Đề xuất
 
-Luật huỷ task mới — **cái gì được phép huỷ, cái gì không**:
+### 2.1 Khái niệm: "dòng chưa gửi xưởng trên đơn đã fulfilled"
 
-| Ai huỷ | Khi nào | Task do người mở lại |
-|---|---|---|
-| Sync 15 phút (`syncDesignTasks`) | đơn FULFILLED (tool hoặc Shopify) và task đang mở, dòng có file | **không** — ghi 1 dòng SYSTEM "Đơn đã fulfilled trên Shopify — task do người mở lại nên giữ nguyên (chỉ leader huỷ)" rồi để yên |
-| Sync | đơn CANCELLED / REFUNDED | **không** — ghi "Đơn đã huỷ / hoàn tiền — task do người mở lại nên giữ nguyên" |
-| Sync | dòng đánh dấu dropship | **không** |
-| Leader bấm "Huỷ task" | mọi task đang mở | có — người quyết |
+Một dòng là **chưa gửi xưởng** khi `lineWentToSupplier` (`src/lib/design-tasks.ts`) trả về false: không có dấu export của dòng hay của đơn, không có `SupplierSheetWrite` WRITTEN, và (bổ sung) không có `SupplierOrderPush` CREATED của đúng xưởng phủ dòng đó (`isSentToSupplier` trong `auto-fulfill.ts` đã tính push; gộp hai hàm làm một chỗ duy nhất).
 
-"Người mở lại" = sự kiện có người thực hiện (không phải Design Agent): REJECT "Mở lại để sửa (đã gửi xưởng) — <lý do>: <ghi chú>", STATUS "Mở lại để sửa" (nút cũ), STATUS "Mở lại task đã huỷ"; và sau sự kiện đó **chưa có** lần tự huỷ nào. Vết để lại trên task:
+Dòng chưa gửi xưởng + đơn fulfilled + task DONE (người mở lại rồi duyệt) = **"gửi muộn"** (late send). Đây là trạng thái cần xử lý; tool chỉ phát hiện và cho người gửi, không tự gửi.
 
-- Mở lại trên đơn đã giao: thêm SYSTEM `Đơn đã giao — mở lại để ship lại dòng này; sync không tự huỷ task`.
-- Mở lại task đã CANCELLED (chỉ leader, qua cùng form "Mở lại để sửa" hoặc nút "Mở lại task"): thêm SYSTEM `Task đã huỷ được mở lại — sync không tự huỷ lại`.
-- Lý do mới trong form: **"Ship lại — hàng lỗi / thất lạc"**.
-- Duyệt design của dòng ship lại: thông báo Lark `Đơn <mã> đã giao cho khách, có design mới để ship lại — check design rồi gửi xưởng <xưởng> làm lại nhé.` và dòng nằm trong "Đã update design / Cần báo xưởng" (đơn fulfilled chỉ hiện khi là ship lại).
-- Hàng đợi review ở máy local nhận file cho task này dù đơn đã đóng (`commit` không còn 409 "Đơn đã giao hoặc đã đóng").
-- Agent vẫn **không** được tự mở lại dòng của đơn đã giao.
+### 2.2 Chuyển xưởng: chặn theo dòng, không theo đơn
 
-## 3. Đề xuất: mỗi dòng có nhiều lần giao
+- `readyLines`: với đơn fulfilled, thay vì trả `[]`, trả các dòng **chưa gửi xưởng** và task DONE (dòng khác của đơn vẫn bị loại vì đã đi). Đơn CANCELLED / REFUNDED / VOIDED vẫn đóng hẳn.
+- Hub "Chờ chuyển xưởng": thêm nhóm **"Đơn đã fulfilled còn dòng chưa gửi"** (query riêng: `fulfillmentStatus` fulfilled + có task DONE + dòng chưa có dấu gửi). Thẻ ghi rõ "Đơn đã giao kiện khác ngày MM/DD/YYYY — dòng này chưa gửi xưởng nào". Không trộn vào nhóm thường để leader nhìn thấy và quyết.
+- Export CSV / ghi sheet Jomall–Mango / push API cho dòng này **đúng như lần đầu**: mã `LIT5121_1`, cùng cột, cùng file. Push API: dòng của đơn chưa có push → push mới bình thường; đơn đã có push CREATED của xưởng khác → push mới cho xưởng này (per-supplier như nay); đơn đã có push CREATED của **cùng** xưởng (đã giao) → `externalOrderId = <order>-R2` theo cơ chế sẵn có, không đòi huỷ push cũ (đây là chỗ duy nhất đụng tới hậu tố, và chỉ ở phía API, xưởng không thấy mã dòng khác).
+- Khi gửi, tool ghi dấu lên `Shipment` của dòng: **`sentAfterFulfilledAt = now`** (cột mới, xem §3), xoá tracking mượn của kiện cũ trên dòng này (`trackingNumber`, `trackingUrl`, `carrier` về null, `status` PENDING, giữ `shopifyFulfillmentId` để còn biết fulfillment nào phải cập nhật). Một event SYSTEM trên task: "Gửi xưởng <tên> ngày MM/DD/YYYY — đơn đã fulfilled từ trước bởi kiện <số cũ>".
 
-### 3.1 Dữ liệu — `Shipment` thêm "lần ship" (khuyến nghị)
+### 2.3 Hiển thị: dòng chưa gửi không được hiện "đã giao"
 
-Giữ bảng `Shipment`, mỗi **lần giao** là một dòng:
+- `orderItemsOf` (CS agent) và trang đơn: dòng có `Shipment.shopifyFulfillmentId` nhưng **chưa gửi xưởng** → hiện **"Chưa gửi xưởng — đơn được đánh dấu giao bởi kiện <số> (dòng khác)"**, không hiện tracking như của mình. Sau khi gửi (`sentAfterFulfilledAt`), hiện "Đã gửi <xưởng> MM/DD/YYYY, chờ tracking". Có tracking riêng → hiện như dòng thường.
+- Sync Shipment từ Shopify (`upsertOrderShipments`): dòng có `sentAfterFulfilledAt` **không** nhận lại tracking của fulfillment cũ; chỉ nhận tracking do Auto Fulfilled / push ghi cho chính nó. Nếu không có cột này, sync 15 phút sẽ ghi đè số cũ trở lại ngay.
+- Tracking page của shop (`/apps/trackingorder`) không đổi: số cũ vẫn tra được, số mới thêm vào fulfillment (2.4).
+
+### 2.4 Auto Fulfilled: tracking về cho dòng gửi muộn
+
+Dòng sheet (hoặc tracking push) `LIT5121_1` + số mới, đơn đã FULFILLED:
+
+1. `settleFromDb` / `buildFulfillmentPlan`: trước khi kết luận `already_fulfilled`, xem các `Shipment` của đơn. Nếu dòng sheet trỏ tới một `Shipment` có `sentAfterFulfilledAt` và **chưa có tracking riêng** → nhánh mới **`late_tracking`** thay vì `already_fulfilled`. Đơn fulfilled không có dòng nào như vậy → `already_fulfilled` như nay (không đoán).
+2. Áp dụng: `updateFulfillmentTracking` trên `shopifyFulfillmentId` của dòng với `numbers: [số cũ, số mới]` và `urls` tương ứng (mở rộng helper: hôm nay chỉ nhận một `number`; `FulfillmentTrackingInput` của Shopify nhận `numbers`/`urls`). Khách thấy cả hai số trên đơn; dòng 2 cũng thấy hai số — không tránh được vì cùng một fulfillment, ghi rõ trong email CS nếu khách hỏi.
+3. `notifyCustomer`: theo câu hỏi 1 (§5). Mặc định đề xuất **bật** — khách đang thiếu hàng, email tracking là thứ họ cần.
+4. `Shipment` của dòng: `trackingNumber` mới, `carrier`, `status` FULFILLED, giữ `sentAfterFulfilledAt`. Chạy ParcelPanel / crawl như dòng thường.
+5. Luật "chỉ fulfill theo sheet của xưởng đã nhận dòng" (11/06) giữ nguyên: sheet Merchize mới được ghi cho LIT5121_1, sheet Mango ghi `#LIT5121_1` sẽ bị giữ (`needs_manual`).
+6. Kết quả hiện trong bảng Auto Fulfilled với trạng thái riêng "Cập nhật tracking (đơn đã fulfilled)" để đếm và soát.
+
+### 2.5 Luồng đầy đủ cho LIT5121_1
+
+1. Task DONE (đã có). Dòng 1 hiện trong hub nhóm "Đơn đã fulfilled còn dòng chưa gửi" với ghi chú kiện cũ. *(mới)*
+2. Leader bấm gửi Merchize (push API) như dòng thường. Tool: push CREATED, `Shipment.LIT5121_1.sentAfterFulfilledAt`, xoá số Mango mượn, event trên task. *(mới)*
+3. Merchize trả tracking (sync tracking Merchize đã có) → Auto Fulfilled nhánh `late_tracking`: thêm số vào fulfillment cũ, email khách (nếu chủ shop chọn), `Shipment` có số riêng. *(mới)*
+4. Trang đơn / CS: dòng 1 "Merchize, <số mới>, đang đi"; dòng 2 "Mango, UL624708308YP, đã giao". *(mới)*
+
+### 2.6 Dọn 42 dòng hiện có
+
+Không tự động. Một route liệt kê (SUPERADMIN, dry-run như `restore-unsent`): đơn fulfilled + dòng chưa gửi xưởng + task không CANCELLED, kèm tracking đang mượn, xưởng map, trạng thái task. Chủ shop / leader duyệt từng dòng:
+
+- **"Đã gửi ngoài tool"** (Bondre đặt tay, Mango cùng kiện…): ghi dấu export của dòng (`OrderLine.exportedAt = <ngày>` + `exportedToSupplierId`, cơ chế có sẵn), kèm event SYSTEM "Chủ shop xác nhận đã gửi <xưởng> ngoài tool" và task → DONE nếu đang mở. Từ đó `lineWentToSupplier` = true, dòng ra khỏi danh sách, tracking đang mang được coi là của nó (đúng với Mango cùng kiện).
+- **"Chưa gửi, cần làm"** (LIT5519_2 và những dòng chủ shop chỉ): giữ task, đi luồng 2.2 khi design xong.
+- **"Không làm nữa"**: leader "Huỷ task" như nay.
+
+## 3. Thay đổi schema (nhỏ)
 
 ```prisma
 model Shipment {
   ...
-  attempt        Int       @default(1)     // 1 = lần giao đầu, 2 = ship lại lần 1 …
-  reshipReason   String?                   // lý do mở lại (LINE_FIX_REASONS) — null ở lần 1
-  reshipNote     String?                   // "Cần sửa ở đâu" khi mở lại
-  reshipTaskEventId String?                // sự kiện REJECT mở lại trên DesignTask (để truy ngược)
-  supplierPushId String?                   // push API tạo ra lần giao này (null: sheet / tay)
-  supersededAt   DateTime?                 // lần giao này đã bị lần sau thay (khách không cần theo dõi nữa)
-  @@unique([orderId, lineKey, attempt])    // thay cho @@unique([orderId, lineKey])
+  sentAfterFulfilledAt DateTime?   // dòng được gửi xưởng sau khi đơn đã fulfilled trên Shopify bởi kiện khác
 }
 ```
 
-- **Lần giao hiện tại** của dòng = `attempt` lớn nhất. Helper `currentShipment(orderId, lineKey)` thay cho mọi `findUnique({ orderId_lineKey })` (≈ 10 chỗ: `repos/shipments.ts`, `supplier-push-core.ts`, `build-fulfill-plan.ts`, `auto-fulfill.ts`, trang tracking, CS order items).
-- Lần giao 2 được **tạo khi duyệt design** của task mở lại với lý do "Ship lại" (hoặc bất kỳ lý do nào trên đơn đã giao): `attempt = n+1`, status `PENDING`, chưa có tracking; lần 1 giữ nguyên tracking cũ.
-- Phương án B (không khuyến nghị): bảng riêng `LineReship` chứa các lần sau, `Shipment` vẫn là "lần hiện tại". Ít chỗ phải sửa hơn nhưng 2 bảng cho cùng một thứ, trang tracking / CS phải ghép 2 nguồn.
+Một cột, không đổi unique, không backfill. Migration tay (migrate dev im lặng trên PC này), bump `SCHEMA_VERSION`. Không có cột này thì sync Shopify 15 phút ghi đè tracking mượn trở lại và Auto Fulfilled không phân biệt được dòng nào đang chờ số riêng — tránh được bằng cách suy từ ngày export so với ngày fulfillment, nhưng `Shipment` không lưu ngày fulfillment, nên cột rõ ràng rẻ hơn.
 
-### 3.2 Mã dòng cho xưởng: `LIT5121_1_R2`
+Không đổi: sheet ghi cho xưởng (cột, mã), sheet đọc về (2 cột Order Number / Tracking), Bondre 2 số, ParcelPanel, P&L.
 
-Một quy ước duy nhất cho sheet ghi, sheet đọc về và push API: **`<đơn>_<dòng>_R<lần>`** (`R2` = lần giao 2). Lần 1 giữ nguyên `LIT5121_1`.
+## 4. Việc phải làm nếu duyệt (ước lượng 2 PR)
 
-- `lineKeysOf` / `orderLineKey` / `normalizeBaseOrder` hiểu hậu tố `_R<n>` → (lineKey, attempt). Hôm nay `_R2` bị coi là một mã dòng lạ → Auto Fulfilled giữ lại (needs_manual), không gây hại nhưng không chạy.
-- Push API: `externalOrderId = <order>-R2` đã có sẵn cho trường hợp push cũ bị huỷ; mở rộng cho push cũ **đã giao** (không đòi huỷ push cũ), `Shipment.supplierPushId` nối tracking về đúng lần giao.
+1. **PR A — gửi muộn:** gộp `lineWentToSupplier` + `isSentToSupplier`; `readyLines` theo dòng trên đơn fulfilled; nhóm mới trong hub; dấu `sentAfterFulfilledAt` + xoá tracking mượn khi export / sheet / push; hiển thị "Chưa gửi xưởng" trên trang đơn và CS; sync Shipment không ghi đè; route liệt kê + xác nhận "đã gửi ngoài tool" (§2.6). Migration + `SCHEMA_VERSION`.
+2. **PR B — tracking về:** nhánh `late_tracking` trong `buildFulfillmentPlan` / `settleFromDb`; `updateFulfillmentTracking` nhận nhiều số; `notifyCustomer` theo câu trả lời; trạng thái mới trong bảng Auto Fulfilled; test với fixture LIT5121.
 
-### 3.3 Sheet của các xưởng
-
-**Sheet tool ghi cho xưởng** (Jomall, Mango qua `supplier.sheetChannels`): **một dòng mỗi lần giao**, cùng cột như nay, thêm 3 cột cuối:
-
-| Cột mới | Nội dung |
-|---|---|
-| `Lần ship` | 1, 2, … (= `attempt`) |
-| `Lý do ship lại` | lý do mở lại + ghi chú ngắn (rỗng ở lần 1) |
-| `Ngày mở lại` | MM/DD/YYYY |
-
-"Order Number"/"Order Vendor" của lần 2 mang `LIT5121_1_R2`. Không sửa dòng lần 1.
-
-**Sheet xưởng ghi tracking về** (Mango, Jomall, Merchize, Printposs, Lenful, Bondre, Printway — Auto Fulfilled đọc): giữ 2 cột `Order Number, Tracking`; xưởng ghi `#LIT5121_1_R2` + tracking mới. Không đổi cấu trúc, chỉ thêm quy ước mã. Bondre vẫn 2 số (SDH + last mile) như nay, trên lần giao tương ứng.
-
-### 3.4 Auto Fulfilled với lần giao ≥ 2
-
-Đơn đã FULFILLED trên Shopify không còn là `already_fulfilled` mặc định:
-
-1. Dòng sheet `_R2` (hoặc tracking push của lần 2) → tìm `Shipment` lần 2 của dòng (PENDING, chưa tracking).
-2. Ghi tracking vào lần 2, `supersededAt` cho lần 1.
-3. Shopify: `fulfillmentTrackingInfoUpdate` trên fulfillment cũ của dòng, **giữ cả số cũ và số mới** (`numbers: [cũ, mới]`, url = trang tracking của số mới), `notifyCustomer` **bật** để khách nhận email tracking mới (cần chủ shop xác nhận — xem §5).
-4. Trang tracking của tool / CS agent đọc lần giao hiện tại; lịch sử các lần hiện dưới dòng.
-
-Dòng sheet không có `_R` trên đơn đã fulfilled vẫn `already_fulfilled` như nay (không đoán).
-
-### 3.5 Luồng đầy đủ cho một dòng lỗi (ví dụ LIT5121_1)
-
-1. CS / chủ shop bấm **Mở lại để sửa** trên task (DONE hoặc đã huỷ), lý do "Ship lại — hàng lỗi / thất lạc" + ghi chú. Task → REJECTED, sync không huỷ nữa. *(đã có)*
-2. Designer sửa (hoặc hàng đợi local đẩy file) → duyệt. Lark báo "ship lại". *(đã có)*
-3. Duyệt tạo `Shipment` lần 2 (PENDING) và đưa dòng về "Chờ chuyển xưởng" với mã `LIT5121_1_R2` — gửi qua sheet hoặc push API đúng như lần 1, có thể chọn xưởng khác. *(mới)*
-4. Xưởng ghi tracking `#LIT5121_1_R2` / push trả tracking → Auto Fulfilled cập nhật Shopify, email khách. *(mới)*
-5. Trang đơn / CS thấy: lần 1 UL624708308YP (đã giao, bị thay), lần 2 <mới> (đang đi). *(mới)*
-
-## 4. Việc phải làm nếu duyệt (ước lượng 3 PR)
-
-1. **Schema + helper** — migration thêm cột, đổi unique; `currentShipment`; backfill `attempt = 1`. Bump `SCHEMA_VERSION`.
-2. **Mã `_R<n>` + Auto Fulfilled + push API** — parse hậu tố, nhánh "cập nhật tracking trên fulfillment cũ", push `-R2` khi push cũ đã giao, `supplierPushId`.
-3. **Duyệt ship lại → lần giao mới + sheet ghi 3 cột + UI** — tạo lần 2 khi duyệt task ship lại, sheet-channel ghi cột mới, trang tracking / đơn / CS hiện các lần.
-
-Không đụng: cách tính P&L (xem câu hỏi 3), Bondre 2 số, ParcelPanel.
+Test: `tests/design-task-restore.integration.test.ts` đã có fixture đơn fulfilled + dòng chưa gửi, mở rộng cho `readyLines` và `orderItemsOf`; `build-fulfill-plan.test.ts` thêm case `late_tracking` và case đơn fulfilled không có dòng gửi muộn vẫn `already_fulfilled`.
 
 ## 5. Câu hỏi cần chủ shop trả lời
 
-1. **Cấu trúc dữ liệu:** đồng ý `Shipment` thêm `attempt` (3.1, khuyến nghị) hay muốn bảng riêng?
-2. **Mã xưởng `LIT5121_1_R2`** cho cả sheet ghi, sheet đọc về và push API — được không, hay xưởng đang quen một kiểu khác?
-3. **Sheet ghi cho xưởng:** thêm 3 cột cuối (Lần ship / Lý do ship lại / Ngày mở lại) — được không? Các sheet đọc về giữ nguyên 2 cột.
-4. **Email khách** khi có tracking ship lại: gửi (notifyCustomer bật) hay chỉ CS báo tay?
-5. **Chi phí ship lại** có cần ghi vào P&L của đơn không (thêm `reshipCost` trên lần giao)? Nếu không, bỏ qua ở đợt này.
+1. **Email khách** khi tracking của dòng gửi muộn về: tool gửi (notifyCustomer bật, khách thấy cả số cũ và số mới) hay chỉ CS báo tay?
+2. **42 dòng hiện có:** chủ shop duyệt từng dòng qua route liệt kê (§2.6), hay chỉ cần xử lý LIT5121_1 và LIT5519_2, số còn lại đánh dấu "đã gửi ngoài tool" một lượt?
+
+Hai điểm tôi tự quyết nếu chủ shop không nói khác: cột `Shipment.sentAfterFulfilledAt` (§3) và nhóm riêng trong hub thay vì trộn vào "Chờ chuyển xưởng" (§2.2).
+
+## 6. Để sau — ship lại thật sự (hàng lỗi / thất lạc sau khi đã giao)
+
+Chủ shop chưa yêu cầu. Khi cần, bài toán khác hẳn: dòng **đã** đi một lần, phải đi lần hai, xưởng đã thấy mã `LIT5121_1` nên cần mã mới. Bản 11/20 đã phác: `Shipment.attempt` + unique `(orderId, lineKey, attempt)`, mã `<đơn>_<dòng>_R<lần>` cho sheet ghi / sheet đọc / push, 3 cột sheet (Lần ship / Lý do ship lại / Ngày mở lại), tạo lần giao mới khi duyệt task có lý do "Ship lại — hàng lỗi / thất lạc". Lý do đó và thông báo Lark "ship lại" đã có trên prod từ PR 13; phần dữ liệu và sheet chỉ làm khi chủ shop gọi.
