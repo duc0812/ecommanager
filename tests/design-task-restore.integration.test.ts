@@ -27,7 +27,8 @@ async function order(opts: { status?: string; lines: LineOpts[]; events?: Array<
       ...(l.exported ? { exportedAt: new Date('2026-10-20'), exportedToSupplierId: SUP } : {}),
     })) },
   } })
-  for (const [i, l] of opts.lines.entries()) {
+  for (let i = 0; i < opts.lines.length; i++) {
+    const l = opts.lines[i]
     const events = opts.events?.[i] ?? [{ type: 'SYSTEM', message: 'Đơn vào từ Shopify — tạo task' }, { type: 'SYSTEM', message: AUTO_CANCEL_SHIPPED }]
     await prisma.designTask.create({ data: {
       orderId: id, shopifyLineId: `${id}-sl${i + 1}`, taskKey: `${code}_${i + 1}`, status: 'CANCELLED',

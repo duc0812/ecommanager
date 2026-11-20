@@ -28,7 +28,7 @@ import { autoFromLocalLibrary } from '@/lib/flat-text-coverage'
 import { APP_FILE_PREFIX, DESIGN_LINK_SEPARATOR, isAppFileLink } from '@/lib/design-links'
 import { saveStudioDesignToLibrary } from '@/lib/studio-library'
 import { MISSING_AREAS_PREFIX, missingPrintAreas, outdatedParts, printFilesReady } from '@/lib/task-files'
-import { exportedSupplierOf, isLineExported } from '@/lib/line-export'
+import { exportedSupplierOf, isLineExported, type ExportTrackedLine, type ExportTrackedOrder } from '@/lib/line-export'
 import { AGENT_USER_EMAIL } from '@/lib/design-agent/agent-user'
 import { isUniqueViolation, retryOnBusy } from '@/lib/sqlite-busy'
 import {
@@ -250,10 +250,7 @@ function isSentLine(o: { pipelineStatus: string }, line: { exportedAt: Date | nu
 }
 
 /** A supplier got the line: its own export mark, the order's legacy export, or a row written on a supplier sheet. */
-export async function lineWentToSupplier(
-  order: { pipelineStatus: string; exportedAt: Date | null; exportedToSupplierId: string | null; lines: Array<{ exportedAt: Date | null }> },
-  line: { id: string; exportedAt: Date | null; exportedToSupplierId: string | null; resolvedSupplierId: string | null; productTitle: string; shopifyProductType: string | null; sku: string | null },
-): Promise<boolean> {
+export async function lineWentToSupplier(order: ExportTrackedOrder, line: ExportTrackedLine & { id: string }): Promise<boolean> {
   if (isLineExported(order, line)) return true
   return !!(await prisma.supplierSheetWrite.findFirst({ where: { orderLineId: line.id, status: 'WRITTEN' }, select: { id: true } }))
 }

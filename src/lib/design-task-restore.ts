@@ -21,19 +21,18 @@ type Ev = { type: string; message: string; actorId: string | null; createdAt: Da
 /** The status the task was in before the cancel, replayed from its events (NEW when nothing says otherwise). */
 export function statusBeforeCancel(events: Ev[]): TaskStatus {
   let status: TaskStatus = 'NEW'
-  let before: TaskStatus = 'NEW'
   const sorted = [...events].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || (a.id < b.id ? -1 : 1))
   for (const e of sorted) {
     if (e.type === 'SYSTEM' && e.message === AUTO_CANCEL_SHIPPED) break
     const m = e.message
     if (e.type === 'ASSIGN') status = 'ASSIGNED'
     else if (e.type === 'REJECT') status = 'REJECTED'
-    else if (e.type === 'ASK') { before = status; status = 'ASK_CUSTOMER' }
+    else if (e.type === 'ASK') status = 'ASK_CUSTOMER'
     else if (e.type === 'STATUS') {
       if (m === 'Từ chối việc — trả về leader giao lại') status = 'NEW'
       else if (m === 'Nhận việc' || m === 'Mở lại để sửa' || m === 'Mở lại task đã huỷ') status = 'DOING'
       else if (m.startsWith('Gửi duyệt') || m === 'Tiếp tục sau khi hỏi khách') status = 'REVIEW'
-      else if (m === 'Tiếp tục làm') status = before === 'ASK_CUSTOMER' ? 'DOING' : before
+      else if (m === 'Tiếp tục làm') status = 'DOING'
       else if (m.startsWith('Duyệt design')) status = 'DONE'
       else if (m === LEADER_CANCEL) status = 'CANCELLED'
     } else if (e.type === 'SYSTEM') {
