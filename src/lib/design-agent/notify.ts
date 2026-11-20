@@ -27,7 +27,8 @@ export function busyNoticeText(key: string, holder: string): string {
  * A line its supplier already has was approved with a new design (owner 11/20/2026). By a link (sheet, CSV): someone has to
  * tell the supplier; by an API push: the line is back at hand-off to be sent again.
  */
-export function supplierFixNoticeText(key: string, supplierName: string, kind: 'LINK' | 'API'): string {
+export function supplierFixNoticeText(key: string, supplierName: string, kind: 'LINK' | 'API', reship = false): string {
+  if (reship) return `Đơn ${key} đã giao cho khách, có design mới để ship lại — check design rồi gửi xưởng ${supplierName} làm lại nhé.`
   const head = `Đơn ${key} đã gửi xưởng ${supplierName} được update design mới`
   return kind === 'LINK' ? `${head}, check design và báo xưởng nhé.` : `${head}, check design rồi gửi lại xưởng trên tool nhé.`
 }

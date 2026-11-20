@@ -12,7 +12,8 @@ vi.mock('@/lib/design-tasks', async importOriginal => {
     },
   }
 })
-import { AUTO_REVIEW_MESSAGE } from '@/lib/design-tasks'
+import { AUTO_REVIEW_MESSAGE, reopenLineForFix } from '@/lib/design-tasks'
+import { LINE_FIX_REASONS } from '@/lib/line-fix'
 import { commitDelivery } from '@/lib/delivery/commit'
 import type { CommitInput, DeliveryFile } from '@/lib/delivery/types'
 import { agentFixture } from './helpers/design-agent-fixture'
@@ -249,6 +250,17 @@ describe('commitDelivery push', () => {
     expect(r).toMatchObject({ ok: false, code: 'closed', httpStatus: 409 })
     await expectNothingWritten(cancelled.orderId, cancelled.taskKey, 'CANCELLED')
     expect(drive.calls).toEqual([])
+  })
+
+  it('a line of a fulfilled order that a person reopened to ship again takes files (owner 11/20/2026)', async () => {
+    const l = await line({ pipelineStatus: 'FULFILLED', taskStatus: 'DONE' })
+    const lineId = (await prisma.orderLine.findFirstOrThrow({ where: { orderId: l.orderId } })).id
+    await reopenLineForFix(lineId, { id: 'u-dlc-lead', name: 'Lead', role: 'ADMIN' }, { reason: LINE_FIX_REASONS[3], note: 'hàng lỗi, ship lại' })
+    const files = [file({ printArea: 'Front', driveFileId: 'dlc-f8r' }), file({ printArea: 'Back', driveFileId: 'dlc-b8r' })]
+    const drive = driveWith(l.taskKey, files)
+    const r = await commitDelivery(l.taskKey, input(files, { expected: { status: 'REJECTED', liveIds: [] } }), drive)
+    expect(r).toMatchObject({ ok: true, status: 'REVIEW' })
+    expect(await rowsOf(l.orderId)).toHaveLength(2)
   })
 
   it('an unknown task is 404 not_found', async () => {

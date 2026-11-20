@@ -68,8 +68,12 @@ describe('canTransition', () => {
   })
   it('reopen and forbidden moves', () => {
     expect(T('DONE', 'DOING', 'DESIGNER')).toBe(true)
-    expect(T('CANCELLED', 'DOING', 'LEADER')).toBe(false)
     expect(T('NEW', 'REVIEW', 'DESIGNER')).toBe(false)
+  })
+  it('a cancelled task opens again only to DOING and only by a leader (owner 11/20/2026)', () => {
+    expect(T('CANCELLED', 'DOING', 'LEADER')).toBe(true)
+    expect(T('CANCELLED', 'DOING', 'DESIGNER')).toBe(false)
+    for (const to of ['NEW', 'ASSIGNED', 'REVIEW', 'REJECTED', 'DONE', 'ASK_CUSTOMER']) expect(T('CANCELLED', to, 'LEADER')).toBe(false)
   })
   it('cancel is leader-only and never from DONE', () => {
     expect(T('DONE', 'CANCELLED', 'LEADER')).toBe(false)

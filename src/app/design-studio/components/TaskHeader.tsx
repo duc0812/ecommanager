@@ -191,11 +191,13 @@ export default function TaskHeader({ detail, qa, holdCount, refreshing, onRefres
   if (can('REJECTED')) {
     secondaries.push(<button key="reject" type="button" className={btnMd} disabled={busy} aria-haspopup="dialog" aria-expanded={panel === 'reject'} onClick={() => { setPanel(panel === 'reject' ? 'none' : 'reject') }}><Icon name="assignment_return" className="text-[18px] text-on-surface-variant" />Trả lại sửa</button>)
   }
-  // On a line already at its supplier the same control asks why and reopens that line only (the server takes it so, too).
-  if (task.status === 'DONE' && detail.reopensSentLine) {
+  // On a line already at its supplier (or shipped) the same control asks why and reopens that line only (the server takes it so, too).
+  // A cancelled task opens again the same way, leaders only; the sync then never cancels it again (owner 11/20/2026).
+  const reopenable = task.status === 'DONE' || (task.status === 'CANCELLED' && me.isLeader)
+  if (reopenable && detail.reopensSentLine) {
     secondaries.push(<button key="reopen" type="button" className={btnMd} disabled={busy} title={LINE_FIX_HELP} aria-haspopup="dialog" aria-expanded={panel === 'reopen'} onClick={() => setPanel(panel === 'reopen' ? 'none' : 'reopen')}><Icon name="edit" className="text-[18px] text-on-surface-variant" />Mở lại để sửa</button>)
-  } else if (task.status === 'DONE' && can('DOING')) {
-    secondaries.push(<button key="reopen" type="button" className={btnMd} disabled={busy} onClick={() => go({ to: 'DOING' })}><Icon name="edit" className="text-[18px] text-on-surface-variant" />Sửa &amp; gửi lại</button>)
+  } else if (reopenable && can('DOING')) {
+    secondaries.push(<button key="reopen" type="button" className={btnMd} disabled={busy} onClick={() => go({ to: 'DOING' })}><Icon name="edit" className="text-[18px] text-on-surface-variant" />{task.status === 'CANCELLED' ? 'Mở lại task' : 'Sửa & gửi lại'}</button>)
   }
 
   const canDeny = can('NEW') && (!me.isLeader || task.assigneeId === me.id)

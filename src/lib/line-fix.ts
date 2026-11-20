@@ -1,5 +1,5 @@
 /** Why a line its supplier already has is opened again for a design fix (owner 11/06/2026). The first one is the default. */
-export const LINE_FIX_REASONS = ['Xưởng yêu cầu update design', 'Khách yêu cầu sửa', 'Nội bộ phát hiện lỗi'] as const
+export const LINE_FIX_REASONS = ['Xưởng yêu cầu update design', 'Khách yêu cầu sửa', 'Nội bộ phát hiện lỗi', 'Ship lại — hàng lỗi / thất lạc'] as const
 export type LineFixReason = (typeof LINE_FIX_REASONS)[number]
 export const LINE_FIX_NOTE_MIN = 3
 export const LINE_FIX_NOTE_MAX = 500
