@@ -35,6 +35,7 @@ import {
   supplierLinkMessage, type LineFix, type LineFixReason, type SupplierLinkKind,
 } from '@/lib/line-fix'
 import { agentViewForTask, cancelQueuedJobsForTask, enqueueFixOnReject, openJobStatusByTask, queueLibraryApplyOnApproval, type AgentTaskView } from '@/lib/design-agent/jobs'
+import { notifyGroup, supplierFixNoticeText } from '@/lib/design-agent/notify'
 
 export { loadTemplateContext, mapTemplate, pickTemplate, type TemplateRow }
 
@@ -657,7 +658,7 @@ function supplierLinkKind(held: FixCycle['held'], taskFolder: string | null): Su
   return !!held?.link && !!taskFolder && held.link === taskFolder ? 'SAME_FOLDER' : 'NEW_LINK'
 }
 
-type FixDelivery = { kind: 'API' } | { kind: 'LINK'; supplierName: string; held: FixCycle['held'] }
+type FixDelivery = { kind: 'API'; supplierName: string } | { kind: 'LINK'; supplierName: string; held: FixCycle['held'] }
 
 /**
  * How the approved fix of a line reopened after it went to its supplier reaches that supplier (owner 11/06/2026, #LIT5105).
@@ -677,12 +678,13 @@ async function fixDelivery(taskId: string, lineId: string): Promise<FixDelivery 
   const line = order?.lines.find(l => l.id === lineId)
   if (!order || !line || isClosedOrder(order) || isShippedOrder(order) || !isLineExported(order, line)) return null
   const supplierId = exportedSupplierOf(order, line)
+  const supplier = supplierId ? await prisma.supplier.findUnique({ where: { id: supplierId }, select: { name: true } }) : null
+  const supplierName = supplier?.name ?? 'xưởng'
   for (const push of order.supplierPushes) {
     const carried = await carriedShopifyLineIds(push, order.lines)
-    if (carried ? carried.includes(line.shopifyLineId) : push.supplierId === supplierId) return { kind: 'API' }
+    if (carried ? carried.includes(line.shopifyLineId) : push.supplierId === supplierId) return { kind: 'API', supplierName }
   }
-  const supplier = supplierId ? await prisma.supplier.findUnique({ where: { id: supplierId }, select: { name: true } }) : null
-  return { kind: 'LINK', supplierName: supplier?.name ?? 'xưởng', held: cycle.held }
+  return { kind: 'LINK', supplierName, held: cycle.held }
 }
 
 type TransitionResult = { task: TaskRow; order: { id: string; designReady: boolean; pipelineStatus: string } | null; notice?: string }
@@ -721,6 +723,7 @@ export async function transitionTask(taskKey: string, actor: Actor, input: Trans
   const data: any = { status: input.to }
   const events: { type: string; message: string; actorId: string | null }[] = []
   let notice: string | null = null
+  let groupNotice: string | null = null
   const say = (type: string, message: string) => events.push({ type, message, actorId: actor.id })
 
   if (input.to === 'ASSIGNED') {
@@ -784,6 +787,7 @@ export async function transitionTask(taskKey: string, actor: Actor, input: Trans
         notice = supplierLinkMessage(supplierLinkKind(delivery.held, task.driveFolderUrl), delivery.supplierName)
         events.push({ type: SUPPLIER_RECHECK, message: notice, actorId: null })
       }
+      if (delivery) groupNotice = supplierFixNoticeText(task.taskKey, delivery.supplierName, delivery.kind)
       data.rejectReasons = null; data.rejectNote = null
       if (accepted) {
         events.push({ type: 'SYSTEM', message: `Duyệt khi chưa có file cho vùng: ${missing.join(', ')} — không lưu vào Design Library`, actorId: actor.id })
@@ -814,6 +818,8 @@ export async function transitionTask(taskKey: string, actor: Actor, input: Trans
   if (!opts.agent && (from === 'REJECTED' || input.to === 'CANCELLED')) {
     await cancelQueuedJobsForTask(task.id, TAKEN_OVER).catch(e => console.error(`[design agent] không huỷ được job của ${taskKey}:`, e?.message ?? e))
   }
+  // The approval stands whatever Lark answers: the group line is a courtesy, never a step of the approval.
+  if (groupNotice) await notifyGroup(groupNotice)
   const row = await rowFor(updated.taskKey)
   if (!row) throw new Error('Task row not found after update')
   return { task: row, order, ...(notice ? { notice } : {}) }

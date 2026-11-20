@@ -1,5 +1,8 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest'
 import { NextRequest } from 'next/server'
+
+const group = vi.hoisted(() => vi.fn<(text: string) => Promise<void>>(async () => {}))
+vi.mock('@/lib/design-agent/notify', async original => ({ ...(await original<typeof import('@/lib/design-agent/notify')>()), notifyGroup: group }))
 import { prisma } from '@/lib/db'
 import { AUTH_COOKIE, signToken } from '@/lib/auth'
 import { DEFAULT_ROLE_PERMISSIONS, type FeaturePermission } from '@/lib/roles'
@@ -228,6 +231,41 @@ afterAll(async () => {
   await cleanup()
   if (createdPrintway) await prisma.supplier.deleteMany({ where: { id: printwayId } })
   if (createdBondre) await prisma.supplier.deleteMany({ where: { id: bondreId } })
+})
+
+beforeEach(() => group.mockClear())
+
+describe('the Lark group hears of a sent line approved with a new design (owner 11/20/2026)', () => {
+  it('a sheet line: one line naming the supplier, sent once the approval is written, asking to check and tell the supplier', async () => {
+    const o = await sentOrder({ sheet: true })
+    await press(o.line2, 'des', fix(CUSTOMER_ASKS))
+    expect(group).not.toHaveBeenCalled()
+    await fixAndApprove(o.id, o.sl2, o.key2)
+    expect(group.mock.calls).toEqual([[`Đơn ${o.key2} đã gửi xưởng T22R Factory được update design mới, check design và báo xưởng nhé.`]])
+    await folderHoldsTheFix(o.sl2, o.key2)
+    await told(o.key2, 'des')
+    expect(group).toHaveBeenCalledTimes(1)
+  })
+
+  it('a pushed line: the line names the API supplier and says the line is back at hand-off', async () => {
+    const o = await sentOrder({ line2Supplier: printwayId })
+    await livePush(o)
+    await press(o.line2, 'des')
+    await fixAndApprove(o.id, o.sl2, o.key2)
+    expect(group.mock.calls).toEqual([[`Đơn ${o.key2} đã gửi xưởng Printway được update design mới, check design rồi gửi lại xưởng trên tool nhé.`]])
+  })
+
+  it('a line never sent, and an order-level factory return, say nothing', async () => {
+    const o = await sentOrder({ status: 'READY_TO_PRODUCTION', exported: false })
+    await transitionTask(o.key1, users.des.actor, { to: 'DOING' })
+    await transitionTask(o.key1, users.des.actor, { to: 'REVIEW' })
+    await transitionTask(o.key1, users.lead.actor, { to: 'DONE' })
+    const r = await sentOrder({ task2: 'DONE' })
+    await updateOrderStatus(r.id, 'DESIGN_REJECTED')
+    expect((await syncDesignTasks(r.id)).reopened).toBe(2)
+    await fixAndApprove(r.id, r.sl1, r.key1)
+    expect(group).not.toHaveBeenCalled()
+  })
 })
 
 describe('the reason and the "Cần sửa ở đâu" note are required', () => {

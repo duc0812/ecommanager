@@ -23,6 +23,15 @@ export function busyNoticeText(key: string, holder: string): string {
   return `${key}: Agent dừng việc này vì ${cutLine(holder, MAX_HOLDER)} đang làm.`
 }
 
+/**
+ * A line its supplier already has was approved with a new design (owner 11/20/2026). By a link (sheet, CSV): someone has to
+ * tell the supplier; by an API push: the line is back at hand-off to be sent again.
+ */
+export function supplierFixNoticeText(key: string, supplierName: string, kind: 'LINK' | 'API'): string {
+  const head = `Đơn ${key} đã gửi xưởng ${supplierName} được update design mới`
+  return kind === 'LINK' ? `${head}, check design và báo xưởng nhé.` : `${head}, check design rồi gửi lại xưởng trên tool nhé.`
+}
+
 export async function notifyNeedsOwner(notice: OwnerNotice, deps: { lark?: LarkApi } = {}): Promise<void> {
   try {
     const config = await getLarkConfig()

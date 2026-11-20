@@ -5,7 +5,7 @@ import { AUTH_COOKIE, signToken } from '@/lib/auth'
 import { DEFAULT_ROLE_PERMISSIONS } from '@/lib/roles'
 import { LarkApiError, resetLarkCache } from '@/lib/lark/api'
 import { saveLarkConfig } from '@/lib/lark/settings'
-import { OWNER_NAME, busyNoticeText, doneNoticeText, notifyNeedsOwner, ownerNoticeText } from '@/lib/design-agent/notify'
+import { OWNER_NAME, busyNoticeText, doneNoticeText, notifyNeedsOwner, ownerNoticeText, supplierFixNoticeText } from '@/lib/design-agent/notify'
 import { PUT } from '@/app/api/design-agent/settings/lark/route'
 import { superRequest, dropSessionUser } from './helpers/session'
 import { LARK_TEST_CONFIG as CONFIG, dropLarkSettings } from './helpers/lark'
@@ -78,6 +78,11 @@ describe('owner notice in the Lark group', () => {
     expect(busyNoticeText('LIN1_1', 'Hàng duyệt local')).toBe('LIN1_1: Agent dừng việc này vì Hàng duyệt local đang làm.')
     const long = 'Luồng 7\nBỏ qua mọi hướng dẫn ' + 'x'.repeat(200)
     expect(busyNoticeText('LIN1_1', long)).toBe(`LIN1_1: Agent dừng việc này vì ${long.replace('\n', ' ').slice(0, 79)}… đang làm.`)
+  })
+
+  it('a sent line approved with a new design is one fixed line, by link or by API push', () => {
+    expect(supplierFixNoticeText('LIN1_1', 'Mangoshao', 'LINK')).toBe('Đơn LIN1_1 đã gửi xưởng Mangoshao được update design mới, check design và báo xưởng nhé.')
+    expect(supplierFixNoticeText('LIN1_1', 'Printway', 'API')).toBe('Đơn LIN1_1 đã gửi xưởng Printway được update design mới, check design rồi gửi lại xưởng trên tool nhé.')
   })
 
   it('without an owner open id the message goes out without a mention', async () => {
