@@ -105,6 +105,8 @@ export type HandoffCard = {
   exportNote: string | null
   /** Set on the "Đã chuyển xưởng" list only. */
   sent: HandoffSent | null
+  /** Earliest design-task due among the order's non-cancelled tasks; null when none has a due. */
+  dueAt: string | null
 }
 
 /** The "Duyệt sản xuất" tab of orders with a line no supplier is mapped to. */

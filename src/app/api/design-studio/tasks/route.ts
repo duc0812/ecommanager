@@ -4,7 +4,7 @@ import { requireScope } from '@/lib/order-scope'
 import { storeScopeFor } from '@/lib/store-scope'
 import { listSentLinesWithoutTask, listTasks, viewerFor, TASK_STATUSES, type TaskStatus, type Readiness } from '@/lib/design-tasks'
 import { getDesignSettings } from '@/lib/design-settings'
-import { countPendingHandoff } from '@/lib/supplier-handoff'
+import { pendingHandoffStats } from '@/lib/supplier-handoff'
 import { getLastDesignTaskSync } from '@/lib/design-task-sync'
 
 const READINESS_VALUES: Readiness[] = ['AUTO', 'LOW', 'MANUAL']
@@ -75,10 +75,10 @@ export async function GET(req: NextRequest) {
 
   // The hand-off lists are not filtered by ?storeId, so the count on their tab is not either: it covers every store the caller has.
   const callerScope = await storeScopeFor(user)
-  const [settings, handoffCount, lastSync, sentLines] = await Promise.all([
-    getDesignSettings(), countPendingHandoff({ storeIds: callerScope.all ? null : callerScope.storeIds }), getLastDesignTaskSync({ hideError: limited }),
+  const [settings, handoff, lastSync, sentLines] = await Promise.all([
+    getDesignSettings(), pendingHandoffStats({ storeIds: callerScope.all ? null : callerScope.storeIds }), getLastDesignTaskSync({ hideError: limited }),
     // A supplier asking for a fix names an order that may never have had a task: a search also shows its sent lines.
     q && !statuses ? listSentLinesWithoutTask({ q, storeIds }) : [],
   ])
-  return NextResponse.json({ tasks, me: viewerFor(user, settings), handoffCount, lastSync, sentLines })
+  return NextResponse.json({ tasks, me: viewerFor(user, settings), handoffCount: handoff.count, handoffOverdue: handoff.overdue, lastSync, sentLines })
 }

@@ -113,7 +113,7 @@ function ReviewHeader({ detail, verdict, position, busy, refreshing, onApprove, 
               {task.assigneeName ? <Avatar name={task.assigneeName} size="md" /> : <Icon name="person" className="text-[18px] text-on-surface-variant" />}
               {task.assigneeName ?? 'Chưa giao'}
             </span>
-            <span className="ml-auto text-label-sm text-on-surface-variant whitespace-nowrap">Mẫu {position.index + 1}/{position.total}</span>
+            <span className="ml-auto text-label-sm text-on-surface-variant whitespace-nowrap">{position.index < 0 ? 'Ngoài danh sách duyệt' : `Mẫu ${position.index + 1}/${position.total}`}</span>
           </div>
           <div className="flex flex-wrap items-center gap-x-md gap-y-xs text-body-sm text-on-surface-variant">
             <span className="font-semibold text-on-surface">{task.productTitle}</span>

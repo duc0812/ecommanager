@@ -1,0 +1,723 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Demo bố cục Design Tasks</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,400,0,0&display=swap" rel="stylesheet">
+<style>
+:root{
+  --surface:#f7f9fb;--lowest:#fff;--low:#f2f4f6;--container:#eceef0;--high:#e6e8ea;
+  --on:#191c1e;--onv:#45474c;--outline:#75777d;--outline-v:#c5c6cd;
+  --primary:#091426;--secondary:#4b41e1;--secondary-10:rgba(75,65,225,.10);--secondary-40:rgba(75,65,225,.4);
+  --green:#00a472;--green-15:rgba(0,164,114,.15);--amber-bg:#fef3c7;--amber:#78350f;--amber-b:#fcd34d;
+  --error:#ba1a1a;--error-c:#ffdad6;--on-error-c:#93000a;--emerald-bg:#d1fae5;--emerald:#064e3b;--emerald-b:#6ee7b7;
+  --shadow:0 4px 6px -1px rgba(0,0,0,.08),0 2px 4px -1px rgba(0,0,0,.04);
+  --bd:rgba(197,198,205,.2);--bd40:rgba(197,198,205,.4);
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:Inter,sans-serif;font-size:14px;line-height:20px;color:var(--on);background:var(--surface)}
+.ms{font-family:'Material Symbols Outlined';font-weight:normal;font-style:normal;font-size:18px;line-height:1;display:inline-block;vertical-align:middle;letter-spacing:normal;white-space:nowrap;direction:ltr;-webkit-font-feature-settings:'liga';font-feature-settings:'liga'}
+button{font:inherit;color:inherit;cursor:pointer;background:none;border:0;padding:0}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+
+/* demo bar */
+.demobar{position:sticky;top:0;z-index:100;display:flex;align-items:center;gap:16px;padding:10px 16px;background:#1e1b4b;color:#fff;font-size:13px}
+.demobar b{font-weight:600}
+.demobar .sw{display:flex;gap:4px;background:rgba(255,255,255,.08);padding:3px;border-radius:999px}
+.demobar .sw button{padding:4px 12px;border-radius:999px;font-size:12px;font-weight:600;color:#c7d2fe}
+.demobar .sw button.on{background:#fff;color:#1e1b4b}
+.demobar .hint{margin-left:auto;color:#c7d2fe}
+
+/* app frame */
+.app{display:flex;min-height:calc(100vh - 40px)}
+.side{width:220px;flex:none;background:var(--primary);color:#cbd5e1;padding:20px 12px;font-size:13px}
+.side .logo{color:#fff;font-weight:700;font-size:16px;padding:4px 10px 18px}
+.side .grp{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:#64748b;padding:12px 10px 4px}
+.side .it{display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:8px;color:#94a3b8}
+.side .it.on{background:rgba(255,255,255,.08);color:#fff}
+.side .it .ms{font-size:18px}
+main{flex:1;min-width:0;padding:24px 28px}
+
+/* tokens */
+.card{background:var(--lowest);border-radius:12px;box-shadow:var(--shadow);border:1px solid var(--bd)}
+.h1{font-size:24px;line-height:32px;font-weight:600;margin:0}
+.sub{font-size:12px;line-height:16px;color:var(--onv)}
+.label{font-size:12px;line-height:16px;font-weight:500}
+.btn{display:inline-flex;align-items:center;gap:4px;border-radius:8px;border:1px solid var(--bd40);background:var(--lowest);padding:4px 12px;font-size:12px;font-weight:600}
+.btn:hover{background:var(--low)}
+.btnp{display:inline-flex;align-items:center;gap:4px;border-radius:8px;background:var(--secondary);color:#fff;padding:8px 16px;font-size:14px;font-weight:600;letter-spacing:.05em}
+.pill{display:inline-flex;align-items:center;gap:3px;border-radius:6px;padding:0 4px;font-size:12px;font-weight:600;white-space:nowrap}
+.pill .ms{font-size:13px}
+.t-ok{background:var(--green-15);color:#00301e}.t-warn{background:var(--amber-bg);color:var(--amber)}.t-bad{background:var(--error-c);color:var(--on-error-c)}.t-idle{background:var(--container);color:var(--onv)}.t-brand{background:var(--secondary-10);color:var(--secondary)}
+.x-ok{color:#00301e}.x-warn{color:var(--amber)}.x-bad{color:var(--error)}.x-idle{color:var(--onv)}
+.av{display:inline-grid;place-items:center;width:20px;height:20px;border-radius:999px;font-size:9px;font-weight:700;color:#fff;background:var(--secondary)}
+.av.b{background:#1e293b}.av.c{background:#00a472}
+.chip{display:inline-flex;align-items:center;gap:4px;border-radius:999px;border:1px solid var(--bd40);background:var(--lowest);padding:2px 8px;font-size:12px;font-weight:500;color:var(--onv)}
+.chip.on{background:var(--secondary-10);color:var(--secondary);border-color:transparent;font-weight:600}
+.chip .n{font-weight:400;color:var(--onv)}
+.note{display:flex;gap:8px;border-radius:8px;padding:8px;font-size:14px}
+
+/* header */
+.hdr{display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:16px}
+.hdr .right{margin-left:auto;display:flex;align-items:center;gap:12px}
+
+/* stepper */
+.stepper{display:flex;align-items:center;padding:14px 20px;margin-bottom:12px}
+.step{display:flex;align-items:center;gap:10px;flex:none}
+.step .c{width:28px;height:28px;border-radius:999px;display:grid;place-items:center;font-size:13px;font-weight:700;border:2px solid var(--outline-v);color:var(--outline)}
+.step .c .ms{font-size:18px}
+.step.done .c{background:var(--green);border-color:var(--green);color:#fff}
+.step.on .c{background:var(--secondary);border-color:var(--secondary);color:#fff}
+.step .t{font-weight:600;color:var(--onv)}
+.step.on .t{color:var(--secondary)}
+.step .k{font-size:12px;font-weight:600;border-radius:999px;padding:1px 7px;background:var(--container);color:var(--onv)}
+.step.on .k{background:var(--secondary);color:#fff}
+.step.warn .k{background:var(--amber-bg);color:var(--amber)}
+.step.go .k{background:var(--emerald-bg);color:var(--emerald)}
+.step .dot{width:6px;height:6px;border-radius:999px;background:var(--error)}
+.step .g{font-size:11px;font-weight:700;color:var(--on-error-c);background:var(--error-c);border-radius:999px;padding:1px 7px;white-space:nowrap}
+.stepper.c6{gap:2px;padding:6px 10px;flex-wrap:wrap;row-gap:4px}
+.c6 .step{min-width:0}
+.c6 .step button{gap:8px;padding:5px 10px;border-radius:8px;min-width:0;align-items:center}
+.c6 .step .tx{display:flex;flex-direction:column;align-items:flex-start;gap:2px;min-width:0}
+.c6 .step .cnt{display:flex;align-items:center;gap:4px}
+.c6 .step.on button{background:var(--secondary-10)}
+.c6 .step .c{width:auto;height:auto;border:0;background:none;color:var(--onv)}
+.c6 .step .c .ms{font-size:18px}
+.c6 .step.on .c{color:var(--secondary)}
+.c6 .step .t{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.c6 .step .k{font-size:11px;padding:0 6px}
+.c6 .step .g{font-size:10px;padding:0 5px}
+.c6 .chev{color:var(--outline-v);font-size:16px;flex:none}
+
+/* priority row (C) */
+.prio{display:flex;flex-wrap:wrap;gap:6px;padding:10px 16px}
+.pchip{display:inline-flex;align-items:center;gap:5px;border-radius:999px;border:1px solid var(--bd40);background:var(--lowest);padding:4px 12px;font-size:13px;font-weight:600;color:var(--onv)}
+.pchip .ms{font-size:15px}
+.pchip .n{font-size:12px;font-weight:700;border-radius:999px;padding:0 7px;background:var(--container);color:var(--onv)}
+.pchip.bad{background:var(--error-c);color:var(--on-error-c);border-color:transparent}.pchip.bad .n{background:#fff;color:var(--error)}
+.pchip.warn{background:var(--amber-bg);color:var(--amber);border-color:transparent}.pchip.warn .n{background:#fff;color:#b45309}
+.pchip.idle{background:var(--low)}
+.pchip.zero{opacity:.45}
+.pchip.on{box-shadow:0 0 0 2px var(--secondary)}
+.pchip:hover{filter:brightness(.97)}
+.queue .grp.bad{color:var(--error);font-weight:600}.queue .grp.warn{color:#b45309;font-weight:600}
+.gh{display:flex;align-items:center;gap:8px;font-weight:600;font-size:13px;margin:0 0 8px}
+.gh .ms{font-size:18px}
+.gh .n{font-size:12px;border-radius:999px;padding:0 7px;background:var(--container);color:var(--onv)}
+.gh.bad{color:var(--error)}.gh.warn{color:#b45309}
+.line{flex:1;height:2px;background:var(--outline-v);margin:0 14px}
+.line.done{background:var(--green)}
+.step button{display:flex;align-items:center;gap:10px;padding:4px 8px;border-radius:8px}
+.step button:hover{background:var(--low)}
+
+/* status tabs */
+.tabs{display:flex;align-items:stretch;margin-bottom:12px;overflow:hidden}
+.tab{display:flex;align-items:center;gap:6px;padding:8px 14px;border-right:1px solid var(--bd);font-size:13px;font-weight:600;color:var(--onv);position:relative}
+.tab:last-child{border-right:0}
+.tab:hover{background:var(--low)}
+.tab .n{font-size:12px;font-weight:600;border-radius:999px;padding:0 7px;background:var(--container);color:var(--onv)}
+.tab.on{color:var(--secondary);background:var(--secondary-10);box-shadow:inset 0 -2px 0 var(--secondary)}
+.tab.on .n{background:var(--secondary);color:#fff}
+.tab .dot{width:6px;height:6px;border-radius:999px;background:var(--error)}
+.tab.alert:not(.on){color:var(--on-error-c)}
+
+/* filter row */
+.filters{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:16px}
+.filters .sep{width:1px;height:20px;background:var(--bd40);margin:0 4px}
+.search{display:flex;align-items:center;gap:4px;border-radius:8px;border:1px solid var(--bd40);background:var(--lowest);padding:0 8px;min-width:280px;flex:1;max-width:460px}
+.search input{flex:1;border:0;outline:0;background:transparent;font:inherit;padding:6px 0}
+.filters .more{margin-left:auto;font-size:12px;color:var(--onv)}
+.filters .more a{color:var(--secondary);text-decoration:none}
+
+/* issues band (C) */
+.issues{margin-bottom:12px}
+.ih{display:flex;align-items:center;gap:8px;padding:8px 16px;border-bottom:1px solid var(--bd);font-weight:600;font-size:13px}
+.ih .ms{color:var(--error)}
+.ih .sub{font-weight:500}
+.ih .clear{font-size:12px;font-weight:600;color:var(--secondary);margin-left:4px}
+.ih .scope{margin-left:auto;display:flex;align-items:center;gap:6px}
+.tiles{display:grid;grid-template-columns:repeat(5,minmax(0,1fr))}
+.tiles7{grid-template-columns:repeat(7,minmax(0,1fr))}
+.tiles7 .tile{flex-direction:column;align-items:flex-start;gap:1px;padding:8px 12px}
+.tiles7 .tile .l1{align-items:center;gap:6px}
+.tiles7 .tile .l1 .ms{font-size:18px}
+.tiles7 .tile .lb,.tiles7 .tile .sb{max-width:100%}
+.tile .u{color:var(--error);font-weight:700;font-size:12px}
+.tile.bad .l1{color:var(--error)}.tile.warn .l1{color:#b45309}.tile.idle .l1{color:var(--onv)}.tile.zero .l1{color:var(--green)}
+.tile.ok{border-top-color:var(--green)}.tile.ok .l1{color:var(--green)}
+.queue .qs{padding:6px 8px 2px}
+.queue .qs .search{min-width:0;max-width:none}
+.queue .more{padding:8px 12px;font-size:12px;color:var(--onv);border-top:1px solid var(--bd)}
+.queue .more a{color:var(--secondary);text-decoration:none}
+.tile{display:flex;align-items:center;gap:10px;text-align:left;padding:10px 14px;border-right:1px solid var(--bd);border-top:3px solid transparent;position:relative;min-width:0}
+.tile:last-child{border-right:0}
+.tile:hover{background:var(--low)}
+.tile>.ms{font-size:22px;flex:none}
+.tile .tx{min-width:0;display:flex;flex-direction:column}
+.tile .l1{display:flex;align-items:baseline;gap:6px;min-width:0}
+.tile .num{font-size:20px;line-height:24px;font-weight:700}
+.tile .lb{font-size:12px;font-weight:600;color:var(--onv);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tile .sb{font-size:11px;color:var(--onv);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tile.bad{border-top-color:var(--error)}.tile.bad>.ms,.tile.bad .num{color:var(--error)}
+.tile.warn{border-top-color:#d97706}.tile.warn>.ms,.tile.warn .num{color:#b45309}
+.tile.idle{border-top-color:var(--outline-v)}.tile.idle>.ms,.tile.idle .num{color:var(--onv)}
+.tile.zero{opacity:.6}.tile.zero>.ms,.tile.zero .num{color:var(--green)}
+.tile.on{background:var(--secondary-10);box-shadow:inset 0 0 0 2px var(--secondary)}
+.pill.iss{font-size:11px;padding:0 5px}
+.note a{color:inherit;font-weight:600;text-decoration:underline}
+.note .acts{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+
+/* body A */
+.body{display:grid;grid-template-columns:290px minmax(0,1fr);gap:16px;align-items:start}
+.queue{position:sticky;top:56px;max-height:calc(100vh - 80px);overflow:auto;display:flex;flex-direction:column}
+.queue .qh{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--bd);font-weight:600;font-size:13px;position:sticky;top:0;background:var(--lowest);z-index:2}
+.queue .qh .sub{margin-left:auto;font-weight:500}
+.queue .grp{display:flex;justify-content:space-between;padding:8px 8px 2px;font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--onv);font-weight:500}
+.row{display:grid;grid-template-columns:44px minmax(0,1fr);gap:8px;padding:8px;border-radius:8px;border:1px solid transparent;text-align:left;width:100%}
+.row:hover{background:var(--low)}
+.row.on{background:var(--secondary-10);border-color:var(--secondary-40)}
+.thumb{width:44px;height:44px;border-radius:6px;border:1px solid var(--bd);display:grid;place-items:center;color:#fff}
+.row .k{display:flex;align-items:center;gap:4px;font-size:12px;font-weight:600}
+.row .k .tl{margin-left:auto;display:inline-flex;align-items:center;gap:2px;font-size:12px;font-weight:600;white-space:nowrap}
+.row .k .tl .ms{font-size:13px}
+.row .p{display:block;font-size:12px;color:var(--onv);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .pl{display:flex;align-items:center;gap:4px;row-gap:2px;flex-wrap:wrap;margin-top:2px}
+.row .pl .av{margin-left:auto}
+.empty{padding:16px 12px;font-size:12px;color:var(--onv)}
+
+/* workspace */
+.ws{display:flex;flex-direction:column;gap:16px;min-width:0}
+.cardh{display:flex;align-items:center;gap:8px;padding:8px 16px;border-bottom:1px solid var(--bd);font-weight:600;font-size:14px}
+.cardh .ms{color:var(--onv)}
+.cardh .r{margin-left:auto;font-size:12px;font-weight:500;color:var(--onv)}
+.cardb{padding:8px 16px 12px;display:flex;flex-direction:column;gap:8px}
+.th{display:flex;gap:16px;padding:16px}
+.th .big{width:72px;height:72px;border-radius:10px;flex:none;display:grid;place-items:center;color:#fff}
+.th .ttl{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.th .ttl .key{font-size:18px;font-weight:700}
+.th .meta{font-size:12px;color:var(--onv);margin-top:4px}
+.th .acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.th .who{margin-left:auto;text-align:right;font-size:12px;color:var(--onv);flex:none}
+.panes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+.ph{height:190px;border-radius:8px;display:grid;place-items:center;color:#fff;font-size:12px;font-weight:600}
+.lower{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{font-size:12px;font-weight:500;color:var(--onv);text-align:left;padding:4px;border-bottom:1px solid var(--bd)}
+td{padding:6px 4px;border-bottom:1px solid var(--bd);vertical-align:top}
+tr:last-child td{border-bottom:0}
+.chk{display:flex;align-items:center;gap:8px;font-size:13px}
+.chk .ms{font-size:18px}
+.hist{font-size:12px;color:var(--onv)}
+.hist b{color:var(--on)}
+
+/* grids for steps 2-4 */
+.grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+.rc .mock{height:150px;border-radius:12px 12px 0 0;display:grid;place-items:center;color:#fff;font-weight:600}
+.rc .b{padding:10px 12px;display:flex;flex-direction:column;gap:6px}
+.checks{display:flex;gap:6px;flex-wrap:wrap}
+.checks span{display:inline-flex;align-items:center;gap:2px;font-size:11px;color:var(--onv)}
+.checks .ms{font-size:14px;color:var(--green)}
+.checks .bad .ms{color:var(--error)}
+.subtabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+
+/* body B */
+.tbl td,.tbl th{padding:8px 10px}
+.tbl tbody tr{cursor:pointer}
+.tbl tbody tr:hover{background:var(--low)}
+.tbl .thumb{width:36px;height:36px}
+.back{display:inline-flex;align-items:center;gap:4px;font-size:13px;font-weight:600;color:var(--secondary);margin-bottom:12px}
+
+.g1{background:linear-gradient(135deg,#f6d365,#fda085)}.g2{background:linear-gradient(135deg,#a1c4fd,#c2e9fb)}.g3{background:linear-gradient(135deg,#84fab0,#8fd3f4)}.g4{background:linear-gradient(135deg,#fccb90,#d57eeb)}.g5{background:linear-gradient(135deg,#e0c3fc,#8ec5fc)}.g6{background:linear-gradient(135deg,#f093fb,#f5576c)}.g7{background:linear-gradient(135deg,#4facfe,#00f2fe)}.g8{background:linear-gradient(135deg,#43e97b,#38f9d7)}
+.gray{background:linear-gradient(135deg,#cfd8dc,#90a4ae)}
+</style>
+</head>
+<body>
+<div class="demobar">
+  <b>Demo bố cục Design Tasks</b><span style="color:#c7d2fe">· bản nháp, số liệu giả, bấm được để thử</span>
+  <div class="sw">
+    <button id="swA" class="on" onclick="setVariant('A')">Phương án A · 2 cột + stepper</button>
+    <button id="swB" onclick="setVariant('B')">Phương án B · bảng rộng kiểu Etsy</button>
+    <button id="swC" onclick="setVariant('C')">Phương án C · luồng việc → nhóm ưu tiên</button>
+  </div>
+  <span class="hint" id="hint"></span>
+</div>
+
+<div class="app">
+  <aside class="side">
+    <div class="logo">Ecom Manager</div>
+    <div class="it"><span class="ms">dashboard</span>Overview</div>
+    <div class="it"><span class="ms">rule</span>Need To Fix</div>
+    <div class="grp">Fulfillment</div>
+    <div class="it"><span class="ms">local_shipping</span>Dashboard</div>
+    <div class="it"><span class="ms">receipt_long</span>Orders &amp; P/L</div>
+    <div class="it"><span class="ms">account_tree</span>Product Mapping</div>
+    <div class="grp">Design Studio</div>
+    <div class="it"><span class="ms">space_dashboard</span>Dashboard</div>
+    <div class="it on"><span class="ms">brush</span>Design Tasks</div>
+    <div class="it"><span class="ms">inventory</span>Tồn đọng</div>
+    <div class="it"><span class="ms">inventory_2</span>Sản phẩm</div>
+    <div class="it"><span class="ms">font_download</span>Fonts</div>
+    <div class="it"><span class="ms">settings</span>Settings</div>
+  </aside>
+  <main>
+    <div class="hdr">
+      <h1 class="h1">Design Tasks</h1>
+      <span class="sub">Task ID = mã đơn_dòng · mỗi task là một dòng hàng cần file in</span>
+      <div class="right">
+        <span class="sub">Thu · Leader</span>
+        <span class="sub">Đồng bộ lần cuối: 11/20/2026, 2:15 PM</span>
+        <button class="btnp"><span class="ms">sync</span>Đồng bộ task</button>
+      </div>
+    </div>
+
+    <div class="card stepper" id="stepper"></div>
+    <div class="card issues" id="issues"></div>
+    <div class="card tabs" id="tabs"></div>
+    <div class="filters" id="filters"></div>
+    <div id="body"></div>
+  </main>
+</div>
+
+<script>
+const READY = {
+  AUTO: { label: 'Tự động đạt', icon: 'bolt', tone: 'ok' },
+  LOW: { label: 'Cần chỉnh', icon: 'tune', tone: 'warn' },
+  MANUAL: { label: 'Làm tay', icon: 'draw', tone: 'idle' },
+}
+const STATUS = {
+  NEW: { label: 'Mới', tone: 'brand' }, ASSIGNED: { label: 'Đã giao', tone: 'brand' }, DOING: { label: 'Đang làm', tone: 'warn' },
+  REVIEW: { label: 'Chờ duyệt', tone: 'brand' }, ASK_CUSTOMER: { label: 'Hỏi khách', tone: 'bad' }, REJECTED: { label: 'Trả lại sửa', tone: 'bad' }, DONE: { label: 'Xong', tone: 'ok' },
+}
+const SECTIONS = [
+  { id: 'ALL', title: 'Tất cả', statuses: null },
+  { id: 'REJECTED', title: 'Bị trả lại — sửa trước', statuses: ['REJECTED'], alert: true },
+  { id: 'ASK', title: 'Đang hỏi khách', statuses: ['ASK_CUSTOMER'], alert: true },
+  { id: 'NEW', title: 'Mới / Đã giao', statuses: ['NEW', 'ASSIGNED'] },
+  { id: 'DOING', title: 'Đang làm', statuses: ['DOING'] },
+  { id: 'REVIEW', title: 'Chờ duyệt', statuses: ['REVIEW'] },
+  { id: 'DONE', title: 'Xong hôm nay', statuses: ['DONE'] },
+]
+const AV = { Thu: 'a', Minh: 'b', Lan: 'c' }
+const TASKS = [
+  { key: 'LIT7198_1', product: 'Personalized Name Tote Bag', variant: 'Natural / M', ready: 'AUTO', status: 'REJECTED', who: 'Thu', due: -3, custom: 'Enter Name: Olivia', g: 'g1', mine: true, reject: 'Font sai — tên in phải thẳng, không cong', issues: [] },
+  { key: 'LIT7199_1', product: 'Dog Mom Sweatshirt', variant: 'Sport Grey / L', ready: 'AUTO', status: 'NEW', who: null, due: -6, custom: 'Dog name: Bella', g: 'g7', issues: [], files: 0 },
+  { key: 'LIT7201_2', product: 'Custom Pet Portrait Mug', variant: '11oz / White', ready: 'MANUAL', status: 'ASK_CUSTOMER', who: 'Minh', due: 2, custom: 'Pet photo: (thiếu ảnh)', g: 'g2', issues: ['MISSING_INPUT'] },
+  { key: 'LIT7203_1', product: 'Knitted Cardigan V-Neck', variant: 'Beige / L', ready: 'LOW', status: 'NEW', who: null, due: 3, custom: 'Name: Grandma Rose', g: 'g3', issues: [] },
+  { key: 'LIT7205_1', product: 'Family Christmas Sweatshirt', variant: 'Black / XL', ready: 'AUTO', status: 'ASSIGNED', who: 'Thu', due: 18, custom: 'Names: Mike, Sarah, Ben', g: 'g4', mine: true, issues: [] },
+  { key: 'LIT7206_3', product: 'Kids Name Hoodie', variant: 'Navy / 6T', ready: 'AUTO', status: 'NEW', who: null, due: 20, custom: 'Name: Liam', g: 'g5', issues: [] },
+  { key: 'LIT7207_1', product: 'Sherpa Fleece Blanket', variant: '50x60', ready: 'MANUAL', status: 'DOING', who: 'Lan', due: 4, custom: 'Back = No', g: 'g6', issues: ['NO_ART'] },
+  { key: 'LIT7210_1', product: 'Accent Mug 11oz', variant: 'Black handle', ready: 'AUTO', status: 'DOING', who: 'Thu', due: 9, custom: 'Name: Dad', g: 'g7', mine: true, issues: [] },
+  { key: 'LIT7211_2', product: 'AOP Hoodie', variant: 'M', ready: 'MANUAL', status: 'DOING', who: 'Minh', due: -1, custom: 'Non-custom', g: 'g8', issues: ['NO_SUPPLIER'] },
+  { key: 'LIT7212_1', product: 'Ceramic Ornament', variant: '3in', ready: 'AUTO', status: 'REVIEW', who: 'Lan', due: 30, custom: 'Name: Emma · Year: 2026', g: 'g1', issues: [] },
+  { key: 'LIT7214_1', product: 'Canvas Lined Tote', variant: '15x16', ready: 'LOW', status: 'REVIEW', who: 'Thu', due: -2, custom: 'Name: Ava', g: 'g2', mine: true, issues: [] },
+  { key: 'LIT7215_1', product: 'Gildan 5000 Tee', variant: 'Sand / L', ready: 'AUTO', status: 'REVIEW', who: 'Minh', due: 3, custom: 'Non-custom', g: 'g3', issues: [] },
+  { key: 'LIT7216_2', product: 'Knit Scarf', variant: 'Cream', ready: 'MANUAL', status: 'NEW', who: null, due: null, custom: 'Name: Noah', g: 'g4', issues: ['NO_SUPPLIER', 'NO_TEMPLATE'] },
+  { key: 'LIT7217_1', product: 'Garden Flag 12x18', variant: 'Double-sided', ready: 'MANUAL', status: 'NEW', who: null, due: 8, custom: 'Family name: The Millers', g: 'g8', issues: ['NO_TEMPLATE'] },
+  { key: 'LIT7220_1', product: 'Custom Pet Portrait Blanket', variant: '60x80', ready: 'MANUAL', status: 'DOING', who: 'Lan', due: 10, custom: 'Pet photo: 2 ảnh · Names: Max, Luna', g: 'g3', issues: [] },
+  { key: 'LIT7218_1', product: 'Cap PoMo Embroidery', variant: 'Black', ready: 'LOW', status: 'DONE', who: 'Thu', due: 2, custom: '4 nhân vật', g: 'g5', mine: true, issues: [] },
+  { key: 'LIT7219_1', product: 'Tumbler 20oz', variant: 'Steel', ready: 'AUTO', status: 'DONE', who: 'Lan', due: 6, custom: 'Name: Chloe', g: 'g6', issues: [] },
+]
+const ISSUES = [
+  { id: 'OVERDUE', label: 'Quá hạn SLA', sub: 'cần file in gấp', icon: 'alarm', tone: 'bad', short: 'quá hạn', test: t => t.due !== null && t.due < 0, action: 'Nhận & render ngay' },
+  { id: 'NO_SUPPLIER', label: 'Chưa map xưởng', sub: 'gán xưởng + SKU xưởng', icon: 'factory', tone: 'warn', short: 'chưa map', test: t => t.issues.includes('NO_SUPPLIER'), action: 'Mở Product Mapping' },
+  { id: 'NO_TEMPLATE', label: 'Chưa có template in', sub: 'dựng template trước', icon: 'dashboard_customize', tone: 'warn', short: 'chưa template', test: t => t.issues.includes('NO_TEMPLATE'), action: 'Mở Tồn đọng · cụm D' },
+  { id: 'NO_ART', label: 'Thiếu file in', sub: 'chưa có artwork gốc', icon: 'print_disabled', tone: 'warn', short: 'thiếu file in', test: t => t.issues.includes('NO_ART'), action: 'Mở trang sản phẩm (artwork gốc)' },
+  { id: 'MISSING_INPUT', label: 'Thiếu dữ liệu khách', sub: 'cần hỏi khách / chờ trả lời', icon: 'contact_support', tone: 'idle', short: 'thiếu dữ liệu', test: t => t.issues.includes('MISSING_INPUT'), action: 'Hỏi khách' },
+]
+const issuesOf = t => t.status === 'DONE' ? [] : ISSUES.filter(i => i.test(t))
+const state = { variant: 'A', step: 1, tab: 'ALL', ready: 'ALL', mine: false, q: '', sel: 'LIT7198_1', bOpen: false, stream: 'FILE', group: null }
+
+const open = () => TASKS.filter(t => t.status !== 'DONE')
+const count = s => s.statuses ? TASKS.filter(t => s.statuses.includes(t.status)).length : open().length
+function timeLeft(t) {
+  if (t.status === 'DONE') return { label: 'đã duyệt', tone: 'ok', icon: 'check' }
+  if (t.due === null) return { label: 'chưa hạn', tone: 'idle', icon: 'schedule' }
+  if (t.due < 0) return { label: `quá ${-t.due}h`, tone: 'bad', icon: 'error' }
+  if (t.due <= 4) return { label: `còn ${t.due}h`, tone: 'warn', icon: 'schedule' }
+  return { label: `còn ${t.due}h`, tone: 'idle', icon: 'schedule' }
+}
+const byDue = (a, b) => (a.due === b.due ? 0 : a.due === null ? 1 : b.due === null ? -1 : a.due - b.due)
+function visible() {
+  const sec = SECTIONS.find(s => s.id === state.tab)
+  if (state.variant === 'C') return visibleC()
+  return TASKS.filter(t => (!sec.statuses ? true : sec.statuses.includes(t.status)))
+    .filter(t => state.ready === 'ALL' || t.ready === state.ready)
+    .filter(t => !state.mine || t.mine)
+    .filter(t => !state.q || (t.key + ' ' + t.product + ' ' + t.custom).toLowerCase().includes(state.q.toLowerCase()))
+}
+const av = who => who ? `<span class="av ${AV[who]}" title="${who}">${who.slice(0, 2).toUpperCase()}</span>` : ''
+const pill = (tone, icon, text) => `<span class="pill t-${tone}">${icon ? `<span class="ms">${icon}</span>` : ''}${text}</span>`
+const tl = t => { const l = timeLeft(t); return `<span class="tl x-${l.tone}"><span class="ms">${l.icon}</span>${l.label}</span>` }
+
+function setVariant(v) { state.variant = v; state.bOpen = false; state.stream = 'FILE'; state.group = null; for (const x of ['A', 'B', 'C']) document.getElementById('sw' + x).classList.toggle('on', v === x); reselect(); render() }
+function setStep(n) { state.step = n; state.bOpen = false; render() }
+function reselect() { const v = visible(); if (!v.find(t => t.key === state.sel) && v[0]) state.sel = v[0].key }
+function setTab(id) { state.tab = id; state.bOpen = false; reselect(); render() }
+function setStream(id) { state.stream = id; state.group = null; state.bOpen = false; reselect(); render() }
+function setGroup(id) { state.group = state.group === id ? null : id; state.bOpen = false; reselect(); render() }
+function setReady(r) { state.ready = r; render() }
+function toggleMine() { state.mine = !state.mine; reselect(); render() }
+function setQ(v) {
+  state.q = v
+  const list = document.getElementById('qlist')
+  if (state.variant === 'C' && list) {
+    const vis = visible(), sec = SECTIONS.find(s => s.id === state.tab)
+    list.innerHTML = queueListHtmlC(vis) || emptyHtmlC()
+    document.getElementById('qcount').textContent = vis.length
+  } else renderBody()
+}
+function select(k) { state.sel = k; state.step = 1; state.bOpen = true; render() }
+function back() { state.bOpen = false; render() }
+
+function renderStepper() {
+  document.getElementById('stepper').classList.toggle('c6', state.variant === 'C')
+  if (state.variant === 'C') return renderStepperC()
+  const n = { 1: open().length, 2: TASKS.filter(t => t.status === 'REVIEW').length, 3: 6, 4: 48 }
+  const steps = [
+    { n: 1, t: 'Task', k: n[1], cls: '', dot: TASKS.some(t => t.status === 'REJECTED') },
+    { n: 2, t: 'Duyệt mẫu', k: n[2], cls: n[2] ? 'warn' : '' },
+    { n: 3, t: 'Duyệt sản xuất', k: n[3], cls: n[3] ? 'go' : '' },
+    { n: 4, t: 'Đã chuyển xưởng', k: n[4], cls: '' },
+  ]
+  document.getElementById('stepper').innerHTML = steps.map((s, i) => {
+    const done = s.n < state.step, on = s.n === state.step
+    return `${i ? `<div class="line ${done || on ? 'done' : ''}"></div>` : ''}
+      <div class="step ${done ? 'done' : ''} ${on ? 'on' : ''} ${s.cls}">
+        <button onclick="setStep(${s.n})" title="Chuyển sang màn ${s.t}">
+          <span class="c">${done ? '<span class="ms">check</span>' : s.n}</span>
+          <span class="t">${s.t}</span>
+          <span class="k">${s.k}</span>
+          ${s.dot ? '<span class="dot"></span>' : ''}
+        </button>
+      </div>`
+  }).join('')
+}
+
+function renderIssues() {
+  const el = document.getElementById('issues')
+  if (state.variant !== 'C') { el.style.display = 'none'; return }
+  el.style.display = ''
+  renderPriorityC(el)
+}
+
+function renderTabs() {
+  const el = document.getElementById('tabs')
+  if (state.step !== 1 || state.variant === 'C') { el.style.display = 'none'; return }
+  el.style.display = ''
+  el.innerHTML = SECTIONS.map(s => {
+    const c = count(s)
+    return `<button class="tab ${state.tab === s.id ? 'on' : ''} ${s.alert && c ? 'alert' : ''}" onclick="setTab('${s.id}')">
+      ${s.title}<span class="n">${c}</span>${s.alert && c ? '<span class="dot"></span>' : ''}</button>`
+  }).join('')
+}
+
+function renderFilters() {
+  const el = document.getElementById('filters')
+  if (state.step !== 1 || state.variant === 'C') { el.style.display = 'none'; return }
+  el.style.display = ''
+  const rc = r => (r === 'ALL' ? open() : open().filter(t => t.ready === r)).length
+  el.innerHTML = `
+    ${['ALL', 'AUTO', 'LOW', 'MANUAL'].map(r => `<button class="chip ${state.ready === r ? 'on' : ''}" onclick="setReady('${r}')">${r === 'ALL' ? 'Tất cả' : READY[r].label} <span class="n">${rc(r)}</span></button>`).join('')}
+    <span class="sep"></span>
+    <button class="chip ${state.mine ? 'on' : ''}" onclick="toggleMine()"><span class="ms" style="font-size:14px">person</span>Của tôi</button>
+    <label class="search"><span class="ms" style="color:var(--onv)">search</span><input placeholder="Tìm task ID, SKU, tên in…" value="${state.q}" oninput="setQ(this.value)"></label>
+    <span class="more">Xem thêm: <a href="#">Đã duyệt</a> · <a href="#">Đã huỷ</a></span>`
+}
+
+const issPills = t => state.variant === 'C'
+  ? issuesOf(t).filter(i => i.id !== 'OVERDUE').map(i => `<span class="pill iss t-${i.tone === 'idle' ? 'bad' : i.tone}" title="${i.label}"><span class="ms">${i.icon}</span>${i.short}</span>`).join('')
+  : ''
+function rowHtml(t) {
+  return `<button class="row ${t.key === state.sel && state.variant !== 'B' ? 'on' : ''}" onclick="select('${t.key}')">
+    <span class="thumb ${t.g}"><span class="ms">${t.custom === 'Non-custom' ? 'checkroom' : 'image'}</span></span>
+    <span style="min-width:0">
+      <span class="k"><span class="mono">${t.key}</span>${tl(t)}</span>
+      <span class="p">${t.product} · ${t.variant}</span>
+      <span class="pl">${pill(READY[t.ready].tone, READY[t.ready].icon, READY[t.ready].label)}${pill(STATUS[t.status].tone, '', STATUS[t.status].label)}${issPills(t)}${av(t.who)}</span>
+    </span></button>`
+}
+
+const emptyHtml = () => `<div class="empty">Không có task nào trong mục này. <a href="#" style="color:var(--secondary)">Bỏ lọc</a></div>`
+function queueListHtml(v, sec) {
+  if (sec.statuses) return v.sort(byDue).map(rowHtml).join('')
+  return SECTIONS.slice(1).map(s => {
+    const rows = v.filter(t => s.statuses.includes(t.status)).sort(byDue)
+    return rows.length ? `<div class="grp"><span>${s.title}</span><span>${rows.length}</span></div>${rows.map(rowHtml).join('')}` : ''
+  }).join('')
+}
+function queueHtml() {
+  if (state.variant === 'C') return queueHtmlC()
+  const v = visible()
+  const sec = SECTIONS.find(s => s.id === state.tab)
+  const c = false
+  const b = null
+  const hot = false
+  const title = (b ? b.label : (sec.statuses ? sec.title : 'Danh sách')) + (hot ? ' · gấp' : '') + (b && sec.statuses ? ` · ${sec.title}` : '')
+  return `<aside class="card queue">
+    <div class="qh"><span class="ms" style="font-size:18px;color:${b || hot ? 'var(--error)' : 'var(--onv)'}">${b ? b.icon : hot ? 'local_fire_department' : 'list'}</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${title}</span> <span class="n" id="qcount" style="font-weight:500;color:var(--onv)">${v.length}</span><span class="sub" title="Quá hạn và gần hạn lên trước" style="white-space:nowrap">hạn gần lên trước</span></div>
+    ${c ? `<div class="qs"><label class="search"><span class="ms" style="color:var(--onv)">search</span><input placeholder="Tìm task ID, SKU, tên in…" value="${state.q}" oninput="setQ(this.value)"></label></div>` : ''}
+    <div id="qlist" style="padding:4px;display:flex;flex-direction:column;gap:4px">${queueListHtml(v, sec) || emptyHtml()}</div>
+    ${c ? `<div class="more">Xem thêm: <a href="#">Đã duyệt</a> · <a href="#">Đã huỷ</a></div>` : ''}
+  </aside>`
+}
+
+function workspaceHtml(t) {
+  if (!t) return `<div class="card" style="padding:24px;color:var(--onv)">Chọn một task để xem chi tiết.</div>`
+  const canSend = t.status === 'DOING' || t.status === 'REJECTED'
+  const iss = state.variant === 'C' ? issuesOf(t) : []
+  const over = iss.find(i => i.id === 'OVERDUE'), blockers = iss.filter(i => i.id !== 'OVERDUE')
+  const noSup = blockers.some(i => i.id === 'NO_SUPPLIER'), noTpl = blockers.some(i => i.id === 'NO_TEMPLATE')
+  const need = state.stream === 'MAP' ? 'cần mapping gấp' : state.stream === 'TPL' ? 'cần dựng template gấp' : state.stream === 'REVIEW' ? 'cần duyệt gấp' : 'cần file in gấp'
+  const overNote = over ? `<div class="note t-bad"><span class="ms">alarm</span><div><b>Quá hạn ${-t.due}h — ${need}.</b> ${t.files === 0 ? 'Chưa có file in nào' : 'File in chưa được duyệt'}${t.ready === 'AUTO' ? ', thư viện đủ để render tự động' : ''}${t.who ? '' : ', chưa ai nhận'}.
+      <div class="acts">${t.who ? '' : '<button class="btn"><span class="ms" style="font-size:16px">front_hand</span>Nhận task</button>'}${t.ready === 'AUTO' ? '<button class="btn" style="background:var(--secondary);color:#fff;border-color:transparent"><span class="ms" style="font-size:16px">auto_awesome</span>Render tự động ngay</button>' : ''}<button class="btn"><span class="ms" style="font-size:16px">priority_high</span>Báo leader</button></div></div></div>` : ''
+  const blockNote = blockers.length ? `<div class="note t-warn"><span class="ms">report</span><div><b>Đang vướng${over ? ' thêm' : ''}:</b> ${blockers.map(i => `${i.label.toLowerCase()} → <a href="#">${i.action}</a>`).join(' · ')}
+      <div class="sub" style="color:inherit;opacity:.8;margin-top:2px">Task này không render tự động được cho tới khi gỡ xong các mục trên.</div></div></div>` : ''
+  const lowNote = state.variant === 'C' && t.ready === 'LOW' && !blockers.length ? `<div class="note t-warn"><span class="ms">tune</span><div><b>Cần chỉnh:</b> máy đã render file tự động, sửa tay (vị trí / font / màu) rồi mới gửi duyệt.</div></div>` : ''
+  return `<div class="ws">
+    ${t.status === 'REJECTED' ? `<div class="note t-bad"><span class="ms">undo</span><div><b>Bị trả lại:</b> ${t.reject}</div></div>` : ''}
+    ${overNote}${blockNote}${lowNote}
+    <div class="card th">
+      <div class="big ${t.g}"><span class="ms" style="font-size:28px">image</span></div>
+      <div style="min-width:0;flex:1">
+        <div class="ttl"><span class="key mono">${t.key}</span>${pill(READY[t.ready].tone, READY[t.ready].icon, READY[t.ready].label)}${pill(STATUS[t.status].tone, '', STATUS[t.status].label)}${tl(t)}</div>
+        <div style="font-weight:600;margin-top:2px">${t.product} <span style="color:var(--onv);font-weight:400">· ${t.variant}</span></div>
+        <div class="meta">Đơn #4232290361 · đặt 11/18/2026 · Xưởng: ${noSup ? '<span class="x-bad" style="font-weight:600">chưa map</span>' : 'Merchize'} · Template: ${noTpl ? '<span class="x-bad" style="font-weight:600">chưa có</span>' : 'LTTBVN Front+Back 2600×2750'} · Customall (app gốc)</div>
+        <div class="acts">
+          ${t.status === 'NEW' ? '<button class="btn"><span class="ms" style="font-size:16px">front_hand</span>Nhận task</button>' : ''}
+          ${t.status === 'NEW' || t.status === 'ASSIGNED' ? '<button class="btn"><span class="ms" style="font-size:16px">play_arrow</span>Bắt đầu làm</button>' : ''}
+          ${canSend ? '<button class="btn" style="background:var(--secondary);color:#fff;border-color:transparent"><span class="ms" style="font-size:16px">send</span>Gửi duyệt</button>' : ''}
+          ${t.status === 'REVIEW' ? '<button class="btn" style="background:var(--secondary);color:#fff;border-color:transparent"><span class="ms" style="font-size:16px">check</span>Duyệt</button><button class="btn" style="color:var(--amber)"><span class="ms" style="font-size:16px">undo</span>Trả lại</button>' : ''}
+          ${t.status === 'DONE' ? '<button class="btn"><span class="ms" style="font-size:16px">edit</span>Sửa &amp; gửi lại</button>' : ''}
+          <button class="btn"><span class="ms" style="font-size:16px">contact_support</span>Hỏi khách</button>
+          <button class="btn"><span class="ms" style="font-size:16px">cloud_download</span>Nạp lại từ Shopify</button>
+        </div>
+      </div>
+      <div class="who">${t.who ? `${av(t.who)} ${t.who}` : 'Chưa giao'}<br><span style="font-size:11px">đang giữ 3 task</span></div>
+    </div>
+    <div class="panes">
+      <div class="card"><div class="cardh"><span class="ms">visibility</span>Preview khách tạo lúc đặt hàng</div><div class="cardb"><div class="ph ${t.g}">preview khách</div></div></div>
+      <div class="card"><div class="cardh"><span class="ms">checkroom</span>Ảnh variant (Shopify)</div><div class="cardb"><div class="ph gray">ảnh variant</div></div></div>
+      <div class="card"><div class="cardh"><span class="ms">print</span>File in<span class="r">Front · v2 · 2600×2750</span></div><div class="cardb"><div class="ph ${t.g}" style="opacity:.85">file in</div><div style="display:flex;gap:8px"><button class="btn"><span class="ms" style="font-size:16px">upload</span>Upload</button><button class="btn"><span class="ms" style="font-size:16px">auto_awesome</span>Render tự động</button></div></div></div>
+    </div>
+    <div class="lower">
+      <div class="card"><div class="cardh"><span class="ms">person</span>Thông tin khách nhập</div><div class="cardb">
+        <table><thead><tr><th>#</th><th>Trường</th><th>Giá trị khách nhập</th><th>Layer</th></tr></thead><tbody>
+          <tr><td>1</td><td>${t.custom.split(':')[0]}</td><td class="mono" style="font-weight:600">${t.custom.split(':')[1] ?? '—'}</td><td class="mono" style="color:var(--secondary);font-size:12px">TXT · name</td></tr>
+          <tr><td>2</td><td>Choose Color</td><td class="mono" style="font-weight:600">${t.variant.split(' / ')[0]}</td><td class="mono" style="color:var(--secondary);font-size:12px">SWAP · color</td></tr>
+        </tbody></table></div></div>
+      <div class="card"><div class="cardh"><span class="ms">dashboard_customize</span>Xưởng &amp; template</div><div class="cardb" style="font-size:13px">
+        <div><b>Merchize</b> · SKU xưởng LTTBVN · US</div><div style="color:var(--onv)">Template: Lined Tote Front+Back · 2600×2750 px · sRGB</div><div style="color:var(--onv)">Artwork gốc: thư viện TN0506261500 · Waltograph thẳng</div></div></div>
+      <div class="card"><div class="cardh"><span class="ms">fact_check</span>Tự kiểm file trước khi gửi<span class="r">3/5</span></div><div class="cardb">
+        <div class="chk"><span class="ms" style="color:var(--${noSup ? 'error' : 'green'})">${noSup ? 'cancel' : 'check_circle'}</span>Xưởng đã map</div>
+        <div class="chk"><span class="ms" style="color:var(--${noTpl || blockers.some(i => i.id === 'NO_ART') ? 'error' : 'green'})">${noTpl || blockers.some(i => i.id === 'NO_ART') ? 'cancel' : 'check_circle'}</span>Artwork gốc trong thư viện</div>
+        <div class="chk"><span class="ms" style="color:var(--green)">check_circle</span>Thông tin khách đủ</div>
+        <div class="chk"><span class="ms" style="color:var(--error)">cancel</span>Đủ file cho mọi vùng in (thiếu Back)</div>
+        <div class="chk"><span class="ms" style="color:var(--error)">cancel</span>Mockup</div></div></div>
+      <div class="card"><div class="cardh"><span class="ms">forum</span>Trao đổi &amp; lịch sử<span class="r">4</span></div><div class="cardb hist">
+        <div><b>Thu</b> · 11/20 1:40 PM · gửi duyệt v2</div><div><b>Leader</b> · 11/20 11:02 AM · trả lại: Font sai</div><div><b>Hệ thống</b> · 11/19 9:00 AM · render tự động v1</div><div><b>Hệ thống</b> · 11/18 8:12 PM · tạo task từ đơn</div></div></div>
+    </div>
+  </div>`
+}
+
+const reviewCard = t => `<div class="card rc">
+    <div class="mock ${t.g}">mockup · ${t.key}</div>
+    <div class="b">
+      <div style="display:flex;align-items:center;gap:6px"><span class="mono" style="font-weight:700">${t.key}</span>${pill(READY[t.ready].tone, READY[t.ready].icon, READY[t.ready].label)}${av(t.who)}</div>
+      <div style="font-size:12px;color:var(--onv)">${t.product} · ${t.variant}</div>
+      <div style="font-size:12px"><b>Khách nhập:</b> ${t.custom}</div>
+      <div class="checks"><span><span class="ms">check_circle</span>Xưởng</span><span><span class="ms">check_circle</span>Artwork gốc</span><span><span class="ms">check_circle</span>Thông tin khách</span><span><span class="ms">check_circle</span>Đủ file</span><span class="${t.ready === 'LOW' ? 'bad' : ''}"><span class="ms">${t.ready === 'LOW' ? 'cancel' : 'check_circle'}</span>Mockup</span></div>
+      <div style="display:flex;gap:6px;margin-top:4px"><button class="btn" style="background:var(--secondary);color:#fff;border-color:transparent"><span class="ms" style="font-size:16px">check</span>Duyệt</button><button class="btn" style="color:var(--amber)"><span class="ms" style="font-size:16px">undo</span>Trả lại</button><button class="btn" onclick="select('${t.key}')">Mở task</button></div>
+    </div></div>`
+function reviewHtml() {
+  return `<div class="grid3">${TASKS.filter(t => t.status === 'REVIEW').map(reviewCard).join('')}</div>`
+}
+
+const HANDOFF_ORDERS = [
+  { id: '#LIT7190', sup: 'Merchize', country: 'US', lines: ['LIT7190_1 · Lined Tote · Front v2, Back v1', 'LIT7190_2 · Gildan 5000 Tee · Front v1'], api: true, urg: 'OVER', due: 'quá 2h' },
+  { id: '#LIT7193', sup: 'Jomall', country: 'US', lines: ['LIT7193_1 · AOP Hoodie · 6 mảnh'], api: true, urg: 'SOON', due: 'còn 3h' },
+  { id: '#LIT7195', sup: 'Mangoshao', country: 'CA', lines: ['LIT7195_1 · Sherpa Blanket 50x60 · Front v1'], api: false, urg: 'OK', due: 'còn 20h' },
+]
+function handoffHtml(orders = HANDOFF_ORDERS) {
+  return `<div style="display:flex;flex-direction:column;gap:12px">${orders.map(o => `<div class="card">
+    <div class="cardh"><span class="ms">receipt_long</span><span class="mono">${o.id}</span><span class="pill t-brand">${o.sup}</span>${state.variant === 'C' ? pill(o.urg === 'OVER' ? 'bad' : o.urg === 'SOON' ? 'warn' : 'idle', o.urg === 'OVER' ? 'error' : 'schedule', o.due) : ''}<span class="r"><span class="ms" style="font-size:14px">public</span> ${o.country}</span></div>
+    <div class="cardb"><div style="display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center">
+      <div style="font-size:13px">${o.lines.map(l => `<div><span class="ms" style="font-size:16px;color:var(--green)">check_circle</span> ${l}</div>`).join('')}</div>
+      <div style="display:flex;gap:6px"><button class="btn"><span class="ms" style="font-size:16px">sync_alt</span>Gán lại xưởng</button>${o.api ? '<button class="btn" style="background:var(--secondary);color:#fff;border-color:transparent"><span class="ms" style="font-size:16px">send</span>Gửi xưởng (API)</button>' : '<button class="btn"><span class="ms" style="font-size:16px">save</span>Lưu chờ xuất CSV</button>'}</div>
+    </div></div></div>`).join('')}</div>`
+}
+
+function sentHtml() {
+  const rows = [
+    ['#LIT7180', 'Merchize', 'Đã gửi API', '11/19/2026', 'còn huỷ được 2h', '—'],
+    ['#LIT7176', 'Jomall', 'Đã gửi API', '11/18/2026', 'đã sản xuất', 'YT2611…'],
+    ['#LIT7171', 'Mangoshao', 'Đã xuất CSV', '11/18/2026', '—', '—'],
+    ['#LIT7165', 'Bondre', 'Có tracking', '11/16/2026', 'đã giao SDH', '9400 1118…'],
+    ['#LIT7160', 'Merchize', 'Có tracking', '11/15/2026', 'US last mile', '9405 5036…'],
+  ]
+  return `<div class="subtabs"><button class="chip on">Tất cả <span class="n">48</span></button><button class="chip">Chờ xuất CSV <span class="n">5</span></button><button class="chip">Đã xuất <span class="n">12</span></button><button class="chip">Đã gửi API <span class="n">20</span></button><button class="chip">Có tracking <span class="n">11</span></button></div>
+  <div class="card"><table class="tbl"><thead><tr><th>Đơn</th><th>Xưởng</th><th>Trạng thái</th><th>Gửi ngày</th><th>Ghi chú</th><th>Tracking</th></tr></thead><tbody>
+  ${rows.map(r => `<tr><td class="mono" style="font-weight:600;color:var(--secondary)">${r[0]}</td><td>${r[1]}</td><td>${pill(r[2] === 'Có tracking' ? 'ok' : 'brand', '', r[2])}</td><td>${r[3]}</td><td style="color:var(--onv)">${r[4]}</td><td class="mono">${r[5]}</td></tr>`).join('')}
+  </tbody></table></div>`
+}
+
+function tableHtml() {
+  const v = visible().sort(byDue)
+  return `<div class="card"><div class="qh" style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--bd);font-weight:600;font-size:13px">Danh sách <span style="font-weight:500;color:var(--onv)">${v.length} task</span><span class="sub" style="margin-left:auto">Quá hạn và gần hạn lên trước · bấm một dòng để mở task</span></div>
+  <table class="tbl"><thead><tr><th></th><th>Task</th><th>Sản phẩm</th><th>Khách nhập</th><th>Độ sẵn sàng</th><th>Trạng thái</th><th>Người làm</th><th>Hạn</th></tr></thead><tbody>
+  ${v.map(t => `<tr onclick="select('${t.key}')"><td><span class="thumb ${t.g}"><span class="ms">image</span></span></td><td class="mono" style="font-weight:600;color:var(--secondary)">${t.key}</td><td>${t.product}<div style="font-size:12px;color:var(--onv)">${t.variant}</div></td><td class="mono" style="font-size:12px">${t.custom}</td><td>${pill(READY[t.ready].tone, READY[t.ready].icon, READY[t.ready].label)}</td><td>${pill(STATUS[t.status].tone, '', STATUS[t.status].label)}</td><td>${t.who ? `${av(t.who)} ${t.who}` : '<span style="color:var(--onv)">—</span>'}</td><td>${tl(t)}</td></tr>`).join('')}
+  ${v.length ? '' : '<tr><td colspan="8" class="empty">Không có task nào trong mục này.</td></tr>'}
+  </tbody></table></div>`
+}
+
+function renderBody() {
+  const el = document.getElementById('body')
+  const sel = TASKS.find(t => t.key === state.sel)
+  let right
+  if (state.step === 2) right = reviewHtml()
+  else if (state.step === 3) right = handoffHtml()
+  else if (state.step === 4) right = sentHtml()
+  if (state.variant === 'C') renderBodyC(el, sel)
+  else if (state.variant !== 'B') {
+    if (state.step === 1) el.innerHTML = `<div class="body">${queueHtml()}${workspaceHtml(sel)}</div>`
+    else el.innerHTML = `<div class="body">${queueHtml()}<div>${right}</div></div>`
+  } else {
+    if (state.step !== 1) el.innerHTML = right
+    else if (state.bOpen) el.innerHTML = `<button class="back" onclick="back()"><span class="ms">arrow_back</span>Danh sách</button>${workspaceHtml(sel)}`
+    else el.innerHTML = tableHtml()
+  }
+  document.getElementById('hint').textContent = state.variant === 'A'
+    ? 'A: stepper đổi màn, tab trạng thái lọc danh sách bên trái, workspace giữ nguyên bên phải'
+    : state.variant === 'B'
+      ? 'B: bảng rộng toàn chiều ngang, bấm một dòng mở workspace, có nút quay lại'
+      : 'C: stepper = 6 luồng việc (Mapping → Template → Files in → Duyệt mẫu → Duyệt sản xuất → Đã chuyển xưởng); trong mỗi luồng chia nhóm ưu tiên từ gấp → còn hạn, bấm nhóm để lọc'
+}
+
+// ===== Phương án C: phân cấp luồng việc → nhóm ưu tiên =====
+const STREAMS = [
+  { id: 'MAP', t: 'Mapping', icon: 'account_tree', who: 'fulfillment / leader', unit: 'task' },
+  { id: 'TPL', t: 'Template', icon: 'dashboard_customize', who: 'leader / người dựng template', unit: 'task' },
+  { id: 'FILE', t: 'Files in', icon: 'brush', who: 'designer', unit: 'task' },
+  { id: 'REVIEW', t: 'Duyệt mẫu', icon: 'fact_check', who: 'leader', unit: 'task' },
+  { id: 'HANDOFF', t: 'Duyệt sản xuất', icon: 'factory', who: 'fulfillment', unit: 'đơn' },
+  { id: 'SENT', t: 'Đã chuyển xưởng', icon: 'local_shipping', who: 'theo dõi', unit: 'đơn' },
+]
+const urg = t => t.due === null ? 'OK' : t.due < 0 ? 'OVER' : t.due <= 4 ? 'SOON' : 'OK'
+function streamOf(t) {
+  if (t.status === 'DONE') return 'HANDOFF'
+  if (t.issues.includes('NO_SUPPLIER')) return 'MAP'
+  if (t.issues.includes('NO_TEMPLATE')) return 'TPL'
+  if (t.status === 'REVIEW') return 'REVIEW'
+  return 'FILE'
+}
+const byUrg = (what, sub) => [
+  { id: 'OVER', title: `${what} gấp`, sub: `${sub} — đã quá hạn`, tone: 'bad', test: t => urg(t) === 'OVER' },
+  { id: 'SOON', title: 'Sắp quá hạn', sub: `${sub} — còn dưới 4h`, tone: 'warn', test: t => urg(t) === 'SOON' },
+  { id: 'OK', title: 'Còn hạn', sub, tone: 'idle', test: () => true },
+]
+const GROUPS = {
+  FILE: [
+    { id: 'FI_URGENT', title: 'Files in gấp', sub: 'quá hạn, chưa có file in', tone: 'bad', test: t => t.status !== 'REJECTED' && t.status !== 'ASK_CUSTOMER' && urg(t) === 'OVER' },
+    { id: 'FI_FIX_URGENT', title: 'Files in cần sửa gấp', sub: 'bị trả lại, đã quá hạn', tone: 'bad', test: t => t.status === 'REJECTED' && urg(t) === 'OVER' },
+    { id: 'FI_SOON', title: 'Sắp quá hạn', sub: 'còn dưới 4h', tone: 'warn', test: t => t.status !== 'REJECTED' && t.status !== 'ASK_CUSTOMER' && urg(t) === 'SOON' },
+    { id: 'FI_FIX', title: 'Cần sửa', sub: 'bị trả lại, còn hạn', tone: 'warn', test: t => t.status === 'REJECTED' },
+    { id: 'FI_ASK', title: 'Chờ khách trả lời', sub: 'đang hỏi khách', tone: 'idle', test: t => t.status === 'ASK_CUSTOMER' },
+    { id: 'FI_OK', title: 'Còn hạn', sub: 'mới / đã giao / đang làm', tone: 'idle', test: () => true },
+  ],
+  MAP: byUrg('Cần mapping', 'chưa gán xưởng + SKU xưởng'),
+  TPL: byUrg('Thiếu template', 'chưa có template in'),
+  REVIEW: [
+    { id: 'RV_URGENT', title: 'Quá hạn — cần duyệt gấp', sub: 'đã quá hạn', tone: 'bad', test: t => urg(t) === 'OVER' },
+    { id: 'RV_SOON', title: 'Sắp quá hạn — cần duyệt', sub: 'còn dưới 4h', tone: 'warn', test: t => urg(t) === 'SOON' },
+    { id: 'RV_OK', title: 'Còn hạn', sub: 'chờ duyệt', tone: 'idle', test: () => true },
+  ],
+  HANDOFF: [
+    { id: 'HO_URGENT', title: 'Quá hạn — cần gửi xưởng gấp', sub: 'đã quá hạn', tone: 'bad', test: o => o.urg === 'OVER' },
+    { id: 'HO_SOON', title: 'Sắp quá hạn', sub: 'còn dưới 4h', tone: 'warn', test: o => o.urg === 'SOON' },
+    { id: 'HO_OK', title: 'Còn hạn', sub: 'chờ gửi xưởng', tone: 'idle', test: () => true },
+  ],
+  SENT: [],
+}
+const groupOf = (stream, t) => GROUPS[stream].find(g => g.test(t))
+const gIcon = g => g.tone === 'bad' ? 'local_fire_department' : g.tone === 'warn' ? 'schedule' : 'check_circle'
+const streamPool = id => id === 'HANDOFF' ? HANDOFF_ORDERS : TASKS.filter(t => streamOf(t) === id)
+function visibleC() {
+  return streamPool(state.stream)
+    .filter(t => !state.group || groupOf(state.stream, t).id === state.group)
+    .filter(t => state.stream === 'HANDOFF' || state.ready === 'ALL' || t.ready === state.ready)
+    .filter(t => state.stream === 'HANDOFF' || !state.mine || t.mine)
+    .filter(t => state.stream === 'HANDOFF' || !state.q || (t.key + ' ' + t.product + ' ' + t.custom).toLowerCase().includes(state.q.toLowerCase()))
+}
+function renderStepperC() {
+  document.getElementById('stepper').innerHTML = STREAMS.map((s, i) => {
+    const pool = streamPool(s.id)
+    const n = s.id === 'SENT' ? 48 : pool.length
+    const hot = s.id === 'SENT' ? 0 : pool.filter(t => (s.id === 'HANDOFF' ? t.urg : urg(t)) === 'OVER').length
+    const on = s.id === state.stream
+    return `${i ? '<span class="ms chev">chevron_right</span>' : ''}
+      <div class="step ${on ? 'on' : ''}">
+        <button onclick="setStream('${s.id}')" title="${i + 1}. ${s.t} · ${s.who}">
+          <span class="c"><span class="ms">${s.icon}</span></span>
+          <span class="tx"><span class="t">${s.t}</span><span class="cnt"><span class="k">${n}</span>${hot ? `<span class="g">${hot} gấp</span>` : ''}</span></span>
+        </button>
+      </div>`
+  }).join('')
+}
+function renderPriorityC(el) {
+  const s = STREAMS.find(x => x.id === state.stream)
+  if (state.stream === 'SENT') {
+    el.innerHTML = `<div class="ih"><span class="ms" style="color:var(--onv)">${s.icon}</span>${s.t} <span class="sub">${s.who} · 48 đơn · nhóm theo trạng thái gửi xưởng, chọn ở hàng dưới</span></div>`
+    return
+  }
+  const pool = streamPool(state.stream).filter(t => state.stream === 'HANDOFF' || !state.mine || t.mine)
+  const gs = GROUPS[state.stream]
+  const cnt = g => pool.filter(t => groupOf(state.stream, t) === g).length
+  const extra = state.stream === 'HANDOFF' ? '' : `<span class="scope"><span class="sub">Lọc thêm:</span>${['AUTO', 'LOW', 'MANUAL'].map(r => `<button class="chip ${state.ready === r ? 'on' : ''}" onclick="setReady(state.ready === '${r}' ? 'ALL' : '${r}')"><span class="ms" style="font-size:14px">${READY[r].icon}</span>${READY[r].label}</button>`).join('')}<button class="chip ${state.mine ? 'on' : ''}" onclick="toggleMine()"><span class="ms" style="font-size:14px">person</span>Của tôi</button></span>`
+  el.innerHTML = `<div class="ih"><span class="ms" style="color:var(--onv)">${s.icon}</span>${s.t} <span class="sub">${s.who} · ${pool.length} ${s.unit} · nhóm ưu tiên từ trái sang phải, bấm để lọc</span>${extra}</div>
+    <div class="prio">
+      <button class="pchip ${!state.group ? 'on' : ''}" onclick="setGroup(null)">Tất cả <span class="n">${pool.length}</span></button>
+      ${gs.map(g => { const n = cnt(g); return `<button class="pchip ${g.tone} ${state.group === g.id ? 'on' : ''} ${n ? '' : 'zero'}" onclick="setGroup('${g.id}')" title="${g.sub}"><span class="ms">${gIcon(g)}</span>${g.title} <span class="n">${n}</span></button>` }).join('')}
+    </div>`
+}
+const emptyHtmlC = () => `<div class="empty">Không có task nào trong nhóm này. <a href="#" style="color:var(--secondary)" onclick="setGroup(null);return false">Xem cả luồng</a></div>`
+function queueListHtmlC(v) {
+  if (state.group) return v.sort(byDue).map(rowHtml).join('')
+  return GROUPS[state.stream].map(g => {
+    const rows = v.filter(t => groupOf(state.stream, t) === g).sort(byDue)
+    return rows.length ? `<div class="grp ${g.tone}"><span>${g.title}</span><span>${rows.length}</span></div>${rows.map(rowHtml).join('')}` : ''
+  }).join('')
+}
+function queueHtmlC() {
+  const v = visibleC()
+  const s = STREAMS.find(x => x.id === state.stream), g = state.group ? GROUPS[state.stream].find(x => x.id === state.group) : null
+  return `<aside class="card queue">
+    <div class="qh"><span class="ms" style="font-size:18px;color:${g && g.tone === 'bad' ? 'var(--error)' : 'var(--onv)'}">${g ? gIcon(g) : s.icon}</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${g ? g.title : s.t}</span> <span class="n" id="qcount" style="font-weight:500;color:var(--onv)">${v.length}</span><span class="sub" title="Quá hạn và gần hạn lên trước" style="white-space:nowrap">hạn gần lên trước</span></div>
+    <div class="qs"><label class="search"><span class="ms" style="color:var(--onv)">search</span><input placeholder="Tìm task ID, SKU, tên in…" value="${state.q}" oninput="setQ(this.value)"></label></div>
+    <div id="qlist" style="padding:4px;display:flex;flex-direction:column;gap:4px">${queueListHtmlC(v) || emptyHtmlC()}</div>
+    <div class="more">Xem thêm: <a href="#">Đã duyệt</a> · <a href="#">Đã huỷ</a></div>
+  </aside>`
+}
+function groupedC(stream, items, renderRows) {
+  const gs = GROUPS[stream]
+  const groups = state.group ? [gs.find(x => x.id === state.group)] : gs
+  return groups.map(g => {
+    const rows = items.filter(t => groupOf(stream, t) === g)
+    return rows.length ? `<div class="gh ${g.tone}"><span class="ms">${gIcon(g)}</span>${g.title}<span class="n">${rows.length}</span></div>${renderRows(rows)}<div style="height:16px"></div>` : ''
+  }).join('') || `<div class="card" style="padding:24px;color:var(--onv)">Không có gì trong nhóm này.</div>`
+}
+function renderBodyC(el, sel) {
+  if (state.stream === 'SENT') { el.innerHTML = sentHtml(); return }
+  if (state.stream === 'HANDOFF') { el.innerHTML = groupedC('HANDOFF', visibleC(), rows => handoffHtml(rows)); return }
+  const right = state.stream === 'REVIEW'
+    ? `<div>${groupedC('REVIEW', visibleC().sort(byDue), rows => `<div class="grid3">${rows.map(reviewCard).join('')}</div>`)}</div>`
+    : workspaceHtml(sel)
+  el.innerHTML = `<div class="body">${queueHtmlC()}${right}</div>`
+}
+
+function render() { renderStepper(); renderIssues(); renderTabs(); renderFilters(); renderBody() }
+render()
+</script>
+</body>
+</html>

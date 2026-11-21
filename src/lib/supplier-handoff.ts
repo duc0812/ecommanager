@@ -87,7 +87,7 @@ function waitingForMappingWhere() {
 }
 
 const LIVE_PUSHES = { where: { status: { in: ACTIVE_PUSH_STATUSES } }, select: { supplierId: true, status: true, exportMarked: true, prevExportJson: true } } as const
-const TASK_GATE = { select: { shopifyLineId: true, status: true, updatedAt: true } } as const
+const TASK_GATE = { select: { shopifyLineId: true, status: true, updatedAt: true, dueAt: true } } as const
 
 /** Oldest first, the orders holding a line that can go now, of this supplier when one is named. The count and the cost are not limited by MAX_CARDS. */
 async function ordersWithReadyLines(where: object, supplierId?: string) {
@@ -103,16 +103,35 @@ async function ordersWithReadyLines(where: object, supplierId?: string) {
   return orders.map(o => ({ ...o, ready: readyLines(o).filter(l => !supplierId || l.resolvedSupplierId === supplierId) })).filter(o => o.ready.length > 0)
 }
 
-export async function countPendingHandoff(opts: { storeIds?: string[] | null } = {}): Promise<number> {
+/** The order's production urgency is its design due: the earliest due among its tasks that are still live. */
+export function handoffDueAt(tasks: { status: string; dueAt: Date | null }[]): Date | null {
+  const dues = tasks.filter(t => t.status !== 'CANCELLED' && t.dueAt).map(t => t.dueAt!.getTime())
+  return dues.length ? new Date(Math.min(...dues)) : null
+}
+
+type HandoffScope = { storeIds?: string[] | null; now?: Date }
+
+/** One pass over the pending hand-off orders: how many wait, and how many of them are past their design due. */
+export async function pendingHandoffStats(opts: HandoffScope = {}): Promise<{ count: number; overdue: number }> {
   const where = opts.storeIds ? { AND: [pendingHandoffWhere(), { storeId: { in: opts.storeIds } }] } : pendingHandoffWhere()
-  return (await ordersWithReadyLines(where)).length
+  const now = (opts.now ?? new Date()).getTime()
+  const orders = await ordersWithReadyLines(where)
+  return { count: orders.length, overdue: orders.filter(o => (handoffDueAt(o.designTasks)?.getTime() ?? Infinity) < now).length }
+}
+
+export async function countPendingHandoff(opts: HandoffScope = {}): Promise<number> {
+  return (await pendingHandoffStats(opts)).count
+}
+
+export async function countOverdueHandoff(opts: HandoffScope = {}): Promise<number> {
+  return (await pendingHandoffStats(opts)).overdue
 }
 
 type StateOrder = {
   id: string; storeId: string; pipelineStatus: string; financialStatus: string; fulfillmentStatus: string | null; designReady: boolean
   supplierHandoffAt: Date | null; supplierHandoffMode: string | null; supplierHandoffById: string | null
   lines: Array<{ id: string; shopifyLineId: string; sku: string | null; productTitle: string; shopifyProductType: string | null; resolvedSupplierId: string | null; resolvedSupplierSku: string | null; designDriveLink: string | null; exportedAt: Date | null; exportedToSupplierId: string | null }>
-  designTasks: Array<{ shopifyLineId: string; status: string; updatedAt: Date }>
+  designTasks: Array<{ shopifyLineId: string; status: string; updatedAt: Date; dueAt?: Date | null }>
   supplierPushes: Array<{ supplierId: string; status: string; exportMarked: boolean; prevExportJson: string | null }>
 }
 
@@ -378,6 +397,7 @@ async function buildCards(where: any, orderBy: any, opts: { checks?: boolean; se
         shipTo: [o.shippingCity, o.shippingStateCode ?? o.shippingState].filter(Boolean).join(', ') || null,
       },
       suppliers, lines, state, exportNote, sent: opts.sent?.get(o.id) ?? null,
+      dueAt: handoffDueAt(o.designTasks)?.toISOString() ?? null,
     })
   }
   return cards

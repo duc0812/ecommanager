@@ -1,7 +1,9 @@
 'use client'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { HandoffCard, Me } from './types'
 import { requestJson } from './model'
+import { HANDOFF_GROUPS, byDue, groupOf } from './streams'
+import { GroupHeader } from './PriorityRow'
 import type { HubTab } from '@/lib/handoff-shared'
 import { fmtUsd, hubView } from '@/lib/handoff-hub'
 import HubCard from './HubCard'
@@ -14,10 +16,15 @@ const TAB_KEY = 'design-studio.hub-tab'
 
 export const fmtDateTime = (iso: string) => new Date(iso).toLocaleString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric', hour: 'numeric', minute: '2-digit' })
 
-export default function HandoffGrid({ q, version, onOpenTask, onChanged }: {
+export default function HandoffGrid({ q, version, onOpenTask, onChanged, group = null, onGroupCounts }: {
   q: string; version: number; onOpenTask: (key: string) => void; onChanged: () => void
+  group?: string | null; onGroupCounts?: (counts: Record<string, number>) => void
 }) {
+  const countsRef = useRef(onGroupCounts)
+  countsRef.current = onGroupCounts
   const [data, setData] = useState<HandoffResponse | null>(null)
+  // The moment the list was loaded: the chip counts and the section grouping are both read against it, so they never disagree.
+  const [loadedAt, setLoadedAt] = useState(() => Date.now())
   const [tab, setTab] = useState<string | null>(() => {
     try { return window.localStorage.getItem(TAB_KEY) } catch { return null }
   })
@@ -38,6 +45,12 @@ export default function HandoffGrid({ q, version, onOpenTask, onChanged }: {
     if (!r.ok) { setError(r.status === 0 ? 'Mất kết nối tới máy chủ — bấm "Tải lại" để thử lại' : r.error); return }
     setError('')
     setData(r.data)
+    const now = Date.now()
+    setLoadedAt(now)
+    const counts: Record<string, number> = {}
+    for (const g of HANDOFF_GROUPS) counts[g.id] = 0
+    for (const c of r.data.pending) counts[groupOf(HANDOFF_GROUPS, { dueAt: c.dueAt }, now).id]++
+    countsRef.current?.(counts)
   }, [q, tab])
 
   useEffect(() => { load() }, [load, version])
@@ -57,7 +70,14 @@ export default function HandoffGrid({ q, version, onOpenTask, onChanged }: {
   const tabs = data?.tabs ?? []
   const selected = data?.selected ?? null
   const current = tabs.find(t => t.id === selected) ?? null
-  const pending = data?.pending ?? []
+  const pending = useMemo(() => data?.pending ?? [], [data])
+  const grouped = useMemo(() => {
+    const sorted = [...pending].sort((a, b) => byDue({ dueAt: a.dueAt }, { dueAt: b.dueAt }))
+    return HANDOFF_GROUPS
+      .filter(def => !group || def.id === group)
+      .map(def => ({ def, rows: sorted.filter(c => groupOf(HANDOFF_GROUPS, { dueAt: c.dueAt }, loadedAt).id === def.id) }))
+      .filter(g => g.rows.length > 0)
+  }, [pending, group, loadedAt])
   const me = data?.me ?? null
   const warned = selected ? pending.filter(c => hubView(c, selected).warnings.length > 0).length : 0
   const sendable = selected ? pending.filter(c => hubView(c, selected).sendableLines.length > 0).length : 0
@@ -113,12 +133,20 @@ export default function HandoffGrid({ q, version, onOpenTask, onChanged }: {
           <Icon name="task_alt" className="text-on-tertiary-container" />{q ? 'Không tìm thấy đơn nào đang chờ gửi xưởng.' : current ? `${current.name} không có đơn nào chờ gửi.` : 'Không có đơn nào chờ gửi xưởng.'}
         </div>
       )}
-      {selected && (
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,340px),1fr))] gap-md">
-          {pending.map(c => <HubCard key={c.order.id} c={c} tabId={selected} sheet={current?.channel === 'SHEET' && !!data?.sheetsConnected} me={me} onOpenTask={onOpenTask}
-            onSheet={id => setSheetDialog({ orderIds: [id] })} onChanged={changed} onError={fail} />)}
+      {!loading && !error && group && pending.length > 0 && grouped.length === 0 && (
+        <div className={`${card} p-lg text-body-sm text-on-surface-variant flex items-center gap-sm`}>
+          <Icon name="task_alt" className="text-on-tertiary-container" />Không có đơn nào trong nhóm này.
         </div>
       )}
+      {selected && grouped.map(({ def, rows }) => (
+        <div key={def.id} className="flex flex-col gap-sm">
+          <GroupHeader def={def} count={rows.length} />
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,340px),1fr))] gap-md">
+            {rows.map(c => <HubCard key={c.order.id} c={c} tabId={selected} sheet={current?.channel === 'SHEET' && !!data?.sheetsConnected} me={me} onOpenTask={onOpenTask}
+              onSheet={id => setSheetDialog({ orderIds: [id] })} onChanged={changed} onError={fail} />)}
+          </div>
+        </div>
+      ))}
       {sheetDialog && selected && (
         <SheetPushDialog supplierId={selected} orderIds={sheetDialog.orderIds} onClose={() => setSheetDialog(null)} onDone={() => { void load(); onChanged() }} />
       )}

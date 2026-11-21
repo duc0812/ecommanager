@@ -10,7 +10,7 @@ import { Icon, btn, card } from './ui'
 type ReviewResponse = { cards: ReviewCard[]; me: Me }
 
 /** The row above the review workspace: how many wait, and one button for the ones the machine finds nothing wrong with. */
-export default function ReviewToolbar({ total, version, onApproved }: { total: number; version: number; onApproved: (keys: string[]) => void }) {
+export default function ReviewToolbar({ total, version, onApproved, only }: { total: number; version: number; onApproved: (keys: string[]) => void; only?: string[] }) {
   const toast = useToast()
   const [cards, setCards] = useState<ReviewCard[]>([])
   const [me, setMe] = useState<Me | null>(null)
@@ -26,11 +26,13 @@ export default function ReviewToolbar({ total, version, onApproved }: { total: n
 
   const clean = useMemo(() => {
     if (!me) return []
+    const allowed = only ? new Set(only) : null
     return cards.filter(c => {
+      if (allowed && !allowed.has(c.task.taskKey)) return false
       const d = { task: c.task, line: c.line, template: c.template ?? null, slots: c.slots, library: c.library ?? null, profile: c.profile ?? null, me }
       return reviewVerdict(d, machineQa(d)).status === 'ok'
     }).map(c => c.task.taskKey)
-  }, [cards, me])
+  }, [cards, me, only])
 
   async function approveClean() {
     if (batch || clean.length === 0) return
