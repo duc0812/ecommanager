@@ -139,3 +139,17 @@ Trạng thái và chuyển trạng thái; cách tính readiness; `Queue` row; `T
 - Số đếm cho bước Đã chuyển xưởng (có thể bỏ số hoặc thêm một count rẻ).
 - Kiểu dáng chip / tiêu đề nhóm trong giới hạn token hiện có; cách stepper xuống dòng ở màn hẹp.
 - Fixture cho integration test của hai cờ `hasSupplier` / `hasTemplate` và của `dueAt` trên thẻ gửi xưởng.
+
+## 8. Điều chỉnh khi code trên origin/main (11/21/2026)
+
+1. **Dữ kiện mapping/template lấy từ `TaskRow.mapping`** (`'READY' | 'UNMAPPED' | 'NO_TEMPLATE'`, server tính bằng `mappingStates` trong `src/lib/mapping-state.ts`). Không thêm trường `hasSupplier`/`hasTemplate` mới: luồng Mapping = `mapping === 'UNMAPPED'`; luồng Template = `mapping === 'NO_TEMPLATE'` và trạng thái NEW/ASSIGNED.
+2. **Dropship là bước thứ bảy của stepper** ("Dropship", sau Đã chuyển xưởng, số đếm = số dropship hiện có, không có "gấp"), chiếm full width với `DropshipGrid` hiện có; hàng ưu tiên chỉ có tiêu đề. Task dropship (`TaskRow.dropship`, CANCELLED) không thuộc luồng task nào.
+3. **Duyệt mẫu giữ workspace từng task một như hiện nay** (`ReviewToolbar` + `ReviewWorkspace`): hàng đợi bên trái gom theo nhóm ưu tiên và điều khiển `reviewSel`; "Mở task" (`onOpenTask` của workspace) hiện `TaskWorkspace` đầy đủ thay cho `ReviewWorkspace`, kèm nút "← Màn duyệt" để quay lại. Nút duyệt nhanh của `ReviewToolbar` chỉ áp cho các task duyệt mẫu đang được liệt kê (nhóm + bộ lọc phụ).
+4. **Bộ lọc phụ** trong `PriorityRow`: các chip readiness giữ nguyên ngữ nghĩa hiện nay (`matchesQueueFilter`, `readyLabel`, nhãn "Auto" ở Duyệt mẫu), thêm "Của tôi" (phía client) và, chỉ ở Files in, "Cần làm artwork" (mỗi sản phẩm một hàng, `artworkProducts`). Hàng chip và nút "Của tôi" riêng của hàng đợi bị bỏ; ô tìm kiếm, các mục thu gọn, nhãn store và hàng đã gửi xưởng vẫn giữ.
+5. **Bộ lọc store** vẫn ở header và áp cho các luồng task (MAP/TPL/FILE/REVIEW), đúng như đang áp cho work/review. **Seller** (`useSellerReadOnly`) chỉ thấy bốn luồng đó.
+6. **Tìm kiếm:** ô tìm của hàng đợi vẫn là tìm toàn cục (các mục tìm kiếm + dòng đã gửi xưởng) trong bốn luồng task; Duyệt sản xuất có ô tìm riêng phía trên hub, gắn cùng `q`; Đã chuyển xưởng giữ ô của `SentGrid` (gắn `q` như hiện nay); Dropship không có (như hiện nay).
+7. **Dải trong workspace:** `Banners` hiện có (Bị trả lại / Đang chờ khách trả lời, kèm chi tiết sự kiện) giữ nguyên; các ghi chú `Flags` mới hiện sau chúng. Pill "Chưa mapping" / "Thiếu template" sẵn có của hàng đợi đáp ứng pill ở hàng của mục 5.1.
+8. **Gom nhóm Duyệt sản xuất** áp trong tab nhà cung cấp đang chọn của hub sản xuất; chip ưu tiên của Duyệt sản xuất đếm các thẻ đã tải của tab đó; "Tất cả" = tổng của chúng.
+9. Nhánh cũ `worktree-design-tasks-streams` (dựng trên `main` local đã cũ) chỉ để tham khảo; `streams.ts`, `StreamStepper.tsx`, `PriorityRow.tsx`, `Flags.tsx`, `tests/design-streams.test.ts` được chép từ đó làm điểm xuất phát và chỉnh lại ở Task 1 và Task 3.
+
+Hai lỗi phát hiện khi review đã sửa trong commit 0c13706: các lần ghi URL của chính trang không bị đọc lại như một lần task đến; bước "Duyệt sản xuất" đang chọn giữ số đếm theo nhóm.
