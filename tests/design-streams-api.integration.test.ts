@@ -24,11 +24,13 @@ describe('handoffDueAt', () => {
 
 describe('pending handoff orders carry the design due', () => {
   let token = ''
+  let storeId = ''
   beforeAll(async () => {
     process.env.AUTH_SECRET = 'test-secret-that-is-long-enough-32chars'
     await prisma.order.deleteMany({ where: { projectId: PROJECT } })
     await prisma.project.upsert({ where: { id: PROJECT }, create: { id: PROJECT, name: 'DSP2', startDate: new Date('2026-06-01') }, update: {} })
     const store = await prisma.shopifyStore.upsert({ where: { shop: SHOP }, create: { shop: SHOP, projectId: PROJECT }, update: {} })
+    storeId = store.id
     await prisma.supplier.upsert({ where: { code: 'dsp2_sup' }, create: { id: SUP, name: 'Dsp2 Factory', code: 'dsp2_sup' }, update: {} })
     await prisma.supplierProduct.create({ data: { supplierId: SUP, sku: 'DSP2-TUMBLER', baseCost: 6 } })
     const perms = DEFAULT_ROLE_PERMISSIONS.ADMIN
@@ -68,11 +70,12 @@ describe('pending handoff orders carry the design due', () => {
 
   it('the hub card shows the earliest non-cancelled due and the order counts as overdue', async () => {
     expect(await countPendingHandoff()).toBeGreaterThanOrEqual(1)
+    expect(await countPendingHandoff({ storeIds: [storeId] })).toBe(1)
     const hub = await listHandoffHub({ q: 'DSP2' })
     const card = hub.pending.find(c => c.order.id === ORDER)!
     expect(card.dueAt).toBe('2026-11-02T00:00:00.000Z')
-    const before = await countOverdueHandoff({ now: new Date('2026-10-15T00:00:00Z') })
-    expect(await countOverdueHandoff({ now: new Date('2026-11-03T00:00:00Z') })).toBe(before + 1)
+    expect(await countOverdueHandoff({ storeIds: [storeId], now: new Date('2026-10-15T00:00:00Z') })).toBe(0)
+    expect(await countOverdueHandoff({ storeIds: [storeId], now: new Date('2026-11-03T00:00:00Z') })).toBe(1)
   })
   it('GET /api/design-studio/tasks returns handoffOverdue', async () => {
     const req = new NextRequest('http://x/api/design-studio/tasks')

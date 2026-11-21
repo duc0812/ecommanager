@@ -143,10 +143,10 @@ function DesignTasks() {
   const [taskOpen, setTaskOpen] = useState(false)
   const [pinned, setPinned] = useState<string | null>(null)
   const [now, setNow] = useState(() => Date.now())
-  // The hand-off and sent lists are not filtered by store, so the picker is drawn only on the task streams it works on and the list loaded
-  // beside the hand-off list is not narrowed by a pick that cannot be seen there.
+  // The hand-off and sent lists are not filtered by store, so the picker is drawn only on the task streams; the task list keeps the pick on
+  // every stream so the stepper counts do not change when another stream is opened.
   const storeFiltered = isTaskStream(stream)
-  const listStoreId = storeFiltered ? storeFilter.storeId : null
+  const listStoreId = storeFilter.storeId
   const [reviewVersion, setReviewVersion] = useState(0)
   const onDropship = stream === 'DROPSHIP'
   useEffect(() => {
@@ -280,6 +280,7 @@ function DesignTasks() {
     setPinned(null)
     if (id !== stream) setHandoffGroupCounts(null)
     if (id !== 'FILE') setFilter(f => (f === 'NEEDS_ARTWORK' ? 'ALL' : f))
+    if (id === 'MAP' || id === 'TPL') setFilter(f => (f === 'AUTO' || f === 'LOW' || f === 'MANUAL' ? 'ALL' : f))
   }, [stream])
 
   const selectTask = useCallback((key: string) => {
@@ -465,7 +466,7 @@ function DesignTasks() {
           titleOnly={stream === 'SENT' || stream === 'DROPSHIP'}
           secondary={isTaskStream(stream) ? {
             filter, onFilter: setFilter, autoLabel: stream === 'REVIEW' ? 'Auto' : READY_META.AUTO.label,
-            counts: chipCounts, needsArtwork: stream === 'FILE', mine, onMine: () => setMine(m => !m),
+            counts: chipCounts, readiness: stream !== 'MAP' && stream !== 'TPL', needsArtwork: stream === 'FILE', mine, onMine: () => setMine(m => !m),
           } : null} />
       </div>
 
@@ -476,7 +477,7 @@ function DesignTasks() {
             <SentLinePanel key={currentLine.lineId} line={currentLine} onReopened={key => { setSelLine(null); selectTask(key); loadList() }} />
           ) : (
             <div className="flex flex-col gap-md min-w-0">
-              {baseLoaded && !sel && !listLoading && !listError && (
+              {baseLoaded && !sel && !listLoading && !listError && !filtered && (
                 <div className={`${card} p-lg text-body-sm text-on-surface-variant`}>
                   {baseTasks.length === 0 ? 'Chưa có task nào. Bấm nút đồng bộ ở góc phải để tạo task từ các đơn đang chờ design.' : 'Luồng này không có task nào.'}
                 </div>

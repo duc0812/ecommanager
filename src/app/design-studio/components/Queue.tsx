@@ -1,13 +1,11 @@
 'use client'
 import { useState } from 'react'
 import type { SentLineRow, TaskRow, TaskStatus } from './types'
-import { readyLabel, timeLeft, type QueueFilter, type Tone } from './model'
+import { readyLabel, timeLeft, type Tone } from './model'
 import { Avatar, DROPSHIP_META, ErrorBanner, Icon, Note, Pill, READY_META, TEXT_TONE, btn, card, fmtDate } from './ui'
 import { StoreLabel } from '@/components/StoreFilter'
 
 const SENT_SECTION = 'Đã gửi xưởng — chưa có task'
-
-export type { QueueFilter }
 
 export type QueueGroup = { key: string; title: string; tone: Tone; rows: TaskRow[] }
 

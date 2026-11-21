@@ -31,7 +31,7 @@ export function GroupHeader({ def, count }: { def: PriorityGroupDef<any>; count:
 
 type Secondary = {
   filter: SecondaryFilter; onFilter: (f: SecondaryFilter) => void; autoLabel: string
-  counts: Record<SecondaryFilter, number>; needsArtwork: boolean; mine: boolean; onMine: () => void
+  counts: Record<SecondaryFilter, number>; readiness: boolean; needsArtwork: boolean; mine: boolean; onMine: () => void
 }
 
 export default function PriorityRow({ stream, total, unit, groups, group, onGroup, secondary, titleOnly }: {
@@ -55,7 +55,7 @@ export default function PriorityRow({ stream, total, unit, groups, group, onGrou
         {secondary && !titleOnly && (
           <div className="ml-auto flex flex-wrap items-center gap-xs">
             <span className="text-label-sm text-on-surface-variant">Lọc thêm:</span>
-            {READINESS.map(r => (
+            {secondary.readiness && READINESS.map(r => (
               <button
                 key={r}
                 type="button"
