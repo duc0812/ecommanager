@@ -41,7 +41,7 @@ export async function GET(req: NextRequest) {
 
   const [total, orders] = await Promise.all([
     countOrders(baseFilter),
-    ordersWithComputedPL({ ...baseFilter, page, pageSize }),
+    ordersWithComputedPL({ ...baseFilter, page, pageSize }, { tracking: true }),
   ])
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize))

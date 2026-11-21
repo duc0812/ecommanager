@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import Sidebar from '@/components/Sidebar'
 import { PIPELINE_STATUSES, STATUS_LABELS, STATUS_COLORS, type PipelineStatus } from '@/lib/pipeline-status'
 import { computeWarnings, WARNING_TYPES, WARNING_META, type WarningType } from '@/lib/order-warnings'
+import TrackingNumbers, { type TrackingNumberItem } from '@/components/orders/TrackingNumbers'
 import { DESIGN_STATUS_META, type LineDesignStatus } from '@/lib/design-status'
 import PgprintsPushModal from '@/components/PgprintsPushModal'
 import StoreFilter, { StoreLabel } from '@/components/StoreFilter'
@@ -77,6 +78,7 @@ type OrderRow = {
     isEstimated: boolean
   }
   mappingSummary: { mapped: number; total: number; complete: boolean }
+  tracking?: TrackingNumberItem[]
   orderType: string           // "CUSTOM" | "NON_CUSTOM" | "UNKNOWN"
   trelloCardId: string | null
   trelloCardUrl: string | null
@@ -814,6 +816,7 @@ export default function OrdersPage() {
                               ))}
                             </div>
                           )}
+                          <TrackingNumbers items={o.tracking} />
                         </>
                       )
                     })()}
@@ -901,6 +904,7 @@ export default function OrdersPage() {
                       </span>
                     )}
                   </div>
+                  <TrackingNumbers items={selectedOrder.tracking} />
                 </div>
                 <div className="flex items-center gap-sm">
                   {pgprintsButton(selectedOrder)}

@@ -6,6 +6,8 @@ const testDatabaseUrl = process.env.TEST_DATABASE_URL ?? 'file:./test.db'
 
 export default defineConfig({
   plugins: [tsconfigPaths()],
+  // tsconfig keeps jsx: preserve for Next; tests that render a component need oxc to compile JSX.
+  oxc: { jsx: { runtime: 'automatic' } },
   test: {
     globals: true,
     environment: 'node',
