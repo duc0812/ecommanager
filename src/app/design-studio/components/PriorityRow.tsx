@@ -2,7 +2,7 @@
 
 import type { Tone } from './model'
 import type { Readiness } from './types'
-import type { PriorityGroupDef, StreamDef } from './streams'
+import type { PriorityGroupDef, SecondaryFilter, StreamDef } from './streams'
 import { card, chip, Icon, READY_META, TEXT_TONE } from './ui'
 
 const TONE_ICON: Record<Tone, string> = { bad: 'local_fire_department', warn: 'schedule', idle: 'check_circle', ok: 'check_circle', brand: 'check_circle' }
@@ -14,8 +14,6 @@ const CHIP_TONE: Record<Tone, string> = {
   ok: 'bg-tertiary/15 text-tertiary',
   brand: 'bg-secondary/10 text-secondary',
 }
-
-export type SecondaryFilter = 'ALL' | 'AUTO' | 'LOW' | 'MANUAL' | 'NEEDS_ARTWORK'
 
 const READINESS: Readiness[] = ['AUTO', 'LOW', 'MANUAL']
 
@@ -31,7 +29,10 @@ export function GroupHeader({ def, count }: { def: PriorityGroupDef<any>; count:
 
 type Secondary = {
   filter: SecondaryFilter; onFilter: (f: SecondaryFilter) => void; autoLabel: string
-  counts: Record<SecondaryFilter, number>; readiness: boolean; needsArtwork: boolean; mine: boolean; onMine: () => void
+  counts: Record<SecondaryFilter, number>
+  /** The chips this stream offers (`secondaryFiltersOf`); "Của tôi" is always there. */
+  filters: SecondaryFilter[]
+  mine: boolean; onMine: () => void
 }
 
 export default function PriorityRow({ stream, total, unit, groups, group, onGroup, secondary, titleOnly }: {
@@ -44,6 +45,20 @@ export default function PriorityRow({ stream, total, unit, groups, group, onGrou
   secondary: Secondary | null
   titleOnly?: boolean
 }) {
+  const groupChip = ({ def, count }: { def: PriorityGroupDef<any>; count: number }) => (
+    <button
+      key={def.id}
+      type="button"
+      aria-pressed={group === def.id}
+      title={def.sub}
+      onClick={() => onGroup(group === def.id ? null : def.id)}
+      className={`inline-flex items-center gap-xs rounded-full px-md py-xs text-label-sm font-semibold ${CHIP_TONE[def.tone]} ${count === 0 ? 'opacity-50' : ''} ${group === def.id ? 'ring-2 ring-secondary' : ''}`}
+    >
+      <Icon name={TONE_ICON[def.tone]} className="text-[14px]" />
+      {def.title}
+      <span className="rounded-full bg-surface-container-lowest px-sm text-on-surface">{count}</span>
+    </button>
+  )
   return (
     <section className={card}>
       <div className={`flex items-center gap-sm px-lg py-sm ${titleOnly ? '' : 'border-b border-outline-variant/20'}`}>
@@ -55,7 +70,7 @@ export default function PriorityRow({ stream, total, unit, groups, group, onGrou
         {secondary && !titleOnly && (
           <div className="ml-auto flex flex-wrap items-center gap-xs">
             <span className="text-label-sm text-on-surface-variant">Lọc thêm:</span>
-            {secondary.readiness && READINESS.map(r => (
+            {READINESS.filter(r => secondary.filters.includes(r)).map(r => (
               <button
                 key={r}
                 type="button"
@@ -67,7 +82,7 @@ export default function PriorityRow({ stream, total, unit, groups, group, onGrou
                 <span className="rounded-full bg-surface-container-lowest px-sm text-on-surface">{secondary.counts[r]}</span>
               </button>
             ))}
-            {secondary.needsArtwork && (
+            {secondary.filters.includes('NEEDS_ARTWORK') && (
               <button
                 type="button"
                 aria-pressed={secondary.filter === 'NEEDS_ARTWORK'}
@@ -85,7 +100,7 @@ export default function PriorityRow({ stream, total, unit, groups, group, onGrou
         )}
       </div>
       {!titleOnly && (
-        <div className="flex flex-wrap gap-xs px-lg py-sm">
+        <div className="flex flex-wrap items-center gap-xs px-lg py-sm">
           <button
             type="button"
             aria-pressed={group === null}
@@ -94,20 +109,9 @@ export default function PriorityRow({ stream, total, unit, groups, group, onGrou
           >
             Tất cả <span className="rounded-full bg-surface-container-lowest px-sm">{total}</span>
           </button>
-          {groups.map(({ def, count }) => (
-            <button
-              key={def.id}
-              type="button"
-              aria-pressed={group === def.id}
-              title={def.sub}
-              onClick={() => onGroup(group === def.id ? null : def.id)}
-              className={`inline-flex items-center gap-xs rounded-full px-md py-xs text-label-sm font-semibold ${CHIP_TONE[def.tone]} ${count === 0 ? 'opacity-50' : ''} ${group === def.id ? 'ring-2 ring-secondary' : ''}`}
-            >
-              <Icon name={TONE_ICON[def.tone]} className="text-[14px]" />
-              {def.title}
-              <span className="rounded-full bg-surface-container-lowest px-sm text-on-surface">{count}</span>
-            </button>
-          ))}
+          {groups.filter(g => !g.def.extra).map(groupChip)}
+          {groups.some(g => g.def.extra) && <span aria-hidden className="mx-xs h-5 w-px bg-outline-variant/40" />}
+          {groups.filter(g => g.def.extra).map(groupChip)}
         </div>
       )}
     </section>

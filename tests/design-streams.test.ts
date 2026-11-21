@@ -68,18 +68,26 @@ describe('groupTasks / counts', () => {
     task({ taskKey: 'e', status: 'NEW', mapping: 'UNMAPPED', dueAt: at(1) }),
     task({ taskKey: 'f', status: 'DONE', dueAt: at(-9) }),
     task({ taskKey: 'g', status: 'CANCELLED' }),
+    task({ taskKey: 'h', status: 'ASK_CUSTOMER', dueAt: at(-3) }),
+    task({ taskKey: 'i', status: 'REJECTED', dueAt: at(-1) }),
   ]
   it('groups only the stream\'s tasks, drops empty groups, sorts by due with null last', () => {
     const groups = groupTasks('FILE', tasks as any, null, NOW)
-    expect(groups.map(g => [g.def.id, g.rows.map((r: any) => r.taskKey)])).toEqual([['FI_URGENT', ['a', 'b']], ['FI_OK', ['c']], ['FI_DONE', ['f']]])
+    expect(groups.map(g => [g.def.id, g.rows.map((r: any) => r.taskKey)])).toEqual([
+      ['FI_URGENT', ['a', 'b']], ['FI_FIX_URGENT', ['i']], ['FI_ASK', ['h']], ['FI_OK', ['c']], ['FI_DONE', ['f']],
+    ])
     expect(groupTasks('FILE', tasks as any, 'FI_OK', NOW).map(g => g.def.id)).toEqual(['FI_OK'])
   })
-  it('stream counts: open tasks only, overdue per stream, handoff from the API numbers, SENT has no total', () => {
-    expect(streamCounts(tasks as any, { count: 7, overdue: 2 }, 3, NOW)).toEqual({
-      MAP: { total: 1, overdue: 0 }, TPL: { total: 0, overdue: 0 }, FILE: { total: 3, overdue: 2 },
+  it('stream counts: open tasks only, "gấp" = the red groups (an overdue task waiting on the customer is not gấp), SENT has no total', () => {
+    const counts = streamCounts(tasks as any, { count: 7, overdue: 2 }, 3, NOW)
+    expect(counts).toEqual({
+      MAP: { total: 1, overdue: 0 }, TPL: { total: 0, overdue: 0 }, FILE: { total: 5, overdue: 3 },
       REVIEW: { total: 1, overdue: 1 }, HANDOFF: { total: 7, overdue: 2 }, SENT: { total: null, overdue: 0 }, DROPSHIP: { total: 3, overdue: 0 },
     })
-    expect(groupCounts('FILE', tasks as any, NOW)).toMatchObject({ FI_URGENT: 2, FI_OK: 1, FI_SOON: 0 })
+    const file = groupCounts('FILE', tasks as any, NOW)
+    expect(file).toMatchObject({ FI_URGENT: 2, FI_FIX_URGENT: 1, FI_ASK: 1, FI_OK: 1, FI_SOON: 0, FI_DONE: 1 })
+    expect(counts.FILE.overdue).toBe(file.FI_URGENT + file.FI_FIX_URGENT)
+    expect(TASK_GROUPS.FILE.filter(d => d.extra).map(d => d.id)).toEqual(['FI_DONE'])
   })
   it('byDue puts null last', () => {
     expect([{ dueAt: null }, { dueAt: at(1) }, { dueAt: at(-1) }].sort(byDue).map(x => x.dueAt)).toEqual([at(-1), at(1), null])
@@ -98,7 +106,7 @@ describe('flagNotes', () => {
     expect(flagNotes({ ...base, stream: 'REVIEW', status: 'REVIEW' }, NOW)[0].title).toBe('Quá hạn 3h — cần duyệt gấp')
     expect(flagNotes({ ...base, dueAt: at(2) }, NOW).some(n => n.key === 'overdue')).toBe(false)
   })
-  it('blockers link to mapping / backlog / product page and say auto render is off', () => {
+  it('blockers link to mapping / templates / product page and say auto render is off', () => {
     const n = flagNotes({ ...base, dueAt: null, stream: 'MAP', mapping: 'UNMAPPED', status: 'NEW' }, NOW)
     expect(n).toHaveLength(1)
     expect(n[0]).toMatchObject({ key: 'blocked', tone: 'warn', icon: 'report', title: 'Đang vướng:' })
@@ -107,7 +115,7 @@ describe('flagNotes', () => {
     expect(n[0].links).toEqual([{ label: 'Mở Product Mapping', href: '/fulfillment/mapping' }])
     const t = flagNotes({ ...base, dueAt: null, stream: 'TPL', mapping: 'NO_TEMPLATE', status: 'ASSIGNED' }, NOW)[0]
     expect(t.text).toContain('chưa có template in')
-    expect(t.links).toEqual([{ label: 'Mở Tồn đọng', href: '/design-studio/backlog' }, { label: 'Mở trang sản phẩm', href: '/design-studio/products/p1' }])
+    expect(t.links).toEqual([{ label: 'Mở Templates', href: '/design-studio/templates' }, { label: 'Mở trang sản phẩm', href: '/design-studio/products/p1' }])
   })
   it('a started task without a template only gets the short size warning', () => {
     const n = flagNotes({ ...base, dueAt: null, mapping: 'NO_TEMPLATE', status: 'DOING' }, NOW)

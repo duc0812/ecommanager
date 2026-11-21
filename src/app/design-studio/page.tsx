@@ -28,29 +28,27 @@ import DriveHealthBanner from './components/DriveHealthBanner'
 import { ToastProvider, useToast } from './components/overlay'
 import { useShopifyRefresh } from './components/useShopifyRefresh'
 import StreamStepper from './components/StreamStepper'
-import PriorityRow, { type SecondaryFilter } from './components/PriorityRow'
+import PriorityRow from './components/PriorityRow'
 import Flags from './components/Flags'
-import { HANDOFF_GROUPS, STREAMS, TASK_GROUPS, TASK_STREAMS, groupCounts, groupTasks, streamCounts, streamOf, type StreamId } from './components/streams'
+import { HANDOFF_GROUPS, STREAMS, TASK_GROUPS, TASK_STREAMS, groupCounts, groupTasks, isTaskStream, secondaryFiltersOf, streamCounts, streamOf, type SecondaryFilter, type StreamId, type TaskStream } from './components/streams'
 import { ErrorBanner, Icon, READY_META, btn, card, fmtDate, fmtDateTime } from './components/ui'
 
-type TaskStreamId = 'MAP' | 'TPL' | 'FILE' | 'REVIEW'
 type ListResponse = { tasks: TaskRow[]; me: Me; handoffCount?: number; handoffOverdue?: number; lastSync?: { ranAt: string; trigger: string; error: string | null } | null; sentLines?: SentLineRow[] }
 
 const ALL_STREAMS: StreamId[] = STREAMS.map(s => s.id)
-
-const isTaskStream = (s: StreamId | null): s is TaskStreamId => s !== null && TASK_STREAMS.includes(s)
 
 function groupDefsOf(stream: StreamId): { id: string }[] {
   if (isTaskStream(stream)) return TASK_GROUPS[stream]
   return stream === 'HANDOFF' ? HANDOFF_GROUPS : []
 }
 
-function secondaryRows(rows: TaskRow[], stream: TaskStreamId, filter: SecondaryFilter, mineId: string | null): TaskRow[] {
-  const shown = filter === 'NEEDS_ARTWORK' && stream === 'FILE' ? artworkProducts(rows).rows : rows.filter(t => matchesQueueFilter(t, filter, stream === 'REVIEW'))
+function secondaryRows(rows: TaskRow[], stream: TaskStream, filter: SecondaryFilter, mineId: string | null): TaskRow[] {
+  const f = secondaryFiltersOf(stream).includes(filter) ? filter : 'ALL'
+  const shown = f === 'NEEDS_ARTWORK' ? artworkProducts(rows).rows : rows.filter(t => matchesQueueFilter(t, f, stream === 'REVIEW'))
   return mineId ? shown.filter(t => t.assigneeId === mineId) : shown
 }
 
-function streamRows(all: TaskRow[], stream: TaskStreamId, filter: SecondaryFilter, mineId: string | null, group: string | null, now: number) {
+function streamRows(all: TaskRow[], stream: TaskStream, filter: SecondaryFilter, mineId: string | null, group: string | null, now: number) {
   return groupTasks(stream, secondaryRows(all.filter(t => streamOf(t) === stream), stream, filter, mineId), group, now)
 }
 
@@ -140,7 +138,8 @@ function DesignTasks() {
   const workStream = stream === 'MAP' || stream === 'TPL' || stream === 'FILE'
   const [group, setGroup] = useState<string | null>(() => searchParams.get('group'))
   const activeGroup = group && groupDefsOf(stream).some(d => d.id === group) ? group : null
-  const [taskOpen, setTaskOpen] = useState(false)
+  // A deep link opens its task at once (the list may still be loading); the arrival below re-routes it to its stream and pins it.
+  const [taskOpen, setTaskOpen] = useState(() => rawStream === 'REVIEW' && !!paramTask)
   const [pinned, setPinned] = useState<string | null>(null)
   const [now, setNow] = useState(() => Date.now())
   // The hand-off and sent lists are not filtered by store, so the picker is drawn only on the task streams; the task list keeps the pick on
@@ -153,8 +152,8 @@ function DesignTasks() {
     if (readOnly || onDropship) return
     requestJson<{ unmapped: unknown[]; mapped: unknown[] }>('/api/design-studio/dropship').then(r => { if (r.ok) setDropshipCount(r.data.unmapped.length + r.data.mapped.length) })
   }, [readOnly, onDropship, reviewVersion])
-  const [sel, setSel] = useState<string | null>(null)
-  const [reviewSel, setReviewSel] = useState<string | null>(null)
+  const [sel, setSel] = useState<string | null>(paramTask)
+  const [reviewSel, setReviewSel] = useState<string | null>(() => (rawStream === 'REVIEW' ? paramTask : null))
   const [filter, setFilter] = useState<SecondaryFilter>('ALL')
   const [mine, setMine] = useState(false)
   const [q, setQ] = useState('')
@@ -170,7 +169,8 @@ function DesignTasks() {
   const loadListRef = useRef<() => void>(() => {})
   const onRecovered = useRef<() => void>(() => {})
   const detailReq = useRef(0)
-  const [arrived, setArrived] = useState<string | null>(null)
+  // `seen` is the last query string the page has acted on; `written` the ones it wrote itself and that have not landed yet.
+  const [seen, setSeen] = useState<string | null>(null)
   const written = useRef<string[]>([])
   const [driveVersion, setDriveVersion] = useState(0)
   const drivePoll = useRef({ key: '', attempts: 0 })
@@ -185,12 +185,14 @@ function DesignTasks() {
     return () => clearInterval(i)
   }, [])
 
+  // The hub and the sent list search on their own; the task list only follows the search box on the task streams.
+  const listQ = isTaskStream(stream) ? debouncedQ : ''
   const loadList = useCallback(async () => {
     if (retryTimer.current) { clearTimeout(retryTimer.current); retryTimer.current = null }
     const id = ++listReq.current
     setListLoading(true)
     const qs = new URLSearchParams()
-    if (debouncedQ) qs.set('q', debouncedQ)
+    if (listQ) qs.set('q', listQ)
     if (listStoreId) qs.set('storeId', listStoreId)
     const query = qs.toString()
     const r = await requestJson<ListResponse>(`/api/design-studio/tasks${query ? `?${query}` : ''}`)
@@ -211,14 +213,14 @@ function DesignTasks() {
     setListError('')
     if (recovered) onRecovered.current()
     setTasks(r.data.tasks)
-    if (!debouncedQ) setBaseTasks(r.data.tasks)
+    if (!listQ) setBaseTasks(r.data.tasks)
     setBaseLoaded(true)
     setSentLines(r.data.sentLines ?? [])
     setMe(r.data.me)
     setHandoffCount(r.data.handoffCount ?? 0)
     setHandoffOverdue(r.data.handoffOverdue ?? 0)
     setLastSync(r.data.lastSync ?? null)
-  }, [debouncedQ, listStoreId])
+  }, [listQ, listStoreId])
 
   const loadDetail = useCallback(async (key: string) => {
     const id = ++detailReq.current
@@ -260,7 +262,7 @@ function DesignTasks() {
     if (stream === 'HANDOFF') return HANDOFF_GROUPS.map(def => ({ def, count: handoffGroupCounts?.[def.id] ?? 0 }))
     return []
   }, [stream, secondary, now, handoffGroupCounts])
-  const rowTotal = stream === 'HANDOFF' && !handoffGroupCounts ? handoffCount : rowGroups.reduce((n, g) => n + g.count, 0)
+  const rowTotal = stream === 'HANDOFF' && !handoffGroupCounts ? handoffCount : rowGroups.reduce((n, g) => (g.def.extra ? n : n + g.count), 0)
   const chipCounts = useMemo(() => {
     const review = stream === 'REVIEW'
     const open = streamTasks.filter(t => t.status !== 'DONE' && (!mineId || t.assigneeId === mineId))
@@ -279,14 +281,16 @@ function DesignTasks() {
     setTaskOpen(false)
     setPinned(null)
     if (id !== stream) setHandoffGroupCounts(null)
-    if (id !== 'FILE') setFilter(f => (f === 'NEEDS_ARTWORK' ? 'ALL' : f))
-    if (id === 'MAP' || id === 'TPL') setFilter(f => (f === 'AUTO' || f === 'LOW' || f === 'MANUAL' ? 'ALL' : f))
+    if (isTaskStream(id)) {
+      const offered = secondaryFiltersOf(id)
+      setFilter(f => (f === 'ALL' || offered.includes(f) ? f : 'ALL'))
+    }
   }, [stream])
 
   const selectTask = useCallback((key: string) => {
     const t = tasks.find(x => x.taskKey === key) ?? baseTasks.find(x => x.taskKey === key)
     const s = t ? streamOf(t) : null
-    const target: TaskStreamId = isTaskStream(s) ? s : 'FILE'
+    const target: TaskStream = isTaskStream(s) ? s : 'FILE'
     const sameStream = target === stream
     if (!sameStream) switchStream(target)
     const listed = !!t && streamRows(baseTasks, target, filter, mineId, sameStream ? activeGroup : null, now).some(g => g.rows.some(r => r.taskKey === key))
@@ -305,45 +309,56 @@ function DesignTasks() {
     else selectTask(key)
   }, [flat, selectTask])
 
-  const arrivalPending = !!paramTask && arrived !== paramTask
+  const cur = searchParams.toString()
+  // True while the URL holds something the page has not acted on yet: a deep link, or an own write that just landed.
+  const urlPending = seen !== cur
 
   useEffect(() => {
-    if (!workStream || !baseLoaded || arrivalPending) return
+    if (!workStream || !baseLoaded || urlPending) return
     if (sel && (sel === pinned || flat.some(t => t.taskKey === sel))) return
     const next = flat[0]?.taskKey ?? null
     if (next !== sel) setSel(next)
-  }, [workStream, baseLoaded, arrivalPending, sel, pinned, flat])
+  }, [workStream, baseLoaded, urlPending, sel, pinned, flat])
 
   useEffect(() => {
-    if (stream !== 'REVIEW' || !baseLoaded || arrivalPending) return
+    if (stream !== 'REVIEW' || !baseLoaded || urlPending) return
     if (reviewSel && (reviewSel === pinned || flat.some(t => t.taskKey === reviewSel))) return
     const next = flat[0]?.taskKey ?? null
     if (next !== reviewSel) { setReviewSel(next); setTaskOpen(false) }
-  }, [stream, baseLoaded, arrivalPending, reviewSel, pinned, flat])
+  }, [stream, baseLoaded, urlPending, reviewSel, pinned, flat])
 
+  // The URL changed under the page: one of its own writes landed (nothing to do), or a link arrived — a task is routed to its
+  // stream; otherwise the stream and group in the link are applied. The first URL already seeded the stream and group state.
   useEffect(() => {
-    const landed = written.current.indexOf(searchParams.toString())
+    const landed = written.current.indexOf(cur)
     if (landed >= 0) {
       written.current.splice(0, landed + 1)
-      setArrived(paramTask)
+      setSeen(cur)
       return
     }
-    if (!baseLoaded || !paramTask || arrived === paramTask) return
-    setArrived(paramTask)
-    if (paramTask !== openKey) selectTask(paramTask)
-  }, [baseLoaded, paramTask, searchParams, arrived, openKey, selectTask])
+    if (seen === cur || !baseLoaded) return
+    const first = seen === null
+    setSeen(cur)
+    if (paramTask) { selectTask(paramTask); return }
+    if (first) return
+    const s = searchParams.get('stream') as StreamId | null
+    const target: StreamId = s && ALL_STREAMS.includes(s) ? s : 'FILE'
+    if (target !== stream) switchStream(target)
+    const g = searchParams.get('group')
+    if (g !== group) setGroup(g)
+  }, [cur, seen, baseLoaded, paramTask, searchParams, stream, group, switchStream, selectTask])
 
   useEffect(() => {
-    if (!baseLoaded || arrivalPending) return
+    if (!baseLoaded || urlPending) return
     const p = new URLSearchParams()
     if (stream !== 'FILE') p.set('stream', stream)
     if (activeGroup) p.set('group', activeGroup)
     if (openKey) p.set('task', openKey)
     const next = p.toString()
-    if (next === searchParams.toString() || written.current[written.current.length - 1] === next) return
+    if (next === cur || written.current[written.current.length - 1] === next) return
     written.current.push(next)
     router.replace(next ? `/design-studio?${next}` : '/design-studio', { scroll: false })
-  }, [baseLoaded, arrivalPending, stream, activeGroup, openKey, searchParams, router])
+  }, [baseLoaded, urlPending, stream, activeGroup, openKey, cur, router])
 
   const reload = useCallback(() => {
     loadList()
@@ -466,7 +481,7 @@ function DesignTasks() {
           titleOnly={stream === 'SENT' || stream === 'DROPSHIP'}
           secondary={isTaskStream(stream) ? {
             filter, onFilter: setFilter, autoLabel: stream === 'REVIEW' ? 'Auto' : READY_META.AUTO.label,
-            counts: chipCounts, readiness: stream !== 'MAP' && stream !== 'TPL', needsArtwork: stream === 'FILE', mine, onMine: () => setMine(m => !m),
+            counts: chipCounts, filters: secondaryFiltersOf(stream), mine, onMine: () => setMine(m => !m),
           } : null} />
       </div>
 
@@ -499,7 +514,7 @@ function DesignTasks() {
               <>
                 <ReviewToolbar total={reviewKeys.length} only={reviewKeys} version={reviewVersion} onApproved={keys => reviewMoved(keys, 'DONE')} />
                 {reviewSel ? (
-                  <ReviewWorkspace key={reviewSel} taskKey={reviewSel} position={{ index: Math.max(0, reviewKeys.indexOf(reviewSel)), total: reviewKeys.length }}
+                  <ReviewWorkspace key={reviewSel} taskKey={reviewSel} position={{ index: reviewKeys.indexOf(reviewSel), total: reviewKeys.length }}
                     onMoved={(key, to) => reviewMoved([key], to)} onOpenTask={selectTask} onChanged={reload} />
                 ) : !listLoading && (
                   <div className={`${card} p-lg text-body-sm text-on-surface-variant flex items-center gap-sm`}>
@@ -517,7 +532,6 @@ function DesignTasks() {
               <Icon name="search" className="text-[18px]" />
               <input value={q} onChange={e => setQ(e.target.value)} placeholder="Tìm đơn, task ID, SKU…" aria-label="Tìm đơn"
                 className="flex-1 min-w-0 bg-transparent text-[13px] text-on-surface outline-none" />
-              {listLoading && <Icon name="progress_activity" className="text-[16px] animate-spin" />}
             </label>
           </div>
           <HandoffGrid q={debouncedQ} version={reviewVersion} group={activeGroup} onGroupCounts={setHandoffGroupCounts} onOpenTask={selectTask} onChanged={reload} />

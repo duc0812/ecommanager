@@ -23,6 +23,8 @@ export default function HandoffGrid({ q, version, onOpenTask, onChanged, group =
   const countsRef = useRef(onGroupCounts)
   countsRef.current = onGroupCounts
   const [data, setData] = useState<HandoffResponse | null>(null)
+  // The moment the list was loaded: the chip counts and the section grouping are both read against it, so they never disagree.
+  const [loadedAt, setLoadedAt] = useState(() => Date.now())
   const [tab, setTab] = useState<string | null>(() => {
     try { return window.localStorage.getItem(TAB_KEY) } catch { return null }
   })
@@ -44,6 +46,7 @@ export default function HandoffGrid({ q, version, onOpenTask, onChanged, group =
     setError('')
     setData(r.data)
     const now = Date.now()
+    setLoadedAt(now)
     const counts: Record<string, number> = {}
     for (const g of HANDOFF_GROUPS) counts[g.id] = 0
     for (const c of r.data.pending) counts[groupOf(HANDOFF_GROUPS, { dueAt: c.dueAt }, now).id]++
@@ -69,13 +72,12 @@ export default function HandoffGrid({ q, version, onOpenTask, onChanged, group =
   const current = tabs.find(t => t.id === selected) ?? null
   const pending = useMemo(() => data?.pending ?? [], [data])
   const grouped = useMemo(() => {
-    const now = Date.now()
     const sorted = [...pending].sort((a, b) => byDue({ dueAt: a.dueAt }, { dueAt: b.dueAt }))
     return HANDOFF_GROUPS
       .filter(def => !group || def.id === group)
-      .map(def => ({ def, rows: sorted.filter(c => groupOf(HANDOFF_GROUPS, { dueAt: c.dueAt }, now).id === def.id) }))
+      .map(def => ({ def, rows: sorted.filter(c => groupOf(HANDOFF_GROUPS, { dueAt: c.dueAt }, loadedAt).id === def.id) }))
       .filter(g => g.rows.length > 0)
-  }, [pending, group])
+  }, [pending, group, loadedAt])
   const me = data?.me ?? null
   const warned = selected ? pending.filter(c => hubView(c, selected).warnings.length > 0).length : 0
   const sendable = selected ? pending.filter(c => hubView(c, selected).sendableLines.length > 0).length : 0

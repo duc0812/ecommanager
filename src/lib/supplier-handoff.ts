@@ -103,21 +103,28 @@ async function ordersWithReadyLines(where: object, supplierId?: string) {
   return orders.map(o => ({ ...o, ready: readyLines(o).filter(l => !supplierId || l.resolvedSupplierId === supplierId) })).filter(o => o.ready.length > 0)
 }
 
-export async function countPendingHandoff(opts: { storeIds?: string[] | null } = {}): Promise<number> {
-  const where = opts.storeIds ? { AND: [pendingHandoffWhere(), { storeId: { in: opts.storeIds } }] } : pendingHandoffWhere()
-  return (await ordersWithReadyLines(where)).length
-}
-
 /** The order's production urgency is its design due: the earliest due among its tasks that are still live. */
 export function handoffDueAt(tasks: { status: string; dueAt: Date | null }[]): Date | null {
   const dues = tasks.filter(t => t.status !== 'CANCELLED' && t.dueAt).map(t => t.dueAt!.getTime())
   return dues.length ? new Date(Math.min(...dues)) : null
 }
 
-export async function countOverdueHandoff(opts: { storeIds?: string[] | null; now?: Date } = {}): Promise<number> {
+type HandoffScope = { storeIds?: string[] | null; now?: Date }
+
+/** One pass over the pending hand-off orders: how many wait, and how many of them are past their design due. */
+export async function pendingHandoffStats(opts: HandoffScope = {}): Promise<{ count: number; overdue: number }> {
   const where = opts.storeIds ? { AND: [pendingHandoffWhere(), { storeId: { in: opts.storeIds } }] } : pendingHandoffWhere()
   const now = (opts.now ?? new Date()).getTime()
-  return (await ordersWithReadyLines(where)).filter(o => (handoffDueAt(o.designTasks)?.getTime() ?? Infinity) < now).length
+  const orders = await ordersWithReadyLines(where)
+  return { count: orders.length, overdue: orders.filter(o => (handoffDueAt(o.designTasks)?.getTime() ?? Infinity) < now).length }
+}
+
+export async function countPendingHandoff(opts: HandoffScope = {}): Promise<number> {
+  return (await pendingHandoffStats(opts)).count
+}
+
+export async function countOverdueHandoff(opts: HandoffScope = {}): Promise<number> {
+  return (await pendingHandoffStats(opts)).overdue
 }
 
 type StateOrder = {

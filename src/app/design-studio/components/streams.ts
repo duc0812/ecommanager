@@ -1,4 +1,4 @@
-import type { Tone } from './model'
+import type { QueueFilter, Tone } from './model'
 import type { Readiness, TaskRow, TaskStatus } from './types'
 
 export type StreamId = 'MAP' | 'TPL' | 'FILE' | 'REVIEW' | 'HANDOFF' | 'SENT' | 'DROPSHIP'
@@ -21,7 +21,15 @@ export const SOON_HOURS = 4
 export const OPEN_TASK_STATUSES: TaskStatus[] = ['NEW', 'ASSIGNED', 'DOING', 'REVIEW', 'REJECTED', 'ASK_CUSTOMER']
 
 export type StreamTask = Pick<TaskRow, 'status' | 'dueAt' | 'mapping' | 'dropship'>
-type TaskStream = Exclude<StreamId, 'HANDOFF' | 'SENT' | 'DROPSHIP'>
+export type TaskStream = Exclude<StreamId, 'HANDOFF' | 'SENT' | 'DROPSHIP'>
+export const isTaskStream = (s: StreamId | null): s is TaskStream => s !== null && TASK_STREAMS.includes(s)
+
+export type SecondaryFilter = QueueFilter
+/** The secondary filters each task stream offers; a filter not listed for a stream counts as 'ALL' there. */
+const SECONDARY_FILTERS: Record<TaskStream, SecondaryFilter[]> = { MAP: [], TPL: [], FILE: ['AUTO', 'LOW', 'MANUAL', 'NEEDS_ARTWORK'], REVIEW: ['AUTO', 'LOW', 'MANUAL'] }
+export function secondaryFiltersOf(stream: StreamId | null): SecondaryFilter[] {
+  return isTaskStream(stream) ? SECONDARY_FILTERS[stream] : []
+}
 
 export function urgencyOf(dueAt: string | null, now = Date.now()): Urgency {
   if (!dueAt) return 'OK'
@@ -39,7 +47,8 @@ export function streamOf(t: Pick<StreamTask, 'status' | 'mapping' | 'dropship'>)
   return 'FILE'
 }
 
-export type PriorityGroupDef<T> = { id: string; title: string; sub: string; tone: Tone; test: (item: T, now: number) => boolean }
+/** `extra`: shown after a divider and left out of the stream's total (Xong hôm nay is not open work). */
+export type PriorityGroupDef<T> = { id: string; title: string; sub: string; tone: Tone; extra?: boolean; test: (item: T, now: number) => boolean }
 
 const isWorking = (t: StreamTask) => t.status === 'NEW' || t.status === 'ASSIGNED' || t.status === 'DOING'
 
@@ -52,21 +61,21 @@ function tiers<T extends { dueAt: string | null }>(prefix: string, urgent: [stri
 }
 
 export const TASK_GROUPS: Record<TaskStream, PriorityGroupDef<StreamTask>[]> = {
-  MAP: tiers<StreamTask>('MP', ['Cần mapping gấp', 'quá hạn, chưa có xưởng'], ['Sắp quá hạn', 'còn dưới 4h'], ['Còn hạn', 'chưa tới hạn']),
-  TPL: tiers<StreamTask>('TP', ['Thiếu template gấp', 'quá hạn, chưa có template'], ['Sắp quá hạn', 'còn dưới 4h'], ['Còn hạn', 'chưa tới hạn']),
+  MAP: tiers<StreamTask>('MP', ['Cần mapping gấp', 'quá hạn, chưa có xưởng'], ['Sắp quá hạn', 'còn tối đa 4h'], ['Còn hạn', 'chưa tới hạn']),
+  TPL: tiers<StreamTask>('TP', ['Thiếu template gấp', 'quá hạn, chưa có template'], ['Sắp quá hạn', 'còn tối đa 4h'], ['Còn hạn', 'chưa tới hạn']),
   FILE: [
     { id: 'FI_URGENT', title: 'Files in gấp', sub: 'quá hạn, chưa có file in', tone: 'bad', test: (t, now) => isWorking(t) && urgencyOf(t.dueAt, now) === 'OVER' },
     { id: 'FI_FIX_URGENT', title: 'Files in cần sửa gấp', sub: 'bị trả lại, đã quá hạn', tone: 'bad', test: (t, now) => t.status === 'REJECTED' && urgencyOf(t.dueAt, now) === 'OVER' },
-    { id: 'FI_SOON', title: 'Sắp quá hạn', sub: 'còn dưới 4h', tone: 'warn', test: (t, now) => isWorking(t) && urgencyOf(t.dueAt, now) === 'SOON' },
+    { id: 'FI_SOON', title: 'Sắp quá hạn', sub: 'còn tối đa 4h', tone: 'warn', test: (t, now) => isWorking(t) && urgencyOf(t.dueAt, now) === 'SOON' },
     { id: 'FI_FIX', title: 'Cần sửa', sub: 'bị trả lại, còn hạn', tone: 'warn', test: t => t.status === 'REJECTED' },
     { id: 'FI_ASK', title: 'Chờ khách trả lời', sub: 'đang hỏi khách', tone: 'idle', test: t => t.status === 'ASK_CUSTOMER' },
     { id: 'FI_OK', title: 'Còn hạn', sub: 'mới / đã giao / đang làm', tone: 'idle', test: t => isWorking(t) },
-    { id: 'FI_DONE', title: 'Xong hôm nay', sub: 'đã duyệt hôm nay', tone: 'ok', test: () => true },
+    { id: 'FI_DONE', title: 'Xong hôm nay', sub: 'đã duyệt hôm nay', tone: 'ok', extra: true, test: () => true },
   ],
-  REVIEW: tiers<StreamTask>('RV', ['Quá hạn — cần duyệt gấp', 'quá hạn, chờ duyệt mẫu'], ['Sắp quá hạn — cần duyệt', 'còn dưới 4h'], ['Còn hạn', 'chưa tới hạn']),
+  REVIEW: tiers<StreamTask>('RV', ['Quá hạn — cần duyệt gấp', 'quá hạn, chờ duyệt mẫu'], ['Sắp quá hạn — cần duyệt', 'còn tối đa 4h'], ['Còn hạn', 'chưa tới hạn']),
 }
 
-export const HANDOFF_GROUPS: PriorityGroupDef<{ dueAt: string | null }>[] = tiers('HO', ['Quá hạn — cần gửi xưởng gấp', 'quá hạn, chưa gửi xưởng'], ['Sắp quá hạn', 'còn dưới 4h'], ['Còn hạn', 'chưa tới hạn'])
+export const HANDOFF_GROUPS: PriorityGroupDef<{ dueAt: string | null }>[] = tiers('HO', ['Quá hạn — cần gửi xưởng gấp', 'quá hạn, chưa gửi xưởng'], ['Sắp quá hạn', 'còn tối đa 4h'], ['Còn hạn', 'chưa tới hạn'])
 
 export function groupOf<T>(defs: PriorityGroupDef<T>[], item: T, now = Date.now()): PriorityGroupDef<T> {
   return defs.find(d => d.test(item, now)) ?? defs[defs.length - 1]
@@ -91,6 +100,7 @@ export function groupTasks<T extends StreamTask>(stream: TaskStream, tasks: T[],
 
 export type StreamCounts = Record<StreamId, { total: number | null; overdue: number }>
 
+/** Per stream: open tasks, and how many sit in a red group — the "N gấp" pill always equals the sum of that stream's red chips. */
 export function streamCounts(tasks: StreamTask[], handoff: { count: number; overdue: number }, dropship: number | null, now = Date.now()): StreamCounts {
   const counts: StreamCounts = {
     MAP: { total: 0, overdue: 0 }, TPL: { total: 0, overdue: 0 }, FILE: { total: 0, overdue: 0 },
@@ -99,9 +109,9 @@ export function streamCounts(tasks: StreamTask[], handoff: { count: number; over
   for (const t of tasks) {
     if (!OPEN_TASK_STATUSES.includes(t.status)) continue
     const s = streamOf(t)
-    if (!s || !TASK_STREAMS.includes(s)) continue
+    if (!isTaskStream(s)) continue
     counts[s].total! += 1
-    if (urgencyOf(t.dueAt, now) === 'OVER') counts[s].overdue += 1
+    if (groupOf(TASK_GROUPS[s], t, now).tone === 'bad') counts[s].overdue += 1
   }
   return counts
 }
@@ -140,7 +150,7 @@ export function flagNotes(input: FlagInput, now = Date.now()): FlagNote[] {
   }
   if (stream === 'TPL') {
     parts.push('chưa có template in')
-    links.push({ label: 'Mở Tồn đọng', href: '/design-studio/backlog' })
+    links.push({ label: 'Mở Templates', href: '/design-studio/templates' })
     if (productPageHref) links.push({ label: 'Mở trang sản phẩm', href: productPageHref })
   }
   const blocked = parts.length > 0

@@ -103,7 +103,7 @@ Hàng chip cũ (độ sẵn sàng + Của tôi + chuyển màn) và các đầu 
 Thêm vào đầu workspace, trên băng "Bị trả lại" hiện có:
 - **Quá hạn**: băng đỏ "Quá hạn Nh — cần file in gấp" (ở Mapping: "cần mapping gấp"; Template: "cần dựng template gấp"; Duyệt mẫu: "cần duyệt gấp"), kèm hành động sẵn có của task (Nhận task / Bắt đầu làm / Render tự động).
   - Ghi chú khi code: băng quá hạn không có nút riêng vì `TaskHeader` ngay bên dưới đã mang sẵn các hành động của task.
-- **Đang vướng** (băng vàng): "chưa map xưởng → Mở Product Mapping (`/fulfillment/mapping`)" và/hoặc, với task ở luồng Template, "chưa có template in → Mở Tồn đọng (`/design-studio/backlog`) · Mở trang sản phẩm (`productPageUrl`)"; kèm dòng "Task này không render tự động được cho tới khi gỡ xong". Task **đã bắt đầu** mà không có template chỉ có băng vàng ngắn "Không có template — tự kiểm tra khổ file trước khi gửi duyệt" (cùng ý với cảnh báo đang có trên thẻ duyệt), không có dòng "không render tự động".
+- **Đang vướng** (băng vàng): "chưa map xưởng → Mở Product Mapping (`/fulfillment/mapping`)" và/hoặc, với task ở luồng Template, "chưa có template in → Mở Templates (`/design-studio/templates`; trang Tồn đọng không có trên origin/main) · Mở trang sản phẩm (`productPageUrl`)"; kèm dòng "Task này không render tự động được cho tới khi gỡ xong". Task **đã bắt đầu** mà không có template chỉ có băng vàng ngắn "Không có template — tự kiểm tra khổ file trước khi gửi duyệt" (cùng ý với cảnh báo đang có trên thẻ duyệt), không có dòng "không render tự động".
 - **Cần chỉnh** (băng vàng, readiness LOW, không vướng gì): "máy đã render file tự động, sửa tay rồi mới gửi duyệt".
 
 ### 5.5 API
@@ -153,3 +153,12 @@ Trạng thái và chuyển trạng thái; cách tính readiness; `Queue` row; `T
 9. Nhánh cũ `worktree-design-tasks-streams` (dựng trên `main` local đã cũ) chỉ để tham khảo; `streams.ts`, `StreamStepper.tsx`, `PriorityRow.tsx`, `Flags.tsx`, `tests/design-streams.test.ts` được chép từ đó làm điểm xuất phát và chỉnh lại ở Task 1 và Task 3.
 
 Hai lỗi phát hiện khi review đã sửa trong commit 0c13706: các lần ghi URL của chính trang không bị đọc lại như một lần task đến; bước "Duyệt sản xuất" đang chọn giữ số đếm theo nhóm.
+
+Đợt review cuối (11/21/2026) chỉnh thêm, khác với 5.2 / 5.4 / 5.5 ở trên:
+- Pill "N gấp" trên stepper = số task nằm trong các nhóm đỏ của luồng đó (Files in: "Files in gấp" + "Files in cần sửa gấp"); task quá hạn đang **Chờ khách trả lời** không tính là gấp, nên pill luôn bằng tổng hai chip đỏ.
+- "Tất cả" của hàng ưu tiên không cộng "Xong hôm nay" (nhóm này đứng sau một vạch ngăn), nên bằng đúng số trên stepper.
+- Chữ phụ của nhóm sắp quá hạn là "còn tối đa 4h" (ngưỡng giữ nguyên: `floor(giờ còn lại) ≤ 4`, cùng `timeLeft`).
+- Link trong băng "Đang vướng" khi thiếu template: "Mở Templates" (`/design-studio/templates`).
+- Link nội bộ `/design-studio?stream=…&group=…` khi trang đang mở được áp vào trang (trước chỉ `?task=`); link `?task=` tải task ngay, không đợi danh sách.
+- Ô tìm của Duyệt sản xuất / Đã chuyển xưởng không còn tải lại danh sách task; API tasks đếm hub bằng một truy vấn (`pendingHandoffStats`).
+- Mapping / Template không có chip readiness (`secondaryFiltersOf` là nguồn duy nhất cho chip của từng luồng); tiêu đề duyệt ghi "Ngoài danh sách duyệt" khi mẫu đang mở không nằm trong danh sách.
