@@ -1,7 +1,7 @@
 'use client'
 import { useState } from 'react'
 import type { SentLineRow, TaskRow, TaskStatus } from './types'
-import { MAPPING_FILTER_LABEL, readyLabel, timeLeft, type QueueFilter } from './model'
+import { readyLabel, timeLeft, type QueueFilter, type Tone } from './model'
 import { Avatar, DROPSHIP_META, ErrorBanner, Icon, Note, Pill, READY_META, TEXT_TONE, btn, card, fmtDate } from './ui'
 import { StoreLabel } from '@/components/StoreFilter'
 
@@ -9,12 +9,14 @@ const SENT_SECTION = 'Đã gửi xưởng — chưa có task'
 
 export type { QueueFilter }
 
-type Section = { title: string; statuses: TaskStatus[]; tone?: string; dropship?: boolean }
+export type QueueGroup = { key: string; title: string; tone: Tone; rows: TaskRow[] }
+
+type Section = { title: string; statuses: TaskStatus[]; tone?: Tone; dropship?: boolean }
 const inSection = (s: Section, t: TaskRow) => s.statuses.includes(t.status) && (s.dropship ?? false) === !!(t.dropship && t.status === 'CANCELLED')
 
 const SECTIONS: Section[] = [
-  { title: 'Bị trả lại — sửa trước', statuses: ['REJECTED'], tone: 'text-error' },
-  { title: 'Đang hỏi khách', statuses: ['ASK_CUSTOMER'], tone: 'text-amber-900' },
+  { title: 'Bị trả lại — sửa trước', statuses: ['REJECTED'], tone: 'bad' },
+  { title: 'Đang hỏi khách', statuses: ['ASK_CUSTOMER'], tone: 'warn' },
   { title: 'Mới / Đã giao', statuses: ['NEW', 'ASSIGNED'] },
   { title: 'Đang làm', statuses: ['DOING'] },
   { title: 'Chờ duyệt', statuses: ['REVIEW'] },
@@ -98,64 +100,49 @@ function SentLineQueueRow({ l, selected, onSelect, showStore }: { l: SentLineRow
   )
 }
 
-export default function Queue({ tasks, sel, onSelect, q, onQ, loading, error, retrying, emptyText, onClearFilters, filter, onFilter, counts, mine, onMine, autoLabel = READY_META.AUTO.label, artworkWaiting, showStore = false, sentLines = [], selLine = null, onSelectLine }: {
+export default function Queue({ tasks, groups, sel, onSelect, q, onQ, loading, error, retrying, emptyText, onClearFilters, artworkWaiting, needsArtworkMode = false, showStore = false, sentLines = [], selLine = null, onSelectLine }: {
+  tasks: TaskRow[]; groups: QueueGroup[]; sel: string | null; onSelect: (key: string) => void
+  q: string; onQ: (v: string) => void; loading: boolean; error: string; retrying: boolean
+  emptyText: string; onClearFilters: (() => void) | null
   /** Name the store on each row; only worth it when the user sees more than one store. */
   showStore?: boolean
   /** A search's sent lines without a task, listed after the task sections. */
   sentLines?: SentLineRow[]; selLine?: string | null; onSelectLine?: (lineId: string) => void
-  /** Open lines per product that needs artwork; without it the chip is not offered (Duyệt mẫu has files already). */
-  artworkWaiting?: Map<string, number>
-  /** The AUTO chip's name: in Duyệt mẫu every AUTO line is already rendered. */
-  autoLabel?: string
-  tasks: TaskRow[]; sel: string | null; onSelect: (key: string) => void
-  q: string; onQ: (v: string) => void; loading: boolean; error: string; retrying: boolean
-  emptyText: string; onClearFilters: (() => void) | null
-  filter: QueueFilter; onFilter: (f: QueueFilter) => void; counts: Record<QueueFilter, number>
-  mine: boolean; onMine: (v: boolean) => void
+  /** Open lines per product that needs artwork; rows show it only in needsArtworkMode. */
+  artworkWaiting?: Map<string, number>; needsArtworkMode?: boolean
 }) {
   const [closed, setClosed] = useState<Record<string, boolean>>({})
-  const groups = (q.trim() ? SEARCH_SECTIONS : SECTIONS).map(s => ({ ...s, rows: tasks.filter(t => inSection(s, t)).sort(byDue) })).filter(g => g.rows.length > 0)
-  const sent = q.trim() && onSelectLine ? sentLines : []
+  const searching = q.trim().length > 0
+  const shown: QueueGroup[] = searching
+    ? SEARCH_SECTIONS.map(s => ({ key: s.title, title: s.title, tone: s.tone ?? 'idle', rows: tasks.filter(t => inSection(s, t)).sort(byDue) })).filter(g => g.rows.length > 0)
+    : groups
+  const sent = searching && onSelectLine ? sentLines : []
   const sentOpen = !closed[SENT_SECTION]
-  const chipCls = (on: boolean) => `inline-flex items-center gap-xs h-7 px-sm rounded-full border text-label-sm ${on ? 'bg-secondary/10 text-secondary border-transparent font-semibold' : 'bg-surface-container-lowest border-outline-variant text-on-surface-variant'}`
   return (
     <aside aria-label="Hàng đợi task" className={`${card} sticky top-md max-h-[calc(100vh-2rem)] overflow-auto flex flex-col pb-md`}>
       <div className="p-sm flex flex-col gap-sm sticky top-0 bg-surface-container-lowest z-10 border-b border-outline-variant/20">
-        <div className="flex items-center gap-sm">
-          <label className="flex-1 min-w-0 flex items-center gap-xs h-9 px-sm rounded-lg bg-surface-container-low text-on-surface-variant">
-            <Icon name="search" className="text-[18px]" />
-            <input value={q} onChange={e => onQ(e.target.value)} placeholder="Task ID, SKU, tên in…" aria-label="Tìm task"
-              className="flex-1 min-w-0 bg-transparent text-[13px] text-on-surface outline-none" />
-            {loading && <Icon name="progress_activity" className="text-[16px] animate-spin" />}
-          </label>
-          <button type="button" aria-pressed={mine} onClick={() => onMine(!mine)}
-            className={`h-9 px-sm rounded-lg border text-label-sm whitespace-nowrap ${mine ? 'bg-secondary/10 text-secondary border-transparent font-semibold' : 'border-outline-variant bg-surface-container-lowest text-on-surface'}`}>
-            Của tôi
-          </button>
-        </div>
-        <div className="flex flex-wrap gap-xs">
-          {(['ALL', 'AUTO', 'LOW', 'MANUAL', ...(artworkWaiting ? ['UNMAPPED', 'NO_TEMPLATE', 'NEEDS_ARTWORK'] : [])] as QueueFilter[]).map(f => (
-            <button key={f} type="button" aria-pressed={filter === f} onClick={() => onFilter(f)} className={chipCls(filter === f)}>
-              {f === 'ALL' ? 'Tất cả' : f === 'AUTO' ? autoLabel : f === 'NEEDS_ARTWORK' ? 'Cần làm artwork' : f === 'UNMAPPED' || f === 'NO_TEMPLATE' ? MAPPING_FILTER_LABEL[f] : READY_META[f].label}<span className="opacity-75 font-normal">{counts[f]}</span>
-            </button>
-          ))}
-        </div>
+        <label className="flex items-center gap-xs h-9 px-sm rounded-lg bg-surface-container-low text-on-surface-variant">
+          <Icon name="search" className="text-[18px]" />
+          <input value={q} onChange={e => onQ(e.target.value)} placeholder="Task ID, SKU, tên in…" aria-label="Tìm task"
+            className="flex-1 min-w-0 bg-transparent text-[13px] text-on-surface outline-none" />
+          {loading && <Icon name="progress_activity" className="text-[16px] animate-spin" />}
+        </label>
         {retrying
           ? <div role="status"><Note tone="warn" icon="cloud_off">Mất kết nối tới máy chủ — đang thử lại…</Note></div>
           : <ErrorBanner msg={error} />}
       </div>
       <div className="flex flex-col gap-[2px]">
-        {groups.map(g => {
-          const open = !closed[g.title]
+        {shown.map(g => {
+          const open = !closed[g.key]
           return (
-            <div key={g.title} className="flex flex-col gap-[2px]">
-              <button type="button" aria-expanded={open} onClick={() => setClosed({ ...closed, [g.title]: open })}
+            <div key={g.key} className="flex flex-col gap-[2px]">
+              <button type="button" aria-expanded={open} onClick={() => setClosed({ ...closed, [g.key]: open })}
                 className="flex items-center gap-xs mx-sm mt-sm mb-[2px] px-xs py-xs text-label-sm font-semibold text-on-surface-variant text-left">
                 <Icon name={open ? 'expand_more' : 'chevron_right'} className="text-[18px]" />
-                <span className={g.tone ?? ''}>{g.title}</span>
+                <span className={g.tone === 'bad' || g.tone === 'warn' ? `${TEXT_TONE[g.tone]} font-semibold` : ''}>{g.title}</span>
                 <span className="font-medium">({g.rows.length})</span>
               </button>
-              {open && g.rows.map(t => <QueueRow key={t.taskKey} t={t} selected={!selLine && t.taskKey === sel} onSelect={onSelect} waiting={filter === 'NEEDS_ARTWORK' ? artworkWaiting?.get(t.productKey) : undefined} showStore={showStore} />)}
+              {open && g.rows.map(t => <QueueRow key={t.taskKey} t={t} selected={!selLine && t.taskKey === sel} onSelect={onSelect} waiting={needsArtworkMode && artworkWaiting ? artworkWaiting.get(t.productKey) : undefined} showStore={showStore} />)}
             </div>
           )
         })}
@@ -171,7 +158,7 @@ export default function Queue({ tasks, sel, onSelect, q, onQ, loading, error, re
             {sentOpen && sent.map(l => <SentLineQueueRow key={l.lineId} l={l} selected={l.lineId === selLine} onSelect={onSelectLine} showStore={showStore} />)}
           </div>
         )}
-        {groups.length === 0 && sent.length === 0 && !loading && !error && !retrying && (
+        {shown.length === 0 && sent.length === 0 && !loading && !error && !retrying && (
           <div className="px-md py-md flex flex-col items-start gap-sm text-label-sm text-on-surface-variant">
             <span>{emptyText}</span>
             {onClearFilters && (
