@@ -1,6 +1,6 @@
 'use client'
 import type { HandoffCard, Me } from './types'
-import { mockupFiles } from './model'
+import { mockupFiles, timeLeft } from './model'
 import { ArtImg } from './art-src'
 import HandoffButton from './HandoffButton'
 import { Icon, Pill, btnPrimary, card as cardClass } from './ui'
@@ -17,6 +17,7 @@ export default function HubCard({ c, tabId, sheet, me, onOpenTask, onSheet, onCh
   me: Me | null; onOpenTask: (key: string) => void; onSheet: (orderId: string) => void; onChanged: (info: string) => void; onError: (msg: string) => void
 }) {
   const view = hubView(c, tabId)
+  const left = c.dueAt ? timeLeft({ status: 'DOING', dueAt: c.dueAt }) : null
   const first = view.first
   if (!first) return null
   const { order, state } = c
@@ -47,7 +48,8 @@ export default function HubCard({ c, tabId, sheet, me, onOpenTask, onSheet, onCh
               : <span title="Dòng chưa có task" className="font-mono font-semibold text-body-sm text-on-surface truncate">{first.lineKey}</span>}
             {tabId === UNMAPPED_TAB && <Pill tone="bad" icon="account_tree">Chưa mapping</Pill>}
             {view.mixed && <Pill tone="idle" icon="call_split">Nhiều xưởng</Pill>}
-            <span className="ml-auto shrink-0 font-semibold text-on-surface" title={order.countryName ?? order.country ?? undefined}>{order.countryCode ?? order.country ?? '—'}</span>
+            {left && <span className="ml-auto shrink-0" title="Hạn design sớm nhất của đơn"><Pill tone={left.tone} icon={left.icon}>{left.label}</Pill></span>}
+            <span className={`${left ? '' : 'ml-auto '}shrink-0 font-semibold text-on-surface`} title={order.countryName ?? order.country ?? undefined}>{order.countryCode ?? order.country ?? '—'}</span>
             {view.warnings.length > 0 && <span role="img" aria-label={`Cảnh báo: ${warnText}`} title={warnText} className="shrink-0 leading-none"><Icon name="warning" className="text-[16px] text-error" /></span>}
           </span>
           <span className="truncate text-body-sm font-semibold text-on-surface" title={line.productTitle}>{line.productTitle}</span>
