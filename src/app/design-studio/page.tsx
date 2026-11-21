@@ -6,10 +6,10 @@ import StoreFilter from '@/components/StoreFilter'
 import { useSellerReadOnly } from '@/components/RoleGate'
 import { useStoreFilter } from '@/lib/use-store-filter'
 import type { Me, SentLineRow, TaskDetail, TaskRow, TaskStatus } from './components/types'
-import { MAPPING_FILTER_LABEL, artworkProducts, emptyQueueText, isRetryable, matchesQueueFilter, postJson, requestJson, retryDelay, taskImages, taskUrl } from './components/model'
+import { artworkProducts, emptyQueueText, isRetryable, matchesQueueFilter, postJson, requestJson, retryDelay, taskImages, taskUrl } from './components/model'
 import { machineQa } from './components/ai-qa'
 import { LightboxProvider } from './components/Lightbox'
-import Queue, { byDue, type QueueFilter } from './components/Queue'
+import Queue, { type QueueGroup } from './components/Queue'
 import TaskHeader from './components/TaskHeader'
 import TaskHandoffChecks from './components/TaskHandoffChecks'
 import CustomerInputs from './components/CustomerInputs'
@@ -27,9 +27,32 @@ import DropshipGrid from './components/DropshipGrid'
 import DriveHealthBanner from './components/DriveHealthBanner'
 import { ToastProvider, useToast } from './components/overlay'
 import { useShopifyRefresh } from './components/useShopifyRefresh'
-import { ErrorBanner, Icon, READY_META, card, fmtDate, fmtDateTime } from './components/ui'
+import StreamStepper from './components/StreamStepper'
+import PriorityRow, { type SecondaryFilter } from './components/PriorityRow'
+import Flags from './components/Flags'
+import { HANDOFF_GROUPS, STREAMS, TASK_GROUPS, TASK_STREAMS, groupCounts, groupTasks, streamCounts, streamOf, type StreamId } from './components/streams'
+import { ErrorBanner, Icon, READY_META, btn, card, fmtDate, fmtDateTime } from './components/ui'
 
-type Mode = 'work' | 'review' | 'handoff' | 'sent' | 'dropship'
+type TaskStreamId = 'MAP' | 'TPL' | 'FILE' | 'REVIEW'
+type ListResponse = { tasks: TaskRow[]; me: Me; handoffCount?: number; handoffOverdue?: number; lastSync?: { ranAt: string; trigger: string; error: string | null } | null; sentLines?: SentLineRow[] }
+
+const ALL_STREAMS: StreamId[] = STREAMS.map(s => s.id)
+
+const isTaskStream = (s: StreamId | null): s is TaskStreamId => s !== null && TASK_STREAMS.includes(s)
+
+function groupDefsOf(stream: StreamId): { id: string }[] {
+  if (isTaskStream(stream)) return TASK_GROUPS[stream]
+  return stream === 'HANDOFF' ? HANDOFF_GROUPS : []
+}
+
+function secondaryRows(rows: TaskRow[], stream: TaskStreamId, filter: SecondaryFilter, mineId: string | null): TaskRow[] {
+  const shown = filter === 'NEEDS_ARTWORK' && stream === 'FILE' ? artworkProducts(rows).rows : rows.filter(t => matchesQueueFilter(t, filter, stream === 'REVIEW'))
+  return mineId ? shown.filter(t => t.assigneeId === mineId) : shown
+}
+
+function streamRows(all: TaskRow[], stream: TaskStreamId, filter: SecondaryFilter, mineId: string | null, group: string | null, now: number) {
+  return groupTasks(stream, secondaryRows(all.filter(t => streamOf(t) === stream), stream, filter, mineId), group, now)
+}
 
 const DRIVE_BADGE_POLL_MS = [4000, 8000, 15000, 30000, 60000, 120000]
 const DRIVE_BADGE_WINDOW_MS = 15 * 60 * 1000
@@ -66,13 +89,14 @@ function Banners({ detail }: { detail: TaskDetail }) {
   return null
 }
 
-function TaskWorkspace({ detail, holdCount, onChanged }: { detail: TaskDetail; holdCount: Record<string, number>; onChanged: () => void }) {
+function TaskWorkspace({ detail, holdCount, onChanged, stream, inQueue }: { detail: TaskDetail; holdCount: Record<string, number>; onChanged: () => void; stream: StreamId | null; inQueue: boolean }) {
   const { refreshing, refresh } = useShopifyRefresh(detail.task.orderId, onChanged)
   const qa = useMemo(() => machineQa(detail), [detail])
   const key = detail.task.taskKey
   return (
     <>
       <Banners detail={detail} />
+      <Flags detail={detail} stream={stream} inQueue={inQueue} />
       <TaskHeader key={`h-${key}`} detail={detail} qa={qa} holdCount={holdCount} refreshing={refreshing} onRefresh={refresh} onChanged={onChanged} />
       {detail.handoff?.pending && <TaskHandoffChecks key={`checks-${key}`} orderId={detail.task.orderId} me={detail.me} onChanged={onChanged} />}
       <CustomerInputs key={`c-${key}`} detail={detail} refreshing={refreshing} onRefresh={refresh} onChanged={onChanged} />
@@ -94,27 +118,44 @@ function DesignTasks() {
   const readOnly = useSellerReadOnly()
 
   const [tasks, setTasks] = useState<TaskRow[]>([])
+  const [baseTasks, setBaseTasks] = useState<TaskRow[]>([])
+  const [baseLoaded, setBaseLoaded] = useState(false)
   const [sentLines, setSentLines] = useState<SentLineRow[]>([])
   const [selLine, setSelLine] = useState<string | null>(null)
-  const [, setMe] = useState<Me | null>(null)
+  const [me, setMe] = useState<Me | null>(null)
   const [handoffCount, setHandoffCount] = useState(0)
+  const [handoffOverdue, setHandoffOverdue] = useState(0)
+  const [handoffGroupCounts, setHandoffGroupCounts] = useState<Record<string, number> | null>(null)
   const [dropshipCount, setDropshipCount] = useState<number | undefined>(undefined)
   const [listLoading, setListLoading] = useState(false)
   const [listError, setListError] = useState('')
   const [retrying, setRetrying] = useState(false)
-  const [mode, setMode] = useState<Mode>('work')
-  // The hand-off and sent lists are not filtered by store, so the picker is drawn only on the two tabs it works on and the queue beside the
-  // hand-off list is not narrowed by a pick that cannot be seen there.
-  const storeFiltered = mode === 'work' || mode === 'review'
+  const [rawStream, setRawStream] = useState<StreamId>(() => {
+    const s = searchParams.get('stream') as StreamId | null
+    return s && ALL_STREAMS.includes(s) ? s : 'FILE'
+  })
+  // A seller's role is known only once the current user has loaded, so the offered set is applied on read rather than frozen at mount.
+  const offered = readOnly ? TASK_STREAMS : ALL_STREAMS
+  const stream: StreamId = offered.includes(rawStream) ? rawStream : 'FILE'
+  const workStream = stream === 'MAP' || stream === 'TPL' || stream === 'FILE'
+  const [group, setGroup] = useState<string | null>(() => searchParams.get('group'))
+  const activeGroup = group && groupDefsOf(stream).some(d => d.id === group) ? group : null
+  const [taskOpen, setTaskOpen] = useState(false)
+  const [pinned, setPinned] = useState<string | null>(null)
+  const [now, setNow] = useState(() => Date.now())
+  // The hand-off and sent lists are not filtered by store, so the picker is drawn only on the task streams it works on and the list loaded
+  // beside the hand-off list is not narrowed by a pick that cannot be seen there.
+  const storeFiltered = isTaskStream(stream)
   const listStoreId = storeFiltered ? storeFilter.storeId : null
   const [reviewVersion, setReviewVersion] = useState(0)
+  const onDropship = stream === 'DROPSHIP'
   useEffect(() => {
-    if (readOnly || mode === 'dropship') return
+    if (readOnly || onDropship) return
     requestJson<{ unmapped: unknown[]; mapped: unknown[] }>('/api/design-studio/dropship').then(r => { if (r.ok) setDropshipCount(r.data.unmapped.length + r.data.mapped.length) })
-  }, [readOnly, mode, reviewVersion])
-  const [sel, setSel] = useState<string | null>(paramTask)
+  }, [readOnly, onDropship, reviewVersion])
+  const [sel, setSel] = useState<string | null>(null)
   const [reviewSel, setReviewSel] = useState<string | null>(null)
-  const [filter, setFilter] = useState<QueueFilter>('ALL')
+  const [filter, setFilter] = useState<SecondaryFilter>('ALL')
   const [mine, setMine] = useState(false)
   const [q, setQ] = useState('')
   const [debouncedQ, setDebouncedQ] = useState('')
@@ -129,6 +170,7 @@ function DesignTasks() {
   const loadListRef = useRef<() => void>(() => {})
   const onRecovered = useRef<() => void>(() => {})
   const detailReq = useRef(0)
+  const arrived = useRef<string | null>(null)
   const [driveVersion, setDriveVersion] = useState(0)
   const drivePoll = useRef({ key: '', attempts: 0 })
 
@@ -138,23 +180,23 @@ function DesignTasks() {
   }, [q])
 
   useEffect(() => {
-    if (paramTask) setSel(paramTask)
-  }, [paramTask])
+    const i = setInterval(() => setNow(Date.now()), 60_000)
+    return () => clearInterval(i)
+  }, [])
 
   const loadList = useCallback(async () => {
     if (retryTimer.current) { clearTimeout(retryTimer.current); retryTimer.current = null }
     const id = ++listReq.current
     setListLoading(true)
     const qs = new URLSearchParams()
-    if (mine) qs.set('mine', '1')
     if (debouncedQ) qs.set('q', debouncedQ)
     if (listStoreId) qs.set('storeId', listStoreId)
     const query = qs.toString()
-    const r = await requestJson<{ tasks: TaskRow[]; me: Me; handoffCount?: number; lastSync?: { ranAt: string; trigger: string; error: string | null } | null; sentLines?: SentLineRow[] }>(`/api/design-studio/tasks${query ? `?${query}` : ''}`)
+    const r = await requestJson<ListResponse>(`/api/design-studio/tasks${query ? `?${query}` : ''}`)
     if (id !== listReq.current) return
     setListLoading(false)
     if (!r.ok) {
-      if (!isRetryable(r.status)) { retryAttempt.current = 0; setRetrying(false); setListError(r.error); return }
+      if (!isRetryable(r.status)) { retryAttempt.current = 0; setRetrying(false); setListError(r.error); setBaseLoaded(true); return }
       const delay = retryDelay(retryAttempt.current)
       retryAttempt.current++
       setRetrying(true)
@@ -168,11 +210,14 @@ function DesignTasks() {
     setListError('')
     if (recovered) onRecovered.current()
     setTasks(r.data.tasks)
+    if (!debouncedQ) setBaseTasks(r.data.tasks)
+    setBaseLoaded(true)
     setSentLines(r.data.sentLines ?? [])
     setMe(r.data.me)
     setHandoffCount(r.data.handoffCount ?? 0)
+    setHandoffOverdue(r.data.handoffOverdue ?? 0)
     setLastSync(r.data.lastSync ?? null)
-  }, [mine, debouncedQ, listStoreId])
+  }, [debouncedQ, listStoreId])
 
   const loadDetail = useCallback(async (key: string) => {
     const id = ++detailReq.current
@@ -184,42 +229,118 @@ function DesignTasks() {
     setDetail(r.data)
   }, [])
 
+  const openKey = workStream ? sel : stream === 'REVIEW' && taskOpen ? reviewSel : null
+
   useEffect(() => { loadListRef.current = loadList }, [loadList])
   useEffect(() => {
-    onRecovered.current = () => { if (sel && detailError) loadDetail(sel) }
-  }, [sel, detailError, loadDetail])
+    onRecovered.current = () => { if (openKey && detailError) loadDetail(openKey) }
+  }, [openKey, detailError, loadDetail])
   useEffect(() => { if (storeFilter.ready) loadList() }, [loadList, storeFilter.ready])
   useEffect(() => () => { if (retryTimer.current) clearTimeout(retryTimer.current) }, [])
 
   useEffect(() => {
-    if (sel) loadDetail(sel)
-  }, [sel, loadDetail])
+    if (openKey) loadDetail(openKey)
+  }, [openKey, loadDetail])
 
-  const artwork = useMemo(() => artworkProducts(tasks), [tasks])
-  const visible = useMemo(() => filter === 'NEEDS_ARTWORK' && mode !== 'review' ? artwork.rows : tasks.filter(t => {
-    return matchesQueueFilter(t, filter, mode === 'review')
-  }), [tasks, filter, mode, artwork])
+  const mineId = mine && me ? me.id : null
+  const streamTasks = useMemo(() => baseTasks.filter(t => streamOf(t) === stream), [baseTasks, stream])
+  const secondary = useMemo(() => (isTaskStream(stream) ? secondaryRows(streamTasks, stream, filter, mineId) : []), [streamTasks, stream, filter, mineId])
+  const visible = useMemo(() => (isTaskStream(stream) ? groupTasks(stream, secondary, activeGroup, now) : []), [stream, secondary, activeGroup, now])
+  const queueGroups = useMemo<QueueGroup[]>(() => visible.map(({ def, rows }) => ({ key: def.id, title: def.title, tone: def.tone, rows })), [visible])
+  const flat = useMemo(() => visible.flatMap(g => g.rows), [visible])
+  const artwork = useMemo(() => artworkProducts(streamTasks), [streamTasks])
+
+  const counts = useMemo(() => streamCounts(baseTasks, { count: handoffCount, overdue: handoffOverdue }, dropshipCount ?? null, now), [baseTasks, handoffCount, handoffOverdue, dropshipCount, now])
+  const rowGroups = useMemo(() => {
+    if (isTaskStream(stream)) {
+      const c = groupCounts(stream, secondary, now)
+      return TASK_GROUPS[stream].map(def => ({ def, count: c[def.id] ?? 0 }))
+    }
+    if (stream === 'HANDOFF') return HANDOFF_GROUPS.map(def => ({ def, count: handoffGroupCounts?.[def.id] ?? 0 }))
+    return []
+  }, [stream, secondary, now, handoffGroupCounts])
+  const rowTotal = stream === 'HANDOFF' && !handoffGroupCounts ? handoffCount : rowGroups.reduce((n, g) => n + g.count, 0)
+  const chipCounts = useMemo(() => {
+    const review = stream === 'REVIEW'
+    const open = streamTasks.filter(t => t.status !== 'DONE' && (!mineId || t.assigneeId === mineId))
+    return {
+      ALL: open.length,
+      AUTO: review ? open.filter(t => t.readiness === 'AUTO' && t.status === 'REVIEW').length : open.filter(t => matchesQueueFilter(t, 'AUTO', false)).length,
+      LOW: open.filter(t => matchesQueueFilter(t, 'LOW', review)).length,
+      MANUAL: open.filter(t => matchesQueueFilter(t, 'MANUAL', review)).length,
+      NEEDS_ARTWORK: artwork.rows.filter(t => !mineId || t.assigneeId === mineId).length,
+    } as Record<SecondaryFilter, number>
+  }, [streamTasks, stream, mineId, artwork])
+
+  const switchStream = useCallback((id: StreamId) => {
+    setRawStream(id)
+    setGroup(null)
+    setTaskOpen(false)
+    setPinned(null)
+    setHandoffGroupCounts(null)
+    if (id !== 'FILE') setFilter(f => (f === 'NEEDS_ARTWORK' ? 'ALL' : f))
+  }, [])
+
+  const selectTask = useCallback((key: string) => {
+    const t = tasks.find(x => x.taskKey === key) ?? baseTasks.find(x => x.taskKey === key)
+    const s = t ? streamOf(t) : null
+    const target: TaskStreamId = isTaskStream(s) ? s : 'FILE'
+    const sameStream = target === stream
+    if (!sameStream) switchStream(target)
+    const listed = !!t && streamRows(baseTasks, target, filter, mineId, sameStream ? activeGroup : null, now).some(g => g.rows.some(r => r.taskKey === key))
+    setPinned(listed ? null : key)
+    if (target === 'REVIEW') {
+      setReviewSel(key)
+      setTaskOpen(true)
+    } else {
+      setSel(key)
+      setSelLine(null)
+    }
+  }, [tasks, baseTasks, stream, switchStream, filter, mineId, activeGroup, now])
+
+  const pickReview = useCallback((key: string) => {
+    if (flat.some(t => t.taskKey === key)) setReviewSel(key)
+    else selectTask(key)
+  }, [flat, selectTask])
+
+  const arrivalPending = !!paramTask && arrived.current !== paramTask
 
   useEffect(() => {
-    if (!sel && visible.length > 0) setSel(visible[0].taskKey)
-  }, [sel, visible])
+    if (!workStream || !baseLoaded || arrivalPending) return
+    if (sel && (sel === pinned || flat.some(t => t.taskKey === sel))) return
+    const next = flat[0]?.taskKey ?? null
+    if (next !== sel) setSel(next)
+  }, [workStream, baseLoaded, arrivalPending, sel, pinned, flat])
 
   useEffect(() => {
-    if (!sel || paramTask === sel) return
-    router.replace(`/design-studio?task=${encodeURIComponent(sel)}`, { scroll: false })
-  }, [sel, paramTask, router])
+    if (stream !== 'REVIEW' || !baseLoaded || arrivalPending) return
+    if (reviewSel && (reviewSel === pinned || flat.some(t => t.taskKey === reviewSel))) return
+    const next = flat[0]?.taskKey ?? null
+    if (next !== reviewSel) { setReviewSel(next); setTaskOpen(false) }
+  }, [stream, baseLoaded, arrivalPending, reviewSel, pinned, flat])
+
+  useEffect(() => {
+    if (!baseLoaded || !paramTask || arrived.current === paramTask) return
+    arrived.current = paramTask
+    if (paramTask !== openKey) selectTask(paramTask)
+  }, [baseLoaded, paramTask, openKey, selectTask])
+
+  useEffect(() => {
+    if (!baseLoaded || arrivalPending) return
+    const p = new URLSearchParams()
+    if (stream !== 'FILE') p.set('stream', stream)
+    if (activeGroup) p.set('group', activeGroup)
+    if (openKey) p.set('task', openKey)
+    const next = p.toString()
+    if (next === searchParams.toString()) return
+    router.replace(next ? `/design-studio?${next}` : '/design-studio', { scroll: false })
+  }, [baseLoaded, arrivalPending, stream, activeGroup, openKey, searchParams, router])
 
   const reload = useCallback(() => {
     loadList()
-    if (sel) loadDetail(sel)
+    if (openKey) loadDetail(openKey)
     setDriveVersion(v => v + 1)
-  }, [loadList, loadDetail, sel])
-
-  const selectTask = useCallback((key: string) => {
-    setSel(key)
-    setSelLine(null)
-    setMode('work')
-  }, [])
+  }, [loadList, loadDetail, openKey])
 
   async function sync() {
     setSyncing(true); setSyncError('')
@@ -233,45 +354,33 @@ function DesignTasks() {
     setReviewVersion(v => v + 1)
   }
 
-  const counts = useMemo(() => {
-    const open = tasks.filter(t => t.status !== 'DONE')
-    return {
-      ALL: open.length,
-      AUTO: mode === 'review' ? open.filter(t => t.readiness === 'AUTO' && t.status === 'REVIEW').length : open.filter(t => matchesQueueFilter(t, 'AUTO', false)).length,
-      LOW: open.filter(t => matchesQueueFilter(t, 'LOW', mode === 'review')).length,
-      MANUAL: open.filter(t => matchesQueueFilter(t, 'MANUAL', mode === 'review')).length,
-      UNMAPPED: open.filter(t => t.mapping === 'UNMAPPED').length,
-      NO_TEMPLATE: open.filter(t => t.mapping === 'NO_TEMPLATE').length,
-      NEEDS_ARTWORK: artwork.rows.length,
-    } as Record<QueueFilter, number>
-  }, [tasks, mode, artwork])
-
-  const reviewCount = useMemo(() => tasks.filter(t => t.status === 'REVIEW').length, [tasks])
-  const reviewTasks = useMemo(() => visible.filter(t => t.status === 'REVIEW').sort(byDue), [visible])
-  useEffect(() => {
-    if (mode !== 'review') return
-    if (!reviewSel || !reviewTasks.some(t => t.taskKey === reviewSel)) setReviewSel(reviewTasks[0]?.taskKey ?? null)
-  }, [mode, reviewSel, reviewTasks])
+  const reviewRows = useMemo(() => (stream === 'REVIEW' ? flat : []), [stream, flat])
+  const reviewKeys = useMemo(() => reviewRows.map(t => t.taskKey), [reviewRows])
   // A reviewed task leaves the review list at once and the next one in due order takes its place; the list reload confirms.
   const reviewMoved = useCallback((keys: string[], to: TaskStatus) => {
-    const next = reviewTasks.find((t, i) => !keys.includes(t.taskKey) && i > reviewTasks.findIndex(x => x.taskKey === reviewSel)) ?? reviewTasks.find(t => !keys.includes(t.taskKey))
-    setTasks(ts => ts.map(t => (keys.includes(t.taskKey) ? { ...t, status: to } : t)))
+    const next = reviewRows.find((t, i) => !keys.includes(t.taskKey) && i > reviewRows.findIndex(x => x.taskKey === reviewSel)) ?? reviewRows.find(t => !keys.includes(t.taskKey))
+    const move = (ts: TaskRow[]) => ts.map(t => (keys.includes(t.taskKey) ? { ...t, status: to } : t))
+    setTasks(move)
+    setBaseTasks(move)
     if (reviewSel && keys.includes(reviewSel)) setReviewSel(next?.taskKey ?? null)
     reload()
     setReviewVersion(v => v + 1)
-  }, [reviewTasks, reviewSel, reload])
-  const filtered = filter !== 'ALL' || mine || !!debouncedQ
-  const emptyText = emptyQueueText({ readinessLabel: filter === 'ALL' ? null : filter === 'NEEDS_ARTWORK' ? 'Cần làm artwork' : filter === 'UNMAPPED' || filter === 'NO_TEMPLATE' ? MAPPING_FILTER_LABEL[filter] : READY_META[filter].label, mine, q: debouncedQ })
-  const clearFilters = useCallback(() => { setFilter('ALL'); setMine(false); setQ('') }, [])
+  }, [reviewRows, reviewSel, reload])
+
+  const groupTitle = activeGroup ? rowGroups.find(g => g.def.id === activeGroup)?.def.title ?? null : null
+  const filterLabel = filter === 'ALL' ? null : filter === 'NEEDS_ARTWORK' ? 'Cần làm artwork' : filter === 'AUTO' && stream === 'REVIEW' ? 'Auto' : READY_META[filter].label
+  const filtered = filter !== 'ALL' || mine || !!debouncedQ || !!activeGroup
+  const emptyText = emptyQueueText({ readinessLabel: [groupTitle, filterLabel].filter(Boolean).join(' · ') || null, mine, q: debouncedQ })
+  const clearFilters = useCallback(() => { setFilter('ALL'); setMine(false); setQ(''); setGroup(null) }, [])
 
   const holdCount = useMemo(() => {
     const m: Record<string, number> = {}
-    for (const t of tasks) if (t.assigneeId && t.status !== 'DONE') m[t.assigneeId] = (m[t.assigneeId] ?? 0) + 1
+    for (const t of baseTasks) if (t.assigneeId && t.status !== 'DONE') m[t.assigneeId] = (m[t.assigneeId] ?? 0) + 1
     return m
-  }, [tasks])
+  }, [baseTasks])
 
-  const current = detail && detail.task.taskKey === sel ? detail : null
-  const currentLine = mode === 'work' && selLine ? sentLines.find(l => l.lineId === selLine) ?? null : null
+  const current = detail && detail.task.taskKey === openKey ? detail : null
+  const currentLine = workStream && selLine ? sentLines.find(l => l.lineId === selLine) ?? null : null
 
   useEffect(() => {
     if (!current || !current.driveConnected) return
@@ -291,18 +400,38 @@ function DesignTasks() {
   }, [current, loadDetail])
   const images = useMemo(() => (current ? taskImages(current) : []), [current])
 
-  const tabs: { mode: Mode; label: string; count?: number; hot?: boolean; tip: string }[] = [
-    { mode: 'work', label: 'Làm task', tip: 'Màn làm từng task' },
-    { mode: 'review', label: 'Duyệt mẫu', count: reviewCount, hot: reviewCount > 0, tip: 'Xem và duyệt các mẫu đang chờ duyệt' },
-    { mode: 'handoff', label: 'Duyệt sản xuất', count: handoffCount, hot: handoffCount > 0, tip: 'Các đơn đã duyệt hết design, chờ gửi xưởng (API hoặc lưu chờ xuất CSV)' },
-    { mode: 'sent', label: 'Đã chuyển xưởng', tip: 'Các đơn đã gửi xưởng: chờ xuất CSV, đã xuất, đã gửi API, đã có tracking' },
-    { mode: 'dropship', label: 'Dropship', count: dropshipCount, hot: !!dropshipCount, tip: 'Hàng dropship mua sẵn: không cần design, chỉ map xưởng rồi gửi' },
-  ]
-  // The supplier hand-off lists are closed to a seller by the API, so their tabs are not offered.
-  const shownTabs = readOnly ? tabs.filter(t => t.mode === 'work' || t.mode === 'review') : tabs
   const syncTip = lastSync
     ? `${lastSync.error ? `Lượt gần nhất lỗi: ${lastSync.error}` : `Tự đồng bộ mỗi 15 phút · lượt gần nhất ${lastSync.trigger === 'schedule' ? 'tự động' : 'bấm tay'}`} · ${fmtDateTime(lastSync.ranAt)}`
     : 'Đồng bộ task từ Shopify'
+  const streamDef = STREAMS.find(s => s.id === stream) ?? STREAMS[2]
+  const showStore = storeFilter.stores.length > 1
+
+  const workspace = openKey && (
+    <>
+      {detailError && (
+        <div className={`${card} p-md`}><ErrorBanner msg={`${openKey}: ${detailError}`} onClose={() => setDetailError('')} /></div>
+      )}
+      {!detailError && !current && (
+        <div className={`${card} p-lg text-body-sm text-on-surface-variant flex items-center gap-sm`}>
+          <Icon name="progress_activity" className="animate-spin" />Đang tải {openKey}…
+        </div>
+      )}
+      {current && (
+        <LightboxProvider images={images}>
+          <TaskWorkspace detail={current} holdCount={holdCount} onChanged={reload}
+            stream={streamOf(current.task) ?? stream} inQueue={baseTasks.some(t => t.taskKey === current.task.taskKey)} />
+        </LightboxProvider>
+      )}
+    </>
+  )
+
+  const queue = isTaskStream(stream) && (
+    <Queue tasks={tasks} groups={queueGroups} sel={stream === 'REVIEW' ? reviewSel : sel} onSelect={stream === 'REVIEW' ? pickReview : selectTask}
+      q={q} onQ={setQ} loading={listLoading} error={listError} retrying={retrying} showStore={showStore}
+      emptyText={filtered ? emptyText : 'Không có task'} onClearFilters={filtered ? clearFilters : null}
+      artworkWaiting={stream === 'FILE' ? artwork.waiting : undefined} needsArtworkMode={stream === 'FILE' && filter === 'NEEDS_ARTWORK'}
+      sentLines={workStream ? sentLines : []} selLine={currentLine?.lineId ?? null} onSelectLine={workStream ? setSelLine : undefined} />
+  )
 
   return (
     <>
@@ -313,20 +442,6 @@ function DesignTasks() {
             <Icon name="info" className="text-[18px] text-on-surface-variant" />
           </span>
         </div>
-        <div role="tablist" aria-label="Chế độ" className="flex items-center gap-xs">
-          {shownTabs.map(t => {
-            const on = mode === t.mode
-            return (
-              <button key={t.mode} type="button" role="tab" aria-selected={on} title={t.tip} onClick={() => setMode(t.mode)}
-                className={`inline-flex items-center gap-xs h-9 px-md rounded-lg text-body-sm font-semibold ${on ? 'bg-on-surface text-surface' : 'text-on-surface-variant hover:bg-surface-container-low'}`}>
-                {t.label}
-                {t.count !== undefined && (
-                  <span className={`inline-flex items-center h-5 px-[7px] rounded-full text-[11px] ${on ? 'bg-surface/20' : t.hot ? 'bg-amber-100 text-amber-900' : 'bg-surface-container text-on-surface-variant'}`}>{t.count}</span>
-                )}
-              </button>
-            )
-          })}
-        </div>
         {storeFiltered && <StoreFilter filter={storeFilter} />}
         <button type="button" onClick={sync} disabled={syncing} aria-label="Đồng bộ task từ Shopify" title={syncTip}
           className={`ml-auto inline-grid place-items-center w-10 h-10 rounded-lg border bg-surface-container-lowest hover:bg-surface-container-low disabled:opacity-60 ${lastSync?.error ? 'border-error text-error' : 'border-outline-variant text-on-surface-variant'}`}>
@@ -336,53 +451,73 @@ function DesignTasks() {
       {syncError && <div className="mb-md"><ErrorBanner msg={syncError} onClose={() => setSyncError('')} /></div>}
       <DriveHealthBanner version={driveVersion} />
 
-      <div className={`grid ${mode === 'sent' || mode === 'dropship' ? 'grid-cols-1' : 'grid-cols-[290px_minmax(0,1fr)]'} gap-md items-start`}>
-        {mode !== 'sent' && mode !== 'dropship' && <Queue tasks={mode === 'review' ? reviewTasks : visible} sel={mode === 'work' ? sel : mode === 'review' ? reviewSel : null} onSelect={mode === 'review' ? setReviewSel : selectTask}
-          q={q} onQ={setQ} loading={listLoading} error={listError} retrying={retrying} showStore={storeFilter.stores.length > 1}
-          emptyText={filtered ? emptyText : 'Không có task'} onClearFilters={filtered ? clearFilters : null}
-          filter={filter} onFilter={setFilter} counts={counts} mine={mine} onMine={setMine} autoLabel={mode === 'review' ? 'Auto' : READY_META.AUTO.label} artworkWaiting={mode === 'review' ? undefined : artwork.waiting}
-          sentLines={mode === 'work' ? sentLines : []} selLine={currentLine?.lineId ?? null} onSelectLine={mode === 'work' ? setSelLine : undefined} />}
-        {mode === 'review' ? (
-          <div className="flex flex-col gap-md min-w-0">
-            <ReviewToolbar total={reviewTasks.length} version={reviewVersion} onApproved={keys => reviewMoved(keys, 'DONE')} />
-            {reviewSel ? (
-              <ReviewWorkspace key={reviewSel} taskKey={reviewSel} position={{ index: Math.max(0, reviewTasks.findIndex(t => t.taskKey === reviewSel)), total: reviewTasks.length }}
-                onMoved={(key, to) => reviewMoved([key], to)} onOpenTask={selectTask} onChanged={reload} />
-            ) : !listLoading && (
-              <div className={`${card} p-lg text-body-sm text-on-surface-variant flex items-center gap-sm`}>
-                <Icon name="task_alt" className="text-on-tertiary-container" />Không có mẫu nào chờ duyệt.
-              </div>
-            )}
-          </div>
-        ) : mode === 'handoff' ? (
-          <HandoffGrid q={debouncedQ} version={reviewVersion} onOpenTask={selectTask} onChanged={reload} />
-        ) : mode === 'dropship' ? (
-          <DropshipGrid q="" version={reviewVersion} onCount={setDropshipCount} onSend={orderNumber => { setQ(orderNumber); setMode('handoff') }} />
-        ) : mode === 'sent' ? (
-          <SentGrid q={debouncedQ} rawQ={q} onQ={setQ} version={reviewVersion} showStore={storeFilter.stores.length > 1} onOpenTask={selectTask} onChanged={reload} />
-        ) : currentLine ? (
-          <SentLinePanel key={currentLine.lineId} line={currentLine} onReopened={key => { setSelLine(null); setSel(key); loadList() }} />
-        ) : (
-        <div className="flex flex-col gap-md min-w-0">
-          {!sel && !listLoading && !listError && (
-            <div className={`${card} p-lg text-body-sm text-on-surface-variant`}>Chưa có task nào. Bấm nút đồng bộ ở góc phải để tạo task từ các đơn đang chờ design.</div>
-          )}
-          {sel && detailError && (
-            <div className={`${card} p-md`}><ErrorBanner msg={`${sel}: ${detailError}`} onClose={() => setDetailError('')} /></div>
-          )}
-          {sel && !detailError && !current && (
-            <div className={`${card} p-lg text-body-sm text-on-surface-variant flex items-center gap-sm`}>
-              <Icon name="progress_activity" className="animate-spin" />Đang tải {sel}…
+      <div className="flex flex-col gap-md mb-md">
+        <StreamStepper counts={counts} active={stream} streams={offered} onSelect={switchStream} />
+        <PriorityRow stream={streamDef} total={rowTotal} unit={streamDef.unit} groups={rowGroups} group={activeGroup} onGroup={setGroup}
+          titleOnly={stream === 'SENT' || stream === 'DROPSHIP'}
+          secondary={isTaskStream(stream) ? {
+            filter, onFilter: setFilter, autoLabel: stream === 'REVIEW' ? 'Auto' : READY_META.AUTO.label,
+            counts: chipCounts, needsArtwork: stream === 'FILE', mine, onMine: () => setMine(m => !m),
+          } : null} />
+      </div>
+
+      {workStream ? (
+        <div className="grid grid-cols-[290px_minmax(0,1fr)] gap-md items-start">
+          {queue}
+          {currentLine ? (
+            <SentLinePanel key={currentLine.lineId} line={currentLine} onReopened={key => { setSelLine(null); selectTask(key); loadList() }} />
+          ) : (
+            <div className="flex flex-col gap-md min-w-0">
+              {baseLoaded && !sel && !listLoading && !listError && (
+                <div className={`${card} p-lg text-body-sm text-on-surface-variant`}>
+                  {baseTasks.length === 0 ? 'Chưa có task nào. Bấm nút đồng bộ ở góc phải để tạo task từ các đơn đang chờ design.' : 'Luồng này không có task nào.'}
+                </div>
+              )}
+              {workspace}
             </div>
           )}
-          {current && (
-            <LightboxProvider images={images}>
-              <TaskWorkspace detail={current} holdCount={holdCount} onChanged={reload} />
-            </LightboxProvider>
-          )}
         </div>
-        )}
-      </div>
+      ) : stream === 'REVIEW' ? (
+        <div className="grid grid-cols-[290px_minmax(0,1fr)] gap-md items-start">
+          {queue}
+          <div className="flex flex-col gap-md min-w-0">
+            {taskOpen && reviewSel ? (
+              <>
+                <div><button type="button" className={btn} onClick={() => setTaskOpen(false)}><Icon name="arrow_back" className="text-[16px]" />Màn duyệt</button></div>
+                {workspace}
+              </>
+            ) : (
+              <>
+                <ReviewToolbar total={reviewKeys.length} only={reviewKeys} version={reviewVersion} onApproved={keys => reviewMoved(keys, 'DONE')} />
+                {reviewSel ? (
+                  <ReviewWorkspace key={reviewSel} taskKey={reviewSel} position={{ index: Math.max(0, reviewKeys.indexOf(reviewSel)), total: reviewKeys.length }}
+                    onMoved={(key, to) => reviewMoved([key], to)} onOpenTask={selectTask} onChanged={reload} />
+                ) : !listLoading && (
+                  <div className={`${card} p-lg text-body-sm text-on-surface-variant flex items-center gap-sm`}>
+                    <Icon name="task_alt" className="text-on-tertiary-container" />Không có mẫu nào chờ duyệt.
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      ) : stream === 'HANDOFF' ? (
+        <div className="flex flex-col gap-md min-w-0">
+          <div className={`${card} p-sm`}>
+            <label className="flex items-center gap-xs h-9 px-sm rounded-lg bg-surface-container-low text-on-surface-variant">
+              <Icon name="search" className="text-[18px]" />
+              <input value={q} onChange={e => setQ(e.target.value)} placeholder="Tìm đơn, task ID, SKU…" aria-label="Tìm đơn"
+                className="flex-1 min-w-0 bg-transparent text-[13px] text-on-surface outline-none" />
+              {listLoading && <Icon name="progress_activity" className="text-[16px] animate-spin" />}
+            </label>
+          </div>
+          <HandoffGrid q={debouncedQ} version={reviewVersion} group={activeGroup} onGroupCounts={setHandoffGroupCounts} onOpenTask={selectTask} onChanged={reload} />
+        </div>
+      ) : stream === 'DROPSHIP' ? (
+        <DropshipGrid q="" version={reviewVersion} onCount={setDropshipCount} onSend={orderNumber => { setQ(orderNumber); switchStream('HANDOFF') }} />
+      ) : (
+        <SentGrid q={debouncedQ} rawQ={q} onQ={setQ} version={reviewVersion} showStore={showStore} onOpenTask={selectTask} onChanged={reload} />
+      )}
     </>
   )
 }
