@@ -148,7 +148,7 @@ describe('Design Studio search: lines already sent to a supplier without a task'
   it('without a search, or with a status filter, the answer only gains an empty list', async () => {
     const res = await getTasks(req('/api/design-studio/tasks', 'admin'))
     const body = await res.json()
-    expect(Object.keys(body)).toEqual(['tasks', 'me', 'handoffCount', 'lastSync', 'sentLines'])
+    expect(Object.keys(body)).toEqual(['tasks', 'me', 'handoffCount', 'handoffOverdue', 'lastSync', 'sentLines'])
     expect(body.sentLines).toEqual([])
     expect((await search('QX22A1', 'admin', '&statuses=DONE')).sentLines).toEqual([])
   })
