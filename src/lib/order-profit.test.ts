@@ -38,11 +38,11 @@ describe('computeOrderProfitFromDb', () => {
     expect(result).toBe(51)
   })
 
-  it('returns profit=expectedPayout if no costs at all for a mapped zero-cost order', () => {
+  it('a mapped line whose supplier product is still priced at 0 has no known profit', () => {
     const result = computeOrderProfitFromDb(50, [
       { qty: 1, resolvedSupplierId: 'supplier-a', resolvedBaseCost: 0, manualBaseCost: null, resolvedShipFirst: 0, resolvedShipAdditional: 0, resolvedImportTax: 0 },
     ])
-    expect(result).toBe(50)
+    expect(result).toBeNull()
   })
 })
 
@@ -87,5 +87,33 @@ describe('manualBaseCost override', () => {
     ])
     expect(result?.hasUnmapped).toBe(false)
     expect(result?.profit).toBe(70)
+  })
+})
+
+describe('zero resolved base cost gets the 50% estimate (Reminiso tree topper / duffle lines)', () => {
+  it('a supplier-mapped line priced 0 is estimated at 50% of payout, like an unmapped LZ line', () => {
+    const zeroCost = estimateOrderCostAndProfit(80, [
+      { qty: 1, resolvedSupplierId: 'go3d', resolvedBaseCost: 0, manualBaseCost: null, resolvedShipFirst: 0, resolvedShipAdditional: 0, resolvedImportTax: 0 },
+    ])
+    const unmapped = estimateOrderCostAndProfit(80, [
+      { qty: 1, resolvedSupplierId: null, resolvedBaseCost: null, manualBaseCost: null, resolvedShipFirst: null, resolvedShipAdditional: null, resolvedImportTax: null },
+    ])
+    expect(zeroCost).toEqual({ knownCogs: 0, estimatedCogs: 40, profit: 40, hasUnmapped: true })
+    expect(zeroCost).toEqual(unmapped)
+  })
+
+  it('a zero-cost line next to a priced line estimates half of what the priced line leaves', () => {
+    const result = estimateOrderCostAndProfit(100, [
+      { qty: 1, resolvedSupplierId: 'mango', resolvedBaseCost: 20, manualBaseCost: null, resolvedShipFirst: 0, resolvedShipAdditional: 0, resolvedImportTax: 0 },
+      { qty: 1, resolvedSupplierId: 'go3d', resolvedBaseCost: 0, manualBaseCost: null, resolvedShipFirst: 0, resolvedShipAdditional: 0, resolvedImportTax: 0 },
+    ])
+    expect(result).toEqual({ knownCogs: 20, estimatedCogs: 60, profit: 40, hasUnmapped: true })
+  })
+
+  it('a manual base cost of 0 stays authoritative', () => {
+    const result = estimateOrderCostAndProfit(100, [
+      { qty: 1, resolvedSupplierId: 'go3d', resolvedBaseCost: 0, manualBaseCost: 0, resolvedShipFirst: 0, resolvedShipAdditional: 0, resolvedImportTax: 0 },
+    ])
+    expect(result).toEqual({ knownCogs: 0, estimatedCogs: 0, profit: 100, hasUnmapped: false })
   })
 })

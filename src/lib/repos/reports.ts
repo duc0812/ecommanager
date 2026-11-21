@@ -9,6 +9,7 @@ import { sumMetaAmountsUsdDated } from '@/lib/meta-currency'
 import { getMetaRateSchedule } from '@/lib/meta-exchange-rates'
 import { PAID_META_STATUSES } from '@/lib/meta-fee'
 import { exportProgress, exportProgressLabel, exportedSupplierOf } from '@/lib/line-export'
+import { orderTrackingNumbers, type OrderTracking, type ShipmentTrackingSource } from '@/lib/order-tracking'
 
 export type PlSummary = {
   orderCount: number
@@ -53,6 +54,27 @@ export type EnrichedOrder = Awaited<ReturnType<typeof listOrdersWithLines>>[numb
   }
   mappingSummary: { mapped: number; total: number; complete: boolean }
   exportProgress: OrderExportProgress
+  tracking: OrderTracking[]
+}
+
+const SHIPMENT_CHUNK = 500
+
+async function trackingByOrder(orderIds: string[]): Promise<Map<string, OrderTracking[]>> {
+  const shipmentsOf = new Map<string, ShipmentTrackingSource[]>()
+  for (let i = 0; i < orderIds.length; i += SHIPMENT_CHUNK) {
+    const rows = await prisma.shipment.findMany({
+      where: {
+        orderId: { in: orderIds.slice(i, i + SHIPMENT_CHUNK) },
+        OR: [{ trackingNumber: { not: null } }, { lastMileTrackingNumber: { not: null } }],
+      },
+      select: {
+        orderId: true, lineKey: true, trackingNumber: true, carrier: true, trackingUrl: true,
+        detectedCarrier: true, lastMileCarrier: true, lastMileTrackingNumber: true, status: true,
+      },
+    })
+    for (const { orderId, ...row } of rows) shipmentsOf.set(orderId, [...(shipmentsOf.get(orderId) ?? []), row])
+  }
+  return new Map(Array.from(shipmentsOf, ([id, rows]) => [id, orderTrackingNumbers(rows)]))
 }
 
 export type OrderExportProgress = {
@@ -61,7 +83,7 @@ export type OrderExportProgress = {
   suppliers: Array<{ id: string; name: string; positions: number[]; exported: number; total: number; done: boolean; lastExportedAt: string | null }>
 }
 
-export async function ordersWithComputedPL(filter: OrderFilter): Promise<EnrichedOrder[]> {
+export async function ordersWithComputedPL(filter: OrderFilter, opts: { tracking?: boolean } = {}): Promise<EnrichedOrder[]> {
   const orders = await listOrdersWithLines(filter)
 
   // Build SkuDesign lookup for Non-Custom design status
@@ -77,6 +99,7 @@ export async function ordersWithComputedPL(filter: OrderFilter): Promise<Enriche
     ? await prisma.supplier.findMany({ where: { id: { in: lineSupplierIds } }, select: { id: true, name: true } })
     : []
   const supplierNameById = new Map(lineSuppliers.map(s => [s.id, s.name]))
+  const trackingOf = opts.tracking ? await trackingByOrder(orders.map(o => o.id)) : new Map<string, OrderTracking[]>()
 
   return orders.map(o => {
     const progress = exportProgress(o)
@@ -142,6 +165,7 @@ export async function ordersWithComputedPL(filter: OrderFilter): Promise<Enriche
           positions: g.positions, exported: g.exported, total: g.total, done: g.done, lastExportedAt: g.lastExportedAt,
         })),
       },
+      tracking: trackingOf.get(o.id) ?? [],
     }
   })
 }
