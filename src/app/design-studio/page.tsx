@@ -170,7 +170,8 @@ function DesignTasks() {
   const loadListRef = useRef<() => void>(() => {})
   const onRecovered = useRef<() => void>(() => {})
   const detailReq = useRef(0)
-  const arrived = useRef<string | null>(null)
+  const [arrived, setArrived] = useState<string | null>(null)
+  const written = useRef<string[]>([])
   const [driveVersion, setDriveVersion] = useState(0)
   const drivePoll = useRef({ key: '', attempts: 0 })
 
@@ -277,9 +278,9 @@ function DesignTasks() {
     setGroup(null)
     setTaskOpen(false)
     setPinned(null)
-    setHandoffGroupCounts(null)
+    if (id !== stream) setHandoffGroupCounts(null)
     if (id !== 'FILE') setFilter(f => (f === 'NEEDS_ARTWORK' ? 'ALL' : f))
-  }, [])
+  }, [stream])
 
   const selectTask = useCallback((key: string) => {
     const t = tasks.find(x => x.taskKey === key) ?? baseTasks.find(x => x.taskKey === key)
@@ -303,7 +304,7 @@ function DesignTasks() {
     else selectTask(key)
   }, [flat, selectTask])
 
-  const arrivalPending = !!paramTask && arrived.current !== paramTask
+  const arrivalPending = !!paramTask && arrived !== paramTask
 
   useEffect(() => {
     if (!workStream || !baseLoaded || arrivalPending) return
@@ -320,10 +321,16 @@ function DesignTasks() {
   }, [stream, baseLoaded, arrivalPending, reviewSel, pinned, flat])
 
   useEffect(() => {
-    if (!baseLoaded || !paramTask || arrived.current === paramTask) return
-    arrived.current = paramTask
+    const landed = written.current.indexOf(searchParams.toString())
+    if (landed >= 0) {
+      written.current.splice(0, landed + 1)
+      setArrived(paramTask)
+      return
+    }
+    if (!baseLoaded || !paramTask || arrived === paramTask) return
+    setArrived(paramTask)
     if (paramTask !== openKey) selectTask(paramTask)
-  }, [baseLoaded, paramTask, openKey, selectTask])
+  }, [baseLoaded, paramTask, searchParams, arrived, openKey, selectTask])
 
   useEffect(() => {
     if (!baseLoaded || arrivalPending) return
@@ -332,7 +339,8 @@ function DesignTasks() {
     if (activeGroup) p.set('group', activeGroup)
     if (openKey) p.set('task', openKey)
     const next = p.toString()
-    if (next === searchParams.toString()) return
+    if (next === searchParams.toString() || written.current[written.current.length - 1] === next) return
+    written.current.push(next)
     router.replace(next ? `/design-studio?${next}` : '/design-studio', { scroll: false })
   }, [baseLoaded, arrivalPending, stream, activeGroup, openKey, searchParams, router])
 
