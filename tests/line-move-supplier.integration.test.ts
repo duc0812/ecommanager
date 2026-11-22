@@ -143,6 +143,25 @@ describe('moving a line no supplier received (owner 11/21/2026, #LIT5707_1)', ()
     expect((await lineOf(HOODIE)).exportedAt).toEqual(CSV_AT)
   })
 
+  it('a tracking number borrowed from a sibling parcel (unsent line, same number as another line) does not block the move', async () => {
+    const hoodie = await lineOf(HOODIE)
+    await prisma.orderLine.update({ where: { id: hoodie.id }, data: { exportedAt: null, exportedToSupplierId: null } })
+    await prisma.shipment.updateMany({ where: { orderId: ORDER, lineKey: KEY }, data: { trackingNumber: 'UL648909030YP' } })
+    await prisma.shipment.create({ data: { orderId: ORDER, projectId: P, lineKey: 'MV5707_2', shopifyLineId: TEE, supplierId: MERCHIZE, trackingNumber: 'UL648909030YP', status: 'DELIVERED' } })
+    const r = await move()
+    expect(r.status).toBe(200)
+    expect(await lineOf(HOODIE)).toMatchObject({ resolvedSupplierId: MERCHIZE, resolvedSupplierSku: 'MWHDVN000000AA03' })
+    const ship = await prisma.shipment.findFirstOrThrow({ where: { orderId: ORDER, lineKey: KEY } })
+    expect(ship.trackingNumber).toBe('UL648909030YP')
+  })
+
+  it('a shared number on a line that carries its own export mark still blocks the move', async () => {
+    await prisma.shipment.updateMany({ where: { orderId: ORDER, lineKey: KEY }, data: { trackingNumber: 'UL648909030YP' } })
+    await prisma.shipment.create({ data: { orderId: ORDER, projectId: P, lineKey: 'MV5707_2', shopifyLineId: TEE, supplierId: MERCHIZE, trackingNumber: 'UL648909030YP', status: 'DELIVERED' } })
+    const r = await move()
+    expect(r.status).toBe(409)
+  })
+
   it('refuses a cancelled order and a missing reason', async () => {
     const bad = await POST(post({ supplierProductId: `${P}-mwhd-L`, reason: '' }), { params: { key: KEY } })
     expect(bad.status).toBe(400)

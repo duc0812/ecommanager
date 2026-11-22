@@ -58,7 +58,14 @@ export async function moveUnsentLine(
     if (carried) throw new MoveLineError('Dòng nằm trong một lần gửi API còn hiệu lực — huỷ lần gửi đó trước', 409)
     const lineKey = lineKeysOf(order.shopifyOrderNumber, order.lines).get(line.shopifyLineId)
     const shipment = lineKey ? await tx.shipment.findUnique({ where: { orderId_lineKey: { orderId: order.id, lineKey } }, select: { id: true, trackingNumber: true } }) : null
-    if (shipment?.trackingNumber) throw new MoveLineError(`Dòng đã có tracking ${shipment.trackingNumber} — xưởng đã gửi hàng, không chuyển được`, 409)
+    if (shipment?.trackingNumber) {
+      // A fulfillment that closed the whole order copies a sibling's parcel onto an unsent line (#LIT5519_2): that number is
+      // borrowed, not this line's own. Only a line no supplier was marked for, sharing the number with a sibling, counts as borrowed.
+      const sibling = line.exportedAt ? null : await tx.shipment.findFirst({
+        where: { orderId: order.id, trackingNumber: shipment.trackingNumber, NOT: { id: shipment.id } }, select: { id: true },
+      })
+      if (!sibling) throw new MoveLineError(`Dòng đã có tracking ${shipment.trackingNumber} — xưởng đã gửi hàng, không chuyển được`, 409)
+    }
     const render = await tx.artworkJob.findFirst({ where: { orderId: order.id, shopifyLineId: line.shopifyLineId, kind: 'RENDER_LINE', status: { in: ['QUEUED', 'PENDING', 'RUNNING'] } }, select: { id: true } })
     if (render) throw new MoveLineError('Đang render artwork, đợi hoàn tất rồi chuyển xưởng', 409)
 
