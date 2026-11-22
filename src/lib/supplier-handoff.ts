@@ -110,6 +110,7 @@ async function ordersWithReadyLines(where: object, supplierId?: string) {
       lines: { select: { id: true, shopifyLineId: true, sku: true, productTitle: true, shopifyProductType: true, resolvedSupplierId: true, designDriveLink: true, dropship: true, costSnapshotAt: true, exportedAt: true, exportedToSupplierId: true, qty: true, manualBaseCost: true, resolvedBaseCost: true } },
       designTasks: TASK_GATE,
       supplierPushes: LIVE_PUSHES,
+      shipments: PARCELS,
     },
   })
   return orders.map(o => ({ ...o, ready: readyLines(o).filter(l => !supplierId || l.resolvedSupplierId === supplierId) })).filter(o => o.ready.length > 0)
@@ -156,10 +157,13 @@ function blockedReason(o: StateOrder, openTasks: number): string {
   return `Đơn đang ở trạng thái "${STATUS_LABELS[o.pipelineStatus as PipelineStatus] ?? o.pipelineStatus}"`
 }
 
+const PARCELS = { select: { shopifyLineId: true, trackingNumber: true } } as const
+
 const STATE_INCLUDE = {
   lines: { select: { id: true, shopifyLineId: true, sku: true, productTitle: true, shopifyProductType: true, resolvedSupplierId: true, resolvedSupplierSku: true, designDriveLink: true, dropship: true, costSnapshotAt: true, exportedAt: true, exportedToSupplierId: true } },
   designTasks: TASK_GATE,
   supplierPushes: LIVE_PUSHES,
+  shipments: PARCELS,
 } as const
 
 type StoreAccount = { name: string; pgprints: boolean; merchizeNote: string | null }

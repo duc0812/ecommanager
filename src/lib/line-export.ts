@@ -135,6 +135,8 @@ export type SendGateOrder<L> = {
   designTasks: { shopifyLineId: string; status: string; updatedAt: Date }[]
   /** The order's pushes with status SENDING or CREATED. */
   supplierPushes: LivePush[]
+  /** The order's parcels by line; a fulfilled multi-line order reads them to tell a line's own parcel from a borrowed one. */
+  shipments?: { shopifyLineId: string | null; trackingNumber: string | null }[]
 }
 
 /** Why a line with a supplier does not go out now: design unfinished, saved for the CSV export, or already at the supplier by a push the app never marked. */
@@ -181,6 +183,19 @@ export function isLateSendOrder(order: { pipelineStatus: string; financialStatus
 
 export const LATE_SEND_NOTE = 'Đơn đã fulfilled trên Shopify bởi kiện của dòng khác — dòng này chưa có dấu gửi xưởng nào: kiểm tra xưởng chưa làm rồi mới gửi'
 
+/**
+ * A line sent outside the tool (Jomall/Mango sheet by hand, Trello era) has no mark but has its supplier's parcel: a tracking number
+ * that only lines of its own supplier share. A number shared with another supplier's line may be that supplier's parcel (borrowed).
+ */
+function hasOwnParcel(order: { lines: Array<LineForClassification & { shopifyLineId?: string; resolvedSupplierId: string | null }>; shipments?: { shopifyLineId: string | null; trackingNumber: string | null }[] }, line: { shopifyLineId?: string; resolvedSupplierId: string | null }): boolean {
+  const shipments = order.shipments ?? []
+  const mine = shipments.find(s => s.shopifyLineId === line.shopifyLineId && !!s.trackingNumber)
+  if (!mine) return false
+  const sharing = new Set(shipments.filter(s => s.trackingNumber === mine.trackingNumber).map(s => s.shopifyLineId))
+  return order.lines.filter(l => sharing.has(l.shopifyLineId ?? null) && !isNonProductLine(l) && !!l.resolvedSupplierId)
+    .every(l => l.resolvedSupplierId === line.resolvedSupplierId)
+}
+
 /** The lines that can go to their supplier now. Sibling lines do not matter. */
 export function readyLines<L extends ExportTrackedLine & DesignGateLine>(
   order: SendGateOrder<L> & { exportedAt?: Date | string | null; exportedToSupplierId?: string | null },
@@ -189,7 +204,7 @@ export function readyLines<L extends ExportTrackedLine & DesignGateLine>(
     // A CSV save or the order's handoff covered the sent siblings, not this line; only an open design or a live push holds it.
     const tracked = { ...order, exportedAt: order.exportedAt ?? null, exportedToSupplierId: order.exportedToSupplierId ?? null }
     return supplierLines(order.lines).filter(l => {
-      if (l.dropship || isLineExported(tracked, l)) return false
+      if (l.dropship || isLineExported(tracked, l) || hasOwnParcel(order, l)) return false
       const hold = lineHold(order, l)
       return hold !== 'DESIGN' && hold !== 'PUSHED'
     })

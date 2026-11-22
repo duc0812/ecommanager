@@ -50,6 +50,28 @@ describe('a fulfilled order sends a line no supplier got only when it has severa
     expect(readyLines(o)).toEqual([])
   })
 
+  it('a line with its own supplier\'s parcel (number shared only with lines of its supplier) was sent outside the tool: not offered', () => {
+    const o = order([line('a'), line('b'), line('c', { resolvedSupplierId: 'sup-b' })], {
+      shipments: [
+        { shopifyLineId: 'sl-a', trackingNumber: '9235990416421803494151' },
+        { shopifyLineId: 'sl-b', trackingNumber: '9235990416421803494151' },
+        { shopifyLineId: 'sl-c', trackingNumber: 'UL582359992YP' },
+      ],
+    })
+    expect(readyLines(o)).toEqual([])
+  })
+
+  it('a number shared with another supplier\'s line is borrowed: both lines stay offered, with the warning', () => {
+    const o = order([fee, line('socks', { resolvedSupplierId: 'sup-mango' }), line('legging', { resolvedSupplierId: 'sup-pg' })], {
+      shipments: [
+        { shopifyLineId: 'sl-fee', trackingNumber: 'UL648909030YP' },
+        { shopifyLineId: 'sl-socks', trackingNumber: 'UL648909030YP' },
+        { shopifyLineId: 'sl-legging', trackingNumber: 'UL648909030YP' },
+      ],
+    })
+    expect(readyLines(o).map(l => l.id)).toEqual(['socks', 'legging'])
+  })
+
   it('an order Shopify fulfilled only in part keeps the usual rules', () => {
     const o = order([line('a', { exportedAt: new Date('2026-11-04'), exportedToSupplierId: 'sup-a' }), line('b')], { pipelineStatus: 'READY_TO_PRODUCTION', fulfillmentStatus: 'PARTIALLY_FULFILLED' })
     expect(isLateSendOrder(o)).toBe(false)
