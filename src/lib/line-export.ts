@@ -165,8 +165,35 @@ export function lineHold(order: Omit<SendGateOrder<unknown>, 'lines' | 'pipeline
   return !task || task.updatedAt <= order.supplierHandoffAt ? 'SAVED' : null
 }
 
+export function isOrderCancelled(order: { pipelineStatus: string; financialStatus: string | null }): boolean {
+  return ['CANCELLED', 'REFUNDED'].includes(order.pipelineStatus) || ['REFUNDED', 'VOIDED'].includes((order.financialStatus ?? '').toUpperCase())
+}
+
+/**
+ * Owner 11/22/2026 (#LIT5519_2): Shopify's "fulfilled" closes only an order with one product line. On an order with several, a
+ * sibling's parcel can fulfil the whole order while a line never went to any supplier; that line still goes to production.
+ */
+export function isLateSendOrder(order: { pipelineStatus: string; financialStatus: string | null; fulfillmentStatus: string | null; lines: LineForClassification[] }): boolean {
+  if (isOrderCancelled(order)) return false
+  const fulfilled = order.pipelineStatus === 'FULFILLED' || (order.fulfillmentStatus ?? '').toUpperCase() === 'FULFILLED'
+  return fulfilled && order.lines.filter(l => !isNonProductLine(l)).length > 1
+}
+
+export const LATE_SEND_NOTE = 'Đơn đã fulfilled trên Shopify bởi kiện của dòng khác — dòng này chưa có dấu gửi xưởng nào: kiểm tra xưởng chưa làm rồi mới gửi'
+
 /** The lines that can go to their supplier now. Sibling lines do not matter. */
-export function readyLines<L extends ExportTrackedLine & DesignGateLine>(order: SendGateOrder<L>): L[] {
+export function readyLines<L extends ExportTrackedLine & DesignGateLine>(
+  order: SendGateOrder<L> & { exportedAt?: Date | string | null; exportedToSupplierId?: string | null },
+): L[] {
+  if (isLateSendOrder(order)) {
+    // A CSV save or the order's handoff covered the sent siblings, not this line; only an open design or a live push holds it.
+    const tracked = { ...order, exportedAt: order.exportedAt ?? null, exportedToSupplierId: order.exportedToSupplierId ?? null }
+    return supplierLines(order.lines).filter(l => {
+      if (l.dropship || isLineExported(tracked, l)) return false
+      const hold = lineHold(order, l)
+      return hold !== 'DESIGN' && hold !== 'PUSHED'
+    })
+  }
   if (!SEND_STATUSES.includes(order.pipelineStatus) || isOrderClosed(order)) return []
   return supplierLines(order.lines).filter(l => !l.exportedAt && !lineHold(order, l))
 }

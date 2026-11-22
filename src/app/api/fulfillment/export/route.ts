@@ -7,7 +7,7 @@ import { isNonProductLine, lineKeysOf } from '@/lib/order-lines'
 import { buildOrdersForCsv } from '@/lib/export-orders'
 import { enabledChannelFor, getSheetChannels } from '@/lib/sheet-channel'
 import { exportLinkErrorMessage } from '@/lib/export-design-links'
-import { exportProgress, exportProgressLabel, isLineExported, isOrderClosed, mixedSupplierNote } from '@/lib/line-export'
+import { exportProgress, exportProgressLabel, isLateSendOrder, isLineExported, isOrderClosed, mixedSupplierNote } from '@/lib/line-export'
 import { isMerchizeSupplier } from '@/lib/merchize'
 import { isPgprintsSupplier } from '@/lib/pgprints-shared'
 import { CSV_LOCKED_MESSAGE, isCsvLocked } from '@/lib/csv-lock'
@@ -66,7 +66,7 @@ export async function POST(req: NextRequest) {
   let skippedNotReadyLines = 0
   for (const o of handedOff) {
     for (const l of supplierLinesOf(o)) {
-      if (isInDesign(l) || (!reExport && isOrderClosed(o))) skippedNotReadyLines++
+      if (isInDesign(l) || (!reExport && isOrderClosed(o) && !isLateSendOrder(o))) skippedNotReadyLines++
       else if (!reExport && isLineExported(o, l)) skippedExportedLines++
       else includedIds.add(l.id)
     }

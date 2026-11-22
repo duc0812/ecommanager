@@ -26,7 +26,7 @@ import { loadLineResolver, recalculateMissingOrderLineCosts } from '@/lib/repos/
 import { printCutCheck } from '@/lib/print-cut'
 import { printFileFit } from '@/lib/print-file-fit'
 import { currentFiles, sameLabel } from '@/lib/task-files'
-import { SEND_STATUSES, canSendBeside, exportProgress, exportProgressLabel, exportedSupplierOf, isDesignOpen, lineHold, readyLines } from '@/lib/line-export'
+import { LATE_SEND_NOTE, SEND_STATUSES, canSendBeside, isLateSendOrder, exportProgress, exportProgressLabel, exportedSupplierOf, isDesignOpen, lineHold, readyLines } from '@/lib/line-export'
 
 export class HandoffError extends Error {
   constructor(message: string, readonly status: number, readonly code: string) {
@@ -59,10 +59,22 @@ const MAX_CARDS = 60
  * A task joins its line by key, which a query cannot follow, so `readyLines` then picks the lines that really can go.
  */
 export function pendingHandoffWhere() {
+  const notRefunded = { financialStatus: { notIn: [...CLOSED_FINANCIAL, ...CLOSED_FINANCIAL.map(s => s.toLowerCase())] } }
   return {
-    pipelineStatus: { in: SEND_STATUSES },
-    OR: [{ designTasks: { some: { status: 'DONE' } } }, { lines: { some: { dropship: true, resolvedSupplierId: { not: null } } } }],
-    AND: [NOT_FULFILLED, { financialStatus: { notIn: [...CLOSED_FINANCIAL, ...CLOSED_FINANCIAL.map(s => s.toLowerCase())] } }],
+    OR: [
+      {
+        pipelineStatus: { in: SEND_STATUSES },
+        OR: [{ designTasks: { some: { status: 'DONE' } } }, { lines: { some: { dropship: true, resolvedSupplierId: { not: null } } } }],
+        AND: [NOT_FULFILLED, notRefunded],
+      },
+      // Owner 11/22/2026: a fulfilled order with several product lines still sends a line no supplier got (readyLines decides).
+      {
+        pipelineStatus: { notIn: ['CANCELLED', 'REFUNDED'] },
+        designTasks: { some: { status: 'DONE' } },
+        lines: { some: { exportedAt: null, resolvedSupplierId: { not: null } } },
+        AND: [{ OR: [{ pipelineStatus: 'FULFILLED' }, { fulfillmentStatus: { in: ['fulfilled', 'FULFILLED'] } }] }, notRefunded],
+      },
+    ],
   }
 }
 
@@ -94,7 +106,7 @@ async function ordersWithReadyLines(where: object, supplierId?: string) {
   const orders = await prisma.order.findMany({
     where, orderBy: { placedAt: 'asc' },
     select: {
-      id: true, pipelineStatus: true, financialStatus: true, fulfillmentStatus: true, designReady: true, supplierHandoffAt: true,
+      id: true, pipelineStatus: true, financialStatus: true, fulfillmentStatus: true, designReady: true, supplierHandoffAt: true, exportedAt: true, exportedToSupplierId: true,
       lines: { select: { id: true, shopifyLineId: true, sku: true, productTitle: true, shopifyProductType: true, resolvedSupplierId: true, designDriveLink: true, dropship: true, costSnapshotAt: true, exportedAt: true, exportedToSupplierId: true, qty: true, manualBaseCost: true, resolvedBaseCost: true } },
       designTasks: TASK_GATE,
       supplierPushes: LIVE_PUSHES,
@@ -226,10 +238,11 @@ export async function handoffStates(orders: StateOrder[]): Promise<Map<string, H
       ? (!account.pgprints ? `Store ${account.name} chưa có Store ID / Secret key PGprints — lưu chờ xuất CSV`
         : `SKU xưởng ${Array.from(new Set(missingApiSku)).join(', ')} chưa có "SKU API" — lưu chờ xuất CSV`)
       : null
-    const apiNote = mzApi ? (account.merchizeNote ? `${account.merchizeNote} — chưa gửi được đơn này` : mixedNote('Merchize'))
+    const sendNote = mzApi ? (account.merchizeNote ? `${account.merchizeNote} — chưa gửi được đơn này` : mixedNote('Merchize'))
       : keyedApi ? mixedNote(SUPPLIER_API_NAMES[keyedApi.kind])
       : pgApi ? mixedNote('PGprints')
       : pgNote
+    const apiNote = [ready.length > 0 && isLateSendOrder(o) ? LATE_SEND_NOTE : null, sendNote].filter(Boolean).join(' · ') || null
     const openTasks = o.designTasks.filter(t => t.status !== 'DONE' && t.status !== 'CANCELLED').length
     const handedOff = o.supplierHandoffAt
       ? {

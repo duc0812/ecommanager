@@ -829,12 +829,27 @@ describe('lines go to their supplier one by one', () => {
   })
 
   it('keeps a rejected and a closed order out of the supplier tabs', async () => {
-    for (const data of [{ pipelineStatus: 'DESIGN_REJECTED' }, { financialStatus: 'REFUNDED' }, { financialStatus: 'voided' }, { fulfillmentStatus: 'FULFILLED' }, { pipelineStatus: 'CANCELLED' }]) {
+    for (const data of [{ pipelineStatus: 'DESIGN_REJECTED' }, { financialStatus: 'REFUNDED' }, { financialStatus: 'voided' }, { pipelineStatus: 'CANCELLED' }]) {
       const o = await lit6102()
       await prisma.order.update({ where: { id: o.id }, data })
       expect((await listHandoffHub({ q: o.number, supplier: CSV_SUP })).pending.some(c => c.order.id === o.id)).toBe(false)
       expect((await handoffStateFor(o.id))!.pending).toBe(false)
     }
+  })
+
+  it('owner 11/22/2026 (#LIT5519_2): Shopify fulfilled closes a one-line order only; on a two-line order the unsent approved line still shows, with a warning', async () => {
+    const o = await lit6102()
+    await prisma.order.update({ where: { id: o.id }, data: { fulfillmentStatus: 'FULFILLED', pipelineStatus: 'FULFILLED' } })
+    const card = (await listHandoffHub({ q: o.number, supplier: CSV_SUP })).pending.find(c => c.order.id === o.id)
+    expect(card).toBeTruthy()
+    expect(hubView(card!, CSV_SUP).lines.map(l => l.taskKey)).toEqual([o.keys[1]])
+    const state = (await handoffStateFor(o.id))!
+    expect(state.pending).toBe(true)
+    expect(state.apiNote).toMatch(/Đơn đã fulfilled trên Shopify bởi kiện của dòng khác/)
+
+    const single = await makeOrder({ lines: 1, approve: true })
+    await prisma.order.update({ where: { id: single.id }, data: { fulfillmentStatus: 'FULFILLED', pipelineStatus: 'FULFILLED' } })
+    expect((await handoffStateFor(single.id))!.pending).toBe(false)
   })
 
   it('a push the app never marked keeps its lines out of the hub, so nobody sends them twice', async () => {
