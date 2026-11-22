@@ -1,7 +1,7 @@
 # Gửi lần đầu một dòng chưa đi trên đơn Shopify đã fulfilled
 
 - **Ngày:** 11/20/2026, viết lại 11/21/2026 theo ý chủ shop ("các đơn bị hủy task là đang chưa ship mà")
-- **Trạng thái:** Đề xuất — chờ chủ shop duyệt. Chưa sửa code cho phần này.
+- **Trạng thái:** §2.2 đã làm một phần trên prod 11/22/2026 (504bb5c + 83bdaae, chủ shop: "Trạng thái đơn shopify đã fulfilled chỉ áp dụng được với đơn 1 item thôi"). Các phần §2.3–§2.4 (Shipment.sentAfterFulfilledAt, late_tracking, hiển thị) vẫn là đề xuất, chờ chủ shop duyệt.
 - **Khu vực:** Fulfillment / Tracking / Design Studio / Chuyển xưởng
 - **Nguồn:** chủ shop 11/20/2026 (LIT5121_1): "Xử lý lại logic hủy task, logic shipping lại… Nếu cần thì thay đổi hoàn toàn sheet tracking của các bên theo logic mới."
 - **Liên quan:** `docs/superpowers/specs/2026-09-05-auto-fulfill-tracking-design.md` (Auto Fulfilled từ sheet), NOTES.md "Reopened tasks are never auto-cancelled" (PR 13, prod 11/20/2026), NOTES.md "Line-level export".
@@ -41,6 +41,8 @@ Một dòng là **chưa gửi xưởng** khi `lineWentToSupplier` (`src/lib/desi
 Dòng chưa gửi xưởng + đơn fulfilled + task DONE (người mở lại rồi duyệt) = **"gửi muộn"** (late send). Đây là trạng thái cần xử lý; tool chỉ phát hiện và cho người gửi, không tự gửi.
 
 ### 2.2 Chuyển xưởng: chặn theo dòng, không theo đơn
+
+> **Đã làm 11/22/2026 (504bb5c + 83bdaae):** `isLateSendOrder` + `readyLines` (`src/lib/line-export.ts`): đơn không huỷ/hoàn, FULFILLED, nhiều hơn 1 dòng sản phẩm (đếm như `lineKeysOf`, bỏ dòng phí/addon) → offer dòng DONE chưa có dấu xuất (export của đơn kiểu cũ vẫn tính), không dropship, không trong push sống chưa đánh dấu, **không có kiện riêng** (tracking chỉ dùng chung với dòng cùng xưởng = đã gửi ngoài tool). Lần lưu CSV trước không giữ dòng. `pendingHandoffWhere` thêm nhánh cho các đơn này, CSV export không bỏ qua, thẻ mang `LATE_SEND_NOTE`. Không có nhóm hub riêng: dòng nằm trong tab xưởng của nó kèm cảnh báo. Push API dùng cơ chế sẵn có (gửi sau `-R2` nếu cùng xưởng đã có push). Chưa làm: ghi `sentAfterFulfilledAt` và xoá tracking mượn khi gửi (§2.2 đoạn cuối), §2.3, §2.4. Auto Fulfilled không đổi.
 
 - `readyLines`: với đơn fulfilled, thay vì trả `[]`, trả các dòng **chưa gửi xưởng** và task DONE (dòng khác của đơn vẫn bị loại vì đã đi). Đơn CANCELLED / REFUNDED / VOIDED vẫn đóng hẳn.
 - Hub "Chờ chuyển xưởng": thêm nhóm **"Đơn đã fulfilled còn dòng chưa gửi"** (query riêng: `fulfillmentStatus` fulfilled + có task DONE + dòng chưa có dấu gửi). Thẻ ghi rõ "Đơn đã giao kiện khác ngày MM/DD/YYYY — dòng này chưa gửi xưởng nào". Không trộn vào nhóm thường để leader nhìn thấy và quyết.
