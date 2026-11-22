@@ -8,6 +8,9 @@ export const SUPPLIER_API_NAMES: Record<SupplierApiKind, string> = { pgprints: '
 
 export type HandoffPush = { status: string; supplierOrderCode: string | null; externalOrderId: string }
 
+/** A live push as one line sees it: the supplier order that carries this line. */
+export type LinePush = HandoffPush & { apiKind: SupplierApiKind | null }
+
 export type HandoffState = {
   /** At least one line can go to its supplier now. */
   pending: boolean
@@ -36,6 +39,8 @@ export type HandoffState = {
   handedOff: { at: string; mode: HandoffMode; byName: string | null } | null
   canUndo: boolean
   push: HandoffPush | null
+  /** OrderLine id → the live push that carries that line; a line no live push carries has no entry. */
+  pushByLine?: Record<string, LinePush>
 }
 
 /**

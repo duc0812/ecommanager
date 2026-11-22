@@ -213,6 +213,24 @@ export function readyLines<L extends ExportTrackedLine & DesignGateLine>(
   return supplierLines(order.lines).filter(l => !l.exportedAt && !lineHold(order, l))
 }
 
+/**
+ * A landed, marked push of the line's own supplier that recorded this line: the supplier is making it, even when a fix reopened
+ * the line and took its export mark (LIT6467_3, owner 11/22/2026). A send never carries it again, and it does not hold back its
+ * siblings: they go beside the push under a new number. The hub still lists it (the push window then deals with it). A push
+ * that recorded no lines holds nothing here.
+ */
+export function heldByLivePush(
+  pushes: LivePush[], line: { id?: string; shopifyLineId: string; resolvedSupplierId: string | null },
+): boolean {
+  return pushes.some(p => {
+    if (p.status !== 'CREATED' || !p.exportMarked || p.supplierId !== line.resolvedSupplierId) return false
+    const carried = pushShopifyLineIds(p)
+    if (carried) return carried.includes(line.shopifyLineId)
+    const ids = pushLineIds(p)
+    return !!ids && !!line.id && ids.includes(line.id)
+  })
+}
+
 function storedIds(push: { prevExportJson: string | null }, field: 'lineIds' | 'shopifyLineIds'): string[] | null {
   try {
     const ids = JSON.parse(push.prevExportJson ?? '{}')[field]

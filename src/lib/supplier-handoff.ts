@@ -17,7 +17,7 @@ import { getCatkissfishSettings, hasCatkissfishAccount } from '@/lib/catkissfish
 import { isLenfulSupplier } from '@/lib/lenful'
 import { getLenfulSettings, hasLenfulKey } from '@/lib/lenful-settings'
 import { ACTIVE_PUSH_STATUSES, activePushByOrder, logHandoffEvent } from '@/lib/repos/push-export'
-import { COOLING_OFF_HOURS, SUPPLIER_API_NAMES, UNMAPPED_TAB, type HandoffCard, type HandoffLine, type HandoffSent, type HandoffState, type HubChannel, type HubTab, type SentStage, type SupplierApiKind } from '@/lib/handoff-shared'
+import { COOLING_OFF_HOURS, SUPPLIER_API_NAMES, UNMAPPED_TAB, type HandoffCard, type HandoffLine, type HandoffSent, type HandoffState, type LinePush, type HubChannel, type HubTab, type SentStage, type SupplierApiKind } from '@/lib/handoff-shared'
 import { effectiveBaseCost } from '@/lib/order-profit'
 import { enabledChannelFor, getSheetChannels, sheetProduct, sizeLabel, type SheetChannel } from '@/lib/sheet-channel'
 import { CSV_LOCKED_MESSAGE, isCsvLocked } from '@/lib/csv-lock'
@@ -26,7 +26,7 @@ import { loadLineResolver, recalculateMissingOrderLineCosts } from '@/lib/repos/
 import { printCutCheck } from '@/lib/print-cut'
 import { printFileFit } from '@/lib/print-file-fit'
 import { currentFiles, sameLabel } from '@/lib/task-files'
-import { LATE_SEND_NOTE, SEND_STATUSES, canSendBeside, isLateSendOrder, exportProgress, exportProgressLabel, exportedSupplierOf, isDesignOpen, lineHold, readyLines } from '@/lib/line-export'
+import { LATE_SEND_NOTE, SEND_STATUSES, canSendBeside, isLateSendOrder, exportProgress, exportProgressLabel, exportedSupplierOf, isDesignOpen, lineHold, pushLineIds, pushShopifyLineIds, readyLines } from '@/lib/line-export'
 
 export class HandoffError extends Error {
   constructor(message: string, readonly status: number, readonly code: string) {
@@ -98,7 +98,7 @@ function waitingForMappingWhere() {
   }
 }
 
-const LIVE_PUSHES = { where: { status: { in: ACTIVE_PUSH_STATUSES } }, select: { supplierId: true, status: true, exportMarked: true, prevExportJson: true } } as const
+const LIVE_PUSHES = { where: { status: { in: ACTIVE_PUSH_STATUSES } }, select: { supplierId: true, status: true, exportMarked: true, prevExportJson: true, externalOrderId: true, supplierOrderCode: true, createdAt: true } } as const
 const TASK_GATE = { select: { shopifyLineId: true, status: true, updatedAt: true, dueAt: true } } as const
 
 /** Oldest first, the orders holding a line that can go now, of this supplier when one is named. The count and the cost are not limited by MAX_CARDS. */
@@ -145,7 +145,29 @@ type StateOrder = {
   supplierHandoffAt: Date | null; supplierHandoffMode: string | null; supplierHandoffById: string | null
   lines: Array<{ id: string; shopifyLineId: string; sku: string | null; productTitle: string; shopifyProductType: string | null; resolvedSupplierId: string | null; resolvedSupplierSku: string | null; designDriveLink: string | null; exportedAt: Date | null; exportedToSupplierId: string | null }>
   designTasks: Array<{ shopifyLineId: string; status: string; updatedAt: Date; dueAt?: Date | null }>
-  supplierPushes: Array<{ supplierId: string; status: string; exportMarked: boolean; prevExportJson: string | null }>
+  supplierPushes: Array<{ supplierId: string; status: string; exportMarked: boolean; prevExportJson: string | null; externalOrderId?: string; supplierOrderCode?: string | null; createdAt?: Date }>
+}
+
+/**
+ * The live push that carries each line, by OrderLine id: a task shows its own line's supplier order, not the order's newest
+ * push (LIT6467, owner 11/22/2026: the Jomall line showed the Merchize order sent for another line).
+ */
+export function pushByLineFor(
+  o: Pick<StateOrder, 'lines' | 'supplierPushes'>, kindOf: (supplierId: string) => SupplierApiKind | null,
+): Record<string, LinePush> {
+  const out: Record<string, LinePush> = {}
+  const newest = [...o.supplierPushes].sort((a, b) => (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0))
+  for (const p of newest) {
+    if (!p.externalOrderId) continue
+    const carried = pushShopifyLineIds(p)
+    const ids = carried ? null : pushLineIds(p)
+    for (const l of o.lines) {
+      if (out[l.id] || isNonProductLine(l) || l.resolvedSupplierId !== p.supplierId) continue
+      if (carried ? !carried.includes(l.shopifyLineId) : ids ? !ids.includes(l.id) : false) continue
+      out[l.id] = { status: p.status, supplierOrderCode: p.supplierOrderCode ?? null, externalOrderId: p.externalOrderId, apiKind: kindOf(p.supplierId) }
+    }
+  }
+  return out
 }
 
 function blockedReason(o: StateOrder, openTasks: number): string {
@@ -200,6 +222,8 @@ export async function handoffStates(orders: StateOrder[]): Promise<Map<string, H
     const hits = suppliers.filter(k.matches)
     return { kind: k.kind, supplier: hits.find(s => s.isActive) ?? hits[0] ?? null, live: liveKeys[k.kind] }
   })
+  const kindOf = (supplierId: string): SupplierApiKind | null =>
+    supplierId === mz?.id ? 'merchize' : supplierId === pg?.id ? 'pgprints' : keyed.find(k => k.supplier?.id === supplierId)?.kind ?? null
   const pgSkus = pg
     ? Array.from(new Set(orders.flatMap(o => o.lines.filter(l => l.resolvedSupplierId === pg.id).map(l => l.resolvedSupplierSku).filter((x): x is string => !!x))))
     : []
@@ -285,6 +309,7 @@ export async function handoffStates(orders: StateOrder[]): Promise<Map<string, H
       handedOff,
       canUndo: !!handedOff && handedOff.mode === 'CSV' && !AFTER_EXPORT.includes(o.pipelineStatus),
       push: push ? { status: push.status, supplierOrderCode: push.supplierOrderCode, externalOrderId: push.externalOrderId } : null,
+      pushByLine: pushByLineFor(o, kindOf),
     })
   }
   return out

@@ -1,7 +1,7 @@
 import { prisma } from '@/lib/db'
 import { markOrdersExported } from '@/lib/repos/orders'
 import {
-  canSendBeside, isLineExported, needsFileLines, pushFileTokens, pushLineIds, pushShopifyLineIds, pushedShopifyLineIds,
+  canSendBeside, heldByLivePush, isLineExported, needsFileLines, pushFileTokens, pushLineIds, pushShopifyLineIds, pushedShopifyLineIds,
   type ExportTrackedLine, type ExportTrackedOrder, type PushedLine,
 } from '@/lib/line-export'
 import { isLineApproved } from '@/lib/public-artwork'
@@ -26,9 +26,9 @@ export function planPushLines<L extends ExportTrackedLine & { id: string; shopif
   order: ExportTrackedOrder<L> & { designTasks: { shopifyLineId: string; status: string }[] }, own: L[],
   pushes: { supplierId: string; status: string; exportMarked: boolean; prevExportJson: string | null }[],
 ): { lines: L[]; held: L[]; later: boolean } {
-  const unsent = own.filter(l => !isLineExported(order, l))
-  const cleared = unsent.filter(l => isLineApproved(l, order.designTasks.find(t => t.shopifyLineId === l.shopifyLineId)))
   const live = pushes.filter(p => ACTIVE_PUSH_STATUSES.includes(p.status))
+  const unsent = own.filter(l => !isLineExported(order, l) && !heldByLivePush(live, l))
+  const cleared = unsent.filter(l => isLineApproved(l, order.designTasks.find(t => t.shopifyLineId === l.shopifyLineId)))
   const later = live.length > 0 && cleared.length > 0 && canSendBeside(live, cleared)
   if (cleared.length > 0 && (live.length === 0 || later)) return { lines: cleared, held: unsent.filter(l => !cleared.includes(l)), later }
   return { lines: live.length > 0 || unsent.length === 0 ? own : unsent, held: [], later: false }
