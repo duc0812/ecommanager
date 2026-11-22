@@ -17,7 +17,7 @@ import { getCatkissfishSettings, hasCatkissfishAccount } from '@/lib/catkissfish
 import { isLenfulSupplier } from '@/lib/lenful'
 import { getLenfulSettings, hasLenfulKey } from '@/lib/lenful-settings'
 import { ACTIVE_PUSH_STATUSES, activePushByOrder, logHandoffEvent } from '@/lib/repos/push-export'
-import { COOLING_OFF_HOURS, SUPPLIER_API_NAMES, UNMAPPED_TAB, type HandoffCard, type HandoffLine, type HandoffSent, type HandoffState, type LinePush, type HubChannel, type HubTab, type SentStage, type SupplierApiKind } from '@/lib/handoff-shared'
+import { COOLING_OFF_HOURS, SUPPLIER_API_NAMES, UNMAPPED_TAB, type HandoffCard, type HandoffLine, type HandoffSent, type HandoffState, type LinePush, type LineSheetRow, type HubChannel, type HubTab, type SentStage, type SupplierApiKind } from '@/lib/handoff-shared'
 import { effectiveBaseCost } from '@/lib/order-profit'
 import { enabledChannelFor, getSheetChannels, sheetProduct, sizeLabel, type SheetChannel } from '@/lib/sheet-channel'
 import { CSV_LOCKED_MESSAGE, isCsvLocked } from '@/lib/csv-lock'
@@ -143,9 +143,28 @@ export async function countOverdueHandoff(opts: HandoffScope = {}): Promise<numb
 type StateOrder = {
   id: string; storeId: string; pipelineStatus: string; financialStatus: string; fulfillmentStatus: string | null; designReady: boolean
   supplierHandoffAt: Date | null; supplierHandoffMode: string | null; supplierHandoffById: string | null
-  lines: Array<{ id: string; shopifyLineId: string; sku: string | null; productTitle: string; shopifyProductType: string | null; resolvedSupplierId: string | null; resolvedSupplierSku: string | null; designDriveLink: string | null; exportedAt: Date | null; exportedToSupplierId: string | null }>
+  shopifyOrderNumber?: string
+  lines: Array<{ id: string; shopifyLineId: string; linePosition?: number | null; sku: string | null; productTitle: string; shopifyProductType: string | null; resolvedSupplierId: string | null; resolvedSupplierSku: string | null; designDriveLink: string | null; exportedAt: Date | null; exportedToSupplierId: string | null }>
   designTasks: Array<{ shopifyLineId: string; status: string; updatedAt: Date; dueAt?: Date | null }>
   supplierPushes: Array<{ supplierId: string; status: string; exportMarked: boolean; prevExportJson: string | null; externalOrderId?: string; supplierOrderCode?: string | null; createdAt?: Date }>
+}
+
+/** The sheet row each line was written to, newest first, by OrderLine id (or by line key once a re-sync renamed the line). */
+export function sheetRowByLineFor(
+  o: Pick<StateOrder, 'lines'> & { shopifyOrderNumber?: string },
+  writes: Array<{ orderLineId: string; lineKey: string; supplierId: string; tabName: string; rowRange: string | null }>,
+  nameOf: (supplierId: string) => string | null,
+): Record<string, LineSheetRow> {
+  const out: Record<string, LineSheetRow> = {}
+  const positioned = o.lines.flatMap(l => (typeof l.linePosition === 'number' ? [{ ...l, linePosition: l.linePosition }] : []))
+  const keys = o.shopifyOrderNumber && positioned.length === o.lines.length ? lineKeysOf(o.shopifyOrderNumber, positioned) : null
+  for (const w of writes) {
+    const line = o.lines.find(l => l.id === w.orderLineId) ?? (keys ? o.lines.find(l => keys.get(l.shopifyLineId) === w.lineKey) : undefined)
+    if (!line || out[line.id]) continue
+    const row = /\d+/.exec(w.rowRange ?? '')?.[0]
+    out[line.id] = { supplierName: nameOf(w.supplierId), tab: w.tabName, row: row ? Number(row) : null }
+  }
+  return out
 }
 
 /**
@@ -182,7 +201,7 @@ function blockedReason(o: StateOrder, openTasks: number): string {
 const PARCELS = { select: { shopifyLineId: true, trackingNumber: true } } as const
 
 const STATE_INCLUDE = {
-  lines: { select: { id: true, shopifyLineId: true, sku: true, productTitle: true, shopifyProductType: true, resolvedSupplierId: true, resolvedSupplierSku: true, designDriveLink: true, dropship: true, costSnapshotAt: true, exportedAt: true, exportedToSupplierId: true } },
+  lines: { select: { id: true, linePosition: true, shopifyLineId: true, sku: true, productTitle: true, shopifyProductType: true, resolvedSupplierId: true, resolvedSupplierSku: true, designDriveLink: true, dropship: true, costSnapshotAt: true, exportedAt: true, exportedToSupplierId: true } },
   designTasks: TASK_GATE,
   supplierPushes: LIVE_PUSHES,
   shipments: PARCELS,
@@ -205,14 +224,19 @@ async function storeAccountsOf(storeIds: string[]): Promise<Map<string, StoreAcc
 export async function handoffStates(orders: StateOrder[]): Promise<Map<string, HandoffState>> {
   const out = new Map<string, HandoffState>()
   if (orders.length === 0) return out
-  const [suppliers, accounts, liveKeys, pushes, channels, csvLocked] = await Promise.all([
-    prisma.supplier.findMany({ select: { id: true, code: true, apiType: true, isActive: true } }),
+  const [suppliers, accounts, liveKeys, pushes, channels, csvLocked, sheetWrites] = await Promise.all([
+    prisma.supplier.findMany({ select: { id: true, code: true, name: true, apiType: true, isActive: true } }),
     storeAccountsOf(Array.from(new Set(orders.map(o => o.storeId)))),
     liveApiKeys(),
     activePushByOrder(orders.map(o => o.id)),
     getSheetChannels(),
     isCsvLocked(),
+    prisma.supplierSheetWrite.findMany({
+      where: { orderId: { in: orders.map(o => o.id) }, status: 'WRITTEN' }, orderBy: { createdAt: 'desc' },
+      select: { orderId: true, orderLineId: true, lineKey: true, supplierId: true, tabName: true, rowRange: true },
+    }),
   ])
+  const supplierNameById = new Map(suppliers.map(s => [s.id, s.name]))
   const sheetSupplierIds = new Set(suppliers.filter(s => enabledChannelFor(channels, s)).map(s => s.id))
   const pgHits = suppliers.filter(isPgprintsSupplier)
   const pg = pgHits.find(s => s.isActive) ?? pgHits[0] ?? null
@@ -310,6 +334,7 @@ export async function handoffStates(orders: StateOrder[]): Promise<Map<string, H
       canUndo: !!handedOff && handedOff.mode === 'CSV' && !AFTER_EXPORT.includes(o.pipelineStatus),
       push: push ? { status: push.status, supplierOrderCode: push.supplierOrderCode, externalOrderId: push.externalOrderId } : null,
       pushByLine: pushByLineFor(o, kindOf),
+      sheetRowByLine: sheetRowByLineFor(o, sheetWrites.filter(w => w.orderId === o.id), id => supplierNameById.get(id) ?? null),
     })
   }
   return out

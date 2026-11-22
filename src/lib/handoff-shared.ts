@@ -11,6 +11,14 @@ export type HandoffPush = { status: string; supplierOrderCode: string | null; ex
 /** A live push as one line sees it: the supplier order that carries this line. */
 export type LinePush = HandoffPush & { apiKind: SupplierApiKind | null }
 
+/** Where a line was written on a supplier's order sheet: the tab and the row number. */
+export type LineSheetRow = { supplierName: string | null; tab: string; row: number | null }
+
+/** "Đã gửi xưởng Jomall · dòng 574 sheet ORDER 11-2026" for a line written to a supplier's sheet. */
+export function sheetRowLabel(r: LineSheetRow): string {
+  return `Đã gửi xưởng${r.supplierName ? ` ${r.supplierName}` : ''}${r.row != null ? ` · dòng ${r.row}` : ''} sheet ${r.tab}`
+}
+
 export type HandoffState = {
   /** At least one line can go to its supplier now. */
   pending: boolean
@@ -41,6 +49,8 @@ export type HandoffState = {
   push: HandoffPush | null
   /** OrderLine id → the live push that carries that line; a line no live push carries has no entry. */
   pushByLine?: Record<string, LinePush>
+  /** OrderLine id → the supplier sheet row the line was written to. */
+  sheetRowByLine?: Record<string, LineSheetRow>
 }
 
 /**

@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { heldByLivePush } from './line-export'
 import { planPushLines } from './repos/push-export'
-import { pushByLineFor } from './supplier-handoff'
+import { pushByLineFor, sheetRowByLineFor } from './supplier-handoff'
+import { sheetRowLabel } from './handoff-shared'
 
 // LIT6467 (owner 11/22/2026): line 3 sits in a landed Merchize order but a fix reopened it and took its mark; line 1 was
 // approved later for the same supplier; line 2 went to Jomall by sheet.
@@ -62,5 +63,20 @@ describe('pushByLineFor', () => {
   it('a push from before lines were recorded shows on every line of its supplier', () => {
     const byLine = pushByLineFor({ lines, supplierPushes: [{ ...oldPush, prevExportJson: null }] }, kindOf)
     expect(Object.keys(byLine).sort()).toEqual(['ol-1', 'ol-3'])
+  })
+})
+
+describe('sheetRowByLineFor', () => {
+  const writes = [
+    { orderLineId: 'ol-2', lineKey: 'LIT6467_2', supplierId: JM, tabName: 'ORDER 11-2026', rowRange: 'A574' },
+    { orderLineId: 'ol-gone', lineKey: 'LIT6467_1', supplierId: MZ, tabName: 'ORDER 11-2026', rowRange: 'A570:Q570' },
+  ]
+  const nameOf = (id: string) => (id === JM ? 'Jomall' : 'Merchize')
+  it('finds the row by line id, and by line key once a re-sync renamed the line', () => {
+    const byLine = sheetRowByLineFor({ lines, shopifyOrderNumber: '#LIT6467' }, writes, nameOf)
+    expect(byLine['ol-2']).toEqual({ supplierName: 'Jomall', tab: 'ORDER 11-2026', row: 574 })
+    expect(byLine['ol-1']?.row).toBe(570)
+    expect(byLine['ol-3']).toBeUndefined()
+    expect(sheetRowLabel(byLine['ol-2'])).toBe('Đã gửi xưởng Jomall · dòng 574 sheet ORDER 11-2026')
   })
 })
