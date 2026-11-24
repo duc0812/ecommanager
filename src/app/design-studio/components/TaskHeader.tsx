@@ -18,6 +18,7 @@ import { PopoverHead, useDismiss, useToast } from './overlay'
 import {
   Avatar, Icon, Pill, READY_META, statusMeta, btnMd, btnPrimaryMd, field, fieldLabel, fmtDate, fmtDateTime, iconBtn, menuItem, popover,
 } from './ui'
+import OutsourceTaskPanel from './OutsourceTaskPanel'
 
 type Panel = 'none' | 'reject' | 'ask' | 'assign' | 'menu' | 'reopen'
 
@@ -216,6 +217,7 @@ export default function TaskHeader({ detail, qa, holdCount, refreshing, onRefres
 
   return (
     <section aria-label={`Task ${task.taskKey}`} className="sticky top-0 z-30 bg-surface-container-lowest rounded-xl shadow-card border border-outline-variant/20">
+      <OutsourceTaskPanel key={`${task.taskKey}-${task.status}-${task.assigneeId}`} taskKey={task.taskKey} onChanged={onChanged} />
       <div className="flex flex-wrap items-center gap-x-md gap-y-sm px-[20px] pt-md pb-sm">
         <div className="flex-[999_1_560px] min-w-0 flex flex-col gap-sm">
           <div className="flex flex-wrap items-center gap-sm">

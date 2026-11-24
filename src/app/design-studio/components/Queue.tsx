@@ -66,6 +66,8 @@ function QueueRow({ t, selected, onSelect, waiting, showStore }: { t: TaskRow; s
           {t.mapping === 'UNMAPPED' && <Pill tone="bad" icon="account_tree" title={t.mappingHint ? `Gợi ý: ${t.mappingHint}` : undefined}>Chưa mapping</Pill>}
           {t.mapping === 'NO_TEMPLATE' && <Pill tone="warn" icon="grid_off" title={t.unmapped ? 'Chưa có xưởng nào có template cho loại hàng này' : 'SKU xưởng chưa có template in'}>Thiếu template</Pill>}
           {waiting !== undefined && <Pill tone="brand" icon="layers">{waiting} đơn chờ</Pill>}
+          {t.status === 'REJECTED' && !t.assigneeId && <Pill tone="warn">Chưa giao</Pill>}
+          {t.outsourceCode && <Pill tone="brand" icon="handshake">Outsource</Pill>}
           {t.assigneeName && <span className="ml-auto"><Avatar name={t.assigneeName} /></span>}
         </span>
       </span>

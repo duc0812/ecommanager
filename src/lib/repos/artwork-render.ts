@@ -26,6 +26,8 @@ type LoadedTask = NonNullable<Awaited<ReturnType<typeof loadTask>>>
 async function enqueueRender(detail: LoadedTask, actorId: string | null, how: string): Promise<RenderJobView> {
   const { task, library, slots } = detail
   const created = await prisma.$transaction(async tx => {
+    const held = await tx.designTask.findUnique({ where: { taskKey: task.taskKey }, select: { outsource: { select: { active: true } } } })
+    if (held?.outsource?.active) throw new LibraryError('Task đang outsource', 409)
     const open = await tx.artworkJob.count({ where: { kind: RENDER_LINE, orderId: task.orderId, shopifyLineId: task.shopifyLineId, status: { in: OPEN } } })
     if (open > 0) throw new LibraryError('Đang dựng file in…', 409)
     return tx.artworkJob.create({
@@ -63,7 +65,7 @@ export type ScheduledRenderSummary = { scanned: number; queued: { taskKey: strin
  */
 export async function queueScheduledRenders(opts: { limit?: number } = {}): Promise<ScheduledRenderSummary> {
   const tasks = await prisma.designTask.findMany({
-    where: { status: { in: SCHEDULED_RENDER_FROM } },
+    where: { status: { in: SCHEDULED_RENDER_FROM }, OR: [{ outsource: null }, { outsource: { active: false } }] },
     select: { taskKey: true, orderId: true, shopifyLineId: true },
     orderBy: { createdAt: 'asc' }, take: opts.limit ?? SCHEDULED_SCAN_LIMIT,
   })

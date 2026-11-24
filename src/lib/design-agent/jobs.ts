@@ -1,3 +1,4 @@
+import { availableForAutomation } from '@/lib/design-outsource-routing'
 import { prisma } from '@/lib/db'
 import type { DesignAgentJob } from '@/generated/prisma/client'
 import { designOf } from '@/lib/flat-text-coverage'
@@ -67,19 +68,22 @@ export async function enqueueAgentJob(input: EnqueueInput): Promise<{ job: Desig
     await refuseHeldLine(input.taskKey, input.source)
   }
   const line = task.order.lines.find(l => l.shopifyLineId === task.shopifyLineId)
-  const job = await prisma.designAgentJob.create({
-    data: {
-      kind: input.kind,
-      source: input.source,
-      taskId: task.id,
-      taskKey: task.taskKey,
-      designCode: (line ? designOf(line.sku) : '') || null,
-      requestText: input.requestText,
-      requestedById: input.requestedById ?? null,
-      requestedBy: input.requestedBy ?? null,
-      priority: input.factory ? 10 : 0,
-      parentJobId: input.parentJobId ?? null,
-    },
+  const job = await prisma.$transaction(async tx => {
+    if (input.kind !== 'LIBRARY_APPLY' && !await tx.designTask.count({ where: { id: task.id, ...availableForAutomation } })) throw new AgentJobError('Task outsource đang được giữ hoặc chờ phân công', 409)
+    return tx.designAgentJob.create({
+      data: {
+        kind: input.kind,
+        source: input.source,
+        taskId: task.id,
+        taskKey: task.taskKey,
+        designCode: (line ? designOf(line.sku) : '') || null,
+        requestText: input.requestText,
+        requestedById: input.requestedById ?? null,
+        requestedBy: input.requestedBy ?? null,
+        priority: input.factory ? 10 : 0,
+        parentJobId: input.parentJobId ?? null,
+      },
+    })
   })
   notifyAgentQueue()
   return { job, created: true, appended: false }
@@ -269,7 +273,7 @@ export async function backfillRejected(opts: {
 }): Promise<{ dryRun: boolean; count: number; taskKeys: string[]; queued: number }> {
   const [rejected, open] = await Promise.all([
     prisma.designTask.findMany({
-      where: { status: 'REJECTED' }, orderBy: { taskKey: 'asc' },
+      where: { status: 'REJECTED', ...availableForAutomation }, orderBy: { taskKey: 'asc' },
       include: { order: { select: { pipelineStatus: true, financialStatus: true, fulfillmentStatus: true } } },
     }),
     prisma.designAgentJob.findMany({ where: { status: { in: OPEN }, taskId: { not: null } }, select: { taskId: true } }),

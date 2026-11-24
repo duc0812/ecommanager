@@ -242,7 +242,7 @@ export default function ReviewWorkspace({ taskKey, position, onMoved, onOpenTask
     if (!detail) return false
     const ok = await go({ to: 'REJECTED', reasons, note: note || undefined })
     if (ok) {
-      toast.say(`Đã trả lại ${detail.task.taskKey} cho designer`)
+      toast.say(detail.task.outsourceCode ? `Đã trả ${detail.task.taskKey} về bảng chung để phân công lại` : `Đã trả lại ${detail.task.taskKey} cho designer`)
       onMoved(detail.task.taskKey, 'REJECTED')
     }
     return ok

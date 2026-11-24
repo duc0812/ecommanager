@@ -20,14 +20,14 @@ import { checklistLibraryState, libraryStateFor, readLocalEntries } from '@/lib/
 import type { TaskLibraryState } from '@/lib/artwork-library-types'
 import type { RenderJobView } from '@/lib/artwork-render-eligibility'
 import { latestRenderJob } from '@/lib/artwork-render-jobs'
-import { canApproveDesign, canEditDesignNote, canHandoffToSupplier, isLeaderRole, type FeaturePermission } from '@/lib/roles'
+import { canApproveDesign, canEditDesignNote, canHandoffToSupplier, canManageOutsource, isLeaderRole, type FeaturePermission } from '@/lib/roles'
 import { ACTIVE_PUSH_STATUSES, activePushByOrder, carriedShopifyLineIds } from '@/lib/repos/push-export'
 import type { HandoffPush } from '@/lib/handoff-shared'
 import { autoRenderEligibility, hasTeeinblueDesign } from '@/lib/artwork-render-eligibility'
 import { autoFromLocalLibrary } from '@/lib/flat-text-coverage'
 import { APP_FILE_PREFIX, DESIGN_LINK_SEPARATOR, isAppFileLink } from '@/lib/design-links'
 import { saveStudioDesignToLibrary } from '@/lib/studio-library'
-import { MISSING_AREAS_PREFIX, missingPrintAreas, outdatedParts, printFilesReady } from '@/lib/task-files'
+import { MISSING_AREAS_PREFIX, currentFiles, missingPrintAreas, outdatedParts, printFilesReady } from '@/lib/task-files'
 import { exportedSupplierOf, isLineExported, type ExportTrackedLine, type ExportTrackedOrder } from '@/lib/line-export'
 import { AGENT_USER_EMAIL } from '@/lib/design-agent/agent-user'
 import { isUniqueViolation, retryOnBusy } from '@/lib/sqlite-busy'
@@ -37,6 +37,9 @@ import {
 } from '@/lib/line-fix'
 import { agentViewForTask, cancelQueuedJobsForTask, enqueueFixOnReject, openJobStatusByTask, queueLibraryApplyOnApproval, type AgentTaskView } from '@/lib/design-agent/jobs'
 import { notifyGroup, supplierFixNoticeText } from '@/lib/design-agent/notify'
+import { availableForAutomation, closeReturnedAssignment } from '@/lib/design-outsource-routing'
+import { withOutsourceReviewLock } from '@/lib/design-outsource-lock'
+import { sourceTemplateVersion, templateStamp } from '@/lib/design-outsource-template'
 
 export { loadTemplateContext, mapTemplate, pickTemplate, type TemplateRow }
 
@@ -349,6 +352,7 @@ export async function syncDesignTasks(orderId: string): Promise<SyncResult> {
   // The key sweep never fails the rest of the sync: whatever it could not do waits for the next one.
   await followLineKeys(order, keys, order.designTasks)
     .catch((err: any) => console.warn(`[design tasks] ${order.shopifyOrderNumber}: chưa đổi được mã task — ${err?.message ?? err}`))
+  const outsourced = new Set((await prisma.designOutsource.findMany({ where: { active: true, task: { orderId } }, select: { taskId: true } })).map(a => a.taskId))
   const factoryReopen = { status: 'REJECTED', rejectReasons: JSON.stringify([FACTORY_REJECT_REASON]), rejectNote: null, prevStatus: null }
   const factoryEvent = { type: 'SYSTEM', message: FACTORY_REOPEN_MESSAGE }
 
@@ -375,7 +379,9 @@ export async function syncDesignTasks(orderId: string): Promise<SyncResult> {
         const hasFile = withArtwork.has(line.shopifyLineId) || !!line.designDriveLink || !!order.trelloCardUrl
         if (!orderClosed && !hasFile) {
           if (existing.status !== 'REJECTED') {
-            await prisma.designTask.update({ where: { id: existing.id }, data: { status: 'REJECTED', rejectReasons: JSON.stringify([SHIPPED_WITHOUT_FILE_REASON]), rejectNote: SHIPPED_WITHOUT_FILE_NOTE, events: { create: { type: 'SYSTEM', message: `${SHIPPED_WITHOUT_FILE_REASON} — giữ task mở` } } } })
+            await prisma.$transaction(async tx => {
+              return tx.designTask.update({ where: { id: existing.id, status: existing.status }, data: { ...await closeReturnedAssignment(tx, existing.id), status: 'REJECTED', rejectReasons: JSON.stringify([SHIPPED_WITHOUT_FILE_REASON]), rejectNote: SHIPPED_WITHOUT_FILE_NOTE, events: { create: { type: 'SYSTEM', message: `${SHIPPED_WITHOUT_FILE_REASON} — giữ task mở` } } } })
+            })
             reopened++
           }
           continue
@@ -395,12 +401,15 @@ export async function syncDesignTasks(orderId: string): Promise<SyncResult> {
     }
     if (factoryRejected && existing) {
       if (existing.status === 'DONE') {
-        await prisma.designTask.update({ where: { id: existing.id }, data: { ...factoryReopen, events: { create: factoryEvent } } })
+        await prisma.$transaction(async tx => {
+          return tx.designTask.update({ where: { id: existing.id, status: existing.status }, data: { ...await closeReturnedAssignment(tx, existing.id), ...factoryReopen, events: { create: factoryEvent } } })
+        })
         reopened++
       }
       continue
     }
     if (line.designDriveLink) {
+      if (existing && outsourced.has(existing.id)) continue
       if (existing?.fromLibrary) {
         // Someone sent the line before the scan ran: there is nothing left to attach for.
         if (line.exportedAt && AUTO_COMPLETE_FROM.includes(existing.status as TaskStatus)) {
@@ -487,6 +496,7 @@ export function viewerFor(user: Actor, settings: Pick<DesignSettings, 'designerC
 export type TransitionInput = { to: TaskStatus; note?: string; reasons?: string[]; assigneeId?: string; kpi?: number; dueHours?: number; continue?: boolean; acceptMissingAreas?: boolean }
 
 export type TaskRow = {
+  outsourceCode?: string | null
   id: string; taskKey: string; status: TaskStatus; readiness: Readiness; assigneeId: string | null; assigneeName: string | null
   kpi: number; dueAt: string | null; slaHours: number; rejectReasons: string[]; rejectNote: string | null
   orderId: string; orderNumber: string; placedAt: string; shopifyLineId: string; linePosition: number
@@ -621,6 +631,8 @@ async function reopenTaskOfLine(task: { id: string; taskKey: string; status: str
   const changed = (from === 'DONE' || from === 'CANCELLED') && await retryOnBusy(() => prisma.$transaction(async tx => {
     const r = await tx.designTask.updateMany({ where: { id: task.id, status: from }, data: lineFixReopen(fix) })
     if (r.count === 0) return false
+    const release = await closeReturnedAssignment(tx, task.id)
+    if ('assigneeId' in release) await tx.designTask.update({ where: { id: task.id }, data: release })
     for (const e of lineFixEvents(fix, actor, heldLink, { ...ctx, fromCancelled: from === 'CANCELLED' })) await tx.designTaskEvent.create({ data: { taskId: task.id, ...e } })
     return true
   }))
@@ -638,7 +650,7 @@ export async function reopenLineForFix(
   lineId: string, actor: Actor, input: { reason?: unknown; note?: unknown }, opts: { agent?: boolean } = {},
 ): Promise<{ task: TaskRow; changed: boolean }> {
   const result = await reopenSentLine(lineId, actor, input)
-  if (result.changed && !opts.agent) {
+  if (result.changed && !opts.agent && await prisma.designTask.count({ where: { id: result.task.id, ...availableForAutomation } })) {
     const fix = parseLineFix(input) as LineFix
     await enqueueFixOnReject({ taskKey: result.task.taskKey, reasons: [fix.reason], note: fix.note, by: actor, source: 'LINE_REOPEN', factory: true })
   }
@@ -783,12 +795,21 @@ const AGENT_REOPEN_ONLY = 'Agent chỉ được mở lại task đã duyệt'
 const TAKEN_OVER = 'Task đã được người xử lý trước khi Agent nhận'
 
 export async function transitionTask(taskKey: string, actor: Actor, input: TransitionInput, opts: { agent?: boolean } = {}): Promise<TransitionResult> {
-  const task = await prisma.designTask.findUnique({ where: { taskKey } })
+  const task = await prisma.designTask.findUnique({ where: { taskKey }, select: { id: true, outsource: { select: { active: true } } } })
+  return task?.outsource?.active ? withOutsourceReviewLock(task.id, () => transitionTaskUnlocked(taskKey, actor, input, opts)) : transitionTaskUnlocked(taskKey, actor, input, opts)
+}
+
+async function transitionTaskUnlocked(taskKey: string, actor: Actor, input: TransitionInput, opts: { agent?: boolean } = {}): Promise<TransitionResult> {
+  const task = await prisma.designTask.findUnique({ where: { taskKey }, include: { outsource: true } })
   if (!task) throw new Error('Task not found')
+  if (actor.role === 'OUTSOURCE') throw new Error('Dùng màn Design Outsource để xử lý task được giao')
+  if (task.outsource && !task.outsource.active && task.status === 'REJECTED' && !task.assigneeId && !['ASSIGNED', 'CANCELLED'].includes(input.to)) throw new Error('Task cần được phân công lại trước khi xử lý')
+  const reopenOutsource = task.outsource?.active && ['DONE', 'CANCELLED'].includes(task.status) && input.to === 'DOING' && !opts.agent
+  if (task.outsource?.active && (!canManageOutsource(actor) || (!reopenOutsource && !['DONE', 'REJECTED', 'CANCELLED'].includes(input.to)))) throw new Error('Task đang outsource — chỉ quản lý được duyệt, trả sửa hoặc hủy; thu hồi trước khi giao lại')
   const from = task.status as TaskStatus
   if (opts.agent && !(from === 'DONE' && input.to === 'DOING')) throw new Error(AGENT_REOPEN_ONLY)
   const role = actorRole(actor)
-  const canApprove = canApproveDesign(actor.role, actor.permissions, (await getDesignSettings()).designerCanApprove)
+  const canApprove = task.outsource?.active ? canManageOutsource(actor) : canApproveDesign(actor.role, actor.permissions, (await getDesignSettings()).designerCanApprove)
   if (!(input.continue && from === 'ASK_CUSTOMER' && input.to === (task.prevStatus ?? 'NEW')) && !canTransition(from, input.to, role, canApprove)) {
     const leaderOnly = from === 'REVIEW' && (input.to === 'DONE' || input.to === 'REJECTED')
     const cancelledOnly = from === 'CANCELLED' ? ' — task đã huỷ chỉ leader mở lại được' : ''
@@ -800,7 +821,7 @@ export async function transitionTask(taskKey: string, actor: Actor, input: Trans
   if ((from === 'DONE' || from === 'CANCELLED') && input.to === 'DOING' && await isSentLineOfOpenOrder(line.id)) {
     return { task: (await reopenLineForFix(line.id, actor, { reason: input.reasons?.[0], note: input.note }, opts)).task, order: null }
   }
-  if (!opts.agent && role !== 'LEADER' && task.assigneeId && task.assigneeId !== actor.id && OWNED_MOVES.includes(input.to)) {
+  if (!reopenOutsource && !opts.agent && role !== 'LEADER' && task.assigneeId && task.assigneeId !== actor.id && OWNED_MOVES.includes(input.to)) {
     const owner = await prisma.appUser.findUnique({ where: { id: task.assigneeId }, select: { name: true } })
     throw new Error(`Task đang thuộc về ${owner?.name ?? 'người khác'}`)
   }
@@ -817,8 +838,14 @@ export async function transitionTask(taskKey: string, actor: Actor, input: Trans
   let groupNotice: string | null = null
   const say = (type: string, message: string) => events.push({ type, message, actorId: actor.id })
 
-  if (input.to === 'ASSIGNED') {
+  if (reopenOutsource) {
+    data.status = 'REJECTED'
+    data.rejectReasons = JSON.stringify(input.reasons ?? [])
+    data.rejectNote = input.note ?? null
+    say('REJECT', 'Mở lại để sửa — chờ phân công')
+  } else if (input.to === 'ASSIGNED') {
     if (!input.assigneeId) throw new Error('assigneeId is required')
+    if ((await prisma.appUser.findUnique({ where: { id: input.assigneeId }, select: { role: true } }))?.role === 'OUTSOURCE') throw new Error('Dùng Chuyển outsource để giao cho tài khoản bên ngoài')
     data.assigneeId = input.assigneeId
     if (input.kpi !== undefined) data.kpi = input.kpi
     if (input.dueHours !== undefined) data.dueAt = new Date(Date.now() + input.dueHours * 3600_000)
@@ -858,10 +885,18 @@ export async function transitionTask(taskKey: string, actor: Actor, input: Trans
 
   let order: { id: string; designReady: boolean; pipelineStatus: string } | null = null
   if (input.to === 'DONE') {
+    if (task.outsource?.active) {
+      const a = task.outsource
+      const template = await templateForLine(line)
+      if (!template || templateStamp(template) !== sourceTemplateVersion(a) || a.confirmedTemplateVersion !== a.templateVersion) throw new Error('Template outsource đã đổi, yêu cầu cập nhật và nộp lại trước khi duyệt')
+      const slots = requiredSlotsFor(template)
+      const files = currentFiles(await prisma.designArtwork.findMany({ where: { outsourceId: a.id, outsourceRevision: a.revision, kind: 'PRINT', removedAt: null } }), 'PRINT')
+      if (!files.length || slots.some(s => !files.some(f => f.printArea === s && f.outsourceTemplateVersion === a.templateVersion))) throw new Error('Bản nộp outsource chưa đủ file cho lần giao hiện tại')
+    }
     const current = await prisma.order.findUniqueOrThrow({ where: { id: task.orderId }, select: { id: true, designReady: true, pipelineStatus: true } })
     const externalLink = !!line.designDriveLink && !line.designDriveLink.startsWith(APP_FILE_PREFIX) && line.designDriveLink !== task.driveFolderUrl
       && !(await prisma.designArtwork.findFirst({ where: { orderId: line.orderId, shopifyLineId: line.shopifyLineId, driveWebViewLink: line.designDriveLink }, select: { id: true } }))
-    if (externalLink && current.pipelineStatus !== 'DESIGN_REJECTED' && !reopenedByFactory(task)) {
+    if (externalLink && !task.outsource?.active && current.pipelineStatus !== 'DESIGN_REJECTED' && !reopenedByFactory(task)) {
       events.splice(0, events.length, ...events.filter(e => e.type !== 'STATUS'), { type: 'SYSTEM', message: 'Design đã có từ ngoài studio — giữ link hiện tại', actorId: actor.id })
       order = current
     } else {
@@ -894,8 +929,11 @@ export async function transitionTask(taskKey: string, actor: Actor, input: Trans
   }
   if (from === 'DONE' && input.to === 'DOING') order = (await updateLine(line.id, { done: false }))?.order ?? null
 
-  const updated = await prisma.designTask.update({ where: { id: task.id }, data: { ...data, events: { create: events } } })
-  if (input.to === 'REJECTED') {
+  const updated = await prisma.$transaction(async tx => {
+    const release = data.status === 'REJECTED' ? await closeReturnedAssignment(tx, task.id) : {}
+    return tx.designTask.update({ where: { id: task.id, status: from }, data: { ...data, ...release, events: { create: events } } })
+  })
+  if (input.to === 'REJECTED' && !task.outsource?.active) {
     const reasons = parseRejectReasons(updated.rejectReasons)
     await enqueueFixOnReject({
       taskKey: updated.taskKey, reasons, note: updated.rejectNote, by: actor, source: 'REJECT', factory: reasons.some(r => SENT_BACK_REASONS.includes(r)),
@@ -912,6 +950,9 @@ export async function transitionTask(taskKey: string, actor: Actor, input: Trans
   }
   // The approval stands whatever Lark answers: the group line is a courtesy, never a step of the approval.
   if (groupNotice) await notifyGroup(groupNotice)
+  if (task.outsource?.active && ['CANCELLED', 'DONE'].includes(input.to)) {
+    await prisma.designOutsourceMessage.create({ data: { outsourceId: task.outsource.id, revision: task.outsource.revision, side: 'INTERNAL', message: input.to === 'DONE' ? 'Mẫu đã được duyệt. Cảm ơn bạn đã hoàn thành.' : 'Task đã được hủy.' } })
+  }
   const row = await rowFor(updated.taskKey)
   if (!row) throw new Error('Task row not found after update')
   return { task: row, order, ...(notice ? { notice } : {}) }
@@ -927,13 +968,14 @@ export const AUTO_REVIEW_MESSAGE = 'Tự động gửi duyệt (file in tự đ�
 export async function submitAutoRenderForReview(orderId: string, shopifyLineId: string): Promise<{ moved: boolean; reason: string | null }> {
   const task = await prisma.designTask.findUnique({ where: { orderId_shopifyLineId: { orderId, shopifyLineId } } })
   if (!task) return { moved: false, reason: 'Không có task' }
+  if (await prisma.designOutsource.count({ where: { taskId: task.id, active: true } })) return { moved: false, reason: 'Task đang outsource' }
   if (!AUTO_REVIEW_FROM.includes(task.status as TaskStatus)) return { moved: false, reason: `Task đang ${task.status}` }
   const line = await prisma.orderLine.findFirst({ where: { orderId, shopifyLineId } })
   if (!line) return { moved: false, reason: 'Không tìm thấy dòng đơn' }
   const missing = await missingPrintFiles(line)
   if (missing) return { moved: false, reason: missing }
   const moved = await prisma.$transaction(async tx => {
-    const r = await tx.designTask.updateMany({ where: { id: task.id, status: task.status }, data: { status: 'REVIEW', readiness: 'AUTO', prevStatus: null } })
+    const r = await tx.designTask.updateMany({ where: { id: task.id, status: task.status, ...availableForAutomation }, data: { status: 'REVIEW', readiness: 'AUTO', prevStatus: null } })
     if (r.count === 0) return false
     await tx.designTaskEvent.create({ data: { taskId: task.id, type: 'SYSTEM', message: AUTO_REVIEW_MESSAGE } })
     return true
@@ -1038,6 +1080,7 @@ async function missingPrintFiles(line: TemplateLookupLine & { shopifyLineId: str
   if (printFilesReady(files, slots)) return null
   return slots.length > 0 ? `Chưa có artwork cho: ${missingPrintAreas(files, slots).join(', ')}` : NO_PRINT_FILE_MESSAGE
 }
+
 
 export async function addTaskNote(taskKey: string, actor: Actor, message: string) {
   const task = await prisma.designTask.findUnique({ where: { taskKey }, select: { id: true } })
@@ -1260,7 +1303,7 @@ export async function listTasks(f: { statuses?: TaskStatus[]; readiness?: Readin
 
   const tasks = await prisma.designTask.findMany({
     where,
-    include: { order: { include: { store: { include: { project: true } }, lines: true } } },
+    include: { outsource: { select: { active: true, code: true } }, order: { include: { store: { include: { project: true } }, lines: true } } },
   })
 
   const assigneeIds = Array.from(new Set(tasks.map(t => t.assigneeId).filter((x): x is string => !!x)))
@@ -1289,7 +1332,7 @@ export async function listTasks(f: { statuses?: TaskStatus[]; readiness?: Readin
     rows.push({
       id: task.id, taskKey: task.taskKey, status: task.status as TaskStatus, readiness: task.readiness as Readiness,
       assigneeId: task.assigneeId, assigneeName: task.assigneeId ? (nameById.get(task.assigneeId) ?? null) : null,
-      kpi: task.kpi, dueAt: task.dueAt ? task.dueAt.toISOString() : null, slaHours: task.slaHours,
+      ...(task.outsource?.active ? { outsourceCode: task.outsource.code } : {}), kpi: task.kpi, dueAt: task.dueAt ? task.dueAt.toISOString() : null, slaHours: task.slaHours,
       rejectReasons: parseRejectReasons(task.rejectReasons), rejectNote: task.rejectNote,
       orderId: task.orderId, orderNumber: task.order.shopifyOrderNumber, placedAt: task.order.placedAt.toISOString(),
       shopifyLineId: task.shopifyLineId, linePosition: line.linePosition, sku: line.sku, productTitle: line.productTitle,

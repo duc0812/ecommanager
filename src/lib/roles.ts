@@ -1,4 +1,4 @@
-export type UserRole = 'SUPERADMIN' | 'ADMIN' | 'SELLER' | 'SUPPORT'
+export type UserRole = 'SUPERADMIN' | 'ADMIN' | 'SELLER' | 'SUPPORT' | 'OUTSOURCE'
 export type FeaturePermission =
   | 'overview'
   | 'shopify'
@@ -14,6 +14,8 @@ export type FeaturePermission =
   | 'fulfillment_tracking'
   | 'fulfillment_design_library'
   | 'design_tasks'
+  | 'design_outsource'
+  | 'design_outsource_manage'
   | 'need_to_fix'
   | 'cs'
   | 'tools_spy_idea'
@@ -33,6 +35,7 @@ export const ROLE_LABELS: Record<UserRole, string> = {
   ADMIN: 'Admin',
   SELLER: 'Seller',
   SUPPORT: 'Support',
+  OUTSOURCE: 'Design Outsource',
 }
 
 // AppUser.role is a free string in the database; anything that gates on a role asks this first.
@@ -55,6 +58,8 @@ export const FEATURE_LABELS: Record<FeaturePermission, string> = {
   fulfillment_tracking: 'Tracking',
   fulfillment_design_library: 'Design Library',
   design_tasks: 'Design Tasks',
+  design_outsource: 'Design Outsource',
+  design_outsource_manage: 'Giao việc và duyệt outsource',
   need_to_fix: 'Need To Fix',
   cs: 'Customer Service',
   tools_spy_idea: 'Spy Idea',
@@ -86,6 +91,8 @@ export const FEATURE_GROUPS: { label: string; permissions: FeaturePermission[] }
       'fulfillment_tracking',
       'fulfillment_design_library',
       'design_tasks',
+      'design_outsource',
+      'design_outsource_manage',
       'need_to_fix',
     ],
   },
@@ -97,8 +104,10 @@ export const FEATURE_GROUPS: { label: string; permissions: FeaturePermission[] }
 ]
 
 export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, FeaturePermission[]> = {
+  OUTSOURCE: ['design_outsource'],
   SUPERADMIN: Object.keys(FEATURE_LABELS) as FeaturePermission[],
   ADMIN: [
+    'design_outsource_manage',
     'overview',
     'shopify',
     'meta_billing',
@@ -154,6 +163,8 @@ const FEATURE_PATHS: Record<FeaturePermission, string[]> = {
   fulfillment_tracking: ['/fulfillment/tracking'],
   fulfillment_design_library: ['/fulfillment/design-library'],
   design_tasks: ['/design-studio'],
+  design_outsource: ['/design-studio/outsource'],
+  design_outsource_manage: ['/design-studio/outsource'],
   need_to_fix: ['/task-fix'],
   cs: ['/cs'],
   tools_spy_idea: ['/tools/spy-idea'],
@@ -195,6 +206,8 @@ function featureForPath(pathname: string) {
 }
 
 export function canAccess(role: UserRole, pathname: string, permissions?: FeaturePermission[]) {
+  if (role === 'OUTSOURCE') return (pathname === '/design-studio/outsource' || pathname.startsWith('/design-studio/outsource/')) && (permissions ?? DEFAULT_ROLE_PERMISSIONS.OUTSOURCE).includes('design_outsource')
+  if (pathname === '/design-studio/outsource' || pathname.startsWith('/design-studio/outsource/')) return isLeaderRole(role) || (permissions ?? DEFAULT_ROLE_PERMISSIONS[role] ?? []).some(p => p === 'design_outsource' || p === 'design_outsource_manage')
   if (role === 'SUPERADMIN') return true
   const feature = featureForPath(pathname)
   if (!feature) return false
@@ -240,13 +253,20 @@ const HOME_PRIORITY: FeaturePermission[] = [
   'setup_projects',
   'setup_hr',
   'setup_users',
+  'design_outsource',
+  'design_outsource_manage',
 ]
 
 export function homePathFor(role: UserRole, permissions?: FeaturePermission[]): string | null {
+  if (role === 'OUTSOURCE') return '/design-studio/outsource'
   if (role === 'SUPERADMIN') return '/'
   const granted = permissions ?? DEFAULT_ROLE_PERMISSIONS[role] ?? []
   const feature = HOME_PRIORITY.find(f => granted.includes(f)) ?? granted[0]
   return feature ? FEATURE_PATHS[feature][0] : null
+}
+
+export function canManageOutsource(user: { role: string; permissions?: FeaturePermission[] }): boolean {
+  return user.role !== 'OUTSOURCE' && (isLeaderRole(user.role) || !!user.permissions?.includes('design_outsource_manage'))
 }
 
 function grantedFor(role: string, permissions?: FeaturePermission[]): FeaturePermission[] {
@@ -259,15 +279,18 @@ export function isLeaderRole(role: string): boolean {
 
 /** REVIEW → DONE / REJECTED: a leader always, a design_tasks holder only while the designerCanApprove setting is on. */
 export function canApproveDesign(role: string, permissions: FeaturePermission[] | undefined, designerCanApprove: boolean): boolean {
+  if (role === 'OUTSOURCE') return false
   if (isLeaderRole(role)) return true
   return designerCanApprove && grantedFor(role, permissions).includes('design_tasks')
 }
 
 /** Editing the CS note of a design task: a leader, or anyone holding design_tasks. */
 export function canEditDesignNote(role: string, permissions: FeaturePermission[] | undefined): boolean {
+  if (role === 'OUTSOURCE') return false
   return isLeaderRole(role) || grantedFor(role, permissions).includes('design_tasks')
 }
 
 export function canHandoffToSupplier(role: string, permissions: FeaturePermission[] | undefined): boolean {
+  if (role === 'OUTSOURCE') return false
   return isLeaderRole(role) || grantedFor(role, permissions).includes('fulfillment_export')
 }

@@ -1,4 +1,5 @@
 import { isTopperProductType, topperPrintCutTemplate } from '@/lib/print-cut'
+import type { Prisma } from '@/generated/prisma/client'
 import { prisma } from '@/lib/db'
 import { partKey } from '@/lib/task-files'
 
@@ -89,18 +90,18 @@ export type TemplateContext = { byId: Map<string, TemplateRecord>; productTempla
 
 const pairKey = (supplierId: string, sku: string) => `${supplierId}\u0000${sku}`
 
-export async function loadTemplateContext(lines: TemplateLookupLine[], profileTemplateIds: Array<string | null | undefined>): Promise<TemplateContext> {
+export async function loadTemplateContext(lines: TemplateLookupLine[], profileTemplateIds: Array<string | null | undefined>, db: Prisma.TransactionClient = prisma): Promise<TemplateContext> {
   const ids = Array.from(new Set(profileTemplateIds.filter((x): x is string => !!x)))
   const supplierIds = Array.from(new Set(lines.map(l => l.resolvedSupplierId).filter((x): x is string => !!x)))
   const skus = Array.from(new Set(lines.filter(l => l.resolvedSupplierId && l.resolvedSupplierSku).map(l => l.resolvedSupplierSku as string)))
   const topperSupplierIds = Array.from(new Set(lines.filter(l => isTopperProductType(l.shopifyProductType)).map(l => l.resolvedSupplierId).filter((id): id is string => !!id)))
   const [profileTemplates, products, supplierTemplates, topperSuppliers] = await Promise.all([
-    ids.length ? prisma.printTemplate.findMany({ where: { id: { in: ids } } }) : [],
+    ids.length ? db.printTemplate.findMany({ where: { id: { in: ids } } }) : [],
     supplierIds.length && skus.length
-      ? prisma.supplierProduct.findMany({ where: { supplierId: { in: supplierIds }, sku: { in: skus }, printTemplateId: { not: null } }, select: { supplierId: true, sku: true, printTemplate: true } })
+      ? db.supplierProduct.findMany({ where: { supplierId: { in: supplierIds }, sku: { in: skus }, printTemplateId: { not: null } }, select: { supplierId: true, sku: true, printTemplate: true } })
       : [],
-    supplierIds.length ? prisma.printTemplate.findMany({ where: { supplierId: { in: supplierIds } } }) : [],
-    topperSupplierIds.length ? prisma.supplier.findMany({ where: { id: { in: topperSupplierIds } }, select: { id: true, code: true } }) : [],
+    supplierIds.length ? db.printTemplate.findMany({ where: { supplierId: { in: supplierIds } } }) : [],
+    topperSupplierIds.length ? db.supplier.findMany({ where: { id: { in: topperSupplierIds } }, select: { id: true, code: true } }) : [],
   ])
   const byId = new Map<string, TemplateRecord>(profileTemplates.map(t => [t.id, t]))
   const productTemplate = new Map<string, TemplateRecord>()

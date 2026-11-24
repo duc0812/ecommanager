@@ -200,6 +200,7 @@ export default function UsersPage() {
                 <option value="ADMIN">Admin</option>
                 <option value="SELLER">Seller</option>
                 <option value="SUPPORT">Support</option>
+                <option value="OUTSOURCE">Design Outsource</option>
               </select>
               <div className="space-y-md rounded-lg border border-outline-variant/20 bg-surface-container-low p-md">
                 <div className="flex items-center justify-between gap-md">

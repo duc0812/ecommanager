@@ -23,6 +23,7 @@ export type Readiness = 'AUTO' | 'LOW' | 'MANUAL'
 export type Me = { id: string; name: string; role: string; isLeader: boolean; canApprove: boolean; canHandoff: boolean; canEditNote?: boolean }
 
 export type TaskRow = {
+  outsourceCode?: string | null
   id: string; taskKey: string; status: TaskStatus; readiness: Readiness; assigneeId: string | null; assigneeName: string | null
   kpi: number; dueAt: string | null; slaHours: number; rejectReasons: string[]; rejectNote: string | null
   orderId: string; orderNumber: string; placedAt: string; shopifyLineId: string; linePosition: number

@@ -91,6 +91,8 @@ export const API_ACCESS_RULES: ApiRule[] = [
   { prefix: '/api/design-studio/tasks/', suffix: '/move-supplier', access: 'SUPERADMIN' },
   { prefix: '/api/design-studio/tasks/', suffix: '/production', access: 'ADMIN' },
   { prefix: '/api/design-studio/handoff/sheet', access: { adminOr: ['fulfillment_export'] } },
+  { prefix: '/api/design-studio/outsource/manage', access: { adminOr: ['design_outsource_manage'] } },
+  { prefix: '/api/design-studio/outsource', access: { adminOr: ['design_outsource', 'design_outsource_manage'] } },
   { prefix: '/api/design-studio/orders/', suffix: '/handoff', methods: WRITE, access: { adminOr: ['fulfillment_export'] } },
   { prefix: '/api/design-studio', access: ['design_tasks', 'fulfillment_design_library', 'fulfillment_orders'] },
   { prefix: '/api/fulfillment/export', access: ['fulfillment_export'] },
@@ -262,6 +264,11 @@ export function canCallApi(
   pathname: string,
   method: string,
 ): ApiDecision {
+  if (role === 'OUTSOURCE') {
+    const sessionPath = ['/api/auth/me', '/api/auth/logout'].includes(pathname)
+    const outsourcePath = pathname.startsWith('/api/design-studio/outsource') && (pathname === '/api/design-studio/outsource' || pathname.startsWith('/api/design-studio/outsource/')) && !pathname.startsWith('/api/design-studio/outsource/manage')
+    return sessionPath || (outsourcePath && permissions.includes('design_outsource')) ? 'ok' : 'forbidden'
+  }
   const access = apiAccessFor(pathname, method)
   if (access === 'PUBLIC') return 'ok'
   if (!role) return 'unauthenticated'

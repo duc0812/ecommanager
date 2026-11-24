@@ -40,6 +40,7 @@ const nav: NavEntry[] = [
   { type: 'group', label: 'Design Studio' },
   { type: 'child', href: '/design-studio/dashboard', icon: 'space_dashboard', label: 'Dashboard' },
   { type: 'child', href: '/design-studio', icon: 'brush', label: 'Design Tasks' },
+  { type: 'child', href: '/design-studio/outsource', icon: 'handshake', label: 'Design Outsource' },
   { type: 'child', href: '/design-studio/products', icon: 'inventory_2', label: 'Sản phẩm' },
   { type: 'child', href: '/design-studio/products/fonts', icon: 'font_download', label: 'Fonts' },
   { type: 'child', href: '/fulfillment/design-library', icon: 'palette', label: 'Design Library' },
@@ -73,6 +74,9 @@ export default function Sidebar() {
   const { user } = useCurrentUser()
   const role: UserRole = user?.role ?? 'SUPPORT'
   const permissions: FeaturePermission[] = user ? user.permissions : []
+  const visibleNav = role === 'OUTSOURCE'
+    ? nav.filter(entry => (entry.type === 'group' && entry.label === 'Design Studio') || ((entry.type === 'item' || entry.type === 'child') && entry.href === '/design-studio/outsource'))
+    : nav
   const [open, setOpen] = useState(false)
   useEffect(() => { setOpen(false) }, [pathname])
   const activeHref = nav.reduce<string | null>((best, entry) => {
@@ -104,7 +108,7 @@ export default function Sidebar() {
       </div>
 
       <nav className="flex-1 space-y-[2px] px-md overflow-y-auto">
-        {nav.map((entry, i) => {
+        {visibleNav.map((entry, i) => {
           if (entry.type === 'divider') {
             return <div key={i} className="my-sm border-t border-white/5" />
           }

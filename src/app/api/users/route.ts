@@ -7,7 +7,7 @@ import { resolveSkuPrefixChange } from '@/lib/clone/sku-code'
 
 export const dynamic = 'force-dynamic'
 
-const ROLES: UserRole[] = ['ADMIN', 'SELLER', 'SUPPORT']
+const ROLES: UserRole[] = ['ADMIN', 'SELLER', 'SUPPORT', 'OUTSOURCE']
 const STATUSES = ['ACTIVE', 'INACTIVE']
 
 function normalizeUser<T extends { role: string; permissions: string; passwordHash?: string | null; storeAccess?: { storeId: string }[] }>(user: T, storeIds?: string[]) {
@@ -21,6 +21,7 @@ function normalizeUser<T extends { role: string; permissions: string; passwordHa
 }
 
 function permissionsFor(role: UserRole, permissions: unknown) {
+  if (role === 'OUTSOURCE') return DEFAULT_ROLE_PERMISSIONS.OUTSOURCE
   const parsed = parsePermissions(permissions)
   return parsed.length > 0 || Array.isArray(permissions) ? parsed : DEFAULT_ROLE_PERMISSIONS[role]
 }

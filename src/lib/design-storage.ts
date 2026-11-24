@@ -2,6 +2,7 @@ import { constants as fsConstants } from 'fs'
 import fs from 'fs/promises'
 import path from 'path'
 import { prisma } from '@/lib/db'
+import type { Prisma } from '@/generated/prisma/client'
 import { artworkUrl, toArtworkRow, type ArtworkRow } from '@/lib/design-studio'
 import { imageSize } from '@/lib/image-size'
 import { cleanPartLabel, fileKindOf, DEFAULT_PART, partForUpload, partTaken, type FileKind } from '@/lib/task-files'
@@ -60,6 +61,7 @@ export function artworkFileType(fileName: string, mimeType: string): { ext: stri
 export type ArtworkSource = 'MANUAL' | 'AUTO'
 export type ArtworkTarget = { orderId: string; shopifyLineId: string; linePosition: number; orderNumber: string }
 type ArtworkMeta = {
+  outsource?: { id: string; revision: number; templateVersion: string; validate: (tx: Prisma.TransactionClient) => Promise<void> }
   printArea: string; fileName: string; mimeType: string; uploadedById: string | null; source?: ArtworkSource; preview?: Buffer | null
   kind?: FileKind
   /** Set when nobody named the part: it is read from the file name and joined to a template area or an existing part of the task. */
@@ -135,13 +137,25 @@ async function storeArtwork(target: ArtworkTarget, meta: ArtworkMeta, payload: A
   }
   const size = 'bytes' in payload ? payload.bytes.length : payload.size
   const dims = imageSize('bytes' in payload ? payload.bytes : await readHead(abs, size))
-  const row = await prisma.designArtwork.create({
+  const row = await prisma.$transaction(async tx => {
+    if (meta.outsource) await meta.outsource.validate(tx)
+    else {
+      const held = await tx.designTask.findUnique({ where: { orderId_shopifyLineId: { orderId: target.orderId, shopifyLineId: target.shopifyLineId } }, select: { outsource: { select: { active: true } } } })
+      if (held?.outsource?.active) throw new Error('Task đang được outsource giữ — thu hồi trước khi thay file nội bộ')
+    }
+    return tx.designArtwork.create({
     data: {
+      ...(meta.outsource ? { outsourceId: meta.outsource.id, outsourceRevision: meta.outsource.revision, outsourceTemplateVersion: meta.outsource.templateVersion } : {}),
       orderId: target.orderId, shopifyLineId: target.shopifyLineId, kind, printArea, version, fileName,
       storagePath: rel.split(path.sep).join('/'), size, mimeType: type.mimeType, uploadedById: meta.uploadedById,
       widthPx: dims?.width ?? null, heightPx: dims?.height ?? null,
       source: meta.source ?? 'MANUAL', previewPath: previewRel ? previewRel.split(path.sep).join('/') : null,
     },
+    })
+  }).catch(async error => {
+    await fs.rm(abs, { force: true }).catch(() => {})
+    if (previewRel) await fs.rm(path.resolve(root, previewRel), { force: true }).catch(() => {})
+    throw error
   })
   return toArtworkRow(row)
 }
@@ -164,6 +178,7 @@ export async function saveArtwork(input: {
 
 /** Stores a file already streamed to disk: the temp file is moved into place, never read into memory. */
 export async function saveArtworkFromTemp(input: {
+  outsource?: ArtworkMeta['outsource']
   target: ArtworkTarget; printArea: string; fileName: string; mimeType: string; temp: { tmpPath: string; size: number }; uploadedById: string | null
   kind?: FileKind; derivePart?: { slots: string[] }
 }): Promise<ArtworkRow> {
