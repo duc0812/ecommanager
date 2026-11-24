@@ -4,6 +4,7 @@ import { syncMerchizeTracking } from '@/lib/repos/merchize-push'
 import { syncCatkissfishTracking } from '@/lib/repos/catkissfish-push'
 import { syncLenfulTracking } from '@/lib/repos/lenful-push'
 import { syncPrintpossTracking } from '@/lib/repos/printposs-push'
+import { syncToadditTracking } from '@/lib/repos/toaddit-push'
 import { syncVnepacketTracking } from '@/lib/repos/vnepacket-tracking'
 
 export type ApiTrackingResult = { name: string; pushes?: number; found?: number; shipments?: number; skipped?: string; error?: string }
@@ -15,6 +16,7 @@ const SYNCS = [
   { name: 'CatKissFish', run: syncCatkissfishTracking },
   { name: 'Lenful', run: syncLenfulTracking },
   { name: 'Printposs', run: syncPrintpossTracking },
+  { name: 'Toaddit', run: syncToadditTracking },
   { name: 'VNEpacket (Gỗ 3D, In House)', run: () => syncVnepacketTracking() },
 ]
 

@@ -8,6 +8,7 @@ import PrintwaySetupCard from '@/components/PrintwaySetupCard'
 import CatkissfishSetupCard from '@/components/CatkissfishSetupCard'
 import LenfulSetupCard from '@/components/LenfulSetupCard'
 import PrintpossSetupCard from '@/components/PrintpossSetupCard'
+import ToadditSetupCard from '@/components/ToadditSetupCard'
 import VnepacketSetupCard from '@/components/VnepacketSetupCard'
 import StoreConnectionsCard from '@/components/StoreConnectionsCard'
 import { SetupBlockLinks, SetupBlockTabs } from '@/components/SetupBlockNav'
@@ -371,6 +372,7 @@ export default function SetupPage() {
         {block === 'fulfill' && <CatkissfishSetupCard />}
         {block === 'fulfill' && <LenfulSetupCard />}
         {block === 'fulfill' && <PrintpossSetupCard />}
+        {block === 'fulfill' && <ToadditSetupCard />}
         {block === 'fulfill' && <VnepacketSetupCard />}
         {block === 'design' && <GoogleDriveSetupCard />}
         {/* Trello Config */}

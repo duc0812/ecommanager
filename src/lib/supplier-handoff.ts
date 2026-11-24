@@ -18,6 +18,8 @@ import { isLenfulSupplier } from '@/lib/lenful'
 import { getLenfulSettings, hasLenfulKey } from '@/lib/lenful-settings'
 import { isPrintpossSupplier } from '@/lib/printposs-shared'
 import { getPrintpossSettings } from '@/lib/printposs-settings'
+import { isToadditSupplier } from '@/lib/toaddit-shared'
+import { getToadditSettings, hasToadditCredentials } from '@/lib/toaddit-settings'
 import { ACTIVE_PUSH_STATUSES, activePushByOrder, logHandoffEvent } from '@/lib/repos/push-export'
 import { COOLING_OFF_HOURS, SUPPLIER_API_NAMES, UNMAPPED_TAB, type HandoffCard, type HandoffLine, type HandoffSent, type HandoffState, type LinePush, type LineSheetRow, type HubChannel, type HubTab, type SentStage, type SupplierApiKind } from '@/lib/handoff-shared'
 import { effectiveBaseCost } from '@/lib/order-profit'
@@ -44,11 +46,12 @@ const KEYED_API_SUPPLIERS = [
   { kind: 'catkissfish' as const, matches: isCatkissfishSupplier },
   { kind: 'lenful' as const, matches: isLenfulSupplier },
   { kind: 'printposs' as const, matches: isPrintpossSupplier },
+  { kind: 'toaddit' as const, matches: isToadditSupplier },
 ]
 
-async function liveApiKeys(): Promise<Record<'bondre' | 'printway' | 'catkissfish' | 'lenful' | 'printposs', boolean>> {
-  const [bondre, printway, catkissfish, lenful, printposs] = await Promise.all([getBondreSettings(), getPrintwaySettings(), getCatkissfishSettings(), getLenfulSettings(), getPrintpossSettings()])
-  return { bondre: hasBondreAccount(bondre), printway: !!printway.token, catkissfish: hasCatkissfishAccount(catkissfish), lenful: hasLenfulKey(lenful), printposs: !!printposs.token }
+async function liveApiKeys(): Promise<Record<'bondre' | 'printway' | 'catkissfish' | 'lenful' | 'printposs' | 'toaddit', boolean>> {
+  const [bondre, printway, catkissfish, lenful, printposs, toaddit] = await Promise.all([getBondreSettings(), getPrintwaySettings(), getCatkissfishSettings(), getLenfulSettings(), getPrintpossSettings(), getToadditSettings()])
+  return { bondre: hasBondreAccount(bondre), printway: !!printway.token, catkissfish: hasCatkissfishAccount(catkissfish), lenful: hasLenfulKey(lenful), printposs: !!printposs.token, toaddit: hasToadditCredentials(toaddit) }
 }
 
 const OPEN_TASK = { status: { notIn: ['DONE', 'CANCELLED'] } }

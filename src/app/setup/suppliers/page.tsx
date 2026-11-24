@@ -179,6 +179,7 @@ export default function SuppliersPage() {
                   <option value="printful">Printful</option>
                   <option value="printify">Printify</option>
                   <option value="printposs">Printposs</option>
+                  <option value="toaddit">Toaddit</option>
                 </select>
               </div>
               <div>
