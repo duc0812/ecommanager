@@ -2,9 +2,9 @@ import type { WorkspaceLine } from '@/lib/design-studio'
 import type { LineHold } from '@/lib/line-export'
 
 export type HandoffMode = 'API' | 'CSV' | 'SHEET'
-export type SupplierApiKind = 'pgprints' | 'merchize' | 'bondre' | 'printway' | 'catkissfish' | 'lenful'
+export type SupplierApiKind = 'pgprints' | 'merchize' | 'bondre' | 'printway' | 'catkissfish' | 'lenful' | 'printposs'
 
-export const SUPPLIER_API_NAMES: Record<SupplierApiKind, string> = { pgprints: 'PGprints', merchize: 'Merchize', bondre: 'Bondre', printway: 'Printway', catkissfish: 'CatKissFish', lenful: 'Lenful' }
+export const SUPPLIER_API_NAMES: Record<SupplierApiKind, string> = { pgprints: 'PGprints', merchize: 'Merchize', bondre: 'Bondre', printway: 'Printway', catkissfish: 'CatKissFish', lenful: 'Lenful', printposs: 'Printposs' }
 
 export type HandoffPush = { status: string; supplierOrderCode: string | null; externalOrderId: string }
 

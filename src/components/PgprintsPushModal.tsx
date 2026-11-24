@@ -10,6 +10,15 @@ type Estimate = { goods: number | null; wallet: number | null; note: string }
 type Preview = PushPreview & { canAct: boolean; canSend?: boolean; estimate?: Estimate | null }
 type Payload = {
   order_id: string
+  first_name?: string
+  last_name?: string
+  address_1?: string
+  address_2?: string
+  city?: string
+  region?: string
+  zip?: string
+  country?: string
+  phone?: string
   email?: string
   shipping_address?: Record<string, string>
   shipping_info?: Record<string, string>
@@ -31,6 +40,10 @@ type Payload = {
 type SupplierCopy = { name: string; settingsHint: string; credentialsHint: string; methodLabel: string; noMethod: string | null; chargeNote: string }
 
 const SUPPLIERS: Record<SupplierApiKind, SupplierCopy> = {
+  printposs: {
+    name: 'Printposs', settingsHint: 'Chưa lưu token Printposs ở Setup › Fulfill', credentialsHint: 'Chưa lưu token Printposs ở Setup › Fulfill',
+    methodLabel: 'Ship', noMethod: 'Printposs xử lý', chargeNote: 'Printposs tạo đơn; kiểm tra trạng thái thanh toán trên tài khoản Printposs',
+  },
   pgprints: {
     name: 'PGprints', settingsHint: 'Chưa bật gửi đơn ở trang cài đặt xưởng Pgprints', credentialsHint: 'Chưa nhập Store ID / Secret key PGprints',
     methodLabel: 'Ship class', noMethod: null, chargeNote: 'PGprints sẽ trừ tiền sau thời gian chờ',
@@ -128,8 +141,8 @@ function IssueList({ issues }: { issues: PreviewIssue[] }) {
   )
 }
 
-function PushPanel({ push, canAct, busy, name, onRefresh, onCancel }: {
-  push: PushView; canAct: boolean; busy: string; name: string; onRefresh: () => void; onCancel: () => void
+function PushPanel({ push, canAct, busy, name, onRefresh, onCancel, supportsCancel = true }: {
+  push: PushView; canAct: boolean; busy: string; name: string; onRefresh: () => void; onCancel: () => void; supportsCancel?: boolean
 }) {
   const meta = statusMeta(name)[push.status]
   const [confirmCancel, setConfirmCancel] = useState(false)
@@ -156,12 +169,12 @@ function PushPanel({ push, canAct, busy, name, onRefresh, onCancel }: {
           <button type="button" className={btn} disabled={!!busy} onClick={onRefresh}>
             <Icon name="sync" className="text-[18px]" />{busy === 'refresh' ? 'Đang cập nhật…' : 'Cập nhật trạng thái'}
           </button>
-          {push.status === 'CREATED' && !confirmCancel && (
+          {supportsCancel && push.status === 'CREATED' && !confirmCancel && (
             <button type="button" className={`${btn} text-error`} disabled={!!busy} onClick={() => setConfirmCancel(true)}>
               <Icon name="cancel" className="text-[18px]" />Huỷ đơn bên {name}
             </button>
           )}
-          {push.status === 'CREATED' && confirmCancel && (
+          {supportsCancel && push.status === 'CREATED' && confirmCancel && (
             <span className="inline-flex items-center gap-xs flex-wrap rounded-lg bg-error-container text-on-error-container px-sm py-xs text-label-sm">
               Huỷ đơn {push.supplierOrderCode ?? push.externalOrderId} bên {name}?
               <button type="button" className={`${btn} text-error`} disabled={!!busy} onClick={() => { setConfirmCancel(false); onCancel() }}>
@@ -251,7 +264,11 @@ export default function PgprintsPushModal({ orderId, supplier = 'pgprints', onCl
     name: `${payload.firstName ?? ''} ${payload.lastName ?? ''}`.trim(), address1: payload.shipping_address1, address2: payload.shipping_address2, city: payload.shipping_city,
     province_code: payload.shipping_province_code, zip: payload.shipping_zip, country: payload.shipping_country, country_code: payload.shipping_country_code, phone: payload.shipping_phone,
   } as Record<string, string> : undefined
-  const address = (lf ? {
+  const ppAddress = supplier === 'printposs' && payload ? {
+    name: `${payload.first_name ?? ''} ${payload.last_name ?? ''}`.trim(), address1: payload.address_1, address2: payload.address_2,
+    city: payload.city, province_code: payload.region, zip: payload.zip, country: payload.country, phone: payload.phone,
+  } as Record<string, string> : undefined
+  const address = ppAddress ?? (lf ? {
     name: lf.name, address1: lf.line1, address2: lf.line2, city: lf.city, province_code: lf.state_code,
     zip: lf.postal, country: lf.country_code, country_code: lf.country_code, phone: lf.phone,
   } as Record<string, string> : undefined) ?? flat ?? payload?.shipping_address ?? (ckf ? {
@@ -293,7 +310,8 @@ export default function PgprintsPushModal({ orderId, supplier = 'pgprints', onCl
           <ErrorBanner msg={error} onClose={() => setError('')} />
           {loading && !preview && <p className="text-body-sm text-on-surface-variant">Đang dựng bản xem trước…</p>}
 
-          {preview && active && <PushPanel push={active} canAct={preview.canAct} busy={busy} name={name} onRefresh={refreshPush} onCancel={cancelPush} />}
+          {preview && active && <PushPanel push={active} canAct={preview.canAct} busy={busy} name={name} onRefresh={refreshPush} onCancel={cancelPush} supportsCancel={supplier !== 'printposs'} />}
+          {supplier === 'printposs' && active && <Note tone="warn" icon="info">API Printposs chưa hỗ trợ huỷ đơn. Liên hệ xưởng để huỷ và đối chiếu trước khi gửi lại.</Note>}
 
           {preview && sendable && (
             <>
