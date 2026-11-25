@@ -23,7 +23,9 @@ Fixed origin `https://ros-openapi.toaddit.com`; JSON POST with `Authorization: B
 
 Success requires HTTP2xx AND code0 AND success1. Create/cancel return a scalar ID, not the old payment/order object. ROS does not document an AppSecret exchange, sandbox base, payment endpoint or create-error catalogue. Business errors, malformed success IDs, timeouts, 408/5xx and mismatched readback retain the send lock; explicit authentication rejection is the only remotely verified definite create refusal currently eligible for retry.
 
-Catalog reads retry transient service/network errors at most three times per page, with bounded backoff. Authentication and invalid catalog data are not retried. An unavailable catalog blocks sending and reports the ROS outage without falsely marking existing mappings as legacy or erasing them. No cached or old-web catalog is substituted. Create/cancel requests are never automatically retried.
+Orders use the exact ROS product code and size stored on their supplier SKU. The preview and send read the catalog when a line needs a new mapping or a different per-order selection. The operator can also open the catalog to change a mapped product. A mapped line uses its stored base cost for the estimate. Create/cancel requests are never automatically retried.
+
+The order lookup accepts ROS's empty result (`data: null` with total 0 on page 1) after a successful response. Missing or inconsistent results still block creation. After create, export still requires a matching order returned by ROS.
 
 ## Duplicate protection and reconciliation
 

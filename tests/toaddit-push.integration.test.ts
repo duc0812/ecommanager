@@ -66,7 +66,7 @@ beforeEach(async () => {
     if (path === '/api/v1/prototype/prototypeList') return response(catalog, { total: catalog.length, pageIndex: 1, pageSize: 200 })
     if (path === '/api/v1/order/orderList') {
       const hits = remote.filter(o => o.orderCode === body.orderCode)
-      return response(mode === 'wrong-readback' && hits.length ? hits.map(o => ({ ...o, id: '99999' })) : hits, { total: hits.length, pageIndex: 1, pageSize: 200 })
+      return response(!hits.length ? null : mode === 'wrong-readback' ? hits.map(o => ({ ...o, id: '99999' })) : hits, { total: hits.length, pageIndex: 1, pageSize: 200 })
     }
     if (path === '/api/v1/order/createOrder') {
       creates++
@@ -103,31 +103,51 @@ describe('Toaddit ROS API integration', () => {
     const id = await makeOrder()
     const unavailable = { status: 200, text: JSON.stringify({ code: 503, success: 0, message: 'Service starting, please try again later, thank you!: Load balancer does not have available server for client: prototype-service' }) }
     vi.mocked(postToadditRos).mockResolvedValueOnce(unavailable).mockResolvedValueOnce(unavailable)
-    const p = await preview(id)
+    const p = (await buildToadditPush(id, {}, true))!.preview
     expect(p.canPush).toBe(true)
     expect(p.toaddit.products[0]).toMatchObject({ productCode: 'FZH56', size: 'ONESIZE' })
     expect(creates).toBe(0)
   })
-  it('reports a catalog outage without falsely claiming a valid mapping is legacy or allowing a send', async () => {
+  it('sends a saved ROS mapping without reading the catalog and accepts the explicit empty order list', async () => {
+    const id = await makeOrder()
+    const p = await preview(id)
+    expect(p.canPush).toBe(true)
+    expect(postToadditRos).not.toHaveBeenCalled()
+    await pushToadditOrder(id, { payloadHash: p.payloadHash!, userId: null, confirmArtwork: true })
+    expect(calls.map(c => c.path)).toEqual(['/api/v1/order/orderList', '/api/v1/order/createOrder', '/api/v1/order/orderList'])
+    expect(calls[1].body.items[0]).toMatchObject({ productCode: 'FZH56', size: 'ONESIZE' })
+    await expect(send(id)).rejects.toMatchObject({ code: 'DUPLICATE' })
+  })
+  it('rejects a null order list without an explicit empty first page', async () => {
+    const id = await makeOrder()
+    for (const page of [{ total: 1, pageIndex: 1 }, { pageIndex: 1 }, { total: 0, pageIndex: 2 }]) {
+      vi.mocked(postToadditRos).mockResolvedValueOnce(response(null, page))
+      await expect(send(id)).rejects.toMatchObject({ code: 'CREATE_FAILED' })
+    }
+    expect(creates).toBe(0)
+  })
+  it('blocks a different per-order choice when it cannot be verified in the catalog', async () => {
     const id = await makeOrder()
     vi.mocked(postToadditRos).mockResolvedValue({ status: 503, text: JSON.stringify({ code: 503, success: 0, message: 'prototype-service unavailable' }) })
-    const p = await preview(id)
+    const selection = { [`${id}-line`]: OTHER }
+    const p = await preview(id, selection)
     expect(p.canPush).toBe(false)
     expect(p.issues.filter(i => i.level === 'error')).toMatchObject([{ code: 'CATALOG', message: expect.stringContaining('Mapping đã lưu được giữ nguyên') }])
     expect(p.issues.some(i => i.code === 'PRODUCT_UNAVAILABLE')).toBe(false)
     expect(p.toaddit.options).toEqual([])
     expect((await prisma.supplierProduct.findUniqueOrThrow({ where: { supplierId_sku: { supplierId: SUP, sku: 'TD-BASE' } } })).apiSku).toBe(VARIANT)
-    await expect(pushToadditOrder(id, { payloadHash: p.payloadHash!, userId: null, confirmArtwork: true })).rejects.toMatchObject({ code: 'NOT_ELIGIBLE' })
+    await expect(pushToadditOrder(id, { payloadHash: p.payloadHash!, userId: null, confirmArtwork: true, variantIds: selection })).rejects.toMatchObject({ code: 'NOT_ELIGIBLE' })
     expect(creates).toBe(0)
     expect(await prisma.supplierOrderPush.count({ where: { orderId: id } })).toBe(0)
   }, 15000)
   it('does not retry an invalid catalog credential or describe a missing valid code as legacy', async () => {
     const id = await makeOrder()
     vi.mocked(postToadditRos).mockResolvedValueOnce({ status: 401, text: JSON.stringify({ code: 1001000, success: 0, message: 'Invalid API key' }) })
-    expect((await preview(id)).issues.map(i => i.code)).toEqual(['CATALOG'])
+    const selection = { [`${id}-line`]: OTHER }
+    expect((await preview(id, selection)).issues.map(i => i.code)).toEqual(['CATALOG'])
     expect(postToadditRos).toHaveBeenCalledTimes(1)
     catalog = []
-    const p = await preview(id)
+    const p = await preview(id, selection)
     expect(p.issues.find(i => i.code === 'PRODUCT_UNAVAILABLE')?.message).toContain('không có trong catalog ROS đang bán')
     expect(p.issues.find(i => i.code === 'PRODUCT_UNAVAILABLE')?.message).not.toContain('API cũ')
   })
@@ -161,7 +181,7 @@ describe('Toaddit ROS API integration', () => {
   it('requires confirmation and refuses stale catalog/file choices', async () => {
     const id = await makeOrder(), p = await preview(id)
     await expect(pushToadditOrder(id, { payloadHash: p.payloadHash!, userId: null, confirmArtwork: false })).rejects.toMatchObject({ code: 'ARTWORK_NOT_CONFIRMED' })
-    catalog[0].sizeList[0].price = 12
+    await prisma.supplierProduct.update({ where: { supplierId_sku: { supplierId: SUP, sku: 'TD-BASE' } }, data: { apiSku: OTHER } })
     await expect(pushToadditOrder(id, { payloadHash: p.payloadHash!, userId: null, confirmArtwork: true })).rejects.toMatchObject({ code: 'PAYLOAD_CHANGED' })
     expect(creates).toBe(0)
   })
@@ -173,7 +193,7 @@ describe('Toaddit ROS API integration', () => {
     expect((await preview(id)).issues.map(i => i.code)).toContain('PRODUCT_UNAVAILABLE')
     await prisma.supplierProduct.update({ where: { supplierId_sku: { supplierId: SUP, sku: 'TD-BASE' } }, data: { apiSku: VARIANT } })
     catalog[0].status = 2
-    expect((await preview(id)).canPush).toBe(false); catalog[0].status = 1
+    expect((await buildToadditPush(id, {}, true))!.preview.canPush).toBe(false); catalog[0].status = 1
     await prisma.order.update({ where: { id }, data: { shippingPhone: null } })
     expect((await preview(id)).issues.map(i => i.code)).toContain('ADDRESS')
     await prisma.designArtwork.create({ data: { orderId: id, shopifyLineId: `${id}-line`, printArea: 'Extra', version: 1, fileName: 'extra.png', storagePath: 'fixture/extra.png', mimeType: 'image/png', size: 10 } })

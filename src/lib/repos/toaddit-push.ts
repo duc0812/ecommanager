@@ -60,7 +60,7 @@ function accountCheck(push: PushRow, account: ToadditAccount): Snapshot {
   return snapshot
 }
 type Built = { preview: PushPreview & { toaddit: ToadditPreviewInfo; estimate: { goods: number | null; wallet: null; note: string } }; rawBody: string | null; externalOrderId: string; supplierId: string | null; snapshot: Snapshot | null }
-export async function buildToadditPush(orderId: string, selection: ToadditSelection = {}): Promise<Built | null> {
+export async function buildToadditPush(orderId: string, selection: ToadditSelection = {}, browseCatalog = false): Promise<Built | null> {
   const order = await loadOrderForPush(orderId)
   if (!order) return null
   const [settings, supplier] = await Promise.all([getToadditSettings(), findToadditSupplier()])
@@ -82,23 +82,38 @@ export async function buildToadditPush(orderId: string, selection: ToadditSelect
   for (const push of pushes.filter(p => isActive(p.status))) {
     if (account) try { accountCheck(push, account) } catch (e: any) { error(e.code ?? 'ACCOUNT_CHANGED', e.message) }
   }
-  let variants: Awaited<ReturnType<typeof listToadditProducts>> = []
-  let catalogLoaded = false
-  if (account && !active && plan.lines.length) {
-    try { variants = await listToadditProducts(account); catalogLoaded = true }
-    catch (e: any) { error('CATALOG', `Không đọc được catalog ROS: ${e.message}`) }
-  }
   const skus = plan.lines.flatMap(l => l.resolvedSupplierSku ? [l.resolvedSupplierSku] : [])
   const products = supplier ? await prisma.supplierProduct.findMany({ where: { supplierId: supplier.id, sku: { in: skus } } }) : []
+  const bySku = new Map(products.map(product => [product.sku, product]))
+  const needsLookup = plan.lines.some(line => {
+    const saved = bySku.get(line.resolvedSupplierSku ?? '')?.apiSku
+    const selected = selection[line.shopifyLineId]
+    return !validToadditVariantId(saved) || (selected !== undefined && selected !== saved)
+  })
+  let variants: Awaited<ReturnType<typeof listToadditProducts>> = []
+  let catalogLoaded = false
+  if (account && !active && plan.lines.length && (needsLookup || browseCatalog)) {
+    try { variants = await listToadditProducts(account); catalogLoaded = true }
+    catch (e: any) {
+      if (needsLookup) error('CATALOG', `Không đọc được catalog ROS: ${e.message}`)
+      else warning('CATALOG', 'Chưa tải được catalog để đổi sản phẩm. Bạn vẫn có thể gửi theo mã và size đã ghép.')
+    }
+  }
   const lines: PreviewLine[] = [], choices: ToadditPreviewInfo['products'] = []
-  const picked: typeof variants = [], items: ToadditOrderPayload['items'] = []
+  const pickedPrices: Array<number | null> = [], items: ToadditOrderPayload['items'] = []
   const methods = new Set<number>()
   let goods: number | null = 0
   const country = countryCodeOf(order.shippingCountry)
   for (const l of plan.lines) {
-    const refId = keyOf(l), product = products.find(p => p.sku === l.resolvedSupplierSku)
+    const refId = keyOf(l), product = bySku.get(l.resolvedSupplierSku ?? '')
     const variantId = selection[l.shopifyLineId] ?? product?.apiSku ?? ''
-    const variant = variants.find(t => t.id === variantId && t.active)
+    const live = variants.find(t => t.id === variantId && t.active)
+    let variant: Pick<typeof variants[number], 'id' | 'productCode' | 'size' | 'name' | 'baseCost'> | undefined = live
+    // A saved ROS mapping already has the exact order fields. A different per-order selection needs a live match.
+    if (account && product && variantId === product.apiSku && validToadditVariantId(variantId) && (!catalogLoaded || live)) {
+      const [productCode, size] = JSON.parse(variantId.slice(4)) as [string, string]
+      variant = { id: variantId, productCode, size, name: product.productName || product.sku, baseCost: product.baseCost }
+    }
     if (!variant && !active && catalogLoaded) {
       const reason = !variantId ? 'chưa ghép mã sản phẩm và size ROS'
         : !validToadditVariantId(variantId) ? 'mapping đang dùng ID API cũ hoặc không hợp lệ; ghép lại mã sản phẩm và size ROS'
@@ -125,7 +140,7 @@ export async function buildToadditPush(orderId: string, selection: ToadditSelect
       designLink: files.prints[0]?.publicUrl ?? '', urlMockup: files.image ?? '' })
     if (variant) {
       choices.push({ refId, shopifyLineId: l.shopifyLineId, variantId: variant.id, productCode: variant.productCode, size: variant.size, name: variant.name })
-      picked.push(variant)
+      pickedPrices.push(variant.baseCost)
       goods = goods === null || variant.baseCost === null ? null : goods + variant.baseCost * l.qty
     } else goods = null
     lines.push({ refId, lineId: l.id, shopifyLineId: l.shopifyLineId, linePosition: l.linePosition, productTitle: l.productTitle, variantTitle: l.variantTitle,
@@ -145,13 +160,13 @@ export async function buildToadditPush(orderId: string, selection: ToadditSelect
   }
   const rawBody = items.length ? JSON.stringify(payload) : null
   const snapshot: Snapshot | null = account && rawBody ? { protocol: 'ros-v1', request: payload, accountId: toadditAccountId(account), lineIds: plan.lines.map(l => l.shopifyLineId) } : null
-  const payloadHash = snapshot ? hashPayload(JSON.stringify({ snapshot, variants: picked, localFiles: lines.map(l => ({ id: l.shopifyLineId, files: l.files, mockup: l.mockupUrl })) })) : null
+  const payloadHash = snapshot ? hashPayload(JSON.stringify({ snapshot, pickedPrices, localFiles: lines.map(l => ({ id: l.shopifyLineId, files: l.files, mockup: l.mockupUrl })) })) : null
   const history = await toPushViews(pushes)
   return { rawBody, externalOrderId, supplierId: supplier?.id ?? null, snapshot, preview: {
     order: { id: order.id, shopifyOrderNumber: order.shopifyOrderNumber, pipelineStatus: order.pipelineStatus, storeName: order.store.project?.name ?? order.store.shop },
     supplier, pushEnabled: !!account, hasCredentials: !!account, canPush: !!rawBody && !issues.some(i => i.level === 'error'), payload: items.length ? payload : null,
     payloadHash, lines, issues, balance: null, activePush: history.find(p => isActive(p.status)) ?? null, laterSend: plan.later, history,
-    estimate: { goods, wallet: null, note: 'Ước tính từ catalog, chưa gồm ship/thuế. Tool không gửi giá ghi đè hoặc tự thanh toán.' },
+    estimate: { goods, wallet: null, note: 'Ước tính theo giá sản phẩm đã ghép hoặc giá catalog của lựa chọn mới, chưa gồm ship/thuế.' },
     toaddit: { protocol: 'ros-v1', products: choices, options: variants.filter(t => t.active).map(t => ({ id: t.id, productCode: t.productCode, size: t.size, name: t.name })) },
   } }
 }

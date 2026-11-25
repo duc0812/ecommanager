@@ -211,6 +211,7 @@ export default function PgprintsPushModal({ orderId, supplier = 'pgprints', onCl
   const [confirming, setConfirming] = useState(false)
   const [artworkConfirmed, setArtworkConfirmed] = useState(false)
   const [variantIds, setVariantIds] = useState<Record<string, string>>({})
+  const [browseRosCatalog, setBrowseRosCatalog] = useState(false)
   const [showPayload, setShowPayload] = useState(false)
   const [lightbox, setLightbox] = useState<number | null>(null)
   const base = `/api/fulfillment/${supplier}/orders/${encodeURIComponent(orderId)}`
@@ -218,12 +219,12 @@ export default function PgprintsPushModal({ orderId, supplier = 'pgprints', onCl
   const load = useCallback(async () => {
     setLoading(true)
     if (supplier === 'toaddit') { setArtworkConfirmed(false); setConfirming(false) }
-    const query = supplier === 'toaddit' ? `?variantIds=${encodeURIComponent(JSON.stringify(variantIds))}` : ''
+    const query = supplier === 'toaddit' ? `?variantIds=${encodeURIComponent(JSON.stringify(variantIds))}&catalog=${browseRosCatalog ? 1 : 0}` : ''
     const r = await call(`${base}/preview${query}`)
     setLoading(false)
     if (!r.ok) { setError(r.error); return }
     setPreview(r.data)
-  }, [base, supplier, variantIds])
+  }, [base, supplier, variantIds, browseRosCatalog])
 
   useEffect(() => { void load() }, [load])
 
@@ -326,6 +327,7 @@ export default function PgprintsPushModal({ orderId, supplier = 'pgprints', onCl
           {supplier === 'printposs' && active && <Note tone="warn" icon="info">API Printposs chưa hỗ trợ huỷ đơn. Liên hệ xưởng để huỷ và đối chiếu trước khi gửi lại.</Note>}
           {preview?.toaddit && sendable && <section className="rounded-xl border border-secondary/30 p-md space-y-md">
             <h3 className="text-body-md font-semibold">Sản phẩm và size Toaddit ROS</h3>
+            {!browseRosCatalog && !preview.toaddit.options.length && <button type="button" className={btn} disabled={!!busy || loading || !canSend} onClick={() => setBrowseRosCatalog(true)}>Đổi sản phẩm hoặc size</button>}
             <p className="text-body-sm text-on-surface-variant">Chọn đúng mã sản phẩm và size của xưởng. File in trọn sheet và mockup đã duyệt ở dưới sẽ được gửi kèm đơn, gồm đúng nội dung cá nhân hoá.</p>
             {preview.lines.map(line => {
               const product = preview.toaddit!.products.find(t => t.shopifyLineId === line.shopifyLineId)
@@ -333,6 +335,7 @@ export default function PgprintsPushModal({ orderId, supplier = 'pgprints', onCl
                 <select className="mt-xs w-full border rounded-lg px-sm py-xs text-body-sm" value={product?.variantId ?? ''} disabled={!!busy || loading || !canSend}
                   onChange={e => { const value = e.target.value; setVariantIds(old => ({ ...old, [line.shopifyLineId]: value })) }}>
                   <option value="" disabled>Chọn sản phẩm và size từ catalog ROS</option>
+                  {product && !preview.toaddit!.options.some(t => t.id === product.variantId) && <option value={product.variantId}>{product.productCode} · {product.size} · {product.name}</option>}
                   {preview.toaddit!.options.map(t => <option key={t.id} value={t.id}>{t.productCode} · {t.size} · {t.name}</option>)}
                 </select>
               </label>

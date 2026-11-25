@@ -50,9 +50,12 @@ async function pages(account: ToadditAccount, path: string, filter: object = {})
     const reply = path === '/prototype/prototypeList'
       ? await readCatalogPage(account, body)
       : await callToaddit(account, path, body)
-    if (!Array.isArray(reply.data)) throw new ToadditError('Toaddit ROS trả danh sách không hợp lệ', 502)
     const total = toadditNumber(reply.page?.total), current = toadditNumber(reply.page?.pageIndex)
     if (current !== null && current !== pageIndex) throw new ToadditError('Toaddit ROS trả sai trang — không dùng danh sách chưa đầy đủ', 502)
+    if (path === '/order/orderList' && pageIndex === 1 && current === 1 && total === 0 && reply.data === null) return []
+    if (!Array.isArray(reply.data) || (reply.data.length === 0 && total !== null && out.length < total)) {
+      throw new ToadditError('Toaddit ROS trả danh sách không hợp lệ', 502)
+    }
     out.push(...reply.data)
     if (!reply.data.length || (total !== null && out.length >= total) || (total === null && reply.data.length < 200)) return out
   }

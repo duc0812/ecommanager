@@ -16,7 +16,7 @@ export async function GET(req: NextRequest, { params }: { params: { orderId: str
   try { value = raw ? JSON.parse(raw) : undefined }
   catch { return NextResponse.json({ error: 'Danh sách sản phẩm không phải JSON hợp lệ' }, { status: 400 }) }
   try {
-    const built = await buildToadditPush(params.orderId, parseToadditSelection(value))
+    const built = await buildToadditPush(params.orderId, parseToadditSelection(value), req.nextUrl.searchParams.get('catalog') === '1')
     if (!built) return NextResponse.json({ error: 'Không tìm thấy đơn' }, { status: 404 })
     return NextResponse.json({ ...built.preview, canAct: ['ADMIN', 'SUPERADMIN'].includes(auth.user.role), canSend: canHandoffToSupplier(auth.user.role, auth.user.permissions) })
   } catch (e) { return toadditErrorResponse(e) }
