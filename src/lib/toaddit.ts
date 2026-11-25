@@ -46,7 +46,10 @@ export async function callToaddit(account: ToadditAccount, path: string, body: u
 async function pages(account: ToadditAccount, path: string, filter: object = {}): Promise<any[]> {
   const out: any[] = []
   for (let pageIndex = 1; pageIndex <= 200; pageIndex++) {
-    const reply = await callToaddit(account, path, { ...filter, page: { pageIndex, pageSize: 200 } })
+    const body = { ...filter, page: { pageIndex, pageSize: 200 } }
+    const reply = path === '/prototype/prototypeList'
+      ? await readCatalogPage(account, body)
+      : await callToaddit(account, path, body)
     if (!Array.isArray(reply.data)) throw new ToadditError('Toaddit ROS trả danh sách không hợp lệ', 502)
     const total = toadditNumber(reply.page?.total), current = toadditNumber(reply.page?.pageIndex)
     if (current !== null && current !== pageIndex) throw new ToadditError('Toaddit ROS trả sai trang — không dùng danh sách chưa đầy đủ', 502)
@@ -54,6 +57,19 @@ async function pages(account: ToadditAccount, path: string, filter: object = {})
     if (!reply.data.length || (total !== null && out.length >= total) || (total === null && reply.data.length < 200)) return out
   }
   throw new ToadditError('Catalog/đơn Toaddit ROS vượt giới hạn phân trang', 502)
+}
+async function readCatalogPage(account: ToadditAccount, body: object): Promise<any> {
+  for (let attempt = 0; ; attempt++) {
+    try { return await callToaddit(account, '/prototype/prototypeList', body) }
+    catch (e) {
+      const transient = e instanceof ToadditError && (e.status === 0 || [408, 429].includes(e.status) || e.status >= 500
+        || /Service starting|Load balancer does not have available server|prototype-service/i.test(e.message))
+      if (!transient) throw e
+      if (attempt === 2) throw new ToadditError('Dịch vụ catalog ROS đang tạm thời không khả dụng. Mapping đã lưu được giữ nguyên; thử lại sau khi ROS hoạt động trở lại.', 503)
+      // Only retry catalog reads; never replay order mutations or use an unverified cached catalog.
+      await new Promise(resolve => setTimeout(resolve, 1100 * (attempt + 1)))
+    }
+  }
 }
 export async function listToadditProducts(account: ToadditAccount): Promise<ToadditProduct[]> {
   const rows = await pages(account, '/prototype/prototypeList')

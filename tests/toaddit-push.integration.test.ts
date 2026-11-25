@@ -99,6 +99,38 @@ afterAll(async () => {
   delete process.env.NEXT_PUBLIC_APP_URL
 })
 describe('Toaddit ROS API integration', () => {
+  it('retries a temporarily unavailable ROS catalog and keeps the confirmed mapping', async () => {
+    const id = await makeOrder()
+    const unavailable = { status: 200, text: JSON.stringify({ code: 503, success: 0, message: 'Service starting, please try again later, thank you!: Load balancer does not have available server for client: prototype-service' }) }
+    vi.mocked(postToadditRos).mockResolvedValueOnce(unavailable).mockResolvedValueOnce(unavailable)
+    const p = await preview(id)
+    expect(p.canPush).toBe(true)
+    expect(p.toaddit.products[0]).toMatchObject({ productCode: 'FZH56', size: 'ONESIZE' })
+    expect(creates).toBe(0)
+  })
+  it('reports a catalog outage without falsely claiming a valid mapping is legacy or allowing a send', async () => {
+    const id = await makeOrder()
+    vi.mocked(postToadditRos).mockResolvedValue({ status: 503, text: JSON.stringify({ code: 503, success: 0, message: 'prototype-service unavailable' }) })
+    const p = await preview(id)
+    expect(p.canPush).toBe(false)
+    expect(p.issues.filter(i => i.level === 'error')).toMatchObject([{ code: 'CATALOG', message: expect.stringContaining('Mapping đã lưu được giữ nguyên') }])
+    expect(p.issues.some(i => i.code === 'PRODUCT_UNAVAILABLE')).toBe(false)
+    expect(p.toaddit.options).toEqual([])
+    expect((await prisma.supplierProduct.findUniqueOrThrow({ where: { supplierId_sku: { supplierId: SUP, sku: 'TD-BASE' } } })).apiSku).toBe(VARIANT)
+    await expect(pushToadditOrder(id, { payloadHash: p.payloadHash!, userId: null, confirmArtwork: true })).rejects.toMatchObject({ code: 'NOT_ELIGIBLE' })
+    expect(creates).toBe(0)
+    expect(await prisma.supplierOrderPush.count({ where: { orderId: id } })).toBe(0)
+  }, 15000)
+  it('does not retry an invalid catalog credential or describe a missing valid code as legacy', async () => {
+    const id = await makeOrder()
+    vi.mocked(postToadditRos).mockResolvedValueOnce({ status: 401, text: JSON.stringify({ code: 1001000, success: 0, message: 'Invalid API key' }) })
+    expect((await preview(id)).issues.map(i => i.code)).toEqual(['CATALOG'])
+    expect(postToadditRos).toHaveBeenCalledTimes(1)
+    catalog = []
+    const p = await preview(id)
+    expect(p.issues.find(i => i.code === 'PRODUCT_UNAVAILABLE')?.message).toContain('không có trong catalog ROS đang bán')
+    expect(p.issues.find(i => i.code === 'PRODUCT_UNAVAILABLE')?.message).not.toContain('API cũ')
+  })
   it('keeps ROS key server-only and does not use legacy credentials', async () => {
     await set('toaddit.appKey', 'old-app-key'); await set('toaddit.appSecret', 'old-app-secret')
     await listToadditProducts(await toadditAccount())

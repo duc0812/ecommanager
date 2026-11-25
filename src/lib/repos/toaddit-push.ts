@@ -83,8 +83,9 @@ export async function buildToadditPush(orderId: string, selection: ToadditSelect
     if (account) try { accountCheck(push, account) } catch (e: any) { error(e.code ?? 'ACCOUNT_CHANGED', e.message) }
   }
   let variants: Awaited<ReturnType<typeof listToadditProducts>> = []
+  let catalogLoaded = false
   if (account && !active && plan.lines.length) {
-    try { variants = await listToadditProducts(account) }
+    try { variants = await listToadditProducts(account); catalogLoaded = true }
     catch (e: any) { error('CATALOG', `Không đọc được catalog ROS: ${e.message}`) }
   }
   const skus = plan.lines.flatMap(l => l.resolvedSupplierSku ? [l.resolvedSupplierSku] : [])
@@ -98,7 +99,12 @@ export async function buildToadditPush(orderId: string, selection: ToadditSelect
     const refId = keyOf(l), product = products.find(p => p.sku === l.resolvedSupplierSku)
     const variantId = selection[l.shopifyLineId] ?? product?.apiSku ?? ''
     const variant = variants.find(t => t.id === variantId && t.active)
-    if (!variant && !active) error('PRODUCT_UNAVAILABLE', `${refId}: chọn đúng mã sản phẩm và size trong catalog ROS; ID mẫu API cũ không dùng được`, refId)
+    if (!variant && !active && catalogLoaded) {
+      const reason = !variantId ? 'chưa ghép mã sản phẩm và size ROS'
+        : !validToadditVariantId(variantId) ? 'mapping đang dùng ID API cũ hoặc không hợp lệ; ghép lại mã sản phẩm và size ROS'
+          : 'mã sản phẩm và size đã ghép không có trong catalog ROS đang bán; kiểm tra lại với xưởng'
+      error('PRODUCT_UNAVAILABLE', `${refId}: ${reason}`, refId)
+    }
     const approved = isLineApproved(l, order.designTasks.find(t => t.shopifyLineId === l.shopifyLineId))
     if (!approved) error('NOT_APPROVED', `${refId}: thiết kế chưa được duyệt`, refId)
     const files = await collectLineFiles(l, order.artworks, { refId, approved, baseUrl, supplierName: 'Toaddit ROS' }, { error, warning })
