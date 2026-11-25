@@ -10,7 +10,7 @@ export async function POST(req: NextRequest, { params }: { params: { orderId: st
   const scope = await requireOrderScope(req, params.orderId)
   if ('error' in scope) return scope.error
   const body = await req.json().catch(() => null)
-  if (body?.confirm !== true || body?.confirmTemplates !== true || typeof body.payloadHash !== 'string' || !/^[a-f0-9]{64}$/.test(body.payloadHash)) return NextResponse.json({ error: 'Cần xác nhận gửi đơn, đối chiếu mẫu Toaddit và payloadHash bản xem trước' }, { status: 400 })
-  try { return NextResponse.json(await pushToadditOrder(params.orderId, { payloadHash: body.payloadHash, userId: auth.user.id, confirmTemplates: true, templateIds: parseToadditSelection(body.templateIds) })) }
+  if (body?.confirm !== true || body?.confirmArtwork !== true || typeof body.payloadHash !== 'string' || !/^[a-f0-9]{64}$/.test(body.payloadHash)) return NextResponse.json({ error: 'Cần xác nhận gửi đơn, đối chiếu file in/mẫu ROS và payloadHash bản xem trước' }, { status: 400 })
+  try { return NextResponse.json(await pushToadditOrder(params.orderId, { payloadHash: body.payloadHash, userId: auth.user.id, confirmArtwork: true, variantIds: parseToadditSelection(body.variantIds) })) }
   catch (e) { return toadditErrorResponse(e) }
 }

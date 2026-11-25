@@ -15,8 +15,8 @@ async function patch(id: string, body: { apiSku?: string; apiShipClass?: string 
 }
 
 /** Which of a supplier's own SKUs each tool SKU is. `shipOptions` gives a list to pick from; without it the ship service is typed. */
-export function SupplierSkuMapTable({ name, rows, skus, shipOptions, shipHint, onRows, onError }: {
-  name: string; rows: Row[]; skus: SkuOption[]; shipOptions?: { value: string; label: string }[]; shipHint: string
+export function SupplierSkuMapTable({ name, rows, skus, shipOptions, shipHint, onRows, onError, selectOnly = false }: {
+  name: string; rows: Row[]; skus: SkuOption[]; shipOptions?: { value: string; label: string }[]; shipHint: string; selectOnly?: boolean
   onRows: (rows: Row[]) => void; onError: (message: string) => void
 }) {
   const [busy, setBusy] = useState('')
@@ -54,12 +54,16 @@ export function SupplierSkuMapTable({ name, rows, skus, shipOptions, shipHint, o
                 <td className="px-sm py-xs font-mono text-xs">{r.sku}</td>
                 <td className="px-sm py-xs">{r.productName ?? '—'}{r.variant1Value ? ` · ${r.variant1Value}` : ''}</td>
                 <td className="px-sm py-xs">
-                  <input key={`${r.id}:${r.apiSku ?? ''}`} list={listId} defaultValue={r.apiSku ?? ''} placeholder="chưa ghép" aria-label={`SKU ${name} của ${r.sku}`}
+                  {selectOnly ? <select value={skus.some(s => s.skuName === r.apiSku) ? r.apiSku! : ''} aria-label={`SKU ${name} của ${r.sku}`} disabled={!!busy}
+                    onChange={e => save(r, { apiSku: e.target.value })} className="w-full min-w-[240px] border rounded px-xs py-[3px] text-xs">
+                    <option value="">{r.apiSku ? 'Chọn lại sản phẩm và size trong catalog' : 'Chọn sản phẩm và size'}</option>
+                    {skus.map(s => <option key={s.skuName} value={s.skuName}>{s.productName ?? s.skuCode ?? s.skuName}</option>)}
+                  </select> : <input key={`${r.id}:${r.apiSku ?? ''}`} list={listId} defaultValue={r.apiSku ?? ''} placeholder="chưa ghép" aria-label={`SKU ${name} của ${r.sku}`}
                     onBlur={e => { if (e.target.value.trim() !== (r.apiSku ?? '')) void save(r, { apiSku: e.target.value.trim() }) }}
-                    className={`w-full min-w-[240px] border rounded px-xs py-[3px] font-mono text-xs ${r.apiSku ? '' : 'border-error/60'}`} />
+                    className={`w-full min-w-[240px] border rounded px-xs py-[3px] font-mono text-xs ${r.apiSku ? '' : 'border-error/60'}`} />}
                   {!r.apiSku && r.suggestion && (
                     <button type="button" className="mt-xs block text-label-sm text-secondary font-semibold text-left" disabled={!!busy} onClick={() => save(r, { apiSku: r.suggestion! })}>
-                      Dùng gợi ý: {r.suggestion}
+                      Dùng gợi ý: {selectOnly ? skus.find(s => s.skuName === r.suggestion)?.productName ?? 'Sản phẩm phù hợp' : r.suggestion}
                     </button>
                   )}
                 </td>

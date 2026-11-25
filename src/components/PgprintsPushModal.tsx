@@ -43,8 +43,8 @@ type SupplierCopy = { name: string; settingsHint: string; credentialsHint: strin
 
 const SUPPLIERS: Record<SupplierApiKind, SupplierCopy> = {
   toaddit: {
-    name: 'Toaddit', settingsHint: 'Chưa lưu App Key / App Secret Toaddit ở Setup › Fulfill', credentialsHint: 'Chưa lưu App Key / App Secret Toaddit ở Setup › Fulfill',
-    methodLabel: 'Ship', noMethod: 'Standard', chargeNote: 'Toaddit tạo đơn theo mẫu đã lưu trên Toaddit',
+    name: 'Toaddit', settingsHint: 'Chưa lưu API key Toaddit ROS ở Setup › Fulfill', credentialsHint: 'Chưa lưu API key Toaddit ROS ở Setup › Fulfill',
+    methodLabel: 'Ship', noMethod: 'Standard', chargeNote: 'Toaddit ROS nhận sản phẩm, size, file in và mockup đã duyệt',
   },
   printposs: {
     name: 'Printposs', settingsHint: 'Chưa lưu token Printposs ở Setup › Fulfill', credentialsHint: 'Chưa lưu token Printposs ở Setup › Fulfill',
@@ -209,21 +209,21 @@ export default function PgprintsPushModal({ orderId, supplier = 'pgprints', onCl
   const [info, setInfo] = useState('')
   const [busy, setBusy] = useState('')
   const [confirming, setConfirming] = useState(false)
-  const [templatesConfirmed, setTemplatesConfirmed] = useState(false)
-  const [templateIds, setTemplateIds] = useState<Record<string, string>>({})
+  const [artworkConfirmed, setArtworkConfirmed] = useState(false)
+  const [variantIds, setVariantIds] = useState<Record<string, string>>({})
   const [showPayload, setShowPayload] = useState(false)
   const [lightbox, setLightbox] = useState<number | null>(null)
   const base = `/api/fulfillment/${supplier}/orders/${encodeURIComponent(orderId)}`
 
   const load = useCallback(async () => {
     setLoading(true)
-    if (supplier === 'toaddit') { setTemplatesConfirmed(false); setConfirming(false) }
-    const query = supplier === 'toaddit' ? `?templateIds=${encodeURIComponent(JSON.stringify(templateIds))}` : ''
+    if (supplier === 'toaddit') { setArtworkConfirmed(false); setConfirming(false) }
+    const query = supplier === 'toaddit' ? `?variantIds=${encodeURIComponent(JSON.stringify(variantIds))}` : ''
     const r = await call(`${base}/preview${query}`)
     setLoading(false)
     if (!r.ok) { setError(r.error); return }
     setPreview(r.data)
-  }, [base, supplier, templateIds])
+  }, [base, supplier, variantIds])
 
   useEffect(() => { void load() }, [load])
 
@@ -236,7 +236,6 @@ export default function PgprintsPushModal({ orderId, supplier = 'pgprints', onCl
   const images = useMemo<LightboxImage[]>(() => {
     if (!preview) return []
     const out: LightboxImage[] = []
-    for (const template of preview.toaddit?.templates ?? []) for (const url of template.images) out.push({ url, label: `${template.refId} · mẫu Toaddit ${template.sku}` })
     for (const line of preview.lines) {
       for (const f of line.files) if (f.thumbUrl) out.push({ url: f.thumbUrl, label: `${line.refId} · file in ${f.area}`, openUrl: f.viewUrl, copyUrl: f.publicUrl ?? f.viewUrl })
       if (line.mockupUrl) out.push({ url: line.mockupUrl, label: `${line.refId} · mockup` })
@@ -259,7 +258,7 @@ export default function PgprintsPushModal({ orderId, supplier = 'pgprints', onCl
     onChanged?.()
   }
 
-  const send = () => act('push', { confirm: true, payloadHash: preview?.payloadHash, ...(supplier === 'toaddit' ? { templateIds, confirmTemplates: templatesConfirmed } : {}) }, d =>
+  const send = () => act('push', { confirm: true, payloadHash: preview?.payloadHash, ...(supplier === 'toaddit' ? { variantIds, confirmArtwork: artworkConfirmed } : {}) }, d =>
     `Đã gửi ${name} — mã ${d.push?.supplierOrderCode ?? d.push?.externalOrderId ?? '—'}${d.push?.totalCost != null ? `, chi phí ${usd(d.push.totalCost)}` : ''}${d.exported ? ', đơn chuyển sang Exported' : ''}`)
   const cancelPush = () => act('cancel', { confirm: true }, d =>
     `Đã huỷ đơn bên ${name}${d.exportReverted ? ' — đơn trở lại trạng thái trước khi gửi' : ''}`)
@@ -280,7 +279,7 @@ export default function PgprintsPushModal({ orderId, supplier = 'pgprints', onCl
     city: payload.city, province_code: payload.region, zip: payload.zip, country: payload.country, phone: payload.phone,
   } as Record<string, string> : undefined
   const td = supplier === 'toaddit' ? payload?.logistics : undefined
-  const tdAddress: Record<string, string> | undefined = td ? { name: td.consignee, address1: td.addr1, address2: td.addr2, city: td.city, province_code: td.province, zip: td.postcode, country: td.countryCode, country_code: td.countryCode, phone: td.phone } : undefined
+  const tdAddress: Record<string, string> | undefined = td ? { name: td.consignee, address1: td.address1, address2: td.address2, city: td.city, province_code: td.province, zip: td.postcode, country: td.countryCode, country_code: td.countryCode, phone: td.phone } : undefined
   const address = tdAddress ?? ppAddress ?? (lf ? {
     name: lf.name, address1: lf.line1, address2: lf.line2, city: lf.city, province_code: lf.state_code,
     zip: lf.postal, country: lf.country_code, country_code: lf.country_code, phone: lf.phone,
@@ -326,23 +325,19 @@ export default function PgprintsPushModal({ orderId, supplier = 'pgprints', onCl
           {preview && active && <PushPanel push={active} canAct={preview.canAct} busy={busy} name={name} onRefresh={refreshPush} onCancel={cancelPush} supportsCancel={supplier !== 'printposs'} />}
           {supplier === 'printposs' && active && <Note tone="warn" icon="info">API Printposs chưa hỗ trợ huỷ đơn. Liên hệ xưởng để huỷ và đối chiếu trước khi gửi lại.</Note>}
           {preview?.toaddit && sendable && <section className="rounded-xl border border-secondary/30 p-md space-y-md">
-            <h3 className="text-body-md font-semibold">Mẫu Toaddit sẽ dùng để sản xuất</h3>
-            <p className="text-body-sm text-on-surface-variant">Toaddit in từ mẫu đã lưu bên Toaddit. Đối chiếu ảnh dưới đây với file in và mockup đã duyệt trong tool. Với đơn cá nhân hoá, chọn đúng mẫu đã hoàn tất tên/nội dung cho đơn này.</p>
+            <h3 className="text-body-md font-semibold">Sản phẩm và size Toaddit ROS</h3>
+            <p className="text-body-sm text-on-surface-variant">Chọn đúng mã sản phẩm và size của xưởng. File in trọn sheet và mockup đã duyệt ở dưới sẽ được gửi kèm đơn, gồm đúng nội dung cá nhân hoá.</p>
             {preview.lines.map(line => {
-              const template = preview.toaddit!.templates.find(t => t.shopifyLineId === line.shopifyLineId)
-              return <div key={line.shopifyLineId} className="space-y-sm">
-                <label className="block text-label-sm">{line.refId} · Mẫu sản xuất
-                  <select className="mt-xs w-full border rounded-lg px-sm py-xs text-body-sm" value={template?.templateId ?? ''} disabled={!!busy || loading || !canSend}
-                    onChange={e => { const value = e.target.value; setTemplateIds(old => ({ ...old, [line.shopifyLineId]: value })) }}>
-                    <option value="" disabled>Chọn mẫu hoàn chỉnh trong Toaddit</option>
-                    {preview.toaddit!.options.map(t => <option key={t.id} value={t.id}>{t.sku} · {t.name} · ID {t.id}</option>)}
-                  </select>
-                </label>
-                <div className="flex flex-wrap gap-sm">{template?.images.map(url => <Thumb key={url} url={url} label={`Mẫu Toaddit ${template.sku}`} onOpen={() => openImage(url)} />)}</div>
-              </div>
+              const product = preview.toaddit!.products.find(t => t.shopifyLineId === line.shopifyLineId)
+              return <label key={line.shopifyLineId} className="block text-label-sm">{line.refId} · Sản phẩm / size
+                <select className="mt-xs w-full border rounded-lg px-sm py-xs text-body-sm" value={product?.variantId ?? ''} disabled={!!busy || loading || !canSend}
+                  onChange={e => { const value = e.target.value; setVariantIds(old => ({ ...old, [line.shopifyLineId]: value })) }}>
+                  <option value="" disabled>Chọn sản phẩm và size từ catalog ROS</option>
+                  {preview.toaddit!.options.map(t => <option key={t.id} value={t.id}>{t.productCode} · {t.size} · {t.name}</option>)}
+                </select>
+              </label>
             })}
-            <p className="text-body-sm font-semibold">{preview.toaddit.environment === 'sandbox' ? 'Sandbox — không gửi đơn thật' : preview.toaddit.payOnCreate ? 'Gửi đơn sẽ trừ tiền số dư Toaddit ngay.' : 'Tạo đơn chưa thanh toán; trả tiền trên Toaddit để vào sản xuất.'}</p>
-            <label className="flex items-start gap-sm text-body-sm"><input type="checkbox" checked={templatesConfirmed} disabled={loading || !!busy || !canSend} onChange={e => setTemplatesConfirmed(e.target.checked)} />Tôi đã đối chiếu mẫu Toaddit, size, màu và nội dung cá nhân hoá khớp thiết kế đã duyệt.</label>
+            <label className="flex items-start gap-sm text-body-sm"><input type="checkbox" checked={artworkConfirmed} disabled={loading || !!busy || !canSend} onChange={e => setArtworkConfirmed(e.target.checked)} />Tôi đã đối chiếu sản phẩm, size, file in, mockup và nội dung cá nhân hoá khớp thiết kế đã duyệt.</label>
           </section>}
 
           {preview && sendable && (
@@ -406,7 +401,7 @@ export default function PgprintsPushModal({ orderId, supplier = 'pgprints', onCl
                           <Thumb url={line.mockupUrl} label="mockup" onOpen={() => openImage(line.mockupUrl)} />
                           <div className="flex flex-col text-label-sm">
                             <b className="text-on-surface">Mockup</b>
-                            <span className="text-on-surface-variant">{line.mockupUrl ? (supplier === 'toaddit' ? 'để đối chiếu trong tool' : 'gửi kèm cho xưởng') : 'không có'}</span>
+                            <span className="text-on-surface-variant">{line.mockupUrl ? 'gửi kèm cho xưởng' : 'không có'}</span>
                           </div>
                         </div>
                       </div>
@@ -499,14 +494,14 @@ export default function PgprintsPushModal({ orderId, supplier = 'pgprints', onCl
                 <Icon name="refresh" className="text-[18px]" />{loading ? 'Đang tải…' : 'Dựng lại bản xem trước'}
               </button>
               {!confirming ? (
-                <button type="button" className={btnPrimary} disabled={!preview.canPush || !canSend || !!busy || loading || (supplier === 'toaddit' && !templatesConfirmed)} title={blockedReason || undefined} onClick={() => setConfirming(true)}>
+                <button type="button" className={btnPrimary} disabled={!preview.canPush || !canSend || !!busy || loading || (supplier === 'toaddit' && !artworkConfirmed)} title={blockedReason || undefined} onClick={() => setConfirming(true)}>
                   <Icon name="send" className="text-[18px]" />Xác nhận gửi
                 </button>
               ) : (
                 <span className="inline-flex items-center gap-sm flex-wrap rounded-lg bg-amber-100 text-amber-900 px-sm py-xs text-label-sm">
                   <Icon name="payments" className="text-[18px]" />
-                  Đơn thật — {supplier === 'toaddit' ? (preview.toaddit?.payOnCreate ? 'trừ tiền số dư Toaddit ngay theo mẫu đã chọn' : 'tạo đơn Toaddit chưa thanh toán') : copy.chargeNote}. Gửi {preview.order.shopifyOrderNumber}?
-                  <button type="button" className={btnPrimary} disabled={!!busy || loading || (supplier === 'toaddit' && !templatesConfirmed)} onClick={send}>
+                  Đơn thật — {copy.chargeNote}. Gửi {preview.order.shopifyOrderNumber}?
+                  <button type="button" className={btnPrimary} disabled={!!busy || loading || (supplier === 'toaddit' && !artworkConfirmed)} onClick={send}>
                     <Icon name="send" className="text-[18px]" />{busy === 'push' ? 'Đang gửi…' : 'Gửi đơn thật'}
                   </button>
                   <button type="button" className={btn} disabled={!!busy} onClick={() => setConfirming(false)}>Chưa gửi</button>

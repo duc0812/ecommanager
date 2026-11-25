@@ -13,24 +13,19 @@ export async function PUT(req: NextRequest) {
   if ('error' in auth) return auth.error
   const body = await req.json().catch(() => null)
   if (!body || typeof body !== 'object' || Array.isArray(body)) return NextResponse.json({ error: 'Body không hợp lệ' }, { status: 400 })
+  if (Object.keys(body).some(key => !['apiKey', 'shippingMethod'].includes(key))) return NextResponse.json({ error: 'ROS chỉ nhận API key và phương thức ship; tải lại trang cài đặt' }, { status: 400 })
   const patch: Partial<ToadditSettings> = {}
-  for (const key of ['appKey', 'appSecret'] as const) {
+  for (const key of ['apiKey'] as const) {
     const v = body[key]
     if (v === undefined) continue
     if (v !== null && (typeof v !== 'string' || v.length > 2000 || /[\r\n]/.test(v))) return NextResponse.json({ error: `${key} không hợp lệ` }, { status: 400 })
-    if (v === null || v.trim()) patch[key] = v === null ? null : v.trim()
-  }
-  if (body.environment !== undefined) {
-    if (!['production', 'sandbox'].includes(body.environment)) return NextResponse.json({ error: 'Môi trường chỉ nhận production hoặc sandbox' }, { status: 400 })
-    patch.environment = body.environment
+    const clean = v === null ? null : v.trim().replace(/^Bearer\s+/i, '')
+    if (clean && /\s/.test(clean)) return NextResponse.json({ error: 'API key ROS không được chứa khoảng trắng' }, { status: 400 })
+    if (clean === null || clean) patch[key] = clean
   }
   if (body.shippingMethod !== undefined) {
-    if (!['1', '2'].includes(body.shippingMethod)) return NextResponse.json({ error: 'Ship chỉ nhận 1 (standard) hoặc 2 (express)' }, { status: 400 })
+    if (!['1', '2', '3'].includes(body.shippingMethod)) return NextResponse.json({ error: 'Ship ROS chỉ nhận 1, 2 hoặc 3' }, { status: 400 })
     patch.shippingMethod = body.shippingMethod
-  }
-  if (body.payOnCreate !== undefined) {
-    if (typeof body.payOnCreate !== 'boolean') return NextResponse.json({ error: 'payOnCreate phải là boolean' }, { status: 400 })
-    patch.payOnCreate = body.payOnCreate
   }
   return NextResponse.json(toadditSettingsView(await saveToadditSettings(patch)))
 }

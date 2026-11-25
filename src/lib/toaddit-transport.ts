@@ -1,63 +1,42 @@
 import { createHash } from 'node:crypto'
 import { prisma } from '@/lib/db'
 import { assertSafeExternalUrl } from '@/lib/safe-url'
+import { TOADDIT_ORIGIN } from '@/lib/toaddit-shared'
 
 export type ToadditHttpResponse = { status: number; text: string }
-
-async function reserveRequestSlot(appKey: string, origin: string): Promise<void> {
-  const key = `toaddit.rate.${createHash('sha256').update(`${origin}:${appKey}`).digest('hex')}`
+async function reserveRequestSlot(apiKey: string): Promise<void> {
+  const key = `toaddit.rosRate.${createHash('sha256').update(apiKey).digest('hex')}`
   const at = await prisma.$transaction(async tx => {
     const row = await tx.appSetting.findUnique({ where: { key } })
-    const old = Number(row?.value)
-    const now = Date.now()
+    const old = Number(row?.value), now = Date.now()
     if (Number.isFinite(old) && old > now + 60_000) throw new Error('Hàng đợi Toaddit đang đầy — thử lại sau')
-    const at = Math.max(now, Number.isFinite(old) ? old : now)
-    const value = String(at + 1100)
+    const at = Math.max(now, Number.isFinite(old) ? old : now), value = String(at + 1100)
     await tx.appSetting.upsert({ where: { key }, create: { key, value }, update: { value } })
     return at
   })
-  const delay = at - Date.now()
-  if (delay > 0) await new Promise(resolve => setTimeout(resolve, delay))
+  if (at > Date.now()) await new Promise(resolve => setTimeout(resolve, at - Date.now()))
 }
-
-/** Toaddit requires HTTP/2. Native fetch on this application's Node version speaks HTTP/1.1. */
-export async function postToadditHttp2(origin: string, path: string, headers: Record<string, string>, body: string): Promise<ToadditHttpResponse> {
-  if (!path.startsWith('/') || path.startsWith('//')) throw new Error('Toaddit endpoint không hợp lệ')
-  const url = assertSafeExternalUrl(`${origin}${path}`, { allowedHosts: ['openapi.toaddit.com', 'openapi-sandbox.toaddit.com'] })
-  if (url.origin !== origin || url.pathname !== path) throw new Error('Toaddit endpoint không hợp lệ')
-  await reserveRequestSlot(headers['X-App-Key'], origin)
-  const { connect } = await import('node:http2')
-  return new Promise((resolve, reject) => {
-    const client = connect(url.origin, { minVersion: 'TLSv1.2', ALPNProtocols: ['h2'] })
-    let settled = false
-    let stream: ReturnType<typeof client.request> | undefined
-    const finish = (error: boolean, value?: ToadditHttpResponse) => {
-      if (settled) return
-      settled = true; clearTimeout(timer)
-      stream?.close(); client.destroy()
-      if (error) reject(new Error('Toaddit không phản hồi qua HTTP/2 hoặc kết nối bị ngắt'))
-      else resolve(value!)
-    }
-    const timer = setTimeout(() => finish(true), 45_000)
-    client.on('error', () => finish(true))
-    client.on('close', () => { if (!settled) finish(true) })
-    client.once('connect', () => {
-      if (client.alpnProtocol !== 'h2') { finish(true); return }
-      try {
-        stream = client.request({ ':method': 'POST', ':path': path, 'content-type': 'application/json; charset=utf-8', accept: 'application/json', ...headers })
-        let status = 0
-        const chunks: Buffer[] = []
-        let bytes = 0
-        stream.on('response', h => { status = Number(h[':status']) })
-        stream.on('data', chunk => {
-          bytes += chunk.length
-          if (bytes > 16 * 1024 * 1024) { finish(true); return }
-          chunks.push(Buffer.from(chunk))
-        })
-        stream.on('error', () => finish(true))
-        stream.on('end', () => finish(false, { status, text: Buffer.concat(chunks).toString('utf8') }))
-        stream.end(body)
-      } catch { finish(true) }
-    })
+export async function postToadditRos(apiKey: string, path: string, body: string): Promise<ToadditHttpResponse> {
+  if (!/^\/api\/v1\/(order|prototype)\/[A-Za-z]+$/.test(path)) throw new Error('Toaddit endpoint không hợp lệ')
+  const url = assertSafeExternalUrl(`${TOADDIT_ORIGIN}${path}`, { allowedHosts: ['ros-openapi.toaddit.com'] })
+  if (url.origin !== TOADDIT_ORIGIN || url.pathname !== path || url.search) throw new Error('Toaddit endpoint không hợp lệ')
+  await reserveRequestSlot(apiKey)
+  const response = await fetch(url, {
+    method: 'POST', redirect: 'error', signal: AbortSignal.timeout(45_000),
+    headers: { 'content-type': 'application/json', accept: 'application/json', Authorization: `Bearer ${apiKey}` }, body,
   })
+  const chunks: Uint8Array[] = []
+  let bytes = 0
+  if (!response.body) throw new Error('Toaddit không trả dữ liệu')
+  const reader = response.body.getReader()
+  try {
+    for (;;) {
+      const { value, done } = await reader.read()
+      if (done) break
+      bytes += value.length
+      if (bytes > 16 * 1024 * 1024) throw new Error('Dữ liệu Toaddit quá lớn')
+      chunks.push(value)
+    }
+  } finally { await reader.cancel().catch(() => {}); reader.releaseLock() }
+  return { status: response.status, text: Buffer.concat(chunks).toString('utf8') }
 }

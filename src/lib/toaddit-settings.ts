@@ -1,21 +1,16 @@
 import { prisma } from '@/lib/db'
-import type { ToadditEnvironment } from '@/lib/toaddit-shared'
 
-export const TOADDIT_KEYS = {
-  appKey: 'toaddit.appKey', appSecret: 'toaddit.appSecret', environment: 'toaddit.environment',
-  shippingMethod: 'toaddit.shippingMethod', payOnCreate: 'toaddit.payOnCreate',
-} as const
-export type ToadditSettings = { appKey: string | null; appSecret: string | null; environment: ToadditEnvironment; shippingMethod: '1' | '2'; payOnCreate: boolean }
-export const hasToadditCredentials = (s: ToadditSettings) => !!s.appKey && !!s.appSecret
+export const TOADDIT_KEYS = { apiKey: 'toaddit.rosApiKey', shippingMethod: 'toaddit.shippingMethod' } as const
+export type ToadditSettings = { apiKey: string | null; shippingMethod: '1' | '2' | '3' }
+export const hasToadditCredentials = (s: ToadditSettings) => !!s.apiKey
 export function toadditSettingsView(s: ToadditSettings) {
-  return { hasAppKey: !!s.appKey, hasAppSecret: !!s.appSecret, hasCredentials: hasToadditCredentials(s), environment: s.environment, shippingMethod: s.shippingMethod, payOnCreate: s.payOnCreate }
+  return { protocol: 'ros-v1' as const, hasApiKey: !!s.apiKey, hasCredentials: hasToadditCredentials(s), shippingMethod: s.shippingMethod }
 }
 export async function getToadditSettings(): Promise<ToadditSettings> {
   const rows = await prisma.appSetting.findMany({ where: { key: { in: Object.values(TOADDIT_KEYS) } } })
   const raw = new Map(rows.map(r => [r.key, r.value.trim()]))
-  return { appKey: raw.get(TOADDIT_KEYS.appKey) || null, appSecret: raw.get(TOADDIT_KEYS.appSecret) || null,
-    environment: raw.get(TOADDIT_KEYS.environment) === 'sandbox' ? 'sandbox' : 'production',
-    shippingMethod: raw.get(TOADDIT_KEYS.shippingMethod) === '2' ? '2' : '1', payOnCreate: raw.get(TOADDIT_KEYS.payOnCreate) === 'true' }
+  const shippingMethod = raw.get(TOADDIT_KEYS.shippingMethod)
+  return { apiKey: raw.get(TOADDIT_KEYS.apiKey) || null, shippingMethod: shippingMethod === '2' || shippingMethod === '3' ? shippingMethod : '1' }
 }
 export async function saveToadditSettings(patch: Partial<ToadditSettings>) {
   await prisma.$transaction(async tx => {
@@ -25,9 +20,6 @@ export async function saveToadditSettings(patch: Partial<ToadditSettings>) {
       const value = patch[field] === null ? '' : String(patch[field]).trim()
       if (value) await tx.appSetting.upsert({ where: { key }, create: { key, value }, update: { value } })
       else await tx.appSetting.deleteMany({ where: { key } })
-    }
-    if (patch.appKey !== undefined || patch.appSecret !== undefined || patch.environment !== undefined) {
-      await tx.appSetting.deleteMany({ where: { key: { startsWith: 'toaddit.session.' } } })
     }
   })
   return getToadditSettings()
