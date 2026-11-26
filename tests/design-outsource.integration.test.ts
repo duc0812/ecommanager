@@ -7,7 +7,7 @@ import { AUTH_COOKIE, signToken } from '@/lib/auth'
 import type { AuthUser } from '@/lib/api-auth'
 import { canAccess, DEFAULT_ROLE_PERMISSIONS, homePathFor } from '@/lib/roles'
 import { canCallApi } from '@/lib/api-access'
-import { actOutsource, assignOutsource, assertOutsourceUpload, driveTemplateLinks, loadOutsource, revokeOutsource, visibleOutsource } from '@/lib/design-outsource'
+import { actOutsource, assignOutsource, assertOutsourceUpload, driveTemplateLinks, outsourceManagement, loadOutsource, revokeOutsource, visibleOutsource } from '@/lib/design-outsource'
 import { withOutsourceReviewLock } from '@/lib/design-outsource-lock'
 import { artworkTargetForTask, saveArtwork, saveArtworkFromTemp } from '@/lib/design-storage'
 import { reopenLineForFix, syncDesignTasks, transitionTask } from '@/lib/design-tasks'
@@ -106,10 +106,25 @@ describe('outsource access and private data', () => {
     expect((await list(await req('/api/design-studio/outsource', null))).status).toBe(401)
     for (const who of [one, designer]) expect((await manage(await req('/api/design-studio/outsource/manage?taskKey=x', who))).status).toBe(403)
   })
-  it('requires a sharing check and keeps assignment data out of the outsource API', async () => {
+  it('uses the mapped supplier SKU download and safe defaults with just a recipient', async () => {
+    const f = await fixture()
+    await prisma.printTemplate.update({ where: { id: f.template.id }, data: { templateUrl: null } })
+    const mapped = await prisma.supplierProduct.create({ data: { supplierId: prefix, sku: f.line.resolvedSupplierSku!, productName: 'Private catalogue name', baseCost: 1, designTemplateUrl: 'https://drive.google.com/open?id=mapped123' } })
+    try {
+      const preview = await outsourceManagement(f.task.taskKey, admin)
+      expect(preview.templateUrl).toBe('https://drive.google.com/file/d/mapped123/view')
+      const a = await assignOutsource(f.task.taskKey, admin, { action: 'assign', assigneeId: one.id })
+      const shared = await loadOutsource(a.code, one)
+      expect(shared.downloadUrl).toContain('id=mapped123')
+      expect(shared.brief).toBe(preview.brief)
+      expect(shared.personalization).toEqual([{ key: 'Name', value: 'Alex' }])
+      expect(shared.dueAt).toBe(f.task.dueAt!.toISOString())
+      expect(JSON.stringify(shared)).not.toContain('Private catalogue name')
+    } finally { await prisma.supplierProduct.delete({ where: { id: mapped.id } }) }
+  })
+  it('keeps assignment data out of the outsource API', async () => {
     const f = await fixture()
     await prisma.orderLine.update({ where: { id: f.line.id }, data: { variantOptions: JSON.stringify({ Size: 'L', Color: 'Navy', Product: 'Private listing option' }) } })
-    await expect(assignOutsource(f.task.taskKey, admin, { ...f.input, shareConfirmed: false })).rejects.toThrow('Xác nhận')
     const a = await assignOutsource(f.task.taskKey, admin, f.input)
     const response = await detail(await req(`/api/design-studio/outsource/${a.code}`, one), { params: { code: a.code } })
     expect(response.status).toBe(200)

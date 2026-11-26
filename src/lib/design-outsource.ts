@@ -55,38 +55,76 @@ async function taskContext(taskKey: string) {
   return { task, line, template }
 }
 
+async function packageDefaults({ task, line, template }: Awaited<ReturnType<typeof taskContext>>) {
+  const mappedProduct = line.resolvedSupplierId && line.resolvedSupplierSku
+    ? await prisma.supplierProduct.findUnique({ where: { supplierId_sku: { supplierId: line.resolvedSupplierId, sku: line.resolvedSupplierSku } }, select: { designTemplateUrl: true } })
+    : null
+  const previous = task.outsource
+  const candidates = [template?.templateUrl, mappedProduct?.designTemplateUrl]
+  if (previous?.active) candidates.unshift(previous.templateUrl)
+  else candidates.push(previous?.templateUrl)
+  let templateUrl = ''
+  for (const candidate of candidates) {
+    if (!candidate) continue
+    try { templateUrl = driveTemplateLinks(candidate).view; break } catch { /* Try the next mapped source. */ }
+  }
+
+  const fields = linePersonalization(line)
+  const shared: { key: string; value: string }[] = previous ? JSON.parse(previous.personalization) : []
+  const selectedFieldIndexes = fields.flatMap((f, i) => {
+    const selected = previous ? shared.some(v => v.key === f.key && v.value === f.value)
+      : /^(?:(?:custom|personalized|pet|your) )?(?:name|text|font|colou?r|number|initials|tên|chữ|màu)(?: [1-9])?$/i.test(f.key.trim()) && !/(?:https?:\/\/|@)/i.test(f.value)
+    return selected ? [i] : []
+  })
+  const referenceKind = previous
+    ? (previous.referenceUrl && previous.referenceUrl === line.previewCdnUrl ? 'preview' : previous.referenceUrl && previous.referenceUrl === line.imageUrl ? 'image' : 'none')
+    : (line.previewCdnUrl ? 'preview' : line.imageUrl ? 'image' : 'none')
+  let reference: OutsourceManagement['reference'] = referenceKind
+  if (reference !== 'none') {
+    try { assertSafeExternalUrl((reference === 'preview' ? line.previewCdnUrl : line.imageUrl)!) } catch { reference = 'none' }
+  }
+  return {
+    templateUrl, templateLabel: previous?.templateLabel ?? 'Template in',
+    brief: previous?.brief || 'Làm mẫu theo template và nội dung được giao. Nộp file in cho từng vùng trên template.',
+    fields, selectedFieldIndexes, reference,
+  }
+}
+
 export async function outsourceManagement(taskKey: string, user: AuthUser): Promise<OutsourceManagement> {
   assertOutsourceManager(user)
-  const { task, line, template } = await taskContext(taskKey)
+  const context = await taskContext(taskKey)
+  const { task, line, template } = context
+  const defaults = await packageDefaults(context)
   const users = await prisma.appUser.findMany({ where: { status: 'ACTIVE', role: 'OUTSOURCE' }, select: { id: true, name: true, permissions: true } })
   const a = task.outsource
   return {
     assignment: a ? { code: a.code, revision: a.revision, active: a.active, assigneeId: a.assigneeId, brief: a.brief, templateLabel: a.templateLabel, templateUrl: a.templateUrl } : null,
     users: users.filter(u => { try { return JSON.parse(u.permissions).includes('design_outsource') } catch { return false } }).map(u => ({ id: u.id, name: u.name })),
-    templateUrl: template?.templateUrl ?? '', hasTemplate: !!template,
-    personalization: linePersonalization(line).map(f => ({ key: f.key, value: f.value })),
+    templateUrl: defaults.templateUrl, templateLabel: defaults.templateLabel, brief: defaults.brief, hasTemplate: !!template,
+    personalization: defaults.fields.map(f => ({ key: f.key, value: f.value })),
     hasPreview: !!line.previewCdnUrl, hasImage: !!line.imageUrl,
     technicalOptions: technicalOptions(line.variantOptions),
-    selectedFieldIndexes: a ? linePersonalization(line).map((f, i) => JSON.parse(a.personalization).some((shared: { key: string; value: string }) => shared.key === f.key && shared.value === f.value) ? i : -1).filter(i => i >= 0) : [],
-    reference: a?.referenceUrl ? (a.referenceUrl === line.previewCdnUrl ? 'preview' : a.referenceUrl === line.imageUrl ? 'image' : 'none') : 'none',
+    selectedFieldIndexes: defaults.selectedFieldIndexes, reference: defaults.reference,
   }
 }
 
 export async function assignOutsource(taskKey: string, user: AuthUser, input: Record<string, unknown>) {
   assertOutsourceManager(user)
-  const { task, line, template } = await taskContext(taskKey)
-  if (input.shareConfirmed !== true) throw new OutsourceError('Xác nhận đã kiểm tra brief, ảnh và template trước khi chia sẻ')
+  const context = await taskContext(taskKey)
+  const { task, line, template } = context
+  const defaults = await packageDefaults(context)
   if (!template) throw new OutsourceError('Task chưa có template in, bổ sung template trước khi giao')
-  const brief = text(input.brief, 'Yêu cầu outsource')
-  const templateLabel = text(input.templateLabel, 'Tên template trung lập', 120)
-  const links = driveTemplateLinks(input.templateUrl)
+  const brief = text(input.brief || defaults.brief, 'Yêu cầu outsource')
+  const templateLabel = text(input.templateLabel || defaults.templateLabel, 'Tên template trung lập', 120)
+  const links = driveTemplateLinks(input.templateUrl || defaults.templateUrl)
   const assigneeId = text(input.assigneeId, 'Người làm', 100)
   const assignee = await prisma.appUser.findUnique({ where: { id: assigneeId } })
   if (!assignee || assignee.role !== 'OUTSOURCE' || assignee.status !== 'ACTIVE' || !JSON.parse(assignee.permissions).includes('design_outsource')) throw new OutsourceError('Chọn tài khoản Design Outsource đang hoạt động')
-  const reference = input.reference === 'preview' ? line.previewCdnUrl : input.reference === 'image' ? line.imageUrl : null
+  const referenceKind = input.reference ?? defaults.reference
+  const reference = referenceKind === 'preview' ? line.previewCdnUrl : referenceKind === 'image' ? line.imageUrl : null
   if (reference) assertSafeExternalUrl(reference)
-  const fields = linePersonalization(line)
-  const selected = Array.isArray(input.fieldIndexes) ? input.fieldIndexes.filter((i): i is number => Number.isInteger(i) && Number(i) >= 0 && Number(i) < fields.length) : []
+  const fields = defaults.fields
+  const selected = Array.isArray(input.fieldIndexes) ? input.fieldIndexes.filter((i): i is number => Number.isInteger(i) && Number(i) >= 0 && Number(i) < fields.length) : defaults.selectedFieldIndexes
   const personalization = JSON.stringify(Array.from(new Set(selected)).map(i => ({ key: fields[i].key, value: fields[i].value })))
   let dueAt = task.dueAt
   if (input.dueAt !== undefined && input.dueAt !== '') {

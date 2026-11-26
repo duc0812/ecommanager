@@ -21,7 +21,7 @@ export type OutsourceManagement = {
   selectedFieldIndexes: number[]
   reference: 'none' | 'preview' | 'image'
   assignment: { code: string; revision: number; active: boolean; assigneeId: string; brief: string; templateLabel: string; templateUrl: string } | null
-  users: { id: string; name: string }[]; templateUrl: string; hasTemplate: boolean
+  users: { id: string; name: string }[]; brief: string; templateLabel: string; templateUrl: string; hasTemplate: boolean
   personalization: { key: string; value: string }[]; hasPreview: boolean; hasImage: boolean
   technicalOptions: { key: string; value: string }[]
 }
