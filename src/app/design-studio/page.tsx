@@ -478,13 +478,13 @@ function DesignTasks() {
 
       <div className="flex flex-col gap-md mb-md">
         <StreamStepper counts={counts} active={stream} streams={offered} onSelect={switchStream} />
-        <PriorityRow stream={streamDef} total={rowTotal} unit={streamDef.unit} groups={rowGroups} group={activeGroup}
+        {stream !== 'HANDOFF' && <PriorityRow stream={streamDef} total={rowTotal} unit={streamDef.unit} groups={rowGroups} group={activeGroup}
           onGroup={id => { setPinned(null); setGroup(id) }}
           titleOnly={stream === 'SENT' || stream === 'DROPSHIP'}
           secondary={isTaskStream(stream) ? {
             filter, onFilter: setFilter, autoLabel: stream === 'REVIEW' ? 'Auto' : READY_META.AUTO.label,
             counts: chipCounts, filters: secondaryFiltersOf(stream), mine, onMine: () => setMine(m => !m),
-          } : null} />
+          } : null} />}
       </div>
 
       {workStream ? (
@@ -528,16 +528,8 @@ function DesignTasks() {
           </div>
         </div>
       ) : stream === 'HANDOFF' ? (
-        <div className="flex flex-col gap-md min-w-0">
-          <div className={`${card} p-sm`}>
-            <label className="flex items-center gap-xs h-9 px-sm rounded-lg bg-surface-container-low text-on-surface-variant">
-              <Icon name="search" className="text-[18px]" />
-              <input value={q} onChange={e => setQ(e.target.value)} placeholder="Tìm đơn, task ID, SKU…" aria-label="Tìm đơn"
-                className="flex-1 min-w-0 bg-transparent text-[13px] text-on-surface outline-none" />
-            </label>
-          </div>
-          <HandoffGrid q={debouncedQ} version={reviewVersion} group={activeGroup} onGroupCounts={setHandoffGroupCounts} onOpenTask={selectTask} onChanged={reload} />
-        </div>
+        <HandoffGrid q={debouncedQ} rawQ={q} onQ={setQ} version={reviewVersion} group={activeGroup} onGroup={id => { setPinned(null); setGroup(id) }}
+          onGroupCounts={setHandoffGroupCounts} onOpenTask={selectTask} onChanged={reload} />
       ) : stream === 'DROPSHIP' ? (
         <DropshipGrid q="" version={reviewVersion} onCount={setDropshipCount} onSend={orderNumber => { setQ(orderNumber); switchStream('HANDOFF') }} />
       ) : (

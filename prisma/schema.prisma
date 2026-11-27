@@ -602,6 +602,7 @@ model DesignTask {
   @@unique([orderId, shopifyLineId])
   @@unique([taskKey])
   @@index([status])
+  @@index([orderId, status])
   @@index([assigneeId])
 }
 

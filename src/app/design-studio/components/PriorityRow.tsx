@@ -27,6 +27,49 @@ export function GroupHeader({ def, count }: { def: PriorityGroupDef<any>; count:
   )
 }
 
+/** "Tất cả" then the priority groups left to right; a pressed chip filters the list, pressing it again clears. */
+export function GroupChips({ total, groups, group, onGroup, className = '' }: {
+  total: number
+  groups: { def: PriorityGroupDef<any>; count: number }[]
+  group: string | null
+  onGroup: (id: string | null) => void
+  className?: string
+}) {
+  const groupChip = ({ def, count }: { def: PriorityGroupDef<any>; count: number }) => (
+    <button
+      key={def.id}
+      type="button"
+      aria-pressed={group === def.id}
+      title={def.sub}
+      onClick={() => onGroup(group === def.id ? null : def.id)}
+      className={`inline-flex items-center gap-xs rounded-full px-md py-xs text-label-sm font-semibold ${CHIP_TONE[def.tone]} ${count === 0 ? 'opacity-50' : ''} ${group === def.id ? 'ring-2 ring-secondary' : ''}`}
+    >
+      <Icon name={def.extra ? 'history' : TONE_ICON[def.tone]} className="text-[14px]" />
+      {def.title}
+      <span className="rounded-full bg-surface-container-lowest px-sm text-on-surface">{count}</span>
+    </button>
+  )
+  return (
+    <div className={`flex flex-wrap items-center gap-xs ${className}`}>
+      <button
+        type="button"
+        aria-pressed={group === null}
+        onClick={() => onGroup(null)}
+        className={`inline-flex items-center gap-xs rounded-full px-md py-xs text-label-sm font-semibold bg-surface-container text-on-surface ${group === null ? 'ring-2 ring-secondary' : ''}`}
+      >
+        Tất cả <span className="rounded-full bg-surface-container-lowest px-sm">{total}</span>
+      </button>
+      {groups.filter(g => !g.def.extra).map(groupChip)}
+      {groups.some(g => g.def.extra) && (
+        <div role="group" aria-label="Lịch sử" className="ml-auto flex items-center gap-xs border-l border-outline-variant/40 pl-sm">
+          <span className="text-label-sm text-on-surface-variant">Lịch sử</span>
+          {groups.filter(g => g.def.extra).map(groupChip)}
+        </div>
+      )}
+    </div>
+  )
+}
+
 type Secondary = {
   filter: SecondaryFilter; onFilter: (f: SecondaryFilter) => void; autoLabel: string
   counts: Record<SecondaryFilter, number>
@@ -45,20 +88,6 @@ export default function PriorityRow({ stream, total, unit, groups, group, onGrou
   secondary: Secondary | null
   titleOnly?: boolean
 }) {
-  const groupChip = ({ def, count }: { def: PriorityGroupDef<any>; count: number }) => (
-    <button
-      key={def.id}
-      type="button"
-      aria-pressed={group === def.id}
-      title={def.sub}
-      onClick={() => onGroup(group === def.id ? null : def.id)}
-      className={`inline-flex items-center gap-xs rounded-full px-md py-xs text-label-sm font-semibold ${CHIP_TONE[def.tone]} ${count === 0 ? 'opacity-50' : ''} ${group === def.id ? 'ring-2 ring-secondary' : ''}`}
-    >
-      <Icon name={def.extra ? 'history' : TONE_ICON[def.tone]} className="text-[14px]" />
-      {def.title}
-      <span className="rounded-full bg-surface-container-lowest px-sm text-on-surface">{count}</span>
-    </button>
-  )
   return (
     <section className={card}>
       <div className={`flex items-center gap-sm px-lg py-sm ${titleOnly ? '' : 'border-b border-outline-variant/20'}`}>
@@ -99,25 +128,7 @@ export default function PriorityRow({ stream, total, unit, groups, group, onGrou
           </div>
         )}
       </div>
-      {!titleOnly && (
-        <div className="flex flex-wrap items-center gap-xs px-lg py-sm">
-          <button
-            type="button"
-            aria-pressed={group === null}
-            onClick={() => onGroup(null)}
-            className={`inline-flex items-center gap-xs rounded-full px-md py-xs text-label-sm font-semibold bg-surface-container text-on-surface ${group === null ? 'ring-2 ring-secondary' : ''}`}
-          >
-            Tất cả <span className="rounded-full bg-surface-container-lowest px-sm">{total}</span>
-          </button>
-          {groups.filter(g => !g.def.extra).map(groupChip)}
-          {groups.some(g => g.def.extra) && (
-            <div role="group" aria-label="Lịch sử" className="ml-auto flex items-center gap-xs border-l border-outline-variant/40 pl-sm">
-              <span className="text-label-sm text-on-surface-variant">Lịch sử</span>
-              {groups.filter(g => g.def.extra).map(groupChip)}
-            </div>
-          )}
-        </div>
-      )}
+      {!titleOnly && <GroupChips total={total} groups={groups} group={group} onGroup={onGroup} className="px-lg py-sm" />}
     </section>
   )
 }
