@@ -44,7 +44,7 @@ Dưới ô nhập có dòng "Khách sẽ nhận link: …1Z999TEST". Đọc dòn
 
 ## 4. Khoá nhà cung cấp của store
 
-Ở dòng của store, bấm "Khoá nhà cung cấp".
+Vào Setup › tab **Fulfill** (hoặc bấm "Khoá xưởng (tab Fulfill)" ở dòng của store). Mỗi xưởng có một card riêng: **Merchize (đẩy đơn qua API)**, **PGprints theo store**, **ParcelPanel theo store**. Mỗi card liệt kê mọi store kèm trạng thái khoá; bấm "Sửa khoá" ở dòng của store để nhập.
 
 **PGprints**: mỗi store có tài khoản PGprints riêng. Tool không bao giờ dùng khoá của store khác.
 
@@ -60,7 +60,7 @@ Dưới ô nhập có dòng "Khách sẽ nhận link: …1Z999TEST". Đọc dòn
 
 **ParcelPanel**: điền API key của store. Không có key thì lượt sync tracking ParcelPanel bỏ qua store này. Litzzy dùng khoá chung, sửa ở trang Tracking.
 
-Bấm "Lưu khoá". Tool không bao giờ hiện lại khoá đầy đủ: Super Admin thấy khoá đã che bớt, người khác chỉ thấy đã có hay chưa.
+Bấm "Lưu khoá" trong card của xưởng đó (mỗi card chỉ lưu khoá của xưởng mình). Tool không bao giờ hiện lại khoá đầy đủ: Super Admin thấy khoá đã che bớt, người khác chỉ thấy đã có hay chưa.
 
 ## 5. Xưởng dùng chung
 

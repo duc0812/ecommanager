@@ -11,6 +11,7 @@ import PrintpossSetupCard from '@/components/PrintpossSetupCard'
 import ToadditSetupCard from '@/components/ToadditSetupCard'
 import VnepacketSetupCard from '@/components/VnepacketSetupCard'
 import StoreConnectionsCard from '@/components/StoreConnectionsCard'
+import StoreKeysSetupCard from '@/components/StoreKeysSetupCard'
 import { SetupBlockLinks, SetupBlockTabs } from '@/components/SetupBlockNav'
 import { SETUP_BLOCKS, blockFromSearch, type SetupBlock } from '@/lib/setup-blocks'
 
@@ -367,6 +368,8 @@ export default function SetupPage() {
         </div>
         )}
         {block === 'fulfill' && <GoogleSheetsSetupCard />}
+        {block === 'fulfill' && <StoreKeysSetupCard supplier="merchize" />}
+        {block === 'fulfill' && <StoreKeysSetupCard supplier="pgprints" />}
         {block === 'fulfill' && <BondreSetupCard />}
         {block === 'fulfill' && <PrintwaySetupCard />}
         {block === 'fulfill' && <CatkissfishSetupCard />}
@@ -374,6 +377,7 @@ export default function SetupPage() {
         {block === 'fulfill' && <PrintpossSetupCard />}
         {block === 'fulfill' && <ToadditSetupCard />}
         {block === 'fulfill' && <VnepacketSetupCard />}
+        {block === 'fulfill' && <StoreKeysSetupCard supplier="parcelpanel" />}
         {block === 'design' && <GoogleDriveSetupCard />}
         {/* Trello Config */}
         {block === 'design' && (
