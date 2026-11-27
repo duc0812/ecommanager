@@ -14,6 +14,7 @@ export type ShipmentSourceLine = {
 
 export type ShipmentSourceFulfillment = {
   id: string
+  status?: string | null
   displayStatus: string | null
   deliveredAt: string | null
   trackingNumber: string | null
@@ -53,7 +54,7 @@ export function buildOrderShipments(input: {
 
   // Map each Shopify line id -> the fulfillment covering it (last one wins if re-shipped).
   const fulfillmentByLineId = new Map<string, ShipmentSourceFulfillment>()
-  for (const f of input.fulfillments) {
+  for (const f of input.fulfillments.filter(isLive)) {
     for (const lineId of f.lineItemIds) {
       fulfillmentByLineId.set(lineId, f)
     }
@@ -74,6 +75,13 @@ export function buildOrderShipments(input: {
       status: mapStatus(f),
     }
   })
+}
+
+// Shopify keeps a cancelled fulfillment on the order and may list it after the live ones (a split re-fulfilment).
+const DEAD_FULFILLMENT = /^(CANCEL+ED|ERROR|FAILURE)$/i
+
+function isLive(f: ShipmentSourceFulfillment): boolean {
+  return !DEAD_FULFILLMENT.test(f.status ?? '') && !DEAD_FULFILLMENT.test(f.displayStatus ?? '')
 }
 
 function mapStatus(f: ShipmentSourceFulfillment | null): string {

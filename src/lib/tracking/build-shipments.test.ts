@@ -89,4 +89,34 @@ describe('buildOrderShipments', () => {
     expect(rows.every(r => r.trackingNumber === 'YT999')).toBe(true)
     expect(rows.every(r => r.status === 'DELIVERED')).toBe(true)
   })
+
+  it('ignores a cancelled fulfillment even when Shopify lists it after the live ones', () => {
+    const rows = buildOrderShipments({
+      shopifyOrderNumber: '#LIT5141',
+      lines: [
+        line({ shopifyLineId: 'gid://mug', linePosition: 1 }),
+        line({ shopifyLineId: 'gid://tote', linePosition: 2 }),
+      ],
+      fulfillments: [
+        fulfillment({ id: 'f3', lineItemIds: ['gid://tote'], trackingNumber: '9214490416421812089616', displayStatus: 'FULFILLED', status: 'SUCCESS' }),
+        fulfillment({ id: 'f2', lineItemIds: ['gid://mug'], trackingNumber: 'ZS34342978499', displayStatus: 'FULFILLED', status: 'SUCCESS' }),
+        fulfillment({ id: 'f1', lineItemIds: ['gid://mug', 'gid://tote'], trackingNumber: 'ZS34342978499', displayStatus: 'CANCELED', status: 'CANCELLED' }),
+      ],
+    })
+    expect(rows.map(r => [r.lineKey, r.shopifyFulfillmentId, r.trackingNumber])).toEqual([
+      ['LIT5141_1', 'f2', 'ZS34342978499'],
+      ['LIT5141_2', 'f3', '9214490416421812089616'],
+    ])
+  })
+
+  it('leaves a line pending when its only fulfillment was cancelled', () => {
+    const rows = buildOrderShipments({
+      shopifyOrderNumber: '4001',
+      lines: [line({ shopifyLineId: 'gid://Z', linePosition: 1 })],
+      fulfillments: [fulfillment({ id: 'fx', lineItemIds: ['gid://Z'], trackingNumber: 'OLD1', displayStatus: 'CANCELED' })],
+    })
+    expect(rows[0].shopifyFulfillmentId).toBeNull()
+    expect(rows[0].trackingNumber).toBeNull()
+    expect(rows[0].status).toBe('PENDING')
+  })
 })

@@ -234,6 +234,7 @@ export async function fetchOrdersPage(
 
 export type ShopifyFulfillment = {
   id: string
+  status: string | null             // SUCCESS / CANCELLED / ERROR / FAILURE
   displayStatus: string | null      // Shopify's own status (SUCCESS/IN_TRANSIT/DELIVERED/…)
   deliveredAt: string | null
   trackingNumber: string | null
@@ -264,6 +265,7 @@ query SyncFulfillments($cursor: String, $query: String) {
       displayFulfillmentStatus
       fulfillments(first: 20) {
         id
+        status
         displayStatus
         deliveredAt
         trackingInfo(first: 10) { number company url }
@@ -376,6 +378,7 @@ export async function fetchOrderFulfillmentsPage(
       const track = (f.trackingInfo || [])[0] ?? null
       return {
         id: f.id,
+        status: f.status ?? null,
         displayStatus: f.displayStatus ?? null,
         deliveredAt: f.deliveredAt ?? null,
         trackingNumber: track?.number ?? null,
