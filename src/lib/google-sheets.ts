@@ -95,6 +95,25 @@ export async function readRange(spreadsheetId: string, tab: string, range: strin
 
 export type RowColor = { red?: number; green?: number; blue?: number }
 
+type SheetCell = { formattedValue?: string; note?: string; userEnteredFormat?: { backgroundColorStyle?: { rgbColor?: RowColor; themeColor?: string }; textFormat?: { strikethrough?: boolean } } }
+
+/** Manual marks matter on the factory's sheet. Conditional formatting also highlights duplicate order numbers. */
+export async function readFactoryOrderRows(spreadsheetId: string, tab: string) {
+  const q = new URLSearchParams({ ranges: `${quoted(tab)}!A:P`, fields: 'sheets.data.rowData.values(formattedValue,note,userEnteredFormat(backgroundColorStyle,textFormat(strikethrough)))' })
+  const data = await call(`${spreadsheetId}?${q}`)
+  const rows: { values?: SheetCell[] }[] = data?.sheets?.[0]?.data?.[0]?.rowData ?? []
+  return rows.map(row => {
+    const cells = row.values ?? []
+    const marked = cells.some(cell => {
+      const color = cell.userEnteredFormat?.backgroundColorStyle
+      const rgb = color?.rgbColor
+      return !!cell.note || !!cell.userEnteredFormat?.textFormat?.strikethrough ||
+        (!!color?.themeColor && color.themeColor !== 'BACKGROUND') || (!!rgb && Math.min(rgb.red ?? 0, rgb.green ?? 0, rgb.blue ?? 0) < 0.99)
+    })
+    return { values: cells.map(c => (c.formattedValue ?? '').trim()), marked }
+  })
+}
+
 export async function tabProperties(spreadsheetId: string, tab: string): Promise<{ sheetId: number; rowCount: number }> {
   const data = await call(`${spreadsheetId}?fields=sheets.properties(title,sheetId,gridProperties.rowCount)`)
   const found = (data?.sheets ?? []).find((s: any) => s?.properties?.title === tab)?.properties

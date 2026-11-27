@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/db'
+import { acceptsApprovedArtwork } from '@/lib/supplier-artwork-policy'
 import { isNonProductLine, lineKeysOf } from '@/lib/order-lines'
 import { loadWorkspace, type Workspace } from '@/lib/design-studio'
 import { requiredSlotsFor, templateForLine } from '@/lib/design-tasks'
@@ -425,10 +426,11 @@ async function buildCards(where: any, orderBy: any, opts: { checks?: boolean; se
       const sentTo = row ? exportedSupplierOf(exportOrder, row) : null
       const template = row ? templateViewFor(await templateForLine(row), line.artworks) : null
       const slots = requiredSlotsFor(template)
-      const wrongSizeAreas = opts.checks
+      const checkGeometry = opts.checks && !acceptsApprovedArtwork(line.supplier)
+      const wrongSizeAreas = checkGeometry
         ? currentFiles(line.artworks, 'PRINT').filter(a => slots.some(s => sameLabel(s, a.printArea)) && printFileFit(template, a.printArea, a).state === 'bad').map(a => a.printArea)
         : []
-      const pair = opts.checks ? printCutCheck(template, line.artworks) : null
+      const pair = checkGeometry ? printCutCheck(template, line.artworks) : null
       if (pair && !pair.ok) wrongSizeAreas.push(...slots)
       const r = resolveNow ? resolvable.find(x => x.id === line.id) : null
       const now = r && resolveNow && !sentTo ? resolveNow({ ...r, order: { storeId: o.storeId, shippingCountry: o.shippingCountry } }) : null

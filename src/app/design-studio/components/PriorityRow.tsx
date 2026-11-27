@@ -54,7 +54,7 @@ export default function PriorityRow({ stream, total, unit, groups, group, onGrou
       onClick={() => onGroup(group === def.id ? null : def.id)}
       className={`inline-flex items-center gap-xs rounded-full px-md py-xs text-label-sm font-semibold ${CHIP_TONE[def.tone]} ${count === 0 ? 'opacity-50' : ''} ${group === def.id ? 'ring-2 ring-secondary' : ''}`}
     >
-      <Icon name={TONE_ICON[def.tone]} className="text-[14px]" />
+      <Icon name={def.extra ? 'history' : TONE_ICON[def.tone]} className="text-[14px]" />
       {def.title}
       <span className="rounded-full bg-surface-container-lowest px-sm text-on-surface">{count}</span>
     </button>
@@ -65,7 +65,7 @@ export default function PriorityRow({ stream, total, unit, groups, group, onGrou
         <Icon name={stream.icon} className="text-on-surface-variant text-[20px]" />
         <span className="text-body-md font-semibold text-on-surface">{stream.title}</span>
         <span className="text-label-sm text-on-surface-variant">
-          {titleOnly ? stream.who : `${stream.who} · ${total} ${unit} · nhóm ưu tiên từ trái sang phải, bấm để lọc`}
+          {titleOnly ? stream.who : `${stream.who} · ${total} ${unit}${stream.id === 'FILE' ? ' chưa duyệt' : ''} · nhóm ưu tiên từ trái sang phải, bấm để lọc`}
         </span>
         {secondary && !titleOnly && (
           <div className="ml-auto flex flex-wrap items-center gap-xs">
@@ -110,8 +110,12 @@ export default function PriorityRow({ stream, total, unit, groups, group, onGrou
             Tất cả <span className="rounded-full bg-surface-container-lowest px-sm">{total}</span>
           </button>
           {groups.filter(g => !g.def.extra).map(groupChip)}
-          {groups.some(g => g.def.extra) && <span aria-hidden className="mx-xs h-5 w-px bg-outline-variant/40" />}
-          {groups.filter(g => g.def.extra).map(groupChip)}
+          {groups.some(g => g.def.extra) && (
+            <div role="group" aria-label="Lịch sử" className="ml-auto flex items-center gap-xs border-l border-outline-variant/40 pl-sm">
+              <span className="text-label-sm text-on-surface-variant">Lịch sử</span>
+              {groups.filter(g => g.def.extra).map(groupChip)}
+            </div>
+          )}
         </div>
       )}
     </section>

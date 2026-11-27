@@ -30,7 +30,7 @@ import { useShopifyRefresh } from './components/useShopifyRefresh'
 import StreamStepper from './components/StreamStepper'
 import PriorityRow from './components/PriorityRow'
 import Flags from './components/Flags'
-import { HANDOFF_GROUPS, STREAMS, TASK_GROUPS, TASK_STREAMS, groupCounts, groupTasks, isTaskStream, secondaryFiltersOf, streamCounts, streamOf, type SecondaryFilter, type StreamId, type TaskStream } from './components/streams'
+import { HANDOFF_GROUPS, STREAMS, TASK_GROUPS, TASK_STREAMS, groupCounts, groupTasks, isTaskStream, secondaryFiltersOf, streamCounts, streamOf, tasksForPanel, type SecondaryFilter, type StreamId, type TaskStream } from './components/streams'
 import { ErrorBanner, Icon, READY_META, btn, card, fmtDate, fmtDateTime } from './components/ui'
 
 type ListResponse = { tasks: TaskRow[]; me: Me; handoffCount?: number; handoffOverdue?: number; lastSync?: { ranAt: string; trigger: string; error: string | null } | null; sentLines?: SentLineRow[] }
@@ -49,7 +49,7 @@ function secondaryRows(rows: TaskRow[], stream: TaskStream, filter: SecondaryFil
 }
 
 function streamRows(all: TaskRow[], stream: TaskStream, filter: SecondaryFilter, mineId: string | null, group: string | null, now: number) {
-  return groupTasks(stream, secondaryRows(all.filter(t => streamOf(t) === stream), stream, filter, mineId), group, now)
+  return groupTasks(stream, secondaryRows(tasksForPanel(stream, all), stream, filter, mineId), group, now)
 }
 
 const DRIVE_BADGE_POLL_MS = [4000, 8000, 15000, 30000, 60000, 120000]
@@ -246,7 +246,7 @@ function DesignTasks() {
   }, [openKey, loadDetail])
 
   const mineId = mine && me ? me.id : null
-  const streamTasks = useMemo(() => baseTasks.filter(t => streamOf(t) === stream), [baseTasks, stream])
+  const streamTasks = useMemo(() => isTaskStream(stream) ? tasksForPanel(stream, baseTasks) : [], [baseTasks, stream])
   const secondary = useMemo(() => (isTaskStream(stream) ? secondaryRows(streamTasks, stream, filter, mineId) : []), [streamTasks, stream, filter, mineId])
   const visible = useMemo(() => (isTaskStream(stream) ? groupTasks(stream, secondary, activeGroup, now) : []), [stream, secondary, activeGroup, now])
   const queueGroups = useMemo<QueueGroup[]>(() => visible.map(({ def, rows }) => ({ key: def.id, title: def.title, tone: def.tone, rows })), [visible])
@@ -443,7 +443,7 @@ function DesignTasks() {
       {current && (
         <LightboxProvider images={images}>
           <TaskWorkspace detail={current} holdCount={holdCount} onChanged={reload}
-            stream={streamOf(current.task) ?? stream} inQueue={baseTasks.some(t => t.taskKey === current.task.taskKey)} />
+            stream={streamOf(current.task)} inQueue={flat.some(t => t.taskKey === current.task.taskKey)} />
         </LightboxProvider>
       )}
     </>
@@ -467,6 +467,7 @@ function DesignTasks() {
           </span>
         </div>
         {storeFiltered && <StoreFilter filter={storeFilter} />}
+        {me?.role === 'SUPERADMIN' && (stream === 'HANDOFF' || stream === 'SENT') && <a href="/design-studio/supplier-refusal" className="text-secondary text-label-md">Xưởng từ chối sản xuất</a>}
         <button type="button" onClick={sync} disabled={syncing} aria-label="Đồng bộ task từ Shopify" title={syncTip}
           className={`ml-auto inline-grid place-items-center w-10 h-10 rounded-lg border bg-surface-container-lowest hover:bg-surface-container-low disabled:opacity-60 ${lastSync?.error ? 'border-error text-error' : 'border-outline-variant text-on-surface-variant'}`}>
           <Icon name="sync" className={`text-[20px] ${syncing ? 'animate-spin' : ''}`} />
@@ -477,7 +478,8 @@ function DesignTasks() {
 
       <div className="flex flex-col gap-md mb-md">
         <StreamStepper counts={counts} active={stream} streams={offered} onSelect={switchStream} />
-        <PriorityRow stream={streamDef} total={rowTotal} unit={streamDef.unit} groups={rowGroups} group={activeGroup} onGroup={setGroup}
+        <PriorityRow stream={streamDef} total={rowTotal} unit={streamDef.unit} groups={rowGroups} group={activeGroup}
+          onGroup={id => { setPinned(null); setGroup(id) }}
           titleOnly={stream === 'SENT' || stream === 'DROPSHIP'}
           secondary={isTaskStream(stream) ? {
             filter, onFilter: setFilter, autoLabel: stream === 'REVIEW' ? 'Auto' : READY_META.AUTO.label,

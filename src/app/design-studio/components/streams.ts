@@ -39,15 +39,14 @@ export function urgencyOf(dueAt: string | null, now = Date.now()): Urgency {
 }
 
 export function streamOf(t: Pick<StreamTask, 'status' | 'mapping' | 'dropship'>): StreamId | null {
-  if (t.status === 'CANCELLED') return null
-  if (t.status === 'DONE') return 'FILE'
+  if (!OPEN_TASK_STATUSES.includes(t.status)) return null
   if (t.mapping === 'UNMAPPED') return 'MAP'
   if (t.mapping === 'NO_TEMPLATE' && (t.status === 'NEW' || t.status === 'ASSIGNED')) return 'TPL'
   if (t.status === 'REVIEW') return 'REVIEW'
   return 'FILE'
 }
 
-/** `extra`: shown after a divider and left out of the stream's total (Xong hôm nay is not open work). */
+/** Extra groups are opt-in history, excluded from both the default list and its total. */
 export type PriorityGroupDef<T> = { id: string; title: string; sub: string; tone: Tone; extra?: boolean; test: (item: T, now: number) => boolean }
 
 const isWorking = (t: StreamTask) => t.status === 'NEW' || t.status === 'ASSIGNED' || t.status === 'DOING'
@@ -88,12 +87,15 @@ export function byDue(a: { dueAt: string | null }, b: { dueAt: string | null }):
   return a.dueAt < b.dueAt ? -1 : 1
 }
 
-const inStream = <T extends StreamTask>(stream: TaskStream, tasks: T[]) => tasks.filter(t => streamOf(t) === stream)
+/** The Files in panel also offers the recent DONE rows returned by the list API for its history filter. */
+export function tasksForPanel<T extends StreamTask>(stream: TaskStream, tasks: T[]): T[] {
+  return tasks.filter(t => streamOf(t) === stream || (stream === 'FILE' && t.status === 'DONE'))
+}
 
 export function groupTasks<T extends StreamTask>(stream: TaskStream, tasks: T[], group: string | null, now = Date.now()): { def: PriorityGroupDef<StreamTask>; rows: T[] }[] {
-  const mine = inStream(stream, tasks)
+  const mine = tasksForPanel(stream, tasks)
   return TASK_GROUPS[stream]
-    .filter(def => group === null || def.id === group)
+    .filter(def => group === null ? !def.extra : def.id === group)
     .map(def => ({ def, rows: mine.filter(t => groupOf(TASK_GROUPS[stream], t, now) === def).sort(byDue) }))
     .filter(g => g.rows.length > 0)
 }
@@ -107,7 +109,6 @@ export function streamCounts(tasks: StreamTask[], handoff: { count: number; over
     REVIEW: { total: 0, overdue: 0 }, HANDOFF: { total: handoff.count, overdue: handoff.overdue }, SENT: { total: null, overdue: 0 }, DROPSHIP: { total: dropship, overdue: 0 },
   }
   for (const t of tasks) {
-    if (!OPEN_TASK_STATUSES.includes(t.status)) continue
     const s = streamOf(t)
     if (!isTaskStream(s)) continue
     counts[s].total! += 1
@@ -118,7 +119,7 @@ export function streamCounts(tasks: StreamTask[], handoff: { count: number; over
 
 export function groupCounts(stream: TaskStream, tasks: StreamTask[], now = Date.now()): Record<string, number> {
   const out: Record<string, number> = Object.fromEntries(TASK_GROUPS[stream].map(d => [d.id, 0]))
-  for (const t of inStream(stream, tasks)) out[groupOf(TASK_GROUPS[stream], t, now).id] += 1
+  for (const t of tasksForPanel(stream, tasks)) out[groupOf(TASK_GROUPS[stream], t, now).id] += 1
   return out
 }
 

@@ -20,7 +20,6 @@ describe('streamOf — vướng gì tính luồng đứng trước', () => {
     expect(streamOf(task({ mapping: 'UNMAPPED', status: 'REJECTED' }))).toBe('MAP')
   })
   it('no template only catches tasks that have not started', () => {
-    expect(streamOf(task({ status: 'DONE', mapping: 'UNMAPPED' }))).toBe('FILE')
     expect(streamOf(task({ mapping: 'NO_TEMPLATE', status: 'NEW' }))).toBe('TPL')
     expect(streamOf(task({ mapping: 'NO_TEMPLATE', status: 'ASSIGNED' }))).toBe('TPL')
     expect(streamOf(task({ mapping: 'NO_TEMPLATE', status: 'DOING' }))).toBe('FILE')
@@ -28,12 +27,12 @@ describe('streamOf — vướng gì tính luồng đứng trước', () => {
     expect(streamOf(task({ mapping: 'NO_TEMPLATE', status: 'REJECTED' }))).toBe('FILE')
     expect(streamOf(task({ mapping: 'NO_TEMPLATE', status: 'ASK_CUSTOMER' }))).toBe('FILE')
   })
-  it('REVIEW → Duyệt mẫu; DONE stays in Files in (Xong hôm nay); CANCELLED is in no stream', () => {
+  it('routes pending review to Duyệt mẫu and keeps closed tasks outside the active streams', () => {
     expect(streamOf(task({ status: 'REVIEW' }))).toBe('REVIEW')
-    expect(streamOf(task({ status: 'DONE' }))).toBe('FILE')
+    expect(streamOf(task({ status: 'DONE' }))).toBeNull()
     expect(streamOf(task({ status: 'CANCELLED' }))).toBeNull()
     expect(streamOf(task({ status: 'CANCELLED', dropship: true }))).toBeNull()
-    expect(streamOf(task({ status: 'DONE', mapping: 'UNMAPPED' }))).toBe('FILE')
+    expect(streamOf(task({ status: 'DONE', mapping: 'UNMAPPED' }))).toBeNull()
     expect(STREAMS.map(s => s.id)).toEqual(['MAP', 'TPL', 'FILE', 'REVIEW', 'HANDOFF', 'SENT', 'DROPSHIP'])
   })
 })
@@ -74,9 +73,14 @@ describe('groupTasks / counts', () => {
   it('groups only the stream\'s tasks, drops empty groups, sorts by due with null last', () => {
     const groups = groupTasks('FILE', tasks as any, null, NOW)
     expect(groups.map(g => [g.def.id, g.rows.map((r: any) => r.taskKey)])).toEqual([
-      ['FI_URGENT', ['a', 'b']], ['FI_FIX_URGENT', ['i']], ['FI_ASK', ['h']], ['FI_OK', ['c']], ['FI_DONE', ['f']],
+      ['FI_URGENT', ['a', 'b']], ['FI_FIX_URGENT', ['i']], ['FI_ASK', ['h']], ['FI_OK', ['c']],
     ])
     expect(groupTasks('FILE', tasks as any, 'FI_OK', NOW).map(g => g.def.id)).toEqual(['FI_OK'])
+  })
+  it('shows approved tasks only in history, even when no open files remain', () => {
+    const closed = [task({ status: 'DONE', mapping: 'UNMAPPED' }), task({ status: 'CANCELLED' })]
+    expect(groupTasks('FILE', closed, null, NOW)).toEqual([])
+    expect(groupTasks('FILE', closed, 'FI_DONE', NOW).flatMap(g => g.rows)).toEqual([closed[0]])
   })
   it('stream counts: open tasks only, "gấp" = the red groups (an overdue task waiting on the customer is not gấp), SENT has no total', () => {
     const counts = streamCounts(tasks as any, { count: 7, overdue: 2 }, 3, NOW)
@@ -86,6 +90,8 @@ describe('groupTasks / counts', () => {
     })
     const file = groupCounts('FILE', tasks as any, NOW)
     expect(file).toMatchObject({ FI_URGENT: 2, FI_FIX_URGENT: 1, FI_ASK: 1, FI_OK: 1, FI_SOON: 0, FI_DONE: 1 })
+    expect(groupTasks('FILE', tasks, null, NOW).flatMap(g => g.rows)).toHaveLength(counts.FILE.total!)
+    expect(groupTasks('FILE', tasks, 'FI_DONE', NOW).flatMap(g => g.rows)).toHaveLength(file.FI_DONE)
     expect(counts.FILE.overdue).toBe(file.FI_URGENT + file.FI_FIX_URGENT)
     expect(TASK_GROUPS.FILE.filter(d => d.extra).map(d => d.id)).toEqual(['FI_DONE'])
   })

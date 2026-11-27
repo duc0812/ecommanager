@@ -655,6 +655,62 @@ describe('the rest of the hub with the channel on', () => {
   })
 })
 
+describe('Gỗ 3D approved artwork', () => {
+  const woodChannel = JSON.parse(fs.readFileSync('scripts/data/sheet-channel-go3d.json', 'utf8'))
+  const headers: string[] = woodChannel.columns.map((c: { header: string }) => c.header)
+
+  beforeEach(async () => {
+    await prisma.supplier.update({ where: { id: SUP }, data: { code: '3' } })
+    await setChannel({ ...woodChannel, enabled: true, spreadsheetId: SHEET })
+    tabs = { '2026': [headers] }
+    gridRows = { '2026': 200 }
+  })
+
+  afterEach(async () => {
+    await prisma.supplier.update({ where: { id: SUP }, data: { code: 'jm_sheet' } })
+  })
+
+  it.each(['no-template', 'missing-cut', 'different-size'])('sends approved art with no mockup: %s', async geometry => {
+    const o = await makeOrder({ preview: null })
+    const l = await line(o.id)
+    if (geometry !== 'no-template') {
+      const template = await prisma.printTemplate.create({ data: {
+        supplierId: SUP, name: `Wood ${geometry}`, widthPx: 2000, heightPx: 1000,
+        areas: JSON.stringify(['Print', 'Cut'].map((name, i) => ({ name, x: i * 1000, y: 0, w: 1000, h: 1000, sizing: 'MATCH_PRINT_CUT' }))),
+      } })
+      const product = await prisma.supplierProduct.create({ data: { supplierId: SUP, sku: `WOOD-${seq}`, baseCost: 10, printTemplateId: template.id } })
+      await prisma.orderLine.update({ where: { id: l.id }, data: { resolvedSupplierSku: product.sku } })
+      for (const area of geometry === 'missing-cut' ? ['Print'] : ['Print', 'Cut']) {
+        await prisma.designArtwork.create({ data: {
+          orderId: o.id, shopifyLineId: l.shopifyLineId, printArea: area, version: 1,
+          fileName: `${area}.png`, size: 1, mimeType: 'image/png', source: 'AUTO',
+          widthPx: area === 'Print' ? 731 : 900, heightPx: 1254,
+          storage: 'DRIVE', driveWebViewLink: `https://drive.google.com/file/d/wood-${seq}-${area}/view`,
+        } })
+      }
+    }
+    expect(await previewSheetPush(SUP, [o.id])).toMatchObject({ ready: 1, blocked: 0 })
+    const card = (await listHandoffHub({ q: o.number })).pending.find(c => c.order.id === o.id)!
+    expect(card.lines[0].wrongSizeAreas).toEqual([])
+    expect((await push([o.id])).results).toEqual([expect.objectContaining({ lineKey: o.key, status: 'WRITTEN' })])
+    expect(writes).toHaveLength(1)
+    expect(writes[0].rows[0][headers.indexOf('Custom 2')]).toBe('https://drive.google.com/drive/folders/abc')
+    expect(writes[0].rows[0][headers.indexOf('Mockup')] ?? '').toBe('')
+    expect((await line(o.id)).exportedToSupplierId).toBe(SUP)
+    expect((await push([o.id])).results).toEqual([])
+    expect(writes).toHaveLength(1)
+  })
+
+  it('keeps unapproved artwork out of the sheet even with an old design link', async () => {
+    const o = await makeOrder({ preview: null })
+    await prisma.designTask.update({ where: { taskKey: o.key }, data: { status: 'REVIEW' } })
+    expect(await previewSheetPush(SUP, [o.id])).toMatchObject({ ready: 0 })
+    expect((await push([o.id])).results).toEqual([])
+    expect(writes).toEqual([])
+    expect((await line(o.id)).exportedAt).toBeNull()
+  })
+})
+
 describe('the rules a channel brings', () => {
   const rules = mango as SheetChannel
 

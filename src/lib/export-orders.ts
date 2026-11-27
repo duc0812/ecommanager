@@ -1,6 +1,7 @@
 import { printCutCheck } from '@/lib/print-cut'
 import { loadTemplateContext, pickTemplate } from '@/lib/print-template-resolve'
 import { prisma } from '@/lib/db'
+import { acceptsApprovedArtwork } from '@/lib/supplier-artwork-policy'
 import type { OrderForCsv } from '@/lib/csv-template'
 import { DESIGN_AREA_SOURCE_PREFIX, MOCKUP_LINK_SOURCE } from '@/lib/csv-template'
 import { lineKeysOf } from '@/lib/order-lines'
@@ -29,9 +30,10 @@ export async function buildOrdersForCsv({ orders, supplierId, columns, perOrder,
     shopifyProductId: { in: Array.from(new Set(candidates.map(c => c.line.shopifyProductId).filter((p): p is string => !!p))) },
   }, select: { storeId: true, shopifyProductId: true, printTemplateId: true } }) : []
   const profileByKey = new Map(profiles.map(p => [`${p.storeId}~${p.shopifyProductId}`, p]))
+  const supplier = await prisma.supplier.findUnique({ where: { id: supplierId }, select: { code: true } })
   const templates = await loadTemplateContext(candidates.map(c => c.line), profiles.map(p => p.printTemplateId))
   const pairs = candidates.map(c => ({ ...c, template: pickTemplate(c.line, profileByKey.get(`${c.order.storeId}~${c.line.shopifyProductId}`) ?? null, templates) }))
-    .filter(c => c.template?.areas.some(a => a.sizing))
+    .filter(c => !acceptsApprovedArtwork(supplier) && c.template?.areas.some(a => a.sizing))
   if (pairs.length) {
     const files = await prisma.designArtwork.findMany({ where: { orderId: { in: Array.from(new Set(pairs.map(c => c.order.id))) }, removedAt: null } })
     const pairProblems: ExportLinkProblem[] = []

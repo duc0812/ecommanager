@@ -1,4 +1,5 @@
 import { UNMAPPED_TAB, type HandoffCard, type HandoffLine } from '@/lib/handoff-shared'
+import { acceptsApprovedArtwork } from '@/lib/supplier-artwork-policy'
 
 export type HubWarningCode = 'WRONG_SIZE' | 'MAPPING' | 'NO_MOCKUP'
 export type HubWarning = { code: HubWarningCode; lineKey: string }
@@ -36,9 +37,10 @@ export function hubView(card: HandoffCard, tabId: string): HubView {
   const lines = card.lines.filter(l => (l.line.supplier?.id ?? null) === supplierId && !l.exportedTo && !l.waiting)
   const warnings = lines.flatMap(l => {
     const out: HubWarning[] = []
-    if (l.wrongSizeAreas.length > 0) out.push({ code: 'WRONG_SIZE', lineKey: l.lineKey })
+    const approvedArtwork = acceptsApprovedArtwork(l.line.supplier)
+    if (!approvedArtwork && l.wrongSizeAreas.length > 0) out.push({ code: 'WRONG_SIZE', lineKey: l.lineKey })
     if (l.mappingNow) out.push({ code: 'MAPPING', lineKey: l.lineKey })
-    if (l.line.supplier && !l.line.dropship && !hasMockup(l)) out.push({ code: 'NO_MOCKUP', lineKey: l.lineKey })
+    if (!approvedArtwork && l.line.supplier && !l.line.dropship && !hasMockup(l)) out.push({ code: 'NO_MOCKUP', lineKey: l.lineKey })
     return out
   })
   return {

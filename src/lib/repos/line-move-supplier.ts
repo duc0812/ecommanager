@@ -1,7 +1,9 @@
 import { prisma } from '@/lib/db'
 import { applyProductionOverride, productionOverride, variantOptions, type ProductionOverride, type ProductionSource } from '@/lib/production-override'
-import { legacyMarks, pushLineIds, pushShopifyLineIds, supplierLines } from '@/lib/line-export'
+import { isOrderClosed, legacyMarks, pushLineIds, pushShopifyLineIds, supplierLines } from '@/lib/line-export'
 import { lineKeysOf } from '@/lib/order-lines'
+import { closeReturnedAssignment } from '@/lib/design-outsource-routing'
+import { loadTemplateContext, pickTemplate } from '@/lib/print-template-resolve'
 
 /**
  * Owner 11/21/2026 (#LIT5707_1): a line the tool marks as sent (a CSV download) that no supplier ever received — no sheet row,
@@ -22,6 +24,7 @@ export async function moveUnsentLine(
   taskKey: string,
   input: { supplierProductId: unknown; reason: unknown },
   actor: { id: string; name: string },
+  refusal?: { sourceId: string; sourceSku: string; dryRun: boolean; sheetRow: number | null; spreadsheetId: string; tab: string },
 ) {
   if (typeof input.supplierProductId !== 'string' || !input.supplierProductId) throw new MoveLineError('Chọn mã hàng của xưởng mới')
   if (typeof input.reason !== 'string' || input.reason.trim().length < 3 || input.reason.length > 1500) throw new MoveLineError('Ghi lý do chuyển xưởng (3–1500 ký tự)')
@@ -45,8 +48,28 @@ export async function moveUnsentLine(
       throw new MoveLineError('Dòng đã ở đúng mã hàng này', 409)
     }
 
-    const sheetRow = await tx.supplierSheetWrite.findFirst({ where: { orderId: order.id, orderLineId: line.id, status: { in: ['WRITING', 'WRITTEN'] } }, select: { id: true } })
-    if (sheetRow) throw new MoveLineError('Dòng đã được ghi vào sheet của xưởng — xưởng đã nhận, không chuyển được', 409)
+    const sheetWrites = await tx.supplierSheetWrite.findMany({ where: {
+      orderId: order.id, OR: [{ orderLineId: line.id }, { lineKey: taskKey }], status: { in: ['WRITING', 'WRITTEN'] },
+    } })
+    if (sheetWrites.length && !refusal) throw new MoveLineError('Dòng đã được ghi vào sheet của xưởng — xưởng đã nhận, không chuyển được', 409)
+    if (refusal) {
+      if (isOrderClosed(order) || order.financialStatus.toUpperCase() !== 'PAID' || line.dropship) throw new MoveLineError('Dòng không còn ở trạng thái chờ sản xuất đã thanh toán', 409)
+      if (line.resolvedSupplierId !== refusal.sourceId || line.resolvedSupplierSku !== refusal.sourceSku ||
+          (line.exportedToSupplierId && line.exportedToSupplierId !== refusal.sourceId) || selected.supplierId === refusal.sourceId) {
+        throw new MoveLineError('Mapping hoặc xưởng nhận đã thay đổi', 409)
+      }
+      if (sheetWrites.some(w => w.status !== 'WRITTEN' || w.supplierId !== refusal.sourceId || w.spreadsheetId !== refusal.spreadsheetId || w.tabName !== refusal.tab || !refusal.sheetRow)) {
+        throw new MoveLineError('Lịch sử ghi sheet khác dữ liệu đối chiếu hoặc đang ghi', 409)
+      }
+      const lookup = { ...line, resolvedSupplierId: selected.supplierId, resolvedSupplierSku: selected.sku }
+      const profile = line.shopifyProductId ? await tx.productProfile.findUnique({ where: { storeId_shopifyProductId: { storeId: order.storeId, shopifyProductId: line.shopifyProductId } }, select: { printTemplateId: true } }) : null
+      const template = pickTemplate(lookup, profile, await loadTemplateContext([lookup], [profile?.printTemplateId], tx))
+      if (!template || !template.areas.length || template.id !== selected.printTemplateId) throw new MoveLineError('Template task chưa khớp SKU đích', 409)
+      const parcel = await tx.shipment.findFirst({ where: { orderId: order.id, OR: [{ lineKey: taskKey }, { shopifyLineId: line.shopifyLineId }], AND: [{ OR: [{ trackingNumber: { not: null } }, { status: { notIn: ['PENDING', 'UNKNOWN'] } }] }] }, select: { id: true } })
+      if (parcel) throw new MoveLineError('Dòng có tracking hoặc đã giao vận', 409)
+      const activeJob = await tx.designAgentJob.findFirst({ where: { taskId: task.id, status: { in: ['QUEUED','RUNNING'] } }, select: { id: true } })
+      if (activeJob) throw new MoveLineError('Design Agent đang giữ dòng này', 409)
+    }
     const pushes = await tx.supplierOrderPush.findMany({ where: { orderId: order.id, status: { in: LIVE_PUSH } }, select: { supplierId: true, prevExportJson: true } })
     const carried = pushes.find(p => {
       const ids = pushLineIds(p)
@@ -57,6 +80,7 @@ export async function moveUnsentLine(
     })
     if (carried) throw new MoveLineError('Dòng nằm trong một lần gửi API còn hiệu lực — huỷ lần gửi đó trước', 409)
     const lineKey = lineKeysOf(order.shopifyOrderNumber, order.lines).get(line.shopifyLineId)
+    if (refusal && lineKey !== taskKey) throw new MoveLineError('Mã dòng trong đơn vừa thay đổi', 409)
     const shipment = lineKey ? await tx.shipment.findUnique({ where: { orderId_lineKey: { orderId: order.id, lineKey } }, select: { id: true, trackingNumber: true } }) : null
     if (shipment?.trackingNumber) {
       // A fulfillment that closed the whole order copies a sibling's parcel onto an unsent line (#LIT5519_2): that number is
@@ -69,6 +93,7 @@ export async function moveUnsentLine(
     const render = await tx.artworkJob.findFirst({ where: { orderId: order.id, shopifyLineId: line.shopifyLineId, kind: 'RENDER_LINE', status: { in: ['QUEUED', 'PENDING', 'RUNNING'] } }, select: { id: true } })
     if (render) throw new MoveLineError('Đang render artwork, đợi hoàn tất rồi chuyển xưởng', 409)
 
+    if (refusal?.dryRun) return { taskKey, verified: true, target: selected.sku }
     const fromSupplier = line.exportedToSupplierId ?? line.resolvedSupplierId
     const from = fromSupplier ? await tx.supplier.findUnique({ where: { id: fromSupplier }, select: { name: true } }) : null
     const previous = productionOverride(line.productionOverrideJson)
@@ -103,6 +128,7 @@ export async function moveUnsentLine(
         resolvedShipAdditional: effective.resolvedShipAdditional, resolvedImportTax: effective.resolvedImportTax,
         costSnapshotAt: now, manualBaseCost: null, productionOverrideJson: JSON.stringify(value),
         exportedAt: null, exportedToSupplierId: null,
+        ...(refusal ? { designDriveLink: null } : {}),
       },
     })
     if (changed.count !== 1) throw new MoveLineError('Dữ liệu dòng vừa đổi, tải lại rồi thử lại', 409)
@@ -111,6 +137,27 @@ export async function moveUnsentLine(
     // The hub lists orders that can still send: an order Exported only because of this mark opens again for the line.
     const others = supplierLines(order.lines.filter(l => l.id !== line.id))
     const reopen = order.pipelineStatus === 'EXPORTED'
+    if (refusal) {
+      const freshTask = await tx.designTask.findUniqueOrThrow({ where: { id: task.id } })
+      if (freshTask.status === 'CANCELLED') throw new MoveLineError('Task đã hủy', 409)
+      const atSheet = refusal.sheetRow ? ` (${refusal.tab}, dòng ${refusal.sheetRow})` : ''
+      const note = `Xưởng từ chối sản xuất${atSheet}: ${fromLabel} → ${toLabel}. ${reason}`
+      await tx.supplierSheetWrite.updateMany({ where: { id: { in: sheetWrites.map(w => w.id) }, status: 'WRITTEN' }, data: { status: 'DECLINED' } })
+      const retired = await tx.designArtwork.updateMany({ where: { orderId: order.id, shopifyLineId: line.shopifyLineId, kind: { in: ['PRINT', 'MOCKUP'] }, removedAt: null }, data: { removedAt: now, removedById: actor.id } })
+      const openStatus = ['NEW', 'DOING', 'ASK_CUSTOMER'].includes(freshTask.status)
+      await tx.designTask.update({ where: { id: task.id }, data: {
+        ...await closeReturnedAssignment(tx, task.id), supplierSnapshot: selected.supplier.name, fromLibrary: false, readiness: 'MANUAL',
+        ...(!openStatus ? { status: 'REJECTED', rejectReasons: JSON.stringify(['Xưởng yêu cầu update design']), rejectNote: note, prevStatus: null } : {}),
+        events: { create: { type: 'SYSTEM', actorId: actor.id, message: `${note}. Lưu lịch sử ${retired.count} file. Link file trước khi đổi: ${line.designDriveLink ?? '—'}` } },
+      } })
+      const siblingSent = await tx.orderLine.count({ where: { orderId: order.id, id: { not: line.id }, exportedAt: { not: null } } })
+      await tx.order.update({ where: { id: order.id }, data: {
+        pipelineStatus: 'PENDING_DESIGN', designReady: false,
+        ...(!siblingSent ? { exportedAt: null, exportedToSupplierId: null, supplierHandoffAt: null, supplierHandoffMode: null, supplierHandoffById: null } : {}),
+        ...(others.length === 0 ? { designDriveLink: null } : {}),
+      } })
+      return { taskKey, target: selected.sku, retired: retired.count, verified: true }
+    }
     if (reopen) await tx.order.update({ where: { id: order.id }, data: { pipelineStatus: 'READY_TO_PRODUCTION' } })
 
     const message = `${MOVE_EVENT_PREFIX}: ${fromLabel} → ${toLabel}${markNote}. Lý do: ${reason}`

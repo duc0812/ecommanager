@@ -3,7 +3,7 @@ import { UNMAPPED_TAB, type HandoffCard, type HandoffLine } from '@/lib/handoff-
 import { fmtUsd, hubTypeLabel, hubView } from '@/lib/handoff-hub'
 
 function line(over: {
-  key?: string; supplierId?: string | null; baseCost?: number | null; exportedTo?: string | null; wrongSizeAreas?: string[]; waiting?: HandoffLine['waiting']
+  key?: string; supplierId?: string | null; supplierCode?: string; baseCost?: number | null; exportedTo?: string | null; wrongSizeAreas?: string[]; waiting?: HandoffLine['waiting']
   mappingNow?: { supplierName: string; sku: string } | null; previewUrl?: string | null; mockup?: boolean; productType?: string | null; supplierProduct?: string | null
 } = {}): HandoffLine {
   const supplierId = over.supplierId === undefined ? 'jm' : over.supplierId
@@ -13,7 +13,7 @@ function line(over: {
     exportedTo: over.exportedTo ?? null, wrongSizeAreas: over.wrongSizeAreas ?? [], mappingNow: over.mappingNow ?? null, waiting: over.waiting ?? null,
     slots: [], apiSku: null, driveFolderUrl: null,
     line: {
-      supplier: supplierId ? { id: supplierId, name: supplierId, code: supplierId } : null,
+      supplier: supplierId ? { id: supplierId, name: supplierId, code: over.supplierCode ?? supplierId } : null,
       supplierProduct: over.supplierProduct ?? null,
       previewUrl: over.previewUrl === undefined ? 'https://cdn.example/p.png' : over.previewUrl,
       artworks: over.mockup ? [{ kind: 'MOCKUP' }] : [],
@@ -68,6 +68,25 @@ describe('hubView', () => {
   it('needs an uploaded mockup or the preview, not only the product photo', () => {
     expect(hubView(card([line({ previewUrl: null })]), 'jm').warnings).toEqual([{ code: 'NO_MOCKUP', lineKey: 'LIT1_1' }])
     expect(hubView(card([line({ previewUrl: null, mockup: true })]), 'jm').warnings).toEqual([])
+  })
+
+  it('lets approved Gỗ 3D artwork go without a mockup or matching template geometry', () => {
+    const approved = line({ supplierId: 'wood-id', supplierCode: '3', previewUrl: null, wrongSizeAreas: ['Print', 'Cut'] })
+    const v = hubView(card([approved]), 'wood-id')
+    expect(v.warnings).toEqual([])
+    expect(v.sendableLines).toEqual([approved])
+  })
+
+  it('still holds Gỗ 3D lines in design, already sent, or mapped to another supplier', () => {
+    const wood = { supplierId: 'wood-id', supplierCode: '3', previewUrl: null }
+    const v = hubView(card([
+      line({ ...wood, key: 'LIT1_1', waiting: 'DESIGN' }),
+      line({ ...wood, key: 'LIT1_2', exportedTo: 'Gỗ 3D' }),
+      line({ ...wood, key: 'LIT1_3', mappingNow: { supplierName: 'Other', sku: 'X' } }),
+      line({ key: 'LIT1_4', supplierId: 'other', previewUrl: null }),
+    ]), 'wood-id')
+    expect(v.warnings).toEqual([{ code: 'MAPPING', lineKey: 'LIT1_3' }])
+    expect(v.sendableLines).toEqual([])
   })
 
   it('puts a line with no supplier in the unmapped tab only', () => {

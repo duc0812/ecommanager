@@ -3,7 +3,7 @@ import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/db'
 import { signToken, AUTH_COOKIE } from '@/lib/auth'
 import { POST } from '@/app/api/design-studio/tasks/[key]/move-supplier/route'
-import { MOVE_EVENT_PREFIX } from '@/lib/repos/line-move-supplier'
+import { MOVE_EVENT_PREFIX, moveUnsentLine } from '@/lib/repos/line-move-supplier'
 import { upsertOrderWithLines, type UpsertOrderInput } from '@/lib/repos/orders'
 import { productionOverride } from '@/lib/production-override'
 import { buildMerchizePush } from '@/lib/repos/merchize-push'
@@ -133,6 +133,27 @@ describe('moving a line no supplier received (owner 11/21/2026, #LIT5707_1)', ()
     const r = await move()
     expect(r.status).toBe(409)
     expect((await r.json()).error).toMatch(/gửi API/)
+  })
+
+  it('previews a factory refusal, then archives its sheet receipt and files while keeping the live sibling', async () => {
+    const hoodie = await lineOf(HOODIE)
+    const target = `${P}-mwhd-L`
+    const template = await prisma.printTemplate.create({ data: { supplierId: MERCHIZE, name: 'New tote', widthPx: 100, heightPx: 100, areas: JSON.stringify([{name:'Print',x:0,y:0,w:100,h:100}]) } })
+    await prisma.supplierProduct.update({ where: { id: target }, data: { printTemplateId: template.id } })
+    const write = await prisma.supplierSheetWrite.create({ data: { supplierId: JOMALL, orderId: ORDER, orderLineId: 'pre-sync-id', lineKey: KEY, spreadsheetId: 's', tabName: 'ORDER', status: 'WRITTEN' } })
+    await prisma.designArtwork.create({ data: { orderId: ORDER, shopifyLineId: HOODIE, printArea:'Print', version:1, fileName:'old.png', size:5, mimeType:'image/png' } })
+    const actor = { id: 'tester', name:'Operator' }
+    const input = { supplierProductId: target, reason: 'Supplier declined production' }
+    const refusal = { sourceId: JOMALL, sourceSku:'GAF-L', spreadsheetId:'s', tab:'ORDER', sheetRow:25, dryRun:true }
+    await moveUnsentLine(KEY, input, actor, refusal)
+    expect((await lineOf(HOODIE)).resolvedSupplierId).toBe(JOMALL)
+    await moveUnsentLine(KEY, input, actor, { ...refusal, dryRun:false })
+    expect(await lineOf(HOODIE)).toMatchObject({ resolvedSupplierId: MERCHIZE, exportedAt:null, designDriveLink:null })
+    expect((await lineOf(TEE)).exportedAt).toEqual(PUSH_AT)
+    expect(await prisma.supplierSheetWrite.findUniqueOrThrow({ where:{id:write.id} })).toMatchObject({ status:'DECLINED' })
+    expect((await prisma.designArtwork.findFirstOrThrow({ where:{orderId:ORDER,shopifyLineId:HOODIE} })).removedAt).not.toBeNull()
+    expect(await prisma.designTask.findUniqueOrThrow({ where:{taskKey:KEY} })).toMatchObject({status:'REJECTED'})
+    await expect(moveUnsentLine(KEY, input, actor, { ...refusal, dryRun:false })).rejects.toThrow()
   })
 
   it('refuses a line with its own tracking', async () => {
