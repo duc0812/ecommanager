@@ -34,7 +34,7 @@ async function makeOrder(opts: { foreign?: boolean; approved?: boolean; qty?: nu
   return id
 }
 const preview = async (id: string, selection = {}) => (await buildToadditPush(id, selection))!.preview
-const send = async (id: string, variantIds = {}) => pushToadditOrder(id, { payloadHash: (await preview(id, variantIds)).payloadHash!, userId: null, confirmArtwork: true, variantIds })
+const send = async (id: string, variantIds = {}) => pushToadditOrder(id, { payloadHash: (await preview(id, variantIds)).payloadHash!, userId: null, variantIds })
 const pushRow = (orderId: string) => prisma.supplierOrderPush.findFirstOrThrow({ where: { orderId }, orderBy: { createdAt: 'desc' } })
 function request(path: string, token: string, body?: unknown, method = 'PUT') {
   const r = new NextRequest(`http://fixture/api/fulfillment/toaddit/${path}`, body === undefined ? undefined : { method, body: JSON.stringify(body), headers: { 'Content-Type': 'application/json' } })
@@ -113,7 +113,7 @@ describe('Toaddit ROS API integration', () => {
     const p = await preview(id)
     expect(p.canPush).toBe(true)
     expect(postToadditRos).not.toHaveBeenCalled()
-    await pushToadditOrder(id, { payloadHash: p.payloadHash!, userId: null, confirmArtwork: true })
+    await pushToadditOrder(id, { payloadHash: p.payloadHash!, userId: null })
     expect(calls.map(c => c.path)).toEqual(['/api/v1/order/orderList', '/api/v1/order/createOrder', '/api/v1/order/orderList'])
     expect(calls[1].body.items[0]).toMatchObject({ productCode: 'FZH56', size: 'ONESIZE' })
     await expect(send(id)).rejects.toMatchObject({ code: 'DUPLICATE' })
@@ -136,7 +136,7 @@ describe('Toaddit ROS API integration', () => {
     expect(p.issues.some(i => i.code === 'PRODUCT_UNAVAILABLE')).toBe(false)
     expect(p.toaddit.options).toEqual([])
     expect((await prisma.supplierProduct.findUniqueOrThrow({ where: { supplierId_sku: { supplierId: SUP, sku: 'TD-BASE' } } })).apiSku).toBe(VARIANT)
-    await expect(pushToadditOrder(id, { payloadHash: p.payloadHash!, userId: null, confirmArtwork: true, variantIds: selection })).rejects.toMatchObject({ code: 'NOT_ELIGIBLE' })
+    await expect(pushToadditOrder(id, { payloadHash: p.payloadHash!, userId: null, variantIds: selection })).rejects.toMatchObject({ code: 'NOT_ELIGIBLE' })
     expect(creates).toBe(0)
     expect(await prisma.supplierOrderPush.count({ where: { orderId: id } })).toBe(0)
   }, 15000)
@@ -178,11 +178,10 @@ describe('Toaddit ROS API integration', () => {
     await expect(send(id)).rejects.toMatchObject({ code: 'DUPLICATE' })
     expect(creates).toBe(1)
   })
-  it('requires confirmation and refuses stale catalog/file choices', async () => {
+  it('refuses stale catalog/file choices', async () => {
     const id = await makeOrder(), p = await preview(id)
-    await expect(pushToadditOrder(id, { payloadHash: p.payloadHash!, userId: null, confirmArtwork: false })).rejects.toMatchObject({ code: 'ARTWORK_NOT_CONFIRMED' })
     await prisma.supplierProduct.update({ where: { supplierId_sku: { supplierId: SUP, sku: 'TD-BASE' } }, data: { apiSku: OTHER } })
-    await expect(pushToadditOrder(id, { payloadHash: p.payloadHash!, userId: null, confirmArtwork: true })).rejects.toMatchObject({ code: 'PAYLOAD_CHANGED' })
+    await expect(pushToadditOrder(id, { payloadHash: p.payloadHash!, userId: null })).rejects.toMatchObject({ code: 'PAYLOAD_CHANGED' })
     expect(creates).toBe(0)
   })
   it('blocks unapproved art, listing-only mockups, old mappings, retired products, missing phone and multi-sheet links', async () => {
@@ -201,7 +200,7 @@ describe('Toaddit ROS API integration', () => {
   })
   it('only one concurrent confirm creates an order', async () => {
     const id = await makeOrder(), p = await preview(id)
-    const results = await Promise.allSettled([1, 2].map(() => pushToadditOrder(id, { payloadHash: p.payloadHash!, userId: null, confirmArtwork: true })))
+    const results = await Promise.allSettled([1, 2].map(() => pushToadditOrder(id, { payloadHash: p.payloadHash!, userId: null })))
     expect(results.filter(r => r.status === 'fulfilled')).toHaveLength(1)
     expect(creates).toBe(1)
   })
@@ -281,7 +280,7 @@ describe('Toaddit ROS API integration', () => {
     expect(await getToadditSettings()).toEqual({ apiKey: KEY, shippingMethod: '3' })
     for (const body of [{ appKey: 'old' }, { payOnCreate: true }, { environment: 'sandbox' }, { apiKey: 'x\ny' }, { shippingMethod: '4' }]) expect((await settingsPut(request('settings', superToken, body))).status).toBe(400)
     const id = await makeOrder()
-    expect((await pushRoute(request(`orders/${id}/push`, adminToken, { confirm: true, confirmTemplates: true, payloadHash: 'a'.repeat(64) }, 'POST'), { params: { orderId: id } })).status).toBe(400)
+    expect((await pushRoute(request(`orders/${id}/push`, adminToken, { confirm: false, payloadHash: 'a'.repeat(64) }, 'POST'), { params: { orderId: id } })).status).toBe(400)
   })
   it('does not accept HTTP200 with success0 or leak the Bearer value in upstream errors', async () => {
     vi.mocked(postToadditRos).mockResolvedValueOnce({ status: 200, text: JSON.stringify({ code: 123, success: 0, message: `Invalid Bearer ${KEY}` }) })
@@ -306,7 +305,7 @@ describe('Toaddit ROS API integration', () => {
   it('requires a fresh confirmation after the print version changes', async () => {
     const id = await makeOrder(), before = await preview(id)
     await prisma.designArtwork.create({ data: { orderId: id, shopifyLineId: `${id}-line`, printArea: 'Print', version: 2, fileName: 'updated.png', storagePath: 'fixture/updated.png', mimeType: 'image/png', size: 100, widthPx: 1000, heightPx: 1000 } })
-    await expect(pushToadditOrder(id, { payloadHash: before.payloadHash!, userId: null, confirmArtwork: true })).rejects.toMatchObject({ code: 'PAYLOAD_CHANGED' })
+    await expect(pushToadditOrder(id, { payloadHash: before.payloadHash!, userId: null })).rejects.toMatchObject({ code: 'PAYLOAD_CHANGED' })
     expect(creates).toBe(0)
   })
 })

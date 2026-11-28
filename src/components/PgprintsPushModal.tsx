@@ -209,7 +209,6 @@ export default function PgprintsPushModal({ orderId, supplier = 'pgprints', onCl
   const [info, setInfo] = useState('')
   const [busy, setBusy] = useState('')
   const [confirming, setConfirming] = useState(false)
-  const [artworkConfirmed, setArtworkConfirmed] = useState(false)
   const [variantIds, setVariantIds] = useState<Record<string, string>>({})
   const [browseRosCatalog, setBrowseRosCatalog] = useState(false)
   const [showPayload, setShowPayload] = useState(false)
@@ -218,7 +217,7 @@ export default function PgprintsPushModal({ orderId, supplier = 'pgprints', onCl
 
   const load = useCallback(async () => {
     setLoading(true)
-    if (supplier === 'toaddit') { setArtworkConfirmed(false); setConfirming(false) }
+    if (supplier === 'toaddit') setConfirming(false)
     const query = supplier === 'toaddit' ? `?variantIds=${encodeURIComponent(JSON.stringify(variantIds))}&catalog=${browseRosCatalog ? 1 : 0}` : ''
     const r = await call(`${base}/preview${query}`)
     setLoading(false)
@@ -259,7 +258,7 @@ export default function PgprintsPushModal({ orderId, supplier = 'pgprints', onCl
     onChanged?.()
   }
 
-  const send = () => act('push', { confirm: true, payloadHash: preview?.payloadHash, ...(supplier === 'toaddit' ? { variantIds, confirmArtwork: artworkConfirmed } : {}) }, d =>
+  const send = () => act('push', { confirm: true, payloadHash: preview?.payloadHash, ...(supplier === 'toaddit' ? { variantIds } : {}) }, d =>
     `Đã gửi ${name} — mã ${d.push?.supplierOrderCode ?? d.push?.externalOrderId ?? '—'}${d.push?.totalCost != null ? `, chi phí ${usd(d.push.totalCost)}` : ''}${d.exported ? ', đơn chuyển sang Exported' : ''}`)
   const cancelPush = () => act('cancel', { confirm: true }, d =>
     `Đã huỷ đơn bên ${name}${d.exportReverted ? ' — đơn trở lại trạng thái trước khi gửi' : ''}`)
@@ -340,7 +339,6 @@ export default function PgprintsPushModal({ orderId, supplier = 'pgprints', onCl
                 </select>
               </label>
             })}
-            <label className="flex items-start gap-sm text-body-sm"><input type="checkbox" checked={artworkConfirmed} disabled={loading || !!busy || !canSend} onChange={e => setArtworkConfirmed(e.target.checked)} />Tôi đã đối chiếu sản phẩm, size, file in, mockup và nội dung cá nhân hoá khớp thiết kế đã duyệt.</label>
           </section>}
 
           {preview && sendable && (
@@ -497,14 +495,14 @@ export default function PgprintsPushModal({ orderId, supplier = 'pgprints', onCl
                 <Icon name="refresh" className="text-[18px]" />{loading ? 'Đang tải…' : 'Dựng lại bản xem trước'}
               </button>
               {!confirming ? (
-                <button type="button" className={btnPrimary} disabled={!preview.canPush || !canSend || !!busy || loading || (supplier === 'toaddit' && !artworkConfirmed)} title={blockedReason || undefined} onClick={() => setConfirming(true)}>
+                <button type="button" className={btnPrimary} disabled={!preview.canPush || !canSend || !!busy || loading} title={blockedReason || undefined} onClick={() => setConfirming(true)}>
                   <Icon name="send" className="text-[18px]" />Xác nhận gửi
                 </button>
               ) : (
                 <span className="inline-flex items-center gap-sm flex-wrap rounded-lg bg-amber-100 text-amber-900 px-sm py-xs text-label-sm">
                   <Icon name="payments" className="text-[18px]" />
                   Đơn thật — {copy.chargeNote}. Gửi {preview.order.shopifyOrderNumber}?
-                  <button type="button" className={btnPrimary} disabled={!!busy || loading || (supplier === 'toaddit' && !artworkConfirmed)} onClick={send}>
+                  <button type="button" className={btnPrimary} disabled={!!busy || loading} onClick={send}>
                     <Icon name="send" className="text-[18px]" />{busy === 'push' ? 'Đang gửi…' : 'Gửi đơn thật'}
                   </button>
                   <button type="button" className={btn} disabled={!!busy} onClick={() => setConfirming(false)}>Chưa gửi</button>

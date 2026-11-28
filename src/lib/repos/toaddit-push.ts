@@ -188,8 +188,7 @@ function verifyRemote(remote: ToadditOrder, snapshot: Snapshot, id?: string | nu
     throw new PushError('ID/mã đơn hoặc SKU, size, số lượng ROS không khớp lần gửi — cần đối chiếu thủ công', 409, 'REMOTE_MISMATCH')
   }
 }
-export async function pushToadditOrder(orderId: string, input: { payloadHash: string; userId: string | null; confirmArtwork: boolean; variantIds?: ToadditSelection }) {
-  if (!input.confirmArtwork) throw new PushError('Cần đối chiếu sản phẩm, file in và mockup ROS trước khi gửi', 400, 'ARTWORK_NOT_CONFIRMED')
+export async function pushToadditOrder(orderId: string, input: { payloadHash: string; userId: string | null; variantIds?: ToadditSelection }) {
   const account = await toadditAccount(), built = await buildToadditPush(orderId, input.variantIds)
   if (!built) throw new PushError('Không tìm thấy đơn', 404, 'NOT_FOUND')
   if (built.preview.activePush && !built.preview.laterSend) throw new PushError(DUPLICATE, 409, 'DUPLICATE')
