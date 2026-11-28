@@ -27,6 +27,14 @@ Orders use the exact ROS product code and size stored on their supplier SKU. The
 
 The order lookup accepts ROS's empty result (`data: null` with total 0 on page 1) after a successful response. Missing or inconsistent results still block creation. After create, export still requires a matching order returned by ROS.
 
+## Updating print files after a send
+
+ROS documents `POST /api/v1/order/updateOrderItem` with `{ id: <ROS order id>, itemList: [{ id: <ROS item id>, designLink, urlMockup }] }`. In the send dialog, an active CREATED push shows **Cập nhật file in sang Toaddit** (route `POST /api/fulfillment/toaddit/orders/<orderId>/update-files`, same permission as the send):
+
+1. `dryRun: true` reads orderList, checks the order/item readback against the snapshot, and lists each sent line whose current approved print (one full sheet) or order mockup link differs from what ROS holds. Lines not approved again are skipped and keep their old ROS files. It is refused unless ROS status is 14 (Need processing) or 18 (Awaiting review); later statuses go through the supplier by hand.
+2. `confirm: true` + `changeHash` re-checks everything and sends only the changed items. ROS item IDs come from orderList, matched by sku/productCode/size/quantity; two sent items with the same key are refused (edit on ROS directly).
+3. On success the push snapshot's items take the new links and gain a `fileUpdates` log (before/after per item), and a HANDOFF event is written. A business-code refusal is reported as refused; a transport failure is reported as unclear and stored on the push. Re-pointing links is idempotent, so pressing it again is safe. orderList does not echo artwork URLs, so the update cannot be read back.
+
 ## Duplicate protection and reconciliation
 
 Order codes include a stable store/order fingerprint to avoid cross-store number collisions. A DB reservation wins before the create. Concurrent confirms cannot create twice. Approved lines can be sent beside lines already sent; a cancelled send uses a fresh -R suffix. The snapshot records protocol ros-v1, account hash, item payload and carried Shopify line IDs, never the API key.

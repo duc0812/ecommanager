@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/db'
-import { isNonProductLine } from '@/lib/order-lines'
-import { isLineApproved } from '@/lib/public-artwork'
+import { isNonProductLine, lineKeysOf } from '@/lib/order-lines'
+import { PublicUrlError, isLineApproved, requirePublicBaseUrl } from '@/lib/public-artwork'
 import { countryCodeOf, resolveStateCode } from '@/lib/shipping-address'
 import { currentFiles } from '@/lib/task-files'
 import { PushError, hashPayload } from '@/lib/repos/pgprints-push'
@@ -8,12 +8,14 @@ import { logHandoffEvent, markPushExported, nextExternalOrderId, planPushLines }
 import { checkOrderForPush, closeCancelledPush, collectLineFiles, isActive, latestPush, loadOrderForPush, reservePush, toPushViews, upsertLineTracking, viewOf, type PushRow } from '@/lib/repos/supplier-push-core'
 import { getToadditSettings, hasToadditCredentials } from '@/lib/toaddit-settings'
 import { isToadditSupplier, validToadditVariantId, type ToadditPreviewInfo } from '@/lib/toaddit-shared'
-import { cancelToadditOrder, createToadditOrder, findToadditOrder, listToadditProducts, toadditAccount, toadditAccountId, ToadditError, toadditStatus, toadditTracking, type ToadditAccount, type ToadditOrder, type ToadditOrderPayload } from '@/lib/toaddit'
+import { cancelToadditOrder, createToadditOrder, findToadditOrder, listToadditProducts, toadditAccount, toadditAccountId, ToadditError, toadditStatus, toadditTracking, updateToadditOrderItems, type ToadditAccount, type ToadditOrder, type ToadditOrderPayload } from '@/lib/toaddit'
 import { parseShipCountries, type PreviewIssue, type PreviewLine, type PushPreview } from '@/lib/pgprints-shared'
 import { productsWithSuggestions, upsertProductMapping } from '@/lib/repos/suppliers'
 
 const DUPLICATE = 'Đơn đã có lần gửi Toaddit đang hiệu lực — không gửi trùng'
-type Snapshot = { protocol: 'ros-v1'; request: ToadditOrderPayload; accountId: string; lineIds: string[] }
+type FileLinks = { designLink: string; urlMockup: string }
+type FileUpdateLog = { at: string; userId: string | null; items: Array<{ refId: string; itemId: string; before: FileLinks; after: FileLinks }> }
+type Snapshot = { protocol: 'ros-v1'; request: ToadditOrderPayload; accountId: string; lineIds: string[]; fileUpdates?: FileUpdateLog[] }
 export type ToadditSelection = Record<string, string>
 export function parseToadditSelection(value: unknown): ToadditSelection {
   if (value === undefined) return {}
@@ -264,6 +266,87 @@ export async function cancelToadditPush(orderId: string) {
   }
   const exportReverted = await closeCancelledPush(push, 'Huỷ đơn bên Toaddit ROS — đơn trở lại chờ chuyển xưởng')
   return { push: await viewOf(push.id), exportReverted }
+}
+// ROS re-points an item's links only before production: 14 Need processing, 18 Awaiting review.
+const EDITABLE_REMOTE = [14, 18]
+export type ToadditFileChange = { refId: string; shopifyLineId: string; index: number; itemId: string; productCode: string; size: string; before: FileLinks; after: FileLinks }
+export async function planToadditFileUpdate(orderId: string) {
+  const supplier = await findToadditSupplier()
+  const push = supplier ? await latestPush(orderId, supplier.id, ['SENDING', 'CREATED']) : null
+  if (!push) throw new PushError('Đơn không có lần gửi Toaddit đang hiệu lực', 404, 'NOT_FOUND')
+  if (push.status === 'SENDING') throw new PushError('Chưa rõ kết quả gửi — cập nhật trạng thái trước khi sửa file', 409, 'UNKNOWN_RESULT')
+  const account = await toadditAccount(), snapshot = accountCheck(push, account)
+  const remote = await findToadditOrder(account, push.externalOrderId)
+  if (!remote) throw new PushError('Không tìm thấy đơn bên ROS — chưa sửa file', 409, 'REMOTE_MISMATCH')
+  verifyRemote(remote, snapshot, push.supplierInternalId)
+  if (remote.status === null || !EDITABLE_REMOTE.includes(remote.status)) {
+    throw new PushError(`Đơn ROS đang "${toadditStatus(remote)}" — chỉ sửa file qua API khi đơn còn Cần xử lý hoặc Chờ duyệt; liên hệ xưởng để đổi file`, 409, 'REMOTE_LOCKED')
+  }
+  const order = await loadOrderForPush(orderId)
+  if (!order) throw new PushError('Không tìm thấy đơn', 404, 'NOT_FOUND')
+  let baseUrl: string
+  try { baseUrl = requirePublicBaseUrl() }
+  catch (e: any) { if (e instanceof PublicUrlError) throw new PushError(e.message, 500, 'PUBLIC_URL'); throw e }
+  const keys = lineKeysOf(order.shopifyOrderNumber, order.lines)
+  const itemKey = (i: any) => JSON.stringify([i.sku, i.productCode, i.size, Number(i.quantity)])
+  const remoteItems: any[] = remote.raw.itemList
+  const sameKey = new Map<string, number>()
+  for (const item of snapshot.request.items) sameKey.set(itemKey(item), (sameKey.get(itemKey(item)) ?? 0) + 1)
+  const used = new Set<number>()
+  const changes: ToadditFileChange[] = [], skipped: string[] = [], blockers: string[] = []
+  for (let index = 0; index < snapshot.request.items.length; index++) {
+    const item = snapshot.request.items[index]
+    const shopifyLineId = snapshot.lineIds[index]
+    const refId = keys.get(shopifyLineId) ?? shopifyLineId
+    const slot = remoteItems.findIndex((r, n) => !used.has(n) && itemKey(r) === itemKey(item))
+    if (slot >= 0) used.add(slot)
+    const line = order.lines.find(l => l.shopifyLineId === shopifyLineId)
+    if (!line) { skipped.push(`${refId}: không còn trong đơn`); continue }
+    if (!isLineApproved(line, order.designTasks.find(t => t.shopifyLineId === shopifyLineId))) { skipped.push(`${refId}: file mới chưa được duyệt — giữ file cũ bên ROS`); continue }
+    const lineErrors: string[] = []
+    const files = await collectLineFiles(line, order.artworks, { refId, approved: true, baseUrl, supplierName: 'Toaddit ROS' }, { error: (_c, m) => lineErrors.push(m), warning: () => {} })
+    const after: FileLinks = { designLink: files.prints.length === 1 ? files.prints[0]?.publicUrl ?? '' : '', urlMockup: files.image ?? '' }
+    const before: FileLinks = { designLink: item.designLink, urlMockup: item.urlMockup }
+    if (after.designLink === before.designLink && after.urlMockup === before.urlMockup) continue
+    if (!after.designLink) lineErrors.push(`${refId}: ROS nhận một designLink; cần đúng một file in trọn sheet theo template`)
+    const mockup = currentFiles(order.artworks.filter(a => a.shopifyLineId === shopifyLineId), 'MOCKUP').some(a => a.mimeType === 'image/png' || a.mimeType === 'image/jpeg')
+    if (!mockup) lineErrors.push(`${refId}: cần mockup của đơn đã duyệt`)
+    if ((sameKey.get(itemKey(item)) ?? 0) > 1) lineErrors.push(`${refId}: nhiều dòng cùng SKU, mã, size và số lượng — không xác định được dòng ROS, sửa trực tiếp trên ROS`)
+    const itemId = slot >= 0 ? String(remoteItems[slot]?.id ?? '') : ''
+    if (!/^[1-9]\d{0,39}$/.test(itemId)) lineErrors.push(`${refId}: ROS không trả ID dòng hàng — chưa sửa được`)
+    if (lineErrors.length) { blockers.push(...lineErrors); continue }
+    changes.push({ refId, shopifyLineId, index, itemId, productCode: item.productCode, size: item.size, before, after })
+  }
+  const changeHash = hashPayload(JSON.stringify({ pushId: push.id, remoteId: remote.id, changes }))
+  return { push, account, snapshot, remote, changes, skipped, blockers, changeHash, remoteStatus: toadditStatus(remote) }
+}
+export async function previewToadditFileUpdate(orderId: string) {
+  const { changes, skipped, blockers, changeHash, remoteStatus, push } = await planToadditFileUpdate(orderId)
+  return { supplierOrderCode: push.supplierOrderCode, remoteStatus, changes, skipped, blockers, changeHash }
+}
+export async function updateToadditFiles(orderId: string, input: { changeHash: string; userId: string | null }) {
+  const plan = await planToadditFileUpdate(orderId)
+  if (plan.blockers.length) throw new PushError(plan.blockers[0], 422, 'NOT_ELIGIBLE', plan.blockers.map(message => ({ level: 'error' as const, code: 'FILE_UPDATE', message })))
+  if (!plan.changes.length) throw new PushError('File in và mockup giống lần gửi — không có gì để cập nhật', 409, 'NO_CHANGE')
+  if (input.changeHash !== plan.changeHash) throw new PushError('File hoặc đơn ROS đã đổi — mở lại bản xem trước cập nhật', 409, 'PAYLOAD_CHANGED')
+  const { push, account, snapshot, remote, changes } = plan
+  try {
+    await updateToadditOrderItems(account, remote.id, changes.map(c => ({ itemId: c.itemId, ...c.after })))
+  } catch (e: any) {
+    const unknown = !(e instanceof ToadditError) || e.unknownOutcome
+    await prisma.supplierOrderPush.update({ where: { id: push.id }, data: { error: `Sửa file ROS ${unknown ? 'chưa rõ kết quả' : 'bị từ chối'}: ${e.message}${unknown ? ' — kiểm tra file trên ROS rồi bấm cập nhật lại' : ''}` } })
+    throw new PushError(e.message, unknown ? 504 : 502, unknown ? 'UNKNOWN_RESULT' : 'UPDATE_FAILED')
+  }
+  const items = snapshot.request.items.map((item, i) => {
+    const c = changes.find(x => x.index === i)
+    return c ? { ...item, ...c.after } : item
+  })
+  const log: FileUpdateLog = { at: new Date().toISOString(), userId: input.userId, items: changes.map(c => ({ refId: c.refId, itemId: c.itemId, before: c.before, after: c.after })) }
+  const next: Snapshot = { ...snapshot, request: { ...snapshot.request, items }, fileUpdates: [...(snapshot.fileUpdates ?? []), log] }
+  await prisma.supplierOrderPush.update({ where: { id: push.id }, data: { requestJson: JSON.stringify(next), error: null } })
+  const refIds = changes.map(c => c.refId)
+  await logHandoffEvent(orderId, `Cập nhật file in sang Toaddit ROS — mã ${push.supplierOrderCode ?? push.externalOrderId}: ${refIds.join(', ')}`, input.userId)
+  return { updated: refIds, push: await viewOf(push.id) }
 }
 export async function syncToadditTracking() {
   const [supplier, settings] = await Promise.all([findToadditSupplier(), getToadditSettings()])

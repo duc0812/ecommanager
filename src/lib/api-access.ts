@@ -78,6 +78,7 @@ export const API_ACCESS_RULES: ApiRule[] = [
   { prefix: '/api/fulfillment/toaddit/catalog', exact: true, methods: ['GET', 'POST'], access: 'ADMIN' },
   { prefix: '/api/fulfillment/toaddit/orders/', suffix: '/preview', methods: READ, access: { adminOr: ['fulfillment_orders', 'fulfillment_export'] } },
   { prefix: '/api/fulfillment/toaddit/orders/', suffix: '/push', methods: ['POST'], access: { adminOr: ['fulfillment_export'] } },
+  { prefix: '/api/fulfillment/toaddit/orders/', suffix: '/update-files', methods: ['POST'], access: { adminOr: ['fulfillment_export'] } },
   { prefix: '/api/fulfillment/toaddit/orders/', suffix: '/refresh', methods: ['POST'], access: 'ADMIN' },
   { prefix: '/api/fulfillment/toaddit/orders/', suffix: '/cancel', methods: ['POST'], access: 'ADMIN' },
   { prefix: '/api/fulfillment/printposs/settings/test', exact: true, methods: ['POST'], access: 'ADMIN' },

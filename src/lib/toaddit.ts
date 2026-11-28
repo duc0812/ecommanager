@@ -117,6 +117,16 @@ export async function cancelToadditOrder(account: ToadditAccount, id: string): P
   const reply = await callToaddit(account, '/order/cancel', { id: Number.isSafeInteger(numericId) ? numericId : id }, true)
   if (toadditId(reply.data) !== id) throw new ToadditError('Toaddit ROS chưa xác nhận đúng ID huỷ — giữ trạng thái đã gửi', 409, null, true)
 }
+export type ToadditItemUpdate = { itemId: string; designLink: string; urlMockup: string }
+export async function updateToadditOrderItems(account: ToadditAccount, orderId: string, items: ToadditItemUpdate[]): Promise<void> {
+  const num = (v: string) => Number.isSafeInteger(Number(v)) ? Number(v) : v
+  const body = { id: num(orderId), itemList: items.map(i => ({ id: num(i.itemId), designLink: i.designLink, urlMockup: i.urlMockup })) }
+  let reply
+  try { reply = await callToaddit(account, '/order/updateOrderItem', body, true) }
+  // A business-code reply is a definite refusal; re-pointing links is idempotent, so only transport failures stay unclear.
+  catch (e) { if (e instanceof ToadditError && e.status >= 200 && e.status < 300) throw new ToadditError(e.message, e.status, e.code, false); throw e }
+  if (toadditId(reply.data) !== orderId) throw new ToadditError('Toaddit ROS chưa xác nhận đúng ID đơn đã sửa — kiểm tra file trên ROS', 409, null, true)
+}
 export function toadditStatus(order: ToadditOrder): string {
   const labels: Record<number, string> = { 14: 'Cần xử lý', 18: 'Chờ duyệt', 42: 'Đang sản xuất', 70: 'Đã gửi hàng', 80: 'Đã huỷ' }
   return order.status === null ? 'Đã nhận đơn — chờ cập nhật' : labels[order.status] ?? `Trạng thái ${order.status}`

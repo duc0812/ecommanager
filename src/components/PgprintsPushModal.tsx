@@ -197,6 +197,71 @@ function PushPanel({ push, canAct, busy, name, onRefresh, onCancel, supportsCanc
   )
 }
 
+type FileChange = { refId: string; productCode: string; size: string; before: { designLink: string; urlMockup: string }; after: { designLink: string; urlMockup: string } }
+type FilePlan = { supplierOrderCode: string | null; remoteStatus: string; changes: FileChange[]; skipped: string[]; blockers: string[]; changeHash: string }
+
+function ToadditFileUpdate({ base, disabled, onDone }: { base: string; disabled: boolean; onDone: (message: string) => void }) {
+  const [plan, setPlan] = useState<FilePlan | null>(null)
+  const [busy, setBusy] = useState('')
+  const [err, setErr] = useState('')
+  async function check() {
+    setBusy('check'); setErr('')
+    const r = await call(`${base}/update-files`, postInit({ dryRun: true }))
+    setBusy('')
+    if (r.ok) setPlan(r.data)
+    else { setPlan(null); setErr(r.error) }
+  }
+  async function apply() {
+    if (!plan) return
+    setBusy('apply'); setErr('')
+    const r = await call(`${base}/update-files`, postInit({ confirm: true, changeHash: plan.changeHash }))
+    setBusy('')
+    if (r.ok) { setPlan(null); onDone(`Đã cập nhật file in sang Toaddit: ${(r.data.updated ?? []).join(', ')}`) }
+    else setErr(r.error)
+  }
+  const link = (url: string, label: string) => url ? <a href={url} target="_blank" rel="noreferrer" className="text-secondary underline">{label}</a> : <span className="text-error">thiếu</span>
+  return (
+    <section className="rounded-xl border border-outline-variant/30 px-md py-sm flex flex-col gap-sm">
+      <div className="flex items-center gap-sm flex-wrap">
+        <Icon name="published_with_changes" className="text-secondary text-[20px]" />
+        <h3 className="text-body-md font-semibold">Cập nhật file in sang Toaddit</h3>
+        <span className="text-body-sm text-on-surface-variant">Thay file in và mockup đã duyệt mới nhất vào đơn ROS. Chỉ làm được khi đơn ROS còn Cần xử lý hoặc Chờ duyệt.</span>
+        <button type="button" className={`${btn} ml-auto`} disabled={disabled || !!busy} onClick={check}>
+          <Icon name="compare_arrows" className="text-[18px]" />{busy === 'check' ? 'Đang kiểm tra…' : 'Kiểm tra file thay đổi'}
+        </button>
+      </div>
+      {err && <Note tone="bad" icon="error">{err}</Note>}
+      {plan && (
+        <div className="flex flex-col gap-sm">
+          <span className="text-body-sm text-on-surface-variant">Đơn ROS {plan.supplierOrderCode ?? ''} đang: <b>{plan.remoteStatus}</b></span>
+          {plan.blockers.length > 0 && <Note tone="bad" icon="block"><b>Chưa cập nhật được</b><ul className="list-disc pl-md">{plan.blockers.map((m, i) => <li key={i}>{m}</li>)}</ul></Note>}
+          {plan.skipped.length > 0 && <Note tone="warn" icon="info"><ul className="list-disc pl-md">{plan.skipped.map((m, i) => <li key={i}>{m}</li>)}</ul></Note>}
+          {plan.changes.length === 0 && plan.blockers.length === 0 && <Note tone="ok" icon="check_circle">File in và mockup đang giống lần gửi — không có gì để cập nhật.</Note>}
+          {plan.changes.length > 0 && (
+            <ul className="flex flex-col gap-xs text-body-sm">
+              {plan.changes.map(c => (
+                <li key={c.refId} className="flex items-center gap-sm flex-wrap">
+                  <b className="font-mono">{c.refId}</b><span className="text-on-surface-variant">{c.productCode} · {c.size}</span>
+                  <span>File in: {c.after.designLink === c.before.designLink ? 'giữ nguyên' : link(c.after.designLink, 'file mới')}</span>
+                  <span>Mockup: {c.after.urlMockup === c.before.urlMockup ? 'giữ nguyên' : link(c.after.urlMockup, 'mockup mới')}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {plan.changes.length > 0 && plan.blockers.length === 0 && (
+            <div className="flex items-center gap-sm flex-wrap">
+              <button type="button" className={btnPrimary} disabled={disabled || !!busy} onClick={apply}>
+                <Icon name="send" className="text-[18px]" />{busy === 'apply' ? 'Đang cập nhật…' : `Gửi ${plan.changes.length} dòng sang ROS`}
+              </button>
+              <button type="button" className={btn} disabled={!!busy} onClick={() => setPlan(null)}>Thôi</button>
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  )
+}
+
 export default function PgprintsPushModal({ orderId, supplier = 'pgprints', onClose, onChanged }: {
   orderId: string; supplier?: SupplierApiKind; onClose: () => void; onChanged?: () => void
 }) {
@@ -323,6 +388,7 @@ export default function PgprintsPushModal({ orderId, supplier = 'pgprints', onCl
           {loading && !preview && <p className="text-body-sm text-on-surface-variant">Đang dựng bản xem trước…</p>}
 
           {preview && active && <PushPanel push={active} canAct={preview.canAct} busy={busy} name={name} onRefresh={refreshPush} onCancel={cancelPush} supportsCancel={supplier !== 'printposs'} />}
+          {supplier === 'toaddit' && preview && active?.status === 'CREATED' && <ToadditFileUpdate base={base} disabled={!canSend || loading} onDone={async message => { setError(''); setInfo(message); await load(); onChanged?.() }} />}
           {supplier === 'printposs' && active && <Note tone="warn" icon="info">API Printposs chưa hỗ trợ huỷ đơn. Liên hệ xưởng để huỷ và đối chiếu trước khi gửi lại.</Note>}
           {preview?.toaddit && sendable && <section className="rounded-xl border border-secondary/30 p-md space-y-md">
             <h3 className="text-body-md font-semibold">Sản phẩm và size Toaddit ROS</h3>

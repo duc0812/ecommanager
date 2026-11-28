@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/db'
 import { postToadditRos } from '@/lib/toaddit-transport'
-import { buildToadditPush, cancelToadditPush, pushToadditOrder, refreshToadditPush, syncToadditCatalog, syncToadditTracking } from '@/lib/repos/toaddit-push'
+import { buildToadditPush, cancelToadditPush, previewToadditFileUpdate, pushToadditOrder, refreshToadditPush, syncToadditCatalog, syncToadditTracking, updateToadditFiles } from '@/lib/repos/toaddit-push'
 import { getToadditSettings, saveToadditSettings } from '@/lib/toaddit-settings'
 import { callToaddit, listToadditProducts, toadditAccount } from '@/lib/toaddit'
 import { toadditVariantId } from '@/lib/toaddit-shared'
@@ -10,13 +10,14 @@ import { handoffStateFor } from '@/lib/supplier-handoff'
 import { AUTH_COOKIE, signToken } from '@/lib/auth'
 import { GET as settingsGet, PUT as settingsPut } from '@/app/api/fulfillment/toaddit/settings/route'
 import { POST as pushRoute } from '@/app/api/fulfillment/toaddit/orders/[orderId]/push/route'
+import { POST as updateFilesRoute } from '@/app/api/fulfillment/toaddit/orders/[orderId]/update-files/route'
 vi.mock('@/lib/toaddit-transport', () => ({ postToadditRos: vi.fn() }))
 const PROJECT = 'project-toaddit-fixture', SUP = 'supplier-toaddit-fixture', KEY = 'ros-fixture-key'
 const VARIANT = toadditVariantId('FZH56', 'ONESIZE'), OTHER = toadditVariantId('FZH9-L', 'ONESIZE')
 let storeId = '', adminToken = '', superToken = '', seq = 0, creates = 0
 let remote: any[] = [], catalog: any[] = [], calls: Array<{ path: string; body: any; key: string }> = []
 let mode: 'ok' | 'timeout' | 'denied' | 'business-error' | 'bad-id' | 'wrong-readback' = 'ok'
-let cancelRefused = false, wrongCancelId = false
+let cancelRefused = false, wrongCancelId = false, updateMode: 'ok' | 'refused' | 'timeout' = 'ok'
 const response = (data: any, page?: any) => ({ status: 200, text: JSON.stringify({ code: 0, success: 1, data, ...(page ? { page } : {}) }) })
 async function makeOrder(opts: { foreign?: boolean; approved?: boolean; qty?: number; mockup?: boolean } = {}) {
   const id = `toaddit-order-${++seq}`
@@ -58,7 +59,7 @@ beforeEach(async () => {
   process.env.NEXT_PUBLIC_APP_URL = 'https://app.example.com'
   await saveToadditSettings({ apiKey: KEY, shippingMethod: '1' })
   await prisma.supplierProduct.update({ where: { supplierId_sku: { supplierId: SUP, sku: 'TD-BASE' } }, data: { apiSku: VARIANT, apiShipClass: null } })
-  creates = 0; calls = []; remote = []; mode = 'ok'; cancelRefused = false; wrongCancelId = false
+  creates = 0; calls = []; remote = []; mode = 'ok'; cancelRefused = false; wrongCancelId = false; updateMode = 'ok'
   catalog = [{ productName: 'Hobo', status: 1, productCodeList: [{ productCode: 'FZH56', colorName: 'White' }], sizeList: [{ sizeName: 'ONESIZE', price: 11 }] },
     { productName: 'Large tote', status: 1, productCodeList: [{ productCode: 'FZH9-L', colorName: 'White' }], sizeList: [{ sizeName: 'ONESIZE', price: 11.5 }] }]
   vi.mocked(postToadditRos).mockImplementation(async (key, path, raw) => {
@@ -82,6 +83,12 @@ beforeEach(async () => {
       expect(typeof body.id).toBe('number')
       const order = remote.find(o => o.id === String(body.id)); order.status = 80
       return response(wrongCancelId ? '99999' : order.id)
+    }
+    if (path === '/api/v1/order/updateOrderItem') {
+      if (updateMode === 'timeout') throw new Error('lost response')
+      if (updateMode === 'refused') return { status: 200, text: JSON.stringify({ code: 1003000, success: 0, message: 'Order in production' }) }
+      expect(typeof body.id).toBe('number')
+      return response(body.id)
     }
     throw new Error(`Unexpected ROS path: ${path}`)
   })
@@ -307,5 +314,67 @@ describe('Toaddit ROS API integration', () => {
     await prisma.designArtwork.create({ data: { orderId: id, shopifyLineId: `${id}-line`, printArea: 'Print', version: 2, fileName: 'updated.png', storagePath: 'fixture/updated.png', mimeType: 'image/png', size: 100, widthPx: 1000, heightPx: 1000 } })
     await expect(pushToadditOrder(id, { payloadHash: before.payloadHash!, userId: null })).rejects.toMatchObject({ code: 'PAYLOAD_CHANGED' })
     expect(creates).toBe(0)
+  })
+  it('re-points a sent order to the newly approved print through updateOrderItem', async () => {
+    const id = await makeOrder()
+    await send(id)
+    const same = await previewToadditFileUpdate(id)
+    expect(same).toMatchObject({ changes: [], blockers: [], skipped: [] })
+    await prisma.designArtwork.create({ data: { orderId: id, shopifyLineId: `${id}-line`, printArea: 'Print', version: 2, fileName: 'fixed.png', storagePath: `fixture/${id}-v2.png`, mimeType: 'image/png', size: 100, widthPx: 1000, heightPx: 1000 } })
+    const plan = await previewToadditFileUpdate(id)
+    expect(plan.blockers).toEqual([])
+    expect(plan.changes).toHaveLength(1)
+    const change = plan.changes[0]
+    expect(change.itemId).toBe('100')
+    expect(change.after.designLink).not.toBe(change.before.designLink)
+    expect(change.after.urlMockup).toBe(change.before.urlMockup)
+    const result = await updateToadditFiles(id, { changeHash: plan.changeHash, userId: null })
+    expect(result.updated).toEqual([change.refId])
+    const update = calls.find(c => c.path === '/api/v1/order/updateOrderItem')!
+    expect(update.body).toEqual({ id: 601, itemList: [{ id: 100, designLink: change.after.designLink, urlMockup: change.after.urlMockup }] })
+    const snapshot = JSON.parse((await pushRow(id)).requestJson)
+    expect(snapshot.request.items[0].designLink).toBe(change.after.designLink)
+    expect(snapshot.fileUpdates).toHaveLength(1)
+    expect((await previewToadditFileUpdate(id)).changes).toEqual([])
+    await expect(updateToadditFiles(id, { changeHash: plan.changeHash, userId: null })).rejects.toMatchObject({ code: 'NO_CHANGE' })
+    expect(await refreshToadditPush(id)).toMatchObject({ found: true })
+  })
+  it('refuses file updates once ROS is in production, on a stale preview, an unapproved fix or an unclear reply', async () => {
+    const id = await makeOrder()
+    await send(id)
+    const art = (v: number) => prisma.designArtwork.create({ data: { orderId: id, shopifyLineId: `${id}-line`, printArea: 'Print', version: v, fileName: `v${v}.png`, storagePath: `fixture/${id}-v${v}.png`, mimeType: 'image/png', size: 100, widthPx: 1000, heightPx: 1000 } })
+    await art(2)
+    const plan = await previewToadditFileUpdate(id)
+    remote[0].status = 42
+    await expect(previewToadditFileUpdate(id)).rejects.toMatchObject({ code: 'REMOTE_LOCKED' })
+    remote[0].status = 18
+    await art(3)
+    await expect(updateToadditFiles(id, { changeHash: plan.changeHash, userId: null })).rejects.toMatchObject({ code: 'PAYLOAD_CHANGED' })
+    await prisma.designTask.updateMany({ where: { orderId: id }, data: { status: 'REVIEW' } })
+    const held = await previewToadditFileUpdate(id)
+    expect(held.changes).toEqual([])
+    expect(held.skipped[0]).toContain('chưa được duyệt')
+    await prisma.designTask.updateMany({ where: { orderId: id }, data: { status: 'DONE' } })
+    updateMode = 'timeout'
+    const fresh = await previewToadditFileUpdate(id)
+    await expect(updateToadditFiles(id, { changeHash: fresh.changeHash, userId: null })).rejects.toMatchObject({ code: 'UNKNOWN_RESULT' })
+    const row = await pushRow(id)
+    expect(row.error).toContain('chưa rõ kết quả')
+    expect(JSON.parse(row.requestJson).fileUpdates).toBeUndefined()
+    updateMode = 'refused'
+    await expect(updateToadditFiles(id, { changeHash: fresh.changeHash, userId: null })).rejects.toMatchObject({ code: 'UPDATE_FAILED' })
+    updateMode = 'ok'
+    await updateToadditFiles(id, { changeHash: fresh.changeHash, userId: null })
+    expect(JSON.parse((await pushRow(id)).requestJson).fileUpdates).toHaveLength(1)
+  })
+  it('update-files route previews on dryRun and needs the change hash to write', async () => {
+    const id = await makeOrder()
+    await send(id)
+    const dry = await updateFilesRoute(request(`orders/${id}/update-files`, adminToken, { dryRun: true }, 'POST'), { params: { orderId: id } })
+    expect(dry.status).toBe(200)
+    expect(await dry.json()).toMatchObject({ changes: [], remoteStatus: 'Cần xử lý' })
+    const bad = await updateFilesRoute(request(`orders/${id}/update-files`, adminToken, { confirm: true }, 'POST'), { params: { orderId: id } })
+    expect(bad.status).toBe(400)
+    expect(calls.some(c => c.path === '/api/v1/order/updateOrderItem')).toBe(false)
   })
 })
