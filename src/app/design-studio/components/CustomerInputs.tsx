@@ -26,8 +26,11 @@ function CsNote({ detail, lastAsk, onChanged }: { detail: TaskDetail; lastAsk: s
   const [draft, setDraft] = useState(line.designNote ?? '')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [expanded, setExpanded] = useState(false)
   const addOns = detail.order.addOns ?? []
-  const empty = !line.designNote && !lastAsk && addOns.length === 0
+  const note = line.designNote ?? ''
+  const empty = !note && !lastAsk && addOns.length === 0
+  const long = note.length > 240 || note.split('\n').length > 3
 
   async function save(e: FormEvent) {
     e.preventDefault()
@@ -41,10 +44,13 @@ function CsNote({ detail, lastAsk, onChanged }: { detail: TaskDetail; lastAsk: s
   }
 
   return (
-    <aside aria-label="Ghi chú CS" className={`flex-[1_1_280px] min-w-0 flex flex-col gap-xs rounded-lg px-[14px] py-sm border ${empty && !editing ? 'bg-surface-container-low border-outline-variant/40' : 'bg-amber-50 border-amber-200'}`}>
-      <div className="flex items-center gap-xs">
+    <aside aria-label="Ghi chú CS" className={`min-w-0 flex flex-col gap-xs rounded-lg px-[14px] py-sm border ${empty && !editing ? 'bg-surface-container-low border-outline-variant/40' : 'bg-amber-50 border-amber-200'}`}>
+      <div className="flex items-center gap-xs flex-wrap">
         <Icon name="sticky_note_2" className="text-[18px] text-amber-800" />
         <span className="text-body-sm font-semibold text-amber-950">Ghi chú CS</span>
+        <span className="text-label-sm text-on-surface-variant" title="OrderLine.designNote — cột 'design note' trên sheet Mango/Jomall và ghi chú sản xuất PGprints. Nhật ký xử lý ghi vào Trao đổi & lịch sử, không ghi vào đây.">
+          CS ghi cho designer · đi kèm dòng đơn sang xưởng
+        </span>
         {canEdit && !editing && (
           <button type="button" onClick={() => { setDraft(line.designNote ?? ''); setEditing(true) }} aria-label="Sửa ghi chú CS" title="Sửa ghi chú CS" className={`${iconBtn} ml-auto w-7 h-7`}>
             <Icon name="edit" className="text-[16px]" />
@@ -63,13 +69,20 @@ function CsNote({ detail, lastAsk, onChanged }: { detail: TaskDetail; lastAsk: s
         </form>
       ) : (
         <>
-          {line.designNote && <span className="text-body-sm text-on-surface whitespace-pre-wrap">{line.designNote}</span>}
+          {note && (
+            <p className={`text-body-sm text-on-surface whitespace-pre-wrap break-words ${long && !expanded ? 'line-clamp-3' : ''}`}>{note}</p>
+          )}
+          {long && (
+            <button type="button" onClick={() => setExpanded(!expanded)} aria-expanded={expanded} className="self-start text-label-sm font-semibold text-secondary hover:underline">
+              {expanded ? 'Thu gọn' : `Xem hết (${note.length} ký tự)`}
+            </button>
+          )}
           {lastAsk && <span className="text-body-sm text-amber-900">Đang hỏi khách: {lastAsk}</span>}
           {empty && <span className="text-body-sm text-on-surface-variant">Không có ghi chú</span>}
         </>
       )}
       {addOns.length > 0 && (
-        <ul className="flex flex-col gap-[2px] text-label-sm text-on-surface">
+        <ul className="flex flex-wrap gap-x-md gap-y-[2px] text-label-sm text-on-surface">
           {addOns.map((a, i) => (
             <li key={`${a.title}-${i}`} className="flex items-start gap-xs break-words">
               <Icon name="add_circle" className="text-[14px] text-amber-800 mt-[1px]" />
@@ -90,8 +103,8 @@ export default function CustomerInputs({ detail, refreshing, onRefresh, onChange
   const count = !line.attributesLoaded ? 'chưa nạp' : fields.length ? `${fields.length} trường` : line.customized ? 'khách không nhập gì' : 'non-custom'
 
   return (
-    <section aria-label="Khách nhập và ghi chú CS" className={`${card} flex flex-wrap gap-x-[20px] gap-y-md px-md pt-sm pb-md`}>
-      <div className="flex-[999_1_560px] min-w-0 flex flex-col gap-sm">
+    <section aria-label="Khách nhập và ghi chú CS" className={`${card} flex flex-col gap-md px-md pt-sm pb-md`}>
+      <div className="min-w-0 flex flex-col gap-sm">
         <div className="flex items-center gap-sm">
           <span className="text-body-sm font-semibold text-on-surface">Khách nhập</span>
           <span className="text-label-sm text-on-surface-variant">{count}</span>
