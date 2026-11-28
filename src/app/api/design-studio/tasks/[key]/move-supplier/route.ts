@@ -10,7 +10,7 @@ export async function POST(req: NextRequest, { params }: { params: { key: string
   if ('error' in scope) return scope.error
   const body = await req.json().catch(() => ({}))
   try {
-    return NextResponse.json(await moveUnsentLine(params.key, { supplierProductId: body?.supplierProductId, reason: body?.reason }, scope.user))
+    return NextResponse.json(await moveUnsentLine(params.key, { supplierProductId: body?.supplierProductId, reason: body?.reason, reship: body?.reship }, scope.user))
   } catch (e) {
     if (e instanceof MoveLineError) return NextResponse.json({ error: e.message }, { status: e.status })
     throw e

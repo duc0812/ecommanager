@@ -3,7 +3,7 @@ import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/db'
 import { signToken, AUTH_COOKIE } from '@/lib/auth'
 import { POST } from '@/app/api/design-studio/tasks/[key]/move-supplier/route'
-import { MOVE_EVENT_PREFIX, moveUnsentLine } from '@/lib/repos/line-move-supplier'
+import { MOVE_EVENT_PREFIX, RESHIP_EVENT_PREFIX, moveUnsentLine } from '@/lib/repos/line-move-supplier'
 import { upsertOrderWithLines, type UpsertOrderInput } from '@/lib/repos/orders'
 import { productionOverride } from '@/lib/production-override'
 import { buildMerchizePush } from '@/lib/repos/merchize-push'
@@ -33,6 +33,8 @@ const post = (body: Record<string, unknown>, token = superToken) => new NextRequ
   method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: `${AUTH_COOKIE}=${token}` }, body: JSON.stringify(body),
 })
 const move = (token = superToken) => POST(post({ supplierProductId: `${P}-mwhd-L`, reason: 'CSV Jomall 11/04 không lên sheet — chủ shop chuyển Merchize' }, token), { params: { key: KEY } })
+const reship = (token = superToken) => POST(post({ supplierProductId: `${P}-mwhd-L`, reason: 'Kiện Jomall đứng INFO_RECEIVED 3 tuần — chủ shop ship lại qua Merchize', reship: true }, token), { params: { key: KEY } })
+const shipOrder = () => prisma.order.update({ where: { id: ORDER }, data: { pipelineStatus: 'FULFILLED', fulfillmentStatus: 'FULFILLED' } })
 const lineOf = (shopifyLineId: string) => prisma.orderLine.findFirstOrThrow({ where: { orderId: ORDER, shopifyLineId } })
 
 async function clean() {
@@ -189,5 +191,74 @@ describe('moving a line no supplier received (owner 11/21/2026, #LIT5707_1)', ()
     await prisma.order.update({ where: { id: ORDER }, data: { pipelineStatus: 'CANCELLED' } })
     const r = await move()
     expect(r.status).toBe(409)
+  })
+})
+
+describe('ship lại qua xưởng khác (owner 11/28/2026, #LIT5958_1)', () => {
+  it('moves a tracked line of a fulfilled order when the super admin confirms a reship, keeps the old parcel and clears the export mark', async () => {
+    await shipOrder()
+    await prisma.shipment.updateMany({ where: { orderId: ORDER, lineKey: KEY }, data: { trackingNumber: 'UL671452455YP', carrier: 'Yanwen', status: 'INFO_RECEIVED' } })
+    const r = await reship()
+    expect(r.status).toBe(200)
+    const body = await r.json()
+    expect(body).toMatchObject({ taskKey: KEY, reship: true, previousTracking: 'UL671452455YP', clearedExportMark: true, orderReopened: false, to: 'merchize MWHDVN000000AA03' })
+    const hoodie = await lineOf(HOODIE)
+    expect(hoodie).toMatchObject({ resolvedSupplierId: MERCHIZE, resolvedSupplierSku: 'MWHDVN000000AA03', resolvedBaseCost: 23.5, exportedAt: null, exportedToSupplierId: null })
+    expect(productionOverride(hoodie.productionOverrideJson)).toMatchObject({ supplierId: MERCHIZE, supplierSku: 'MWHDVN000000AA03' })
+    const ship = await prisma.shipment.findFirstOrThrow({ where: { orderId: ORDER, lineKey: KEY } })
+    expect(ship).toMatchObject({ supplierId: JOMALL, trackingNumber: 'UL671452455YP' })
+    const order = await prisma.order.findUniqueOrThrow({ where: { id: ORDER } })
+    expect(order.pipelineStatus).toBe('FULFILLED')
+    const task = await prisma.designTask.findUniqueOrThrow({ where: { taskKey: KEY }, include: { events: true } })
+    const event = task.events.find(e => e.message.startsWith(RESHIP_EVENT_PREFIX))?.message
+    expect(event).toMatch(/Jomall Test GAF-L → merchize MWHDVN000000AA03, gỡ dấu đã xuất 2026-11-04 12:53 UTC, kiện cũ UL671452455YP giữ nguyên\. Lý do: Kiện Jomall/)
+    expect(task.events.some(e => e.message.startsWith(MOVE_EVENT_PREFIX))).toBe(false)
+  })
+
+  it('the Merchize send then carries the reshipped line under the order number', async () => {
+    await shipOrder()
+    await prisma.shipment.updateMany({ where: { orderId: ORDER, lineKey: KEY }, data: { trackingNumber: 'UL671452455YP' } })
+    await reship()
+    const built = await buildMerchizePush(ORDER)
+    expect(built).not.toBeNull()
+    expect(built!.preview.lines.map((l: any) => l.lineKey ?? l.key ?? l.refId)).toEqual([KEY])
+    expect(built!.preview.issues.filter((i: any) => i.level === 'error').map((i: any) => i.code)).not.toContain('ALREADY_EXPORTED')
+  })
+
+  it('a reship also passes a WRITTEN sheet row of the old supplier and leaves that row as history', async () => {
+    await shipOrder()
+    const hoodie = await lineOf(HOODIE)
+    const write = await prisma.supplierSheetWrite.create({ data: { supplierId: JOMALL, orderId: ORDER, orderLineId: hoodie.id, lineKey: KEY, spreadsheetId: 's', tabName: 'ORDER 11-2026', status: 'WRITTEN' } })
+    const r = await reship()
+    expect(r.status).toBe(200)
+    expect((await lineOf(HOODIE)).resolvedSupplierId).toBe(MERCHIZE)
+    expect((await prisma.supplierSheetWrite.findUniqueOrThrow({ where: { id: write.id } })).status).toBe('WRITTEN')
+  })
+
+  it('a reship is refused while the line has no tracking and its order is not shipped — the plain move covers that', async () => {
+    const r = await reship()
+    expect(r.status).toBe(409)
+    expect((await r.json()).error).toMatch(/chưa giao/)
+    expect(await lineOf(HOODIE)).toMatchObject({ resolvedSupplierId: JOMALL, exportedAt: CSV_AT })
+  })
+
+  it('a reship still waits for a push whose outcome is unknown (SENDING), but a landed push of the old send is history', async () => {
+    await shipOrder()
+    const hoodie = await lineOf(HOODIE)
+    await prisma.supplierOrderPush.updateMany({ where: { orderId: ORDER }, data: { status: 'SENDING', prevExportJson: JSON.stringify({ lineIds: [hoodie.id], shopifyLineIds: [HOODIE] }) } })
+    const held = await reship()
+    expect(held.status).toBe(409)
+    expect((await held.json()).error).toMatch(/gửi API/)
+    await prisma.supplierOrderPush.updateMany({ where: { orderId: ORDER }, data: { status: 'CREATED' } })
+    const r = await reship()
+    expect(r.status).toBe(200)
+    expect((await lineOf(HOODIE)).resolvedSupplierId).toBe(MERCHIZE)
+  })
+
+  it('only a super admin may reship', async () => {
+    await shipOrder()
+    const r = await reship(adminToken)
+    expect(r.status).toBe(403)
+    expect((await lineOf(HOODIE)).resolvedSupplierId).toBe(JOMALL)
   })
 })

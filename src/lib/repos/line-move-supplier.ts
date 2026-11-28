@@ -19,16 +19,25 @@ const CLOSED_FINANCIAL = ['REFUNDED', 'VOIDED']
 const LIVE_PUSH = ['SENDING', 'CREATED']
 
 export const MOVE_EVENT_PREFIX = 'Chuyển xưởng dòng chưa xưởng nào nhận'
+/**
+ * Owner 11/28/2026 (#LIT5958_1): a line whose parcel left but never arrived (Yanwen stuck at INFO_RECEIVED) goes out again from
+ * another supplier. The super admin confirms the reship: the old supplier's sheet row, landed push and parcel stay as history,
+ * the line resolves to the new product and loses its export mark so the new supplier's send can carry it.
+ */
+export const RESHIP_EVENT_PREFIX = 'Ship lại qua xưởng khác'
+const RESHIP_NOT_NEEDED = 'Dòng chưa có tracking và đơn chưa giao — dùng chuyển xưởng thường, không phải ship lại'
 
 export async function moveUnsentLine(
   taskKey: string,
-  input: { supplierProductId: unknown; reason: unknown },
+  input: { supplierProductId: unknown; reason: unknown; reship?: unknown },
   actor: { id: string; name: string },
   refusal?: { sourceId: string; sourceSku: string; dryRun: boolean; sheetRow: number | null; spreadsheetId: string; tab: string },
 ) {
   if (typeof input.supplierProductId !== 'string' || !input.supplierProductId) throw new MoveLineError('Chọn mã hàng của xưởng mới')
   if (typeof input.reason !== 'string' || input.reason.trim().length < 3 || input.reason.length > 1500) throw new MoveLineError('Ghi lý do chuyển xưởng (3–1500 ký tự)')
   const reason = input.reason.trim()
+  const reship = input.reship === true
+  if (reship && refusal) throw new MoveLineError('Ship lại không đi cùng từ chối của xưởng')
 
   const task = await prisma.designTask.findUnique({ where: { taskKey } })
   if (!task) throw new MoveLineError('Không tìm thấy task', 404)
@@ -51,7 +60,7 @@ export async function moveUnsentLine(
     const sheetWrites = await tx.supplierSheetWrite.findMany({ where: {
       orderId: order.id, OR: [{ orderLineId: line.id }, { lineKey: taskKey }], status: { in: ['WRITING', 'WRITTEN'] },
     } })
-    if (sheetWrites.length && !refusal) throw new MoveLineError('Dòng đã được ghi vào sheet của xưởng — xưởng đã nhận, không chuyển được', 409)
+    if (sheetWrites.length && !refusal && !reship) throw new MoveLineError('Dòng đã được ghi vào sheet của xưởng — xưởng đã nhận, không chuyển được', 409)
     if (refusal) {
       if (isOrderClosed(order) || order.financialStatus.toUpperCase() !== 'PAID' || line.dropship) throw new MoveLineError('Dòng không còn ở trạng thái chờ sản xuất đã thanh toán', 409)
       if (line.resolvedSupplierId !== refusal.sourceId || line.resolvedSupplierSku !== refusal.sourceSku ||
@@ -70,7 +79,7 @@ export async function moveUnsentLine(
       const activeJob = await tx.designAgentJob.findFirst({ where: { taskId: task.id, status: { in: ['QUEUED','RUNNING'] } }, select: { id: true } })
       if (activeJob) throw new MoveLineError('Design Agent đang giữ dòng này', 409)
     }
-    const pushes = await tx.supplierOrderPush.findMany({ where: { orderId: order.id, status: { in: LIVE_PUSH } }, select: { supplierId: true, prevExportJson: true } })
+    const pushes = await tx.supplierOrderPush.findMany({ where: { orderId: order.id, status: { in: LIVE_PUSH } }, select: { supplierId: true, status: true, prevExportJson: true } })
     const carried = pushes.find(p => {
       const ids = pushLineIds(p)
       const shopifyIds = pushShopifyLineIds(p)
@@ -78,18 +87,25 @@ export async function moveUnsentLine(
       // A push made before sends went by line carried every line of its supplier.
       return p.supplierId === (line.exportedToSupplierId ?? line.resolvedSupplierId)
     })
-    if (carried) throw new MoveLineError('Dòng nằm trong một lần gửi API còn hiệu lực — huỷ lần gửi đó trước', 409)
+    // A reship leaves a landed push as the record of the first send; one still without an answer may yet become that first send.
+    if (carried && !(reship && carried.status === 'CREATED')) throw new MoveLineError('Dòng nằm trong một lần gửi API còn hiệu lực — huỷ lần gửi đó trước', 409)
     const lineKey = lineKeysOf(order.shopifyOrderNumber, order.lines).get(line.shopifyLineId)
     if (refusal && lineKey !== taskKey) throw new MoveLineError('Mã dòng trong đơn vừa thay đổi', 409)
     const shipment = lineKey ? await tx.shipment.findUnique({ where: { orderId_lineKey: { orderId: order.id, lineKey } }, select: { id: true, trackingNumber: true } }) : null
+    let previousTracking: string | null = null
     if (shipment?.trackingNumber) {
       // A fulfillment that closed the whole order copies a sibling's parcel onto an unsent line (#LIT5519_2): that number is
       // borrowed, not this line's own. Only a line no supplier was marked for, sharing the number with a sibling, counts as borrowed.
       const sibling = line.exportedAt ? null : await tx.shipment.findFirst({
         where: { orderId: order.id, trackingNumber: shipment.trackingNumber, NOT: { id: shipment.id } }, select: { id: true },
       })
-      if (!sibling) throw new MoveLineError(`Dòng đã có tracking ${shipment.trackingNumber} — xưởng đã gửi hàng, không chuyển được`, 409)
+      if (!sibling) {
+        if (!reship) throw new MoveLineError(`Dòng đã có tracking ${shipment.trackingNumber} — xưởng đã gửi hàng, không chuyển được`, 409)
+        previousTracking = shipment.trackingNumber
+      }
     }
+    const shipped = order.pipelineStatus === 'FULFILLED' || (order.fulfillmentStatus ?? '').toUpperCase() === 'FULFILLED'
+    if (reship && !shipped && !previousTracking) throw new MoveLineError(RESHIP_NOT_NEEDED, 409)
     const render = await tx.artworkJob.findFirst({ where: { orderId: order.id, shopifyLineId: line.shopifyLineId, kind: 'RENDER_LINE', status: { in: ['QUEUED', 'PENDING', 'RUNNING'] } }, select: { id: true } })
     if (render) throw new MoveLineError('Đang render artwork, đợi hoàn tất rồi chuyển xưởng', 409)
 
@@ -132,7 +148,8 @@ export async function moveUnsentLine(
       },
     })
     if (changed.count !== 1) throw new MoveLineError('Dữ liệu dòng vừa đổi, tải lại rồi thử lại', 409)
-    if (shipment) await tx.shipment.update({ where: { id: shipment.id }, data: { supplierId: selected.supplierId } })
+    // The parcel on a reshipped line is the old supplier's; the new one's tracking lands when its own send is refreshed.
+    if (shipment && !reship) await tx.shipment.update({ where: { id: shipment.id }, data: { supplierId: selected.supplierId } })
 
     // The hub lists orders that can still send: an order Exported only because of this mark opens again for the line.
     const others = supplierLines(order.lines.filter(l => l.id !== line.id))
@@ -160,11 +177,12 @@ export async function moveUnsentLine(
     }
     if (reopen) await tx.order.update({ where: { id: order.id }, data: { pipelineStatus: 'READY_TO_PRODUCTION' } })
 
-    const message = `${MOVE_EVENT_PREFIX}: ${fromLabel} → ${toLabel}${markNote}. Lý do: ${reason}`
+    const parcelNote = previousTracking ? `, kiện cũ ${previousTracking} giữ nguyên` : ''
+    const message = `${reship ? RESHIP_EVENT_PREFIX : MOVE_EVENT_PREFIX}: ${fromLabel} → ${toLabel}${markNote}${parcelNote}. Lý do: ${reason}`
     await tx.designTaskEvent.create({ data: { taskId: task.id, type: 'SYSTEM', actorId: actor.id, message } })
     return {
       taskKey, lineId: line.id, from: fromLabel, to: toLabel, clearedExportMark: !!line.exportedAt,
-      orderReopened: reopen, otherSupplierLines: others.length, message,
+      orderReopened: reopen, otherSupplierLines: others.length, reship, previousTracking, message,
     }
   })
 }
